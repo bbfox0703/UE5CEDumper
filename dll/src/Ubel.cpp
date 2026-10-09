@@ -1953,18 +1953,18 @@ static void EnsureFunctionFlagsOffset() {
     }
 
     // [UE-OVERRIDE-411] review. The vote adds only this version's shift, so under a version from the wrong side of
-    // 4.18 -- a persisted override, set before any scan could check it -- it cannot find the tail and the readers
-    // keep the wrong one. Say so: every buffer handed to ProcessEvent is sized or checked by its chain
-    // (Ubel::ParamBufferSize; Mimic's slab by Mimic::InvokeSlabRefusal), the values read are not.
+    // 4.18 -- a persisted override, set before any scan could check it -- it cannot find the tail. The measurement
+    // can, and the readers follow it (DynOff::FunctionTailReadBase); the version is still wrong for this game in
+    // whatever else it keys, so say so.
     const int tailBase = MeasureTailBase(samples, cands);
     DynOff::UFUNCTION_TAIL_MEASURED.store(tailBase, std::memory_order_relaxed);
     if (tailBase >= 0 && DynOff::UFUNCTION_FLAGS > 0) {
-        const int readers = DynOff::FunctionTailBaseFor(ver, DynOff::UFUNCTION_FLAGS, DynOff::UFUNCTION_TAIL_EXTRA);
-        if (readers != tailBase)
+        const int layout = DynOff::FunctionTailBaseFor(ver, DynOff::UFUNCTION_FLAGS, DynOff::UFUNCTION_TAIL_EXTRA);
+        if (layout != tailBase)
             LOG_WARN("DetectFunctionFlags: the sampled UFunctions keep NumParms / ParmsSize behind +0x%X, but UE %u's "
-                     "layout reads them behind +0x%X -- that version does not fit this game's UFunctions (a wrong UE "
-                     "version override?). NumParms / ParmsSize / ReturnValueOffset read wrong until it is corrected.",
-                     tailBase, ver, readers);
+                     "layout puts them behind +0x%X -- that version does not fit this game's UFunctions (a wrong UE "
+                     "version override?). The tail is read at the measured base; correct the version.",
+                     tailBase, ver, layout);
     }
     DynOff::bUFunctionFlagsDetected.store(true, std::memory_order_release);
 }
@@ -1979,8 +1979,12 @@ OverrideTailCheck CheckVersionOverrideTail(unsigned newVersion) {
     // Asked before the override is applied, so a vote that runs here runs under the version the scan detected; the
     // measurement does not depend on the version either way.
     const int decided = FunctionFlagsOffset();
-    if (!DynOff::bOffsetsProbeRan.load(std::memory_order_acquire)) return r;   // no scan yet: nothing to sample
     int measured = DynOff::UFUNCTION_TAIL_MEASURED.load(std::memory_order_relaxed);
+    // A re-init clears the probe flag and keeps the measurement, which the same game's UFunctions still fit, so a
+    // held one judges until the new probe runs. With neither there is nothing to sample: property chains are read
+    // only after the probe.
+    const bool probeRan = DynOff::bOffsetsProbeRan.load(std::memory_order_acquire);
+    if (!probeRan && measured < 0) return r;
     if (measured < 0) {
         // The vote's samples decided nothing -- typically too few UFunctions loaded when it ran. Sample again now,
         // over both versions' candidates.
@@ -1992,14 +1996,14 @@ OverrideTailCheck CheckVersionOverrideTail(unsigned newVersion) {
         measured = MeasureTailBase(SampleParamShapes(64), cands);
         if (measured >= 0) DynOff::UFUNCTION_TAIL_MEASURED.store(measured, std::memory_order_relaxed);
     }
-    // What the readers would use: a decided offset and its extra stay latched across an override; undecided, they
-    // start from the new version's own primary (ReadFuncFlagsAndParams).
+    // Where the new version's layout puts the tail: a decided offset and its extra stay latched across an override;
+    // undecided, it starts from the new version's own primary (ReadFuncFlagsAndParams).
     const int flagsOff = decided > 0 ? decided
         : DynOff::FunctionFlagsPrimaryFor(newVersion, DynOff::bCasePreservingName, DynOff::USTRUCT_PROPSSIZE,
                                           DynOff::bOffsetsValidated.load(std::memory_order_acquire),
                                           DynOff::bUseFProperty);
     const int extra = decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0;
-    r.readersBase  = DynOff::FunctionTailBaseFor(newVersion, flagsOff, extra);
+    r.versionBase  = DynOff::FunctionTailBaseFor(newVersion, flagsOff, extra);
     r.measuredBase = measured;
     r.verdict      = DynOff::CheckTailForVersion(newVersion, flagsOff, extra, measured);
     return r;
@@ -2045,7 +2049,8 @@ static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
     // shifts all three by 2. This comment used to call the flat offsets "stable across all UE
     // versions"; on 4.11-4.17 that read NumParms as ParmsSize and undersized every invoke buffer
     // inside the game. [A2-UFUNC-TAIL-4X] -- the table, and why it is keyed on the version, live
-    // on DynOff::FunctionTailShiftFor.
+    // on DynOff::FunctionTailShiftFor. Once the sampled UFunctions have measured the tail, that
+    // measurement decides instead, so a wrong version cannot move it ([UE-OVERRIDE-411] review 2).
     if (funcFlagsOff >= 0) {
         const int tail = DynOff::FunctionTailReadBase(g_cachedUEVersion, funcFlagsOff,
                                                       decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0,   // [VND583-01]

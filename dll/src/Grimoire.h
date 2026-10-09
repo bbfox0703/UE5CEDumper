@@ -744,12 +744,13 @@ constexpr uint32_t ProcessEventBufferBytes(uint32_t parmsSize, int64_t chainEnd)
 
 // === Does a UE version fit the UFunction tail the game actually has? [UE-OVERRIDE-411] review ===
 //
-// The override reaches 4.11-4.17 since [UE-OVERRIDE-411], so one pick can move every tail read by 2 in either
-// direction: 4.17 on a 4.18 title, or 4.18 on a 4.15 one. The version is the only thing the readers key the shift
-// on, and the FunctionFlags vote cannot catch a wrong one -- it adds only that version's shift. The sampled
-// UFunctions can: at the right base NumParms and ParmsSize match each function's own parameter chain
-// (FunctionTailMatches). So set_ue_version_override refuses a version whose base the measurement contradicts.
-// The base the readers put the tail at: NumParms / ParmsSize / ReturnValueOffset sit +4 / +6 / +8 behind it.
+// The override reaches 4.11-4.17 since [UE-OVERRIDE-411], so one pick puts a version's tail 2 off the game's in
+// either direction: 4.17 on a 4.18 title, or 4.18 on a 4.15 one. The FunctionFlags vote cannot catch a wrong one --
+// it adds only that version's shift. The sampled UFunctions can: at the right base NumParms and ParmsSize match each
+// function's own parameter chain (FunctionTailMatches). The readers follow that measurement (FunctionTailReadBase
+// below), so a wrong version no longer misreads the tail; set_ue_version_override still refuses a version whose base
+// the measurement contradicts, because the version keys more than the tail, and that one is not this game's.
+// The base a version's layout puts the tail at: NumParms / ParmsSize / ReturnValueOffset sit +4 / +6 / +8 behind it.
 constexpr int FunctionTailBaseFor(unsigned ueVersion, int flagsOff, int tailExtra) {
     return flagsOff + FunctionTailShiftFor(ueVersion) + tailExtra;
 }
@@ -760,15 +761,14 @@ constexpr int FunctionTailBaseFor(unsigned ueVersion, int flagsOff, int tailExtr
 // ParmsSize / ReturnValueOffset by 2. On a title whose version is right the two agree: the vote's winning base is one
 // of the bases the measurement weighs, under the same per-sample rule.
 constexpr int FunctionTailReadBase(unsigned ueVersion, int flagsOff, int tailExtra, int measuredBase) {
-    (void)measuredBase;
-    return FunctionTailBaseFor(ueVersion, flagsOff, tailExtra);
+    return measuredBase >= 0 ? measuredBase : FunctionTailBaseFor(ueVersion, flagsOff, tailExtra);
 }
 
 enum class TailCheck { Agrees, Contradicts, Unmeasured };
 
-// `flagsOff` / `tailExtra` are what the readers would use under `ueVersion`; `measuredBase` is
-// UFUNCTION_TAIL_MEASURED. Nothing measured (no scan yet, or samples that do not decide) is never a refusal:
-// the too-old refusal sends the user to the override precisely when no scan has run.
+// `flagsOff` / `tailExtra` are what the vote latched, or `ueVersion`'s own primary when it decided nothing;
+// `measuredBase` is UFUNCTION_TAIL_MEASURED. Nothing measured (no scan yet, or samples that do not decide) is never
+// a refusal: the too-old refusal sends the user to the override precisely when no scan has run.
 constexpr TailCheck CheckTailForVersion(unsigned ueVersion, int flagsOff, int tailExtra, int measuredBase) {
     if (measuredBase < 0 || flagsOff <= 0) return TailCheck::Unmeasured;
     return FunctionTailBaseFor(ueVersion, flagsOff, tailExtra) == measuredBase ? TailCheck::Agrees

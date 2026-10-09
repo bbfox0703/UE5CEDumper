@@ -576,14 +576,16 @@ inline ParamKind ParamKindOf(uint64_t propertyFlags) {
 // has not run, or it could not measure) -- the caller then keeps its primary + sweep.
 int FunctionFlagsOffset();
 
-// [UE-OVERRIDE-411] review: whether a UE version override fits the UFunction tail this game actually has. The readers
-// put NumParms / ParmsSize where the version's FunctionTailShiftFor says, and the sampled UFunctions say where they
-// are; set_ue_version_override refuses a version that would move the readers off it. Runs the FunctionFlags vote
-// first when nothing has asked for it yet, and measures again when that vote could not; Unmeasured when no scan
-// has run (there is nothing to sample) or the samples do not decide.
+// [UE-OVERRIDE-411] review: whether a UE version override fits the UFunction tail this game actually has. A version's
+// layout puts NumParms / ParmsSize where its FunctionTailShiftFor says, and the sampled UFunctions say where they are.
+// The readers follow the measurement whenever there is one (DynOff::FunctionTailReadBase), so set_ue_version_override
+// refuses a version the measurement contradicts as a version wrong for this game, not to protect those reads. Runs the
+// FunctionFlags vote first when nothing has asked for it yet, and measures again when that vote could not; a held
+// measurement judges before a re-init's probe has run. Unmeasured when there is none to hold and no scan has run (there
+// is nothing to sample), or the samples do not decide.
 struct OverrideTailCheck {
     DynOff::TailCheck verdict = DynOff::TailCheck::Unmeasured;
-    int readersBase  = -1;   // where the readers would put the tail under the requested version
+    int versionBase  = -1;   // where the requested version's layout puts the tail
     int measuredBase = -1;   // where the sampled UFunctions put it
 };
 OverrideTailCheck CheckVersionOverrideTail(unsigned newVersion);

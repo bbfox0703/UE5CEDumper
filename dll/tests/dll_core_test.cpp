@@ -4514,8 +4514,8 @@ int main() {
         char ob[96];
         auto verdictOf = [&](unsigned v) {
             const Ubel::OverrideTailCheck c = Ubel::CheckVersionOverrideTail(v);
-            snprintf(ob, sizeof(ob), "verdict %d readers +0x%X measured +0x%X", static_cast<int>(c.verdict),
-                     c.readersBase, c.measuredBase);
+            snprintf(ob, sizeof(ob), "verdict %d version +0x%X measured +0x%X", static_cast<int>(c.verdict),
+                     c.versionBase, c.measuredBase);
             return c;
         };
         // [UE-OVERRIDE-411] review 2: what the readers take from the third function (three 4-byte parameters, no
@@ -4543,8 +4543,8 @@ int main() {
         check("OVERRIDETAIL ⭐: the vote's samples measure the tail base at +0x88",
               DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x88, std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()).c_str());
         auto c417 = verdictOf(417);
-        check("OVERRIDETAIL ⭐: 4.17 on a 4.18 title contradicts it -- the readers would move to +0x8A",
-              c417.verdict == TailCheck::Contradicts && c417.readersBase == 0x8A, ob);
+        check("OVERRIDETAIL ⭐: 4.17 on a 4.18 title contradicts it -- its layout puts the tail at +0x8A",
+              c417.verdict == TailCheck::Contradicts && c417.versionBase == 0x8A, ob);
         check("OVERRIDETAIL ⭐: ...and so does the new floor, 4.11", verdictOf(411).verdict == TailCheck::Contradicts, ob);
         check("OVERRIDETAIL control: 4.18 itself agrees", verdictOf(418).verdict == TailCheck::Agrees, ob);
         check("OVERRIDETAIL control: 4.21 keeps the same tail and agrees", verdictOf(421).verdict == TailCheck::Agrees, ob);

@@ -2117,20 +2117,23 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     + std::to_string(Grimoire::UE_VERSION_OVERRIDE_MAX) + " or 0 to clear)").dump();
             }
 
-            // [UE-OVERRIDE-411] review: a version from the other side of 4.18 moves every UFunction tail read by 2
+            // [UE-OVERRIDE-411] review: a version from the other side of 4.18 puts the UFunction tail 2 off this game's
             // (NumParms / ParmsSize / ReturnValueOffset), so one the sampled UFunctions contradict is refused here,
-            // before anything is persisted or changed. Clearing changes nothing in-process and is always accepted;
-            // with no scan to sample, the override is applied as asked -- DynOff::CheckTailForVersion says why.
+            // before anything is persisted or changed. KEPT, not advisory, since review 2 made the readers follow the
+            // measurement (DynOff::FunctionTailReadBase): the tail reads no longer need it, but the version keys more
+            // than the tail, and a version this game's UFunctions contradict is the wrong one for everything else it
+            // keys. Clearing changes nothing in-process and is always accepted; with nothing measured, the override is
+            // applied as asked -- DynOff::CheckTailForVersion says why.
             if (newVersion != 0) {
                 const Ubel::OverrideTailCheck tc = Ubel::CheckVersionOverrideTail(static_cast<unsigned>(newVersion));
                 if (tc.verdict == DynOff::TailCheck::Contradicts) {
                     char msg[384];
                     snprintf(msg, sizeof(msg),
                              "UE %d.%d does not fit this game: its UFunctions keep NumParms / ParmsSize behind +0x%X, "
-                             "where UE %d.%d would read them behind +0x%X (4.11-4.17 carry a RepOffset that 4.18 "
+                             "where UE %d.%d's layout puts them behind +0x%X (4.11-4.17 carry a RepOffset that 4.18 "
                              "dropped). The override was not applied.",
                              newVersion / 100, newVersion % 100, tc.measuredBase,
-                             newVersion / 100, newVersion % 100, tc.readersBase);
+                             newVersion / 100, newVersion % 100, tc.versionBase);
                     Sein::Warn("PIPE:cmd", "set_ue_version_override: refused -- %s", msg);
                     return Renge::MakeError(id, msg).dump();
                 }
