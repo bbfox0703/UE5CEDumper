@@ -102,7 +102,7 @@ public partial class DetectStatsViewModel : ViewModelBase
     public event Func<string, Task<bool>>? RequestCopyText;
 
     public DetectStatsViewModel(IDumpService dump, ILoggingService log,
-                                ISnapshotStore? snapshotStore = null)
+                                ISnapshotStore? snapshotStore = null, IExperimentalGate? experimentalGate = null)
     {
         _dump = dump;
         _log = log;
