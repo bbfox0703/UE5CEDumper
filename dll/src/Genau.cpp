@@ -3209,11 +3209,12 @@ static ResourceVersionVerdict DecideResourceVersion(uint32_t exeVer, bool exeFro
 // The resource half of DetectVersionDetailed: the game exe's VERSIONINFO and a CrashReportClient's, and what they
 // decide before any memory scan. `done` = the verdict stands at tier 1; otherwise `result` carries a sub-floor
 // reading at tier 3 (or nothing) for the memory scan to decide.
-// It takes the paths, rather than asking the process for its own, so dll_core_test runs it -- the readings, the
-// decision and the short-circuit together -- on resource-only DLLs built from dll/tests/res: the glue between the
-// pinned helpers had no test, and a refactor that dropped it would have reverted IS Defense to "scanned"
-// [VER-410-GATE] review. `crcPath`: the CrashReportClient to read; nullptr looks beside `exePath` the way the DLL
-// does, "" reads none.
+// It takes the paths, rather than asking the process for its own, so dll_core_test runs it -- the readings and the
+// decision -- on resource-only DLLs built from dll/tests/res: the glue between the pinned helpers had no test, and a
+// refactor that dropped it would have reverted IS Defense to "scanned" [VER-410-GATE] review. The short-circuit itself
+// is DetectVersionDetailed's return on `done`, which takes the exe path and the image for the same reason.
+// `crcPath`: the CrashReportClient to read; nullptr looks above `exePath` the way the DLL does (dll/CMakeLists.txt lays
+// the fixtures out as an install so that lookup is run too), "" reads none.
 struct ResourcePhase {
     VersionScanResult      result;
     ResourceVersionVerdict verdict;
@@ -3305,12 +3306,12 @@ static ResourcePhase DetectVersionFromResources(const wchar_t* exePath, const wc
     return p;
 }
 
-static VersionScanResult DetectVersionDetailed() {
+// `exePath` and the image [`base`, `base` + `size`) are the process's own in production (the overload below); a test
+// hands a fixture install's exe and a buffer of its own, so a decided resource verdict's return before the memory scan
+// is run, not only the readings that decide it ([VER-410-GATE] second review).
+static VersionScanResult DetectVersionDetailed(const wchar_t* exePath, uintptr_t base, size_t size) {
     Sein::Info("SCAN:Ver", "DetectVersion: Attempting to detect UE version...");
 
-    // An empty path (GetModuleFileNameW failed) reads nothing from either source, as the readers always did.
-    wchar_t exePath[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
     const ResourcePhase rp = DetectVersionFromResources(exePath, nullptr);
     if (rp.done) return rp.result;
     VersionScanResult r = rp.result;
@@ -3332,8 +3333,6 @@ static VersionScanResult DetectVersionDetailed() {
                    "corroborates it — the memory scan decides)",
                    r.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
 
-    uintptr_t base = Macht::GetModuleBase(nullptr);
-    size_t    size = Macht::GetModuleSize(nullptr);
     if (!base || !size) {
         Sein::Warn("SCAN:Ver", "DetectVersion: Cannot get module base");
         return r;
@@ -3454,6 +3453,13 @@ static VersionScanResult DetectVersionDetailed() {
                "(pre-UE4 markers %d/%d, below the %d needed)",
                markers, kPreUE4MarkerCount, kPreUE4MarkerThreshold);
     return r;
+}
+
+static VersionScanResult DetectVersionDetailed() {
+    // An empty path (GetModuleFileNameW failed) reads nothing from either source, as the readers always did.
+    wchar_t exePath[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    return DetectVersionDetailed(exePath, Macht::GetModuleBase(nullptr), Macht::GetModuleSize(nullptr));
 }
 
 uint32_t DetectVersion() {

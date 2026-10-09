@@ -677,7 +677,8 @@ if(BUILD_DLL_TESTS)
     # The b25c / b25d scripts are the very resources tools/verify/b25_marker_exes.py stamps into its
     # live marker exes -- it reads them from tests/res -- so the offline test and the live one judge
     # the same bytes.
-    foreach(_vr b25c_corroborated b25d_bare game_buildstring_410 game_buildstring_411 game_only)
+    foreach(_vr b25c_corroborated b25d_bare game_buildstring_410 game_buildstring_411 game_only
+                game_product_fixedfile_410)
         add_library(verres_${_vr} MODULE ${CMAKE_CURRENT_SOURCE_DIR}/tests/res/${_vr}.rc)
         set_target_properties(verres_${_vr} PROPERTIES LINKER_LANGUAGE CXX)
         if(MSVC)
@@ -685,4 +686,33 @@ if(BUILD_DLL_TESTS)
         endif()
         add_dependencies(dll_core_test verres_${_vr})
     endforeach()
+
+    # ---- ...laid out as a UE install ([VER-410-GATE] second review) --------------------------------
+    #
+    # Production never names a CrashReportClient: it passes nullptr and Genau looks for one above the
+    # exe (Grimoire::CrashReportCandidates), so a test that hands the path in skips the lookup the DLL
+    # actually runs. Two trees from the fixtures above, rebuilt whenever either DLL is:
+    #   verres_tree/Game/Binaries/Win64/Game.exe                 the game-versioned exe with a 4.10 build string
+    #   verres_tree/Engine/Binaries/Win64/CrashReportClient.exe  a 4.10.2 CrashReportClient (b25c's resource)
+    #   verres_tree_nocrc/Game/Binaries/Win64/Game.exe           the same exe with nothing above it
+    set(_vtree ${CMAKE_CURRENT_BINARY_DIR}/verres_tree)
+    set(_vtree_outputs
+        ${_vtree}/Game/Binaries/Win64/Game.exe
+        ${_vtree}/Engine/Binaries/Win64/CrashReportClient.exe
+        ${_vtree}_nocrc/Game/Binaries/Win64/Game.exe)
+    add_custom_command(
+        OUTPUT ${_vtree_outputs}
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${_vtree}/Game/Binaries/Win64
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${_vtree}/Engine/Binaries/Win64
+        COMMAND ${CMAKE_COMMAND} -E make_directory ${_vtree}_nocrc/Game/Binaries/Win64
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:verres_game_buildstring_410> ${_vtree}/Game/Binaries/Win64/Game.exe
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:verres_b25c_corroborated>
+                ${_vtree}/Engine/Binaries/Win64/CrashReportClient.exe
+        COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:verres_game_buildstring_410>
+                ${_vtree}_nocrc/Game/Binaries/Win64/Game.exe
+        DEPENDS verres_game_buildstring_410 verres_b25c_corroborated
+                $<TARGET_FILE:verres_game_buildstring_410> $<TARGET_FILE:verres_b25c_corroborated>
+        VERBATIM)
+    add_custom_target(verres_tree DEPENDS ${_vtree_outputs})
+    add_dependencies(dll_core_test verres_tree)
 endif()

@@ -369,6 +369,45 @@ int main() {
         auto g0 = phase(gameOnly, L"");
         check("VER-410-GATE rev 9 control: a game version with no engine build string still reads nothing",
               !g0.done && g0.result.version == 0 && g0.exeVersion == 0, gb);
+
+        // [VER-410-GATE] second review: the paths production uses. It names no CrashReportClient -- Genau looks above
+        // the exe -- and DetectVersionDetailed returns a decided verdict before any memory scan. dll/CMakeLists.txt lays
+        // the fixtures out as an install: the 4.10 build-string exe under Game/Binaries/Win64 with a 4.10.2
+        // CrashReportClient under Engine/Binaries/Win64, and the same exe with nothing above it.
+        const std::wstring treeExe = dir + L"verres_tree\\Game\\Binaries\\Win64\\Game.exe";
+        const std::wstring loneExe = dir + L"verres_tree_nocrc\\Game\\Binaries\\Win64\\Game.exe";
+        for (const std::wstring* f : { &treeExe, &loneExe })
+            check("VER-410-GATE tree setup: the fixture install was laid out beside the test",
+                  GetFileAttributesW(f->c_str()) != INVALID_FILE_ATTRIBUTES,
+                  Utf8Helpers::EncodeUtf16(f->c_str(), f->size()).c_str());
+        auto tr = phase(treeExe, nullptr);
+        check("VER-410-GATE tree ⭐: the CrashReportClient above the exe is found the way the DLL looks -- tier 1 by it",
+              tr.done && tr.result.version == 410 && tr.result.tier == 1 && tr.verdict.byCrc
+              && tr.verdict.source == Genau::VersionSource::Exe, gb);
+        auto lone = phase(loneExe, nullptr);
+        check("VER-410-GATE tree control: the same exe with nothing above it stays tier 3",
+              !lone.done && lone.result.version == 410 && lone.result.tier == 3 && !lone.verdict.byCrc, gb);
+        // The memory half sees an image whose only engine tag is a Tier-1 needle for 4.27.
+        static const char kImage[] = "........++UE4+Release-4.27-CL-18319896................................";
+        const auto dTree = Genau::DetectVersionDetailed(treeExe.c_str(), reinterpret_cast<uintptr_t>(kImage),
+                                                        sizeof(kImage));
+        snprintf(gb, sizeof(gb), "version %u tier %d", dTree.version, dTree.tier);
+        check("VER-410-GATE tree ⭐: a decided resource verdict returns before the memory scan -- 410, not the image's 4.27",
+              dTree.version == 410 && dTree.tier == 1, gb);
+        const auto dLone = Genau::DetectVersionDetailed(loneExe.c_str(), reinterpret_cast<uintptr_t>(kImage),
+                                                        sizeof(kImage));
+        snprintf(gb, sizeof(gb), "version %u tier %d", dLone.version, dLone.tier);
+        check("VER-410-GATE tree control: an undecided one goes on to the memory scan, which finds the image's 4.27",
+              dLone.version == 427 && dLone.tier == 1, gb);
+
+        // A game version in the fixed ProductVersion, the engine's 4.10.2 in the fixed FileVersion and its build string
+        // in the ProductVersion string: the FileVersion branch is a fixed-field reading, so the string corroborates it.
+        const std::wstring productFixedFile = res(L"game_product_fixedfile_410");
+        auto pf = phase(productFixedFile, L"");
+        check("VER-410-GATE glue ⭐: a fixed FileVersion of 4.10.2 under a game ProductVersion is a fixed-field reading, "
+              "corroborated by the build string -- tier 1",
+              pf.done && pf.result.version == 410 && pf.result.tier == 1 && pf.exeReading.fromFixedField
+              && pf.verdict.byBuildString, gb);
         // The new readings change the verdict a cached title holds, and the cache-reuse branch would restore the old
         // one for ever: the string fallback's widening is a logic change, rev 8 -> 9.
         check("VER-410-GATE rev 9: the detection logic rev was bumped for the string fallback",
