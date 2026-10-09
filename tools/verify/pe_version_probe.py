@@ -7,15 +7,18 @@ THROUGH Tier 0 to the memory-string needle -- and five candidates were listed th
 structurally cannot, for the same reason Lushfoil could not. One offline sweep
 answers "which titles can even reach the tier I want" before anything is launched.
 
-Mirrors `Genau::DetectVersionFromPEResource` (dll/src/Genau.cpp) in order:
+Mirrors `Genau::DetectVersionFromPEResource` (dll/src/Genau.cpp) in order -- `read_resource()`:
   1. VS_FIXEDFILEINFO.dwProductVersionMS   5.x -> 500+minor | 4.x -> 400+minor
   2. VS_FIXEDFILEINFO.dwFileVersionMS      same
-  3. StringFileInfo ProductVersion/FileVersion containing '++UEn+Release-', or (rev 9) one that is
-     the engine's own build string -- `engine_build_string_code`, a port of
-     Grimoire::EngineBuildStringCode. Such a code came from a string, so below the 4.11 floor it
-     cannot corroborate itself: only an agreeing CrashReportClient makes it refuse the scan.
+  3. StringFileInfo ProductVersion, then FileVersion, each the first non-empty value over EVERY
+     VarFileInfo translation (`first_nonempty`): a '++UEn+Release-' prefix found anywhere whose
+     %u.%u gives a version code, else (rev 9) the engine's own build string --
+     `engine_build_string_code`, a port of Grimoire::EngineBuildStringCode (`string_reading`).
+     Such a code came from a string, so below the 4.11 floor it cannot corroborate itself: only an
+     agreeing CrashReportClient makes it refuse the scan.
   4. otherwise -> "unrecognised", and the caller falls back to the memory scan
-⚠ Keep in step with that function; a divergence here silently mis-plans a row.
+⚠ Keep in step with that function; a divergence here silently mis-plans a row. tier_triage.py and
+tier1_host_survey.py read through read_resource() for that reason, rather than each keeping a copy.
 
     py pe_version_probe.py <exe> [<exe> ...]
     py pe_version_probe.py --scan "D:\SteamLibrary\steamapps\common" [more roots]
@@ -113,22 +116,42 @@ STRING_KEYS = ("ProductVersion", "FileVersion")
 def first_nonempty(translations, query, key):
     """ReadVersionInfoString: walk every (lang, codepage) in VarFileInfo\\Translation and take the first non-empty
     value -- DropIn's strings are not under the first translation. `query(lang, cp, key)` -> str or None."""
-    if not translations:
-        return ""
-    return query(translations[0][0], translations[0][1], key) or ""
+    for lang, cp in translations:
+        v = query(lang, cp, key)
+        if v:
+            return v
+    return ""
+
+
+# sscanf's "%u.%u": each %u skips whitespace and takes an optional sign; the '.' between is literal.
+_SCANF_UU = re.compile(r"[ \t\n\v\f\r]*([+-]?)([0-9]+)\.[ \t\n\v\f\r]*([+-]?)([0-9]+)")
+
+
+def _scanf_u(sign, digits):
+    """%u's value: a minus wraps modulo 2^32, which UeVersionCode then rejects; past 2^32 is no code either."""
+    v = int(digits)
+    if v > U32:
+        return U32
+    return (-v) & U32 if sign == "-" else v
 
 
 def string_reading(strs):
     """The C++ string fallback over {key: value}: ProductVersion, then FileVersion; in each, a `++UE5+Release-` /
-    `++UE4+Release-` prefix found anywhere whose `%u.%u` gives a version code, else the engine build string.
-    -> (kind, key, string, code) or None."""
+    `++UE4+Release-` prefix (its first occurrence, anywhere in the string) whose `%u.%u` gives a version code, else
+    the engine build string. -> (kind, key, string, code) or None."""
     for key in STRING_KEYS:
         s = strs.get(key, "")
         if not s:
             continue
         for pre in _PREFIXES:
-            if pre in s:
-                return ("STRING", key, s, None)
+            p = s.find(pre)
+            if p < 0:
+                continue
+            m = _SCANF_UU.match(s, p + len(pre))
+            if m:
+                code = ue_version_code(_scanf_u(m.group(1), m.group(2)), _scanf_u(m.group(3), m.group(4)))
+                if code:
+                    return ("STRING", key, s, code)
         code = engine_build_string_code(s)
         if code:
             return ("BUILD STRING", key, s, code)
