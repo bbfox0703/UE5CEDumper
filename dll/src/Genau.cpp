@@ -3306,6 +3306,25 @@ static ResourcePhase DetectVersionFromResources(const wchar_t* exePath, const wc
     return p;
 }
 
+// The line under "PE resource failed" when the resources read a version below the floor that they could not
+// corroborate: whose reading it was, and why it stands alone. None of it may carry a sweep_title.py keyword -- its
+// fallback window ends at the next line it collects -- nor judge_d's case-sensitive must-not. Pure, so dll_core_test
+// pins each source's wording.
+static std::string Tier3ResourceNote(const ResourcePhase& rp) {
+    char buf[384];
+    if (rp.verdict.source == VersionSource::Crc)
+        snprintf(buf, sizeof(buf), "DetectVersion: (the game exe's resource %s; CrashReportClient says UE %u, below "
+                 "the %u floor, which alone does not corroborate a reading below it — the memory scan decides)",
+                 rp.exeVersion ? ("says UE " + std::to_string(rp.exeVersion)).c_str() : "read nothing usable",
+                 rp.result.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
+    else
+        snprintf(buf, sizeof(buf), "DetectVersion: (the PE resource did not fail: it read UE %u, below the "
+                 "%u floor, and neither an engine build string nor an agreeing CrashReportClient "
+                 "corroborates it — the memory scan decides)",
+                 rp.result.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
+    return buf;
+}
+
 // `exePath` and the image [`base`, `base` + `size`) are the process's own in production (the overload below); a test
 // hands a fixture install's exe and a buffer of its own, so a decided resource verdict's return before the memory scan
 // is run, not only the readings that decide it ([VER-410-GATE] second review).
@@ -3318,20 +3337,9 @@ static VersionScanResult DetectVersionDetailed(const wchar_t* exePath, uintptr_t
 
     Sein::Warn("SCAN:Ver", "DetectVersion: PE resource failed, falling back to memory string scan");
     // The line above is kept word for word (sweep_title.py times the fallback from it), but below the
-    // floor it is misleading: a resource was read, and only its corroboration is missing. Which resource
-    // is the verdict's source -- the exe's, or a CrashReportClient's beside an exe that read nothing usable
-    // or another version. Neither line may carry a sweep_title.py keyword: its fallback window ends at the
-    // next line it collects.
-    if (r.tier == 3 && rp.verdict.source == VersionSource::Crc)
-        Sein::Info("SCAN:Ver", "DetectVersion: (the game exe's resource %s; CrashReportClient says UE %u, below "
-                   "the %u floor, which alone does not corroborate a reading below it — the memory scan decides)",
-                   rp.exeVersion ? ("says UE " + std::to_string(rp.exeVersion)).c_str() : "read nothing usable",
-                   r.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
-    else if (r.tier == 3)
-        Sein::Info("SCAN:Ver", "DetectVersion: (the PE resource did not fail: it read UE %u, below the "
-                   "%u floor, and neither an engine build string nor an agreeing CrashReportClient "
-                   "corroborates it — the memory scan decides)",
-                   r.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
+    // floor it is misleading: a resource was read, and only its corroboration is missing.
+    if (r.tier == 3)
+        Sein::Info("SCAN:Ver", "%s", Tier3ResourceNote(rp).c_str());
 
     if (!base || !size) {
         Sein::Warn("SCAN:Ver", "DetectVersion: Cannot get module base");

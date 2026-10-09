@@ -356,6 +356,32 @@ int main() {
               s10.exeVersion == 410 && !s10.exeReading.fromFixedField, gb);
         check("VER-410-GATE rev 9 ⭐: ...which alone stays tier 3 -- the string does not corroborate itself",
               !s10.done && s10.result.version == 410 && s10.result.tier == 3 && !s10.verdict.byBuildString, gb);
+        // [VER-410-GATE] second review: the line under "PE resource failed" told this reading that no engine build
+        // string corroborates it, two lines after the log said the reading IS the build string. A code read out of the
+        // string cannot corroborate itself, and the line says so now. The b25-judged Warn line is not this one.
+        const std::string n10 = Genau::Tier3ResourceNote(s10);
+        check("VER-410-GATE note ⭐: a reading out of the exe's build string says it cannot corroborate itself",
+              n10.find("build string") != std::string::npos && n10.find("cannot corroborate") != std::string::npos
+              && n10.find("neither an engine build string") == std::string::npos, n10.c_str());
+        const std::string nFixed = Genau::Tier3ResourceNote(d);
+        check("VER-410-GATE note control: a fixed-field reading keeps its line word for word",
+              nFixed == "DetectVersion: (the PE resource did not fail: it read UE 410, below the 411 floor, and neither "
+                        "an engine build string nor an agreeing CrashReportClient corroborates it — the memory scan "
+                        "decides)", nFixed.c_str());
+        const std::string nCrc = Genau::Tier3ResourceNote(gc);
+        check("VER-410-GATE note control: a CrashReportClient's reading keeps its line",
+              nCrc == "DetectVersion: (the game exe's resource read nothing usable; CrashReportClient says UE 410, "
+                      "below the 411 floor, which alone does not corroborate a reading below it — the memory scan "
+                      "decides)", nCrc.c_str());
+        // sweep_title.py's WANT keywords end its fallback window at the next line it collects, and judge_d's must-not
+        // is case-sensitive.
+        for (const std::string* note : { &n10, &nFixed, &nCrc })
+            for (const char* kw : { "PE VERSIONINFO", "PE resource failed", "Tier 1 (", "Tier 2 ", "Tier 3 ",
+                                    "pre-UE4 markers", "UE Version =", "DetectPublisher", "skipped DetectVersion",
+                                    "CORROBORATED" })
+                if (note->find(kw) != std::string::npos)
+                    check("VER-410-GATE note: no tier-3 line carries a sweep_title.py keyword or 'CORROBORATED'", false,
+                          (std::string(kw) + " in: " + *note).c_str());
         auto s10c = phase(gameBuild410, b25c.c_str());
         check("VER-410-GATE rev 9 ⭐: ...and beside a CrashReportClient agreeing on 410 it stops at tier 1, the exe's",
               s10c.done && s10c.result.version == 410 && s10c.result.tier == 1 && s10c.verdict.byCrc
