@@ -45,8 +45,9 @@ uintptr_t   g_cachedGWorld          = 0;
 uintptr_t   g_cachedSparseDelegates = 0;  // FSparseDelegateStorage::SparseDelegates (UE 5.0+, optional)
 uint32_t    g_cachedUEVersion = 0;
 bool        g_cachedVersionDetected = true;  // false if UE version detection failed (PE + memory scan)
-bool        g_cachedIsUserOverride  = false; // true = ueVersion came from a user-set persistent override
+bool        g_cachedIsUserOverride  = false; // true = the version in force is the user's override (persisted, or cleared with Auto pending)
 bool        g_cachedIsLowConfidence = false; // true = Tier 3 bare-pattern OR publisher-bias fallback
+bool        g_cachedAutoPending     = false; // true = Auto chosen, nothing on record to hand back: the override's version holds until the next launch
 bool        g_cachedVersionTooOld   = false; // true = engine predates 4.11 — scan skipped, see Genau.h
 const char* g_cachedPublisherThumbprint = nullptr;  // e.g. "SQUARE_ENIX" (nullptr if no match)
 const char* g_cachedGObjectsMethod        = "not_found";  // "aob", "data_scan", "not_found"
@@ -301,6 +302,7 @@ bool UE5_Init() {
     g_cachedVersionDetected = ptrs.bVersionDetected;
     g_cachedIsUserOverride  = ptrs.bUserOverride;
     g_cachedIsLowConfidence = ptrs.bLowConfidence;
+    g_cachedAutoPending     = false;   // a fresh scan read the cache, so a cleared override is already gone
     g_cachedVersionTooOld   = ptrs.bVersionTooOld;
     g_cachedPublisherThumbprint = ptrs.publisherThumbprint;
     g_cachedGObjectsMethod        = ptrs.gobjectsMethod;

@@ -2221,6 +2221,50 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void AutoOverAnOverride_HandsBackTheDetection_OrSaysItWaitsForTheNextLaunch()
+    {
+        // [UE-OVERRIDE-HINT-AUTO] set_ue_version_override(0) used to clear only the override flag, so the session kept
+        // the overridden version unbadged, as if detected. The decision is Flamme::PlanAutoRestore and the ladder
+        // DynOff::ApplyVersionLadder (both pinned in dll_helpers_test); Fern.cpp and Frieren.cpp reach no test target,
+        // so the wiring is pinned in source.
+        var fern = DllSource("Fern.cpp").Replace("\r\n", "\n");
+        int handler = fern.IndexOf("if (cmd == Renge::CMD_SET_UE_VERSION_OVERRIDE)", StringComparison.Ordinal);
+        Assert.True(handler >= 0, "the set_ue_version_override handler was not found");
+        int next = fern.IndexOf("if (cmd == Renge::CMD_SET_INVOKE_TIMEOUT)", handler, StringComparison.Ordinal);
+        Assert.True(next > handler, "the handler's end was not found");
+        var body = fern[handler..next];
+        int autoArm = body.IndexOf("if (newVersion == 0) {\n", StringComparison.Ordinal);
+        int setArm = body.IndexOf("} else {\n                g_cachedUEVersion       = static_cast<uint32_t>(newVersion);",
+                                  StringComparison.Ordinal);
+        Assert.True(autoArm >= 0 && setArm > autoArm, "the Auto arm must come before the set arm");
+        var auto = body[autoArm..setArm];
+        // Auto plans from the hint cache, climbs init's ladder, and drops the envelopes as an override does.
+        Assert.Contains("Flamme::LoadHints(g_cachedPeHash)", auto);
+        Assert.Contains("Flamme::PlanAutoRestore(", auto);
+        Assert.Contains("FrierenInit::CorrectVersionStructurally(", auto);
+        Assert.Contains("dropVersionDerivedEnvelopes();", auto);
+        Assert.Contains("g_cachedAutoPending = Flamme::AutoPendsUntilNextLaunch(", auto);
+        Assert.DoesNotContain("just clear the override flag", body);   // the old arm, whole
+        // The set arm drops the envelopes too, and ends a pending Auto.
+        var set = body[setArm..];
+        Assert.Contains("dropVersionDerivedEnvelopes();", set);
+        Assert.Contains("g_cachedAutoPending     = false;", set);
+        // The reply says what happened, and every snapshot says whether Auto waits for the next launch.
+        Assert.Contains("data[\"auto_pending\"]      = g_cachedAutoPending;", body);
+        Assert.Contains("data[\"auto_restore\"]  = Flamme::AutoRestoreName(autoRestore);", body);
+        int snapshot = fern.IndexOf("static void FillPointerSnapshot(json& data) {", StringComparison.Ordinal);
+        Assert.True(snapshot >= 0, "FillPointerSnapshot was not found");
+        Assert.True(fern.IndexOf("data[\"auto_pending\"]         = g_cachedAutoPending;", snapshot,
+                                 StringComparison.Ordinal) > snapshot, "get_pointers does not carry auto_pending");
+        // A fresh init read the cache, so a pending Auto has already happened by then.
+        var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
+        int init = frieren.IndexOf("bool UE5_Init() {", StringComparison.Ordinal);
+        Assert.True(init >= 0, "UE5_Init not found");
+        Assert.True(frieren.IndexOf("g_cachedAutoPending     = false;", init, StringComparison.Ordinal) > init,
+                    "UE5_Init does not reset the pending Auto");
+    }
+
+    [Fact]
     public void MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Init()
     {
         // [R7-S9] Two windows R7-C-05 left open. (1) EnsureInitialized passed `g_cachedGObjects != 0` and the flag load as

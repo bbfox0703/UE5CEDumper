@@ -6807,6 +6807,77 @@ static void Test_CachedDetectionRules() {
     EXPECT("TooOld: a user's override is never refused", !RefusedAsTooOld(410, true, false, true));
 }
 
+// [UE-OVERRIDE-HINT-AUTO] Auto chosen over an override used to clear only the flag, so the session kept the overridden
+// version and the UI showed it unbadged, as if detected. It now hands back the detection the next launch would start
+// from, or says the override's version holds until that launch.
+static void Test_PlanAutoRestore() {
+    std::printf("\n--- UE-OVERRIDE-HINT-AUTO: Auto chosen over an override ---\n");
+    using Flamme::AutoRestore;
+    using Flamme::PlanAutoRestore;
+    const uint32_t rev = 9;
+    // The Adventures of Elliot's shape: a stripped UE5 title, cached as the 4.27 publisher fallback, low confidence.
+    Flamme::ScanHints elliot;
+    elliot.hasVersionHint = true; elliot.ueVersion = 427; elliot.versionDetected = false;
+    elliot.lowConfidence = true; elliot.versionDetectRev = rev;
+    const auto e = PlanAutoRestore(true, elliot, rev, false);
+    EXPECT("Auto ⭐: an override over a detection on record hands it back", e.outcome == AutoRestore::Restored);
+    EXPECT("Auto: ...the record's version, which init's ladder then climbs", e.version == 427);
+    EXPECT("Auto: ...its detected flag verbatim", !e.detected);
+    EXPECT("Auto: ...and its low confidence", e.lowConfidence);
+    // DumperTest58's shape: a confident 5.8 detection.
+    Flamme::ScanHints dt58 = elliot;
+    dt58.ueVersion = 508; dt58.versionDetected = true; dt58.lowConfidence = false;
+    const auto d = PlanAutoRestore(true, dt58, rev, false);
+    EXPECT("Auto: a confident 5.8 detection comes back confident",
+           d.outcome == AutoRestore::Restored && d.version == 508 && d.detected && !d.lowConfidence);
+    EXPECT("Auto: a matched publisher flags it, as a launch reusing it would",
+           PlanAutoRestore(true, dt58, rev, true).lowConfidence);
+
+    EXPECT("Auto: no override in force has nothing to undo",
+           PlanAutoRestore(false, dt58, rev, false).outcome == AutoRestore::NotOverridden);
+    EXPECT("Auto ⭐: no detection on record waits for the next launch",
+           PlanAutoRestore(true, Flamme::ScanHints{}, rev, false).outcome == AutoRestore::NoDetection);
+    Flamme::ScanHints zero = dt58;
+    zero.ueVersion = 0;
+    EXPECT("Auto: a zero version on record is no detection", PlanAutoRestore(true, zero, rev, false).outcome == AutoRestore::NoDetection);
+    EXPECT("Auto ⭐: a detection an older logic stamped waits for the launch that detects again",
+           PlanAutoRestore(true, dt58, rev + 1, false).outcome == AutoRestore::StaleDetection);
+    Flamme::ScanHints isDefense = dt58;   // IS Defense: a confident 4.10 the launch refuses
+    isDefense.ueVersion = 410;
+    EXPECT("Auto ⭐: a detection the next launch refuses as too old is not handed back",
+           PlanAutoRestore(true, isDefense, rev, false).outcome == AutoRestore::TooOld);
+    Flamme::ScanHints ue3 = dt58;
+    ue3.ueVersion = Grimoire::PRE_UE4_SENTINEL_VERSION;
+    EXPECT("Auto: ...nor the pre-UE4 sentinel", PlanAutoRestore(true, ue3, rev, false).outcome == AutoRestore::TooOld);
+    Flamme::ScanHints guess410 = isDefense;
+    guess410.lowConfidence = true;
+    EXPECT("Auto: a low-confidence 4.10 is a guess a launch scans with, so it comes back",
+           PlanAutoRestore(true, guess410, rev, false).outcome == AutoRestore::Restored);
+    Flamme::ScanHints floor = dt58;
+    floor.ueVersion = Grimoire::MIN_SUPPORTED_UE_VERSION;
+    EXPECT("Auto: the support floor itself comes back", PlanAutoRestore(true, floor, rev, false).outcome == AutoRestore::Restored);
+
+    using Flamme::AutoPendsUntilNextLaunch;
+    EXPECT("Pending ⭐: no detection, persisted -- the override's version holds until the next launch",
+           AutoPendsUntilNextLaunch(AutoRestore::NoDetection, true));
+    EXPECT("Pending: a stale detection, persisted", AutoPendsUntilNextLaunch(AutoRestore::StaleDetection, true));
+    EXPECT("Pending: a too-old detection, persisted", AutoPendsUntilNextLaunch(AutoRestore::TooOld, true));
+    EXPECT("Pending: a restored detection is not pending", !AutoPendsUntilNextLaunch(AutoRestore::Restored, true));
+    EXPECT("Pending: no override in force is not pending", !AutoPendsUntilNextLaunch(AutoRestore::NotOverridden, true));
+    EXPECT("Pending ⭐: unpersisted, the override is still on disk, so nothing is pending",
+           !AutoPendsUntilNextLaunch(AutoRestore::NoDetection, false)
+           && !AutoPendsUntilNextLaunch(AutoRestore::StaleDetection, false)
+           && !AutoPendsUntilNextLaunch(AutoRestore::TooOld, false));
+
+    using Flamme::AutoRestoreName;
+    EXPECT("Wire: the five names the UI reads",
+           std::string(AutoRestoreName(AutoRestore::Restored)) == "restored"
+           && std::string(AutoRestoreName(AutoRestore::NotOverridden)) == "not_overridden"
+           && std::string(AutoRestoreName(AutoRestore::NoDetection)) == "no_detection"
+           && std::string(AutoRestoreName(AutoRestore::StaleDetection)) == "stale_detection"
+           && std::string(AutoRestoreName(AutoRestore::TooOld)) == "too_old");
+}
+
 // [VND583-06] Would UE's FWeakObjectPtr::Get() refuse a resolved target?
 static void Test_WeakTargetGarbage() {
     EXPECT("VND583-06: UE5 RF_MirroredGarbage in ObjectFlags -> garbage",
@@ -9683,6 +9754,7 @@ int main() {
     RUN(Test_CmcMarkerVersion);
     RUN(Test_VersionLadder);         // [UE-OVERRIDE-HINT-AUTO] the init ladder, as one function
     RUN(Test_CachedDetectionRules);  // [UE-OVERRIDE-HINT-AUTO] the cache-reuse rule and the too-old verdict
+    RUN(Test_PlanAutoRestore);       // [UE-OVERRIDE-HINT-AUTO] what Auto hands back, or that it waits
     RUN(Test_WeakTargetGarbage);
     RUN(Test_UnresolvedWeakLabel);
     RUN(Test_FFieldVariantDefaults);
