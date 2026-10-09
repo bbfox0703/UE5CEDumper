@@ -2210,10 +2210,12 @@ public class InvokeScriptTests
     {
         // [R7-X4] Stock UE 5.3 already reflects CharacterMovementComponent::GravityDirection, so the property marker
         // raised every stock 5.3 title with a CMC to 504 (ThirdPerson53, DragonSword, Avowed) -- and switched off the
-        // 5.0-5.3 PendingKill tag there. The rule lives in DynOff::CmcMarkerVersion (dll_helpers_test); Frieren.cpp
-        // reaches no test target, so the wiring is pinned in source.
+        // 5.0-5.3 PendingKill tag there. The rule lives in DynOff::CmcMarkerVersion, which the init version ladder's CMC
+        // rung applies (DynOff::ApplyVersionLadder; both pinned in dll_helpers_test since [UE-OVERRIDE-HINT-AUTO]).
+        // Frieren.cpp reaches no test target, so the wiring -- the ladder fed the SetGravityDirection function -- is
+        // pinned in source.
         var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
-        Assert.Contains("DynOff::CmcMarkerVersion(", frieren);
+        Assert.Contains("DynOff::ApplyVersionLadder(", frieren);
         Assert.Contains("\"SetGravityDirection\"", frieren);
         Assert.DoesNotContain("property marker (CMC::GravityDirection) = UE5.4+", frieren);
     }
