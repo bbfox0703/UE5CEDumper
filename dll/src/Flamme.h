@@ -141,15 +141,29 @@ struct AutoRestorePlan {
 /// whether a publisher thumbprint matched this exe, which a launch re-applies to a reused version.
 inline AutoRestorePlan PlanAutoRestore(bool overrideInForce, const ScanHints& h, uint32_t currentLogicRev,
                                        bool publisherMatched) {
-    (void)overrideInForce; (void)h; (void)currentLogicRev; (void)publisherMatched;
-    return {};
+    AutoRestorePlan p;
+    if (!overrideInForce) return p;
+    if (!h.hasVersionHint || h.ueVersion == 0) {
+        p.outcome = AutoRestore::NoDetection;
+        return p;
+    }
+    if (!CachedDetectionTrusted(h, currentLogicRev)) {
+        p.outcome = AutoRestore::StaleDetection;
+        return p;
+    }
+    p.version       = h.ueVersion;
+    p.detected      = h.versionDetected;
+    p.lowConfidence = CachedLowConfidence(h, publisherMatched);
+    p.outcome = Grimoire::RefusedAsTooOld(p.version, p.detected, p.lowConfidence, /*userOverride=*/false)
+                    ? AutoRestore::TooOld : AutoRestore::Restored;
+    return p;
 }
 
 /// Whether the override's version holds until the next launch: Auto found nothing to hand back, and the clear was
 /// persisted. Unpersisted, the override is still on disk and the next launch applies it again, so nothing is pending.
 constexpr bool AutoPendsUntilNextLaunch(AutoRestore outcome, bool persisted) {
-    (void)outcome; (void)persisted;
-    return false;
+    return persisted && (outcome == AutoRestore::NoDetection || outcome == AutoRestore::StaleDetection
+                         || outcome == AutoRestore::TooOld);
 }
 
 /// Load hints for a given PE hash from the cache file.
