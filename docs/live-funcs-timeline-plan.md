@@ -645,7 +645,9 @@ UE4 live check, if one is ever needed, is UE 4.27.
   0 orphaned, 0 unjoined); the native-entry index 7,607 entries from 7,609 functions. **Not seen:** what Call
   Trace showed -- the stack names and the parameter values -- because the detail pane covered the whole list
   (`[CT-DETAIL-COVERS-LIST]`). 4.15 has the 4.11-4.17 UFunction tail, so the parameter values are the part worth a
-  look; it is owed with that row's live check.
+  look; it is owed with that row's live check. **Seen the same day on build 3646:** Actor::ReceiveTick's
+  DeltaSeconds read 0.0167; its stacks name no frame, as expected for a Blueprint event reached from native tick
+  code, so stack naming on 4.15 is not yet exercised (todo.md `[LIVE-3646]`).
 
 ### Build order
 
