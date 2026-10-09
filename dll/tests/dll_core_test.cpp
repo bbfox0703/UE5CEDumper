@@ -360,8 +360,10 @@ int main() {
         check("VER-410-GATE rev 9 ⭐: ...and beside a CrashReportClient agreeing on 410 it stops at tier 1, the exe's",
               s10c.done && s10c.result.version == 410 && s10c.result.tier == 1 && s10c.verdict.byCrc
               && !s10c.verdict.byBuildString && s10c.verdict.source == Genau::VersionSource::Exe, gb);
+        // The 4.11 fixture carries its build string in FileVersion, under a game ProductVersion: the fallback reads both
+        // keys, and the 4.10 fixture already holds the ProductVersion one.
         auto s11 = phase(gameBuild411, L"");
-        check("VER-410-GATE rev 9 ⭐: game fixed fields + a simplified 4.11 build string read 411 at tier 1",
+        check("VER-410-GATE rev 9 ⭐: game fixed fields + a simplified 4.11 build string in FileVersion read 411 at tier 1",
               s11.done && s11.result.version == 411 && s11.result.tier == 1 && s11.exeVersion == 411
               && !s11.exeReading.fromFixedField, gb);
         auto g0 = phase(gameOnly, L"");

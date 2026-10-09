@@ -8,9 +8,10 @@ BEGIN
   BEGIN
     BLOCK "040904b0"
     BEGIN
-      VALUE "FileDescription", "UE5CEDumper VER-410-GATE fixture: game fixed fields, simplified 4.11 build string (synthetic)"
+      VALUE "FileDescription", "UE5CEDumper VER-410-GATE fixture: game fixed fields and ProductVersion, simplified 4.11 build string in FileVersion (synthetic)"
       VALUE "ProductName", "Game-Versioned 4.11 Marker"
-      VALUE "ProductVersion", "4.11.0-0+UE4"
+      VALUE "ProductVersion", "1.0.0.0"
+      VALUE "FileVersion", "4.11.0-0+UE4"
     END
   END
   BLOCK "VarFileInfo"
