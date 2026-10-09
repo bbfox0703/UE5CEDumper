@@ -2,6 +2,7 @@ using System.Reflection;
 using System.Text.Json.Nodes;
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Headless;
 using Avalonia.Media;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
@@ -130,6 +131,26 @@ public class ExperimentalCheckboxTests
         Dispatcher.UIThread.RunJobs();
         Assert.True(box.IsEnabled);
         Assert.Equal(Res("str.Experimental.EnableHint"), ToolTip.GetTip(box) as string);
+    });
+
+    [Fact]
+    public Task The_disabled_box_opens_its_tooltip_under_the_pointer() => Headless.Run(() =>
+    {
+        // The property alone proves nothing about what the user sees: a disabled control is left out of the input hit
+        // test, so the pointer over it is over nothing with a tooltip -- unless the tooltip service is told otherwise.
+        var (panel, vm, _) = Shown(enabled: true);
+        vm.SetConnected(true);
+        Dispatcher.UIThread.RunJobs();
+        var box = TheBox(panel);
+        Assert.False(box.IsEnabled);
+        ToolTip.SetShowDelay(box, 0);   // the app's delay is a timer the headless dispatcher does not wait out
+        var window = (Window)TopLevel.GetTopLevel(panel)!;
+        var centre = box.TranslatePoint(new Point(box.Bounds.Width / 2, box.Bounds.Height / 2), window)!.Value;
+
+        window.MouseMove(centre);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(ToolTip.GetIsOpen(box), "the pointer is over the disabled box and its tooltip did not open");
+        Assert.Equal(Res("str.Experimental.DisconnectFirst"), ToolTip.GetTip(box) as string);
     });
 
     [Fact]
