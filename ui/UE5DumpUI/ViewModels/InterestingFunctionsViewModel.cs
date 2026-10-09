@@ -851,7 +851,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
                 Description = desc,
                 ClassName   = sr.ClassName,
                 FuncName    = sr.FuncName,
-                ParmsSize   = sr.ParmsSize,
+                // The chain's end, which gates the mailbox slab, not the tail's ParmsSize the Params column shows.
+                ParmsSize   = BakedScriptGenerator.BakedParmsSize(sr.Entry),
                 // No baked values for batch entries -- user fills the
                 // PARAMS table in CE per-row before activating. The
                 // helper zero-fills the buffer so the script is safe

@@ -5920,6 +5920,24 @@ std::vector<NoiseClassVerdict> ClassifyNoiseClasses(const std::vector<std::strin
 // because the UFunction count per class is small (usually <50) and the
 // per-class walk caches nothing — we pay the full O(F) per class.
 
+// One list_all_functions row from a function WalkFunctions read, its parameter chain included. Separate so
+// dll_core_test can pin the row without a pool of classes.
+static AllFunctionEntry FunctionEntryFor(const ClassInfo& ci, uintptr_t classAddr, const std::string& classPath,
+                                         const FunctionInfo& f) {
+    AllFunctionEntry entry;
+    entry.className     = ci.Name;
+    entry.classAddr     = classAddr;
+    entry.superName     = ci.SuperName;
+    entry.classPath     = classPath;
+    entry.funcName      = f.name;
+    entry.funcAddr      = f.address;
+    entry.functionFlags = f.functionFlags;
+    entry.numParms      = f.numParms;
+    entry.parmsSize     = f.parmsSize;
+    entry.bufferBytes   = 0;
+    return entry;
+}
+
 AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
     AllFunctionsResult result;
 
@@ -5970,18 +5988,7 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
 
         for (const auto& f : funcs) {
             if (static_cast<int>(result.entries.size()) >= maxEntries) { result.truncated = true; break; }
-
-            AllFunctionEntry entry;
-            entry.className     = ci.Name;
-            entry.classAddr     = obj;
-            entry.superName     = ci.SuperName;
-            entry.classPath     = classPath;
-            entry.funcName      = f.name;
-            entry.funcAddr      = f.address;
-            entry.functionFlags = f.functionFlags;
-            entry.numParms      = f.numParms;
-            entry.parmsSize     = f.parmsSize;
-            result.entries.push_back(std::move(entry));
+            result.entries.push_back(FunctionEntryFor(ci, obj, classPath, f));
             result.totalFunctions++;
         }
     }

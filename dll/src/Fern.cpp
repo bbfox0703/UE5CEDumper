@@ -4473,6 +4473,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 item["function_flags"]= e.functionFlags;
                 item["num_parms"]     = e.numParms;
                 item["parms_size"]    = e.parmsSize;
+                item["buffer_bytes"]  = e.bufferBytes;
                 functions.push_back(item);
             }
 

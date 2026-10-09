@@ -2813,6 +2813,7 @@ public sealed class DumpService : IDumpService
                     FunctionFlags = (uint)(obj["function_flags"]?.GetValue<long>() ?? 0L),
                     NumParms      = (byte)(obj["num_parms"]?.GetValue<int>() ?? 0),
                     ParmsSize     = (ushort)(obj["parms_size"]?.GetValue<int>() ?? 0),
+                    BufferBytes   = (uint)Math.Max(obj["buffer_bytes"]?.GetValue<int>() ?? 0, 0),
                 });
             }
         }

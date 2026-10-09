@@ -1828,7 +1828,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 if (inputParams.Count == 0 && !hasReturn)
                 {
                     var script = Services.BakedScriptGenerator.Generate(
-                        className, funcName, funcMatch.ParmsSize,
+                        className, funcName, Services.BakedScriptGenerator.BakedParmsSize(funcMatch),
                         Array.Empty<Models.BakedParamValue>());
                     var description = $"Invoke (baked, no args): {className}::{funcName}";
                     // Probe live before send: IsAvailable is only a cache of the
@@ -2047,7 +2047,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 if (inputParams.Count == 0 && !hasReturn)
                 {
                     var script = Services.BakedScriptGenerator.Generate(
-                        className, funcName, funcMatch.ParmsSize,
+                        className, funcName, Services.BakedScriptGenerator.BakedParmsSize(funcMatch),
                         Array.Empty<Models.BakedParamValue>());
                     var description = $"exec (baked, no args): {className}::{funcName}";
                     // Probe live before send — IsAvailable is a stale connect cache (X8).

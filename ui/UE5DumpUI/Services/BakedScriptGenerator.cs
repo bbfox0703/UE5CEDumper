@@ -40,6 +40,23 @@ public static class BakedScriptGenerator
     /// after it and the struct ends 8 bytes later.</summary>
     internal const int ParamsRegionBytes = 1024;
 
+    /// <summary>
+    /// [UE-OVERRIDE-411] review 2: the <c>parmsSize</c> a baked invoke carries. ue5_invoke_helper.lua refuses one
+    /// past the mailbox's paramsData slab, and bounds every write and the zero-fill by it, so it has to be where
+    /// the function's parameter chain ends -- never only the ParmsSize the DLL read from the UFunction's tail: under
+    /// a wrong UE version that read is another field (NumParms, a few bytes), which let a 1 KB+ out parameter past
+    /// the helper's gate. The chain end is <see cref="InvokeScriptGenerator.RequiredSpan(int, IEnumerable{FunctionParamModel})"/>
+    /// over the parameters, or the DLL's own <c>buffer_bytes</c> where only a list_all_functions row is at hand.
+    /// </summary>
+    internal static int BakedParmsSize(int parmsSize, IEnumerable<FunctionParamModel> parameters)
+        => parmsSize;
+
+    /// <inheritdoc cref="BakedParmsSize(int, IEnumerable{FunctionParamModel})"/>
+    internal static int BakedParmsSize(FunctionInfoModel func) => BakedParmsSize(func.ParmsSize, func.Parameters);
+
+    /// <inheritdoc cref="BakedParmsSize(int, IEnumerable{FunctionParamModel})"/>
+    internal static int BakedParmsSize(AllFunctionEntry entry) => entry.ParmsSize;
+
     /// <summary>Baseline verify-mode dump width when nothing needs more.</summary>
     internal const int DefaultDumpBytes = 32;
 

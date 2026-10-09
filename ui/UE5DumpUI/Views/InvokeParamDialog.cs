@@ -100,7 +100,9 @@ public sealed class InvokeParamDialog : Window
     {
         _inputParams = inputParams;
         _allParams = allParams;
-        _parmsSize = parmsSize;
+        // The chain's end, not the tail's ParmsSize: this sizes the pipe buffer, bounds the params written into it and
+        // gates the baked script's mailbox slab, and a ParmsSize read under a wrong UE version is another field.
+        _parmsSize = BakedScriptGenerator.BakedParmsSize(parmsSize, allParams);
         _className = className;
         _funcName = funcName;
         _instanceAddr = instanceAddr;

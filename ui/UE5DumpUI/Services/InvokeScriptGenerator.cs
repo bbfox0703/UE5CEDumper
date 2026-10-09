@@ -300,10 +300,14 @@ public static class InvokeScriptGenerator
     /// only ParmsSize bytes of the caller's buffer and builds the locals in its own frame, so a local
     /// past the slab must not refuse a call whose parameters fit.</para>
     /// </summary>
-    internal static long RequiredSpan(FunctionInfoModel func)
+    internal static long RequiredSpan(FunctionInfoModel func) => RequiredSpan(func.ParmsSize, func.Parameters);
+
+    /// <summary>The same span from a ParmsSize and the parameters (the return included), for a caller that holds
+    /// the two apart -- InvokeParamDialog is handed them separately.</summary>
+    internal static long RequiredSpan(int parmsSize, IEnumerable<FunctionParamModel> parameters)
     {
-        long span = func.ParmsSize;
-        foreach (var p in func.Parameters)
+        long span = parmsSize;
+        foreach (var p in parameters)
             if (p.Offset >= 0 && p.Size > 0)
                 span = Math.Max(span, (long)p.Offset + p.Size);
         return span;

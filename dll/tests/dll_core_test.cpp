@@ -1256,6 +1256,16 @@ int main() {
         onlyReturn.params[0].isParm = false;
         check("PEBUF: a return entry counts even when its CPF_Parm bit did not read -- ProcessEvent writes it",
               Ubel::ParamBufferSize(onlyReturn) == 12, std::to_string(Ubel::ParamBufferSize(onlyReturn)).c_str());
+        // [UE-OVERRIDE-411] review 2: a list_all_functions row carries the chain's end beside the tail's ParmsSize, so
+        // a cheat-table row built from that list hands the CE helper the number that gates the mailbox slab.
+        ClassInfo rowClass{};
+        rowClass.Name = "Actor";
+        const Aura::AllFunctionEntry row = Aura::FunctionEntryFor(rowClass, 0x1000, "/Script/Engine.Actor", noReturn);
+        snprintf(buf, sizeof(buf), "bufferBytes %u parmsSize %u", row.bufferBytes, row.parmsSize);
+        check("PEBUF ⭐: a list_all_functions row carries where the chain ends (12) beside the misread ParmsSize (1)",
+              row.bufferBytes == 12 && row.parmsSize == 1, buf);
+        check("PEBUF control: ...and the row's other fields are the function's",
+              row.funcName == noReturn.name && row.className == "Actor" && row.classAddr == 0x1000);
 
         // invoke_function holds only ResolveFunctionInfo's tail read, so its form reads the chain at the address.
         // UProperty mode, as on 4.18: Children -> UProperty entries with PropertyFlags / Offset_Internal / ElementSize.

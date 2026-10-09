@@ -1237,6 +1237,10 @@ struct AllFunctionEntry {
     uint32_t    functionFlags = 0;
     uint8_t     numParms    = 0;
     uint16_t    parmsSize   = 0;
+    // [UE-OVERRIDE-411] review 2: where the function's parameter chain ends (Ubel::ParamBufferSize). A cheat-table row
+    // built from this list carries it as the CE helper's parmsSize, which gates the 1 KB mailbox slab; parmsSize is
+    // the tail read, another field under a wrong UE version.
+    uint32_t    bufferBytes = 0;
 };
 
 // A class CONTRIBUTED iff it owns at least one emitted entry. DERIVED from the
