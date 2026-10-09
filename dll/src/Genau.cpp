@@ -3317,6 +3317,13 @@ static std::string Tier3ResourceNote(const ResourcePhase& rp) {
                  "the %u floor, which alone does not corroborate a reading below it — the memory scan decides)",
                  rp.exeVersion ? ("says UE " + std::to_string(rp.exeVersion)).c_str() : "read nothing usable",
                  rp.result.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
+    else if (!rp.exeReading.fromFixedField)
+        // Read out of the exe's own engine build string (rev 9): the string is the reading, so it cannot also be the
+        // second signal -- only an agreeing CrashReportClient could have been.
+        snprintf(buf, sizeof(buf), "DetectVersion: (the PE resource did not fail: it read UE %u out of the exe's own "
+                 "engine build string, below the %u floor; that string cannot corroborate its own reading, and no "
+                 "CrashReportClient agreed — the memory scan decides)",
+                 rp.result.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
     else
         snprintf(buf, sizeof(buf), "DetectVersion: (the PE resource did not fail: it read UE %u, below the "
                  "%u floor, and neither an engine build string nor an agreeing CrashReportClient "
