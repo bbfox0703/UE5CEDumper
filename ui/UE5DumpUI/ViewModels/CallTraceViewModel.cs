@@ -146,6 +146,19 @@ public partial class CallTraceViewModel : ViewModelBase
     /// its text row by row.</summary>
     private static double ClampWidth(double value, double min) => double.IsNaN(value) ? min : Math.Clamp(value, min, MaxWidth);
 
+    // [CT-DETAIL-COVERS-LIST] Declarations the tests compile against; they still show and drag the remembered widths.
+    internal double SplitWidth { get; set; } = double.NaN;
+    public double ShownTimeColWidth => TimeColWidth;
+    public double ShownDurationColWidth => DurationColWidth;
+    public double ShownThreadColWidth => ThreadColWidth;
+    public double ShownObjectColWidth => ObjectColWidth;
+    public double ShownDetailPaneWidth => DetailPaneWidth;
+    internal void DragTime(double step) => TimeColWidth += step;
+    internal void DragDuration(double step) => DurationColWidth += step;
+    internal void DragThread(double step) => ThreadColWidth += step;
+    internal void DragObject(double step) => ObjectColWidth += step;
+    internal void DragDetailPane(double step) => DetailPaneWidth += step;
+
     internal CallTrace? Trace => _trace;
     internal CallTraceTree? Tree => _tree;
 

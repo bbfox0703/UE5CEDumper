@@ -410,6 +410,14 @@ source and editor are installed for when they are needed.
   The live look also found Address squeezed to its floor in a narrow pane; its floor is now its width (red 3c1ea493 /
   green d7da0d04, build 3645; **live 2026-10-09** on DumperTest58 Shipping: with the detail pane dragged to about
   400 px, Address kept its 170 with Copy / ASM beside it, and Where kept its floor and scrolled).
+  ⬜ `[CT-DETAIL-COVERS-LIST]` (MED, the maintainer on build 3645, 2026-10-09, Extinction, UE 4.15): 「Call Trace
+  UI有個問題：Call, Call Stack, Parameters 那個 Panel 可以完全蓋掉左側的 timeline，我剛剛使用時，由於 timeline 的UI完全看不到，
+  我只看到 C,S,P 那個完全沒內容的 panel，沒內容是因為就算我選了 C,S,P要錄，但是沒辦法點到 timeline 項目，整個資料沒顯示」 --
+  the detail pane covered the whole list, so no row could be clicked and the pane had nothing to show. Layout only:
+  the UI's log has the trace (31,320 calls and 225 stacks loaded, then 32,068 and 250, 0 orphaned). Cause: the pane
+  is docked at `DetailPaneWidth`, clamped to [200, 4096] and never against the panel's width, so a remembered width
+  (`ui-options.json` `callTrace.detailPaneWidth`, 766 on that machine) or a drag leaves the list nothing, its handle
+  with it. In progress: red tests first.
   ✅ `[SNAPRIG-S5-RATE]` (LOW, the same walkthrough; fixed 2026-10-08, offline by `--self-test`; **live 2026-10-09**:
   DumperTest58 Shipping at ~30 fps, DLL 3644, `--stacks --pdb` with no budget given chose 11/s ("between 6.1 and
   20.2 ... 30/s does not fit"), S5 kept 99 in its 77..99 window and dropped 141, the parameter counters were checked

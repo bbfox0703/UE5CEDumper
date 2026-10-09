@@ -2,6 +2,8 @@ using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Headless;
+using Avalonia.Input;
 using Avalonia.Markup.Xaml;
 using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Threading;
@@ -18,7 +20,8 @@ namespace UE5DumpUI.HeadlessTests;
 /// step-3 walkthrough left it: the list is narrower than its four fixed columns. Each column keeps its dragged width,
 /// none draws into the visible part of the one on its left, and what does not fit is cut at the list's edge instead of
 /// drawing over the detail pane. A source test cannot show this: the overlap came from where DockPanel puts a fixed
-/// width cell that no longer fits, which no attribute in the file states.
+/// width cell that no longer fits, which no attribute in the file states. [CT-DETAIL-COVERS-LIST]: the list keeps its
+/// floor beside the detail pane however wide the pane is remembered or dragged, and its rows can be clicked.
 /// </summary>
 public class CallTraceColumnsTests
 {
@@ -60,22 +63,36 @@ public class CallTraceColumnsTests
         FunctionText = "DumperTest58Actor_C::ReceiveTick", ObjectText = "DumperTest58Actor_0",
     };
 
-    /// <summary>The panel in a 1000-wide window, its columns at their defaults (Time 96, Duration 88, Thread 64,
-    /// Object 260), the detail pane as wide as asked.</summary>
-    private static (CallTracePanel panel, CallTraceViewModel vm) Laid(double detailPaneWidth)
+    /// <summary>A view model with its columns at their defaults (Time 96, Duration 88, Thread 64, Object 260), the
+    /// detail pane remembered as wide as asked, and these rows.</summary>
+    private static CallTraceViewModel NewVm(double detailPaneWidth, CallTraceRow[] rows)
     {
         LoadStrings();
         var dump = DispatchProxy.Create<IDumpService, Inert>();
         var log = DispatchProxy.Create<ILoggingService, Inert>();
-        var vm = new CallTraceViewModel(dump, log, new LiveFuncsViewModel(dump, log))
+        return new CallTraceViewModel(dump, log, new LiveFuncsViewModel(dump, log))
         {
             DetailPaneWidth = detailPaneWidth,
-            Rows = new[] { Row },
+            Rows = rows,
         };
+    }
+
+    /// <summary>The panel in a window as wide as asked, showing <paramref name="rows"/>.</summary>
+    private static (Window window, CallTracePanel panel, CallTraceViewModel vm) LaidIn(
+        double windowWidth, double detailPaneWidth, params CallTraceRow[] rows)
+    {
+        var vm = NewVm(detailPaneWidth, rows);
         var panel = new CallTracePanel { DataContext = vm };
-        var window = new Window { Content = panel, Width = 1000, Height = 600 };
+        var window = new Window { Content = panel, Width = windowWidth, Height = 600 };
         window.Show();
         Dispatcher.UIThread.RunJobs();
+        return (window, panel, vm);
+    }
+
+    /// <summary>The panel in a 1000-wide window showing <see cref="Row"/>, the detail pane as wide as asked.</summary>
+    private static (CallTracePanel panel, CallTraceViewModel vm) Laid(double detailPaneWidth)
+    {
+        var (_, panel, vm) = LaidIn(1000, detailPaneWidth, Row);
         return (panel, vm);
     }
 
@@ -237,5 +254,157 @@ public class CallTraceColumnsTests
         var address = grid.Columns.Single(c => Equals(c.Header, Header("str.CT.Stack.Col.Address")));
         Assert.True(where.ActualWidth >= 419.5 && address.ActualWidth >= 169.5,
                     $"Where is {where.ActualWidth:0.#} and Address {address.ActualWidth:0.#} wide in a grid of {grid.Bounds.Width:0.#}");
+    });
+
+    // ---- [CT-DETAIL-COVERS-LIST] the list keeps its floor beside the detail pane ----
+
+    private static readonly CallTraceRow Row2 = new()
+    {
+        TimeText = "1240.001", DurationText = "4.5", ThreadText = "52",
+        FunctionText = "DumperTest58Actor_C::SnapProbe_Call", ObjectText = "DumperTest58Actor_1",
+    };
+
+    /// <summary>The list's floor, as the view model states it: a row's item padding, Time, Duration and Thread at their
+    /// default widths, Object at its floor and <see cref="FunctionSlice"/> of Function.</summary>
+    private const double ListFloor = 512;
+    private const double FunctionSlice = 160;
+    /// <summary>What the panel's width loses before the list and the pane share it: its margin on each side and the
+    /// pane's handle.</summary>
+    private const double PanelChrome = 8 + 8 + 8;
+
+    private static ListBox List(Visual panel) => panel.GetVisualDescendants().OfType<ListBox>().Single();
+    private static TabControl Pane(Visual panel) => panel.GetVisualDescendants().OfType<TabControl>().Single();
+    private static Thumb PaneHandle(Visual panel) => ((Panel)Pane(panel).GetVisualParent()!).Children.OfType<Thumb>().Single();
+    private static Thumb HeaderHandle(Visual panel, string key) => ((Panel)HeaderCell(panel, key)).Children.OfType<Thumb>().Single();
+
+    /// <summary>A row's Function cell: the clipping panel that carries the whole name as its tooltip.</summary>
+    private static DockPanel FunctionCell(Visual panel, CallTraceRow row)
+        => panel.GetVisualDescendants().OfType<DockPanel>().Single(d => ToolTip.GetTip(d) as string == row.FunctionText);
+
+    /// <summary>The list at its floor or wider, and in <paramref name="row"/> Time, Duration and Thread whole and at
+    /// least <see cref="FunctionSlice"/> of Function: what a call is picked by.</summary>
+    private static void AssertListFloor(Visual panel, CallTraceRow row)
+    {
+        double list = List(panel).Bounds.Width;
+        Assert.True(list >= ListFloor - 0.5, $"the list is {list:0.#} wide, under its floor of {ListFloor}");
+        foreach (var text in new[] { row.TimeText, row.DurationText, row.ThreadText })
+        {
+            var cell = Text(panel, text);
+            var (left, right) = Span(cell, panel);
+            double seen = VisibleRight(cell, panel);
+            Assert.True(seen >= right - 0.5, $"the cell {text} at {left:0.#}-{right:0.#} is cut at {seen:0.#}");
+        }
+        var function = FunctionCell(panel, row);
+        double shown = VisibleRight(function, panel) - Span(function, panel).left;
+        Assert.True(shown >= FunctionSlice - 0.5, $"Function shows {shown:0.#} px, under {FunctionSlice}");
+    }
+
+    private static Point Centre(Visual v, TopLevel top)
+        => v.TranslatePoint(new Point(v.Bounds.Width / 2, v.Bounds.Height / 2), top)!.Value;
+
+    /// <summary>A press and release near the left of what can be seen of <paramref name="target"/>.</summary>
+    private static void Click(TopLevel top, Visual target)
+    {
+        var p = target.TranslatePoint(new Point(Math.Min(target.Bounds.Width / 2, 40), target.Bounds.Height / 2), top)!.Value;
+        top.MouseDown(p, MouseButton.Left);
+        top.MouseUp(p, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    /// <summary>One drag: pressed on the handle's centre, moved <paramref name="dx"/> across, released there.</summary>
+    private static void Drag(TopLevel top, Visual handle, double dx)
+    {
+        var from = Centre(handle, top);
+        var to = new Point(from.X + dx, from.Y);
+        top.MouseDown(from, MouseButton.Left);
+        top.MouseMove(to, RawInputModifiers.LeftMouseButton);
+        top.MouseUp(to, MouseButton.Left);
+        Dispatcher.UIThread.RunJobs();
+    }
+
+    /// <summary>The maintainer's report on build 3645: a remembered pane wider than the panel covered the list, so no
+    /// row could be clicked and the pane had nothing to show. However wide the pane is remembered, the list keeps its
+    /// floor beside it and a click selects a row. 800: the app's narrowest window; 1000 with 766, the width remembered on
+    /// the maintainer's machine.</summary>
+    [Theory]
+    [InlineData(800, 4096)]
+    [InlineData(1000, 766)]
+    public Task A_remembered_pane_wider_than_the_panel_leaves_the_list_its_floor_and_a_row_to_click(double window, double pane)
+        => Headless.Run(() =>
+    {
+        var (top, panel, vm) = LaidIn(window, pane, Row, Row2);
+        AssertListFloor(panel, Row2);
+        Assert.Equal(window - PanelChrome - ListFloor, Pane(panel).Bounds.Width, 0.5);
+        Click(top, FunctionCell(panel, Row2));
+        Assert.Equal(1, vm.SelectedIndex);
+    });
+
+    /// <summary>The panel narrowed under a remembered pane (a smaller window, the object tree unfolded) fits the pane in
+    /// the same layout; widened again, it gives the remembered width back.</summary>
+    [Fact]
+    public Task A_narrower_panel_refits_the_pane_and_a_wider_one_gives_back_the_remembered_width() => Headless.Run(() =>
+    {
+        var (top, panel, vm) = LaidIn(1600, 766, Row, Row2);
+        Assert.Equal(766, Pane(panel).Bounds.Width, 0.5);
+        top.Width = 800;
+        Dispatcher.UIThread.RunJobs();
+        AssertListFloor(panel, Row2);
+        Assert.Equal(766.0, vm.DetailPaneWidth);
+        top.Width = 1600;
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(766, Pane(panel).Bounds.Width, 0.5);
+    });
+
+    /// <summary>The tab hidden while the window narrowed: shown again, its list still keeps its floor.</summary>
+    [Fact]
+    public Task The_tab_shown_again_after_the_window_narrowed_keeps_the_lists_floor() => Headless.Run(() =>
+    {
+        var vm = NewVm(766, new[] { Row, Row2 });
+        var panel = new CallTracePanel { DataContext = vm };
+        var tabs = new TabControl();
+        tabs.Items.Add(new TabItem { Header = "Other", Content = new TextBlock { Text = "other" } });
+        tabs.Items.Add(new TabItem { Header = "Call Trace", Content = panel });
+        tabs.SelectedIndex = 1;
+        var window = new Window { Content = tabs, Width = 1600, Height = 600 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(766, Pane(panel).Bounds.Width, 0.5);
+
+        tabs.SelectedIndex = 0;
+        Dispatcher.UIThread.RunJobs();
+        window.Width = 800;
+        Dispatcher.UIThread.RunJobs();
+        tabs.SelectedIndex = 1;
+        Dispatcher.UIThread.RunJobs();
+        AssertListFloor(panel, Row2);
+    });
+
+    /// <summary>A drag of the pane's handle past the list's floor stops there, and a drag back moves the pane at once:
+    /// a drag adds to the width shown, so nothing past the limit is kept to be undone first.</summary>
+    [Fact]
+    public Task A_pane_drag_past_the_lists_floor_stops_there_and_the_next_drag_back_moves_at_once() => Headless.Run(() =>
+    {
+        var (top, panel, _) = LaidIn(1000, 380, Row);
+        double limit = 1000 - PanelChrome - ListFloor;
+        Drag(top, PaneHandle(panel), -400);
+        Assert.Equal(limit, Pane(panel).Bounds.Width, 0.5);
+        Assert.Equal(ListFloor, List(panel).Bounds.Width, 0.5);
+        Drag(top, PaneHandle(panel), +30);
+        Assert.Equal(limit - 30, Pane(panel).Bounds.Width, 0.5);
+    });
+
+    /// <summary>The same for a column: Thread dragged far to the right pushes Object to its floor and stops where
+    /// Function keeps its slice; a drag back narrows it at once. The list is 596 wide, a row's cells 572.</summary>
+    [Fact]
+    public Task A_column_drag_past_its_limit_stops_where_Function_keeps_its_slice_and_drags_back_at_once() => Headless.Run(() =>
+    {
+        var (top, panel, _) = LaidIn(1000, 380, Row);
+        double limit = 572 - FunctionSlice - 96 - 88 - 80;
+        Drag(top, HeaderHandle(panel, "str.CT.Col.Thread"), +400);
+        Assert.Equal(limit, HeaderCell(panel, "str.CT.Col.Thread").Bounds.Width, 0.5);
+        Assert.Equal(80, Text(panel, Row.ObjectText).Bounds.Width, 0.5);
+        AssertListFloor(panel, Row);
+        Drag(top, HeaderHandle(panel, "str.CT.Col.Thread"), -10);
+        Assert.Equal(limit - 10, HeaderCell(panel, "str.CT.Col.Thread").Bounds.Width, 0.5);
     });
 }
