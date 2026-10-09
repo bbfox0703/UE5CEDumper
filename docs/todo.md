@@ -276,8 +276,8 @@ source and editor are installed for when they are needed.
   two layers are under `[UE-OVERRIDE-411]`; the round was interrupted by the laptop crash and resumed):
   - *The glue had no test* (LOW): `Genau::DetectVersionFromResources(exePath, crcPath)` is the resource half of
     detection, moved out unchanged; `dll/CMakeLists.txt` builds each `dll/tests/res/*.rc` into a resource-only DLL,
-    and dll_core_test runs the reads, the decision and the tier-1 short-circuit on them. The b25 rig reads its C / D
-    scripts from the same files. The reviewer's R4 / R5 are killed.
+    and dll_core_test runs the reads and the decision on them (the short-circuit's return only since the second
+    review, below). The b25 rig reads its C / D scripts from the same files. The reviewer's R4 / R5 are killed.
   - *Two parser constraints unpinned* (LOW): `...+UE4-Releases+5.10` and a branch-first string with text after its
     changelist are 0 (R1 / R2 killed).
   - *The tier-3 log lines put a CrashReportClient's reading in the exe's mouth* (LOW): the verdict carries its
@@ -294,13 +294,54 @@ source and editor are installed for when they are needed.
     builds only), test-games.md's IS Defense row, the ResourceReading comment, and EngineBuildStringCode's header
     (the branch is licensee-editable: Satisfactory, Titan Quest II, Dolls Nest measured).
   Live check still owed, as above; `[VER-410-RIG-EF]` below adds the two shapes this round made reachable.
+  ✅ **Second review 2026-10-09 (`out/step3/gate_review2.json`), this tag's four LOW fixed, in source** (the MED and
+  three LOW are under `[UE-OVERRIDE-411]`; the ninth finding is `[VER-410-FIXED-VS-STRING]` below, not taken):
+  - *The glue test skipped the paths production uses* (`d4a069c1`; the reviewer's M1 / M2 / M4, 3 / 3 killed):
+    `dll/CMakeLists.txt` lays the fixtures out as an install (`verres_tree`: the 4.10 build-string exe as
+    `Game/Binaries/Win64/Game.exe`, b25c's 4.10.2 resource as `Engine/Binaries/Win64/CrashReportClient.exe`;
+    `verres_tree_nocrc`: the exe alone), so `DetectVersionFromResources(exe, nullptr)` finds the CrashReportClient
+    the way the DLL looks. `DetectVersionDetailed(exePath, base, size)` is a seam (the zero-argument form passes the
+    process's own): handed an image whose only tag is a Tier-1 needle for 4.27, the tree returns 410 before the
+    memory scan and the lone exe goes on to find 427. New fixture `game_product_fixedfile_410.rc` (game
+    PRODUCTVERSION, FILEVERSION 4,10,2,0, the IS Defense string): a fixed-field reading, tier 1 by the string.
+  - *The tier-3 line for a reading out of the exe's own build string said no build string corroborates it* (red
+    `b6713c35`, green `69bae937`, 3 / 3 mutants): `Genau::Tier3ResourceNote` now says the string cannot corroborate
+    its own reading; the exe's fixed-field line and the CrashReportClient's are unchanged word for word, none carries
+    a sweep_title.py keyword or judge_d's must-not (pinned). The b25-judged Warn line is untouched.
+  - *Rev 9's note and the fallback comment overstated the old gap* (`79b574e5`, comments): the old prefix path finds
+    `++UEn+Release-` anywhere, so a version-first string with a full 4.18+ branch read before rev 9 too; rev 9 added
+    only the `++depot+UE4-Releases+` and `+UE<M>` branches. The prefix path checks no branch / M.m agreement
+    (`4.10.2-0+++UE4+Release-4.11` reads 411), so it and EngineBuildStringCode are not interchangeable.
+  - *Two offline mirrors kept their own string checks* (red `6a70df60`, green `0355cce1`, `bd14348b`; 5 / 5
+    mutants): `pe_version_probe.py` walks every translation (first non-empty, as ReadVersionInfoString) and takes a
+    prefix only when its `%u.%u` gives a code (sscanf's whitespace / sign rules), else the build string, else the next
+    key; `tier_triage.py` and `tier1_host_survey.py` read through its `read_resource`. On the fixture install's
+    `Game.exe` and `game_buildstring_411` the old tools said FALLS THROUGH / PE_MISS, the new ones Tier0 410 / 411.
+    Selftest 46 / 46. The two tools still have no selftest of their own -- checked on the fixtures, before and after.
+  Owed: a re-run of `tier1_host_survey.py` over both Steam libraries, to see whether any installed title changes
+  verdict (the reviewer's own mirror measured 0 of 422 readings changing between rev 8 and 9).
+- ⬜ `[VER-410-FIXED-VS-STRING]` (LOW, from the 2026-10-09 second review; **a follow-up, not taken**): a game version
+  in the fixed fields that lands inside 4.0-4.27 / 5.0-5.9 beats the exe's own engine build string, unlogged.
+  `ReadUeVersionFromFile` returns the fixed-field code before any string is read, and `DecideResourceVersion` uses
+  the build string only to corroborate an EQUAL code -- although the build string is the engine-stamped signal. Shapes:
+  a game at 4.5 (fixed 4.5.0.0) with ProductVersion `4.15.0-0+UE4` reads 405 (tier 3, then scanned with 4.05's
+  UFunction tail where 4.15 needs +2 -- now read at the measured base, since `[UE-OVERRIDE-411]`'s second review); the
+  same engine with game version 5.1 reads 501 at tier 1, no low-confidence badge. **Unmeasured in the wild:** the
+  reviewer's sweep found 0 of the 373 fixed readings on this PC contradicted by their own build string. Fix sketch:
+  when the ProductVersion or FileVersion string gives a nonzero `EngineBuildStringCode` that differs from the
+  fixed-field code, take the string's code with `fromFixedField` false (below the floor it then still needs an
+  agreeing CrashReportClient) and log the disagreement the way "SOURCES DISAGREE" is; its own
+  `kVersionDetectLogicRev` bump (9 -> 10, every cached title re-detects once); a `dll/tests/res` fixture per shape,
+  red first; `pe_version_probe.py` mirrors it. Effort **S**.
 - ⬜ `[VER-410-RIG-EF]` (LOW, from the 2026-10-09 review round): the b25 marker-exe rig judges only exes that read
   their own version. Two shapes this round changed are pinned offline only (dll_core_test, resource-only DLLs):
   E -- game fixed fields + the IS Defense string beside a 4.10 CrashReportClient (rev 9: refused, by the
   CrashReportClient's agreement) and F -- an exe reading nothing beside a 4.10 CrashReportClient (scanned; the new
   "CrashReportClient says UE 410 ... the game exe's own PE VERSIONINFO read nothing usable" lines, which no test
   reads). The rig needs a CrashReportClient copy at `<root>/Engine/Binaries/Win64` above each marker exe
-  (`Grimoire::CrashReportCandidates`). Effort **S**.
+  (`Grimoire::CrashReportCandidates`). Effort **S**. Since the second review E is also pinned offline through the
+  lookup production runs (dll_core_test's `verres_tree`, a CrashReportClient found above the exe); the live rig is
+  still owed for both.
 - ⬜ `[UE410-SUPPORT]` (**decided 2026-10-08: not now** -- the maintainer; the gate above refuses 4.10 cleanly). The
   feasibility study (UE 4.10 source, IS Defense's PDB, the DLL) found it doable but L (~700-900 lines, 4-6 sessions
   plus 2-3 live): a third object-array shape (`FUObjectArray`+0x10 is an INLINE 512-slot chunk table, 16,384 objects
@@ -322,7 +363,8 @@ source and editor are installed for when they are needed.
   every ProcessEvent buffer sized from it ended where the return value starts.
   - *Buffers* (7 / 7 mutants killed): `DynOff::ProcessEventBufferBytes` = max(ParmsSize, the CPF_Parm chain's end),
     through `Ubel::ParamBufferSize`, for every buffer the DLL hands ProcessEvent -- Wirbel, Schlacht, Dunste and
-    `invoke_function` (which reads the chain at the address); Mimic's fixed slab is unchanged.
+    `invoke_function` (which reads the chain at the address); Mimic's fixed slab was left unchanged (the second
+    review's MED, below).
   - *The override itself* (11 / 11 killed): `set_ue_version_override` asks `Ubel::CheckVersionOverrideTail` first
     and refuses a version whose tail base contradicts the base the sampled UFunctions measure (8 samples, 60 %), with
     an error naming both; clearing is always accepted, and an unmeasured check (no scan yet) applies the override as
@@ -330,6 +372,43 @@ source and editor are installed for when they are needed.
   Owed besides the AOT publish and the live check above: Fern.cpp is compiled by no test target, so the refusal is
   checked by build and reading only -- live, `set_ue_version_override` 417 on a 4.18 title (OCTOPATH or DQ XI S)
   must answer the error and change nothing; 4.15 on a 4.11-4.17 title (NEKOPALIVE, Extinction) must be accepted.
+  ✅ **Second review 2026-10-09 (`out/step3/gate_review2.json`), the MED and this tag's three LOW fixed, in source**
+  (the other four LOW are under `[VER-410-GATE]`). Totals at the round's end: dll_core_test 1162 checks, 0
+  failure(s); dll_helpers_test Pass 3179, Fail 0; C# 6495 (6493 passed, 2 skipped); headless 43 / 43; Lua 11 / 11 on
+  CE's VM; 33 gate(s) run, 0 failed, 1 skipped (check_processevent_slots: no vendored templates in the worktree).
+  - *MED -- Mimic's paramsData slab was never checked against the chain*: CMD_INVOKE handed ProcessEvent the fixed
+    1024-byte slab (or a 1024-byte owned copy), and the CE helper's `parmsSize > 1024` gated a baked tail-read
+    ParmsSize -- the NumParms byte under a wrong version. DLL (red `61e42820`, green `7efc2006`; 5 / 5 mutants):
+    `Mimic::InvokeSlabRefusal` -- HandleInvoke sizes the block with `Ubel::ParamBufferSize` and publishes -13
+    (`MB_ERR_INVOKE_TOO_LARGE`) past the slab, -12 (`MB_ERR_INVOKE_UNRESOLVED`) for a function that does not resolve
+    (it used to be queued). Not a mailbox contract change (new failures of an existing command; v5 / min 1, hash
+    unchanged); Frieren.h now says a buffer must reach the chain's end. CE side (red `bc71b3d5`, green `b92ecb65`;
+    7 / 7 mutants): every baked invoke carries `BakedScriptGenerator.BakedParmsSize` -- `RequiredSpan` over the
+    parameters for InvokeParamDialog (which also sizes its pipe buffer by it) and the three no-argument fast paths, and
+    the DLL's new `buffer_bytes` on list_all_functions rows (`Aura::FunctionEntryFor`) for Interesting Functions'
+    cheat-table rows; a source scan holds every call site to it. ue5_invoke_helper.lua's gate is unchanged and now
+    sees that number.
+  - *The refusal held only while a measurement existed* (red `25a12663`, green `09e49712`; 5 / 5 mutants):
+    `DynOff::FunctionTailReadBase` -- the readers (ReadFuncFlagsAndParams, so every walk_functions row / FIND_FUNCTION
+    reply / baked script, and the Live Funcs capture) read NumParms / ParmsSize / ReturnValueOffset at
+    `UFUNCTION_TAIL_MEASURED` whenever it is >= 0, whatever the version; on a right version it is the vote's base.
+    A held measurement judges an override before a re-init's probe. **The pipe refusal is KEPT, not advisory**: the
+    tail reads no longer need it, but the version keys more than the tail, and a version the UFunctions contradict is
+    wrong for all of it; its message says where the version's LAYOUT puts the tail (`OverrideTailCheck::versionBase`).
+  - *No test pinned the vote's +4 extra in the override check* (`87056173`): an OVERRIDETAIL tail 4 past the shift
+    -- 5.5 / 5.0 agree, 4.17 contradicts; the reviewer's M1 (`extra = 0`) is killed.
+  - *The converted call sites had no pin* (`ba6b090b`, `c86c6fee`, `8e69f5c6`, green `2481406b`, `e42baf50`):
+    `tools/check_processevent_buffers.py`, a gate in check_all and ci.yml -- an allocation sized from a ParmsSize
+    (directly or through a local, each `?:` arm on its own, a `min()` never lifted) without ParamBufferSize /
+    ProcessEventBufferBytes, or a `UE5_CallProcessEventEx` size that is not its buffer's own, fails; 19 controls
+    (11 red, 8 green) run first on every run. Its first run on the tree found one real case: `invoke_function` kept
+    the caller's parms_size whenever ResolveFunctionInfo failed -- it now reads the chain at the address either way.
+    8 / 8 mutants killed after one survivor (a ternary arm) hardened the gate.
+  Owed besides the AOT publish (the UI changed): live, CMD_INVOKE on a function whose chain passes 1 KB answers -13 and
+  leaves the game untouched; Interesting Functions -> Generate Cheat Table on a function with an out parameter carries
+  the chain's end in its invokeUFunction; on a 4.11-4.17 title under a 4.18 override (or the reverse) walk_functions
+  shows the real ParmsSize and the vote's WARN says the tail is read at the measured base. Mimic.cpp and Fern.cpp
+  are compiled by no test target -- their glue is checked by build, the new gate and reading.
 - ⬜ `[DUMPERTEST410-FIXTURE]` (the maintainer chose it 2026-10-08): package a Blueprint-only DumperTest410 from the
   installed UE 4.10.4 (the TP_ThirdPersonBP template, the prebuilt UE4Game-Win64-Shipping) while the editor is still
   installed: `tools/ue-sample/repackage.py` needs a content-only mode (no `Build.bat <Project>Editor`, `-nocompile
@@ -342,8 +421,9 @@ source and editor are installed for when they are needed.
   label; it is not): (1) **the tooltip** says only "Force a specific UE version for this game. Saved per-game and
   reapplied on every launch. Choose Auto to revert to auto-detection." -- nothing on what it changes. Set over the
   pipe, it rewrites the cached version at once (no rescan), and everything derived from the version follows it:
-  where UFunction's flags / NumParms / ParmsSize / ReturnValueOffset are read (Teleport, invoke_function, Live Funcs
-  parameters), UE4 UProperty subclass fields, the soft / lazy pointer envelopes, the set / map layout, FName
+  where UFunction's flags are read while the FunctionFlags vote is undecided, and its NumParms / ParmsSize /
+  ReturnValueOffset until a scan has measured the tail (since `[UE-OVERRIDE-411]`'s second review the measured
+  tail wins; Teleport, invoke_function, Live Funcs parameters), UE4 UProperty subclass fields, the soft / lazy pointer envelopes, the set / map layout, FName
   alignment, the weak-pointer garbage test, the CE export layout; GObjects, GNames and the measured DynOff offsets
   stay (the handler does not re-run ValidateAndFixOffsets, on purpose). Saved, it replaces detection before the next
   scan and skips the too-old refusal. A wrong pick misreads, and the [UE-OVERRIDE-411] review's MED was a crash
