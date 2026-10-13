@@ -479,6 +479,20 @@ int main() {
         auto bare = phase(b25d, L"");
         check("VER-410-FIXED-VS-STRING control: a fixed 4.10.3 beside a bare '4.10.3' (no build string) stays fixed",
               bare.exeReading.fromFixedField && bare.exeVersion == 410 && bare.exeReading.overruledFixedCode == 0, gb);
+        // The fixed FileVersion is the second fixed field read and takes the same rule: every fixture above carries its
+        // game version in PRODUCTVERSION, so the FileVersion branch could take its fixed code unchecked with all of them
+        // green. [VER-410-FIXED-VS-STRING] review
+        const std::wstring fileFixed405 = res(L"game_filefixed405_buildstring_415");
+        check("VER-410-FIXED-VS-STRING setup: the resource fixture was built beside the test",
+              GetFileAttributesW(fileFixed405.c_str()) != INVALID_FILE_ATTRIBUTES,
+              Utf8Helpers::EncodeUtf16(fileFixed405.c_str(), fileFixed405.size()).c_str());
+        auto ff405 = phase(fileFixed405, L"");
+        check("VER-410-FIXED-VS-STRING ⭐: a fixed FileVersion of 4.5 under a game ProductVersion and a 4.15 build string "
+              "reads 415, from the string",
+              ff405.exeVersion == 415 && !ff405.exeReading.fromFixedField && ff405.exeReading.overruledFixedCode == 405,
+              gb);
+        check("VER-410-FIXED-VS-STRING ⭐: ...at tier 1",
+              ff405.done && ff405.result.version == 415 && ff405.result.tier == 1, gb);
         // The reading says which fixed-field code it overruled, which is what the SOURCES DISAGREE line names.
         check("VER-410-FIXED-VS-STRING: each overruling reading names the fixed code it overruled (405 / 501 / 420)",
               f405.exeReading.overruledFixedCode == 405 && f501.exeReading.overruledFixedCode == 501

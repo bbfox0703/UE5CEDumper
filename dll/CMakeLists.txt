@@ -676,10 +676,11 @@ if(BUILD_DLL_TESTS)
     # holding nothing but that resource, linked /NOENTRY. dll_core_test finds them beside itself.
     # Some of these scripts are the very resources tools/verify/b25_marker_exes.py stamps into its
     # live marker exes -- it reads them from tests/res, and says which -- so the offline test and the
-    # live one judge the same bytes.
+    # live one judge the same bytes. tools/verify/pe_version_probe.py --selftest reads every script there
+    # as well and fails on one it holds no expected reading for: the offline port answers each shape too.
     foreach(_vr b25c_corroborated b25d_bare game_buildstring_410 game_buildstring_411 game_only
                 game_product_fixedfile_410 game_fixed405_buildstring_415 game_fixed501_buildstring_415
-                game_fixed420_buildstring_410)
+                game_fixed420_buildstring_410 game_filefixed405_buildstring_415)
         add_library(verres_${_vr} MODULE ${CMAKE_CURRENT_SOURCE_DIR}/tests/res/${_vr}.rc)
         set_target_properties(verres_${_vr} PROPERTIES LINKER_LANGUAGE CXX)
         if(MSVC)

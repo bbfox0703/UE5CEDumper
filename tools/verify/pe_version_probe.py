@@ -272,6 +272,7 @@ _RC_EXPECT = {
     "game_fixed405_buildstring_415": ("build string", "ProductVersion", 415, 405),
     "game_fixed501_buildstring_415": ("build string", "FileVersion", 415, 501),
     "game_fixed420_buildstring_410": ("build string", "ProductVersion", 410, 420),
+    "game_filefixed405_buildstring_415": ("build string", "ProductVersion", 415, 405),
 }
 _RC_FIXED = re.compile(r"(FILEVERSION|PRODUCTVERSION)[ \t]+(\d+),(\d+),(\d+),(\d+)")
 _RC_VALUE = re.compile(r'VALUE "(ProductVersion|FileVersion)", "([^"\\]*)"')
@@ -307,8 +308,6 @@ def rc_fields(text):
 
 # Shapes no fixture carries: (name, (pmaj, pmin, fmaj, fmin), strings, want (kind, key, code, overruled)).
 _DECIDE_SELFTEST = [
-    ("a fixed FileVersion under a game ProductVersion is overruled too", (1, 0, 4, 5), {"ProductVersion": "4.15.0-0+UE4"},
-     ("build string", "ProductVersion", 415, 405)),
     ("a fixed ProductVersion outside 4.x / 5.x falls to the fixed FileVersion", (4, 99, 4, 10), {},
      ("fixed", "FileVersion", 410, None)),
     ("the fixed ProductVersion is read before the fixed FileVersion", (4, 20, 4, 10), {},
