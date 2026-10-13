@@ -935,7 +935,8 @@ FIXTURE_STACK_PER_RING, FIXTURE_STACK_TOTAL = 30, 200
 # "Clearly" above and below: a frame rate wobbles from second to second, and stacks slow the game a little, so the
 # budget keeps this factor from SnapProbe_PerFrame's rate (or it may not bite in every second) and from every other
 # choice's (or the budget may cut the calls the other checks count), and the total keeps this factor of their rates
-# free. The step-2 run's parameter budget keeps the same margins.
+# free beside this factor of SnapProbe_PerFrame's, up to its budget (pf_share). The step-2 run's parameter budget keeps
+# the same margins.
 BUDGET_MARGIN = 1.5
 # --names (the ledger's S3-A1 on a real game): its checks by name, so --self-test's controls name the check each fault
 # must fail.
@@ -1200,11 +1201,18 @@ def others_room(rates: dict[str, float]) -> float:
     return sum(r for n, r in rates.items() if n != "SnapProbe_PerFrame") * BUDGET_MARGIN
 
 
+def pf_share(per: int, pf_rate: float) -> float:
+    """What SnapProbe_PerFrame may keep of the one total in a second: Linie's StackAdmit takes every call of a second
+    up to its per-function budget, and a second's calls run over the average rate as a frame rate wobbles, so it is
+    weighed at BUDGET_MARGIN times that rate, as the other choices' room is [SNAPRIG-ROUND5]."""
+    return min(budget_echo(per), BUDGET_MARGIN * pf_rate)
+
+
 def total_starves(rates: dict[str, float], per: int, total: int) -> bool:
     """Whether one total, admitted in call order each second, can starve the other choices at these rates: beside
-    what SnapProbe_PerFrame may keep of it (its per-function budget, or its rate when lower) it does not leave them
-    their room. It says what may happen; whether it did is the main recording's to show."""
-    return budget_echo(total) < min(budget_echo(per), rates.get("SnapProbe_PerFrame", 0.0)) + others_room(rates)
+    what SnapProbe_PerFrame may keep of it (pf_share) it does not leave them their room. It says what may happen;
+    whether it did is the main recording's to show."""
+    return budget_echo(total) < pf_share(per, rates.get("SnapProbe_PerFrame", 0.0)) + others_room(rates)
 
 
 def per_frame_budget(rates: dict[str, float], given: int | None, total: int,
@@ -1234,7 +1242,7 @@ def per_frame_budget(rates: dict[str, float], given: int | None, total: int,
         return total_starves(rates, per, total)
 
     def starving(per: int) -> str:
-        return (f"; the total {budget_echo(total)}/s is under the {min(budget_echo(per), pf) + room:.1f}/s that "
+        return (f"; the total {budget_echo(total)}/s is under the {pf_share(per, pf) + room:.1f}/s that "
                 f"SnapProbe_PerFrame may keep plus {BUDGET_MARGIN:g}x the other choices' rates: one total, admitted in "
                 f"call order each second, which SnapProbe_PerFrame may spend before the others are called and so "
                 f"starve them, and its share of the total is no budget it can be held to")
@@ -3853,8 +3861,10 @@ def self_test() -> int:
     # The review's LOW-2: the total is one total for every stack choice, admitted in call order each second, so a total
     # that leaves the others no room beside SnapProbe_PerFrame's share may starve SnapProbe_Call on a correct DLL.
     expect("S5 rate: a total under SnapProbe_PerFrame's share plus 1.5x the others' rates starves them: said in why, "
-           "and S5 not run (SnapProbe_PerFrame's share of a shared total is not the budget)",
-           lambda: (lambda c_: (c_["per"], c_["runs"], c_["starves"]) == (40, False, True) and "starve" in c_["why"])(
+           "the share and the room summed (40 of 45 a second may take, beside 12: 52), and S5 not run "
+           "(SnapProbe_PerFrame's share of a shared total is not the budget)",
+           lambda: (lambda c_: (c_["per"], c_["runs"], c_["starves"]) == (40, False, True) and "starve" in c_["why"]
+                    and "under the 52.0/s" in c_["why"])(
                per_frame_budget({"SnapProbe_Call": 8, "SnapProbe_PerFrame": 30}, 40, 15)) and
            per_frame_budget({"SnapProbe_Call": 8, "SnapProbe_PerFrame": 60}, 30, 42)["starves"] is False and
            per_frame_budget({"SnapProbe_Call": 8, "SnapProbe_PerFrame": 60}, 30, 41)["starves"] is True)
