@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using Microsoft.Data.Sqlite;
 using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
@@ -187,6 +188,23 @@ public class SnapshotViewModelTests : IDisposable
         }
     }
 
+    // The rows the active game's DB holds, listed or not. A capture that never completed is still in progress, and the
+    // list shows no capture in progress [SNAPSHOT-CRASH-PARTIAL], so an empty list cannot tell a deleted partial from
+    // one left behind: only the tables can. Unpooled, so no handle outlives the read.
+    private async Task<(long Snapshots, long Fields)> RawRowsAsync(CancellationToken ct)
+    {
+        await using var conn = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = _store.DatabasePath, Pooling = false }.ToString());
+        await conn.OpenAsync(ct);
+        async Task<long> CountAsync(string table)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"SELECT COUNT(*) FROM {table};";
+            return (long)(await cmd.ExecuteScalarAsync(ct) ?? 0L);
+        }
+        return (await CountAsync("snapshots"), await CountAsync("fields"));
+    }
+
     [Fact]
     public async Task Capture_CancelMidStream_DeletesPartialSnapshot()
     {
@@ -200,12 +218,14 @@ public class SnapshotViewModelTests : IDisposable
 
         var task = vm.CaptureCommand.ExecuteAsync(null);
         await dump.SecondChunkReached.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);   // producer blocked on chunk 2
+        Assert.Equal(1L, (await RawRowsAsync(ct)).Snapshots);   // precondition: the partial's row is there to delete
         vm.CancelCommand.Execute(null);
         await task;
 
         Assert.False(vm.IsCapturing);
         Assert.Contains("cancel", vm.StatusText, StringComparison.OrdinalIgnoreCase);
-        Assert.Empty(await _store.ListSnapshotsAsync(ct));   // the partial snapshot was deleted
+        Assert.Empty(await _store.ListSnapshotsAsync(ct));   // not finalised as a snapshot
+        Assert.Equal((0L, 0L), await RawRowsAsync(ct));      // and deleted, row and fields
     }
 
     // Simulates a pipe DISCONNECT mid-capture: delivers one chunk, then the second
@@ -264,6 +284,8 @@ public class SnapshotViewModelTests : IDisposable
         // No snapshot may survive as usable — the truncated partial is deleted, not
         // finalised. (Before the fix this list held one usable, truncated snapshot.)
         Assert.Empty(await _store.ListSnapshotsAsync(ct));
+        // The list hides a capture in progress, so the delete itself shows only in the tables.
+        Assert.Equal((0L, 0L), await RawRowsAsync(ct));
     }
 
     // A disconnect BEFORE any snapshot row is created (bare OCE from BeginSnapshotAsync,
