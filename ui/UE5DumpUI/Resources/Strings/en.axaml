@@ -1578,9 +1578,11 @@
     <sys:String x:Key="str.TP.StHold">Hold @0</sys:String>
     <sys:String x:Key="str.TP.StReset">Reset</sys:String>
     <sys:String x:Key="str.Tip.TP.StDetect">Resolve the player pawn + its owned components and keyword-score reflected numeric fields for a stealth/visibility/detection meter. Read-only — loads the top candidate into the readout for you to verify before holding it. While a hold runs, it reads the held meter again and keeps holding it.</sys:String>
-    <sys:String x:Key="str.Tip.TP.StHold">Force the detected meter to 0 on every live instance of its class and hold it there (re-asserted on a timer). "N held" shows how many instances are held.</sys:String>
+    <sys:String x:Key="str.Tip.TP.StHold">Force the detected meter to 0 on every live instance of its class and hold it there (re-asserted on a timer). "N held" shows how many instances are held. With no live instance yet, the hold is armed and applies as soon as one spawns.</sys:String>
     <sys:String x:Key="str.Tip.TP.StReset">Release the hold — restore the captured base value and stop holding the meter.</sys:String>
     <sys:String x:Key="str.TP.StDetectWhileHolding">Still holding {0} at 0 (Detect found {1} candidate(s)). Reset first to hold a different meter.</sys:String>
+    <sys:String x:Key="str.TP.StArmed">⏳ Hold @0 on {0} is ARMED but holding nothing yet — no live instance of {1} or any subclass exists right now. It applies as soon as one spawns; Reset releases it.</sys:String>
+    <sys:String x:Key="str.TP.StRearmRefused">Hold @0 refused (DLL error {0}). The earlier hold on {1} stays armed; Reset releases it.</sys:String>
     <sys:String x:Key="str.TP.FgHeader">Keep Foreground</sys:String>
     <sys:String x:Key="str.TP.FgState">State:</sys:String>
     <sys:String x:Key="str.TP.FgHint">Force the game to always behave as the foreground app so it doesn't idle/pause its game thread when unfocused (t.IdleWhenNotForeground). Needed for POV / UFunction invokes on games that halt when backgrounded — e.g. Persona 3 Reload. Off by default.</sys:String>

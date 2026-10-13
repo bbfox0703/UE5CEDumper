@@ -166,8 +166,9 @@ is **persisted**.
 > opened this session. An untick **turns off what the features run in the
 > game**: while connected, at once -- `TeleportViewModel`'s teardown turns off
 > Fly when the DLL last said its worker runs (with no pawn too: the card then
-> reads Unavailable, and the worker flies the next pawn), See-through and a
-> Holding Stealth when their cards read them running, then Keep Foreground --
+> reads Unavailable, and the worker flies the next pawn), See-through when its
+> card reads it running and the Stealth card's own hold (holding, or armed for
+> an instance to spawn, which Solide keeps however the badge reads), then Keep Foreground --
 > last, because the game is unfocused at an untick and one that idles then
 > could not run the un-hide or the collision restore, which need its game
 > thread -- and releases the experimental hotkeys only after; a
@@ -190,8 +191,9 @@ is **persisted**.
 > whatever the switch, listing the holds as last read (at a connect, when its
 > panel attaches, after its own actions) -- the way out for a Stealth hold the
 > card could not claim, as when the connect found no pawn to match it to.
-> Detect, pressed while the Stealth card holds, only reads: it keeps the badge
-> and the held meter that Reset and the teardown release.
+> Detect, pressed while the Stealth card's hold is holding or armed, only
+> reads: it keeps the badge and the held meter that Reset and the teardown
+> release.
 > **How it got here.** The maintainer first chose 「只能在斷線時取消 + 保留防線」
 > (untick only while disconnected, plus the defence line), on the premise that
 > a disconnect ends what an experimental feature holds. The review found it

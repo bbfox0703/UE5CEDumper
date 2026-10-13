@@ -431,8 +431,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         // [EXPOFF-TEARDOWN] Turning the features off hides the Force submenu but releases no hold: the forced-fields
         // strip stays, whatever the gate, with its own remove and Clear all. It lists the holds as last read -- at a
         // connect, when the panel attaches, after its own actions -- so a hold made elsewhere since shows at the next
-        // of those. (The Teleport Stealth card releases its own meter hold, whose card does hide; one the card could
-        // not claim, as when the connect found no pawn to match it to, is left to this strip.)
+        // of those. (The Teleport Stealth card releases its own meter hold, holding or armed for an instance to spawn,
+        // whose card does hide; one the card could not claim, as when the connect found no pawn to match it to, is left
+        // to this strip.)
         OnPropertyChanged(nameof(ForceEnabled));
         OnPropertyChanged(nameof(ForceMenuVisible));
     }

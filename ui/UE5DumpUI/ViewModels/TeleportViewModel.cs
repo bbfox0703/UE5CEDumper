@@ -957,6 +957,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // game) shows the old game's hold and Hold @0 would send its stale
             // class::field. (L13)
             _stealthCandidate = null;
+            _stealthArmed = false;   // the hold outlives the pipe; the connect prime claims it again if it can
             StealthFieldText = "—";
             ApplyStealthState(-1);   // [A4-STEALTH-PRIME] Unknown until the connect prime reads the DLL's holds
         }
@@ -1812,8 +1813,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             "God Mode (toggle)", UE5DumpUI.Services.ProtectionScriptGenerator.Generate());
 
     // ── Player stealth meter (Solide via find_stealth_meter + force_field) ──
-    /// <summary>Tri-state badge: "Holding @0" (green) / "Off" / "Ready" / "Not
-    /// found" (amber). The meter is auto-found on the local pawn + its owned
+    /// <summary>Badge: "Holding @0" (green) / "Armed @0" (amber: held as soon as an
+    /// instance spawns) / "Off" / "Ready" / "Not found" (amber) / "Unknown". The meter
+    /// is auto-found on the local pawn + its owned
     /// components (keyword-scored numeric field) and held at 0 by the DLL's
     /// force-and-hold worker — the honest, per-game subset of "enemies can't detect
     /// you" (there is no universal detection bool; docs/godmode-spec.md §3.2).</summary>
@@ -1823,10 +1825,20 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// the user can verify the auto-find picked the right meter before holding it.</summary>
     [ObservableProperty] private string _stealthFieldText = "—";
 
-    /// <summary>Badge text set while the meter is actively held at 0 — the single source
-    /// of truth for "a hold is live", so the experimental gate-off teardown knows to
-    /// release it. (M9)</summary>
+    /// <summary>Badge text while the meter is held at 0 on at least one live instance. What the card releases is
+    /// decided by <see cref="_stealthArmed"/>, not by this text: other answers overwrite the badge while the DLL's job
+    /// runs on.</summary>
     private const string StealthHoldingState = "Holding @0";
+
+    /// <summary>Badge text while the DLL keeps the card's hold armed with no live instance to write: Solide applies it
+    /// as soon as one spawns.</summary>
+    private const string StealthArmedState = "Armed @0";
+
+    /// <summary>[EXPOFF-ROUND3-PAUSED] The DLL keeps a hold job on <see cref="_stealthCandidate"/> that this card set,
+    /// or that the connect prime claimed as the meter's: what Reset releases, what Detect leaves alone, and what the
+    /// experimental teardown releases (M9). Its own flag because Solide keeps a job the card's answer does not say is
+    /// holding -- one that matched no instance yet, and an armed one whose re-arm was refused.</summary>
+    private bool _stealthArmed;
 
     /// <summary>[A4-STEALTH-PRIME] The Stealth card's hold badge, in the shape every other card's badge has
     /// (<c>Apply&lt;X&gt;State</c>, which gate 17d reads): -1 Unknown, 0 Off, 1 Holding. The disconnect branch set "Off"
@@ -1853,10 +1865,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var cands = await _dump.FindStealthMeterAsync();
-            // [EXPOFF-ROUND3-PAUSED] While a hold runs, the badge and the held meter are what Reset and the experimental
-            // teardown release, so Detect only reads: overwritten, they released nothing (or the newly found field)
-            // while Solide went on forcing the meter.
-            if (StealthState == StealthHoldingState && _stealthCandidate is { } held)
+            // [EXPOFF-ROUND3-PAUSED] While a hold is armed, the held meter is what Reset and the experimental teardown
+            // release, so Detect only reads: overwritten, they released the newly found field or none while Solide
+            // went on forcing the meter.
+            if (_stealthArmed && _stealthCandidate is { } held)
             {
                 var now = cands.FirstOrDefault(c => c.ClassName == held.ClassName && c.FieldName == held.FieldName);
                 if (now != null) StealthFieldText = $"{held.ClassName}::{held.FieldName} = {now.Current:0.###} (held)";
@@ -1900,10 +1912,25 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var r = await _dump.ForceFieldAsync(c.ClassName, c.FieldName, "numeric", 0);
-            if (r.Code < 0 || r.Held == 0)
+            if (r.Code < 0)
             {
+                // Refused. Solide drops a new job it refused but keeps one already armed (it was asked to re-arm the
+                // hold, not to remove it), so the card's own hold, if it had one, still runs and stays its to release.
+                if (_stealthArmed)
+                {
+                    StatusText = Res.Format("str.TP.StRearmRefused", r.Code, c.FieldName);
+                    return;
+                }
                 (StealthState, StealthBadgeColor) = ("Not found", "#C9A04E");
-                StatusText = $"Hold failed: {(r.Held == 0 ? "no live instance matched" : $"DLL error {r.Code}")}.";
+                StatusText = $"Hold failed: DLL error {r.Code}.";
+                return;
+            }
+            // Code 0: Solide kept the job, whatever it holds this instant (audit #5 Z11, as Property Search's Force).
+            _stealthArmed = true;
+            if (r.Held == 0)
+            {
+                (StealthState, StealthBadgeColor) = (StealthArmedState, "#E0A050");
+                StatusText = Res.Format("str.TP.StArmed", c.FieldName, c.ClassName);
                 return;
             }
             (StealthState, StealthBadgeColor) = (StealthHoldingState, "#4EC9B0");
@@ -1932,6 +1959,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             ClearError();
             if (_stealthCandidate != null)
                 await _dump.ResetFieldAsync(_stealthCandidate.ClassName, _stealthCandidate.FieldName);
+            _stealthArmed = false;
             (StealthState, StealthBadgeColor) = ("Off", "#999999");
             StatusText = "Released the stealth-meter hold.";
         }
@@ -2514,7 +2542,12 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         if (!IsConnected) return;
         var forced = await _dump.GetForcedFieldsAsync();
-        if (forced.Count == 0) { ApplyStealthState(0); return; }
+        if (forced.Count == 0)
+        {
+            _stealthArmed = false;
+            ApplyStealthState(0);
+            return;
+        }
         var cands = await _dump.FindStealthMeterAsync();
         UE5DumpUI.Models.StealthCandidate? held = null;
         foreach (var c in cands)
@@ -2529,8 +2562,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             }
             if (held != null) break;
         }
+        // Unmatched, the hold is left as the card knew it: a disconnect has already cleared the card's claim, and the
+        // main window's second prime of one connect must not drop a hold made between the two.
         if (held == null) { ApplyStealthState(-1); return; }
         _stealthCandidate = held;
+        _stealthArmed = true;
         StealthFieldText = $"{held.ClassName}::{held.FieldName} = 0 (held)";
         ApplyStealthState(1);
     }
@@ -4924,16 +4960,17 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>[EXPOFF-TEARDOWN] Fly, See-through and a Stealth hold, each only when the last reading says it runs
-    /// (Fly's is the DLL's own flag, which a no-pawn badge does not show). One at a time: each command sets IsBusy and
-    /// the status line, and the pipe serves them in order anyway.</summary>
+    /// (Fly's is the DLL's own flag, which a no-pawn badge does not show; Stealth's is the card's own armed hold, which
+    /// its badge does not always show). One at a time: each command sets IsBusy and the status line, and the pipe
+    /// serves them in order anyway.</summary>
     private async Task TurnOffRunningExperimentalAsync()
     {
         if (_flyActive) await ResetFlyCommand.ExecuteAsync(null);
         if (_seeThroughActive) await ResetSeeThroughCommand.ExecuteAsync(null);
-        // Release an active Solide stealth-meter hold too — its card is about to be
+        // Release the card's Solide stealth-meter hold too, holding or armed — its card is about to be
         // hidden (IsVisible=ExperimentalEnabled), so a live re-assert worker would
         // otherwise keep writing game memory with no visible way to stop it. (M9)
-        if (StealthState == StealthHoldingState) await ResetStealthCommand.ExecuteAsync(null);
+        if (_stealthArmed) await ResetStealthCommand.ExecuteAsync(null);
     }
 
     /// <summary>Register the saved combos for the experimental-feature hotkeys.

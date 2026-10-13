@@ -747,8 +747,10 @@ public class TeleportViewModelTests
     }
 
     [Fact]
-    public async Task HoldStealth_zero_held_shows_not_found()
+    public async Task HoldStealth_zero_held_shows_armed()
     {
+        // [EXPOFF-ROUND3-PAUSED] Held 0 with code 0 is a job Solide KEPT: it applies as soon as an instance spawns.
+        // This read "Not found" and "Hold failed" while the DLL forced the meter on the next spawn.
         var fake = new FakeDumpService
         {
             NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "C", FieldName = "F" } },
@@ -760,7 +762,27 @@ public class TeleportViewModelTests
         await vm.DetectStealthMeterCommand.ExecuteAsync(null);
         await vm.HoldStealthCommand.ExecuteAsync(null);
 
+        Assert.Equal("Armed @0", vm.StealthState);
+        Assert.DoesNotContain("Hold failed", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HoldStealth_refused_with_nothing_armed_shows_not_found()
+    {
+        // A negative code on a first hold: Solide dropped the job it refused, so nothing is armed.
+        var fake = new FakeDumpService
+        {
+            NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "C", FieldName = "F" } },
+            NextForce = new() { Held = 0, Resolved = false, Code = -3 },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        await vm.HoldStealthCommand.ExecuteAsync(null);
+
         Assert.Equal("Not found", vm.StealthState);
+        Assert.Contains("DLL error -3", vm.StatusText, StringComparison.Ordinal);
     }
 
     [Fact]
