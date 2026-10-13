@@ -2312,6 +2312,37 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void AutoOverAnOverride_PutsTheClimbedVersionInForce()
+    {
+        // [OVERRIDE-REVIEW2-LOWS] The record holds the version from BEFORE init's structural ladder, so the version Auto
+        // hands back is the one the ladder climbs it to -- Elliot's cached 4.27 fallback is a UE5 title. The pin above
+        // checks only that the ladder is CALLED; a Restored arm that climbed and then put the record's own version in
+        // force (the review's mutant M2) kept it green. Fern.cpp reaches no test target, so the value is pinned here:
+        // the record's version goes into the ladder, the ladder's result is the one refined and put in force, nothing
+        // else in the arm assigns the version, and a ladder that lowered the label to UE4 leaves it low-confidence.
+        var fern = DllSource("Fern.cpp").Replace("\r\n", "\n");
+        int handler = fern.IndexOf("if (cmd == Renge::CMD_SET_UE_VERSION_OVERRIDE)", StringComparison.Ordinal);
+        Assert.True(handler >= 0, "the set_ue_version_override handler was not found");
+        int restored = fern.IndexOf("if (plan.outcome == Flamme::AutoRestore::Restored) {", handler,
+                                    StringComparison.Ordinal);
+        Assert.True(restored > handler, "the Restored arm was not found");
+        int pending = fern.IndexOf("} else if (plan.outcome != Flamme::AutoRestore::NotOverridden) {", restored,
+                                   StringComparison.Ordinal);
+        Assert.True(pending > restored, "the Restored arm's end was not found");
+        var arm = fern[restored..pending];
+
+        var climb = System.Text.RegularExpressions.Regex.Match(arm,
+            @"const DynOff::StructuralVersion climbed = FrierenInit::CorrectVersionStructurally\(\s*plan\.version,\s*/\*userOverride=\*/false,");
+        Assert.True(climb.Success, "the record's version must be what climbs the ladder, as a detection");
+        var inForce = System.Text.RegularExpressions.Regex.Match(arm,
+            @"g_cachedUEVersion\s*=\s*DynOff::RefineVersionFromLazyMarkers\(\s*climbed\.version,");
+        Assert.True(inForce.Success, "the version put in force must be the ladder's result, refined");
+        Assert.True(inForce.Index > climb.Index, "the version must be put in force after the ladder has climbed");
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(arm, @"\bg_cachedUEVersion\s*=[^=]"));
+        Assert.Contains("g_cachedIsLowConfidence = plan.lowConfidence || climbed.loweredToUE4;", arm);
+    }
+
+    [Fact]
     public void ApplyRescan_ClimbsTheVersionLadder_WhenItRunsTheFirstOffsetsProbe()
     {
         // [VER-MARKERS-PAST-504] Init climbs its version ladder right after the offsets probe, and skips both when
