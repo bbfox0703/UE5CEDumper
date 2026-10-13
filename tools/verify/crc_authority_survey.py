@@ -35,6 +35,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -106,8 +107,12 @@ def fallback_probe(path):
 
 
 def code_of(line):
-    """The version code one line of pe_version_probe's output names, as text; "" when it names none."""
-    return line.rsplit("->", 1)[1].strip() if "->" in line else ""
+    """The version code one line of pe_version_probe's output names, as text; "" when it names none. The digits right
+    after the line's last '->' that has any: the probe's lines also carry an arrow with no code ('FALLS THROUGH ->
+    memory-string Tier 1') and text after the code ('(overrules fixed 405)'), so the tail after the last arrow is not
+    the code."""
+    codes = re.findall(r"->\s*(\d+)", line)
+    return codes[-1] if codes else ""
 
 
 def find_editors():

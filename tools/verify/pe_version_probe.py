@@ -453,7 +453,7 @@ def verdict_text(r):
     if k == "fixed":
         return f"Tier0 {r['key']} -> {r['code']}"
     if k == "string":
-        return f"Tier0 STRING {r['key']}='{r['string']}'"
+        return f"Tier0 STRING {r['key']}='{r['string']}' -> {r['code']}"
     if k == "build string":
         over = f" (overrules fixed {r['overruled']})" if r["overruled"] else ""
         return f"Tier0 BUILD STRING {r['key']}='{r['string']}' -> {r['code']}{over}"
