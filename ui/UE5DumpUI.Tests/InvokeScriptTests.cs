@@ -2509,12 +2509,12 @@ public class InvokeScriptTests
 
         var src = CodeOnly(DllSource("Solitar.cpp").Replace("\r\n", "\n"));
 
-        // Outside the helpers a mask is read twice: the God Mode scan logs the FieldMask it resolved, and the trainer
-        // export bakes a single-bit mask (its Lua does its own read-modify-write).
+        // Outside the helpers one mask is read: the God Mode scan logs the FieldMask it resolved. The trainer export's
+        // single-bit mask is Solitar::TrainerMaskFor's (dll_helpers_test): its Lua does its own read-modify-write.
         var maskUses = System.Text.RegularExpressions.Regex.Matches(src, @"[\w.]*\.(?:mask|fieldMask|byteMask)\b")
             .Select(m => m.Value).OrderBy(v => v, StringComparer.Ordinal).ToArray();
-        Assert.Equal(new[] { "b.mask", "bits.byteMask", "t.bits.fieldMask" }, maskUses);
-        Assert.Contains("b.mask = bits.byteMask;", src, StringComparison.Ordinal);
+        Assert.Equal(new[] { "b.mask", "t.bits.fieldMask" }, maskUses);
+        Assert.Contains("b.mask = TrainerMaskFor(bits);", src, StringComparison.Ordinal);
 
         var paths = new (string Signature, string? Write)[]
         {

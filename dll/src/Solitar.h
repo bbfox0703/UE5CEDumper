@@ -21,13 +21,11 @@ namespace Solitar {
 // PAWN base so a standalone CE-Lua trainer can freeze the bit without the DLL.
 // ByteOffset = FBoolProperty.Offset + within-byte ByteOffset; Mask is a single
 // bit; Protect is the bit value that means "protected" (what GodMode ON writes).
-// [SOLIDE-NATIVE-BOOL] A native bool exports its ByteMask, 0x01: the trainer's
-// single-bit read-modify-write over the 0 / 1 a C++ bool holds then writes
-// exactly 0x01 / 0x00, what UE itself writes.
+// A native bool's whole byte still bakes one bit: TrainerMaskFor says why.
 struct ProtectBit {
     std::string name;       // property name (e.g. "bCanBeDamaged")
     int32_t     byteOffset; // absolute byte offset from the pawn base
-    uint8_t     mask;       // single-bit mask
+    uint8_t     mask;       // single-bit mask (TrainerMaskFor)
     int8_t      protect;    // bit value meaning "protected" (0 for bCanBeDamaged)
 };
 
@@ -73,6 +71,15 @@ inline bool ReadBoolValue(uint8_t cur, const BoolBits& b) {
 
 inline uint8_t WriteBoolValue(uint8_t cur, const BoolBits& b, bool value) {
     return static_cast<uint8_t>((cur & ~b.fieldMask) | (value ? b.byteMask : 0));
+}
+
+// [SOLIDE-NATIVE-BOOL] review: the mask a standalone trainer bakes for a protection bool. Its Lua sets and clears ONE
+// bit by arithmetic -- isSet = floor(byte / mask) % 2, then byte + mask or byte - mask -- so the mask must be a single
+// bit, and true must land as UE's own value: a packed bool's bit, a native bool's ByteMask 0x01, which over the 0 / 1 a
+// C++ bool holds writes exactly 0x01 / 0x00. A native bool's FieldMask 0xFF would write 0xFF over 0x00 (the value
+// [A3-BOOL-NATIVE-NOWRITE] forbids) and 0x100 -- stored as 0x00 -- over 0x01, turning protection OFF when asked ON.
+inline uint8_t TrainerMaskFor(const BoolBits& b) {
+    return b.fieldMask;
 }
 
 // A bool property's layout from the {FieldSize, ByteOffset, ByteMask, FieldMask} quads read at each probed offset,

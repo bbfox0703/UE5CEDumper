@@ -4589,6 +4589,45 @@ static void Test_Solitar_BoolBits() {
     EXPECT("BOOLBITS control: a packed bool reads and writes exactly as ApplyBoolBit did", differ == 0);
 }
 
+// ----- Solitar::TrainerMaskFor (the mask get_trainer_offsets' god_bits bakes) -----
+// [SOLIDE-NATIVE-BOOL] review: since a native bool resolves, its mask reaches the standalone trainer, whose Lua does its
+// own single-bit arithmetic. setbit below is that Lua, step for step; CE's writeByte keeps the low 8 bits.
+static void Test_Solitar_TrainerMaskFor() {
+    using Solitar::BoolBits;
+    using Solitar::TrainerMaskFor;
+    auto setbit = [](uint8_t cur, unsigned mask, int want) -> uint8_t {
+        const unsigned isSet = (cur / mask) % 2;
+        if (want == 1 && isSet == 0) return static_cast<uint8_t>((cur + mask) & 0xFF);
+        if (want == 0 && isSet == 1) return static_cast<uint8_t>((cur - mask) & 0xFF);
+        return cur;
+    };
+    auto oneBit = [](unsigned m) { return m != 0 && (m & (m - 1)) == 0; };
+
+    const BoolBits native{ 0, 0xFF, 0x01 };
+    const unsigned nm = TrainerMaskFor(native);
+    EXPECT_EQ_U64("TRAINERMASK ⭐: a native bool bakes its ByteMask, 0x01", nm, 0x01);
+    EXPECT_EQ_U64("TRAINERMASK ⭐: ...so the trainer's ON over 0x00 writes 0x01, never 0xFF", setbit(0x00, nm, 1), 0x01);
+    EXPECT_EQ_U64("TRAINERMASK ⭐: ...ON over 0x01 leaves it ON (not 0x100, stored as 0x00)", setbit(0x01, nm, 1), 0x01);
+    EXPECT_EQ_U64("TRAINERMASK: ...OFF over 0x01 writes 0x00", setbit(0x01, nm, 0), 0x00);
+    EXPECT_EQ_U64("TRAINERMASK: ...OFF over 0x00 leaves it 0x00", setbit(0x00, nm, 0), 0x00);
+
+    // A packed bool bakes its own bit, and the trainer then writes what WriteBoolValue writes, for every byte.
+    int wrongMask = 0, differ = 0;
+    for (int bit = 0; bit < 8; ++bit) {
+        const uint8_t m = static_cast<uint8_t>(1u << bit);
+        const BoolBits packed{ 3, m, m };
+        const unsigned pm = TrainerMaskFor(packed);
+        if (pm != m || !oneBit(pm)) ++wrongMask;
+        for (int cur = 0; cur < 256; ++cur)
+            for (int want : { 0, 1 })
+                if (setbit(static_cast<uint8_t>(cur), pm, want)
+                    != Solitar::WriteBoolValue(static_cast<uint8_t>(cur), packed, want == 1))
+                    ++differ;
+    }
+    EXPECT("TRAINERMASK control: a packed bool bakes its own bit", wrongMask == 0);
+    EXPECT("TRAINERMASK control: ...and the trainer writes it exactly as WriteBoolValue does", differ == 0);
+}
+
 // ----- Solitar::MatchProtectionBool (T2 generic invincibility-flag matcher) ---
 // Polarity is the bug-prone part: a wrong value would ENABLE damage. Lock the
 // keyword set + protect-value for each known flag, and confirm unrelated /
@@ -10297,6 +10336,7 @@ int main() {
     // Solitar GodMode — FBoolProperty single-bit read-modify-write
     RUN(Test_Solitar_ApplyBoolBit);
     RUN(Test_Solitar_BoolBits);   // [SOLIDE-NATIVE-BOOL] God Mode / Force on a native bool
+    RUN(Test_Solitar_TrainerMaskFor);   // ...and the mask the standalone trainer bakes for one
     RUN(Test_Solitar_MatchProtectionBool);
     RUN(Test_Solide_MatchStealthField);
     RUN(Test_Solide_IntWidthAndRange);
