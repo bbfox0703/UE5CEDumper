@@ -293,6 +293,27 @@ public class ExperimentalTeardownTests : IDisposable
         Assert.Equal("Off", vm.StealthState);
     }
 
+    /// <summary>The round-3 review's LOW: an untick that came after a connect, but before its prime had read the DLL,
+    /// saw the flags the disconnect had reset; no connect teardown was started (the features were on), so what the
+    /// prime found running afterwards stayed on behind the hidden cards.</summary>
+    [Fact]
+    public async Task Unticked_before_the_connect_prime_lands_what_it_finds_running_goes_off()
+    {
+        var (vm, dll, hotkeys, gate) = Make(enabled: true);
+        dll.Fly = true;   // left by an earlier session, or a CE record
+        dll.HoldForegroundRead = new TaskCompletionSource<bool>();
+
+        vm.SetConnected(true);   // the prime waits on its foreground read; Fly is read after it
+        gate.IsEnabled = false;
+        dll.HoldForegroundRead.SetResult(true);
+        await vm.ConnectPrime;
+        await vm.ExperimentalTeardown;
+
+        Assert.Contains("fly", dll.Off);
+        Assert.False(dll.Fly);
+        Assert.Empty(hotkeys.Live);
+    }
+
     // ---- The review's MED: with no pawn the DLL answers Fly active and has_cmc false, the card reads Unavailable, and
     // the worker waits for a pawn and flies it again -- so a flight the card cannot show is still one to turn off.
 
