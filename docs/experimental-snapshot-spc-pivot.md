@@ -175,8 +175,11 @@ is **persisted**.
 > running Detect Stats scan is discarded -- and while disconnected, at the next
 > connect with the features still off, after the connect prime, from what it
 > reads in the DLL (never at a connect with them on). The untick stays owed in
-> `experimental.json` (`teardownOwed`) until a teardown has run to its end over
-> a live connection, so a restart in between keeps it; and only an owed untick
+> `experimental.json` (`teardownOwed`) until a teardown over a live connection
+> has known what ran and turned it all off -- every reading it decided from a
+> reply, every OFF it sent answered (a failed read or OFF, or a connect that
+> could not read Keep Foreground, leaves it to the next connect) -- so a restart
+> in between keeps it; and only an owed untick
 > is paid -- a connect with the features off and nothing owed leaves alone what
 > a CE record runs (Fly, Keep Foreground and See-through have mailbox
 > commands). Live Funcs gives a kept trace back to the game at the untick (its
