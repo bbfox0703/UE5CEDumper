@@ -3599,10 +3599,13 @@ architecture or UX changes in these areas.
   before they know the tool, and pick them up naturally once they are familiar with it. It is not there to make the UI
   a few tabs shorter. So do not judge an experimental-off layout by the lines or tabs it saves (a finding of that kind
   was withdrawn on this ground), and do not propose ungating a feature because the UI has room for it. The switch's
-  rules, the same day: the System tab's checkbox **ticks at any time but unticks only while disconnected** (ticked and
-  connected, it is disabled and its tooltip says to Disconnect first) -- one rule, not a per-feature test of what is
-  "running"; the session lock (an experimental tab opened) still wins; and Live Funcs offers a kept trace only while
-  the switch is on, as a defence line behind the rule. Design record:
+  rules, the same day: the System tab's checkbox **ticks and unticks at any time, connected or not**; only the session
+  lock (a tab that locks it, opened this session) disables it; and an untick **turns off what the features run in the
+  game** -- at once while connected, and at the next connect with the features off while disconnected, from what the
+  connect prime reads. ⛔ Do not re-propose "untick only while disconnected": it was built and reversed the same day,
+  because a disconnect does not end Keep Foreground, Fly or a Solide hold (the DLL's last-client teardown ends the
+  trace and See-through only), so it left them running behind hidden cards (`[EXPOFF-TEARDOWN]`). Live Funcs offers a
+  kept trace only while the switch is on, as a defence line. Design record:
   [experimental-snapshot-spc-pivot.md](experimental-snapshot-spc-pivot.md), Phase 0.
 
 Evaluations that concluded "do not build" live in the repo rather than here — see [README.md](README.md)'s

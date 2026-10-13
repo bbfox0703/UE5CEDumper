@@ -158,23 +158,33 @@ is **persisted**.
 > of this document, is the effect, not the reason. Settled in
 > [working-lessons.md](working-lessons.md) §6.
 
-> **Update (2026-10-09, `[LF-EXPOFF-TRACE]`):** the opt-in **ticks at any time
-> but unticks only while disconnected** (the maintainer's choice, 「只能在斷線時取消
-> + 保留防線」). Ticked and connected, the checkbox is disabled and its tooltip,
-> shown on the disabled box too (`ToolTip.ShowOnDisabled`), reads
-> `str.Experimental.DisconnectFirst`; a dropped pipe frees it as a Disconnect
-> does. `CanToggleExperimental` is now the session lock **and**
-> `ExperimentalUntickNeedsDisconnect` (ticked, connected, not locked); the lock
-> still wins, and a locked box keeps the plain tooltip, since a Disconnect would
-> not free it. Why one rule: what counts as "running" would have to be defined
-> per feature (Detect Stats is not in the lock's list), while a disconnect
-> already ends what the trace holds -- Live Funcs withdraws the offer and the
-> DLL drops the trace with the client -- and unticking is rare. Behind the rule,
-> a defence line: Live Funcs offers a kept trace (Open in Call Trace, its status
-> sentences) and opens the Call Trace tab only while the switch is on.
-> ⚠ The rule also means the checkbox can no longer reach Teleport's gate-off
-> teardown, which needs a connection: `[EXPOFF-TEARDOWN]` in
-> [todo.md](todo.md), the maintainer's call.
+> **Update (2026-10-09, `[LF-EXPOFF-TRACE]` `[EXPOFF-TEARDOWN]`):** the opt-in
+> **ticks and unticks at any time, connected or not**. `CanToggleExperimental`
+> is the session lock alone, and the locked box -- the only disabled state --
+> shows its tooltip (`ToolTip.ShowOnDisabled`), `str.Experimental.LockedForSession`:
+> the features stay on until the UI restarts, because a tab that locks them was
+> opened this session. An untick **turns off what the features run in the
+> game**: while connected, at once -- `TeleportViewModel`'s teardown turns Keep
+> Foreground OFF, then Fly, See-through and a Holding Stealth when their cards
+> read them running, and releases the experimental hotkeys only after; a
+> running Detect Stats scan is discarded -- and while disconnected, at the next
+> connect with the features still off, after the connect prime, from what it
+> reads in the DLL (never at a connect with them on). Behind it, a defence line:
+> Live Funcs offers a kept trace (Open in Call Trace, its status sentences) and
+> opens the Call Trace tab only while the switch is on, and a disconnect takes
+> the sentences off for good. The rest needs nothing: Snapshot, SPC Query, Class
+> Pivot and Call Trace lock the opt-in when opened; leaving Live Funcs for the
+> System tab stops a recording; Property Search's forced-fields strip shows
+> every hold whatever the switch.
+> **How it got here.** The maintainer first chose 「只能在斷線時取消 + 保留防線」
+> (untick only while disconnected, plus the defence line), on the premise that
+> a disconnect ends what an experimental feature holds. The review found it
+> does not -- the DLL's last-client teardown in `Fern` ends the trace and
+> See-through, not Keep Foreground, Fly or a Solide hold -- so the rule left
+> them running behind hidden cards with their hotkeys gone; offered three ways
+> out, the maintainer chose 「連線中也可取消，立即清理」 (untick while connected
+> too, and clean up at once). The record is `[LF-EXPOFF-TRACE]` in
+> [todo.md](todo.md).
 
 -----
 
