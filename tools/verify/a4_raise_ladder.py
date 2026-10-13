@@ -72,6 +72,21 @@ def current_rev():
     return int(m.group(1))
 
 
+def pe_hash(exe_path):
+    """The hint cache's key for an exe: PE TimeDateStamp then SizeOfImage, 16 upper-case hex digits.
+
+    A fixture repackaged N times leaves N entries under one gameName (DumperTest58 Shipping had 8 on
+    2026-10-14), so the name alone cannot say which entry the next launch will read; its own hash can.
+    """
+    b = pathlib.Path(exe_path).read_bytes()[:4096]
+    e = int.from_bytes(b[0x3C:0x40], "little")
+    if b[e:e + 4] != b"PE\0\0":
+        raise SystemExit("!! %s is not a PE image" % exe_path)
+    stamp = int.from_bytes(b[e + 8:e + 12], "little")
+    size_of_image = int.from_bytes(b[e + 24 + 56:e + 24 + 60], "little")
+    return "%08X%08X" % (stamp, size_of_image)
+
+
 def log_dir(flavour):
     stem = FLAVOUR_EXE[flavour][:-4]
     return pathlib.Path(os.environ["LOCALAPPDATA"]) / "UE5CEDumper" / "Logs" / stem
@@ -112,6 +127,13 @@ def main():
         doc = json.loads(original.decode("utf-8"))
         targets = [k for k, v in doc.get("games", {}).items()
                    if v.get("gameName") == exe]
+        if len(targets) > 1:
+            # Several builds of the fixture left entries under one name: seed the one this exe's own PE hash keys.
+            sys.path.insert(0, str(HERE))
+            from launch_dumpertest import FLAVOURS
+            own = pe_hash(FLAVOURS[a.flavour])
+            print("entries : %d under %s; this exe's PE hash is %s" % (len(targets), exe, own))
+            targets = [k for k in targets if k.upper() == own]
         if len(targets) != 1:
             raise SystemExit("!! expected exactly 1 cache entry for %s, found %d -- refusing "
                              "to guess which to seed" % (exe, len(targets)))
