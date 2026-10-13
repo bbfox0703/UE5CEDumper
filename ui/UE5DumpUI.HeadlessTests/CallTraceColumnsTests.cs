@@ -150,36 +150,45 @@ public class CallTraceColumnsTests
                         $"{what}: {spans[i].name} draws over {spans[i - 1].name} ({layout})");
     }
 
-    // [CT-DETAIL-COVERS-LIST] The list is narrower than its columns only where the panel is narrower than both floors:
-    // the pane keeps its 200 and the list, laid out as at its floor, is cut. 500: the list 276 wide (its header 272),
-    // narrower than the four columns as the floor lays them out (328), so Function has nothing left and Object is cut.
-    // 440: narrower than Time, Duration and Thread together (248), so Thread is cut too. (Before the floor, the step-3
-    // walkthrough reached the same lists with the pane dragged to 700 and 760 in a 1000 window.)
-    [Theory]
-    [InlineData(500)]
-    [InlineData(440)]
-    public Task A_narrow_list_keeps_every_header_column_out_of_the_next(double window) => Headless.Run(() =>
+    // [CT-DETAIL-COVERS-LIST] A list narrower than the 512 a row's columns are fitted to is laid out as at 512 and cut.
+    // The pane keeps its remembered 380 in both windows. 680: the list 276 wide (its header 272), narrower than the
+    // four columns as a fitted row lays them out (328), so Function has nothing left and Object is cut. 620: the list
+    // 216 (its header 212), narrower than Time, Duration and Thread together (248), so Thread is cut too. (The step-3
+    // walkthrough reached the same lists with the pane dragged to 700 and 760 in a 1000 window.) The header's width pins
+    // each window: below a 612 window the pane gives way before the list does, so any narrower one leaves a list of 208.
+    private static (Window window, CallTracePanel panel, CallTraceViewModel vm) LaidNarrow(double window, double header)
     {
-        var (_, panel, vm) = LaidIn(window, 380, Row);
+        var laid = LaidIn(window, 380, Row);
+        double shown = HeaderCell(laid.panel, "str.CT.Col.Time").GetVisualParent()!.Bounds.Width;
+        Assert.True(Math.Abs(shown - header) < 0.5, $"the header is {shown:0.#} wide in a {window} window, not {header}");
+        return laid;
+    }
+
+    [Theory]
+    [InlineData(680, 272)]
+    [InlineData(620, 212)]
+    public Task A_narrow_list_keeps_every_header_column_out_of_the_next(double window, double header) => Headless.Run(() =>
+    {
+        var (_, panel, vm) = LaidNarrow(window, header);
         AssertApart("header", panel, HeaderCells(panel, vm));
     });
 
     [Theory]
-    [InlineData(500)]
-    [InlineData(440)]
-    public Task A_narrow_list_keeps_every_row_column_out_of_the_next(double window) => Headless.Run(() =>
+    [InlineData(680, 272)]
+    [InlineData(620, 212)]
+    public Task A_narrow_list_keeps_every_row_column_out_of_the_next(double window, double header) => Headless.Run(() =>
     {
-        var (_, panel, vm) = LaidIn(window, 380, Row);
+        var (_, panel, vm) = LaidNarrow(window, header);
         AssertApart("row", panel, RowCells(panel, vm));
     });
 
     [Theory]
-    [InlineData(500)]
-    [InlineData(440)]
-    public Task What_does_not_fit_is_cut_at_the_list_and_never_drawn_over_the_detail_pane(double window)
+    [InlineData(680, 272)]
+    [InlineData(620, 212)]
+    public Task What_does_not_fit_is_cut_at_the_list_and_never_drawn_over_the_detail_pane(double window, double header)
         => Headless.Run(() =>
     {
-        var (_, panel, vm) = LaidIn(window, 380, Row);
+        var (_, panel, vm) = LaidNarrow(window, header);
         var tabs = panel.GetVisualDescendants().OfType<TabControl>().Single();
         var handle = ((Panel)tabs.GetVisualParent()!).Children.OfType<Thumb>().Single();
         double edge = Span(handle, panel).left;
