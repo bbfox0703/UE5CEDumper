@@ -538,6 +538,39 @@ public class ExperimentalTeardownTests : IDisposable
         Assert.Equal("Unknown", vm.StealthState);
     }
 
+    // The main window primes twice on one connect (the pipe's state handler, then the end of the scan), with no
+    // disconnect between to clear the card's claim: the second prime ends it only on a definite answer.
+
+    [Fact]
+    public async Task A_second_prime_that_cannot_match_the_cards_hold_leaves_it_the_cards()
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await DetectAndHold(vm);
+        dll.NoMeter = true;   // the pawn went between the two primes
+        await Connect(vm);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.Contains("reset_field " + FakeDll.Meter, dll.Off);
+        Assert.Empty(dll.Forced);
+    }
+
+    [Fact]
+    public async Task A_second_prime_that_finds_nothing_forced_ends_the_cards_hold()
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await DetectAndHold(vm);
+        dll.Forced.Clear();   // Property Search's Clear all, between the two primes
+        await Connect(vm);
+        Assert.Equal("Off", vm.StealthState);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.Equal(new[] { "foreground" }, dll.Off);
+    }
+
     // ---- The review's MED: with no pawn the DLL answers Fly active and has_cmc false, the card reads Unavailable, and
     // the worker waits for a pawn and flies it again -- so a flight the card cannot show is still one to turn off.
 
