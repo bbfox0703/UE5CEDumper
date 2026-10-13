@@ -2312,6 +2312,32 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void ApplyRescan_ClimbsTheVersionLadder_WhenItRunsTheFirstOffsetsProbe()
+    {
+        // [VER-MARKERS-PAST-504] Init climbs its version ladder right after the offsets probe, and skips both when
+        // GObjects is missing. apply_rescan then runs that first probe -- and never climbed, so a stripped UE5 title
+        // revived by a rescan kept its raw label (a 4.27 publisher fallback, say) for the whole session, with every
+        // version gate reading it. The ladder is DynOff::ApplyVersionLadder (pinned in dll_helpers_test); Fern.cpp
+        // reaches no test target, so the wiring is pinned here: the first-probe block climbs it, as the user's
+        // override if it is one, and applies the result as UE5_Init does.
+        var fern = DllSource("Fern.cpp").Replace("\r\n", "\n");
+        int handler = fern.IndexOf("if (cmd == Renge::CMD_APPLY_RESCAN) {", StringComparison.Ordinal);
+        Assert.True(handler >= 0, "the apply_rescan handler was not found");
+        int next = fern.IndexOf("if (cmd == Renge::CMD_TRIGGER_SCAN) {", handler, StringComparison.Ordinal);
+        Assert.True(next > handler, "the apply_rescan handler's end was not found");
+        var body = fern[handler..next];
+        int probe = body.IndexOf("if (!Genau::ValidateAndFixOffsets(g_cachedUEVersion)) {", StringComparison.Ordinal);
+        int hoisted = body.IndexOf("// GEngine's second pass is HOISTED", StringComparison.Ordinal);
+        Assert.True(probe >= 0 && hoisted > probe, "the first-probe block was not found");
+        var firstProbe = body[probe..hoisted];
+        Assert.Contains("FrierenInit::CorrectVersionStructurally(", firstProbe);
+        Assert.Contains("g_cachedUEVersion, g_cachedIsUserOverride, \"apply_rescan\");", firstProbe);
+        Assert.Contains("g_cachedUEVersion = climbed.version;", firstProbe);
+        Assert.Contains("if (climbed.loweredToUE4)", firstProbe);
+        Assert.Contains("g_cachedIsLowConfidence = true;", firstProbe);
+    }
+
+    [Fact]
     public void MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Init()
     {
         // [R7-S9] Two windows R7-C-05 left open. (1) EnsureInitialized passed `g_cachedGObjects != 0` and the flag load as
