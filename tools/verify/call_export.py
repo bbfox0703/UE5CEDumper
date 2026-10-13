@@ -96,6 +96,9 @@ def main(argv=None):
     ap.add_argument("--dll", default="dist/UE5Dumper.dll")
     ap.add_argument("--module", default="UE5Dumper.dll")
     ap.add_argument("--timeout", type=float, default=20.0)
+    # One integer for an export that takes one (UE5_SetFly(1), as a CE record calls it): the remote thread's
+    # parameter lands in RCX, the first argument under the x64 convention. Without it the parameter is NULL (0).
+    ap.add_argument("--arg", type=lambda s: int(s, 0), default=None)
     a = ap.parse_args(argv)
 
     pid = pid_of(a.process)
@@ -113,7 +116,8 @@ def main(argv=None):
                                        ctypes.c_void_p, ctypes.c_void_p, wt.DWORD,
                                        ctypes.POINTER(wt.DWORD)]
     t0 = time.time()
-    th = k32.CreateRemoteThread(h, None, 0, ctypes.c_void_p(target), None, 0, None)
+    param = None if a.arg is None else ctypes.c_void_p(a.arg)
+    th = k32.CreateRemoteThread(h, None, 0, ctypes.c_void_p(target), param, 0, None)
     if not th:
         raise SystemExit("call_export: CreateRemoteThread failed (%d)" % ctypes.get_last_error())
     rc = k32.WaitForSingleObject(th, int(a.timeout * 1000))
