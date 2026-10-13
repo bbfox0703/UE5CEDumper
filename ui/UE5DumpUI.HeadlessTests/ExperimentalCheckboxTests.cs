@@ -33,6 +33,7 @@ internal sealed class SwitchGate(bool enabled) : IExperimentalGate
     }
 
     public int SnapshotQuotaMb { get; set; }
+    public bool TeardownOwed { get; set; }
     public bool IsLocked { get; private set; }
 
     public void Lock()

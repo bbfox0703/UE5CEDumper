@@ -60,6 +60,8 @@ public sealed class ExperimentalGate : IExperimentalGate
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
+    public bool TeardownOwed { get; set; }
+
     public int SnapshotQuotaMb
     {
         get => _quotaMb;

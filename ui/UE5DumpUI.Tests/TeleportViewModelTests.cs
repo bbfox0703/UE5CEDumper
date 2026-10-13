@@ -274,8 +274,15 @@ public class TeleportViewModelTests
         public bool IsEnabled
         {
             get => _enabled;
-            set { if (_enabled == value) return; _enabled = value; Changed?.Invoke(this, EventArgs.Empty); }
+            set
+            {
+                if (_enabled == value) return;
+                _enabled = value;
+                TeardownOwed = !value;   // as the app's gate: an untick owes a teardown, a tick owes none
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
         }
+        public bool TeardownOwed { get; set; }
         public int SnapshotQuotaMb { get; set; } = 1024;
         public bool IsLocked => false;
         public void Lock() { }

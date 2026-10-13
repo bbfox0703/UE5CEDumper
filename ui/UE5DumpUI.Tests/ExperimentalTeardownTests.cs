@@ -144,8 +144,9 @@ public class ExperimentalTeardownTests : IDisposable
         }
     }
 
-    /// <summary>The opt-in as the app's gate behaves when unlocked: Changed on a real flip.</summary>
-    private sealed class Switch(bool enabled) : IExperimentalGate
+    /// <summary>The opt-in as the app's gate behaves when unlocked: Changed on a real flip, and an untick owes a
+    /// teardown that a tick withdraws. <paramref name="owed"/> is what an earlier session left in experimental.json.</summary>
+    private sealed class Switch(bool enabled, bool owed = false) : IExperimentalGate
     {
         private bool _enabled = enabled;
 
@@ -156,10 +157,12 @@ public class ExperimentalTeardownTests : IDisposable
             {
                 if (_enabled == value) return;
                 _enabled = value;
+                TeardownOwed = !value;
                 Changed?.Invoke(this, EventArgs.Empty);
             }
         }
 
+        public bool TeardownOwed { get; set; } = owed;
         public int SnapshotQuotaMb { get; set; }
         public bool IsLocked => false;
         public void Lock() { }
@@ -167,7 +170,7 @@ public class ExperimentalTeardownTests : IDisposable
     }
 
     /// <summary>Teleport with the experimental hotkeys Keep Foreground OFF and Fly toggle bound, as saved.</summary>
-    private (TeleportViewModel vm, FakeDll dll, Hotkeys hotkeys, Switch gate) Make(bool enabled)
+    private (TeleportViewModel vm, FakeDll dll, Hotkeys hotkeys, Switch gate) Make(bool enabled, bool owed = false)
     {
         var platform = new MockPlatformService(_dir);
         new TeleportHotkeyStore(platform).Save(new Dictionary<string, TeleportHotkeyBinding>
@@ -177,7 +180,7 @@ public class ExperimentalTeardownTests : IDisposable
         });
         var dll = new FakeDll();
         var hotkeys = new Hotkeys();
-        var gate = new Switch(enabled);
+        var gate = new Switch(enabled, owed);
         var vm = new TeleportViewModel(dll, new MockLoggingService(), platform, aobMaker: null,
                                        globalHotkeys: hotkeys, experimentalGate: gate);
         return (vm, dll, hotkeys, gate);
@@ -383,20 +386,97 @@ public class ExperimentalTeardownTests : IDisposable
     }
 
     [Fact]
-    public async Task A_connect_with_the_features_off_and_nothing_running_sends_nothing()
+    public async Task A_connect_that_owes_a_teardown_with_nothing_running_sends_nothing()
     {
-        // The default for a new user: a connect costs no round trip and keeps its "Connected".
-        var (vm, dll, _, _) = Make(enabled: false);
+        // Keep Foreground goes off only when the prime read it ON: an OFF at every such connect would cost a round
+        // trip and stamp over its "Connected". What was owed is then paid.
+        var (vm, dll, _, gate) = Make(enabled: false, owed: true);
 
         await Connect(vm);
         Assert.Empty(dll.Off);
         Assert.Equal("Connected", vm.StatusText);
+        Assert.False(gate.TeardownOwed);
+    }
+
+    // ---- The round-3 review's LOW: the connect teardown ran at EVERY connect with the features off, not only after an
+    // untick made while disconnected (the maintainer's words). Fly, Keep Foreground and See-through can be driven from
+    // CE through the mailbox, so a UI connect reset a flight a CE record had started, and its record stayed ticked.
+
+    [Fact]
+    public async Task A_connect_with_the_features_off_and_no_untick_owed_leaves_what_runs_alone()
+    {
+        var (vm, dll, _, _) = Make(enabled: false);
+        dll.Foreground = 1;
+        dll.Fly = true;
+        dll.SeeThrough = true;
+        dll.HoldTheMeter();
+
+        await Connect(vm);
+        Assert.Empty(dll.Off);
+        Assert.True(dll.Fly);
+        Assert.Equal(1, dll.Foreground);
+        Assert.Equal("Connected", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task An_untick_whose_teardown_ran_owes_nothing_to_the_next_connect()
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await TurnAllOn(vm);
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.Equal(AllOff, dll.Off);
+        Assert.False(gate.TeardownOwed);
+
+        vm.SetConnected(false);
+        dll.Fly = true;   // a CE record, with the features off
+        await Connect(vm);
+        Assert.Equal(AllOff, dll.Off);   // nothing more
+        Assert.True(dll.Fly);
+    }
+
+    [Fact]
+    public async Task An_untick_made_while_disconnected_is_paid_at_the_next_connect_only()
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await TurnAllOn(vm);
+        vm.SetConnected(false);
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.True(gate.TeardownOwed);
+
+        await Connect(vm);
+        Assert.Equal(AllOff, dll.Off);
+        Assert.False(gate.TeardownOwed);
+
+        vm.SetConnected(false);
+        dll.Fly = true;   // a CE record, after the teardown was paid
+        await Connect(vm);
+        Assert.Equal(AllOff, dll.Off);
+        Assert.True(dll.Fly);
+    }
+
+    [Fact]
+    public async Task An_untick_whose_teardown_lost_the_connection_stays_owed()
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await TurnAllOn(vm);
+        dll.HoldForegroundOff = new TaskCompletionSource<bool>();
+
+        gate.IsEnabled = false;
+        vm.SetConnected(false);   // the pipe drops before Keep Foreground's OFF is answered
+        dll.HoldForegroundOff.SetResult(true);
+        await vm.ExperimentalTeardown;
+        Assert.True(gate.TeardownOwed);
     }
 
     [Fact]
     public async Task Ticked_before_the_connect_prime_lands_nothing_is_turned_off()
     {
-        var (vm, dll, _, gate) = Make(enabled: false);
+        var (vm, dll, _, gate) = Make(enabled: false, owed: true);
         dll.Foreground = 1;
         dll.HoldForegroundRead = new TaskCompletionSource<bool>();
 
@@ -415,7 +495,7 @@ public class ExperimentalTeardownTests : IDisposable
     {
         // The main window calls SetConnected(true) twice on one connect: from the pipe's state handler, and again once
         // the scan has finished. The later prime reads the DLL again, so the earlier one's teardown stands aside.
-        var (vm, dll, _, _) = Make(enabled: false);
+        var (vm, dll, _, _) = Make(enabled: false, owed: true);
         dll.Foreground = 1;
         dll.HoldForegroundRead = new TaskCompletionSource<bool>();
 

@@ -7,8 +7,9 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// Locks the ExperimentalGate persistence contract: default off, survives a
-/// round-trip through a fresh instance, raises Changed only on real flips, and
-/// writes to %AppData%\UE5CEDumper\experimental.json. Reuses
+/// round-trip through a fresh instance, raises Changed only on real flips, keeps
+/// an untick's owed teardown across a restart, and writes to
+/// %AppData%\UE5CEDumper\experimental.json. Reuses
 /// <see cref="MockPlatformService"/> from AobUsageServiceTests.
 /// </summary>
 public class ExperimentalGateTests : IDisposable
@@ -169,5 +170,72 @@ public class ExperimentalGateTests : IDisposable
         Assert.False(reopened.IsLocked);
         reopened.IsEnabled = false;
         Assert.False(reopened.IsEnabled);
+    }
+
+    // ---- [EXPOFF-ROUND3-PAUSED] An untick owes the teardown of what the features run in the game until it has run
+    // over a live connection; an untick made while disconnected is paid at the next connect, so it must outlive a
+    // restart in between -- and only an owed untick is paid, as a connect must leave alone what a CE record runs.
+
+    [Fact]
+    public void An_untick_owes_a_teardown_and_a_restart_still_owes_it()
+    {
+        var gate = new ExperimentalGate(_platform);
+        gate.IsEnabled = true;
+        Assert.False(gate.TeardownOwed);
+
+        gate.IsEnabled = false;
+        Assert.True(gate.TeardownOwed);
+        Assert.True(new ExperimentalGate(_platform).TeardownOwed);
+    }
+
+    [Fact]
+    public void A_paid_teardown_and_a_tick_each_clear_it_for_good()
+    {
+        var gate = new ExperimentalGate(_platform);
+        gate.IsEnabled = true;
+        gate.IsEnabled = false;
+        gate.TeardownOwed = false;   // the teardown ran
+        Assert.False(new ExperimentalGate(_platform).TeardownOwed);
+
+        gate.IsEnabled = true;
+        gate.IsEnabled = false;
+        gate.IsEnabled = true;       // on again: the cards show what runs
+        Assert.False(gate.TeardownOwed);
+        Assert.False(new ExperimentalGate(_platform).TeardownOwed);
+    }
+
+    [Fact]
+    public void Paying_the_teardown_raises_nothing()
+    {
+        var gate = new ExperimentalGate(_platform);
+        gate.IsEnabled = true;
+        gate.IsEnabled = false;
+        int fired = 0;
+        gate.Changed += (_, _) => fired++;
+
+        gate.TeardownOwed = false;
+        Assert.Equal(0, fired);
+    }
+
+    [Fact]
+    public void An_untick_the_lock_refuses_owes_nothing()
+    {
+        var gate = new ExperimentalGate(_platform);
+        gate.IsEnabled = true;
+        gate.Lock();
+
+        gate.IsEnabled = false;
+        Assert.False(gate.TeardownOwed);
+    }
+
+    [Fact]
+    public void A_file_written_before_the_flag_owes_nothing()
+    {
+        var path = new ExperimentalGate(_platform).FilePath;
+        File.WriteAllText(path, "{\n  \"enabled\": false,\n  \"snapshotQuotaMb\": 1024\n}");
+
+        var gate = new ExperimentalGate(_platform);
+        Assert.False(gate.IsEnabled);
+        Assert.False(gate.TeardownOwed);
     }
 }

@@ -32,6 +32,13 @@ public interface IExperimentalGate
     /// <see cref="Changed"/> on the first call. Not persisted.</summary>
     void Lock();
 
+    /// <summary>[EXPOFF-ROUND3-PAUSED] True from an untick until the teardown of what the features run in the game has
+    /// run to its end over a live connection. An untick sets it and a tick clears it; the teardown clears it when done.
+    /// Persisted with <see cref="IsEnabled"/>, so an untick made while disconnected is honoured at the next connect even
+    /// across a restart -- and only that connect: with nothing owed, a connect with the features off leaves alone what a
+    /// CE record may be running. Setting it does not raise <see cref="Changed"/>.</summary>
+    bool TeardownOwed { get; set; }
+
     /// <summary>Raised whenever <see cref="IsEnabled"/> or <see cref="IsLocked"/>
     /// changes.</summary>
     event EventHandler? Changed;

@@ -62,6 +62,7 @@ public class FlyExportFollowsExperimentalTests : IDisposable
     {
         public bool IsEnabled { get; set; } = enabled;
         public int SnapshotQuotaMb { get; set; } = 1024;
+        public bool TeardownOwed { get; set; }
         public bool IsLocked => false;
         public void Lock() { }
         public event EventHandler? Changed { add { } remove { } }

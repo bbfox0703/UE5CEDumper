@@ -16,6 +16,7 @@ public class LiveFuncsTraceTests
     {
         public bool IsEnabled { get; set; } = enabled;
         public int SnapshotQuotaMb { get; set; }
+        public bool TeardownOwed { get; set; }
         public bool IsLocked => false;
         public void Lock() { }
         public event EventHandler? Changed { add { } remove { } }
@@ -481,6 +482,7 @@ public class LiveFuncsTraceTests
     {
         public bool IsEnabled { get; set; }
         public int SnapshotQuotaMb { get; set; }
+        public bool TeardownOwed { get; set; }
         public bool IsLocked => false;
         public void Lock() { }
         public event EventHandler? Changed;
