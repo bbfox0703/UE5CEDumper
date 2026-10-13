@@ -59,6 +59,8 @@ extern "C" __declspec(dllexport) Mimic::MailboxData g_invokeMailbox = {};
 // Statically initialised: a script must be able to read this the instant the DLL
 // is mapped, before StartThread and before any init has run. Nothing writes it at
 // runtime — it is a constant published through the export table.
+// Its name and magic are also how one build of the dumper recognises another in the same
+// process (Grimoire::DUMPER_IDENTITY_EXPORT, [AOB-SKIP-OWN-DLL]): rename it and that breaks too.
 extern "C" __declspec(dllexport) Mimic::MailboxContract g_mailboxContract = {
     Mimic::MAILBOX_CONTRACT_MAGIC,
     Mimic::MAILBOX_CONTRACT,

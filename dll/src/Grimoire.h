@@ -29,8 +29,8 @@ constexpr const wchar_t* HINT_CACHE_PREFIX = L"UE5CEDumper";  // File: UE5CEDump
 
 // --- Dumper identity ---
 // [AOB-SKIP-OWN-DLL] The exported symbol every build of the dumper carries, UE5Dumper.dll and each proxy alike: the
-// mailbox contract, whose magic (Mimic::MAILBOX_CONTRACT_MAGIC) tells our copy from a module that merely shares the
-// name. Mimic.cpp defines it; Macht reads it to keep its multi-module scan out of other copies of us.
+// mailbox contract (defined in Mimic.cpp), whose magic (Mimic::MAILBOX_CONTRACT_MAGIC) tells a build of ours from a
+// module that merely exports the same name. It is how one copy recognises another mapped in the same process.
 constexpr const char*    DUMPER_IDENTITY_EXPORT = "g_mailboxContract";
 
 // --- Named Pipe ---

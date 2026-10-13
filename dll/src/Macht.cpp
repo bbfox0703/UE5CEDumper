@@ -17,6 +17,7 @@
 #include <cstring>
 #include <immintrin.h>  // AVX2 intrinsics for SIMD pattern scanning
 #include <malloc.h>     // _resetstkoflw: re-arm the guard page after a stack overflow the capture caught
+#include <atomic>
 
 // The linker's symbol for this image's own base: "which module is ours" by address, never by file name, since a proxy
 // carries a system DLL's name.
@@ -548,12 +549,36 @@ std::vector<ModuleInfo> GetLoadedModules() {
 }
 
 // ============================================================
-// Public: AOBScanAllModules
+// Public: IsDumperModule
 // ============================================================
 
 bool IsDumperModule(HMODULE h) {
-    (void)h;
-    return false;   // RED STUB: today nothing asks
+    if (!h) return false;
+    // The handle comes from the walk's module snapshot and may have gone stale since. GetProcAddress resolves it
+    // through the loader, not by reading the address: measured 2026-10-13 (Windows 11), a freed and unmapped DLL's
+    // handle answers NULL with error 126 and no fault. The magic is read under SEH all the same.
+    const FARPROC sym = GetProcAddress(h, Grimoire::DUMPER_IDENTITY_EXPORT);
+    if (!sym) return false;
+    uint32_t magic = 0;
+    return ReadSafe(reinterpret_cast<uintptr_t>(sym), magic) && magic == Mimic::MAILBOX_CONTRACT_MAGIC;
+}
+
+// ============================================================
+// Public: AOBScanAllModules
+// ============================================================
+
+// [AOB-SKIP-OWN-DLL] One line per dumper image left out, not one per pattern: Pass 2 walks every module once for each
+// pattern that missed, and the reason does not change between patterns. A different image (another copy) gets its own.
+static void NoteDumperImageSkipped(const ModuleInfo& m, ModuleScanVerdict verdict) {
+    static std::atomic<uintptr_t> s_lastOwn{0}, s_lastOther{0};
+    std::atomic<uintptr_t>& last = verdict == ModuleScanVerdict::SkipOwnModule ? s_lastOwn : s_lastOther;
+    if (last.exchange(m.base) == m.base) return;
+    const std::string modU8 = Utf8Helpers::EncodeUtf16(m.name, MAX_PATH);  // a full path: convert, never `%ls`
+    LOG_INFO("AOBScanAllModules: not scanning '%s' at 0x%llX -- %s", modU8.c_str(),
+             static_cast<unsigned long long>(m.base),
+             verdict == ModuleScanVerdict::SkipOwnModule
+                 ? "the dumper's own image"
+                 : "another build of the dumper in this process (two proxies, or a DLL injected beside a proxy)");
 }
 
 // [AOB-SKIP-OWN-DLL] The walk, with the image to treat as our own passed in. The public entry passes this image's
@@ -571,6 +596,8 @@ static std::vector<uintptr_t> ScanAllModulesExcept(const char* pattern, uintptr_
     for (auto& m : modules) {
         const ModuleScanVerdict verdict = ClassifyModuleForScan(m.base, m.size, mainBase, ownBase,
                                                                 [&] { return IsDumperModule(m.hModule); });
+        if (verdict == ModuleScanVerdict::SkipOwnModule || verdict == ModuleScanVerdict::SkipOtherDumper)
+            NoteDumperImageSkipped(m, verdict);
         if (verdict != ModuleScanVerdict::Scan) continue;
 
         auto hits = AOBScanAll(pattern, m.base);
@@ -578,7 +605,7 @@ static std::vector<uintptr_t> ScanAllModulesExcept(const char* pattern, uintptr_
             // ⚠ CONVERT FIRST; NEVER `%ls`. [NONASCIILS-2026-08-24] — see the long note at
             // Methode.cpp's copy of this. ⭐ THIS is the most exposed of the four sites:
             // despite the field name and the "in '%ls'" wording, `m.name` is a FULL install
-            // path (GetModuleFileNameW, ~line 493), and it is reached from the ordinary MA1
+            // path (GetModuleFileNameW in GetLoadedModules), and it is reached from the ordinary MA1
             // fallback — no CE plugin and no third-party DLL required, just a game installed
             // under a non-ASCII folder. Conversion stays INSIDE this branch so it costs one
             // allocation per MATCHING module, not per module scanned.

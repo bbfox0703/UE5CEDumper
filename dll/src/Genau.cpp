@@ -1529,7 +1529,7 @@ static uintptr_t ScanForTarget(
                 if (!batchResults[j].matches.empty()) continue; // processed in pass 1
 
                 // (MA1) The expensive half. One AOBScanAllModules re-enumerates every loaded
-                // module and scans each — measured 2.34 s on a 593-module title, and on that
+                // module and scans each one it admits — measured 2.34 s on a 593-module title, and on that
                 // title 99.98% of the whole SparseDelegates phase was spent right here.
                 if (Tot::Requested()) {
                     report.cancelled = true;

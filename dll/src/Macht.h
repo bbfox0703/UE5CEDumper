@@ -263,13 +263,21 @@ inline constexpr size_t kMinScannedModuleSize = 0x10000;
 // [AOB-SKIP-OWN-DLL] The walk's decision for one module, pure so dll_helpers_test pins it. `ownBase` is the image
 // holding this code; `isDumper` answers "is this module a build of the dumper", and is asked last, only of a module
 // every other arm let through, because answering it reads the module's export table.
+//
+// Why the dumper's images are left out: they hold the dumper's code, and that code touches the same engine structures
+// the patterns describe, so a pattern can match it (IS Defense: two of GOBJ_V1's three multi-module matches were in
+// our version.dll proxy). No engine global ever lives in one of them, so leaving them out loses no real candidate.
+// A second build can be mapped beside this one -- two proxies in one game folder (the first-loaded-wins mutex idles
+// the second, its image stays), or UE5Dumper.dll injected beside a proxy by a tool that does not check -- which is
+// why the question is "a build of the dumper", not only "this image".
 template <class IsDumperFn>
 constexpr ModuleScanVerdict ClassifyModuleForScan(uintptr_t base, size_t size, uintptr_t mainBase,
                                                   uintptr_t ownBase, IsDumperFn&& isDumper) {
-    // RED STUB: today's rule, which neither knows its own image nor asks the question.
-    (void)ownBase; (void)isDumper;
+    // The exe comes first: where the dumper's code IS the exe (dll_core_test), it is still scanned, ahead of the walk.
     if (base == mainBase) return ModuleScanVerdict::SkipMainExe;
+    if (base == ownBase) return ModuleScanVerdict::SkipOwnModule;
     if (size < kMinScannedModuleSize) return ModuleScanVerdict::SkipTiny;
+    if (isDumper()) return ModuleScanVerdict::SkipOtherDumper;
     return ModuleScanVerdict::Scan;
 }
 
