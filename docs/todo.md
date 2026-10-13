@@ -357,14 +357,16 @@ source and editor are installed for when they are needed.
   header showed "Object-array stride not detected -- the default is in use ..." although no scan ran (Aura's verdict
   starts "undetected" and FindAll returns before Aura::Init). `EngineState.IsStrideUntrusted(detect, versionTooOld)`
   is the one rule for the top-bar badge and the Dump All stamp, and is false on a refused engine (4.0-4.10 and the
-  pre-UE4 sentinel); the Dump All meta line now also says whether the engine was refused. Live check owed: IS Defense
-  through its refreshed proxy shows the red notice and no orange stride badge.
+  pre-UE4 sentinel); the Dump All meta line now also says whether the engine was refused. **Live PASS 2026-10-14
+  (3648):** IS Defense through its refreshed proxy, UI connected and scanned -- "Connected -- UE410 (0 objects)", the
+  red notice, and no orange stride badge in the top bar.
 - ✅ `[TOOOLD-VERSION-TEXT]` **not reproduced, 2026-10-13, nothing changed** (LOW, `[LIVE-3646]`): the row quoted the
   notice as "UE 411 is the oldest ... UE 410 and earlier", but `str.Pointers.VersionTooOld` has read "UE 4.11 ... UE
   4.10" since `44f2862e`, the v3646 tag included, and `git log -S"UE 411 is the oldest"` finds no commit; no other
   too-old text the UI shows carries a raw code. The likely source of the observation: on the System tab the UE Version
   card right above the notice shows the raw code (410), and the status line reads "Connected -- UE410" -- the format the
-  UI uses for every game, not the notice's.
+  UI uses for every game, not the notice's. **Confirmed live 2026-10-14 (3648) on IS Defense:** the red notice reads
+  "UE 4.11 is the oldest this tool can read. UE 4.10 and earlier ...", with the card above it showing 410.
 - ✅ `[PROXYREFRESH-NONSHIPPING-EXE]` **BUILT 2026-10-13, in source** (LOW, `[LIVE-3646]`; red `39781ccc`, green
   `70a83005`; review fixes `67facbe5`, red `ae4e715f` / green `872251e9`, red `1e9d0f46` / green `abf5cc45`; 5 / 5
   mutants killed): `tools/verify/proxy_refresh.py` now takes every game folder that holds one of OUR four DLLs (the
