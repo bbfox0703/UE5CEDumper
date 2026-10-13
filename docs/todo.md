@@ -487,28 +487,23 @@ source and editor are installed for when they are needed.
     Selftest 46 / 46. The two tools still have no selftest of their own -- checked on the fixtures, before and after.
   Owed: a re-run of `tier1_host_survey.py` over both Steam libraries, to see whether any installed title changes
   verdict (the reviewer's own mirror measured 0 of 422 readings changing between rev 8 and 9).
-- ⬜ `[VER-410-FIXED-VS-STRING]` (LOW, from the 2026-10-09 second review; **a follow-up, not taken**): a game version
-  in the fixed fields that lands inside 4.0-4.27 / 5.0-5.9 beats the exe's own engine build string, unlogged.
-  `ReadUeVersionFromFile` returns the fixed-field code before any string is read, and `DecideResourceVersion` uses
-  the build string only to corroborate an EQUAL code -- although the build string is the engine-stamped signal. Shapes:
-  a game at 4.5 (fixed 4.5.0.0) with ProductVersion `4.15.0-0+UE4` reads 405 (tier 3, then scanned with 4.05's
-  UFunction tail where 4.15 needs +2 -- now read at the measured base, since `[UE-OVERRIDE-411]`'s second review); the
-  same engine with game version 5.1 reads 501 at tier 1, no low-confidence badge. **Unmeasured in the wild:** the
-  reviewer's sweep found 0 of the 373 fixed readings on this PC contradicted by their own build string. Fix sketch:
-  when the ProductVersion or FileVersion string gives a nonzero `EngineBuildStringCode` that differs from the
-  fixed-field code, take the string's code with `fromFixedField` false (below the floor it then still needs an
-  agreeing CrashReportClient) and log the disagreement the way "SOURCES DISAGREE" is; its own
-  `kVersionDetectLogicRev` bump (9 -> 10, every cached title re-detects once); a `dll/tests/res` fixture per shape,
-  red first; `pe_version_probe.py` mirrors it. Effort **S**.
-- ⬜ `[VER-410-RIG-EF]` (LOW, from the 2026-10-09 review round): the b25 marker-exe rig judges only exes that read
-  their own version. Two shapes this round changed are pinned offline only (dll_core_test, resource-only DLLs):
-  E -- game fixed fields + the IS Defense string beside a 4.10 CrashReportClient (rev 9: refused, by the
-  CrashReportClient's agreement) and F -- an exe reading nothing beside a 4.10 CrashReportClient (scanned; the new
-  "CrashReportClient says UE 410 ... the game exe's own PE VERSIONINFO read nothing usable" lines, which no test
-  reads). The rig needs a CrashReportClient copy at `<root>/Engine/Binaries/Win64` above each marker exe
-  (`Grimoire::CrashReportCandidates`). Effort **S**. Since the second review E is also pinned offline through the
-  lookup production runs (dll_core_test's `verres_tree`, a CrashReportClient found above the exe); the live rig is
-  still owed for both.
+- ✅ `[VER-410-FIXED-VS-STRING]` **BUILT 2026-10-14, in source** (LOW; red `c6a7ec76` / `c91202d7`, green `87039ea9` /
+  `4fecb1fd`; review `caf550be`, `ca6a6cc5`, `d221dab4`, red `789f1bc3` / green `f0eb2150`; 22 mutants killed): a
+  fixed-field code yields to the first of the file's ProductVersion / FileVersion strings that
+  `Grimoire::EngineBuildStringCode` reads as a DIFFERENT version -- that reading is not a fixed-field one, so below the
+  floor it still needs an agreeing CrashReportClient -- and the disagreement is logged as "SOURCES DISAGREE"
+  (`FixedFieldOverruledNote`); an agreeing string keeps the old reading. **`kVersionDetectLogicRev` 9 -> 10: every
+  cached title re-detects once.** Fixtures `game_fixed405_buildstring_415`, `game_fixed501_buildstring_415`,
+  `game_fixed420_buildstring_410`; `pe_version_probe.py` mirrors the rule as a pure `decide()` its `--selftest` runs, and
+  `crc_authority_survey.py` reads the probe's new "(overrules fixed N)" lines right. Measured read-only: 0 of 389 exes
+  on this PC change reading (both Steam libraries, the corpus, the engine installs). Live check owed: one cached title
+  re-detects at rev 10 with an unchanged verdict; IS Defense is still refused.
+- ✅ `[VER-410-RIG-EF]` **BUILT 2026-10-14, offline** (LOW; `2a92cba3`, `ba1181ba`; 12 mutants killed):
+  `b25_marker_exes.py` builds E (`b25e_crc_agrees`, the IS Defense string, refused by an agreeing 4.10 CrashReportClient)
+  and F (`b25f_crc_alone`, an exe reading nothing beside it, scanned), each in an install tree with b25c's 4.10.2 exe as
+  `Engine/Binaries/Win64/CrashReportClient.exe`; `build` checks with a port of `Grimoire::CrashReportCandidates` that
+  each tree's copy is the first one the DLL finds; every judge clause, positive and must-not, is pinned by a canned log
+  (selftest 62 / 62). **Live run owed:** `build`, start each exe, inject, trigger the scan, then `check`.
 - ⬜ `[UE410-SUPPORT]` (**decided 2026-10-08: not now** -- the maintainer; the gate above refuses 4.10 cleanly). The
   feasibility study (UE 4.10 source, IS Defense's PDB, the DLL) found it doable but L (~700-900 lines, 4-6 sessions
   plus 2-3 live): a third object-array shape (`FUObjectArray`+0x10 is an INLINE 512-slot chunk table, 16,384 objects
@@ -696,9 +691,12 @@ source and editor are installed for when they are needed.
   refuses the whole UTF-8 name, so find_by_address reports such a sub-object as 'nearest' (`[UE4-WIDE-FNAME-CLEANCHECK]`).
   Live check owed on NEKOPALIVE (4.11) or DQ XI S / OCTOPATH (4.18): name sanity stays 10/10, and a Japanese-named
   object or property reads whole in the tree, Class/Struct and a pipe lookup.
-- ⬜ `[UE4-WIDE-FNAME-CLEANCHECK]` (LOW, left by `[UE4-WIDE-FNAME]`): let Aura's `IsCleanFName` accept a well-formed
-  non-ASCII name (a UE4 name that passed the slot gate, or UTF-8 without '?' or C0 controls), checked against the DQ3
-  HD-2D mojibake case first. Effort **S**.
+- ✅ `[UE4-WIDE-FNAME-CLEANCHECK]` **BUILT 2026-10-14, in source** (LOW; red `e9347b7f`, green `338348f2`, docs
+  `a1110418`; 9 mutants killed): Aura's `IsCleanFName` keeps a well-formed non-ASCII name (well-formed UTF-8, no '?',
+  no C0 / C1 control, no DEL, bounded) and still refuses the DQ3 HD-2D junk it was written against. Trade: a short CJK
+  mojibake (24 code units or fewer, which Serie's `IsImplausibleWideName` keeps) is now accepted where it was refused --
+  the maintainer may want it tightened. Live check owed with `[UE4-WIDE-FNAME]`'s: find_by_address on a sub-object whose
+  class name is wide reports 'backward' again, not 'nearest'.
 - ⬜ `[UBEL-ASCII-FIRSTCHAR]` (LOW, found with `[UE4-WIDE-FNAME]`, not a regression): six Ubel heuristics refuse a name
   whose first byte is not printable ASCII (ResolvePropertyNameType, ReadSlotObjectName, ReadParamSlotNames,
   ResolveOptionalLayout, CorrectSubclassOffsets, WalkInstance's struct probe), so a CJK-first name is dropped on UE4 and
@@ -889,14 +887,11 @@ source and editor are installed for when they are needed.
   **Round 4 (2026-10-09):** the main rate is the table's, or the parameter ring's (written + dropped over the trace's
   span) where that is higher, so a plausible but wrong table cannot stand the check down (807b0de9 / adac8c4c in the
   worktree, cherry-picked; R1c killed).
-  ⬜ `[SNAPRIG-ROUND5]` (LOW, the round-4 review of the rig, 2026-10-09; left for after the live checks): (1) the
-  ring rate's span is not pinned -- `FakeClock` moves only on sleep, so a span shortened to `span_lo` (run_stacks) or
-  `--record-s` (run_full) overstates the rate and survives (R1g, R1h); give the scripted DLL the clock so Start and
-  Stop take time and its rings count only while the trace is open, add a control just under 1.5x, and take the
-  clock after the Stop's reply in run_stacks. (2) `unexplained_refusals` weighs SnapProbe_PerFrame's take of the total
-  at min(per, its average) with no margin, while Linie's StackAdmit lets it take every call of a second the ring
-  allows: give it the same 1.5x the others get, or count refusals unexplained only where per caps the probe; helper
-  control: per 100, total 40, pf 30 is explained. Effort **S**.
+  ✅ `[SNAPRIG-ROUND5]` **BUILT 2026-10-14, in source** (LOW; red `bc1a9066` / green `8ad29314`, `d018c885`, red
+  `c638d18a` / green `62317052`, docs `83af51bf`): the scripted DLL's Start and Stop take time and its rings count only
+  while the trace is open; run_stacks and run_game_stacks end a recording's span at the Stop's reply; a ring-only rate
+  just under 1.5x pins the span; `total_starves` weighs SnapProbe_PerFrame's share of the stack total at 1.5x its rate,
+  as the others are (per 100, total 40, pf 30 is explained). Self-test only; no live run was needed.
   ✅ `[OT-COLLAPSE-PERSIST]` (LOW, the maintainer, 2026-10-08, not Live Funcs; built in 3642 and checked live the
   same day: collapsed, restarted, still collapsed; expanded, the width back, `false` saved): the left Object list collapses to a
   strip with its arrow button, and the next start forgot it. Remember it in ui-options.json (`Main.ObjectTreeCollapsed`,
@@ -1138,8 +1133,8 @@ from the agents' notes, not yet reproduced (working-lessons §1.8).
 | id | sev | status | what | where |
 |---|---|---|---|---|
 | `[BOOL-NATIVE-SEARCH]` | MED | ✅ 2026-09-26 `2093ea91` (red `85c9e8ed`) — live check owed: verification-register `[BOOL-NATIVE-SEARCH]` | **A Freeze built from Property Search or Interesting Properties can whole-byte-write a packed bool whose layout probe missed.** `[A3-BOOL-NATIVE-NOWRITE]` made a bool three-state (Packed / Native / Unresolved) and taught the Live Walker to refuse Unresolved via `FieldValueConverter.PlanBoolWrite`, but only `walk_instance` publishes `bool_native`. `Aura::PropertyMatch` has no `boolNative`, so `SearchProperties` / `SearchPropertiesBatch` drop the `FieldInfo.boolNative` WalkClassEx computed, `search_properties` / `search_properties_batch` emit only `bool_mask`, and every UI consumer reads "no mask" as "native". `FreezeScriptGenerator` then emits no `boolMask`, and `ue5_freeze_helper.lua`'s `writeBool` stamps `0x01` / `0x00` over the whole byte every 50 ms on every instance of the class tree -- the AA1 corruption of up to 7 sibling bools, on exactly the engines where the probe misses (DQ XI S reads every packed bitfield as mask 0, per `[A3-BOOL-NATIVE-NOWRITE]`). Found as the stale `Fern.cpp` comment "Absent = native bool" (the eval's lead). Force ON/OFF is NOT affected: `Solitar::ReadBoolLayout` re-probes and refuses an Unresolved layout (since `[SOLIDE-NATIVE-BOOL]` it also takes a native bool, written 0x01 / 0x00). **Fix:** carry `boolNative` through `PropertyMatch` and both encoders (additive pipe key, no mailbox-contract change); UI parses it and routes every bool freeze through `PlanBoolWrite` -- Property Search refuses before the value prompt, the batch CT skips and counts, the generator throws as the last line of defence. The Lua helper's no-mask path stays (a saved table for a native bool keeps working). **Fixed as above** (`2093ea91`): `FreezeScriptGenerator.IsUnresolvedBool` is the shared predicate; 10 red tests (parse x2, Property Search refusal, batch skip+count, generator throw x5, source pin) went green, native / packed controls stayed green; UI 5610/5610. | `Aura.h` `PropertyMatch`; `Aura.cpp` `SearchProperties` / `SearchPropertiesBatch`; `Fern.cpp` search encoders; `DumpService` search parsers; `PropertySearchViewModel.CopyFreezeScriptAsync`; `InterestingPropertiesViewModel.BuildRowsFromSelection`; `FreezeScriptGenerator` |
-| `[HOTKEY-REBIND-DEAD]` | LOW | lead | `TeleportViewModel.ApplyCapturedKey` -> `RegisterMarkerHotkey` disposes the row's existing registration BEFORE trying the new combo and returns early when the new one is taken: the old hotkey is dead, the row still shows the old label, `Conflicted` stays false and no banner appears. | `TeleportViewModel.ApplyCapturedKey` / `RegisterMarkerHotkey` |
-| `[SNAPSHOT-CRASH-PARTIAL]` | LOW | lead | `BeginCaptureSessionAsync` justifies `synchronous=OFF` with "a partial capture is discarded", but no startup cleanup of a row a CRASH left behind was found (`is_usable` defaults to 1; `RemovePartialAsync` runs in-process only). A `[W1-PARTIAL-MARK]` kept partial is also committed while `synchronous` is still OFF. | `ISnapshotStore` / `SnapshotStore.BeginCaptureSessionAsync` |
+| `[HOTKEY-REBIND-DEAD]` | LOW | ✅ 2026-10-14 in source (red `f3412025` / green `37a0421a`; review `5000a086`, red `e54a441d` / green `f2bb172e`, `42fc37c4`): a re-bind claims the new combo before letting the old one go, so a refused combo leaves the row's hotkey registered and labelled; re-binding the same combo is a no-op; a refusal names our own holder when it is ours. With it `[HOTKEY-STARTUP-CONFLICT-ERASED]` (red `b883baad` / green `ba011b49`): a saved combo taken at startup stays in the persisted set (the next save of ANY row used to erase it) and is tried again when the box is ticked again. Open lead: the startup conflict banner says "Free the combo and reconnect", but a reconnect re-registers nothing. Live check owed: bind a combo another app holds -> refused, the old one still fires | `TeleportViewModel.ApplyCapturedKey` -> `RegisterMarkerHotkey` disposes the row's existing registration BEFORE trying the new combo and returns early when the new one is taken: the old hotkey is dead, the row still shows the old label, `Conflicted` stays false and no banner appears. | `TeleportViewModel.ApplyCapturedKey` / `RegisterMarkerHotkey` |
+| `[SNAPSHOT-CRASH-PARTIAL]` | LOW | ✅ 2026-10-14 in source (red `e3df3412` / green `8443b0da`, `b788788a`; review `60124c49` (MED: the partial-delete tests had gone vacuous, now asserted from the tables), red `944ff62c` / green `ba0e0e4b`, `ef38c1f6`, `f3728aba`, red `3da406d5` / green `71474b40`, `da0a1793`): a capture's row is in progress until it completes, every list and picker ignores an unfinished capture, a dead process's is removed at the next capture's start -- also when the disk guard refuses that capture -- and a capture's completion commits under synchronous=NORMAL. Kept partials (`[W1-PARTIAL-MARK]`) stay usable. Residuals: a failed in-process delete leaves this process's orphan hidden until a later run captures; quota and count retention still count unfinished rows. Live check owed: kill the UI mid-capture, restart, the capture is not listed and the next capture removes it | `BeginCaptureSessionAsync` justifies `synchronous=OFF` with "a partial capture is discarded", but no startup cleanup of a row a CRASH left behind was found (`is_usable` defaults to 1; `RemovePartialAsync` runs in-process only). A `[W1-PARTIAL-MARK]` kept partial is also committed while `synchronous` is still OFF. | `ISnapshotStore` / `SnapshotStore.BeginCaptureSessionAsync` |
 | `[SOLIDE-NATIVE-BOOL]` | LOW | ✅ 2026-10-14 in source (dev `eea45912`..`6ded0c29`: God Mode targets and Force take a native bool, written 0x01 / 0x00, packed bools byte-identical, Unresolved still refused; the standalone trainer bakes ByteMask 0x01 through `Solitar::TrainerMaskFor`; every Solitar bool path pinned to ReadBoolValue / WriteBoolValue) — live check owed: Force ON / OFF on a Blueprint bool holds N and the Live Walker reads 01 / 00, never FF; a packed AActor bit changes only its bit; God Mode on a BP bInvincible-style bool logs mask=0xFF and flips 00 / 01; get_trainer_offsets gives it mask 1 | Force ON/OFF holds nothing on a NATIVE bool: `Solitar::ReadBoolLayout` accepts only a single-bit FieldMask, so a Blueprint / native bool is refused (`PR_ERR_REFLECT`, 0 held). Safe, but useless there; could accept the `ClassifyBoolLayout` Native verdict and write `0x01` / `0x00`. | `Solitar.cpp` `ReadBoolLayout`; `Solide` K_BOOL |
 | `[GRIMOIRE-507-GUARD]` | INFO | maintainer call | The 507 rung of the UE-version raise ladder (`IsReorderedFUObjectItem57`) carries no `ver >= 500` guard while its comment used to say both rungs did (the comment now states the per-rung rule). Whether `Object@+0x08` is a layout no UE4 build has -- so no guard is needed -- is the open question. | `UE5_Init` version ladder; `Grimoire.h` |
 | `[HIMMEL-PAL51-OFFSETS]` | INFO | lead | Himmel.h's PAL51 note says "its +0x8 / +0x34 int32s are the very fields the validator checks"; `ValidateSparseDelegates` reads +0x0C / +0x2C for its range check (+0x00 / +0x08 for the content check). Needs its history read before rewording. | `Himmel.h` PAL51 note |
