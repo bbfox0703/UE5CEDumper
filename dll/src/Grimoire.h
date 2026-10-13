@@ -469,12 +469,12 @@ constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
 // === Raise-only version markers (the structural half) ===
 //
 // UE5_Init runs a raise-only ladder every init: 503 (tagged FFieldVariant) -> 504
-// (CMC::SetGravityDirection UFUNCTION; the property alone only floors at 503 -- [R7-X4]) -> 507 (reordered FUObjectItem) -> 508 (virtual ~FFieldClass).
+// (CMC::SetGravityDirection UFUNCTION; the property alone only floors at 503 -- [R7-X4]) -> 505 (UEnum::EnumPackage
+// ahead of EnumDisplayNameFn -- [VER-MARKERS-PAST-504]) -> 507 (reordered FUObjectItem) -> 508 (virtual ~FFieldClass).
 // It exists because heavily-stripped titles lose every version string and fall back to
 // 4.27 while the structural probes have already proved otherwise. The PURE predicates
-// live in this header so the tests can pin them (the two below, and the CMC rule as
-// DynOff::CmcMarkerVersion), and so does the ladder's order (DynOff::ApplyVersionLadder);
-// the live reads that feed them stay in Frieren.cpp.
+// and per-object samplers live in this header so the tests can pin them, and so does the
+// ladder's order (DynOff::ApplyVersionLadder); the live reads that feed them stay in Frieren.cpp.
 //
 // ⚠ Every rung is RAISE-ONLY, and whether it is also guarded on `ver >= 500` is decided
 // PER RUNG in DynOff::ApplyVersionLadder: a rung whose probe could misfire on a UE4 title must
@@ -675,7 +675,7 @@ constexpr bool IsCompactSetLayout(int32_t elementSize, unsigned ueVersion) {
 }
 inline std::atomic<bool> bCompactSets{false};
 
-// [VND583-12] UE5_GetVersion's lazy refine, from two markers that surface only after init.
+// [VND583-12] UE5_GetVersion's lazy refine, from two markers that can surface after init.
 // A reflected Utf8StrProperty / AnsiStrProperty => 5.5+ (AnsiStrProperty.h first ships in 5.5.0-release).
 // The UEnum::FNameData struct-of-arrays => **5.7+**: Class.h at 5.6.0-release still declares
 // `TArray<TPair<FName, int64>> Names;`, and 5.7.0-release declares `class FNameData`. It raised to 506,
@@ -715,6 +715,72 @@ constexpr unsigned CmcMarkerVersion(unsigned ueVersion, bool fproperty, bool has
     return ueVersion;
 }
 
+// === [VER-MARKERS-PAST-504] Rungs past 5.4, from layouts every loaded enum and struct carries ===
+//
+// A title whose PE version is stripped and whose exe holds no build string climbed no further than the CMC rung's
+// 504 -- FINAL FANTASY RESONANCE DEMO and The Adventures of Elliot both read 504, while every engine file they ship
+// matches the 5.6 installs. Below 5.7 there is no version string left to read, so the rungs read reflection objects.
+//
+// A rung fires on a clear majority of what it sampled: at least kLadderProbeMinAgree agreeing samples, and three
+// quarters of all. One stray object (a class default, a half-built enum) must not decide a version, and neither may a
+// handful.
+constexpr int kLadderProbeMinAgree = 5;
+constexpr bool LadderProbeMajority(int agree, int sampled) {
+    return agree >= kLadderProbeMinAgree && agree * 4 >= sampled * 3;
+}
+
+// UE 5.5: UEnum's CppForm shrank to uint8 and EnumPackage moved ahead of EnumDisplayNameFn. Measured from the Shipping
+// fixtures' PDBs (UEnum, relative to Names):
+//   DumperTest51 (5.1)  CppForm int32 +0x10, EnumFlags int32 +0x14, EnumDisplayNameFn +0x18, EnumPackage +0x20
+//   DumperTest   (5.4)  CppForm int32 +0x10, EnumFlags uint8 +0x14, EnumDisplayNameFn +0x18, EnumPackage +0x20
+//   DumperTest56 (5.6)  CppForm uint8 +0x10, EnumFlags uint8 +0x11, EnumPackage +0x14,       EnumDisplayNameFn +0x20
+// and RE-UE4SS's 5_05 template is 5_06's. (5.7 replaced Names itself with FNameData, which DetectUEnumNames tells
+// apart and the lazy refine already reads as 507.) EnumPackage is the enum's package's own FName: Enum.cpp sets it
+// from GetPackage()->GetFName() wherever an enum's names are registered, constructed (SetEnums) or loaded
+// (Serialize). So on an enum with names, the slot that repeats the package's ComparisonIndex says which layout this
+// is. Names is an 8-aligned TArray, and every member after it keeps its place relative to Names on a
+// case-preserving build (a 12-byte FName ends where the 8-byte one's padding did), so the slots are read relative
+// to the MEASURED DynOff::UENUM_NAMES. Before 5.5 the +0x14 slot holds EnumFlags (EEnumFlags: 0 to 3), never a
+// package name.
+constexpr int kEnumPackageAfterNames55 = 0x14;
+constexpr int kEnumPackageAfterNames51 = 0x20;   // 5.1-5.4; counted for the log, not needed by the verdict
+constexpr int kLadderMaxOuterDepth = 16;
+
+struct EnumPackageTally {
+    int sampled = 0;   // enums with names whose package has a name to compare
+    int at55    = 0;   // ...whose package name sits at Names + 0x14 (5.5+)
+    int at51    = 0;   // ...at Names + 0x20 (5.1-5.4)
+};
+constexpr bool EnumPackageProves55(const EnumPackageTally& t) { return LadderProbeMajority(t.at55, t.sampled); }
+
+// One enum's sample; false when it is not one. `read(addr, out, size)` is a guarded read. The package is the
+// outermost object (GetPackage()), reached through OuterPrivate at `outerOff`; `nameOff` is UObject::NamePrivate.
+template <class ReadMem>
+bool SampleEnumPackage(EnumPackageTally& t, uintptr_t enumAddr, int namesOff, int outerOff, int nameOff,
+                       ReadMem&& read) {
+    // The class default object never ran SetEnums: no names, and no EnumPackage either.
+    int32_t numNames = 0;
+    if (!read(enumAddr + namesOff + 8, &numNames, sizeof numNames) || numNames <= 0 || numNames > 0x10000)
+        return false;
+    uintptr_t pkg = enumAddr;
+    bool top = false;
+    for (int depth = 0; depth < kLadderMaxOuterDepth && !top; ++depth) {
+        uintptr_t outer = 0;
+        if (!read(pkg + outerOff, &outer, sizeof outer)) return false;
+        if (outer) pkg = outer;
+        else       top = true;
+    }
+    if (!top || pkg == enumAddr) return false;
+    int32_t pkgName = 0, slot55 = 0, slot51 = 0;
+    if (!read(pkg + nameOff, &pkgName, sizeof pkgName) || pkgName == 0) return false;
+    if (!read(enumAddr + namesOff + kEnumPackageAfterNames55, &slot55, sizeof slot55)) return false;
+    if (!read(enumAddr + namesOff + kEnumPackageAfterNames51, &slot51, sizeof slot51)) return false;
+    ++t.sampled;
+    if (slot55 == pkgName) ++t.at55;
+    if (slot51 == pkgName) ++t.at51;
+    return true;
+}
+
 // === The init version ladder, in one place [UE-OVERRIDE-HINT-AUTO] ===
 //
 // After the offsets probe, init corrects the scan's version from what the probe measured: UProperty mode is UE4
@@ -736,7 +802,8 @@ struct StructuralVersionFacts {
     bool virtualDtor58       = false;  // IsVirtualDtorFFieldClass58(FFIELDCLASS_NAME)
 };
 
-enum class VersionRung { UPropertyMode, TaggedFieldVariant, CmcMarkers, ReorderedItem, VirtualFieldClassDtor };
+enum class VersionRung { UPropertyMode, TaggedFieldVariant, CmcMarkers, EnumPackage55, ReorderedItem,
+                         VirtualFieldClassDtor };
 
 struct StructuralVersion {
     unsigned version      = 0;
@@ -746,10 +813,12 @@ struct StructuralVersion {
 // `probeCmc(bool& hasGravityDirectionProperty, bool& hasSetGravityDirectionFunction)` reads one loaded
 // CharacterMovementComponent class and returns false when there is none. It is asked only inside the CMC rung's
 // window (FProperty mode, 5.0-5.3), because it walks the object array and a UE4 title must never pay for that.
+// `probeEnumPackage()` returns an EnumPackageTally over sampled enums, and is asked only inside its rung's window
+// (FProperty mode, 5.0-5.4) for the same reason.
 // `onRung(rung, from, to)` hears each rung that changed the version, so the caller's log names the evidence.
-template <class ProbeCmc, class OnRung>
+template <class ProbeCmc, class ProbeEnumPackage, class OnRung>
 StructuralVersion ApplyVersionLadder(unsigned ueVersion, const StructuralVersionFacts& f, ProbeCmc&& probeCmc,
-                                     OnRung&& onRung) {
+                                     ProbeEnumPackage&& probeEnumPackage, OnRung&& onRung) {
     StructuralVersion r{ueVersion, false};
     if (!f.measured) return r;
     auto step = [&](VersionRung rung, unsigned to) {
@@ -768,6 +837,8 @@ StructuralVersion ApplyVersionLadder(unsigned ueVersion, const StructuralVersion
         if (probeCmc(prop, func))
             step(VersionRung::CmcMarkers, CmcMarkerVersion(r.version, true, prop, func));
     }
+    if (f.fproperty && r.version >= 500 && r.version < 505 && EnumPackageProves55(probeEnumPackage()))
+        step(VersionRung::EnumPackage55, 505u);
     if (f.fproperty && r.version < 507 && f.reorderedItem57)
         step(VersionRung::ReorderedItem, 507u);
     // The >= 500 guard is the rung's, not cosmetic: a false 0x08 on a UE4 title would raise 427 to 508 and cross the

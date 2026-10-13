@@ -143,6 +143,10 @@ static bool CopyToBuffer(const std::string& src, char* buf, int32_t bufLen) {
 }
 
 namespace FrierenInit {
+// [VER-MARKERS-PAST-504] How many enums the 5.5 rung samples. Native reflection objects sit at the front of the object
+// array, so a first-N search ends early; the verdict wants a clear majority of DynOff::kLadderProbeMinAgree or more.
+constexpr int kLadderEnumSample = 32;
+
 // The live half of DynOff::ApplyVersionLadder: the probe's facts, the CMC read and the log lines. Init runs it after
 // the offsets probe, and Auto chosen over an override runs it on the detection it restores, so both land on the
 // version the same evidence proves. `who` prefixes the log lines, which the A4 rig greps for.
@@ -200,6 +204,34 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
         return false;
     };
 
+    // [VER-MARKERS-PAST-504] UE5.5 moved UEnum::EnumPackage ahead of EnumDisplayNameFn; the layouts and the rule are
+    // DynOff::SampleEnumPackage / EnumPackageProves55. Both slots sit behind the MEASURED Names, so the enum reader's
+    // own detection runs first if no enum read has yet -- told not to latch a miss, since this may run before the
+    // engine has registered the enums it looks for. The FNameData container (5.7+) has no such slot; the lazy refine
+    // reads that one.
+    DynOff::EnumPackageTally enumTally;
+    auto probeEnumPackage = [&]() -> DynOff::EnumPackageTally {
+        if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
+            Genau::DetectUEnumNames(/*latchFailure=*/false);
+        const bool namesKnown = DynOff::bUEnumNamesDetected.load(std::memory_order_acquire)
+                             && !DynOff::bUEnumNamesFailed.load(std::memory_order_acquire);
+        if (!namesKnown || DynOff::bEnumNamesNewContainer) {
+            LOG_INFO("%s: UEnum::EnumPackage probe skipped -- %s.", who,
+                     namesKnown ? "UEnum::Names is the UE5.7+ FNameData" : "UEnum::Names not located");
+            return enumTally;
+        }
+        const auto read = [](uintptr_t a, void* out, size_t n) { return Macht::ReadBytesSafe(a, out, n); };
+        const auto enums = Aura::FindInstancesByClass("Enum", /*exactMatch=*/true, kLadderEnumSample);
+        for (const auto& e : enums.results) {
+            if (e.addr)
+                DynOff::SampleEnumPackage(enumTally, e.addr, DynOff::UENUM_NAMES, DynOff::UOBJECT_OUTER,
+                                          Grimoire::OFF_UOBJECT_NAME, read);
+        }
+        LOG_INFO("%s: UEnum::EnumPackage probe -- %d enum(s) sampled; the package name at Names+0x14 (UE5.5+) "
+                 "on %d, at Names+0x20 (UE5.1-5.4) on %d.", who, enumTally.sampled, enumTally.at55, enumTally.at51);
+        return enumTally;
+    };
+
     auto onRung = [&](DynOff::VersionRung rung, unsigned from, unsigned to) {
         switch (rung) {
         case DynOff::VersionRung::UPropertyMode:
@@ -226,6 +258,10 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
                      "function=%s) -- raising version %u -> %u.", who, cmcProp ? "yes" : "no",
                      cmcFunc ? "yes" : "no", from, to);
             break;
+        case DynOff::VersionRung::EnumPackage55:
+            LOG_WARN("%s: structural marker (UEnum::EnumPackage at Names+0x14 on %d of %d sampled enums = UE5.5+) "
+                     "but version=%u — raising to 505.", who, enumTally.at55, enumTally.sampled, from);
+            break;
         case DynOff::VersionRung::ReorderedItem:
             LOG_WARN("%s: structural marker (FUObjectItem Object@+0x08, %dB = UE5.7+) "
                      "but version=%u — raising floor to 507.", who, itemSz, from);
@@ -243,7 +279,7 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
         }
     };
 
-    return DynOff::ApplyVersionLadder(ueVersion, f, probeCmc, onRung);
+    return DynOff::ApplyVersionLadder(ueVersion, f, probeCmc, probeEnumPackage, onRung);
 }
 } // namespace FrierenInit
 
@@ -742,10 +778,10 @@ void UE5_Shutdown() {
 
 uint32_t UE5_GetVersion() {
     // Lazy UE5.5 / 5.7 refines off markers discovered during walks / enum access (the
-    // structural item + property markers ran at init; these two only surface later):
+    // structural ladder ran at init; these two can surface later):
     //   • a reflected Utf8StrProperty / AnsiStrProperty (Ubel flag) ⇒ UE5.5+
     //   • the FNameData struct-of-arrays UEnum::Names container (DynOff flag, set by
-    //     the lazy DetectUEnumNames) ⇒ UE5.7+ (this is the layout whose enum bug the
+    //     DetectUEnumNames, which may first run at the first enum read) ⇒ UE5.7+ (this is the layout whose enum bug the
     //     Neu reader fixed; e.g. Titan Quest II). [VND583-12] It was 5.6+ -- see
     //     DynOff::RefineVersionFromLazyMarkers, which holds the rule and its citations.
     // Cheap reads; the UI polls this for the badge, so the version self-corrects as the
