@@ -1216,6 +1216,23 @@ int main() {
               pv == "{bA=false, bB=true, bU=true}", pv.c_str());
     }
 
+    // -- INT8-PREVIEW -- the struct preview reads an Int8Property signed ----------------------
+    //
+    // [INT8-PREVIEW]. The struct preview decodes each member through Ubel::PreviewScalarValue, which read
+    // an Int8Property through uint8_t, so a member holding -1 previewed as 255. A ByteProperty beside it
+    // holds the same byte and is the unsigned type, so it must still read 255.
+    {
+        blk("INT8-PREVIEW - a struct's Int8 member previews signed, its Byte neighbour unsigned");
+        ClassInfo si{};
+        FieldInfo i8{};  i8.Name = "Delta"; i8.TypeName = "Int8Property"; i8.Offset = 0; i8.Size = 1;
+        FieldInfo by{};  by.Name = "Count"; by.TypeName = "ByteProperty"; by.Offset = 1; by.Size = 1;
+        si.Fields.push_back(i8);
+        si.Fields.push_back(by);
+        const uint8_t sbuf[2] = { 0xFF, 0xFF };
+        const std::string pv = Ubel::InterpretStructByLayout(sbuf, 2, si, 8);
+        check("INT8-PREVIEW ⭐: Int8 0xFF is -1, ByteProperty 0xFF is 255", pv == "{Delta=-1, Count=255}", pv.c_str());
+    }
+
     // -- UFUNCTAIL-2026-09-11 -- NumParms / ParmsSize / ReturnValueOffset on UE 4.11-4.17 ----
     //
     // [A2-UFUNC-TAIL-4X]. FunctionFlags is measured per version, but the three fields behind it

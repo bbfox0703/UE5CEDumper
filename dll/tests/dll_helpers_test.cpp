@@ -8877,6 +8877,20 @@ static void Test_Ubel_PreviewScalarValue() {
         EXPECT("ByteProperty",       Ubel::PreviewScalarValue("ByteProperty", b, 1) == "200");
     }
 
+    // --- [INT8-PREVIEW] Int8Property is int8 in every engine, so its byte is SIGNED: the game holds
+    //     -1 as 0xFF. Read through uint8_t it previewed 255. ByteProperty is the unsigned one-byte type
+    //     and must stay so -- the fix is not "every one-byte value is signed".
+    {
+        uint8_t b[1] = { 0xFF };
+        EXPECT("Int8Property 0xFF is -1, not 255",  Ubel::PreviewScalarValue("Int8Property", b, 1) == "-1");
+        b[0] = 0x80;
+        EXPECT("Int8Property 0x80 is -128",         Ubel::PreviewScalarValue("Int8Property", b, 1) == "-128");
+        b[0] = 0x7F;
+        EXPECT("Int8Property 0x7F is 127",          Ubel::PreviewScalarValue("Int8Property", b, 1) == "127");
+        b[0] = 0xFF;
+        EXPECT("ByteProperty 0xFF stays 255",       Ubel::PreviewScalarValue("ByteProperty", b, 1) == "255");
+    }
+
     // --- [A2-STRUCT-PREVIEW-BOOLMASK] packed bools read THEIR bit, not the byte. A physics actor's
     //     bSimulatedPhysicSleep (0x01) and bRepPhysics (0x02) share a byte; both previewed "true".
     {
