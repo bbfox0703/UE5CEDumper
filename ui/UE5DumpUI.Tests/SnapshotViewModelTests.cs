@@ -1415,6 +1415,54 @@ public class SnapshotViewModelTests : IDisposable
         Assert.Contains("disk", vm.StatusText, StringComparison.OrdinalIgnoreCase);
     }
 
+    // [SNAPSHOT-CRASH-PARTIAL] A capture a crashed run left is listed nowhere, so no Delete reaches it, and the cleanup
+    // at a capture's start is what removes it. A capture the free-disk guard refuses never gets that far, and a drive
+    // that stays low would keep the dead capture's rows -- possibly the very space it is short of -- for good.
+    [Fact]
+    public async Task Capture_RefusedForLowDisk_StillRemovesACaptureACrashedRunLeft()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        static SnapshotCapturedObject Obj(int i)
+        {
+            var o = new SnapshotCapturedObject
+            {
+                Index = i, Addr = $"0x{i:X}", Name = $"O_{i}", ClassName = "C", OuterClassName = "World", Path = $"/G.M:L.O_{i}",
+            };
+            o.Fields.Add(new SnapshotCapturedField { Name = "HP", Type = "IntProperty", Hex = "64000000", Offset = 0x10 });
+            return o;
+        }
+        var died = new SnapshotStore(new MockPlatformService(_tempDir), log: null, captureOwner: "a run that crashed");
+        died.SetActiveGame("PEHASH");
+        long dead = await died.CreateSnapshotAsync(new SnapshotMeta { Label = "cut short", Scope = "NumericNoByte" }, ct);
+        await died.WriteChunkAsync(dead, new[] { Obj(1) }, ct);
+        _store.SetActiveGame("PEHASH");
+        long whole = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "whole", Scope = "NumericNoByte" }, ct);
+        await _store.WriteChunkAsync(whole, new[] { Obj(2) }, ct);
+        await _store.FinalizeSnapshotAsync(whole, 1, 1, ct);
+
+        var dump = new CaptureStub();
+        // 1 GB free on a 1 TB drive: the 10% / 50 GB guard refuses.
+        var platform = new DiskStubPlatformService(_tempDir)
+        {
+            FreeBytes  = 1L * 1024 * 1024 * 1024,
+            TotalBytes = 1024L * 1024 * 1024 * 1024,
+        };
+        var vm = new SnapshotViewModel(dump, _store, new MockLoggingService(), gate: null, platform: platform)
+        {
+            SelectedScope = "NumericNoByte",
+        };
+        vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
+        await vm.PendingRefresh!;
+        Assert.Equal((2L, 2L), await RawRowsAsync(ct));   // precondition: the dead capture and the whole snapshot
+
+        await vm.CaptureCommand.ExecuteAsync(null);
+
+        Assert.Null(dump.LastDataType);                   // still refused: BeginSnapshot never reached
+        Assert.Contains("disk", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal((1L, 1L), await RawRowsAsync(ct));   // the dead capture's row and field are gone
+        Assert.Equal(whole, Assert.Single(await _store.ListSnapshotsAsync(ct)).Id);
+    }
+
     [Fact]
     public async Task Capture_AllowedWhenDiskAboveGuard()
     {

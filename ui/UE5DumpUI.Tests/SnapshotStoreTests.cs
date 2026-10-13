@@ -279,6 +279,54 @@ public class SnapshotStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task A_dead_capture_is_removed_on_its_own_and_rows_only()
+    {
+        // The free-disk guard refuses a capture before its start-of-capture cleanup runs, so a capture a dead process
+        // left -- listed nowhere, so no Delete reaches it -- needs a removal of its own, and one without the VACUUM
+        // that cleanup runs: on a drive the guard has just called low, VACUUM's scratch copy is the risk. Everything
+        // else stays: this process's open capture, a flagged-unusable snapshot (listed, so the user still sees it
+        // until a capture starts), and a whole one.
+        var ct = TestContext.Current.CancellationToken;
+        var died = new SnapshotStore(new MockPlatformService(_tempDir), log: null, captureOwner: "a process that died");
+        died.SetActiveGame("LOWDISK");
+        _store.SetActiveGame("LOWDISK");
+        long dead = await died.CreateSnapshotAsync(new SnapshotMeta { Label = "cut short" }, ct);
+        await died.WriteChunkAsync(dead, Enumerable.Range(1, 400)
+            .Select(i => MakeObject(i, ("HP", "IntProperty", "0A000000"), ("MP", "IntProperty", "0B000000")))
+            .ToList(), ct);
+
+        long flagged = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "drifted" }, ct);
+        await using (var s = await _store.BeginCaptureSessionAsync(ct))
+        {
+            int n = s.WriteChunk(flagged, new[] { MakeObject(1, ("HP", "IntProperty", "0A000000")) }, ct);
+            await s.CompleteSnapshotAsync(flagged, 1, n, isUsable: false, ct: ct);
+        }
+        long whole = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "whole" }, ct);
+        await _store.WriteChunkAsync(whole, new[] { MakeObject(2, ("HP", "IntProperty", "14000000")) }, ct);
+        await _store.FinalizeSnapshotAsync(whole, 1, 1, ct);
+        long open = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "open" }, ct);
+        Assert.Equal(800L, await FieldRowsOfAsync(dead, ct));   // precondition
+
+        Assert.Equal(1, await _store.DeleteDeadCapturesAsync(ct));
+
+        Assert.Equal(0L, await FieldRowsOfAsync(dead, ct));
+        await using var conn = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = _store.DatabasePath, Pooling = false }.ToString());
+        await conn.OpenAsync(ct);
+        var ids = new List<long>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT id FROM snapshots ORDER BY id;";
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct)) ids.Add(r.GetInt64(0));
+        }
+        Assert.Equal(new[] { flagged, whole, open }, ids);
+        // Rows only: the dead capture's pages are free inside the file, not handed back by a VACUUM.
+        Assert.True(await ScalarAsync(conn, "PRAGMA freelist_count;", ct) > 0);
+        Assert.Equal(0, await _store.DeleteDeadCapturesAsync(ct));
+    }
+
+    [Fact]
     public async Task A_kept_partial_is_listed_usable_once_completed_and_a_seeded_snapshot_once_finalized()
     {
         // [W1-PARTIAL-MARK] A cap / low-disk stop completes its partial usable: being in progress until then must not

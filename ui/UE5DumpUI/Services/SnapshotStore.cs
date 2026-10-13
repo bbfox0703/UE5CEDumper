@@ -2501,6 +2501,9 @@ public sealed class SnapshotStore : ISnapshotStore
         return removed;
     }
 
+    /// <summary>[SNAPSHOT-CRASH-PARTIAL] Red stub.</summary>
+    public Task<int> DeleteDeadCapturesAsync(CancellationToken ct = default) => Task.FromResult(0);
+
     public async Task DeleteSnapshotAsync(long snapshotId, bool reclaim = false, CancellationToken ct = default)
     {
         await using var conn = await OpenAsync(ct);

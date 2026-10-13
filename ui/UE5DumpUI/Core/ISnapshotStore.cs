@@ -123,6 +123,14 @@ public interface ISnapshotStore
     Task<int> DeleteUnusableSnapshotsAsync(CancellationToken ct = default)
         => Task.FromResult(0);
 
+    /// <summary>Delete every capture a process that is gone left in progress for the active game, and nothing
+    /// else: the half of <see cref="DeleteUnusableSnapshotsAsync"/> no list shows, for a capture the free-disk guard
+    /// refuses before that cleanup can run. Rows only, no VACUUM: the freed pages stay in the file for the next
+    /// capture, since VACUUM's scratch copy is what a drive the guard calls low cannot spare. Returns how many were
+    /// removed. Default no-op (returns 0) so lightweight test doubles need not implement it.</summary>
+    Task<int> DeleteDeadCapturesAsync(CancellationToken ct = default)
+        => Task.FromResult(0);
+
     /// <summary>Delete the snapshot database FILES for EVERY game (all
     /// <c>snapshots.*.db</c> plus their <c>-wal</c>/<c>-shm</c> sidecars and the
     /// per-game <c>snapshots.*.denylist.json</c>) from disk — a whole-file wipe, not
