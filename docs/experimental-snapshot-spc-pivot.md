@@ -180,7 +180,9 @@ is **persisted**.
 > a CE record runs (Fly, Keep Foreground and See-through have mailbox
 > commands). Live Funcs gives a kept trace back to the game at the untick (its
 > buffer and parameter block, by its generation) and drops its Open in Call
-> Trace and status sentences with it, as a disconnect does. Behind it, a
+> Trace and status sentences with it, as a disconnect does; when the stop that
+> leaving Live Funcs sent has not answered by the untick, the trace goes back as
+> the reply lands, so the order changes nothing. Behind it, a
 > defence line: Live Funcs offers a kept trace and opens the Call Trace tab only
 > while the switch is on. The rest needs nothing: Snapshot, SPC Query, Class
 > Pivot and Call Trace lock the opt-in when opened; leaving Live Funcs for the
