@@ -2603,6 +2603,12 @@ public class TeleportViewModelTests
         Assert.Contains("'Ctrl+F8' is the cursor-teleport hotkey", vm.StatusText);
         Assert.Contains("keeps F5", vm.StatusText);
         Assert.DoesNotContain("another app", vm.StatusText);
+
+        // The cursor hotkey being on does not make it the holder of every refused combo.
+        hk.Taken.Add((HotkeyModifiers.Control, 0x76));     // Ctrl+F7, held by another app
+        vm.BeginCaptureCommand.Execute(row);
+        vm.ApplyCapturedKey(Avalonia.Input.Key.F7, Avalonia.Input.KeyModifiers.Control);
+        Assert.Contains("'Ctrl+F7' is already in use by another app", vm.StatusText);
     }
 
     [Fact]
