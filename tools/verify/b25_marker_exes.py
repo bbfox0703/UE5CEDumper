@@ -596,16 +596,31 @@ def selftest():
         ("E fails when the exe's own build string corroborated itself", judge_e,
          e_ok.replace("by a CrashReportClient agreeing with the exe",
                       f"by the exe's own engine build string '{IS_DEFENSE_BUILD_STRING}'"), "FAIL"),
+        # ...and with the CrashReportClient's line still there, only the must-not can see it.
+        ("E fails when the exe's own build string corroborated it as well", judge_e,
+         e_ok + f"{stamp}DetectVersion: CORROBORATED by the exe's own engine build string "
+         f"'{IS_DEFENSE_BUILD_STRING}'\n", "FAIL"),
         ("E fails if a GObjects batch ran", judge_e, e_ok + "[GObjects] Batch 1/7\n", "FAIL"),
+        ("E fails if a NOT-accepting line came too", judge_e, e_ok + f"{stamp}DetectVersion: PE VERSIONINFO says UE "
+         f"410, below the {floor} floor — NOT accepting that on its own (it would refuse the whole scan).\n", "FAIL"),
+        ("E fails if the exe and the CrashReportClient disagreed", judge_e, e_ok + f"{stamp}DetectVersion: SOURCES "
+         "DISAGREE — CrashReportClient says 410, the game exe's own VERSIONINFO says 427.\n", "FAIL"),
         ("E fails without the CrashReportClient its install layout puts above it", judge_e,
          e_ok.replace(crc, ""), "FAIL"),
         ("E fails on C's log (the exe corroborating itself, no CrashReportClient)", judge_e, c_ok, "FAIL"),
         ("F passes its own log", judge_f, f_ok, "PASS"),
         ("F fails on E's log (a CrashReportClient alone must not refuse)", judge_f, e_ok, "FAIL"),
         ("F fails when the CrashReportClient's 410 is put in the exe's mouth", judge_f, f_mouth, "FAIL"),
+        ("F fails when the exe's mouth line comes beside the right one", judge_f,
+         f_ok + f"{stamp}DetectVersion: PE VERSIONINFO says UE 410, below the {floor} floor — NOT accepting that on its "
+         "own (it would refuse the whole scan).\n", "FAIL"),
         ("F fails on a refusal", judge_f, f_ok + f"FindAll: UE 410 is older than the minimum supported {floor} — "
          "SKIPPING the scan.\n", "FAIL"),
         ("F fails on D's log (the exe's own reading, no CrashReportClient)", judge_f, d_ok, "FAIL"),
+        ("F fails if anything was CORROBORATED", judge_f,
+         f_ok + "DetectVersion: CORROBORATED by a CrashReportClient agreeing with the exe\n", "FAIL"),
+        ("F fails if the exe agreed with the CrashReportClient", judge_f,
+         f_ok + "DetectVersion: CrashReportClient and the game exe AGREE on 410\n", "FAIL"),
         ("a cached F is CACHED, never PASS", judge_f, cached + f_ok, "CACHED"),
         ("an empty log fails E", judge_e, "", "FAIL"),
         ("an empty log fails F", judge_f, "", "FAIL"),
