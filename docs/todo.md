@@ -314,16 +314,29 @@ source and editor are installed for when they are needed.
     floor: dragging the pane's handle stopped with the list at about 512 and Where whole.
   - Also seen: `launch_dumpertest.py` printed "the cap is this machine's saved FrameRateLimit=30".
   - Not in this release, so not run: `[LF-EXPOFF-TRACE]`. Not run: Mimic's invoke slab (the CE mailbox path).
-- ⬜ `[REFUSED-STRIDE-NOTICE]` (LOW, `[LIVE-3646]`): on a game refused as too old the header still shows "Object-array
-  stride not detected -- the default is in use; object counts and names ..." -- no scan ran, so nothing was
-  defaulted. Hide it (or say the scan was skipped) when `is_version_too_old`. Effort **S**.
-- ⬜ `[TOOOLD-VERSION-TEXT]` (LOW, `[LIVE-3646]`): the too-old notice reads "UE 411 is the oldest this tool can read.
-  UE 410 and earlier ..." -- the internal numbers, not 4.11 / 4.10. Effort **S**.
-- ⬜ `[PROXYREFRESH-NONSHIPPING-EXE]` (LOW, `[LIVE-3646]`): `tools/verify/proxy_refresh.py` finds a game folder only
-  through a `*-Win64-Shipping.exe`, so the proxies beside `Extinction.exe`, `Nekopara.exe` or `DRAGON QUEST XI S.exe`
-  are neither reported nor refreshed: Extinction ran build 3645 after the tool said it had refreshed every stale
-  proxy. Find the game exe the way the proxy's own loader does (the folder holding our DLL), keep the ownership and
-  backup guards. Effort **S**.
+- ✅ `[REFUSED-STRIDE-NOTICE]` **BUILT 2026-10-13, in source** (LOW, `[LIVE-3646]`; red `c7152586`, green `fc80b377`;
+  review fixes `e0aa8560`, red `9fd9b0db` / green `26a4b1f4`; 2 / 2 mutants killed): on a game refused as too old the
+  header showed "Object-array stride not detected -- the default is in use ..." although no scan ran (Aura's verdict
+  starts "undetected" and FindAll returns before Aura::Init). `EngineState.IsStrideUntrusted(detect, versionTooOld)`
+  is the one rule for the top-bar badge and the Dump All stamp, and is false on a refused engine (4.0-4.10 and the
+  pre-UE4 sentinel); the Dump All meta line now also says whether the engine was refused. Live check owed: IS Defense
+  through its refreshed proxy shows the red notice and no orange stride badge.
+- ✅ `[TOOOLD-VERSION-TEXT]` **not reproduced, 2026-10-13, nothing changed** (LOW, `[LIVE-3646]`): the row quoted the
+  notice as "UE 411 is the oldest ... UE 410 and earlier", but `str.Pointers.VersionTooOld` has read "UE 4.11 ... UE
+  4.10" since `44f2862e`, the v3646 tag included, and `git log -S"UE 411 is the oldest"` finds no commit; no other
+  too-old text the UI shows carries a raw code. The likely source of the observation: on the System tab the UE Version
+  card right above the notice shows the raw code (410), and the status line reads "Connected -- UE410" -- the format the
+  UI uses for every game, not the notice's.
+- ✅ `[PROXYREFRESH-NONSHIPPING-EXE]` **BUILT 2026-10-13, in source** (LOW, `[LIVE-3646]`; red `39781ccc`, green
+  `70a83005`; review fixes `67facbe5`, red `ae4e715f` / green `872251e9`, red `1e9d0f46` / green `abf5cc45`; 5 / 5
+  mutants killed): `tools/verify/proxy_refresh.py` now takes every game folder that holds one of OUR four DLLs (the
+  existing ProductName ownership check), whatever its exe is called. Hardened with it: the running guard reads
+  tasklist's CSV row (a non-ASCII exe read as not running), refuses if ANY exe beside the proxy runs, and backups take
+  a unique name with a `.source.txt` (path and SHA-256) beside them; `report` no longer prints an all-clear it did not
+  check (no dist counterpart, a missing `--lib`). `--selftest` (temp trees only, 39 controls) is the new
+  `proxy_refresh_selftest` gate in check_all and ci.yml. Measured read-only: 13 deployed proxies found before, 14
+  after (Extinction). Live check owed: after the next DLL build, `report` shows Extinction STALE and `refresh
+  "Extinction"` backs it up and replaces it.
 - ⬜ `[OVERRIDE-REVIEW2-LOWS]` (3 LOW, the `[UE-OVERRIDE-HINT-AUTO]` round's first review, 2026-10-09; left for after
   the release by the maintainer's quota call): (1) Mimic's HandleInvoke glue -- `Ubel::ParamBufferSize` feeding
   `InvokeSlabRefusal` before the first ProcessEvent call -- has no source pin (mutant M1 survived); (2) an override
@@ -573,15 +586,64 @@ source and editor are installed for when they are needed.
   land on dev (they touch the same handler). Effort **S-M**.
 
 **Found by the 4.10 study, worth doing whatever 4.10's fate** (they help titles already supported):
-- ⬜ `[UE4-ASSETPTR-PROPS]` (LOW): AssetObjectProperty / AssetClassProperty (4.11-4.17's soft pointers) do not go
-  down the soft-pointer path in Ubel. Effort **S**.
-- ⬜ `[UE4-USTRUCT-GIVEUP]` (LOW): in UProperty mode, when no Guid / Vector struct validates the offsets, the fallback
-  gives FProperty-era UStruct offsets (0x40/0x48/0x58); UE4 below 4.25 is 0x30/0x38/0x40/0x48. Effort **S**.
-- ⬜ `[AOB-SKIP-OWN-DLL]` (LOW): `Macht::AOBScanAllModules` does not skip our own module -- on IS Defense GOBJ_V1
-  matched twice inside our `version.dll` proxy, so every multi-module scan has us as a false-candidate source.
-  Effort **S**.
-- ⬜ `[UE4-WIDE-FNAME]` (LOW): Serie's UE4 name path never tests the wide-character bit (Index & 1), so a non-ASCII
-  FName reads as garbage on 4.10-4.22. Effort **S**.
+- ✅ `[UE4-ASSETPTR-PROPS]` **BUILT 2026-10-13, in source** (LOW; red `0b9c290f` / `84886f28`, green `a32ffa3c`; review
+  red `744045a2` / green `25b13780`, docs `3e288b28`; 18 / 18 mutants killed): 4.11-4.17's FAssetPtr (UE_4.10 headers,
+  a 4.15 PDB) is FWeakObjectPtr +0, TagAtLastTest +8, one FString path at +0x10, 0x20 in all; 4.18's FSoftObjectPtr
+  keeps the envelope with an FName + FString path. `Ubel::IsAssetPtrProperty` routes AssetObject / AssetClass
+  properties to their own reader, never the 4.18+ soft reader (which would latch SOFTPTR_PATH from them). Walk rows,
+  obj_class / meta_class, UProperty-mode TArray<TAssetPtr> elements (0x20 stride published), struct-array members, the
+  Property Search preview, Live Funcs parameters, Find References, the class matcher and scorer see them. Not covered:
+  `[UE4-ASSETPTR-EXPORTS]` below. Live check owed on NEKOPALIVE (4.11), Extinction (4.15) or Fantasynth (4.13): asset
+  paths on AssetObjectProperty rows, a TArray<TAssetPtr>'s element paths, obj_class / meta_class in walk_class, and no
+  "TSoftObjectPtr payload envelope measured" line from them.
+- ⬜ `[UE4-ASSETPTR-EXPORTS]` (LOW, left by `[UE4-ASSETPTR-PROPS]`): the UI consumers are still keyed on Soft* names --
+  the SDK export (`MapCppDeclCore` has no Asset arm, so the field is raw bytes), CE XML and CSX (unknown type), USMAP
+  (maps by name, so Asset* is Unknown although `EPropertyType.AssetObjectProperty` = 16 exists), Property Search's
+  type filter, Live Walker's array drill (read_array_elements returns raw bytes for an asset inner), and the invoke
+  dialog (an Asset* parameter falls to WriteParam's 4-byte fallback over FWeakObjectPtr's index; it belongs with the
+  empty-only parameters). Effort **S-M**.
+- ✅ `[UE4-USTRUCT-GIVEUP]` **BUILT 2026-10-13, in source** (LOW; red `d32a4fa6`, green `b6405cab`; review pins `37318445`,
+  `23dab73d`; 8 / 8 mutants killed): neither give-up exit of `Genau::ValidateAndFixOffsets` wrote a UStruct offset in
+  UProperty mode, so the 4.25+ head shipped. `DynOff::UPropertyUStructHeadFor(UFIELD_NEXT, version)` gives
+  Super / Children / PropertiesSize / Script per version: 4.11-4.21 0x30/0x38/0x40/0x48 (UE_4.18 Class.h, a 4.20
+  Shipping PDB), 4.22-4.24 0x40/0x48/0x50/0x58 (FStructBaseChain first: UE_4.23 headers, a 4.23 Shipping PDB; the
+  4.21 -> 4.22 step from RE-UE4SS's templates only), applied before both exits. Live check owed, Shipping only (every
+  real UE4 game has Guid and Vector, so it needs a staged DLL that skips FindStructByName): the offsets summary shows the
+  version's head and walks keep their sizes.
+- ⬜ `[UE4-USTRUCT-GIVEUP-STATS]` (LOW, left by `[UE4-USTRUCT-GIVEUP]`): the head follows the UField::Next it is given,
+  and a give-up's Next is DetectUPropertyMode's guess, which cannot see a STATS build's TStatId -- a Development /
+  DebugGame 4.11-4.24 build that gives up ships the head 8 short (4.15 Dev 30/38/40/48 against the PDB's 38/40/48/50).
+  Fix: probe Next at +0x28 against +0x30 on a UProperty / UFunction chain before applying the head. Narrow: commercial
+  games ship Shipping builds. Effort **S**.
+- ✅ `[AOB-SKIP-OWN-DLL]` **BUILT 2026-10-13, in source** (LOW; red `e46518b9`, green `b0b9ea4c`; review red `1ea19cf0` /
+  green `92ed1d64`; 11 mutants killed, one equivalent survivor): `Macht::ClassifyModuleForScan` (pure, pinned) leaves
+  out our own image (`__ImageBase`) and every other build of the dumper (`Macht::IsDumperModule`: it exports
+  `g_mailboxContract` with the contract magic, or failing that `UE5_Init`), each logged once; an impostor exporting the
+  name without the magic is still scanned. Three /NOENTRY fixture DLLs (`dll/tests/res/owncopy_fixture.cpp`). Known
+  limit: the version.dll proxy builds of 2026-03-02 to 03-04 export neither name. Live check owed: a title whose scan
+  reaches Pass 2's multi-module fallback through our proxy logs "not scanning '<proxy>' ... the dumper's own image"
+  and no "N matches in '<our proxy>'" (IS Defense's 2026-10-08 log had 2 matches in VERSION.dll).
+- ⬜ `[DUMPER-SECOND-COPY-AUTOSTART]` (LOW, a lead from the `[AOB-SKIP-OWN-DLL]` builder, not reproduced):
+  `Voll::DecideStart` treats a pipe held by our own PID as AlreadyOurs, so a second copy in the same process (an
+  injected UE5Dumper.dll beside a proxy) still runs UE5_AutoStartBlocking -- a full scan and Mimic::StartThread; whether
+  it also installs the Stark hook a second time was not checked. Re-derive first (Heiter / Frieren / Voll). Effort
+  **S**.
+- ✅ `[UE4-WIDE-FNAME]` **BUILT 2026-10-13, in source** (LOW; red `d9940165`, green `a8729219`; review `9bf36d33`, red
+  `2c2eb686` / green `d25459f8`, `c5625918`, `e6422d73`; 16 mutants killed): UE_4.10 / UE_4.18 NameTypes.h store
+  `Index = (slot << 1) | wide`; `Serie::UE4EntryIsWide` believes bit 0 only when the rest of the word equals the slot,
+  and `ReadUE4WideName` decodes UTF-16 to its terminator (page-bounded, at most NAME_SIZE units). The narrow read keeps
+  its 255-byte window but reads it in page-bounded pieces, so an ANSI name ending just before an unreadable page reads
+  whole instead of "". Trade: Aura's `IsCleanFName` used to accept a wide name cut to its first ASCII character and now
+  refuses the whole UTF-8 name, so find_by_address reports such a sub-object as 'nearest' (`[UE4-WIDE-FNAME-CLEANCHECK]`).
+  Live check owed on NEKOPALIVE (4.11) or DQ XI S / OCTOPATH (4.18): name sanity stays 10/10, and a Japanese-named
+  object or property reads whole in the tree, Class/Struct and a pipe lookup.
+- ⬜ `[UE4-WIDE-FNAME-CLEANCHECK]` (LOW, left by `[UE4-WIDE-FNAME]`): let Aura's `IsCleanFName` accept a well-formed
+  non-ASCII name (a UE4 name that passed the slot gate, or UTF-8 without '?' or C0 controls), checked against the DQ3
+  HD-2D mojibake case first. Effort **S**.
+- ⬜ `[UBEL-ASCII-FIRSTCHAR]` (LOW, found with `[UE4-WIDE-FNAME]`, not a regression): six Ubel heuristics refuse a name
+  whose first byte is not printable ASCII (ResolvePropertyNameType, ReadSlotObjectName, ReadParamSlotNames,
+  ResolveOptionalLayout, CorrectSubclassOffsets, WalkInstance's struct probe), so a CJK-first name is dropped on UE4 and
+  UE5 alike. Needs a UTF-8-aware first-character check and a live check. Effort **S-M**.
 
 ## 🧭 Idea 2026-10-04 — Live Funcs call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
@@ -779,9 +841,11 @@ source and editor are installed for when they are needed.
   ✅ `[MODULE-HELPERS-FOLD]` (LOW, step-3 design 2.5; done 2026-10-08): Genau's file-static ModuleOfAddress /
   ModuleNameOf and Macht's DescribeCode found a module the same way; Macht now owns ModuleOfAddress and
   ModuleLeafUtf8 (any path length), and Genau's "(unknown)" fallback is a thin wrapper.
-  ⬜ `[INT8-PREVIEW]` (LOW, found while designing step 2): `Ubel`'s `PreviewScalarValue` reads an `Int8Property`
-  through `uint8_t`, so every preview built on it shows -1 as 255. The snapshot decoder reads Int8 signed (B6) and is
-  not affected; the other callers are. Effort **S**.
+  ✅ `[INT8-PREVIEW]` **BUILT 2026-10-13, in source** (LOW; red `d07e98f5`, green `12e247ee`; 2 / 2 mutants killed):
+  `PreviewScalarValue` reads an Int8Property as int8_t (ByteProperty stays unsigned), and the snapshot decoder's own
+  signed branch folded back into it. Live check owed on DumperTest: a struct preview whose Int8 member is negative --
+  Live Walker's `{...}` on a StructProperty row, or a struct TMap key / value -- shows -N, not 256-N (Live Funcs read
+  Int8 signed before and after, so it is only the control).
   ✅ `[LF-CLEAR-CHOICES]` (LOW, the maintainer, 2026-10-08; built and review-fixed; **live 2026-10-09**, build 3645
   on DumperTest58 Shipping: with T, P and S ticked and the settings folded, Clear T/P/S on the header emptied all three
   columns and the summary went to "ticked 0, parameters 0, stacks 0", its orange gone): the table's
