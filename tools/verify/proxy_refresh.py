@@ -2,6 +2,8 @@
 
     py proxy_refresh.py report
     py proxy_refresh.py refresh "Lushfoil"      # substring of the game folder name
+    py proxy_refresh.py report --dist <dir>     # compare against another checkout's dist/proxy
+    py proxy_refresh.py --selftest              # discovery, guards and refresh on temp trees only
 
 WHY THIS EXISTS. The maintainer's standing warning is that a game may already have an
 OLD build of ours mapped. Measured 2026-08-19: **every** deployed proxy on this machine
@@ -20,17 +22,22 @@ have already spent the launch.
 WHAT `refresh` DOES, AND WHAT IT REFUSES TO DO. It copies `dist/proxy/<name>.dll` over
 the deployed copy, **after** backing the old one up to `out/proxy-backups/` with its
 size and SHA-256 recorded. It refuses if:
-  * the game is running (replacing a mapped DLL silently does nothing useful);
+  * an exe beside the proxy is running (replacing a mapped DLL silently does nothing useful);
   * the deployed file is already identical (nothing to do, and a needless write);
   * the backup cannot be written first.
 It never deletes and never touches a name that is not one of our four proxies.
 """
+import argparse
+import contextlib
 import hashlib
+import io
 import pathlib
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
+from typing import NamedTuple
 
 # The ownership predicate, shared rather than reimplemented: PE VERSIONINFO ProductName ==
 # "UE5CEDumper", which is exactly what Methode.cpp's IsOurModule reads. A refresh that
@@ -47,11 +54,17 @@ LIBS = [pathlib.Path(r"C:\Program Files (x86)\Steam\steamapps\common"),
 OURS = {"dxgi.dll", "version.dll", "winmm.dll", "dinput8.dll"}
 
 
-def _dist_build() -> str:
-    """The build number actually sitting in dist/, read at call time."""
+class Deployed(NamedTuple):
+    game: pathlib.Path    # the library's top-level game folder: what `refresh <substring>` matches
+    exes: list            # the .exe files beside the proxy: the processes that would map it
+    proxy: pathlib.Path
+
+
+def _dist_build(dist=None) -> str:
+    """The build number actually sitting in that dist/, read at call time."""
     try:
-        return (pathlib.Path(__file__).resolve().parents[2]
-                / "dist" / "build_number.txt").read_text().strip() or "?"
+        return ((DIST if dist is None else pathlib.Path(dist)).parent
+                / "build_number.txt").read_text().strip() or "?"
     except OSError:
         return "?"
 
@@ -65,14 +78,19 @@ def sha(p):
     return hashlib.sha256(p.read_bytes()).hexdigest()
 
 
-def dist_map():
-    return {q.name.lower(): q for q in DIST.glob("*.dll") if q.name.lower() in OURS}
+def is_ours(p, owner=product_name):
+    return (owner(str(p)) or "").lower() == "ue5cedumper"
 
 
-def deployed():
-    """[(gamedir, exe, proxy_path)] for every game folder carrying one of our proxies."""
+def dist_map(dist=None):
+    src = DIST if dist is None else pathlib.Path(dist)
+    return {q.name.lower(): q for q in src.glob("*.dll") if q.name.lower() in OURS}
+
+
+def deployed(libs=None, owner=product_name):
+    """[Deployed(game, exes, proxy)] for every game folder carrying one of our proxies."""
     out = []
-    for lib in LIBS:
+    for lib in (LIBS if libs is None else libs):
         if not lib.is_dir():
             continue
         for d in sorted(lib.iterdir()):
@@ -81,22 +99,35 @@ def deployed():
             for exe in list(d.rglob("*-Win64-Shipping.exe"))[:1]:
                 for q in exe.parent.glob("*.dll"):
                     if q.name.lower() in OURS:
-                        out.append((d, exe, q))
+                        out.append(Deployed(d, [exe], q))
     return out
 
 
-def running(exe_name):
-    o = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {exe_name}", "/FO", "CSV", "/NH"],
-                       capture_output=True, text=True, errors="replace").stdout
+def _tasklist(exe_name):
+    return subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {exe_name}", "/FO", "CSV", "/NH"],
+                          capture_output=True, text=True, errors="replace").stdout
+
+
+def running(exe_name, tasklist=_tasklist):
+    o = tasklist(exe_name)
     return exe_name.lower() in o.lower()
 
 
-def report():
-    dm = dist_map()
+def busy(exes, is_running=running):
+    """The exes beside a proxy that are running now: any one of them may have it mapped."""
+    return [e.name for e in exes if is_running(e.name)]
+
+
+def _exe_list(exes):
+    return ", ".join(e.name for e in exes) or "(none beside it)"
+
+
+def report(libs=None, dist=None, owner=product_name):
+    dm = dist_map(dist)
     say(f"dist/proxy: " + ", ".join(f"{k}={v.stat().st_size:,}" for k, v in sorted(dm.items())))
-    rows = deployed()
+    rows = deployed(libs, owner)
     stale = foreign = 0
-    for d, exe, q in rows:
+    for d, exes, q in rows:
         cur = dm.get(q.name.lower())
         if not cur:
             continue
@@ -106,24 +137,25 @@ def report():
         # so OCTOPATH's real ReShade `dxgi.dll` was reported as "*** STALE ***" -- a word that
         # means "run refresh on it", i.e. the report ADVISED the destruction the refresh gate
         # exists to prevent. A foreign DLL is not out of date; it is not ours to date.
-        if (product_name(str(q)) or "").lower() != "ue5cedumper":
+        if not is_ours(q, owner):
             foreign += 1
             say(f"  {d.name[:34]:<36} {q.name:<12} {q.stat().st_size:>10,}  "
-                f"FOREIGN (not ours — left alone)   exe={exe.name}")
+                f"FOREIGN (not ours — left alone)   exe={_exe_list(exes)}")
             continue
         same = sha(q) == sha(cur)
         stale += 0 if same else 1
         say(f"  {d.name[:34]:<36} {q.name:<12} {q.stat().st_size:>10,}  "
-            f"{'CURRENT' if same else '*** STALE ***'}   exe={exe.name}")
+            f"{'CURRENT' if same else '*** STALE ***'}   exe={_exe_list(exes)}")
     tail = f", {foreign} foreign (skipped)" if foreign else ""
     say(f"\n{len(rows)} deployed proxy(ies), {stale} stale{tail}")
     return stale
 
 
-def refresh(match):
-    dm = dist_map()
+def refresh(match, libs=None, dist=None, backups=None, owner=product_name, is_running=running):
+    dm = dist_map(dist)
+    backups = BACKUPS if backups is None else pathlib.Path(backups)
     done = 0
-    for d, exe, q in deployed():
+    for d, exes, q in deployed(libs, owner):
         if match.lower() not in d.name.lower():
             continue
         cur = dm.get(q.name.lower())
@@ -142,23 +174,23 @@ def refresh(match):
         #
         # This is the same predicate `Methode.cpp`'s `IsOurModule` uses and the same helper
         # `inject.py` now imports, so the three cannot drift.
-        pn = product_name(str(q))
-        if (pn or "").lower() != "ue5cedumper":
+        if not is_ours(q, owner):
             say(f"  ⛔ SKIPPED {d.name}: {q.name} is NOT ours "
-                f"(ProductName={pn!r}) — a third-party wrapper, left untouched")
+                f"(ProductName={owner(str(q))!r}) — a third-party wrapper, left untouched")
             continue
-        if running(exe.name):
-            say(f"  REFUSED: {exe.name} is RUNNING; replacing a mapped DLL achieves nothing. "
+        up = busy(exes, is_running)
+        if up:
+            say(f"  REFUSED: {', '.join(up)} is RUNNING; replacing a mapped DLL achieves nothing. "
                 f"Kill it first.")
             continue
-        BACKUPS.mkdir(parents=True, exist_ok=True)
+        backups.mkdir(parents=True, exist_ok=True)
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        bak = BACKUPS / f"{d.name.replace(' ', '_')[:40]}.{q.name}.{stamp}.bak"
+        bak = backups / f"{d.name.replace(' ', '_')[:40]}.{q.name}.{stamp}.bak"
         shutil.copy2(q, bak)
         if not bak.is_file() or sha(bak) != sha(q):
             raise SystemExit(f"proxy_refresh: FAILED -- backup of {q} did not verify; "
                              f"refusing to overwrite the deployed file")
-        say(f"  backed up {q.name} ({q.stat().st_size:,} B, sha {sha(q)[:12]}) -> {bak.name}")
+        say(f"  backed up {q} ({q.stat().st_size:,} B, sha {sha(q)[:12]}) -> {bak.name}")
         shutil.copy2(cur, q)
         if sha(q) != sha(cur):
             raise SystemExit(f"proxy_refresh: FAILED -- copy of {cur} to {q} did not verify")
@@ -166,19 +198,168 @@ def refresh(match):
         # regardless of what it actually copied -- a verification tool quoting a build
         # number it never read, which is the one thing this repo's rules forbid. It
         # would have reported "3263" while deploying 3334.
-        say(f"  refreshed {d.name} :: {q.name} -> {q.stat().st_size:,} B  (dist {_dist_build()})")
+        say(f"  refreshed {d.name} :: {q.relative_to(d)} -> {q.stat().st_size:,} B  (dist {_dist_build(dist)})")
         done += 1
     say(f"\nrefreshed {done} file(s)")
     return 0
 
 
+# ── selftest ─────────────────────────────────────────────────────────────────────────────────
+
+def _owner_by_bytes(path):
+    """The selftest's ownership: a fake DLL's bytes name its ProductName. A real VERSIONINFO needs a real PE;
+    b29_product_name.py checks the reader itself."""
+    data = pathlib.Path(path).read_bytes()
+    return "UE5CEDumper" if data.startswith(b"OURS") else (data.decode("ascii", "replace") or None)
+
+
+def selftest():
+    """[PROXYREFRESH-NONSHIPPING-EXE] Discovery, the guards and refresh on temp trees only: no Steam library, no
+    dist/ and no backup folder outside this run is read or written, and the only process looked at is this one."""
+    checks = []
+
+    def check(name, ok):
+        checks.append((name, bool(ok)))
+
+    # tasklist filters by name inside itself, in UTF-16; its OUTPUT comes back in the console code page, so a
+    # name that page cannot hold arrives as replacement characters, and the no-match notice is localized.
+    row = '"\ufffd\ufffd\ufffd  \ufffd.exe","4242","Console","1","10,000 K"\n'
+    check("a running non-ASCII exe reads as running though tasklist cannot print its name",
+          running("ネコぱら  ライブ.exe", tasklist=lambda n: row))
+    check("the English no-match notice reads as not running",
+          not running("Extinction.exe", tasklist=lambda n:
+                      "INFO: No tasks are running which match the specified criteria.\n"))
+    check("a localized, mis-decoded no-match notice reads as not running",
+          not running("Extinction.exe", tasklist=lambda n: "\ufffd\ufffdT: \ufffdS\ufffd\ufffd\ufffd\n"))
+    check("no output at all reads as not running", not running("Extinction.exe", tasklist=lambda n: ""))
+    check("the real tasklist finds this very process by its image name",
+          running(pathlib.Path(sys.executable).name))
+    check("the real tasklist finds no multi-space non-ASCII exe that does not exist",
+          not running("no such game  ネコぱら.exe"))
+
+    with tempfile.TemporaryDirectory(prefix="proxy_refresh_selftest_") as tmp:
+        tmp = pathlib.Path(tmp)
+        lib1 = tmp / "Steam Lib" / "steamapps" / "common"
+        lib2 = tmp / "ライブラリ" / "steamapps" / "common"
+        dist = tmp / "dist" / "proxy"
+        backups = tmp / "backups"
+
+        def put(p, data):
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.write_bytes(data)
+            return p
+
+        for n in sorted(OURS):
+            put(dist / n, b"OURS new " + n.encode())
+        (dist.parent / "build_number.txt").write_text("9999")
+
+        old = {}
+
+        def game(lib, name, folder, exes, dlls):
+            for e in exes:
+                put(lib / name / folder / e, b"MZ")
+            for dll, data in dlls.items():
+                old[(name, f"{folder}/{dll}")] = put(lib / name / folder / dll, data)
+
+        game(lib1, "Shipping Game", "G/Binaries/Win64", ["G-Win64-Shipping.exe"], {"version.dll": b"OURS old ship"})
+        game(lib1, "Extinction", "Blink/Binaries/Win64", ["Extinction.exe"], {"version.dll": b"OURS old ext"})
+        game(lib1, "DRAGON QUEST XI S", "Game/Binaries/Win64", ["DRAGON QUEST XI S.exe", "PostCrashDump.exe"],
+             {"dxgi.dll": b"OURS old dq"})
+        game(lib2, "ネコぱら  ライブ", "Package/Binaries/Win64", ["ネコぱら  ライブ.exe"], {"winmm.dll": b"OURS old neko"})
+        game(lib1, "Octo", "Octo/Binaries/Win64", ["Octo-Win64-Shipping.exe"],
+             {"winmm.dll": b"OURS old octo", "dxgi.dll": b"ReShade"})
+        game(lib1, "Fresh", "Bin", ["Fresh.exe"], {"dinput8.dll": (dist / "dinput8.dll").read_bytes()})
+        game(lib1, "Busy Game", "Bin", ["Busy Game.exe", "Anti-Cheat Helper.exe"], {"version.dll": b"OURS old busy"})
+        game(lib1, "Twin", "A/Win64", ["Twin.exe"], {"version.dll": b"OURS old twin A"})
+        game(lib1, "Twin", "B/Win64", ["TwinB.exe"], {"version.dll": b"OURS old twin B"})
+        game(lib1, "Caps", "Bin", ["Caps.exe"], {"VERSION.dll": b"OURS old caps"})
+        game(lib1, "SEED BATTLE", "Bin", ["SEED BATTLE.exe"], {"dxgi.dll": b"ReShade"})
+        game(lib1, "Only ReShade", "OR/Binaries/Win64", ["OR-Win64-Shipping.exe"], {"dxgi.dll": b"ReShade"})
+        game(lib1, "Plain", "Bin", ["Plain.exe"], {"steam_api64.dll": b"OURS but not a proxy name"})
+        libs = [lib1, lib2]
+
+        rows = deployed(libs, owner=_owner_by_bytes)
+        found = {(r.game.name, r.proxy.relative_to(r.game).as_posix()) for r in rows}
+        for (name, rel), why in [
+            (("Shipping Game", "G/Binaries/Win64/version.dll"), "beside a *-Win64-Shipping.exe (the control)"),
+            (("Extinction", "Blink/Binaries/Win64/version.dll"), "beside Extinction.exe"),
+            (("DRAGON QUEST XI S", "Game/Binaries/Win64/dxgi.dll"), "beside a multi-space exe name"),
+            (("ネコぱら  ライブ", "Package/Binaries/Win64/winmm.dll"), "beside a non-ASCII exe in a non-ASCII library"),
+            (("Twin", "A/Win64/version.dll"), "in one of two folders of one game"),
+            (("Twin", "B/Win64/version.dll"), "in the other folder of that game"),
+            (("Caps", "Bin/VERSION.dll"), "under an upper-case name"),
+            (("Octo", "Octo/Binaries/Win64/dxgi.dll"), "a foreign wrapper BESIDE one of ours (so it is named, then left)"),
+        ]:
+            check(f"found: {name} :: {rel} -- {why}", (name, rel) in found)
+        for name in ("SEED BATTLE", "Only ReShade"):
+            check(f"not a deployment: {name} holds only a foreign wrapper", all(g != name for g, _ in found))
+        check("never listed: a DLL that is not one of the four proxy names", all(g != "Plain" for g, _ in found))
+        dq = [r for r in rows if r.game.name == "DRAGON QUEST XI S"]
+        check("every exe beside the proxy is carried, not only the first",
+              dq and sorted(e.name for e in dq[0].exes) == ["DRAGON QUEST XI S.exe", "PostCrashDump.exe"])
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            stale = report(libs, dist, owner=_owner_by_bytes)
+        text = out.getvalue()
+        check("report counts nine stale proxies of ours", stale == 9)
+        check("report names the Extinction proxy STALE with its exe",
+              any("Extinction" in ln and "*** STALE ***" in ln and "exe=Extinction.exe" in ln
+                  for ln in text.splitlines()))
+        check("report calls the wrapper beside ours FOREIGN", any("Octo" in ln and "FOREIGN" in ln
+                                                                  for ln in text.splitlines()))
+        check("report's total is every listed file, one foreign",
+              "11 deployed proxy(ies), 9 stale, 1 foreign (skipped)" in text)
+
+        def is_running(name):
+            return name == "Busy Game.exe"
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            refresh("extinc", libs, dist, backups, owner=_owner_by_bytes, is_running=is_running)
+        check("a scoped refresh writes only the game it names",
+              old[("Extinction", "Blink/Binaries/Win64/version.dll")].read_bytes() == b"OURS new version.dll"
+              and old[("DRAGON QUEST XI S", "Game/Binaries/Win64/dxgi.dll")].read_bytes() == b"OURS old dq")
+
+        with contextlib.redirect_stdout(io.StringIO()):
+            refresh("", libs, dist, backups, owner=_owner_by_bytes, is_running=is_running)
+        refreshed = [k for k in old if k[0] in ("Shipping Game", "Extinction", "DRAGON QUEST XI S", "ネコぱら  ライブ",
+                                                 "Twin", "Caps") or k == ("Octo", "Octo/Binaries/Win64/winmm.dll")]
+        check("every stale proxy of ours is refreshed to dist's bytes, whatever its exe is called",
+              all(old[k].read_bytes() == (dist / old[k].name.lower()).read_bytes() for k in refreshed))
+        check("a running exe -- not the first beside the proxy -- refuses its refresh",
+              old[("Busy Game", "Bin/version.dll")].read_bytes() == b"OURS old busy")
+        check("the foreign wrapper beside ours is left untouched",
+              old[("Octo", "Octo/Binaries/Win64/dxgi.dll")].read_bytes() == b"ReShade")
+        check("a current proxy is not rewritten",
+              old[("Fresh", "Bin/dinput8.dll")].read_bytes() == (dist / "dinput8.dll").read_bytes())
+        saved = sorted(p.read_bytes() for p in backups.glob("*.bak")) if backups.is_dir() else []
+        want = sorted([b"OURS old ship", b"OURS old ext", b"OURS old dq", b"OURS old neko", b"OURS old octo",
+                       b"OURS old twin A", b"OURS old twin B", b"OURS old caps"])
+        check("every refreshed file's old bytes sit in their own backup -- two in one game and one second included",
+              saved == want)
+        check("nothing running was backed up", not any("Busy" in p.name for p in backups.glob("*.bak")))
+
+    for name, ok in checks:
+        print(f"  {'ok  ' if ok else 'FAIL'}  {name}")
+    bad = sum(not ok for _, ok in checks)
+    print(f"proxy_refresh selftest: {len(checks) - bad}/{len(checks)} controls passed")
+    return 1 if bad else 0
+
+
 if __name__ == "__main__":
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "report"
-    if cmd == "report":
-        report()
-    elif cmd == "refresh":
-        if len(sys.argv) < 3:
-            raise SystemExit("proxy_refresh: refresh needs a game-folder substring")
-        refresh(sys.argv[2])
+    ap = argparse.ArgumentParser(description="Report or refresh the proxy DLLs deployed into game folders.")
+    ap.add_argument("cmd", nargs="?", default="report", choices=["report", "refresh"])
+    ap.add_argument("match", nargs="?", help="refresh: a substring of the game folder name")
+    ap.add_argument("--dist", type=pathlib.Path, help="the dist/proxy folder to compare with (default: this checkout's)")
+    ap.add_argument("--lib", type=pathlib.Path, action="append",
+                    help="a steamapps/common folder to search (repeatable; default: the two Steam libraries)")
+    ap.add_argument("--selftest", action="store_true", help="run the controls on temp trees, then exit")
+    a = ap.parse_args()
+    if a.selftest:
+        sys.exit(selftest())
+    if a.cmd == "report":
+        report(a.lib, a.dist)
     else:
-        raise SystemExit(__doc__)
+        if not a.match:
+            raise SystemExit("proxy_refresh: refresh needs a game-folder substring")
+        refresh(a.match, a.lib, a.dist)
