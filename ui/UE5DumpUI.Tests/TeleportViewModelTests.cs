@@ -257,6 +257,35 @@ public class TeleportViewModelTests
         }
     }
 
+    /// <summary>RegisterSpecific as Win32 RegisterHotKey answers it: a combo is refused while a registration holds it,
+    /// ours included, or while another app does (<see cref="Taken"/>), and is free again once its registration is
+    /// disposed. <see cref="Live"/> is what is registered now, in registration order.</summary>
+    private sealed class OsHotkeyService : IGlobalHotkeyService
+    {
+        public HashSet<(uint Mods, uint Vk)> Taken { get; } = new();
+        public List<(uint Mods, uint Vk)> Live { get; } = new();
+        public IGlobalHotkeyRegistration? RegisterCursorHotkey(Action onPressed) => null;
+        public IGlobalHotkeyRegistration? RegisterSpecific(uint modifiers, uint vk, string label, Action onPressed)
+        {
+            var combo = (modifiers, vk);
+            if (Taken.Contains(combo) || Live.Contains(combo)) return null;
+            Live.Add(combo);
+            return new Registration(this, combo, label);
+        }
+        private sealed class Registration(OsHotkeyService owner, (uint, uint) combo, string label)
+            : IGlobalHotkeyRegistration
+        {
+            private bool _disposed;
+            public string Label => label;
+            public void Dispose()
+            {
+                if (_disposed) return;
+                _disposed = true;
+                owner.Live.Remove(combo);
+            }
+        }
+    }
+
     /// <summary>Every RegisterSpecific fails (combo held by another app) — models
     /// the "saved hotkey is taken at startup" case.</summary>
     private sealed class FailingHotkeyService : IGlobalHotkeyService
@@ -2497,6 +2526,93 @@ public class TeleportViewModelTests
 
         vm.ClearHotkeyCommand.Execute(row);
         Assert.False(row.HasBinding);
+    }
+
+    // ── [HOTKEY-REBIND-DEAD] a re-bind the OS refuses leaves the row's hotkey as it was ──
+
+    /// <summary>F5 bound to save0 through the capture, as a user binds it: VK_F5 0x74, no modifier.</summary>
+    private static TeleportHotkeyRow BindSave0ToF5(TeleportViewModel vm)
+    {
+        var row = vm.HotkeyRows.First(r => r.ActionId == "save0");
+        vm.BeginCaptureCommand.Execute(row);
+        Assert.True(vm.ApplyCapturedKey(Avalonia.Input.Key.F5, Avalonia.Input.KeyModifiers.None));
+        Assert.Equal("F5", row.Label);
+        return row;
+    }
+
+    [Fact]
+    public void Rebinding_to_a_combo_another_app_holds_keeps_the_old_hotkey_live()
+    {
+        var hk = new OsHotkeyService();
+        var vm = CreateVm(new FakeDumpService(), out var platform, hk);
+        var row = BindSave0ToF5(vm);
+        hk.Taken.Add((HotkeyModifiers.Control, 0x76));   // Ctrl+F7, held by another app
+
+        vm.BeginCaptureCommand.Execute(row);
+        bool handled = vm.ApplyCapturedKey(Avalonia.Input.Key.F7, Avalonia.Input.KeyModifiers.Control);
+
+        Assert.True(handled);
+        Assert.False(vm.IsCapturingHotkey);
+        Assert.Equal(new[] { (0u, 0x74u) }, hk.Live);    // F5 still registered: the row's key still fires
+        Assert.Equal("F5", row.Label);
+        Assert.False(row.Conflicted);
+        Assert.False(vm.HasHotkeyWarning);
+        Assert.Contains("'Ctrl+F7' is already in use", vm.StatusText);
+        Assert.Contains("keeps F5", vm.StatusText);
+        Assert.Equal(new TeleportHotkeyBinding(0, 0x74), new TeleportHotkeyStore(platform).Load()["save0"]);
+    }
+
+    [Fact]
+    public void Rebinding_to_a_combo_another_row_holds_keeps_both_rows_live()
+    {
+        var hk = new OsHotkeyService();
+        var vm = CreateVm(new FakeDumpService(), out _, hk);
+        BindSave0ToF5(vm);
+        var recall = vm.HotkeyRows.First(r => r.ActionId == "recall0");
+        vm.BeginCaptureCommand.Execute(recall);
+        vm.ApplyCapturedKey(Avalonia.Input.Key.F6, Avalonia.Input.KeyModifiers.None);
+
+        vm.BeginCaptureCommand.Execute(recall);
+        vm.ApplyCapturedKey(Avalonia.Input.Key.F5, Avalonia.Input.KeyModifiers.None);   // save0's combo
+
+        Assert.Equal(new[] { (0u, 0x74u), (0u, 0x75u) }, hk.Live.OrderBy(c => c.Vk));
+        Assert.Equal("F6", recall.Label);
+        Assert.False(recall.Conflicted);
+    }
+
+    [Fact]
+    public void Rebinding_a_row_to_the_combo_it_holds_keeps_it_live()
+    {
+        // RegisterHotKey refuses a combo already registered, ours included: trying it again before the row's own
+        // registration is let go would always fail.
+        var hk = new OsHotkeyService();
+        var vm = CreateVm(new FakeDumpService(), out _, hk);
+        var row = BindSave0ToF5(vm);
+
+        vm.BeginCaptureCommand.Execute(row);
+        bool handled = vm.ApplyCapturedKey(Avalonia.Input.Key.F5, Avalonia.Input.KeyModifiers.None);
+
+        Assert.True(handled);
+        Assert.Equal(new[] { (0u, 0x74u) }, hk.Live);
+        Assert.Equal("F5", row.Label);
+        Assert.False(row.Conflicted);
+        Assert.Contains("bound to F5", vm.StatusText);
+    }
+
+    [Fact]
+    public void Rebinding_to_a_free_combo_releases_the_old_one()
+    {
+        var hk = new OsHotkeyService();
+        var vm = CreateVm(new FakeDumpService(), out var platform, hk);
+        var row = BindSave0ToF5(vm);
+
+        vm.BeginCaptureCommand.Execute(row);
+        vm.ApplyCapturedKey(Avalonia.Input.Key.F7, Avalonia.Input.KeyModifiers.Control);
+
+        Assert.Equal(new[] { (HotkeyModifiers.Control, 0x76u) }, hk.Live);
+        Assert.Equal("Ctrl+F7", row.Label);
+        Assert.Equal(new TeleportHotkeyBinding(HotkeyModifiers.Control, 0x76),
+            new TeleportHotkeyStore(platform).Load()["save0"]);
     }
 
     [Fact]
