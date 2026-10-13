@@ -6300,6 +6300,10 @@ int main() {
               apFns.empty() || apFns[0].params.empty() ? "(none)" : apFns[0].params[0].objClassName.c_str());
         check("ASSETPTR ⭐: ...and so does a Live Funcs parameter layout",
               Ubel::ParamSlotObject(A(apWhich), "AssetObjectProperty") == A(apTex));
+        check("ASSETPTR ⭐: ...and the functions-taking-a-class matcher",
+              Aura::ParamTargetType(A(apWhich)) == A(apTex));
+        check("ASSETPTR ⭐: the class scorer weighs them as the object references they are",
+              Aura::GetFieldTypeWeight("AssetObjectProperty") == 2 && Aura::GetFieldTypeWeight("AssetClassProperty") == 2);
 
         DynOff::ApplyPropertyFamily(svFamily);
         DynOff::bUseFProperty = svFProp;  DynOff::bCasePreservingName = svCpn;  g_cachedUEVersion = svVer;
