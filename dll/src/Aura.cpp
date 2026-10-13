@@ -2265,8 +2265,10 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 
         // Validate the CLASS too. A backward-scan false positive is arbitrary
         // bytes that merely resemble a UObject header; its ClassPrivate points
-        // at junk whose name decodes to '?'-runs (ANSI) or CJK mojibake (wide,
-        // which Serie::GetString drops as "" once it is long or dense enough).
+        // at junk whose name decodes to '?'-runs (ANSI) or CJK mojibake (wide:
+        // on the 4.23+ pool Serie::GetString drops it as "" once it is long or
+        // dense enough; a pre-4.23 wide decode gets no such check, and only
+        // IsCleanFName's length cap bounds it).
         // Accepting it makes the Live Walker surface 亂碼 (DQ3 HD-2D: a value in
         // raw heap resolved to 'Property??IntProperty' with a 435-char mojibake
         // class). Require a clean class FName so only real subobjects pass.
