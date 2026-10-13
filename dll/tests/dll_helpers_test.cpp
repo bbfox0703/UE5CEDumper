@@ -6757,6 +6757,7 @@ static void Test_EnumPackageProbe() {
         EnumPackageTally t;
         Obj orphan = e56;
         orphan.ptr(0x20, 0);
+        orphan.i32(kName, kPkgName);   // its own name repeats its +0x14 slot, so only the self-as-package guard refuses it
         EXPECT("EnumPkg: an enum with no Outer is not a sample", !sample(orphan, 0x40, 0x20, t) && t.sampled == 0);
         Obj empty = e56;
         empty.i32(0x40 + 0x08, 0);
