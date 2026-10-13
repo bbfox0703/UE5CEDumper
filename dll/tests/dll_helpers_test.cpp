@@ -6974,7 +6974,10 @@ static void Test_VersionLadder() {
         EXPECT("Ladder ⭐: the 5.4 enum layout leaves a 5.4 label alone (DumperTest)",
                run(504, f, old).version == 504 && old.enumAsked == 1);
         Probe stock51; stock51.enums = enums54;
-        EXPECT("Ladder: ...and a 5.1 one (DumperTest51)", run(501, f, stock51).version == 501);
+        EXPECT("Ladder: ...and a 5.1 one (DumperTest51)", run(501, f, stock51).version == 501 && stock51.enumAsked == 1);
+        Probe floor; floor.enums = enums55;
+        EXPECT("Ladder: the window opens at 5.0 -- a 5.0 label whose tagged probe missed is asked, and climbs to 5.5",
+               run(500, f, floor).version == 505 && floor.enumAsked == 1);
         Probe none;
         EXPECT("Ladder: no enum sampled changes nothing", run(503, f, none).version == 503 && none.enumAsked == 1);
         Probe split; split.enums = EnumPackageTally{32, 20, 12};
@@ -7013,6 +7016,9 @@ static void Test_VersionLadder() {
                run(504, f, old).version == 504 && old.structAsked == 1);
         Probe none;
         EXPECT("Ladder: no struct sampled changes nothing", run(505, f, none).version == 505 && none.structAsked == 1);
+        Probe floor; floor.structs = structs56;
+        EXPECT("Ladder: the window opens at 5.0 -- a 5.0 label whose tagged probe missed is asked, and climbs to 5.6",
+               run(500, f, floor).version == 506 && floor.structAsked == 1);
         Probe split; split.structs = StructStateTally{48, 30};
         EXPECT("Ladder: no clear majority changes nothing", run(505, f, split).version == 505);
     }
