@@ -96,10 +96,15 @@ public sealed class EngineState
     public int ItemDetectProbes { get; init; }
 
     /// <summary>True when the stride is a guess: object counts and names may be an alias of the real pool.</summary>
-    public bool ItemStrideUntrusted => IsStrideUntrusted(ItemDetect);
+    public bool ItemStrideUntrusted => IsStrideUntrusted(ItemDetect, IsVersionTooOld);
 
-    /// <summary>The rule, shared by the badge and the dump stamp: tentative and undetected are guesses.</summary>
-    public static bool IsStrideUntrusted(string detect) => detect is "tentative" or "undetected";
+    /// <summary>The one rule for every surface that reports the stride verdict, so a badge and a dump stamp cannot
+    /// disagree: tentative and undetected are guesses. Never on a refused engine (<see cref="IsVersionTooOld"/>): the
+    /// scan was skipped, so its "undetected" is only the value the DLL starts with -- no stride was guessed and no
+    /// object was read with one, and the refusal banner already says why everything is empty.
+    /// [REFUSED-STRIDE-NOTICE]</summary>
+    public static bool IsStrideUntrusted(string detect, bool versionTooOld) =>
+        !versionTooOld && detect is ("tentative" or "undetected");
 
     /// <summary>The badge's words for a guessed stride; "" when the stride is not a guess.</summary>
     public static string StrideGuessText(string detect, int validated, int probes) => detect switch

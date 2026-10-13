@@ -289,8 +289,9 @@ public partial class PointerPanelViewModel : ViewModelBase
 
     /// <summary>Drives the GLOBAL "stride is a guess" badge in the top bar: a tentative or undetected stride
     /// means object counts and names may be an alias of the real pool (a stride dividing the real one reads
-    /// every k-th object).</summary>
-    public bool ShowStrideGuessBadge => HasData && EngineState.IsStrideUntrusted(ItemDetect);
+    /// every k-th object). Silent on a refused engine, whose "undetected" is no verdict -- see
+    /// <see cref="EngineState.IsStrideUntrusted"/>.</summary>
+    public bool ShowStrideGuessBadge => HasData && EngineState.IsStrideUntrusted(ItemDetect, IsVersionTooOld);
 
     /// <summary>Text for the global stride-guess badge.</summary>
     public string StrideGuessBadgeText =>
