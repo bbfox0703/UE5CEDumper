@@ -374,6 +374,33 @@ public class SnapshotStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task A_capture_is_back_at_synchronous_NORMAL_before_its_completion_commits()
+    {
+        // The order, not just the end state: a switch made after the completion's commit leaves that commit's own
+        // autocheckpoint -- the one that may fold every frame in -- running OFF. Traced on the session's connection.
+        var ct = TestContext.Current.CancellationToken;
+        _store.SetActiveGame("DURABLE");
+        long kept = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "kept", Scope = "NumericNoByte" }, ct);
+        await using var s = await _store.BeginCaptureSessionAsync(ct);
+        var handle = SnapshotStore.SessionConnectionForTests(s).Handle!;
+        var ran = new List<string>();
+        SQLitePCL.raw.sqlite3_trace(handle, (SQLitePCL.strdelegate_trace)((_, sql) => { lock (ran) ran.Add(sql); }), null);
+        try
+        {
+            int n = s.WriteChunk(kept, new[] { MakeObject(1, ("HP", "IntProperty", "0A000000")) }, ct);
+            await s.CompleteSnapshotAsync(kept, 1, n, ct: ct);
+        }
+        finally
+        {
+            SQLitePCL.raw.sqlite3_trace(handle, (SQLitePCL.strdelegate_trace?)null, null);   // the handle goes back to the pool
+        }
+
+        int normal = ran.FindIndex(q => q.Contains("PRAGMA synchronous=NORMAL", StringComparison.Ordinal));
+        int totals = ran.FindIndex(q => q.StartsWith("UPDATE snapshots SET object_count", StringComparison.Ordinal));
+        Assert.True(normal >= 0 && totals > normal, string.Join(" | ", ran));
+    }
+
+    [Fact]
     public void PartialMarker_ShowsInTheGridLabel_AndEveryPickerLine()
     {
         const string at = "2026-09-12T10:00:00Z";

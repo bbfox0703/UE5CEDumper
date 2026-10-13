@@ -416,6 +416,10 @@ public sealed class SnapshotStore : ISnapshotStore
     internal static long SessionSynchronousForTests(ICaptureSession session)
         => ((CaptureSession)session).SynchronousLevel();
 
+    /// <summary>A capture session's connection, for a test that traces the order of what it runs.</summary>
+    internal static SqliteConnection SessionConnectionForTests(ICaptureSession session)
+        => ((CaptureSession)session).Connection;
+
     // Builds + binds the scalar + struct-array INSERT commands for the `fields` table
     // once, then inserts each captured object's rows. Shared by the one-shot
     // WriteChunkAsync (tests / seeding) and the long-lived CaptureSession so the
@@ -708,6 +712,8 @@ public sealed class SnapshotStore : ISnapshotStore
             await tx.CommitAsync(ct);
             _completed = true;
         }
+
+        internal SqliteConnection Connection => _conn;
 
         /// <summary>The session connection's PRAGMA synchronous (0 OFF, 1 NORMAL), for the tests.</summary>
         internal long SynchronousLevel()
