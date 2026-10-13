@@ -452,6 +452,21 @@ def selftest():
               saved == want)
         check("nothing running was backed up", not any("Busy" in p.name for p in backups.glob("*.bak")))
 
+        # Two folders of one game back up under names that differ by a counter alone, so only a record ON DISK says
+        # which .bak goes back where once the console output is gone; a restore by guess swaps the two builds.
+        def recorded(bak):
+            side = bak.with_name(bak.name + ".source.txt")
+            return side.read_text(encoding="utf-8").splitlines() if side.is_file() else []
+
+        came_from = {k: p for k, p in old.items() if before[k] in want}
+        baks = sorted(backups.glob("*.bak")) if backups.is_dir() else []
+        check("every backup records the path it came from and its SHA-256 -- Twin's A and B and the non-ASCII path "
+              "included",
+              len(baks) == len(want) and len(came_from) == len(want)
+              and all(len(recorded(b)) >= 2
+                      and recorded(b)[0] == str(next(p for k, p in came_from.items() if before[k] == b.read_bytes()))
+                      and recorded(b)[1] == hashlib.sha256(b.read_bytes()).hexdigest() for b in baks))
+
     for name, ok in checks:
         print(f"  {'ok  ' if ok else 'FAIL'}  {name}")
     bad = sum(not ok for _, ok in checks)
