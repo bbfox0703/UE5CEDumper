@@ -110,11 +110,14 @@ public class ExperimentalTeardownTests : IDisposable
         public override Task<SeeThroughStatus> SeeThroughGetStateAsync(CancellationToken ct = default)
             => Task.FromResult(new SeeThroughStatus { Active = SeeThrough, HasTarget = true });
 
+        /// <summary>What the meter search finds besides the player's meter, best first; with NoMeter, nothing (no pawn).</summary>
+        public List<StealthCandidate> OtherMeters { get; } = new();
+        public bool NoMeter;
+
         public override Task<IReadOnlyList<StealthCandidate>> FindStealthMeterAsync(int max = 8, CancellationToken ct = default)
-            => Task.FromResult<IReadOnlyList<StealthCandidate>>(new List<StealthCandidate>
-            {
-                new() { ClassName = "BP_Player_C", FieldName = "Visibility", Score = 9 },
-            });
+            => Task.FromResult<IReadOnlyList<StealthCandidate>>(NoMeter ? new List<StealthCandidate>()
+                : OtherMeters.Append(new StealthCandidate { ClassName = "BP_Player_C", FieldName = "Visibility", Score = 9 })
+                             .ToList());
 
         public override Task<IReadOnlyList<ForcedFieldInfo>> GetForcedFieldsAsync(CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<ForcedFieldInfo>>(Forced.ToList());
@@ -370,6 +373,45 @@ public class ExperimentalTeardownTests : IDisposable
         await Connect(vm);
         Assert.Empty(dll.Off);
         Assert.Equal("Connected", vm.StatusText);
+    }
+
+    // ---- The round-3 review's LOW: the Stealth release keys on the card's "Holding @0", and Detect -- enabled while
+    // holding -- overwrote it with "Ready" (or "Not found") and replaced the held candidate, while the DLL's hold ran
+    // on. An untick then released nothing, and Reset released the newly detected field or none.
+
+    [Fact]
+    public async Task Detect_again_while_holding_leaves_the_hold_for_the_untick_to_release()
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        await vm.HoldStealthCommand.ExecuteAsync(null);
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);   // to see that the meter now reads 0
+        Assert.Equal("Holding @0", vm.StealthState);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.Contains("reset_field " + FakeDll.Meter, dll.Off);
+        Assert.Empty(dll.Forced);
+    }
+
+    [Theory]
+    [InlineData("no pawn")]
+    [InlineData("another meter first")]
+    public async Task Detect_again_while_holding_keeps_the_held_meter_for_Reset(string found)
+    {
+        var (vm, dll, _, _) = Make(enabled: true);
+        await Connect(vm);
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        await vm.HoldStealthCommand.ExecuteAsync(null);
+        if (found == "no pawn") dll.NoMeter = true;
+        else dll.OtherMeters.Add(new StealthCandidate { ClassName = "BP_Enemy_C", FieldName = "Awareness", Score = 20 });
+
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        Assert.Equal("Holding @0", vm.StealthState);
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { "reset_field " + FakeDll.Meter }, dll.Off);
+        Assert.Empty(dll.Forced);
     }
 
     // ---- The review's MED: with no pawn the DLL answers Fly active and has_cmc false, the card reads Unavailable, and
