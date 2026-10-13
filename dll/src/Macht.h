@@ -282,7 +282,8 @@ constexpr ModuleScanVerdict ClassifyModuleForScan(uintptr_t base, size_t size, u
 }
 
 // [AOB-SKIP-OWN-DLL] True when `h` is a build of the dumper: UE5Dumper.dll or any proxy flavour, whatever its file is
-// called. Asks the module's export table, so the caller must hold a module that is still loaded or accept a false.
+// called, and a build from before the mailbox contract too (Grimoire::DUMPER_LEGACY_IDENTITY_EXPORT). Asks the
+// module's export table, so the caller must hold a module that is still loaded or accept a false.
 bool IsDumperModule(HMODULE h);
 
 // AOBScanAll across ALL loaded modules (main EXE + DLLs), less the dumper's own images (ClassifyModuleForScan).

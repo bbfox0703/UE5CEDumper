@@ -28,10 +28,16 @@ constexpr size_t         LOG_MAX_SIZE     = LOG_MAX_SIZE_MB * 1024 * 1024;
 constexpr const wchar_t* HINT_CACHE_PREFIX = L"UE5CEDumper";  // File: UE5CEDumper.{COMPUTERNAME}.json
 
 // --- Dumper identity ---
-// [AOB-SKIP-OWN-DLL] The exported symbol every build of the dumper carries, UE5Dumper.dll and each proxy alike: the
-// mailbox contract (defined in Mimic.cpp), whose magic (Mimic::MAILBOX_CONTRACT_MAGIC) tells a build of ours from a
-// module that merely exports the same name. It is how one copy recognises another mapped in the same process.
+// [AOB-SKIP-OWN-DLL] The exported symbol every current build of the dumper carries, UE5Dumper.dll and each proxy
+// alike: the mailbox contract (defined in Mimic.cpp), whose magic (Mimic::MAILBOX_CONTRACT_MAGIC) tells a build of
+// ours from a module that merely exports the same name. It is how one copy recognises another mapped in the same
+// process.
 constexpr const char*    DUMPER_IDENTITY_EXPORT = "g_mailboxContract";
+// The contract only exists since 2026-08-06, so a build from before it -- a stale proxy left in a game folder -- is
+// recognised by the C ABI's init entry instead, which every build has exported (the version.dll proxy since
+// 2026-03-05) and the CE scripts look for by name. It carries no magic to check; no engine module exports that name,
+// so a module that does is not one the walk needs.
+constexpr const char*    DUMPER_LEGACY_IDENTITY_EXPORT = "UE5_Init";
 
 // --- Named Pipe ---
 constexpr const wchar_t* PIPE_NAME        = L"\\\\.\\pipe\\UE5DumpBfx";

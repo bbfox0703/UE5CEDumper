@@ -558,9 +558,10 @@ bool IsDumperModule(HMODULE h) {
     // through the loader, not by reading the address: measured 2026-10-13 (Windows 11), a freed and unmapped DLL's
     // handle answers NULL with error 126 and no fault. The magic is read under SEH all the same.
     const FARPROC sym = GetProcAddress(h, Grimoire::DUMPER_IDENTITY_EXPORT);
-    if (!sym) return false;
     uint32_t magic = 0;
-    return ReadSafe(reinterpret_cast<uintptr_t>(sym), magic) && magic == Mimic::MAILBOX_CONTRACT_MAGIC;
+    if (sym && ReadSafe(reinterpret_cast<uintptr_t>(sym), magic) && magic == Mimic::MAILBOX_CONTRACT_MAGIC) return true;
+    // A build from before the contract exports none, and is still a build of ours.
+    return GetProcAddress(h, Grimoire::DUMPER_LEGACY_IDENTITY_EXPORT) != nullptr;
 }
 
 // ============================================================
