@@ -29,6 +29,8 @@ size and SHA-256 recorded. It refuses if:
   * the deployed file is already identical (nothing to do, and a needless write);
   * the backup cannot be written first.
 It never deletes and never touches a name that is not one of our four proxies.
+Neither verb prints an all-clear it did not check: a dist holding none of our DLLs, or a `--lib`
+that is not a folder, stops it, and a proxy with no counterpart in dist is named UNCOMPARED.
 """
 import argparse
 import contextlib
@@ -91,6 +93,18 @@ def dist_map(dist=None):
     return {q.name.lower(): q for q in src.glob("*.dll") if q.name.lower() in OURS}
 
 
+def _compare_with(dist=None):
+    """(the dist folder, its dist_map), refusing a dist that holds none of our DLLs. With nothing to compare against,
+    every deployed proxy goes unchecked and the total still reads "0 stale" -- what a worktree with no dist/ and a
+    mistyped --dist both printed, and an all-clear is exactly what makes an operator skip the refresh."""
+    src = DIST if dist is None else pathlib.Path(dist)
+    dm = dist_map(src)
+    if not dm:
+        raise SystemExit(f"proxy_refresh: {src} holds none of our proxy DLLs ({', '.join(sorted(OURS))}) -- "
+                         f"nothing to compare against; pass --dist with a checkout's dist/proxy")
+    return src, dm
+
+
 def deployed(libs=None, owner=product_name):
     """[Deployed(game, exes, proxy)] for every proxy-named DLL in a folder that holds one of OURS.
 
@@ -105,8 +119,12 @@ def deployed(libs=None, owner=product_name):
     DXVK, mod loaders) and none beside a Shipping exe, so a search by name alone would have listed all eleven. A
     foreign file BESIDE one of ours is still yielded, so report and refresh can name it and leave it alone."""
     out = []
-    for lib in (LIBS if libs is None else libs):
+    for lib in (LIBS if libs is None else [pathlib.Path(x) for x in libs]):
         if not lib.is_dir():
+            # A built-in library may simply not exist on this machine. One the caller NAMED is a mistake when it is
+            # not a folder, and skipping it would report every game in it as carrying no proxy at all.
+            if libs is not None:
+                raise SystemExit(f"proxy_refresh: library {lib} is not a folder")
             continue
         for d in sorted(lib.iterdir()):
             if not d.is_dir():
@@ -145,14 +163,12 @@ def _exe_list(exes):
 
 
 def report(libs=None, dist=None, owner=product_name):
-    dm = dist_map(dist)
-    say(f"dist/proxy: " + ", ".join(f"{k}={v.stat().st_size:,}" for k, v in sorted(dm.items())))
+    src, dm = _compare_with(dist)
+    say(f"dist/proxy {src} (build {_dist_build(src)}): "
+        + ", ".join(f"{k}={v.stat().st_size:,}" for k, v in sorted(dm.items())))
     rows = deployed(libs, owner)
-    stale = foreign = 0
+    stale = foreign = uncompared = 0
     for d, exes, q in rows:
-        cur = dm.get(q.name.lower())
-        if not cur:
-            continue
         # Ownership BEFORE freshness, and for the same reason `refresh()` gates on it
         # ([PROXYREFRESHOWNER-2026-08-24]): `deployed()` yields every file under one of our four
         # names in a folder of ours, and a third-party wrapper can legitimately own one of them. This line used to be missing here,
@@ -164,11 +180,20 @@ def report(libs=None, dist=None, owner=product_name):
             say(f"  {d.name[:34]:<36} {q.name:<12} {q.stat().st_size:>10,}  "
                 f"FOREIGN (not ours — left alone)   exe={_exe_list(exes)}")
             continue
+        cur = dm.get(q.name.lower())
+        if not cur:
+            # Counted and named, never skipped: a row left out of the comparison is not a current one, and a silent
+            # skip is how "0 stale" came to be printed over proxies nobody had compared.
+            uncompared += 1
+            say(f"  {d.name[:34]:<36} {q.name:<12} {q.stat().st_size:>10,}  "
+                f"UNCOMPARED (dist has no {q.name.lower()})   exe={_exe_list(exes)}")
+            continue
         same = sha(q) == sha(cur)
         stale += 0 if same else 1
         say(f"  {d.name[:34]:<36} {q.name:<12} {q.stat().st_size:>10,}  "
             f"{'CURRENT' if same else '*** STALE ***'}   exe={_exe_list(exes)}")
     tail = f", {foreign} foreign (skipped)" if foreign else ""
+    tail += f", {uncompared} UNCOMPARED (no counterpart in dist -- NOT checked)" if uncompared else ""
     say(f"\n{len(rows)} deployed proxy(ies), {stale} stale{tail}")
     return stale
 
@@ -185,15 +210,17 @@ def _backup_path(backups, game, proxy, stamp):
 
 
 def refresh(match, libs=None, dist=None, backups=None, owner=product_name, is_running=running):
-    dm = dist_map(dist)
+    src, dm = _compare_with(dist)
     backups = BACKUPS if backups is None else pathlib.Path(backups)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    done = 0
+    done = uncompared = 0
     for d, exes, q in deployed(libs, owner):
         if match.lower() not in d.name.lower():
             continue
         cur = dm.get(q.name.lower())
         if not cur:
+            uncompared += 1
+            say(f"  SKIPPED {d.name}: {q.relative_to(d)} -- {src} has no {q.name.lower()}, so it was not compared")
             continue
         if sha(q) == sha(cur):
             say(f"  {d.name}: {q.name} already current — nothing to do")
@@ -233,7 +260,7 @@ def refresh(match, libs=None, dist=None, backups=None, owner=product_name, is_ru
         # would have reported "3263" while deploying 3334.
         say(f"  refreshed {d.name} :: {q.relative_to(d)} -> {q.stat().st_size:,} B  (dist {_dist_build(dist)})")
         done += 1
-    say(f"\nrefreshed {done} file(s)")
+    say(f"\nrefreshed {done} file(s)" + (f", {uncompared} NOT compared (no counterpart in dist)" if uncompared else ""))
     return 0
 
 
