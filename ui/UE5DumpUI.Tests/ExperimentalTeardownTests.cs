@@ -511,6 +511,24 @@ public class ExperimentalTeardownTests : IDisposable
     [InlineData("fly")]
     [InlineData("seethrough")]
     [InlineData("stealth")]
+    [InlineData("foreground")]
+    public async Task A_connect_teardown_that_could_not_read_what_an_earlier_session_left_stays_owed(string fails)
+    {
+        // What the earlier session's cards knew is not what this connect's DLL runs: the disconnect forgets it.
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        vm.SetConnected(false);
+        gate.IsEnabled = false;
+        dll.ReadFails.Add(fails);
+
+        await Connect(vm);
+        Assert.True(gate.TeardownOwed);
+    }
+
+    [Theory]
+    [InlineData("fly")]
+    [InlineData("seethrough")]
+    [InlineData("stealth")]
     public async Task An_untick_after_a_prime_that_could_not_read_what_runs_stays_owed(string fails)
     {
         var (vm, dll, _, gate) = Make(enabled: true);
@@ -757,6 +775,7 @@ public class ExperimentalTeardownTests : IDisposable
         await vm.ExperimentalTeardown;
         Assert.Contains("fly", dll.Off);
         Assert.False(dll.Fly);
+        Assert.False(gate.TeardownOwed);   // the no-pawn reply is a reply: the card knew the worker ran
     }
 
     [Fact]
@@ -773,6 +792,7 @@ public class ExperimentalTeardownTests : IDisposable
         gate.IsEnabled = false;
         await vm.ExperimentalTeardown;
         Assert.DoesNotContain("fly", dll.Off);
+        Assert.False(gate.TeardownOwed);   // and that it did not
     }
 
     [Fact]
