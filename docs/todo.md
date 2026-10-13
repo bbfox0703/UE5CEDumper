@@ -253,7 +253,7 @@ findings, with one cause: the exe has a protector's shape (scrambled section nam
 section, no ASLR), as Elliot's and P3R's do -- the only three of the 37 UE exes on this machine without ASLR
 (measured 2026-10-09 from their PE headers; every other title and fixture has it).
 
-- ✅ `[VER-MARKERS-PAST-504]` **BUILT 2026-10-14, in source -- option (a); live checks owed** (MED; closure below the row): a title whose PE version is stripped and whose exe holds no `++UE5+Release-`
+- ✅ `[VER-MARKERS-PAST-504]` **BUILT 2026-10-14, build 3647; LIVE PASS 2026-10-14** (MED; closure and the live results below the row): a title whose PE version is stripped and whose exe holds no `++UE5+Release-`
   string is reported as **504** at most: the runtime marker ladder (tagged FFieldVariant → 503, the
   `SetGravityDirection` UFUNCTION → 504, `DynOff::CmcMarkerVersion`) has no rung past 5.4. FFRS reads 504 and is
   most likely **5.6**; so is Elliot, recorded as 5.4. Evidence, measured 2026-10-09 on every UE title installed here:
@@ -295,6 +295,14 @@ section, no ASLR), as Elliot's and P3R's do -- the only three of the 37 UE exes 
   probes reading the old layouts; DumperTest56 seeded to 504 climbs 504 -> 505 -> 506; `a4_raise_ladder.py` on
   DumperTest58 (504 -> 506 -> 507 -> 508); Manor Lords (5.5.4) seeded to 504 reaches 505 and NOT 506; FFRS and Elliot
   through their proxies climb to 506 and badge UE 5.6 -- then correct their docs/test-games.md rows.
+  ✅ **Live, build 3647, 2026-10-14 -- every check PASS** (pipe and logs; the UI badge was not looked at): the
+  probes read 31 enums / 46 structs everywhere. DumperTest51 (5.1) and DumperTest (5.4): +0x14 on 0, +0x20 on 31,
+  flags on 0 -- 501 / 504 kept. Manor Lords (5.5.4, current build, seeded 504): 505 on 31 of 31, flags on 0, stayed
+  505 -- the 5.5 layout, template-only until now, measured on a real 5.5 binary. DumperTest56 Shipping (seeded 504):
+  505, then 506 on 46 of 46, no 507 / 508. DumperTest58 Shipping (seeded 504): the enum probe skipped on FNameData,
+  506 on 46 of 46, then 507 and 508. FFRS (cached 504) and Elliot (427 -> 503 -> 504): 505 -> 506, 53,036 and
+  84,990 objects; test-games.md and both READMEs corrected. The A4 rig learned a 5.6 mode and to pick the entry its
+  fixture's own PE hash keys (`62abba2b`, `f2234fda`).
 - ⬜ `[OVERRIDE-RAISED-BY-LADDER]` (**the maintainer's decision**, from `[VER-MARKERS-PAST-504]`'s review): every
   raise rung lifts a persisted user override as it lifts a detection (503 / 504 / 507 / 508 already did; 505 / 506 now
   widen it to any 5.0-5.5 override on a 5.5 or 5.6 title), and the override flag stays set, so the badge reads e.g.

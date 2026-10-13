@@ -61,7 +61,7 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 
 *UE 4.11 是支援下限；4.10 以下會直接顯示為不支援。*
 
-*冒險家艾略特的千年奇譚與 FINAL FANTASY RESONANCE DEMO 隱藏了引擎版本：工具會顯示 5.4，本表依它們隨附的引擎檔案歸為 5.6。*
+*冒險家艾略特的千年奇譚與 FINAL FANTASY RESONANCE DEMO 隱藏了引擎版本；從 build 3647 起，工具會依其結構判讀為 5.6（之前的版本顯示 5.4）。*
 
 ---
 
