@@ -203,8 +203,8 @@ public class ExperimentalCheckboxTests
     });
 
     /// <summary>The defence line behind the box, on Live Funcs' own panel: a trace kept while the features were on, and
-    /// then they are off by any path, shows neither Open in Call Trace nor its sentences on the status line; on again,
-    /// the DLL still holds the trace, so both come back.</summary>
+    /// then they are off by any path, shows neither Open in Call Trace nor its sentences on the status line; the untick
+    /// gives the trace back to the game at once [EXPOFF-ROUND3-PAUSED], so on again neither comes back.</summary>
     [Fact]
     public Task Off_Live_Funcs_shows_neither_Open_in_Call_Trace_nor_the_trace_sentences() => Headless.Run(() =>
     {
@@ -225,9 +225,10 @@ public class ExperimentalCheckboxTests
         Assert.StartsWith(status.Text + " " + kept, before, StringComparison.Ordinal);   // the Stop's own line stays
         Assert.DoesNotContain(kept, ToolTip.GetTip(status) as string ?? "", StringComparison.Ordinal);
 
+        string off = status.Text!;
         gate.IsEnabled = true;
         Dispatcher.UIThread.RunJobs();
-        Assert.True(open.IsEffectivelyVisible, "on again, Open in Call Trace stays hidden over a trace the DLL holds");
-        Assert.Equal(before, status.Text);
+        Assert.False(open.IsEffectivelyVisible, "on again, Open in Call Trace offers a trace the untick gave back");
+        Assert.Equal(off, status.Text);
     });
 }
