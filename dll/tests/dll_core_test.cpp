@@ -10910,6 +10910,42 @@ int main() {
                 *c = L'B';
             chunk[6] = reinterpret_cast<uintptr_t>(e6);
         }
+
+        // [UE4-WIDE-FNAME] review: the narrow read asked for a fixed 255-byte window, so an ANSI name allocated within
+        // 255 bytes of an unreadable page failed whole and came back "". UnrealNames.cpp packs entries end to end in
+        // pools of 64 KB (4.10) / 256 KB (4.18) from FMemory::Malloc, so the last entry of each pool can sit right
+        // before one. Six pages reserved, the first, third and fifth committed, one fixture at the end of each.
+        uint8_t* npage = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x6000, MEM_RESERVE, PAGE_READWRITE));
+        check("UE4WIDE setup: reserved six pages for the narrow fixtures", npage != nullptr);
+        static std::vector<uint8_t> eLongAnsi;
+        if (npage) {
+            for (size_t p = 0; p < 0x6000; p += 0x2000) VirtualAlloc(npage + p, 0x1000, MEM_COMMIT, PAGE_READWRITE);
+            auto atPageEnd = [](uint8_t* pageEnd, int32_t slot, size_t strBytes) {
+                uint8_t* e = pageEnd - 0x10 - strBytes;
+                const int32_t word = slot << 1;   // narrow: bit 0 clear beside its own slot
+                memcpy(e, &word, sizeof word);
+                return e;
+            };
+            // An ANSI name whose terminator is the committed page's last byte.
+            static const char edge[] = "PageEdgeName";
+            uint8_t* e8 = atPageEnd(npage + 0x1000, 8, sizeof edge);
+            memcpy(e8 + 0x10, edge, sizeof edge);
+            chunk[8] = reinterpret_cast<uintptr_t>(e8);
+            // 100 bytes up to the page's end with no terminator: the next byte to read is unreadable.
+            uint8_t* e9 = atPageEnd(npage + 0x3000, 9, 100);
+            memset(e9 + 0x10, 'B', 100);
+            chunk[9] = reinterpret_cast<uintptr_t>(e9);
+            // Exactly the 255-byte window, ending at the page's end, no terminator: the window fits and is kept.
+            uint8_t* e10 = atPageEnd(npage + 0x5000, 10, 255);
+            memset(e10 + 0x10, 'C', 255);
+            chunk[10] = reinterpret_cast<uintptr_t>(e10);
+        }
+        // Longer than the window, all readable: cut to its first 255 bytes, as it always was.
+        {
+            std::string longAnsi(300, 'A');
+            chunk[11] = makeEntry(eLongAnsi, 11 << 1, longAnsi.data(), longAnsi.size());
+        }
+
         static uintptr_t chunks[2] = { reinterpret_cast<uintptr_t>(chunk), 0 };
         Serie::InitUE4(reinterpret_cast<uintptr_t>(chunks), 0x10);
 
@@ -10931,6 +10967,19 @@ int main() {
             check("UE4WIDE: one running into an unreadable page is refused, not read past",
                   Serie::GetString(6).empty(), Serie::GetString(6).c_str());
             VirtualFree(wpage, 0, MEM_RELEASE);
+        }
+        check("UE4WIDE narrow control: a name longer than the window is cut to its first 255 bytes",
+              Serie::GetString(11) == std::string(255, 'A'), std::to_string(Serie::GetString(11).size()).c_str());
+        if (npage) {
+            check("UE4WIDE narrow page edge ⭐ an ANSI name ending at an unreadable page's edge is read whole",
+                  Serie::GetString(8) == "PageEdgeName", Serie::GetString(8).c_str());
+            check("UE4WIDE narrow page edge ⭐ ...and keeps its number suffix", Serie::GetString(8, 3) == "PageEdgeName_2",
+                  Serie::GetString(8, 3).c_str());
+            check("UE4WIDE narrow page edge: one running into an unreadable page is refused, not read past",
+                  Serie::GetString(9).empty(), Serie::GetString(9).c_str());
+            check("UE4WIDE narrow page edge: a window that ends exactly at the page's end is kept, 255 bytes",
+                  Serie::GetString(10) == std::string(255, 'C'), std::to_string(Serie::GetString(10).size()).c_str());
+            VirtualFree(npage, 0, MEM_RELEASE);
         }
     }
 
