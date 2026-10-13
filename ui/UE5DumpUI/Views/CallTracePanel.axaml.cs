@@ -31,9 +31,10 @@ public partial class CallTracePanel : UserControl
     // added to the width shown as it comes. The view model clamps the result and remembers it.
     private CallTraceViewModel? Vm => DataContext as CallTraceViewModel;
 
-    /// <summary>[CT-DETAIL-COVERS-LIST] Tells the view model the width the list and the detail pane share before the
-    /// children are measured, so a remembered width the panel can no longer show, however the panel came to be
-    /// narrower, is fitted in this same layout instead of first being laid out over the list.</summary>
+    /// <summary>[CT-DETAIL-COVERS-LIST] Tells the view model the width the list and the detail pane share, so a
+    /// remembered width the panel can no longer show, however the panel came to be narrower, is fitted. It is told
+    /// before the children are measured only to spare measuring them twice: told after, the widths it changes
+    /// invalidate them, and Avalonia measures them again before anything is arranged, to the same layout.</summary>
     protected override Size MeasureOverride(Size availableSize)
     {
         if (Vm is { } vm && _root != null && double.IsFinite(availableSize.Width))
