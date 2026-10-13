@@ -6778,6 +6778,32 @@ static void Test_EnumPackageProbe() {
         refuse = 0;
         EXPECT("EnumPkg: control -- the same enum read in full is", sample(e56, 0x40, 0x20, t) && t.sampled == 1);
     }
+    {   // When the probe reads at all: only behind a Names offset a detection MEASURED, and only the legacy TArray.
+        using DynOff::EnumProbeSkip;
+        using DynOff::EnumPackageProbeSkip;
+        EXPECT("EnumPkg ⭐: the probe reads behind a Names offset a detection found",
+               EnumPackageProbeSkip(true, false, false) == EnumProbeSkip::None);
+        EXPECT("EnumPkg: ...not before any detection ran",
+               EnumPackageProbeSkip(false, false, false) == EnumProbeSkip::NamesNotLocated);
+        EXPECT("EnumPkg ⭐: ...nor after a latched FAILED, which leaves only the default offset",
+               EnumPackageProbeSkip(true, true, false) == EnumProbeSkip::NamesNotLocated
+               && EnumPackageProbeSkip(true, true, true) == EnumProbeSkip::NamesNotLocated);
+        EXPECT("EnumPkg ⭐: ...nor behind the UE5.7+ FNameData, which has no EnumPackage slot",
+               EnumPackageProbeSkip(true, false, true) == EnumProbeSkip::NamesAreFNameData);
+    }
+    {   // The probe the 5.5 rung asks: which objects it samples, how many, and where it reads the package's name.
+        std::vector<std::pair<std::string, int>> asked;
+        Obj pkg, cdo, e[6];
+        for (auto& x : e) makeEnum(pkg, x, 0x20, 0x40, Shape::UE56);
+        std::vector<uintptr_t> found{ cdo.at() };   // Default__Enum first, as the object array has it: no names
+        for (auto& x : e) found.push_back(x.at());
+        auto findExact = [&](const char* cls, int limit) { asked.emplace_back(cls, limit); return found; };
+        const EnumPackageTally t = DynOff::ProbeEnumPackages(findExact, 0x40, 0x20, read);
+        EXPECT("EnumPkg ⭐: the probe asks once for exact Enum instances, kLadderEnumSample of them",
+               asked == (std::vector<std::pair<std::string, int>>{ { "Enum", DynOff::kLadderEnumSample } }));
+        EXPECT("EnumPkg ⭐: ...samples every enum it is handed that has names, against its package's NamePrivate",
+               t.sampled == 6 && t.at55 == 6 && t.at51 == 0 && EnumPackageProves55(t));
+    }
 }
 
 // [VER-MARKERS-PAST-504] The 5.6 rung's evidence: the word behind UStruct::PropertiesSize + 4. Through 5.5 it is the high
@@ -6856,6 +6882,24 @@ static void Test_StructStateProbe() {
         EXPECT("StructState: a word that cannot be read is not a sample", !sample(s56, 0x58, t) && t.sampled == 1);
         refuse = 0;
         EXPECT("StructState: control -- the same struct read in full is", sample(s56, 0x58, t) && t.sampled == 2 && t.linked == 1);
+    }
+    {   // The probe the 5.6 rung asks: which objects it samples, and how many of each kind.
+        std::vector<std::pair<std::string, int>> asked;
+        Obj cls[2], ss[2], fn[2], cdo;   // cdo: Default__Class, never linked -- not a sample
+        for (Obj* o : { &cls[0], &cls[1], &ss[0], &ss[1], &fn[0], &fn[1] }) struct56(*o, 0x58, 0x10, 8, 1);
+        auto findExact = [&](const char* kind, int limit) {
+            asked.emplace_back(kind, limit);
+            const std::string k = kind;
+            if (k == "Class")        return std::vector<uintptr_t>{ cdo.at(), cls[0].at(), cls[1].at() };
+            if (k == "ScriptStruct") return std::vector<uintptr_t>{ ss[0].at(), ss[1].at() };
+            if (k == "Function")     return std::vector<uintptr_t>{ fn[0].at(), fn[1].at() };
+            return std::vector<uintptr_t>{};
+        };
+        const StructStateTally t = DynOff::ProbeStructStates(findExact, 0x58, read);
+        const int n = DynOff::kLadderStructSample;
+        EXPECT("StructState ⭐: the probe asks for exact Class, ScriptStruct and Function instances, kLadderStructSample each",
+               asked == (std::vector<std::pair<std::string, int>>{ { "Class", n }, { "ScriptStruct", n }, { "Function", n } }));
+        EXPECT("StructState ⭐: ...and every kind votes", t.sampled == 6 && t.linked == 6 && StructStateProves56(t));
     }
 }
 

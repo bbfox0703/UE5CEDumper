@@ -2223,11 +2223,14 @@ public class InvokeScriptTests
     [Fact]
     public void InitVersionLadder_PastFiveFour_ReadsTheMeasuredEnumAndStructLayouts()
     {
-        // [VER-MARKERS-PAST-504] The 5.5 and 5.6 rungs' rules and samplers are pinned in dll_helpers_test
-        // (Test_EnumPackageProbe, Test_StructStateProbe, Test_VersionLadder). Frieren.cpp reaches no test target, so the
-        // wiring is pinned here: the ladder is handed both probes, each sampler reads behind the MEASURED offset, and
-        // the early UEnum::Names detection is told not to latch a miss -- a latched FAILED would switch enum names off
-        // for the whole process on a title that had not registered its enums yet.
+        // [VER-MARKERS-PAST-504] The 5.5 and 5.6 rungs' rules, samplers and probes -- which classes they sample, how
+        // many, and when the enum probe skips -- are pinned in dll_helpers_test (Test_EnumPackageProbe,
+        // Test_StructStateProbe, Test_VersionLadder). Frieren.cpp reaches no test target, so the wiring is pinned here:
+        // the ladder is handed both probes, each probe reads behind the MEASURED offset, the object array is searched
+        // by EXACT class name (a substring match would let any object whose class merely contains "Class" vote), the
+        // skip rule is fed the detection's own flags, and the early UEnum::Names detection is told not to latch a miss
+        // -- a latched FAILED would switch enum names off for the whole process on a title that had not registered its
+        // enums yet.
         var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
         int fn = frieren.IndexOf("DynOff::StructuralVersion CorrectVersionStructurally(", StringComparison.Ordinal);
         Assert.True(fn >= 0, "CorrectVersionStructurally was not found");
@@ -2235,8 +2238,11 @@ public class InvokeScriptTests
         Assert.True(end > fn, "the end of CorrectVersionStructurally was not found");
         var body = frieren[fn..end];
         Assert.Contains("Genau::DetectUEnumNames(/*latchFailure=*/false);", body);
-        Assert.Contains("DynOff::SampleEnumPackage(enumTally, e.addr, DynOff::UENUM_NAMES, DynOff::UOBJECT_OUTER,", body);
-        Assert.Contains("DynOff::SampleStructState(structTally, s.addr, DynOff::USTRUCT_PROPSSIZE, read);", body);
+        Assert.Contains("Aura::FindInstancesByClass(cls, /*exactMatch=*/true, limit).results", body);
+        Assert.Contains("DynOff::EnumPackageProbeSkip(namesDetected, namesFailed, DynOff::bEnumNamesNewContainer);", body);
+        Assert.Contains("enumTally = DynOff::ProbeEnumPackages(findExact, DynOff::UENUM_NAMES, DynOff::UOBJECT_OUTER, read);",
+                        body);
+        Assert.Contains("structTally = DynOff::ProbeStructStates(findExact, DynOff::USTRUCT_PROPSSIZE, read);", body);
         Assert.Contains("DynOff::ApplyVersionLadder(ueVersion, f, probeCmc, probeEnumPackage, probeStructState, onRung);",
                         body);
     }
