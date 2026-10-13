@@ -5781,6 +5781,65 @@ int main() {
         }
     }
 
+    // [AOB-SKIP-OWN-DLL] The multi-module walk on real images. On IS Defense GOBJ_V1 matched twice inside our own
+    // version.dll proxy, so every Pass 2 scan had the dumper as a source of false candidates. Two fixtures beside this
+    // exe (dll/tests/res/owncopy_fixture.cpp) carry one marker in an executable section above the walk's size floor;
+    // one exports the dumper's mailbox contract, the other the same name with a wrong magic. Here the dumper's own
+    // image IS this exe, so the own-image arm is reached through the walk's seam with a fixture standing in for it.
+    {   blk("AOB-SKIP-OWN-DLL - the multi-module walk leaves out every build of the dumper, and only those");
+        wchar_t self[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, self, MAX_PATH);
+        std::wstring dir(self);
+        dir.resize(dir.find_last_of(L"\\/") + 1);
+        HMODULE dumper   = LoadLibraryW((dir + L"owncopy_dumper.dll").c_str());
+        HMODULE impostor = LoadLibraryW((dir + L"owncopy_impostor.dll").c_str());
+        check("AOB-SKIP-OWN-DLL setup: both fixtures load from beside the test", dumper && impostor);
+        if (dumper && impostor) {
+            const char* marker = "E8 4F 57 4E 43 4F 50 59 9C 37 B1 D4 2A 6E 05 F3";
+            const uintptr_t db = reinterpret_cast<uintptr_t>(dumper), ib = reinterpret_cast<uintptr_t>(impostor);
+            MODULEINFO dmi{}, imi{};
+            const bool infoOk = GetModuleInformation(GetCurrentProcess(), dumper, &dmi, sizeof dmi)
+                             && GetModuleInformation(GetCurrentProcess(), impostor, &imi, sizeof imi);
+            check("AOB-SKIP-OWN-DLL setup: both images are above the walk's size floor", infoOk
+                  && dmi.SizeOfImage >= Macht::kMinScannedModuleSize && imi.SizeOfImage >= Macht::kMinScannedModuleSize);
+            auto inImage = [](uintptr_t a, uintptr_t base, const MODULEINFO& mi) {
+                return a >= base && a < base + mi.SizeOfImage;
+            };
+            // Controls: the marker is in each image, so a walk that reports none from one has LEFT IT OUT.
+            check("AOB-SKIP-OWN-DLL control: scanned directly, the dumper fixture holds the marker",
+                  Macht::AOBScanAll(marker, db).size() == 1);
+            check("AOB-SKIP-OWN-DLL control: ...and so does the impostor", Macht::AOBScanAll(marker, ib).size() == 1);
+
+            check("AOB-SKIP-OWN-DLL identity: a module exporting the contract with its magic is a dumper build",
+                  Macht::IsDumperModule(dumper));
+            check("AOB-SKIP-OWN-DLL identity: the same export name with a wrong magic is not",
+                  !Macht::IsDumperModule(impostor));
+            check("AOB-SKIP-OWN-DLL identity: a module without the export is not",
+                  !Macht::IsDumperModule(GetModuleHandleW(L"kernel32.dll")));
+            check("AOB-SKIP-OWN-DLL identity: this exe, which exports no contract, is not",
+                  !Macht::IsDumperModule(GetModuleHandleW(nullptr)));
+            check("AOB-SKIP-OWN-DLL identity: no module is not", !Macht::IsDumperModule(nullptr));
+
+            const std::vector<uintptr_t> walk = Macht::AOBScanAllModules(marker);
+            size_t inDumper = 0, inImpostor = 0;
+            for (uintptr_t a : walk) {
+                if (inImage(a, db, dmi)) ++inDumper;
+                if (inImage(a, ib, imi)) ++inImpostor;
+            }
+            check("AOB-SKIP-OWN-DLL ⭐ the walk reports nothing from another build of the dumper", inDumper == 0,
+                  std::to_string(inDumper).c_str());
+            check("AOB-SKIP-OWN-DLL ⭐ ...and still reports the module that only shares the export's name",
+                  inImpostor == 1, std::to_string(inImpostor).c_str());
+            check("AOB-SKIP-OWN-DLL ...and nothing else", walk.size() == 1, std::to_string(walk.size()).c_str());
+
+            const std::vector<uintptr_t> walkOwn = Macht::ScanAllModulesExcept(marker, ib);
+            check("AOB-SKIP-OWN-DLL ⭐ the walk leaves out the image it holds as its own", walkOwn.empty(),
+                  std::to_string(walkOwn.size()).c_str());
+        }
+        if (impostor) FreeLibrary(impostor);
+        if (dumper)   FreeLibrary(dumper);
+    }
+
     // -- UPROPSLOT-2026-09-27 -- a UProperty engine gets the property subclass family at ITS start -------------------
     //
     // ⛔ POOL-FAKING (own GObjects, own name table; the LAST block, and it restores every DynOff Genau writes).

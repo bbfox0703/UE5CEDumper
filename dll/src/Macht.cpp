@@ -9,6 +9,7 @@
 #include "Grimoire.h"
 #include "Utf8Helpers.h"   // wide module paths must be converted before they reach Sein
                            // ([NONASCIILS-2026-08-24]; Sein formats with a narrow vsnprintf)
+#include "Mimic.h"         // MAILBOX_CONTRACT_MAGIC: what proves a module is a build of the dumper
 
 #include <Psapi.h>
 #include <vector>
@@ -16,6 +17,10 @@
 #include <cstring>
 #include <immintrin.h>  // AVX2 intrinsics for SIMD pattern scanning
 #include <malloc.h>     // _resetstkoflw: re-arm the guard page after a stack overflow the capture caught
+
+// The linker's symbol for this image's own base: "which module is ours" by address, never by file name, since a proxy
+// carries a system DLL's name.
+extern "C" IMAGE_DOS_HEADER __ImageBase;
 
 namespace Macht {
 
@@ -546,7 +551,14 @@ std::vector<ModuleInfo> GetLoadedModules() {
 // Public: AOBScanAllModules
 // ============================================================
 
-std::vector<uintptr_t> AOBScanAllModules(const char* pattern) {
+bool IsDumperModule(HMODULE h) {
+    (void)h;
+    return false;   // RED STUB: today nothing asks
+}
+
+// [AOB-SKIP-OWN-DLL] The walk, with the image to treat as our own passed in. The public entry passes this image's
+// base; dll_core_test, where this image IS the main exe, passes a fixture's base to reach the own-module arm.
+static std::vector<uintptr_t> ScanAllModulesExcept(const char* pattern, uintptr_t ownBase) {
     std::vector<uintptr_t> allResults;
 
     // Scan main module first (most likely to contain the match)
@@ -557,8 +569,9 @@ std::vector<uintptr_t> AOBScanAllModules(const char* pattern) {
     // Scan other loaded modules (UE modular builds: Engine, Core DLLs, etc.)
     auto modules = GetLoadedModules();
     for (auto& m : modules) {
-        if (m.base == mainBase) continue;  // already scanned
-        if (m.size < 0x10000) continue;    // skip tiny modules (< 64KB)
+        const ModuleScanVerdict verdict = ClassifyModuleForScan(m.base, m.size, mainBase, ownBase,
+                                                                [&] { return IsDumperModule(m.hModule); });
+        if (verdict != ModuleScanVerdict::Scan) continue;
 
         auto hits = AOBScanAll(pattern, m.base);
         if (!hits.empty()) {
@@ -577,6 +590,10 @@ std::vector<uintptr_t> AOBScanAllModules(const char* pattern) {
     }
 
     return allResults;
+}
+
+std::vector<uintptr_t> AOBScanAllModules(const char* pattern) {
+    return ScanAllModulesExcept(pattern, reinterpret_cast<uintptr_t>(&__ImageBase));
 }
 
 // ============================================================
@@ -938,10 +955,8 @@ std::string ModuleLeafUtf8(HMODULE h) {
     return Utf8Helpers::LeafUtf8(path.data(), len);
 }
 
-// [LIVEFUNCS-STEP3] S3-M2. `own` compares bases: in the game this module is UE5Dumper.dll or a proxy under a system
-// DLL's name, and in dll_core_test it is the test exe itself.
-extern "C" IMAGE_DOS_HEADER __ImageBase;
-
+// [LIVEFUNCS-STEP3] S3-M2. `own` compares bases (__ImageBase, declared at the top of this file): in the game this
+// module is UE5Dumper.dll or a proxy under a system DLL's name, and in dll_core_test it is the test exe itself.
 bool DescribeCode(uintptr_t retAddr, CodeSite& out) {
     out = CodeSite{};
     if (retAddr < 2) return false;

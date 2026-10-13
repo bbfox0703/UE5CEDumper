@@ -27,6 +27,12 @@ constexpr size_t         LOG_MAX_SIZE     = LOG_MAX_SIZE_MB * 1024 * 1024;
 // --- Hint Cache ---
 constexpr const wchar_t* HINT_CACHE_PREFIX = L"UE5CEDumper";  // File: UE5CEDumper.{COMPUTERNAME}.json
 
+// --- Dumper identity ---
+// [AOB-SKIP-OWN-DLL] The exported symbol every build of the dumper carries, UE5Dumper.dll and each proxy alike: the
+// mailbox contract, whose magic (Mimic::MAILBOX_CONTRACT_MAGIC) tells our copy from a module that merely shares the
+// name. Mimic.cpp defines it; Macht reads it to keep its multi-module scan out of other copies of us.
+constexpr const char*    DUMPER_IDENTITY_EXPORT = "g_mailboxContract";
+
 // --- Named Pipe ---
 constexpr const wchar_t* PIPE_NAME        = L"\\\\.\\pipe\\UE5DumpBfx";
 constexpr const char*    PIPE_NAME_NARROW  = "\\\\.\\pipe\\UE5DumpBfx";

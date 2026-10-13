@@ -8650,6 +8650,50 @@ static void Test_Genau_AdmitMultiModuleCandidate() {
                   "AdmitMultiModuleCandidate must be constexpr-evaluable");
 }
 
+// [AOB-SKIP-OWN-DLL] Which modules the multi-module walk scans. On IS Defense (UE 4.10, through the version.dll proxy)
+// GOBJ_V1's three multi-module matches included two inside that proxy -- our own code -- so every Pass 2 scan had the
+// dumper as a source of false candidates. A second build of ours can be mapped too (two proxies in one game folder:
+// the first-loaded-wins mutex idles the second but its image stays; or UE5Dumper.dll injected beside a proxy by a tool
+// that does not check, whose auto-start then scans as well), and its code is the same code.
+static void Test_Macht_ClassifyModuleForScan() {
+    std::printf("Test_Macht_ClassifyModuleForScan\n");
+    using Macht::ModuleScanVerdict;
+    const uintptr_t mainBase = 0x140000000ull, ownBase = 0x7FF810000000ull, other = 0x7FF820000000ull;
+    const size_t big = 0x200000, tiny = Macht::kMinScannedModuleSize - 1;
+    int asked = 0;
+    auto ours   = [&] { ++asked; return true; };
+    auto theirs = [&] { ++asked; return false; };
+
+    EXPECT("SKIPOWN: the image holding this code is not scanned",
+           Macht::ClassifyModuleForScan(ownBase, big, mainBase, ownBase, theirs) == ModuleScanVerdict::SkipOwnModule);
+    EXPECT("SKIPOWN: another build of the dumper is not scanned",
+           Macht::ClassifyModuleForScan(other, big, mainBase, ownBase, ours) == ModuleScanVerdict::SkipOtherDumper);
+    EXPECT("SKIPOWN: any other module above the floor is scanned",
+           Macht::ClassifyModuleForScan(other, big, mainBase, ownBase, theirs) == ModuleScanVerdict::Scan);
+    EXPECT("SKIPOWN: the main exe is left to the scan ahead of the walk",
+           Macht::ClassifyModuleForScan(mainBase, big, mainBase, ownBase, theirs) == ModuleScanVerdict::SkipMainExe);
+    // dll_core_test's shape, where this code IS the exe: the exe is still the exe, scanned ahead of the walk.
+    EXPECT("SKIPOWN: own image == main exe reads as the main exe",
+           Macht::ClassifyModuleForScan(mainBase, big, mainBase, mainBase, theirs) == ModuleScanVerdict::SkipMainExe);
+    EXPECT("SKIPOWN: a module below the floor is skipped as today",
+           Macht::ClassifyModuleForScan(other, tiny, mainBase, ownBase, theirs) == ModuleScanVerdict::SkipTiny);
+    EXPECT("SKIPOWN: the floor itself is scanned, as today",
+           Macht::ClassifyModuleForScan(other, Macht::kMinScannedModuleSize, mainBase, ownBase, theirs)
+               == ModuleScanVerdict::Scan);
+
+    // The question reads a module's export table, so it is asked only of a module every cheaper arm let through.
+    asked = 0;
+    (void)Macht::ClassifyModuleForScan(mainBase, big, mainBase, ownBase, ours);
+    (void)Macht::ClassifyModuleForScan(ownBase, big, mainBase, ownBase, ours);
+    (void)Macht::ClassifyModuleForScan(other, tiny, mainBase, ownBase, ours);
+    EXPECT_EQ_U64("SKIPOWN: not asked of the exe, our own image, or a module below the floor", asked, 0);
+    (void)Macht::ClassifyModuleForScan(other, big, mainBase, ownBase, theirs);
+    EXPECT_EQ_U64("SKIPOWN: asked once of a module the other arms let through", asked, 1);
+
+    static_assert(Macht::ClassifyModuleForScan(2, 0x20000, 1, 3, [] { return false; }) == ModuleScanVerdict::Scan,
+                  "ClassifyModuleForScan must be constexpr-evaluable");
+}
+
 static void Test_Macht_ParsePattern_Nibble() {
     std::printf("Test_Macht_ParsePattern_Nibble\n");
     Macht::ParsedPattern p;
@@ -9841,6 +9885,7 @@ int main() {
     // Macht — AOB pattern parser: nibble wildcards (4? / ?5) + anchor selection
     RUN(Test_Sig_IsCeReplayableAob);
     RUN(Test_Genau_AdmitMultiModuleCandidate);
+    RUN(Test_Macht_ClassifyModuleForScan);       // [AOB-SKIP-OWN-DLL] the walk leaves the dumper's own images out
     RUN(Test_Radar_RefineContainerAnchor);
     RUN(Test_Radar_LeafAnchor);
     RUN(Test_Macht_ParsePattern_Nibble);

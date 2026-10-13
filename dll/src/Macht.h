@@ -248,7 +248,36 @@ struct ModuleInfo {
 // Get all loaded modules in the current process
 std::vector<ModuleInfo> GetLoadedModules();
 
-// AOBScanAll across ALL loaded modules (main EXE + DLLs).
+// [AOB-SKIP-OWN-DLL] What AOBScanAllModules does with one module of its walk, and why.
+enum class ModuleScanVerdict : uint8_t {
+    Scan,
+    SkipMainExe,       // already scanned, ahead of the walk
+    SkipOwnModule,     // the image holding this code
+    SkipOtherDumper,   // another build of the dumper mapped in the same process
+    SkipTiny,          // below kMinScannedModuleSize
+};
+
+// Smaller images are not worth a scan: no engine global lives in a stub.
+inline constexpr size_t kMinScannedModuleSize = 0x10000;
+
+// [AOB-SKIP-OWN-DLL] The walk's decision for one module, pure so dll_helpers_test pins it. `ownBase` is the image
+// holding this code; `isDumper` answers "is this module a build of the dumper", and is asked last, only of a module
+// every other arm let through, because answering it reads the module's export table.
+template <class IsDumperFn>
+constexpr ModuleScanVerdict ClassifyModuleForScan(uintptr_t base, size_t size, uintptr_t mainBase,
+                                                  uintptr_t ownBase, IsDumperFn&& isDumper) {
+    // RED STUB: today's rule, which neither knows its own image nor asks the question.
+    (void)ownBase; (void)isDumper;
+    if (base == mainBase) return ModuleScanVerdict::SkipMainExe;
+    if (size < kMinScannedModuleSize) return ModuleScanVerdict::SkipTiny;
+    return ModuleScanVerdict::Scan;
+}
+
+// [AOB-SKIP-OWN-DLL] True when `h` is a build of the dumper: UE5Dumper.dll or any proxy flavour, whatever its file is
+// called. Asks the module's export table, so the caller must hold a module that is still loaded or accept a false.
+bool IsDumperModule(HMODULE h);
+
+// AOBScanAll across ALL loaded modules (main EXE + DLLs), less the dumper's own images (ClassifyModuleForScan).
 // Returns all match addresses found in any module.
 std::vector<uintptr_t> AOBScanAllModules(const char* pattern);
 
