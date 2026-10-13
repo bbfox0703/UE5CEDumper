@@ -6455,6 +6455,36 @@ static void Test_CheckTailForVersion() {
     EXPECT("TailCheck: no FunctionFlags offset is Unmeasured", CheckTailForVersion(417, 0, 0, 0x88) == TailCheck::Unmeasured);
 }
 
+// [OVERRIDE-REVIEW2-LOWS] An override persisted before [UE-OVERRIDE-411], or chosen before any scan, is applied at every
+// launch, and the vote that measured the contradiction said so in the log alone. get_pointers now says it, by the
+// refusal's own verdict.
+static void Test_OverrideContradictsTail() {
+    using DynOff::OverrideContradictsTail;
+    EXPECT("OverrideTail ⭐: a persisted 4.17 on a 4.18 tail is contradicted", OverrideContradictsTail(true, 417, 0x88, 0, 0x88));
+    EXPECT("OverrideTail ⭐: ...and 4.18 on a 4.11-4.17 tail", OverrideContradictsTail(true, 418, 0x88, 0, 0x8A));
+    EXPECT("OverrideTail ⭐: ...and 4.17 on a +4 5.x tail (the vote's extra counts)",
+           OverrideContradictsTail(true, 417, 0xB0, 4, 0xB4));
+    EXPECT("OverrideTail control: an override that fits is not", !OverrideContradictsTail(true, 418, 0x88, 0, 0x88));
+    EXPECT("OverrideTail control: ...nor 4.15 on its own tail", !OverrideContradictsTail(true, 415, 0x88, 0, 0x8A));
+    EXPECT("OverrideTail control: ...nor 5.5 on the +4 tail", !OverrideContradictsTail(true, 505, 0xB0, 4, 0xB4));
+    EXPECT("OverrideTail: a DETECTED version is not the user's override to take back",
+           !OverrideContradictsTail(false, 417, 0x88, 0, 0x88));
+    EXPECT("OverrideTail: nothing measured is never a contradiction", !OverrideContradictsTail(true, 417, 0x88, 0, -1));
+    EXPECT("OverrideTail: ...nor a tail with no FunctionFlags offset", !OverrideContradictsTail(true, 417, 0, 0, 0x88));
+    // One verdict with the refusal: wherever set_ue_version_override would refuse the version, the note shows.
+    int disagree = 0;
+    char first[96] = "none";
+    for (unsigned v : { 411u, 415u, 417u, 418u, 421u, 427u, 500u, 505u, 508u })
+        for (int base : { 0x88, 0x8A, 0x8C, 0xB0, 0xB4 })
+            for (int extra : { 0, 4 }) {
+                const bool refused = DynOff::CheckTailForVersion(v, 0x88, extra, base) == DynOff::TailCheck::Contradicts;
+                if (OverrideContradictsTail(true, v, 0x88, extra, base) != refused && disagree++ == 0)
+                    snprintf(first, sizeof(first), "v %u base 0x%X extra %d", v, base, extra);
+            }
+    if (disagree != 0) std::printf("    OverrideTail: %d disagreement(s), the first %s\n", disagree, first);
+    EXPECT("OverrideTail: the note and the refusal give one verdict", disagree == 0);
+}
+
 // [UE-OVERRIDE-411] review 2: the refusal held only while a measurement existed in-process; a persisted override, a
 // pick made before any scan, or a misdetection reached the readers unchecked and moved every tail read by 2. The
 // measurement now drives the readers whatever the version.
@@ -10227,6 +10257,7 @@ int main() {
     RUN(Test_FunctionFlagsOffset);
     RUN(Test_ProcessEventBufferBytes);
     RUN(Test_CheckTailForVersion);
+    RUN(Test_OverrideContradictsTail);   // [OVERRIDE-REVIEW2-LOWS] get_pointers' override_contradicted
     RUN(Test_FunctionTailReadBase);
     RUN(Test_PickMeasuredTailBase);
     RUN(Test_UFieldNextFProperty);

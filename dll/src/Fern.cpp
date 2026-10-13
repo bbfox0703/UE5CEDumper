@@ -1342,6 +1342,9 @@ static void FillPointerSnapshot(json& data) {
     // [UE-OVERRIDE-HINT-AUTO] On every snapshot, so a UI that reconnects mid-session still says Auto waits for the
     // next launch rather than offering the override's version back as the choice.
     data["auto_pending"]         = g_cachedAutoPending;
+    // [OVERRIDE-REVIEW2-LOWS] Judged on every snapshot, not latched here, so the panel's note follows Auto, a new
+    // override and a structural raise of the one in force.
+    data["override_contradicted"] = Ubel::OverrideInForceContradicted(g_cachedUEVersion, g_cachedIsUserOverride);
     data["is_version_too_old"]   = g_cachedVersionTooOld;
     // build_number: compile-time DLL build (e.g. 648). Also emitted on the
     // init response; surfacing it on every snapshot lets the UI's

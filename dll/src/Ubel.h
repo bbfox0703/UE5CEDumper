@@ -590,6 +590,13 @@ struct OverrideTailCheck {
 };
 OverrideTailCheck CheckVersionOverrideTail(unsigned newVersion);
 
+// [OVERRIDE-REVIEW2-LOWS] DynOff::OverrideContradictsTail for the version in force: judged as CheckVersionOverrideTail
+// judges a new one, but from the held measurement alone -- get_pointers asks it on every refresh, so it never samples
+// again. With an override in force it runs the one-time FunctionFlags vote first if nothing has asked for it yet (the
+// vote the first function read would run, under the same version), so the panel's note is there the first time it
+// looks; with none, it reads nothing.
+bool OverrideInForceContradicted(unsigned versionInForce, bool userOverride);
+
 // Get the UClass* of a UObject
 uintptr_t GetClass(uintptr_t uobjectAddr);
 

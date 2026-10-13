@@ -4749,6 +4749,63 @@ int main() {
         check("OVERRIDETAIL: before the offsets probe an override is Unmeasured, not refused",
               verdictOf(417).verdict == TailCheck::Unmeasured, ob);
 
+        // [OVERRIDE-REVIEW2-LOWS] What get_pointers publishes as override_contradicted. An override persisted before
+        // the refusal existed, or chosen before any scan, is handed in ahead of the scan at every launch; the vote
+        // then measured the contradiction and said so in the log alone. Nothing has read a function yet here: the
+        // judgement runs the vote itself, under the version in force, as the first function read would.
+        DynOff::bOffsetsProbeRan.store(true);
+        build(0x88);
+        resetVote();
+        g_cachedUEVersion = 417;
+        check("OVERRIDENOTE ⭐: a persisted 4.17 on a 4.18 title is published as contradicted",
+              Ubel::OverrideInForceContradicted(417, true));
+        check("OVERRIDENOTE: ...the judgement ran the vote, which measured the tail at +0x88",
+              DynOff::bUFunctionFlagsDetected.load() && DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x88,
+              std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()).c_str());
+        check("OVERRIDENOTE: ...and the same version, detected, is not the user's to take back",
+              !Ubel::OverrideInForceContradicted(417, false));
+        check("OVERRIDENOTE control: an override that fits the measured tail is not contradicted",
+              !Ubel::OverrideInForceContradicted(418, true));
+
+        // With no override in force nothing is read: the vote stays for the first function read to run.
+        resetVote();
+        g_cachedUEVersion = 418;
+        check("OVERRIDENOTE: no override is never contradicted", !Ubel::OverrideInForceContradicted(418, false));
+        check("OVERRIDENOTE: ...and asking ran no vote", !DynOff::bUFunctionFlagsDetected.load());
+
+        // The inverse: a 4.15 title under a 4.18 override.
+        build(0x8A);
+        resetVote();
+        g_cachedUEVersion = 418;
+        check("OVERRIDENOTE ⭐: 4.18 on a 4.15 tail is published as contradicted",
+              Ubel::OverrideInForceContradicted(418, true));
+        check("OVERRIDENOTE control: 4.15 there is not", !Ubel::OverrideInForceContradicted(415, true));
+
+        // The vote's +4 extra counts, as it does for the refusal.
+        build(0x8C);
+        resetVote();
+        g_cachedUEVersion = 505;
+        check("OVERRIDENOTE control: 5.5 on a +4 tail is not contradicted", !Ubel::OverrideInForceContradicted(505, true));
+        check("OVERRIDENOTE: ...4.17 there is", Ubel::OverrideInForceContradicted(417, true));
+
+        // A measurement the vote could not make stays unmade: the snapshot asks on every refresh, so it never samples
+        // again (the override's refusal does, once, when the user picks a version).
+        build(0x88);
+        resetVote();
+        g_cachedUEVersion = 417;
+        for (int i = bFn0 + 3; i < kOT; ++i) setItem(i, 0);
+        check("OVERRIDENOTE: three samples measure nothing, so nothing is contradicted",
+              !Ubel::OverrideInForceContradicted(417, true));
+        for (int i = bFn0 + 3; i < kOT; ++i) setItem(i, A(i));
+        check("OVERRIDENOTE: ...and asking again does not sample again",
+              !Ubel::OverrideInForceContradicted(417, true) && DynOff::UFUNCTION_TAIL_MEASURED.load() == -1,
+              std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()).c_str());
+
+        // Before any scan: nothing to judge.
+        resetVote();
+        DynOff::bOffsetsProbeRan.store(false);
+        check("OVERRIDENOTE: before the offsets probe nothing is contradicted", !Ubel::OverrideInForceContradicted(417, true));
+
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
         DynOff::bCasePreservingName = svCpnO;
         DynOff::bUseFProperty       = svFPropO;

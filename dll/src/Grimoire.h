@@ -1043,6 +1043,18 @@ constexpr TailCheck CheckTailForVersion(unsigned ueVersion, int flagsOff, int ta
                                                                                : TailCheck::Contradicts;
 }
 
+// [OVERRIDE-REVIEW2-LOWS] Whether the version in force is a user override this game's UFunctions contradict -- what
+// get_pointers publishes, so the Pointers panel can say so beside the override badge. set_ue_version_override refuses
+// such a version only while a measurement exists, so one persisted before [UE-OVERRIDE-411], or chosen before any scan,
+// is still handed in ahead of the scan at every launch; the vote that then measures the contradiction said so in the
+// log alone. The verdict is the refusal's own over the same inputs, so the note and the refusal cannot disagree.
+// Nothing measured is never a contradiction, and a detected version is not one the user can take back.
+constexpr bool OverrideContradictsTail(bool userOverride, unsigned ueVersion, int flagsOff, int tailExtra,
+                                       int measuredBase) {
+    (void)userOverride; (void)ueVersion; (void)flagsOff; (void)tailExtra; (void)measuredBase;
+    return false;   // red: stubbed
+}
+
 // The measurement's winner among candidate tail bases, given each one's hits over `samples` sampled
 // UFunctions; -1 when none wins. The vote's own bar (Ubel::EnsureFunctionFlagsOffset): at least 8 samples
 // and 60% of them. Two bases tied at the top cannot both be the tail, so a tie decides nothing.
