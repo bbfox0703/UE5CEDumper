@@ -1344,7 +1344,8 @@ def main_rate(main_pf: float | None, ring_pf: float) -> float | None:
 def budget_window(per_s: int, span_lo: float, span_hi: float) -> tuple[float, float]:
     """The slots a ring keeps when its function is called more often than its budget. The DLL admits the first per_s
     calls of each second, so a recording of L seconds keeps per_s x L, give or take one second's worth: the windows
-    at either end are partly covered. The span is known only between two bounds (the Start's reply, the Stop)."""
+    at either end are partly covered. The span is known only between two bounds: the Start's reply to the Stop's send,
+    and the Start's send to the Stop's reply."""
     return per_s * (span_lo - 1), per_s * (span_hi + 1)
 
 
@@ -1508,7 +1509,11 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     sleep(args.record_s)
     t2 = clock()
     stop = data_of(c.request("pe_profile_stop"))
-    span_lo, span_hi = t2 - t1, t2 - t0   # the trace starts inside the Start and stops when the Stop arrives
+    t3 = clock()
+    # The trace opens inside the Start and closes inside the Stop, so it was open at least from the Start's reply to
+    # the Stop's send and at most from the Start's send to the Stop's reply. A rate weighed over the longer span is
+    # never above the truth; ended at the Stop's send it would leave out the Stop's own time [SNAPRIG-ROUND5].
+    span_lo, span_hi = t2 - t1, t3 - t0
     out["stack_stop"] = stop
     st2 = stop.get("trace", {})
     gen = st2.get("gen", 0)
@@ -1820,12 +1825,13 @@ def run_game_stacks(c, check: Checks, out: dict, args, sleep=time.sleep, clock=t
     sleep(args.record_s)
     t2 = clock()
     stop = data_of(c.request("pe_profile_stop"))
+    t3 = clock()   # the trace closes inside the Stop: its span ends at the latest at the reply (run_stacks)
     after = data_of(c.request("pe_profile_get", limit=1))
     st2 = stop.get("trace", {})
     stack2 = st2.get("stack", {})
     cost = stack_cost(stack2, st2.get("qpc_freq", 0), t2 - t1)
     rates = {"plain": calls_per_s(table), "with_stacks": calls_per_s(after)}
-    _, hi = budget_window(total, t2 - t1, t2 - t0)
+    _, hi = budget_window(total, t2 - t1, t3 - t0)
     check(f"the total budget held: at most about {total}/s captured", cost["captures"] <= hi,
           f"{cost['captures']} captures, at most {hi:.0f}")
     census: dict[str, int] = {}
