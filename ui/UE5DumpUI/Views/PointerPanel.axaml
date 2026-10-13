@@ -59,6 +59,13 @@
                            FontWeight="SemiBold"
                            IsVisible="{Binding ShowUserOverrideBadge}"
                            ToolTip.Tip="{StaticResource str.Pointers.VersionUserOverrideTooltip}"/>
+                <!-- [OVERRIDE-REVIEW2-LOWS] The override in force does not fit this game's UFunctions. Amber, the
+                     low-confidence colour: the version may misread, and only the user can take the pick back. -->
+                <TextBlock Text="{StaticResource str.Pointers.VersionOverrideContradictedBadge}"
+                           Foreground="#E6A817" FontSize="11" VerticalAlignment="Center"
+                           FontWeight="SemiBold"
+                           IsVisible="{Binding ShowOverrideContradictedNote}"
+                           ToolTip.Tip="{StaticResource str.Pointers.VersionOverrideContradictedText}"/>
                 <!-- Low confidence — amber warning -->
                 <TextBlock Text="{StaticResource str.Pointers.VersionLowConfidenceBadge}"
                            Foreground="#E6A817" FontSize="11" VerticalAlignment="Center"
@@ -83,6 +90,11 @@
                      Foreground="#E6A817" FontSize="11" TextWrapping="Wrap"
                      Margin="0,6,0,0"
                      IsVisible="{Binding ShowLowConfidenceWarning}"/>
+          <!-- [OVERRIDE-REVIEW2-LOWS] The full text behind the badge beside the override badge. -->
+          <TextBlock Text="{StaticResource str.Pointers.VersionOverrideContradictedText}"
+                     Foreground="#E6A817" FontSize="11" TextWrapping="Wrap"
+                     Margin="0,6,0,0"
+                     IsVisible="{Binding ShowOverrideContradictedNote}"/>
           <!-- [UE-OVERRIDE-HINT-AUTO] Auto chosen with no detection on record to return to: the ComboBox
                shows the choice, the override badge what is still in force, and this when Auto lands.
                Blue, the override badge's colour: nothing is wrong, the change is only deferred. -->

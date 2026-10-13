@@ -319,8 +319,10 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// launch: the ComboBox shows the choice, the override badge what is in force, and this note when Auto lands.</summary>
     public bool ShowAutoPendingNote => HasData && IsAutoPending;
 
-    /// <summary>[OVERRIDE-REVIEW2-LOWS] The override in force does not fit this game's UFunctions.</summary>
-    public bool ShowOverrideContradictedNote => false;   // red: stubbed
+    /// <summary>[OVERRIDE-REVIEW2-LOWS] The override in force does not fit this game's UFunctions: the note beside its
+    /// badge tells the user to choose Auto or a version that fits. Not while Auto is pending -- that is already chosen,
+    /// and its own note says when it lands.</summary>
+    public bool ShowOverrideContradictedNote => HasData && IsUserOverride && !IsAutoPending && IsOverrideContradicted;
 
     /// <summary>True when detection succeeded but used the low-confidence Tier 3 / publisher-bias path.</summary>
     public bool ShowLowConfidenceWarning => HasData && IsLowConfidence && !IsUserOverride;
@@ -664,6 +666,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         VersionDetected = state.VersionDetected;
         IsUserOverride = state.IsUserOverride;
         IsAutoPending = state.IsAutoPending;
+        IsOverrideContradicted = state.IsOverrideContradicted;
         IsLowConfidence = state.IsLowConfidence;
         IsVersionTooOld = state.IsVersionTooOld;
         OffsetsValidated = state.OffsetsValidated;
@@ -806,6 +809,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowVersionWarning));
         OnPropertyChanged(nameof(ShowUserOverrideBadge));
         OnPropertyChanged(nameof(ShowAutoPendingNote));
+        OnPropertyChanged(nameof(ShowOverrideContradictedNote));
         OnPropertyChanged(nameof(ShowLowConfidenceWarning));
         OnPropertyChanged(nameof(ShowVersionDetectedBadge));
         // Both refusal banners. ShowVersionTooOldWarning was MISSING here before the pre-UE4

@@ -175,6 +175,9 @@ public sealed class DumpService : IDumpService
             // [UE-OVERRIDE-HINT-AUTO] Only the pointers payload carries it. Absent (an older DLL, which never handed
             // a detection back in-process) reads as not pending.
             IsAutoPending = ptrs["auto_pending"]?.GetValue<bool>() ?? false,
+            // [OVERRIDE-REVIEW2-LOWS] Only the pointers payload carries it. Absent (an older DLL, which published no such
+            // verdict) reads as fitting: no note.
+            IsOverrideContradicted = ptrs["override_contradicted"]?.GetValue<bool>() ?? false,
             // Only the pointers payload carries this — an older DLL omits it, which reads as
             // false, i.e. "not gated", which is the right default for a DLL that predates the gate.
             IsVersionTooOld = ptrs["is_version_too_old"]?.GetValue<bool>() ?? false,
