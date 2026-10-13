@@ -5963,6 +5963,52 @@ int main() {
         check("UPROPSLOT ⭐: ...and so do the readers outside the family (UPropertySubclassStart), not 0x6C",
               DynOff::UPropertySubclassStart(415) == 0x78, std::to_string(DynOff::UPropertySubclassStart(415)).c_str());
 
+        // [UE4-USTRUCT-GIVEUP] The same give-up shipped the 4.25+ UStruct head (Super 0x40, Children 0x48, PropertiesSize
+        // 0x58, Script 0x60) on a UProperty engine. Measured: 4.11-4.21 put SuperStruct right behind UField::Next (0x30 /
+        // 0x38 / 0x40 / 0x48 -- UE_4.18 Class.h, EVERSPACE's 4.20 PDB); 4.22-4.24 game builds add the 16-byte
+        // FStructBaseChain base first (0x40 / 0x48 / 0x50 / 0x58 -- UE_4.23 Class.h, UE423_Flying's Shipping PDB), so
+        // there the old default read PropertiesSize from Script's data pointer. Each run starts from the load-time head,
+        // because the measured runs above left 4.23's real one behind.
+        {
+            auto ustructAtLoad = [] {
+                DynOff::USTRUCT_SUPER = 0x40;      DynOff::USTRUCT_CHILDREN = 0x48;
+                DynOff::USTRUCT_PROPSSIZE = 0x58;  DynOff::USTRUCT_SCRIPT = 0x60;
+            };
+            auto head = [] {
+                char b[64];
+                snprintf(b, sizeof b, "%02X/%02X/%02X/%02X", DynOff::USTRUCT_SUPER, DynOff::USTRUCT_CHILDREN,
+                         DynOff::USTRUCT_PROPSSIZE, DynOff::USTRUCT_SCRIPT);
+                return std::string(b);
+            };
+            auto giveUpAt = [&](uint32_t ver) {
+                ustructAtLoad();
+                runGenau(ver);
+                return std::string(DynOff::g_offsetsFallbackReason) == "no-guid-or-vector-struct" && !DynOff::bUseFProperty;
+            };
+            layout(4, 0x28, 0x34, 0x44);   // still no Guid / Vector
+            const bool gu423 = giveUpAt(423);
+            check("USTRUCT-GIVEUP setup: 4.23 takes the give-up in UProperty mode", gu423, DynOff::g_offsetsFallbackReason);
+            check("USTRUCT-GIVEUP ⭐: a 4.23 give-up ships 4.23's head 40/48/50/58, PropertiesSize not on Script's pointer",
+                  head() == "40/48/50/58", head().c_str());
+            giveUpAt(422);
+            check("USTRUCT-GIVEUP ⭐: 4.22, FStructBaseChain's first version, ships 40/48/50/58", head() == "40/48/50/58",
+                  head().c_str());
+            giveUpAt(421);
+            check("USTRUCT-GIVEUP ⭐: 4.21, the last without it, ships 30/38/40/48", head() == "30/38/40/48", head().c_str());
+            const bool gu418 = giveUpAt(418);
+            check("USTRUCT-GIVEUP ⭐: a 4.18 give-up ships 30/38/40/48", gu418 && head() == "30/38/40/48", head().c_str());
+            giveUpAt(415);
+            check("USTRUCT-GIVEUP ⭐: a 4.15 give-up ships 30/38/40/48", head() == "30/38/40/48", head().c_str());
+
+            // Control: a version default never overrides a measurement. The fixture's Guid holds Children at +0x48, so a
+            // measured 4.18 run derives Super 0x40 from it -- not the 4.18 default 0x30.
+            layout(2, 0x28, 0x34, 0x44);
+            ustructAtLoad();
+            runGenau(418);
+            check("USTRUCT-GIVEUP control: a measured 4.18 run keeps the head its Children measurement gives, 40/48/50/58",
+                  DynOff::bOffsetsValidated.load() && head() == "40/48/50/58", head().c_str());
+        }
+
         // Review wf_b99fb861-680 (F5), pinned after the review of build 3594 found it untested: a 4.18-4.24 title
         // labelled 4.25+ (Square Enix's 427 bias) starts in FProperty mode, so Step 2.5 set no UProperty family; the
         // ChildProperties scan then fails over to UProperty mode, and if the Offset_Internal probe fails too, the run
