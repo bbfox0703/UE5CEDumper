@@ -50,6 +50,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private bool _versionDetected = true;
     [ObservableProperty] private bool _isUserOverride;
     [ObservableProperty] private bool _isAutoPending;   // [UE-OVERRIDE-HINT-AUTO] see EngineState.IsAutoPending
+    [ObservableProperty] private bool _isOverrideContradicted;   // [OVERRIDE-REVIEW2-LOWS] see EngineState.IsOverrideContradicted
     [ObservableProperty] private bool _isLowConfidence;
     // Default true so a DLL that predates get_offsets shows no banner — see EngineState.
     [ObservableProperty] private bool _offsetsValidated = true;
@@ -317,6 +318,9 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>[UE-OVERRIDE-HINT-AUTO] Auto was chosen, but this session keeps the override's version until the next
     /// launch: the ComboBox shows the choice, the override badge what is in force, and this note when Auto lands.</summary>
     public bool ShowAutoPendingNote => HasData && IsAutoPending;
+
+    /// <summary>[OVERRIDE-REVIEW2-LOWS] The override in force does not fit this game's UFunctions.</summary>
+    public bool ShowOverrideContradictedNote => false;   // red: stubbed
 
     /// <summary>True when detection succeeded but used the low-confidence Tier 3 / publisher-bias path.</summary>
     public bool ShowLowConfidenceWarning => HasData && IsLowConfidence && !IsUserOverride;

@@ -2343,6 +2343,22 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void PointerSnapshot_SaysWhenTheOverrideInForceIsContradicted()
+    {
+        // [OVERRIDE-REVIEW2-LOWS] The verdict is DynOff::OverrideContradictsTail and its live half
+        // Ubel::OverrideInForceContradicted (pinned in dll_helpers_test / dll_core_test). Fern.cpp reaches no test
+        // target, so the wiring is pinned here: every pointer snapshot judges the version in force, and whether it is
+        // the user's, at the moment it is published.
+        var fern = DllSource("Fern.cpp").Replace("\r\n", "\n");
+        int snapshot = fern.IndexOf("static void FillPointerSnapshot(json& data) {", StringComparison.Ordinal);
+        Assert.True(snapshot >= 0, "FillPointerSnapshot was not found");
+        int end = fern.IndexOf("\n}\n", snapshot, StringComparison.Ordinal);
+        Assert.True(end > snapshot, "the end of FillPointerSnapshot was not found");
+        Assert.Matches(@"data\[""override_contradicted""\]\s*=\s*Ubel::OverrideInForceContradicted\(g_cachedUEVersion, g_cachedIsUserOverride\);",
+                       fern[snapshot..end]);
+    }
+
+    [Fact]
     public void ApplyRescan_ClimbsTheVersionLadder_WhenItRunsTheFirstOffsetsProbe()
     {
         // [VER-MARKERS-PAST-504] Init climbs its version ladder right after the offsets probe, and skips both when

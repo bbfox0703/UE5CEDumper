@@ -17,6 +17,11 @@ public sealed class EngineState
     /// in force, so <see cref="IsUserOverride"/> stays true beside this.</summary>
     public bool IsAutoPending { get; init; }
 
+    /// <summary>[OVERRIDE-REVIEW2-LOWS] True when the version in force is the user's override and this game's sampled
+    /// UFunctions contradict it (DynOff::OverrideContradictsTail): the DLL refuses such a pick while a scan has measured
+    /// the tail, so this is one saved before that check existed, or chosen before a scan could make it.</summary>
+    public bool IsOverrideContradicted { get; init; }
+
     /// <summary>True when ueVersion came from Tier 3 bare-pattern OR publisher-bias fallback — UI surfaces a warning.</summary>
     public bool IsLowConfidence { get; init; }
 
