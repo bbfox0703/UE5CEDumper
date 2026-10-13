@@ -894,10 +894,13 @@ struct StructuralVersion {
 
 // `probeCmc(bool& hasGravityDirectionProperty, bool& hasSetGravityDirectionFunction)` reads one loaded
 // CharacterMovementComponent class and returns false when there is none. It is asked only inside the CMC rung's
-// window (FProperty mode, 5.0-5.3), because it walks the object array and a UE4 title must never pay for that.
+// window (FProperty mode, 5.0-5.3), because it walks the object array and a UE4 label must never pay for that.
 // `probeEnumPackage()` returns an EnumPackageTally over sampled enums, and `probeStructState()` a StructStateTally
 // over sampled structs; each is asked only inside its own rung's window (FProperty mode, 5.0-5.4 and 5.0-5.5) for the
-// same reason.
+// same reason. The windows go by the LABEL, not the engine: a UE4 title that carries a 5.x label -- Genau's flat 504
+// default when detection fails, as on Persona 3 Reload, a UE4.27 fork on UE5-style structures -- sits inside the 5.5
+// and 5.6 windows, pays both walks at every init, and keeps its label only because both probes read negative there:
+// stock 4.27 keeps EnumFlags at Names+0x14 and MinAlignment's high half at PropertiesSize+6.
 // `onRung(rung, from, to)` hears each rung that changed the version, so the caller's log names the evidence.
 template <class ProbeCmc, class ProbeEnumPackage, class ProbeStructState, class OnRung>
 StructuralVersion ApplyVersionLadder(unsigned ueVersion, const StructuralVersionFacts& f, ProbeCmc&& probeCmc,
