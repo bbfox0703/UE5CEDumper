@@ -1,0 +1,21 @@
+1 VERSIONINFO
+FILEVERSION 5,1,0,0
+PRODUCTVERSION 5,1,0,0
+FILEOS 0x4L
+FILETYPE 0x1L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "FileDescription", "UE5CEDumper VER-410-FIXED-VS-STRING fixture: game version 5.1 in the fixed fields and ProductVersion, a branch-first 4.15 build string in FileVersion (synthetic)"
+      VALUE "ProductName", "Game 5.1 on Engine 4.15 Marker"
+      VALUE "ProductVersion", "5.1.0.0"
+      VALUE "FileVersion", "++UE4+Release-4.15-CL-0"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END

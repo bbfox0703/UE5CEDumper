@@ -678,7 +678,8 @@ if(BUILD_DLL_TESTS)
     # live marker exes -- it reads them from tests/res -- so the offline test and the live one judge
     # the same bytes.
     foreach(_vr b25c_corroborated b25d_bare game_buildstring_410 game_buildstring_411 game_only
-                game_product_fixedfile_410)
+                game_product_fixedfile_410 game_fixed405_buildstring_415 game_fixed501_buildstring_415
+                game_fixed420_buildstring_410)
         add_library(verres_${_vr} MODULE ${CMAKE_CURRENT_SOURCE_DIR}/tests/res/${_vr}.rc)
         set_target_properties(verres_${_vr} PROPERTIES LINKER_LANGUAGE CXX)
         if(MSVC)

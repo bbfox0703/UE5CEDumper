@@ -438,6 +438,48 @@ int main() {
         // one for ever: the string fallback's widening is a logic change, rev 8 -> 9.
         check("VER-410-GATE rev 9: the detection logic rev was bumped for the string fallback",
               Genau::kVersionDetectLogicRev >= 9);
+
+        // [VER-410-FIXED-VS-STRING] A game version in the fixed fields that lands inside 4.0-4.27 / 5.0-5.9 was taken
+        // before any string was read, so it beat the exe's own engine build string -- the engine-stamped signal. Where
+        // the two name different versions the build string's code is taken, as a string reading (fromFixedField false):
+        // at or above the floor that is tier 1, below it only an agreeing CrashReportClient can make it one.
+        const std::wstring fixed405 = res(L"game_fixed405_buildstring_415");
+        const std::wstring fixed501 = res(L"game_fixed501_buildstring_415");
+        const std::wstring fixed420 = res(L"game_fixed420_buildstring_410");
+        for (const std::wstring* f : { &fixed405, &fixed501, &fixed420 })
+            check("VER-410-FIXED-VS-STRING setup: the resource fixture was built beside the test",
+                  GetFileAttributesW(f->c_str()) != INVALID_FILE_ATTRIBUTES,
+                  Utf8Helpers::EncodeUtf16(f->c_str(), f->size()).c_str());
+        auto f405 = phase(fixed405, L"");
+        check("VER-410-FIXED-VS-STRING ⭐: fixed 4.5 under a 4.15 build string reads 415, from the string",
+              f405.exeVersion == 415 && !f405.exeReading.fromFixedField, gb);
+        check("VER-410-FIXED-VS-STRING ⭐: ...at tier 1, the floor and above needing no second signal",
+              f405.done && f405.result.version == 415 && f405.result.tier == 1, gb);
+        auto f501 = phase(fixed501, L"");
+        check("VER-410-FIXED-VS-STRING ⭐: fixed 5.1 under a branch-first 4.15 build string in FileVersion reads 415",
+              f501.done && f501.result.version == 415 && f501.result.tier == 1 && f501.exeVersion == 415
+              && !f501.exeReading.fromFixedField, gb);
+        // The refusal's direction: a sub-floor build string under a supported fixed field is a string reading, which
+        // cannot corroborate itself -- it must not refuse on its own.
+        auto f420 = phase(fixed420, L"");
+        check("VER-410-FIXED-VS-STRING ⭐: fixed 4.20 under IS Defense's 4.10 build string reads 410, from the string",
+              f420.exeVersion == 410 && !f420.exeReading.fromFixedField, gb);
+        check("VER-410-FIXED-VS-STRING ⭐: ...which alone stays tier 3 -- the string does not corroborate itself",
+              !f420.done && f420.result.version == 410 && f420.result.tier == 3 && !f420.verdict.byBuildString, gb);
+        auto f420c = phase(fixed420, b25c.c_str());
+        check("VER-410-FIXED-VS-STRING: ...and beside a CrashReportClient agreeing on 410 it stops at tier 1, the exe's",
+              f420c.done && f420c.result.version == 410 && f420c.result.tier == 1 && f420c.verdict.byCrc
+              && !f420c.verdict.byBuildString && f420c.verdict.source == Genau::VersionSource::Exe, gb);
+        // Controls: a fixed field the build string agrees with stays a fixed-field reading (b25c above is one, with the
+        // string in ProductVersion), so it still corroborates itself below the floor.
+        auto agree = phase(b25c, L"");
+        check("VER-410-FIXED-VS-STRING control: b25c's fixed 4.10.2 and its own 4.10 build string agree -- still fixed",
+              agree.exeReading.fromFixedField && agree.exeVersion == 410 && agree.verdict.byBuildString, gb);
+        auto bare = phase(b25d, L"");
+        check("VER-410-FIXED-VS-STRING control: a fixed 4.10.3 beside a bare '4.10.3' (no build string) stays fixed",
+              bare.exeReading.fromFixedField && bare.exeVersion == 410, gb);
+        // A cached title holds the fixed field's verdict, and the cache-reuse branch would restore it for ever.
+        check("VER-410-FIXED-VS-STRING: the detection logic rev was bumped (9 -> 10)", Genau::kVersionDetectLogicRev >= 10);
     }
 
     {   blk("A7 — ForEach honours Tot::Requested() and stops");
