@@ -259,12 +259,14 @@ public class TeleportViewModelTests
 
     /// <summary>RegisterSpecific as Win32 RegisterHotKey answers it: a combo is refused while a registration holds it,
     /// ours included, or while another app does (<see cref="Taken"/>), and is free again once its registration is
-    /// disposed. <see cref="Live"/> is what is registered now, in registration order.</summary>
+    /// disposed. <see cref="Live"/> is what is registered now, in registration order. The cursor hotkey claims the
+    /// ladder's first rung, Ctrl+F8, the same way.</summary>
     private sealed class OsHotkeyService : IGlobalHotkeyService
     {
         public HashSet<(uint Mods, uint Vk)> Taken { get; } = new();
         public List<(uint Mods, uint Vk)> Live { get; } = new();
-        public IGlobalHotkeyRegistration? RegisterCursorHotkey(Action onPressed) => null;
+        public IGlobalHotkeyRegistration? RegisterCursorHotkey(Action onPressed)
+            => RegisterSpecific(HotkeyModifiers.Control, 0x77, "Ctrl+F8", onPressed);
         public IGlobalHotkeyRegistration? RegisterSpecific(uint modifiers, uint vk, string label, Action onPressed)
         {
             var combo = (modifiers, vk);
@@ -2557,7 +2559,7 @@ public class TeleportViewModelTests
         Assert.Equal("F5", row.Label);
         Assert.False(row.Conflicted);
         Assert.False(vm.HasHotkeyWarning);
-        Assert.Contains("'Ctrl+F7' is already in use", vm.StatusText);
+        Assert.Contains("'Ctrl+F7' is already in use by another app", vm.StatusText);
         Assert.Contains("keeps F5", vm.StatusText);
         Assert.Equal(new TeleportHotkeyBinding(0, 0x74), new TeleportHotkeyStore(platform).Load()["save0"]);
     }
@@ -2578,6 +2580,29 @@ public class TeleportViewModelTests
         Assert.Equal(new[] { (0u, 0x74u), (0u, 0x75u) }, hk.Live.OrderBy(c => c.Vk));
         Assert.Equal("F6", recall.Label);
         Assert.False(recall.Conflicted);
+        // The holder is ours, so say which row it is: "another app" sends the user hunting for a program that is not
+        // there.
+        Assert.Contains("'F5' is already bound to 'Save marker 1'", vm.StatusText);
+        Assert.Contains("'Recall marker 1' keeps F6", vm.StatusText);
+        Assert.DoesNotContain("another app", vm.StatusText);
+    }
+
+    [Fact]
+    public void Rebinding_to_the_cursor_hotkeys_combo_names_the_cursor_hotkey()
+    {
+        var hk = new OsHotkeyService();
+        var vm = CreateVm(new FakeDumpService(), out _, hk);
+        vm.CursorHotkeyEnabled = true;                      // claims Ctrl+F8
+        Assert.Equal("Ctrl+F8", vm.CursorHotkeyLabel);
+        var row = BindSave0ToF5(vm);
+
+        vm.BeginCaptureCommand.Execute(row);
+        vm.ApplyCapturedKey(Avalonia.Input.Key.F8, Avalonia.Input.KeyModifiers.Control);
+
+        Assert.Equal("F5", row.Label);
+        Assert.Contains("'Ctrl+F8' is the cursor-teleport hotkey", vm.StatusText);
+        Assert.Contains("keeps F5", vm.StatusText);
+        Assert.DoesNotContain("another app", vm.StatusText);
     }
 
     [Fact]
