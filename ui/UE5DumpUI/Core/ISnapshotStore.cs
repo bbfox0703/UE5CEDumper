@@ -68,8 +68,9 @@ public interface ISnapshotStore
 
     /// <summary>Insert a new snapshot row; returns its generated id. The row is a capture in progress, listed nowhere,
     /// until <see cref="ICaptureSession.CompleteSnapshotAsync"/> or <see cref="FinalizeSnapshotAsync"/> ends it: a
-    /// process that dies before then leaves no snapshot, only rows the next capture's start removes
-    /// (<see cref="DeleteUnusableSnapshotsAsync"/>).</summary>
+    /// process that dies before then leaves no snapshot, only rows the next capture removes, at its start
+    /// (<see cref="DeleteUnusableSnapshotsAsync"/>) or, when the free-disk guard refuses it,
+    /// <see cref="DeleteDeadCapturesAsync"/>.</summary>
     Task<long> CreateSnapshotAsync(SnapshotMeta meta, CancellationToken ct = default);
 
     /// <summary>Append one captured chunk (flattened to field rows) under one

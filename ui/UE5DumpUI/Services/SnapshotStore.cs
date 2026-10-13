@@ -394,7 +394,7 @@ public sealed class SnapshotStore : ISnapshotStore
         {
             // Bulk-load pragmas: trade durability for speed during the capture, as snapshot data is rebuildable (a
             // recapture). synchronous only decides when SQLite fsyncs, so an APP crash loses nothing committed: the
-            // capture's row stays in progress, and the next capture's start removes it [SNAPSHOT-CRASH-PARTIAL]. What
+            // capture's row stays in progress, and the next capture removes it [SNAPSHOT-CRASH-PARTIAL]. What
             // OFF exposes is an OS crash or power loss: commits not yet on disk lost, and, as its checkpoints run
             // unsynced, the per-game file corrupted -- every snapshot of the game, not this capture alone. The
             // exposure ends at the next checkpoint on a NORMAL connection, which syncs (the post-capture quota pass
@@ -2464,13 +2464,25 @@ public sealed class SnapshotStore : ISnapshotStore
         return result;
     }
 
-    public async Task<int> DeleteUnusableSnapshotsAsync(CancellationToken ct = default)
+    // A capture still in progress for a writer other than this process: a process that died mid-capture
+    // [SNAPSHOT-CRASH-PARTIAL]. This process's own open capture is never one of them, so removing them is safe beside a
+    // running capture. Binds $me to _captureOwner.
+    private const string DeadCaptureWhere = "capture_owner NOT IN ('', $me)";
+
+    public Task<int> DeleteUnusableSnapshotsAsync(CancellationToken ct = default)
+        // Flagged unusable, or a dead process's capture. Not done when the store opens instead: an open can run on the
+        // UI thread (Microsoft.Data.Sqlite's async calls run synchronously), and a dead capture's rows can run to
+        // gigabytes. Reclaim the disk: an unusable capture can still be large, and this runs at the START of a new
+        // capture, so freeing it now keeps the file from bloating.
+        => DeleteSnapshotsWhereAsync("is_usable=0 OR " + DeadCaptureWhere, reclaim: true, "unusable or unfinished", ct);
+
+    public Task<int> DeleteDeadCapturesAsync(CancellationToken ct = default)
+        // No reclaim: VACUUM copies the live data aside first, which a drive the free-disk guard calls low cannot
+        // spare. The freed pages stay in the file, and the next capture fills them before it grows the file.
+        => DeleteSnapshotsWhereAsync(DeadCaptureWhere, reclaim: false, "unfinished", ct);
+
+    private async Task<int> DeleteSnapshotsWhereAsync(string doomed, bool reclaim, string what, CancellationToken ct)
     {
-        // Flagged unusable, or a capture still in progress for a writer other than this process: a process that died
-        // mid-capture [SNAPSHOT-CRASH-PARTIAL]. This process's own open capture is never one of them, so this is safe
-        // beside a running capture. Not done when the store opens instead: an open can run on the UI thread
-        // (Microsoft.Data.Sqlite's async calls run synchronously), and a dead capture's rows can run to gigabytes.
-        const string doomed = "is_usable=0 OR capture_owner NOT IN ('', $me)";
         await using var conn = await OpenAsync(ct);
         int removed;
         await using (var count = conn.CreateCommand())
@@ -2493,16 +2505,11 @@ public sealed class SnapshotStore : ISnapshotStore
             cmd.Parameters.AddWithValue("$me", _captureOwner);
             await cmd.ExecuteNonQueryAsync(ct);
         }
-        // Reclaim the disk: an unusable capture can still be large, and this runs at
-        // the START of a new capture, so freeing it now keeps the file from bloating.
-        await ReclaimDiskAsync(conn, ct);
+        if (reclaim) await ReclaimDiskAsync(conn, ct);
         _log?.Info(Constants.LogCatView,
-            $"SnapshotStore: deleted {removed} unusable or unfinished snapshot(s) (reclaimed disk)");
+            $"SnapshotStore: deleted {removed} {what} snapshot(s){(reclaim ? " (reclaimed disk)" : "")}");
         return removed;
     }
-
-    /// <summary>[SNAPSHOT-CRASH-PARTIAL] Red stub.</summary>
-    public Task<int> DeleteDeadCapturesAsync(CancellationToken ct = default) => Task.FromResult(0);
 
     public async Task DeleteSnapshotAsync(long snapshotId, bool reclaim = false, CancellationToken ct = default)
     {

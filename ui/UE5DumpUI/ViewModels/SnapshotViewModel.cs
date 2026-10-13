@@ -749,6 +749,17 @@ public partial class SnapshotViewModel : ViewModelBase
             var msg = DiskGuardMessage();
             StatusText = msg;
             _log.Warn(Constants.LogCatView, "Snapshot: " + msg);
+            // A capture a crashed run left is listed nowhere, so no Delete reaches it, and the cleanup at a capture's
+            // start below never runs while the drive stays low: remove it here, rows only [SNAPSHOT-CRASH-PARTIAL].
+            // Best-effort, as that cleanup is.
+            try
+            {
+                int dead = await Task.Run(() => _store.DeleteDeadCapturesAsync());
+                if (dead > 0)
+                    _log.Info(Constants.LogCatView,
+                        $"Snapshot: removed {dead} unfinished snapshot(s) a crashed run left (capture refused, low disk)");
+            }
+            catch (Exception ex) { _log.Warn(Constants.LogCatView, $"Snapshot: unfinished-capture cleanup skipped: {ex.Message}"); }
             return CaptureOutcome.DiskLow;
         }
 
@@ -810,7 +821,8 @@ public partial class SnapshotViewModel : ViewModelBase
         // mid-capture failure. CompleteSnapshotAsync never ran, so the row is still a
         // capture in progress: listed nowhere, but the start-of-capture cleanup leaves this
         // process's own in-progress rows alone (only a dead process's are its to remove),
-        // so its rows would stay until the app restarts [SNAPSHOT-CRASH-PARTIAL]. Reclaim
+        // so its rows would stay until a later run of the app tries a capture in this game
+        // [SNAPSHOT-CRASH-PARTIAL]. Reclaim
         // too: a cancelled snapshot can be multi-GB and DELETE alone
         // leaves the file size unchanged until a Delete All. NO ct: the capture token may
         // already be cancelled, but this cleanup (incl. a possibly multi-second VACUUM)
