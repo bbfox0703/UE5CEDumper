@@ -1439,6 +1439,14 @@ public class SnapshotViewModelTests : IDisposable
         long whole = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "whole", Scope = "NumericNoByte" }, ct);
         await _store.WriteChunkAsync(whole, new[] { Obj(2) }, ct);
         await _store.FinalizeSnapshotAsync(whole, 1, 1, ct);
+        // A drift-flagged snapshot is listed, so the user sees and can delete it: it waits for a capture that starts,
+        // and a refused one is not that -- nor may a refusal run that cleanup's VACUUM on a low drive.
+        long flagged = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "drifted", Scope = "NumericNoByte" }, ct);
+        await using (var s = await _store.BeginCaptureSessionAsync(ct))
+        {
+            int n = s.WriteChunk(flagged, new[] { Obj(3) }, ct);
+            await s.CompleteSnapshotAsync(flagged, 1, n, isUsable: false, ct: ct);
+        }
 
         var dump = new CaptureStub();
         // 1 GB free on a 1 TB drive: the 10% / 50 GB guard refuses.
@@ -1453,14 +1461,14 @@ public class SnapshotViewModelTests : IDisposable
         };
         vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
         await vm.PendingRefresh!;
-        Assert.Equal((2L, 2L), await RawRowsAsync(ct));   // precondition: the dead capture and the whole snapshot
+        Assert.Equal((3L, 3L), await RawRowsAsync(ct));   // precondition: the dead capture, the whole and the flagged
 
         await vm.CaptureCommand.ExecuteAsync(null);
 
         Assert.Null(dump.LastDataType);                   // still refused: BeginSnapshot never reached
         Assert.Contains("disk", vm.StatusText, StringComparison.OrdinalIgnoreCase);
-        Assert.Equal((1L, 1L), await RawRowsAsync(ct));   // the dead capture's row and field are gone
-        Assert.Equal(whole, Assert.Single(await _store.ListSnapshotsAsync(ct)).Id);
+        Assert.Equal((2L, 2L), await RawRowsAsync(ct));   // the dead capture's row and field are gone, no more
+        Assert.Equal(new[] { flagged, whole }, (await _store.ListSnapshotsAsync(ct)).Select(m => m.Id));
     }
 
     [Fact]
