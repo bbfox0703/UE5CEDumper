@@ -6582,6 +6582,18 @@ static void Test_CheckTailForVersion() {
     // Split Fiction's tail sits +4 later on 5.x (the vote's extra).
     EXPECT("TailCheck: a 5.x tail with the +4 extra agrees at 5.5", CheckTailForVersion(505, 0xB0, 4, 0xB4) == TailCheck::Agrees);
     EXPECT("TailCheck: ...and 4.17 on it contradicts", CheckTailForVersion(417, 0xB0, 4, 0xB4) == TailCheck::Contradicts);
+    // [OVERRIDE-REVIEW2-LOWS] review: a vote run under a version from the wrong side of 4.18 decides nothing and latches
+    // extra 0, so on a +4 tail the latched extra does not explain the measurement. The extra is the game's, not the
+    // version's: judged with the latched 0, the version that fits was refused for the rest of the session.
+    EXPECT("TailCheck ⭐: 5.5 on a +4 tail agrees though the vote (run under 4.17) latched extra 0",
+           CheckTailForVersion(505, 0xB0, 0, 0xB4) == TailCheck::Agrees);
+    EXPECT("TailCheck ⭐: ...and 4.15 on a +4 4.11-4.17 tail the vote (run under 4.18) could not find",
+           CheckTailForVersion(415, 0x88, 0, 0x8E) == TailCheck::Agrees);
+    EXPECT("TailCheck control: ...4.17 on the 5.x +4 tail still contradicts", CheckTailForVersion(417, 0xB0, 0, 0xB4) == TailCheck::Contradicts);
+    EXPECT("TailCheck control: ...4.18 on the 4.11-4.17 +4 tail still contradicts",
+           CheckTailForVersion(418, 0x88, 0, 0x8E) == TailCheck::Contradicts);
+    EXPECT("TailCheck control: no extra the vote weighs explains a gap of 8", CheckTailForVersion(505, 0xB0, 0, 0xB8) == TailCheck::Contradicts);
+    EXPECT("TailCheck control: ...nor a tail before FunctionFlags", CheckTailForVersion(505, 0xB0, 0, 0xAC) == TailCheck::Contradicts);
     // Nothing to judge is never a refusal.
     EXPECT("TailCheck: nothing measured is Unmeasured", CheckTailForVersion(417, 0x88, 0, -1) == TailCheck::Unmeasured);
     EXPECT("TailCheck: no FunctionFlags offset is Unmeasured", CheckTailForVersion(417, 0, 0, 0x88) == TailCheck::Unmeasured);
@@ -6599,6 +6611,8 @@ static void Test_OverrideContradictsTail() {
     EXPECT("OverrideTail control: an override that fits is not", !OverrideContradictsTail(true, 418, 0x88, 0, 0x88));
     EXPECT("OverrideTail control: ...nor 4.15 on its own tail", !OverrideContradictsTail(true, 415, 0x88, 0, 0x8A));
     EXPECT("OverrideTail control: ...nor 5.5 on the +4 tail", !OverrideContradictsTail(true, 505, 0xB0, 4, 0xB4));
+    EXPECT("OverrideTail ⭐: ...nor 5.5 there when the vote ran under a wrong version and latched extra 0",
+           !OverrideContradictsTail(true, 505, 0xB0, 0, 0xB4));
     EXPECT("OverrideTail: a DETECTED version is not the user's override to take back",
            !OverrideContradictsTail(false, 417, 0x88, 0, 0x88));
     EXPECT("OverrideTail: nothing measured is never a contradiction", !OverrideContradictsTail(true, 417, 0x88, 0, -1));

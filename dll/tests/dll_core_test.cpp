@@ -4565,6 +4565,7 @@ int main() {
         const int      svFlagsO = DynOff::UFUNCTION_FLAGS;
         const int      svExtraO = DynOff::UFUNCTION_TAIL_EXTRA;
         const int      svMeasO  = DynOff::UFUNCTION_TAIL_MEASURED.load();
+        const int      svPropsO = DynOff::USTRUCT_PROPSSIZE;
         DynOff::bCasePreservingName = false;
         DynOff::bUseFProperty       = false;    // UProperty mode: a function's parameters are its Children
         DynOff::bOffsetsValidated.store(false); // the version table is the primary: 0x88 on both sides of 4.18
@@ -4805,6 +4806,35 @@ int main() {
         resetVote();
         DynOff::bOffsetsProbeRan.store(false);
         check("OVERRIDENOTE: before the offsets probe nothing is contradicted", !Ubel::OverrideInForceContradicted(417, true));
+
+        // [OVERRIDE-REVIEW2-LOWS] review: the note tells the user to choose a version that fits, so the one that fits
+        // must be accepted. A persisted 4.17 on a +4 tail: the vote runs under 4.17, cannot find the tail, and latches
+        // the primary with extra 0. The probe validated here, as on a real FProperty title, so FunctionFlags' primary
+        // comes from PropertiesSize and is the same under every version (0x40 + 0x48 in UProperty mode = 0x88).
+        DynOff::bOffsetsProbeRan.store(true);
+        DynOff::bOffsetsValidated.store(true);
+        DynOff::USTRUCT_PROPSSIZE = 0x40;
+        build(0x8C);
+        resetVote();
+        g_cachedUEVersion = 417;
+        check("OVERRIDEEXTRA setup: a persisted 4.17 on a +4 tail is published as contradicted",
+              Ubel::OverrideInForceContradicted(417, true));
+        snprintf(ob, sizeof(ob), "flags +0x%X extra %d measured +0x%X", DynOff::UFUNCTION_FLAGS,
+                 DynOff::UFUNCTION_TAIL_EXTRA, DynOff::UFUNCTION_TAIL_MEASURED.load());
+        check("OVERRIDEEXTRA setup: ...its vote kept the primary +0x88 with extra 0; the measurement found +0x8C",
+              DynOff::UFUNCTION_FLAGS == 0x88 && DynOff::UFUNCTION_TAIL_EXTRA == 0
+                  && DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x8C, ob);
+        auto pick505 = verdictOf(505);
+        check("OVERRIDEEXTRA ⭐: the user then picks 5.5, which fits the +4 tail -- accepted, not refused for that 0",
+              pick505.verdict == TailCheck::Agrees, ob);
+        check("OVERRIDEEXTRA ⭐: ...5.0 as well", verdictOf(500).verdict == TailCheck::Agrees, ob);
+        check("OVERRIDEEXTRA control: ...4.17 is still refused", verdictOf(417).verdict == TailCheck::Contradicts, ob);
+        check("OVERRIDEEXTRA ⭐: ...and 5.5 in force is not published as contradicted",
+              !Ubel::OverrideInForceContradicted(505, true));
+        check("OVERRIDEEXTRA measured control: the readers keep the measured +4 tail: NumParms 3, ParmsSize 12",
+              readsRight(readOf(bFn0 + 2)), rb);
+        DynOff::USTRUCT_PROPSSIZE = svPropsO;
+        DynOff::bOffsetsValidated.store(false);
 
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
         DynOff::bCasePreservingName = svCpnO;
