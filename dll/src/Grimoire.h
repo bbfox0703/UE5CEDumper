@@ -470,7 +470,8 @@ constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
 //
 // UE5_Init runs a raise-only ladder every init: 503 (tagged FFieldVariant) -> 504
 // (CMC::SetGravityDirection UFUNCTION; the property alone only floors at 503 -- [R7-X4]) -> 505 (UEnum::EnumPackage
-// ahead of EnumDisplayNameFn -- [VER-MARKERS-PAST-504]) -> 507 (reordered FUObjectItem) -> 508 (virtual ~FFieldClass).
+// ahead of EnumDisplayNameFn) -> 506 (UStruct::StructStateFlags behind an int16 MinAlignment; both
+// [VER-MARKERS-PAST-504]) -> 507 (reordered FUObjectItem) -> 508 (virtual ~FFieldClass).
 // It exists because heavily-stripped titles lose every version string and fall back to
 // 4.27 while the structural probes have already proved otherwise. The PURE predicates
 // and per-object samplers live in this header so the tests can pin them, and so does the
@@ -781,6 +782,38 @@ bool SampleEnumPackage(EnumPackageTally& t, uintptr_t enumAddr, int namesOff, in
     return true;
 }
 
+// UE 5.6: UStruct::MinAlignment shrank to int16, and `std::atomic<uint16> StructStateFlags` took the other half of
+// the word. Measured from the Shipping fixtures' PDBs (UStruct, relative to PropertiesSize):
+//   DumperTest51 (5.1), DumperTest (5.4)       MinAlignment int32 +4                        (and RE-UE4SS 5_05: int32)
+//   DumperTest56 (5.6), DumperTest58 (5.8)     MinAlignment int16 +4, StructStateFlags +6   (and RE-UE4SS 5_07)
+// UStruct::Link ends with StructStateFlags.fetch_or(PropertyDataAvailable) in Class.cpp of 5.6, 5.7 and 5.8, the only
+// flag any of them defines, so a linked class, script struct or function reads exactly 1 there; through 5.5 the
+// same two bytes are MinAlignment's high half, 0 for any alignment a struct can have. The word sits at the same
+// distance from the MEASURED DynOff::USTRUCT_PROPSSIZE on a case-preserving build, whose UObject only moves the
+// whole block.
+constexpr int kStructStateAfterPropsSize = 6;
+constexpr uint16_t kStructPropertyDataAvailable = 1;
+
+struct StructStateTally {
+    int sampled = 0;   // structs whose MinAlignment reads as one
+    int linked  = 0;   // ...whose next 16 bits read PropertyDataAvailable (5.6+)
+};
+constexpr bool StructStateProves56(const StructStateTally& t) { return LadderProbeMajority(t.linked, t.sampled); }
+
+// One struct's sample; false when it is not one. A MinAlignment that is not a power of two up to 256 is not a linked
+// UStruct's -- the class default object's is 0 -- so it is not counted at all.
+template <class ReadMem>
+bool SampleStructState(StructStateTally& t, uintptr_t structAddr, int propsSizeOff, ReadMem&& read) {
+    int16_t minAlign = 0;
+    if (!read(structAddr + propsSizeOff + 4, &minAlign, sizeof minAlign)) return false;
+    if (minAlign <= 0 || minAlign > 256 || (minAlign & (minAlign - 1)) != 0) return false;
+    uint16_t state = 0;
+    if (!read(structAddr + propsSizeOff + kStructStateAfterPropsSize, &state, sizeof state)) return false;
+    ++t.sampled;
+    if (state == kStructPropertyDataAvailable) ++t.linked;
+    return true;
+}
+
 // === The init version ladder, in one place [UE-OVERRIDE-HINT-AUTO] ===
 //
 // After the offsets probe, init corrects the scan's version from what the probe measured: UProperty mode is UE4
@@ -802,8 +835,8 @@ struct StructuralVersionFacts {
     bool virtualDtor58       = false;  // IsVirtualDtorFFieldClass58(FFIELDCLASS_NAME)
 };
 
-enum class VersionRung { UPropertyMode, TaggedFieldVariant, CmcMarkers, EnumPackage55, ReorderedItem,
-                         VirtualFieldClassDtor };
+enum class VersionRung { UPropertyMode, TaggedFieldVariant, CmcMarkers, EnumPackage55, StructStateFlags56,
+                         ReorderedItem, VirtualFieldClassDtor };
 
 struct StructuralVersion {
     unsigned version      = 0;
@@ -813,12 +846,14 @@ struct StructuralVersion {
 // `probeCmc(bool& hasGravityDirectionProperty, bool& hasSetGravityDirectionFunction)` reads one loaded
 // CharacterMovementComponent class and returns false when there is none. It is asked only inside the CMC rung's
 // window (FProperty mode, 5.0-5.3), because it walks the object array and a UE4 title must never pay for that.
-// `probeEnumPackage()` returns an EnumPackageTally over sampled enums, and is asked only inside its rung's window
-// (FProperty mode, 5.0-5.4) for the same reason.
+// `probeEnumPackage()` returns an EnumPackageTally over sampled enums, and `probeStructState()` a StructStateTally
+// over sampled structs; each is asked only inside its own rung's window (FProperty mode, 5.0-5.4 and 5.0-5.5) for the
+// same reason.
 // `onRung(rung, from, to)` hears each rung that changed the version, so the caller's log names the evidence.
-template <class ProbeCmc, class ProbeEnumPackage, class OnRung>
+template <class ProbeCmc, class ProbeEnumPackage, class ProbeStructState, class OnRung>
 StructuralVersion ApplyVersionLadder(unsigned ueVersion, const StructuralVersionFacts& f, ProbeCmc&& probeCmc,
-                                     ProbeEnumPackage&& probeEnumPackage, OnRung&& onRung) {
+                                     ProbeEnumPackage&& probeEnumPackage, ProbeStructState&& probeStructState,
+                                     OnRung&& onRung) {
     StructuralVersion r{ueVersion, false};
     if (!f.measured) return r;
     auto step = [&](VersionRung rung, unsigned to) {
@@ -839,6 +874,8 @@ StructuralVersion ApplyVersionLadder(unsigned ueVersion, const StructuralVersion
     }
     if (f.fproperty && r.version >= 500 && r.version < 505 && EnumPackageProves55(probeEnumPackage()))
         step(VersionRung::EnumPackage55, 505u);
+    if (f.fproperty && r.version >= 500 && r.version < 506 && StructStateProves56(probeStructState()))
+        step(VersionRung::StructStateFlags56, 506u);
     if (f.fproperty && r.version < 507 && f.reorderedItem57)
         step(VersionRung::ReorderedItem, 507u);
     // The >= 500 guard is the rung's, not cosmetic: a false 0x08 on a UE4 title would raise 427 to 508 and cross the

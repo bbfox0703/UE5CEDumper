@@ -143,13 +143,15 @@ static bool CopyToBuffer(const std::string& src, char* buf, int32_t bufLen) {
 }
 
 namespace FrierenInit {
-// [VER-MARKERS-PAST-504] How many enums the 5.5 rung samples. Native reflection objects sit at the front of the object
-// array, so a first-N search ends early; the verdict wants a clear majority of DynOff::kLadderProbeMinAgree or more.
-constexpr int kLadderEnumSample = 32;
+// [VER-MARKERS-PAST-504] How many enums the 5.5 rung samples, and how many structs of each kind the 5.6 rung does.
+// Native reflection objects sit at the front of the object array, so a first-N search ends early; the verdict wants a
+// clear majority of DynOff::kLadderProbeMinAgree or more.
+constexpr int kLadderEnumSample   = 32;
+constexpr int kLadderStructSample = 16;
 
-// The live half of DynOff::ApplyVersionLadder: the probe's facts, the CMC read and the log lines. Init runs it after
-// the offsets probe, and Auto chosen over an override runs it on the detection it restores, so both land on the
-// version the same evidence proves. `who` prefixes the log lines, which the A4 rig greps for.
+// The live half of DynOff::ApplyVersionLadder: the probe's facts, the reads its rungs ask for and the log lines.
+// Init runs it after the offsets probe, and Auto chosen over an override runs it on the detection it restores, so
+// both land on the version the same evidence proves. `who` prefixes the log lines, which the A4 rig greps for.
 DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool userOverride, const char* who) {
     DynOff::StructuralVersionFacts f;
     f.measured            = DynOff::bOffsetsProbeRan.load(std::memory_order_acquire);
@@ -232,6 +234,24 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
         return enumTally;
     };
 
+    // [VER-MARKERS-PAST-504] UE5.6 split UStruct::MinAlignment into int16 + StructStateFlags, which UStruct::Link sets;
+    // the layouts and the rule are DynOff::SampleStructState / StructStateProves56. Every kind of linked UStruct
+    // carries it, so classes, script structs and functions all vote, read behind the MEASURED PropertiesSize.
+    DynOff::StructStateTally structTally;
+    auto probeStructState = [&]() -> DynOff::StructStateTally {
+        const auto read = [](uintptr_t a, void* out, size_t n) { return Macht::ReadBytesSafe(a, out, n); };
+        for (const char* kind : { "Class", "ScriptStruct", "Function" }) {
+            const auto structs = Aura::FindInstancesByClass(kind, /*exactMatch=*/true, kLadderStructSample);
+            for (const auto& s : structs.results) {
+                if (s.addr)
+                    DynOff::SampleStructState(structTally, s.addr, DynOff::USTRUCT_PROPSSIZE, read);
+            }
+        }
+        LOG_INFO("%s: UStruct::StructStateFlags probe -- %d struct(s) sampled; PropertyDataAvailable at "
+                 "PropertiesSize+6 (UE5.6+) on %d.", who, structTally.sampled, structTally.linked);
+        return structTally;
+    };
+
     auto onRung = [&](DynOff::VersionRung rung, unsigned from, unsigned to) {
         switch (rung) {
         case DynOff::VersionRung::UPropertyMode:
@@ -262,6 +282,11 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
             LOG_WARN("%s: structural marker (UEnum::EnumPackage at Names+0x14 on %d of %d sampled enums = UE5.5+) "
                      "but version=%u — raising to 505.", who, enumTally.at55, enumTally.sampled, from);
             break;
+        case DynOff::VersionRung::StructStateFlags56:
+            LOG_WARN("%s: structural marker (UStruct::StructStateFlags = PropertyDataAvailable on %d of %d sampled "
+                     "structs = UE5.6+) but version=%u — raising to 506.", who, structTally.linked,
+                     structTally.sampled, from);
+            break;
         case DynOff::VersionRung::ReorderedItem:
             LOG_WARN("%s: structural marker (FUObjectItem Object@+0x08, %dB = UE5.7+) "
                      "but version=%u — raising floor to 507.", who, itemSz, from);
@@ -279,7 +304,7 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
         }
     };
 
-    return DynOff::ApplyVersionLadder(ueVersion, f, probeCmc, probeEnumPackage, onRung);
+    return DynOff::ApplyVersionLadder(ueVersion, f, probeCmc, probeEnumPackage, probeStructState, onRung);
 }
 } // namespace FrierenInit
 
