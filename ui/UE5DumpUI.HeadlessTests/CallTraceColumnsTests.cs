@@ -389,11 +389,12 @@ public class CallTraceColumnsTests
         Dispatcher.UIThread.RunJobs();
     }
 
-    /// <summary>One drag: pressed on the handle's centre, moved <paramref name="dx"/> across, released there.</summary>
-    private static void Drag(TopLevel top, Visual handle, double dx)
+    /// <summary>One drag: pressed on the handle's centre, moved <paramref name="dx"/> across and
+    /// <paramref name="dy"/> down, released there.</summary>
+    private static void Drag(TopLevel top, Visual handle, double dx, double dy = 0)
     {
         var from = Centre(handle, top);
-        var to = new Point(from.X + dx, from.Y);
+        var to = new Point(from.X + dx, from.Y + dy);
         top.MouseDown(from, MouseButton.Left);
         top.MouseMove(to, RawInputModifiers.LeftMouseButton);
         top.MouseUp(to, MouseButton.Left);
@@ -518,6 +519,33 @@ public class CallTraceColumnsTests
         AssertFittedRow(panel, Row);
         Drag(top, HeaderHandle(panel, "str.CT.Col.Thread"), -10);
         Assert.Equal(limit - 10, HeaderCell(panel, "str.CT.Col.Thread").Bounds.Width, 0.5);
+    });
+
+    /// <summary>[CT-FLOOR-208] A press on the pane's handle that moves only down, with the pane shown narrower than it is
+    /// remembered, leaves the remembered width: written, the width shown replaced it in ui-options.json and a wider
+    /// window never gave it back (the round-1 review's probe: a remembered 766 became the 464 shown).</summary>
+    [Fact]
+    public Task A_pane_handle_pressed_and_moved_only_down_keeps_the_remembered_width() => Headless.Run(() =>
+    {
+        var (top, panel, vm) = LaidIn(1000, 1200, Row);
+        Assert.Equal(1000 - PanelChrome - ListFloor, Pane(panel).Bounds.Width, 0.5);
+        Drag(top, PaneHandle(panel), 0, 20);
+        Assert.Equal(1200.0, vm.DetailPaneWidth);
+        top.Width = 1600;
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(1200, Pane(panel).Bounds.Width, 0.5);
+    });
+
+    /// <summary>A column's handle the same: Object shows 164 of its 260 beside a pane of 380 in a 1000 window, and a
+    /// press on its handle that moves only down keeps the 260.</summary>
+    [Fact]
+    public Task A_column_handle_pressed_and_moved_only_down_keeps_the_remembered_width() => Headless.Run(() =>
+    {
+        var (top, panel, vm) = LaidIn(1000, 380, Row);
+        Assert.Equal(164, Text(panel, Row.ObjectText).Bounds.Width, 0.5);
+        Drag(top, HeaderHandle(panel, "str.CT.Col.Object"), 0, 20);
+        Assert.Equal(260.0, vm.ObjectColWidth);
+        Assert.Equal(164, Text(panel, Row.ObjectText).Bounds.Width, 0.5);
     });
 
     /// <summary>Each column's handle widens its own column by the step dragged, in the direction the handle faces:

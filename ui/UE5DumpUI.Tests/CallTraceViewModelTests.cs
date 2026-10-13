@@ -1138,6 +1138,53 @@ public class CallTraceViewModelTests
         Assert.Equal(200.0, vm.ShownDetailPaneWidth);   // its own floor
     }
 
+    private static readonly string[] RememberedWidths =
+    {
+        nameof(CallTraceViewModel.TimeColWidth), nameof(CallTraceViewModel.DurationColWidth),
+        nameof(CallTraceViewModel.ThreadColWidth), nameof(CallTraceViewModel.ObjectColWidth),
+        nameof(CallTraceViewModel.DetailPaneWidth),
+    };
+
+    [Fact]
+    public void A_pane_drag_that_moves_nothing_keeps_the_remembered_width()
+    {
+        // [CT-FLOOR-208] A remembered width is what ui-options.json saves. A drag that leaves the pane where it was --
+        // a press with only a vertical jiggle, or a push into the limit -- is not the user choosing the width shown:
+        // written, it replaced the 766 for good and a wider window gave back the narrower one.
+        var (vm, _) = MakeVm(Dump());
+        vm.DetailPaneWidth = 766;
+        vm.SplitWidth = 900;                                // shown as 692
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        vm.DragDetailPane(0);
+        vm.DragDetailPane(+60);                             // into the limit: still 692
+        Assert.Equal((692.0, 766.0), (vm.ShownDetailPaneWidth, vm.DetailPaneWidth));
+        Assert.DoesNotContain(raised, n => RememberedWidths.Contains(n));
+        vm.SplitWidth = 1600;
+        Assert.Equal(766.0, vm.ShownDetailPaneWidth);
+        vm.SplitWidth = 900;
+        vm.DragDetailPane(-10);                             // a drag that moves still remembers what it leaves
+        Assert.Equal((682.0, 682.0), (vm.ShownDetailPaneWidth, vm.DetailPaneWidth));
+    }
+
+    [Fact]
+    public void A_column_drag_that_moves_nothing_keeps_the_remembered_width()
+    {
+        var (vm, _) = MakeVm(Dump());
+        vm.TimeColWidth = 4096;
+        vm.SplitWidth = 1000;                               // 596 for the cells: Time shows 284, Object its 80 of 260
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        vm.DragTime(+30);                                   // into Time's limit
+        vm.DragObject(+30);                                 // into Object's, held at its floor by Time
+        vm.DragThread(0);
+        vm.DragDuration(0);
+        vm.DragObject(0);
+        Assert.Equal((284.0, 40.0, 32.0, 80.0), ShownColumns(vm));
+        Assert.Equal((4096.0, 88.0, 64.0, 260.0), (vm.TimeColWidth, vm.DurationColWidth, vm.ThreadColWidth, vm.ObjectColWidth));
+        Assert.DoesNotContain(raised, n => RememberedWidths.Contains(n));
+    }
+
     [Fact]
     public void Object_gives_way_so_Function_keeps_160_and_comes_back_to_its_remembered_width_with_room()
     {
