@@ -364,7 +364,7 @@ int32_t ResolveProtectBits(std::vector<ProtectBit>& out) {
         ProtectBit b;
         b.name = f.Name;
         b.byteOffset = f.Offset + static_cast<int32_t>(bits.byteOff);
-        b.mask = bits.byteMask;
+        b.mask = TrainerMaskFor(bits);
         b.protect = protect ? 1 : 0;
         out.push_back(std::move(b));
         if (out.size() >= 16) break;   // mirror BuildTargets sanity cap

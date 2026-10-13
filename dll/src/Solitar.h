@@ -79,7 +79,7 @@ inline uint8_t WriteBoolValue(uint8_t cur, const BoolBits& b, bool value) {
 // C++ bool holds writes exactly 0x01 / 0x00. A native bool's FieldMask 0xFF would write 0xFF over 0x00 (the value
 // [A3-BOOL-NATIVE-NOWRITE] forbids) and 0x100 -- stored as 0x00 -- over 0x01, turning protection OFF when asked ON.
 inline uint8_t TrainerMaskFor(const BoolBits& b) {
-    return b.fieldMask;
+    return b.byteMask;
 }
 
 // A bool property's layout from the {FieldSize, ByteOffset, ByteMask, FieldMask} quads read at each probed offset,
