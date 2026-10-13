@@ -88,6 +88,12 @@ inline uint8_t TrainerMaskFor(const BoolBits& b) {
 // ByteMask -- so a packed bool resolves exactly as it did. Only when there is none does Ubel::ClassifyBoolLayout's
 // Native verdict count. Anything else is refused: the all-zero a missed probe reads is never native, and a whole-byte
 // write there is the AA1 corruption of up to 7 sibling bools.
+// This precedence deliberately differs from Ubel's walk probe (ProbeBoolLayout, behind walk_instance's bool_native /
+// bool_mask), which takes the FIRST offset that classifies either way. Taking a native verdict ahead of a packed layout
+// further down the probe would turn a packed bool whose base offset reads native-looking bytes into a whole-byte write;
+// a write that clears siblings is the worse miss. The cost: when one probed offset reads native and another packed, the
+// Live Walker and this probe can name different bytes for the same bool -- a coincidence of stale bytes, which neither
+// probe can tell from the real layout.
 inline bool PickBoolBits(const uint8_t (*quads)[4], const bool* readOk, int n, BoolBits& out) {
     for (int i = 0; i < n; ++i) {
         if (!readOk[i]) continue;
