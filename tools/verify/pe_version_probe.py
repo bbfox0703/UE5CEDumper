@@ -273,6 +273,7 @@ _RC_EXPECT = {
     "game_fixed501_buildstring_415": ("build string", "FileVersion", 415, 501),
     "game_fixed420_buildstring_410": ("build string", "ProductVersion", 410, 420),
     "game_filefixed405_buildstring_415": ("build string", "ProductVersion", 415, 405),
+    "game_fixed410_two_buildstrings": ("fixed", "ProductVersion", 410, None),
 }
 _RC_FIXED = re.compile(r"(FILEVERSION|PRODUCTVERSION)[ \t]+(\d+),(\d+),(\d+),(\d+)")
 _RC_VALUE = re.compile(r'VALUE "(ProductVersion|FileVersion)", "([^"\\]*)"')

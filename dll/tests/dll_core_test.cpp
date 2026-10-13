@@ -493,6 +493,19 @@ int main() {
               gb);
         check("VER-410-FIXED-VS-STRING ⭐: ...at tier 1",
               ff405.done && ff405.result.version == 415 && ff405.result.tier == 1, gb);
+        // Which string is the build string when both are one: ProductVersion's, as the string fallback reads them. Below
+        // the floor the order is the verdict, not the log's wording -- read FileVersion's first and this fixed 4.10 is
+        // overruled to 415 and scanned, where ProductVersion's agreeing string corroborates it and the scan is refused.
+        const std::wstring twoBuild = res(L"game_fixed410_two_buildstrings");
+        check("VER-410-FIXED-VS-STRING setup: the resource fixture was built beside the test",
+              GetFileAttributesW(twoBuild.c_str()) != INVALID_FILE_ATTRIBUTES,
+              Utf8Helpers::EncodeUtf16(twoBuild.c_str(), twoBuild.size()).c_str());
+        auto two = phase(twoBuild, L"");
+        check("VER-410-FIXED-VS-STRING ⭐: fixed 4.10.2 with an agreeing ProductVersion build string and a 4.15 FileVersion "
+              "one stays a fixed reading of 410 -- ProductVersion's string is the one compared",
+              two.exeVersion == 410 && two.exeReading.fromFixedField && two.exeReading.overruledFixedCode == 0, gb);
+        check("VER-410-FIXED-VS-STRING ⭐: ...corroborated by that string, so it stops at tier 1 and the scan is refused",
+              two.done && two.result.version == 410 && two.result.tier == 1 && two.verdict.byBuildString, gb);
         // The reading says which fixed-field code it overruled, which is what the SOURCES DISAGREE line names.
         check("VER-410-FIXED-VS-STRING: each overruling reading names the fixed code it overruled (405 / 501 / 420)",
               f405.exeReading.overruledFixedCode == 405 && f501.exeReading.overruledFixedCode == 501
