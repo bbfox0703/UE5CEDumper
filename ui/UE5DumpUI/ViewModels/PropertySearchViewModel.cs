@@ -223,8 +223,8 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         _isAobMakerAvailable = aobMaker?.IsAvailable ?? false;
     }
 
-    /// <summary>[R7-D-08] The re-read <see cref="OnConnected"/> started. A test seam, like
-    /// <c>TeleportViewModel.ConnectPrime</c>: production code never awaits it.</summary>
+    /// <summary>[R7-D-08] The re-read <see cref="OnConnected"/> started. A test seam: production code never awaits
+    /// it.</summary>
     internal Task ConnectPrime { get; private set; } = Task.CompletedTask;
 
     /// <summary>[R7-D-08] Called once a (re)connected session's DLL is scanned. The DLL's force-holds survive a pipe drop

@@ -2406,7 +2406,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// asserts one <c>GetMouseCursorAsync</c> and would see one or two depending on whether
     /// the background prime had landed yet. Weakening that assertion to ">= 1" would hide
     /// exactly the kind of duplicate-call regression it exists to catch, so the seam is the
-    /// honest fix. Production code never awaits this.</remarks>
+    /// honest fix. The UI thread never waits on it: what awaits it in production is the
+    /// experimental teardown, itself fire-and-forget, which must act on what the prime read.</remarks>
     internal Task ConnectPrime { get; private set; } = Task.CompletedTask;
 
     /// <summary>
@@ -4863,6 +4864,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             if (IsConnected)
             {
+                // A connect's prime may still be reading the DLL, and until it lands the cards hold what the disconnect
+                // reset: what it then found running would stay on. It is quiet and catches its own failures.
+                await ConnectPrime;
                 // Unconditionally: the badge can read Unknown over a hook that holds, and OFF is idempotent.
                 await ForceForegroundLockOffCommand.ExecuteAsync(null);
                 await TurnOffRunningExperimentalAsync();
