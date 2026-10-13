@@ -2458,6 +2458,27 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void SolitarBools_ResolveAndWriteThroughTheBoolBitsHelpers()
+    {
+        // [SOLIDE-NATIVE-BOOL] Which probed layout a God Mode target or a forced bool takes, and how its byte is read
+        // and written, are Solitar::PickBoolBits / ReadBoolValue / WriteBoolValue (pinned in dll_helpers_test): a native
+        // bool owns the whole byte and is written 0x01 / 0x00. Solitar.cpp reaches no test target, so the glue is
+        // pinned here: the probe hands every quad to PickBoolBits, and no read or write in the file goes back to a bare
+        // mask -- ApplyBoolBit with a native bool's FieldMask would stamp 0xFF, which C++ that XORs a bool reads as
+        // still true.
+        var src = DllSource("Solitar.cpp").Replace("\r\n", "\n");
+        int fn = src.IndexOf("bool ReadBoolLayout(uintptr_t fpropAddr, BoolBits& bits) {", StringComparison.Ordinal);
+        Assert.True(fn >= 0, "ReadBoolLayout(fpropAddr, BoolBits&) was not found");
+        int end = src.IndexOf("\n}\n", fn, StringComparison.Ordinal);
+        Assert.Contains("return PickBoolBits(quads, readOk, kTries, bits);", src[fn..end]);
+        Assert.DoesNotMatch(@"ReadBoolLayout\([^()]*,[^()]*,[^()]*\)", src);   // the old (byteOff, mask) form
+        Assert.DoesNotContain("ApplyBoolBit(", src);
+        Assert.DoesNotMatch(@"&\s*(?:t\.)?mask\b", src);
+        Assert.Contains("WriteBoolValue(", src);
+        Assert.Contains("ReadBoolValue(", src);
+    }
+
+    [Fact]
     public void FindRefsReply_CarriesSparseSkipped()
     {
         // [R7-A-01] Same object, additive: the sparse pass did not run on a compact-set build.

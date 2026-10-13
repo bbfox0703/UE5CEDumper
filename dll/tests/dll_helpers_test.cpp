@@ -4496,6 +4496,99 @@ static void Test_Solitar_ApplyBoolBit() {
     }
 }
 
+// ----- Solitar::PickBoolBits / ReadBoolValue / WriteBoolValue [SOLIDE-NATIVE-BOOL] ----
+// God Mode's targets and Force ON / OFF took a packed bitfield bool only, so a NATIVE bool -- every Blueprint bool,
+// SetBoolSize's {FieldSize 1, ByteOffset 0, ByteMask 0x01, FieldMask 0xFF} -- was refused (PR_ERR_REFLECT, 0 held).
+// It now resolves to the whole byte and is written 0x01 / 0x00; a packed bool resolves and writes exactly as before;
+// an unresolved layout stays refused ([A3-BOOL-NATIVE-NOWRITE]: a whole-byte write there corrupts 7 sibling bools).
+
+static void Test_Solitar_BoolBits() {
+    using Solitar::BoolBits;
+    using Solitar::PickBoolBits;
+    using Solitar::ReadBoolValue;
+    using Solitar::WriteBoolValue;
+    constexpr int kTries = 5;   // ReadBoolLayout's probe: base, -4, +4, +8, -8
+    struct Probe {
+        uint8_t quads[kTries][4] = {};
+        bool    ok[kTries] = { true, true, true, true, true };
+    };
+    auto pick = [&](const Probe& p, BoolBits& out) { return PickBoolBits(p.quads, p.ok, kTries, out); };
+    auto set = [](Probe& p, int i, uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
+        p.quads[i][0] = a; p.quads[i][1] = b; p.quads[i][2] = c; p.quads[i][3] = d;
+    };
+
+    // A native bool at the probe's base: the whole byte, written 0x01 / 0x00.
+    {
+        Probe p; set(p, 0, 1, 0, 0x01, 0xFF);
+        BoolBits b;
+        const bool ok = pick(p, b);
+        EXPECT("BOOLBITS ⭐: a native bool (1 / 0 / 01 / FF) resolves", ok);
+        EXPECT("BOOLBITS ⭐: ...to the whole byte at ByteOffset 0, true writing 0x01",
+               ok && b.byteOff == 0 && b.fieldMask == 0xFF && b.byteMask == 0x01);
+    }
+    // ...and at a fallback offset, when nothing packed is anywhere.
+    {
+        Probe p; set(p, 0, 7, 7, 7, 7); set(p, 1, 1, 0, 0x01, 0xFF);
+        BoolBits b;
+        EXPECT("BOOLBITS ⭐: a native layout at a fallback offset resolves", pick(p, b) && b.fieldMask == 0xFF);
+    }
+    // A packed bool: exactly what the probe has always taken.
+    {
+        Probe p; set(p, 0, 1, 2, 0x04, 0x04);
+        BoolBits b;
+        EXPECT("BOOLBITS control: a packed bool resolves to its byte and bit",
+               pick(p, b) && b.byteOff == 2 && b.fieldMask == 0x04 && b.byteMask == 0x04);
+    }
+    // A packed layout anywhere wins over a native one earlier in the probe: a packed bool never changes its read.
+    {
+        Probe p; set(p, 0, 1, 0, 0x01, 0xFF); set(p, 2, 1, 3, 0x80, 0x80);
+        BoolBits b;
+        EXPECT("BOOLBITS control: a packed layout at a later offset still wins",
+               pick(p, b) && b.byteOff == 3 && b.fieldMask == 0x80 && b.byteMask == 0x80);
+    }
+    // Refused, as before: what a missed probe reads, fill, and the packed rule's own limits.
+    {
+        BoolBits b;
+        Probe zero;
+        EXPECT("BOOLBITS: all-zero (a missed probe) is refused", !pick(zero, b));
+        Probe ff; for (int i = 0; i < kTries; ++i) set(ff, i, 1, 0, 0xFF, 0xFF);
+        EXPECT("BOOLBITS: an all-0xFF read is refused (ByteMask is held to 0x01)", !pick(ff, b));
+        Probe mask0; set(mask0, 0, 1, 0, 0, 0);
+        EXPECT("BOOLBITS: FieldSize 1 with mask 0 is refused -- never a whole-byte write", !pick(mask0, b));
+        Probe off; set(off, 0, 1, 2, 0x01, 0xFF);
+        EXPECT("BOOLBITS: FieldMask 0xFF at a non-zero ByteOffset is refused", !pick(off, b));
+        Probe wide; set(wide, 0, 4, 0, 0xFF, 0xFF);
+        EXPECT("BOOLBITS: a 4-byte bool is refused", !pick(wide, b));
+        Probe bo8; set(bo8, 0, 1, 8, 0x01, 0x01);
+        EXPECT("BOOLBITS control: a ByteOffset past the bitfield word is refused, as before", !pick(bo8, b));
+        Probe bm2; set(bm2, 0, 1, 0, 0x03, 0x01);
+        EXPECT("BOOLBITS control: a two-bit ByteMask is refused, as before", !pick(bm2, b));
+        Probe faulted; set(faulted, 0, 1, 0, 0x01, 0xFF); faulted.ok[0] = false;
+        EXPECT("BOOLBITS: a read that faulted is never taken", !pick(faulted, b));
+    }
+
+    // Writing and reading a native bool: the whole byte, 0x01 / 0x00, whatever it held.
+    const BoolBits native{ 0, 0xFF, 0x01 };
+    EXPECT_EQ_U64("BOOLBITS native: true over 0x00 writes 0x01", WriteBoolValue(0x00, native, true), 0x01);
+    EXPECT_EQ_U64("BOOLBITS native: false over 0x01 writes 0x00", WriteBoolValue(0x01, native, false), 0x00);
+    EXPECT_EQ_U64("BOOLBITS native: true never stamps 0xFF", WriteBoolValue(0xFF, native, true), 0x01);
+    EXPECT_EQ_U64("BOOLBITS native: false clears a non-canonical true", WriteBoolValue(0x02, native, false), 0x00);
+    EXPECT("BOOLBITS native: any non-zero byte reads true, as UE reads it", ReadBoolValue(0x02, native));
+    EXPECT("BOOLBITS native: 0x00 reads false", !ReadBoolValue(0x00, native));
+    // A packed bool: byte-identical to ApplyBoolBit, for every byte, bit and value.
+    int differ = 0;
+    for (int bit = 0; bit < 8; ++bit) {
+        const uint8_t m = static_cast<uint8_t>(1u << bit);
+        const BoolBits packed{ 0, m, m };
+        for (int cur = 0; cur < 256; ++cur)
+            for (bool v : { false, true })
+                if (WriteBoolValue(static_cast<uint8_t>(cur), packed, v) != Solitar::ApplyBoolBit(static_cast<uint8_t>(cur), m, v)
+                    || ReadBoolValue(static_cast<uint8_t>(cur), packed) != ((cur & m) != 0))
+                    ++differ;
+    }
+    EXPECT("BOOLBITS control: a packed bool reads and writes exactly as ApplyBoolBit did", differ == 0);
+}
+
 // ----- Solitar::MatchProtectionBool (T2 generic invincibility-flag matcher) ---
 // Polarity is the bug-prone part: a wrong value would ENABLE damage. Lock the
 // keyword set + protect-value for each known flag, and confirm unrelated /
@@ -10203,6 +10296,7 @@ int main() {
 
     // Solitar GodMode — FBoolProperty single-bit read-modify-write
     RUN(Test_Solitar_ApplyBoolBit);
+    RUN(Test_Solitar_BoolBits);   // [SOLIDE-NATIVE-BOOL] God Mode / Force on a native bool
     RUN(Test_Solitar_MatchProtectionBool);
     RUN(Test_Solide_MatchStealthField);
     RUN(Test_Solide_IntWidthAndRange);

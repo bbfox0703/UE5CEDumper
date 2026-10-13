@@ -51,6 +51,43 @@ inline uint8_t ApplyBoolBit(uint8_t cur, uint8_t mask, bool value) {
                  : static_cast<uint8_t>(cur & ~mask);
 }
 
+// [SOLIDE-NATIVE-BOOL] Where one bool property's value sits in its byte, and how it is read and written: UE's own
+// FBoolProperty rule -- read (byte & FieldMask) != 0, write (byte & ~FieldMask) | (value ? ByteMask : 0). A packed
+// bitfield bool owns one bit, both masks being that bit, so this is ApplyBoolBit. A NATIVE bool (every Blueprint bool,
+// a plain `bool bFoo`) owns the whole byte, FieldMask 0xFF, and writes ByteMask 0x01 -- 0x01 / 0x00, never 0xFF,
+// which C++ that XORs a bool reads as still true ([A3-BOOL-NATIVE-NOWRITE]).
+struct BoolBits {
+    uint8_t byteOff   = 0;   // ByteOffset: the byte inside the property's Offset_Internal
+    uint8_t fieldMask = 0;   // the bits the value owns
+    uint8_t byteMask  = 0;   // what true writes there
+};
+
+inline bool ReadBoolValue(uint8_t cur, const BoolBits& b) {
+    return (cur & b.fieldMask) != 0;
+}
+
+inline uint8_t WriteBoolValue(uint8_t cur, const BoolBits& b, bool value) {
+    return static_cast<uint8_t>((cur & ~b.fieldMask) | (value ? b.byteMask : 0));
+}
+
+// A bool property's layout from the {FieldSize, ByteOffset, ByteMask, FieldMask} quads read at each probed offset,
+// in probe order (`readOk[i]` false = that read faulted). A packed layout at ANY offset is taken first, under the rule
+// this probe has always applied -- one FieldMask bit, a ByteOffset inside the 8-byte bitfield word, a one-bit
+// ByteMask -- so a packed bool resolves exactly as it did. Only when there is none does Ubel::ClassifyBoolLayout's
+// Native verdict count. Anything else is refused: the all-zero a missed probe reads is never native, and a whole-byte
+// write there is the AA1 corruption of up to 7 sibling bools.
+inline bool PickBoolBits(const uint8_t (*quads)[4], const bool* readOk, int n, BoolBits& out) {
+    for (int i = 0; i < n; ++i) {
+        if (!readOk[i]) continue;
+        const uint8_t fieldSize = quads[i][0], bo = quads[i][1], bm = quads[i][2], fm = quads[i][3];
+        if (fieldSize == 1 && fm && (fm & (fm - 1)) == 0 && bo <= 7 && bm && (bm & (bm - 1)) == 0) {
+            out = BoolBits{ bo, fm, fm };
+            return true;
+        }
+    }
+    return false;   // red: the Native verdict is not accepted yet
+}
+
 // Generic damage/invincibility flag matcher (T2 — the "Build 1256" note at the top of docs/godmode-spec.md).
 // Given an ALREADY-LOWERCASED reflected bool property name, return true when it
 // is a known damage/invincibility flag and set outProtect to the value that
