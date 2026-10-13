@@ -33,8 +33,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private readonly TeleportHotkeyStore? _hotkeyStore;
     private IGlobalHotkeyRegistration? _cursorHotkey;
     // Live marker-hotkey registrations + the persisted combos, both keyed by
-    // action id ("save0".."recall2").
-    private readonly Dictionary<string, IGlobalHotkeyRegistration> _markerHotkeys = new();
+    // action id ("save0".."recall2"). A registration keeps the combo it holds: a
+    // re-bind compares against it, since the OS refuses a combo we already hold.
+    private readonly Dictionary<string, (IGlobalHotkeyRegistration Registration, TeleportHotkeyBinding Binding)>
+        _markerHotkeys = new();
     private readonly Dictionary<string, TeleportHotkeyBinding> _bindings = new(StringComparer.Ordinal);
 
     // Hotkeys belonging to the experimental-gated cards (Keep Foreground / Fly).
@@ -5057,9 +5059,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         foreach (var row in ExperimentalHotkeyRows)
         {
-            if (_markerHotkeys.TryGetValue(row.ActionId, out var reg))
+            if (_markerHotkeys.TryGetValue(row.ActionId, out var live))
             {
-                reg.Dispose();
+                live.Registration.Dispose();
                 _markerHotkeys.Remove(row.ActionId);
             }
             row.Conflicted = false;
@@ -5075,18 +5077,21 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             .Select(r => $"{r.DisplayName} ({r.Label})")
             .ToList());
 
+    /// <summary>Make <paramref name="b"/> the action's live hotkey. The new combo is claimed while the action's
+    /// current registration still holds, and that one is let go only once the claim succeeds: a combo another app or
+    /// another row holds must not leave the action with no hotkey at all [HOTKEY-REBIND-DEAD]. The combo the action
+    /// already holds is kept as it is, since the OS refuses a combo that is registered, ours included.</summary>
+    /// <returns>Whether <paramref name="b"/> is now live; on false the action keeps what it had.</returns>
     private bool RegisterMarkerHotkey(string actionId, TeleportHotkeyBinding b)
     {
         if (_globalHotkeys == null) return false;
-        if (_markerHotkeys.TryGetValue(actionId, out var old))
-        {
-            old.Dispose();
-            _markerHotkeys.Remove(actionId);
-        }
+        bool hadLive = _markerHotkeys.TryGetValue(actionId, out var old);
+        if (hadLive && old.Binding == b) return true;
         var reg = _globalHotkeys.RegisterSpecific(b.WinMods, b.Vk, b.Label,
             () => OnMarkerHotkeyPressed(actionId));
         if (reg == null) return false;
-        _markerHotkeys[actionId] = reg;
+        if (hadLive) old.Registration.Dispose();
+        _markerHotkeys[actionId] = (reg, b);
         return true;
     }
 
@@ -5207,7 +5212,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         var binding = new TeleportHotkeyBinding(winMods, vk);
         if (!RegisterMarkerHotkey(row.ActionId, binding))
         {
-            StatusText = $"'{label}' is already in use by another app — pick a different combo.";
+            // The row's binding, label and flags stay as they were: a hotkey it had is still registered.
+            string kept = _markerHotkeys.ContainsKey(row.ActionId) ? $" '{row.DisplayName}' keeps {row.Label}." : "";
+            StatusText = $"'{label}' is already in use by another app — pick a different combo.{kept}";
             return true;
         }
         _bindings[row.ActionId] = binding;
@@ -5224,9 +5231,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private void ClearHotkey(TeleportHotkeyRow? row)
     {
         if (row == null) return;
-        if (_markerHotkeys.TryGetValue(row.ActionId, out var reg))
+        if (_markerHotkeys.TryGetValue(row.ActionId, out var live))
         {
-            reg.Dispose();
+            live.Registration.Dispose();
             _markerHotkeys.Remove(row.ActionId);
         }
         _bindings.Remove(row.ActionId);
@@ -5597,7 +5604,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             _experimentalGate.Changed -= OnExperimentalGateChanged;
         _cursorHotkey?.Dispose();
         _cursorHotkey = null;
-        foreach (var reg in _markerHotkeys.Values) reg.Dispose();
+        foreach (var live in _markerHotkeys.Values) live.Registration.Dispose();
         _markerHotkeys.Clear();
         // The other five disposable VMs dispose their KeywordSearchMemory; this one
         // was the holdout, so its debounce timer outlived the VM. (B20)
