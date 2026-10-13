@@ -1119,6 +1119,7 @@ inline std::string PreviewScalarValue(const std::string& typeName,
 // untagged pointer (0x20 less an FName path's 0x18 is 0x08) and latches it. So these are read here, at their own
 // fixed offset, and never through that reader. The tag outlived their era (5.3 removed it), so +0x10 holds for all of it.
 inline constexpr int ASSETPTR_PATH = 0x10;
+inline constexpr int ASSETPTR_SIZE = ASSETPTR_PATH + 0x10;   // the FString closes it: one size, so an array's one stride
 inline bool IsAssetPtrProperty(const std::string& typeName) {
     return typeName == "AssetObjectProperty" || typeName == "AssetClassProperty";
 }

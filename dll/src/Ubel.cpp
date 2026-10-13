@@ -4590,9 +4590,9 @@ ReadArrayResult ReadSoftObjectArrayElements(
     // Combined element size ranges 0x20 .. 0x48 across versions — the low end
     // dropped from 0x28 when UE 5.3 deleted TagAtLastTest (see DynOff::SOFTPTR_PATH).
     // When FPROPERTY_ELEMSIZE returned garbage, derive a plausible fallback.
-    if (assetPtr && elemSize != ASSETPTR_PATH + 0x10) {
-        Sein::Warn("WALK:ArrayG", "Invalid AssetPtr elemSize=%d, using 0x%X", elemSize, ASSETPTR_PATH + 0x10);
-        elemSize = ASSETPTR_PATH + 0x10;   // FAssetPtr has one size: the envelope and one FString
+    if (assetPtr && elemSize != ASSETPTR_SIZE) {
+        Sein::Warn("WALK:ArrayG", "Invalid AssetPtr elemSize=%d, using 0x%X", elemSize, ASSETPTR_SIZE);
+        elemSize = ASSETPTR_SIZE;   // FAssetPtr has one size: the envelope and one FString
     } else if (!assetPtr && (elemSize < 0x18 || elemSize > 0x80)) {
         int pathSize = SoftObjectPathPayloadSize();
         // Pass 0: there is no trustworthy ElementSize here by definition, so take
@@ -6471,11 +6471,16 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
                 // [UE4-ASSETPTR-PROPS] 4.11-4.17's TAssetPtr arrays: the same per-element read in their own layout. No
                 // soft-array metadata is stamped -- it describes an FName path, which the CE export would lay out here.
-                if (innerFound && IsAssetPtrProperty(fv.arrayInnerType) && arr.Data && fv.arrayCount > 0) {
-                    auto assetResult = ReadSoftObjectArrayElements(
-                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit, /*assetPtr=*/true);
-                    if (assetResult.ok && !assetResult.elements.empty())
-                        fv.arrayElements = std::move(assetResult.elements);
+                if (innerFound && IsAssetPtrProperty(fv.arrayInnerType)) {
+                    if (arr.Data && fv.arrayCount > 0) {
+                        auto assetResult = ReadSoftObjectArrayElements(
+                            instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit, /*assetPtr=*/true);
+                        if (assetResult.ok && !assetResult.elements.empty())
+                            fv.arrayElements = std::move(assetResult.elements);
+                    }
+                    // The reader takes FAssetPtr's one size whatever the inner's ElementSize said, so the row publishes
+                    // that stride too: the UI lays the elements out by it.
+                    fv.arrayElemSize = ASSETPTR_SIZE;
                 }
                 // Phase H: Lazy object arrays (UProperty mode)
                 if (innerFound && IsLazyObjectArrayType(fv.arrayInnerType)
