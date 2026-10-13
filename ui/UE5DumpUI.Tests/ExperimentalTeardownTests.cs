@@ -36,9 +36,9 @@ public class ExperimentalTeardownTests : IDisposable
         public bool SeeThrough;
         public List<ForcedFieldInfo> Forced { get; } = new();
         public List<string> Off { get; } = new();
-        /// <summary>The foreground lock's OFF waits on this.</summary>
+        /// <summary>The next foreground-lock OFF waits on this; one OFF takes it, so two teardowns can be held apart.</summary>
         public TaskCompletionSource<bool>? HoldForegroundOff;
-        /// <summary>The connect prime's foreground read waits on this.</summary>
+        /// <summary>The next foreground read waits on this; one read takes it.</summary>
         public TaskCompletionSource<bool>? HoldForegroundRead;
 
         public const string Meter = "BP_Player_C::Visibility";
@@ -53,7 +53,11 @@ public class ExperimentalTeardownTests : IDisposable
             if (!enable)
             {
                 Off.Add("foreground");
-                if (HoldForegroundOff is { } hold) await hold.Task;
+                if (HoldForegroundOff is { } hold)
+                {
+                    HoldForegroundOff = null;
+                    await hold.Task;
+                }
             }
             Foreground = enable ? 1 : 0;
             return Foreground;
@@ -61,7 +65,11 @@ public class ExperimentalTeardownTests : IDisposable
 
         public override async Task<int> GetForegroundLockAsync(CancellationToken ct = default)
         {
-            if (HoldForegroundRead is { } hold) await hold.Task;
+            if (HoldForegroundRead is { } hold)
+            {
+                HoldForegroundRead = null;
+                await hold.Task;
+            }
             return Foreground;
         }
 
@@ -239,13 +247,14 @@ public class ExperimentalTeardownTests : IDisposable
         await Connect(vm);
         await TurnAllOn(vm);
         Assert.Equal(2, hotkeys.Live.Count);
-        dll.HoldForegroundOff = new TaskCompletionSource<bool>();
+        var offHold = new TaskCompletionSource<bool>();
+        dll.HoldForegroundOff = offHold;
 
         gate.IsEnabled = false;
         Assert.Equal(AllOff, dll.Off);   // all sent, the last not yet answered
         Assert.Equal(2, hotkeys.Live.Count);   // Keep Foreground OFF's own key stays while the lock may still be on
 
-        dll.HoldForegroundOff.SetResult(true);
+        offHold.SetResult(true);
         await vm.ExperimentalTeardown;
         Assert.Equal(AllOff, dll.Off);
         Assert.Empty(hotkeys.Live);
@@ -257,11 +266,12 @@ public class ExperimentalTeardownTests : IDisposable
         var (vm, dll, hotkeys, gate) = Make(enabled: true);
         await Connect(vm);
         await TurnAllOn(vm);
-        dll.HoldForegroundOff = new TaskCompletionSource<bool>();
+        var offHold = new TaskCompletionSource<bool>();
+        dll.HoldForegroundOff = offHold;
 
         gate.IsEnabled = false;
         gate.IsEnabled = true;
-        dll.HoldForegroundOff.SetResult(true);
+        offHold.SetResult(true);
         await vm.ExperimentalTeardown;
 
         Assert.Equal(2, hotkeys.Live.Count);
@@ -307,11 +317,12 @@ public class ExperimentalTeardownTests : IDisposable
     {
         var (vm, dll, hotkeys, gate) = Make(enabled: true);
         dll.Fly = true;   // left by an earlier session, or a CE record
-        dll.HoldForegroundRead = new TaskCompletionSource<bool>();
+        var readHold = new TaskCompletionSource<bool>();
+        dll.HoldForegroundRead = readHold;
 
         vm.SetConnected(true);   // the prime waits on its foreground read; Fly is read after it
         gate.IsEnabled = false;
-        dll.HoldForegroundRead.SetResult(true);
+        readHold.SetResult(true);
         await vm.ConnectPrime;
         await vm.ExperimentalTeardown;
 
@@ -464,11 +475,58 @@ public class ExperimentalTeardownTests : IDisposable
         var (vm, dll, _, gate) = Make(enabled: true);
         await Connect(vm);
         await TurnAllOn(vm);
-        dll.HoldForegroundOff = new TaskCompletionSource<bool>();
+        var offHold = new TaskCompletionSource<bool>();
+        dll.HoldForegroundOff = offHold;
 
         gate.IsEnabled = false;
         vm.SetConnected(false);   // the pipe drops before Keep Foreground's OFF is answered
-        dll.HoldForegroundOff.SetResult(true);
+        offHold.SetResult(true);
+        await vm.ExperimentalTeardown;
+        Assert.True(gate.TeardownOwed);
+    }
+
+    [Fact]
+    public async Task A_teardown_overtaken_by_a_later_untick_leaves_that_untick_owed()
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await TurnAllOn(vm);
+        var first = new TaskCompletionSource<bool>();
+        dll.HoldForegroundOff = first;
+        gate.IsEnabled = false;
+        var firstTeardown = vm.ExperimentalTeardown;
+        gate.IsEnabled = true;
+        var second = new TaskCompletionSource<bool>();
+        dll.HoldForegroundOff = second;
+        gate.IsEnabled = false;   // owed again, with a teardown of its own
+
+        first.SetResult(true);    // the first ends while connected: it served the earlier untick, not this one
+        await firstTeardown;
+        vm.SetConnected(false);   // and the second loses the connection
+        second.SetResult(true);
+        await vm.ExperimentalTeardown;
+        Assert.True(gate.TeardownOwed);
+    }
+
+    [Fact]
+    public async Task A_connect_teardown_overtaken_by_a_later_connect_leaves_the_untick_owed()
+    {
+        var (vm, dll, _, gate) = Make(enabled: false, owed: true);
+        dll.Foreground = 1;
+        var off = new TaskCompletionSource<bool>();
+        dll.HoldForegroundOff = off;
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+        var firstTeardown = vm.ExperimentalTeardown;   // waits on Keep Foreground's OFF
+        var read = new TaskCompletionSource<bool>();
+        dll.HoldForegroundRead = read;
+        vm.SetConnected(true);    // a later connect primes again, and owes the teardown itself
+
+        off.SetResult(true);      // the first ends, connected -- but the connect it served is not the current one
+        await firstTeardown;
+        vm.SetConnected(false);   // and the later one's prime never lands on a connection
+        read.SetResult(true);
+        await vm.ConnectPrime;
         await vm.ExperimentalTeardown;
         Assert.True(gate.TeardownOwed);
     }
@@ -478,11 +536,12 @@ public class ExperimentalTeardownTests : IDisposable
     {
         var (vm, dll, _, gate) = Make(enabled: false, owed: true);
         dll.Foreground = 1;
-        dll.HoldForegroundRead = new TaskCompletionSource<bool>();
+        var readHold = new TaskCompletionSource<bool>();
+        dll.HoldForegroundRead = readHold;
 
         vm.SetConnected(true);
         gate.IsEnabled = true;
-        dll.HoldForegroundRead.SetResult(true);
+        readHold.SetResult(true);
         await vm.ConnectPrime;
         await vm.ExperimentalTeardown;
 
@@ -497,13 +556,14 @@ public class ExperimentalTeardownTests : IDisposable
         // the scan has finished. The later prime reads the DLL again, so the earlier one's teardown stands aside.
         var (vm, dll, _, _) = Make(enabled: false, owed: true);
         dll.Foreground = 1;
-        dll.HoldForegroundRead = new TaskCompletionSource<bool>();
+        var readHold = new TaskCompletionSource<bool>();
+        dll.HoldForegroundRead = readHold;
 
         vm.SetConnected(true);
         var first = vm.ExperimentalTeardown;
         vm.SetConnected(true);
         var second = vm.ExperimentalTeardown;
-        dll.HoldForegroundRead.SetResult(true);
+        readHold.SetResult(true);
         await first;
         await second;
 
