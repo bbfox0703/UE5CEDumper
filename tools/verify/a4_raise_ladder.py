@@ -2,6 +2,7 @@
 
     py tools/verify/a4_raise_ladder.py                 # dev58 (32-byte FUObjectItem)
     py tools/verify/a4_raise_ladder.py --flavour shipping58
+    py tools/verify/a4_raise_ladder.py --flavour shipping56   # a real 5.6 binary: 504 -> 505 -> 506, and no further
     py tools/verify/a4_raise_ladder.py --restore-only  # if a previous run died mid-way
 
 THE ROW. `UE5_Init` runs a raise-ONLY ladder every init: 503 (tagged FFieldVariant) -> 504
@@ -52,7 +53,13 @@ CACHE = (pathlib.Path(os.environ["LOCALAPPDATA"]) / "UE5CEDumper"
          / ("UE5CEDumper.%s.json" % os.environ.get("COMPUTERNAME", "")))
 GENAU_H = REPO / "dll" / "src" / "Genau.h"
 
-FLAVOUR_EXE = {"dev58": "DumperTest58.exe", "shipping58": "DumperTest58-Win64-Shipping.exe"}
+FLAVOUR_EXE = {"dev58": "DumperTest58.exe", "shipping58": "DumperTest58-Win64-Shipping.exe",
+               "shipping56": "DumperTest56-Win64-Shipping.exe"}
+# What each fixture must climb to from the 504 seed. A 5.8 binary keeps 5.6's StructStateFlags but has FNameData
+# (the 505 probe skips) and then the 507 / 508 markers; a 5.6 binary has the 5.5 enum layout and the 5.6 struct
+# one, and must STOP at 506 -- a 507 or 508 line there is a false raise, so it is checked as a must-not.
+EXPECT = {"dev58": (("506", "507", "508"), ()), "shipping58": (("506", "507", "508"), ()),
+          "shipping56": (("505", "506"), ("507", "508"))}
 SEED_VERSION = 504
 
 
@@ -161,7 +168,7 @@ def main():
 
         # ---- read the ladder off the log ------------------------------------
         print("\n--- version lines written after the watermark ---")
-        want = {"seed": False, "506": False, "507": False, "508": False, "complete": False}
+        want = {"seed": False, "505": False, "506": False, "507": False, "508": False, "complete": False}
         seen = 0
         for p in sorted(ld.glob("*-0.log")) if ld.is_dir() else []:
             for ln in p.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -179,6 +186,8 @@ def main():
                 # the 506 one, so the 507 line now reports 506.
                 if "structural marker" in ln and "version=%d" % SEED_VERSION in ln:
                     want["seed"] = True
+                if "raising to 505" in ln:
+                    want["505"] = True
                 if "raising to 506" in ln:
                     want["506"] = True
                 if "raising floor to 507" in ln:
@@ -196,15 +205,21 @@ def main():
                          "game never logged; NOTHING below this measures the ladder")
         else:
             print("\n  (%d log lines in the window)" % seen)
-            for k, label in (("seed", "the seed reached UE5_Init (rung reports version=%d)"
-                                      % SEED_VERSION),
-                             ("506", "506 rung fired (UStruct::StructStateFlags)"),
-                             ("507", "507 rung fired (FUObjectItem Object@+0x08)"),
-                             ("508", "508 rung fired (FFieldClass::Name@+0x08)"),
-                             ("complete", "scan completed")):
-                print("  %-5s %s" % ("OK" if want[k] else "MISS", label))
+            must, must_not = EXPECT[a.flavour]
+            labels = {"seed": "the seed reached UE5_Init (rung reports version=%d)" % SEED_VERSION,
+                      "505": "505 rung fired (UEnum::EnumPackage)",
+                      "506": "506 rung fired (UStruct::StructStateFlags)",
+                      "507": "507 rung fired (FUObjectItem Object@+0x08)",
+                      "508": "508 rung fired (FFieldClass::Name@+0x08)",
+                      "complete": "scan completed"}
+            for k in ("seed",) + tuple(must) + ("complete",):
+                print("  %-5s %s" % ("OK" if want[k] else "MISS", labels[k]))
                 if not want[k]:
-                    fails.append(label)
+                    fails.append(labels[k])
+            for k in must_not:
+                print("  %-5s %s (must NOT fire on this fixture)" % ("BAD" if want[k] else "OK", labels[k]))
+                if want[k]:
+                    fails.append("false raise: " + labels[k])
     finally:
         # ---- kill the game, then put the cache back --------------------------
         subprocess.run(["taskkill", "/F", "/IM", FLAVOUR_EXE[a.flavour]],
