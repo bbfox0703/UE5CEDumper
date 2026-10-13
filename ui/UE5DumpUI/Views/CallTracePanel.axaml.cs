@@ -28,7 +28,7 @@ public partial class CallTracePanel : UserControl
 
     // [LIVEFUNCS-STEP2] U10: a Thumb reports the pointer's offset from where it was pressed, measured from the thumb
     // itself. The thumb sits on the edge it resizes and moves with it, so each report is the step since the last one:
-    // added to the width shown as it comes. The view model clamps the result and remembers it.
+    // added to the width shown as it comes. The view model clamps the result and remembers it where it moved the width.
     private CallTraceViewModel? Vm => DataContext as CallTraceViewModel;
 
     /// <summary>[CT-DETAIL-COVERS-LIST] Tells the view model the width the list and the detail pane share, so a
