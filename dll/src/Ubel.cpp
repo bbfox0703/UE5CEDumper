@@ -1454,11 +1454,12 @@ static bool IsPrintableName(const std::string& n) {
     return !n.empty() && static_cast<unsigned char>(n[0]) >= 0x20 && static_cast<unsigned char>(n[0]) < 0x7F;
 }
 
-// [SDK-METACLASS] A ClassProperty's / SoftClassProperty's two classes: PropertyClass, the class of the VALUE
+// [SDK-METACLASS] A class-valued property's two classes: PropertyClass, the class of the VALUE
 // (`Class`, or a UClass subclass such as BlueprintGeneratedClass), and MetaClass, the UClass it holds a
-// subclass of. MetaClass is the pointer right after PropertyClass in every supported layout -- FClassProperty
-// and FSoftClassProperty add it as their only member, 4.18..5.8 UnrealType.h, the RE-UE4SS layout templates and
-// Dumper-7's Offsets.cpp all agree -- so it is derived, never stored as a DynOff.
+// subclass of. MetaClass is the pointer right after PropertyClass in every supported layout, added as the class
+// property's only member: 4.18..5.8 UnrealType.h, the RE-UE4SS layout templates and Dumper-7's Offsets.cpp agree
+// for the hard and soft class properties, and 4.11-4.17's UAssetClassProperty does the same (UE_4.10 UnrealType.h;
+// UE415_Flyinh's 4.15 PDB, PropertyClass +0x80 and MetaClass +0x88) -- so it is derived, never stored as a DynOff.
 // The slot is the MODE's own subclass start. On a UProperty engine FSTRUCTPROP_STRUCT was never derived before
 // [UPROP-SUBCLASS-SLOT] and sat one pointer past PropertyClass -- ON the MetaClass (UE423_Flying: 0x78 against a
 // 0x70 start) -- and a family move after init can still leave it off for a while ([FAMILY-EPOCH]). That is why
@@ -1511,8 +1512,7 @@ static bool IsClassValuedProperty(const std::string& tn) {
 }
 
 // [SDK-CONTAINER-OBJCLASS] Every property type whose first subclass member is a class pointer:
-// UObjectPropertyBase::PropertyClass for the object / class / weak / soft / lazy flavours, and
-// UInterfaceProperty::InterfaceClass at the same slot.
+// UObjectPropertyBase::PropertyClass for each of its flavours, and UInterfaceProperty::InterfaceClass at the same slot.
 static bool IsObjectFamilyProperty(const std::string& tn) {
     return tn == "ObjectProperty" || tn == "ClassProperty" || tn == "WeakObjectProperty"
         || tn == "SoftObjectProperty" || tn == "SoftClassProperty" || tn == "InterfaceProperty"

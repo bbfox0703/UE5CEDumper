@@ -152,9 +152,12 @@ target UClass and provide one-click filling:
   that re-target themselves).
 
 `ParamBufferBuilder.IsPickablePointerType` is the canonical 7-type list
-locked by test theories — adding a new pointer property type requires
-mirroring it in both the DLL `WalkFunctions` extraction and the C# helper
-or the build catches the drift.
+locked by test theories: the types `WriteParam` writes as one 8-byte value.
+It is narrower than the DLL `WalkFunctions` extraction, which also names a
+class for 4.11-4.17's `AssetObjectProperty` / `AssetClassProperty`; those
+stay out of the picker, because nothing could write a picked instance into
+an `FAssetPtr` (the theories pin that too). A new pointer property type joins
+the list only with a `WriteParam` arm.
 
 Stage 3 (class validation — DLL `validate_object_class` round-trip before
 invoke) deferred until a real class-mismatch crash motivates it; picker

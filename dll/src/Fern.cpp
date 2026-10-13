@@ -2813,9 +2813,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     pj["parm"]   = p.isParm;
                     if (!p.structType.empty())
                         pj["struct_type"] = p.structType;
-                    // Stage 1 (Invoke param picker): target UClass for
-                    // Object/Class/Soft/Weak/Lazy/Interface params. Mirrors
-                    // the field-side `obj_class` key used by walk_class.
+                    // Stage 1 (Invoke param picker): an object-family param's
+                    // target UClass. Mirrors the field-side `obj_class` key used
+                    // by walk_class. The UI's picker list is narrower: it offers
+                    // a pick only where it can write one (ParamBufferBuilder).
                     if (!p.objClassName.empty())
                         pj["obj_class"] = p.objClassName;
                     if (!p.structFields.empty()) {

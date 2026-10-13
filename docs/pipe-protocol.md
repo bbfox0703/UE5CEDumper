@@ -1013,7 +1013,8 @@ in the `Dump All Metadata` JSONL. `search_properties` / `search_properties_batch
 match rows also carry **`prop_flags`** (same `"0x…"` hex form, omitted when 0) so
 the Interesting Properties scorer can gate on `SaveGame`/`BlueprintVisible`/`EditorOnly`.
 
-**`obj_class` vs `meta_class` on a `ClassProperty` / `SoftClassProperty`** `[SDK-METACLASS]`:
+**`obj_class` vs `meta_class` on a `ClassProperty` / `SoftClassProperty`** (and 4.11-4.17's
+`AssetClassProperty`, the soft class property before 4.18 renamed it) `[SDK-METACLASS]`:
 `obj_class` is the PropertyClass — the class of the *value*, which for a class-valued property
 is `Class` (or a UClass subclass such as `BlueprintGeneratedClass`). `meta_class` is the class
 it holds a *subclass of*: `TSubclassOf<APawn>` arrives as `obj_class: "Class"`,
