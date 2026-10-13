@@ -204,7 +204,10 @@ public class ExperimentalTeardownTests : IDisposable
         Assert.Equal("Holding @0", vm.StealthState);
     }
 
-    private static readonly string[] AllOff = { "foreground", "fly", "seethrough", "reset_field " + FakeDll.Meter };
+    /// <summary>What a teardown sends, in order. Keep Foreground goes last (the round-3 review's LOW): an untick is a
+    /// click in the UI, so the game is unfocused, and a game that idles when unfocused could no longer run the
+    /// See-through un-hide or the noclip collision restore, which need its game thread.</summary>
+    private static readonly string[] AllOff = { "fly", "seethrough", "reset_field " + FakeDll.Meter, "foreground" };
 
     [Fact]
     public async Task Unticked_while_connected_everything_the_features_run_goes_off_at_once()
@@ -236,7 +239,7 @@ public class ExperimentalTeardownTests : IDisposable
         dll.HoldForegroundOff = new TaskCompletionSource<bool>();
 
         gate.IsEnabled = false;
-        Assert.Equal(new[] { "foreground" }, dll.Off);   // sent, and not yet answered
+        Assert.Equal(AllOff, dll.Off);   // all sent, the last not yet answered
         Assert.Equal(2, hotkeys.Live.Count);   // Keep Foreground OFF's own key stays while the lock may still be on
 
         dll.HoldForegroundOff.SetResult(true);
