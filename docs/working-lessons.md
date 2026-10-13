@@ -3605,8 +3605,8 @@ architecture or UX changes in these areas.
   connect prime reads; only that connect, as the untick is kept owed until paid, and a connect owing nothing leaves alone
   what a CE record runs. ⛔ Do not re-propose "untick only while disconnected": it was built and reversed the same day,
   because a disconnect does not end Keep Foreground, Fly or a Solide hold (the DLL's last-client teardown ends the
-  trace and See-through only), so it left them running behind hidden cards (`[EXPOFF-TEARDOWN]`). Live Funcs offers a
-  kept trace only while the switch is on, as a defence line. Design record:
+  trace and See-through only), so it left them running behind hidden cards (`[EXPOFF-TEARDOWN]`). Live Funcs gives a
+  kept trace back at the untick, and offers one only while the switch is on, as a defence line. Design record:
   [experimental-snapshot-spc-pivot.md](experimental-snapshot-spc-pivot.md), Phase 0.
 
 Evaluations that concluded "do not build" live in the repo rather than here — see [README.md](README.md)'s

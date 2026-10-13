@@ -822,14 +822,15 @@ public partial class LiveFuncsViewModel : ViewModelBase
 
     /// <summary>The running recording asked for a trace (fixed at Start).</summary>
     private bool _recordingTrace;
-    /// <summary>The trace's state after the last traced recording stopped; null before one.</summary>
+    /// <summary>The trace's state after the last traced recording stopped; null before one, and once the trace is
+    /// given back (an untick) or dropped (a disconnect).</summary>
     public TraceInfo? LastTraceInfo { get; private set; }
     /// <summary>A traced recording stopped and its trace waits in the DLL: offer the Call Trace tab.</summary>
     [ObservableProperty] private bool _hasTraceToOpen;
     /// <summary>[LF-EXPOFF-TRACE] Open in Call Trace shows for a kept trace while the experimental features are on. Off,
     /// the Call Trace tab is hidden, and the button would show its content all the same: the opt-out bypassed. An
-    /// offer the DLL still backs comes back when they are on again; a disconnect withdraws it for good, as the DLL drops
-    /// the trace with the client.</summary>
+    /// untick gives a kept trace back to the game and a disconnect drops it with the client, so neither offer comes
+    /// back; one kept by a Stop made while they were off is offered once they are on.</summary>
     public bool CanOpenCallTrace => HasTraceToOpen && TraceAvailable;
     partial void OnHasTraceToOpenChanged(bool value) => OnPropertyChanged(nameof(CanOpenCallTrace));
     /// <summary>Raised by "Open in Call Trace"; the main window switches tabs and loads the trace.</summary>
@@ -847,9 +848,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
         if (_experimentalGate != null)
             _experimentalGate.Changed += (_, _) =>
             {
-                // [EXPOFF-TEARDOWN] Nothing to stop when the features go off: the box that turns them off is on the
-                // System tab, and leaving this tab for it stops a recording, traced or not (OnLeavingTab). What that
-                // stop keeps of a trace is hidden with the switch here, and offered again when it comes back.
+                // [EXPOFF-TEARDOWN] No recording to stop when the features go off: the box that turns them off is on
+                // the System tab, and leaving this tab for it stops a recording, traced or not (OnLeavingTab). What
+                // that stop keeps of a trace is given back to the game at once [EXPOFF-ROUND3-PAUSED]: the tab it
+                // waits for is hidden, and its buffer would hold game memory until the next Start or a disconnect.
+                if (!TraceAvailable && LastTraceInfo is { Allocated: true, Written: > 0 } kept) ReleaseKeptTrace(kept.Gen);
                 OnPropertyChanged(nameof(TraceAvailable));
                 OnPropertyChanged(nameof(CanOpenCallTrace));
                 ComposeTraceStatus();
@@ -1769,13 +1772,34 @@ public partial class LiveFuncsViewModel : ViewModelBase
         RefreshSnapshotList();
         _lastCallsPerSecond = 0;
         OnPropertyChanged(nameof(TraceEstimate));
-        // [LF-EXPOFF-TRACE] The Stop's trace sentences go with the trace: left, they sent the user to a trace the DLL no
-        // longer holds, and the switch turned off and on again composed them back. The Stop's own line stays. Cleared
-        // here rather than left to the status write, which raises nothing when the switch already took them off.
-        if (_traceClause != null)
-        {
-            _traceClause = null;
-            StatusText = _statusBeforeTraceClause;
-        }
+        DropTraceClause();
+    }
+
+    /// <summary>[LF-EXPOFF-TRACE] The Stop's trace sentences go with the trace: left, they sent the user to a trace the
+    /// DLL no longer holds, and the switch turned off and on again composed them back. The Stop's own line stays.
+    /// Cleared here rather than left to the status write, which raises nothing when the switch already took them
+    /// off.</summary>
+    private void DropTraceClause()
+    {
+        if (_traceClause == null) return;
+        _traceClause = null;
+        StatusText = _statusBeforeTraceClause;
+    }
+
+    /// <summary>[EXPOFF-ROUND3-PAUSED] The features went off over a trace the DLL keeps: it is given back now, by its
+    /// generation (so a newer recording is never freed), and its offer and sentences go with it, as at a
+    /// disconnect.</summary>
+    private void ReleaseKeptTrace(ulong gen)
+    {
+        HasTraceToOpen = false;
+        LastTraceInfo = null;
+        DropTraceClause();
+        _ = ReleaseTraceAsync(gen);
+    }
+
+    private async Task ReleaseTraceAsync(ulong gen)
+    {
+        try { await _dump.PeTraceReleaseAsync(gen); }
+        catch (Exception ex) { _log.Error("LivePEProfiler: giving the kept trace back on the experimental opt-out failed", ex); }
     }
 }

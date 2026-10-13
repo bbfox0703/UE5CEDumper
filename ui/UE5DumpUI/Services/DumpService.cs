@@ -3050,7 +3050,8 @@ public sealed class DumpService : IDumpService
         };
     }
 
-    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Give the game its memory back once the trace is read.</summary>
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Give the game its memory back once the trace is read, or once the
+    /// experimental features are turned off over it.</summary>
     public async Task PeTraceReleaseAsync(ulong gen, CancellationToken ct = default)
     {
         var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_trace_release", ["gen"] = gen }, ct);

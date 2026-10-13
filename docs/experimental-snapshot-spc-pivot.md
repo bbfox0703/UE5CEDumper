@@ -178,10 +178,11 @@ is **persisted**.
 > a live connection, so a restart in between keeps it; and only an owed untick
 > is paid -- a connect with the features off and nothing owed leaves alone what
 > a CE record runs (Fly, Keep Foreground and See-through have mailbox
-> commands). Behind it, a defence line:
-> Live Funcs offers a kept trace (Open in Call Trace, its status sentences) and
-> opens the Call Trace tab only while the switch is on, and a disconnect takes
-> the sentences off for good. The rest needs nothing: Snapshot, SPC Query, Class
+> commands). Live Funcs gives a kept trace back to the game at the untick (its
+> buffer and parameter block, by its generation) and drops its Open in Call
+> Trace and status sentences with it, as a disconnect does. Behind it, a
+> defence line: Live Funcs offers a kept trace and opens the Call Trace tab only
+> while the switch is on. The rest needs nothing: Snapshot, SPC Query, Class
 > Pivot and Call Trace lock the opt-in when opened; leaving Live Funcs for the
 > System tab stops a recording; Property Search's forced-fields strip stays
 > whatever the switch, listing the holds as last read (at a connect, when its

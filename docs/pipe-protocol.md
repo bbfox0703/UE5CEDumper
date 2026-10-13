@@ -636,7 +636,8 @@ the three `pe_trace_*` commands read it afterwards. The plan and its decisions: 
 // [TRACE-UNLOADED-NAMES]
 { "id": 75, "cmd": "pe_trace_names", "kind": "objs", "gen": 3, "offset": 0, "limit": 2000 }
 
-// Release the ring now (the UI has read it) instead of at the next Start or when the last client leaves. gen
+// Release the ring now (the UI has read it, or turned the experimental features off over it) instead of at the next
+// Start or when the last client leaves. gen
 // (optional): free only that recording, and only once it has stopped, so a reader never frees a newer recording.
 // Reply: released (bool).
 { "id": 76, "cmd": "pe_trace_release", "gen": 3 }
