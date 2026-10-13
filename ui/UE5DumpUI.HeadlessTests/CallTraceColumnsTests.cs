@@ -226,6 +226,13 @@ public class CallTraceColumnsTests
     {
         LoadDataGridTheme();
         var (_, panel, vm) = LaidIn(1600, detailPaneWidth, Row);
+        return StackShown(panel, vm, shortWhere);
+    }
+
+    /// <summary>The Call stack tab of a panel already laid out, chosen and showing one frame.</summary>
+    private static (DataGrid grid, DataGridColumn where) StackShown(CallTracePanel panel, CallTraceViewModel vm,
+                                                                   bool shortWhere = false)
+    {
         vm.StackRows = new[] { shortWhere ? new StackFrameRow { Index = Frame.Index, Address = Frame.Address, Where = "+0x6F" } : Frame };
         panel.GetVisualDescendants().OfType<TabControl>().Single().SelectedIndex = 1;
         Dispatcher.UIThread.RunJobs();
@@ -233,6 +240,21 @@ public class CallTraceColumnsTests
         var where = grid.Columns.Single(c => Equals(c.Header, Header("str.CT.Stack.Col.Where")));
         return (grid, where);
     }
+
+    /// <summary>[CT-DETAIL-COVERS-LIST] Why the list's floor is 208 (the maintainer's choice, 2026-10-09): at the app's
+    /// default 1400 window with the object tree unfolded, a pane remembered wide shows the Call stack's columns side by
+    /// side, Where at its 420 or more, with no sideways scroll. A floor that also kept Function's slice beside the pane
+    /// capped it near 502 there, and Where scrolled.</summary>
+    [Fact]
+    public Task At_the_default_window_a_wide_pane_shows_the_Call_stack_with_Where_whole() => Headless.Run(() =>
+    {
+        LoadDataGridTheme();
+        var (_, panel, vm) = LaidInApp(1400, 350, 4096, Row);
+        var (grid, where) = StackShown(panel, vm);
+        double all = grid.Columns.Sum(c => c.ActualWidth);
+        Assert.True(where.ActualWidth >= 419.5 && all <= grid.Bounds.Width + 0.5,
+                    $"Where is {where.ActualWidth:0.#} wide and the columns take {all:0.#} of a grid {grid.Bounds.Width:0.#} wide");
+    });
 
     /// <summary>Dragged wide, the pane gives Where everything the three fixed columns leave: a long name is not cut
     /// beside empty space. "Everything" allows a vertical scroll bar's width. The short name is what tells this from a

@@ -1117,23 +1117,23 @@ public class CallTraceViewModelTests
     public void A_pane_drag_past_the_limit_stops_there_and_the_next_drag_back_moves_at_once()
     {
         var (vm, _) = MakeVm(Dump());
-        vm.SplitWidth = 1000;          // the pane may show 488
-        vm.DragDetailPane(+400);       // from 380, asks for 780
-        Assert.Equal(488.0, vm.ShownDetailPaneWidth);
-        Assert.Equal(488.0, vm.DetailPaneWidth);   // what a drag leaves shown is what is remembered
+        vm.SplitWidth = 1000;          // the pane may show 792
+        vm.DragDetailPane(+500);       // from 380, asks for 880
+        Assert.Equal(792.0, vm.ShownDetailPaneWidth);
+        Assert.Equal(792.0, vm.DetailPaneWidth);   // what a drag leaves shown is what is remembered
         vm.DragDetailPane(-30);
-        Assert.Equal(458.0, vm.ShownDetailPaneWidth);
+        Assert.Equal(762.0, vm.ShownDetailPaneWidth);
     }
 
     [Fact]
     public void A_pane_drag_starts_from_the_width_shown_not_the_one_remembered()
     {
-        // The remembered 766 shows as 488: a drag 10 narrower moves the pane at once, with no margin to undo first.
+        // The remembered 766 shows as 692: a drag 10 narrower moves the pane at once, with no margin to undo first.
         var (vm, _) = MakeVm(Dump());
         vm.DetailPaneWidth = 766;
-        vm.SplitWidth = 1000;
+        vm.SplitWidth = 900;
         vm.DragDetailPane(-10);
-        Assert.Equal((478.0, 478.0), (vm.ShownDetailPaneWidth, vm.DetailPaneWidth));
+        Assert.Equal((682.0, 682.0), (vm.ShownDetailPaneWidth, vm.DetailPaneWidth));
         vm.DragDetailPane(-1000);
         Assert.Equal(200.0, vm.ShownDetailPaneWidth);   // its own floor
     }
