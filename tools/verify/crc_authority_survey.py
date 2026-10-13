@@ -101,8 +101,13 @@ def fallback_probe(path):
                 elif tok.startswith("file="):
                     filev = tok[5:]
             if "->" in line:
-                code = line.rsplit("->", 1)[1].strip()
+                code = code_of(line)
     return prod, filev, code
+
+
+def code_of(line):
+    """The version code one line of pe_version_probe's output names, as text; "" when it names none."""
+    return line.rsplit("->", 1)[1].strip() if "->" in line else ""
 
 
 def find_editors():
@@ -160,8 +165,27 @@ def merge_oracle(existing, harvested):
     return merged, sorted(added), sorted(updated), kept
 
 
+def _reading(kind, key=None, code=None, string=None, overruled=None):
+    return {"kind": kind, "key": key, "code": code, "string": string, "overruled": overruled}
+
+
+# fallback_probe reads the code back out of the probe's printed line, so each kind of line the probe prints is parsed
+# here: a reading whose code is dropped falls out of both the agree and the disagree tally, and its text goes into the
+# oracle's "code". (name, reading, the code fallback_probe must read)
+_PROBE_LINE_CASES = [
+    ("a fixed reading", _reading("fixed", "ProductVersion", 427), "427"),
+    ("a build string", _reading("build string", "ProductVersion", 410, "4.10.2-0+++depot+UE4-Releases+4.10"), "410"),
+    ("a build string that overrules the fixed fields",
+     _reading("build string", "ProductVersion", 415, "4.15.0-0+UE4", 405), "415"),
+    ("a prefix string", _reading("string", "ProductVersion", 427, "++UE4+Release-4.27-CL-18319896"), "427"),
+    ("an unrecognised resource", _reading("unrecognised"), ""),
+    ("no resource", _reading("no resource"), ""),
+]
+
+
 def selftest():
-    """[VND583-16] The merge, on synthetic entries -- no Editor, no file outside the repo."""
+    """[VND583-16] The merge, on synthetic entries -- no Editor, no file outside the repo. Then the code read back out
+    of each kind of line pe_version_probe prints."""
     e = lambda h, ed, pv: {"editor": ed, "productVersion": pv, "sha256": h}
     existing = {"a": e("a", "UE_5.8", "5.8.2.0"), "b": e("b", "UE_4.27", "4.27.2.0")}
     harvested = {"c": e("c", "UE_5.8", "5.8.3.0"), "b": e("b", "UE_4.27", "4.27.2.0")}
@@ -175,6 +199,9 @@ def selftest():
     renamed = {"b": e("b", "UE_4.27_moved", "4.27.2.0")}
     m2, a2, u2, k2 = merge_oracle(existing, renamed)
     checks.append(("a changed row under the same hash is UPDATED, not duplicated", u2 == ["b"] and len(m2) == 2))
+    for name, r, want in _PROBE_LINE_CASES:
+        got = code_of(PV.output_line("CrashReportClient.exe", PV.verdict_text(r), "4.5.0.0", "4.5.0.0"))
+        checks.append((f"probe line, {name}: the code read back is {want!r} (got {got!r})", got == want))
     failed = [name for name, ok in checks if not ok]
     for name, ok in checks:
         print("  %s  %s" % ("ok  " if ok else "FAIL", name))

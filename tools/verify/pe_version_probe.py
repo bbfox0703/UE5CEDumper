@@ -434,22 +434,36 @@ def read_resource(path):
 def probe(path):
     """-> (verdict, product, file, strings). Verdict contains FALLTHROUGH when usable."""
     r = read_resource(path)
+    if r["kind"] in ("no resource", "unreadable", "no fixedinfo"):
+        return (verdict_text(r), None, None, {})
+    return (verdict_text(r), r["prod"], r["fver"], r["strs"])
+
+
+def verdict_text(r):
+    """A read_resource() result as the one-line verdict main() prints. Pure and apart from the read because
+    crc_authority_survey.py reads the version code back out of the printed line (fallback_probe), and its --selftest
+    runs that parse on each kind of verdict made here, through output_line."""
     k = r["kind"]
     if k == "no resource":
-        return (f"no resource -- {FALLTHROUGH}", None, None, {})
+        return f"no resource -- {FALLTHROUGH}"
     if k == "unreadable":
-        return ("resource UNREADABLE", None, None, {})
+        return "resource UNREADABLE"
     if k == "no fixedinfo":
-        return (f"no VS_FIXEDFILEINFO -- {FALLTHROUGH}", None, None, {})
-    strs = r["strs"]
+        return f"no VS_FIXEDFILEINFO -- {FALLTHROUGH}"
     if k == "fixed":
-        return (f"Tier0 {r['key']} -> {r['code']}", r["prod"], r["fver"], strs)
+        return f"Tier0 {r['key']} -> {r['code']}"
     if k == "string":
-        return (f"Tier0 STRING {r['key']}='{r['string']}'", r["prod"], r["fver"], strs)
+        return f"Tier0 STRING {r['key']}='{r['string']}'"
     if k == "build string":
         over = f" (overrules fixed {r['overruled']})" if r["overruled"] else ""
-        return (f"Tier0 BUILD STRING {r['key']}='{r['string']}' -> {r['code']}{over}", r["prod"], r["fver"], strs)
-    return (f"unrecognised -- {FALLTHROUGH}", r["prod"], r["fver"], strs)
+        return f"Tier0 BUILD STRING {r['key']}='{r['string']}' -> {r['code']}{over}"
+    return f"unrecognised -- {FALLTHROUGH}"
+
+
+def output_line(label, verdict, prod, fver):
+    """One file's line as main() prints it -- the text crc_authority_survey.py's fallback_probe parses."""
+    flag = "  <== usable for a Tier-1 row" if FALLTHROUGH in verdict else ""
+    return f"{label[:44]:45} prod={str(prod):11} file={str(fver):11} {verdict}{flag}"
 
 def collect(roots):
     out = []
@@ -473,9 +487,7 @@ def main():
     usable = []
     for t in targets:
         verdict, prod, fver, strs = probe(t)
-        label = os.path.basename(t)
-        flag = "  <== usable for a Tier-1 row" if FALLTHROUGH in verdict else ""
-        print(f"{label[:44]:45} prod={str(prod):11} file={str(fver):11} {verdict}{flag}")
+        print(output_line(os.path.basename(t), verdict, prod, fver))
         if FALLTHROUGH in verdict:
             usable.append((t, strs))
     print(f"\n{len(targets)} scanned, {len(usable)} fall through Tier 0")
