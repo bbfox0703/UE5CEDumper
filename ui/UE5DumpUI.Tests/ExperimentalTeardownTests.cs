@@ -63,8 +63,13 @@ public class ExperimentalTeardownTests : IDisposable
             return Foreground;
         }
 
+        /// <summary>How the foreground read fails, when it does: "throw" (the pipe), or "-1" (the DLL's error code).</summary>
+        public string? ForegroundReadFails;
+
         public override async Task<int> GetForegroundLockAsync(CancellationToken ct = default)
         {
+            if (ForegroundReadFails == "throw") throw new InvalidOperationException("the read failed");
+            if (ForegroundReadFails == "-1") return -1;
             if (HoldForegroundRead is { } hold)
             {
                 HoldForegroundRead = null;
@@ -329,6 +334,42 @@ public class ExperimentalTeardownTests : IDisposable
         Assert.Contains("fly", dll.Off);
         Assert.False(dll.Fly);
         Assert.Empty(hotkeys.Live);
+    }
+
+    // ---- The round-3 review's LOW: the rules for a foreground read that failed (badge Unknown) were stated in comments
+    // and checked by nothing. An untick turns Keep Foreground off whatever its badge reads, as the hook may hold behind
+    // an Unknown; a connect that owes a teardown turns it off only when it was read ON, so a failed read neither costs a
+    // round trip nor stamps over "Connected".
+
+    [Theory]
+    [InlineData("throw")]
+    [InlineData("-1")]
+    public async Task Unticked_while_connected_Keep_Foreground_goes_off_even_when_its_read_failed(string fails)
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        dll.Foreground = 1;
+        dll.ForegroundReadFails = fails;
+        await Connect(vm);
+        Assert.Equal("Unknown", vm.ForegroundLockState);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.Contains("foreground", dll.Off);
+        Assert.Equal(0, dll.Foreground);
+    }
+
+    [Theory]
+    [InlineData("throw")]
+    [InlineData("-1")]
+    public async Task A_connect_owing_a_teardown_leaves_Keep_Foreground_alone_when_its_read_failed(string fails)
+    {
+        var (vm, dll, _, _) = Make(enabled: false, owed: true);
+        vm.SetConnected(false);   // the badge back to Unknown, as after any earlier session
+        dll.ForegroundReadFails = fails;
+
+        await Connect(vm);
+        Assert.Empty(dll.Off);
+        Assert.Equal("Connected", vm.StatusText);
     }
 
     // ---- The review's MED: with no pawn the DLL answers Fly active and has_cmc false, the card reads Unavailable, and
