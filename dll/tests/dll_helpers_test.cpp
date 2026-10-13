@@ -6779,6 +6779,85 @@ static void Test_EnumPackageProbe() {
     }
 }
 
+// [VER-MARKERS-PAST-504] The 5.6 rung's evidence: the word behind UStruct::PropertiesSize + 4. Through 5.5 it is the high
+// half of an int32 MinAlignment, 0; from 5.6 MinAlignment is int16 and StructStateFlags follows, which UStruct::Link sets
+// to PropertyDataAvailable (1). The fakes copy the fixture PDBs' UStruct: DumperTest (5.4) and DumperTest51 (5.1) put
+// an int32 MinAlignment at 0x5C, DumperTest56 (5.6) and DumperTest58 (5.8) an int16 at 0x5C and the flags at 0x5E.
+static void Test_StructStateProbe() {
+    std::printf("\n--- VER-MARKERS-PAST-504: the 5.6 rung's UStruct::StructStateFlags probe ---\n");
+    using DynOff::StructStateTally;
+    using DynOff::StructStateProves56;
+    EXPECT("StructState ⭐: every sampled struct linked proves 5.6", StructStateProves56(StructStateTally{48, 48}));
+    EXPECT("StructState: three quarters is a clear majority", StructStateProves56(StructStateTally{48, 36}));
+    EXPECT("StructState: ...one fewer is not", !StructStateProves56(StructStateTally{48, 35}));
+    EXPECT("StructState: four samples are too few", !StructStateProves56(StructStateTally{4, 4}));
+    EXPECT("StructState: the int32 MinAlignment of 5.4 / 5.5 proves nothing", !StructStateProves56(StructStateTally{48, 0}));
+    EXPECT("StructState: nothing sampled proves nothing", !StructStateProves56(StructStateTally{}));
+
+    struct Obj {
+        alignas(8) uint8_t b[0xB0] = {};
+        uintptr_t at(int off = 0) { return reinterpret_cast<uintptr_t>(b) + static_cast<uintptr_t>(off); }
+        void i32(int off, int32_t v) { std::memcpy(b + off, &v, sizeof v); }
+        void u16(int off, uint16_t v) { std::memcpy(b + off, &v, sizeof v); }
+    };
+    uintptr_t refuse = 0;
+    auto read = [&](uintptr_t a, void* out, size_t n) {
+        if (refuse && a <= refuse && refuse < a + n) return false;
+        std::memcpy(out, reinterpret_cast<const void*>(a), n);
+        return true;
+    };
+    // A linked struct of `size` bytes and alignment `align`, as the PDB lays it out at `props` (PropertiesSize).
+    auto struct54 = [](Obj& o, int props, int32_t size, int32_t align) { o.i32(props, size); o.i32(props + 4, align); };
+    auto struct56 = [](Obj& o, int props, int32_t size, int16_t align, uint16_t state) {
+        o.i32(props, size);
+        o.u16(props + 4, static_cast<uint16_t>(align));
+        o.u16(props + 6, state);
+    };
+    auto sample = [&](Obj& o, int props, StructStateTally& t) { return DynOff::SampleStructState(t, o.at(), props, read); };
+    {
+        Obj s54, s56;
+        struct54(s54, 0x58, 0x2A8, 8);
+        struct56(s56, 0x58, 0x2A8, 8, 1);
+        StructStateTally t54, t56;
+        EXPECT("StructState ⭐: a 5.4 class (DumperTest PDB) is sampled and is not linked-flagged",
+               sample(s54, 0x58, t54) && t54.sampled == 1 && t54.linked == 0);
+        EXPECT("StructState ⭐: a linked 5.6 class (DumperTest56 PDB) reads PropertyDataAvailable",
+               sample(s56, 0x58, t56) && t56.sampled == 1 && t56.linked == 1);
+        Obj big54;
+        struct54(big54, 0x58, 0x40, 16);
+        StructStateTally tb;
+        EXPECT("StructState: a 16-aligned 5.4 struct is no different", sample(big54, 0x58, tb) && tb.linked == 0);
+    }
+    {   // Case-preserving: PropertiesSize at 0x60, and the flags stay at +6.
+        Obj s56;
+        struct56(s56, 0x60, 0x10, 4, 1);
+        StructStateTally t;
+        EXPECT("StructState: a case-preserving 5.6 struct, PropertiesSize at 0x60",
+               sample(s56, 0x60, t) && t.sampled == 1 && t.linked == 1);
+    }
+    {   // What is, and is not, a sample.
+        StructStateTally t;
+        Obj unlinked;
+        struct56(unlinked, 0x58, 0x10, 4, 0);
+        EXPECT("StructState: a 5.6 struct not linked yet is sampled, unflagged",
+               sample(unlinked, 0x58, t) && t.sampled == 1 && t.linked == 0);
+        Obj cdo;   // Default__Class: never linked, all zero
+        EXPECT("StructState ⭐: a MinAlignment of 0 is not a struct's -- not a sample", !sample(cdo, 0x58, t) && t.sampled == 1);
+        Obj odd;
+        struct54(odd, 0x58, 0x10, 3);
+        EXPECT("StructState: an alignment that is not a power of two is not a sample", !sample(odd, 0x58, t) && t.sampled == 1);
+        Obj huge;
+        struct54(huge, 0x58, 0x10, 0x400);
+        EXPECT("StructState: an alignment past 256 is not a sample", !sample(huge, 0x58, t) && t.sampled == 1);
+        Obj s56;
+        struct56(s56, 0x58, 0x10, 8, 1);
+        refuse = s56.at(0x58 + 6);
+        EXPECT("StructState: a word that cannot be read is not a sample", !sample(s56, 0x58, t) && t.sampled == 1);
+        refuse = 0;
+        EXPECT("StructState: control -- the same struct read in full is", sample(s56, 0x58, t) && t.sampled == 2 && t.linked == 1);
+    }
+}
+
 // [UE-OVERRIDE-HINT-AUTO] The init version ladder as one function: init climbs it after the offsets probe, and Auto
 // chosen over an override climbs it from the detection it restores, so a stripped UE5 title is not handed back its
 // 4.27 fallback. Pinned rung by rung, in order, with each rung's guard.
@@ -6787,19 +6866,25 @@ static void Test_VersionLadder() {
     using DynOff::StructuralVersionFacts;
     using DynOff::VersionRung;
     using DynOff::EnumPackageTally;
+    using DynOff::StructStateTally;
     struct Probe {
         bool present = false, prop = false, func = false; int asked = 0;
-        EnumPackageTally enums; int enumAsked = 0;   // [VER-MARKERS-PAST-504] the 5.5 rung's evidence
+        EnumPackageTally enums; int enumAsked = 0;     // [VER-MARKERS-PAST-504] the 5.5 rung's evidence
+        StructStateTally structs; int structAsked = 0; // [VER-MARKERS-PAST-504] the 5.6 rung's evidence
     };
     auto run = [](unsigned v, const StructuralVersionFacts& f, Probe& p, std::vector<VersionRung>* rungs = nullptr) {
         return DynOff::ApplyVersionLadder(v, f,
             [&](bool& prop, bool& func) { ++p.asked; prop = p.prop; func = p.func; return p.present; },
             [&]() { ++p.enumAsked; return p.enums; },
+            [&]() { ++p.structAsked; return p.structs; },
             [&](VersionRung r, unsigned, unsigned) { if (rungs) rungs->push_back(r); });
     };
     // Every sampled enum keeps its package name at Names+0x14 (UE5.5+), or at Names+0x20 (UE5.1-5.4).
     const EnumPackageTally enums55{32, 32, 0};
     const EnumPackageTally enums54{32, 0, 32};
+    // Every sampled linked struct reads PropertyDataAvailable at PropertiesSize+6 (UE5.6+), or 0 there (to 5.5).
+    const StructStateTally structs56{48, 48};
+    const StructStateTally structs55{48, 0};
     auto measured = [](bool fproperty) {
         StructuralVersionFacts f;
         f.measured  = true;
@@ -6810,11 +6895,11 @@ static void Test_VersionLadder() {
     {   // Nothing is a fact before the probe has run.
         StructuralVersionFacts f;
         f.fproperty = true; f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
-        Probe p; p.present = true; p.func = true; p.enums = enums55;
+        Probe p; p.present = true; p.func = true; p.enums = enums55; p.structs = structs56;
         const auto r = run(427, f, p);
         EXPECT("Ladder ⭐: nothing measured leaves a 4.27 label alone", r.version == 427 && !r.loweredToUE4);
         EXPECT("Ladder: ...and walks no object array for a CMC", p.asked == 0);
-        EXPECT("Ladder: ...nor for an enum", p.enumAsked == 0);
+        EXPECT("Ladder: ...nor for an enum or a struct", p.enumAsked == 0 && p.structAsked == 0);
         StructuralVersionFacts u;
         u.fproperty = false;
         EXPECT("Ladder: nothing measured never lowers a UE5 label", run(504, u, p).version == 504);
@@ -6831,10 +6916,11 @@ static void Test_VersionLadder() {
         EXPECT("Ladder: UProperty mode leaves a UE4 label alone, and does not call it lowered",
                keep.version == 427 && !keep.loweredToUE4);
         f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
-        Probe q; q.present = true; q.func = true; q.enums = enums55;
+        Probe q; q.present = true; q.func = true; q.enums = enums55; q.structs = structs56;
         EXPECT("Ladder: no UE5 rung fires in UProperty mode", run(427, f, q).version == 427 && q.asked == 0);
         EXPECT("Ladder: ...nor after the UProperty rung lowered the label", run(508, f, q).version == 418 && q.asked == 0);
-        EXPECT("Ladder: ...and UProperty mode never pays the enum walk", q.enumAsked == 0);
+        EXPECT("Ladder: ...and UProperty mode never pays the enum or the struct walk",
+               q.enumAsked == 0 && q.structAsked == 0);
     }
     {   // Tagged FFieldVariant: UE5.3+.
         auto f = measured(true);
@@ -6874,7 +6960,7 @@ static void Test_VersionLadder() {
         auto g = f;
         g.taggedFFieldVariant = true;
         Probe stripped; stripped.present = true; stripped.func = true; stripped.enums = enums55;
-        EXPECT("Ladder ⭐: a stripped 5.5+ title climbs 4.27 -> 5.3 -> 5.4 -> 5.5 (FFRS, Elliot)",
+        EXPECT("Ladder ⭐: a stripped 5.5 title climbs 4.27 -> 5.3 -> 5.4 -> 5.5",
                run(427, g, stripped).version == 505);
         Probe menu; menu.enums = enums55;
         EXPECT("Ladder: ...and with no CMC loaded yet, 4.27 -> 5.3 -> 5.5", run(427, g, menu).version == 505);
@@ -6892,6 +6978,42 @@ static void Test_VersionLadder() {
         EXPECT("Ladder: no enum sampled changes nothing", run(503, f, none).version == 503 && none.enumAsked == 1);
         Probe split; split.enums = EnumPackageTally{32, 20, 12};
         EXPECT("Ladder: no clear majority changes nothing", run(504, f, split).version == 504);
+    }
+    {   // [VER-MARKERS-PAST-504] UStruct::StructStateFlags behind an int16 MinAlignment: UE5.6+, inside its window only.
+        auto f = measured(true);
+        Probe p; p.structs = structs56;
+        std::vector<VersionRung> heard;
+        EXPECT("Ladder ⭐: PropertyDataAvailable at PropertiesSize+6 lifts 5.5 to 5.6, and says so",
+               run(505, f, p, &heard).version == 506 && p.structAsked == 1
+               && heard == std::vector<VersionRung>{VersionRung::StructStateFlags56});
+        Probe both; both.enums = enums55; both.structs = structs56;
+        std::vector<VersionRung> two;
+        EXPECT("Ladder: 5.4 -> 5.5 -> 5.6, the enum rung first",
+               run(504, f, both, &two).version == 506
+               && two == (std::vector<VersionRung>{VersionRung::EnumPackage55, VersionRung::StructStateFlags56}));
+        Probe structsOnly; structsOnly.structs = structs56;
+        EXPECT("Ladder: the struct rung alone lifts 5.4 to 5.6 (enum names not located)",
+               run(504, f, structsOnly).version == 506);
+        auto g = f;
+        g.taggedFFieldVariant = true;
+        Probe stripped; stripped.present = true; stripped.func = true; stripped.enums = enums55; stripped.structs = structs56;
+        std::vector<VersionRung> climb;
+        EXPECT("Ladder ⭐: a stripped 5.6 title climbs 4.27 -> 5.3 -> 5.4 -> 5.5 -> 5.6 (FFRS, Elliot)",
+               run(427, g, stripped, &climb).version == 506
+               && climb == (std::vector<VersionRung>{VersionRung::TaggedFieldVariant, VersionRung::CmcMarkers,
+                                                     VersionRung::EnumPackage55, VersionRung::StructStateFlags56}));
+        Probe ue4; ue4.structs = structs56;
+        EXPECT("Ladder ⭐: a UE4 label never pays the struct walk", run(427, f, ue4).version == 427 && ue4.structAsked == 0);
+        Probe top; top.structs = structs56;
+        EXPECT("Ladder: 5.6 and above never ask",
+               run(506, f, top).version == 506 && run(508, f, top).version == 508 && top.structAsked == 0);
+        Probe old; old.structs = structs55;
+        EXPECT("Ladder ⭐: the int32 MinAlignment of 5.4 / 5.5 leaves the label alone (DumperTest)",
+               run(504, f, old).version == 504 && old.structAsked == 1);
+        Probe none;
+        EXPECT("Ladder: no struct sampled changes nothing", run(505, f, none).version == 505 && none.structAsked == 1);
+        Probe split; split.structs = StructStateTally{48, 30};
+        EXPECT("Ladder: no clear majority changes nothing", run(505, f, split).version == 505);
     }
     {   // The reordered FUObjectItem: UE5.7+.
         auto f = measured(true);
@@ -6914,18 +7036,18 @@ static void Test_VersionLadder() {
     {   // The whole ladder.
         auto f = measured(true);
         f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
-        Probe p; p.present = true; p.func = true; p.enums = enums55;
+        Probe p; p.present = true; p.func = true; p.enums = enums55; p.structs = structs56;
         std::vector<VersionRung> rungs;
         const auto r = run(427, f, p, &rungs);
         EXPECT("Ladder: every rung from 4.27 lands on 5.8", r.version == 508 && !r.loweredToUE4);
         EXPECT("Ladder: ...and reports each rung that moved it, in order",
                (rungs == std::vector<VersionRung>{VersionRung::TaggedFieldVariant, VersionRung::CmcMarkers,
-                                                  VersionRung::EnumPackage55, VersionRung::ReorderedItem,
-                                                  VersionRung::VirtualFieldClassDtor}));
+                                                  VersionRung::EnumPackage55, VersionRung::StructStateFlags56,
+                                                  VersionRung::ReorderedItem, VersionRung::VirtualFieldClassDtor}));
         std::vector<VersionRung> again;
-        Probe q; q.present = true; q.func = true; q.enums = enums55;
+        Probe q; q.present = true; q.func = true; q.enums = enums55; q.structs = structs56;
         EXPECT("Ladder ⭐: climbing again from where it landed changes nothing (a cached value that already climbed)",
-               run(r.version, f, q, &again).version == 508 && again.empty() && q.enumAsked == 0);
+               run(r.version, f, q, &again).version == 508 && again.empty() && q.enumAsked == 0 && q.structAsked == 0);
     }
 }
 
@@ -10033,6 +10155,7 @@ int main() {
     RUN(Test_FNameAlign);
     RUN(Test_CmcMarkerVersion);
     RUN(Test_EnumPackageProbe);      // [VER-MARKERS-PAST-504] the 5.5 rung's evidence
+    RUN(Test_StructStateProbe);      // [VER-MARKERS-PAST-504] the 5.6 rung's evidence
     RUN(Test_VersionLadder);        // [UE-OVERRIDE-HINT-AUTO] the init ladder, as one function
     RUN(Test_CachedDetectionRules);  // [UE-OVERRIDE-HINT-AUTO] the cache-reuse rule and the too-old verdict
     RUN(Test_PlanAutoRestore);       // [UE-OVERRIDE-HINT-AUTO] what Auto hands back, or that it waits
