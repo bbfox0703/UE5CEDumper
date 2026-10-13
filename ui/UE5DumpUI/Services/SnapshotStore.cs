@@ -396,11 +396,12 @@ public sealed class SnapshotStore : ISnapshotStore
             // recapture). synchronous only decides when SQLite fsyncs, so an APP crash loses nothing committed: the
             // capture's row stays in progress, and the next capture removes it [SNAPSHOT-CRASH-PARTIAL]. What
             // OFF exposes is an OS crash or power loss: commits not yet on disk lost, and, as its checkpoints run
-            // unsynced, the per-game file corrupted -- every snapshot of the game, not this capture alone. The
-            // exposure ends at the next checkpoint on a NORMAL connection, which syncs (the post-capture quota pass
-            // runs one); the session restores NORMAL when it disposes. A kept partial's completion [W1-PARTIAL-MARK]
-            // is committed under OFF like a whole capture's, and adds nothing to that: in WAL mode NORMAL does not
-            // sync a commit either, and a completion that is lost leaves the row in progress again.
+            // unsynced, the per-game file corrupted -- every snapshot of the game, not this capture alone. A
+            // checkpoint syncs only when it has frames to copy, so a NORMAL one after an OFF one that folded
+            // everything in would sync nothing: the session goes back to NORMAL before the completion commits
+            // (CompleteSnapshotAsync), whose frames a syncing checkpoint then folds in, and on dispose otherwise.
+            // A kept partial [W1-PARTIAL-MARK] completes the same way as a whole capture; in WAL mode NORMAL does
+            // not sync a commit, and a completion that is lost leaves the row in progress again.
             await ExecAsync(conn, "PRAGMA synchronous=OFF; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-262144;", ct);
             return new CaptureSession(conn, _log, DatabasePath);
         }
@@ -645,6 +646,14 @@ public sealed class SnapshotStore : ISnapshotStore
             _tx!.Commit();
             await _tx.DisposeAsync();
             _tx = null;
+
+            // The bulk load ends here, before the completion commits [SNAPSHOT-CRASH-PARTIAL]. Its checkpoints ran OFF,
+            // unsynced, and a checkpoint syncs the db file only when it has frames left to copy, so had an OFF one
+            // folded the completion in too, no later checkpoint would sync the pages they wrote. Committed under
+            // NORMAL, the completion's frames are folded in by a checkpoint that syncs (its own autocheckpoint, or
+            // the post-capture quota pass's), and that sync flushes the whole file. Between transactions: SQLite
+            // refuses to change the safety level inside one.
+            await ExecAsync(_conn, "PRAGMA synchronous=NORMAL;", ct);
 
             await using var tx = (SqliteTransaction)await _conn.BeginTransactionAsync(ct);
 

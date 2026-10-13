@@ -30,7 +30,8 @@ public interface ICaptureSession : IAsyncDisposable
     long CurrentSizeBytes();
 
     /// <summary>Finalise the captured snapshot on the session connection: commit the row
-    /// tail, stamp object/field totals, end the row's in-progress mark (so it is listed),
+    /// tail, end the bulk load's <c>synchronous=OFF</c> (the rest commits under NORMAL),
+    /// stamp object/field totals, end the row's in-progress mark (so it is listed),
     /// and write the per-class pivot counts (class_counts)
     /// INCREMENTALLY from per-class distinct GObjects-index sets accumulated while writing —
     /// replacing the ~10 s <c>COUNT(DISTINCT) GROUP BY ×2</c> the lazy build runs. Call once,
@@ -82,8 +83,9 @@ public interface ISnapshotStore
 
     /// <summary>Open a bulk-capture write session: ONE connection with bulk-load pragmas
     /// (`synchronous=OFF` etc.: an app crash loses nothing committed, an OS crash or power loss
-    /// can cost the game's whole file, accepted as snapshots are rebuildable; the implementation
-    /// says when that ends) + a
+    /// can cost the game's whole file, accepted as snapshots are rebuildable; it lasts until the
+    /// checkpoint that folds in <see cref="ICaptureSession.CompleteSnapshotAsync"/>'s commit, made
+    /// under NORMAL so that checkpoint syncs) + a
     /// transaction committed every N chunks, so a multi-million-row capture isn't paying
     /// a fresh connection + `EnsureSchema` + fsync per chunk. The streaming capture loop
     /// writes each chunk via <see cref="ICaptureSession.WriteChunk"/> from a background
