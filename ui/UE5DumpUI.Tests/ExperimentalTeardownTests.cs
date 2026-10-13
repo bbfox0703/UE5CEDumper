@@ -122,11 +122,22 @@ public class ExperimentalTeardownTests : IDisposable
         public override Task<IReadOnlyList<ForcedFieldInfo>> GetForcedFieldsAsync(CancellationToken ct = default)
             => Task.FromResult<IReadOnlyList<ForcedFieldInfo>>(Forced.ToList());
 
+        /// <summary>No live instance of the meter's class yet (death, a level load): Solide keeps the job armed, applies
+        /// it when one spawns, and answers held 0 with code 0.</summary>
+        public bool NoInstance;
+        /// <summary>A refusal, as a negative code: Solide drops a new job it refused, and keeps one already armed.</summary>
+        public int RefuseCode;
+
         public override Task<ForceFieldResult> ForceFieldAsync(string className, string fieldName, string kind,
                                                                double value = 0, bool on = false, CancellationToken ct = default)
         {
-            HoldTheMeter();
-            return Task.FromResult(new ForceFieldResult { Held = 1, Resolved = true });
+            if (RefuseCode < 0) return Task.FromResult(new ForceFieldResult { Code = RefuseCode });
+            if (!Forced.Any(f => f.ClassName == className && f.FieldName == fieldName))
+                Forced.Add(new ForcedFieldInfo
+                {
+                    ClassName = className, FieldName = fieldName, Kind = "numeric", Value = 0, Held = NoInstance ? 0 : 1,
+                });
+            return Task.FromResult(new ForceFieldResult { Held = NoInstance ? 0 : 1, Resolved = !NoInstance });
         }
 
         public override Task<int> ResetFieldAsync(string className, string fieldName, CancellationToken ct = default)
@@ -412,6 +423,119 @@ public class ExperimentalTeardownTests : IDisposable
         await vm.ResetStealthCommand.ExecuteAsync(null);
         Assert.Equal(new[] { "reset_field " + FakeDll.Meter }, dll.Off);
         Assert.Empty(dll.Forced);
+    }
+
+    // ---- The round-3 re-review's LOW: the release still keyed on the "Holding @0" badge, and Hold writes "Not found"
+    // and "Hold failed" whenever nothing is held at once -- while Solide keeps the job: a new one that matched no
+    // instance stays armed and forces the meter as soon as one spawns, and a refused re-arm keeps the hold it had. An
+    // untick then released nothing and paid the debt, so the meter was forced behind the hidden card for the session.
+
+    private static async Task DetectAndHold(TeleportViewModel vm)
+    {
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        await vm.HoldStealthCommand.ExecuteAsync(null);
+    }
+
+    [Fact]
+    public async Task A_hold_armed_before_any_instance_spawns_is_released_by_the_untick()
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        dll.NoInstance = true;   // the player died, or a level is loading
+        await DetectAndHold(vm);
+        Assert.Single(dll.Forced);   // armed in the DLL, waiting for an instance
+        Assert.Equal("Armed @0", vm.StealthState);
+        Assert.DoesNotContain("Hold failed", vm.StatusText, StringComparison.Ordinal);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.Contains("reset_field " + FakeDll.Meter, dll.Off);
+        Assert.Empty(dll.Forced);
+        Assert.Equal("Off", vm.StealthState);
+        Assert.False(gate.TeardownOwed);
+    }
+
+    [Fact]
+    public async Task A_hold_armed_before_any_instance_spawns_is_kept_by_Detect_for_Reset()
+    {
+        var (vm, dll, _, _) = Make(enabled: true);
+        await Connect(vm);
+        dll.NoInstance = true;
+        await DetectAndHold(vm);
+        dll.OtherMeters.Add(new StealthCandidate { ClassName = "BP_Enemy_C", FieldName = "Awareness", Score = 20 });
+
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        Assert.Equal("Armed @0", vm.StealthState);
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { "reset_field " + FakeDll.Meter }, dll.Off);
+        Assert.Empty(dll.Forced);
+    }
+
+    [Fact]
+    public async Task A_refused_re_arm_leaves_the_earlier_hold_for_the_untick()
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await DetectAndHold(vm);
+        dll.RefuseCode = -7;
+        await vm.HoldStealthCommand.ExecuteAsync(null);   // Solide keeps the hold it already had
+        Assert.Single(dll.Forced);
+        Assert.Equal("Holding @0", vm.StealthState);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.Contains("reset_field " + FakeDll.Meter, dll.Off);
+        Assert.Empty(dll.Forced);
+    }
+
+    [Fact]
+    public async Task A_refused_first_hold_arms_nothing_for_the_untick_to_release()
+    {
+        // Solide drops a new job it refused: the card holds nothing of its own.
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        dll.RefuseCode = -7;
+        await DetectAndHold(vm);
+        Assert.Empty(dll.Forced);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.DoesNotContain("reset_field " + FakeDll.Meter, dll.Off);
+    }
+
+    [Fact]
+    public async Task A_hold_reset_on_its_card_is_not_released_again_by_the_untick()
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await DetectAndHold(vm);
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+        dll.HoldTheMeter();   // the same field forced again, from Property Search: not the card's to release
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.Equal(new[] { "reset_field " + FakeDll.Meter, "foreground" }, dll.Off);
+        Assert.Single(dll.Forced);
+    }
+
+    [Fact]
+    public async Task A_hold_the_connect_could_not_claim_is_left_to_Property_Search()
+    {
+        // No pawn at the connect, so no meter to match the DLL's hold to: the card cannot tell it from a Property
+        // Search Force, and the forced-fields strip is the way out.
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await DetectAndHold(vm);
+        vm.SetConnected(false);
+        dll.NoMeter = true;
+        await Connect(vm);
+        Assert.Equal("Unknown", vm.StealthState);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.DoesNotContain("reset_field " + FakeDll.Meter, dll.Off);
+        Assert.Single(dll.Forced);
+        Assert.Equal("Unknown", vm.StealthState);
     }
 
     // ---- The review's MED: with no pawn the DLL answers Fly active and has_cmc false, the card reads Unavailable, and
