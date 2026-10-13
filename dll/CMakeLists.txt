@@ -674,9 +674,9 @@ if(BUILD_DLL_TESTS)
     # Genau reads a UE version out of a FILE (GetFileVersionInfoW), and one file carries one
     # VERSIONINFO, so every resource shape the version gate must judge is a file of its own: a DLL
     # holding nothing but that resource, linked /NOENTRY. dll_core_test finds them beside itself.
-    # The b25c / b25d scripts are the very resources tools/verify/b25_marker_exes.py stamps into its
-    # live marker exes -- it reads them from tests/res -- so the offline test and the live one judge
-    # the same bytes.
+    # Some of these scripts are the very resources tools/verify/b25_marker_exes.py stamps into its
+    # live marker exes -- it reads them from tests/res, and says which -- so the offline test and the
+    # live one judge the same bytes.
     foreach(_vr b25c_corroborated b25d_bare game_buildstring_410 game_buildstring_411 game_only
                 game_product_fixedfile_410 game_fixed405_buildstring_415 game_fixed501_buildstring_415
                 game_fixed420_buildstring_410)

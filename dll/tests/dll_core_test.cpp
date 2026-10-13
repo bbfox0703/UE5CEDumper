@@ -300,7 +300,7 @@ int main() {
 
     // [VER-410-GATE] review: the same decision with its glue -- the VERSIONINFO reads, the ProductVersion string handed
     // on, and the tier-1 short-circuit -- on real files. dll/CMakeLists.txt builds each dll/tests/res/*.rc into a
-    // resource-only DLL beside this exe; b25c / b25d are the resources the b25 rig's live marker exes carry. Only the
+    // resource-only DLL beside this exe; the b25 rig's live marker exes carry some of the same scripts. Only the
     // pure helpers were pinned before, and a refactor that dropped the string or the short-circuit stayed green.
     {   blk("VER-410-GATE glue - the resource half of detection, run on built VERSIONINFO files");
         wchar_t self[MAX_PATH] = {};
