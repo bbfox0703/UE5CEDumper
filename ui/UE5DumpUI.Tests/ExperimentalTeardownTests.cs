@@ -65,7 +65,11 @@ public class ExperimentalTeardownTests : IDisposable
             return Foreground;
         }
 
-        private FlyStatus FlyNow => new() { HasCmc = true, Active = Fly, State = Fly ? 1 : 0 };
+        /// <summary>No pawn to fly (a menu, a loading screen, death, a vehicle): Fly's reply says no CharacterMovement
+        /// and still says whether the worker runs, as Dunste's GetStatus does.</summary>
+        public bool NoPawn;
+
+        private FlyStatus FlyNow => new() { HasCmc = !NoPawn, Active = Fly, State = Fly ? 1 : 0 };
 
         public override Task<FlyStatus> FlySetAsync(bool? enable, double? speed, int? preset, bool? noclip,
                                                     CancellationToken ct = default)
@@ -287,6 +291,41 @@ public class ExperimentalTeardownTests : IDisposable
         Assert.False(dll.Fly);
         Assert.Empty(dll.Forced);
         Assert.Equal("Off", vm.StealthState);
+    }
+
+    // ---- The review's MED: with no pawn the DLL answers Fly active and has_cmc false, the card reads Unavailable, and
+    // the worker waits for a pawn and flies it again -- so a flight the card cannot show is still one to turn off.
+
+    [Fact]
+    public async Task Unticked_while_connected_a_flight_waiting_for_a_pawn_is_turned_off()
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+        dll.NoPawn = true;
+        await vm.RefreshFlyCommand.ExecuteAsync(null);
+        Assert.Equal("Unavailable", vm.FlyState);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.Contains("fly", dll.Off);
+        Assert.False(dll.Fly);
+    }
+
+    [Fact]
+    public async Task Unticked_while_disconnected_a_flight_waiting_for_a_pawn_is_turned_off_at_the_next_connect()
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+        vm.SetConnected(false);
+        gate.IsEnabled = false;
+        dll.NoPawn = true;
+
+        await Connect(vm);
+        Assert.Equal("Unavailable", vm.FlyState);
+        Assert.Contains("fly", dll.Off);
+        Assert.False(dll.Fly);
     }
 
     [Fact]
