@@ -1051,8 +1051,7 @@ constexpr TailCheck CheckTailForVersion(unsigned ueVersion, int flagsOff, int ta
 // Nothing measured is never a contradiction, and a detected version is not one the user can take back.
 constexpr bool OverrideContradictsTail(bool userOverride, unsigned ueVersion, int flagsOff, int tailExtra,
                                        int measuredBase) {
-    (void)userOverride; (void)ueVersion; (void)flagsOff; (void)tailExtra; (void)measuredBase;
-    return false;   // red: stubbed
+    return userOverride && CheckTailForVersion(ueVersion, flagsOff, tailExtra, measuredBase) == TailCheck::Contradicts;
 }
 
 // The measurement's winner among candidate tail bases, given each one's hits over `samples` sampled
