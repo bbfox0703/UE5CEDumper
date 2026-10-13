@@ -10888,10 +10888,19 @@ int main() {
         chunk[7] = makeEntry(eLong, (7 << 1) | 1, longName.data(), longName.size() * sizeof(wchar_t));
         reinterpret_cast<wchar_t*>(eLong.data() + 0x10)[longName.size()] = L'A';   // overwrite the helper's terminator
         // The longest name the engine makes: NAME_SIZE counts the terminator, so 1023 units and then the terminator.
-        static std::vector<uint8_t> eMax;
-        {
-            std::vector<wchar_t> maxName(1023, L'D');
-            chunk[12] = makeEntry(eMax, (12 << 1) | 1, maxName.data(), maxName.size() * sizeof(wchar_t));
+        // The terminator is the first unit of the second of two committed pages: the reads before it end at the page
+        // boundary with 1023 units in hand, so the loop's own bound decides whether the terminator is read at all --
+        // anywhere else it arrives inside a read and a bound one unit short goes unseen.
+        uint8_t* mpage = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x2000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        check("UE4WIDE setup: committed two pages for the NAME_SIZE - 1 fixture", mpage != nullptr);
+        if (mpage) {
+            wchar_t* name = reinterpret_cast<wchar_t*>(mpage + 0x1000) - 1023;
+            for (int i = 0; i < 1023; ++i) name[i] = L'D';
+            name[1023] = 0;
+            uint8_t* e12 = reinterpret_cast<uint8_t*>(name) - 0x10;
+            const int32_t w12 = (12 << 1) | 1;
+            memcpy(e12, &w12, sizeof w12);
+            chunk[12] = reinterpret_cast<uintptr_t>(e12);
         }
 
         // Four pages reserved, the first and third committed: a name that ends at an unreadable page, in the first,
@@ -10967,8 +10976,11 @@ int main() {
               Serie::GetString(3, 2).c_str());
         check("UE4WIDE: no terminator within NAME_SIZE is refused", Serie::GetString(7).empty(),
               Serie::GetString(7).c_str());
-        check("UE4WIDE: a name of NAME_SIZE - 1 units, terminator last, is read whole",
-              Serie::GetString(12) == std::string(1023, 'D'), std::to_string(Serie::GetString(12).size()).c_str());
+        if (mpage) {
+            check("UE4WIDE: a name of NAME_SIZE - 1 units, terminator last, is read whole",
+                  Serie::GetString(12) == std::string(1023, 'D'), std::to_string(Serie::GetString(12).size()).c_str());
+            VirtualFree(mpage, 0, MEM_RELEASE);
+        }
         if (wpage) {
             check("UE4WIDE: a wide name ending at an unreadable page's edge is read whole",
                   Serie::GetString(5) == "\xC3\x85ngstr\xC3\xB6m", Serie::GetString(5).c_str());
