@@ -263,6 +263,22 @@ public class SnapshotStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task A_capture_another_store_of_this_process_has_open_survives_the_cleanup()
+    {
+        // The mark names the process, not the store: a second store of this process is no dead writer.
+        var ct = TestContext.Current.CancellationToken;
+        var other = new SnapshotStore(new MockPlatformService(_tempDir));
+        other.SetActiveGame("SIBLING");
+        _store.SetActiveGame("SIBLING");
+        long open = await other.CreateSnapshotAsync(new SnapshotMeta { Label = "open", Scope = "NumericNoByte" }, ct);
+
+        Assert.Equal(0, await _store.DeleteUnusableSnapshotsAsync(ct));
+
+        await other.FinalizeSnapshotAsync(open, 0, 0, ct);
+        Assert.Equal(open, Assert.Single(await _store.ListSnapshotsAsync(ct)).Id);
+    }
+
+    [Fact]
     public async Task A_kept_partial_is_listed_usable_once_completed_and_a_seeded_snapshot_once_finalized()
     {
         // [W1-PARTIAL-MARK] A cap / low-disk stop completes its partial usable: being in progress until then must not
