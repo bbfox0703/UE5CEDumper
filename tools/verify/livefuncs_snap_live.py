@@ -3863,11 +3863,15 @@ def self_test() -> int:
            lambda: pick(60, 8, total=35) == (16, True) and pick(60, 2, total=40) == (30, True) and
            pick(60, 8, total=20) == (30, False) and
            per_frame_budget({"SnapProbe_Call": 8, "SnapProbe_PerFrame": 60}, None, 35)["starves"] is False)
-    # The starve rule's two terms, pinned (the second review's T2 / T3): SnapProbe_PerFrame keeps no more than it is
-    # called, so a budget above its rate leaves the rest of the total free; and the room is every other choice's
-    # rate, summed, not the busiest one's.
-    expect("S5 rate: a budget of 100 over a probe at 60 a second leaves 60 + 1.5 x 2 in a total of 80: nothing starves",
-           lambda: per_frame_budget({"SnapProbe_Call": 2, "SnapProbe_PerFrame": 60}, 100, 80)["starves"] is False)
+    # The starve rule's two terms, pinned (the second review's T2 / T3): SnapProbe_PerFrame keeps no more of the total
+    # than its budget, and no more than 1.5x its rate -- a second's calls run over the average as a frame rate
+    # wobbles, and Linie's StackAdmit takes every call of a second up to the budget [SNAPRIG-ROUND5] -- so only a
+    # budget above that leaves the rest of the total free; and the room is every other choice's rate, summed, not the
+    # busiest one's.
+    expect("S5 rate: a budget of 100 over a probe at 60 a second may take 1.5 x 60 of it in a second, beside 1.5 x 2: a "
+           "total of 93 starves nothing, 92 starves the others",
+           lambda: per_frame_budget({"SnapProbe_Call": 2, "SnapProbe_PerFrame": 60}, 100, 93)["starves"] is False and
+           per_frame_budget({"SnapProbe_Call": 2, "SnapProbe_PerFrame": 60}, 100, 92)["starves"] is True)
     expect("S5 rate: two other choices at 8 a second need 1.5 x 16 beside 30 (54): a total of 50 starves them",
            lambda: per_frame_budget({"A": 8, "B": 8, "SnapProbe_PerFrame": 60}, 30, 50)["starves"] is True)
     expect("S5 rate: when no budget fits, the total may still starve the others (5 a second against 60 and 2)",
@@ -3901,6 +3905,18 @@ def self_test() -> int:
     expect("S3 unexplained: a per-function budget under 1.5x SnapProbe_Call's rate explains them (2 against 2 a "
            "second)",
            lambda: unexplained_refusals(refused_in, plain_rates, 60.0, 2, 200) == 0)
+    # [SNAPRIG-ROUND5] The round-4 review's (2): StackAdmit lets SnapProbe_PerFrame take every call of a second the
+    # ring allows, and a second's calls run over the average, so its share of the total is weighed at 1.5x its rate
+    # (up to its budget), as the others' room is. At its average alone, per 100 and a total of 40 beside a probe at 30
+    # a second left 7 free for SnapProbe_Call's 3, and a refusal a correct DLL can make failed S3.
+    pf_30 = dict(plain_rates, SnapProbe_PerFrame=30.0)
+    expect("S3 unexplained: per 100, a total of 40 and the probe at 30 a second (45 it may take in a second, beside 1.5 "
+           "x 2) explain the refusals, and stand the checks down where none was kept; a total of 48 leaves the others "
+           "their room, and does neither",
+           lambda: unexplained_refusals(refused_in, pf_30, 30.0, 100, 40) == 0 and
+           starved_in_scope(refused_in, 0, pf_30, 30.0, 100, 40) is not None and
+           unexplained_refusals(refused_in, pf_30, 30.0, 100, 48) == 4 and
+           starved_in_scope(refused_in, 0, pf_30, 30.0, 100, 48) is None)
     expect("S3 unexplained: a total that starves the others at SnapProbe_PerFrame's plain rate explains them, the main "
            "rate unknown or not",
            lambda: unexplained_refusals(refused_in, plain_rates, None, 30, 20) == 0 and
