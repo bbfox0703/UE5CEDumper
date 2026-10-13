@@ -373,24 +373,47 @@ source and editor are installed for when they are needed.
   `proxy_refresh_selftest` gate in check_all and ci.yml. Measured read-only: 13 deployed proxies found before, 14
   after (Extinction). Live check owed: after the next DLL build, `report` shows Extinction STALE and `refresh
   "Extinction"` backs it up and replaces it.
-- ⬜ `[OVERRIDE-REVIEW2-LOWS]` (3 LOW, the `[UE-OVERRIDE-HINT-AUTO]` round's first review, 2026-10-09; left for after
-  the release by the maintainer's quota call): (1) Mimic's HandleInvoke glue -- `Ubel::ParamBufferSize` feeding
-  `InvokeSlabRefusal` before the first ProcessEvent call -- has no source pin (mutant M1 survived); (2) an override
-  persisted before `[UE-OVERRIDE-411]`, or set before any scan, that the sampled UFunctions contradict is applied at
-  every launch with only a log line -- latch it and show a note beside the badge; (3) the Auto arm's pin checks only
-  that the ladder is called, not that its version is the one put in force (mutant M2 survived). The second reviewer
-  (detection / docs / UI text) was not run. Effort **S** each.
-- ⬜ `[CT-FLOOR-208]` (the maintainer chose 2026-10-09, paused for quota): the list's floor becomes 208 (Time +
-  Duration clickable) and wins over the pane's 200, so a wide pane can show the Call stack's Where whole at the
-  default window; a drag writes the remembered width only when it moves; and the round-1 review's LOWs (a narrow
-  panel can still squeeze the list, a drag that moves nothing rewrites the remembered width, the live recipe's window
-  sizes, a view-model swap not remeasured, comments) -- `out/step3/ct_detail_review.json`. Worktree
-  `wf_f6c68db8-98a-1`: red `d542a5c6` plus an uncommitted edit of `CallTraceViewModel.cs`. Effort **S-M**.
-- ⬜ `[EXPOFF-ROUND3-PAUSED]` (paused for quota, not in this release): `[LF-EXPOFF-TRACE]`'s round 3 -- the opt-in
-  unticks connected or not and tears down at once, or at the next connect -- is built in worktree
-  `wf_2e0b3559-405-1` (`34501dcc`, 19 commits on `36a13a4d`); its first review found one MED (the teardown decides
-  whether Fly runs from `_flyActive`, which `ApplyFlyReadout` clears when there is no CMC, so a flight can be left
-  running) and seven LOWs (`out/step3/expoff_round3_partial.json`); the second review was not run. Effort **M**.
+- ✅ `[OVERRIDE-REVIEW2-LOWS]` **BUILT 2026-10-14, in source** (3 LOW, the `[UE-OVERRIDE-HINT-AUTO]` round's first
+  review; dev `eea45912`..`6ded0c29`, shared with `[SOLIDE-NATIVE-BOOL]`): (1) a C# source pin holds Mimic's HandleInvoke
+  to `Ubel::ParamBufferSize` -> `Mimic::InvokeSlabRefusal` before the first ProcessEvent call; (3) the Auto arm's pin
+  checks the version put in force, not only that the ladder ran; (2) get_pointers carries `override_contradicted` and
+  the Pointers panel shows an amber "Does not fit this game" badge beside the override badge, with a note. The review
+  round closed the builder's own lead: a vote run under a contradicted 4.11-4.17 override latched extra 0 and then
+  refused the version that fits a +4 tail for the session -- `DynOff::CheckTailForVersion` now judges with the extra the
+  measurement implies (`DynOff::UFUNCTION_TAIL_EXTRAS {0,4}`, pinned by dll_core_test OVERRIDEEXTRA). No mailbox
+  contract change. Live check owed: a 4.17 override persisted on a 4.18+ title (OCTOPATH / DQ XI S), or 4.18 on a
+  4.11-4.17 one -> `override_contradicted` true, the badge and note; Auto (with a detection on record) clears it; a
+  fitting version is then accepted. **The maintainer's call, open:** the verdict is re-derived on every snapshot from
+  the vote's measurement (not a sticky latch), and the note is hidden while Auto is pending.
+- ✅ `[CT-FLOOR-208]` **BUILT 2026-10-14, in source** (the maintainer's choice of 2026-10-09; dev `dd464feb`..`ead4e753`,
+  red `d542a5c6` carried; round-1 and round-2 review findings all closed; 17 mutants killed, 2 equivalent): the Call
+  Trace list's floor `MinListWidth` = 24 + 96 + 88 = **208** (Time and Duration whole and clickable) and it wins over
+  the pane's 200 -- `FitPane = max(0, min(remembered, split - 208))`, so below a 408 split the pane gives way; a row's
+  columns are still fitted to `MinFittedListWidth` = 512 and cut at the edge. A drag writes a remembered width only
+  when it moves the width on screen (pane and all four columns: a vertical jiggle, a push into a cap or a floor writes
+  nothing). A view model that replaces another is remeasured again (`5e85d7c8`, reversing `e50b5679`). At the 1400
+  default window the pane may now reach 806 and the Call stack shows Frame / Address / Copy-ASM / Where side by side.
+  Live check owed on an AOT build (DumperTest58 Shipping, any trace; set ui-options.json `callTrace.detailPaneWidth`
+  766 first): at a 1000 window the list is 208 and a row selects; a press-and-release or a push into a limit leaves the
+  remembered 766; at 1400 the pane stops at about 806 with the Call stack whole; at the 800 minimum, dragging the tree's
+  splitter right narrows the pane to nothing while the list keeps 208. **The maintainer's call, open:** the list can
+  still drop below 208 when the whole Call Trace panel is narrower than 232 (MainWindow's ContentGrid `*` column has no
+  MinWidth -- only with the object tree dragged very wide); once the list has taken the pane below 200, the pane's
+  handle moves neither way (round 1's choice, kept).
+- ✅ `[EXPOFF-ROUND3-PAUSED]` **BUILT 2026-10-14, in source** (dev `8ffccb75`..`17f4c0ba`, 43 commits: round 3's 19
+  carried onto today's dev, the first review's MED + 7 LOW and the re-review's 2 LOW + 1 INFO, each red then green):
+  MED -- an untick decides Fly from the DLL's flag, not `_flyActive`, which `ApplyFlyReadout` clears with no pawn, so a
+  flight on a menu or loading screen is turned off; an untick waits for the connect prime; Keep Foreground goes off
+  last; only an untick still owed (persisted as experimental.json `teardownOwed`) is torn down at a connect, and the
+  debt is paid only when the teardown knew what ran and every OFF it sent landed; a Detect while a Stealth hold runs
+  only reads, and the release follows the card's own armed hold (new badge `Armed @0`, `str.TP.StArmed` /
+  `str.TP.StRearmRefused`); an untick gives Live Funcs' kept trace back at once (`pe_trace_release`), also when the
+  Stop's reply lands after it; the tabs that lock the box are one answer the tooltip and the view share. On dev: C# 6641
+  (6640 passed, 1 skipped), headless 68 / 68. Live check owed: `[LF-EXPOFF-TRACE]`'s list below. Noted by the builder,
+  not taken: an Apply / Hold still in flight at the untick can land after the teardown read the card; the fly_toggle
+  hotkey path has no test. **The maintainer's call:** a connect with the features off now tears down only an owed
+  untick, so a Fly or Keep Foreground started from a CE record while the features are off is left alone (reverting
+  the narrowing restores the broad teardown).
 - ✅ `[VER-410-GATE]` **BUILT 2026-10-08, in source; refused live on IS Defense 2026-10-09, `[LIVE-3646]`** (red `3b4e5e4d`, green `d0260b4f`, rig `5af81317` /
   `9ade3939`; 6 / 6 mutants killed) -- live check owed: `py tools/verify/b25_marker_exes.py build`, run each exe,
   inject, trigger the scan, then `check` (C refused, D scanned, A and B as before); then IS Defense through a
@@ -764,6 +787,10 @@ source and editor are installed for when they are needed.
   pane's handle far left: it stops there, and a drag back moves at once; widen the window or fold the object tree:
   the pane returns to its remembered width; drag Thread's handle far right: Object narrows to its floor and Thread
   stops with Function's slice left.
+  ⚠ **Superseded in part by `[CT-FLOOR-208]` (2026-10-14):** the list's floor is 208, not 512 (512 is now
+  `MinFittedListWidth`, the narrowest list a row's columns are fitted to); below a 408 split the PANE gives way, down
+  to 0, while the list keeps 208; a drag writes a width only when it moves it; the panel remeasures on a new view model
+  again (`e50b5679` reversed by `5e85d7c8`). The live recipe owed is `[CT-FLOOR-208]`'s.
   ✅ `[SNAPRIG-S5-RATE]` (LOW, the same walkthrough; fixed 2026-10-08, offline by `--self-test`; **live 2026-10-09**:
   DumperTest58 Shipping at ~30 fps, DLL 3644, `--stacks --pdb` with no budget given chose 11/s ("between 6.1 and
   20.2 ... 30/s does not fit"), S5 kept 99 in its 77..99 window and dropped 141, the parameter counters were checked
@@ -940,33 +967,23 @@ source and editor are installed for when they are needed.
   2026-10-09**, build 3645 on DumperTest58 Shipping: SnapProbe_PerFrame's parameters chosen, the estimate was orange
   (its 3,027 s against a trace scoped to the chosen rows); Trace ticked on all 14 rows turned it grey (the trace then
   about 48.8 min), and Clear ticks turned it orange again.
-  ⬜ `[LF-EXPOFF-TRACE]` (LOW, found 2026-10-09 by the maintainer's ask to check the layout with the experimental
-  features off, build 3645 on DumperTest58 Shipping): off, the layout is as designed -- the five experimental tabs go,
-  the Live Funcs header keeps the fold button, Fetch limit, Min calls and Hide per-frame (no Clear T/P/S), the Trace,
-  Parameters, estimate and memory lines and the T / P / S columns are gone, a recording made while off offers no trace,
-  and the folded summary reads "Fetch limit 512, min calls 1", not orange. **The defect:** a trace recorded while the
-  features were on survives turning them off (System tab, possible until an experimental tab is opened in the
-  session): the header keeps "Open in Call Trace" and the status line "Trace: N records. Open it in the Call Trace
-  tab.", and the button shows the hidden Call Trace panel's content with no tab selected, Load trace and the exports
-  working -- the opt-out bypassed. `HasTraceToOpen` is set at a Stop and cleared by a Start, a disconnect or Call
-  Trace's load of it; the gate's `Changed` handler raises `TraceAvailable` but leaves it. Fix: the button, the status
-  line's trace clause and `OpenCallTrace` all follow `TraceAvailable` as well (red test first). INFO, the
-  maintainer's call: off, the fold saves no line (the header already holds the only row it folds). Effort **S**.
-  Steps 2 and 3, as decided before: **decided (T9, 2026-10-07)** only for chosen functions; the call rate is
-  what is limited (an estimate with a warning, per-frame functions asked for stacks, the DLL's budget as the
-  guarantee); a Snapshot column apart from the Trace tick (the plan's "How much may be chosen").
-  [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md).
-  A ring buffer (a power-of-two slider, 32–512 MB, default 64, with the seconds it keeps estimated beside it) that
-  keeps the calls just before Stop, two small records per call (entry and return), the call tree computed after
-  Stop; then parameter and native-stack snapshots for ticked functions only.
-  Effort **L** across the three steps, risk **med** (it adds work to the ProcessEvent hot path; measure first).
-  Our own feature: its commits carry **no** `Co-authored-by: fireundubh` trailer. **Decided 2026-10-06 and
-  2026-10-07** after a design review (TR1–TR7): the ring (T1), no register capture (T4), two record-time filters —
-  the ticked-function scope first, then leaving out per-frame functions (T5) — experimental only (T6), and a
-  once-per-session confirmation when nothing is ticked (T7). The trace rides on the Live Funcs recording (a
-  "Trace" checkbox, no Start of its own); viewed in its own "Call Trace" tab, which shows the ticks and the trace
-  settings grayed out (T8); functions ticked in the Live Funcs table (T3). The plan's "Measure before building"
-  is taken as part of step 1.
+  ✅ `[LF-EXPOFF-TRACE]` **BUILT 2026-10-14, in source** (LOW, found 2026-10-09; built with `[EXPOFF-TEARDOWN]` and
+  `[EXPOFF-ROUND3-PAUSED]`, dev `8ffccb75`..`17f4c0ba`): a trace recorded while the experimental features were on
+  survived turning them off, and the opt-out could be bypassed through Live Funcs' "Open in Call Trace". The maintainer
+  chose 2026-10-09 first 「只能在斷線時取消 + 保留防線」, then, after the review found that Fern's last-client teardown ends
+  only the trace and See-through, 「連線中也可取消，立即清理」: the box unticks connected or not (only the session lock,
+  `str.Experimental.LockedForSession`, disables it) and the untick tears down at once what the features run (Fly,
+  See-through, a Stealth hold, Keep Foreground last, a running Detect Stats scan, Live Funcs' kept trace and its
+  sentences); unticked while disconnected, the next connect pays the debt from the primed state. The gate's purpose is
+  to keep a new user's effort on the basic tools, not to save tabs (working-lessons §6). **Live check owed on an AOT
+  build:** (1) Keep Foreground, Fly and a Stealth hold on, untick while connected -> all off, Keep Foreground last, in
+  the game and on the badges; (2) Fly on, then a menu (badge Unavailable), untick -> `fly_set enable:false`; (3) Detect
+  while holding keeps `Holding @0`; (4) Hold @0 with no live instance -> `Armed @0`, then untick -> `reset_field`;
+  (5) disconnect, untick, restart the UI, reconnect -> the three go off once primed, `teardownOwed` true then false;
+  (6) an OFF that fails leaves `teardownOwed` true for the next connect; (7) features off, a CE Fly record, reconnect
+  -> left alone; (8) a traced Stop, System, untick -> `pe_trace_release`, nothing offered after a re-tick; (9) untick
+  before an auto-stop's reply lands -> released as it lands; (10) with Snapshot opened, the greyed box's tooltip reads
+  the session-lock text.
 
 -----
 
@@ -1120,10 +1137,10 @@ from the agents' notes, not yet reproduced (working-lessons §1.8).
 
 | id | sev | status | what | where |
 |---|---|---|---|---|
-| `[BOOL-NATIVE-SEARCH]` | MED | ✅ 2026-09-26 `2093ea91` (red `85c9e8ed`) — live check owed: verification-register `[BOOL-NATIVE-SEARCH]` | **A Freeze built from Property Search or Interesting Properties can whole-byte-write a packed bool whose layout probe missed.** `[A3-BOOL-NATIVE-NOWRITE]` made a bool three-state (Packed / Native / Unresolved) and taught the Live Walker to refuse Unresolved via `FieldValueConverter.PlanBoolWrite`, but only `walk_instance` publishes `bool_native`. `Aura::PropertyMatch` has no `boolNative`, so `SearchProperties` / `SearchPropertiesBatch` drop the `FieldInfo.boolNative` WalkClassEx computed, `search_properties` / `search_properties_batch` emit only `bool_mask`, and every UI consumer reads "no mask" as "native". `FreezeScriptGenerator` then emits no `boolMask`, and `ue5_freeze_helper.lua`'s `writeBool` stamps `0x01` / `0x00` over the whole byte every 50 ms on every instance of the class tree -- the AA1 corruption of up to 7 sibling bools, on exactly the engines where the probe misses (DQ XI S reads every packed bitfield as mask 0, per `[A3-BOOL-NATIVE-NOWRITE]`). Found as the stale `Fern.cpp` comment "Absent = native bool" (the eval's lead). Force ON/OFF is NOT affected: `Solitar::ReadBoolLayout` re-probes and accepts a single bit only. **Fix:** carry `boolNative` through `PropertyMatch` and both encoders (additive pipe key, no mailbox-contract change); UI parses it and routes every bool freeze through `PlanBoolWrite` -- Property Search refuses before the value prompt, the batch CT skips and counts, the generator throws as the last line of defence. The Lua helper's no-mask path stays (a saved table for a native bool keeps working). **Fixed as above** (`2093ea91`): `FreezeScriptGenerator.IsUnresolvedBool` is the shared predicate; 10 red tests (parse x2, Property Search refusal, batch skip+count, generator throw x5, source pin) went green, native / packed controls stayed green; UI 5610/5610. | `Aura.h` `PropertyMatch`; `Aura.cpp` `SearchProperties` / `SearchPropertiesBatch`; `Fern.cpp` search encoders; `DumpService` search parsers; `PropertySearchViewModel.CopyFreezeScriptAsync`; `InterestingPropertiesViewModel.BuildRowsFromSelection`; `FreezeScriptGenerator` |
+| `[BOOL-NATIVE-SEARCH]` | MED | ✅ 2026-09-26 `2093ea91` (red `85c9e8ed`) — live check owed: verification-register `[BOOL-NATIVE-SEARCH]` | **A Freeze built from Property Search or Interesting Properties can whole-byte-write a packed bool whose layout probe missed.** `[A3-BOOL-NATIVE-NOWRITE]` made a bool three-state (Packed / Native / Unresolved) and taught the Live Walker to refuse Unresolved via `FieldValueConverter.PlanBoolWrite`, but only `walk_instance` publishes `bool_native`. `Aura::PropertyMatch` has no `boolNative`, so `SearchProperties` / `SearchPropertiesBatch` drop the `FieldInfo.boolNative` WalkClassEx computed, `search_properties` / `search_properties_batch` emit only `bool_mask`, and every UI consumer reads "no mask" as "native". `FreezeScriptGenerator` then emits no `boolMask`, and `ue5_freeze_helper.lua`'s `writeBool` stamps `0x01` / `0x00` over the whole byte every 50 ms on every instance of the class tree -- the AA1 corruption of up to 7 sibling bools, on exactly the engines where the probe misses (DQ XI S reads every packed bitfield as mask 0, per `[A3-BOOL-NATIVE-NOWRITE]`). Found as the stale `Fern.cpp` comment "Absent = native bool" (the eval's lead). Force ON/OFF is NOT affected: `Solitar::ReadBoolLayout` re-probes and refuses an Unresolved layout (since `[SOLIDE-NATIVE-BOOL]` it also takes a native bool, written 0x01 / 0x00). **Fix:** carry `boolNative` through `PropertyMatch` and both encoders (additive pipe key, no mailbox-contract change); UI parses it and routes every bool freeze through `PlanBoolWrite` -- Property Search refuses before the value prompt, the batch CT skips and counts, the generator throws as the last line of defence. The Lua helper's no-mask path stays (a saved table for a native bool keeps working). **Fixed as above** (`2093ea91`): `FreezeScriptGenerator.IsUnresolvedBool` is the shared predicate; 10 red tests (parse x2, Property Search refusal, batch skip+count, generator throw x5, source pin) went green, native / packed controls stayed green; UI 5610/5610. | `Aura.h` `PropertyMatch`; `Aura.cpp` `SearchProperties` / `SearchPropertiesBatch`; `Fern.cpp` search encoders; `DumpService` search parsers; `PropertySearchViewModel.CopyFreezeScriptAsync`; `InterestingPropertiesViewModel.BuildRowsFromSelection`; `FreezeScriptGenerator` |
 | `[HOTKEY-REBIND-DEAD]` | LOW | lead | `TeleportViewModel.ApplyCapturedKey` -> `RegisterMarkerHotkey` disposes the row's existing registration BEFORE trying the new combo and returns early when the new one is taken: the old hotkey is dead, the row still shows the old label, `Conflicted` stays false and no banner appears. | `TeleportViewModel.ApplyCapturedKey` / `RegisterMarkerHotkey` |
 | `[SNAPSHOT-CRASH-PARTIAL]` | LOW | lead | `BeginCaptureSessionAsync` justifies `synchronous=OFF` with "a partial capture is discarded", but no startup cleanup of a row a CRASH left behind was found (`is_usable` defaults to 1; `RemovePartialAsync` runs in-process only). A `[W1-PARTIAL-MARK]` kept partial is also committed while `synchronous` is still OFF. | `ISnapshotStore` / `SnapshotStore.BeginCaptureSessionAsync` |
-| `[SOLIDE-NATIVE-BOOL]` | LOW | lead | Force ON/OFF holds nothing on a NATIVE bool: `Solitar::ReadBoolLayout` accepts only a single-bit FieldMask, so a Blueprint / native bool is refused (`PR_ERR_REFLECT`, 0 held). Safe, but useless there; could accept the `ClassifyBoolLayout` Native verdict and write `0x01` / `0x00`. | `Solitar.cpp` `ReadBoolLayout`; `Solide` K_BOOL |
+| `[SOLIDE-NATIVE-BOOL]` | LOW | ✅ 2026-10-14 in source (dev `eea45912`..`6ded0c29`: God Mode targets and Force take a native bool, written 0x01 / 0x00, packed bools byte-identical, Unresolved still refused; the standalone trainer bakes ByteMask 0x01 through `Solitar::TrainerMaskFor`; every Solitar bool path pinned to ReadBoolValue / WriteBoolValue) — live check owed: Force ON / OFF on a Blueprint bool holds N and the Live Walker reads 01 / 00, never FF; a packed AActor bit changes only its bit; God Mode on a BP bInvincible-style bool logs mask=0xFF and flips 00 / 01; get_trainer_offsets gives it mask 1 | Force ON/OFF holds nothing on a NATIVE bool: `Solitar::ReadBoolLayout` accepts only a single-bit FieldMask, so a Blueprint / native bool is refused (`PR_ERR_REFLECT`, 0 held). Safe, but useless there; could accept the `ClassifyBoolLayout` Native verdict and write `0x01` / `0x00`. | `Solitar.cpp` `ReadBoolLayout`; `Solide` K_BOOL |
 | `[GRIMOIRE-507-GUARD]` | INFO | maintainer call | The 507 rung of the UE-version raise ladder (`IsReorderedFUObjectItem57`) carries no `ver >= 500` guard while its comment used to say both rungs did (the comment now states the per-rung rule). Whether `Object@+0x08` is a layout no UE4 build has -- so no guard is needed -- is the open question. | `UE5_Init` version ladder; `Grimoire.h` |
 | `[HIMMEL-PAL51-OFFSETS]` | INFO | lead | Himmel.h's PAL51 note says "its +0x8 / +0x34 int32s are the very fields the validator checks"; `ValidateSparseDelegates` reads +0x0C / +0x2C for its range check (+0x00 / +0x08 for the content check). Needs its history read before rewording. | `Himmel.h` PAL51 note |
 | `[SEIN-UNROUTED-CATS]` | INFO | lead | `LOG_CAT "PROXY"` and `"SEETHRU"` have no `s_catMap` row, so they land in init.log by fallback; intent unrecorded. | `Sein.cpp` `s_catMap` |
