@@ -1279,7 +1279,7 @@ inline void ApplyPropertyFamily(const PropertyFamily& f) {
     if (moved) g_propertyFamilyEpoch.fetch_add(1, std::memory_order_acq_rel);
 }
 
-// === UEnum — lazy-detected by DetectUEnumNames() ===
+// === UEnum — detected by DetectUEnumNames(), on first use or by the version ladder at init ===
 inline int UENUM_NAMES          = 0x40;  // UEnum::Names (Neu::EnumNamesLayout region offset)
 // [VND583-04] The legacy pair's value width (8 = int64; 1 = uint8 on UE 4.9-4.14) and stride
 // (0 = the int64 pair's own), decided by DetectUEnumNames and applied by the enum reader (Ubel).

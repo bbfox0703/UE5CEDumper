@@ -107,8 +107,11 @@ namespace Genau {  // legacy alias: OffsetFinder
     // Populates DynOff namespace and detects CasePreservingName (+0x8 shift for UE5.5+/5.7).
     bool ValidateAndFixOffsets(uint32_t ueVersion);
 
-    // Lazy UEnum::Names offset detection — called on first EnumProperty encounter
-    bool DetectUEnumNames();
+    // UEnum::Names offset detection — run on first use, and at init by the version ladder's 5.5 rung when the
+    // label is 5.0-5.4 in FProperty mode. A search that completes and
+    // finds nothing latches FAILED, unless latchFailure is false: the ladder's early call passes false, since the
+    // engine may not have registered the enums it looks for yet.
+    bool DetectUEnumNames(bool latchFailure = true);
 }
 ```
 

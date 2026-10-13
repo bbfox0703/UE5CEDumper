@@ -5777,7 +5777,7 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
 }
 
 // ============================================================
-// DetectUEnumNames — Lazy-detect UEnum::Names TArray offset
+// DetectUEnumNames — detect the UEnum::Names TArray offset, on first use or by the version ladder at init
 //
 // Strategy: Find a well-known UEnum object (ENetRole or EObjectFlags)
 // in GObjects, then probe offsets 0x30..0x120 for a TArray header

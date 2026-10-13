@@ -408,7 +408,7 @@ uint32_t DetectVersion();
 // Updates DynOff:: namespace variables.
 bool ValidateAndFixOffsets(uint32_t ueVersion);
 
-// Lazy-detect UEnum::Names offset by probing known enums (ENetRole, etc.) in GObjects.
+// Detect the UEnum::Names offset by probing known enums (ENetRole, etc.) in GObjects, on first use.
 // Sets DynOff::UENUM_NAMES and DynOff::bUEnumNamesDetected on success.
 // A search that ran to completion and found nothing latches bUEnumNamesFailed, so the enum readers stop
 // re-walking the object array -- unless `latchFailure` is false [VER-MARKERS-PAST-504]. A caller that runs
