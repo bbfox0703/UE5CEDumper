@@ -41,6 +41,15 @@ public partial class CallTracePanel : UserControl
         return base.MeasureOverride(availableSize);
     }
 
+    /// <summary>[CT-FLOOR-208] A view model set after the last measure has never been told the room. One that replaces
+    /// another leaves the panel's own size as it was, so nothing else measures the panel again, and the new view
+    /// model's remembered pane would stay unfitted over the list.</summary>
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        base.OnDataContextChanged(e);
+        InvalidateMeasure();
+    }
+
     private void OnTimeThumbDragDelta(object? sender, VectorEventArgs e) => Vm?.DragTime(e.Vector.X);
 
     private void OnDurationThumbDragDelta(object? sender, VectorEventArgs e) => Vm?.DragDuration(e.Vector.X);
