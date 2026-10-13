@@ -2473,12 +2473,6 @@ static SnapValue DecodeSnapElement(const ParamField& f, const uint8_t* p, uint32
     SnapValue v;
     if (f.size <= 0 || avail < static_cast<uint32_t>(f.size)) { v.mark = SnapMark::Missing; return v; }
     const std::string& t = f.typeName;
-    if (t == "Int8Property") {   // signed: PreviewScalarValue reads it through uint8_t
-        int8_t x = 0;
-        memcpy(&x, p, 1);
-        v.text = std::to_string(x);
-        return v;
-    }
     if (t == "BoolProperty") {
         if (f.boolMask) v.text = (p[0] & f.boolMask) ? "true" : "false";
         else if (f.boolNative) v.text = p[0] ? "true" : "false";

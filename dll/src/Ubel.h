@@ -1105,7 +1105,9 @@ inline std::string PreviewScalarValue(const std::string& typeName,
     // read every bool as false. ⛔ Never a bare (p[0] & mask) != 0.
     if (typeName == "BoolProperty")
         return (boolMask != 0 ? (p[0] & boolMask) != 0 : p[0] != 0) ? "true" : "false";
-    if (typeName == "ByteProperty" || typeName == "Int8Property") return std::to_string(p[0]);
+    if (typeName == "ByteProperty") return std::to_string(p[0]);
+    // [INT8-PREVIEW] int8 in every engine: the game holds -1 as 0xFF, which a uint8_t read shows as 255.
+    if (typeName == "Int8Property") return std::to_string(static_cast<int8_t>(p[0]));
     return "";   // needs process state, or not previewable
 }
 
