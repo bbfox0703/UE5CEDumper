@@ -411,6 +411,10 @@ public sealed class SnapshotStore : ISnapshotStore
         }
     }
 
+    /// <summary>A capture session's PRAGMA synchronous (0 OFF, 1 NORMAL): the tests' view of when its bulk load ends.</summary>
+    internal static long SessionSynchronousForTests(ICaptureSession session)
+        => ((CaptureSession)session).SynchronousLevel();
+
     // Builds + binds the scalar + struct-array INSERT commands for the `fields` table
     // once, then inserts each captured object's rows. Shared by the one-shot
     // WriteChunkAsync (tests / seeding) and the long-lived CaptureSession so the
@@ -694,6 +698,15 @@ public sealed class SnapshotStore : ISnapshotStore
 
             await tx.CommitAsync(ct);
             _completed = true;
+        }
+
+        /// <summary>The session connection's PRAGMA synchronous (0 OFF, 1 NORMAL), for the tests.</summary>
+        internal long SynchronousLevel()
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.Transaction = _tx;   // the session keeps a batch transaction open between commits
+            cmd.CommandText = "PRAGMA synchronous;";
+            return (long)(cmd.ExecuteScalar() ?? -1L);
         }
 
         public async ValueTask DisposeAsync()

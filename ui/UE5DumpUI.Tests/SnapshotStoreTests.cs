@@ -354,6 +354,26 @@ public class SnapshotStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task A_capture_completes_under_synchronous_NORMAL()
+    {
+        // [SNAPSHOT-CRASH-PARTIAL] The bulk load runs synchronous=OFF, so its checkpoints do not sync, and a checkpoint
+        // syncs the db file only when it has frames left to copy: once an OFF checkpoint has folded every frame in,
+        // the post-capture TRUNCATE checkpoint finds nothing and syncs nothing. A completion -- a kept partial's
+        // [W1-PARTIAL-MARK] as much as a whole capture's -- committed under NORMAL leaves frames that only a checkpoint
+        // which syncs folds in, and that sync flushes the file the OFF checkpoints wrote.
+        var ct = TestContext.Current.CancellationToken;
+        _store.SetActiveGame("DURABLE");
+        long kept = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "kept", Scope = "NumericNoByte" }, ct);
+        await using var s = await _store.BeginCaptureSessionAsync(ct);
+        Assert.Equal(0L, SnapshotStore.SessionSynchronousForTests(s));   // the bulk load: OFF
+
+        int n = s.WriteChunk(kept, new[] { MakeObject(1, ("HP", "IntProperty", "0A000000")) }, ct);
+        await s.CompleteSnapshotAsync(kept, 1, n, isUsable: true, partialReason: Constants.SnapshotPartialDiskLow, ct: ct);
+
+        Assert.Equal(1L, SnapshotStore.SessionSynchronousForTests(s));   // NORMAL before the session is even disposed
+    }
+
+    [Fact]
     public void PartialMarker_ShowsInTheGridLabel_AndEveryPickerLine()
     {
         const string at = "2026-09-12T10:00:00Z";
