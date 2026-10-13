@@ -9487,6 +9487,12 @@ static void Test_Serie_UE4EntryIsWide() {
     // The rest of the word names the entry's own slot, so a set bit counts only beside it: a layout whose first int32
     // is something else keeps today's narrow read.
     EXPECT("UE4WIDE: a set bit beside another slot is not believed", !Serie::UE4EntryIsWide((6 << 1) | 1, 5));
+    // The whole slot, not its low bits: a word that agrees only within a chunk (the element index GetEntry already
+    // has) or only in 16 bits would let a non-stock first int32 with bit 0 set through once in 2^15, not 2^32.
+    EXPECT("UE4WIDE: a slot that agrees only within the chunk is not believed",
+           !Serie::UE4EntryIsWide(((5 + 0x4000) << 1) | 1, 5));
+    EXPECT("UE4WIDE: a slot that agrees only in its low 16 bits is not believed",
+           !Serie::UE4EntryIsWide(((5 + 0x10000) << 1) | 1, 5));
     EXPECT("UE4WIDE: a zeroed word is not wide", !Serie::UE4EntryIsWide(0, 1));
     EXPECT("UE4WIDE: an all-ones word is not wide for a real slot", !Serie::UE4EntryIsWide(-1, 5));
     static_assert(!Serie::UE4EntryIsWide(4 << 1, 4), "UE4EntryIsWide must be constexpr-evaluable");
