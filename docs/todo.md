@@ -253,7 +253,7 @@ findings, with one cause: the exe has a protector's shape (scrambled section nam
 section, no ASLR), as Elliot's and P3R's do -- the only three of the 37 UE exes on this machine without ASLR
 (measured 2026-10-09 from their PE headers; every other title and fixture has it).
 
-- ⬜ `[VER-MARKERS-PAST-504]` (MED): a title whose PE version is stripped and whose exe holds no `++UE5+Release-`
+- ✅ `[VER-MARKERS-PAST-504]` **BUILT 2026-10-14, in source -- option (a); live checks owed** (MED; closure below the row): a title whose PE version is stripped and whose exe holds no `++UE5+Release-`
   string is reported as **504** at most: the runtime marker ladder (tagged FFieldVariant → 503, the
   `SetGravityDirection` UFUNCTION → 504, `DynOff::CmcMarkerVersion`) has no rung past 5.4. FFRS reads 504 and is
   most likely **5.6**; so is Elliot, recorded as 5.4. Evidence, measured 2026-10-09 on every UE title installed here:
@@ -275,6 +275,31 @@ section, no ASLR), as Elliot's and P3R's do -- the only three of the 37 UE exes 
   (`D3D12Core.dll`, `tbb12.dll`) -- one-to-one with 5.4 / 5.5-5.6 / 5.7 / 5.8 above; a licensee can ship its own
   Agility SDK, so it should only raise a marker-ladder result. Then correct Elliot's row in test-games.md. Effort
   **M**.
+  ✅ **Built 2026-10-14** (red `c54374d6` / green `7e66cca8`, red `e9450b81` / green `292f1be0`, red `08b3ee04` /
+  green `0f2d67f6`, pins `cd7b5ce9`, rig `10746aca`, docs `1c956d48`; review fixes `4c47cb38`, `b17fced3`, `5bc9732c`,
+  red `a2954fe4` / green `514c75b2`, red `65d1b651` / green `79f636e8`, red `8f37f0c5` / green `d99c4f04`, docs
+  `121195c8`, `ff65c039`; 20 mutants killed): two raise-only rungs in `DynOff::ApplyVersionLadder`, FProperty mode,
+  after the CMC rung and before 507 / 508. **505** (label 500-504): a clear majority (at least 5, and three quarters)
+  of sampled native enums hold their outermost package's FName at UEnum::Names+0x14 (5.5 / 5.6 move EnumPackage there
+  from +0x20; FNameData's 5.7+ layout is skipped). **506** (label 500-505): a clear majority of sampled classes, script
+  structs and functions read PropertyDataAvailable (1) at PropertiesSize+6 -- 5.6 split MinAlignment into int16 +
+  `std::atomic<uint16> StructStateFlags`, which `UStruct::Link` sets. Measured on the four Shipping fixtures' PDBs
+  (5.1 / 5.4 old layouts; 5.6 new; 5.8 FNameData + new) and the UE 5.4 / 5.6 / 5.7 / 5.8 headers; 5.5 from RE-UE4SS's
+  template only (no 5.5 binary here). The probes live in Grimoire.h (driven by dll_helpers_test), the glue in
+  Frieren.cpp / Fern.cpp is pinned by C# source tests; init, Auto over an override and, new, a first offsets probe in
+  apply_rescan all climb the same ladder. The early `DetectUEnumNames(latchFailure=false)` never latches a miss. Effect
+  of the 506 label, every version gate checked: only the ProcessEvent fallback slot moves (0x268 -> 0x260, what FFRS
+  and Elliot measured by pattern). Cost, unmeasured: a 5.0-5.4 label pays the early enum detection and bounded first-N
+  walks at each init. On dev: dll_core_test 1239 checks, 0 failure(s); dll_helpers_test Pass 3363, Fail 0; C# 6525
+  (6524 passed, 1 skipped); 35 gates. **Live checks owed:** DumperTest (5.4) and DumperTest51 stay 504 / 501 with the
+  probes reading the old layouts; DumperTest56 seeded to 504 climbs 504 -> 505 -> 506; `a4_raise_ladder.py` on
+  DumperTest58 (504 -> 506 -> 507 -> 508); Manor Lords (5.5.4) seeded to 504 reaches 505 and NOT 506; FFRS and Elliot
+  through their proxies climb to 506 and badge UE 5.6 -- then correct their docs/test-games.md rows.
+- ⬜ `[OVERRIDE-RAISED-BY-LADDER]` (**the maintainer's decision**, from `[VER-MARKERS-PAST-504]`'s review): every
+  raise rung lifts a persisted user override as it lifts a detection (503 / 504 / 507 / 508 already did; 505 / 506 now
+  widen it to any 5.0-5.5 override on a 5.5 or 5.6 title), and the override flag stays set, so the badge reads e.g.
+  UE 5.6 with the override mark. Since `79f636e8` init logs "User override = N overruled -- the structural markers
+  above raise it to M". Should an override be exempt -- from every raise rung, or only the statistical 505 / 506?
 - ⬜ `[MH-PRERESERVE-PROXY]` (LOW, a proposal): FFRS's game-thread hook failed with `MH_ERROR_MEMORY_ALLOC` at the
   first two Live Funcs Starts (14:34:33, 14:34:48) and recovered at the third (14:35:31, "hook RECOVERED on attempt
   3", validated 1,620 hooks / 1,500 ms): the bounded retry of `[MHPOISON-STARVE-2026-09-07]` working on a real game
