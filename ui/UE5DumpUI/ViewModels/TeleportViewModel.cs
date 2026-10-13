@@ -4867,9 +4867,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 // A connect's prime may still be reading the DLL, and until it lands the cards hold what the disconnect
                 // reset: what it then found running would stay on. It is quiet and catches its own failures.
                 await ConnectPrime;
+                await TurnOffRunningExperimentalAsync();
+                // Keep Foreground last: an untick is a click in the UI, so the game is unfocused, and a game that idles
+                // then could not run the un-hide and collision restore above, which need its game thread.
                 // Unconditionally: the badge can read Unknown over a hook that holds, and OFF is idempotent.
                 await ForceForegroundLockOffCommand.ExecuteAsync(null);
-                await TurnOffRunningExperimentalAsync();
             }
         }
         catch (Exception ex) { _log.Error("Teleport experimental teardown failed", ex); }
@@ -4888,10 +4890,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             await prime;
             if (gen != _connectTeardownGen || !IsConnected || ExperimentalEnabled) return;
-            // Keep Foreground only when the prime read it ON: an OFF at every connect would cost a new user's connect a
-            // round trip and stamp over its "Connected", and a read that failed keeps its honest Unknown.
-            if (_foregroundLockOn) await ForceForegroundLockOffCommand.ExecuteAsync(null);
             await TurnOffRunningExperimentalAsync();
+            // Keep Foreground last, for the untick's reason. Only when the prime read it ON: an OFF at every connect
+            // would cost a new user's connect a round trip and stamp over its "Connected", and a read that failed keeps
+            // its honest Unknown.
+            if (_foregroundLockOn) await ForceForegroundLockOffCommand.ExecuteAsync(null);
         }
         catch (Exception ex) { _log.Error("Teleport connect-time experimental teardown failed", ex); }
     }
