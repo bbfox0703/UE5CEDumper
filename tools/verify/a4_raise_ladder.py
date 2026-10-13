@@ -5,10 +5,14 @@
     py tools/verify/a4_raise_ladder.py --restore-only  # if a previous run died mid-way
 
 THE ROW. `UE5_Init` runs a raise-ONLY ladder every init: 503 (tagged FFieldVariant) -> 504
-(CMC::GravityDirection) -> 507 (reordered FUObjectItem) -> 508 (virtual ~FFieldClass). The 507
-and 508 rungs had never been observed firing, because they only run when the *cached* version is
-BELOW them -- and on a genuine 5.8 binary detection already answers 508, so the ladder has nothing
-to raise.
+(CMC::SetGravityDirection) -> 505 (UEnum::EnumPackage) -> 506 (UStruct::StructStateFlags) -> 507
+(reordered FUObjectItem) -> 508 (virtual ~FFieldClass). The 507 and 508 rungs had never been
+observed firing, because they only run when the *cached* version is BELOW them -- and on a genuine
+5.8 binary detection already answers 508, so the ladder has nothing to raise.
+
+From a 504 seed on a 5.8 binary the 506 rung fires first [VER-MARKERS-PAST-504]: 5.8 keeps 5.6's
+StructStateFlags. The 505 rung stays silent there by design -- 5.7 replaced UEnum::Names with
+FNameData, which has no EnumPackage slot behind it, so its probe logs that it skipped.
 
 ⭐ WHY NO REBUILD AND NO REPACKAGE. The input is data. Seed the hint cache with `ueVersion: 504`
 for this game and the ladder has somewhere to climb from. This is legitimate rather than a lie the
@@ -157,7 +161,7 @@ def main():
 
         # ---- read the ladder off the log ------------------------------------
         print("\n--- version lines written after the watermark ---")
-        want = {"seed": False, "507": False, "508": False, "complete": False}
+        want = {"seed": False, "506": False, "507": False, "508": False, "complete": False}
         seen = 0
         for p in sorted(ld.glob("*-0.log")) if ld.is_dir() else []:
             for ln in p.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -165,16 +169,20 @@ def main():
                 if not m or m.group(1) < watermark:
                     continue
                 seen += 1
-                if not re.search(r"UE Version|raising floor|structural marker|Complete \(UE", ln):
+                if not re.search(r"UE Version|raising floor|structural marker|Complete \(UE"
+                                 r"|EnumPackage probe|StructStateFlags probe", ln):
                     continue
                 print("   ", ln.strip()[:168])
-                # The seed is witnessed by the 507 rung REPORTING it, which is stronger than
+                # The seed is witnessed by the first rung REPORTING it, which is stronger than
                 # the "cached, rev=" line: it proves the value reached UE5_Init, not merely
-                # that Genau read something.
+                # that Genau read something. Since [VER-MARKERS-PAST-504] that first rung is
+                # the 506 one, so the 507 line now reports 506.
+                if "structural marker" in ln and "version=%d" % SEED_VERSION in ln:
+                    want["seed"] = True
+                if "raising to 506" in ln:
+                    want["506"] = True
                 if "raising floor to 507" in ln:
                     want["507"] = True
-                    if "version=%d" % SEED_VERSION in ln:
-                        want["seed"] = True
                 if "raising floor to 508" in ln:
                     want["508"] = True
                 if "Complete (UE" in ln:
@@ -190,6 +198,7 @@ def main():
             print("\n  (%d log lines in the window)" % seen)
             for k, label in (("seed", "the seed reached UE5_Init (rung reports version=%d)"
                                       % SEED_VERSION),
+                             ("506", "506 rung fired (UStruct::StructStateFlags)"),
                              ("507", "507 rung fired (FUObjectItem Object@+0x08)"),
                              ("508", "508 rung fired (FFieldClass::Name@+0x08)"),
                              ("complete", "scan completed")):
