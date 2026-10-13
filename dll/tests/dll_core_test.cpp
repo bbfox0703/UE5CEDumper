@@ -6274,6 +6274,9 @@ int main() {
               rA.arrayElements.empty() ? "(no elements)" : rA.arrayElements[0].value.c_str());
         check("ASSETPTR ⭐: ...without the 4.18+ soft-array layout, which places an FName path the CE export would read",
               rA.softArrayPathOffset == 0 && rA.softArrayFNameSize == 0, std::to_string(rA.softArrayPathOffset).c_str());
+        check("ASSETPTR ⭐: ...and without an FName index for the CE DropDownList (+0x10 holds the FString's pointer)",
+              rA.arrayElements.size() == 2 && rA.arrayElements[0].rawIntValue == 0,
+              rA.arrayElements.empty() ? "(no elements)" : std::to_string(rA.arrayElements[0].rawIntValue).c_str());
         check("ASSETPTR ⭐: no 4.18+ soft-path envelope was latched from a 0x20 asset pointer",
               DynOff::SOFTPTR_PATH == -1, std::to_string(DynOff::SOFTPTR_PATH).c_str());
 

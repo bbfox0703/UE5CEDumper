@@ -1506,7 +1506,8 @@ static void ApplyClassValuedNames(uintptr_t propAddr, std::string& objClass, std
 }
 
 static bool IsClassValuedProperty(const std::string& tn) {
-    return tn == "ClassProperty" || tn == "SoftClassProperty";
+    // [UE4-ASSETPTR-PROPS] UAssetClassProperty adds its MetaClass after PropertyClass the same way (UE415_Flyinh's PDB).
+    return tn == "ClassProperty" || tn == "SoftClassProperty" || tn == "AssetClassProperty";
 }
 
 // [SDK-CONTAINER-OBJCLASS] Every property type whose first subclass member is a class pointer:
@@ -1515,7 +1516,7 @@ static bool IsClassValuedProperty(const std::string& tn) {
 static bool IsObjectFamilyProperty(const std::string& tn) {
     return tn == "ObjectProperty" || tn == "ClassProperty" || tn == "WeakObjectProperty"
         || tn == "SoftObjectProperty" || tn == "SoftClassProperty" || tn == "InterfaceProperty"
-        || tn == "LazyObjectProperty";
+        || tn == "LazyObjectProperty" || IsAssetPtrProperty(tn);   // [UE4-ASSETPTR-PROPS] soft, before 4.18
 }
 
 // One slot's class names, the field's own or a container's: the plain slot read for the object family, overridden
@@ -2236,10 +2237,7 @@ bool ReadFunctionKey(uintptr_t func, int32_t& nameIndex, int32_t& nameNumber, ui
 // engine it can land on another field. The slot is taken only when it holds that kind of object.
 static uintptr_t ParamSlotObject(uintptr_t prop, const std::string& typeName) {
     const bool isStruct = typeName == "StructProperty";
-    const bool isObject = typeName == "ObjectProperty" || typeName == "ClassProperty" ||
-                          typeName == "WeakObjectProperty" || typeName == "SoftObjectProperty" ||
-                          typeName == "SoftClassProperty" || typeName == "InterfaceProperty" ||
-                          typeName == "LazyObjectProperty";
+    const bool isObject = IsObjectFamilyProperty(typeName);
     if (!isStruct && !isObject) return 0;
     const int slot = DynOff::bUseFProperty ? DynOff::FSTRUCTPROP_STRUCT : DynOff::UPropertySubclassStart(g_cachedUEVersion);
     uintptr_t ptr = 0;
@@ -2558,6 +2556,13 @@ static SnapValue DecodeSnapElement(const ParamField& f, const uint8_t* p, uint32
         }
         return v;
     }
+    if (IsAssetPtrProperty(t)) {   // [UE4-ASSETPTR-PROPS] the path is one FString: its text is on the heap, not in the copy
+        const int32_t num = load32(ASSETPTR_PATH + 8);
+        if (num <= 1 || load64(ASSETPTR_PATH) == 0) { v.text = "null"; return v; }
+        v.text = "<asset path, " + std::to_string(num - 1) + " chars, not copied>";
+        v.mark = SnapMark::Header;
+        return v;
+    }
     if (t == "LazyObjectProperty") {
         const int off = ctx.lazyGuidOffset >= 0 ? ctx.lazyGuidOffset : LazyGuidOffset(f.size);
         char buf[48];
@@ -2862,10 +2867,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             // PropertyClass lives at the same FProperty subclass
                             // extension slot as FStructProperty::Struct — mirrors
                             // the WalkClassEx field-side enrichment, ReadSlotClassNames).
-                            else if (param.typeName == "ObjectProperty"     || param.typeName == "ClassProperty"
-                                  || param.typeName == "WeakObjectProperty" || param.typeName == "SoftObjectProperty"
-                                  || param.typeName == "SoftClassProperty"  || param.typeName == "InterfaceProperty"
-                                  || param.typeName == "LazyObjectProperty") {
+                            else if (IsObjectFamilyProperty(param.typeName)) {
                                 param.objClassName = ReadPropertyClassName(cur);
                             }
 
@@ -2932,10 +2934,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             // extension slot as UStructProperty::Struct holds
                             // UObjectPropertyBase::PropertyClass — both are the
                             // first derived field after the UProperty base.
-                            else if (param.typeName == "ObjectProperty"     || param.typeName == "ClassProperty"
-                                  || param.typeName == "WeakObjectProperty" || param.typeName == "SoftObjectProperty"
-                                  || param.typeName == "SoftClassProperty"  || param.typeName == "InterfaceProperty"
-                                  || param.typeName == "LazyObjectProperty") {
+                            else if (IsObjectFamilyProperty(param.typeName)) {
                                 uintptr_t classPtr = 0;
                                 if (Macht::ReadSafe(cur + subclassStart, classPtr) && IsClassObject(classPtr)) {
                                     std::string cn = GetName(classPtr);
@@ -4501,6 +4500,9 @@ ReadArrayResult ReadStructArrayElements(
             } else if (cf.typeName == "SoftObjectProperty" || cf.typeName == "SoftClassProperty") {
                 sf.value = ReadSoftObjectPath(elemAddr + cf.offset + SoftPathOffset(cf.size));
                 if (sf.value.empty()) sf.value = "(none)";
+            } else if (IsAssetPtrProperty(cf.typeName)) {   // [UE4-ASSETPTR-PROPS]
+                sf.value = ReadFString(elemAddr + cf.offset, ASSETPTR_PATH);
+                if (sf.value.empty()) sf.value = "(none)";
             } else if (cf.typeName == "LazyObjectProperty") {
                 uintptr_t gAddr = elemAddr + cf.offset + LazyGuidOffset(cf.size);
                 uint32_t ga = 0, gb = 0, gc = 0, gd = 0;
@@ -4570,10 +4572,12 @@ bool IsSoftObjectArrayType(const std::string& innerTypeName) {
 // For each element resolves the FSoftObjectPath asset name (UI display)
 // and the embedded FWeakObjectPtr to a live UObject* when the asset is
 // currently loaded (so CE / Address Finder can navigate to it).
+// [UE4-ASSETPTR-PROPS] `assetPtr`: the elements are 4.11-4.17's FAssetPtr, whose path is an FString at
+// ASSETPTR_PATH -- read as that, with no FName index for the CE DropDownList (there is no FName to list).
 // ============================================================
 ReadArrayResult ReadSoftObjectArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
-    int32_t elemSize, int32_t offset, int32_t limit)
+    int32_t elemSize, int32_t offset, int32_t limit, bool assetPtr)
 {
     ReadArrayResult result;
     result.ok = false;
@@ -4586,7 +4590,10 @@ ReadArrayResult ReadSoftObjectArrayElements(
     // Combined element size ranges 0x20 .. 0x48 across versions — the low end
     // dropped from 0x28 when UE 5.3 deleted TagAtLastTest (see DynOff::SOFTPTR_PATH).
     // When FPROPERTY_ELEMSIZE returned garbage, derive a plausible fallback.
-    if (elemSize < 0x18 || elemSize > 0x80) {
+    if (assetPtr && elemSize != ASSETPTR_PATH + 0x10) {
+        Sein::Warn("WALK:ArrayG", "Invalid AssetPtr elemSize=%d, using 0x%X", elemSize, ASSETPTR_PATH + 0x10);
+        elemSize = ASSETPTR_PATH + 0x10;   // FAssetPtr has one size: the envelope and one FString
+    } else if (!assetPtr && (elemSize < 0x18 || elemSize > 0x80)) {
         int pathSize = SoftObjectPathPayloadSize();
         // Pass 0: there is no trustworthy ElementSize here by definition, so take
         // whatever has already been measured, or the version-derived default.
@@ -4628,8 +4635,9 @@ ReadArrayResult ReadSoftObjectArrayElements(
         uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * elemSize;
 
         // Asset path string (display value)
-        const int softPathOff = SoftPathOffset(static_cast<int32_t>(elemSize));
-        std::string assetPath = ReadSoftObjectPath(elemAddr + softPathOff);
+        const int softPathOff = assetPtr ? ASSETPTR_PATH : SoftPathOffset(static_cast<int32_t>(elemSize));
+        std::string assetPath = assetPtr ? ReadFString(elemAddr, ASSETPTR_PATH)
+                                         : ReadSoftObjectPath(elemAddr + softPathOff);
 
         // Surface the AssetPathName / PackageName ComparisonIndex so the CE XML
         // exporter can build a shared DropDownList for the FName leaf. The
@@ -4642,7 +4650,7 @@ ReadArrayResult ReadSoftObjectArrayElements(
         // and at least agreed with each other; splitting them is strictly worse than the
         // original bug, and it is the CE table -- the artifact that ships.
         uint32_t pathFNameIdx = 0;
-        if (Macht::ReadSafe(elemAddr + softPathOff, pathFNameIdx) && pathFNameIdx != 0
+        if (!assetPtr && Macht::ReadSafe(elemAddr + softPathOff, pathFNameIdx) && pathFNameIdx != 0
             && pathFNameIdx != 0xFFFFFFFFu) {
             elem.rawIntValue = static_cast<int64_t>(pathFNameIdx);
         }
@@ -5924,9 +5932,13 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         // When the asset is currently loaded the embedded FWeakObjectPtr resolves
         // to the live UObject*; expose it via ptrValue so the UI can drill in
         // and the Address Finder can route through soft references.
-        if (fi.TypeName == "SoftObjectProperty" || fi.TypeName == "SoftClassProperty") {
+        // [UE4-ASSETPTR-PROPS] 4.11-4.17's AssetObject / AssetClass properties share this envelope, but their path is one
+        // FString at ASSETPTR_PATH, read as that.
+        const bool assetPtr = IsAssetPtrProperty(fi.TypeName);
+        if (fi.TypeName == "SoftObjectProperty" || fi.TypeName == "SoftClassProperty" || assetPtr) {
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
-            std::string assetPath = ReadSoftObjectPath(fieldAddr + SoftPathOffset(fi.Size));
+            std::string assetPath = assetPtr ? ReadFString(fieldAddr, ASSETPTR_PATH)
+                                             : ReadSoftObjectPath(fieldAddr + SoftPathOffset(fi.Size));
             fv.strValue = assetPath;
 
             // Resolve embedded FWeakObjectPtr at +0x00 → live UObject* (when loaded)
@@ -6456,6 +6468,14 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             fv.arrayElements = std::move(softResult.elements);
                         }
                     }
+                }
+                // [UE4-ASSETPTR-PROPS] 4.11-4.17's TAssetPtr arrays: the same per-element read in their own layout. No
+                // soft-array metadata is stamped -- it describes an FName path, which the CE export would lay out here.
+                if (innerFound && IsAssetPtrProperty(fv.arrayInnerType) && arr.Data && fv.arrayCount > 0) {
+                    auto assetResult = ReadSoftObjectArrayElements(
+                        instanceAddr, fi.Offset, fv.arrayElemSize, 0, arrayLimit, /*assetPtr=*/true);
+                    if (assetResult.ok && !assetResult.elements.empty())
+                        fv.arrayElements = std::move(assetResult.elements);
                 }
                 // Phase H: Lazy object arrays (UProperty mode)
                 if (innerFound && IsLazyObjectArrayType(fv.arrayInnerType)
@@ -8446,8 +8466,10 @@ void ResolvePropertyPreviews(
         // no branch at all (so it silently got NO preview) — audit #5 U13. Display
         // order matches WalkInstance's own soft-pointer handler: path, then the
         // resolved target when the asset happens to be loaded, then "(none)".
-        if (t == "SoftObjectProperty" || t == "SoftClassProperty") {
-            std::string assetPath = ReadSoftObjectPath(inst + off + SoftPathOffset(sz));
+        if (t == "SoftObjectProperty" || t == "SoftClassProperty" || IsAssetPtrProperty(t)) {
+            // [UE4-ASSETPTR-PROPS] 4.11-4.17's asset pointers: the same envelope, the path one FString.
+            std::string assetPath = IsAssetPtrProperty(t) ? ReadFString(inst + off, ASSETPTR_PATH)
+                                                          : ReadSoftObjectPath(inst + off + SoftPathOffset(sz));
             if (!assetPath.empty()) {
                 m.preview = assetPath;
                 continue;

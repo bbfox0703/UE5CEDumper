@@ -50,6 +50,9 @@ inline int32_t RequiredAlignment(const std::string& typeName, int32_t elemSize,
     // WeakObjectProperty: 2x int32 (8 bytes), 4-byte aligned.
     if (typeName == "WeakObjectProperty") return 4;
     if (typeName == "SoftObjectProperty" || typeName == "SoftClassProperty") return 8;
+    // [UE4-ASSETPTR-PROPS] 4.11-4.17's FAssetPtr ends in an FString, so it is 8-aligned too (UE415_Flyinh's PDB: 0x20,
+    // padded after TagAtLastTest).
+    if (typeName == "AssetObjectProperty" || typeName == "AssetClassProperty") return 8;
     // FLazyObjectPtr = TPersistentObjectPtr<FUniqueObjectGuid>: FWeakObjectPtr {int32, int32} (+ the
     // pre-5.3 int32 TagAtLastTest) + a bare FGuid (four uint32, no alignas) -- alignof 4 in EVERY era.
     // It said 8, which put a TMap<int32, TLazyObjectPtr> value at +8 instead of +4 and made every

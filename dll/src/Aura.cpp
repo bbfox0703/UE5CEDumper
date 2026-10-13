@@ -3246,7 +3246,8 @@ std::vector<ContainerMatch> FindInContainersDeep(uintptr_t addr, int32_t maxResu
 //   - Direct ObjectProperty / ClassProperty / InterfaceProperty
 //     (8-byte UObject* read directly at field+0)
 //   - Direct WeakObjectProperty / SoftObjectProperty / SoftClassProperty /
-//     LazyObjectProperty (FWeakObjectPtr at field+0 → resolved via
+//     LazyObjectProperty, and 4.11-4.17's asset pointers (IsWeakLikeProp)
+//     (FWeakObjectPtr at field+0 → resolved via
 //     ResolveWeakObjectPtr; only matches when the ref is currently bound
 //     to a live UObject)
 //   - DelegateProperty (single FScriptDelegate — FWeakObjectPtr target at
@@ -3284,8 +3285,8 @@ struct DirectPointerEntry {
 struct WeakLikePointerEntry {
     int32_t     offset;
     std::string name;
-    std::string typeName;     // "WeakObjectProperty" / "SoftObjectProperty"
-                              // / "SoftClassProperty" / "LazyObjectProperty"
+    std::string typeName;     // the holder's type: one IsWeakLikeProp accepts, a DelegateProperty, or the
+                              // OptionalProperty that wraps a weak-like value
     int32_t     setFlagOffset = -1;   // TOptional bIsSet byte, relative to offset; -1 = none
 };
 
@@ -3368,8 +3369,9 @@ struct ClassReferenceMeta {
 };
 
 static bool IsWeakLikeProp(const std::string& tn) {
+    // [UE4-ASSETPTR-PROPS] 4.11-4.17's asset pointers carry the same FWeakObjectPtr at +0 (Ubel::ASSETPTR_PATH).
     return tn == "WeakObjectProperty" || tn == "SoftObjectProperty"
-        || tn == "SoftClassProperty"  || tn == "LazyObjectProperty";
+        || tn == "SoftClassProperty"  || tn == "LazyObjectProperty" || Ubel::IsAssetPtrProperty(tn);
 }
 static bool IsDirectObjectProp(const std::string& tn) {
     return tn == "ObjectProperty" || tn == "ClassProperty";
@@ -5669,7 +5671,7 @@ static int GetFieldTypeWeight(const std::string& typeName) {
     if (typeName == "ObjectProperty"     || typeName == "ClassProperty"      ||
         typeName == "WeakObjectProperty" || typeName == "LazyObjectProperty" ||
         typeName == "SoftObjectProperty" || typeName == "SoftClassProperty"  ||
-        typeName == "InterfaceProperty") return 2;
+        typeName == "InterfaceProperty"  || Ubel::IsAssetPtrProperty(typeName)) return 2;   // [UE4-ASSETPTR-PROPS]
     if (typeName == "MapProperty" || typeName == "SetProperty") return 2;
 
     // Low-value: enums, bools, strings, bytes
@@ -6276,7 +6278,8 @@ static uintptr_t ParamTargetType(uintptr_t fieldAddr) {
         pType == "StructProperty"     || pType == "ObjectProperty"     ||
         pType == "ClassProperty"      || pType == "WeakObjectProperty" ||
         pType == "SoftObjectProperty" || pType == "SoftClassProperty"  ||
-        pType == "InterfaceProperty"  || pType == "LazyObjectProperty";
+        pType == "InterfaceProperty"  || pType == "LazyObjectProperty" ||
+        Ubel::IsAssetPtrProperty(pType);   // [UE4-ASSETPTR-PROPS] a UObjectPropertyBase, PropertyClass in the slot
     if (!classBearing) return 0;
     // FStructProperty::Struct and FObjectPropertyBase::PropertyClass share the
     // FProperty subclass-extension slot. UE4 (<4.25) UProperty puts them at the start Genau
