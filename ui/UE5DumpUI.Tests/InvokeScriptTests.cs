@@ -2372,6 +2372,45 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void MailboxInvoke_SizesTheParametersByTheChain_AndRefusesBeforeProcessEvent()
+    {
+        // [OVERRIDE-REVIEW2-LOWS] CMD_INVOKE hands ProcessEvent the fixed paramsData slab (or the queued path's owned
+        // copy of it), so a parameter block that ends past it is written into whatever follows the mailbox. The verdict
+        // is Mimic::InvokeSlabRefusal (pinned in dll_helpers_test); HandleInvoke's glue -- the block measured by the
+        // function's own chain, the verdict asked before the first ProcessEvent, a refusal that returns -- had no pin,
+        // and the review's mutant M1 survived. Mimic.cpp reaches no test target, so the glue is pinned here.
+        var mimic = DllSource("Mimic.cpp").Replace("\r\n", "\n");
+        int fn = mimic.IndexOf("static void HandleInvoke() {", StringComparison.Ordinal);
+        Assert.True(fn >= 0, "HandleInvoke was not found");
+        int end = mimic.IndexOf("\n}\n", fn, StringComparison.Ordinal);
+        Assert.True(end > fn, "the end of HandleInvoke was not found");
+        var body = mimic[fn..end];
+
+        int resolved = body.IndexOf("const bool flagsResolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);",
+                                    StringComparison.Ordinal);
+        Assert.True(resolved >= 0, "the invoked function must be resolved at the address being invoked");
+        // A ParmsSize alone is read where the version puts the tail; the chain's end is where ProcessEvent writes.
+        var need = System.Text.RegularExpressions.Regex.Match(body,
+            @"const uint32_t needBytes = flagsResolved \? Ubel::ParamBufferSize\(ufuncAddr, fi\.parmsSize\) : 0;");
+        Assert.True(need.Success, "the parameter block must be measured by Ubel::ParamBufferSize");
+        var verdict = System.Text.RegularExpressions.Regex.Match(body,
+            @"const int32_t refusal = InvokeSlabRefusal\(flagsResolved, needBytes,\s*static_cast<uint32_t>\(sizeof\(g_invokeMailbox\.paramsData\)\)\);");
+        Assert.True(verdict.Success, "the verdict must weigh that block against the slab ProcessEvent is handed");
+        var refused = System.Text.RegularExpressions.Regex.Match(body,
+            @"if \(refusal != 0\) \{(?:(?!\n    \}).)*?\bSetError\(refusal, msg\);\s*return;\s*\n    \}",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        Assert.True(refused.Success, "a refusal must publish its own code and return before anything is invoked");
+
+        int direct = body.IndexOf("UE5_CallProcessEventDirect(", StringComparison.Ordinal);
+        int queued = body.IndexOf("UE5_CallProcessEventEx(", StringComparison.Ordinal);
+        Assert.True(direct >= 0 && queued >= 0, "both ProcessEvent routes must be in HandleInvoke");
+        Assert.True(resolved < need.Index && need.Index < verdict.Index && verdict.Index < refused.Index,
+                    "resolve, measure, judge, refuse -- in that order");
+        Assert.True(refused.Index + refused.Length < Math.Min(direct, queued),
+                    "the slab must be judged before the first ProcessEvent call");
+    }
+
+    [Fact]
     public void FindRefsReply_CarriesSparseSkipped()
     {
         // [R7-A-01] Same object, additive: the sparse pass did not run on a compact-set build.
