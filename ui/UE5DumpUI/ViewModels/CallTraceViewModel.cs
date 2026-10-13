@@ -244,25 +244,30 @@ public partial class CallTraceViewModel : ViewModelBase
 
     // [CT-DETAIL-COVERS-LIST] A drag adds its step to the width SHOWN and remembers what it leaves shown. Added to a
     // remembered width the panel does not show, a drag past the limit would keep a margin that the next drag back has
-    // to undo first, with nothing moving meanwhile.
-    internal void DragTime(double step) => TimeColWidth = DraggedColumn(0, step);
-    internal void DragDuration(double step) => DurationColWidth = DraggedColumn(1, step);
-    internal void DragThread(double step) => ThreadColWidth = DraggedColumn(2, step);
+    // to undo first, with nothing moving meanwhile. [CT-FLOOR-208] A drag that leaves the width where it was writes
+    // nothing: a press with only a vertical jiggle, or a push into the limit, is not the user choosing the width
+    // shown, and written it replaced the remembered one in ui-options.json, so a wider window never gave it back.
+    internal void DragTime(double step) { if (DraggedColumn(0, step) is { } w) TimeColWidth = w; }
+    internal void DragDuration(double step) { if (DraggedColumn(1, step) is { } w) DurationColWidth = w; }
+    internal void DragThread(double step) { if (DraggedColumn(2, step) is { } w) ThreadColWidth = w; }
     /// <summary>Object's step widens it: its handle is on its left edge.</summary>
-    internal void DragObject(double step) => ObjectColWidth = DraggedColumn(3, step);
+    internal void DragObject(double step) { if (DraggedColumn(3, step) is { } w) ObjectColWidth = w; }
     /// <summary>The pane's step widens it: its handle is on its left edge. A pane the list has taken below its own 200
     /// cannot move: narrower is under the width it can remember, and wider takes the list's floor.</summary>
     internal void DragDetailPane(double step)
     {
         double cap = FitPane(MaxWidth, _splitWidth);
         if (cap < MinDetailPaneWidth) return;
-        DetailPaneWidth = Math.Clamp(_shownPane + step, MinDetailPaneWidth, cap);
+        double next = Math.Clamp(_shownPane + step, MinDetailPaneWidth, cap);
+        if (next != _shownPane) DetailPaneWidth = next;
     }
 
-    private double DraggedColumn(int i, double step)
+    /// <summary>Column <paramref name="i"/>'s width after a step from the width shown, or null where it does not move.</summary>
+    private double? DraggedColumn(int i, double step)
     {
         double[] shown = ShownColumns;
-        return Math.Clamp(shown[i] + step, ColumnFloors[i], ColumnCap(i, shown, RowRoom(_splitWidth, _shownPane)));
+        double next = Math.Clamp(shown[i] + step, ColumnFloors[i], ColumnCap(i, shown, RowRoom(_splitWidth, _shownPane)));
+        return next == shown[i] ? null : next;
     }
 
     internal CallTrace? Trace => _trace;
