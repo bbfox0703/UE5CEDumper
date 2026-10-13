@@ -383,8 +383,8 @@
                        VerticalAlignment="Center"
                        MaxWidth="440" TextTrimming="CharacterEllipsis"/>
           </Border>
-          <!-- [W4-STRIDE-TENTATIVE] The object-array stride is a GUESS (tentative) or was not detected at all:
-               object counts and names may be an alias of the real pool. -->
+          <!-- [W4-STRIDE-TENTATIVE] The object-array stride is a guess, as EngineState.IsStrideUntrusted decides
+               it: object counts and names may be an alias of the real pool. -->
           <Border IsVisible="{Binding ShowStrideGuessBadge}"
                   Background="#3A1E0A" BorderBrush="#E67817" BorderThickness="1"
                   CornerRadius="3" Padding="6,1" VerticalAlignment="Center"

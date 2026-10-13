@@ -169,8 +169,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public bool ShowPackedLayoutBadge => IsConnected && Pointers.ShowPackedLayoutBadge;
     public string PackedLayoutBadgeText => Pointers.PackedLayoutBadgeText;
 
-    /// <summary>[W4-STRIDE-TENTATIVE] Global "object-array stride is a guess" badge: connected, and the DLL said
-    /// the stride is tentative or undetected -- object counts and names may be wrong.</summary>
+    /// <summary>[W4-STRIDE-TENTATIVE] Global "object-array stride is a guess" badge: connected, and the pointer
+    /// panel's verdict, which is <see cref="EngineState.IsStrideUntrusted"/> -- object counts and names may be wrong.
+    /// Mirrored rather than restated, so this badge cannot drift from the rule (a refused engine's "undetected", for
+    /// one, is no verdict).</summary>
     public bool ShowStrideGuessBadge => IsConnected && Pointers.ShowStrideGuessBadge;
     public string StrideGuessBadgeText => Pointers.StrideGuessBadgeText;
 
