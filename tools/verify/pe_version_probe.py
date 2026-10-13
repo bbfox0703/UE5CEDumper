@@ -178,6 +178,46 @@ _READER_SELFTEST = [
     ("a game version alone reads nothing", {"ProductVersion": "1.0.0.0", "FileVersion": "1.0.10897.0"}, None),
 ]
 
+def build_string_of(strs):
+    """The file's own engine build string, as the C++ looks for it beside a fixed-field reading: ProductVersion's string,
+    then FileVersion's, the first that `engine_build_string_code` reads. -> (key, string, code) or None."""
+    for key in STRING_KEYS:
+        s = strs.get(key, "")
+        code = engine_build_string_code(s)
+        if code:
+            return key, s, code
+    return None
+
+
+def fixed_reading(fixed_key, fixed_code, strs):
+    """A fixed field's code, as ReadUeVersionFromFile takes it. -> the fields read_resource() reports."""
+    return {"kind": "fixed", "code": fixed_code, "key": fixed_key, "string": None, "overruled": None}
+
+
+_IS_DEFENSE = "4.10.2-0+++depot+UE4-Releases+4.10"
+# ([VER-410-FIXED-VS-STRING] rev 10) (name, fixed key, fixed code, strings, want (kind, key, code, overruled)). The first
+# three are dll_core_test's fixtures game_fixed405_buildstring_415 / game_fixed501_buildstring_415 /
+# game_fixed420_buildstring_410; the agreeing and bare ones are b25c's and b25d's.
+_FIXED_SELFTEST = [
+    ("4.5 fixed under a 4.15 build string reads 415", "ProductVersion", 405, {"ProductVersion": "4.15.0-0+UE4"},
+     ("build string", "ProductVersion", 415, 405)),
+    ("5.1 fixed under FileVersion's branch-first 4.15 reads 415", "ProductVersion", 501,
+     {"ProductVersion": "5.1.0.0", "FileVersion": "++UE4+Release-4.15-CL-0"}, ("build string", "FileVersion", 415, 501)),
+    ("4.20 fixed under IS Defense's 4.10 string reads 410", "ProductVersion", 420, {"ProductVersion": _IS_DEFENSE},
+     ("build string", "ProductVersion", 410, 420)),
+    ("an agreeing build string keeps the fixed reading", "ProductVersion", 410, {"ProductVersion": _IS_DEFENSE},
+     ("fixed", "ProductVersion", 410, None)),
+    ("a bare version string keeps the fixed reading", "ProductVersion", 410, {"ProductVersion": "4.10.3"},
+     ("fixed", "ProductVersion", 410, None)),
+    ("a prefix-only string (its branch disagrees) is no build string", "ProductVersion", 427,
+     {"ProductVersion": "4.10.2-0+++UE4+Release-4.11"}, ("fixed", "ProductVersion", 427, None)),
+    ("ProductVersion's build string is looked at before FileVersion's", "ProductVersion", 405,
+     {"ProductVersion": "4.15.0-0+UE4", "FileVersion": "++UE4+Release-4.18-CL-0"},
+     ("build string", "ProductVersion", 415, 405)),
+    ("a FileVersion fixed reading keeps its key", "FileVersion", 410, {"ProductVersion": "1.0.0.0"},
+     ("fixed", "FileVersion", 410, None)),
+]
+
 _TRANSLATION_SELFTEST = [
     # DropIn's shape: nothing under the first translation, the value under the second.
     ("the second translation answers when the first has nothing",
@@ -214,7 +254,13 @@ def selftest():
         ok = got == want
         bad += not ok
         print(f"  {'ok ' if ok else 'BAD'}  translations: {name} -> {got!r} (want {want!r})")
-    total = len(_SELFTEST) + len(_READER_SELFTEST) + len(_TRANSLATION_SELFTEST)
+    for name, fkey, fcode, strs, want in _FIXED_SELFTEST:
+        r = fixed_reading(fkey, fcode, strs)
+        got = (r["kind"], r["key"], r["code"], r["overruled"])
+        ok = got == want
+        bad += not ok
+        print(f"  {'ok ' if ok else 'BAD'}  fixed vs build string: {name} -> {got} (want {want})")
+    total = len(_SELFTEST) + len(_READER_SELFTEST) + len(_TRANSLATION_SELFTEST) + len(_FIXED_SELFTEST)
     print(f"selftest: {total - bad}/{total} passed")
     return 1 if bad else 0
 
@@ -226,7 +272,8 @@ def read_resource(path):
       string the string read, when the reading came from one
       prod / fver   the fixed fields as dotted text (None without a VS_FIXEDFILEINFO)
       strs   {key: first non-empty value over every translation}"""
-    out = {"kind": "no resource", "code": None, "key": None, "string": None, "prod": None, "fver": None, "strs": {}}
+    out = {"kind": "no resource", "code": None, "key": None, "string": None, "overruled": None,
+           "prod": None, "fver": None, "strs": {}}
     dummy = wintypes.DWORD(0)
     size = ver.GetFileVersionInfoSizeW(path, ctypes.byref(dummy))
     if not size:
@@ -266,7 +313,7 @@ def read_resource(path):
     for key, (maj, mnr) in (("ProductVersion", (pmaj, pmin)), ("FileVersion", (fmaj, fmin))):
         code = ue_version_code(maj, mnr)
         if code:
-            out.update(kind="fixed", code=code, key=key)
+            out.update(fixed_reading(key, code, out["strs"]))
             return out
     r = string_reading(out["strs"])
     if r:
