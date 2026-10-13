@@ -125,7 +125,19 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 // corpus and the Epic Games folder, 373 read through the fixed fields, 1 through a `++UE5+Release-` string and 48 read
 // nothing; none of the 48 carries an engine build string, so no reading on this machine changes.
 // The bump costs one re-detect per cached title, as rev 8's did.
-constexpr uint32_t kVersionDetectLogicRev = 9;
+// rev 10 (2026-10-14, [VER-410-FIXED-VS-STRING]): where a file's fixed fields and its own engine build string
+// (Grimoire::EngineBuildStringCode, ProductVersion's string first, then FileVersion's) name DIFFERENT versions, the
+// string's is taken, as a string reading, and the disagreement is logged ("SOURCES DISAGREE — the fixed field ...").
+// Before it the fixed fields were returned before any string was read, so a game version inside 4.0-4.27 / 5.0-5.9 beat
+// the engine-stamped signal: a game at 4.5 on engine 4.15 read 405 (tier 3, scanned with 4.05's UFunction tail), at 5.1
+// it read 501 at tier 1. Taken from the string, a code below the floor still cannot corroborate itself; only an
+// agreeing CrashReportClient refuses on it. Mandatory under the rule at the top: every cached title re-detects once, so
+// one cached under rev 9 from an overruled fixed field is re-read.
+// MEASURED (2026-10-14, pe_version_probe.py, which mirrors this reader): of the 53 exes under a Binaries\Win64 or \Win32
+// folder in the maintainer's two Steam libraries, 36 read through the fixed fields, 14 of those beside a build string
+// that AGREES, and none is overruled; adding the local analyze corpus and the Epic Games folder, 389 exes, 343 fixed
+// readings, 206 agreeing, still none. So no reading on this machine changes, and the shape stays unmeasured in the wild.
+constexpr uint32_t kVersionDetectLogicRev = 10;
 
 // ============================================================
 // Multi-module candidate admission (audit #5 AA38)

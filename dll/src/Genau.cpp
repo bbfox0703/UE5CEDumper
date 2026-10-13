@@ -2875,7 +2875,22 @@ static void LogResourceVersion(const char* label, uint32_t major, uint32_t minor
 struct ResourceReading {
     std::string productVersion;          // StringFileInfo ProductVersion, empty when absent
     bool        fromFixedField = false;  // the code came from VS_FIXEDFILEINFO, not from a string
+    // The fixed fields' code when the file's own engine build string named another version and was taken instead;
+    // 0 when nothing was overruled. [VER-410-FIXED-VS-STRING]
+    uint32_t    overruledFixedCode = 0;
 };
+
+// The line logged when a file's fixed fields and its own engine build string name different versions and the string
+// is taken. Pure, so dll_core_test pins its wording. [VER-410-FIXED-VS-STRING]
+static std::string FixedFieldOverruledNote(const char* fixedLabel, uint32_t fixedCode, const char* stringKey,
+                                           const std::string& buildString, uint32_t buildCode) {
+    char line[512];
+    snprintf(line, sizeof(line), "DetectVersion: SOURCES DISAGREE — the fixed field (%s) says UE %u, the same file's "
+             "%s string '%s' is the engine's build string and says UE %u. Taking %u: UBT stamps that string from the "
+             "engine, while the fixed fields can carry the game's own version.",
+             fixedLabel, fixedCode, stringKey, buildString.c_str(), buildCode, buildCode);
+    return line;
+}
 
 static uint32_t ReadUeVersionFromFile(const wchar_t* path,
                                       const char* productLabel, const char* fileLabel,
@@ -2887,9 +2902,10 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
     std::vector<uint8_t> buf(infoSize);
     if (!GetFileVersionInfoW(path, handle, infoSize, buf.data())) return 0;
 
-    // Read once: the string fallback below wants it, and so does the corroboration of a reading
-    // below the floor, which needs it whatever the fixed fields say.
+    // Read once: the string fallback below wants them, and so do the fixed fields' check against the engine's build
+    // string and the corroboration of a reading below the floor, which need them whatever the fixed fields say.
     const std::string productVersion = ReadVersionInfoString(buf.data(), L"ProductVersion");
+    const std::string fileVersion    = ReadVersionInfoString(buf.data(), L"FileVersion");
     if (reading) reading->productVersion = productVersion;
 
     VS_FIXEDFILEINFO* fi = nullptr;
@@ -2898,22 +2914,43 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
                         reinterpret_cast<LPVOID*>(&fi), &len)) return 0;
     if (!fi || len < sizeof(VS_FIXEDFILEINFO)) return 0;
 
-    uint32_t major = HIWORD(fi->dwProductVersionMS);
-    uint32_t minor = LOWORD(fi->dwProductVersionMS);
-    if (uint32_t code = Grimoire::UeVersionCode(major, minor)) {
-        LogResourceVersion(productLabel, major, minor, code);
+    // [VER-410-FIXED-VS-STRING] The fixed fields are the game's to set, and a game version can land inside 4.0-4.27 /
+    // 5.0-5.9 (a game at 4.5 on engine 4.15 read 405 and was scanned with 4.05's UFunction tail; at 5.1 it read 501 at
+    // tier 1). The engine's build string is stamped by UBT from Version.h whatever the fixed fields say, and
+    // EngineBuildStringCode only answers for a UE<M> branch that agrees with its version half, so where the two name
+    // different versions the string's is taken -- as a STRING reading (fromFixedField false): below the floor it
+    // cannot corroborate itself, and refuses only beside an agreeing CrashReportClient. ProductVersion's string first,
+    // as the fallback below reads them.
+    const char* buildKey = "ProductVersion";
+    const std::string* buildString = &productVersion;
+    uint32_t buildCode = Grimoire::EngineBuildStringCode(productVersion);
+    if (!buildCode) {
+        buildKey = "FileVersion";
+        buildString = &fileVersion;
+        buildCode = Grimoire::EngineBuildStringCode(fileVersion);
+    }
+    auto takeFixed = [&](const char* label, uint32_t fmaj, uint32_t fmin, uint32_t code) -> uint32_t {
+        LogResourceVersion(label, fmaj, fmin, code);
+        if (buildCode && buildCode != code) {
+            Sein::Warn("SCAN:Ver", "%s",
+                       FixedFieldOverruledNote(label, code, buildKey, *buildString, buildCode).c_str());
+            if (reading) { reading->fromFixedField = false; reading->overruledFixedCode = code; }
+            return buildCode;
+        }
         if (reading) reading->fromFixedField = true;
         return code;
-    }
+    };
+
+    uint32_t major = HIWORD(fi->dwProductVersionMS);
+    uint32_t minor = LOWORD(fi->dwProductVersionMS);
+    if (uint32_t code = Grimoire::UeVersionCode(major, minor))
+        return takeFixed(productLabel, major, minor, code);
 
     // Some shippers put the UE version in FileVersion instead of ProductVersion.
     uint32_t fmajor = HIWORD(fi->dwFileVersionMS);
     uint32_t fminor = LOWORD(fi->dwFileVersionMS);
-    if (uint32_t code = Grimoire::UeVersionCode(fmajor, fminor)) {
-        LogResourceVersion(fileLabel, fmajor, fminor, code);
-        if (reading) reading->fromFixedField = true;
-        return code;
-    }
+    if (uint32_t code = Grimoire::UeVersionCode(fmajor, fminor))
+        return takeFixed(fileLabel, fmajor, fminor, code);
 
     // Last resort inside the resource: the StringFileInfo *strings*. Some games leave
     // VS_FIXEDFILEINFO generic (1.0.0.0) but paste the real engine tag into
@@ -2924,8 +2961,7 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
     // for this file because the strings are not under the default translation.
     const wchar_t* const kStringKeys[] = { L"ProductVersion", L"FileVersion" };
     for (const wchar_t* key : kStringKeys) {
-        const std::string s = key == kStringKeys[0] ? productVersion
-                                                    : ReadVersionInfoString(buf.data(), key);
+        const std::string& s = key == kStringKeys[0] ? productVersion : fileVersion;
         if (s.empty()) continue;
         for (const char* prefix : { "++UE5+Release-", "++UE4+Release-" }) {
             size_t p = s.find(prefix);

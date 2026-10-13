@@ -474,10 +474,24 @@ int main() {
         // string in ProductVersion), so it still corroborates itself below the floor.
         auto agree = phase(b25c, L"");
         check("VER-410-FIXED-VS-STRING control: b25c's fixed 4.10.2 and its own 4.10 build string agree -- still fixed",
-              agree.exeReading.fromFixedField && agree.exeVersion == 410 && agree.verdict.byBuildString, gb);
+              agree.exeReading.fromFixedField && agree.exeVersion == 410 && agree.verdict.byBuildString
+              && agree.exeReading.overruledFixedCode == 0, gb);
         auto bare = phase(b25d, L"");
         check("VER-410-FIXED-VS-STRING control: a fixed 4.10.3 beside a bare '4.10.3' (no build string) stays fixed",
-              bare.exeReading.fromFixedField && bare.exeVersion == 410, gb);
+              bare.exeReading.fromFixedField && bare.exeVersion == 410 && bare.exeReading.overruledFixedCode == 0, gb);
+        // The reading says which fixed-field code it overruled, which is what the SOURCES DISAGREE line names.
+        check("VER-410-FIXED-VS-STRING: each overruling reading names the fixed code it overruled (405 / 501 / 420)",
+              f405.exeReading.overruledFixedCode == 405 && f501.exeReading.overruledFixedCode == 501
+              && f420.exeReading.overruledFixedCode == 420);
+        const std::string over = Genau::FixedFieldOverruledNote("PE VERSIONINFO", 405, "ProductVersion", "4.15.0-0+UE4", 415);
+        check("VER-410-FIXED-VS-STRING note ⭐: the disagreement is logged as SOURCES DISAGREE, naming both readings",
+              over.find("SOURCES DISAGREE") != std::string::npos && over.find("says UE 405") != std::string::npos
+              && over.find("'4.15.0-0+UE4'") != std::string::npos && over.find("Taking 415") != std::string::npos,
+              over.c_str());
+        // b25's judge_d refuses a log carrying CORROBORATED, and the line must not claim the string was taken because it
+        // corroborated anything.
+        check("VER-410-FIXED-VS-STRING note: it carries no 'CORROBORATED'", over.find("CORROBORATED") == std::string::npos,
+              over.c_str());
         // A cached title holds the fixed field's verdict, and the cache-reuse branch would restore it for ever.
         check("VER-410-FIXED-VS-STRING: the detection logic rev was bumped (9 -> 10)", Genau::kVersionDetectLogicRev >= 10);
     }
