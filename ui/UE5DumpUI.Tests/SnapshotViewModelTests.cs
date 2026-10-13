@@ -325,8 +325,10 @@ public class SnapshotViewModelTests : IDisposable
         // The loop stopped itself (not wedged): toggle reset + manual capture re-enabled.
         Assert.False(vm.AutoSnapshotEnabled);
         Assert.True(vm.CanManualCapture);
-        // No usable snapshot was left behind (none was even created).
+        // No usable snapshot was left behind (none was even created): the list hides a capture in
+        // progress, so "none created" is the tables' to say.
         Assert.Empty(await _store.ListSnapshotsAsync(ct));
+        Assert.Equal((0L, 0L), await RawRowsAsync(ct));
     }
 
     // [AUTOSNAP-STOP-STALE-STATUS] Turning Auto OFF by hand cancels the loop mid-countdown, and
@@ -1411,6 +1413,7 @@ public class SnapshotViewModelTests : IDisposable
 
         Assert.False(vm.IsCapturing);
         Assert.Empty(await _store.ListSnapshotsAsync(ct));   // guard refused before any write
+        Assert.Equal((0L, 0L), await RawRowsAsync(ct));      // not even a row in progress, which no list shows
         Assert.Null(dump.LastDataType);                      // BeginSnapshot never reached
         Assert.Contains("disk", vm.StatusText, StringComparison.OrdinalIgnoreCase);
     }
