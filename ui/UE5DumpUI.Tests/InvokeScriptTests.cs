@@ -2463,9 +2463,9 @@ public class InvokeScriptTests
         // [SOLIDE-NATIVE-BOOL] Which probed layout a God Mode target or a forced bool takes, and how its byte is read
         // and written, are Solitar::PickBoolBits / ReadBoolValue / WriteBoolValue (pinned in dll_helpers_test): a native
         // bool owns the whole byte and is written 0x01 / 0x00. Solitar.cpp reaches no test target, so the glue is
-        // pinned here: the probe hands every quad to PickBoolBits, and no read or write in the file goes back to a bare
-        // mask -- ApplyBoolBit with a native bool's FieldMask would stamp 0xFF, which C++ that XORs a bool reads as
-        // still true.
+        // pinned here: the probe hands every quad to PickBoolBits, and nothing in the file masks a byte with a bare mask
+        // -- ApplyBoolBit with a native bool's FieldMask would stamp 0xFF, which C++ that XORs a bool reads as still true.
+        // A path that skips the helpers WITHOUT a bitwise mask is the next test's to catch.
         var src = DllSource("Solitar.cpp").Replace("\r\n", "\n");
         int fn = src.IndexOf("bool ReadBoolLayout(uintptr_t fpropAddr, BoolBits& bits) {", StringComparison.Ordinal);
         Assert.True(fn >= 0, "ReadBoolLayout(fpropAddr, BoolBits&) was not found");
@@ -2477,6 +2477,81 @@ public class InvokeScriptTests
         Assert.DoesNotMatch(@"\b(?:mask|fieldMask|byteMask)\s*\)?\s*[&|]", src);
         Assert.Contains("WriteBoolValue(", src);
         Assert.Contains("ReadBoolValue(", src);
+    }
+
+    [Fact]
+    public void SolitarBools_EachPathReadsAndWritesItsByteThroughTheHelpers()
+    {
+        // [SOLIDE-NATIVE-BOOL] review: the file-wide pin above sees a bare mask only where it meets & | ~, so
+        // `on ? bits.byteMask : 0` passed it -- a whole-byte stamp that, on a packed bool, clears the 7 bools sharing its
+        // byte on every re-assert tick (the AA1 corruption), and none of the tests that compile helpers can see it.
+        // So each function that reads or writes a bool's byte is held on its own: the byte it writes is the one
+        // WriteBoolValue made, and every read of a byte it fetched goes through ReadBoolValue. The masks a path may still
+        // touch are an allow-list, so a new use has to be argued for here.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string BodyOf(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " was not found -- re-point this pin");
+            int open = src.IndexOf('{', at);
+            int depth = 0;
+            for (int i = open; i < src.Length; i++)
+            {
+                if (src[i] == '{') depth++;
+                else if (src[i] == '}' && --depth == 0) return src[open..(i + 1)];
+            }
+            throw new InvalidOperationException(signature + " has no closing brace");
+        }
+
+        var src = CodeOnly(DllSource("Solitar.cpp").Replace("\r\n", "\n"));
+
+        // Outside the helpers a mask is read twice: the God Mode scan logs the FieldMask it resolved, and the trainer
+        // export bakes a single-bit mask (its Lua does its own read-modify-write).
+        var maskUses = System.Text.RegularExpressions.Regex.Matches(src, @"[\w.]*\.(?:mask|fieldMask|byteMask)\b")
+            .Select(m => m.Value).OrderBy(v => v, StringComparer.Ordinal).ToArray();
+        Assert.Equal(new[] { "b.mask", "bits.byteMask", "t.bits.fieldMask" }, maskUses);
+        Assert.Contains("b.mask = bits.byteMask;", src, StringComparison.Ordinal);
+
+        var paths = new (string Signature, string? Write)[]
+        {
+            ("int32_t ApplyGodNowLocked(bool verbose, bool* outDrifted", "uint8_t nb = WriteBoolValue(b, t.bits, want);"),
+            ("int32_t SetActorBool(uintptr_t obj, uintptr_t classAddr, const char* propName, bool on)",
+             "uint8_t nb = WriteBoolValue(b, bits, on);"),
+            ("int32_t GetActorBool(uintptr_t obj, uintptr_t classAddr, const char* propName)", null),
+            ("int32_t GetGodMode()", null),
+        };
+        foreach (var (signature, write) in paths)
+        {
+            var body = BodyOf(src, signature);
+            var writes = System.Text.RegularExpressions.Regex.Matches(body, @"Macht::WriteBytes\(([^()]*)\)")
+                .Select(m => m.Groups[1].Value).ToArray();
+            if (write is null)
+            {
+                Assert.True(writes.Length == 0, signature + " reads a bool; it must not write one");
+            }
+            else
+            {
+                Assert.True(writes.Length == 1 && writes[0] == "byteAddr, &nb, 1",
+                            signature + " must write exactly the one byte WriteBoolValue made");
+                Assert.Contains(write, body, StringComparison.Ordinal);
+                Assert.Single(System.Text.RegularExpressions.Regex.Matches(body, @"\bnb\s*=(?!=)"));
+            }
+
+            // Every use of a fetched byte, once the allowed forms are taken out, must be gone: a bare `b ? 1 : 0` or
+            // `b != want` reads a packed bool's siblings as its value.
+            var rest = System.Text.RegularExpressions.Regex.Replace(body,
+                @"uint8_t (?:b|after) = 0;"
+                + @"|Macht::ReadSafe\(byteAddr, (?:b|after)\)"
+                + @"|ReadBoolValue\((?:b|after), (?:t\.)?bits\)"
+                + @"|WriteBoolValue\(b, (?:t\.)?bits, (?:want|on)\)"
+                + @"|\bnb != b\b", "");
+            Assert.True(!System.Text.RegularExpressions.Regex.IsMatch(rest, @"\b(?:b|after)\b"),
+                        signature + " uses a fetched byte outside ReadBoolValue / WriteBoolValue");
+        }
     }
 
     [Fact]
