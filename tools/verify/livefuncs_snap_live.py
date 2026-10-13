@@ -4023,6 +4023,16 @@ def self_test() -> int:
                     len(s5_skipped(r[0])) == 1 and "44.0/s" in s5_skipped(r[0])[0] and
                     r[1]["stack_budget"]["main_rate_ring"] < BUDGET_MARGIN * 30)(
                s5_run(60, main_pf_rate=just_under)))
+    # The ring alone decides: a table that counts a tenth, the probe at 46 a second. Over the longest span its ring
+    # shows at least ring_46, just under 45, so the check is not run; a span that leaves out the Stop's own time reads
+    # over 45 and runs it.
+    ring_46 = round(46 * open_s) / span_hi
+    expect(f"dry run: a main table that counts a tenth, the probe at 46 a second: its ring shows at least "
+           f"{ring_46:.1f}, just under 1.5x the 30 sent, so S5's window is not run, that rate the reason",
+           lambda: ring_46 < BUDGET_MARGIN * 30 <= round(46 * open_s) / (span_hi - ScriptedDll.STOP_S) and
+           (lambda r: failing(r[0]) == [] and s5_ran(r[0]) == [] and len(s5_skipped(r[0])) == 1 and
+            f"{ring_46:.1f}/s" in s5_skipped(r[0])[0])(
+               s5_run(60, main_pf_rate=46, faults=("main_pf_under",))))
     s3_in_scope = ("S3 every in-scope stack holds an own frame", S3_KNOWN_IN)
 
     def s3_starved(ch: Checks, *words: str) -> bool:
@@ -4134,6 +4144,11 @@ def self_test() -> int:
                     "44.0/s" in step2_line(r[0])[1][0] and
                     r[1]["param_budget"]["main_rate_ring"] < BUDGET_MARGIN * 30)(
                step2_run(60, main_pf_rate=just_under)))
+    expect(f"dry run step 2: a main table that counts a tenth, the probe at 46 a second: the parameter ring shows at "
+           f"least {ring_46:.1f}, just under 1.5x the 30 sent, so the check is not run, that rate the reason",
+           lambda: (lambda r: r[2] == 30 and step2_line(r[0])[0] == [] and len(step2_line(r[0])[1]) == 1 and
+                    f"{ring_46:.1f}/s" in step2_line(r[0])[1][0])(
+               step2_run(60, main_pf_rate=46, faults=("main_pf_under",))))
     # The same for the step-2 run. Its other checks fail on the scripted DLL (the class docstring), so these controls
     # name the lines they read.
     step2_main = f"the budget: {MAIN_TABLE}"
