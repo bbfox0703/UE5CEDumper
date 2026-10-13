@@ -5214,7 +5214,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             // The row's binding, label and flags stay as they were: a hotkey it had is still registered.
             string kept = _markerHotkeys.ContainsKey(row.ActionId) ? $" '{row.DisplayName}' keeps {row.Label}." : "";
-            StatusText = $"'{label}' is already in use by another app — pick a different combo.{kept}";
+            StatusText = $"'{label}' {HotkeyHolderOf(binding, label)} — pick a different combo.{kept}";
             return true;
         }
         _bindings[row.ActionId] = binding;
@@ -5225,6 +5225,21 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         StatusText = $"'{row.DisplayName}' bound to {label}. Keep the game focused and press it.";
         _log.Info($"Teleport: {row.ActionId} hotkey bound to {label}");
         return true;
+    }
+
+    /// <summary>Who holds a combo the OS refused, as the refusal says it: one of our own registrations when it is ours,
+    /// since "another app" would send the user looking for a program that is not there. The cursor hotkey is known
+    /// only by its label, which the ladder names as <see cref="HotkeyKeyMap"/> does.</summary>
+    private string HotkeyHolderOf(TeleportHotkeyBinding binding, string label)
+    {
+        foreach (var (actionId, live) in _markerHotkeys)
+        {
+            if (live.Binding != binding) continue;
+            string name = AllHotkeyRows.FirstOrDefault(r => r.ActionId == actionId)?.DisplayName ?? actionId;
+            return $"is already bound to '{name}'";
+        }
+        if (_cursorHotkey != null && _cursorHotkey.Label == label) return "is the cursor-teleport hotkey";
+        return "is already in use by another app";
     }
 
     [RelayCommand]
