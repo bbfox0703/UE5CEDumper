@@ -4877,19 +4877,19 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // when registration fails — otherwise a hotkey silently goes dead and
             // the row looks unbound.
             row.Label = b.Label;
+            // Retained whether or not it registers below: every re-bind or clear rewrites the file from _bindings,
+            // so a combo left out of it would be erased by the first one, and the experimental gate re-registers
+            // only what it holds.
+            _bindings[row.ActionId] = b;
 
             // Experimental-feature hotkeys stay UNregistered until the experimental
-            // gate is enabled (their card is hidden anyway). Retain the binding so
-            // enabling later re-registers it (see RegisterExperimentalHotkeys).
+            // gate is enabled (their card is hidden anyway); enabling it later
+            // registers them (see RegisterExperimentalHotkeys).
             if (s_experimentalHotkeyIds.Contains(row.ActionId) && !ExperimentalEnabled)
-            {
-                _bindings[row.ActionId] = b;
                 continue;
-            }
 
             if (RegisterMarkerHotkey(row.ActionId, b))
             {
-                _bindings[row.ActionId] = b;
                 row.Conflicted = false;
             }
             else
