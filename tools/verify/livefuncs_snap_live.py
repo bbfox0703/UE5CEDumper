@@ -1453,8 +1453,8 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
                clock=time.perf_counter, symbols=None) -> None:
     """--stacks on DumperTest58: S0-S7 (the module docstring). `rows` are the fixture check's rows, by name. `pid`
     (out/host.pid when None) names the game process for frame 0's module; --self-test passes 0, a scripted DLL as
-    `c`, and a fake clock that only its sleep moves. `symbols` opens --pdb's session as open_game_pdb does
-    (open_game_pdb when None); --self-test passes the scripted game's."""
+    `c`, and a fake clock (FakeClock) that its sleep and the scripted DLL's Start and Stop move. `symbols` opens
+    --pdb's session as open_game_pdb does (open_game_pdb when None); --self-test passes the scripted game's."""
     need = ("SnapNest_Outer",) + STACK_CHOICES
     missing = [n for n in need if not isinstance((rows.get(n) or {}).get("fname_key"), list)]
     if missing:
@@ -2350,7 +2350,9 @@ def run_pdb(check: Checks, out: dict, opened, slots: list[dict], in_scope: list[
                   "names": {f"{rva:#x}": answers.get(rva) for rva in sorted(answers)}, "first_in_scope": first}
 
 
-DRY_RECORD_S = 2.0       # the dry run's --record-s: S5's window at a budget of B a second is then B..3B, above zero
+# The dry run's --record-s. The scripted Start and Stop add their time (ScriptedDll.START_S / STOP_S) to the span's
+# upper bound, so S5's window at a budget of B a second is B..3.2B (budget_window over 2.0-2.2 s), above zero.
+DRY_RECORD_S = 2.0
 
 
 class FakeClock:
