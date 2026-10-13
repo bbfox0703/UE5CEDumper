@@ -6021,6 +6021,25 @@ int main() {
             runGenau(418);
             check("USTRUCT-GIVEUP control: a measured 4.18 run keeps the head its Children measurement gives, 40/48/50/58",
                   DynOff::bOffsetsValidated.load() && head() == "40/48/50/58", head().c_str());
+
+            // The other give-up exit: Guid is found, but none of its slots heads a *Property chain (a stripped or
+            // obfuscated build). It ships the version's head too -- which only holds while the head is set before both
+            // exits, not inside the no-Guid one.
+            auto childPropsGiveUpAt = [&](uint32_t ver) {
+                ustructAtLoad();
+                runGenau(ver);
+                return std::string(DynOff::g_offsetsFallbackReason) == "childprops-probe-failed" && !DynOff::bUseFProperty;
+            };
+            putP(upGuid, 0x48, 0);   // Guid keeps its name, loses its Children
+            const bool cp418 = childPropsGiveUpAt(418);
+            check("USTRUCT-GIVEUP setup: a 4.18 Guid with no property chain takes the childprops-probe-failed give-up",
+                  cp418, DynOff::g_offsetsFallbackReason);
+            check("USTRUCT-GIVEUP ⭐: ...and that exit ships 4.18's head 30/38/40/48 as well", head() == "30/38/40/48",
+                  head().c_str());
+            const bool cp423 = childPropsGiveUpAt(423);
+            check("USTRUCT-GIVEUP ⭐: a 4.23 childprops-probe-failed give-up ships 40/48/50/58",
+                  cp423 && head() == "40/48/50/58", head().c_str());
+            putP(upGuid, 0x48, A(upProp[0]));
         }
 
         // Review wf_b99fb861-680 (F5), pinned after the review of build 3594 found it untested: a 4.18-4.24 title
