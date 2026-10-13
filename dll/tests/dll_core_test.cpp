@@ -6313,6 +6313,24 @@ int main() {
         check("ASSETPTR ⭐: no 4.18+ soft-path envelope was latched from a 0x20 asset pointer",
               DynOff::SOFTPTR_PATH == -1, std::to_string(DynOff::SOFTPTR_PATH).c_str());
 
+        // FAssetPtr has one size, so an inner ElementSize that says otherwise is a misread. The elements are read at 0x20
+        // regardless -- the second one now names its own asset, so a 0x28 stride would miss it -- and the row must
+        // publish that stride, the one the UI lays the elements out by, not the misread.
+        put32(apInner, DynOff::UPROPERTY_ELEMSIZE, 0x28);
+        static const wchar_t kElem2[] = L"/Game/UI/C.C";
+        fstr(apElems[1], 0x10, kElem2);
+        const auto apWalk2 = Ubel::WalkInstance(A(apInst), A(apCls), 64, 2, false);
+        Ubel::LiveFieldValue rA2{};
+        for (const auto& f : apWalk2.fields) if (f.name == "Icons") rA2 = f;
+        check("ASSETPTR ⭐: a misread inner ElementSize (0x28) still reads both elements at FAssetPtr's 0x20",
+              rA2.arrayElements.size() == 2 && rA2.arrayElements[0].value == "/Game/UI/A.A"
+                && rA2.arrayElements[1].value == "/Game/UI/C.C",
+              rA2.arrayElements.size() == 2 ? rA2.arrayElements[1].value.c_str() : "(not two elements)");
+        check("ASSETPTR ⭐: ...and the row publishes that stride, not the misread one", rA2.arrayElemSize == 0x20,
+              std::to_string(rA2.arrayElemSize).c_str());
+        put32(apInner, DynOff::UPROPERTY_ELEMSIZE, 0x20);
+        memset(apElems[1], 0, sizeof apElems[1]);
+
         // Property Search's preview column reads the same path.
         std::vector<Aura::PropertyMatch> apMatches(1);
         apMatches[0].classAddr  = A(apCls);
