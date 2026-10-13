@@ -87,6 +87,11 @@ public sealed class SnapshotStore : ISnapshotStore
         EnsureProviderInitialised();
     }
 
+    /// <summary>[SNAPSHOT-CRASH-PARTIAL] Red stub: the writer a capture's row is marked in progress by.</summary>
+    internal SnapshotStore(IPlatformService platform, ILoggingService? log, string captureOwner) : this(platform, log)
+    {
+    }
+
     public void SetActiveGame(string? peHash)
     {
         _peHash = SanitizePeHash(peHash);
