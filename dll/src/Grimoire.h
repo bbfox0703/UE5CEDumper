@@ -587,6 +587,9 @@ constexpr bool FunctionTailMatches(int numParms, int parmsSize, int paramCount, 
 // FunctionTailShiftFor -- upstream puts Split Fiction's tail +4 later (RE-UE4SS config).
 inline int UFUNCTION_FLAGS      = 0;
 inline int UFUNCTION_TAIL_EXTRA = 0;
+// The extras a game's tail can carry: none, or Split Fiction's +4. The vote weighs exactly these, and a version is
+// judged against them (CheckTailForVersion), so the two cannot disagree about what a tail may look like.
+inline constexpr int UFUNCTION_TAIL_EXTRAS[] = { 0, 4 };
 inline std::atomic<bool> bUFunctionFlagsDetected{false};
 // [UE-OVERRIDE-411] review: where the sampled UFunctions themselves keep NumParms / ParmsSize, as the base those two
 // sit +4 / +6 behind -- measured against every candidate, whatever the version says. -1 = not measured.
@@ -1034,13 +1037,20 @@ constexpr int FunctionTailReadBase(unsigned ueVersion, int flagsOff, int tailExt
 
 enum class TailCheck { Agrees, Contradicts, Unmeasured };
 
-// `flagsOff` / `tailExtra` are what the vote latched, or `ueVersion`'s own primary when it decided nothing;
-// `measuredBase` is UFUNCTION_TAIL_MEASURED. Nothing measured (no scan yet, or samples that do not decide) is never
-// a refusal: the too-old refusal sends the user to the override precisely when no scan has run.
-constexpr TailCheck CheckTailForVersion(unsigned ueVersion, int flagsOff, int tailExtra, int measuredBase) {
+// `flagsOff` is the FunctionFlags offset the vote latched, or `ueVersion`'s own primary when it decided nothing;
+// `measuredBase` is UFUNCTION_TAIL_MEASURED. A version fits when the measurement sits at its own shift plus an extra
+// a game's tail can carry (UFUNCTION_TAIL_EXTRAS) -- the extra the MEASUREMENT implies, never the one the vote latched
+// ([OVERRIDE-REVIEW2-LOWS] review). The extra is the game's, not the version's, and a vote run under a version from
+// the wrong side of 4.18 decides nothing and latches 0: judged with that 0, the version that fits a +4 tail was
+// refused for the rest of the session. Whatever the extra, the two sides of 4.18 differ by a shift of 2, so 0 or 4
+// explains a measurement for one side only. Nothing measured (no scan yet, or samples that do not decide) is never a
+// refusal: the too-old refusal sends the user to the override precisely when no scan has run.
+constexpr TailCheck CheckTailForVersion(unsigned ueVersion, int flagsOff, int measuredBase) {
     if (measuredBase < 0 || flagsOff <= 0) return TailCheck::Unmeasured;
-    return FunctionTailBaseFor(ueVersion, flagsOff, tailExtra) == measuredBase ? TailCheck::Agrees
-                                                                               : TailCheck::Contradicts;
+    const int extra = measuredBase - FunctionTailBaseFor(ueVersion, flagsOff, 0);
+    for (int e : UFUNCTION_TAIL_EXTRAS)
+        if (extra == e) return TailCheck::Agrees;
+    return TailCheck::Contradicts;
 }
 
 // [OVERRIDE-REVIEW2-LOWS] Whether the version in force is a user override this game's UFunctions contradict -- what
@@ -1049,9 +1059,8 @@ constexpr TailCheck CheckTailForVersion(unsigned ueVersion, int flagsOff, int ta
 // is still handed in ahead of the scan at every launch; the vote that then measures the contradiction said so in the
 // log alone. The verdict is the refusal's own over the same inputs, so the note and the refusal cannot disagree.
 // Nothing measured is never a contradiction, and a detected version is not one the user can take back.
-constexpr bool OverrideContradictsTail(bool userOverride, unsigned ueVersion, int flagsOff, int tailExtra,
-                                       int measuredBase) {
-    return userOverride && CheckTailForVersion(ueVersion, flagsOff, tailExtra, measuredBase) == TailCheck::Contradicts;
+constexpr bool OverrideContradictsTail(bool userOverride, unsigned ueVersion, int flagsOff, int measuredBase) {
+    return userOverride && CheckTailForVersion(ueVersion, flagsOff, measuredBase) == TailCheck::Contradicts;
 }
 
 // The measurement's winner among candidate tail bases, given each one's hits over `samples` sampled

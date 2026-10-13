@@ -1922,7 +1922,7 @@ static void EnsureFunctionFlagsOffset() {
     const int shift = DynOff::FunctionTailShiftFor(ver);
     int bestOff = 0, bestExtra = 0, bestHits = -1;
     for (int c : cands) {
-        for (int extra : { 0, 4 }) {
+        for (int extra : DynOff::UFUNCTION_TAIL_EXTRAS) {
             int hits = 0;
             for (const Sample& s : samples) {
                 uint8_t numParms = 0;
@@ -1975,15 +1975,14 @@ int FunctionFlagsOffset() {
     return DynOff::UFUNCTION_FLAGS;
 }
 
-// Where `ver`'s layout puts the UFunction tail: a decided offset and its extra stay latched across an override;
-// undecided, it starts from `ver`'s own primary (ReadFuncFlagsAndParams). One rule for the override's refusal and
-// for the published contradiction, so they cannot judge the same version differently.
-static void TailLayoutFor(unsigned ver, int decided, int& flagsOff, int& extra) {
-    flagsOff = decided > 0 ? decided
+// Where FunctionFlags sits when `ver` is judged: a decided offset stays latched across an override; undecided, it starts
+// from `ver`'s own primary (ReadFuncFlagsAndParams). One rule for the override's refusal and for the published
+// contradiction, so they cannot judge the same version differently.
+static int TailFlagsOffFor(unsigned ver, int decided) {
+    return decided > 0 ? decided
         : DynOff::FunctionFlagsPrimaryFor(ver, DynOff::bCasePreservingName, DynOff::USTRUCT_PROPSSIZE,
                                           DynOff::bOffsetsValidated.load(std::memory_order_acquire),
                                           DynOff::bUseFProperty);
-    extra = decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0;
 }
 
 OverrideTailCheck CheckVersionOverrideTail(unsigned newVersion) {
@@ -2008,20 +2007,19 @@ OverrideTailCheck CheckVersionOverrideTail(unsigned newVersion) {
         measured = MeasureTailBase(SampleParamShapes(64), cands);
         if (measured >= 0) DynOff::UFUNCTION_TAIL_MEASURED.store(measured, std::memory_order_relaxed);
     }
-    int flagsOff = 0, extra = 0;
-    TailLayoutFor(newVersion, decided, flagsOff, extra);
-    r.versionBase  = DynOff::FunctionTailBaseFor(newVersion, flagsOff, extra);
+    const int flagsOff = TailFlagsOffFor(newVersion, decided);
+    // The base a refusal names: the version's layout with the extra the vote latched. Only the message reads it; the
+    // verdict takes the extra the measurement implies (DynOff::CheckTailForVersion says why).
+    r.versionBase  = DynOff::FunctionTailBaseFor(newVersion, flagsOff, decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0);
     r.measuredBase = measured;
-    r.verdict      = DynOff::CheckTailForVersion(newVersion, flagsOff, extra, measured);
+    r.verdict      = DynOff::CheckTailForVersion(newVersion, flagsOff, measured);
     return r;
 }
 
 bool OverrideInForceContradicted(unsigned versionInForce, bool userOverride) {
     if (!userOverride) return false;
     const int decided = FunctionFlagsOffset();
-    int flagsOff = 0, extra = 0;
-    TailLayoutFor(versionInForce, decided, flagsOff, extra);
-    return DynOff::OverrideContradictsTail(userOverride, versionInForce, flagsOff, extra,
+    return DynOff::OverrideContradictsTail(userOverride, versionInForce, TailFlagsOffFor(versionInForce, decided),
                                            DynOff::UFUNCTION_TAIL_MEASURED.load(std::memory_order_relaxed));
 }
 

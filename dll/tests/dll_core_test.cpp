@@ -4701,8 +4701,9 @@ int main() {
               readsRight(readOf(bFn0 + 2)), rb);
 
         // [UE-OVERRIDE-411] review 2: a tail 4 past the version's shift, Split Fiction's shape. The vote absorbs it as
-        // UFUNCTION_TAIL_EXTRA, and the override check has to add that extra to the version it judges: without it
-        // every override on such a title is refused, the right one included.
+        // UFUNCTION_TAIL_EXTRA, and the override check has to allow that extra in the version it judges: without it
+        // every override on such a title is refused, the right one included. (It takes the extra the measurement
+        // implies, not the vote's: OVERRIDEEXTRA below is why.)
         build(0x8C);
         resetVote();
         g_cachedUEVersion = 505;

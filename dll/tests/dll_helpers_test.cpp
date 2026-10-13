@@ -6572,31 +6572,37 @@ static void Test_CheckTailForVersion() {
     EXPECT("TailBase: the vote's extra adds on top", DynOff::FunctionTailBaseFor(505, 0xB0, 4) == 0xB4);
     // A 4.18 title (OCTOPATH / DQ XI S): FunctionFlags 0x88, NumParms 0x8C -- the tail base is 0x88.
     EXPECT("TailCheck ⭐: 4.17 on a 4.18 tail contradicts it (ParmsSize would come from ReturnValueOffset)",
-           CheckTailForVersion(417, 0x88, 0, 0x88) == TailCheck::Contradicts);
-    EXPECT("TailCheck ⭐: ...and so does the floor, 4.11", CheckTailForVersion(411, 0x88, 0, 0x88) == TailCheck::Contradicts);
-    EXPECT("TailCheck: 4.18 agrees", CheckTailForVersion(418, 0x88, 0, 0x88) == TailCheck::Agrees);
-    EXPECT("TailCheck: 4.21 keeps the same tail and agrees", CheckTailForVersion(421, 0x88, 0, 0x88) == TailCheck::Agrees);
+           CheckTailForVersion(417, 0x88, 0x88) == TailCheck::Contradicts);
+    EXPECT("TailCheck ⭐: ...and so does the floor, 4.11", CheckTailForVersion(411, 0x88, 0x88) == TailCheck::Contradicts);
+    EXPECT("TailCheck: 4.18 agrees", CheckTailForVersion(418, 0x88, 0x88) == TailCheck::Agrees);
+    EXPECT("TailCheck: 4.21 keeps the same tail and agrees", CheckTailForVersion(421, 0x88, 0x88) == TailCheck::Agrees);
     // The inverse the widening lets a user correct: a 4.15 title (RepOffset first, base 0x8A) misdetected as 4.18+.
-    EXPECT("TailCheck ⭐: 4.15 on a 4.11-4.17 tail agrees", CheckTailForVersion(415, 0x88, 0, 0x8A) == TailCheck::Agrees);
-    EXPECT("TailCheck ⭐: 4.18 on that tail contradicts it", CheckTailForVersion(418, 0x88, 0, 0x8A) == TailCheck::Contradicts);
-    // Split Fiction's tail sits +4 later on 5.x (the vote's extra).
-    EXPECT("TailCheck: a 5.x tail with the +4 extra agrees at 5.5", CheckTailForVersion(505, 0xB0, 4, 0xB4) == TailCheck::Agrees);
-    EXPECT("TailCheck: ...and 4.17 on it contradicts", CheckTailForVersion(417, 0xB0, 4, 0xB4) == TailCheck::Contradicts);
-    // [OVERRIDE-REVIEW2-LOWS] review: a vote run under a version from the wrong side of 4.18 decides nothing and latches
-    // extra 0, so on a +4 tail the latched extra does not explain the measurement. The extra is the game's, not the
-    // version's: judged with the latched 0, the version that fits was refused for the rest of the session.
-    EXPECT("TailCheck ⭐: 5.5 on a +4 tail agrees though the vote (run under 4.17) latched extra 0",
-           CheckTailForVersion(505, 0xB0, 0, 0xB4) == TailCheck::Agrees);
-    EXPECT("TailCheck ⭐: ...and 4.15 on a +4 4.11-4.17 tail the vote (run under 4.18) could not find",
-           CheckTailForVersion(415, 0x88, 0, 0x8E) == TailCheck::Agrees);
-    EXPECT("TailCheck control: ...4.17 on the 5.x +4 tail still contradicts", CheckTailForVersion(417, 0xB0, 0, 0xB4) == TailCheck::Contradicts);
-    EXPECT("TailCheck control: ...4.18 on the 4.11-4.17 +4 tail still contradicts",
-           CheckTailForVersion(418, 0x88, 0, 0x8E) == TailCheck::Contradicts);
-    EXPECT("TailCheck control: no extra the vote weighs explains a gap of 8", CheckTailForVersion(505, 0xB0, 0, 0xB8) == TailCheck::Contradicts);
-    EXPECT("TailCheck control: ...nor a tail before FunctionFlags", CheckTailForVersion(505, 0xB0, 0, 0xAC) == TailCheck::Contradicts);
+    EXPECT("TailCheck ⭐: 4.15 on a 4.11-4.17 tail agrees", CheckTailForVersion(415, 0x88, 0x8A) == TailCheck::Agrees);
+    EXPECT("TailCheck ⭐: 4.18 on that tail contradicts it", CheckTailForVersion(418, 0x88, 0x8A) == TailCheck::Contradicts);
+    // Split Fiction's tail sits +4 later on 5.x. [OVERRIDE-REVIEW2-LOWS] review: the extra is the one the measurement
+    // implies, never the vote's latched one -- a vote run under a version from the wrong side of 4.18 decides nothing
+    // and latches 0, and judged with that 0 the version that fits was refused for the rest of the session (the live
+    // route is dll_core_test's OVERRIDEEXTRA).
+    EXPECT("TailCheck ⭐: a 5.x tail with the +4 extra agrees at 5.5, whatever the vote latched",
+           CheckTailForVersion(505, 0xB0, 0xB4) == TailCheck::Agrees);
+    EXPECT("TailCheck: ...and 4.17 on it contradicts", CheckTailForVersion(417, 0xB0, 0xB4) == TailCheck::Contradicts);
+    EXPECT("TailCheck ⭐: 4.15 on a +4 4.11-4.17 tail agrees (a vote under 4.18 could not find it)",
+           CheckTailForVersion(415, 0x88, 0x8E) == TailCheck::Agrees);
+    EXPECT("TailCheck: ...and 4.18 on it contradicts", CheckTailForVersion(418, 0x88, 0x8E) == TailCheck::Contradicts);
+    EXPECT("TailCheck control: no extra the vote weighs explains a gap of 8", CheckTailForVersion(505, 0xB0, 0xB8) == TailCheck::Contradicts);
+    EXPECT("TailCheck control: ...nor a tail before FunctionFlags", CheckTailForVersion(505, 0xB0, 0xAC) == TailCheck::Contradicts);
     // Nothing to judge is never a refusal.
-    EXPECT("TailCheck: nothing measured is Unmeasured", CheckTailForVersion(417, 0x88, 0, -1) == TailCheck::Unmeasured);
-    EXPECT("TailCheck: no FunctionFlags offset is Unmeasured", CheckTailForVersion(417, 0, 0, 0x88) == TailCheck::Unmeasured);
+    EXPECT("TailCheck: nothing measured is Unmeasured", CheckTailForVersion(417, 0x88, -1) == TailCheck::Unmeasured);
+    EXPECT("TailCheck: no FunctionFlags offset is Unmeasured", CheckTailForVersion(417, 0, 0x88) == TailCheck::Unmeasured);
+    // Whatever FunctionFlags offset is judged, an extra of 0 or 4 explains a measured base for one side of 4.18 only:
+    // the two sides' shifts differ by 2.
+    int bothSides = 0;
+    for (int flags : { 0x88, 0x90, 0x98, 0xA0, 0xB0, 0xB8 })
+        for (int base = flags - 8; base <= flags + 12; ++base)
+            if (CheckTailForVersion(417, flags, base) == TailCheck::Agrees
+                && CheckTailForVersion(418, flags, base) == TailCheck::Agrees)
+                ++bothSides;
+    EXPECT("TailCheck: no measured base fits both sides of 4.18", bothSides == 0);
 }
 
 // [OVERRIDE-REVIEW2-LOWS] An override persisted before [UE-OVERRIDE-411], or chosen before any scan, is applied at every
@@ -6604,29 +6610,26 @@ static void Test_CheckTailForVersion() {
 // refusal's own verdict.
 static void Test_OverrideContradictsTail() {
     using DynOff::OverrideContradictsTail;
-    EXPECT("OverrideTail ⭐: a persisted 4.17 on a 4.18 tail is contradicted", OverrideContradictsTail(true, 417, 0x88, 0, 0x88));
-    EXPECT("OverrideTail ⭐: ...and 4.18 on a 4.11-4.17 tail", OverrideContradictsTail(true, 418, 0x88, 0, 0x8A));
-    EXPECT("OverrideTail ⭐: ...and 4.17 on a +4 5.x tail (the vote's extra counts)",
-           OverrideContradictsTail(true, 417, 0xB0, 4, 0xB4));
-    EXPECT("OverrideTail control: an override that fits is not", !OverrideContradictsTail(true, 418, 0x88, 0, 0x88));
-    EXPECT("OverrideTail control: ...nor 4.15 on its own tail", !OverrideContradictsTail(true, 415, 0x88, 0, 0x8A));
-    EXPECT("OverrideTail control: ...nor 5.5 on the +4 tail", !OverrideContradictsTail(true, 505, 0xB0, 4, 0xB4));
-    EXPECT("OverrideTail ⭐: ...nor 5.5 there when the vote ran under a wrong version and latched extra 0",
-           !OverrideContradictsTail(true, 505, 0xB0, 0, 0xB4));
+    EXPECT("OverrideTail ⭐: a persisted 4.17 on a 4.18 tail is contradicted", OverrideContradictsTail(true, 417, 0x88, 0x88));
+    EXPECT("OverrideTail ⭐: ...and 4.18 on a 4.11-4.17 tail", OverrideContradictsTail(true, 418, 0x88, 0x8A));
+    EXPECT("OverrideTail ⭐: ...and 4.17 on a +4 5.x tail", OverrideContradictsTail(true, 417, 0xB0, 0xB4));
+    EXPECT("OverrideTail control: an override that fits is not", !OverrideContradictsTail(true, 418, 0x88, 0x88));
+    EXPECT("OverrideTail control: ...nor 4.15 on its own tail", !OverrideContradictsTail(true, 415, 0x88, 0x8A));
+    EXPECT("OverrideTail control: ...nor 5.5 on the +4 tail, whatever the vote latched",
+           !OverrideContradictsTail(true, 505, 0xB0, 0xB4));
     EXPECT("OverrideTail: a DETECTED version is not the user's override to take back",
-           !OverrideContradictsTail(false, 417, 0x88, 0, 0x88));
-    EXPECT("OverrideTail: nothing measured is never a contradiction", !OverrideContradictsTail(true, 417, 0x88, 0, -1));
-    EXPECT("OverrideTail: ...nor a tail with no FunctionFlags offset", !OverrideContradictsTail(true, 417, 0, 0, 0x88));
+           !OverrideContradictsTail(false, 417, 0x88, 0x88));
+    EXPECT("OverrideTail: nothing measured is never a contradiction", !OverrideContradictsTail(true, 417, 0x88, -1));
+    EXPECT("OverrideTail: ...nor a tail with no FunctionFlags offset", !OverrideContradictsTail(true, 417, 0, 0x88));
     // One verdict with the refusal: wherever set_ue_version_override would refuse the version, the note shows.
     int disagree = 0;
     char first[96] = "none";
     for (unsigned v : { 411u, 415u, 417u, 418u, 421u, 427u, 500u, 505u, 508u })
-        for (int base : { 0x88, 0x8A, 0x8C, 0xB0, 0xB4 })
-            for (int extra : { 0, 4 }) {
-                const bool refused = DynOff::CheckTailForVersion(v, 0x88, extra, base) == DynOff::TailCheck::Contradicts;
-                if (OverrideContradictsTail(true, v, 0x88, extra, base) != refused && disagree++ == 0)
-                    snprintf(first, sizeof(first), "v %u base 0x%X extra %d", v, base, extra);
-            }
+        for (int base : { 0x88, 0x8A, 0x8C, 0x8E, 0xB0, 0xB4 }) {
+            const bool refused = DynOff::CheckTailForVersion(v, 0x88, base) == DynOff::TailCheck::Contradicts;
+            if (OverrideContradictsTail(true, v, 0x88, base) != refused && disagree++ == 0)
+                snprintf(first, sizeof(first), "v %u base 0x%X", v, base);
+        }
     if (disagree != 0) std::printf("    OverrideTail: %d disagreement(s), the first %s\n", disagree, first);
     EXPECT("OverrideTail: the note and the refusal give one verdict", disagree == 0);
 }
