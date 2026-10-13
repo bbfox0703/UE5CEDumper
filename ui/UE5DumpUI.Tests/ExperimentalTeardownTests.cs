@@ -1,0 +1,354 @@
+using System.IO;
+using UE5DumpUI.Core;
+using UE5DumpUI.Models;
+using UE5DumpUI.Services;
+using UE5DumpUI.ViewModels;
+using Xunit;
+
+namespace UE5DumpUI.Tests;
+
+/// <summary>
+/// [LF-EXPOFF-TRACE] [EXPOFF-TEARDOWN] What turning the experimental features off does to what they run in the game,
+/// as the maintainer chose after the review (2026-10-09, 「連線中也可取消，立即清理」): unticked while connected,
+/// Teleport's teardown turns Keep Foreground, Fly, See-through and a Stealth hold off at once, and only then releases
+/// their hotkeys; unticked while disconnected, the next connect with the features still off turns off whatever the
+/// connect prime reads on -- never a connect with them on. The DLL's last-client teardown ends See-through, not the
+/// other three, so without this they ran on behind hidden cards.
+/// </summary>
+public class ExperimentalTeardownTests : IDisposable
+{
+    private readonly string _dir = Path.Combine(Path.GetTempPath(), $"UE5DumpExpTeardown_{Guid.NewGuid():N}");
+
+    public ExperimentalTeardownTests() => Directory.CreateDirectory(_dir);
+
+    public void Dispose()
+    {
+        try { Directory.Delete(_dir, recursive: true); }
+        catch { /* best effort */ }
+    }
+
+    /// <summary>The DLL as the Teleport cards see it: each experimental feature's state, answered by its get and
+    /// moved by its set, and what was sent to turn one off, in order. A hold, when set, keeps an answer back.</summary>
+    private sealed class FakeDll : StubDumpService
+    {
+        public int Foreground;
+        public bool Fly;
+        public bool SeeThrough;
+        public List<ForcedFieldInfo> Forced { get; } = new();
+        public List<string> Off { get; } = new();
+        /// <summary>The foreground lock's OFF waits on this.</summary>
+        public TaskCompletionSource<bool>? HoldForegroundOff;
+        /// <summary>The connect prime's foreground read waits on this.</summary>
+        public TaskCompletionSource<bool>? HoldForegroundRead;
+
+        public const string Meter = "BP_Player_C::Visibility";
+
+        public void HoldTheMeter() => Forced.Add(new ForcedFieldInfo
+        {
+            ClassName = "BP_Player_C", FieldName = "Visibility", Kind = "numeric", Value = 0, Held = 1,
+        });
+
+        public override async Task<int> SetForegroundLockAsync(bool enable, CancellationToken ct = default)
+        {
+            if (!enable)
+            {
+                Off.Add("foreground");
+                if (HoldForegroundOff is { } hold) await hold.Task;
+            }
+            Foreground = enable ? 1 : 0;
+            return Foreground;
+        }
+
+        public override async Task<int> GetForegroundLockAsync(CancellationToken ct = default)
+        {
+            if (HoldForegroundRead is { } hold) await hold.Task;
+            return Foreground;
+        }
+
+        private FlyStatus FlyNow => new() { HasCmc = true, Active = Fly, State = Fly ? 1 : 0 };
+
+        public override Task<FlyStatus> FlySetAsync(bool? enable, double? speed, int? preset, bool? noclip,
+                                                    CancellationToken ct = default)
+        {
+            if (enable is bool on)
+            {
+                if (!on) Off.Add("fly");
+                Fly = on;
+            }
+            return Task.FromResult(FlyNow);
+        }
+
+        public override Task<FlyStatus> FlyGetStateAsync(CancellationToken ct = default) => Task.FromResult(FlyNow);
+
+        public override Task<SeeThroughStatus> SeeThroughSetAsync(bool? enable, int? count, CancellationToken ct = default)
+        {
+            if (enable is bool on)
+            {
+                if (!on) Off.Add("seethrough");
+                SeeThrough = on;
+            }
+            return Task.FromResult(new SeeThroughStatus { Active = SeeThrough, HasTarget = true });
+        }
+
+        public override Task<SeeThroughStatus> SeeThroughGetStateAsync(CancellationToken ct = default)
+            => Task.FromResult(new SeeThroughStatus { Active = SeeThrough, HasTarget = true });
+
+        public override Task<IReadOnlyList<StealthCandidate>> FindStealthMeterAsync(int max = 8, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<StealthCandidate>>(new List<StealthCandidate>
+            {
+                new() { ClassName = "BP_Player_C", FieldName = "Visibility", Score = 9 },
+            });
+
+        public override Task<IReadOnlyList<ForcedFieldInfo>> GetForcedFieldsAsync(CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<ForcedFieldInfo>>(Forced.ToList());
+
+        public override Task<ForceFieldResult> ForceFieldAsync(string className, string fieldName, string kind,
+                                                               double value = 0, bool on = false, CancellationToken ct = default)
+        {
+            HoldTheMeter();
+            return Task.FromResult(new ForceFieldResult { Held = 1, Resolved = true });
+        }
+
+        public override Task<int> ResetFieldAsync(string className, string fieldName, CancellationToken ct = default)
+        {
+            Off.Add($"reset_field {className}::{fieldName}");
+            Forced.RemoveAll(f => f.ClassName == className && f.FieldName == fieldName);
+            return Task.FromResult(0);
+        }
+
+        public override Task<List<TeleportMarker>> TeleportGetMarkersAsync(CancellationToken ct = default)
+            => Task.FromResult(new List<TeleportMarker>());
+    }
+
+    /// <summary>The registrations still held: a registration leaves the list when it is disposed.</summary>
+    private sealed class Hotkeys : IGlobalHotkeyService
+    {
+        public List<string> Live { get; } = new();
+
+        public IGlobalHotkeyRegistration? RegisterCursorHotkey(Action onPressed) => null;
+
+        public IGlobalHotkeyRegistration? RegisterSpecific(uint modifiers, uint vk, string label, Action onPressed)
+        {
+            Live.Add(label);
+            return new Registration(this, label);
+        }
+
+        private sealed class Registration(Hotkeys owner, string label) : IGlobalHotkeyRegistration
+        {
+            public string Label => label;
+            public void Dispose() => owner.Live.Remove(label);
+        }
+    }
+
+    /// <summary>The opt-in as the app's gate behaves when unlocked: Changed on a real flip.</summary>
+    private sealed class Switch(bool enabled) : IExperimentalGate
+    {
+        private bool _enabled = enabled;
+
+        public bool IsEnabled
+        {
+            get => _enabled;
+            set
+            {
+                if (_enabled == value) return;
+                _enabled = value;
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        public int SnapshotQuotaMb { get; set; }
+        public bool IsLocked => false;
+        public void Lock() { }
+        public event EventHandler? Changed;
+    }
+
+    /// <summary>Teleport with the experimental hotkeys Keep Foreground OFF and Fly toggle bound, as saved.</summary>
+    private (TeleportViewModel vm, FakeDll dll, Hotkeys hotkeys, Switch gate) Make(bool enabled)
+    {
+        var platform = new MockPlatformService(_dir);
+        new TeleportHotkeyStore(platform).Save(new Dictionary<string, TeleportHotkeyBinding>
+        {
+            ["foreground_off"] = new TeleportHotkeyBinding(HotkeyModifiers.Control, 0x78 /*F9*/),
+            ["fly_toggle"] = new TeleportHotkeyBinding(HotkeyModifiers.Control, 0x77 /*F8*/),
+        });
+        var dll = new FakeDll();
+        var hotkeys = new Hotkeys();
+        var gate = new Switch(enabled);
+        var vm = new TeleportViewModel(dll, new MockLoggingService(), platform, aobMaker: null,
+                                       globalHotkeys: hotkeys, experimentalGate: gate);
+        return (vm, dll, hotkeys, gate);
+    }
+
+    private static async Task Connect(TeleportViewModel vm)
+    {
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+        await vm.ExperimentalTeardown;
+    }
+
+    /// <summary>Keep Foreground, Fly, See-through and a Stealth hold all on, through their own cards.</summary>
+    private static async Task TurnAllOn(TeleportViewModel vm)
+    {
+        await vm.ForceForegroundLockOnCommand.ExecuteAsync(null);
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+        await vm.ApplySeeThroughCommand.ExecuteAsync(null);
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        await vm.HoldStealthCommand.ExecuteAsync(null);
+        Assert.Equal("ON", vm.ForegroundLockState);
+        Assert.Equal("ON", vm.FlyState);
+        Assert.Equal("ON", vm.SeeThroughState);
+        Assert.Equal("Holding @0", vm.StealthState);
+    }
+
+    private static readonly string[] AllOff = { "foreground", "fly", "seethrough", "reset_field " + FakeDll.Meter };
+
+    [Fact]
+    public async Task Unticked_while_connected_everything_the_features_run_goes_off_at_once()
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await TurnAllOn(vm);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+
+        Assert.Equal(AllOff, dll.Off);
+        Assert.Equal(0, dll.Foreground);
+        Assert.False(dll.Fly);
+        Assert.False(dll.SeeThrough);
+        Assert.Empty(dll.Forced);
+        Assert.Equal("OFF", vm.ForegroundLockState);
+        Assert.Equal("OFF", vm.FlyState);
+        Assert.Equal("Off", vm.StealthState);
+    }
+
+    [Fact]
+    public async Task Unticked_while_connected_the_hotkeys_go_only_after_what_they_control_is_off()
+    {
+        var (vm, dll, hotkeys, gate) = Make(enabled: true);
+        await Connect(vm);
+        await TurnAllOn(vm);
+        Assert.Equal(2, hotkeys.Live.Count);
+        dll.HoldForegroundOff = new TaskCompletionSource<bool>();
+
+        gate.IsEnabled = false;
+        Assert.Equal(new[] { "foreground" }, dll.Off);   // sent, and not yet answered
+        Assert.Equal(2, hotkeys.Live.Count);   // Keep Foreground OFF's own key stays while the lock may still be on
+
+        dll.HoldForegroundOff.SetResult(true);
+        await vm.ExperimentalTeardown;
+        Assert.Equal(AllOff, dll.Off);
+        Assert.Empty(hotkeys.Live);
+    }
+
+    [Fact]
+    public async Task Ticked_again_before_the_teardown_ends_the_hotkeys_stay()
+    {
+        var (vm, dll, hotkeys, gate) = Make(enabled: true);
+        await Connect(vm);
+        await TurnAllOn(vm);
+        dll.HoldForegroundOff = new TaskCompletionSource<bool>();
+
+        gate.IsEnabled = false;
+        gate.IsEnabled = true;
+        dll.HoldForegroundOff.SetResult(true);
+        await vm.ExperimentalTeardown;
+
+        Assert.Equal(2, hotkeys.Live.Count);
+    }
+
+    [Fact]
+    public async Task Unticked_while_disconnected_the_hotkeys_go_at_once_and_nothing_is_sent()
+    {
+        var (vm, dll, hotkeys, gate) = Make(enabled: true);
+        Assert.Equal(2, hotkeys.Live.Count);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.Empty(hotkeys.Live);
+        Assert.Empty(dll.Off);
+    }
+
+    [Fact]
+    public async Task Unticked_while_disconnected_the_next_connect_turns_off_what_the_DLL_still_runs()
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await TurnAllOn(vm);
+        vm.SetConnected(false);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.Empty(dll.Off);   // nothing reaches the DLL while disconnected
+
+        await Connect(vm);
+        Assert.Equal(AllOff, dll.Off);
+        Assert.Equal(0, dll.Foreground);
+        Assert.False(dll.Fly);
+        Assert.Empty(dll.Forced);
+        Assert.Equal("Off", vm.StealthState);
+    }
+
+    [Fact]
+    public async Task A_connect_with_the_features_on_turns_nothing_off()
+    {
+        var (vm, dll, _, _) = Make(enabled: true);
+        dll.Foreground = 1;
+        dll.Fly = true;
+        dll.SeeThrough = true;
+        dll.HoldTheMeter();
+
+        await Connect(vm);
+        Assert.Empty(dll.Off);
+        Assert.Equal("Holding @0", vm.StealthState);
+    }
+
+    [Fact]
+    public async Task A_connect_with_the_features_off_and_nothing_running_sends_nothing()
+    {
+        // The default for a new user: a connect costs no round trip and keeps its "Connected".
+        var (vm, dll, _, _) = Make(enabled: false);
+
+        await Connect(vm);
+        Assert.Empty(dll.Off);
+        Assert.Equal("Connected", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Ticked_before_the_connect_prime_lands_nothing_is_turned_off()
+    {
+        var (vm, dll, _, gate) = Make(enabled: false);
+        dll.Foreground = 1;
+        dll.HoldForegroundRead = new TaskCompletionSource<bool>();
+
+        vm.SetConnected(true);
+        gate.IsEnabled = true;
+        dll.HoldForegroundRead.SetResult(true);
+        await vm.ConnectPrime;
+        await vm.ExperimentalTeardown;
+
+        Assert.Empty(dll.Off);
+        Assert.Equal("ON", vm.ForegroundLockState);
+    }
+
+    [Fact]
+    public async Task Two_connects_in_a_row_turn_a_feature_off_once()
+    {
+        // The main window calls SetConnected(true) twice on one connect: from the pipe's state handler, and again once
+        // the scan has finished. The later prime reads the DLL again, so the earlier one's teardown stands aside.
+        var (vm, dll, _, _) = Make(enabled: false);
+        dll.Foreground = 1;
+        dll.HoldForegroundRead = new TaskCompletionSource<bool>();
+
+        vm.SetConnected(true);
+        var first = vm.ExperimentalTeardown;
+        vm.SetConnected(true);
+        var second = vm.ExperimentalTeardown;
+        dll.HoldForegroundRead.SetResult(true);
+        await first;
+        await second;
+
+        Assert.Equal(new[] { "foreground" }, dll.Off);
+        Assert.Equal(0, dll.Foreground);
+    }
+}

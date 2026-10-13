@@ -4796,6 +4796,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
               $"{string.Join(", ", failed)}. Free the combo and reconnect, or re-bind below.";
     }
 
+    /// <summary>[LF-EXPOFF-TRACE] The experimental teardown last started, so a test can await it. Production never
+    /// awaits it.</summary>
+    internal Task ExperimentalTeardown { get; private set; } = Task.CompletedTask;
+
     /// <summary>Experimental gate flipped (System-tab checkbox). Refresh the gated
     /// card visibility and (dis)engage the experimental-feature hotkeys. On disable
     /// we FIRST force the features off (user choice) so a live cursor-lock/flight is
