@@ -3835,6 +3835,11 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         // 4.18+ Offset_Internal default -- 0x6C against this 0x78 (review of build 3596).
         DynOff::UPROPERTY_SUBCLASS_START = DynOff::FSTRUCTPROP_STRUCT;
     }
+    if (!DynOff::bUseFProperty) {
+        // [UE4-USTRUCT-GIVEUP] The UStruct head of THIS version, so a give-up exit below ships it rather than 4.25's
+        // (DynOff::UPropertyUStructHeadFor has the measurements). A Children found below re-derives all four.
+        DynOff::ApplyUStructHead(DynOff::UPropertyUStructHeadFor(DynOff::UFIELD_NEXT, ueVersion));
+    }
 
     // Step 3: Find "Guid" or "Vector" struct for probing
     uintptr_t guidStruct = FindStructByName("Guid");

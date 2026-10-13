@@ -158,6 +158,34 @@ inline int USTRUCT_PROPSSIZE  = 0x58;
 // PROPSSIZE; default mirrors the UE4.25+/UE5 standard (0x58 + 8 = 0x60).
 inline int USTRUCT_SCRIPT     = 0x60;
 
+// [UE4-USTRUCT-GIVEUP] The head above is 4.25's. A UProperty engine (UE < 4.25) has no ChildProperties, and its
+// SuperStruct sits right behind UField::Next -- unless the build carries FStructBaseChain, a 16-byte private base that
+// 4.22-4.24 put between UField and SuperStruct in every non-editor build (ObjectMacros.h picks the struct-array IsChildOf
+// outside UE_EDITOR). Measured: UE_4.18 Class.h and EVERSPACE's 4.20 Shipping PDB give 0x30/0x38/0x40/0x48 for
+// Super/Children/PropertiesSize/Script; UE_4.23 Class.h and UE423_Flying's 4.23 Shipping PDB give 0x40/0x48/0x50/0x58
+// (its Development PDB, whose UObject carries a StatID, is the same head 8 further on, as UField::Next is). Where between
+// 4.21 and 4.22 the base arrived is RE-UE4SS's MemberVariableLayout templates' answer; no header or PDB of either is here.
+// Genau measures Children and derives the rest from it, so this is only what a run that cannot measure ships. An unknown
+// version gets the 4.22-4.24 head: Super and Children where 4.25's default already put them, so it is never further off
+// than that default was.
+struct UStructHead {
+    int super;
+    int children;
+    int propsSize;   // MinAlignment follows at +4
+    int script;
+};
+inline constexpr UStructHead UPropertyUStructHeadFor(int ufieldNext, unsigned ueVersion) {
+    const bool baseChain = ueVersion == 0 || ueVersion >= 422;
+    const int super = ufieldNext + 8 + (baseChain ? 0x10 : 0);
+    return UStructHead{ super, super + 8, super + 0x10, super + 0x18 };
+}
+inline void ApplyUStructHead(const UStructHead& h) {
+    USTRUCT_SUPER = h.super;
+    USTRUCT_CHILDREN = h.children;
+    USTRUCT_PROPSSIZE = h.propsSize;
+    USTRUCT_SCRIPT = h.script;
+}
+
 // === UFunction::Func — native exec-thunk pointer (Path 2 disassembly) ===
 // FNativeFuncPtr at the tail of UFunction. For native functions it points at
 // the execXxx thunk in .text (what Denken disassembles); for script functions

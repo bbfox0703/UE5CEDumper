@@ -7252,6 +7252,42 @@ static void Test_UPropertyFamilyFor() {
                    UPropertyFamilyFor(0x50, v, cpn).structProp == DynOff::UBoolPropFieldSizeFor(0x50, v, cpn));
 }
 
+// [UE4-USTRUCT-GIVEUP] The UStruct head a UProperty engine's give-up ships. Every expected tuple below is a PDB's or a
+// header's, read with llvm-pdbutil (`pretty -classes -class-definitions=layout -include-types=^UStruct$`).
+static void Test_UPropertyUStructHeadFor() {
+    auto is = [](DynOff::UStructHead h, int s, int c, int p, int sc) {
+        return h.super == s && h.children == c && h.propsSize == p && h.script == sc;
+    };
+    using DynOff::UPropertyUStructHeadFor;
+    EXPECT("USTRUCT-GIVEUP: 4.18 (UE_4.18 Class.h) 30/38/40/48", is(UPropertyUStructHeadFor(0x28, 418), 0x30, 0x38, 0x40, 0x48));
+    EXPECT("USTRUCT-GIVEUP: 4.20 Shipping (EVERSPACE's PDB) 30/38/40/48",
+           is(UPropertyUStructHeadFor(0x28, 420), 0x30, 0x38, 0x40, 0x48));
+    EXPECT("USTRUCT-GIVEUP: 4.11 and 4.21 have no FStructBaseChain either",
+           is(UPropertyUStructHeadFor(0x28, 411), 0x30, 0x38, 0x40, 0x48)
+           && is(UPropertyUStructHeadFor(0x28, 421), 0x30, 0x38, 0x40, 0x48));
+    EXPECT("USTRUCT-GIVEUP: 4.23 Shipping (UE423_Flying's PDB) 40/48/50/58 -- FStructBaseChain first",
+           is(UPropertyUStructHeadFor(0x28, 423), 0x40, 0x48, 0x50, 0x58));
+    EXPECT("USTRUCT-GIVEUP: 4.22 and 4.24 carry it too",
+           is(UPropertyUStructHeadFor(0x28, 422), 0x40, 0x48, 0x50, 0x58)
+           && is(UPropertyUStructHeadFor(0x28, 424), 0x40, 0x48, 0x50, 0x58));
+    // A STATS build's UObject is 8 longer (TStatId), and so its UField::Next: the head follows Next, not the version.
+    EXPECT("USTRUCT-GIVEUP: 4.15 Development (UE415_Flyinh's PDB, Next 0x30) 38/40/48/50",
+           is(UPropertyUStructHeadFor(0x30, 415), 0x38, 0x40, 0x48, 0x50));
+    EXPECT("USTRUCT-GIVEUP: 4.23 Development (UE423_Flying's PDB, Next 0x30) 48/50/58/60",
+           is(UPropertyUStructHeadFor(0x30, 423), 0x48, 0x50, 0x58, 0x60));
+    // Case-preserving names move UField::Next to 0x30 the same way; DQ XI S's shifted 4.18 measured it at 0x38.
+    EXPECT("USTRUCT-GIVEUP: a shifted 4.18 (Next 0x38) 40/48/50/58", is(UPropertyUStructHeadFor(0x38, 418), 0x40, 0x48, 0x50, 0x58));
+    // An unknown version: 4.22-4.24's head, whose Super and Children are the 4.25+ default's.
+    EXPECT("USTRUCT-GIVEUP: an unknown version gets 40/48/50/58", is(UPropertyUStructHeadFor(0x28, 0), 0x40, 0x48, 0x50, 0x58));
+    // Script follows PropertiesSize + MinAlignment on every one, as Grimoire's USTRUCT_SCRIPT note says.
+    for (unsigned v : { 0u, 411u, 418u, 421u, 422u, 424u })
+        for (int next : { 0x28, 0x30, 0x38 }) {
+            const DynOff::UStructHead h = UPropertyUStructHeadFor(next, v);
+            EXPECT("USTRUCT-GIVEUP: Children = Super + 8, PropertiesSize = Children + 8, Script = PropertiesSize + 8",
+                   h.children == h.super + 8 && h.propsSize == h.children + 8 && h.script == h.propsSize + 8);
+        }
+}
+
 static void Test_PropertyFamilyIsCoherent() {
     // Every real Offset_Internal this repo has measured, plus the neighbours a future
     // engine could plausibly land on.
@@ -9782,6 +9818,7 @@ int main() {
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);
     RUN(Test_UPropertyFamilyFor);
+    RUN(Test_UPropertyUStructHeadFor);
     RUN(Test_PropertyFamilyForIsAligned);
     RUN(Test_PropertyFamilyIsCoherent);
     RUN(Test_NameWitness);
