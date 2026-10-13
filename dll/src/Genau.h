@@ -409,9 +409,12 @@ uint32_t DetectVersion();
 bool ValidateAndFixOffsets(uint32_t ueVersion);
 
 // Lazy-detect UEnum::Names offset by probing known enums (ENetRole, etc.) in GObjects.
-// Called on first EnumProperty encounter, NOT during init.
 // Sets DynOff::UENUM_NAMES and DynOff::bUEnumNamesDetected on success.
-bool DetectUEnumNames();
+// A search that ran to completion and found nothing latches bUEnumNamesFailed, so the enum readers stop
+// re-walking the object array -- unless `latchFailure` is false [VER-MARKERS-PAST-504]. A caller that runs
+// before the first enum read may run before the engine has registered ENetRole at all, and a miss that early
+// must leave the lazy path free to try again.
+bool DetectUEnumNames(bool latchFailure = true);
 
 // === Extra Scan: user-triggered aggressive fallback techniques ===
 // These are computationally expensive (seconds, not milliseconds) and are designed

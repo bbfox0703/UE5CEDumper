@@ -5806,7 +5806,7 @@ static std::string GetObjectName(uintptr_t obj) {
     return ReadFNameStr(obj + Grimoire::OFF_UOBJECT_NAME);
 }
 
-bool DetectUEnumNames() {
+bool DetectUEnumNames(bool latchFailure) {
     // Already detected?
     if (DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
         return true;
@@ -5953,6 +5953,14 @@ bool DetectUEnumNames() {
     if (searchAborted) {
         Sein::Warn("DYNO:Enum", "DetectUEnumNames: search cancelled (client gone / shutdown) -- "
             "not latching FAILED; the next enum lookup retries");
+        return false;
+    }
+
+    // [VER-MARKERS-PAST-504] The version ladder's early call: a miss there may only mean the engine has not
+    // registered the enums yet, so it is reported and not remembered.
+    if (!latchFailure) {
+        Sein::Info("DYNO:Enum", "DetectUEnumNames: no known enum found yet -- not latching FAILED for an "
+            "early caller; the next enum lookup retries");
         return false;
     }
 
