@@ -395,6 +395,7 @@ public class SnapshotStoreTests : IDisposable
         // The DB must be left usable (WAL restored, no wedged lock) — a follow-up write works.
         long id2 = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "y", Scope = "NumericNoByte" }, ct);
         await _store.WriteChunkAsync(id2, new[] { MakeObject(2, ("HP", "IntProperty", "14000000")) }, ct);
+        await _store.FinalizeSnapshotAsync(id2, 1, 1, ct);
         Assert.Single(await _store.ListSnapshotsAsync(ct));
     }
 
@@ -784,11 +785,13 @@ public class SnapshotStoreTests : IDisposable
 
         _store.SetActiveGame("GAMEA");
         var pathA = _store.DatabasePath;
-        await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "a", PeHash = "GAMEA" }, ct);
+        long a = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "a", PeHash = "GAMEA" }, ct);
+        await _store.FinalizeSnapshotAsync(a, 0, 0, ct);   // listed once finished [SNAPSHOT-CRASH-PARTIAL]
 
         _store.SetActiveGame("GAMEB");
         var pathB = _store.DatabasePath;
-        await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "b", PeHash = "GAMEB" }, ct);
+        long b = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "b", PeHash = "GAMEB" }, ct);
+        await _store.FinalizeSnapshotAsync(b, 0, 0, ct);
 
         Assert.NotEqual(pathA, pathB);
         Assert.Contains("GAMEA", pathA);
@@ -897,6 +900,8 @@ public class SnapshotStoreTests : IDisposable
         var ct = TestContext.Current.CancellationToken;
         long a = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "a" }, ct);
         long b = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "b" }, ct);
+        await _store.FinalizeSnapshotAsync(b, 0, 0, ct);   // finished out of order: the list still goes by id
+        await _store.FinalizeSnapshotAsync(a, 0, 0, ct);
         var list = await _store.ListSnapshotsAsync(ct);
         Assert.Equal(2, list.Count);
         Assert.Equal(b, list[0].Id);  // newest (higher id) first
@@ -1192,12 +1197,13 @@ public class SnapshotStoreTests : IDisposable
             store.SetActiveGame($"PE{iter:D4}");
 
             // Every one of these drives an independent OpenAsync on the same new file.
+            var create = Task.Run(() => store.CreateSnapshotAsync(
+                new SnapshotMeta { Label = "a", CapturedAt = "t", PeHash = "PE", GameSessionId = "S", UeVersion = 504, Scope = "NumericNoByte" }, ct), ct);
             var ops = new List<Task>
             {
                 Task.Run(() => store.ListSnapshotsAsync(ct), ct),
                 Task.Run(() => store.ListSnapshotsAsync(ct), ct),
-                Task.Run(() => store.CreateSnapshotAsync(
-                    new SnapshotMeta { Label = "a", CapturedAt = "t", PeHash = "PE", GameSessionId = "S", UeVersion = 504, Scope = "NumericNoByte" }, ct), ct),
+                create,
                 Task.Run(async () => { await using var s = await store.BeginCaptureSessionAsync(ct); }, ct),
                 Task.Run(() => store.GetUsageAsync(ct), ct),
             };
@@ -1214,7 +1220,9 @@ public class SnapshotStoreTests : IDisposable
                             string.Join(Environment.NewLine + "  ", failed));
             }
 
-            // The schema is actually usable afterwards (not just "no exception").
+            // The schema is actually usable afterwards (not just "no exception"): the created row is there, and is
+            // listed once finished [SNAPSHOT-CRASH-PARTIAL].
+            await store.FinalizeSnapshotAsync(await create, 0, 0, ct);
             Assert.Single(await store.ListSnapshotsAsync(ct));
         }
     }
