@@ -7282,10 +7282,12 @@ static void Test_UPropertyUStructHeadFor() {
     EXPECT("USTRUCT-GIVEUP: 4.22 and 4.24 carry it too",
            is(UPropertyUStructHeadFor(0x28, 422), 0x40, 0x48, 0x50, 0x58)
            && is(UPropertyUStructHeadFor(0x28, 424), 0x40, 0x48, 0x50, 0x58));
-    // A STATS build's UObject is 8 longer (TStatId), and so its UField::Next: the head follows Next, not the version.
-    EXPECT("USTRUCT-GIVEUP: 4.15 Development (UE415_Flyinh's PDB, Next 0x30) 38/40/48/50",
+    // A STATS build's UObject is 8 longer (TStatId), and so its UField::Next: the head follows Next, not the version --
+    // GIVEN that Next. A give-up has no measured one and passes 0x28 on such a build (DynOff::UPropertyUStructHeadFor),
+    // so these two hold for the arithmetic, not for a STATS build that gives up.
+    EXPECT("USTRUCT-GIVEUP: given a measured Next 0x30 at 4.15, UE415_Flyinh's Development PDB head 38/40/48/50",
            is(UPropertyUStructHeadFor(0x30, 415), 0x38, 0x40, 0x48, 0x50));
-    EXPECT("USTRUCT-GIVEUP: 4.23 Development (UE423_Flying's PDB, Next 0x30) 48/50/58/60",
+    EXPECT("USTRUCT-GIVEUP: given a measured Next 0x30 at 4.23, UE423_Flying's Development PDB head 48/50/58/60",
            is(UPropertyUStructHeadFor(0x30, 423), 0x48, 0x50, 0x58, 0x60));
     // Case-preserving names move UField::Next to 0x30 the same way; DQ XI S's shifted 4.18 measured it at 0x38.
     EXPECT("USTRUCT-GIVEUP: a shifted 4.18 (Next 0x38) 40/48/50/58", is(UPropertyUStructHeadFor(0x38, 418), 0x40, 0x48, 0x50, 0x58));

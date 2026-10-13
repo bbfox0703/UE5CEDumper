@@ -5999,6 +5999,20 @@ int main() {
             check("USTRUCT-GIVEUP ⭐: a 4.18 give-up ships 30/38/40/48", gu418 && head() == "30/38/40/48", head().c_str());
             giveUpAt(415);
             check("USTRUCT-GIVEUP ⭐: a 4.15 give-up ships 30/38/40/48", head() == "30/38/40/48", head().c_str());
+            // The head follows the run's UField::Next, not a constant. Case-preserving names are the one 0x30 a give-up
+            // can see: the UObject repeats its ComparisonIndex as DisplayIndex. (A STATS build's 0x30 it cannot see --
+            // DynOff::UPropertyUStructHeadFor says what that costs.)
+            put32(upGuid, Grimoire::OFF_UOBJECT_NAME + 4, 4);   // DisplayIndex == ComparisonIndex ("A")
+            const bool cpn415 = giveUpAt(415);
+            check("USTRUCT-GIVEUP setup: a case-preserving 4.15 gives up with UField::Next 0x30",
+                  cpn415 && DynOff::bCasePreservingName && DynOff::UFIELD_NEXT == 0x30,
+                  std::to_string(DynOff::UFIELD_NEXT).c_str());
+            check("USTRUCT-GIVEUP ⭐: ...and ships the head one slot on, 38/40/48/50", head() == "38/40/48/50",
+                  head().c_str());
+            giveUpAt(423);
+            check("USTRUCT-GIVEUP ⭐: a case-preserving 4.23 give-up ships 48/50/58/60",
+                  DynOff::bCasePreservingName && head() == "48/50/58/60", head().c_str());
+            put32(upGuid, Grimoire::OFF_UOBJECT_NAME + 4, 0);
 
             // Control: a version default never overrides a measurement. The fixture's Guid holds Children at +0x48, so a
             // measured 4.18 run derives Super 0x40 from it -- not the 4.18 default 0x30.

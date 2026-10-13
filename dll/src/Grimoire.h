@@ -168,6 +168,10 @@ inline int USTRUCT_SCRIPT     = 0x60;
 // Genau measures Children and derives the rest from it, so this is only what a run that cannot measure ships. An unknown
 // version gets the 4.22-4.24 head: Super and Children where 4.25's default already put them, so it is never further off
 // than that default was.
+// ⚠ The head follows the UField::Next it is GIVEN, and a give-up has no measured one: only DetectUPropertyMode's guess,
+// 0x30 for case-preserving names and 0x28 otherwise. A STATS build's TStatId (Development, DebugGame) moves Next to 0x30
+// as well, and nothing on the give-up path can see it, so such a build that gives up ships this head 8 short. The STATS
+// figures above hold for a measured Next; a give-up is version-correct on Shipping builds only.
 struct UStructHead {
     int super;
     int children;
