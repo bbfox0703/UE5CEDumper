@@ -3678,6 +3678,27 @@ int main() {
         DynOff::bUEnumNamesFailed.store(false);
     }
 
+    // -- ENUMNAMESNOLATCH-2026-10-13 -- the version ladder's UEnum::Names detection latches no failure ------------
+    //
+    // [VER-MARKERS-PAST-504] Init's 5.5 rung reads UEnum::EnumPackage behind the MEASURED Names, so init runs the lazy
+    // detection early -- on a title that may not have registered ENetRole yet. A FAILED latched there would switch enum
+    // names off for the whole process, so that call must report the miss and leave both flags for the lazy path.
+    {
+        blk("ENUMNAMESNOLATCH - a detection told not to latch a failure leaves the next lookup free to retry");
+        ResetCancel();
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+        DynOff::bUEnumNamesDetected.store(false);
+        DynOff::bUEnumNamesFailed.store(false);
+        const bool soft = Genau::DetectUEnumNames(/*latchFailure=*/false);
+        check("ENUMNAMESNOLATCH ⭐: finding no known enum, it reports the miss and latches neither flag",
+              !soft && !DynOff::bUEnumNamesFailed.load() && !DynOff::bUEnumNamesDetected.load());
+        const bool hard = Genau::DetectUEnumNames();
+        check("ENUMNAMESNOLATCH control: the lazy path's own call, on the same pool, still latches FAILED",
+              !hard && DynOff::bUEnumNamesFailed.load() && DynOff::bUEnumNamesDetected.load());
+        DynOff::bUEnumNamesDetected.store(false);
+        DynOff::bUEnumNamesFailed.store(false);
+    }
+
     // -- DELEGATEARRAYPAD-2026-09-12 -- a TArray<FScriptDelegate> publishes its PER-ELEMENT detector pad -----------
     //
     // ⛔ POOL-FAKING, like STRARRAYWALK: own pool, last. [A4-DELEGATE-ARRAY-PAD] The elements of a TArray<FScriptDelegate>
