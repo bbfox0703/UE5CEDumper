@@ -2255,7 +2255,8 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
         // NOTE: a plain printable-ASCII check is NOT enough — Serie::GetString
         // sanitizes junk bytes to '?' (0x3F, itself printable), so a garbage
         // name like "Property??IntProperty" would slip through. IsCleanFName
-        // rejects any '?' / non-ASCII / empty result.
+        // rejects any '?' / control / ill-formed UTF-8 / empty result, and keeps a
+        // well-formed wide (localized) name.
         uint32_t nameIdx = 0;
         if (!Macht::ReadSafe(probe + Grimoire::OFF_UOBJECT_NAME, nameIdx)) continue;
         if (nameIdx == 0) continue;  // Index 0 = "None", skip
@@ -2264,7 +2265,8 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 
         // Validate the CLASS too. A backward-scan false positive is arbitrary
         // bytes that merely resemble a UObject header; its ClassPrivate points
-        // at junk whose name decodes to '?'-runs (ANSI) or CJK mojibake (wide).
+        // at junk whose name decodes to '?'-runs (ANSI) or CJK mojibake (wide,
+        // which Serie::GetString drops as "" once it is long or dense enough).
         // Accepting it makes the Live Walker surface 亂碼 (DQ3 HD-2D: a value in
         // raw heap resolved to 'Property??IntProperty' with a 435-char mojibake
         // class). Require a clean class FName so only real subobjects pass.
