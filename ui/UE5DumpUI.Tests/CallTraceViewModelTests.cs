@@ -1160,10 +1160,11 @@ public class CallTraceViewModelTests
     }
 
     [Fact]
-    public void A_list_below_its_floor_is_laid_out_as_at_its_floor_and_cut_at_its_edge()
+    public void A_list_narrower_than_a_fitted_row_is_laid_out_as_at_512_and_cut_at_its_edge()
     {
-        // The pane keeps its 200 and the list has 400 of its 512. Squeezed to their floors instead, the columns would
-        // show less of every one of them, Time included; laid out as at the floor, Time and Duration stay whole.
+        // The pane shows its 380 and the list has 220: over its floor of 208, under the 512 a row's columns are fitted
+        // to. Squeezed to their floors instead, the columns would show less of every one of them, Time included; laid
+        // out as at 512, Time and Duration stay whole.
         var (vm, _) = MakeVm(Dump());
         vm.SplitWidth = 600;
         Assert.Equal((96.0, 88.0, 64.0, 80.0), ShownColumns(vm));
