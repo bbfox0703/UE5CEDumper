@@ -567,6 +567,23 @@ static bool ReadUE4WideName(uintptr_t at, std::vector<wchar_t>& out) {
     return false;
 }
 
+// [UE4-WIDE-FNAME] review: a pre-4.23 narrow name, up to its terminator or the 255-byte window it has always been read
+// in. The window was one read, and an SEH read fails whole, so a name allocated within 255 bytes of an unreadable page
+// came back "" -- the pools pack entries end to end. Each read now stops at a page boundary and the next is made only
+// while no terminator has come, so wherever the old window was readable the sanitizer sees the same name.
+static bool ReadUE4NarrowName(uintptr_t at, char (&buf)[256]) {
+    constexpr size_t kWindow = 255;
+    size_t got = 0;
+    while (got < kWindow) {
+        const size_t n = (std::min)(static_cast<size_t>(0x1000 - (at & 0xFFF)), kWindow - got);
+        if (!Macht::ReadBytesSafe(at, buf + got, n)) return false;
+        if (memchr(buf + got, 0, n)) return true;
+        got += n;
+        at += n;
+    }
+    return true;
+}
+
 std::string GetString(int32_t nameIndex, int32_t number) {
     if (nameIndex <= 0 && number == 0) return "None";
 
@@ -589,7 +606,7 @@ std::string GetString(int32_t nameIndex, int32_t number) {
 
         // UE4: null-terminated string at fixed offset within FNameEntry
         char buf[256] = {};
-        if (!Macht::ReadBytesSafe(entry + s_ue4StringOffset, buf, 255)) return "";
+        if (!ReadUE4NarrowName(entry + s_ue4StringOffset, buf)) return "";
         buf[255] = '\0';
 
         // Sanitize to printable ASCII; reject a junk-laden decode (invalid/uninitialized

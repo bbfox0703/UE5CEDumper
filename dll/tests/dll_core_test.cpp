@@ -10866,7 +10866,7 @@ int main() {
     // stores Index = (slot << NAME_INDEX_SHIFT) | wide. Serie never read the bit: a wide name was read as narrow bytes,
     // cut at its first zero byte ("Café" came back "C") or rejected outright (any CJK name came back empty).
     {
-        blk("UE4WIDE - a pre-4.23 wide FName decodes as UTF-16; the narrow read is unchanged");
+        blk("UE4WIDE - a pre-4.23 wide FName decodes as UTF-16; the narrow read keeps its window, up to a page's edge");
         auto makeEntry = [](std::vector<uint8_t>& e, int32_t word, const void* chars, size_t bytes) {
             e.assign(0x10 + bytes + sizeof(wchar_t), 0);   // terminated, whichever width the payload is
             memcpy(e.data(), &word, sizeof word);
