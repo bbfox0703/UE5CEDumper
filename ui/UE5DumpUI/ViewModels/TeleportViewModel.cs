@@ -1853,6 +1853,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var cands = await _dump.FindStealthMeterAsync();
+            // [EXPOFF-ROUND3-PAUSED] While a hold runs, the badge and the held meter are what Reset and the experimental
+            // teardown release, so Detect only reads: overwritten, they released nothing (or the newly found field)
+            // while Solide went on forcing the meter.
+            if (StealthState == StealthHoldingState && _stealthCandidate is { } held)
+            {
+                var now = cands.FirstOrDefault(c => c.ClassName == held.ClassName && c.FieldName == held.FieldName);
+                if (now != null) StealthFieldText = $"{held.ClassName}::{held.FieldName} = {now.Current:0.###} (held)";
+                StatusText = Res.Format("str.TP.StDetectWhileHolding", held.FieldName, cands.Count);
+                return;
+            }
             if (cands.Count == 0)
             {
                 _stealthCandidate = null;
