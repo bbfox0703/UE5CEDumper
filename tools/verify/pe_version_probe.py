@@ -10,6 +10,9 @@ answers "which titles can even reach the tier I want" before anything is launche
 Mirrors `Genau::DetectVersionFromPEResource` (dll/src/Genau.cpp) in order -- `read_resource()`:
   1. VS_FIXEDFILEINFO.dwProductVersionMS   5.x -> 500+minor | 4.x -> 400+minor
   2. VS_FIXEDFILEINFO.dwFileVersionMS      same
+     (rev 10) either fixed reading yields to the file's own engine build string when that names another version
+     (`fixed_reading`): ProductVersion's string, then FileVersion's, read by `engine_build_string_code`; the result is
+     a 'build string' reading recording the fixed code it `overruled`
   3. StringFileInfo ProductVersion, then FileVersion, each the first non-empty value over EVERY
      VarFileInfo translation (`first_nonempty`): a '++UEn+Release-' prefix found anywhere whose
      %u.%u gives a version code, else (rev 9) the engine's own build string --
@@ -190,7 +193,12 @@ def build_string_of(strs):
 
 
 def fixed_reading(fixed_key, fixed_code, strs):
-    """A fixed field's code, as ReadUeVersionFromFile takes it. -> the fields read_resource() reports."""
+    """A fixed field's code, as ReadUeVersionFromFile takes it. -> the fields read_resource() reports.
+    ([VER-410-FIXED-VS-STRING] rev 10) The fixed fields are the game's to set; where the file's own engine build string
+    names another version, the string's is taken, as a 'build string' reading that records the code it `overruled`."""
+    b = build_string_of(strs)
+    if b and b[2] != fixed_code:
+        return {"kind": "build string", "code": b[2], "key": b[0], "string": b[1], "overruled": fixed_code}
     return {"kind": "fixed", "code": fixed_code, "key": fixed_key, "string": None, "overruled": None}
 
 
@@ -270,6 +278,7 @@ def read_resource(path):
       code   the version code the DLL takes at Tier 0 (None when it falls through to the memory scan)
       key    for a fixed reading 'ProductVersion' / 'FileVersion' (which fixed field), else the string's key
       string the string read, when the reading came from one
+      overruled  the fixed fields' code when the file's engine build string named another and was taken, else None
       prod / fver   the fixed fields as dotted text (None without a VS_FIXEDFILEINFO)
       strs   {key: first non-empty value over every translation}"""
     out = {"kind": "no resource", "code": None, "key": None, "string": None, "overruled": None,
@@ -339,7 +348,8 @@ def probe(path):
     if k == "string":
         return (f"Tier0 STRING {r['key']}='{r['string']}'", r["prod"], r["fver"], strs)
     if k == "build string":
-        return (f"Tier0 BUILD STRING {r['key']}='{r['string']}' -> {r['code']}", r["prod"], r["fver"], strs)
+        over = f" (overrules fixed {r['overruled']})" if r["overruled"] else ""
+        return (f"Tier0 BUILD STRING {r['key']}='{r['string']}' -> {r['code']}{over}", r["prod"], r["fver"], strs)
     return (f"unrecognised -- {FALLTHROUGH}", r["prod"], r["fver"], strs)
 
 def collect(roots):
