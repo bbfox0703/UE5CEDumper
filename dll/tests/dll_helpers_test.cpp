@@ -3896,6 +3896,18 @@ static void Test_ValueScan_SparseContainerGeometry() {
            Macht::ComputeSetElementStride(8, 8) == Macht::ComputeSetElementStride(8));
     EXPECT("Scharf NameProperty(8) align = 4",        Scharf::RequiredAlignment("NameProperty", 8, false) == 4);
     EXPECT("Scharf WeakObjectProperty align = 4",     Scharf::RequiredAlignment("WeakObjectProperty", 8, false) == 4);
+    // [UE4-ASSETPTR-PROPS] FAssetPtr, 4.11-4.17's soft pointer, ends in an FString, so it is 8-aligned (UE415_Flyinh's
+    // PDB: 0x20, with 4 bytes of padding after TagAtLastTest). 0 ("not validated") left a TMap<TAssetPtr, int32>'s
+    // pair aligned by its int32 -- the stride GetMapPairLayout derives, rebuilt here, came out 0x2C, not 0x30.
+    EXPECT("Scharf AssetObjectProperty align = 8",    Scharf::RequiredAlignment("AssetObjectProperty", 0x20, false) == 8);
+    EXPECT("Scharf AssetClassProperty align = 8",     Scharf::RequiredAlignment("AssetClassProperty", 0x20, false) == 8);
+    {
+        const int32_t keyAlign = Scharf::RequiredAlignment("AssetObjectProperty", 0x20, false);
+        const int32_t valAlign = Scharf::RequiredAlignment("IntProperty", 4, false);
+        const int32_t pairSize = Macht::ComputeMapValueOffset(0x20, 4, valAlign) + 4;
+        EXPECT("TMap<TAssetPtr, int32>: pair stride 0x30",
+               Macht::ComputeSetElementStride(pairSize, keyAlign > valAlign ? keyAlign : valAlign) == 0x30);
+    }
 }
 
 // ----- main ------------------------------------------------------------------

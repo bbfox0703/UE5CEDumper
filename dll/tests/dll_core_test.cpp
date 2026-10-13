@@ -6129,6 +6129,186 @@ int main() {
         DynOff::UPROPERTY_OFFSET = svUOff; DynOff::UPROPERTY_ELEMSIZE = svUElem;
     }
 
+    // -- ASSETPTR-2026-10-13 -- UE 4.11-4.17's soft pointers are read in their own layout ----------------------------------
+    //
+    // ⛔ OWN name table (after UPROPINNER). [UE4-ASSETPTR-PROPS] AssetObjectProperty / AssetClassProperty, the soft
+    // pointers before 4.18 renamed them, hold an FAssetPtr: FWeakObjectPtr +0, TagAtLastTest +8, and the path as ONE
+    // FString (FStringAssetReference::AssetLongPathname) at +0x10, 0x20 in all (UE_4.10 PersistentObjectPtr.h /
+    // StringAssetReference.h; UE415_Flyinh's 4.15 PDB). Nothing read them: a walk row showed bytes, the class no
+    // PropertyClass / MetaClass. And the 4.18+ reader must not take them either -- its envelope arithmetic reads a 0x20
+    // element as a 5.3+ untagged pointer (0x20 - an FName/FString path's 0x18 = 0x08) and LATCHES that for the session.
+    // A 4.15-sized class: Next +0x28, ElementSize +0x34, Offset_Internal +0x50, subclass start 0x78.
+    {
+        blk("ASSETPTR - a 4.11-4.17 AssetObject / AssetClass property: its path, its classes, its array, its preview");
+
+        const auto svFProp = DynOff::bUseFProperty;       const auto svNext = DynOff::UFIELD_NEXT;
+        const auto svChildren = DynOff::USTRUCT_CHILDREN; const auto svPropsSize = DynOff::USTRUCT_PROPSSIZE;
+        const auto svSuper = DynOff::USTRUCT_SUPER;
+        const auto svUOff = DynOff::UPROPERTY_OFFSET;     const auto svUElem = DynOff::UPROPERTY_ELEMSIZE;
+        const auto svUStart = DynOff::UPROPERTY_SUBCLASS_START;
+        const auto svCpn = DynOff::bCasePreservingName;   const auto svSoft = DynOff::SOFTPTR_PATH;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        const uint32_t svVer = g_cachedUEVersion;
+        DynOff::bUseFProperty = false;  DynOff::bCasePreservingName = false;  g_cachedUEVersion = 415;
+        DynOff::UFIELD_NEXT = 0x28;     DynOff::USTRUCT_SUPER = 0x30;  DynOff::USTRUCT_CHILDREN = 0x38;
+        DynOff::USTRUCT_PROPSSIZE = 0x40;
+        DynOff::UPROPERTY_OFFSET = 0x50; DynOff::UPROPERTY_ELEMSIZE = 0x34;
+        DynOff::ApplyPropertyFamily(DynOff::UPropertyFamilyFor(0x50, 415, false));
+        DynOff::UPROPERTY_SUBCLASS_START = DynOff::FSTRUCTPROP_STRUCT;
+        DynOff::SOFTPTR_PATH = -1;   // nothing measured: a 4.18+ envelope latched here would be the misread
+        const int S = DynOff::FSTRUCTPROP_STRUCT;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t apEntry[19][0x40] = {};
+        const char* apNames[19] = { "", "AssetObjectProperty", "AssetClassProperty", "ArrayProperty", "StructProperty",
+                                    "Class", "Texture2D", "Actor", "Icon", "Spawn", "Icons", "Inner", "Rows", "Row",
+                                    "ScriptStruct", "Pic", "Function", "Load", "Which" };
+        static uintptr_t apChunk[20] = {};
+        for (int i = 1; i <= 18; ++i) {
+            memcpy(apEntry[i] + 0x10, apNames[i], strlen(apNames[i]) + 1);
+            apChunk[i] = A(apEntry[i]);
+        }
+        static uintptr_t apChunks[2] = { reinterpret_cast<uintptr_t>(apChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(apChunks), 0x10);
+
+        static uint8_t apPC[5][0x100] = {};
+        auto pcls = [&](int nameIdx) { put32(apPC[nameIdx], Grimoire::OFF_UOBJECT_NAME, nameIdx); return A(apPC[nameIdx]); };
+        static uint8_t apClass[0x100] = {}, apTex[0x100] = {}, apActor[0x100] = {}, apSSCls[0x100] = {},
+                       apFnCls[0x100] = {};
+        put32(apClass, Grimoire::OFF_UOBJECT_NAME, 5);  putP(apClass, Grimoire::OFF_UOBJECT_CLASS, A(apClass));
+        put32(apTex, Grimoire::OFF_UOBJECT_NAME, 6);    putP(apTex, Grimoire::OFF_UOBJECT_CLASS, A(apClass));
+        put32(apActor, Grimoire::OFF_UOBJECT_NAME, 7);  putP(apActor, Grimoire::OFF_UOBJECT_CLASS, A(apClass));
+        put32(apSSCls, Grimoire::OFF_UOBJECT_NAME, 14);
+        put32(apFnCls, Grimoire::OFF_UOBJECT_NAME, 16);
+
+        // TAssetPtr<UTexture2D> Icon; TAssetSubclassOf<AActor> Spawn; TArray<TAssetPtr<UTexture2D>> Icons;
+        // TArray<FRow> Rows, FRow { TAssetPtr<UTexture2D> Pic; }; and a function Load(TAssetPtr<UTexture2D> Which).
+        static uint8_t apIcon[0x100] = {}, apSpawn[0x100] = {}, apIcons[0x100] = {}, apInner[0x100] = {},
+                       apRows[0x100] = {}, apRowInner[0x100] = {}, apRow[0x100] = {}, apPic[0x100] = {},
+                       apFn[0x100] = {}, apWhich[0x100] = {}, apCls[0x100] = {};
+        auto prop = [&](uint8_t* p, uintptr_t cls, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, Grimoire::OFF_UOBJECT_CLASS, cls);  put32(p, Grimoire::OFF_UOBJECT_NAME, nameIdx);
+            put32(p, DynOff::UPROPERTY_ELEMSIZE - 4, 1);  put32(p, DynOff::UPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::UPROPERTY_OFFSET, off);
+            putP(p, DynOff::UFIELD_NEXT, next ? A(next) : 0);
+        };
+        prop(apIcon, pcls(1), 8, 0x28, 0x20, apSpawn);    putP(apIcon, S, A(apTex));
+        prop(apSpawn, pcls(2), 9, 0x48, 0x20, apIcons);   putP(apSpawn, S, A(apClass));  putP(apSpawn, S + 8, A(apActor));
+        prop(apIcons, pcls(3), 10, 0x68, 0x10, apRows);   putP(apIcons, S, A(apInner));
+        prop(apInner, pcls(1), 11, 0, 0x20, nullptr);     putP(apInner, S, A(apTex));
+        prop(apRows, pcls(3), 12, 0x78, 0x10, apFn);      putP(apRows, S, A(apRowInner));
+        prop(apRowInner, pcls(4), 11, 0, 0x20, nullptr);  putP(apRowInner, S, A(apRow));
+        putP(apRow, Grimoire::OFF_UOBJECT_CLASS, A(apSSCls));  put32(apRow, Grimoire::OFF_UOBJECT_NAME, 13);
+        put32(apRow, DynOff::USTRUCT_PROPSSIZE, 0x20);   putP(apRow, DynOff::USTRUCT_CHILDREN, A(apPic));
+        prop(apPic, pcls(1), 15, 0, 0x20, nullptr);       putP(apPic, S, A(apTex));
+        putP(apFn, Grimoire::OFF_UOBJECT_CLASS, A(apFnCls));  put32(apFn, Grimoire::OFF_UOBJECT_NAME, 17);
+        putP(apFn, DynOff::USTRUCT_CHILDREN, A(apWhich));
+        prop(apWhich, pcls(1), 18, 0, 0x20, nullptr);     putP(apWhich, S, A(apTex));
+        { const uint64_t kParm = 0x80; memcpy(apWhich + DynOff::UPROPERTY_FLAGS, &kParm, sizeof kParm); }
+        put32(apCls, DynOff::USTRUCT_PROPSSIZE, 0x88);
+        putP(apCls, DynOff::USTRUCT_CHILDREN, A(apIcon));
+
+        // The instance: Icon names its asset, Spawn is empty, Icons holds one named element and one empty one, and
+        // Rows one FRow naming its own. The weak halves are {0, 0} -- serial 0 is null -- so every value below comes
+        // from the path alone.
+        static const wchar_t kIcon[] = L"/Game/UI/Icon.Icon";
+        static const wchar_t kElem[] = L"/Game/UI/A.A";
+        static const wchar_t kRow[]  = L"/Game/UI/B.B";
+        auto fstr = [&](uint8_t* b, int off, const wchar_t* s) {
+            putP(b, off, A(s));
+            put32(b, off + 8, static_cast<int32_t>(wcslen(s) + 1));
+            put32(b, off + 12, static_cast<int32_t>(wcslen(s) + 1));
+        };
+        alignas(8) static uint8_t apElems[2][0x20] = {};
+        fstr(apElems[0], 0x10, kElem);
+        alignas(8) static uint8_t apRowElems[1][0x20] = {};
+        fstr(apRowElems[0], 0x10, kRow);
+        alignas(8) static uint8_t apInst[0x90] = {};
+        fstr(apInst, 0x28 + 0x10, kIcon);
+        putP(apInst, 0x68, A(apElems));     put32(apInst, 0x70, 2);  put32(apInst, 0x74, 2);
+        putP(apInst, 0x78, A(apRowElems));  put32(apInst, 0x80, 1);  put32(apInst, 0x84, 1);
+
+        const auto& apInfo = Ubel::WalkClassEx(A(apCls));
+        auto field = [&](const char* n) -> const FieldInfo* {
+            for (const auto& f : apInfo.Fields) if (f.Name == n) return &f;
+            return nullptr;
+        };
+        const FieldInfo* fI = field("Icon"); const FieldInfo* fS = field("Spawn"); const FieldInfo* fA = field("Icons");
+        auto s = [](const FieldInfo* f, std::string FieldInfo::* m) { return f ? (f->*m).c_str() : "(no field)"; };
+        check("ASSETPTR setup: the 4.15 class walked its three properties",
+              fI && fS && fA && fI->TypeName == "AssetObjectProperty" && fS->TypeName == "AssetClassProperty"
+                && fA->TypeName == "ArrayProperty" && fA->innerType == "AssetObjectProperty",
+              std::to_string(apInfo.Fields.size()).c_str());
+        check("ASSETPTR ⭐: an AssetObjectProperty names its PropertyClass", fI && fI->objClassName == "Texture2D",
+              s(fI, &FieldInfo::objClassName));
+        check("ASSETPTR ⭐: an AssetClassProperty names its MetaClass, the class it holds a subclass of",
+              fS && fS->metaClassName == "Actor", s(fS, &FieldInfo::metaClassName));
+        check("ASSETPTR ⭐: ...and an array of them names its inner's class", fA && fA->innerObjClass == "Texture2D",
+              s(fA, &FieldInfo::innerObjClass));
+
+        const auto apWalk = Ubel::WalkInstance(A(apInst), A(apCls), 64, 2, false);
+        auto row = [&](const char* n) -> Ubel::LiveFieldValue {
+            for (const auto& f : apWalk.fields) if (f.name == n) return f;
+            return Ubel::LiveFieldValue{};
+        };
+        const auto rI = row("Icon"), rS = row("Spawn"), rA = row("Icons"), rR = row("Rows");
+        check("ASSETPTR setup: the walk produced the four rows",
+              rI.typeName == "AssetObjectProperty" && rS.typeName == "AssetClassProperty" && rA.typeName == "ArrayProperty"
+                && rR.typeName == "ArrayProperty" && rR.arrayElements.size() == 1,
+              std::to_string(apWalk.fields.size()).c_str());
+        const auto& rowSub = rR.arrayElements.empty() ? std::vector<Ubel::LiveFieldValue::ArrayElement::StructSubField>{}
+                                                      : rR.arrayElements[0].structFields;
+        check("ASSETPTR ⭐: a struct array's asset member reads its path",
+              rowSub.size() == 1 && rowSub[0].name == "Pic" && rowSub[0].value == "/Game/UI/B.B",
+              rowSub.empty() ? "(no sub-fields)" : rowSub[0].value.c_str());
+        check("ASSETPTR ⭐: a walk row reads the asset path out of the FString at +0x10",
+              rI.typedValue == "/Game/UI/Icon.Icon" && rI.strValue == "/Game/UI/Icon.Icon", rI.typedValue.c_str());
+        check("ASSETPTR ⭐: ...and an empty one says (none)", rS.typedValue == "(none)", rS.typedValue.c_str());
+        check("ASSETPTR ⭐: an array of them reads each element's path",
+              rA.arrayElements.size() == 2 && rA.arrayElements[0].value == "/Game/UI/A.A"
+                && rA.arrayElements[1].value == "(none)",
+              rA.arrayElements.empty() ? "(no elements)" : rA.arrayElements[0].value.c_str());
+        check("ASSETPTR ⭐: ...without the 4.18+ soft-array layout, which places an FName path the CE export would read",
+              rA.softArrayPathOffset == 0 && rA.softArrayFNameSize == 0, std::to_string(rA.softArrayPathOffset).c_str());
+        check("ASSETPTR ⭐: no 4.18+ soft-path envelope was latched from a 0x20 asset pointer",
+              DynOff::SOFTPTR_PATH == -1, std::to_string(DynOff::SOFTPTR_PATH).c_str());
+
+        // Property Search's preview column reads the same path.
+        std::vector<Aura::PropertyMatch> apMatches(1);
+        apMatches[0].classAddr  = A(apCls);
+        apMatches[0].propType   = "AssetObjectProperty";
+        apMatches[0].propOffset = 0x28;
+        apMatches[0].propSize   = 0x20;
+        std::unordered_map<uintptr_t, uintptr_t> apMap{ { A(apCls), A(apInst) } };
+        Ubel::ResolvePropertyPreviews(apMatches, apMap);
+        check("ASSETPTR ⭐: Property Search previews the asset path", apMatches[0].preview == "/Game/UI/Icon.Icon",
+              apMatches[0].preview.c_str());
+        // Find References takes the weak half at +0 of either era's soft pointer.
+        check("ASSETPTR ⭐: Find References treats both as weak-like holders",
+              Aura::IsWeakLikeProp("AssetObjectProperty") && Aura::IsWeakLikeProp("AssetClassProperty"));
+        // A function's asset parameter: the Functions list and a Live Funcs layout both name its class.
+        const auto apFns = Ubel::WalkFunctions(A(apCls));
+        check("ASSETPTR setup: the class lists Load with its one parameter",
+              apFns.size() == 1 && apFns[0].params.size() == 1 && apFns[0].params[0].typeName == "AssetObjectProperty",
+              std::to_string(apFns.size()).c_str());
+        check("ASSETPTR ⭐: WalkFunctions names an asset parameter's class",
+              apFns.size() == 1 && apFns[0].params.size() == 1 && apFns[0].params[0].objClassName == "Texture2D",
+              apFns.empty() || apFns[0].params.empty() ? "(none)" : apFns[0].params[0].objClassName.c_str());
+        check("ASSETPTR ⭐: ...and so does a Live Funcs parameter layout",
+              Ubel::ParamSlotObject(A(apWhich), "AssetObjectProperty") == A(apTex));
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;  DynOff::bCasePreservingName = svCpn;  g_cachedUEVersion = svVer;
+        DynOff::UFIELD_NEXT = svNext;     DynOff::USTRUCT_CHILDREN = svChildren; DynOff::USTRUCT_PROPSSIZE = svPropsSize;
+        DynOff::USTRUCT_SUPER = svSuper;
+        DynOff::UPROPERTY_OFFSET = svUOff; DynOff::UPROPERTY_ELEMSIZE = svUElem;
+        DynOff::UPROPERTY_SUBCLASS_START = svUStart;  DynOff::SOFTPTR_PATH = svSoft;
+    }
+
     // -- FAMILYEPOCH-2026-09-28 -- a class walked before the family moves is walked again after it ----------------------
     //
     // ⛔ OWN name table (after UPROPINNER). [FAMILY-EPOCH] The walk caches were keyed by class address alone, and two
@@ -10095,6 +10275,21 @@ int main() {
         check("a soft path with a sub-path says so, and that its text was not copied",
               vs.size() == 1 && vs[0].text == "/Game/Maps/Arena.Arena:<sub-path, 33 chars, not copied>" &&
               vs[0].mark == SM::Header, vs.empty() ? "" : vs[0].text.c_str());
+        // [UE4-ASSETPTR-PROPS] A 4.11-4.17 asset pointer's path is ONE FString at +0x10, whose text is on the heap, not
+        // in the copy: said, with its length. Read with the 4.18+ arm, its Data pointer's halves were taken for FNames.
+        alignas(8) uint8_t ap[0x40] = {};
+        const uint64_t apData = 0xA550;
+        const int32_t apNum = 19;
+        memcpy(ap + 0x10, &apData, 8);
+        memcpy(ap + 0x18, &apNum, 4);
+        Ubel::ParamLayout apL;
+        apL.params = { field("Icon", "AssetObjectProperty", 0, 0x20), field("Spawn", "AssetClassProperty", 0x20, 0x20) };
+        const auto va = Ubel::DecodeParamSnapshot(apL, ap, sizeof ap, false, ctx);
+        check("an asset pointer (4.11-4.17): its path's length, its text not copied",
+              va.size() == 2 && va[0].text == "<asset path, 18 chars, not copied>" && va[0].mark == SM::Header,
+              va.empty() ? "" : va[0].text.c_str());
+        check("...and an empty one is null", va.size() == 2 && va[1].text == "null" && va[1].mark == SM::Exact,
+              va.size() < 2 ? "" : va[1].text.c_str());
     }
 
     {
