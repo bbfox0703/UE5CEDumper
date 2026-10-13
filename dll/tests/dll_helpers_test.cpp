@@ -7084,6 +7084,33 @@ static void Test_VersionLadder() {
         f.reorderedItem57 = true;
         EXPECT("Ladder: the 5.7 rung then the 5.8 rung -- 4.27 -> 5.7 -> 5.8", run(427, f, p).version == 508);
     }
+    {   // [VER-MARKERS-PAST-504] A raise rung lifts a user override as it lifts a detection, and the result says which:
+        // the rung lines read "version=N" either way, and triage must tell an overruled override from a raised label.
+        auto f = measured(true);
+        f.userOverride = true;
+        Probe p; p.structs = structs56;
+        const auto raised = run(504, f, p);
+        EXPECT("Ladder ⭐: a 5.4 override on a 5.6 layout is raised to 5.6, and the result says the override was",
+               raised.version == 506 && raised.overrideRaised);
+        Probe none;
+        const auto kept = run(504, f, none);
+        EXPECT("Ladder: an override no rung moves is not called raised", kept.version == 504 && !kept.overrideRaised);
+        auto d = measured(true);
+        Probe q; q.structs = structs56;
+        const auto detected = run(504, d, q);
+        EXPECT("Ladder ⭐: a raised detection is not called an overruled override",
+               detected.version == 506 && !detected.overrideRaised);
+        auto u = measured(false);
+        u.userOverride = true;
+        Probe w;
+        const auto lowered = run(508, u, w);
+        EXPECT("Ladder: an override the UProperty rung lowers is not called raised -- that rung's own line says so",
+               lowered.loweredToUE4 && !lowered.overrideRaised);
+        StructuralVersionFacts unmeasured;
+        unmeasured.fproperty = true; unmeasured.userOverride = true; unmeasured.virtualDtor58 = true;
+        Probe r; r.structs = structs56;
+        EXPECT("Ladder: nothing measured raises no override", !run(504, unmeasured, r).overrideRaised);
+    }
     {   // The whole ladder.
         auto f = measured(true);
         f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;

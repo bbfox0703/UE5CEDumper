@@ -2248,6 +2248,26 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void InitVersionLadder_SaysWhenAStructuralRungRaisesAUserOverride()
+    {
+        // [VER-MARKERS-PAST-504] A raise rung lifts a persisted override as it lifts a detection, and its own line reads
+        // "version=N" either way. The ladder reports that the N was the user's (StructuralVersion::overrideRaised,
+        // pinned in dll_helpers_test Test_VersionLadder); Frieren.cpp reaches no test target, so the wiring is pinned
+        // here: the ladder is told when the label is an override, and the log names the override it overruled.
+        var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
+        int fn = frieren.IndexOf("DynOff::StructuralVersion CorrectVersionStructurally(", StringComparison.Ordinal);
+        Assert.True(fn >= 0, "CorrectVersionStructurally was not found");
+        int end = frieren.IndexOf("} // namespace FrierenInit", fn, StringComparison.Ordinal);
+        Assert.True(end > fn, "the end of CorrectVersionStructurally was not found");
+        var body = frieren[fn..end];
+        Assert.Contains("f.userOverride        = userOverride;", body);
+        int ladder = body.IndexOf("DynOff::ApplyVersionLadder(", StringComparison.Ordinal);
+        int said = body.IndexOf("if (climbed.overrideRaised)", StringComparison.Ordinal);
+        Assert.True(ladder >= 0 && said > ladder, "the override line must follow the ladder and read its result");
+        Assert.Contains("User override = %u overruled", body[said..]);
+    }
+
+    [Fact]
     public void AutoOverAnOverride_HandsBackTheDetection_OrSaysItWaitsForTheNextLaunch()
     {
         // [UE-OVERRIDE-HINT-AUTO] set_ue_version_override(0) used to clear only the override flag, so the session kept
