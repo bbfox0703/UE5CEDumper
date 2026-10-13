@@ -180,6 +180,26 @@ public class DumpAllServiceTests
         Assert.Contains("\"stride_untrusted\":true", lines[0]);
     }
 
+    [Fact]
+    public void Generate_RefusedEngine_MetaDoesNotCallTheStrideAGuess()
+    {
+        // [REFUSED-STRIDE-NOTICE] On an engine refused as too old the scan never ran: "undetected" is only Aura's
+        // starting value, and not one object was read with any stride, so there is no alias for the stamp to flag.
+        var dump = new FakeDumpForDump();
+        var refused = new EngineState
+        {
+            UEVersion = 410,
+            IsVersionTooOld = true,
+            ModuleName = "Old-Win64-Shipping.exe",
+            ObjectCount = 0,
+            ItemDetect = "undetected",
+        };
+
+        var lines = Dump(dump, engineState: refused);
+
+        Assert.Contains("\"stride_untrusted\":false", lines[0]);
+    }
+
     // ==================================================================
     // Filter: Class + BPGC variants become class lines, structs struct lines; drop everything else
     // ==================================================================

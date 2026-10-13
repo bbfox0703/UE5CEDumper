@@ -53,6 +53,8 @@ public class PointerPanelVersionGateTests
         GNamesMethod = "not_found",
         GWorldMethod = "not_found",
         ObjectCount = 0,
+        // What the wire carries on a refusal: Aura's static default, because its detection never ran.
+        ItemDetect = "undetected",
     };
 
     [Fact]
@@ -166,6 +168,23 @@ public class PointerPanelVersionGateTests
         // The Sparse card must stay silent too — neither "unsupported" nor "AOB not found".
         Assert.False(vm.IsSparseDelegatesUnsupported);
         Assert.False(vm.IsSparseDelegatesNotFound);
+    }
+
+    [Theory]
+    [InlineData(PointerPanelViewModel.PreUE4SentinelVersion)]
+    [InlineData(410)]
+    public void RefusedEngine_ShowsNoStrideGuess(int ueVersion)
+    {
+        // [REFUSED-STRIDE-NOTICE] LIVE-OBSERVED on IS Defense (UE 4.10.2), build 3646: the top bar said the
+        // object-array stride was not detected and "the default is in use" under the refusal banner. No scan ran,
+        // so no stride was guessed and nothing was read with one; the "undetected" on the wire is only the value
+        // Aura starts with. The dump stamp shares the rule, so it must not call the stride untrusted either.
+        var state = Refused(ueVersion);
+        var vm = NewVm();
+        vm.Update(state);
+
+        Assert.False(vm.ShowStrideGuessBadge);
+        Assert.False(state.ItemStrideUntrusted);
     }
 
     [Fact]
