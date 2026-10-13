@@ -344,6 +344,50 @@ def selftest():
         check("report's total is every listed file, one foreign",
               "11 deployed proxy(ies), 9 stale, 1 foreign (skipped)" in text)
 
+        # Nothing to compare against must never read as "0 stale": a worktree has no dist/, and a mistyped --dist or
+        # --lib is one keystroke away, and the operator then skips the refresh the title needed.
+        def refusal(fn):
+            said_here = io.StringIO()
+            try:
+                with contextlib.redirect_stdout(said_here):
+                    fn()
+            except SystemExit as e:
+                return str(e), said_here.getvalue()
+            return None, said_here.getvalue()
+
+        nowhere = tmp / "no dist here" / "proxy"
+        why, said_there = refusal(lambda: report(libs, nowhere, owner=_owner_by_bytes))
+        check("report against a dist that holds none of our DLLs stops, naming it, and prints no total",
+              why and str(nowhere) in why and "stale" not in said_there)
+        before = {k: p.read_bytes() for k, p in old.items()}
+        why, _ = refusal(lambda: refresh("", libs, nowhere, backups, owner=_owner_by_bytes,
+                                         is_running=lambda n: False))
+        check("refresh from a dist that holds none of our DLLs stops and writes nothing",
+              why and str(nowhere) in why and all(p.read_bytes() == before[k] for k, p in old.items())
+              and not backups.exists())
+        missing_lib = tmp / "Steam Libary" / "steamapps" / "common"
+        why, said_there = refusal(lambda: report([lib1, missing_lib], dist, owner=_owner_by_bytes))
+        check("a library named explicitly that is not a folder stops the report, naming it",
+              why and str(missing_lib) in why and "stale" not in said_there)
+
+        partial = tmp / "partial" / "proxy"
+        put(partial / "version.dll", b"OURS new version.dll")
+        (partial.parent / "build_number.txt").write_text("9998")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            stale = report(libs, partial, owner=_owner_by_bytes)
+        text_partial = out.getvalue()
+        check("a proxy with no counterpart in dist is reported UNCOMPARED, not skipped",
+              any("DRAGON QUEST XI S" in ln and "UNCOMPARED" in ln for ln in text_partial.splitlines()))
+        check("report's total counts the uncompared proxies apart from the stale ones",
+              stale == 6 and "11 deployed proxy(ies), 6 stale, 1 foreign (skipped), 4 UNCOMPARED" in text_partial)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            refresh("DRAGON", libs, partial, backups, owner=_owner_by_bytes, is_running=lambda n: False)
+        check("refresh says it did not compare a proxy dist has no counterpart for, and leaves it",
+              any("DRAGON QUEST XI S" in ln and "no dxgi.dll" in ln for ln in out.getvalue().splitlines())
+              and old[("DRAGON QUEST XI S", "Game/Binaries/Win64/dxgi.dll")].read_bytes() == b"OURS old dq")
+
         def is_running(name):
             return name == "Busy Game.exe"
 
