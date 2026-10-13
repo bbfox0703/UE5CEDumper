@@ -10887,6 +10887,12 @@ int main() {
         std::vector<wchar_t> longName(1100, L'A');
         chunk[7] = makeEntry(eLong, (7 << 1) | 1, longName.data(), longName.size() * sizeof(wchar_t));
         reinterpret_cast<wchar_t*>(eLong.data() + 0x10)[longName.size()] = L'A';   // overwrite the helper's terminator
+        // The longest name the engine makes: NAME_SIZE counts the terminator, so 1023 units and then the terminator.
+        static std::vector<uint8_t> eMax;
+        {
+            std::vector<wchar_t> maxName(1023, L'D');
+            chunk[12] = makeEntry(eMax, (12 << 1) | 1, maxName.data(), maxName.size() * sizeof(wchar_t));
+        }
 
         // Four pages reserved, the first and third committed: a name that ends at an unreadable page, in the first,
         // and one that runs into one, in the third -- apart, so filling the one cannot overwrite the other.
@@ -10961,6 +10967,8 @@ int main() {
               Serie::GetString(3, 2).c_str());
         check("UE4WIDE: no terminator within NAME_SIZE is refused", Serie::GetString(7).empty(),
               Serie::GetString(7).c_str());
+        check("UE4WIDE: a name of NAME_SIZE - 1 units, terminator last, is read whole",
+              Serie::GetString(12) == std::string(1023, 'D'), std::to_string(Serie::GetString(12).size()).c_str());
         if (wpage) {
             check("UE4WIDE: a wide name ending at an unreadable page's edge is read whole",
                   Serie::GetString(5) == "\xC3\x85ngstr\xC3\xB6m", Serie::GetString(5).c_str());
@@ -10980,6 +10988,28 @@ int main() {
             check("UE4WIDE narrow page edge: a window that ends exactly at the page's end is kept, 255 bytes",
                   Serie::GetString(10) == std::string(255, 'C'), std::to_string(Serie::GetString(10).size()).c_str());
             VirtualFree(npage, 0, MEM_RELEASE);
+        }
+
+        // Both reads take the string offset Genau latched, not the stock +0x10: ValidateGNamesUE4 can latch another
+        // (0x06 / 0x0C / 0x08). No stock layout with Index first and a non-0x10 string is established, so this pins
+        // the seam only: the same table re-installed at +0x0C, each payload four bytes earlier than the stock one.
+        {
+            auto makeAt0C = [](std::vector<uint8_t>& e, int32_t word, const void* chars, size_t bytes) {
+                e.assign(0x0C + bytes + sizeof(wchar_t), 0);
+                memcpy(e.data(), &word, sizeof word);
+                memcpy(e.data() + 0x0C, chars, bytes);
+                return reinterpret_cast<uintptr_t>(e.data());
+            };
+            static std::vector<uint8_t> cAnsi, cLatin;
+            static uintptr_t chunkC[4] = {};
+            chunkC[1] = makeAt0C(cAnsi, 1 << 1, ansi, sizeof ansi - 1);
+            chunkC[2] = makeAt0C(cLatin, (2 << 1) | 1, latin, sizeof latin - sizeof(wchar_t));
+            static uintptr_t chunksC[2] = { reinterpret_cast<uintptr_t>(chunkC), 0 };
+            Serie::InitUE4(reinterpret_cast<uintptr_t>(chunksC), 0x0C);
+            check("UE4WIDE string offset 0x0C control: the narrow read takes it", Serie::GetString(1) == "ByteProperty",
+                  Serie::GetString(1).c_str());
+            check("UE4WIDE string offset 0x0C: so does the wide read", Serie::GetString(2) == "Caf\xC3\xA9",
+                  Serie::GetString(2).c_str());
         }
     }
 
