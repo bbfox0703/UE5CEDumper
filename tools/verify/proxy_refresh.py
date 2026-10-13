@@ -347,14 +347,23 @@ def selftest():
         def is_running(name):
             return name == "Busy Game.exe"
 
-        with contextlib.redirect_stdout(io.StringIO()):
+        said = io.StringIO()
+        with contextlib.redirect_stdout(said):
             refresh("extinc", libs, dist, backups, owner=_owner_by_bytes, is_running=is_running)
         check("a scoped refresh writes only the game it names",
               old[("Extinction", "Blink/Binaries/Win64/version.dll")].read_bytes() == b"OURS new version.dll"
               and old[("DRAGON QUEST XI S", "Game/Binaries/Win64/dxgi.dll")].read_bytes() == b"OURS old dq")
 
-        with contextlib.redirect_stdout(io.StringIO()):
+        with contextlib.redirect_stdout(said):
             refresh("", libs, dist, backups, owner=_owner_by_bytes, is_running=is_running)
+        # The build a refresh prints is the build of the dist it COPIED, read from that dist: a number from any other
+        # dist/ (this checkout's, or "?" in a worktree with none) is the "(dist 3263)" lie the line exists to stop.
+        done = [ln for ln in said.getvalue().splitlines() if ln.startswith("  refreshed ")]
+        check("every refresh line names the build of the dist it copied, one line per refreshed file",
+              len(done) == 8 and all(ln.endswith("(dist 9999)") for ln in done))
+        head = text.splitlines()[0] if text else ""
+        check("report's dist header lists the dist it was given",
+              head.startswith("dist/proxy") and all(f"{n}=" in head for n in sorted(OURS)))
         refreshed = [k for k in old if k[0] in ("Shipping Game", "Extinction", "DRAGON QUEST XI S", "ネコぱら  ライブ",
                                                  "Twin", "Caps") or k == ("Octo", "Octo/Binaries/Win64/winmm.dll")]
         check("every stale proxy of ours is refreshed to dist's bytes, whatever its exe is called",
