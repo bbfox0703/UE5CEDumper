@@ -36,6 +36,7 @@
 #include "../src/Ubel.h"        // Native-C scan P0: ComputeHoles / ComputeClassHoles / NormalizeGuessedTypeToProperty (inline, pure)
 #include "../src/Serie.h"       // FNamePool index geometry: ReadEnumRawValue is in Ubel; BlockBits/UE4 bounds are here (audit #5 G4/G5)
 #include "../src/Aura.h"
+#include "../src/Utf8Helpers.h"   // EncodeUtf16 / IsImplausibleWideName: the decodes Aura::IsCleanFName is handed
 #include "../src/Dunste.h"        // IsEnginePackage (header-inline, pure) — engine/game package gate
 #include "../src/Tot.h"         // Cancellation flags: cancel-immunity vs background-worker (B4)
 #include "../src/Routine.h"    // SafeThread — detaching-on-destroy thread wrapper
@@ -10025,6 +10026,57 @@ static void Test_Serie_UE4EntryIsWide() {
     static_assert(!Serie::UE4EntryIsWide(4 << 1, 4), "UE4EntryIsWide must be constexpr-evaluable");
 }
 
+// [UE4-WIDE-FNAME-CLEANCHECK] find_by_address's backward scan keeps a candidate only when its name and its class's name
+// read as genuine. The gate refused every non-ASCII byte, so since [UE4-WIDE-FNAME] decodes a pre-4.23 wide name whole
+// (it used to arrive cut to its first ASCII character, and pass), a Japanese-named sub-object went to 'nearest'. It now
+// accepts well-formed UTF-8 -- and must still refuse what the DQ3 HD-2D false positive decoded to.
+static void Test_Aura_IsCleanFName() {
+    std::printf("Test_Aura_IsCleanFName\n");
+    using Aura::IsCleanFName;
+    // Accepted: ASCII as before, and a localized name in any plane.
+    EXPECT("CLEANCHECK control: an ASCII name", IsCleanFName("BackgroundBlur"));
+    EXPECT("CLEANCHECK control: a numbered ASCII name", IsCleanFName("Default__BP_Hero_C_3"));
+    const wchar_t hpWide[] = { L'H', L'P', 0x4F53, 0x529B, 0 };   // "HP体力", the short CJK name IsImplausibleWideName keeps
+    EXPECT("CLEANCHECK ⭐: a wide CJK name, decoded whole", IsCleanFName(Utf8Helpers::EncodeUtf16(hpWide, 4)));
+    EXPECT("CLEANCHECK ⭐: katakana", IsCleanFName("\xE3\x82\xAB\xE3\x82\xBF\xE3\x82\xAB\xE3\x83\x8A"));   // カタカナ
+    EXPECT("CLEANCHECK ⭐: a Latin-1 letter from a wide entry (Caf\xC3\xA9)", IsCleanFName("Caf\xC3\xA9"));
+    EXPECT("CLEANCHECK: a supplementary-plane character, as EncodeUtf16 joins a pair",
+           IsCleanFName("Name\xF0\x9F\x98\x80"));
+    EXPECT("CLEANCHECK: a numbered wide name", IsCleanFName("\xE5\x89\xA3_1"));   // 剣_1
+    EXPECT("CLEANCHECK: 256 bytes is the longest kept", IsCleanFName(std::string(256, 'A')));
+
+    // The DQ3 HD-2D case the gate was written against: a value in raw heap, a junk header 0x20 before it whose name
+    // decoded to 'Property??IntProperty' and whose ClassPrivate's name was an ASCII asset path read as UTF-16 -- 435
+    // characters of mojibake. Serie::GetString returns "" for that decode; at full length it is also far past the cap.
+    EXPECT("CLEANCHECK DQ3 ⭐: the junk object's name is refused ('?')", !IsCleanFName("Property??IntProperty"));
+    EXPECT("CLEANCHECK DQ3 ⭐: what Serie returns for the mojibake class (\"\") is refused", !IsCleanFName(""));
+    std::string path;
+    while (path.size() < 870) path += "/Material/IMP_L_C01_Church_";
+    path.resize(870);
+    std::wstring moji(435, L'\0');
+    for (size_t i = 0; i < 435; ++i)
+        moji[i] = static_cast<wchar_t>(static_cast<uint8_t>(path[2 * i]) | (static_cast<uint8_t>(path[2 * i + 1]) << 8));
+    EXPECT("CLEANCHECK DQ3: Serie's wide guard still drops the 435-unit mojibake",
+           Utf8Helpers::IsImplausibleWideName(moji.data(), moji.size()));
+    EXPECT("CLEANCHECK DQ3 ⭐: the 435-unit mojibake, were it decoded, is refused here too",
+           !IsCleanFName(Utf8Helpers::EncodeUtf16(moji.data(), moji.size())));
+
+    // Refused: what no decode of a real name produces.
+    EXPECT("CLEANCHECK: 257 bytes", !IsCleanFName(std::string(257, 'A')));
+    EXPECT("CLEANCHECK: a C0 control", !IsCleanFName("Na\x01me"));
+    EXPECT("CLEANCHECK: a tab", !IsCleanFName("Na\tme"));
+    EXPECT("CLEANCHECK: DEL", !IsCleanFName("Na\x7Fme"));
+    EXPECT("CLEANCHECK: a C1 control (U+0085)", !IsCleanFName("Na\xC2\x85me"));
+    EXPECT("CLEANCHECK control: U+00A0 is past the C1 block, and kept", IsCleanFName("Na\xC2\xA0me"));
+    const wchar_t lone[] = { L'A', 0xD800, L'B', 0 };   // EncodeUtf16 turns a lone surrogate into '?'
+    EXPECT("CLEANCHECK: a lone surrogate in a wide name", !IsCleanFName(Utf8Helpers::EncodeUtf16(lone, 3)));
+    EXPECT("CLEANCHECK: a lone continuation byte", !IsCleanFName("Na\x80me"));
+    EXPECT("CLEANCHECK: a truncated sequence", !IsCleanFName("Name\xE4\xBD"));
+    EXPECT("CLEANCHECK: an overlong encoding", !IsCleanFName("Na\xC0\xAFme"));
+    EXPECT("CLEANCHECK: a CESU-8 surrogate", !IsCleanFName("Na\xED\xA0\x80me"));
+    EXPECT("CLEANCHECK: a raw Latin-1 byte (an ANSI decode Serie would have dropped)", !IsCleanFName("Caf\xE9"));
+}
+
 // audit #5 G5 — the UE4 TNameEntryArray index guard must reject a NEGATIVE nameIndex
 // (a poison 0xFFFFFFFF read into an int32 as -1), which under truncating division gives
 // chunkIndex 0 / elemIndex -1 and derefs chunk + (-1)*8. Negative control: a guard that
@@ -10495,6 +10547,7 @@ int main() {
     RUN(Test_Serie_BlockBitsProbe);           // G4  — idx-1 probe cannot distinguish 14 vs 16
     RUN(Test_Serie_FirstEntryAfterNone);      //     — idx 1 is INTERIOR to "None"; derive the boundary
     RUN(Test_Serie_UE4EntryIsWide);           // [UE4-WIDE-FNAME] the pre-4.23 entry's wide bit, beside its own slot
+    RUN(Test_Aura_IsCleanFName);              // [UE4-WIDE-FNAME-CLEANCHECK] the backward scan's name gate keeps wide names
     RUN(Test_Serie_UE4NameIndexInBounds);     // G5  — reject negative UE4 name index
 
     // [INVOKEINHERIT-2026-08-20] by-name resolution must climb SuperStruct

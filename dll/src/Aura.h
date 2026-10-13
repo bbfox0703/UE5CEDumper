@@ -1057,6 +1057,24 @@ inline std::string PathLeafName(const std::string& raw) {
     return (slash == std::string::npos) ? canon : canon.substr(slash + 1);
 }
 
+// A genuine narrow FName resolves to non-empty printable ASCII; a wide (localized)
+// one -- UE5's, and pre-4.23's since [UE4-WIDE-FNAME] -- resolves to non-ASCII UTF-8,
+// which this gate refuses along with the junk: a wide-named sub-object found only by
+// the backward scan is the price. Serie::GetString
+// sanitizes non-printable ANSI bytes to '?' and (after the wide-name guard)
+// returns "" for mojibake, so any '?', non-ASCII byte, or emptiness marks a
+// junk decode. Used to gate backward-scan candidates whose arbitrary +0x18
+// bytes can resolve to garbage names — keeps find_by_address from surfacing a
+// misidentified "object" that the Live Walker then walks into 亂碼.
+// Header-inline and pure so dll_helpers_test can pin it.
+inline bool IsCleanFName(const std::string& s) {
+    if (s.empty() || s.size() > 256) return false;
+    for (unsigned char c : s) {
+        if (c == '?' || c < 0x20 || c >= 0x7F) return false;
+    }
+    return true;
+}
+
 // IsListedEnumObject -- which GObjects rows list_enums publishes. [USMAP-UDE-MISSING]
 // A native UEnum and a Blueprint UserDefinedEnum (its own UEnum subclass, so an exact
 // `== "Enum"` dropped every one), never a class-default object: a CDO's row reads its
