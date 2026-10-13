@@ -301,8 +301,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>
     /// Lock the experimental opt-in for the rest of this session. Called the
-    /// first time the user opens an experimental tab that locks it (the list is
-    /// MainWindow.axaml.cs's tab switch) while enabled — from that point the System-tab
+    /// first time the user opens an experimental tab that locks it
+    /// (<see cref="LocksExperimental"/>) while enabled — from that point the System-tab
     /// opt-in checkbox can no longer be unticked. Session-only (a restart clears
     /// the lock). Idempotent and a no-op when the gate isn't enabled.
     /// </summary>
@@ -312,8 +312,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             _experimentalGate.Lock();
     }
 
+    /// <summary>[EXPOFF-ROUND3-PAUSED] The experimental tabs, by Tag, whose opening locks the opt-in for the session:
+    /// what they run cannot be torn down by an untick (a Snapshot capture keeps walking GObjects across tab switches),
+    /// so the opt-in stays until a restart instead. An experimental tab left out needs its own cleanup on an untick, as
+    /// Detect Stats has. str.Experimental.LockedForSession names these tabs; ExperimentalUntickTests holds the three
+    /// together.</summary>
+    private static readonly HashSet<string> s_experimentalLockingTabs =
+        new(StringComparer.Ordinal) { "Snapshot", "SpcQuery", "ClassPivot", "CallTrace" };
+
     /// <summary>[EXPOFF-ROUND3-PAUSED] Whether opening the tab tagged <paramref name="tag"/> locks the opt-in.</summary>
-    public static bool LocksExperimental(string? tag) => false;
+    public static bool LocksExperimental(string? tag) => tag != null && s_experimentalLockingTabs.Contains(tag);
 
     /// <summary>C5: switch to the Class Pivot tab and hand off the chosen
     /// class/property. Guarded so it's inert when the pivot tab isn't available.</summary>

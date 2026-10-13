@@ -733,13 +733,12 @@ public partial class MainWindow : Window
         if (tag != "Pointers") vm.Pointers.OnLeavingTab();
         else                   vm.Pointers.OnEnteringTab();
 
-        // Opening one of the tabs named below while enabled commits the opt-in for
-        // the rest of the session: the System-tab checkbox can no longer be
-        // unticked until a restart, as the gate does not persist the lock. Not
-        // every experimental tab is named, so whatever an experimental feature can
-        // run without one of these opened needs its own cleanup on an untick.
+        // Opening a tab that locks the opt-in while enabled commits it for the rest
+        // of the session: the System-tab checkbox can no longer be unticked until a
+        // restart, as the gate does not persist the lock. Which tabs lock is the view
+        // model's answer, so the locked box's tooltip and its tests share it.
         // LockExperimental is idempotent and a no-op when the feature isn't enabled.
-        if (tag is "Snapshot" or "SpcQuery" or "ClassPivot" or "CallTrace")
+        if (MainWindowViewModel.LocksExperimental(tag))
             vm.LockExperimental();
 
         // [AOBMAKER-EVAL-2026-09-29] Tabs whose HEX / +CE / ASM buttons read the shared AobMakerStatus.
