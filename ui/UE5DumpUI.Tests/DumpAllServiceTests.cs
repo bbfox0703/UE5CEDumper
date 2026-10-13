@@ -121,6 +121,7 @@ public class DumpAllServiceTests
         Assert.StartsWith("{\"kind\":\"summary\"", lines[^1]);
         // Meta contains UE version + module name + GObjects
         Assert.Contains("\"ue_version\":427", lines[0]);
+        Assert.Contains("\"version_too_old\":false", lines[0]);
         Assert.Contains("TestGame-Win64-Shipping.exe", lines[0]);
         // FUObjectItem layout defaults to classic (no UE5.7+ packing).
         Assert.Contains("\"item_layout\":\"classic\"", lines[0]);
@@ -198,6 +199,9 @@ public class DumpAllServiceTests
         var lines = Dump(dump, engineState: refused);
 
         Assert.Contains("\"stride_untrusted\":false", lines[0]);
+        // The stamp and the raw "undetected" verdict beside it disagree on a refused engine, so the line says why: an
+        // offline reader keyed on item_detect would otherwise call a dump of nothing stride-untrusted.
+        Assert.Contains("\"version_too_old\":true", lines[0]);
     }
 
     // ==================================================================
