@@ -6671,6 +6671,114 @@ static void Test_CmcMarkerVersion() {
     EXPECT("R7-X4: never raises below the 5.x range", CmcMarkerVersion(427, true, true, true) == 427);
 }
 
+// [VER-MARKERS-PAST-504] The 5.5 rung's evidence: which slot behind the MEASURED UEnum::Names repeats the name of the
+// enum's package. The fakes copy the fixture PDBs' layouts -- DumperTest (5.4) and DumperTest56 (5.6) Shipping, and
+// DumperTest51 (5.1) -- and the same layouts on a case-preserving build, whose UObject is 8 longer and FName 12 bytes.
+static void Test_EnumPackageProbe() {
+    std::printf("\n--- VER-MARKERS-PAST-504: the 5.5 rung's UEnum::EnumPackage probe ---\n");
+    using DynOff::EnumPackageTally;
+    using DynOff::EnumPackageProves55;
+    EXPECT("EnumPkg ⭐: every sampled enum at Names+0x14 proves 5.5", EnumPackageProves55(EnumPackageTally{32, 32, 0}));
+    EXPECT("EnumPkg: three quarters is a clear majority", EnumPackageProves55(EnumPackageTally{32, 24, 0}));
+    EXPECT("EnumPkg: ...one fewer is not", !EnumPackageProves55(EnumPackageTally{32, 23, 0}));
+    EXPECT("EnumPkg: five agreeing samples are enough", EnumPackageProves55(EnumPackageTally{5, 5, 0}));
+    EXPECT("EnumPkg: ...four are not", !EnumPackageProves55(EnumPackageTally{4, 4, 0}));
+    EXPECT("EnumPkg: the 5.4 layout proves nothing", !EnumPackageProves55(EnumPackageTally{32, 0, 32}));
+    EXPECT("EnumPkg: nothing sampled proves nothing", !EnumPackageProves55(EnumPackageTally{}));
+
+    // Fake objects in host memory, read through a plain copy -- or refused at one address.
+    struct Obj {
+        alignas(8) uint8_t b[0x80] = {};
+        uintptr_t at(int off = 0) { return reinterpret_cast<uintptr_t>(b) + static_cast<uintptr_t>(off); }
+        void i32(int off, int32_t v) { std::memcpy(b + off, &v, sizeof v); }
+        void ptr(int off, uintptr_t v) { std::memcpy(b + off, &v, sizeof v); }
+    };
+    uintptr_t refuse = 0;
+    auto read = [&](uintptr_t a, void* out, size_t n) {
+        if (refuse && a <= refuse && refuse < a + n) return false;
+        std::memcpy(out, reinterpret_cast<const void*>(a), n);
+        return true;
+    };
+    constexpr int kName = Grimoire::OFF_UOBJECT_NAME;
+    constexpr int32_t kPkgName = 0x1B2C4;   // the package's FName ComparisonIndex
+    // An enum with three names, its package as its Outer, and its member block after Names as the PDB lays it out.
+    enum class Shape { UE51, UE54, UE56 };
+    auto makeEnum = [&](Obj& pkg, Obj& en, int outerOff, int namesOff, Shape s) {
+        pkg.i32(kName, kPkgName);
+        en.ptr(outerOff, pkg.at());
+        en.ptr(namesOff, pkg.at());                 // Names.Data (any readable pointer)
+        en.i32(namesOff + 0x08, 3);                 // Names.Num
+        en.i32(namesOff + 0x0C, 4);                 // Names.Max
+        switch (s) {
+        case Shape::UE51: en.i32(namesOff + 0x10, 2); en.i32(namesOff + 0x14, 1); en.i32(namesOff + 0x20, kPkgName); break;
+        case Shape::UE54: en.i32(namesOff + 0x10, 2); en.b[namesOff + 0x14] = 1; en.i32(namesOff + 0x20, kPkgName); break;
+        case Shape::UE56: en.b[namesOff + 0x10] = 2; en.b[namesOff + 0x11] = 1; en.i32(namesOff + 0x14, kPkgName); break;
+        }
+    };
+    auto sample = [&](Obj& en, int namesOff, int outerOff, EnumPackageTally& t) {
+        return DynOff::SampleEnumPackage(t, en.at(), namesOff, outerOff, kName, read);
+    };
+    {
+        Obj pkg, e51, e54, e56;
+        makeEnum(pkg, e51, 0x20, 0x40, Shape::UE51);
+        makeEnum(pkg, e54, 0x20, 0x40, Shape::UE54);
+        makeEnum(pkg, e56, 0x20, 0x40, Shape::UE56);
+        EnumPackageTally t51, t54, t56;
+        EXPECT("EnumPkg ⭐: a 5.4 enum (DumperTest PDB) keeps its package at Names+0x20",
+               sample(e54, 0x40, 0x20, t54) && t54.sampled == 1 && t54.at51 == 1 && t54.at55 == 0);
+        EXPECT("EnumPkg: ...as a 5.1 one does (DumperTest51 PDB: EnumFlags still int32)",
+               sample(e51, 0x40, 0x20, t51) && t51.sampled == 1 && t51.at51 == 1 && t51.at55 == 0);
+        EXPECT("EnumPkg ⭐: a 5.6 enum (DumperTest56 PDB) keeps it at Names+0x14",
+               sample(e56, 0x40, 0x20, t56) && t56.sampled == 1 && t56.at55 == 1 && t56.at51 == 0);
+    }
+    {   // Case-preserving: Outer at 0x28, Names at 0x48; both slots keep their place relative to Names.
+        Obj pkg, e54, e56;
+        makeEnum(pkg, e54, 0x28, 0x48, Shape::UE54);
+        makeEnum(pkg, e56, 0x28, 0x48, Shape::UE56);
+        EnumPackageTally t54, t56;
+        EXPECT("EnumPkg: a case-preserving 5.4 enum, Names at 0x48",
+               sample(e54, 0x48, 0x28, t54) && t54.at51 == 1 && t54.at55 == 0);
+        EXPECT("EnumPkg: a case-preserving 5.6 enum, Names at 0x48",
+               sample(e56, 0x48, 0x28, t56) && t56.at55 == 1 && t56.at51 == 0);
+    }
+    {   // The comparison is with the OUTERMOST object -- GetPackage() -- not the direct Outer.
+        Obj pkg, mid, e56;
+        makeEnum(pkg, e56, 0x20, 0x40, Shape::UE56);
+        mid.i32(kName, 0x777);
+        mid.ptr(0x20, pkg.at());
+        e56.ptr(0x20, mid.at());
+        EnumPackageTally t;
+        EXPECT("EnumPkg: an enum inside another object is compared with its package",
+               sample(e56, 0x40, 0x20, t) && t.at55 == 1);
+    }
+    {   // What is not a sample.
+        Obj pkg, e56;
+        makeEnum(pkg, e56, 0x20, 0x40, Shape::UE56);
+        EnumPackageTally t;
+        Obj orphan = e56;
+        orphan.ptr(0x20, 0);
+        EXPECT("EnumPkg: an enum with no Outer is not a sample", !sample(orphan, 0x40, 0x20, t) && t.sampled == 0);
+        Obj empty = e56;
+        empty.i32(0x40 + 0x08, 0);
+        EXPECT("EnumPkg ⭐: an enum with no names is not a sample -- Default__Enum never ran SetEnums, so no EnumPackage",
+               !sample(empty, 0x40, 0x20, t) && t.sampled == 0);
+        Obj nameless;
+        Obj e2 = e56;
+        e2.ptr(0x20, nameless.at());
+        EXPECT("EnumPkg: a package whose name reads None is not a sample", !sample(e2, 0x40, 0x20, t) && t.sampled == 0);
+        Obj a, b;
+        a.ptr(0x20, b.at());
+        b.ptr(0x20, a.at());
+        Obj loop = e56;
+        loop.ptr(0x20, a.at());
+        EXPECT("EnumPkg: an Outer chain that never ends is not a sample", !sample(loop, 0x40, 0x20, t) && t.sampled == 0);
+        refuse = e56.at(0x40 + 0x14);
+        EXPECT("EnumPkg: a slot that cannot be read is not a sample", !sample(e56, 0x40, 0x20, t) && t.sampled == 0);
+        refuse = 0;
+        EXPECT("EnumPkg: control -- the same enum read in full is", sample(e56, 0x40, 0x20, t) && t.sampled == 1);
+    }
+}
+
 // [UE-OVERRIDE-HINT-AUTO] The init version ladder as one function: init climbs it after the offsets probe, and Auto
 // chosen over an override climbs it from the detection it restores, so a stripped UE5 title is not handed back its
 // 4.27 fallback. Pinned rung by rung, in order, with each rung's guard.
@@ -6678,12 +6786,20 @@ static void Test_VersionLadder() {
     std::printf("\n--- UE-OVERRIDE-HINT-AUTO: the init version ladder ---\n");
     using DynOff::StructuralVersionFacts;
     using DynOff::VersionRung;
-    struct Probe { bool present = false, prop = false, func = false; int asked = 0; };
+    using DynOff::EnumPackageTally;
+    struct Probe {
+        bool present = false, prop = false, func = false; int asked = 0;
+        EnumPackageTally enums; int enumAsked = 0;   // [VER-MARKERS-PAST-504] the 5.5 rung's evidence
+    };
     auto run = [](unsigned v, const StructuralVersionFacts& f, Probe& p, std::vector<VersionRung>* rungs = nullptr) {
         return DynOff::ApplyVersionLadder(v, f,
             [&](bool& prop, bool& func) { ++p.asked; prop = p.prop; func = p.func; return p.present; },
+            [&]() { ++p.enumAsked; return p.enums; },
             [&](VersionRung r, unsigned, unsigned) { if (rungs) rungs->push_back(r); });
     };
+    // Every sampled enum keeps its package name at Names+0x14 (UE5.5+), or at Names+0x20 (UE5.1-5.4).
+    const EnumPackageTally enums55{32, 32, 0};
+    const EnumPackageTally enums54{32, 0, 32};
     auto measured = [](bool fproperty) {
         StructuralVersionFacts f;
         f.measured  = true;
@@ -6694,10 +6810,11 @@ static void Test_VersionLadder() {
     {   // Nothing is a fact before the probe has run.
         StructuralVersionFacts f;
         f.fproperty = true; f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
-        Probe p; p.present = true; p.func = true;
+        Probe p; p.present = true; p.func = true; p.enums = enums55;
         const auto r = run(427, f, p);
         EXPECT("Ladder ⭐: nothing measured leaves a 4.27 label alone", r.version == 427 && !r.loweredToUE4);
         EXPECT("Ladder: ...and walks no object array for a CMC", p.asked == 0);
+        EXPECT("Ladder: ...nor for an enum", p.enumAsked == 0);
         StructuralVersionFacts u;
         u.fproperty = false;
         EXPECT("Ladder: nothing measured never lowers a UE5 label", run(504, u, p).version == 504);
@@ -6714,9 +6831,10 @@ static void Test_VersionLadder() {
         EXPECT("Ladder: UProperty mode leaves a UE4 label alone, and does not call it lowered",
                keep.version == 427 && !keep.loweredToUE4);
         f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
-        Probe q; q.present = true; q.func = true;
+        Probe q; q.present = true; q.func = true; q.enums = enums55;
         EXPECT("Ladder: no UE5 rung fires in UProperty mode", run(427, f, q).version == 427 && q.asked == 0);
         EXPECT("Ladder: ...nor after the UProperty rung lowered the label", run(508, f, q).version == 418 && q.asked == 0);
+        EXPECT("Ladder: ...and UProperty mode never pays the enum walk", q.enumAsked == 0);
     }
     {   // Tagged FFieldVariant: UE5.3+.
         auto f = measured(true);
@@ -6746,6 +6864,35 @@ static void Test_VersionLadder() {
         EXPECT("Ladder: a CMC with neither marker changes nothing, and no rung is reported",
                run(502, f, bare, &heard).version == 502 && heard.empty());
     }
+    {   // [VER-MARKERS-PAST-504] UEnum::EnumPackage moved ahead of EnumDisplayNameFn: UE5.5+, inside its window only.
+        auto f = measured(true);
+        Probe p; p.enums = enums55;
+        std::vector<VersionRung> heard;
+        EXPECT("Ladder ⭐: EnumPackage at Names+0x14 lifts 5.4 to 5.5, and says so",
+               run(504, f, p, &heard).version == 505 && p.enumAsked == 1
+               && heard == std::vector<VersionRung>{VersionRung::EnumPackage55});
+        auto g = f;
+        g.taggedFFieldVariant = true;
+        Probe stripped; stripped.present = true; stripped.func = true; stripped.enums = enums55;
+        EXPECT("Ladder ⭐: a stripped 5.5+ title climbs 4.27 -> 5.3 -> 5.4 -> 5.5 (FFRS, Elliot)",
+               run(427, g, stripped).version == 505);
+        Probe menu; menu.enums = enums55;
+        EXPECT("Ladder: ...and with no CMC loaded yet, 4.27 -> 5.3 -> 5.5", run(427, g, menu).version == 505);
+        Probe ue4; ue4.enums = enums55;
+        EXPECT("Ladder ⭐: a UE4 label never pays the enum walk", run(427, f, ue4).version == 427 && ue4.enumAsked == 0);
+        Probe top; top.enums = enums55;
+        EXPECT("Ladder: 5.5 and above never ask",
+               run(505, f, top).version == 505 && run(506, f, top).version == 506 && top.enumAsked == 0);
+        Probe old; old.enums = enums54;
+        EXPECT("Ladder ⭐: the 5.4 enum layout leaves a 5.4 label alone (DumperTest)",
+               run(504, f, old).version == 504 && old.enumAsked == 1);
+        Probe stock51; stock51.enums = enums54;
+        EXPECT("Ladder: ...and a 5.1 one (DumperTest51)", run(501, f, stock51).version == 501);
+        Probe none;
+        EXPECT("Ladder: no enum sampled changes nothing", run(503, f, none).version == 503 && none.enumAsked == 1);
+        Probe split; split.enums = EnumPackageTally{32, 20, 12};
+        EXPECT("Ladder: no clear majority changes nothing", run(504, f, split).version == 504);
+    }
     {   // The reordered FUObjectItem: UE5.7+.
         auto f = measured(true);
         f.reorderedItem57 = true;
@@ -6767,17 +6914,18 @@ static void Test_VersionLadder() {
     {   // The whole ladder.
         auto f = measured(true);
         f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
-        Probe p; p.present = true; p.func = true;
+        Probe p; p.present = true; p.func = true; p.enums = enums55;
         std::vector<VersionRung> rungs;
         const auto r = run(427, f, p, &rungs);
         EXPECT("Ladder: every rung from 4.27 lands on 5.8", r.version == 508 && !r.loweredToUE4);
         EXPECT("Ladder: ...and reports each rung that moved it, in order",
                (rungs == std::vector<VersionRung>{VersionRung::TaggedFieldVariant, VersionRung::CmcMarkers,
-                                                  VersionRung::ReorderedItem, VersionRung::VirtualFieldClassDtor}));
+                                                  VersionRung::EnumPackage55, VersionRung::ReorderedItem,
+                                                  VersionRung::VirtualFieldClassDtor}));
         std::vector<VersionRung> again;
-        Probe q; q.present = true; q.func = true;
+        Probe q; q.present = true; q.func = true; q.enums = enums55;
         EXPECT("Ladder ⭐: climbing again from where it landed changes nothing (a cached value that already climbed)",
-               run(r.version, f, q, &again).version == 508 && again.empty());
+               run(r.version, f, q, &again).version == 508 && again.empty() && q.enumAsked == 0);
     }
 }
 
@@ -9884,7 +10032,8 @@ int main() {
     RUN(Test_UFieldNextFProperty);
     RUN(Test_FNameAlign);
     RUN(Test_CmcMarkerVersion);
-    RUN(Test_VersionLadder);         // [UE-OVERRIDE-HINT-AUTO] the init ladder, as one function
+    RUN(Test_EnumPackageProbe);      // [VER-MARKERS-PAST-504] the 5.5 rung's evidence
+    RUN(Test_VersionLadder);        // [UE-OVERRIDE-HINT-AUTO] the init ladder, as one function
     RUN(Test_CachedDetectionRules);  // [UE-OVERRIDE-HINT-AUTO] the cache-reuse rule and the too-old verdict
     RUN(Test_PlanAutoRestore);       // [UE-OVERRIDE-HINT-AUTO] what Auto hands back, or that it waits
     RUN(Test_WeakTargetGarbage);
