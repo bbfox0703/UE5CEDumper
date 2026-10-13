@@ -3608,6 +3608,18 @@ architecture or UX changes in these areas.
   trace and See-through only), so it left them running behind hidden cards (`[EXPOFF-TEARDOWN]`). Live Funcs gives a
   kept trace back at the untick, and offers one only while the switch is on, as a defence line. Design record:
   [experimental-snapshot-spc-pivot.md](experimental-snapshot-spc-pivot.md), Phase 0.
+- **The known-issues pass's open calls, decided by the maintainer 2026-10-14** (todo.md has each row):
+  - A persisted UE version override accepts the structural version checks' result: a raise rung lifts it as it lifts a
+    detection, and init logs that the override was overruled (`[OVERRIDE-RAISED-BY-LADDER]`).
+  - The "does not fit this game" note beside the override badge is re-derived on every snapshot from the UFunction
+    vote's measurement, not latched, and is hidden while Auto is pending (`[OVERRIDE-REVIEW2-LOWS]`).
+  - The Call Trace list may drop below its 208 floor only when the whole panel is narrower than 232 (the object
+    tree dragged very wide), and a pane the list has taken below 200 does not drag: kept, because nobody narrows it
+    that far in practice and anyone who does will widen the window (`[CT-FLOOR-208]`).
+  - A connect with the experimental features off tears down only an untick still owed; a Fly or Keep Foreground a
+    CE record started while the features are off is left alone (`[EXPOFF-ROUND3-PAUSED]`).
+  - `IsCleanFName` accepts a short CJK mojibake as a name, a known issue kept on purpose: refusing it would refuse
+    genuine short CJK names (`[UE4-WIDE-FNAME-CLEANCHECK]`).
 
 Evaluations that concluded "do not build" live in the repo rather than here — see [README.md](README.md)'s
 index for `text-translation-eval.md` and `multipipe-eval.md`; `Nibble-Mask-Evaluation.md` is in the

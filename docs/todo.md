@@ -6,9 +6,8 @@ Open work only. **Read this when deciding what to do next.**
 >
 > ▶ **Current programme:** the known-issues fix pass of 2026-10-13/14 -- four batches built in source (builds 3647 /
 > 3648, dev-log 3648); live PASS so far: `[VER-MARKERS-PAST-504]`, `[PROXYREFRESH-NONSHIPPING-EXE]`,
-> `[UE4-ASSETPTR-PROPS]`, `[VER-410-FIXED-VS-STRING]`. Next: the live checks the other rows owe (most need the UI),
-> `[MH-PRERESERVE-PROXY]`, and the maintainer's open calls (`[OVERRIDE-RAISED-BY-LADDER]` and the ones noted in the
-> rows) ·
+> `[UE4-ASSETPTR-PROPS]`, `[VER-410-FIXED-VS-STRING]`. Next: the live checks the other rows owe (most need the UI) and
+> `[MH-PRERESERVE-PROXY]`; the maintainer's calls of 2026-10-14 are recorded in the rows and working-lessons §6 ·
 > `[LIVEFUNCS-TIMELINE-2026-10-04]` (Live Funcs) · open but idle: the `[FIXPASS-2026-09-10]` live-check backlog. Change this line in the commit that starts or ends a programme.
 
 > ## ⛔ BEFORE YOU PLAN OFF ANY HEADING IN THIS FILE — READ THIS 2026-08-24 RECONCILIATION
@@ -305,7 +304,9 @@ section, no ASLR), as Elliot's and P3R's do -- the only three of the 37 UE exes 
   506 on 46 of 46, then 507 and 508. FFRS (cached 504) and Elliot (427 -> 503 -> 504): 505 -> 506, 53,036 and
   84,990 objects; test-games.md and both READMEs corrected. The A4 rig learned a 5.6 mode and to pick the entry its
   fixture's own PE hash keys (`62abba2b`, `f2234fda`).
-- ⬜ `[OVERRIDE-RAISED-BY-LADDER]` (**the maintainer's decision**, from `[VER-MARKERS-PAST-504]`'s review): every
+- ✅ `[OVERRIDE-RAISED-BY-LADDER]` **decided 2026-10-14 by the maintainer: keep** -- an override accepts the structural
+  version checks' result (「override接受結構性版本判定結果」); working-lessons §6. Was (from `[VER-MARKERS-PAST-504]`'s
+  review): every
   raise rung lifts a persisted user override as it lifts a detection (503 / 504 / 507 / 508 already did; 505 / 506 now
   widen it to any 5.0-5.5 override on a 5.5 or 5.6 title), and the override flag stays set, so the badge reads e.g.
   UE 5.6 with the override mark. Since `79f636e8` init logs "User override = N overruled -- the structural markers
@@ -389,8 +390,8 @@ source and editor are installed for when they are needed.
   measurement implies (`DynOff::UFUNCTION_TAIL_EXTRAS {0,4}`, pinned by dll_core_test OVERRIDEEXTRA). No mailbox
   contract change. Live check owed: a 4.17 override persisted on a 4.18+ title (OCTOPATH / DQ XI S), or 4.18 on a
   4.11-4.17 one -> `override_contradicted` true, the badge and note; Auto (with a detection on record) clears it; a
-  fitting version is then accepted. **The maintainer's call, open:** the verdict is re-derived on every snapshot from
-  the vote's measurement (not a sticky latch), and the note is hidden while Auto is pending.
+  fitting version is then accepted. **Decided 2026-10-14 (the maintainer: as built):** the verdict is re-derived on every
+  snapshot from the vote's measurement (not a sticky latch), and the note is hidden while Auto is pending.
 - ✅ `[CT-FLOOR-208]` **BUILT 2026-10-14, in source** (the maintainer's choice of 2026-10-09; dev `dd464feb`..`ead4e753`,
   red `d542a5c6` carried; round-1 and round-2 review findings all closed; 17 mutants killed, 2 equivalent): the Call
   Trace list's floor `MinListWidth` = 24 + 96 + 88 = **208** (Time and Duration whole and clickable) and it wins over
@@ -402,8 +403,8 @@ source and editor are installed for when they are needed.
   Live check owed on an AOT build (DumperTest58 Shipping, any trace; set ui-options.json `callTrace.detailPaneWidth`
   766 first): at a 1000 window the list is 208 and a row selects; a press-and-release or a push into a limit leaves the
   remembered 766; at 1400 the pane stops at about 806 with the Call stack whole; at the 800 minimum, dragging the tree's
-  splitter right narrows the pane to nothing while the list keeps 208. **The maintainer's call, open:** the list can
-  still drop below 208 when the whole Call Trace panel is narrower than 232 (MainWindow's ContentGrid `*` column has no
+  splitter right narrows the pane to nothing while the list keeps 208. **Decided 2026-10-14 (the maintainer: keep -- nobody
+  narrows it that far in practice, and anyone who does will widen the window):** the list can still drop below 208 when the whole Call Trace panel is narrower than 232 (MainWindow's ContentGrid `*` column has no
   MinWidth -- only with the object tree dragged very wide); once the list has taken the pane below 200, the pane's
   handle moves neither way (round 1's choice, kept).
 - ✅ `[EXPOFF-ROUND3-PAUSED]` **BUILT 2026-10-14, in source** (dev `8ffccb75`..`17f4c0ba`, 43 commits: round 3's 19
@@ -417,8 +418,8 @@ source and editor are installed for when they are needed.
   Stop's reply lands after it; the tabs that lock the box are one answer the tooltip and the view share. On dev: C# 6641
   (6640 passed, 1 skipped), headless 68 / 68. Live check owed: `[LF-EXPOFF-TRACE]`'s list below. Noted by the builder,
   not taken: an Apply / Hold still in flight at the untick can land after the teardown read the card; the fly_toggle
-  hotkey path has no test. **The maintainer's call:** a connect with the features off now tears down only an owed
-  untick, so a Fly or Keep Foreground started from a CE record while the features are off is left alone (reverting
+  hotkey path has no test. **Decided 2026-10-14 (the maintainer: accepted):** a connect with the features off now
+  tears down only an owed untick, so a Fly or Keep Foreground started from a CE record while the features are off is left alone (reverting
   the narrowing restores the broad teardown).
 - ✅ `[VER-410-GATE]` **BUILT 2026-10-08, in source; refused live on IS Defense 2026-10-09, `[LIVE-3646]`** (red `3b4e5e4d`, green `d0260b4f`, rig `5af81317` /
   `9ade3939`; 6 / 6 mutants killed) -- live check owed: `py tools/verify/b25_marker_exes.py build`, run each exe,
@@ -706,9 +707,12 @@ source and editor are installed for when they are needed.
   object or property reads whole in the tree, Class/Struct and a pipe lookup.
 - ✅ `[UE4-WIDE-FNAME-CLEANCHECK]` **BUILT 2026-10-14, in source** (LOW; red `e9347b7f`, green `338348f2`, docs
   `a1110418`; 9 mutants killed): Aura's `IsCleanFName` keeps a well-formed non-ASCII name (well-formed UTF-8, no '?',
-  no C0 / C1 control, no DEL, bounded) and still refuses the DQ3 HD-2D junk it was written against. Trade: a short CJK
-  mojibake (24 code units or fewer, which Serie's `IsImplausibleWideName` keeps) is now accepted where it was refused --
-  the maintainer may want it tightened. Live check owed with `[UE4-WIDE-FNAME]`'s: find_by_address on a sub-object whose
+  no C0 / C1 control, no DEL, bounded) and still refuses the DQ3 HD-2D junk it was written against. **Known issue, accepted 2026-10-14 by the maintainer:**
+  a short CJK mojibake (24 code units or fewer, which Serie's `IsImplausibleWideName` keeps) is now accepted where it
+  was refused. Why it happens: a garbled name of a few CJK characters is well-formed UTF-8, and nothing short of a
+  dictionary tells it from a genuine short CJK name. Why it is accepted: refusing it would refuse genuine short CJK
+  names again, which was the defect; the gate only picks which object find_by_address's backward scan names, and its
+  containment check still keeps an address from being attributed to an object that does not contain it. Live check owed with `[UE4-WIDE-FNAME]`'s: find_by_address on a sub-object whose
   class name is wide reports 'backward' again, not 'nearest'.
 - ⬜ `[UBEL-ASCII-FIRSTCHAR]` (LOW, found with `[UE4-WIDE-FNAME]`, not a regression): six Ubel heuristics refuse a name
   whose first byte is not printable ASCII (ResolvePropertyNameType, ReadSlotObjectName, ReadParamSlotNames,
