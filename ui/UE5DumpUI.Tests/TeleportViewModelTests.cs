@@ -2090,6 +2090,63 @@ public class TeleportViewModelTests
         Assert.False(vm.HasHotkeyWarning);
     }
 
+    [Fact]
+    public void A_combo_taken_at_startup_stays_saved_when_another_row_is_rebound_or_cleared()
+    {
+        // A combo another app holds this launch may be free the next: the row keeps it, flagged, and so must the file.
+        // Every re-bind or clear of ANY row rewrites the file from the persisted set, so a combo left out of that set
+        // was erased by the first one.
+        var platform = new FakePlatform();
+        new TeleportHotkeyStore(platform).Save(new Dictionary<string, TeleportHotkeyBinding>
+        {
+            ["recall2"] = new TeleportHotkeyBinding(HotkeyModifiers.Control, 0x75),   // Ctrl+F6
+        });
+        var hk = new OsHotkeyService();
+        hk.Taken.Add((HotkeyModifiers.Control, 0x75));   // held by another app this launch
+        var vm = new TeleportViewModel(new FakeDumpService(), new NoopLogger(), platform,
+            aobMaker: null, globalHotkeys: hk);
+        var recall2 = vm.HotkeyRows.First(r => r.ActionId == "recall2");
+        Assert.True(recall2.Conflicted);
+
+        var save0 = BindSave0ToF5(vm);
+        Assert.Equal(new TeleportHotkeyBinding(HotkeyModifiers.Control, 0x75),
+            new TeleportHotkeyStore(platform).Load().GetValueOrDefault("recall2"));
+        vm.ClearHotkeyCommand.Execute(save0);
+
+        var saved = new TeleportHotkeyStore(platform).Load();
+        Assert.Equal(new TeleportHotkeyBinding(HotkeyModifiers.Control, 0x75), saved.GetValueOrDefault("recall2"));
+        Assert.False(saved.ContainsKey("save0"));
+        Assert.True(recall2.Conflicted);                  // still flagged: nothing has registered it
+        Assert.Equal("Ctrl+F6", recall2.Label);
+    }
+
+    [Fact]
+    public async Task An_experimental_combo_taken_at_startup_is_tried_again_when_the_box_is_ticked_again()
+    {
+        // Ticking the box registers the experimental rows' saved combos; one taken at startup is a saved combo too.
+        var platform = new FakePlatform();
+        new TeleportHotkeyStore(platform).Save(new Dictionary<string, TeleportHotkeyBinding>
+        {
+            ["foreground_off"] = new TeleportHotkeyBinding(HotkeyModifiers.Control, 0x75),   // Ctrl+F6
+        });
+        var hk = new OsHotkeyService();
+        hk.Taken.Add((HotkeyModifiers.Control, 0x75));
+        var gate = new FakeExperimentalGate(enabled: true);
+        var vm = new TeleportViewModel(new FakeDumpService(), new NoopLogger(), platform,
+            aobMaker: null, globalHotkeys: hk, experimentalGate: gate);
+        var row = vm.ExperimentalHotkeyRows.First(r => r.ActionId == "foreground_off");
+        Assert.True(row.Conflicted);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        hk.Taken.Clear();                                 // the other app let it go
+        gate.IsEnabled = true;
+
+        Assert.Equal(new[] { (HotkeyModifiers.Control, 0x75u) }, hk.Live);
+        Assert.False(row.Conflicted);
+        Assert.Equal("Ctrl+F6", row.Label);
+    }
+
     // ── Experimental gating (Keep Foreground / Fly / Standalone trainer) ──
 
     [Fact]
