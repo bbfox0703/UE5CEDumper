@@ -129,10 +129,13 @@ inline bool UE4NameIndexInBounds(int32_t nameIndex, int32_t chunkSize, int32_t m
 }
 
 // [UE4-WIDE-FNAME] Is the pre-4.23 FNameEntry behind table slot `nameIndex` a wide (UTF-16) one? `indexWord` is the
-// entry's first int32.
+// entry's first int32. NameTypes.h (UE 4.10 and 4.18 alike) declares `NAME_INDEX Index` first -- then HashNext, then
+// the AnsiName / WideName union, at +0x10 on x64 -- with NAME_WIDE_MASK 0x1 and NAME_INDEX_SHIFT 1, and
+// AllocateNameEntry stores Index = (slot << 1) | wide, the slot being where the table holds the entry. So the word
+// names its own slot, and the bit is believed only beside it: a layout whose first int32 is something else keeps the
+// narrow read it always had.
 inline constexpr bool UE4EntryIsWide(int32_t indexWord, int32_t nameIndex) {
-    (void)indexWord; (void)nameIndex;
-    return false;   // RED STUB: today's reader never asks
+    return (indexWord & 1) != 0 && (indexWord >> 1) == nameIndex;
 }
 
 } // namespace Serie

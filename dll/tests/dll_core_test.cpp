@@ -10888,11 +10888,13 @@ int main() {
         chunk[7] = makeEntry(eLong, (7 << 1) | 1, longName.data(), longName.size() * sizeof(wchar_t));
         reinterpret_cast<wchar_t*>(eLong.data() + 0x10)[longName.size()] = L'A';   // overwrite the helper's terminator
 
-        // Two pages reserved, one committed: names that end at, and run into, an unreadable page.
-        uint8_t* wpage = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x2000, MEM_RESERVE, PAGE_READWRITE));
-        check("UE4WIDE setup: reserved two pages", wpage != nullptr);
+        // Four pages reserved, the first and third committed: a name that ends at an unreadable page, in the first,
+        // and one that runs into one, in the third -- apart, so filling the one cannot overwrite the other.
+        uint8_t* wpage = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x4000, MEM_RESERVE, PAGE_READWRITE));
+        check("UE4WIDE setup: reserved four pages", wpage != nullptr);
         if (wpage) {
             VirtualAlloc(wpage, 0x1000, MEM_COMMIT, PAGE_READWRITE);
+            VirtualAlloc(wpage + 0x2000, 0x1000, MEM_COMMIT, PAGE_READWRITE);
             // Ångström and its terminator end exactly at the page's end.
             static const wchar_t edge[] = { 0x00C5, L'n', L'g', L's', L't', L'r', 0x00F6, L'm', 0 };
             uint8_t* e5 = wpage + 0x1000 - 0x10 - sizeof edge;
@@ -10900,11 +10902,11 @@ int main() {
             memcpy(e5, &w5, sizeof w5);
             memcpy(e5 + 0x10, edge, sizeof edge);
             chunk[5] = reinterpret_cast<uintptr_t>(e5);
-            // Unterminated up to the page's end, so the next unit to read is unreadable.
-            uint8_t* e6 = wpage + 0x800;
+            // Unterminated up to the third page's end, so the next unit to read is unreadable.
+            uint8_t* e6 = wpage + 0x2800;
             const int32_t w6 = (6 << 1) | 1;
             memcpy(e6, &w6, sizeof w6);
-            for (wchar_t* c = reinterpret_cast<wchar_t*>(e6 + 0x10); reinterpret_cast<uint8_t*>(c) < wpage + 0x1000; ++c)
+            for (wchar_t* c = reinterpret_cast<wchar_t*>(e6 + 0x10); reinterpret_cast<uint8_t*>(c) < wpage + 0x3000; ++c)
                 *c = L'B';
             chunk[6] = reinterpret_cast<uintptr_t>(e6);
         }

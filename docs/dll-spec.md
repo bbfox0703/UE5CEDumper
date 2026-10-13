@@ -318,7 +318,7 @@ namespace Serie {  // legacy alias: FNamePool
 |------|-------------|--------------|--------|
 | UE5 standard | `Init(addr, 0)` | `[2B header][string]` | 2 |
 | Hash-prefixed | `Init(addr, 4)` | `[4B hash][2B header][string]` | 4 |
-| UE4 TNameEntryArray | `InitUE4(addr)` | double-deref, string at fixed offset | — |
+| UE4 TNameEntryArray | `InitUE4(addr)` | double-deref, string at fixed offset: ANSI, or UTF-16 when the entry's first int32 (`Index`) is `(slot << 1) \| 1` (`[UE4-WIDE-FNAME]`) | — |
 
 **Chunk calculation (UE5 modes):**
 ```cpp
