@@ -586,4 +586,21 @@ public class CallTraceColumnsTests
         Dispatcher.UIThread.RunJobs();
         AssertListFloor(panel, Row2);
     });
+
+    /// <summary>[CT-FLOOR-208] A view model that replaces another on a panel already laid out is fitted too. The new one
+    /// has never been told the room, and nothing about the panel's own size changes to measure it again: the round-1
+    /// review's probe swapped a pane of 380 for one of 4096 and found the pane at 4096 and the list at nothing in 1000
+    /// and 1600 windows.</summary>
+    [Theory]
+    [InlineData(1000)]
+    [InlineData(1600)]
+    public Task A_view_model_that_replaces_another_is_fitted_too(double window) => Headless.Run(() =>
+    {
+        var (_, panel, _) = LaidIn(window, 380, Row, Row2);
+        var next = NewVm(4096, new[] { Row, Row2 });
+        panel.DataContext = next;
+        Dispatcher.UIThread.RunJobs();
+        AssertListFloor(panel, Row2);
+        Assert.Equal(window - PanelChrome - ListFloor, Pane(panel).Bounds.Width, 0.5);
+    });
 }
