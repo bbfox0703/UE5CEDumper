@@ -43,6 +43,19 @@ public class ExperimentalTeardownTests : IDisposable
 
         public const string Meter = "BP_Player_C::Visibility";
 
+        /// <summary>The OFFs that fail while the UI still reads connected -- the pipe faulted them before the
+        /// disconnect reached the UI, or the DLL answered an error: "fly", "seethrough", "reset_field",
+        /// "foreground". Each is recorded in <see cref="Off"/> before it fails.</summary>
+        public HashSet<string> OffFails { get; } = new();
+        /// <summary>The reads that fail the same way: "fly", "seethrough", "stealth" (the forced fields),
+        /// "foreground".</summary>
+        public HashSet<string> ReadFails { get; } = new();
+
+        private void FailIf(HashSet<string> set, string what)
+        {
+            if (set.Contains(what)) throw new IOException("Pipe disconnected");
+        }
+
         public void HoldTheMeter() => Forced.Add(new ForcedFieldInfo
         {
             ClassName = "BP_Player_C", FieldName = "Visibility", Kind = "numeric", Value = 0, Held = 1,
@@ -58,6 +71,7 @@ public class ExperimentalTeardownTests : IDisposable
                     HoldForegroundOff = null;
                     await hold.Task;
                 }
+                FailIf(OffFails, "foreground");
             }
             Foreground = enable ? 1 : 0;
             return Foreground;
@@ -69,6 +83,7 @@ public class ExperimentalTeardownTests : IDisposable
         public override async Task<int> GetForegroundLockAsync(CancellationToken ct = default)
         {
             if (ForegroundReadFails == "throw") throw new InvalidOperationException("the read failed");
+            FailIf(ReadFails, "foreground");
             if (ForegroundReadFails == "-1") return -1;
             if (HoldForegroundRead is { } hold)
             {
@@ -89,26 +104,41 @@ public class ExperimentalTeardownTests : IDisposable
         {
             if (enable is bool on)
             {
-                if (!on) Off.Add("fly");
+                if (!on)
+                {
+                    Off.Add("fly");
+                    FailIf(OffFails, "fly");
+                }
                 Fly = on;
             }
             return Task.FromResult(FlyNow);
         }
 
-        public override Task<FlyStatus> FlyGetStateAsync(CancellationToken ct = default) => Task.FromResult(FlyNow);
+        public override Task<FlyStatus> FlyGetStateAsync(CancellationToken ct = default)
+        {
+            FailIf(ReadFails, "fly");
+            return Task.FromResult(FlyNow);
+        }
 
         public override Task<SeeThroughStatus> SeeThroughSetAsync(bool? enable, int? count, CancellationToken ct = default)
         {
             if (enable is bool on)
             {
-                if (!on) Off.Add("seethrough");
+                if (!on)
+                {
+                    Off.Add("seethrough");
+                    FailIf(OffFails, "seethrough");
+                }
                 SeeThrough = on;
             }
             return Task.FromResult(new SeeThroughStatus { Active = SeeThrough, HasTarget = true });
         }
 
         public override Task<SeeThroughStatus> SeeThroughGetStateAsync(CancellationToken ct = default)
-            => Task.FromResult(new SeeThroughStatus { Active = SeeThrough, HasTarget = true });
+        {
+            FailIf(ReadFails, "seethrough");
+            return Task.FromResult(new SeeThroughStatus { Active = SeeThrough, HasTarget = true });
+        }
 
         /// <summary>What the meter search finds besides the player's meter, best first; with NoMeter, nothing (no pawn).</summary>
         public List<StealthCandidate> OtherMeters { get; } = new();
@@ -120,18 +150,28 @@ public class ExperimentalTeardownTests : IDisposable
                              .ToList());
 
         public override Task<IReadOnlyList<ForcedFieldInfo>> GetForcedFieldsAsync(CancellationToken ct = default)
-            => Task.FromResult<IReadOnlyList<ForcedFieldInfo>>(Forced.ToList());
+        {
+            FailIf(ReadFails, "stealth");
+            return Task.FromResult<IReadOnlyList<ForcedFieldInfo>>(Forced.ToList());
+        }
 
         /// <summary>No live instance of the meter's class yet (death, a level load): Solide keeps the job armed, applies
         /// it when one spawns, and answers held 0 with code 0.</summary>
         public bool NoInstance;
         /// <summary>A refusal, as a negative code: Solide drops a new job it refused, and keeps one already armed.</summary>
         public int RefuseCode;
+        /// <summary>The hold reaches Solide, which arms it, and its answer is lost.</summary>
+        public bool HoldThrows;
 
         public override Task<ForceFieldResult> ForceFieldAsync(string className, string fieldName, string kind,
                                                                double value = 0, bool on = false, CancellationToken ct = default)
         {
             if (RefuseCode < 0) return Task.FromResult(new ForceFieldResult { Code = RefuseCode });
+            if (HoldThrows)
+            {
+                Forced.Add(new ForcedFieldInfo { ClassName = className, FieldName = fieldName, Kind = "numeric", Value = 0, Held = 1 });
+                throw new IOException("Pipe disconnected");
+            }
             if (!Forced.Any(f => f.ClassName == className && f.FieldName == fieldName))
                 Forced.Add(new ForcedFieldInfo
                 {
@@ -143,6 +183,7 @@ public class ExperimentalTeardownTests : IDisposable
         public override Task<int> ResetFieldAsync(string className, string fieldName, CancellationToken ct = default)
         {
             Off.Add($"reset_field {className}::{fieldName}");
+            FailIf(OffFails, "reset_field");
             Forced.RemoveAll(f => f.ClassName == className && f.FieldName == fieldName);
             return Task.FromResult(0);
         }
@@ -352,8 +393,9 @@ public class ExperimentalTeardownTests : IDisposable
 
     // ---- The round-3 review's LOW: the rules for a foreground read that failed (badge Unknown) were stated in comments
     // and checked by nothing. An untick turns Keep Foreground off whatever its badge reads, as the hook may hold behind
-    // an Unknown; a connect that owes a teardown turns it off only when it was read ON, so a failed read neither costs a
-    // round trip nor stamps over "Connected".
+    // an Unknown, and its answer pays the debt; a connect that owes a teardown turns it off only when it was read ON, so
+    // a failed read neither costs a round trip nor stamps over "Connected" -- and, not knowing whether the lock holds,
+    // it leaves the untick owed to the next connect (the round-3 re-review's INFO).
 
     [Theory]
     [InlineData("throw")]
@@ -370,20 +412,147 @@ public class ExperimentalTeardownTests : IDisposable
         await vm.ExperimentalTeardown;
         Assert.Contains("foreground", dll.Off);
         Assert.Equal(0, dll.Foreground);
+        Assert.False(gate.TeardownOwed);
     }
 
     [Theory]
     [InlineData("throw")]
     [InlineData("-1")]
-    public async Task A_connect_owing_a_teardown_leaves_Keep_Foreground_alone_when_its_read_failed(string fails)
+    public async Task A_connect_owing_a_teardown_leaves_Keep_Foreground_alone_when_its_read_failed_and_stays_owed(string fails)
     {
-        var (vm, dll, _, _) = Make(enabled: false, owed: true);
+        var (vm, dll, _, gate) = Make(enabled: false, owed: true);
         vm.SetConnected(false);   // the badge back to Unknown, as after any earlier session
+        dll.Foreground = 1;
         dll.ForegroundReadFails = fails;
 
         await Connect(vm);
         Assert.Empty(dll.Off);
         Assert.Equal("Connected", vm.StatusText);
+        Assert.True(gate.TeardownOwed);
+
+        // The next connect reads it, turns it off, and pays.
+        dll.ForegroundReadFails = null;
+        vm.SetConnected(false);
+        await Connect(vm);
+        Assert.Equal(new[] { "foreground" }, dll.Off);
+        Assert.Equal(0, dll.Foreground);
+        Assert.False(gate.TeardownOwed);
+    }
+
+    // ---- The round-3 re-review's INFO: the debt was paid on the connection and the gate generation alone. Every OFF
+    // catches its own failure, so a teardown whose OFFs all failed still "ran to its end"; and the pipe faults its
+    // pending requests before it raises the disconnect, so IsConnected can still read true when the OFF's failure lands
+    // (An_untick_whose_teardown_lost_the_connection_stays_owed models only the other order). A teardown that decided
+    // from a read that failed did not know what ran. Either way the next connect would owe nothing, and whatever was
+    // still on stayed on behind the hidden cards.
+
+    [Theory]
+    [InlineData("fly")]
+    [InlineData("seethrough")]
+    [InlineData("reset_field")]
+    [InlineData("foreground")]
+    public async Task An_untick_with_an_OFF_that_failed_on_a_live_connection_stays_owed(string fails)
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await TurnAllOn(vm);
+        dll.OffFails.Add(fails);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.True(vm.IsConnected);
+        Assert.Equal(AllOff, dll.Off);   // every OFF was still tried
+        Assert.True(gate.TeardownOwed);
+    }
+
+    [Theory]
+    [InlineData("fly")]
+    [InlineData("seethrough")]
+    [InlineData("reset_field")]
+    [InlineData("foreground")]
+    public async Task A_connect_teardown_with_an_OFF_that_failed_stays_owed_until_one_lands(string fails)
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await TurnAllOn(vm);
+        vm.SetConnected(false);
+        gate.IsEnabled = false;
+        dll.OffFails.Add(fails);
+
+        await Connect(vm);
+        Assert.Equal(AllOff, dll.Off);
+        Assert.True(gate.TeardownOwed);
+
+        dll.OffFails.Clear();
+        vm.SetConnected(false);
+        await Connect(vm);
+        Assert.False(gate.TeardownOwed);
+        Assert.False(dll.Fly);
+        Assert.False(dll.SeeThrough);
+        Assert.Empty(dll.Forced);
+        Assert.Equal(0, dll.Foreground);
+    }
+
+    [Theory]
+    [InlineData("fly")]
+    [InlineData("seethrough")]
+    [InlineData("stealth")]
+    [InlineData("foreground")]
+    public async Task A_connect_teardown_that_could_not_read_what_runs_stays_owed(string fails)
+    {
+        var (vm, dll, _, gate) = Make(enabled: false, owed: true);
+        dll.ReadFails.Add(fails);
+
+        await Connect(vm);
+        Assert.True(gate.TeardownOwed);
+    }
+
+    [Theory]
+    [InlineData("fly")]
+    [InlineData("seethrough")]
+    [InlineData("stealth")]
+    public async Task An_untick_after_a_prime_that_could_not_read_what_runs_stays_owed(string fails)
+    {
+        var (vm, dll, _, gate) = Make(enabled: true);
+        dll.ReadFails.Add(fails);
+        await Connect(vm);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.True(gate.TeardownOwed);
+    }
+
+    [Theory]
+    [InlineData("fly")]
+    [InlineData("seethrough")]
+    public async Task A_card_read_again_after_a_failed_prime_lets_the_untick_pay(string fails)
+    {
+        // Fly and See-through are one state each, so any answered read of it is the whole answer.
+        var (vm, dll, _, gate) = Make(enabled: true);
+        dll.ReadFails.Add(fails);
+        await Connect(vm);
+        dll.ReadFails.Clear();
+        if (fails == "fly") await vm.RefreshFlyCommand.ExecuteAsync(null);
+        else await vm.RefreshSeeThroughCommand.ExecuteAsync(null);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.False(gate.TeardownOwed);
+    }
+
+    [Fact]
+    public async Task A_Stealth_hold_whose_answer_was_lost_leaves_the_untick_owed()
+    {
+        // The request may have reached Solide and armed a job the card never heard of.
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        dll.HoldThrows = true;
+        await vm.HoldStealthCommand.ExecuteAsync(null);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.True(gate.TeardownOwed);
     }
 
     // ---- The round-3 review's LOW: the Stealth release keys on the card's "Holding @0", and Detect -- enabled while
