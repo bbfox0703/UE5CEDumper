@@ -2221,6 +2221,27 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void InitVersionLadder_PastFiveFour_ReadsTheMeasuredEnumAndStructLayouts()
+    {
+        // [VER-MARKERS-PAST-504] The 5.5 and 5.6 rungs' rules and samplers are pinned in dll_helpers_test
+        // (Test_EnumPackageProbe, Test_StructStateProbe, Test_VersionLadder). Frieren.cpp reaches no test target, so the
+        // wiring is pinned here: the ladder is handed both probes, each sampler reads behind the MEASURED offset, and
+        // the early UEnum::Names detection is told not to latch a miss -- a latched FAILED would switch enum names off
+        // for the whole process on a title that had not registered its enums yet.
+        var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
+        int fn = frieren.IndexOf("DynOff::StructuralVersion CorrectVersionStructurally(", StringComparison.Ordinal);
+        Assert.True(fn >= 0, "CorrectVersionStructurally was not found");
+        int end = frieren.IndexOf("} // namespace FrierenInit", fn, StringComparison.Ordinal);
+        Assert.True(end > fn, "the end of CorrectVersionStructurally was not found");
+        var body = frieren[fn..end];
+        Assert.Contains("Genau::DetectUEnumNames(/*latchFailure=*/false);", body);
+        Assert.Contains("DynOff::SampleEnumPackage(enumTally, e.addr, DynOff::UENUM_NAMES, DynOff::UOBJECT_OUTER,", body);
+        Assert.Contains("DynOff::SampleStructState(structTally, s.addr, DynOff::USTRUCT_PROPSSIZE, read);", body);
+        Assert.Contains("DynOff::ApplyVersionLadder(ueVersion, f, probeCmc, probeEnumPackage, probeStructState, onRung);",
+                        body);
+    }
+
+    [Fact]
     public void AutoOverAnOverride_HandsBackTheDetection_OrSaysItWaitsForTheNextLaunch()
     {
         // [UE-OVERRIDE-HINT-AUTO] set_ue_version_override(0) used to clear only the override flag, so the session kept
