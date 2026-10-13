@@ -23,8 +23,8 @@ WHERE IT LOOKS. Every folder in the Steam libraries (or `--lib`) that holds one 
 DLLs, whatever the exe beside it is called -- `deployed()` says why.
 
 WHAT `refresh` DOES, AND WHAT IT REFUSES TO DO. It copies `dist/proxy/<name>.dll` over
-the deployed copy, **after** backing the old one up to `out/proxy-backups/` with its
-size and SHA-256 recorded. It refuses if:
+the deployed copy, **after** backing the old one up to `out/proxy-backups/`, with its
+source path and SHA-256 recorded beside it in `<backup>.source.txt`. It refuses if:
   * an exe beside the proxy is running (replacing a mapped DLL silently does nothing useful);
   * the deployed file is already identical (nothing to do, and a needless write);
   * the backup cannot be written first.
@@ -209,6 +209,12 @@ def _backup_path(backups, game, proxy, stamp):
     return bak
 
 
+def _source_record(bak):
+    """Where a backup's bytes came from, kept beside it: names alone tell two folders of one game apart only by a
+    counter, and the console line that says which is which is gone by the time a restore is needed."""
+    return bak.with_name(bak.name + ".source.txt")
+
+
 def refresh(match, libs=None, dist=None, backups=None, owner=product_name, is_running=running):
     src, dm = _compare_with(dist)
     backups = BACKUPS if backups is None else pathlib.Path(backups)
@@ -249,6 +255,12 @@ def refresh(match, libs=None, dist=None, backups=None, owner=product_name, is_ru
         shutil.copy2(q, bak)
         if not bak.is_file() or sha(bak) != sha(q):
             raise SystemExit(f"proxy_refresh: FAILED -- backup of {q} did not verify; "
+                             f"refusing to overwrite the deployed file")
+        # Before the overwrite, like the backup itself: a backup nobody can place is not one a restore can use.
+        try:
+            _source_record(bak).write_text(f"{q}\n{sha(q)}\n", encoding="utf-8")
+        except OSError as e:
+            raise SystemExit(f"proxy_refresh: FAILED -- could not record where {bak.name} came from ({e}); "
                              f"refusing to overwrite the deployed file")
         say(f"  backed up {q} ({q.stat().st_size:,} B, sha {sha(q)[:12]}) -> {bak.name}")
         shutil.copy2(cur, q)
@@ -466,6 +478,22 @@ def selftest():
               and all(len(recorded(b)) >= 2
                       and recorded(b)[0] == str(next(p for k, p in came_from.items() if before[k] == b.read_bytes()))
                       and recorded(b)[1] == hashlib.sha256(b.read_bytes()).hexdigest() for b in baks))
+
+        # The record is written BEFORE the overwrite: a refresh that cannot say where a backup came from must not go
+        # on to replace the file. The record's path is pointed at a folder, which no file write can open.
+        game(lib1, "Locked", "Bin", ["Locked.exe"], {"version.dll": b"OURS old locked"})
+        blocked = tmp / "a folder where the record would go"
+        blocked.mkdir()
+        this = sys.modules[__name__]
+        real_record, this._source_record = this._source_record, lambda bak: blocked
+        try:
+            why, _ = refusal(lambda: refresh("Locked", libs, dist, backups, owner=_owner_by_bytes,
+                                             is_running=lambda n: False))
+        finally:
+            this._source_record = real_record
+        check("a backup whose source cannot be recorded stops the refresh before the deployed file is replaced",
+              why and "could not record" in why
+              and old[("Locked", "Bin/version.dll")].read_bytes() == b"OURS old locked")
 
     for name, ok in checks:
         print(f"  {'ok  ' if ok else 'FAIL'}  {name}")
