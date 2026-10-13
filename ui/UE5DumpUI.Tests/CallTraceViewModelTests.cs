@@ -1159,6 +1159,9 @@ public class CallTraceViewModelTests
         vm.DragDetailPane(0);
         vm.DragDetailPane(+60);                             // into the limit: still 692
         Assert.Equal((692.0, 766.0), (vm.ShownDetailPaneWidth, vm.DetailPaneWidth));
+        vm.SplitWidth = 408;                                // the list keeps 208: the pane shows its own floor, 200
+        vm.DragDetailPane(-10);                             // into that floor
+        Assert.Equal((200.0, 766.0), (vm.ShownDetailPaneWidth, vm.DetailPaneWidth));
         Assert.DoesNotContain(raised, n => RememberedWidths.Contains(n));
         vm.SplitWidth = 1600;
         Assert.Equal(766.0, vm.ShownDetailPaneWidth);
@@ -1180,6 +1183,13 @@ public class CallTraceViewModelTests
         vm.DragThread(0);
         vm.DragDuration(0);
         vm.DragObject(0);
+        // A push into a column's own floor is a push into a limit too. The setter's clamp would put a width written
+        // under the floor back at 40 / 32 / 80, so a drag's clamp that let it through would look harmless, and it would
+        // still replace the remembered 88 / 64 / 260 with the floor. Time is left out: a row is fitted to at least 512,
+        // so Time is never shown at its floor with more remembered.
+        vm.DragDuration(-10);
+        vm.DragThread(-10);
+        vm.DragObject(-10);
         Assert.Equal((284.0, 40.0, 32.0, 80.0), ShownColumns(vm));
         Assert.Equal((4096.0, 88.0, 64.0, 260.0), (vm.TimeColWidth, vm.DurationColWidth, vm.ThreadColWidth, vm.ObjectColWidth));
         Assert.DoesNotContain(raised, n => RememberedWidths.Contains(n));
