@@ -719,12 +719,15 @@ if(BUILD_DLL_TESTS)
     # ---- dll_core_test's other-dumper fixtures ([AOB-SKIP-OWN-DLL]) --------------------------------
     #
     # Macht's multi-module walk skips any module that is a build of the dumper, and in the test process the dumper's
-    # own image IS the main exe, so the walk can only be shown a second copy as a DLL of its own. One source, two
-    # DLLs, no code and no CRT (/NOENTRY): the contract export with the real magic, and the same name with a wrong one.
-    foreach(_oc dumper impostor)
+    # own image IS the main exe, so the walk can only be shown a second copy as a DLL of its own. One source, three
+    # DLLs, no CRT (/NOENTRY): the contract export with the real magic, the same name with a wrong one, and a build
+    # from before the contract, which exports UE5_Init alone.
+    foreach(_oc dumper impostor legacy)
         add_library(owncopy_${_oc} MODULE ${CMAKE_CURRENT_SOURCE_DIR}/tests/res/owncopy_fixture.cpp)
         if(_oc STREQUAL "impostor")
             target_compile_definitions(owncopy_${_oc} PRIVATE OWNCOPY_FIXTURE_IMPOSTOR)
+        elseif(_oc STREQUAL "legacy")
+            target_compile_definitions(owncopy_${_oc} PRIVATE OWNCOPY_FIXTURE_LEGACY)
         endif()
         if(MSVC)
             target_link_options(owncopy_${_oc} PRIVATE /NOENTRY)

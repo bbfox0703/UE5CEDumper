@@ -5793,8 +5793,12 @@ int main() {
         dir.resize(dir.find_last_of(L"\\/") + 1);
         HMODULE dumper   = LoadLibraryW((dir + L"owncopy_dumper.dll").c_str());
         HMODULE impostor = LoadLibraryW((dir + L"owncopy_impostor.dll").c_str());
+        // A build from before the mailbox contract (2026-08-06) exports UE5_Init and no contract; a stale proxy left
+        // in a game folder beside a current one is that build.
+        HMODULE legacy   = LoadLibraryW((dir + L"owncopy_legacy.dll").c_str());
         check("AOB-SKIP-OWN-DLL setup: both fixtures load from beside the test", dumper && impostor);
-        if (dumper && impostor) {
+        check("AOB-SKIP-OWN-DLL setup: ...and the pre-contract build", legacy != nullptr);
+        if (dumper && impostor && legacy) {
             const char* marker = "E8 4F 57 4E 43 4F 50 59 9C 37 B1 D4 2A 6E 05 F3";
             const uintptr_t db = reinterpret_cast<uintptr_t>(dumper), ib = reinterpret_cast<uintptr_t>(impostor);
             MODULEINFO dmi{}, imi{};
@@ -5802,6 +5806,11 @@ int main() {
                              && GetModuleInformation(GetCurrentProcess(), impostor, &imi, sizeof imi);
             check("AOB-SKIP-OWN-DLL setup: both images are above the walk's size floor", infoOk
                   && dmi.SizeOfImage >= Macht::kMinScannedModuleSize && imi.SizeOfImage >= Macht::kMinScannedModuleSize);
+            const uintptr_t lb = reinterpret_cast<uintptr_t>(legacy);
+            MODULEINFO lmi{};
+            check("AOB-SKIP-OWN-DLL setup: the pre-contract build is above the size floor too",
+                  GetModuleInformation(GetCurrentProcess(), legacy, &lmi, sizeof lmi)
+                  && lmi.SizeOfImage >= Macht::kMinScannedModuleSize);
             auto inImage = [](uintptr_t a, uintptr_t base, const MODULEINFO& mi) {
                 return a >= base && a < base + mi.SizeOfImage;
             };
@@ -5809,11 +5818,15 @@ int main() {
             check("AOB-SKIP-OWN-DLL control: scanned directly, the dumper fixture holds the marker",
                   Macht::AOBScanAll(marker, db).size() == 1);
             check("AOB-SKIP-OWN-DLL control: ...and so does the impostor", Macht::AOBScanAll(marker, ib).size() == 1);
+            check("AOB-SKIP-OWN-DLL control: ...and so does the pre-contract build",
+                  Macht::AOBScanAll(marker, lb).size() == 1);
 
             check("AOB-SKIP-OWN-DLL identity: a module exporting the contract with its magic is a dumper build",
                   Macht::IsDumperModule(dumper));
             check("AOB-SKIP-OWN-DLL identity: the same export name with a wrong magic is not",
                   !Macht::IsDumperModule(impostor));
+            check("AOB-SKIP-OWN-DLL identity ⭐ a build from before the contract, exporting UE5_Init, is a dumper build",
+                  Macht::IsDumperModule(legacy));
             check("AOB-SKIP-OWN-DLL identity: a module without the export is not",
                   !Macht::IsDumperModule(GetModuleHandleW(L"kernel32.dll")));
             check("AOB-SKIP-OWN-DLL identity: this exe, which exports no contract, is not",
@@ -5821,13 +5834,16 @@ int main() {
             check("AOB-SKIP-OWN-DLL identity: no module is not", !Macht::IsDumperModule(nullptr));
 
             const std::vector<uintptr_t> walk = Macht::AOBScanAllModules(marker);
-            size_t inDumper = 0, inImpostor = 0;
+            size_t inDumper = 0, inImpostor = 0, inLegacy = 0;
             for (uintptr_t a : walk) {
                 if (inImage(a, db, dmi)) ++inDumper;
                 if (inImage(a, ib, imi)) ++inImpostor;
+                if (inImage(a, lb, lmi)) ++inLegacy;
             }
             check("AOB-SKIP-OWN-DLL ⭐ the walk reports nothing from another build of the dumper", inDumper == 0,
                   std::to_string(inDumper).c_str());
+            check("AOB-SKIP-OWN-DLL ⭐ ...nor from one built before the contract", inLegacy == 0,
+                  std::to_string(inLegacy).c_str());
             check("AOB-SKIP-OWN-DLL ⭐ ...and still reports the module that only shares the export's name",
                   inImpostor == 1, std::to_string(inImpostor).c_str());
             check("AOB-SKIP-OWN-DLL ...and nothing else", walk.size() == 1, std::to_string(walk.size()).c_str());
@@ -5836,6 +5852,7 @@ int main() {
             check("AOB-SKIP-OWN-DLL ⭐ the walk leaves out the image it holds as its own", walkOwn.empty(),
                   std::to_string(walkOwn.size()).c_str());
         }
+        if (legacy)   FreeLibrary(legacy);
         if (impostor) FreeLibrary(impostor);
         if (dumper)   FreeLibrary(dumper);
     }
