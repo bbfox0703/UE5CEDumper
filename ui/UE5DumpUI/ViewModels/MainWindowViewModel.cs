@@ -312,6 +312,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             _experimentalGate.Lock();
     }
 
+    /// <summary>[EXPOFF-ROUND3-PAUSED] Whether opening the tab tagged <paramref name="tag"/> locks the opt-in.</summary>
+    public static bool LocksExperimental(string? tag) => false;
+
     /// <summary>C5: switch to the Class Pivot tab and hand off the chosen
     /// class/property. Guarded so it's inert when the pivot tab isn't available.</summary>
     private async void HandlePivotHandoff(string className, string? propName)

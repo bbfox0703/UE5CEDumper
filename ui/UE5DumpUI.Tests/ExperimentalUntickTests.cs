@@ -125,6 +125,65 @@ public class ExperimentalUntickTests : IDisposable
         Assert.Equal(idle, main.DetectStats.StatusText);
     }
 
+    // ---- The round-3 review's LOW: which tabs lock the opt-in was a literal list in the view's tab switch, and the claims
+    // that rest on it -- what the rest of an experimental feature needs on an untick, and the locked box's tooltip,
+    // which names those tabs -- were checked by nothing: dropping a tab from the list passed every suite.
+
+    /// <summary>Every experimental tab of the main window (shown only with the features on): its Tag and its header.</summary>
+    private static List<(string tag, string header)> ExperimentalTabs()
+    {
+        var axaml = System.Xml.Linq.XDocument.Load(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/MainWindow.axaml"));
+        var en = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        var tabs = new List<(string, string)>();
+        foreach (var tab in axaml.Descendants().Where(e => e.Name.LocalName == "TabItem"
+                                                          && (string?)e.Attribute("IsVisible") == "{Binding ExperimentalEnabled}"))
+        {
+            string key = ((string)tab.Attribute("Header")!).Replace("{StaticResource ", "").TrimEnd('}');
+            tabs.Add(((string)tab.Attribute("Tag")!, EnString(en, key)));
+        }
+        return tabs;
+    }
+
+    private static string EnString(string en, string key)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(en, "x:Key=\"" + System.Text.RegularExpressions.Regex.Escape(key)
+                                                               + "\">([^<]*)</sys:String>");
+        Assert.True(m.Success, $"{key} is not in en.axaml");
+        return System.Net.WebUtility.HtmlDecode(m.Groups[1].Value);
+    }
+
+    [Fact]
+    public void The_locked_box_names_exactly_the_experimental_tabs_that_lock_it()
+    {
+        var en = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        string locked = EnString(en, "str.Experimental.LockedForSession");
+        var tabs = ExperimentalTabs();
+        Assert.Contains(tabs, t => MainWindowViewModel.LocksExperimental(t.tag));    // not vacuous either way
+        Assert.Contains(tabs, t => !MainWindowViewModel.LocksExperimental(t.tag));
+        foreach (var (tag, header) in tabs)
+            Assert.True(MainWindowViewModel.LocksExperimental(tag) == locked.Contains(header, StringComparison.Ordinal),
+                        $"{tag} ('{header}'): locks = {MainWindowViewModel.LocksExperimental(tag)}, but the tooltip "
+                        + (locked.Contains(header, StringComparison.Ordinal) ? "names it" : "does not name it"));
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("LiveFuncs")]
+    [InlineData("Teleport")]
+    [InlineData("Pointers")]
+    public void A_tab_that_is_not_experimental_locks_nothing(string? tag)
+        => Assert.False(MainWindowViewModel.LocksExperimental(tag));
+
+    [Fact]
+    public void The_tab_switch_locks_the_opt_in_through_that_answer()
+    {
+        // The view's tab switch is not reachable from a unit test; its call is pinned instead, so the list cannot be
+        // kept in two places again.
+        var view = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/MainWindow.axaml.cs"));
+        Assert.Matches(@"if \(MainWindowViewModel\.LocksExperimental\(tag\)\)\s*vm\.LockExperimental\(\);", view);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(view, @"vm\.LockExperimental\(\)"));
+    }
+
     /// <summary>A scorer batch that answers, empty, only when the test lets it.</summary>
     private sealed class HeldSearch : StubDumpService
     {
