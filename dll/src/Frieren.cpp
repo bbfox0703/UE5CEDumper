@@ -152,6 +152,7 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
     f.fproperty           = DynOff::bUseFProperty;
     f.flatObjectArray     = Aura::IsFlat();
     f.taggedFFieldVariant = DynOff::bTaggedFFieldVariant;
+    f.userOverride        = userOverride;
     // The UE5.7 reordered FUObjectItem: the Object* moved to +0x08 (e.g. Solarpunk, the stock-UE5.7 repro). Detected
     // during the GObjects scan, so reliable even in a menu. The item SIZE grows with the build configuration -- 24
     // Shipping, 32 Development (STATS=1 appends TStatId), 40 Test (UE 5.7's Build.h added
@@ -299,7 +300,15 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
         }
     };
 
-    return DynOff::ApplyVersionLadder(ueVersion, f, probeCmc, probeEnumPackage, probeStructState, onRung);
+    const DynOff::StructuralVersion climbed =
+        DynOff::ApplyVersionLadder(ueVersion, f, probeCmc, probeEnumPackage, probeStructState, onRung);
+    // [VER-MARKERS-PAST-504] The rung lines above read "version=N" whether N was detected or chosen; this says it was
+    // chosen, so triage does not read an overruled override as a raised detection.
+    if (climbed.overrideRaised)
+        LOG_WARN("%s: User override = %u overruled -- the structural markers above raise it to %u; no override "
+                 "holds a version below what the layout proves. If %u is wrong for this game, a marker misfired: "
+                 "keep this log for the report.", who, ueVersion, climbed.version, climbed.version);
+    return climbed;
 }
 } // namespace FrierenInit
 

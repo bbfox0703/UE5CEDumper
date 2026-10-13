@@ -867,6 +867,11 @@ StructStateTally ProbeStructStates(FindExact&& findExact, int propsSizeOff, Read
 //
 // The facts are the probe's. None of them is a fact until it has run (`measured`): a default FFIELDCLASS_NAME or
 // bUseFProperty would pass for a measurement, so the ladder then leaves the version alone.
+//
+// A user override climbs too: Genau hands a persisted override in as the label, and no rung asks where the label
+// came from, so an override cannot hold a title below what its layout proves -- the rule the UProperty rung states
+// for the other direction. [VER-MARKERS-PAST-504] `userOverride` changes no rung; it lets the result say that the
+// version a raise rung moved was the user's (`overrideRaised`), which the rung's own line cannot.
 struct StructuralVersionFacts {
     bool measured            = false;  // DynOff::bOffsetsProbeRan
     bool fproperty           = false;  // DynOff::bUseFProperty
@@ -874,14 +879,16 @@ struct StructuralVersionFacts {
     bool taggedFFieldVariant = false;  // DynOff::bTaggedFFieldVariant
     bool reorderedItem57     = false;  // IsReorderedFUObjectItem57 over the measured item layout
     bool virtualDtor58       = false;  // IsVirtualDtorFFieldClass58(FFIELDCLASS_NAME)
+    bool userOverride        = false;  // the label is the user's override, not a detection
 };
 
 enum class VersionRung { UPropertyMode, TaggedFieldVariant, CmcMarkers, EnumPackage55, StructStateFlags56,
                          ReorderedItem, VirtualFieldClassDtor };
 
 struct StructuralVersion {
-    unsigned version      = 0;
-    bool     loweredToUE4 = false;   // the UProperty rung fired: the label was wrong, so it is not trusted as detected
+    unsigned version        = 0;
+    bool     loweredToUE4   = false;   // the UProperty rung fired: the label was wrong, so it is not trusted as detected
+    bool     overrideRaised = false;   // a raise rung lifted the user's override (the UProperty rung says so itself)
 };
 
 // `probeCmc(bool& hasGravityDirectionProperty, bool& hasSetGravityDirectionFunction)` reads one loaded
@@ -923,6 +930,7 @@ StructuralVersion ApplyVersionLadder(unsigned ueVersion, const StructuralVersion
     // >= 500 / >= 501 layout gates in Aura and Ubel.
     if (f.fproperty && r.version >= 500 && r.version < 508 && f.virtualDtor58)
         step(VersionRung::VirtualFieldClassDtor, 508u);
+    r.overrideRaised = f.userOverride && r.version > ueVersion;
     return r;
 }
 
