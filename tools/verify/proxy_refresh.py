@@ -19,6 +19,9 @@ nothing, and LoadLibraryW just bumps a refcount). Everything then measured is th
 `PipeClient.assert_build()` catches it — but only if you run it, and only after you
 have already spent the launch.
 
+WHERE IT LOOKS. Every folder in the Steam libraries (or `--lib`) that holds one of OUR four
+DLLs, whatever the exe beside it is called -- `deployed()` says why.
+
 WHAT `refresh` DOES, AND WHAT IT REFUSES TO DO. It copies `dist/proxy/<name>.dll` over
 the deployed copy, **after** backing the old one up to `out/proxy-backups/` with its
 size and SHA-256 recorded. It refuses if:
@@ -31,6 +34,7 @@ import argparse
 import contextlib
 import hashlib
 import io
+import os
 import pathlib
 import shutil
 import subprocess
@@ -88,7 +92,18 @@ def dist_map(dist=None):
 
 
 def deployed(libs=None, owner=product_name):
-    """[Deployed(game, exes, proxy)] for every game folder carrying one of our proxies."""
+    """[Deployed(game, exes, proxy)] for every proxy-named DLL in a folder that holds one of OURS.
+
+    The folder is found the way the loader finds the proxy: Windows looks for a DLL in the directory of the exe
+    that loads it first, so a deployment is a folder holding one of our four DLLs, whatever the exe beside it is
+    called. This used to find a game only through a `*-Win64-Shipping.exe`, so the proxies beside `Extinction.exe`,
+    `Nekopara.exe` or `DRAGON QUEST XI S.exe` were neither reported nor refreshed -- Extinction ran build 3645 after
+    this tool said every stale proxy was refreshed. [PROXYREFRESH-NONSHIPPING-EXE]
+
+    "Ours" is the ownership predicate, so a folder holding only third-party wrappers is no deployment. Measured
+    2026-10-13 on the maintainer's two libraries: 25 files under our four names, 11 of them someone else's (ReShade,
+    DXVK, mod loaders) and none beside a Shipping exe, so a search by name alone would have listed all eleven. A
+    foreign file BESIDE one of ours is still yielded, so report and refresh can name it and leave it alone."""
     out = []
     for lib in (LIBS if libs is None else libs):
         if not lib.is_dir():
@@ -96,10 +111,14 @@ def deployed(libs=None, owner=product_name):
         for d in sorted(lib.iterdir()):
             if not d.is_dir():
                 continue
-            for exe in list(d.rglob("*-Win64-Shipping.exe"))[:1]:
-                for q in exe.parent.glob("*.dll"):
-                    if q.name.lower() in OURS:
-                        out.append(Deployed(d, [exe], q))
+            for folder, dirs, files in os.walk(d):
+                dirs.sort()
+                here = pathlib.Path(folder)
+                named = [here / f for f in sorted(files) if f.lower() in OURS]
+                if not any(is_ours(q, owner) for q in named):
+                    continue
+                exes = [here / f for f in sorted(files) if f.lower().endswith(".exe")]
+                out.extend(Deployed(d, exes, q) for q in named)
     return out
 
 
@@ -109,8 +128,11 @@ def _tasklist(exe_name):
 
 
 def running(exe_name, tasklist=_tasklist):
-    o = tasklist(exe_name)
-    return exe_name.lower() in o.lower()
+    """Any process with this image name? tasklist's filter matches inside tasklist, in UTF-16, so a CSV row at all is
+    the answer. Searching its OUTPUT for the name cannot be: that comes back in the console code page, where a name
+    the page cannot hold is replacement characters (any non-ASCII name under `-X utf8`), and the no-match notice is
+    localized, so neither the name nor an "INFO:" prefix is there to find."""
+    return any(line.startswith('"') for line in tasklist(exe_name).splitlines())
 
 
 def busy(exes, is_running=running):
@@ -132,8 +154,8 @@ def report(libs=None, dist=None, owner=product_name):
         if not cur:
             continue
         # Ownership BEFORE freshness, and for the same reason `refresh()` gates on it
-        # ([PROXYREFRESHOWNER-2026-08-24]): `deployed()` selects by FILENAME, and a third-party
-        # wrapper can legitimately own one of our four names. This line used to be missing here,
+        # ([PROXYREFRESHOWNER-2026-08-24]): `deployed()` yields every file under one of our four
+        # names in a folder of ours, and a third-party wrapper can legitimately own one of them. This line used to be missing here,
         # so OCTOPATH's real ReShade `dxgi.dll` was reported as "*** STALE ***" -- a word that
         # means "run refresh on it", i.e. the report ADVISED the destruction the refresh gate
         # exists to prevent. A foreign DLL is not out of date; it is not ours to date.
@@ -151,9 +173,21 @@ def report(libs=None, dist=None, owner=product_name):
     return stale
 
 
+def _backup_path(backups, game, proxy, stamp):
+    """A name no earlier backup holds. One game can now carry our proxy in more than one folder, and the two would
+    share a game-name + DLL-name + second key: the second copy would overwrite the first one's backup AFTER the
+    first was refreshed, so the old bytes would be gone."""
+    base = f"{game.name.replace(' ', '_')[:40]}.{proxy.name}.{stamp}"
+    bak, n = backups / f"{base}.bak", 1
+    while bak.exists():
+        bak, n = backups / f"{base}.{n}.bak", n + 1
+    return bak
+
+
 def refresh(match, libs=None, dist=None, backups=None, owner=product_name, is_running=running):
     dm = dist_map(dist)
     backups = BACKUPS if backups is None else pathlib.Path(backups)
+    stamp = time.strftime("%Y%m%d-%H%M%S")
     done = 0
     for d, exes, q in deployed(libs, owner):
         if match.lower() not in d.name.lower():
@@ -165,8 +199,8 @@ def refresh(match, libs=None, dist=None, backups=None, owner=product_name, is_ru
             say(f"  {d.name}: {q.name} already current — nothing to do")
             continue
         # ⛔ OWNERSHIP GATE — [PROXYREFRESHOWNER-2026-08-24]. Everything above this line
-        # decides by FILENAME, and a game folder can legitimately hold a third-party DLL
-        # under one of our four names: ReShade ships `dxgi.dll`, and so do SpecialK and
+        # decides by FILENAME for this file (its folder qualified through a SIBLING of ours), and a
+        # game folder can legitimately hold a third-party DLL under one of our four names: ReShade ships `dxgi.dll`, and so do SpecialK and
         # Ultimate ASI Loader. Without this check the "refresh" DESTROYS it — measured on
         # 2026-08-24, when this rig overwrote OCTOPATH TRAVELER's real ReShade `dxgi.dll`
         # (5,255,448 B, ProductName "ReShade") with our 2,893,824 B proxy. It was
@@ -184,8 +218,7 @@ def refresh(match, libs=None, dist=None, backups=None, owner=product_name, is_ru
                 f"Kill it first.")
             continue
         backups.mkdir(parents=True, exist_ok=True)
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        bak = backups / f"{d.name.replace(' ', '_')[:40]}.{q.name}.{stamp}.bak"
+        bak = _backup_path(backups, d, q, stamp)
         shutil.copy2(q, bak)
         if not bak.is_file() or sha(bak) != sha(q):
             raise SystemExit(f"proxy_refresh: FAILED -- backup of {q} did not verify; "

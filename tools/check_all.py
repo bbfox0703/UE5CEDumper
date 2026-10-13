@@ -116,6 +116,13 @@ GATES = [
      "the SDK engine-source oracle self-test failed -- a verdict it gives on real headers can no longer be trusted",
      False),
 
+    # [PROXYREFRESH-NONSHIPPING-EXE] the rig every proxy-mode game row runs first: a deployment it cannot see is
+    # never refreshed, and the game then answers with an old build. Temp trees only, no library is read.
+    ("proxy_refresh_selftest",
+     ["tools/verify/proxy_refresh.py", "--selftest"],
+     "proxy_refresh.py's controls failed -- it would miss a deployed proxy, touch a DLL that is not ours, refresh "
+     "one a running game maps, or lose a backup. Run 'py tools/verify/proxy_refresh.py --selftest'", False),
+
     ("check_axaml_strings",
      ["tools/check_axaml_strings.py"],
      "an en.axaml key is referenced-but-undefined (a load-time crash) or "

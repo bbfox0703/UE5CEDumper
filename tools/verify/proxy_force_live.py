@@ -67,8 +67,10 @@ def report():
 def backup():
     dest = BACKUPS / time.strftime("force-live-%Y%m%d-%H%M%S")
     dest.mkdir(parents=True, exist_ok=False)
-    for d, exe, q in ours():
-        to = dest / d.name / q.name
+    # One folder per PROXY, not per game: a game can carry ours in two folders, or two of ours in one, and restore
+    # reads the one source.txt beside each copy -- a shared folder sent every copy to the last one's path.
+    for i, (d, _exes, q) in enumerate(ours()):
+        to = dest / f"{i:02d} {d.name}" / q.name
         to.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(q, to)
         (to.parent / "source.txt").write_text(f"{q}\n{sha(q)}\n", encoding="utf-8")
