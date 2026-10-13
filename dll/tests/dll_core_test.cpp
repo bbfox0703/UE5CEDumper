@@ -3683,6 +3683,8 @@ int main() {
     // [VER-MARKERS-PAST-504] Init's 5.5 rung reads UEnum::EnumPackage behind the MEASURED Names, so init runs the lazy
     // detection early -- on a title that may not have registered ENetRole yet. A FAILED latched there would switch enum
     // names off for the whole process, so that call must report the miss and leave both flags for the lazy path.
+    // Its positive arm -- the same call still finds and latches a registered ENetRole -- needs a built ENetRole, so it
+    // sits in ENUMU8, which builds one.
     {
         blk("ENUMNAMESNOLATCH - a detection told not to latch a failure leaves the next lookup free to retry");
         ResetCancel();
@@ -4969,6 +4971,18 @@ int main() {
         const std::string c2 = Ubel::ResolveEnumValue(A(bNetRole), 2);
         check("ENUMU8 control: 4.18's int64 values stay 8 bytes and resolve",
               DynOff::UENUM_VALUE_SIZE == 8 && c2 == "ROLE_AutonomousProxy", c2.c_str());
+
+        // [VER-MARKERS-PAST-504] ENUMNAMESNOLATCH's positive arm: the version ladder's early call is told not to latch a
+        // MISS, and must still search and latch a FIND -- the 5.5 rung reads behind the Names offset it measures, so a
+        // call that gave up early would leave that rung silent on every title.
+        build(8, 16);
+        g_cachedUEVersion   = 504;
+        DynOff::UENUM_NAMES = 0x88;   // not where ENetRole keeps it, so only a measurement passes
+        const bool early = Genau::DetectUEnumNames(/*latchFailure=*/false);
+        check("ENUMNAMESNOLATCH ⭐ positive: the ladder's early call finds ENetRole's Names and latches the find",
+              early && DynOff::bUEnumNamesDetected.load() && !DynOff::bUEnumNamesFailed.load()
+              && DynOff::UENUM_NAMES == 0x40 && !DynOff::bEnumNamesNewContainer,
+              std::to_string(DynOff::UENUM_NAMES).c_str());
 
         {
             std::lock_guard<std::mutex> lk(Ubel::s_enumCacheMutex);
