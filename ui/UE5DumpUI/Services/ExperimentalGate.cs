@@ -19,6 +19,7 @@ public sealed class ExperimentalGate : IExperimentalGate
     private bool _enabled;
     private bool _locked;
     private int _quotaMb = 1024;
+    private bool _teardownOwed;
 
     // Source-generated JSON context (reflection-based JSON is disabled in trimmed/AOT builds)
     private static readonly ExperimentalSettingsJsonContext s_jsonCtx = ExperimentalSettingsJsonContext.Default;
@@ -44,6 +45,9 @@ public sealed class ExperimentalGate : IExperimentalGate
             if (_locked && !value) return;
             if (_enabled == value) return;
             _enabled = value;
+            // Saved in the same write as the untick, so no crash can keep one and lose the other. On again, nothing
+            // is owed: the cards show what runs.
+            _teardownOwed = !value;
             Save();
             Changed?.Invoke(this, EventArgs.Empty);
         }
@@ -60,7 +64,16 @@ public sealed class ExperimentalGate : IExperimentalGate
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
-    public bool TeardownOwed { get; set; }
+    public bool TeardownOwed
+    {
+        get => _teardownOwed;
+        set
+        {
+            if (_teardownOwed == value) return;
+            _teardownOwed = value;
+            Save();  // no Changed — nothing visible depends on it
+        }
+    }
 
     public int SnapshotQuotaMb
     {
@@ -84,6 +97,7 @@ public sealed class ExperimentalGate : IExperimentalGate
             {
                 _enabled = settings.Enabled;
                 _quotaMb = settings.SnapshotQuotaMb < 0 ? 0 : settings.SnapshotQuotaMb;
+                _teardownOwed = settings.TeardownOwed;
             }
         }
         catch (Exception ex)
@@ -97,7 +111,7 @@ public sealed class ExperimentalGate : IExperimentalGate
         try
         {
             var json = JsonSerializer.Serialize(
-                new ExperimentalSettings { Enabled = _enabled, SnapshotQuotaMb = _quotaMb },
+                new ExperimentalSettings { Enabled = _enabled, SnapshotQuotaMb = _quotaMb, TeardownOwed = _teardownOwed },
                 s_jsonCtx.ExperimentalSettings);
             var tempPath = _filePath + ".tmp";
             File.WriteAllText(tempPath, json);

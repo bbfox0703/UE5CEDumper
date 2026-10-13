@@ -908,10 +908,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // IsBusy, which flickers every CanOperate-bound button, and write
             // StatusText, which would overwrite the "Connected" just set above.
             ConnectPrime = PrimeHeldBadgesAsync();
-            // [EXPOFF-TEARDOWN] With the features off, what the prime finds running of theirs is turned off after it.
-            // A host with no gate has no opt-in to have turned off.
+            // [EXPOFF-TEARDOWN] An untick still owed -- made while disconnected, or its teardown cut short -- is paid
+            // after the prime: what it finds running of theirs is turned off. Nothing owed, nothing is touched, as a CE
+            // record may be running it. A host with no gate has no opt-in to have turned off.
             int gen = ++_connectTeardownGen;
-            if (_experimentalGate is { IsEnabled: false })
+            if (_experimentalGate is { IsEnabled: false, TeardownOwed: true })
                 ExperimentalTeardown = TearDownAfterConnectPrimeAsync(ConnectPrime, gen);
         }
         else
@@ -4818,7 +4819,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     internal Task ExperimentalTeardown { get; private set; } = Task.CompletedTask;
 
     /// <summary>[EXPOFF-TEARDOWN] Moved by every gate change, so an untick's teardown that is still running when the box
-    /// is ticked again leaves the hotkeys registered: they are wanted again.</summary>
+    /// is ticked again leaves the hotkeys registered: they are wanted again. A teardown pays what the gate owes only
+    /// while this has not moved, so it never pays for a later untick it did not serve.</summary>
     private int _hotkeyReleaseGen;
 
     /// <summary>[EXPOFF-TEARDOWN] Moved by every connect, so only the last connect's teardown runs: the main window calls
@@ -4856,7 +4858,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// <summary>[EXPOFF-TEARDOWN] The untick's teardown (the maintainer's choice after the review, 2026-10-09: the box
     /// unticks while connected, and what the features run goes off at once). Connected, the features are forced OFF
     /// before their hotkeys go, so the game cannot stay cursor-locked, flying or held behind hidden cards. Disconnected,
-    /// nothing reaches the DLL: the next connect with the features off does it from the DLL's own state
+    /// nothing reaches the DLL, and the gate keeps the untick owed: the next connect pays it from the DLL's own state
     /// (<see cref="TearDownAfterConnectPrimeAsync"/>), as the DLL's last-client teardown does not end these.</summary>
     private async Task TearDownOnUntickAsync(int gen)
     {
@@ -4872,6 +4874,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 // then could not run the un-hide and collision restore above, which need its game thread.
                 // Unconditionally: the badge can read Unknown over a hook that holds, and OFF is idempotent.
                 await ForceForegroundLockOffCommand.ExecuteAsync(null);
+                PayOwedTeardown(gen);
             }
         }
         catch (Exception ex) { _log.Error("Teleport experimental teardown failed", ex); }
@@ -4880,23 +4883,34 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         if (gen == _hotkeyReleaseGen) UnregisterExperimentalHotkeys();
     }
 
-    /// <summary>[EXPOFF-TEARDOWN] A connect with the features off, once its prime has read the DLL: whatever of theirs
-    /// the DLL still runs -- unticked while disconnected, or left by an earlier session -- runs behind hidden cards, so
-    /// it is turned off. Not when a later connect primes again, when the connection went, or when the box was ticked
-    /// meanwhile: with the features on, the cards show what runs.</summary>
+    /// <summary>[EXPOFF-TEARDOWN] A connect that owes an untick's teardown -- the box unticked while disconnected, or a
+    /// teardown cut short, even before a restart -- once its prime has read the DLL: whatever of theirs the DLL still
+    /// runs runs behind hidden cards, so it is turned off. Not when a later connect primes again, when the connection
+    /// went, or when the box was ticked meanwhile: with the features on, the cards show what runs.</summary>
     private async Task TearDownAfterConnectPrimeAsync(Task prime, int gen)
     {
         try
         {
             await prime;
             if (gen != _connectTeardownGen || !IsConnected || ExperimentalEnabled) return;
+            int gateGen = _hotkeyReleaseGen;
             await TurnOffRunningExperimentalAsync();
-            // Keep Foreground last, for the untick's reason. Only when the prime read it ON: an OFF at every connect
-            // would cost a new user's connect a round trip and stamp over its "Connected", and a read that failed keeps
-            // its honest Unknown.
+            // Keep Foreground last, for the untick's reason. Only when the prime read it ON: an OFF at every such
+            // connect would cost a round trip and stamp over its "Connected", and a read that failed keeps its honest
+            // Unknown.
             if (_foregroundLockOn) await ForceForegroundLockOffCommand.ExecuteAsync(null);
+            if (gen == _connectTeardownGen) PayOwedTeardown(gateGen);
         }
         catch (Exception ex) { _log.Error("Teleport connect-time experimental teardown failed", ex); }
+    }
+
+    /// <summary>[EXPOFF-ROUND3-PAUSED] A teardown ran to its end: what the gate owes is paid, so a later connect leaves
+    /// alone what a CE record runs. Not when the connection went meanwhile (its OFFs may not have landed, so the next
+    /// connect pays), nor after a gate change since the teardown began (that untick has a teardown of its own).</summary>
+    private void PayOwedTeardown(int gateGen)
+    {
+        if (IsConnected && gateGen == _hotkeyReleaseGen && _experimentalGate != null)
+            _experimentalGate.TeardownOwed = false;
     }
 
     /// <summary>[EXPOFF-TEARDOWN] Fly, See-through and a Stealth hold, each only when the last reading says it runs

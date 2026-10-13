@@ -3602,7 +3602,8 @@ architecture or UX changes in these areas.
   rules, the same day: the System tab's checkbox **ticks and unticks at any time, connected or not**; only the session
   lock (a tab that locks it, opened this session) disables it; and an untick **turns off what the features run in the
   game** -- at once while connected, and at the next connect with the features off while disconnected, from what the
-  connect prime reads. ⛔ Do not re-propose "untick only while disconnected": it was built and reversed the same day,
+  connect prime reads; only that connect, as the untick is kept owed until paid, and a connect owing nothing leaves alone
+  what a CE record runs. ⛔ Do not re-propose "untick only while disconnected": it was built and reversed the same day,
   because a disconnect does not end Keep Foreground, Fly or a Solide hold (the DLL's last-client teardown ends the
   trace and See-through only), so it left them running behind hidden cards (`[EXPOFF-TEARDOWN]`). Live Funcs offers a
   kept trace only while the switch is on, as a defence line. Design record:

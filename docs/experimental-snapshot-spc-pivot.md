@@ -173,7 +173,12 @@ is **persisted**.
 > thread -- and releases the experimental hotkeys only after; a
 > running Detect Stats scan is discarded -- and while disconnected, at the next
 > connect with the features still off, after the connect prime, from what it
-> reads in the DLL (never at a connect with them on). Behind it, a defence line:
+> reads in the DLL (never at a connect with them on). The untick stays owed in
+> `experimental.json` (`teardownOwed`) until a teardown has run to its end over
+> a live connection, so a restart in between keeps it; and only an owed untick
+> is paid -- a connect with the features off and nothing owed leaves alone what
+> a CE record runs (Fly, Keep Foreground and See-through have mailbox
+> commands). Behind it, a defence line:
 > Live Funcs offers a kept trace (Open in Call Trace, its status sentences) and
 > opens the Call Trace tab only while the switch is on, and a disconnect takes
 > the sentences off for good. The rest needs nothing: Snapshot, SPC Query, Class

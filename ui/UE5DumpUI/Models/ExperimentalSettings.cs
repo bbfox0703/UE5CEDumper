@@ -17,6 +17,11 @@ public sealed class ExperimentalSettings
     /// active game's DB over this, the oldest snapshots are auto-dropped (FIFO).
     /// 0 = unlimited. Default 1 GB.</summary>
     public int SnapshotQuotaMb { get; set; } = 1024;
+
+    /// <summary>[EXPOFF-ROUND3-PAUSED] An untick whose teardown of what the features run in the game has not yet run
+    /// over a live connection. On disk so that an untick made while disconnected is paid at the next connect even after
+    /// a restart. A file written before this key reads false: nothing owed.</summary>
+    public bool TeardownOwed { get; set; }
 }
 
 /// <summary>
