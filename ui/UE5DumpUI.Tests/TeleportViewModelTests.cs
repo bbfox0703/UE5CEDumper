@@ -2616,6 +2616,24 @@ public class TeleportViewModelTests
     }
 
     [Fact]
+    public void Rebinding_to_the_same_key_with_a_modifier_is_a_new_combo()
+    {
+        // The combo the row already holds is kept as it is; the same key under other modifiers is not that combo, and
+        // must be claimed like any other -- or the row would show and save Ctrl+F5 while F5 stayed the live key.
+        var hk = new OsHotkeyService();
+        var vm = CreateVm(new FakeDumpService(), out var platform, hk);
+        var row = BindSave0ToF5(vm);
+
+        vm.BeginCaptureCommand.Execute(row);
+        vm.ApplyCapturedKey(Avalonia.Input.Key.F5, Avalonia.Input.KeyModifiers.Control);
+
+        Assert.Equal(new[] { (HotkeyModifiers.Control, 0x74u) }, hk.Live);
+        Assert.Equal("Ctrl+F5", row.Label);
+        Assert.Equal(new TeleportHotkeyBinding(HotkeyModifiers.Control, 0x74),
+            new TeleportHotkeyStore(platform).Load()["save0"]);
+    }
+
+    [Fact]
     public async Task Operations_noop_when_disconnected()
     {
         var fake = new FakeDumpService();
