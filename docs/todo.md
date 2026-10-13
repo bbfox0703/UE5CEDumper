@@ -4,7 +4,10 @@ Open work only. **Read this when deciding what to do next.**
 
 > 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
 >
-> ▶ **Current programme:** `[LIVEFUNCS-TIMELINE-2026-10-04]` (Live Funcs) · open but idle: the `[FIXPASS-2026-09-10]` live-check backlog. Change this line in the commit that starts or ends a programme.
+> ▶ **Current programme:** the known-issues fix pass of 2026-10-13 (the maintainer: fix the known open rows, verify,
+> keep going) -- batch 1 closed in source; next `[VER-MARKERS-PAST-504]`, then the remaining LOW rows, the paused
+> `[CT-FLOOR-208]` / `[EXPOFF-ROUND3-PAUSED]`, `[MH-PRERESERVE-PROXY]`, a build and the live checks each row owes ·
+> `[LIVEFUNCS-TIMELINE-2026-10-04]` (Live Funcs) · open but idle: the `[FIXPASS-2026-09-10]` live-check backlog. Change this line in the commit that starts or ends a programme.
 
 > ## ⛔ BEFORE YOU PLAN OFF ANY HEADING IN THIS FILE — READ THIS 2026-08-24 RECONCILIATION
 >
