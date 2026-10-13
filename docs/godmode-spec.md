@@ -264,6 +264,16 @@ Identical to `Wirbel::ResolveCursorBit` + `SetMouseCursor`, retargeted to the
 > Bitfield write = **read-modify-write of a single byte with the mask** — never
 > write a whole byte (would clobber the 7 neighbouring bitfields). Exactly what
 > `SetMouseCursor` ([Wirbel.cpp:1548-1552](../dll/src/Wirbel.cpp)) already does.
+>
+> **`[SOLIDE-NATIVE-BOOL]`** Step 2b also takes a **native** bool —
+> `{FieldSize 1, ByteOffset 0, ByteMask 0x01, FieldMask 0xFF}`, every Blueprint
+> bool, which the T2 scan meets on a Blueprint pawn — when no packed layout is
+> found at any probed offset (`Solitar::PickBoolBits`). A native bool owns the
+> whole byte, so it is written `0x01` / `0x00` (UE's own `SetPropertyValue`:
+> clear `FieldMask`, set `ByteMask`), never `0xFF`; a packed bool resolves and is
+> written exactly as above; any other layout is still refused. The same resolver
+> serves Force ON / OFF (`Solide`, bool kind), which held nothing on a native bool
+> before.
 
 ### 5.3 Re-assert worker (D4)
 

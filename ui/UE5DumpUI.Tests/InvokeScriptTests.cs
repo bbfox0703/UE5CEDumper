@@ -2473,7 +2473,8 @@ public class InvokeScriptTests
         Assert.Contains("return PickBoolBits(quads, readOk, kTries, bits);", src[fn..end]);
         Assert.DoesNotMatch(@"ReadBoolLayout\([^()]*,[^()]*,[^()]*\)", src);   // the old (byteOff, mask) form
         Assert.DoesNotContain("ApplyBoolBit(", src);
-        Assert.DoesNotMatch(@"&\s*(?:t\.)?mask\b", src);
+        Assert.DoesNotMatch(@"[&|~]\s*(?:\w+\.)*(?:mask|fieldMask|byteMask)\b", src);
+        Assert.DoesNotMatch(@"\b(?:mask|fieldMask|byteMask)\s*\)?\s*[&|]", src);
         Assert.Contains("WriteBoolValue(", src);
         Assert.Contains("ReadBoolValue(", src);
     }

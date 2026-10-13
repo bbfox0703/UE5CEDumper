@@ -13,12 +13,17 @@
 #include <string>
 #include <vector>
 
+#include "Ubel.h"   // ClassifyBoolLayout: PickBoolBits takes its Native verdict
+
 namespace Solitar {
 
 // One protection bool resolved on the live pawn, expressed as offsets from the
 // PAWN base so a standalone CE-Lua trainer can freeze the bit without the DLL.
 // ByteOffset = FBoolProperty.Offset + within-byte ByteOffset; Mask is a single
 // bit; Protect is the bit value that means "protected" (what GodMode ON writes).
+// [SOLIDE-NATIVE-BOOL] A native bool exports its ByteMask, 0x01: the trainer's
+// single-bit read-modify-write over the 0 / 1 a C++ bool holds then writes
+// exactly 0x01 / 0x00, what UE itself writes.
 struct ProtectBit {
     std::string name;       // property name (e.g. "bCanBeDamaged")
     int32_t     byteOffset; // absolute byte offset from the pawn base
@@ -85,7 +90,14 @@ inline bool PickBoolBits(const uint8_t (*quads)[4], const bool* readOk, int n, B
             return true;
         }
     }
-    return false;   // red: the Native verdict is not accepted yet
+    for (int i = 0; i < n; ++i) {
+        if (!readOk[i]) continue;
+        if (Ubel::ClassifyBoolLayout(quads[i][0], quads[i][1], quads[i][2], quads[i][3]) == Ubel::BoolLayout::Native) {
+            out = BoolBits{ 0, 0xFF, 0x01 };
+            return true;
+        }
+    }
+    return false;
 }
 
 // Generic damage/invincibility flag matcher (T2 — the "Build 1256" note at the top of docs/godmode-spec.md).
@@ -137,12 +149,13 @@ int32_t GetState(State& out);
 
 // General primitive (docs/godmode-spec.md §5.4) — v2 hook for "force any bool"
 // from Property Search. Resolve + read-modify-write one reflected FBoolProperty
-// on an object. `on` is the DESIRED VALUE OF THE PROPERTY. One-shot (no
-// re-assert). Returns the observed property bit (1/0) or a negative ProtectResult.
+// on an object -- its bit, or a native bool's whole byte (PickBoolBits). `on` is
+// the DESIRED VALUE OF THE PROPERTY. One-shot (no re-assert). Returns the observed
+// property value (1/0) or a negative ProtectResult.
 int32_t SetActorBool(uintptr_t obj, uintptr_t classAddr, const char* propName, bool on);
 
 // Read-only companion to SetActorBool: resolve + read one reflected FBoolProperty
-// bit on an object. Returns the observed bit (1/0) or a negative ProtectResult
+// on an object. Returns the observed value (1/0) or a negative ProtectResult
 // when the object/property can't be resolved. Used by Solide to capture a bool's
 // restore base before forcing it.
 int32_t GetActorBool(uintptr_t obj, uintptr_t classAddr, const char* propName);
