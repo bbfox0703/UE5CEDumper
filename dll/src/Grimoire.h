@@ -859,9 +859,10 @@ StructStateTally ProbeStructStates(FindExact&& findExact, int propsSizeOff, Read
 //
 // After the offsets probe, init corrects the scan's version from what the probe measured: UProperty mode is UE4
 // before 4.25 whatever the label says, and the raise-only rungs above lift a stripped title to the UE5 minor its
-// layout proves. The DLL caches its detection before this ladder runs, so anything that hands a cached detection
-// back to the session -- Auto chosen over an override -- has to climb the same ladder, or a UE5 title whose strings
-// were stripped lands on its 4.27 fallback. One function, so the two cannot drift. Climbing twice changes nothing
+// layout proves. The DLL caches its detection before this ladder runs, so anything else that settles the session's
+// version -- handing a cached detection back (Auto chosen over an override), or running the first offsets probe
+// after an init that had none to run -- has to climb the same ladder, or a UE5 title whose strings were stripped
+// lands on its 4.27 fallback. One function, so they cannot drift. Climbing twice changes nothing
 // (every rung is a floor or a window it leaves), so a cached value that already climbed -- the UI records the
 // version it was shown -- lands in the same place.
 //

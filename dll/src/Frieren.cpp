@@ -144,8 +144,8 @@ static bool CopyToBuffer(const std::string& src, char* buf, int32_t bufLen) {
 
 namespace FrierenInit {
 // The live half of DynOff::ApplyVersionLadder: the probe's facts, the reads its rungs ask for and the log lines.
-// Init runs it after the offsets probe, and Auto chosen over an override runs it on the detection it restores, so
-// both land on the version the same evidence proves. `who` prefixes the log lines, which the A4 rig greps for.
+// Every path that settles the session's version after an offsets probe runs it, so each lands on the version the
+// same evidence proves. `who` prefixes the log lines, which the A4 rig greps for.
 DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool userOverride, const char* who) {
     DynOff::StructuralVersionFacts f;
     f.measured            = DynOff::bOffsetsProbeRan.load(std::memory_order_acquire);

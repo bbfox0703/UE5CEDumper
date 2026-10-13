@@ -88,7 +88,7 @@ extern "C" bool      UE5_IsGameThreadHookActive();
 extern "C" int       UE5_GetProcessEventOffset();
 
 // [R7-C-05] Frieren.cpp: the init fence apply_rescan holds (see FrierenInit there).
-// [UE-OVERRIDE-HINT-AUTO] ...and init's version ladder, which Auto climbs from the detection it hands back.
+// [UE-OVERRIDE-HINT-AUTO] ...and init's version ladder, which a version settled here climbs as init's does.
 namespace FrierenInit {
 void BeginApply();
 void EndApply();
@@ -6555,6 +6555,16 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 if (!Genau::ValidateAndFixOffsets(g_cachedUEVersion)) {
                     Sein::Warn("PIPE:cmd", "apply_rescan: ValidateAndFixOffsets returned false");
                 }
+                // [VER-MARKERS-PAST-504] Init climbs its version ladder right after this probe and skipped both, so the
+                // first probe climbs it here -- else a stripped UE5 title revived by a rescan keeps its raw label (a
+                // 4.27 publisher fallback, say) for the session. Applied as UE5_Init applies it.
+                extern bool g_cachedIsUserOverride;
+                extern bool g_cachedIsLowConfidence;
+                const DynOff::StructuralVersion climbed = FrierenInit::CorrectVersionStructurally(
+                    g_cachedUEVersion, g_cachedIsUserOverride, "apply_rescan");
+                g_cachedUEVersion = climbed.version;
+                if (climbed.loweredToUE4)
+                    g_cachedIsLowConfidence = true;
             }
 
             // GEngine's second pass is HOISTED out of the block above (G3): it must still run
