@@ -128,4 +128,11 @@ inline bool UE4NameIndexInBounds(int32_t nameIndex, int32_t chunkSize, int32_t m
     return chunkIndex >= 0 && chunkIndex <= maxChunks;
 }
 
+// [UE4-WIDE-FNAME] Is the pre-4.23 FNameEntry behind table slot `nameIndex` a wide (UTF-16) one? `indexWord` is the
+// entry's first int32.
+inline constexpr bool UE4EntryIsWide(int32_t indexWord, int32_t nameIndex) {
+    (void)indexWord; (void)nameIndex;
+    return false;   // RED STUB: today's reader never asks
+}
+
 } // namespace Serie

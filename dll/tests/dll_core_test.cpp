@@ -1470,11 +1470,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL and the LIVEFUNCS-STEP2 name / layout blocks below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -10856,6 +10856,80 @@ int main() {
         DynOff::bUEnumNamesFailed = savedFailed;
         DynOff::bFNameAlignProbed = savedProbed;
         DynOff::FNAME_ALIGN_MEASURED = savedAlign;
+    }
+
+    // -- UE4-WIDE-FNAME -- a pre-4.23 wide FName decodes as UTF-16 ------------------------------------------------
+    //
+    // ⛔ POOL-FAKING: installs its own UE4 name table first, and Serie's pool state cannot be restored -- keep it last.
+    // UE 4.10-4.22 entries as NameTypes.h declares them (4.10 and 4.18 alike, x64): `NAME_INDEX Index` at +0x00,
+    // `FNameEntry* HashNext` at +0x08, the AnsiName / WideName union at +0x10. AllocateNameEntry (UnrealNames.cpp)
+    // stores Index = (slot << NAME_INDEX_SHIFT) | wide. Serie never read the bit: a wide name was read as narrow bytes,
+    // cut at its first zero byte ("Café" came back "C") or rejected outright (any CJK name came back empty).
+    {
+        blk("UE4WIDE - a pre-4.23 wide FName decodes as UTF-16; the narrow read is unchanged");
+        auto makeEntry = [](std::vector<uint8_t>& e, int32_t word, const void* chars, size_t bytes) {
+            e.assign(0x10 + bytes + sizeof(wchar_t), 0);   // terminated, whichever width the payload is
+            memcpy(e.data(), &word, sizeof word);
+            memcpy(e.data() + 0x10, chars, bytes);
+            return reinterpret_cast<uintptr_t>(e.data());
+        };
+        static std::vector<uint8_t> eAnsi, eCjk, eLatin, eStray, eLong;
+        static const char    ansi[]  = "ByteProperty";
+        static const wchar_t cjk[]   = { 0x65E5, 0x672C, 0x8A9E, 0 };   // 日本語
+        static const wchar_t latin[] = { L'C', L'a', L'f', 0x00E9, 0 };  // Café: every code unit has a zero high byte
+        static const char    plain[] = "Plain";
+        static uintptr_t chunk[16] = {};
+        chunk[1] = makeEntry(eAnsi, 1 << 1, ansi, sizeof ansi - 1);
+        chunk[2] = makeEntry(eCjk, (2 << 1) | 1, cjk, sizeof cjk - sizeof(wchar_t));
+        chunk[3] = makeEntry(eLatin, (3 << 1) | 1, latin, sizeof latin - sizeof(wchar_t));
+        chunk[4] = makeEntry(eStray, (9 << 1) | 1, plain, sizeof plain - 1);   // the bit, beside ANOTHER slot
+        // No terminator within NAME_SIZE (1024 units), all of it readable.
+        std::vector<wchar_t> longName(1100, L'A');
+        chunk[7] = makeEntry(eLong, (7 << 1) | 1, longName.data(), longName.size() * sizeof(wchar_t));
+        reinterpret_cast<wchar_t*>(eLong.data() + 0x10)[longName.size()] = L'A';   // overwrite the helper's terminator
+
+        // Two pages reserved, one committed: names that end at, and run into, an unreadable page.
+        uint8_t* wpage = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x2000, MEM_RESERVE, PAGE_READWRITE));
+        check("UE4WIDE setup: reserved two pages", wpage != nullptr);
+        if (wpage) {
+            VirtualAlloc(wpage, 0x1000, MEM_COMMIT, PAGE_READWRITE);
+            // Ångström and its terminator end exactly at the page's end.
+            static const wchar_t edge[] = { 0x00C5, L'n', L'g', L's', L't', L'r', 0x00F6, L'm', 0 };
+            uint8_t* e5 = wpage + 0x1000 - 0x10 - sizeof edge;
+            const int32_t w5 = (5 << 1) | 1;
+            memcpy(e5, &w5, sizeof w5);
+            memcpy(e5 + 0x10, edge, sizeof edge);
+            chunk[5] = reinterpret_cast<uintptr_t>(e5);
+            // Unterminated up to the page's end, so the next unit to read is unreadable.
+            uint8_t* e6 = wpage + 0x800;
+            const int32_t w6 = (6 << 1) | 1;
+            memcpy(e6, &w6, sizeof w6);
+            for (wchar_t* c = reinterpret_cast<wchar_t*>(e6 + 0x10); reinterpret_cast<uint8_t*>(c) < wpage + 0x1000; ++c)
+                *c = L'B';
+            chunk[6] = reinterpret_cast<uintptr_t>(e6);
+        }
+        static uintptr_t chunks[2] = { reinterpret_cast<uintptr_t>(chunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(chunks), 0x10);
+
+        check("UE4WIDE control: an ANSI entry reads as before", Serie::GetString(1) == "ByteProperty",
+              Serie::GetString(1).c_str());
+        check("UE4WIDE control: a set bit beside another slot keeps the narrow read", Serie::GetString(4) == "Plain",
+              Serie::GetString(4).c_str());
+        check("UE4WIDE ⭐ a wide CJK name decodes to UTF-8", Serie::GetString(2) == "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E",
+              Serie::GetString(2).c_str());
+        check("UE4WIDE ⭐ a wide name with zero high bytes is whole, not cut at its first zero byte",
+              Serie::GetString(3) == "Caf\xC3\xA9", Serie::GetString(3).c_str());
+        check("UE4WIDE: a wide name keeps its number suffix", Serie::GetString(3, 2) == "Caf\xC3\xA9_1",
+              Serie::GetString(3, 2).c_str());
+        check("UE4WIDE: no terminator within NAME_SIZE is refused", Serie::GetString(7).empty(),
+              Serie::GetString(7).c_str());
+        if (wpage) {
+            check("UE4WIDE: a wide name ending at an unreadable page's edge is read whole",
+                  Serie::GetString(5) == "\xC3\x85ngstr\xC3\xB6m", Serie::GetString(5).c_str());
+            check("UE4WIDE: one running into an unreadable page is refused, not read past",
+                  Serie::GetString(6).empty(), Serie::GetString(6).c_str());
+            VirtualFree(wpage, 0, MEM_RELEASE);
+        }
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

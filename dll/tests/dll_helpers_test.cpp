@@ -9474,6 +9474,24 @@ static void Test_Serie_FirstEntryAfterNone() {
     EXPECT_EQ_U64("bad stride -> -1",    Serie::FirstEntryAfterNone(2, 0), -1);
 }
 
+// [UE4-WIDE-FNAME] UE 4.10-4.22 keep a name's charset in its entry's first int32: NameTypes.h (4.10 and 4.18 alike)
+// declares `NAME_INDEX Index` first, with NAME_WIDE_MASK 0x1 and NAME_INDEX_SHIFT 1, and UnrealNames.cpp's
+// AllocateNameEntry stores `(Index << NAME_INDEX_SHIFT) | wide` where Index is the slot the entry is stored at. Serie
+// never read it, so every wide name decoded as narrow bytes: cut at its first zero byte, or rejected.
+static void Test_Serie_UE4EntryIsWide() {
+    std::printf("Test_Serie_UE4EntryIsWide\n");
+    EXPECT("UE4WIDE: a wide entry's word, (slot << 1) | 1, is wide", Serie::UE4EntryIsWide((5 << 1) | 1, 5));
+    EXPECT("UE4WIDE: at a slot past the first chunk too",
+           Serie::UE4EntryIsWide((0x123456 << 1) | 1, 0x123456));
+    EXPECT("UE4WIDE: an ANSI entry's word, slot << 1, is not", !Serie::UE4EntryIsWide(5 << 1, 5));
+    // The rest of the word names the entry's own slot, so a set bit counts only beside it: a layout whose first int32
+    // is something else keeps today's narrow read.
+    EXPECT("UE4WIDE: a set bit beside another slot is not believed", !Serie::UE4EntryIsWide((6 << 1) | 1, 5));
+    EXPECT("UE4WIDE: a zeroed word is not wide", !Serie::UE4EntryIsWide(0, 1));
+    EXPECT("UE4WIDE: an all-ones word is not wide for a real slot", !Serie::UE4EntryIsWide(-1, 5));
+    static_assert(!Serie::UE4EntryIsWide(4 << 1, 4), "UE4EntryIsWide must be constexpr-evaluable");
+}
+
 // audit #5 G5 — the UE4 TNameEntryArray index guard must reject a NEGATIVE nameIndex
 // (a poison 0xFFFFFFFF read into an int32 as -1), which under truncating division gives
 // chunkIndex 0 / elemIndex -1 and derefs chunk + (-1)*8. Negative control: a guard that
@@ -9938,6 +9956,7 @@ int main() {
     RUN(Test_Ubel_IsPlausibleStringCount);    // U10 — FString cap bounds a garbage Count
     RUN(Test_Serie_BlockBitsProbe);           // G4  — idx-1 probe cannot distinguish 14 vs 16
     RUN(Test_Serie_FirstEntryAfterNone);      //     — idx 1 is INTERIOR to "None"; derive the boundary
+    RUN(Test_Serie_UE4EntryIsWide);           // [UE4-WIDE-FNAME] the pre-4.23 entry's wide bit, beside its own slot
     RUN(Test_Serie_UE4NameIndexInBounds);     // G5  — reject negative UE4 name index
 
     // [INVOKEINHERIT-2026-08-20] by-name resolution must climb SuperStruct
