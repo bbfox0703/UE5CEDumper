@@ -3591,6 +3591,19 @@ architecture or UX changes in these areas.
   warnings with it; a user-visible path is measured to be bound by JSON parsing; it has a few months of releases
   and issues behind it. A parse hotspot found before then takes STJ's `Utf8JsonReader` on that one path, as
   `DumpDiffModels` does.
+- **The experimental opt-in is about where a new user spends effort, NOT about fewer tabs** (the
+  maintainer, 2026-10-09, `[LF-EXPOFF-TRACE]`), in their words (one line, so no renderer splits it):
+  「實驗性功能是較複雜功能，例如SPC, Snapshot等，沒有一點電腦知識的話，根本不知道那是什麼，我特地一開始不開，就是要使用者別花太多精神在這些進階功能上，等工具熟了後自然會用。故並不是為了UI要少幾個 tabs」
+  -- in English: the experimental features are the complex ones (SPC, Snapshot, ...) that a user without some computer
+  knowledge cannot make sense of; they start OFF on purpose, so that users do not spend effort on advanced features
+  before they know the tool, and pick them up naturally once they are familiar with it. It is not there to make the UI
+  a few tabs shorter. So do not judge an experimental-off layout by the lines or tabs it saves (a finding of that kind
+  was withdrawn on this ground), and do not propose ungating a feature because the UI has room for it. The switch's
+  rules, the same day: the System tab's checkbox **ticks at any time but unticks only while disconnected** (ticked and
+  connected, it is disabled and its tooltip says to Disconnect first) -- one rule, not a per-feature test of what is
+  "running"; the session lock (an experimental tab opened) still wins; and Live Funcs offers a kept trace only while
+  the switch is on, as a defence line behind the rule. Design record:
+  [experimental-snapshot-spc-pivot.md](experimental-snapshot-spc-pivot.md), Phase 0.
 
 Evaluations that concluded "do not build" live in the repo rather than here — see [README.md](README.md)'s
 index for `text-translation-eval.md` and `multipipe-eval.md`; `Nibble-Mask-Evaluation.md` is in the

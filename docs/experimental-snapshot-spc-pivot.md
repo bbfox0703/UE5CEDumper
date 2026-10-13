@@ -8,7 +8,9 @@
 > `docs/todo.md` carries the phased work block.
 
 This brings three analysis features from `discrete` into UE5CEDumper, gated
-behind an opt-in "experimental" flag so the default UI stays unchanged:
+behind an opt-in "experimental" flag so the default UI stays unchanged (the
+reason for the gate is the maintainer's, in Phase 0's *Purpose of the gate*: to
+keep a new user's effort off the advanced features, not to save tabs):
 
 - **Snapshot** — point-in-time capture of all numeric UPROPERTY values across
   GObjects, persisted for diff / SPC / pivot.
@@ -145,6 +147,34 @@ is **persisted**.
 > `IsLocked` + `Lock()`; `MainTabs_SelectionChanged` locks on first
 > experimental-tab open; the checkbox `IsEnabled` binds to
 > `PointerPanelViewModel.CanToggleExperimental`.
+
+> **Purpose of the gate (the maintainer, 2026-10-09, `[LF-EXPOFF-TRACE]`):**
+> 「實驗性功能是較複雜功能，例如SPC, Snapshot等，沒有一點電腦知識的話，根本不知道那是什麼，我特地一開始不開，就是要使用者別花太多精神在這些進階功能上，等工具熟了後自然會用。故並不是為了UI要少幾個 tabs」
+> In English: the experimental features are the complex ones (SPC, Snapshot,
+> ...) that a user without some computer knowledge cannot make sense of. They
+> start OFF on purpose, so that users do not spend effort on advanced features
+> before they know the tool, and pick them up naturally once familiar. It is
+> **not** about having fewer tabs: "the default UI stays unchanged", at the top
+> of this document, is the effect, not the reason. Settled in
+> [working-lessons.md](working-lessons.md) §6.
+
+> **Update (2026-10-09, `[LF-EXPOFF-TRACE]`):** the opt-in **ticks at any time
+> but unticks only while disconnected** (the maintainer's choice, 「只能在斷線時取消
+> + 保留防線」). Ticked and connected, the checkbox is disabled and its tooltip,
+> shown on the disabled box too (`ToolTip.ShowOnDisabled`), reads
+> `str.Experimental.DisconnectFirst`; a dropped pipe frees it as a Disconnect
+> does. `CanToggleExperimental` is now the session lock **and**
+> `ExperimentalUntickNeedsDisconnect` (ticked, connected, not locked); the lock
+> still wins, and a locked box keeps the plain tooltip, since a Disconnect would
+> not free it. Why one rule: what counts as "running" would have to be defined
+> per feature (Detect Stats is not in the lock's list), while a disconnect
+> already ends what the trace holds -- Live Funcs withdraws the offer and the
+> DLL drops the trace with the client -- and unticking is rare. Behind the rule,
+> a defence line: Live Funcs offers a kept trace (Open in Call Trace, its status
+> sentences) and opens the Call Trace tab only while the switch is on.
+> ⚠ The rule also means the checkbox can no longer reach Teleport's gate-off
+> teardown, which needs a connection: `[EXPOFF-TEARDOWN]` in
+> [todo.md](todo.md), the maintainer's call.
 
 -----
 
