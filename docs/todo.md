@@ -371,7 +371,9 @@ source and editor are installed for when they are needed.
   a unique name with a `.source.txt` (path and SHA-256) beside them; `report` no longer prints an all-clear it did not
   check (no dist counterpart, a missing `--lib`). `--selftest` (temp trees only, 39 controls) is the new
   `proxy_refresh_selftest` gate in check_all and ci.yml. Measured read-only: 13 deployed proxies found before, 14
-  after (Extinction). Live check owed: after the next DLL build, `report` shows Extinction STALE and `refresh
+  after (Extinction). **Live PASS 2026-10-14:** `report` listed Extinction STALE beside the Shipping titles (14 proxies, was 13),
+  `refresh` backed it up and replaced it, and Extinction then answered the pipe as 3647, later 3648. Was owed:
+  `report` shows Extinction STALE and `refresh
   "Extinction"` backs it up and replaces it.
 - ✅ `[OVERRIDE-REVIEW2-LOWS]` **BUILT 2026-10-14, in source** (3 LOW, the `[UE-OVERRIDE-HINT-AUTO]` round's first
   review; dev `eea45912`..`6ded0c29`, shared with `[SOLIDE-NATIVE-BOOL]`): (1) a C# source pin holds Mimic's HandleInvoke
@@ -496,7 +498,9 @@ source and editor are installed for when they are needed.
   cached title re-detects once.** Fixtures `game_fixed405_buildstring_415`, `game_fixed501_buildstring_415`,
   `game_fixed420_buildstring_410`; `pe_version_probe.py` mirrors the rule as a pure `decide()` its `--selftest` runs, and
   `crc_authority_survey.py` reads the probe's new "(overrules fixed N)" lines right. Measured read-only: 0 of 389 exes
-  on this PC change reading (both Steam libraries, the corpus, the engine installs). Live check owed: one cached title
+  on this PC change reading (both Steam libraries, the corpus, the engine installs). **Live PASS 2026-10-14 (3648):** Extinction (rev 9), NEKOPALIVE and IS Defense (rev 7)
+  each logged "re-detecting once and re-stamping" with an unchanged verdict (415, 411, 410), and IS Defense was still
+  CORROBORATED and refused (SKIPPING the scan). Was owed: one cached title
   re-detects at rev 10 with an unchanged verdict; IS Defense is still refused.
 - ✅ `[VER-410-RIG-EF]` **BUILT 2026-10-14, offline** (LOW; `2a92cba3`, `ba1181ba`; 12 mutants killed):
   `b25_marker_exes.py` builds E (`b25e_crc_agrees`, the IS Defense string, refused by an agreeing 4.10 CrashReportClient)
@@ -647,7 +651,10 @@ source and editor are installed for when they are needed.
   properties to their own reader, never the 4.18+ soft reader (which would latch SOFTPTR_PATH from them). Walk rows,
   obj_class / meta_class, UProperty-mode TArray<TAssetPtr> elements (0x20 stride published), struct-array members, the
   Property Search preview, Live Funcs parameters, Find References, the class matcher and scorer see them. Not covered:
-  `[UE4-ASSETPTR-EXPORTS]` below. Live check owed on NEKOPALIVE (4.11), Extinction (4.15) or Fantasynth (4.13): asset
+  `[UE4-ASSETPTR-EXPORTS]` below. **Live PASS 2026-10-14 on Extinction (4.15, build 3648):** walk_class gives
+  `PreGameWorld` / `FixedOverride` as AssetObjectProperty, size 0x20, obj_class World, and `ZonesToUse` and three more
+  as TArray with an AssetObjectProperty inner; a live BC_BlinkGameInstance_C reads
+  `/Game/Maps/PreGame/PreGameMap.PreGameMap`, an empty one `(none)`; no envelope line from them. Was owed on NEKOPALIVE (4.11), Extinction (4.15) or Fantasynth (4.13): asset
   paths on AssetObjectProperty rows, a TArray<TAssetPtr>'s element paths, obj_class / meta_class in walk_class, and no
   "TSoftObjectPtr payload envelope measured" line from them.
 - ⬜ `[UE4-ASSETPTR-EXPORTS]` (LOW, left by `[UE4-ASSETPTR-PROPS]`): the UI consumers are still keyed on Soft* names --
@@ -689,7 +696,9 @@ source and editor are installed for when they are needed.
   its 255-byte window but reads it in page-bounded pieces, so an ANSI name ending just before an unreadable page reads
   whole instead of "". Trade: Aura's `IsCleanFName` used to accept a wide name cut to its first ASCII character and now
   refuses the whole UTF-8 name, so find_by_address reports such a sub-object as 'nearest' (`[UE4-WIDE-FNAME-CLEANCHECK]`).
-  Live check owed on NEKOPALIVE (4.11) or DQ XI S / OCTOPATH (4.18): name sanity stays 10/10, and a Japanese-named
+  NEKOPALIVE, 2026-10-14 (3648): name sanity 10/10 and 0 empty names over 24,997
+  objects, but not one non-ASCII name -- the narrow path is unchanged, the wide one still unexercised live.
+  Live check owed on DQ XI S / OCTOPATH (4.18) or another pre-4.23 title with localized FNames: name sanity stays 10/10, and a Japanese-named
   object or property reads whole in the tree, Class/Struct and a pipe lookup.
 - ✅ `[UE4-WIDE-FNAME-CLEANCHECK]` **BUILT 2026-10-14, in source** (LOW; red `e9347b7f`, green `338348f2`, docs
   `a1110418`; 9 mutants killed): Aura's `IsCleanFName` keeps a well-formed non-ASCII name (well-formed UTF-8, no '?',
