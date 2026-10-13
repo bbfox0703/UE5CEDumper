@@ -771,8 +771,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty] private string _flyCurrentText = "—";
 
-    /// <summary>Tracks whether fly is currently engaged (so the global hotkey +
-    /// the toggle button can flip it).</summary>
+    /// <summary>Whether the DLL's Fly worker runs, as its last reply said -- also behind an Unavailable badge, since
+    /// with no pawn the worker waits and flies the next one: whether a flight is there to turn off is decided by this,
+    /// not by the badge. [EXPOFF-ROUND3-PAUSED]</summary>
     private bool _flyActive;
 
     /// <summary>Slider readout, e.g. "1200 uu/s".</summary>
@@ -2778,6 +2779,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             FlyCurrentText = "Current: unavailable (no CharacterMovement on this pawn)";
             ApplyFlyState(-1);
+            // Dunste answers `active` whatever the pawn, and its worker flies the next pawn: the flight is not over.
+            _flyActive = st.Active;
             return;
         }
         FlyCurrentText = st.Active
@@ -4889,8 +4892,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         catch (Exception ex) { _log.Error("Teleport connect-time experimental teardown failed", ex); }
     }
 
-    /// <summary>[EXPOFF-TEARDOWN] Fly, See-through and a Stealth hold, each only when its card reads it running. One at a
-    /// time: each command sets IsBusy and the status line, and the pipe serves them in order anyway.</summary>
+    /// <summary>[EXPOFF-TEARDOWN] Fly, See-through and a Stealth hold, each only when the last reading says it runs
+    /// (Fly's is the DLL's own flag, which a no-pawn badge does not show). One at a time: each command sets IsBusy and
+    /// the status line, and the pipe serves them in order anyway.</summary>
     private async Task TurnOffRunningExperimentalAsync()
     {
         if (_flyActive) await ResetFlyCommand.ExecuteAsync(null);

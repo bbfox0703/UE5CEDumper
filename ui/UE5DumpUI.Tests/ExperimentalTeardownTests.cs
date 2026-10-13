@@ -313,6 +313,22 @@ public class ExperimentalTeardownTests : IDisposable
     }
 
     [Fact]
+    public async Task Unticked_while_connected_with_no_pawn_and_no_flight_Fly_is_left_alone()
+    {
+        // The DLL's flag decides, not the missing pawn: an Unavailable badge over a worker that is not running is not
+        // a flight.
+        var (vm, dll, _, gate) = Make(enabled: true);
+        await Connect(vm);
+        dll.NoPawn = true;
+        await vm.RefreshFlyCommand.ExecuteAsync(null);
+        Assert.Equal("Unavailable", vm.FlyState);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        Assert.DoesNotContain("fly", dll.Off);
+    }
+
+    [Fact]
     public async Task Unticked_while_disconnected_a_flight_waiting_for_a_pawn_is_turned_off_at_the_next_connect()
     {
         var (vm, dll, _, gate) = Make(enabled: true);

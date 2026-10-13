@@ -165,8 +165,10 @@ is **persisted**.
 > the features stay on until the UI restarts, because a tab that locks them was
 > opened this session. An untick **turns off what the features run in the
 > game**: while connected, at once -- `TeleportViewModel`'s teardown turns Keep
-> Foreground OFF, then Fly, See-through and a Holding Stealth when their cards
-> read them running, and releases the experimental hotkeys only after; a
+> Foreground OFF, then Fly when the DLL last said its worker runs (with no pawn
+> too: the card then reads Unavailable, and the worker flies the next pawn),
+> See-through and a Holding Stealth when their cards read them running, and
+> releases the experimental hotkeys only after; a
 > running Detect Stats scan is discarded -- and while disconnected, at the next
 > connect with the features still off, after the connect prime, from what it
 > reads in the DLL (never at a connect with them on). Behind it, a defence line:
