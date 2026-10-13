@@ -806,8 +806,8 @@ uint32_t UE5_GetVersion() {
     // structural ladder ran at init; these two can surface later):
     //   • a reflected Utf8StrProperty / AnsiStrProperty (Ubel flag) ⇒ UE5.5+
     //   • the FNameData struct-of-arrays UEnum::Names container (DynOff flag, set by
-    //     DetectUEnumNames, which may first run at the first enum read) ⇒ UE5.7+ (this is the layout whose enum bug the
-    //     Neu reader fixed; e.g. Titan Quest II). [VND583-12] It was 5.6+ -- see
+    //     DetectUEnumNames, which may first run at the first enum read) ⇒ UE5.7+ (this
+    //     is the layout whose enum bug the Neu reader fixed; e.g. Titan Quest II). [VND583-12] It was 5.6+ -- see
     //     DynOff::RefineVersionFromLazyMarkers, which holds the rule and its citations.
     // Cheap reads; the UI polls this for the badge, so the version self-corrects as the
     // user browses.

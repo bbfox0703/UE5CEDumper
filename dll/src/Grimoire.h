@@ -720,7 +720,7 @@ constexpr unsigned CmcMarkerVersion(unsigned ueVersion, bool fproperty, bool has
 //
 // A title whose PE version is stripped and whose exe holds no build string climbed no further than the CMC rung's
 // 504 -- FINAL FANTASY RESONANCE DEMO and The Adventures of Elliot both read 504, while every engine file they ship
-// matches the 5.6 installs. Below 5.7 there is no version string left to read, so the rungs read reflection objects.
+// matches the 5.6 installs. Such a title has no version string left to read, so these rungs read reflection objects.
 //
 // A rung fires on a clear majority of what it sampled: at least kLadderProbeMinAgree agreeing samples, and three
 // quarters of all. One stray object (a class default, a half-built enum) must not decide a version, and neither may a
@@ -784,8 +784,8 @@ bool SampleEnumPackage(EnumPackageTally& t, uintptr_t enumAddr, int namesOff, in
 
 // UE 5.6: UStruct::MinAlignment shrank to int16, and `std::atomic<uint16> StructStateFlags` took the other half of
 // the word. Measured from the Shipping fixtures' PDBs (UStruct, relative to PropertiesSize):
-//   DumperTest51 (5.1), DumperTest (5.4)       MinAlignment int32 +4                        (and RE-UE4SS 5_05: int32)
-//   DumperTest56 (5.6), DumperTest58 (5.8)     MinAlignment int16 +4, StructStateFlags +6   (and RE-UE4SS 5_07)
+//   DumperTest51 (5.1), DumperTest (5.4)       MinAlignment int32 +4                        (RE-UE4SS 5_05: the same)
+//   DumperTest56 (5.6), DumperTest58 (5.8)     MinAlignment int16 +4, StructStateFlags +6   (RE-UE4SS 5_06-5_08: the same)
 // UStruct::Link ends with StructStateFlags.fetch_or(PropertyDataAvailable) in Class.cpp of 5.6, 5.7 and 5.8, the only
 // flag any of them defines, so a linked class, script struct or function reads exactly 1 there; through 5.5 the
 // same two bytes are MinAlignment's high half, 0 for any alignment a struct can have. The word sits at the same
