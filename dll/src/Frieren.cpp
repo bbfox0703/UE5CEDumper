@@ -143,12 +143,6 @@ static bool CopyToBuffer(const std::string& src, char* buf, int32_t bufLen) {
 }
 
 namespace FrierenInit {
-// [VER-MARKERS-PAST-504] How many enums the 5.5 rung samples, and how many structs of each kind the 5.6 rung does.
-// Native reflection objects sit at the front of the object array, so a first-N search ends early; the verdict wants a
-// clear majority of DynOff::kLadderProbeMinAgree or more.
-constexpr int kLadderEnumSample   = 32;
-constexpr int kLadderStructSample = 16;
-
 // The live half of DynOff::ApplyVersionLadder: the probe's facts, the reads its rungs ask for and the log lines.
 // Init runs it after the offsets probe, and Auto chosen over an override runs it on the detection it restores, so
 // both land on the version the same evidence proves. `who` prefixes the log lines, which the A4 rig greps for.
@@ -206,47 +200,48 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
         return false;
     };
 
+    // [VER-MARKERS-PAST-504] The 5.5 and 5.6 rungs' probes, the classes they sample and how many are
+    // DynOff::ProbeEnumPackages / ProbeStructStates; this hands them the object array. The search is by EXACT class
+    // name: a substring match would let any object whose class merely contains "Class" vote.
+    const auto findExact = [](const char* cls, int limit) {
+        std::vector<uintptr_t> out;
+        for (const auto& r : Aura::FindInstancesByClass(cls, /*exactMatch=*/true, limit).results)
+            out.push_back(r.addr);
+        return out;
+    };
+    const auto read = [](uintptr_t a, void* out, size_t n) { return Macht::ReadBytesSafe(a, out, n); };
+
     // [VER-MARKERS-PAST-504] UE5.5 moved UEnum::EnumPackage ahead of EnumDisplayNameFn; the layouts and the rule are
     // DynOff::SampleEnumPackage / EnumPackageProves55. Both slots sit behind the MEASURED Names, so the enum reader's
     // own detection runs first if no enum read has yet -- told not to latch a miss, since this may run before the
-    // engine has registered the enums it looks for. The FNameData container (5.7+) has no such slot; the lazy refine
-    // reads that one.
+    // engine has registered the enums it looks for. When the probe reads at all is DynOff::EnumPackageProbeSkip; the
+    // flags are loaded in order, because bEnumNamesNewContainer is published by the detection's release-store.
     DynOff::EnumPackageTally enumTally;
     auto probeEnumPackage = [&]() -> DynOff::EnumPackageTally {
         if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
             Genau::DetectUEnumNames(/*latchFailure=*/false);
-        const bool namesKnown = DynOff::bUEnumNamesDetected.load(std::memory_order_acquire)
-                             && !DynOff::bUEnumNamesFailed.load(std::memory_order_acquire);
-        if (!namesKnown || DynOff::bEnumNamesNewContainer) {
+        const bool namesDetected = DynOff::bUEnumNamesDetected.load(std::memory_order_acquire);
+        const bool namesFailed   = DynOff::bUEnumNamesFailed.load(std::memory_order_acquire);
+        const DynOff::EnumProbeSkip skip =
+            DynOff::EnumPackageProbeSkip(namesDetected, namesFailed, DynOff::bEnumNamesNewContainer);
+        if (skip != DynOff::EnumProbeSkip::None) {
             LOG_INFO("%s: UEnum::EnumPackage probe skipped -- %s.", who,
-                     namesKnown ? "UEnum::Names is the UE5.7+ FNameData" : "UEnum::Names not located");
+                     skip == DynOff::EnumProbeSkip::NamesAreFNameData ? "UEnum::Names is the UE5.7+ FNameData"
+                                                                     : "UEnum::Names not located");
             return enumTally;
         }
-        const auto read = [](uintptr_t a, void* out, size_t n) { return Macht::ReadBytesSafe(a, out, n); };
-        const auto enums = Aura::FindInstancesByClass("Enum", /*exactMatch=*/true, kLadderEnumSample);
-        for (const auto& e : enums.results) {
-            if (e.addr)
-                DynOff::SampleEnumPackage(enumTally, e.addr, DynOff::UENUM_NAMES, DynOff::UOBJECT_OUTER,
-                                          Grimoire::OFF_UOBJECT_NAME, read);
-        }
+        enumTally = DynOff::ProbeEnumPackages(findExact, DynOff::UENUM_NAMES, DynOff::UOBJECT_OUTER, read);
         LOG_INFO("%s: UEnum::EnumPackage probe -- %d enum(s) sampled; the package name at Names+0x14 (UE5.5+) "
                  "on %d, at Names+0x20 (UE5.1-5.4) on %d.", who, enumTally.sampled, enumTally.at55, enumTally.at51);
         return enumTally;
     };
 
     // [VER-MARKERS-PAST-504] UE5.6 split UStruct::MinAlignment into int16 + StructStateFlags, which UStruct::Link sets;
-    // the layouts and the rule are DynOff::SampleStructState / StructStateProves56. Every kind of linked UStruct
-    // carries it, so classes, script structs and functions all vote, read behind the MEASURED PropertiesSize.
+    // the layouts and the rule are DynOff::SampleStructState / StructStateProves56, read behind the MEASURED
+    // PropertiesSize.
     DynOff::StructStateTally structTally;
     auto probeStructState = [&]() -> DynOff::StructStateTally {
-        const auto read = [](uintptr_t a, void* out, size_t n) { return Macht::ReadBytesSafe(a, out, n); };
-        for (const char* kind : { "Class", "ScriptStruct", "Function" }) {
-            const auto structs = Aura::FindInstancesByClass(kind, /*exactMatch=*/true, kLadderStructSample);
-            for (const auto& s : structs.results) {
-                if (s.addr)
-                    DynOff::SampleStructState(structTally, s.addr, DynOff::USTRUCT_PROPSSIZE, read);
-            }
-        }
+        structTally = DynOff::ProbeStructStates(findExact, DynOff::USTRUCT_PROPSSIZE, read);
         LOG_INFO("%s: UStruct::StructStateFlags probe -- %d struct(s) sampled; PropertyDataAvailable at "
                  "PropertiesSize+6 (UE5.6+) on %d.", who, structTally.sampled, structTally.linked);
         return structTally;

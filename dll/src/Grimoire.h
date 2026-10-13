@@ -473,9 +473,10 @@ constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
 // ahead of EnumDisplayNameFn) -> 506 (UStruct::StructStateFlags behind an int16 MinAlignment; both
 // [VER-MARKERS-PAST-504]) -> 507 (reordered FUObjectItem) -> 508 (virtual ~FFieldClass).
 // It exists because heavily-stripped titles lose every version string and fall back to
-// 4.27 while the structural probes have already proved otherwise. The PURE predicates
-// and per-object samplers live in this header so the tests can pin them, and so does the
-// ladder's order (DynOff::ApplyVersionLadder); the live reads that feed them stay in Frieren.cpp.
+// 4.27 while the structural probes have already proved otherwise. The PURE predicates,
+// the per-object samplers and the probes over the object array live in this header so the
+// tests can pin them, and so does the ladder's order (DynOff::ApplyVersionLadder); the live
+// reads that feed them stay in Frieren.cpp.
 //
 // ⚠ Every rung is RAISE-ONLY, and whether it is also guarded on `ver >= 500` is decided
 // PER RUNG in DynOff::ApplyVersionLadder: a rung whose probe could misfire on a UE4 title must
@@ -812,6 +813,46 @@ bool SampleStructState(StructStateTally& t, uintptr_t structAddr, int propsSizeO
     ++t.sampled;
     if (state == kStructPropertyDataAvailable) ++t.linked;
     return true;
+}
+
+// The two probes those rungs ask, over the object array. `findExact(className, limit)` returns the addresses of the
+// first `limit` objects whose class is exactly `className`; native reflection objects sit at the front of the array,
+// so a first-N search ends early. Each sample must be able to reach kLadderProbeMinAgree by itself, or its rung could
+// never fire.
+constexpr int kLadderEnumSample   = 32;   // enums
+constexpr int kLadderStructSample = 16;   // structs of each kind
+static_assert(kLadderEnumSample >= kLadderProbeMinAgree && kLadderStructSample >= kLadderProbeMinAgree,
+              "a ladder sample smaller than kLadderProbeMinAgree can never reach a verdict");
+// Every kind of linked UStruct carries StructStateFlags, so classes, script structs and functions all vote.
+inline constexpr const char* kLadderStructKinds[] = { "Class", "ScriptStruct", "Function" };
+
+// Why the enum probe reads nothing. Its slots sit behind the MEASURED Names, so it waits for a detection that found
+// them -- a latched FAILED leaves only the default offset -- and the 5.7+ FNameData container has no EnumPackage
+// slot behind it at all (the lazy refine reads that container as 5.7).
+enum class EnumProbeSkip { None, NamesNotLocated, NamesAreFNameData };
+constexpr EnumProbeSkip EnumPackageProbeSkip(bool namesDetected, bool namesFailed, bool fnameDataContainer) {
+    if (!namesDetected || namesFailed) return EnumProbeSkip::NamesNotLocated;
+    return fnameDataContainer ? EnumProbeSkip::NamesAreFNameData : EnumProbeSkip::None;
+}
+
+// The 5.5 rung's probe. The package's name is its UObject::NamePrivate; the way to the package is the measured
+// OuterPrivate at `outerOff`.
+template <class FindExact, class ReadMem>
+EnumPackageTally ProbeEnumPackages(FindExact&& findExact, int namesOff, int outerOff, ReadMem&& read) {
+    EnumPackageTally t;
+    for (const uintptr_t e : findExact("Enum", kLadderEnumSample))
+        SampleEnumPackage(t, e, namesOff, outerOff, Grimoire::OFF_UOBJECT_NAME, read);
+    return t;
+}
+
+// The 5.6 rung's probe.
+template <class FindExact, class ReadMem>
+StructStateTally ProbeStructStates(FindExact&& findExact, int propsSizeOff, ReadMem&& read) {
+    StructStateTally t;
+    for (const char* kind : kLadderStructKinds)
+        for (const uintptr_t s : findExact(kind, kLadderStructSample))
+            SampleStructState(t, s, propsSizeOff, read);
+    return t;
 }
 
 // === The init version ladder, in one place [UE-OVERRIDE-HINT-AUTO] ===
