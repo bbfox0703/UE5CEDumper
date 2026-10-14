@@ -357,15 +357,19 @@ static constexpr size_t kWindowWalkMaxRegions = 200000;
 // re-walk for the same target within this window so one Start costs at most one walk, not two held under s_mhMutex.
 static constexpr uint64_t kWindowLogThrottleMs = 5000;
 
-// The regions VirtualQuery reports over [lo, endExclusive), in address order: the map Lager models MinHook's walks on.
-static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive) {
+// The regions VirtualQuery reports over [lo, endExclusive), in address order: the map Lager totals bytes on. `stop`
+// reports WHY the walk ended, so the summary can name a budget / cap stop as itself rather than as a phantom query
+// failure. The map is for the BYTE TOTALS only; the picks are measured separately (LogTrampolineWindow) by a live
+// walk that steps allocation by allocation from the origin, so a budget-truncated map never makes a pick read "none".
+static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive, Lager::WalkStop& stop) {
     std::vector<Lager::Region> map;
     map.reserve(4096);
+    stop = Lager::WalkStop::Complete;
     const uint64_t deadline = GetTickCount64() + kWindowWalkBudgetMs;
     uint64_t addr = lo & ~static_cast<uint64_t>(0xFFF);
     while (addr < endExclusive) {
         MEMORY_BASIC_INFORMATION mbi{};
-        if (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) == 0) break;
+        if (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) == 0) { stop = Lager::WalkStop::QueryFailed; break; }
         Lager::Region r;
         r.base           = reinterpret_cast<uint64_t>(mbi.BaseAddress);
         r.size           = mbi.RegionSize;
@@ -374,10 +378,26 @@ static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive
         r.type           = mbi.Type;   // MEM_PRIVATE / MEM_IMAGE / MEM_MAPPED -- who took the space
         map.push_back(r);
         const uint64_t next = r.base + r.size;
-        if (next <= addr || GetTickCount64() > deadline || map.size() >= kWindowWalkMaxRegions) break;
+        if (next <= addr) break;
+        if (GetTickCount64() > deadline)         { stop = Lager::WalkStop::Budget;    break; }
+        if (map.size() >= kWindowWalkMaxRegions) { stop = Lager::WalkStop::RegionCap; break; }
         addr = next;
     }
     return map;
+}
+
+// A live VirtualQuery as Lager's FindPrev/FindNextFreeRegionWith want it: the region holding `addr`, or false where
+// VirtualQuery answers 0. Stepping allocation by allocation from the origin, this reaches the nearest free region in
+// a few dozen queries, so the picks are measured even when the budgeted byte-totals map above is cut short.
+static bool LiveQueryRegion(uint64_t addr, Lager::Region& out) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) == 0) return false;
+    out.base           = reinterpret_cast<uint64_t>(mbi.BaseAddress);
+    out.size           = mbi.RegionSize;
+    out.state          = mbi.State;
+    out.allocationBase = reinterpret_cast<uint64_t>(mbi.AllocationBase);
+    out.type           = mbi.Type;
+    return true;
 }
 
 // MH_CreateHook answers MH_ERROR_MEMORY_ALLOC and nothing more. Walk the window GetMemoryBlock searched for `target`
@@ -405,11 +425,18 @@ static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {
     const uint64_t appMax = reinterpret_cast<uint64_t>(si.lpMaximumApplicationAddress);
     const Lager::Window w = Lager::SearchWindow(target, appMin, appMax);
     const uint64_t t0 = GetTickCount64();
-    const std::vector<Lager::Region> map = WalkRegions(w.minAddr, w.maxAddr + Lager::kMemoryBlockSize);
+    Lager::WalkStop stop = Lager::WalkStop::Complete;
+    const std::vector<Lager::Region> map = WalkRegions(w.minAddr, w.maxAddr + Lager::kMemoryBlockSize, stop);
     const uint64_t walkMs = GetTickCount64() - t0;
-    const Lager::WindowSummary summary =
+    Lager::WindowSummary summary =
         Lager::SummarizeWindow(map, target, appMin, appMax, si.dwAllocationGranularity);
-    const std::string line = Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock, lastError);
+    // Measure the picks LIVE, independent of the budgeted map: buffer.c's own two walks step allocation by allocation
+    // from the target, so the nearest free region (just below / above the image) is always reached, even when a
+    // budget stop left the byte-totals map short of it.
+    summary.pickBelow = Lager::FindPrevFreeRegionWith(LiveQueryRegion, target, w.minAddr, si.dwAllocationGranularity);
+    summary.pickAbove = Lager::FindNextFreeRegionWith(LiveQueryRegion, target, w.maxAddr, si.dwAllocationGranularity);
+    const std::string line =
+        Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock, stop, lastError);
     LOG_ERROR("GameThreadDispatch: %s (%zu region(s) walked in %llu ms)", line.c_str(), map.size(),
               (unsigned long long)walkMs);
 }

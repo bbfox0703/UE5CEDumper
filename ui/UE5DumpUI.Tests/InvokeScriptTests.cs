@@ -2740,13 +2740,24 @@ public class InvokeScriptTests
         Assert.Contains("GetSystemInfo(&si);", log, StringComparison.Ordinal);
         Assert.Contains("Lager::SearchWindow(target, appMin, appMax)", log, StringComparison.Ordinal);
         // The walk spans every byte a block could occupy: up to the last block start plus the block.
-        Assert.Contains("WalkRegions(w.minAddr, w.maxAddr + Lager::kMemoryBlockSize)", log, StringComparison.Ordinal);
+        Assert.Contains("WalkRegions(w.minAddr, w.maxAddr + Lager::kMemoryBlockSize, stop)", log, StringComparison.Ordinal);
         Assert.Contains("Lager::SummarizeWindow(map, target, appMin, appMax, si.dwAllocationGranularity)", log,
             StringComparison.Ordinal);
-        Assert.Contains("Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), ", log,
+        Assert.Contains("Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock, stop, lastError)",
+            log, StringComparison.Ordinal);
+        // The picks are measured LIVE, not read from the (possibly budget-truncated) byte-totals map, so a cut-short
+        // map never makes a pick read "none".
+        Assert.Contains("summary.pickBelow = Lager::FindPrevFreeRegionWith(LiveQueryRegion, target, w.minAddr", log,
             StringComparison.Ordinal);
+        Assert.Contains("summary.pickAbove = Lager::FindNextFreeRegionWith(LiveQueryRegion, target, w.maxAddr", log,
+            StringComparison.Ordinal);
+        // WalkRegions reports WHY it stopped, so a budget/cap stop is not logged as a phantom VirtualQuery failure.
+        var walkStop = MinHookGlueBody(stark, "static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive, Lager::WalkStop& stop) {");
+        Assert.Contains("stop = Lager::WalkStop::QueryFailed;", walkStop, StringComparison.Ordinal);
+        Assert.Contains("stop = Lager::WalkStop::Budget;", walkStop, StringComparison.Ordinal);
+        Assert.Contains("stop = Lager::WalkStop::RegionCap;", walkStop, StringComparison.Ordinal);
 
-        var walk = MinHookGlueBody(stark, "static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive) {");
+        var walk = MinHookGlueBody(stark, "static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive, Lager::WalkStop& stop) {");
         Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi))", walk, StringComparison.Ordinal);
         Assert.Contains("reinterpret_cast<uint64_t>(mbi.AllocationBase)", walk, StringComparison.Ordinal);
         Assert.Contains("r.type           = mbi.Type;", walk, StringComparison.Ordinal);   // so the line can say who took the space
@@ -2949,7 +2960,7 @@ public class InvokeScriptTests
         Assert.DoesNotContain("reinterpret_cast<uintptr_t>(trampoline) &", stark, StringComparison.Ordinal);
 
         var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {");
-        Assert.Contains("Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock, lastError)", log,
+        Assert.Contains("Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock, stop, lastError)", log,
             StringComparison.Ordinal);
     }
 

@@ -87,40 +87,64 @@ inline const Region* QueryAt(const std::vector<Region>& map, uint64_t addr) {
     return nullptr;
 }
 
+/// FindPrevFreeRegion's walk over any query source. `query(addr, out)` fills `out` with the region holding `addr`
+/// and returns false where VirtualQuery would answer 0 (unmapped). This is buffer.c's walk line for line; both the
+/// synthetic-map overload below and the live VirtualQuery walk in Stark drive it, so the two cannot drift.
+template <typename QueryFn>
+inline uint64_t FindPrevFreeRegionWith(QueryFn query, uint64_t origin, uint64_t minAddr, uint64_t granularity) {
+    uint64_t tryAddr = origin;
+    tryAddr -= tryAddr % granularity;
+    tryAddr -= granularity;
+    while (tryAddr >= minAddr) {
+        Region r;
+        if (!query(tryAddr, r)) break;
+        if (r.state == kMemFree) return tryAddr;
+        if (r.allocationBase < granularity) break;
+        tryAddr = r.allocationBase - granularity;
+    }
+    return 0;
+}
+
+/// FindNextFreeRegion's walk over any query source (see FindPrevFreeRegionWith).
+template <typename QueryFn>
+inline uint64_t FindNextFreeRegionWith(QueryFn query, uint64_t origin, uint64_t maxAddr, uint64_t granularity) {
+    uint64_t tryAddr = origin;
+    tryAddr -= tryAddr % granularity;
+    tryAddr += granularity;
+    while (tryAddr <= maxAddr) {
+        Region r;
+        if (!query(tryAddr, r)) break;
+        if (r.state == kMemFree) return tryAddr;
+        tryAddr = r.base + r.size;
+        tryAddr += granularity - 1;
+        tryAddr -= tryAddr % granularity;
+    }
+    return 0;
+}
+
+/// A query source over a synthetic map: the region holding `addr`, or false where VirtualQuery would answer 0.
+inline bool QueryMap(const std::vector<Region>& map, uint64_t addr, Region& out) {
+    const Region* r = QueryAt(map, addr);
+    if (!r) return false;
+    out = *r;
+    return true;
+}
+
 /// FindPrevFreeRegion: from the allocation-granularity multiple below the one holding `origin`, step DOWN one
 /// allocation at a time (to the granule under its AllocationBase) until an address in a free region. 0 = NULL.
 /// GetMemoryBlock tries this direction first.
 inline uint64_t FindPrevFreeRegion(const std::vector<Region>& map, uint64_t origin, uint64_t minAddr,
                                    uint64_t granularity) {
-    uint64_t tryAddr = origin;
-    tryAddr -= tryAddr % granularity;
-    tryAddr -= granularity;
-    while (tryAddr >= minAddr) {
-        const Region* r = QueryAt(map, tryAddr);
-        if (!r) break;
-        if (r->state == kMemFree) return tryAddr;
-        if (r->allocationBase < granularity) break;
-        tryAddr = r->allocationBase - granularity;
-    }
-    return 0;
+    return FindPrevFreeRegionWith([&](uint64_t a, Region& out) { return QueryMap(map, a, out); },
+                                  origin, minAddr, granularity);
 }
 
 /// FindNextFreeRegion: from the allocation-granularity multiple above the one holding `origin`, step UP one region
 /// at a time (to the first granule at or past its end) until an address in a free region. 0 = NULL.
 inline uint64_t FindNextFreeRegion(const std::vector<Region>& map, uint64_t origin, uint64_t maxAddr,
                                    uint64_t granularity) {
-    uint64_t tryAddr = origin;
-    tryAddr -= tryAddr % granularity;
-    tryAddr += granularity;
-    while (tryAddr <= maxAddr) {
-        const Region* r = QueryAt(map, tryAddr);
-        if (!r) break;
-        if (r->state == kMemFree) return tryAddr;
-        tryAddr = r->base + r->size;
-        tryAddr += granularity - 1;
-        tryAddr -= tryAddr % granularity;
-    }
-    return 0;
+    return FindNextFreeRegionWith([&](uint64_t a, Region& out) { return QueryMap(map, a, out); },
+                                  origin, maxAddr, granularity);
 }
 
 /// Where GetMemoryBlock would allocate a NEW block for `origin`: below first, then above; 0 = no free block start.
@@ -263,13 +287,31 @@ inline ImageLayout ParseImageLayout(const uint8_t* bytes, size_t len, uint64_t b
     return img;
 }
 
+/// Why the region walk that built the map stopped. When the map does not cover the whole window, the reason the
+/// summary prints must be the TRUE one: a budget or region-cap stop is not "a VirtualQuery failed", and reporting it
+/// as one sent a reader looking for an unmapped page that was never there.
+enum class WalkStop { Complete, QueryFailed, Budget, RegionCap };
+
+inline const char* WalkStopNote(WalkStop stop) {
+    switch (stop) {
+        case WalkStop::Budget:     return " (map INCOMPLETE: the walk's time budget was spent before the window was "
+                                          "fully mapped -- the byte totals cover only the part walked)";
+        case WalkStop::RegionCap:  return " (map INCOMPLETE: the region cap was hit before the window was fully "
+                                          "mapped -- the byte totals cover only the part walked)";
+        case WalkStop::QueryFailed:return " (map INCOMPLETE: a VirtualQuery failed inside the window)";
+        default:                   return " (map INCOMPLETE)";
+    }
+}
+
 /// The log line for a failed block search: the window, what is free in it and where a new block would go, what
-/// took the rest, the held block, and the main image beside it. heldBlock 0 = no block held. `lastError` is the
-/// GetLastError() captured right after MH_CreateHook returned MH_ERROR_MEMORY_ALLOC: when the address search DID find
-/// room (a pick is non-zero, or the held block serves the target), the failure was not the window, and the line says
-/// so with that error -- VirtualAlloc was refused (commit limit / ACG) or MinHook's hook table could not grow.
+/// took the rest, the held block, and the main image beside it. heldBlock 0 = no block held. `stop` is why the map
+/// walk ended, printed only when the map did not cover the span (so a budget stop is not blamed on a phantom
+/// VirtualQuery failure). `lastError` is the GetLastError() captured right after MH_CreateHook returned
+/// MH_ERROR_MEMORY_ALLOC: when the address search DID find room (a pick is non-zero, or the held block serves the
+/// target), the failure was not the window, and the line says so with that error -- VirtualAlloc was refused (commit
+/// limit / ACG) or MinHook's hook table could not grow.
 inline std::string FormatWindowSummary(const WindowSummary& s, uint64_t origin, const ImageLayout& img,
-                                       uint64_t heldBlock, uint32_t lastError = 0) {
+                                       uint64_t heldBlock, WalkStop stop = WalkStop::Complete, uint32_t lastError = 0) {
     auto hex = [](uint64_t v) {
         char b[24];
         if (v) std::snprintf(b, sizeof b, "0x%llX", (unsigned long long)v);
@@ -297,7 +339,7 @@ inline std::string FormatWindowSummary(const WindowSummary& s, uint64_t origin, 
         "FindPrevFreeRegion -> %s, FindNextFreeRegion -> %s; held block %s%s; main image 0x%llX + 0x%X, "
         "DYNAMICBASE %s%s",
         (unsigned long long)origin, (unsigned long long)s.window.minAddr, (unsigned long long)s.window.maxAddr,
-        s.covered ? "" : " (map INCOMPLETE: a VirtualQuery failed inside the window)",
+        s.covered ? "" : WalkStopNote(stop),
         s.freeRegions, (unsigned long long)s.freeBytes, (unsigned long long)s.largestFreeSize,
         (unsigned long long)s.largestFreeBase, s.blockableRegions, (unsigned long long)s.reservedBytes,
         (unsigned long long)s.committedBytes, taken, below.c_str(), above.c_str(), held.c_str(),

@@ -10371,12 +10371,12 @@ static void Test_Lager_FormatWindowSummary() {
     // line says so and carries LastError. A pick below (the held block in reach) is the simplest way to show room.
     const Lager::WindowSummary hole =
         Lager::SummarizeWindow(LgFullMapWithGap(0x120000000ull, 0xFFF0000ull), kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
-    const std::string refusal = Lager::FormatWindowSummary(hole, kFfrsPe, img, 0, 1455u);
+    const std::string refusal = Lager::FormatWindowSummary(hole, kFfrsPe, img, 0, Lager::WalkStop::Complete, 1455u);
     EXPECT("a non-zero pick beside MEMORY_ALLOC blames VirtualAlloc / the heap, not the window",
            refusal.find("a block start WAS free, so the window is not the cause") != std::string::npos);
     EXPECT("and carries the captured LastError", refusal.find("LastError 1455") != std::string::npos);
     EXPECT("a held block that serves the target also counts as room found",
-           Lager::FormatWindowSummary(full, kFfrsPe, img, kFfrsBase - kLgGran, 8u).find(
+           Lager::FormatWindowSummary(full, kFfrsPe, img, kFfrsBase - kLgGran, Lager::WalkStop::Complete, 8u).find(
                "the window is not the cause") != std::string::npos);
 
     EXPECT("a held block in reach says so",
@@ -10387,12 +10387,39 @@ static void Test_Lager_FormatWindowSummary() {
                "(out of this target's reach)") != std::string::npos);
     std::vector<Lager::Region> gap;
     LgPushImage(gap);
-    EXPECT("an incomplete map says so",
-           Lager::FormatWindowSummary(Lager::SummarizeWindow(gap, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran),
-                                      kFfrsPe, img, 0).find("INCOMPLETE") != std::string::npos);
+    const Lager::WindowSummary gapSum = Lager::SummarizeWindow(gap, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+    EXPECT("an incomplete map says so", !gapSum.covered);
+    // The incomplete note names the TRUE cause: a budget or cap stop is not blamed on a phantom VirtualQuery failure.
+    EXPECT("a query-failed stop reads as a VirtualQuery failure",
+           Lager::FormatWindowSummary(gapSum, kFfrsPe, img, 0, Lager::WalkStop::QueryFailed).find(
+               "a VirtualQuery failed inside the window") != std::string::npos);
+    EXPECT("a budget stop reads as the budget, not a query failure",
+           Lager::FormatWindowSummary(gapSum, kFfrsPe, img, 0, Lager::WalkStop::Budget).find(
+               "time budget was spent") != std::string::npos);
+    EXPECT("a budget stop does NOT claim a VirtualQuery failed",
+           Lager::FormatWindowSummary(gapSum, kFfrsPe, img, 0, Lager::WalkStop::Budget).find(
+               "a VirtualQuery failed") == std::string::npos);
+    EXPECT("a region-cap stop reads as the cap",
+           Lager::FormatWindowSummary(gapSum, kFfrsPe, img, 0, Lager::WalkStop::RegionCap).find(
+               "region cap was hit") != std::string::npos);
+    EXPECT("a complete walk over a covered map prints no note whatever the enum default",
+           Lager::FormatWindowSummary(full, kFfrsPe, img, 0, Lager::WalkStop::Budget).find("INCOMPLETE")
+               == std::string::npos);
     EXPECT("unreadable headers say so",
            Lager::FormatWindowSummary(full, kFfrsPe, Lager::ImageLayout{}, 0).find("DYNAMICBASE unknown")
                != std::string::npos);
+
+    // The live callback walk and the synthetic-map walk are one implementation: the map overload delegates to the
+    // *With core, so FindPrev/FindNextFreeRegionWith over a QueryMap lambda give the map overload's own answers.
+    const auto empty = LgEmptyMap();
+    const Lager::Window w = Lager::SearchWindow(kFfrsPe, kLgAppMin, kLgAppMax);
+    auto q = [&](uint64_t a, Lager::Region& out) { return Lager::QueryMap(empty, a, out); };
+    EXPECT_EQ_U64("FindPrevFreeRegionWith matches the map overload",
+                  Lager::FindPrevFreeRegionWith(q, kFfrsPe, w.minAddr, kLgGran),
+                  Lager::FindPrevFreeRegion(empty, kFfrsPe, w.minAddr, kLgGran));
+    EXPECT_EQ_U64("FindNextFreeRegionWith matches the map overload",
+                  Lager::FindNextFreeRegionWith(q, kFfrsPe, w.maxAddr, kLgGran),
+                  Lager::FindNextFreeRegion(empty, kFfrsPe, w.maxAddr, kLgGran));
 }
 
 // ----- Stark::DescribeHookAttempt ([MH-PRERESERVE-PROXY], B24's log line) ----------------------------------------
