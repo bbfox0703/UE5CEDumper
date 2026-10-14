@@ -658,6 +658,29 @@ bool InstallHook(uintptr_t processEventAddr) {
         LOG_INFO("GameThreadDispatch: ProcessEvent's trampoline 0x%llX is %s the held block 0x%llX",
                  (unsigned long long)reinterpret_cast<uintptr_t>(s_originalPE),
                  peBlock == s_heldBlock ? "in" : "NOT in", (unsigned long long)s_heldBlock);
+        // [MH-PRERESERVE-PROXY] Reuse ALWAYS wins over allocation, so landing in the held block proves nothing about
+        // whether the hold was needed. Run buffer.c's two walks live for ProcessEvent's window: if neither could place
+        // a new block, the hold is what made this install succeed (the fix is proven); if one could, a fresh block was
+        // free anyway (reuse happened, but the window was not starved). A few dozen queries, off the hot path.
+        if (peBlock == s_heldBlock) {
+            SYSTEM_INFO si{};
+            GetSystemInfo(&si);
+            const uint64_t appMin = reinterpret_cast<uint64_t>(si.lpMinimumApplicationAddress);
+            const uint64_t appMax = reinterpret_cast<uint64_t>(si.lpMaximumApplicationAddress);
+            const Lager::Window w = Lager::SearchWindow(processEventAddr, appMin, appMax);
+            const uint64_t below = Lager::FindPrevFreeRegionWith(LiveQueryRegion, processEventAddr, w.minAddr,
+                                                                 si.dwAllocationGranularity);
+            const uint64_t above = Lager::FindNextFreeRegionWith(LiveQueryRegion, processEventAddr, w.maxAddr,
+                                                                 si.dwAllocationGranularity);
+            if (below == 0 && above == 0) {
+                LOG_INFO("GameThreadDispatch: the held block was NEEDED -- MinHook could not have placed a fresh block "
+                         "(FindPrevFreeRegion -> none, FindNextFreeRegion -> none)");
+            } else {
+                LOG_INFO("GameThreadDispatch: the held block was reused, but a fresh block was also available this time "
+                         "(FindPrevFreeRegion -> 0x%llX, FindNextFreeRegion -> 0x%llX) -- the window was not starved",
+                         (unsigned long long)below, (unsigned long long)above);
+            }
+        }
     } else {
         LOG_INFO("GameThreadDispatch: ProcessEvent's trampoline 0x%llX is in block 0x%llX (no block was held)",
                  (unsigned long long)reinterpret_cast<uintptr_t>(s_originalPE), (unsigned long long)peBlock);
