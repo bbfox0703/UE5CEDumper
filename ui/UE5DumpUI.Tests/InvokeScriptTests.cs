@@ -2752,6 +2752,24 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void MemoryAllocDiagnostic_CapturesLastErrorBeforeItIsClobbered()
+    {
+        // MH_ERROR_MEMORY_ALLOC is not only "no free block start": MinHook returns it when a found granule's
+        // VirtualAlloc(PAGE_EXECUTE_READWRITE) is refused (commit limit, ACG/ProhibitDynamicCode) or when AddHookEntry's
+        // HeapAlloc on MinHook's private heap fails. LastError tells those apart, but the LOG_ERROR that runs before the
+        // window walk clobbers it. Capture it right after MH_CreateHook so the window line can say "a block start WAS
+        // free -- the failure is not the window". Stark.cpp reaches no test target: pin the capture.
+        var stark = MinHookGlue("Stark.cpp");
+        var install = MinHookGlueBody(stark, "bool InstallHook(uintptr_t processEventAddr) {");
+        int zero = install.IndexOf("SetLastError(0);", StringComparison.Ordinal);
+        int create = install.IndexOf("MH_STATUS status = MH_CreateHook(", StringComparison.Ordinal);
+        int grab = install.IndexOf("const DWORD mhLastError = GetLastError();", StringComparison.Ordinal);
+        Assert.True(zero >= 0 && create > zero, "SetLastError(0) must come before ProcessEvent's MH_CreateHook");
+        Assert.True(grab > create, "GetLastError() must be captured right after MH_CreateHook, before any LOG_ERROR");
+        Assert.Contains("LogTrampolineWindow(processEventAddr, mhLastError);", install, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HookInstallLines_SayWhenAnAttemptWasForced()
     {
         // B24 stopped counting a forced attempt against the automatic budget, but its failure line still printed
