@@ -14,6 +14,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 namespace Stark {
 
@@ -249,6 +250,14 @@ inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs) {
 //      trampoline (MH_ERROR_MEMORY_ALLOC). Already retryable on its OWN budget in
 //      Frieren (kMaxHookAttempts / kHookRetryCooldownMs) and forced past by
 //      UE5_EnsureGameThreadHook. Nothing here touches it.
+
+/// How TryInstallGameThreadHook names an install attempt in its log lines ([MH-PRERESERVE-PROXY]). A forced attempt
+/// (a feature being switched on) is not counted against the automatic budget (B24), so printing the automatic counter
+/// beside it as "attempt N/M" read as a second attempt with the same number.
+inline std::string DescribeHookAttempt(bool forced, int automaticAttempts, int maxAttempts) {
+    (void)forced;   // RED stub: today's wording, the same for both
+    return "attempt " + std::to_string(automaticAttempts) + "/" + std::to_string(maxAttempts);
+}
 
 /// Detected ProcessEvent vtable offset sentinels. >=0 is a real byte offset.
 /// Exported to the UI through UE5_GetProcessEventOffset, so the two negatives

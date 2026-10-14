@@ -10359,6 +10359,25 @@ static void Test_Lager_FormatWindowSummary() {
                != std::string::npos);
 }
 
+// ----- Stark::DescribeHookAttempt ([MH-PRERESERVE-PROXY], B24's log line) ----------------------------------------
+//
+// A forced install attempt (a feature switched on) is not counted against the automatic budget (B24). Its failure
+// line used to print the automatic counter as "attempt N/8" all the same, so on FINAL FANTASY RESONANCE DEMO each
+// failing Live Funcs Start logged the same "attempt N/8" twice: the counted automatic attempt and the forced one.
+
+static void Test_Stark_DescribeHookAttempt() {
+    EXPECT_EQ_STR("an automatic attempt is numbered against the budget",
+                  Stark::DescribeHookAttempt(false, 1, 8), "attempt 1/8");
+    const std::string forced = Stark::DescribeHookAttempt(true, 1, 8);
+    EXPECT("a forced attempt does not read as the automatic attempt with the same counter",
+           forced != Stark::DescribeHookAttempt(false, 1, 8));
+    EXPECT("a forced attempt says it was forced", forced.find("forced") != std::string::npos);
+    EXPECT("and that it was not counted", forced.find("not counted") != std::string::npos);
+    EXPECT_EQ_STR("its whole text", forced, "forced attempt, not counted -- 1/8 automatic attempt(s) used");
+    EXPECT_EQ_STR("a forced attempt before any automatic one",
+                  Stark::DescribeHookAttempt(true, 0, 8), "forced attempt, not counted -- 0/8 automatic attempt(s) used");
+}
+
 #define RUN(fn) do { if (g_trace) std::printf("[run] %s\n", #fn); fn(); } while (0)
 
 // [PATH-MODULE-NAME-UTF8] get_ce_pointer_info's ce_base was snprintf'd into char[128]: a long stem lost the closing
@@ -10834,6 +10853,7 @@ int main() {
     RUN(Test_Lager_SummarizeWindow);
     RUN(Test_Lager_ParseImageLayout);
     RUN(Test_Lager_FormatWindowSummary);
+    RUN(Test_Stark_DescribeHookAttempt);       // B24's log line: a forced attempt says so
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

@@ -2752,6 +2752,21 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void HookInstallLines_SayWhenAnAttemptWasForced()
+    {
+        // B24 stopped counting a forced attempt against the automatic budget, but its failure line still printed
+        // "attempt N/8" from the automatic counter, so each failing Live Funcs Start on FFRS logged the same N twice.
+        // Both of TryInstallGameThreadHook's lines now name the attempt through Stark::DescribeHookAttempt.
+        var frieren = MinHookGlue("Frieren.cpp");
+        var body = MinHookGlueBody(frieren, "static void TryInstallGameThreadHook(bool force = false) {");
+        Assert.Contains("Stark::DescribeHookAttempt(force, attempts, kMaxHookAttempts)", body, StringComparison.Ordinal);
+        Assert.Contains("hook install failed (%s), invoke will", body, StringComparison.Ordinal);
+        Assert.Contains("hook RECOVERED on %s", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("(attempt %d/%d)", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("RECOVERED on attempt %d", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TeleportTransports_PublishTheParentRelativeFlagAndNeverAZeroLanding()
     {
         // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS], the mailbox and C ABI halves. No test target compiles Mimic.cpp
