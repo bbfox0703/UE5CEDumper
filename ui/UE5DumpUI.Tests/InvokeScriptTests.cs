@@ -2767,6 +2767,98 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void HeldBlock_IsTakenAtAutoStart_AndNeverEnabled()
+    {
+        // The holder: a MinHook hook created early on a target inside the main image and never enabled, so its block
+        // stays next to the image for the process lifetime and the ProcessEvent hook can land in it later. Taken on the
+        // auto-start thread of both DLL flavours (the proxy's runs at process start, while the window is still empty),
+        // never in DllMain, where MinHook would run under the loader lock.
+        var heiter = MinHookGlue("Heiter.cpp");
+        Assert.Equal(2, MinHookCount(heiter, "Stark::HoldTrampolineBlock();"));
+        int proxy = heiter.IndexOf("LOG_INFO(\"DllMain ProxyStart: proxy DLL mode", StringComparison.Ordinal);
+        int proxyHold = heiter.IndexOf("Stark::HoldTrampolineBlock();", Math.Max(proxy, 0), StringComparison.Ordinal);
+        int proxySleep = heiter.IndexOf("Sleep(500);", Math.Max(proxy, 0), StringComparison.Ordinal);
+        Assert.True(proxy >= 0 && proxyHold > proxy && proxySleep > proxyHold,
+            "the proxy flavour must hold the block first thing, before its start-up delay and the pipe server");
+        int ceGuard = heiter.IndexOf("if (IsCheatEngineExeName(leaf)) {", StringComparison.Ordinal);
+        int injectHold = heiter.IndexOf("Stark::HoldTrampolineBlock();", Math.Max(ceGuard, 0), StringComparison.Ordinal);
+        int pipeProbe = heiter.IndexOf("HANDLE testPipe = CreateFileW(", Math.Max(ceGuard, 0), StringComparison.Ordinal);
+        Assert.True(ceGuard >= 0 && injectHold > ceGuard && pipeProbe > injectHold,
+            "the injected flavour must hold the block after the Cheat Engine guard and before the pipe probe");
+        var dllMain = MinHookGlueBody(heiter, "BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {");
+        Assert.DoesNotContain("HoldTrampolineBlock", dllMain, StringComparison.Ordinal);
+
+        var stark = MinHookGlue("Stark.cpp");
+        var hold = MinHookGlueBody(stark, "void HoldTrampolineBlock() {");
+        Assert.Contains("std::lock_guard<std::mutex> lock(s_mhMutex);", hold, StringComparison.Ordinal);
+        Assert.Contains("Lager::ChooseHolderTargets(img)", hold, StringComparison.Ordinal);
+        int safe = hold.IndexOf("if (!HolderCandidateSafe(target))", StringComparison.Ordinal);
+        int create = hold.IndexOf("MH_CreateHook(reinterpret_cast<LPVOID>(target), reinterpret_cast<LPVOID>(&HolderDetour),",
+            StringComparison.Ordinal);
+        Assert.True(safe >= 0 && create > safe, "every candidate must be checked readable before MinHook reads it");
+        Assert.DoesNotContain("MH_EnableHook", hold, StringComparison.Ordinal);
+        Assert.DoesNotContain("MH_QueueEnableHook", hold, StringComparison.Ordinal);
+        // The only hook Stark enables is ProcessEvent's.
+        Assert.Equal(1, MinHookCount(stark, "MH_EnableHook("));
+        Assert.Contains("MH_EnableHook(reinterpret_cast<LPVOID>(processEventAddr))", stark, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HeldBlock_NothingEnablesEveryHook_NorTearsMinHookDown()
+    {
+        // MH_CreateHook never writes its target; MH_EnableHook does (hook.c, EnableHookLL). The holder stays harmless
+        // only while nothing enables it: no MH_ALL_HOOKS (MH_EnableHook(MH_ALL_HOOKS) and MH_QueueEnableHook(
+        // MH_ALL_HOOKS) + MH_ApplyQueued would patch the holder's target too), and no MH_Uninitialize, which frees
+        // every block -- the held one and every live trampoline with it.
+        var files = new List<string>();
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var c = Path.Combine(dir.FullName, "dll", "src");
+            if (Directory.Exists(c)) { files.AddRange(Directory.GetFiles(c, "*.cpp")); files.AddRange(Directory.GetFiles(c, "*.h")); break; }
+        }
+        Assert.NotEmpty(files);
+        foreach (var f in files)
+        {
+            var code = MinHookGlue(Path.GetFileName(f));
+            foreach (var banned in new[] { "MH_ALL_HOOKS", "MH_QueueEnableHook", "MH_ApplyQueued", "MH_Uninitialize" })
+                Assert.False(code.Contains(banned, StringComparison.Ordinal), Path.GetFileName(f) + " calls " + banned);
+        }
+    }
+
+    [Fact]
+    public void HeldBlock_StepsAsideForARealHook_AndTheInstallSaysWhereItsTrampolineWent()
+    {
+        var stark = MinHookGlue("Stark.cpp");
+        var install = MinHookGlueBody(stark, "bool InstallHook(uintptr_t processEventAddr) {");
+        Assert.Contains("std::lock_guard<std::mutex> lock(s_mhMutex);", install, StringComparison.Ordinal);
+        Assert.Contains("if (!EnsureMinHookLocked()) return false;", install, StringComparison.Ordinal);
+        // A real hook outranks the holder: MinHook keys hooks by target, so ProcessEvent at the holder's address would
+        // fail MH_ERROR_ALREADY_CREATED.
+        int aside = install.IndexOf("if (s_heldTarget != 0 && s_heldTarget == processEventAddr) {", StringComparison.Ordinal);
+        int remove = install.IndexOf("MH_RemoveHook(reinterpret_cast<LPVOID>(s_heldTarget))", Math.Max(aside, 0), StringComparison.Ordinal);
+        int create = install.IndexOf("reinterpret_cast<LPVOID*>(&s_originalPE));", StringComparison.Ordinal);
+        Assert.True(aside >= 0 && remove > aside && create > remove, "the holder must step aside before ProcessEvent's MH_CreateHook");
+        // Out of reach is said before the attempt; where the trampoline went, after it.
+        int reach = install.IndexOf("if (!Lager::BlockServes(s_heldBlock, Lager::SearchWindow(processEventAddr, appMin, appMax)))",
+            StringComparison.Ordinal);
+        Assert.True(reach >= 0 && reach < create, "the reach check must come before MH_CreateHook");
+        int where = install.IndexOf("const uintptr_t peBlock = reinterpret_cast<uintptr_t>(s_originalPE) &", StringComparison.Ordinal);
+        Assert.True(where > create, "the trampoline's block must be reported after MH_CreateHook");
+        Assert.Contains("peBlock == s_heldBlock", install, StringComparison.Ordinal);
+
+        var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target) {");
+        Assert.Contains("Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock)", log,
+            StringComparison.Ordinal);
+    }
+
+    private static int MinHookCount(string s, string what)
+    {
+        int n = 0;
+        for (int i = s.IndexOf(what, StringComparison.Ordinal); i >= 0; i = s.IndexOf(what, i + what.Length, StringComparison.Ordinal)) n++;
+        return n;
+    }
+
+    [Fact]
     public void TeleportTransports_PublishTheParentRelativeFlagAndNeverAZeroLanding()
     {
         // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS], the mailbox and C ABI halves. No test target compiles Mimic.cpp

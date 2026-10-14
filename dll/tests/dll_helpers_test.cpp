@@ -10378,6 +10378,139 @@ static void Test_Stark_DescribeHookAttempt() {
                   Stark::DescribeHookAttempt(true, 0, 8), "forced attempt, not counted -- 0/8 automatic attempt(s) used");
 }
 
+// ----- Lager: the held block ([MH-PRERESERVE-PROXY]) ------------------------------------------------------------
+//
+// A hook created early on a target inside the main image and never enabled keeps its MinHook block for the process
+// lifetime, and a later hook that the block serves lands in it. These are the rules that decide where that block
+// goes, whom it serves, and which target may hold it.
+
+static void Test_Lager_OriginsServedBy() {
+    const uint64_t block = kFfrsBase - kLgGran;   // where the block goes at process start: just below the image
+    const Lager::Span s = Lager::OriginsServedBy(block, kLgAppMin, kLgAppMax);
+    EXPECT("a block in the application range serves something", !s.empty);
+    EXPECT_EQ_U64("lowest origin served = block + MEMORY_BLOCK_SIZE - MAX_MEMORY_RANGE", s.lo,
+                  block + 0x1000ull - 0x40000000ull);
+    EXPECT_EQ_U64("highest origin served = block + MAX_MEMORY_RANGE", s.hi, block + 0x40000000ull);
+    // The span is the reuse test solved for origin: check both ends against GetMemoryBlock's own test.
+    auto served = [&](uint64_t origin) {
+        return Lager::BlockServes(block, Lager::SearchWindow(origin, kLgAppMin, kLgAppMax));
+    };
+    EXPECT("served at the span's low end",      served(s.lo));
+    EXPECT("not served one below it",          !served(s.lo - 1));
+    EXPECT("served at the span's high end",     served(s.hi));
+    EXPECT("not served one above it",          !served(s.hi + 1));
+
+    EXPECT_EQ_U64("a block under 1 GB serves every origin from 0", Lager::OriginsServedBy(0x20000ull, kLgAppMin, kLgAppMax).lo, 0);
+    EXPECT("a block below the application range serves nothing",
+           Lager::OriginsServedBy(0x1000ull, kLgAppMin, kLgAppMax).empty);
+    EXPECT("a block at the top of the range serves nothing",
+           Lager::OriginsServedBy(kLgAppMax - 0xFFFull, kLgAppMin, kLgAppMax).empty);
+}
+
+// The arithmetic the change rests on, on FFRS's numbers: the block a holder on the entry point takes at process
+// start serves ProcessEvent and every executable byte of the 474 MB image; the same holder on a heap that has
+// already filled the space under the image gets a block too far down to serve ProcessEvent.
+static void Test_Lager_HeldBlockReachesProcessEvent() {
+    const auto noAslr = LgPeHeader(0x20B, 0x8120, 0x1000, (uint32_t)kFfrsSize);
+    const Lager::ImageLayout img = Lager::ParseImageLayout(noAslr.data(), noAslr.size(), kFfrsBase);
+    const Lager::ExecRange code = Lager::ExecutableRange(img);
+    EXPECT_EQ_U64("the executable range starts at the code section", code.lo, kFfrsBase + 0x1000);
+    EXPECT_EQ_U64("and ends with the RWX section (raw size standing in for VirtualSize 0)", code.hi,
+                  kFfrsBase + 0x13003000ull);
+
+    const uint64_t block = Lager::NewBlockAddress(LgEmptyMap(), kFfrsEntry, kLgAppMin, kLgAppMax, kLgGran);
+    EXPECT_EQ_U64("process start: the holder's block lands 64 KB below the image", block, kFfrsBase - kLgGran);
+    EXPECT("it serves ProcessEvent",
+           Lager::BlockServes(block, Lager::SearchWindow(kFfrsPe, kLgAppMin, kLgAppMax)));
+    EXPECT("it serves every executable byte of the image",
+           Lager::SpanCovers(Lager::OriginsServedBy(block, kLgAppMin, kLgAppMax), code));
+
+    // Late: the heap took everything from 0x100020000 up to the image. The highest free granule under it,
+    // 0x100010000, is just inside the entry point's window (entry - 1 GB = 0x100001000), so the block goes there.
+    std::vector<Lager::Region> late;
+    late.push_back(LgFree(kLgAppMin, 0x100020000ull));
+    late.push_back(LgCommit(0x100020000ull, kFfrsBase, 0x100020000ull));
+    LgPushImage(late);
+    late.push_back(LgFree(kFfrsEnd, 0x7FF000000000ull));
+    const uint64_t deep = Lager::NewBlockAddress(late, kFfrsEntry, kLgAppMin, kLgAppMax, kLgGran);
+    EXPECT_EQ_U64("late: the holder's block lands ~1 GB down", deep, 0x100010000ull);
+    EXPECT("late: it does not serve ProcessEvent",
+           !Lager::BlockServes(deep, Lager::SearchWindow(kFfrsPe, kLgAppMin, kLgAppMax)));
+    EXPECT("late: it does not cover the image's executable range",
+           !Lager::SpanCovers(Lager::OriginsServedBy(deep, kLgAppMin, kLgAppMax), code));
+    EXPECT("an empty executable range is never covered", !Lager::SpanCovers(Lager::OriginsServedBy(block, kLgAppMin, kLgAppMax),
+                                                                            Lager::ExecRange{}));
+}
+
+static void Test_Lager_ChooseHolderTargets() {
+    const auto hdr = LgPeHeader(0x20B, 0x8120, 0x2340, (uint32_t)kFfrsSize);
+    const Lager::ImageLayout img = Lager::ParseImageLayout(hdr.data(), hdr.size(), kFfrsBase);
+    const auto c = Lager::ChooseHolderTargets(img);
+    EXPECT("entry point + two executable section starts", c.size() == 3);
+    EXPECT("the entry point comes first",
+           c.size() == 3 && c[0].address == kFfrsBase + 0x2340 && c[0].kind == Lager::HolderKind::EntryPoint);
+    EXPECT("then the code section's start",
+           c.size() == 3 && c[1].address == kFfrsBase + 0x1000 && c[1].kind == Lager::HolderKind::SectionStart);
+    EXPECT("then the RWX section's start (the read-only data section is skipped)",
+           c.size() == 3 && c[2].address == kFfrsBase + 0x13000000ull);
+
+    // An entry point AT a section start is offered once.
+    const auto atStart = LgPeHeader(0x20B, 0x8120, 0x1000, (uint32_t)kFfrsSize);
+    const auto d = Lager::ChooseHolderTargets(Lager::ParseImageLayout(atStart.data(), atStart.size(), kFfrsBase));
+    EXPECT("an entry point at a section start is not offered twice", d.size() == 2 && d[0].address == kFfrsBase + 0x1000 &&
+                                                                     d[0].kind == Lager::HolderKind::EntryPoint);
+
+    const auto noEntry = LgPeHeader(0x20B, 0x8120, 0, (uint32_t)kFfrsSize);
+    const auto e = Lager::ChooseHolderTargets(Lager::ParseImageLayout(noEntry.data(), noEntry.size(), kFfrsBase));
+    EXPECT("no entry point: section starts only", e.size() == 2 && e[0].kind == Lager::HolderKind::SectionStart);
+
+    const auto outside = LgPeHeader(0x20B, 0x8120, (uint32_t)kFfrsSize, (uint32_t)kFfrsSize);
+    const auto f = Lager::ChooseHolderTargets(Lager::ParseImageLayout(outside.data(), outside.size(), kFfrsBase));
+    EXPECT("an entry point past SizeOfImage is not offered", f.size() == 2 && f[0].kind == Lager::HolderKind::SectionStart);
+
+    EXPECT("the candidate count is capped", Lager::ChooseHolderTargets(img, 1).size() == 1);
+    EXPECT("unreadable headers give no candidate", Lager::ChooseHolderTargets(Lager::ImageLayout{}).empty());
+
+    Lager::ImageLayout empty = img;
+    empty.sections[0].virtualSize = 0;
+    empty.sections[0].rawSize = 0;
+    const auto g = Lager::ChooseHolderTargets(empty);
+    EXPECT("an executable section that maps nothing is skipped",
+           g.size() == 2 && g[1].address == kFfrsBase + 0x13000000ull);
+    EXPECT("the kinds are named for the log",
+           std::string(Lager::HolderKindName(Lager::HolderKind::EntryPoint)) == "the image's entry point" &&
+           std::string(Lager::HolderKindName(Lager::HolderKind::SectionStart)) == "the start of an executable section");
+}
+
+static void Test_Lager_HolderCandidateReadable() {
+    using namespace Lager;
+    EXPECT("execute-read code is readable", ProtectIsReadableCode(kPageExecuteRead));
+    EXPECT("execute-read-write code is readable", ProtectIsReadableCode(kPageExecuteReadWrite));
+    EXPECT("execute-only code is NOT readable", !ProtectIsReadableCode(kPageExecute));
+    EXPECT("a guard page is NOT readable", !ProtectIsReadableCode(kPageExecuteRead | kPageGuard));
+    EXPECT("a read-only page is not code", !ProtectIsReadableCode(0x02));
+    EXPECT("MinHook calls execute-only executable", ProtectIsExecutable(kPageExecute));
+    EXPECT("MinHook calls read-only not executable", !ProtectIsExecutable(0x02));
+
+    EXPECT("an ordinary entry point is taken",
+           HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead));
+    EXPECT("an execute-only target is refused",
+           !HolderCandidateReadable(kMemCommit, kPageExecute, kMemCommit, kPageExecute, kMemCommit, kPageExecute));
+    EXPECT("a target whose next page is not readable is refused",
+           !HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, 0x01, kMemCommit, kPageExecuteRead));
+    EXPECT("a target whose next page is reserved is refused",
+           !HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemReserve, 0, kMemCommit, kPageExecuteRead));
+    EXPECT("an uncommitted target is refused",
+           !HolderCandidateReadable(kMemReserve, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead));
+    // target - 5: MinHook reads it only when IsExecutableAddress calls it executable.
+    EXPECT("a read-only page before a section start is fine (MinHook does not read it)",
+           HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, 0x02));
+    EXPECT("a free page before is fine",
+           HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemFree, 0x01));
+    EXPECT("an execute-only page before is refused (MinHook would read it)",
+           !HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, kPageExecute));
+}
+
 #define RUN(fn) do { if (g_trace) std::printf("[run] %s\n", #fn); fn(); } while (0)
 
 // [PATH-MODULE-NAME-UTF8] get_ce_pointer_info's ce_base was snprintf'd into char[128]: a long stem lost the closing
@@ -10854,6 +10987,11 @@ int main() {
     RUN(Test_Lager_ParseImageLayout);
     RUN(Test_Lager_FormatWindowSummary);
     RUN(Test_Stark_DescribeHookAttempt);       // B24's log line: a forced attempt says so
+    // [MH-PRERESERVE-PROXY] the held block: where it lands, whom it serves, which target may hold it
+    RUN(Test_Lager_OriginsServedBy);
+    RUN(Test_Lager_HeldBlockReachesProcessEvent);
+    RUN(Test_Lager_ChooseHolderTargets);
+    RUN(Test_Lager_HolderCandidateReadable);
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

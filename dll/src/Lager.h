@@ -261,4 +261,83 @@ inline std::string FormatWindowSummary(const WindowSummary& s, uint64_t origin, 
     return buf;
 }
 
+// ---- The held block ([MH-PRERESERVE-PROXY]) ----------------------------------------------------------------------
+//
+// GetMemoryBlock reuses any block on its list that BlockServes the new target and still has a free slot, before it
+// allocates, and FreeBuffer releases a block only with its last used slot. So one hook created early on a target
+// inside the main image -- and never enabled, never removed -- keeps a block next to the image for the process
+// lifetime, and every later hook in the image that the block serves lands in it whatever the heap has done since.
+
+/// The hook targets a block at `block` serves: BlockServes(block, SearchWindow(origin, ...)) solved for origin.
+/// origin <= block + MAX_MEMORY_RANGE keeps minAddr at or below the block; origin >= block + MEMORY_BLOCK_SIZE -
+/// MAX_MEMORY_RANGE keeps maxAddr above it. `empty` when no origin is served (a block outside the application range).
+struct Span {
+    uint64_t lo = 0;
+    uint64_t hi = 0;     // inclusive
+    bool empty = true;
+};
+inline Span OriginsServedBy(uint64_t block, uint64_t appMin, uint64_t appMax) {
+    (void)block; (void)appMin; (void)appMax; return Span{};   // RED stub
+}
+
+/// A section's mapped extent: the loader maps VirtualSize (some linkers leave it 0, then SizeOfRawData stands in),
+/// clipped to SizeOfImage.
+inline uint64_t SectionSpanEnd(const ImageLayout& img, const Section& s) {
+    (void)img; (void)s; return 0;   // RED stub
+}
+
+/// [lo, hi) spanning every executable section, as absolute addresses; lo == hi when none is marked executable.
+struct ExecRange {
+    uint64_t lo = 0;
+    uint64_t hi = 0;
+};
+inline ExecRange ExecutableRange(const ImageLayout& img) {
+    (void)img; return ExecRange{};   // RED stub
+}
+
+/// True when the block whose served span is `served` serves every address in [range.lo, range.hi).
+inline bool SpanCovers(const Span& served, const ExecRange& range) {
+    (void)served; (void)range; return false;   // RED stub
+}
+
+/// Where the holder hook goes, best first. MH_CreateHook only READS its target (CreateTrampolineFunction copies the
+/// first instructions into the slot) and only MH_EnableHook writes it, so the target's code is never changed -- but
+/// the address is taken in MinHook's table, so it has to be one no real hook will want. The entry point is the CRT
+/// startup routine, never a UFunction or UObject::ProcessEvent; a section start is the fallback for an entry point
+/// MinHook cannot trampoline (a protector stub that opens on a short jump). Stark steps the holder aside if a real
+/// hook ever asks for its address anyway.
+enum class HolderKind { EntryPoint, SectionStart };
+
+struct HolderCandidate {
+    uint64_t   address = 0;
+    HolderKind kind = HolderKind::EntryPoint;
+};
+
+inline const char* HolderKindName(HolderKind k) {
+    (void)k; return "";   // RED stub
+}
+
+inline std::vector<HolderCandidate> ChooseHolderTargets(const ImageLayout& img, size_t maxCandidates = 4) {
+    (void)img; (void)maxCandidates; return {};   // RED stub
+}
+
+/// MinHook reads a holder target with no SEH, inside its own spin lock: a fault there kills the game, and a caught
+/// one would leave the lock taken for every later MinHook call. So a candidate is used only where every byte
+/// MinHook reads is readable. Its IsExecutableAddress accepts any PAGE_EXECUTE_* page, execute-only PAGE_EXECUTE
+/// included, and a guard page faults on its first read.
+inline bool ProtectIsExecutable(uint32_t protect) {
+    (void)protect; return false;   // RED stub
+}
+inline bool ProtectIsReadableCode(uint32_t protect) {
+    (void)protect; return false;   // RED stub
+}
+
+/// at / end: the pages holding the candidate and its 32nd byte (CreateTrampolineFunction decodes forward from the
+/// target); before: the page holding target - 5, which MinHook reads only when its IsExecutableAddress calls it
+/// executable (the hot-patch path).
+inline bool HolderCandidateReadable(uint32_t stateAt, uint32_t protectAt, uint32_t stateEnd, uint32_t protectEnd,
+                                    uint32_t stateBefore, uint32_t protectBefore) {
+    (void)stateAt; (void)protectAt; (void)stateEnd; (void)protectEnd; (void)stateBefore; (void)protectBefore; return false;   // RED stub
+}
+
 } // namespace Lager
