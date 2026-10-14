@@ -373,8 +373,10 @@ static void LogTrampolineWindow(uintptr_t target) {
 }
 
 // MinHook's own state (its private heap) is the one record of whether it is initialised, shared by every module in
-// this DLL that hooks: each accepts MH_ERROR_ALREADY_INITIALIZED, and none calls MH_Uninitialize, which would free
-// the held block and every live trampoline with it (InvokeScriptTests pins the absence). Call under s_mhMutex.
+// this DLL that hooks: each accepts MH_ERROR_ALREADY_INITIALIZED (the holder is usually the first initialiser now, so
+// Grausam's later call almost always lands on that branch -- InvokeScriptTests pins that every call site ORs it in),
+// and none calls MH_Uninitialize, which would free the held block and every live trampoline with it (pinned too).
+// Call under s_mhMutex.
 static bool EnsureMinHookLocked() {
     if (s_mhInitialized.load()) return true;
     const MH_STATUS status = MH_Initialize();

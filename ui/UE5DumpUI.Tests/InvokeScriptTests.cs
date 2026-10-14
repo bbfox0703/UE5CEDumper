@@ -2851,6 +2851,40 @@ public class InvokeScriptTests
             StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void EveryMinHookInitializeSite_AcceptsAlreadyInitialized()
+    {
+        // MinHook's HeapCreate lives once per process, shared by every module in this DLL that hooks (Stark's holder
+        // and ProcessEvent hook, Grausam's foreground lock). Whoever calls MH_Initialize() first gets MH_OK; everyone
+        // after gets MH_ERROR_ALREADY_INITIALIZED, which is SUCCESS. Since the holder now initialises MinHook at proxy
+        // process start (or ~1 s after injection), Grausam is practically always the second caller, so treating
+        // ALREADY_INITIALIZED as a failure would break Foreground Lock on every enable. No C++ test target compiles a
+        // file that calls MH_Initialize, so pin the acceptance in source: every call site must OR it in beside MH_OK.
+        var files = new List<string>();
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var c = Path.Combine(dir.FullName, "dll", "src");
+            if (Directory.Exists(c)) { files.AddRange(Directory.GetFiles(c, "*.cpp")); files.AddRange(Directory.GetFiles(c, "*.h")); break; }
+        }
+        Assert.NotEmpty(files);
+        int sites = 0;
+        foreach (var f in files)
+        {
+            var code = MinHookGlue(Path.GetFileName(f));   // comments stripped: a "MH_Initialize failed" log string is not a call
+            for (int i = code.IndexOf("MH_Initialize()", StringComparison.Ordinal); i >= 0;
+                 i = code.IndexOf("MH_Initialize()", i + 1, StringComparison.Ordinal))
+            {
+                sites++;
+                // The acceptance sits in the same statement that tests the status, right after the call.
+                int window = Math.Min(code.Length, i + 300);
+                Assert.True(code.IndexOf("MH_ERROR_ALREADY_INITIALIZED", i, window - i, StringComparison.Ordinal) >= 0,
+                    Path.GetFileName(f) + ": an MH_Initialize() call does not accept MH_ERROR_ALREADY_INITIALIZED, so a "
+                    + "second initialiser (the holder always is one) reads a successful init as a failure");
+            }
+        }
+        Assert.True(sites >= 2, "expected MH_Initialize() in at least Stark.cpp and Grausam.cpp -- found " + sites);
+    }
+
     private static int MinHookCount(string s, string what)
     {
         int n = 0;
