@@ -345,7 +345,7 @@ German spelling.
 | Neu | ノイ | Neu | Discovers undercover ("new") | 🟢 EnumNames | UEnum::Names parse — legacy `TArray<TPair<FName,int64>>` vs the UE5.6+ FNameData struct-of-arrays disguised at the same offset (`Neu.h`, build 1266) |
 | Weg | ヴェーク | Weg | Magic Special Forces trooper ("way/path") | ⬜ | Routing / path resolution / address-path walk |
 | Grau | グラウ | Grau | Straight-laced trooper ("gray") | ⬜ | Neutral baseline |
-| Lager | ラーガー | Lager | Carefree trooper ("storage/depot") | 🟢 TrampolineDepot | Pure model of where MinHook puts a hook's trampoline block (`vendor/minhook/src/buffer.c`'s window and free-region walks) + the main image's PE layout: summarises the window when MH_CreateHook fails with MH_ERROR_MEMORY_ALLOC (`Lager.h`, header-only, [MH-PRERESERVE-PROXY]) |
+| Lager | ラーガー | Lager | Special Forces trooper ("storage/depot") | 🟢 TrampolineDepot | Pure model of where MinHook puts a hook's trampoline block (`vendor/minhook/src/buffer.c`'s window and free-region walks) + the main image's PE layout: summarises the window when MH_CreateHook fails with MH_ERROR_MEMORY_ALLOC, and names where a held trampoline block goes, whom it serves and which target may hold it (ChooseHolderTargets / OriginsServedBy / SpanCovers) (`Lager.h`, header-only, [MH-PRERESERVE-PROXY]) |
 | Löwe (Held) | レーヴェ | Lowe | Governor / anti-magic ("lion") | ⬜ | Aggressive / dominant heuristic |
 | Radar | ラダール | Radar | Shadow Warrior chief | 🟢 ValueScan | CE-style by-value First/Next Scan (`Radar.cpp/.h`, was `ValueScan`) |
 | Schritt | シュリット | Schritt | Shadow Warrior ("step") | ⬜ | Stepping / single-step iteration |

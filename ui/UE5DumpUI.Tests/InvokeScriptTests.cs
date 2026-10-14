@@ -2873,6 +2873,10 @@ public class InvokeScriptTests
         Assert.True(safe >= 0 && create > safe, "every candidate must be checked readable before MinHook reads it");
         Assert.DoesNotContain("MH_EnableHook", hold, StringComparison.Ordinal);
         Assert.DoesNotContain("MH_QueueEnableHook", hold, StringComparison.Ordinal);
+        // An empty executable range (header-only copy, or a packer that cleared the EXECUTE flag) is reported UNKNOWN,
+        // not "does NOT cover" -- the block may serve ProcessEvent, it just cannot be verified from the headers.
+        Assert.Contains("const bool codeKnown = code.hi > code.lo;", hold, StringComparison.Ordinal);
+        Assert.Contains("executable range is unknown", hold, StringComparison.Ordinal);
         // The only hook Stark enables is ProcessEvent's.
         Assert.Equal(1, MinHookCount(stark, "MH_EnableHook("));
         Assert.Contains("MH_EnableHook(reinterpret_cast<LPVOID>(processEventAddr))", stark, StringComparison.Ordinal);

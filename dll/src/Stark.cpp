@@ -492,7 +492,20 @@ void HoldTrampolineBlock() {
         s_heldBlock  = static_cast<uintptr_t>(Lager::BlockOfSlot(reinterpret_cast<uintptr_t>(trampoline)));
         const Lager::Span served = Lager::OriginsServedBy(s_heldBlock, appMin, appMax);
         const Lager::ExecRange code = Lager::ExecutableRange(img);
-        const bool covers = Lager::SpanCovers(served, code);
+        const bool codeKnown = code.hi > code.lo;   // headers named at least one executable section
+        const bool covers = codeKnown && Lager::SpanCovers(served, code);
+        // An empty executable range (a header-only copy, or a packer that cleared IMAGE_SCN_MEM_EXECUTE) is UNKNOWN,
+        // not "does NOT cover": the block may well serve ProcessEvent, we just cannot verify it from the headers.
+        if (!codeKnown) {
+            LOG_WARN("GameThreadDispatch: held a MinHook trampoline block for the process lifetime: block 0x%llX, "
+                     "taken by a hook created (never enabled) on 0x%llX, %s; it serves hook targets [0x%llX, 0x%llX]; "
+                     "the image's executable range is unknown (its headers named no executable section), so coverage "
+                     "was not checked (image 0x%llX + 0x%X, DYNAMICBASE %s)",
+                     (unsigned long long)s_heldBlock, (unsigned long long)target, Lager::HolderKindName(c.kind),
+                     (unsigned long long)served.lo, (unsigned long long)served.hi, (unsigned long long)img.base,
+                     img.sizeOfImage, img.dynamicBase ? "yes" : "no");
+            return;
+        }
         const char* fmt =
             "GameThreadDispatch: held a MinHook trampoline block for the process lifetime: block 0x%llX, taken "
             "by a hook created (never enabled) on 0x%llX, %s; it serves hook targets [0x%llX, 0x%llX], %s the "
