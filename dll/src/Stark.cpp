@@ -355,8 +355,10 @@ static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive
 
 // MH_CreateHook answers MH_ERROR_MEMORY_ALLOC and nothing more. Walk the window GetMemoryBlock searched for `target`
 // and log what held it, so a failure on a live game says whether the space was taken, by what, and where the main
-// image sits -- the evidence [MH-PRERESERVE-PROXY] was proposed without.
-static void LogTrampolineWindow(uintptr_t target) {
+// image sits -- the evidence [MH-PRERESERVE-PROXY] was proposed without. `lastError` is GetLastError() captured right
+// after MH_CreateHook: when the window still had room, it is what distinguishes a VirtualAlloc/heap refusal from a
+// full window.
+static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {
     SYSTEM_INFO si{};
     GetSystemInfo(&si);
     const uint64_t appMin = reinterpret_cast<uint64_t>(si.lpMinimumApplicationAddress);
@@ -367,7 +369,7 @@ static void LogTrampolineWindow(uintptr_t target) {
     const uint64_t walkMs = GetTickCount64() - t0;
     const Lager::WindowSummary summary =
         Lager::SummarizeWindow(map, target, appMin, appMax, si.dwAllocationGranularity);
-    const std::string line = Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock);
+    const std::string line = Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock, lastError);
     LOG_ERROR("GameThreadDispatch: %s (%zu region(s) walked in %llu ms)", line.c_str(), map.size(),
               (unsigned long long)walkMs);
 }
@@ -538,16 +540,19 @@ bool InstallHook(uintptr_t processEventAddr) {
         }
     }
 
-    // Create hook
+    // Create hook. Clear LastError first and read it back immediately: on MH_ERROR_MEMORY_ALLOC it is the only thing
+    // that separates a full window from a VirtualAlloc/heap refusal, and the LOG_ERROR below would overwrite it.
+    SetLastError(0);
     MH_STATUS status = MH_CreateHook(
         reinterpret_cast<LPVOID>(processEventAddr),
         reinterpret_cast<LPVOID>(&HookedProcessEvent),
         reinterpret_cast<LPVOID*>(&s_originalPE));
+    const DWORD mhLastError = GetLastError();
 
     if (status != MH_OK) {
         LOG_ERROR("GameThreadDispatch: MH_CreateHook failed: %s",
                   MH_StatusToString(status));
-        if (status == MH_ERROR_MEMORY_ALLOC) LogTrampolineWindow(processEventAddr);
+        if (status == MH_ERROR_MEMORY_ALLOC) LogTrampolineWindow(processEventAddr, mhLastError);
         return false;
     }
 

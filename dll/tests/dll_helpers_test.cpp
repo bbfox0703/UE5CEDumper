@@ -10343,6 +10343,21 @@ static void Test_Lager_FormatWindowSummary() {
            line.find("main image 0x140000000 + 0x1DA00000, DYNAMICBASE no") != std::string::npos);
     EXPECT("a complete map says nothing about incompleteness", line.find("INCOMPLETE") == std::string::npos);
 
+    EXPECT("a full window says nothing about VirtualAlloc being refused",
+           line.find("the window is not the cause") == std::string::npos);
+
+    // When the address search found room beside a real MH_ERROR_MEMORY_ALLOC, the failure was not the window: the
+    // line says so and carries LastError. A pick below (the held block in reach) is the simplest way to show room.
+    const Lager::WindowSummary hole =
+        Lager::SummarizeWindow(LgFullMapWithGap(0x120000000ull, 0xFFF0000ull), kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+    const std::string refusal = Lager::FormatWindowSummary(hole, kFfrsPe, img, 0, 1455u);
+    EXPECT("a non-zero pick beside MEMORY_ALLOC blames VirtualAlloc / the heap, not the window",
+           refusal.find("a block start WAS free, so the window is not the cause") != std::string::npos);
+    EXPECT("and carries the captured LastError", refusal.find("LastError 1455") != std::string::npos);
+    EXPECT("a held block that serves the target also counts as room found",
+           Lager::FormatWindowSummary(full, kFfrsPe, img, kFfrsBase - kLgGran, 8u).find(
+               "the window is not the cause") != std::string::npos);
+
     EXPECT("a held block in reach says so",
            Lager::FormatWindowSummary(full, kFfrsPe, img, kFfrsBase - kLgGran).find(
                "held block 0x13FFF0000 (serves this target)") != std::string::npos);

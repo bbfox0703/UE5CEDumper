@@ -116,9 +116,12 @@ inline uint64_t FindNextFreeRegion(const std::vector<Region>& map, uint64_t orig
     return 0;
 }
 
-/// Where GetMemoryBlock would allocate a NEW block for `origin`: below first, then above; 0 = MH_ERROR_MEMORY_ALLOC.
-/// A free granule-aligned address always takes the one-page VirtualAlloc (a free region ends on a page boundary
-/// past it), so only a race could make the real call disagree.
+/// Where GetMemoryBlock would allocate a NEW block for `origin`: below first, then above; 0 = no free block start.
+/// This models only the ADDRESS search. A free granule it names can still fail to become a block: VirtualAlloc(
+/// PAGE_EXECUTE_READWRITE) can be refused under a dynamic-code policy (ACG) or at the commit limit, and MinHook also
+/// answers MH_ERROR_MEMORY_ALLOC when AddHookEntry's HeapAlloc on its private heap fails -- neither is the window. So
+/// a non-zero answer here beside a real MH_ERROR_MEMORY_ALLOC means the failure was NOT the address window; the live
+/// LastError (FormatWindowSummary's lastError) says which.
 inline uint64_t NewBlockAddress(const std::vector<Region>& map, uint64_t origin, uint64_t appMin, uint64_t appMax,
                                 uint64_t granularity) {
     const Window w = SearchWindow(origin, appMin, appMax);
@@ -233,9 +236,12 @@ inline ImageLayout ParseImageLayout(const uint8_t* bytes, size_t len, uint64_t b
 }
 
 /// The log line for a failed block search: the window, what is free in it and where a new block would go, what
-/// took the rest, the held block, and the main image beside it. heldBlock 0 = no block held.
+/// took the rest, the held block, and the main image beside it. heldBlock 0 = no block held. `lastError` is the
+/// GetLastError() captured right after MH_CreateHook returned MH_ERROR_MEMORY_ALLOC: when the address search DID find
+/// room (a pick is non-zero, or the held block serves the target), the failure was not the window, and the line says
+/// so with that error -- VirtualAlloc was refused (commit limit / ACG) or MinHook's hook table could not grow.
 inline std::string FormatWindowSummary(const WindowSummary& s, uint64_t origin, const ImageLayout& img,
-                                       uint64_t heldBlock) {
+                                       uint64_t heldBlock, uint32_t lastError = 0) {
     auto hex = [](uint64_t v) {
         char b[24];
         if (v) std::snprintf(b, sizeof b, "0x%llX", (unsigned long long)v);
@@ -243,12 +249,19 @@ inline std::string FormatWindowSummary(const WindowSummary& s, uint64_t origin, 
         return std::string(b);
     };
     const std::string below = hex(s.pickBelow), above = hex(s.pickAbove), held = hex(heldBlock);
-    char buf[1024];
+    const bool roomFound = s.pickBelow != 0 || s.pickAbove != 0 ||
+                           (heldBlock != 0 && BlockServes(heldBlock, s.window));
+    char refused[224] = "";
+    if (roomFound)
+        std::snprintf(refused, sizeof refused,
+            " -- NB a block start WAS free, so the window is not the cause: VirtualAlloc refused the page "
+            "(commit limit / ACG) or MinHook's hook table could not grow (LastError %u)", (unsigned)lastError);
+    char buf[1200];
     std::snprintf(buf, sizeof buf,
         "MinHook block window for 0x%llX: block starts [0x%llX, 0x%llX]%s -- %u free region(s), 0x%llX bytes free, "
         "largest 0x%llX at 0x%llX, %u can start a block; reserved 0x%llX, committed 0x%llX; "
         "FindPrevFreeRegion -> %s, FindNextFreeRegion -> %s; held block %s%s; main image 0x%llX + 0x%X, "
-        "DYNAMICBASE %s",
+        "DYNAMICBASE %s%s",
         (unsigned long long)origin, (unsigned long long)s.window.minAddr, (unsigned long long)s.window.maxAddr,
         s.covered ? "" : " (map INCOMPLETE: a VirtualQuery failed inside the window)",
         s.freeRegions, (unsigned long long)s.freeBytes, (unsigned long long)s.largestFreeSize,
@@ -257,7 +270,7 @@ inline std::string FormatWindowSummary(const WindowSummary& s, uint64_t origin, 
         heldBlock == 0 ? "" : (BlockServes(heldBlock, s.window) ? " (serves this target)"
                                                                 : " (out of this target's reach)"),
         (unsigned long long)img.base, img.sizeOfImage,
-        img.valid ? (img.dynamicBase ? "yes" : "no") : "unknown (headers unreadable)");
+        img.valid ? (img.dynamicBase ? "yes" : "no") : "unknown (headers unreadable)", refused);
     return buf;
 }
 
