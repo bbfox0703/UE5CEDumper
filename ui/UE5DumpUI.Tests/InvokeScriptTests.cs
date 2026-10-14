@@ -2770,6 +2770,24 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void MemoryAllocWindow_WalkIsThrottledPerTarget()
+    {
+        // Each failing Live Funcs Start fails twice (EnsureProcessEventReady's automatic attempt, then the forced one),
+        // so an unthrottled window walk runs twice -- up to ~4 s under s_mhMutex, holding the pe_profile_start reply.
+        // LogTrampolineWindow skips a re-walk for the same target within a short window and says it did. Stark.cpp
+        // reaches no test target: pin the throttle.
+        var stark = MinHookGlue("Stark.cpp");
+        Assert.Contains("kWindowLogThrottleMs", stark, StringComparison.Ordinal);
+        var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {");
+        Assert.Contains("s_lastWindowLogTarget", log, StringComparison.Ordinal);
+        Assert.Contains("s_lastWindowLogMs", log, StringComparison.Ordinal);
+        int gate = log.IndexOf("kWindowLogThrottleMs", StringComparison.Ordinal);
+        int walk = log.IndexOf("WalkRegions(", StringComparison.Ordinal);
+        Assert.True(gate >= 0 && walk > gate, "the throttle must be decided before the (expensive) WalkRegions call");
+        Assert.Contains("return;", log[..walk], StringComparison.Ordinal);   // an early return skips the walk
+    }
+
+    [Fact]
     public void HookInstallLines_SayWhenAnAttemptWasForced()
     {
         // B24 stopped counting a forced attempt against the automatic budget, but its failure line still printed
