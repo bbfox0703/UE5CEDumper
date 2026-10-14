@@ -2750,6 +2750,13 @@ public class InvokeScriptTests
         Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi))", walk, StringComparison.Ordinal);
         Assert.Contains("reinterpret_cast<uint64_t>(mbi.AllocationBase)", walk, StringComparison.Ordinal);
         Assert.Contains("r.type           = mbi.Type;", walk, StringComparison.Ordinal);   // so the line can say who took the space
+        // The walk is bounded two ways, neither depending on the other: a time budget AND a region count. A review
+        // found that removing the deadline alone held s_mhMutex for ~157 s on a heap-filled window.
+        Assert.Contains("const uint64_t deadline = GetTickCount64() + kWindowWalkBudgetMs;", walk, StringComparison.Ordinal);
+        Assert.Contains("GetTickCount64() > deadline", walk, StringComparison.Ordinal);
+        Assert.Contains("map.size() >= kWindowWalkMaxRegions", walk, StringComparison.Ordinal);
+        Assert.Contains("kWindowWalkBudgetMs = 2000;", stark, StringComparison.Ordinal);
+        Assert.Contains("kWindowWalkMaxRegions = 200000;", stark, StringComparison.Ordinal);
     }
 
     [Fact]

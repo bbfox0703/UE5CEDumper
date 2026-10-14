@@ -348,6 +348,10 @@ static Lager::ImageLayout ReadMainImageLayout() {
 // through the window can be thousands of regions. The walk runs on a pipe thread the user is waiting on, so it stops
 // at this budget, and the summary then says its map is incomplete.
 static constexpr uint64_t kWindowWalkBudgetMs = 2000;
+// A SECOND bound, independent of the clock: the ±1 GB window holds at most ~2 GB / 4 KB regions, which would grow the
+// vector to ~16 MB. Cap the region count so memory is bounded even if the clock misbehaves (the deadline is the usual
+// stop; this is the backstop a review asked for after a deadline-removed mutant held s_mhMutex for ~157 s).
+static constexpr size_t kWindowWalkMaxRegions = 200000;
 
 // One failing Start fails twice (the automatic attempt, then the forced one), each walking the same window. Skip a
 // re-walk for the same target within this window so one Start costs at most one walk, not two held under s_mhMutex.
@@ -356,6 +360,7 @@ static constexpr uint64_t kWindowLogThrottleMs = 5000;
 // The regions VirtualQuery reports over [lo, endExclusive), in address order: the map Lager models MinHook's walks on.
 static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive) {
     std::vector<Lager::Region> map;
+    map.reserve(4096);
     const uint64_t deadline = GetTickCount64() + kWindowWalkBudgetMs;
     uint64_t addr = lo & ~static_cast<uint64_t>(0xFFF);
     while (addr < endExclusive) {
@@ -369,7 +374,7 @@ static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive
         r.type           = mbi.Type;   // MEM_PRIVATE / MEM_IMAGE / MEM_MAPPED -- who took the space
         map.push_back(r);
         const uint64_t next = r.base + r.size;
-        if (next <= addr || GetTickCount64() > deadline) break;
+        if (next <= addr || GetTickCount64() > deadline || map.size() >= kWindowWalkMaxRegions) break;
         addr = next;
     }
     return map;
