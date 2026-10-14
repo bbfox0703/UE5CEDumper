@@ -2705,6 +2705,52 @@ public class InvokeScriptTests
         Assert.DoesNotContain("s_originalPE", seh, StringComparison.Ordinal);                      // never the trampoline
     }
 
+    // [MH-PRERESERVE-PROXY] Stark's MinHook glue. No test target compiles Stark.cpp, Frieren.cpp or Heiter.cpp, so these
+    // pin their source with comments removed; the rules the glue calls are dll_helpers_test's (Test_Lager_*).
+    private static string MinHookGlue(string file) => string.Join('\n', DllSource(file).Split('\n').Select(l =>
+    {
+        int c = l.IndexOf("//", StringComparison.Ordinal);
+        return c >= 0 ? l[..c] : l;
+    }));
+
+    private static string MinHookGlueBody(string code, string signature)
+    {
+        int at = code.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(at >= 0, signature + " was not found -- re-point this pin");
+        int end = code.IndexOf("\n}", at, StringComparison.Ordinal);
+        Assert.True(end > at, signature + ": no closing brace at column 0");
+        return code[at..end];
+    }
+
+    [Fact]
+    public void HookAllocFailure_LogsTheWindowMinHookSearched()
+    {
+        // MH_CreateHook answers MH_ERROR_MEMORY_ALLOC and nothing more. On that answer Stark walks the window MinHook's
+        // GetMemoryBlock searched for ProcessEvent and logs Lager's summary of it: what is free, where a new block would
+        // go, what took the rest, and the main image with its ASLR bit.
+        var stark = MinHookGlue("Stark.cpp");
+        var install = MinHookGlueBody(stark, "bool InstallHook(uintptr_t processEventAddr) {");
+        int create = install.IndexOf("reinterpret_cast<LPVOID*>(&s_originalPE));", StringComparison.Ordinal);
+        int enable = install.IndexOf("status = MH_EnableHook(reinterpret_cast<LPVOID>(processEventAddr));", StringComparison.Ordinal);
+        Assert.True(create >= 0 && enable > create, "InstallHook's MH_CreateHook / MH_EnableHook pair not found");
+        Assert.Contains("if (status == MH_ERROR_MEMORY_ALLOC) LogTrampolineWindow(processEventAddr);",
+            install[create..enable], StringComparison.Ordinal);
+
+        var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target) {");
+        Assert.Contains("GetSystemInfo(&si);", log, StringComparison.Ordinal);
+        Assert.Contains("Lager::SearchWindow(target, appMin, appMax)", log, StringComparison.Ordinal);
+        // The walk spans every byte a block could occupy: up to the last block start plus the block.
+        Assert.Contains("WalkRegions(w.minAddr, w.maxAddr + Lager::kMemoryBlockSize)", log, StringComparison.Ordinal);
+        Assert.Contains("Lager::SummarizeWindow(map, target, appMin, appMax, si.dwAllocationGranularity)", log,
+            StringComparison.Ordinal);
+        Assert.Contains("Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), ", log,
+            StringComparison.Ordinal);
+
+        var walk = MinHookGlueBody(stark, "static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive) {");
+        Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi))", walk, StringComparison.Ordinal);
+        Assert.Contains("reinterpret_cast<uint64_t>(mbi.AllocationBase)", walk, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void TeleportTransports_PublishTheParentRelativeFlagAndNeverAZeroLanding()
     {

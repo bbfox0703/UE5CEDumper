@@ -46,6 +46,7 @@
 #include "../src/Voll.h"       // Pipe-accept capacity logging policy (OnCreateFailure/Success, [PIPEBUSY])
 #include "../src/Methode.h"    // NarrowForAnsiLoad (header-inline, pure) -- the CE-plugin inject path, [PATH-METHODE-NO8DOT3]
 #include "../src/Flamme.h"     // ShouldPublishAtomicWrite (constexpr, pure) — hint-cache publish gate
+#include "../src/Lager.h"      // MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY])
 
 #include <Windows.h>
 
@@ -10098,6 +10099,266 @@ static void Test_Serie_UE4NameIndexInBounds() {
 // Print the test about to run, when DLL_TEST_TRACE is set. build.ps1 sets it under
 // CI. Off locally so the ordinary run stays two lines.
 static bool g_trace = false;
+// ----- Lager: MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY]) ------------------------------
+//
+// MH_CreateHook reports MH_ERROR_MEMORY_ALLOC and nothing more, so the DLL summarises the window MinHook searched,
+// through this model of vendor/minhook/src/buffer.c. Every map here is a synthetic VirtualQuery walk; the numbers
+// are FINAL FANTASY RESONANCE DEMO's where the shape matters: a 474 MB image without ASLR at 0x140000000 and
+// ProcessEvent at image + 0x1592D00.
+
+namespace {
+
+constexpr uint64_t kLgAppMin   = 0x10000ull;
+constexpr uint64_t kLgAppMax   = 0x7FFFFFFEFFFFull;
+constexpr uint64_t kLgGran     = 0x10000ull;
+constexpr uint64_t kFfrsBase   = 0x140000000ull;
+constexpr uint64_t kFfrsSize   = 0x1DA00000ull;
+constexpr uint64_t kFfrsEnd    = kFfrsBase + kFfrsSize;
+constexpr uint64_t kFfrsPe     = kFfrsBase + 0x1592D00ull;
+constexpr uint64_t kFfrsEntry  = kFfrsBase + 0x1000ull;
+
+Lager::Region LgFree(uint64_t b, uint64_t e)                 { return {b, e - b, Lager::kMemFree, 0}; }
+Lager::Region LgCommit(uint64_t b, uint64_t e, uint64_t a)   { return {b, e - b, Lager::kMemCommit, a}; }
+Lager::Region LgReserve(uint64_t b, uint64_t e, uint64_t a)  { return {b, e - b, Lager::kMemReserve, a}; }
+
+// The image as one allocation of three regions (headers, code, data), the way VirtualQuery reports a mapped exe.
+void LgPushImage(std::vector<Lager::Region>& m) {
+    m.push_back(LgCommit(kFfrsBase, kFfrsBase + 0x1000, kFfrsBase));
+    m.push_back(LgCommit(kFfrsBase + 0x1000, kFfrsBase + 0x12000000, kFfrsBase));
+    m.push_back(LgCommit(kFfrsBase + 0x12000000, kFfrsEnd, kFfrsBase));
+}
+
+// At process start: nothing near the image.
+std::vector<Lager::Region> LgEmptyMap() {
+    std::vector<Lager::Region> m;
+    m.push_back(LgFree(kLgAppMin, kFfrsBase));
+    LgPushImage(m);
+    m.push_back(LgFree(kFfrsEnd, 0x7FF000000000ull));
+    return m;
+}
+
+// The heap grown through the whole +-1 GB window: allocations of 256 MB below the image and two above it.
+std::vector<Lager::Region> LgFullMap() {
+    std::vector<Lager::Region> m;
+    m.push_back(LgFree(kLgAppMin, 0xC0000000ull));
+    m.push_back(LgCommit(0xC0000000ull, 0x100000000ull, 0xC0000000ull));
+    for (uint64_t a = 0x100000000ull; a < kFfrsBase; a += 0x10000000ull)
+        m.push_back(LgCommit(a, a + 0x10000000ull, a));
+    LgPushImage(m);
+    m.push_back(LgCommit(kFfrsEnd, 0x170000000ull, kFfrsEnd));
+    m.push_back(LgReserve(0x170000000ull, 0x1C0000000ull, 0x170000000ull));
+    m.push_back(LgFree(0x1C0000000ull, 0x7FF000000000ull));
+    return m;
+}
+
+// The full map with the allocation at `allocBase` cut to `size`: the space it gave up is free.
+std::vector<Lager::Region> LgFullMapWithGap(uint64_t allocBase, uint64_t size) {
+    std::vector<Lager::Region> out;
+    for (const Lager::Region& r : LgFullMap()) {
+        if (r.base == allocBase) {
+            out.push_back(LgCommit(r.base, r.base + size, r.allocationBase));
+            out.push_back(LgFree(r.base + size, r.base + r.size));
+        } else {
+            out.push_back(r);
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+static void Test_Lager_SearchWindowMirrorsGetMemoryBlock() {
+    const Lager::Window w = Lager::SearchWindow(kFfrsPe, kLgAppMin, kLgAppMax);
+    EXPECT_EQ_U64("FFRS ProcessEvent: minAddr = origin - MAX_MEMORY_RANGE", w.minAddr, kFfrsPe - 0x40000000ull);
+    EXPECT_EQ_U64("FFRS ProcessEvent: maxAddr = origin + MAX_MEMORY_RANGE - (MEMORY_BLOCK_SIZE - 1)",
+                  w.maxAddr, kFfrsPe + 0x40000000ull - 0xFFFull);
+
+    // buffer.c narrows minAddr only when origin > MAX_MEMORY_RANGE: at exactly 1 GB the bound stays the app minimum.
+    EXPECT_EQ_U64("origin == MAX_MEMORY_RANGE keeps lpMinimumApplicationAddress",
+                  Lager::SearchWindow(0x40000000ull, kLgAppMin, kLgAppMax).minAddr, kLgAppMin);
+    EXPECT_EQ_U64("origin one past MAX_MEMORY_RANGE still keeps it (origin - RANGE = 1 < app min)",
+                  Lager::SearchWindow(0x40000001ull, kLgAppMin, kLgAppMax).minAddr, kLgAppMin);
+    EXPECT_EQ_U64("near the top: maxAddr = lpMaximumApplicationAddress - 0xFFF",
+                  Lager::SearchWindow(kLgAppMax - 0x1000, kLgAppMin, kLgAppMax).maxAddr, kLgAppMax - 0xFFFull);
+
+    // The reuse test is half-open: a block AT maxAddr is "too far".
+    EXPECT("a block at minAddr is reused",           Lager::BlockServes(w.minAddr, w));
+    EXPECT("a block one below minAddr is too far",  !Lager::BlockServes(w.minAddr - 1, w));
+    EXPECT("a block below maxAddr is reused",        Lager::BlockServes(w.maxAddr - 1, w));
+    EXPECT("a block AT maxAddr is too far",         !Lager::BlockServes(w.maxAddr, w));
+}
+
+static void Test_Lager_FindFreeRegionWalks() {
+    const auto empty = LgEmptyMap();
+    const Lager::Window w = Lager::SearchWindow(kFfrsPe, kLgAppMin, kLgAppMax);
+    // Down: the granule under ProcessEvent's is inside the image, so the walk jumps to the granule under the image's
+    // AllocationBase -- the first block lands 64 KB below the image.
+    EXPECT_EQ_U64("process start: FindPrevFreeRegion lands just below the image",
+                  Lager::FindPrevFreeRegion(empty, kFfrsPe, w.minAddr, kLgGran), kFfrsBase - kLgGran);
+    // Up: region by region to the image's end, rounded to a granule.
+    EXPECT_EQ_U64("process start: FindNextFreeRegion lands at the image's end",
+                  Lager::FindNextFreeRegion(empty, kFfrsPe, w.maxAddr, kLgGran), kFfrsEnd);
+    EXPECT_EQ_U64("process start: a new block goes below first",
+                  Lager::NewBlockAddress(empty, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran), kFfrsBase - kLgGran);
+
+    // The heap through the whole window: MH_ERROR_MEMORY_ALLOC.
+    const auto full = LgFullMap();
+    EXPECT_EQ_U64("full window: nothing below", Lager::FindPrevFreeRegion(full, kFfrsPe, w.minAddr, kLgGran), 0);
+    EXPECT_EQ_U64("full window: nothing above", Lager::FindNextFreeRegion(full, kFfrsPe, w.maxAddr, kLgGran), 0);
+    EXPECT_EQ_U64("full window: no new block", Lager::NewBlockAddress(full, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran), 0);
+
+    // A free tail that holds no granule-aligned address is no use to MinHook: the 0x120000000 allocation ends
+    // 44 KB short of the next one, and the walk steps past it.
+    const auto tail = LgFullMapWithGap(0x120000000ull, 0xFFF5000ull);
+    EXPECT("the tail map holds the free tail", Lager::QueryAt(tail, 0x12FFF5000ull) != nullptr &&
+                                               Lager::QueryAt(tail, 0x12FFF5000ull)->state == Lager::kMemFree);
+    EXPECT_EQ_U64("a sub-granule free tail is not a block", Lager::FindPrevFreeRegion(tail, kFfrsPe, w.minAddr, kLgGran), 0);
+
+    // One granule-aligned hole is: the allocation under it ends on the granule.
+    const auto hole = LgFullMapWithGap(0x120000000ull, 0xFFF0000ull);
+    EXPECT_EQ_U64("a granule-aligned hole is found", Lager::FindPrevFreeRegion(hole, kFfrsPe, w.minAddr, kLgGran),
+                  0x12FFF0000ull);
+
+    // FindNextFreeRegion rounds a region's END up to a granule: a free run that starts mid-granule is entered at
+    // the next granule, not at its own first page.
+    std::vector<Lager::Region> up;
+    up.push_back(LgFree(kLgAppMin, kFfrsBase));
+    LgPushImage(up);
+    up.push_back(LgCommit(kFfrsEnd, kFfrsEnd + 0x5000, kFfrsEnd));
+    up.push_back(LgFree(kFfrsEnd + 0x5000, 0x7FF000000000ull));
+    EXPECT_EQ_U64("FindNextFreeRegion enters a mid-granule free run at the next granule",
+                  Lager::FindNextFreeRegion(up, kFfrsPe, w.maxAddr, kLgGran), kFfrsEnd + kLgGran);
+
+    // A VirtualQuery that fails ends the walk: buffer.c breaks, it does not skip ahead.
+    std::vector<Lager::Region> gap;
+    LgPushImage(gap);
+    EXPECT_EQ_U64("an unmapped query ends FindPrevFreeRegion", Lager::FindPrevFreeRegion(gap, kFfrsPe, w.minAddr, kLgGran), 0);
+    EXPECT("QueryAt answers nullptr outside the map", Lager::QueryAt(gap, kFfrsBase - 1) == nullptr);
+    EXPECT("QueryAt finds the region holding an address", Lager::QueryAt(gap, kFfrsPe) == &gap[1]);
+}
+
+static void Test_Lager_SummarizeWindow() {
+    const auto full = LgFullMap();
+    const Lager::WindowSummary s = Lager::SummarizeWindow(full, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+    EXPECT("full: the map covers the window", s.covered);
+    EXPECT("full: no free region inside the window", s.freeRegions == 0 && s.freeBytes == 0);
+    EXPECT("full: nothing can start a block", s.blockableRegions == 0);
+    EXPECT_EQ_U64("full: no pick below", s.pickBelow, 0);
+    EXPECT_EQ_U64("full: no pick above", s.pickAbove, 0);
+    // Reserved: [0x170000000, 0x1C0000000) clipped at the span's end (maxAddr + one block).
+    EXPECT_EQ_U64("full: spanEnd = maxAddr + MEMORY_BLOCK_SIZE", s.spanEnd, kFfrsPe + 0x40000000ull + 1);
+    EXPECT_EQ_U64("full: reserved bytes, clipped", s.reservedBytes, s.spanEnd - 0x170000000ull);
+    EXPECT_EQ_U64("full: committed bytes, clipped",
+                  s.committedBytes, 0x170000000ull - (kFfrsPe - 0x40000000ull));
+
+    const auto hole = LgFullMapWithGap(0x120000000ull, 0xFFF0000ull);
+    const Lager::WindowSummary h = Lager::SummarizeWindow(hole, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+    EXPECT("hole: one free region, and it can start a block", h.freeRegions == 1 && h.blockableRegions == 1);
+    EXPECT_EQ_U64("hole: its bytes", h.freeBytes, 0x10000ull);
+    EXPECT_EQ_U64("hole: the largest free region is it", h.largestFreeBase, 0x12FFF0000ull);
+    EXPECT_EQ_U64("hole: FindPrevFreeRegion picks it", h.pickBelow, 0x12FFF0000ull);
+
+    const auto tail = LgFullMapWithGap(0x120000000ull, 0xFFF5000ull);
+    const Lager::WindowSummary t = Lager::SummarizeWindow(tail, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+    EXPECT("tail: free, but cannot start a block", t.freeRegions == 1 && t.blockableRegions == 0);
+
+    std::vector<Lager::Region> gap;
+    LgPushImage(gap);
+    EXPECT("a walk that stops inside the window is reported as incomplete",
+           !Lager::SummarizeWindow(gap, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran).covered);
+}
+
+// A PE32+ header in a buffer: MZ, e_lfanew 0x80, three sections.
+static std::vector<uint8_t> LgPeHeader(uint16_t magic, uint16_t dllChars, uint32_t entryRva, uint32_t sizeOfImage) {
+    std::vector<uint8_t> b(0x400, 0);
+    auto put16 = [&](size_t o, uint32_t v) { b[o] = (uint8_t)v; b[o + 1] = (uint8_t)(v >> 8); };
+    auto put32 = [&](size_t o, uint32_t v) { put16(o, v & 0xFFFF); put16(o + 2, v >> 16); };
+    put16(0, 0x5A4D);
+    put32(0x3C, 0x80);
+    put32(0x80, 0x00004550);
+    put16(0x80 + 4, 0x8664);
+    put16(0x80 + 6, 3);              // NumberOfSections
+    put16(0x80 + 20, 0xF0);          // SizeOfOptionalHeader
+    const size_t opt = 0x80 + 24;
+    put16(opt, magic);
+    put32(opt + 16, entryRva);
+    put32(opt + 56, sizeOfImage);
+    put16(opt + 70, dllChars);
+    const size_t table = opt + 0xF0;
+    struct S { uint32_t va, vs, raw, ch; } secs[3] = {
+        {0x1000,   0x12000000, 0x12000000, 0x60000020},   // code: CNT_CODE | MEM_EXECUTE | MEM_READ
+        {0x12001000, 0x100000, 0x100000,   0x40000040},   // data: read-only
+        {0x13000000, 0,        0x3000,     0xE0000020},   // a protector's RWX section, VirtualSize left 0
+    };
+    for (int i = 0; i < 3; ++i) {
+        put32(table + i * 40 + 8, secs[i].vs);
+        put32(table + i * 40 + 12, secs[i].va);
+        put32(table + i * 40 + 16, secs[i].raw);
+        put32(table + i * 40 + 36, secs[i].ch);
+    }
+    return b;
+}
+
+static void Test_Lager_ParseImageLayout() {
+    // FFRS shipped without DYNAMICBASE (0x8120: TS-aware, NX, high-entropy only).
+    const auto noAslr = LgPeHeader(0x20B, 0x8120, 0x1000, (uint32_t)kFfrsSize);
+    const Lager::ImageLayout a = Lager::ParseImageLayout(noAslr.data(), noAslr.size(), kFfrsBase);
+    EXPECT("a PE32+ header parses", a.valid);
+    EXPECT_EQ_U64("SizeOfImage", a.sizeOfImage, kFfrsSize);
+    EXPECT_EQ_U64("AddressOfEntryPoint", a.entryRva, 0x1000);
+    EXPECT("no DYNAMICBASE bit -> dynamicBase false", !a.dynamicBase);
+    EXPECT("three sections", a.sections.size() == 3);
+    EXPECT("section 3 keeps its zero VirtualSize and its raw size",
+           a.sections.size() == 3 && a.sections[2].virtualSize == 0 && a.sections[2].rawSize == 0x3000);
+
+    const auto aslr = LgPeHeader(0x20B, 0x8160, 0x1000, (uint32_t)kFfrsSize);
+    EXPECT("DYNAMICBASE bit -> dynamicBase true",
+           Lager::ParseImageLayout(aslr.data(), aslr.size(), kFfrsBase).dynamicBase);
+
+    // A short copy loses the sections that do not fit, never the header fields.
+    const size_t cut = 0x80 + 24 + 0xF0 + 40 + 39;
+    const Lager::ImageLayout s = Lager::ParseImageLayout(noAslr.data(), cut, kFfrsBase);
+    EXPECT("a short copy keeps the header", s.valid && s.sizeOfImage == kFfrsSize);
+    EXPECT("a short copy keeps only the whole section entries", s.sections.size() == 1);
+
+    const auto pe32 = LgPeHeader(0x10B, 0x8160, 0x1000, (uint32_t)kFfrsSize);
+    EXPECT("a PE32 (x86) header is refused", !Lager::ParseImageLayout(pe32.data(), pe32.size(), kFfrsBase).valid);
+    auto noMz = noAslr; noMz[0] = 0;
+    EXPECT("no MZ -> invalid", !Lager::ParseImageLayout(noMz.data(), noMz.size(), kFfrsBase).valid);
+    EXPECT("null bytes -> invalid", !Lager::ParseImageLayout(nullptr, 0x400, kFfrsBase).valid);
+}
+
+static void Test_Lager_FormatWindowSummary() {
+    const auto noAslr = LgPeHeader(0x20B, 0x8120, 0x1000, (uint32_t)kFfrsSize);
+    const Lager::ImageLayout img = Lager::ParseImageLayout(noAslr.data(), noAslr.size(), kFfrsBase);
+    const Lager::WindowSummary full =
+        Lager::SummarizeWindow(LgFullMap(), kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+    const std::string line = Lager::FormatWindowSummary(full, kFfrsPe, img, 0);
+    EXPECT("names the target", line.find("MinHook block window for 0x141592D00") != std::string::npos);
+    EXPECT("names the block-start bounds", line.find("[0x101592D00, 0x181591D01]") != std::string::npos);
+    EXPECT("both searches came back empty",
+           line.find("FindPrevFreeRegion -> none, FindNextFreeRegion -> none") != std::string::npos);
+    EXPECT("no held block", line.find("held block none;") != std::string::npos);
+    EXPECT("the image and its ASLR bit",
+           line.find("main image 0x140000000 + 0x1DA00000, DYNAMICBASE no") != std::string::npos);
+    EXPECT("a complete map says nothing about incompleteness", line.find("INCOMPLETE") == std::string::npos);
+
+    EXPECT("a held block in reach says so",
+           Lager::FormatWindowSummary(full, kFfrsPe, img, kFfrsBase - kLgGran).find(
+               "held block 0x13FFF0000 (serves this target)") != std::string::npos);
+    EXPECT("a held block out of reach says so",
+           Lager::FormatWindowSummary(full, kFfrsPe, img, 0x100000000ull).find(
+               "(out of this target's reach)") != std::string::npos);
+    std::vector<Lager::Region> gap;
+    LgPushImage(gap);
+    EXPECT("an incomplete map says so",
+           Lager::FormatWindowSummary(Lager::SummarizeWindow(gap, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran),
+                                      kFfrsPe, img, 0).find("INCOMPLETE") != std::string::npos);
+    EXPECT("unreadable headers say so",
+           Lager::FormatWindowSummary(full, kFfrsPe, Lager::ImageLayout{}, 0).find("DYNAMICBASE unknown")
+               != std::string::npos);
+}
+
 #define RUN(fn) do { if (g_trace) std::printf("[run] %s\n", #fn); fn(); } while (0)
 
 // [PATH-MODULE-NAME-UTF8] get_ce_pointer_info's ce_base was snprintf'd into char[128]: a long stem lost the closing
@@ -10566,6 +10827,13 @@ int main() {
     // [RELAUNCHPIPE-2026-08-19] a held pipe must be watched, not surrendered
     RUN(Test_Voll_DecideStart);
     RUN(Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway);
+
+    // [MH-PRERESERVE-PROXY] MinHook's trampoline-block search, modelled for the MH_ERROR_MEMORY_ALLOC diagnostic
+    RUN(Test_Lager_SearchWindowMirrorsGetMemoryBlock);
+    RUN(Test_Lager_FindFreeRegionWalks);
+    RUN(Test_Lager_SummarizeWindow);
+    RUN(Test_Lager_ParseImageLayout);
+    RUN(Test_Lager_FormatWindowSummary);
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

@@ -17,7 +17,7 @@ UE5CEDumper/
 │
 ├── dll/                            ← C++ DLL (injected into game process)
 │   ├── CMakeLists.txt              ← DLL build config (versioning, git hash, deps)
-│   └── src/                        ← 31 .cpp + 40 .h (40th: Methode.h, [PATH-METHODE-NO8DOT3]; Frieren-themed; see naming-convention.md)
+│   └── src/                        ← 31 .cpp + 41 .h (41st: Lager.h, [MH-PRERESERVE-PROXY]; Frieren-themed; see naming-convention.md)
 │       ├── Heiter.cpp              ← dllmain — DLL_PROCESS_ATTACH, AutoStartThreadProc
 │       ├── Methode.cpp             ← CEPlugin — CE plugin Type 5 main menu
 │       ├── Methode.h               ← CEPlugin pure helpers (NarrowForAnsiLoad), tested by dll_helpers_test
@@ -42,6 +42,7 @@ UE5CEDumper/
 │       ├── GraphPath.h             ← Forward-BFS shortest pointer chain (Locate in GWorld), under Aura::
 │       ├── Utf8Helpers.h           ← UTF-8 conversion leaf utilities
 │       ├── Stark.cpp / .h          ← GameThreadDispatch — MinHook ProcessEvent hook, game-thread queue
+│       ├── Lager.h                 ← TrampolineDepot — pure model of MinHook's trampoline-block search (buffer.c) + PE layout, for the MH_ERROR_MEMORY_ALLOC map
 │       ├── Wirbel.cpp / .h         ← Teleport — marker save/recall + cursor/POV/coord teleport (BugIt-style), build 1027+
 │       ├── Solitar.cpp / .h        ← GodMode — force AActor::bCanBeDamaged + re-assert worker (build 1251)
 │       ├── Laufen.cpp / .h         ← MovementTuning — CMC float knobs ×multiplier + re-assert worker (build ~1799)
