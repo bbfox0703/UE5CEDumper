@@ -27,6 +27,17 @@ builds ≤696 in
 
 -----
 
+## 2026-10-14 (build 3649) — the ProcessEvent hook no longer depends on free memory near the game `[MH-PRERESERVE-PROXY]`
+
+- **Live Funcs, Call Trace and game-thread calls no longer fail with "the trampoline could not be placed".** On
+  some games (FINAL FANTASY RESONANCE DEMO, The Adventures of Elliot) the hook on ProcessEvent sometimes failed the
+  first tries because no memory was free near the game's code. The DLL now keeps that memory from the moment the
+  game starts (through a proxy DLL) and uses it later. Checked live: with the memory deliberately exhausted the hook
+  still installed on the first try, where build 3648 failed; FINAL FANTASY RESONANCE DEMO hooked first time.
+- If the hook still cannot be placed, the log now says why: what holds the memory near the game, and whether it was
+  full or refused. A forced retry is labelled as forced in the log.
+- Tests: dll_core_test 1,280 checks and dll_helpers_test 3,568, 0 failures; C# 6,669 run, 0 failed; 36 gates.
+
 ## 2026-10-14 (build 3648, with 3647) — games that hide their engine version read UE 5.5 / 5.6; turning the experimental features off stops what they run; the Call Trace list keeps Time and Duration clickable; a batch of known issues fixed `[VER-MARKERS-PAST-504]` `[EXPOFF-ROUND3-PAUSED]` `[CT-FLOOR-208]`
 
 - **Games that strip their version now read their real UE 5.5 / 5.6.** When a game hides its engine version, the

@@ -311,7 +311,7 @@ section, no ASLR), as Elliot's and P3R's do -- the only three of the 37 UE exes 
   widen it to any 5.0-5.5 override on a 5.5 or 5.6 title), and the override flag stays set, so the badge reads e.g.
   UE 5.6 with the override mark. Since `79f636e8` init logs "User override = N overruled -- the structural markers
   above raise it to M". Should an override be exempt -- from every raise rung, or only the statistical 505 / 506?
-- ⬜ `[MH-PRERESERVE-PROXY]` (LOW, a proposal): FFRS's game-thread hook failed with `MH_ERROR_MEMORY_ALLOC` at the
+- ✅ `[MH-PRERESERVE-PROXY]` **BUILT 2026-10-14, build 3649; LIVE PASS** (LOW; closure below the row): FFRS's game-thread hook failed with `MH_ERROR_MEMORY_ALLOC` at the
   first two Live Funcs Starts (14:34:33, 14:34:48) and recovered at the third (14:35:31, "hook RECOVERED on attempt
   3", validated 1,620 hooks / 1,500 ms): the bounded retry of `[MHPOISON-STARVE-2026-09-07]` working on a real game
   for the first time, and the UI's `hook_detail` advice was the right one. Elliot is where this failure was first
@@ -325,6 +325,33 @@ section, no ASLR), as Elliot's and P3R's do -- the only three of the 37 UE exes 
   FFRS or Elliot: a `VirtualQuery` map of the window when the install fails. Also INFO: each failing Start logs
   "attempt N/8" twice -- the counted automatic attempt and the uncounted forced one (B24) print the same N; mark the
   second "forced". Effort **S-M**, risk **med** (the hook path).
+  ✅ **Built 2026-10-14** (dev `883941e3`..`63eeb57e`, 28 commits: the builder's 6, then 17 review findings fixed --
+  none refuted; 30 + review mutants killed; dll_helpers_test 3568, C# 6669, 36 gates). New module `Lager` (pure
+  model of vendored MinHook's `GetMemoryBlock` / `FindPrevFreeRegion` / `FindNextFreeRegion`, gated against the
+  submodule by `check_lager_vendor_sync.py`). (1) **The held block**: at the proxy's auto-start (process start, off
+  the loader lock) and ~1 s after an injection, MinHook is initialised and a hook is CREATED, never enabled, on the
+  main image's entry point (else an executable section start), so MinHook's 4 KB trampoline block is taken next to
+  the image while the window is free and kept for the process lifetime; `MH_CreateHook` without `MH_EnableHook`
+  never writes the target (hook.c / trampoline.c), and ProcessEvent's later hook reuses the block. (2) **The map**:
+  an `MH_ERROR_MEMORY_ALLOC` logs the window MinHook searched -- free regions, what can start a block, reserved /
+  committed, who holds it (private / image / mapped, the largest occupant), MinHook's two picks measured live, the
+  held block, the image and DYNAMICBASE -- bounded and throttled, and tells a full window from a VirtualAlloc refusal
+  (LastError). (3) The forced attempt's line says "forced attempt, not counted -- N/8 automatic attempt(s) used";
+  RECOVERED fires on any success after a failure. Not built: the out-of-process window-filling rig the design
+  proposed -- a safety classifier refused it twice; DumperTest's own `-DumperTestStarveVM` (reserves the window
+  in-process at world begin play) serves instead.
+  ✅ **Live 2026-10-14, build 3649:** (A) DumperTest Shipping `-DumperTestStarveVM`, injected late: "no MinHook
+  trampoline block held (... MH_ERROR_MEMORY_ALLOC)", then the install failed and the map read 2 free regions, 0 that
+  can start a block, the space taken by private memory (largest occupant ~1 GB), both picks none, 129 regions walked
+  in 0 ms, the second walk throttled; the forced line read as above. (B) The same starvation with the 3649
+  version.dll proxy in the package: the block held at process start 64 KB under the image, Live Funcs Start
+  installed ProcessEvent's hook first time, its trampoline in the held block, "the held block was NEEDED -- MinHook
+  could not have placed a fresh block". (C) Control, the same with the 3648 proxy: `MH_ERROR_MEMORY_ALLOC`, no hook
+  (and the old duplicate "attempt 1/8"). The proxy was then taken out of the DumperTest package (Recycle Bin). (D)
+  FFRS through its dxgi proxy: the holder took the protector exe's entry point (0x14F647D20), block 0x13FFF0000,
+  DYNAMICBASE no; the hook installed first time in the held block, but "a fresh block was also available this time
+  -- the window was not starved": on this run the heap-growth hypothesis was neither reproduced nor refuted, and if
+  the window fills on a later run the log now says so and the held block covers it.
 
 ## 🐞 Maintainer report 2026-10-08 — IS Defense (UE 4.10) is not refused as unsupported `[UE410-2026-10-08]`
 
