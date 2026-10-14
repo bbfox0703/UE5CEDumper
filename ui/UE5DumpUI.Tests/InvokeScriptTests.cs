@@ -2767,6 +2767,23 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void HookRecoveredLine_DoesNotDependOnTheAutomaticCounter()
+    {
+        // The "hook RECOVERED" line used to be gated on `attempts > 1`, the AUTOMATIC counter. A forced attempt does
+        // not spend that counter (B24), and a recovery after the 5 s cooldown skipped the automatic attempt, so the
+        // FFRS pattern (two Starts fail, the third succeeds) could succeed with attempts <= 1 and log no RECOVERED
+        // line. Gate it on a "last install attempt failed" flag instead, set on any failed attempt and cleared on
+        // success, so a recovery is logged however it was reached. Frieren.cpp reaches no test target: pin the source.
+        var frieren = MinHookGlue("Frieren.cpp");
+        Assert.Contains("s_lastInstallFailed", frieren, StringComparison.Ordinal);
+        var body = MinHookGlueBody(frieren, "static void TryInstallGameThreadHook(bool force = false) {");
+        Assert.Contains("s_lastInstallFailed.store(true", body, StringComparison.Ordinal);      // set on a failed attempt
+        Assert.Contains("s_lastInstallFailed.exchange(false", body, StringComparison.Ordinal);  // gates RECOVERED, clears it
+        Assert.Contains("hook RECOVERED on %s", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("if (attempts > 1)", body, StringComparison.Ordinal);             // the automatic-counter gate is gone
+    }
+
+    [Fact]
     public void HeldBlock_IsTakenAtAutoStart_AndNeverEnabled()
     {
         // The holder: a MinHook hook created early on a target inside the main image and never enabled, so its block
