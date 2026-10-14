@@ -335,6 +335,10 @@ static Lager::ImageLayout ReadMainImageLayout() {
 // at this budget, and the summary then says its map is incomplete.
 static constexpr uint64_t kWindowWalkBudgetMs = 2000;
 
+// One failing Start fails twice (the automatic attempt, then the forced one), each walking the same window. Skip a
+// re-walk for the same target within this window so one Start costs at most one walk, not two held under s_mhMutex.
+static constexpr uint64_t kWindowLogThrottleMs = 5000;
+
 // The regions VirtualQuery reports over [lo, endExclusive), in address order: the map Lager models MinHook's walks on.
 static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive) {
     std::vector<Lager::Region> map;
@@ -362,6 +366,19 @@ static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive
 // after MH_CreateHook: when the window still had room, it is what distinguishes a VirtualAlloc/heap refusal from a
 // full window.
 static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {
+    // Throttle: a Start fails twice and would walk twice. Called only from InstallHook, which holds s_mhMutex, so
+    // this static state needs no lock of its own.
+    static uintptr_t s_lastWindowLogTarget = 0;
+    static uint64_t  s_lastWindowLogMs     = 0;
+    const uint64_t nowMs = GetTickCount64();
+    if (target == s_lastWindowLogTarget && nowMs - s_lastWindowLogMs < kWindowLogThrottleMs) {
+        LOG_WARN("GameThreadDispatch: MinHook block window for 0x%llX not re-walked -- its map was logged %llu ms ago",
+                 (unsigned long long)target, (unsigned long long)(nowMs - s_lastWindowLogMs));
+        return;
+    }
+    s_lastWindowLogTarget = target;
+    s_lastWindowLogMs     = nowMs;
+
     SYSTEM_INFO si{};
     GetSystemInfo(&si);
     const uint64_t appMin = reinterpret_cast<uint64_t>(si.lpMinimumApplicationAddress);
