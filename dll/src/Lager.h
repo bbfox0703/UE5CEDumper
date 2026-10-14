@@ -365,9 +365,19 @@ inline bool ProtectIsReadableCode(uint32_t protect) {
            (protect & (kPageExecuteRead | kPageExecuteReadWrite | kPageExecuteWriteCopy)) != 0;
 }
 
-/// at / end: the pages holding the candidate and its 32nd byte (CreateTrampolineFunction decodes forward from the
-/// target); before: the page holding target - 5, which MinHook reads only when its IsExecutableAddress calls it
-/// executable (the hot-patch path).
+// How far past a holder target MinHook reads, with no SEH of its own. CreateTrampolineFunction decodes the prologue
+// instruction by instruction until the bytes copied reach sizeof(JMP_REL) == 5; the LAST instruction it disassembles
+// therefore starts at an offset of at most 4 + 15 (the longest x86-64 instruction can precede it) = 19, and hde64
+// then reads up to ~33 bytes of THAT instruction -- up to 16 legacy prefixes, a REX byte, a 1-2 byte opcode, ModRM,
+// SIB, a 4-byte displacement and an 8-byte immediate -- before it caps the reported length at 15. 19 + 33 = 52;
+// rounded up to a tidy 64 for margin. HolderCandidateSafe queries the page of target + kHolderReadSpan - 1 and
+// SEH-probes this many bytes, so a candidate whose decode reach crosses into an unreadable page is refused, not
+// faulted on inside MinHook's spin lock.
+constexpr uint64_t kHolderReadSpan = 64;
+
+/// at / end: the pages holding the candidate and the last byte MinHook can decode (target + kHolderReadSpan - 1;
+/// CreateTrampolineFunction decodes forward from the target); before: the page holding target - 5, which MinHook
+/// reads only when its IsExecutableAddress calls it executable (the hot-patch path).
 inline bool HolderCandidateReadable(uint32_t stateAt, uint32_t protectAt, uint32_t stateEnd, uint32_t protectEnd,
                                     uint32_t stateBefore, uint32_t protectBefore) {
     if (stateAt != kMemCommit || !ProtectIsReadableCode(protectAt)) return false;

@@ -394,18 +394,19 @@ static bool EnsureMinHookLocked() {
 static void HolderDetour() {}
 
 // May MinHook read `target`? It reads a hook target with no SEH, inside its spin lock, so a fault there would end
-// the game and a caught one would leave the lock taken for every later MinHook call. Lager decides from the page
+// the game and a caught one would leave the lock taken for every later MinHook call. It decodes past the prologue,
+// so the guard covers target .. target + kHolderReadSpan - 1 (Lager derives the span). Lager decides from the page
 // protections; the SEH copy then proves the bytes are really there.
 static bool HolderCandidateSafe(uintptr_t target) {
     MEMORY_BASIC_INFORMATION at{}, end{}, before{};
     if (!VirtualQuery(reinterpret_cast<LPCVOID>(target), &at, sizeof(at)) ||
-        !VirtualQuery(reinterpret_cast<LPCVOID>(target + 31), &end, sizeof(end)) ||
+        !VirtualQuery(reinterpret_cast<LPCVOID>(target + Lager::kHolderReadSpan - 1), &end, sizeof(end)) ||
         !VirtualQuery(reinterpret_cast<LPCVOID>(target - 5), &before, sizeof(before))) {
         return false;
     }
     if (!Lager::HolderCandidateReadable(at.State, at.Protect, end.State, end.Protect, before.State, before.Protect))
         return false;
-    uint8_t probe[32];
+    uint8_t probe[Lager::kHolderReadSpan];
     return CopyBytesSEH(reinterpret_cast<const void*>(target), probe, sizeof(probe));
 }
 
