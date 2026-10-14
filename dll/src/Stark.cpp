@@ -319,15 +319,27 @@ static bool CopyBytesSEH(const void* src, void* dst, size_t len) {
     return true;
 }
 
-// The main image's PE layout, read from its mapped headers. A header page that cannot be read gives an invalid
-// layout, which the summary reports as unknown rather than guessing.
+// A committed, readable, non-guarded page -- the only header we will touch. A PAGE_GUARD (or PAGE_NOACCESS) header is
+// an anti-dump trick; reading it would consume the guard and wake a protector's handler, so we leave it alone.
+static bool PageReadableNoGuard(const MEMORY_BASIC_INFORMATION& mbi) {
+    if (mbi.State != MEM_COMMIT || (mbi.Protect & PAGE_GUARD)) return false;
+    const DWORD readable = PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY |
+                           PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    return (mbi.Protect & readable) != 0;
+}
+
+// The main image's PE layout, read from its mapped headers. The header page is QUERIED before it is copied: in proxy
+// mode this runs at every process start, before the game's init, so a guarded/uncommitted header must give an invalid
+// (unknown) layout rather than being read -- the summary then reports unknown instead of guessing.
 static Lager::ImageLayout ReadMainImageLayout() {
     const auto* base = reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr));
+    Lager::ImageLayout unknown;
+    unknown.base = reinterpret_cast<uint64_t>(base);
+    MEMORY_BASIC_INFORMATION hdrMbi{};
     uint8_t hdr[0x1000];
-    if (!base || !CopyBytesSEH(base, hdr, sizeof(hdr))) {
-        Lager::ImageLayout img;
-        img.base = reinterpret_cast<uint64_t>(base);
-        return img;
+    if (!base || !VirtualQuery(base, &hdrMbi, sizeof(hdrMbi)) || !PageReadableNoGuard(hdrMbi) ||
+        !CopyBytesSEH(base, hdr, sizeof(hdr))) {
+        return unknown;
     }
     return Lager::ParseImageLayout(hdr, sizeof(hdr), reinterpret_cast<uint64_t>(base));
 }

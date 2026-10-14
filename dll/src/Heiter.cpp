@@ -117,11 +117,13 @@ static void AutoStartBody()
         }
     }
 
-    LOG_INFO("DllMain ProxyStart: proxy DLL mode — starting pipe server only (no scan)");
+    LOG_INFO("DllMain ProxyStart: proxy DLL mode — holding a MinHook trampoline block, then starting the pipe "
+             "server (no scan)");
     g_invokeMailbox.initState = Mimic::INIT_RUNNING;
 
     // [MH-PRERESERVE-PROXY] First, while the address space around the main image is still empty: a proxy is
-    // loaded at process start, long before anything asks for the ProcessEvent hook.
+    // loaded at process start, long before anything asks for the ProcessEvent hook. This initialises MinHook and
+    // takes (never enables) one hook inside the main image to hold its trampoline block for the process lifetime.
     Stark::HoldTrampolineBlock();
 
     // Brief delay for game to finish early init (avoid pipe creation during process startup)

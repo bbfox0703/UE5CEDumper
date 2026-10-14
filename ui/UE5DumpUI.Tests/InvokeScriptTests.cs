@@ -2799,10 +2799,14 @@ public class InvokeScriptTests
         var stark = MinHookGlue("Stark.cpp");
         var body = MinHookGlueBody(stark, "static Lager::ImageLayout ReadMainImageLayout() {");
         int query = body.IndexOf("VirtualQuery(base", StringComparison.Ordinal);
+        int gate = body.IndexOf("PageReadableNoGuard(hdrMbi)", StringComparison.Ordinal);
         int copy = body.IndexOf("CopyBytesSEH(base, hdr, sizeof(hdr))", StringComparison.Ordinal);
-        Assert.True(query >= 0 && copy > query, "the header page must be queried before it is copied");
-        Assert.Contains("PAGE_GUARD", body, StringComparison.Ordinal);                 // a guarded header is refused, not consumed
-        Assert.Contains("MEM_COMMIT", body, StringComparison.Ordinal);
+        Assert.True(query >= 0 && gate > query && copy > gate,
+            "the header page must be queried, then checked readable/non-guarded, before it is copied");
+        // The readability helper refuses a guarded or uncommitted page.
+        var guard = MinHookGlueBody(stark, "static bool PageReadableNoGuard(const MEMORY_BASIC_INFORMATION& mbi) {");
+        Assert.Contains("PAGE_GUARD", guard, StringComparison.Ordinal);
+        Assert.Contains("MEM_COMMIT", guard, StringComparison.Ordinal);
     }
 
     [Fact]
