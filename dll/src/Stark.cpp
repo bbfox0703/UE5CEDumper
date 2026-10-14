@@ -85,8 +85,11 @@ static std::atomic<bool> s_hookActive{false};
 static std::atomic<bool> s_mhInitialized{false};
 static uintptr_t s_hookedAddr = 0;
 
-// Every MinHook call Stark makes runs under this one mutex: InstallHook's check-then-create and the block holder
-// must not interleave (audit #3: two MH_CreateHook calls racing on one target corrupt MinHook's tables).
+// Every MinHook call Stark makes runs under this one mutex. It does NOT guard MinHook's own tables -- every MH_* call
+// already holds MinHook's spin lock, and a second MH_CreateHook on one target simply returns MH_ERROR_ALREADY_CREATED.
+// What it guards is STARK's state and its check-then-act: s_originalPE / s_hookedAddr / s_heldTarget / s_heldBlock and
+// the "step the holder aside if ProcessEvent asks for its address" sequence, which InstallHook and the block holder
+// must not interleave (audit #3).
 static std::mutex s_mhMutex;
 
 // [MH-PRERESERVE-PROXY] The held trampoline block (HoldTrampolineBlock). Written under s_mhMutex.
@@ -483,12 +486,14 @@ void HoldTrampolineBlock() {
 }
 
 bool InstallHook(uintptr_t processEventAddr) {
-    // Serialize the whole check-then-MH_CreateHook/MH_EnableHook sequence. This is
-    // a public API and the Frieren-side call_once only covers the game-thread
-    // dispatch path — a concurrent (or future) caller must never race two
-    // MH_CreateHook calls on the same target, which can corrupt MinHook's internal
-    // tables (audit #3). A second caller blocks here, then hits the s_hookActive /
-    // s_hookedAddr fast-paths below and no-ops. The block holder takes the same mutex.
+    // Serialize the whole check-then-MH_CreateHook/MH_EnableHook sequence. Not for MinHook's
+    // sake -- its spin lock guards its own tables and a duplicate create returns
+    // MH_ERROR_ALREADY_CREATED -- but because this reads and writes Stark's own state
+    // (s_originalPE / s_hookedAddr / s_heldTarget / s_heldBlock) and the holder step-aside,
+    // and the Frieren-side call_once only covers the game-thread dispatch path, so a concurrent
+    // (or future) public caller must still see a consistent view (audit #3). A second caller
+    // blocks here, then hits the s_hookActive / s_hookedAddr fast-paths below and no-ops. The
+    // block holder takes the same mutex.
     std::lock_guard<std::mutex> lock(s_mhMutex);
 
     if (s_hookActive.load()) {
