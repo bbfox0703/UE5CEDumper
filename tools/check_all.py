@@ -219,6 +219,15 @@ GATES = [
      "off -- which is why audit #5 G12 found it late and why its own fix missed a third "
      "writer. Run 'py tools/check_property_family.py --list'", False),
 
+    # [MH-PRERESERVE-PROXY] dll/src/Lager.h is a pure transcription of vendor/minhook's buffer.c; a submodule bump that
+    # moved a walk or a constant would leave the model -- and every live "serves/covers" verdict -- silently wrong.
+    ("check_lager_vendor_sync",
+     ["tools/check_lager_vendor_sync.py"],
+     "vendor/minhook moved out of sync with dll/src/Lager.h: a block/range/slot constant or one of the "
+     "FindPrev/FindNext/GetMemoryBlock walks changed, and Lager.h still models the old MinHook. Re-verify Lager.h "
+     "(and its dll_helpers_test cases), then update the constant / GOLDEN it names. Run "
+     "'py tools/check_lager_vendor_sync.py --list'", False),
+
     ("check_ce_untick_placement",
      ["tools/check_ce_untick_placement.py"],
      "a CE Lua bail-out unticks its record with an IMMEDIATE 'memrec.Active = false' "

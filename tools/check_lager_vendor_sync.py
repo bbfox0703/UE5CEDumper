@@ -53,7 +53,7 @@ WALKS = (
 
 # sha256 over the comment-stripped, whitespace-normalised bodies of WALKS, in order. Update ONLY after re-verifying
 # Lager.h against the new MinHook (see "WHEN IT FIRES").
-GOLDEN = "__PLACEHOLDER__"
+GOLDEN = "35ddbd82648539e49de402510233d3e4bb6e12ac3a0da3d4f0a2a593e4f2b751"
 
 
 def strip_comments(text: str) -> str:
