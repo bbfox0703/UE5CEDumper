@@ -2789,6 +2789,23 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void MainImageHeaderRead_QueriesThePageBeforeCopyingIt()
+    {
+        // In proxy mode the holder runs at every process start, before the game's init -- including launches where
+        // Live Funcs is never opened. ReadMainImageLayout copies the 4 KB header page; a protector that PAGE_GUARDs its
+        // header to detect dumpers would have the guard consumed and its vectored handler see the read. Query the page
+        // first and skip the copy unless it is committed and readable with no PAGE_GUARD, reporting an unknown layout
+        // instead. Stark.cpp reaches no test target: pin the guard.
+        var stark = MinHookGlue("Stark.cpp");
+        var body = MinHookGlueBody(stark, "static Lager::ImageLayout ReadMainImageLayout() {");
+        int query = body.IndexOf("VirtualQuery(base", StringComparison.Ordinal);
+        int copy = body.IndexOf("CopyBytesSEH(base, hdr, sizeof(hdr))", StringComparison.Ordinal);
+        Assert.True(query >= 0 && copy > query, "the header page must be queried before it is copied");
+        Assert.Contains("PAGE_GUARD", body, StringComparison.Ordinal);                 // a guarded header is refused, not consumed
+        Assert.Contains("MEM_COMMIT", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void HookInstallLines_SayWhenAnAttemptWasForced()
     {
         // B24 stopped counting a forced attempt against the automatic budget, but its failure line still printed
