@@ -1012,7 +1012,16 @@ source and editor are installed for when they are needed.
   Connect -> the prime read the three states, then `fly_set enable:false`, `teardownOwed` false; (8) a traced Stop
   (1,488 records), System, untick -> `pe_trace_release`, "trace buffer released"; re-ticked, Live Funcs offers no
   trace and no "Trace: N records"; (10) after Call Trace was opened the greyed box's tooltip read the session-lock
-  text. Not run: (2) no menu without a pawn on DumperTest, (4) its pawn always has the meter, (6), (7), (9).
+  text. ✅ **The rest, the same day -- steps 2, 4, 6, 7 and 9 PASS, so all ten have run** (no program change: a pawn
+  destroyed by a teleport below KillZ, `suspend.py`, and `call_export.py --arg` (`5952a1c3`) for a CE-style start):
+  (2, the MED) a CE-style Fly on, the pawn destroyed -> the Fly card "Unavailable", `fly_get_state` active with no
+  CMC; untick -> `fly_set enable:false`, "Fly: DISABLED"; (4) Detect, the pawn destroyed and collected, Hold @0 ->
+  amber `Armed @0`; untick -> `reset_field`, Keep Foreground last; (6) Keep Foreground on, the game suspended, untick
+  -> the OFF sent and never answered, the game killed -> `teardownOwed` stayed true; a fresh game and a connect paid
+  it (false); (7) features off, nothing owed, `UE5_SetFly(1)` through the export, then a connect -> only
+  `fly_get_state`, no `fly_set`, the flight kept; (9) a traced recording, the game suspended, System and untick,
+  resumed -> the Stop's reply landed and `pe_trace_release` went out in the same millisecond, "trace buffer released".
+  Seen with it: after a reconnect with no pawn the Stealth card reads Unknown and leaves its job alone, by design.
 
 -----
 
