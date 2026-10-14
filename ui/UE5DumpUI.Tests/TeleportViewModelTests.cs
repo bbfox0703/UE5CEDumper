@@ -257,6 +257,37 @@ public class TeleportViewModelTests
         }
     }
 
+    /// <summary>RegisterSpecific as Win32 RegisterHotKey answers it: a combo is refused while a registration holds it,
+    /// ours included, or while another app does (<see cref="Taken"/>), and is free again once its registration is
+    /// disposed. <see cref="Live"/> is what is registered now, in registration order. The cursor hotkey claims the
+    /// ladder's first rung, Ctrl+F8, the same way.</summary>
+    private sealed class OsHotkeyService : IGlobalHotkeyService
+    {
+        public HashSet<(uint Mods, uint Vk)> Taken { get; } = new();
+        public List<(uint Mods, uint Vk)> Live { get; } = new();
+        public IGlobalHotkeyRegistration? RegisterCursorHotkey(Action onPressed)
+            => RegisterSpecific(HotkeyModifiers.Control, 0x77, "Ctrl+F8", onPressed);
+        public IGlobalHotkeyRegistration? RegisterSpecific(uint modifiers, uint vk, string label, Action onPressed)
+        {
+            var combo = (modifiers, vk);
+            if (Taken.Contains(combo) || Live.Contains(combo)) return null;
+            Live.Add(combo);
+            return new Registration(this, combo, label);
+        }
+        private sealed class Registration(OsHotkeyService owner, (uint, uint) combo, string label)
+            : IGlobalHotkeyRegistration
+        {
+            private bool _disposed;
+            public string Label => label;
+            public void Dispose()
+            {
+                if (_disposed) return;
+                _disposed = true;
+                owner.Live.Remove(combo);
+            }
+        }
+    }
+
     /// <summary>Every RegisterSpecific fails (combo held by another app) — models
     /// the "saved hotkey is taken at startup" case.</summary>
     private sealed class FailingHotkeyService : IGlobalHotkeyService
@@ -274,8 +305,15 @@ public class TeleportViewModelTests
         public bool IsEnabled
         {
             get => _enabled;
-            set { if (_enabled == value) return; _enabled = value; Changed?.Invoke(this, EventArgs.Empty); }
+            set
+            {
+                if (_enabled == value) return;
+                _enabled = value;
+                TeardownOwed = !value;   // as the app's gate: an untick owes a teardown, a tick owes none
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
         }
+        public bool TeardownOwed { get; set; }
         public int SnapshotQuotaMb { get; set; } = 1024;
         public bool IsLocked => false;
         public void Lock() { }
@@ -740,8 +778,10 @@ public class TeleportViewModelTests
     }
 
     [Fact]
-    public async Task HoldStealth_zero_held_shows_not_found()
+    public async Task HoldStealth_zero_held_shows_armed()
     {
+        // [EXPOFF-ROUND3-PAUSED] Held 0 with code 0 is a job Solide KEPT: it applies as soon as an instance spawns.
+        // This read "Not found" and "Hold failed" while the DLL forced the meter on the next spawn.
         var fake = new FakeDumpService
         {
             NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "C", FieldName = "F" } },
@@ -753,7 +793,27 @@ public class TeleportViewModelTests
         await vm.DetectStealthMeterCommand.ExecuteAsync(null);
         await vm.HoldStealthCommand.ExecuteAsync(null);
 
+        Assert.Equal("Armed @0", vm.StealthState);
+        Assert.DoesNotContain("Hold failed", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task HoldStealth_refused_with_nothing_armed_shows_not_found()
+    {
+        // A negative code on a first hold: Solide dropped the job it refused, so nothing is armed.
+        var fake = new FakeDumpService
+        {
+            NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "C", FieldName = "F" } },
+            NextForce = new() { Held = 0, Resolved = false, Code = -3 },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        await vm.HoldStealthCommand.ExecuteAsync(null);
+
         Assert.Equal("Not found", vm.StealthState);
+        Assert.Contains("DLL error -3", vm.StatusText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2030,6 +2090,63 @@ public class TeleportViewModelTests
         Assert.False(vm.HasHotkeyWarning);
     }
 
+    [Fact]
+    public void A_combo_taken_at_startup_stays_saved_when_another_row_is_rebound_or_cleared()
+    {
+        // A combo another app holds this launch may be free the next: the row keeps it, flagged, and so must the file.
+        // Every re-bind or clear of ANY row rewrites the file from the persisted set, so a combo left out of that set
+        // was erased by the first one.
+        var platform = new FakePlatform();
+        new TeleportHotkeyStore(platform).Save(new Dictionary<string, TeleportHotkeyBinding>
+        {
+            ["recall2"] = new TeleportHotkeyBinding(HotkeyModifiers.Control, 0x75),   // Ctrl+F6
+        });
+        var hk = new OsHotkeyService();
+        hk.Taken.Add((HotkeyModifiers.Control, 0x75));   // held by another app this launch
+        var vm = new TeleportViewModel(new FakeDumpService(), new NoopLogger(), platform,
+            aobMaker: null, globalHotkeys: hk);
+        var recall2 = vm.HotkeyRows.First(r => r.ActionId == "recall2");
+        Assert.True(recall2.Conflicted);
+
+        var save0 = BindSave0ToF5(vm);
+        Assert.Equal(new TeleportHotkeyBinding(HotkeyModifiers.Control, 0x75),
+            new TeleportHotkeyStore(platform).Load().GetValueOrDefault("recall2"));
+        vm.ClearHotkeyCommand.Execute(save0);
+
+        var saved = new TeleportHotkeyStore(platform).Load();
+        Assert.Equal(new TeleportHotkeyBinding(HotkeyModifiers.Control, 0x75), saved.GetValueOrDefault("recall2"));
+        Assert.False(saved.ContainsKey("save0"));
+        Assert.True(recall2.Conflicted);                  // still flagged: nothing has registered it
+        Assert.Equal("Ctrl+F6", recall2.Label);
+    }
+
+    [Fact]
+    public async Task An_experimental_combo_taken_at_startup_is_tried_again_when_the_box_is_ticked_again()
+    {
+        // Ticking the box registers the experimental rows' saved combos; one taken at startup is a saved combo too.
+        var platform = new FakePlatform();
+        new TeleportHotkeyStore(platform).Save(new Dictionary<string, TeleportHotkeyBinding>
+        {
+            ["foreground_off"] = new TeleportHotkeyBinding(HotkeyModifiers.Control, 0x75),   // Ctrl+F6
+        });
+        var hk = new OsHotkeyService();
+        hk.Taken.Add((HotkeyModifiers.Control, 0x75));
+        var gate = new FakeExperimentalGate(enabled: true);
+        var vm = new TeleportViewModel(new FakeDumpService(), new NoopLogger(), platform,
+            aobMaker: null, globalHotkeys: hk, experimentalGate: gate);
+        var row = vm.ExperimentalHotkeyRows.First(r => r.ActionId == "foreground_off");
+        Assert.True(row.Conflicted);
+
+        gate.IsEnabled = false;
+        await vm.ExperimentalTeardown;
+        hk.Taken.Clear();                                 // the other app let it go
+        gate.IsEnabled = true;
+
+        Assert.Equal(new[] { (HotkeyModifiers.Control, 0x75u) }, hk.Live);
+        Assert.False(row.Conflicted);
+        Assert.Equal("Ctrl+F6", row.Label);
+    }
+
     // ── Experimental gating (Keep Foreground / Fly / Standalone trainer) ──
 
     [Fact]
@@ -2468,6 +2585,140 @@ public class TeleportViewModelTests
 
         vm.ClearHotkeyCommand.Execute(row);
         Assert.False(row.HasBinding);
+    }
+
+    // ── [HOTKEY-REBIND-DEAD] a re-bind the OS refuses leaves the row's hotkey as it was ──
+
+    /// <summary>F5 bound to save0 through the capture, as a user binds it: VK_F5 0x74, no modifier.</summary>
+    private static TeleportHotkeyRow BindSave0ToF5(TeleportViewModel vm)
+    {
+        var row = vm.HotkeyRows.First(r => r.ActionId == "save0");
+        vm.BeginCaptureCommand.Execute(row);
+        Assert.True(vm.ApplyCapturedKey(Avalonia.Input.Key.F5, Avalonia.Input.KeyModifiers.None));
+        Assert.Equal("F5", row.Label);
+        return row;
+    }
+
+    [Fact]
+    public void Rebinding_to_a_combo_another_app_holds_keeps_the_old_hotkey_live()
+    {
+        var hk = new OsHotkeyService();
+        var vm = CreateVm(new FakeDumpService(), out var platform, hk);
+        var row = BindSave0ToF5(vm);
+        hk.Taken.Add((HotkeyModifiers.Control, 0x76));   // Ctrl+F7, held by another app
+
+        vm.BeginCaptureCommand.Execute(row);
+        bool handled = vm.ApplyCapturedKey(Avalonia.Input.Key.F7, Avalonia.Input.KeyModifiers.Control);
+
+        Assert.True(handled);
+        Assert.False(vm.IsCapturingHotkey);
+        Assert.Equal(new[] { (0u, 0x74u) }, hk.Live);    // F5 still registered: the row's key still fires
+        Assert.Equal("F5", row.Label);
+        Assert.False(row.Conflicted);
+        Assert.False(vm.HasHotkeyWarning);
+        Assert.Contains("'Ctrl+F7' is already in use by another app", vm.StatusText);
+        Assert.Contains("keeps F5", vm.StatusText);
+        Assert.Equal(new TeleportHotkeyBinding(0, 0x74), new TeleportHotkeyStore(platform).Load()["save0"]);
+    }
+
+    [Fact]
+    public void Rebinding_to_a_combo_another_row_holds_keeps_both_rows_live()
+    {
+        var hk = new OsHotkeyService();
+        var vm = CreateVm(new FakeDumpService(), out _, hk);
+        BindSave0ToF5(vm);
+        var recall = vm.HotkeyRows.First(r => r.ActionId == "recall0");
+        vm.BeginCaptureCommand.Execute(recall);
+        vm.ApplyCapturedKey(Avalonia.Input.Key.F6, Avalonia.Input.KeyModifiers.None);
+
+        vm.BeginCaptureCommand.Execute(recall);
+        vm.ApplyCapturedKey(Avalonia.Input.Key.F5, Avalonia.Input.KeyModifiers.None);   // save0's combo
+
+        Assert.Equal(new[] { (0u, 0x74u), (0u, 0x75u) }, hk.Live.OrderBy(c => c.Vk));
+        Assert.Equal("F6", recall.Label);
+        Assert.False(recall.Conflicted);
+        // The holder is ours, so say which row it is: "another app" sends the user hunting for a program that is not
+        // there.
+        Assert.Contains("'F5' is already bound to 'Save marker 1'", vm.StatusText);
+        Assert.Contains("'Recall marker 1' keeps F6", vm.StatusText);
+        Assert.DoesNotContain("another app", vm.StatusText);
+    }
+
+    [Fact]
+    public void Rebinding_to_the_cursor_hotkeys_combo_names_the_cursor_hotkey()
+    {
+        var hk = new OsHotkeyService();
+        var vm = CreateVm(new FakeDumpService(), out _, hk);
+        vm.CursorHotkeyEnabled = true;                      // claims Ctrl+F8
+        Assert.Equal("Ctrl+F8", vm.CursorHotkeyLabel);
+        var row = BindSave0ToF5(vm);
+
+        vm.BeginCaptureCommand.Execute(row);
+        vm.ApplyCapturedKey(Avalonia.Input.Key.F8, Avalonia.Input.KeyModifiers.Control);
+
+        Assert.Equal("F5", row.Label);
+        Assert.Contains("'Ctrl+F8' is the cursor-teleport hotkey", vm.StatusText);
+        Assert.Contains("keeps F5", vm.StatusText);
+        Assert.DoesNotContain("another app", vm.StatusText);
+
+        // The cursor hotkey being on does not make it the holder of every refused combo.
+        hk.Taken.Add((HotkeyModifiers.Control, 0x76));     // Ctrl+F7, held by another app
+        vm.BeginCaptureCommand.Execute(row);
+        vm.ApplyCapturedKey(Avalonia.Input.Key.F7, Avalonia.Input.KeyModifiers.Control);
+        Assert.Contains("'Ctrl+F7' is already in use by another app", vm.StatusText);
+    }
+
+    [Fact]
+    public void Rebinding_a_row_to_the_combo_it_holds_keeps_it_live()
+    {
+        // RegisterHotKey refuses a combo already registered, ours included: trying it again before the row's own
+        // registration is let go would always fail.
+        var hk = new OsHotkeyService();
+        var vm = CreateVm(new FakeDumpService(), out _, hk);
+        var row = BindSave0ToF5(vm);
+
+        vm.BeginCaptureCommand.Execute(row);
+        bool handled = vm.ApplyCapturedKey(Avalonia.Input.Key.F5, Avalonia.Input.KeyModifiers.None);
+
+        Assert.True(handled);
+        Assert.Equal(new[] { (0u, 0x74u) }, hk.Live);
+        Assert.Equal("F5", row.Label);
+        Assert.False(row.Conflicted);
+        Assert.Contains("bound to F5", vm.StatusText);
+    }
+
+    [Fact]
+    public void Rebinding_to_a_free_combo_releases_the_old_one()
+    {
+        var hk = new OsHotkeyService();
+        var vm = CreateVm(new FakeDumpService(), out var platform, hk);
+        var row = BindSave0ToF5(vm);
+
+        vm.BeginCaptureCommand.Execute(row);
+        vm.ApplyCapturedKey(Avalonia.Input.Key.F7, Avalonia.Input.KeyModifiers.Control);
+
+        Assert.Equal(new[] { (HotkeyModifiers.Control, 0x76u) }, hk.Live);
+        Assert.Equal("Ctrl+F7", row.Label);
+        Assert.Equal(new TeleportHotkeyBinding(HotkeyModifiers.Control, 0x76),
+            new TeleportHotkeyStore(platform).Load()["save0"]);
+    }
+
+    [Fact]
+    public void Rebinding_to_the_same_key_with_a_modifier_is_a_new_combo()
+    {
+        // The combo the row already holds is kept as it is; the same key under other modifiers is not that combo, and
+        // must be claimed like any other -- or the row would show and save Ctrl+F5 while F5 stayed the live key.
+        var hk = new OsHotkeyService();
+        var vm = CreateVm(new FakeDumpService(), out var platform, hk);
+        var row = BindSave0ToF5(vm);
+
+        vm.BeginCaptureCommand.Execute(row);
+        vm.ApplyCapturedKey(Avalonia.Input.Key.F5, Avalonia.Input.KeyModifiers.Control);
+
+        Assert.Equal(new[] { (HotkeyModifiers.Control, 0x74u) }, hk.Live);
+        Assert.Equal("Ctrl+F5", row.Label);
+        Assert.Equal(new TeleportHotkeyBinding(HotkeyModifiers.Control, 0x74),
+            new TeleportHotkeyStore(platform).Load()["save0"]);
     }
 
     [Fact]

@@ -19,22 +19,25 @@ public class DetectStatsViewModelTests
         public Dictionary<string, string> InstanceAddrByClass { get; } = new();
         public Dictionary<string, List<LiveFieldValue>> WalkByAddr { get; } = new();
         public int FindInstancesCalls { get; private set; }
+        /// <summary>When set, the scorer's batch answers only once it completes.</summary>
+        public TaskCompletionSource<bool>? HoldSearch { get; set; }
 
-        public override Task<PropertySearchBatchResult> SearchPropertiesBatchAsync(
+        public override async Task<PropertySearchBatchResult> SearchPropertiesBatchAsync(
             string[] queries, string[]? types = null, bool gameOnly = true,
             int limitPerQuery = 200, CancellationToken ct = default)
         {
+            if (HoldSearch is { } hold) await hold.Task;
             var env = new PropertySearchQueryEnvelope
             {
                 Query = "seed",
                 MatchCount = Matches.Count,
                 Results = new List<PropertySearchMatch>(Matches),
             };
-            return Task.FromResult(new PropertySearchBatchResult
+            return new PropertySearchBatchResult
             {
                 PerQuery = new List<PropertySearchQueryEnvelope> { env },
                 Total = Matches.Count,
-            });
+            };
         }
 
         public override Task<FindInstancesResult> FindInstancesAsync(
@@ -281,5 +284,92 @@ public class DetectStatsViewModelTests
 
         Assert.Single(vm.Results);                       // still detects
         Assert.Contains("unavailable", vm.StatusText);   // snapshot note, no throw
+    }
+
+    // ---- [EXPOFF-TEARDOWN] Turning the experimental features off while a Detect runs: the tab is hidden then, and Detect
+    // Stats is not one of the tabs that lock the opt-in, so a scan can be running when the box is unticked.
+
+    /// <summary>The opt-in as the app's gate behaves when unlocked: Changed on a real flip.</summary>
+    private sealed class Switch(bool enabled) : IExperimentalGate
+    {
+        private bool _enabled = enabled;
+
+        public bool IsEnabled
+        {
+            get => _enabled;
+            set
+            {
+                if (_enabled == value) return;
+                _enabled = value;
+                Changed?.Invoke(this, EventArgs.Empty);
+            }
+        }
+
+        public int SnapshotQuotaMb { get; set; }
+        public bool TeardownOwed { get; set; }
+        public bool IsLocked => false;
+        public void Lock() { }
+        public event EventHandler? Changed;
+    }
+
+    private static FakeDump OneConfirmable()
+    {
+        var dump = new FakeDump();
+        dump.Matches.Add(M("Health", "PlayerCharacter", "FloatProperty", 0x100));
+        dump.InstanceAddrByClass["PlayerCharacter"] = "0xAAAA";
+        dump.WalkByAddr["0xAAAA"] = new() { F("Health", 0x100, "100") };
+        return dump;
+    }
+
+    [Fact]
+    public async Task Off_a_running_Detect_asks_the_DLL_nothing_more_and_publishes_nothing()
+    {
+        var dump = OneConfirmable();
+        dump.HoldSearch = new TaskCompletionSource<bool>();
+        var gate = new Switch(true);
+        var vm = new DetectStatsViewModel(dump, new NoopLogger(), experimentalGate: gate);
+        string idle = vm.StatusText;
+
+        var run = vm.DetectCommand.ExecuteAsync(null);
+        Assert.True(vm.IsBusy);
+        gate.IsEnabled = false;
+        Assert.Equal(idle, vm.StatusText);   // not "Scanning…" over a scan that is gone
+
+        dump.HoldSearch.SetResult(true);
+        await run;
+        Assert.Equal(0, dump.FindInstancesCalls);
+        Assert.Empty(vm.Results);
+        Assert.Equal(idle, vm.StatusText);
+        Assert.False(vm.IsBusy);
+    }
+
+    [Fact]
+    public async Task Off_after_a_Detect_finished_its_rows_wait_for_the_features_to_come_back()
+    {
+        var dump = OneConfirmable();
+        var gate = new Switch(true);
+        var vm = new DetectStatsViewModel(dump, new NoopLogger(), experimentalGate: gate);
+        await vm.DetectCommand.ExecuteAsync(null);
+        string done = vm.StatusText;
+
+        gate.IsEnabled = false;
+        gate.IsEnabled = true;
+        Assert.Single(vm.Results);
+        Assert.Equal(done, vm.StatusText);
+    }
+
+    [Fact]
+    public async Task On_a_running_Detect_is_left_to_finish()
+    {
+        var dump = OneConfirmable();
+        dump.HoldSearch = new TaskCompletionSource<bool>();
+        var gate = new Switch(false);
+        var vm = new DetectStatsViewModel(dump, new NoopLogger(), experimentalGate: gate);
+
+        var run = vm.DetectCommand.ExecuteAsync(null);
+        gate.IsEnabled = true;
+        dump.HoldSearch.SetResult(true);
+        await run;
+        Assert.Single(vm.Results);
     }
 }

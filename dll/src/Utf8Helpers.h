@@ -118,7 +118,7 @@ inline bool IsImplausibleWideName(const wchar_t* data, size_t len) {
 
 // Decode a narrow (ANSI) UE FName payload into a clean string, or "" when it is junk.
 // A real narrow FName is pure printable ASCII by construction — UE stores localized /
-// non-ASCII text with the wide bit set (handled by EncodeUtf16 + IsImplausibleWideName).
+// non-ASCII text with the wide bit set (handled by EncodeUtf16, plus IsImplausibleWideName on the 4.23+ FNamePool).
 // So ANY byte outside [0x20,0x7F), other than a NUL terminator, means the bytes are NOT
 // a valid narrow FName: the entry is corrupt, or an invalid / uninitialized FName index
 // landed mid-entry inside a packed FNamePool. (In a packed pool, indices 1 and 2 fall

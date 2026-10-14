@@ -443,6 +443,21 @@ total: 0x28 (UE4, and UE5.3+ non-CPN) ... 0x48 (UE5.1-5.2 with CasePreservingNam
 ```
 
 ```
+TAssetPtr<T> / TAssetSubclassOf<T>        // UE 4.11-4.17: AssetObjectProperty / AssetClassProperty
++0x00 FWeakObjectPtr (8B)
++0x08 Tag (4B) + pad (4B)
++0x10 FStringAssetReference = ONE FString AssetLongPathname (16B)
+total: 0x20
+```
+
+4.18 renamed these Soft* and replaced the single FString with `FSoftObjectPath`
+(UE_4.10 `PersistentObjectPtr.h` / `StringAssetReference.h`, UE415_Flyinh's 4.15 PDB,
+UE_4.18 `SoftObjectPath.h`). They are read at the fixed `Ubel::ASSETPTR_PATH` and
+**never** through the envelope arithmetic below: `0x20` less an FName/FString path's
+`0x18` is `0x08`, which that arithmetic accepts as a 5.3+ untagged pointer and latches
+for the session. `[UE4-ASSETPTR-PROPS]`
+
+```
 TLazyObjectPtr<T>                          // Phase H
 +0x00 FWeakObjectPtr (8B)
 [+0x08 Tag (4B)]                            <- UE <= 5.2 ONLY; NO pad, FGuid is 4-aligned

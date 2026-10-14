@@ -2043,20 +2043,6 @@ SearchResultSet FindActorsInLevel(uintptr_t levelAddr, int maxResults, int32_t* 
 
 // Helper: populate an AddressLookupResult from a UObject pointer.
 // `kind` distinguishes confidence levels — see AddressLookupResult comment.
-// A genuine FName resolves to non-empty printable ASCII. Serie::GetString
-// sanitizes non-printable ANSI bytes to '?' and (after the wide-name guard)
-// returns "" for mojibake, so any '?', non-ASCII byte, or emptiness marks a
-// junk decode. Used to gate backward-scan candidates whose arbitrary +0x18
-// bytes can resolve to garbage names — keeps find_by_address from surfacing a
-// misidentified "object" that the Live Walker then walks into 亂碼.
-static bool IsCleanFName(const std::string& s) {
-    if (s.empty() || s.size() > 256) return false;
-    for (unsigned char c : s) {
-        if (c == '?' || c < 0x20 || c >= 0x7F) return false;
-    }
-    return true;
-}
-
 static void FillLookupResult(AddressLookupResult& out, uintptr_t obj, int32_t index,
                              int32_t offsetFromBase, bool exact,
                              const char* kind = nullptr) {
@@ -2269,7 +2255,8 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
         // NOTE: a plain printable-ASCII check is NOT enough — Serie::GetString
         // sanitizes junk bytes to '?' (0x3F, itself printable), so a garbage
         // name like "Property??IntProperty" would slip through. IsCleanFName
-        // rejects any '?' / non-ASCII / empty result.
+        // rejects any '?' / control / ill-formed UTF-8 / empty result, and keeps a
+        // well-formed wide (localized) name.
         uint32_t nameIdx = 0;
         if (!Macht::ReadSafe(probe + Grimoire::OFF_UOBJECT_NAME, nameIdx)) continue;
         if (nameIdx == 0) continue;  // Index 0 = "None", skip
@@ -2278,7 +2265,10 @@ AddressLookupResult FindByAddress(uintptr_t addr) {
 
         // Validate the CLASS too. A backward-scan false positive is arbitrary
         // bytes that merely resemble a UObject header; its ClassPrivate points
-        // at junk whose name decodes to '?'-runs (ANSI) or CJK mojibake (wide).
+        // at junk whose name decodes to '?'-runs (ANSI) or CJK mojibake (wide:
+        // on the 4.23+ pool Serie::GetString drops it as "" once it is long or
+        // dense enough; a pre-4.23 wide decode gets no such check, and only
+        // IsCleanFName's length cap bounds it).
         // Accepting it makes the Live Walker surface 亂碼 (DQ3 HD-2D: a value in
         // raw heap resolved to 'Property??IntProperty' with a 435-char mojibake
         // class). Require a clean class FName so only real subobjects pass.
@@ -3246,7 +3236,8 @@ std::vector<ContainerMatch> FindInContainersDeep(uintptr_t addr, int32_t maxResu
 //   - Direct ObjectProperty / ClassProperty / InterfaceProperty
 //     (8-byte UObject* read directly at field+0)
 //   - Direct WeakObjectProperty / SoftObjectProperty / SoftClassProperty /
-//     LazyObjectProperty (FWeakObjectPtr at field+0 → resolved via
+//     LazyObjectProperty, and 4.11-4.17's asset pointers (IsWeakLikeProp)
+//     (FWeakObjectPtr at field+0 → resolved via
 //     ResolveWeakObjectPtr; only matches when the ref is currently bound
 //     to a live UObject)
 //   - DelegateProperty (single FScriptDelegate — FWeakObjectPtr target at
@@ -3284,8 +3275,8 @@ struct DirectPointerEntry {
 struct WeakLikePointerEntry {
     int32_t     offset;
     std::string name;
-    std::string typeName;     // "WeakObjectProperty" / "SoftObjectProperty"
-                              // / "SoftClassProperty" / "LazyObjectProperty"
+    std::string typeName;     // the holder's type: one IsWeakLikeProp accepts, a DelegateProperty, or the
+                              // OptionalProperty that wraps a weak-like value
     int32_t     setFlagOffset = -1;   // TOptional bIsSet byte, relative to offset; -1 = none
 };
 
@@ -3368,8 +3359,9 @@ struct ClassReferenceMeta {
 };
 
 static bool IsWeakLikeProp(const std::string& tn) {
+    // [UE4-ASSETPTR-PROPS] 4.11-4.17's asset pointers carry the same FWeakObjectPtr at +0 (Ubel::ASSETPTR_PATH).
     return tn == "WeakObjectProperty" || tn == "SoftObjectProperty"
-        || tn == "SoftClassProperty"  || tn == "LazyObjectProperty";
+        || tn == "SoftClassProperty"  || tn == "LazyObjectProperty" || Ubel::IsAssetPtrProperty(tn);
 }
 static bool IsDirectObjectProp(const std::string& tn) {
     return tn == "ObjectProperty" || tn == "ClassProperty";
@@ -5669,7 +5661,7 @@ static int GetFieldTypeWeight(const std::string& typeName) {
     if (typeName == "ObjectProperty"     || typeName == "ClassProperty"      ||
         typeName == "WeakObjectProperty" || typeName == "LazyObjectProperty" ||
         typeName == "SoftObjectProperty" || typeName == "SoftClassProperty"  ||
-        typeName == "InterfaceProperty") return 2;
+        typeName == "InterfaceProperty"  || Ubel::IsAssetPtrProperty(typeName)) return 2;   // [UE4-ASSETPTR-PROPS]
     if (typeName == "MapProperty" || typeName == "SetProperty") return 2;
 
     // Low-value: enums, bools, strings, bytes
@@ -6276,7 +6268,8 @@ static uintptr_t ParamTargetType(uintptr_t fieldAddr) {
         pType == "StructProperty"     || pType == "ObjectProperty"     ||
         pType == "ClassProperty"      || pType == "WeakObjectProperty" ||
         pType == "SoftObjectProperty" || pType == "SoftClassProperty"  ||
-        pType == "InterfaceProperty"  || pType == "LazyObjectProperty";
+        pType == "InterfaceProperty"  || pType == "LazyObjectProperty" ||
+        Ubel::IsAssetPtrProperty(pType);   // [UE4-ASSETPTR-PROPS] a UObjectPropertyBase, PropertyClass in the slot
     if (!classBearing) return 0;
     // FStructProperty::Struct and FObjectPropertyBase::PropertyClass share the
     // FProperty subclass-extension slot. UE4 (<4.25) UProperty puts them at the start Genau

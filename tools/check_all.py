@@ -116,6 +116,13 @@ GATES = [
      "the SDK engine-source oracle self-test failed -- a verdict it gives on real headers can no longer be trusted",
      False),
 
+    # [PROXYREFRESH-NONSHIPPING-EXE] the rig every proxy-mode game row runs first: a deployment it cannot see is
+    # never refreshed, and the game then answers with an old build. Temp trees only, no library is read.
+    ("proxy_refresh_selftest",
+     ["tools/verify/proxy_refresh.py", "--selftest"],
+     "proxy_refresh.py's controls failed -- it would miss a deployed proxy, touch a DLL that is not ours, refresh "
+     "one a running game maps, or lose a backup. Run 'py tools/verify/proxy_refresh.py --selftest'", False),
+
     ("check_axaml_strings",
      ["tools/check_axaml_strings.py"],
      "an en.axaml key is referenced-but-undefined (a load-time crash) or "
@@ -211,6 +218,15 @@ GATES = [
      "stay correct while TArray element descriptors and every enum name read 8 bytes "
      "off -- which is why audit #5 G12 found it late and why its own fix missed a third "
      "writer. Run 'py tools/check_property_family.py --list'", False),
+
+    # [MH-PRERESERVE-PROXY] dll/src/Lager.h is a pure transcription of vendor/minhook's buffer.c; a submodule bump that
+    # moved a walk or a constant would leave the model -- and every live "serves/covers" verdict -- silently wrong.
+    ("check_lager_vendor_sync",
+     ["tools/check_lager_vendor_sync.py"],
+     "vendor/minhook moved out of sync with dll/src/Lager.h: a block/range/slot constant or one of the "
+     "FindPrev/FindNext/GetMemoryBlock walks changed, and Lager.h still models the old MinHook. Re-verify Lager.h "
+     "(and its dll_helpers_test cases), then update the constant / GOLDEN it names. Run "
+     "'py tools/check_lager_vendor_sync.py --list'", False),
 
     ("check_ce_untick_placement",
      ["tools/check_ce_untick_placement.py"],

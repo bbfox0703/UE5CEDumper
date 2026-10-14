@@ -169,8 +169,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public bool ShowPackedLayoutBadge => IsConnected && Pointers.ShowPackedLayoutBadge;
     public string PackedLayoutBadgeText => Pointers.PackedLayoutBadgeText;
 
-    /// <summary>[W4-STRIDE-TENTATIVE] Global "object-array stride is a guess" badge: connected, and the DLL said
-    /// the stride is tentative or undetected -- object counts and names may be wrong.</summary>
+    /// <summary>[W4-STRIDE-TENTATIVE] Global "object-array stride is a guess" badge: connected, and the pointer
+    /// panel's verdict, which is <see cref="EngineState.IsStrideUntrusted"/> -- object counts and names may be wrong.
+    /// Mirrored rather than restated, so this badge cannot drift from the rule (a refused engine's "undetected", for
+    /// one, is no verdict).</summary>
     public bool ShowStrideGuessBadge => IsConnected && Pointers.ShowStrideGuessBadge;
     public string StrideGuessBadgeText => Pointers.StrideGuessBadgeText;
 
@@ -299,8 +301,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>
     /// Lock the experimental opt-in for the rest of this session. Called the
-    /// first time the user opens an experimental tab that locks it (the list is
-    /// MainWindow.axaml.cs's tab switch) while enabled — from that point the System-tab
+    /// first time the user opens an experimental tab that locks it
+    /// (<see cref="LocksExperimental"/>) while enabled — from that point the System-tab
     /// opt-in checkbox can no longer be unticked. Session-only (a restart clears
     /// the lock). Idempotent and a no-op when the gate isn't enabled.
     /// </summary>
@@ -309,6 +311,17 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         if (_experimentalGate is { IsEnabled: true, IsLocked: false })
             _experimentalGate.Lock();
     }
+
+    /// <summary>[EXPOFF-ROUND3-PAUSED] The experimental tabs, by Tag, whose opening locks the opt-in for the session:
+    /// what they run cannot be torn down by an untick (a Snapshot capture keeps walking GObjects across tab switches),
+    /// so the opt-in stays until a restart instead. An experimental tab left out needs its own cleanup on an untick, as
+    /// Detect Stats has. str.Experimental.LockedForSession names these tabs; ExperimentalUntickTests holds the three
+    /// together.</summary>
+    private static readonly HashSet<string> s_experimentalLockingTabs =
+        new(StringComparer.Ordinal) { "Snapshot", "SpcQuery", "ClassPivot", "CallTrace" };
+
+    /// <summary>[EXPOFF-ROUND3-PAUSED] Whether opening the tab tagged <paramref name="tag"/> locks the opt-in.</summary>
+    public static bool LocksExperimental(string? tag) => tag != null && s_experimentalLockingTabs.Contains(tag);
 
     /// <summary>C5: switch to the Class Pivot tab and hand off the chosen
     /// class/property. Guarded so it's inert when the pivot tab isn't available.</summary>
@@ -328,7 +341,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>Enable the "Pivot this property" context-menu items only when the
     /// experimental Class Pivot tab is both present and opted in — so the handoff
-    /// stays invisible while experimental features are off.</summary>
+    /// stays invisible while experimental features are off. [EXPOFF-TEARDOWN] A handoff
+    /// already made needs no stopping on an untick: it opens Class Pivot, which locks the
+    /// opt-in for the session, so the box cannot be unticked under it.</summary>
     private void UpdatePivotHandoffEnabled()
     {
         bool on = ExperimentalEnabled && Pivot != null;
@@ -596,7 +611,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         DumpExplorer = new DumpExplorerViewModel(dump, log, platform);
         // Detect Player Stats (P4). snapshotStore is optional — the behavioral
         // signal is opt-in and no-ops (with a note) when it's null.
-        DetectStats = new DetectStatsViewModel(dump, log, snapshotStore);
+        DetectStats = new DetectStatsViewModel(dump, log, snapshotStore, experimentalGate);
         Console = new ConsoleViewModel(dump, log);
         Teleport = new TeleportViewModel(dump, log, platform, aobMaker, globalHotkeys, experimentalGate, coordLibrary);
         if (snapshotStore != null)

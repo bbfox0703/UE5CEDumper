@@ -61,10 +61,16 @@ public static class ParamBufferBuilder
     /// that benefits from the Stage 2 instance-picker UI (a button that opens
     /// the live-instance picker pre-filtered to the param's expected UClass).
     ///
-    /// Includes every property type the DLL's WalkFunctions extracts an
-    /// <c>objClassName</c> for. Excludes scalars / struct / containers / bool —
-    /// those have their own editing paths (typed textbox, struct sub-field
-    /// expansion, etc.) and shouldn't get a picker button.
+    /// The pointer-flavoured types <see cref="WriteParam"/> writes as one 8-byte
+    /// value, which is what a picked instance becomes. That is NOT every type the
+    /// DLL's WalkFunctions names an <c>objClassName</c> for: 4.11-4.17's
+    /// <c>AssetObjectProperty</c> / <c>AssetClassProperty</c> get one too, but an
+    /// <c>FAssetPtr</c> is a weak-pointer envelope plus a path string, and
+    /// WriteParam has no arm that could put a picked instance into it (its size
+    /// fallback would write the address's low 4 bytes). They stay out, and the
+    /// tests say so. Excludes scalars / struct / containers / bool — those have
+    /// their own editing paths (typed textbox, struct sub-field expansion, etc.)
+    /// and shouldn't get a picker button.
     /// </summary>
     public static bool IsPickablePointerType(string typeName) =>
         typeName is "ObjectProperty"

@@ -405,6 +405,7 @@ public class PropertySearchForceTests
     {
         public bool IsEnabled { get; set; }
         public int SnapshotQuotaMb { get; set; }
+        public bool TeardownOwed { get; set; }
         public bool IsLocked { get; private set; }
         public void Lock() { IsLocked = true; RaiseChanged(); }
         public event EventHandler? Changed;

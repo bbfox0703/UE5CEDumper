@@ -36,6 +36,7 @@
 #include "../src/Ubel.h"        // Native-C scan P0: ComputeHoles / ComputeClassHoles / NormalizeGuessedTypeToProperty (inline, pure)
 #include "../src/Serie.h"       // FNamePool index geometry: ReadEnumRawValue is in Ubel; BlockBits/UE4 bounds are here (audit #5 G4/G5)
 #include "../src/Aura.h"
+#include "../src/Utf8Helpers.h"   // EncodeUtf16 / IsImplausibleWideName: the decodes Aura::IsCleanFName is handed
 #include "../src/Dunste.h"        // IsEnginePackage (header-inline, pure) — engine/game package gate
 #include "../src/Tot.h"         // Cancellation flags: cancel-immunity vs background-worker (B4)
 #include "../src/Routine.h"    // SafeThread — detaching-on-destroy thread wrapper
@@ -45,6 +46,7 @@
 #include "../src/Voll.h"       // Pipe-accept capacity logging policy (OnCreateFailure/Success, [PIPEBUSY])
 #include "../src/Methode.h"    // NarrowForAnsiLoad (header-inline, pure) -- the CE-plugin inject path, [PATH-METHODE-NO8DOT3]
 #include "../src/Flamme.h"     // ShouldPublishAtomicWrite (constexpr, pure) — hint-cache publish gate
+#include "../src/Lager.h"      // MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY])
 
 #include <Windows.h>
 
@@ -3896,6 +3898,18 @@ static void Test_ValueScan_SparseContainerGeometry() {
            Macht::ComputeSetElementStride(8, 8) == Macht::ComputeSetElementStride(8));
     EXPECT("Scharf NameProperty(8) align = 4",        Scharf::RequiredAlignment("NameProperty", 8, false) == 4);
     EXPECT("Scharf WeakObjectProperty align = 4",     Scharf::RequiredAlignment("WeakObjectProperty", 8, false) == 4);
+    // [UE4-ASSETPTR-PROPS] FAssetPtr, 4.11-4.17's soft pointer, ends in an FString, so it is 8-aligned (UE415_Flyinh's
+    // PDB: 0x20, with 4 bytes of padding after TagAtLastTest). 0 ("not validated") left a TMap<TAssetPtr, int32>'s
+    // pair aligned by its int32 -- the stride GetMapPairLayout derives, rebuilt here, came out 0x2C, not 0x30.
+    EXPECT("Scharf AssetObjectProperty align = 8",    Scharf::RequiredAlignment("AssetObjectProperty", 0x20, false) == 8);
+    EXPECT("Scharf AssetClassProperty align = 8",     Scharf::RequiredAlignment("AssetClassProperty", 0x20, false) == 8);
+    {
+        const int32_t keyAlign = Scharf::RequiredAlignment("AssetObjectProperty", 0x20, false);
+        const int32_t valAlign = Scharf::RequiredAlignment("IntProperty", 4, false);
+        const int32_t pairSize = Macht::ComputeMapValueOffset(0x20, 4, valAlign) + 4;
+        EXPECT("TMap<TAssetPtr, int32>: pair stride 0x30",
+               Macht::ComputeSetElementStride(pairSize, keyAlign > valAlign ? keyAlign : valAlign) == 0x30);
+    }
 }
 
 // ----- main ------------------------------------------------------------------
@@ -4482,6 +4496,138 @@ static void Test_Solitar_ApplyBoolBit() {
         uint8_t clrOnce = ApplyBoolBit(0xA5, mask, false);
         EXPECT_EQ_U64("idempotent clear", ApplyBoolBit(clrOnce, mask, false), clrOnce);
     }
+}
+
+// ----- Solitar::PickBoolBits / ReadBoolValue / WriteBoolValue [SOLIDE-NATIVE-BOOL] ----
+// God Mode's targets and Force ON / OFF took a packed bitfield bool only, so a NATIVE bool -- every Blueprint bool,
+// SetBoolSize's {FieldSize 1, ByteOffset 0, ByteMask 0x01, FieldMask 0xFF} -- was refused (PR_ERR_REFLECT, 0 held).
+// It now resolves to the whole byte and is written 0x01 / 0x00; a packed bool resolves and writes exactly as before;
+// an unresolved layout stays refused ([A3-BOOL-NATIVE-NOWRITE]: a whole-byte write there corrupts 7 sibling bools).
+
+static void Test_Solitar_BoolBits() {
+    using Solitar::BoolBits;
+    using Solitar::PickBoolBits;
+    using Solitar::ReadBoolValue;
+    using Solitar::WriteBoolValue;
+    constexpr int kTries = 5;   // ReadBoolLayout's probe: base, -4, +4, +8, -8
+    struct Probe {
+        uint8_t quads[kTries][4] = {};
+        bool    ok[kTries] = { true, true, true, true, true };
+    };
+    auto pick = [&](const Probe& p, BoolBits& out) { return PickBoolBits(p.quads, p.ok, kTries, out); };
+    auto set = [](Probe& p, int i, uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
+        p.quads[i][0] = a; p.quads[i][1] = b; p.quads[i][2] = c; p.quads[i][3] = d;
+    };
+
+    // A native bool at the probe's base: the whole byte, written 0x01 / 0x00.
+    {
+        Probe p; set(p, 0, 1, 0, 0x01, 0xFF);
+        BoolBits b;
+        const bool ok = pick(p, b);
+        EXPECT("BOOLBITS ⭐: a native bool (1 / 0 / 01 / FF) resolves", ok);
+        EXPECT("BOOLBITS ⭐: ...to the whole byte at ByteOffset 0, true writing 0x01",
+               ok && b.byteOff == 0 && b.fieldMask == 0xFF && b.byteMask == 0x01);
+    }
+    // ...and at a fallback offset, when nothing packed is anywhere.
+    {
+        Probe p; set(p, 0, 7, 7, 7, 7); set(p, 1, 1, 0, 0x01, 0xFF);
+        BoolBits b;
+        EXPECT("BOOLBITS ⭐: a native layout at a fallback offset resolves", pick(p, b) && b.fieldMask == 0xFF);
+    }
+    // A packed bool: exactly what the probe has always taken.
+    {
+        Probe p; set(p, 0, 1, 2, 0x04, 0x04);
+        BoolBits b;
+        EXPECT("BOOLBITS control: a packed bool resolves to its byte and bit",
+               pick(p, b) && b.byteOff == 2 && b.fieldMask == 0x04 && b.byteMask == 0x04);
+    }
+    // A packed layout anywhere wins over a native one earlier in the probe: a packed bool never changes its read.
+    {
+        Probe p; set(p, 0, 1, 0, 0x01, 0xFF); set(p, 2, 1, 3, 0x80, 0x80);
+        BoolBits b;
+        EXPECT("BOOLBITS control: a packed layout at a later offset still wins",
+               pick(p, b) && b.byteOff == 3 && b.fieldMask == 0x80 && b.byteMask == 0x80);
+    }
+    // Refused, as before: what a missed probe reads, fill, and the packed rule's own limits.
+    {
+        BoolBits b;
+        Probe zero;
+        EXPECT("BOOLBITS: all-zero (a missed probe) is refused", !pick(zero, b));
+        Probe ff; for (int i = 0; i < kTries; ++i) set(ff, i, 1, 0, 0xFF, 0xFF);
+        EXPECT("BOOLBITS: an all-0xFF read is refused (ByteMask is held to 0x01)", !pick(ff, b));
+        Probe mask0; set(mask0, 0, 1, 0, 0, 0);
+        EXPECT("BOOLBITS: FieldSize 1 with mask 0 is refused -- never a whole-byte write", !pick(mask0, b));
+        Probe off; set(off, 0, 1, 2, 0x01, 0xFF);
+        EXPECT("BOOLBITS: FieldMask 0xFF at a non-zero ByteOffset is refused", !pick(off, b));
+        Probe wide; set(wide, 0, 4, 0, 0xFF, 0xFF);
+        EXPECT("BOOLBITS: a 4-byte bool is refused", !pick(wide, b));
+        Probe bo8; set(bo8, 0, 1, 8, 0x01, 0x01);
+        EXPECT("BOOLBITS control: a ByteOffset past the bitfield word is refused, as before", !pick(bo8, b));
+        Probe bm2; set(bm2, 0, 1, 0, 0x03, 0x01);
+        EXPECT("BOOLBITS control: a two-bit ByteMask is refused, as before", !pick(bm2, b));
+        Probe faulted; set(faulted, 0, 1, 0, 0x01, 0xFF); faulted.ok[0] = false;
+        EXPECT("BOOLBITS: a read that faulted is never taken", !pick(faulted, b));
+    }
+
+    // Writing and reading a native bool: the whole byte, 0x01 / 0x00, whatever it held.
+    const BoolBits native{ 0, 0xFF, 0x01 };
+    EXPECT_EQ_U64("BOOLBITS native: true over 0x00 writes 0x01", WriteBoolValue(0x00, native, true), 0x01);
+    EXPECT_EQ_U64("BOOLBITS native: false over 0x01 writes 0x00", WriteBoolValue(0x01, native, false), 0x00);
+    EXPECT_EQ_U64("BOOLBITS native: true never stamps 0xFF", WriteBoolValue(0xFF, native, true), 0x01);
+    EXPECT_EQ_U64("BOOLBITS native: false clears a non-canonical true", WriteBoolValue(0x02, native, false), 0x00);
+    EXPECT("BOOLBITS native: any non-zero byte reads true, as UE reads it", ReadBoolValue(0x02, native));
+    EXPECT("BOOLBITS native: 0x00 reads false", !ReadBoolValue(0x00, native));
+    // A packed bool: byte-identical to ApplyBoolBit, for every byte, bit and value.
+    int differ = 0;
+    for (int bit = 0; bit < 8; ++bit) {
+        const uint8_t m = static_cast<uint8_t>(1u << bit);
+        const BoolBits packed{ 0, m, m };
+        for (int cur = 0; cur < 256; ++cur)
+            for (bool v : { false, true })
+                if (WriteBoolValue(static_cast<uint8_t>(cur), packed, v) != Solitar::ApplyBoolBit(static_cast<uint8_t>(cur), m, v)
+                    || ReadBoolValue(static_cast<uint8_t>(cur), packed) != ((cur & m) != 0))
+                    ++differ;
+    }
+    EXPECT("BOOLBITS control: a packed bool reads and writes exactly as ApplyBoolBit did", differ == 0);
+}
+
+// ----- Solitar::TrainerMaskFor (the mask get_trainer_offsets' god_bits bakes) -----
+// [SOLIDE-NATIVE-BOOL] review: since a native bool resolves, its mask reaches the standalone trainer, whose Lua does its
+// own single-bit arithmetic. setbit below is that Lua, step for step; CE's writeByte keeps the low 8 bits.
+static void Test_Solitar_TrainerMaskFor() {
+    using Solitar::BoolBits;
+    using Solitar::TrainerMaskFor;
+    auto setbit = [](uint8_t cur, unsigned mask, int want) -> uint8_t {
+        const unsigned isSet = (cur / mask) % 2;
+        if (want == 1 && isSet == 0) return static_cast<uint8_t>((cur + mask) & 0xFF);
+        if (want == 0 && isSet == 1) return static_cast<uint8_t>((cur - mask) & 0xFF);
+        return cur;
+    };
+    auto oneBit = [](unsigned m) { return m != 0 && (m & (m - 1)) == 0; };
+
+    const BoolBits native{ 0, 0xFF, 0x01 };
+    const unsigned nm = TrainerMaskFor(native);
+    EXPECT_EQ_U64("TRAINERMASK ⭐: a native bool bakes its ByteMask, 0x01", nm, 0x01);
+    EXPECT_EQ_U64("TRAINERMASK ⭐: ...so the trainer's ON over 0x00 writes 0x01, never 0xFF", setbit(0x00, nm, 1), 0x01);
+    EXPECT_EQ_U64("TRAINERMASK ⭐: ...ON over 0x01 leaves it ON (not 0x100, stored as 0x00)", setbit(0x01, nm, 1), 0x01);
+    EXPECT_EQ_U64("TRAINERMASK: ...OFF over 0x01 writes 0x00", setbit(0x01, nm, 0), 0x00);
+    EXPECT_EQ_U64("TRAINERMASK: ...OFF over 0x00 leaves it 0x00", setbit(0x00, nm, 0), 0x00);
+
+    // A packed bool bakes its own bit, and the trainer then writes what WriteBoolValue writes, for every byte.
+    int wrongMask = 0, differ = 0;
+    for (int bit = 0; bit < 8; ++bit) {
+        const uint8_t m = static_cast<uint8_t>(1u << bit);
+        const BoolBits packed{ 3, m, m };
+        const unsigned pm = TrainerMaskFor(packed);
+        if (pm != m || !oneBit(pm)) ++wrongMask;
+        for (int cur = 0; cur < 256; ++cur)
+            for (int want : { 0, 1 })
+                if (setbit(static_cast<uint8_t>(cur), pm, want)
+                    != Solitar::WriteBoolValue(static_cast<uint8_t>(cur), packed, want == 1))
+                    ++differ;
+    }
+    EXPECT("TRAINERMASK control: a packed bool bakes its own bit", wrongMask == 0);
+    EXPECT("TRAINERMASK control: ...and the trainer writes it exactly as WriteBoolValue does", differ == 0);
 }
 
 // ----- Solitar::MatchProtectionBool (T2 generic invincibility-flag matcher) ---
@@ -6428,19 +6574,66 @@ static void Test_CheckTailForVersion() {
     EXPECT("TailBase: the vote's extra adds on top", DynOff::FunctionTailBaseFor(505, 0xB0, 4) == 0xB4);
     // A 4.18 title (OCTOPATH / DQ XI S): FunctionFlags 0x88, NumParms 0x8C -- the tail base is 0x88.
     EXPECT("TailCheck ⭐: 4.17 on a 4.18 tail contradicts it (ParmsSize would come from ReturnValueOffset)",
-           CheckTailForVersion(417, 0x88, 0, 0x88) == TailCheck::Contradicts);
-    EXPECT("TailCheck ⭐: ...and so does the floor, 4.11", CheckTailForVersion(411, 0x88, 0, 0x88) == TailCheck::Contradicts);
-    EXPECT("TailCheck: 4.18 agrees", CheckTailForVersion(418, 0x88, 0, 0x88) == TailCheck::Agrees);
-    EXPECT("TailCheck: 4.21 keeps the same tail and agrees", CheckTailForVersion(421, 0x88, 0, 0x88) == TailCheck::Agrees);
+           CheckTailForVersion(417, 0x88, 0x88) == TailCheck::Contradicts);
+    EXPECT("TailCheck ⭐: ...and so does the floor, 4.11", CheckTailForVersion(411, 0x88, 0x88) == TailCheck::Contradicts);
+    EXPECT("TailCheck: 4.18 agrees", CheckTailForVersion(418, 0x88, 0x88) == TailCheck::Agrees);
+    EXPECT("TailCheck: 4.21 keeps the same tail and agrees", CheckTailForVersion(421, 0x88, 0x88) == TailCheck::Agrees);
     // The inverse the widening lets a user correct: a 4.15 title (RepOffset first, base 0x8A) misdetected as 4.18+.
-    EXPECT("TailCheck ⭐: 4.15 on a 4.11-4.17 tail agrees", CheckTailForVersion(415, 0x88, 0, 0x8A) == TailCheck::Agrees);
-    EXPECT("TailCheck ⭐: 4.18 on that tail contradicts it", CheckTailForVersion(418, 0x88, 0, 0x8A) == TailCheck::Contradicts);
-    // Split Fiction's tail sits +4 later on 5.x (the vote's extra).
-    EXPECT("TailCheck: a 5.x tail with the +4 extra agrees at 5.5", CheckTailForVersion(505, 0xB0, 4, 0xB4) == TailCheck::Agrees);
-    EXPECT("TailCheck: ...and 4.17 on it contradicts", CheckTailForVersion(417, 0xB0, 4, 0xB4) == TailCheck::Contradicts);
+    EXPECT("TailCheck ⭐: 4.15 on a 4.11-4.17 tail agrees", CheckTailForVersion(415, 0x88, 0x8A) == TailCheck::Agrees);
+    EXPECT("TailCheck ⭐: 4.18 on that tail contradicts it", CheckTailForVersion(418, 0x88, 0x8A) == TailCheck::Contradicts);
+    // Split Fiction's tail sits +4 later on 5.x. [OVERRIDE-REVIEW2-LOWS] review: the extra is the one the measurement
+    // implies, never the vote's latched one -- a vote run under a version from the wrong side of 4.18 decides nothing
+    // and latches 0, and judged with that 0 the version that fits was refused for the rest of the session (the live
+    // route is dll_core_test's OVERRIDEEXTRA).
+    EXPECT("TailCheck ⭐: a 5.x tail with the +4 extra agrees at 5.5, whatever the vote latched",
+           CheckTailForVersion(505, 0xB0, 0xB4) == TailCheck::Agrees);
+    EXPECT("TailCheck: ...and 4.17 on it contradicts", CheckTailForVersion(417, 0xB0, 0xB4) == TailCheck::Contradicts);
+    EXPECT("TailCheck ⭐: 4.15 on a +4 4.11-4.17 tail agrees (a vote under 4.18 could not find it)",
+           CheckTailForVersion(415, 0x88, 0x8E) == TailCheck::Agrees);
+    EXPECT("TailCheck: ...and 4.18 on it contradicts", CheckTailForVersion(418, 0x88, 0x8E) == TailCheck::Contradicts);
+    EXPECT("TailCheck control: no extra the vote weighs explains a gap of 8", CheckTailForVersion(505, 0xB0, 0xB8) == TailCheck::Contradicts);
+    EXPECT("TailCheck control: ...nor a tail before FunctionFlags", CheckTailForVersion(505, 0xB0, 0xAC) == TailCheck::Contradicts);
     // Nothing to judge is never a refusal.
-    EXPECT("TailCheck: nothing measured is Unmeasured", CheckTailForVersion(417, 0x88, 0, -1) == TailCheck::Unmeasured);
-    EXPECT("TailCheck: no FunctionFlags offset is Unmeasured", CheckTailForVersion(417, 0, 0, 0x88) == TailCheck::Unmeasured);
+    EXPECT("TailCheck: nothing measured is Unmeasured", CheckTailForVersion(417, 0x88, -1) == TailCheck::Unmeasured);
+    EXPECT("TailCheck: no FunctionFlags offset is Unmeasured", CheckTailForVersion(417, 0, 0x88) == TailCheck::Unmeasured);
+    // Whatever FunctionFlags offset is judged, an extra of 0 or 4 explains a measured base for one side of 4.18 only:
+    // the two sides' shifts differ by 2.
+    int bothSides = 0;
+    for (int flags : { 0x88, 0x90, 0x98, 0xA0, 0xB0, 0xB8 })
+        for (int base = flags - 8; base <= flags + 12; ++base)
+            if (CheckTailForVersion(417, flags, base) == TailCheck::Agrees
+                && CheckTailForVersion(418, flags, base) == TailCheck::Agrees)
+                ++bothSides;
+    EXPECT("TailCheck: no measured base fits both sides of 4.18", bothSides == 0);
+}
+
+// [OVERRIDE-REVIEW2-LOWS] An override persisted before [UE-OVERRIDE-411], or chosen before any scan, is applied at every
+// launch, and the vote that measured the contradiction said so in the log alone. get_pointers now says it, by the
+// refusal's own verdict.
+static void Test_OverrideContradictsTail() {
+    using DynOff::OverrideContradictsTail;
+    EXPECT("OverrideTail ⭐: a persisted 4.17 on a 4.18 tail is contradicted", OverrideContradictsTail(true, 417, 0x88, 0x88));
+    EXPECT("OverrideTail ⭐: ...and 4.18 on a 4.11-4.17 tail", OverrideContradictsTail(true, 418, 0x88, 0x8A));
+    EXPECT("OverrideTail ⭐: ...and 4.17 on a +4 5.x tail", OverrideContradictsTail(true, 417, 0xB0, 0xB4));
+    EXPECT("OverrideTail control: an override that fits is not", !OverrideContradictsTail(true, 418, 0x88, 0x88));
+    EXPECT("OverrideTail control: ...nor 4.15 on its own tail", !OverrideContradictsTail(true, 415, 0x88, 0x8A));
+    EXPECT("OverrideTail control: ...nor 5.5 on the +4 tail, whatever the vote latched",
+           !OverrideContradictsTail(true, 505, 0xB0, 0xB4));
+    EXPECT("OverrideTail: a DETECTED version is not the user's override to take back",
+           !OverrideContradictsTail(false, 417, 0x88, 0x88));
+    EXPECT("OverrideTail: nothing measured is never a contradiction", !OverrideContradictsTail(true, 417, 0x88, -1));
+    EXPECT("OverrideTail: ...nor a tail with no FunctionFlags offset", !OverrideContradictsTail(true, 417, 0, 0x88));
+    // One verdict with the refusal: wherever set_ue_version_override would refuse the version, the note shows.
+    int disagree = 0;
+    char first[96] = "none";
+    for (unsigned v : { 411u, 415u, 417u, 418u, 421u, 427u, 500u, 505u, 508u })
+        for (int base : { 0x88, 0x8A, 0x8C, 0x8E, 0xB0, 0xB4 }) {
+            const bool refused = DynOff::CheckTailForVersion(v, 0x88, base) == DynOff::TailCheck::Contradicts;
+            if (OverrideContradictsTail(true, v, 0x88, base) != refused && disagree++ == 0)
+                snprintf(first, sizeof(first), "v %u base 0x%X", v, base);
+        }
+    if (disagree != 0) std::printf("    OverrideTail: %d disagreement(s), the first %s\n", disagree, first);
+    EXPECT("OverrideTail: the note and the refusal give one verdict", disagree == 0);
 }
 
 // [UE-OVERRIDE-411] review 2: the refusal held only while a measurement existed in-process; a persisted override, a
@@ -6659,6 +6852,238 @@ static void Test_CmcMarkerVersion() {
     EXPECT("R7-X4: never raises below the 5.x range", CmcMarkerVersion(427, true, true, true) == 427);
 }
 
+// [VER-MARKERS-PAST-504] The 5.5 rung's evidence: which slot behind the MEASURED UEnum::Names repeats the name of the
+// enum's package. The fakes copy the fixture PDBs' layouts -- DumperTest (5.4) and DumperTest56 (5.6) Shipping, and
+// DumperTest51 (5.1) -- and the same layouts on a case-preserving build, whose UObject is 8 longer and FName 12 bytes.
+static void Test_EnumPackageProbe() {
+    std::printf("\n--- VER-MARKERS-PAST-504: the 5.5 rung's UEnum::EnumPackage probe ---\n");
+    using DynOff::EnumPackageTally;
+    using DynOff::EnumPackageProves55;
+    EXPECT("EnumPkg ⭐: every sampled enum at Names+0x14 proves 5.5", EnumPackageProves55(EnumPackageTally{32, 32, 0}));
+    EXPECT("EnumPkg: three quarters is a clear majority", EnumPackageProves55(EnumPackageTally{32, 24, 0}));
+    EXPECT("EnumPkg: ...one fewer is not", !EnumPackageProves55(EnumPackageTally{32, 23, 0}));
+    EXPECT("EnumPkg: five agreeing samples are enough", EnumPackageProves55(EnumPackageTally{5, 5, 0}));
+    EXPECT("EnumPkg: ...four are not", !EnumPackageProves55(EnumPackageTally{4, 4, 0}));
+    EXPECT("EnumPkg: the 5.4 layout proves nothing", !EnumPackageProves55(EnumPackageTally{32, 0, 32}));
+    EXPECT("EnumPkg: nothing sampled proves nothing", !EnumPackageProves55(EnumPackageTally{}));
+
+    // Fake objects in host memory, read through a plain copy -- or refused at one address.
+    struct Obj {
+        alignas(8) uint8_t b[0x80] = {};
+        uintptr_t at(int off = 0) { return reinterpret_cast<uintptr_t>(b) + static_cast<uintptr_t>(off); }
+        void i32(int off, int32_t v) { std::memcpy(b + off, &v, sizeof v); }
+        void ptr(int off, uintptr_t v) { std::memcpy(b + off, &v, sizeof v); }
+    };
+    uintptr_t refuse = 0;
+    auto read = [&](uintptr_t a, void* out, size_t n) {
+        if (refuse && a <= refuse && refuse < a + n) return false;
+        std::memcpy(out, reinterpret_cast<const void*>(a), n);
+        return true;
+    };
+    constexpr int kName = Grimoire::OFF_UOBJECT_NAME;
+    constexpr int32_t kPkgName = 0x1B2C4;   // the package's FName ComparisonIndex
+    // An enum with three names, its package as its Outer, and its member block after Names as the PDB lays it out.
+    enum class Shape { UE51, UE54, UE56 };
+    auto makeEnum = [&](Obj& pkg, Obj& en, int outerOff, int namesOff, Shape s) {
+        pkg.i32(kName, kPkgName);
+        en.ptr(outerOff, pkg.at());
+        en.ptr(namesOff, pkg.at());                 // Names.Data (any readable pointer)
+        en.i32(namesOff + 0x08, 3);                 // Names.Num
+        en.i32(namesOff + 0x0C, 4);                 // Names.Max
+        switch (s) {
+        case Shape::UE51: en.i32(namesOff + 0x10, 2); en.i32(namesOff + 0x14, 1); en.i32(namesOff + 0x20, kPkgName); break;
+        case Shape::UE54: en.i32(namesOff + 0x10, 2); en.b[namesOff + 0x14] = 1; en.i32(namesOff + 0x20, kPkgName); break;
+        case Shape::UE56: en.b[namesOff + 0x10] = 2; en.b[namesOff + 0x11] = 1; en.i32(namesOff + 0x14, kPkgName); break;
+        }
+    };
+    auto sample = [&](Obj& en, int namesOff, int outerOff, EnumPackageTally& t) {
+        return DynOff::SampleEnumPackage(t, en.at(), namesOff, outerOff, kName, read);
+    };
+    {
+        Obj pkg, e51, e54, e56;
+        makeEnum(pkg, e51, 0x20, 0x40, Shape::UE51);
+        makeEnum(pkg, e54, 0x20, 0x40, Shape::UE54);
+        makeEnum(pkg, e56, 0x20, 0x40, Shape::UE56);
+        EnumPackageTally t51, t54, t56;
+        EXPECT("EnumPkg ⭐: a 5.4 enum (DumperTest PDB) keeps its package at Names+0x20",
+               sample(e54, 0x40, 0x20, t54) && t54.sampled == 1 && t54.at51 == 1 && t54.at55 == 0);
+        EXPECT("EnumPkg: ...as a 5.1 one does (DumperTest51 PDB: EnumFlags still int32)",
+               sample(e51, 0x40, 0x20, t51) && t51.sampled == 1 && t51.at51 == 1 && t51.at55 == 0);
+        EXPECT("EnumPkg ⭐: a 5.6 enum (DumperTest56 PDB) keeps it at Names+0x14",
+               sample(e56, 0x40, 0x20, t56) && t56.sampled == 1 && t56.at55 == 1 && t56.at51 == 0);
+    }
+    {   // Case-preserving: Outer at 0x28, Names at 0x48; both slots keep their place relative to Names.
+        Obj pkg, e54, e56;
+        makeEnum(pkg, e54, 0x28, 0x48, Shape::UE54);
+        makeEnum(pkg, e56, 0x28, 0x48, Shape::UE56);
+        EnumPackageTally t54, t56;
+        EXPECT("EnumPkg: a case-preserving 5.4 enum, Names at 0x48",
+               sample(e54, 0x48, 0x28, t54) && t54.at51 == 1 && t54.at55 == 0);
+        EXPECT("EnumPkg: a case-preserving 5.6 enum, Names at 0x48",
+               sample(e56, 0x48, 0x28, t56) && t56.at55 == 1 && t56.at51 == 0);
+    }
+    {   // The comparison is with the OUTERMOST object -- GetPackage() -- not the direct Outer.
+        Obj pkg, mid, e56;
+        makeEnum(pkg, e56, 0x20, 0x40, Shape::UE56);
+        mid.i32(kName, 0x777);
+        mid.ptr(0x20, pkg.at());
+        e56.ptr(0x20, mid.at());
+        EnumPackageTally t;
+        EXPECT("EnumPkg: an enum inside another object is compared with its package",
+               sample(e56, 0x40, 0x20, t) && t.at55 == 1);
+    }
+    {   // What is not a sample.
+        Obj pkg, e56;
+        makeEnum(pkg, e56, 0x20, 0x40, Shape::UE56);
+        EnumPackageTally t;
+        Obj orphan = e56;
+        orphan.ptr(0x20, 0);
+        orphan.i32(kName, kPkgName);   // its own name repeats its +0x14 slot, so only the self-as-package guard refuses it
+        EXPECT("EnumPkg: an enum with no Outer is not a sample", !sample(orphan, 0x40, 0x20, t) && t.sampled == 0);
+        Obj empty = e56;
+        empty.i32(0x40 + 0x08, 0);
+        EXPECT("EnumPkg ⭐: an enum with no names is not a sample -- Default__Enum never ran SetEnums, so no EnumPackage",
+               !sample(empty, 0x40, 0x20, t) && t.sampled == 0);
+        Obj nameless;
+        Obj e2 = e56;
+        e2.ptr(0x20, nameless.at());
+        EXPECT("EnumPkg: a package whose name reads None is not a sample", !sample(e2, 0x40, 0x20, t) && t.sampled == 0);
+        Obj a, b;
+        a.ptr(0x20, b.at());
+        b.ptr(0x20, a.at());
+        Obj loop = e56;
+        loop.ptr(0x20, a.at());
+        EXPECT("EnumPkg: an Outer chain that never ends is not a sample", !sample(loop, 0x40, 0x20, t) && t.sampled == 0);
+        refuse = e56.at(0x40 + 0x14);
+        EXPECT("EnumPkg: a slot that cannot be read is not a sample", !sample(e56, 0x40, 0x20, t) && t.sampled == 0);
+        refuse = 0;
+        EXPECT("EnumPkg: control -- the same enum read in full is", sample(e56, 0x40, 0x20, t) && t.sampled == 1);
+    }
+    {   // When the probe reads at all: only behind a Names offset a detection MEASURED, and only the legacy TArray.
+        using DynOff::EnumProbeSkip;
+        using DynOff::EnumPackageProbeSkip;
+        EXPECT("EnumPkg ⭐: the probe reads behind a Names offset a detection found",
+               EnumPackageProbeSkip(true, false, false) == EnumProbeSkip::None);
+        EXPECT("EnumPkg: ...not before any detection ran",
+               EnumPackageProbeSkip(false, false, false) == EnumProbeSkip::NamesNotLocated);
+        EXPECT("EnumPkg ⭐: ...nor after a latched FAILED, which leaves only the default offset",
+               EnumPackageProbeSkip(true, true, false) == EnumProbeSkip::NamesNotLocated
+               && EnumPackageProbeSkip(true, true, true) == EnumProbeSkip::NamesNotLocated);
+        EXPECT("EnumPkg ⭐: ...nor behind the UE5.7+ FNameData, which has no EnumPackage slot",
+               EnumPackageProbeSkip(true, false, true) == EnumProbeSkip::NamesAreFNameData);
+    }
+    {   // The probe the 5.5 rung asks: which objects it samples, how many, and where it reads the package's name.
+        std::vector<std::pair<std::string, int>> asked;
+        Obj pkg, cdo, e[6];
+        for (auto& x : e) makeEnum(pkg, x, 0x20, 0x40, Shape::UE56);
+        std::vector<uintptr_t> found{ cdo.at() };   // Default__Enum first, as the object array has it: no names
+        for (auto& x : e) found.push_back(x.at());
+        auto findExact = [&](const char* cls, int limit) { asked.emplace_back(cls, limit); return found; };
+        const EnumPackageTally t = DynOff::ProbeEnumPackages(findExact, 0x40, 0x20, read);
+        EXPECT("EnumPkg ⭐: the probe asks once for exact Enum instances, kLadderEnumSample of them",
+               asked == (std::vector<std::pair<std::string, int>>{ { "Enum", DynOff::kLadderEnumSample } }));
+        EXPECT("EnumPkg ⭐: ...samples every enum it is handed that has names, against its package's NamePrivate",
+               t.sampled == 6 && t.at55 == 6 && t.at51 == 0 && EnumPackageProves55(t));
+    }
+}
+
+// [VER-MARKERS-PAST-504] The 5.6 rung's evidence: the word behind UStruct::PropertiesSize + 4. Through 5.5 it is the high
+// half of an int32 MinAlignment, 0; from 5.6 MinAlignment is int16 and StructStateFlags follows, which UStruct::Link sets
+// to PropertyDataAvailable (1). The fakes copy the fixture PDBs' UStruct: DumperTest (5.4) and DumperTest51 (5.1) put
+// an int32 MinAlignment at 0x5C, DumperTest56 (5.6) and DumperTest58 (5.8) an int16 at 0x5C and the flags at 0x5E.
+static void Test_StructStateProbe() {
+    std::printf("\n--- VER-MARKERS-PAST-504: the 5.6 rung's UStruct::StructStateFlags probe ---\n");
+    using DynOff::StructStateTally;
+    using DynOff::StructStateProves56;
+    EXPECT("StructState ⭐: every sampled struct linked proves 5.6", StructStateProves56(StructStateTally{48, 48}));
+    EXPECT("StructState: three quarters is a clear majority", StructStateProves56(StructStateTally{48, 36}));
+    EXPECT("StructState: ...one fewer is not", !StructStateProves56(StructStateTally{48, 35}));
+    EXPECT("StructState: four samples are too few", !StructStateProves56(StructStateTally{4, 4}));
+    EXPECT("StructState: the int32 MinAlignment of 5.4 / 5.5 proves nothing", !StructStateProves56(StructStateTally{48, 0}));
+    EXPECT("StructState: nothing sampled proves nothing", !StructStateProves56(StructStateTally{}));
+
+    struct Obj {
+        alignas(8) uint8_t b[0xB0] = {};
+        uintptr_t at(int off = 0) { return reinterpret_cast<uintptr_t>(b) + static_cast<uintptr_t>(off); }
+        void i32(int off, int32_t v) { std::memcpy(b + off, &v, sizeof v); }
+        void u16(int off, uint16_t v) { std::memcpy(b + off, &v, sizeof v); }
+    };
+    uintptr_t refuse = 0;
+    auto read = [&](uintptr_t a, void* out, size_t n) {
+        if (refuse && a <= refuse && refuse < a + n) return false;
+        std::memcpy(out, reinterpret_cast<const void*>(a), n);
+        return true;
+    };
+    // A linked struct of `size` bytes and alignment `align`, as the PDB lays it out at `props` (PropertiesSize).
+    auto struct54 = [](Obj& o, int props, int32_t size, int32_t align) { o.i32(props, size); o.i32(props + 4, align); };
+    auto struct56 = [](Obj& o, int props, int32_t size, int16_t align, uint16_t state) {
+        o.i32(props, size);
+        o.u16(props + 4, static_cast<uint16_t>(align));
+        o.u16(props + 6, state);
+    };
+    auto sample = [&](Obj& o, int props, StructStateTally& t) { return DynOff::SampleStructState(t, o.at(), props, read); };
+    {
+        Obj s54, s56;
+        struct54(s54, 0x58, 0x2A8, 8);
+        struct56(s56, 0x58, 0x2A8, 8, 1);
+        StructStateTally t54, t56;
+        EXPECT("StructState ⭐: a 5.4 class (DumperTest PDB) is sampled and is not linked-flagged",
+               sample(s54, 0x58, t54) && t54.sampled == 1 && t54.linked == 0);
+        EXPECT("StructState ⭐: a linked 5.6 class (DumperTest56 PDB) reads PropertyDataAvailable",
+               sample(s56, 0x58, t56) && t56.sampled == 1 && t56.linked == 1);
+        Obj big54;
+        struct54(big54, 0x58, 0x40, 16);
+        StructStateTally tb;
+        EXPECT("StructState: a 16-aligned 5.4 struct is no different", sample(big54, 0x58, tb) && tb.linked == 0);
+    }
+    {   // Case-preserving: PropertiesSize at 0x60, and the flags stay at +6.
+        Obj s56;
+        struct56(s56, 0x60, 0x10, 4, 1);
+        StructStateTally t;
+        EXPECT("StructState: a case-preserving 5.6 struct, PropertiesSize at 0x60",
+               sample(s56, 0x60, t) && t.sampled == 1 && t.linked == 1);
+    }
+    {   // What is, and is not, a sample.
+        StructStateTally t;
+        Obj unlinked;
+        struct56(unlinked, 0x58, 0x10, 4, 0);
+        EXPECT("StructState: a 5.6 struct not linked yet is sampled, unflagged",
+               sample(unlinked, 0x58, t) && t.sampled == 1 && t.linked == 0);
+        Obj cdo;   // Default__Class: never linked, all zero
+        EXPECT("StructState ⭐: a MinAlignment of 0 is not a struct's -- not a sample", !sample(cdo, 0x58, t) && t.sampled == 1);
+        Obj odd;
+        struct54(odd, 0x58, 0x10, 3);
+        EXPECT("StructState: an alignment that is not a power of two is not a sample", !sample(odd, 0x58, t) && t.sampled == 1);
+        Obj huge;
+        struct54(huge, 0x58, 0x10, 0x400);
+        EXPECT("StructState: an alignment past 256 is not a sample", !sample(huge, 0x58, t) && t.sampled == 1);
+        Obj s56;
+        struct56(s56, 0x58, 0x10, 8, 1);
+        refuse = s56.at(0x58 + 6);
+        EXPECT("StructState: a word that cannot be read is not a sample", !sample(s56, 0x58, t) && t.sampled == 1);
+        refuse = 0;
+        EXPECT("StructState: control -- the same struct read in full is", sample(s56, 0x58, t) && t.sampled == 2 && t.linked == 1);
+    }
+    {   // The probe the 5.6 rung asks: which objects it samples, and how many of each kind.
+        std::vector<std::pair<std::string, int>> asked;
+        Obj cls[2], ss[2], fn[2], cdo;   // cdo: Default__Class, never linked -- not a sample
+        for (Obj* o : { &cls[0], &cls[1], &ss[0], &ss[1], &fn[0], &fn[1] }) struct56(*o, 0x58, 0x10, 8, 1);
+        auto findExact = [&](const char* kind, int limit) {
+            asked.emplace_back(kind, limit);
+            const std::string k = kind;
+            if (k == "Class")        return std::vector<uintptr_t>{ cdo.at(), cls[0].at(), cls[1].at() };
+            if (k == "ScriptStruct") return std::vector<uintptr_t>{ ss[0].at(), ss[1].at() };
+            if (k == "Function")     return std::vector<uintptr_t>{ fn[0].at(), fn[1].at() };
+            return std::vector<uintptr_t>{};
+        };
+        const StructStateTally t = DynOff::ProbeStructStates(findExact, 0x58, read);
+        const int n = DynOff::kLadderStructSample;
+        EXPECT("StructState ⭐: the probe asks for exact Class, ScriptStruct and Function instances, kLadderStructSample each",
+               asked == (std::vector<std::pair<std::string, int>>{ { "Class", n }, { "ScriptStruct", n }, { "Function", n } }));
+        EXPECT("StructState ⭐: ...and every kind votes", t.sampled == 6 && t.linked == 6 && StructStateProves56(t));
+    }
+}
+
 // [UE-OVERRIDE-HINT-AUTO] The init version ladder as one function: init climbs it after the offsets probe, and Auto
 // chosen over an override climbs it from the detection it restores, so a stripped UE5 title is not handed back its
 // 4.27 fallback. Pinned rung by rung, in order, with each rung's guard.
@@ -6666,12 +7091,26 @@ static void Test_VersionLadder() {
     std::printf("\n--- UE-OVERRIDE-HINT-AUTO: the init version ladder ---\n");
     using DynOff::StructuralVersionFacts;
     using DynOff::VersionRung;
-    struct Probe { bool present = false, prop = false, func = false; int asked = 0; };
+    using DynOff::EnumPackageTally;
+    using DynOff::StructStateTally;
+    struct Probe {
+        bool present = false, prop = false, func = false; int asked = 0;
+        EnumPackageTally enums; int enumAsked = 0;     // [VER-MARKERS-PAST-504] the 5.5 rung's evidence
+        StructStateTally structs; int structAsked = 0; // [VER-MARKERS-PAST-504] the 5.6 rung's evidence
+    };
     auto run = [](unsigned v, const StructuralVersionFacts& f, Probe& p, std::vector<VersionRung>* rungs = nullptr) {
         return DynOff::ApplyVersionLadder(v, f,
             [&](bool& prop, bool& func) { ++p.asked; prop = p.prop; func = p.func; return p.present; },
+            [&]() { ++p.enumAsked; return p.enums; },
+            [&]() { ++p.structAsked; return p.structs; },
             [&](VersionRung r, unsigned, unsigned) { if (rungs) rungs->push_back(r); });
     };
+    // Every sampled enum keeps its package name at Names+0x14 (UE5.5+), or at Names+0x20 (UE5.1-5.4).
+    const EnumPackageTally enums55{32, 32, 0};
+    const EnumPackageTally enums54{32, 0, 32};
+    // Every sampled linked struct reads PropertyDataAvailable at PropertiesSize+6 (UE5.6+), or 0 there (to 5.5).
+    const StructStateTally structs56{48, 48};
+    const StructStateTally structs55{48, 0};
     auto measured = [](bool fproperty) {
         StructuralVersionFacts f;
         f.measured  = true;
@@ -6682,10 +7121,11 @@ static void Test_VersionLadder() {
     {   // Nothing is a fact before the probe has run.
         StructuralVersionFacts f;
         f.fproperty = true; f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
-        Probe p; p.present = true; p.func = true;
+        Probe p; p.present = true; p.func = true; p.enums = enums55; p.structs = structs56;
         const auto r = run(427, f, p);
         EXPECT("Ladder ⭐: nothing measured leaves a 4.27 label alone", r.version == 427 && !r.loweredToUE4);
         EXPECT("Ladder: ...and walks no object array for a CMC", p.asked == 0);
+        EXPECT("Ladder: ...nor for an enum or a struct", p.enumAsked == 0 && p.structAsked == 0);
         StructuralVersionFacts u;
         u.fproperty = false;
         EXPECT("Ladder: nothing measured never lowers a UE5 label", run(504, u, p).version == 504);
@@ -6702,9 +7142,11 @@ static void Test_VersionLadder() {
         EXPECT("Ladder: UProperty mode leaves a UE4 label alone, and does not call it lowered",
                keep.version == 427 && !keep.loweredToUE4);
         f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
-        Probe q; q.present = true; q.func = true;
+        Probe q; q.present = true; q.func = true; q.enums = enums55; q.structs = structs56;
         EXPECT("Ladder: no UE5 rung fires in UProperty mode", run(427, f, q).version == 427 && q.asked == 0);
         EXPECT("Ladder: ...nor after the UProperty rung lowered the label", run(508, f, q).version == 418 && q.asked == 0);
+        EXPECT("Ladder: ...and UProperty mode never pays the enum or the struct walk",
+               q.enumAsked == 0 && q.structAsked == 0);
     }
     {   // Tagged FFieldVariant: UE5.3+.
         auto f = measured(true);
@@ -6734,6 +7176,77 @@ static void Test_VersionLadder() {
         EXPECT("Ladder: a CMC with neither marker changes nothing, and no rung is reported",
                run(502, f, bare, &heard).version == 502 && heard.empty());
     }
+    {   // [VER-MARKERS-PAST-504] UEnum::EnumPackage moved ahead of EnumDisplayNameFn: UE5.5+, inside its window only.
+        auto f = measured(true);
+        Probe p; p.enums = enums55;
+        std::vector<VersionRung> heard;
+        EXPECT("Ladder ⭐: EnumPackage at Names+0x14 lifts 5.4 to 5.5, and says so",
+               run(504, f, p, &heard).version == 505 && p.enumAsked == 1
+               && heard == std::vector<VersionRung>{VersionRung::EnumPackage55});
+        auto g = f;
+        g.taggedFFieldVariant = true;
+        Probe stripped; stripped.present = true; stripped.func = true; stripped.enums = enums55;
+        EXPECT("Ladder ⭐: a stripped 5.5 title climbs 4.27 -> 5.3 -> 5.4 -> 5.5",
+               run(427, g, stripped).version == 505);
+        Probe menu; menu.enums = enums55;
+        EXPECT("Ladder: ...and with no CMC loaded yet, 4.27 -> 5.3 -> 5.5", run(427, g, menu).version == 505);
+        Probe ue4; ue4.enums = enums55;
+        EXPECT("Ladder ⭐: a UE4 label never pays the enum walk", run(427, f, ue4).version == 427 && ue4.enumAsked == 0);
+        Probe top; top.enums = enums55;
+        EXPECT("Ladder: 5.5 and above never ask",
+               run(505, f, top).version == 505 && run(506, f, top).version == 506 && top.enumAsked == 0);
+        Probe old; old.enums = enums54;
+        EXPECT("Ladder ⭐: the 5.4 enum layout leaves a 5.4 label alone (DumperTest)",
+               run(504, f, old).version == 504 && old.enumAsked == 1);
+        Probe stock51; stock51.enums = enums54;
+        EXPECT("Ladder: ...and a 5.1 one (DumperTest51)", run(501, f, stock51).version == 501 && stock51.enumAsked == 1);
+        Probe floor; floor.enums = enums55;
+        EXPECT("Ladder: the window opens at 5.0 -- a 5.0 label whose tagged probe missed is asked, and climbs to 5.5",
+               run(500, f, floor).version == 505 && floor.enumAsked == 1);
+        Probe none;
+        EXPECT("Ladder: no enum sampled changes nothing", run(503, f, none).version == 503 && none.enumAsked == 1);
+        Probe split; split.enums = EnumPackageTally{32, 20, 12};
+        EXPECT("Ladder: no clear majority changes nothing", run(504, f, split).version == 504);
+    }
+    {   // [VER-MARKERS-PAST-504] UStruct::StructStateFlags behind an int16 MinAlignment: UE5.6+, inside its window only.
+        auto f = measured(true);
+        Probe p; p.structs = structs56;
+        std::vector<VersionRung> heard;
+        EXPECT("Ladder ⭐: PropertyDataAvailable at PropertiesSize+6 lifts 5.5 to 5.6, and says so",
+               run(505, f, p, &heard).version == 506 && p.structAsked == 1
+               && heard == std::vector<VersionRung>{VersionRung::StructStateFlags56});
+        Probe both; both.enums = enums55; both.structs = structs56;
+        std::vector<VersionRung> two;
+        EXPECT("Ladder: 5.4 -> 5.5 -> 5.6, the enum rung first",
+               run(504, f, both, &two).version == 506
+               && two == (std::vector<VersionRung>{VersionRung::EnumPackage55, VersionRung::StructStateFlags56}));
+        Probe structsOnly; structsOnly.structs = structs56;
+        EXPECT("Ladder: the struct rung alone lifts 5.4 to 5.6 (enum names not located)",
+               run(504, f, structsOnly).version == 506);
+        auto g = f;
+        g.taggedFFieldVariant = true;
+        Probe stripped; stripped.present = true; stripped.func = true; stripped.enums = enums55; stripped.structs = structs56;
+        std::vector<VersionRung> climb;
+        EXPECT("Ladder ⭐: a stripped 5.6 title climbs 4.27 -> 5.3 -> 5.4 -> 5.5 -> 5.6 (FFRS, Elliot)",
+               run(427, g, stripped, &climb).version == 506
+               && climb == (std::vector<VersionRung>{VersionRung::TaggedFieldVariant, VersionRung::CmcMarkers,
+                                                     VersionRung::EnumPackage55, VersionRung::StructStateFlags56}));
+        Probe ue4; ue4.structs = structs56;
+        EXPECT("Ladder ⭐: a UE4 label never pays the struct walk", run(427, f, ue4).version == 427 && ue4.structAsked == 0);
+        Probe top; top.structs = structs56;
+        EXPECT("Ladder: 5.6 and above never ask",
+               run(506, f, top).version == 506 && run(508, f, top).version == 508 && top.structAsked == 0);
+        Probe old; old.structs = structs55;
+        EXPECT("Ladder ⭐: the int32 MinAlignment of 5.4 / 5.5 leaves the label alone (DumperTest)",
+               run(504, f, old).version == 504 && old.structAsked == 1);
+        Probe none;
+        EXPECT("Ladder: no struct sampled changes nothing", run(505, f, none).version == 505 && none.structAsked == 1);
+        Probe floor; floor.structs = structs56;
+        EXPECT("Ladder: the window opens at 5.0 -- a 5.0 label whose tagged probe missed is asked, and climbs to 5.6",
+               run(500, f, floor).version == 506 && floor.structAsked == 1);
+        Probe split; split.structs = StructStateTally{48, 30};
+        EXPECT("Ladder: no clear majority changes nothing", run(505, f, split).version == 505);
+    }
     {   // The reordered FUObjectItem: UE5.7+.
         auto f = measured(true);
         f.reorderedItem57 = true;
@@ -6752,20 +7265,48 @@ static void Test_VersionLadder() {
         f.reorderedItem57 = true;
         EXPECT("Ladder: the 5.7 rung then the 5.8 rung -- 4.27 -> 5.7 -> 5.8", run(427, f, p).version == 508);
     }
+    {   // [VER-MARKERS-PAST-504] A raise rung lifts a user override as it lifts a detection, and the result says which:
+        // the rung lines read "version=N" either way, and triage must tell an overruled override from a raised label.
+        auto f = measured(true);
+        f.userOverride = true;
+        Probe p; p.structs = structs56;
+        const auto raised = run(504, f, p);
+        EXPECT("Ladder ⭐: a 5.4 override on a 5.6 layout is raised to 5.6, and the result says the override was",
+               raised.version == 506 && raised.overrideRaised);
+        Probe none;
+        const auto kept = run(504, f, none);
+        EXPECT("Ladder: an override no rung moves is not called raised", kept.version == 504 && !kept.overrideRaised);
+        auto d = measured(true);
+        Probe q; q.structs = structs56;
+        const auto detected = run(504, d, q);
+        EXPECT("Ladder ⭐: a raised detection is not called an overruled override",
+               detected.version == 506 && !detected.overrideRaised);
+        auto u = measured(false);
+        u.userOverride = true;
+        Probe w;
+        const auto lowered = run(508, u, w);
+        EXPECT("Ladder: an override the UProperty rung lowers is not called raised -- that rung's own line says so",
+               lowered.loweredToUE4 && !lowered.overrideRaised);
+        StructuralVersionFacts unmeasured;
+        unmeasured.fproperty = true; unmeasured.userOverride = true; unmeasured.virtualDtor58 = true;
+        Probe r; r.structs = structs56;
+        EXPECT("Ladder: nothing measured raises no override", !run(504, unmeasured, r).overrideRaised);
+    }
     {   // The whole ladder.
         auto f = measured(true);
         f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
-        Probe p; p.present = true; p.func = true;
+        Probe p; p.present = true; p.func = true; p.enums = enums55; p.structs = structs56;
         std::vector<VersionRung> rungs;
         const auto r = run(427, f, p, &rungs);
         EXPECT("Ladder: every rung from 4.27 lands on 5.8", r.version == 508 && !r.loweredToUE4);
         EXPECT("Ladder: ...and reports each rung that moved it, in order",
                (rungs == std::vector<VersionRung>{VersionRung::TaggedFieldVariant, VersionRung::CmcMarkers,
+                                                  VersionRung::EnumPackage55, VersionRung::StructStateFlags56,
                                                   VersionRung::ReorderedItem, VersionRung::VirtualFieldClassDtor}));
         std::vector<VersionRung> again;
-        Probe q; q.present = true; q.func = true;
+        Probe q; q.present = true; q.func = true; q.enums = enums55; q.structs = structs56;
         EXPECT("Ladder ⭐: climbing again from where it landed changes nothing (a cached value that already climbed)",
-               run(r.version, f, q, &again).version == 508 && again.empty());
+               run(r.version, f, q, &again).version == 508 && again.empty() && q.enumAsked == 0 && q.structAsked == 0);
     }
 }
 
@@ -7250,6 +7791,44 @@ static void Test_UPropertyFamilyFor() {
         for (bool cpn : { false, true })
             EXPECT("UPROPSLOT: the family's base IS the bool slot A6 derives, at every UProperty version",
                    UPropertyFamilyFor(0x50, v, cpn).structProp == DynOff::UBoolPropFieldSizeFor(0x50, v, cpn));
+}
+
+// [UE4-USTRUCT-GIVEUP] The UStruct head a UProperty engine's give-up ships. Every expected tuple below is a PDB's or a
+// header's, read with llvm-pdbutil (`pretty -classes -class-definitions=layout -include-types=^UStruct$`).
+static void Test_UPropertyUStructHeadFor() {
+    auto is = [](DynOff::UStructHead h, int s, int c, int p, int sc) {
+        return h.super == s && h.children == c && h.propsSize == p && h.script == sc;
+    };
+    using DynOff::UPropertyUStructHeadFor;
+    EXPECT("USTRUCT-GIVEUP: 4.18 (UE_4.18 Class.h) 30/38/40/48", is(UPropertyUStructHeadFor(0x28, 418), 0x30, 0x38, 0x40, 0x48));
+    EXPECT("USTRUCT-GIVEUP: 4.20 Shipping (EVERSPACE's PDB) 30/38/40/48",
+           is(UPropertyUStructHeadFor(0x28, 420), 0x30, 0x38, 0x40, 0x48));
+    EXPECT("USTRUCT-GIVEUP: 4.11 and 4.21 have no FStructBaseChain either",
+           is(UPropertyUStructHeadFor(0x28, 411), 0x30, 0x38, 0x40, 0x48)
+           && is(UPropertyUStructHeadFor(0x28, 421), 0x30, 0x38, 0x40, 0x48));
+    EXPECT("USTRUCT-GIVEUP: 4.23 Shipping (UE423_Flying's PDB) 40/48/50/58 -- FStructBaseChain first",
+           is(UPropertyUStructHeadFor(0x28, 423), 0x40, 0x48, 0x50, 0x58));
+    EXPECT("USTRUCT-GIVEUP: 4.22 and 4.24 carry it too",
+           is(UPropertyUStructHeadFor(0x28, 422), 0x40, 0x48, 0x50, 0x58)
+           && is(UPropertyUStructHeadFor(0x28, 424), 0x40, 0x48, 0x50, 0x58));
+    // A STATS build's UObject is 8 longer (TStatId), and so its UField::Next: the head follows Next, not the version --
+    // GIVEN that Next. A give-up has no measured one and passes 0x28 on such a build (DynOff::UPropertyUStructHeadFor),
+    // so these two hold for the arithmetic, not for a STATS build that gives up.
+    EXPECT("USTRUCT-GIVEUP: given a measured Next 0x30 at 4.15, UE415_Flyinh's Development PDB head 38/40/48/50",
+           is(UPropertyUStructHeadFor(0x30, 415), 0x38, 0x40, 0x48, 0x50));
+    EXPECT("USTRUCT-GIVEUP: given a measured Next 0x30 at 4.23, UE423_Flying's Development PDB head 48/50/58/60",
+           is(UPropertyUStructHeadFor(0x30, 423), 0x48, 0x50, 0x58, 0x60));
+    // Case-preserving names move UField::Next to 0x30 the same way; DQ XI S's shifted 4.18 measured it at 0x38.
+    EXPECT("USTRUCT-GIVEUP: a shifted 4.18 (Next 0x38) 40/48/50/58", is(UPropertyUStructHeadFor(0x38, 418), 0x40, 0x48, 0x50, 0x58));
+    // An unknown version: 4.22-4.24's head, whose Super and Children are the 4.25+ default's.
+    EXPECT("USTRUCT-GIVEUP: an unknown version gets 40/48/50/58", is(UPropertyUStructHeadFor(0x28, 0), 0x40, 0x48, 0x50, 0x58));
+    // Script follows PropertiesSize + MinAlignment on every one, as Grimoire's USTRUCT_SCRIPT note says.
+    for (unsigned v : { 0u, 411u, 418u, 421u, 422u, 424u })
+        for (int next : { 0x28, 0x30, 0x38 }) {
+            const DynOff::UStructHead h = UPropertyUStructHeadFor(next, v);
+            EXPECT("USTRUCT-GIVEUP: Children = Super + 8, PropertiesSize = Children + 8, Script = PropertiesSize + 8",
+                   h.children == h.super + 8 && h.propsSize == h.children + 8 && h.script == h.propsSize + 8);
+        }
 }
 
 static void Test_PropertyFamilyIsCoherent() {
@@ -8600,6 +9179,50 @@ static void Test_Genau_AdmitMultiModuleCandidate() {
                   "AdmitMultiModuleCandidate must be constexpr-evaluable");
 }
 
+// [AOB-SKIP-OWN-DLL] Which modules the multi-module walk scans. On IS Defense (UE 4.10, through the version.dll proxy)
+// GOBJ_V1's three multi-module matches included two inside that proxy -- our own code -- so every Pass 2 scan had the
+// dumper as a source of false candidates. A second build of ours can be mapped too (two proxies in one game folder:
+// the first-loaded-wins mutex idles the second but its image stays; or UE5Dumper.dll injected beside a proxy by a tool
+// that does not check, whose auto-start then scans as well), and its code is the same code.
+static void Test_Macht_ClassifyModuleForScan() {
+    std::printf("Test_Macht_ClassifyModuleForScan\n");
+    using Macht::ModuleScanVerdict;
+    const uintptr_t mainBase = 0x140000000ull, ownBase = 0x7FF810000000ull, other = 0x7FF820000000ull;
+    const size_t big = 0x200000, tiny = Macht::kMinScannedModuleSize - 1;
+    int asked = 0;
+    auto ours   = [&] { ++asked; return true; };
+    auto theirs = [&] { ++asked; return false; };
+
+    EXPECT("SKIPOWN: the image holding this code is not scanned",
+           Macht::ClassifyModuleForScan(ownBase, big, mainBase, ownBase, theirs) == ModuleScanVerdict::SkipOwnModule);
+    EXPECT("SKIPOWN: another build of the dumper is not scanned",
+           Macht::ClassifyModuleForScan(other, big, mainBase, ownBase, ours) == ModuleScanVerdict::SkipOtherDumper);
+    EXPECT("SKIPOWN: any other module above the floor is scanned",
+           Macht::ClassifyModuleForScan(other, big, mainBase, ownBase, theirs) == ModuleScanVerdict::Scan);
+    EXPECT("SKIPOWN: the main exe is left to the scan ahead of the walk",
+           Macht::ClassifyModuleForScan(mainBase, big, mainBase, ownBase, theirs) == ModuleScanVerdict::SkipMainExe);
+    // dll_core_test's shape, where this code IS the exe: the exe is still the exe, scanned ahead of the walk.
+    EXPECT("SKIPOWN: own image == main exe reads as the main exe",
+           Macht::ClassifyModuleForScan(mainBase, big, mainBase, mainBase, theirs) == ModuleScanVerdict::SkipMainExe);
+    EXPECT("SKIPOWN: a module below the floor is skipped as today",
+           Macht::ClassifyModuleForScan(other, tiny, mainBase, ownBase, theirs) == ModuleScanVerdict::SkipTiny);
+    EXPECT("SKIPOWN: the floor itself is scanned, as today",
+           Macht::ClassifyModuleForScan(other, Macht::kMinScannedModuleSize, mainBase, ownBase, theirs)
+               == ModuleScanVerdict::Scan);
+
+    // The question reads a module's export table, so it is asked only of a module every cheaper arm let through.
+    asked = 0;
+    (void)Macht::ClassifyModuleForScan(mainBase, big, mainBase, ownBase, ours);
+    (void)Macht::ClassifyModuleForScan(ownBase, big, mainBase, ownBase, ours);
+    (void)Macht::ClassifyModuleForScan(other, tiny, mainBase, ownBase, ours);
+    EXPECT_EQ_U64("SKIPOWN: not asked of the exe, our own image, or a module below the floor", asked, 0);
+    (void)Macht::ClassifyModuleForScan(other, big, mainBase, ownBase, theirs);
+    EXPECT_EQ_U64("SKIPOWN: asked once of a module the other arms let through", asked, 1);
+
+    static_assert(Macht::ClassifyModuleForScan(2, 0x20000, 1, 3, [] { return false; }) == ModuleScanVerdict::Scan,
+                  "ClassifyModuleForScan must be constexpr-evaluable");
+}
+
 static void Test_Macht_ParsePattern_Nibble() {
     std::printf("Test_Macht_ParsePattern_Nibble\n");
     Macht::ParsedPattern p;
@@ -8875,6 +9498,20 @@ static void Test_Ubel_PreviewScalarValue() {
         EXPECT("BoolProperty true",  Ubel::PreviewScalarValue("BoolProperty", b, 1) == "true");
         b[0] = 200;
         EXPECT("ByteProperty",       Ubel::PreviewScalarValue("ByteProperty", b, 1) == "200");
+    }
+
+    // --- [INT8-PREVIEW] Int8Property is int8 in every engine, so its byte is SIGNED: the game holds
+    //     -1 as 0xFF. Read through uint8_t it previewed 255. ByteProperty is the unsigned one-byte type
+    //     and must stay so -- the fix is not "every one-byte value is signed".
+    {
+        uint8_t b[1] = { 0xFF };
+        EXPECT("Int8Property 0xFF is -1, not 255",  Ubel::PreviewScalarValue("Int8Property", b, 1) == "-1");
+        b[0] = 0x80;
+        EXPECT("Int8Property 0x80 is -128",         Ubel::PreviewScalarValue("Int8Property", b, 1) == "-128");
+        b[0] = 0x7F;
+        EXPECT("Int8Property 0x7F is 127",          Ubel::PreviewScalarValue("Int8Property", b, 1) == "127");
+        b[0] = 0xFF;
+        EXPECT("ByteProperty 0xFF stays 255",       Ubel::PreviewScalarValue("ByteProperty", b, 1) == "255");
     }
 
     // --- [A2-STRUCT-PREVIEW-BOOLMASK] packed bools read THEIR bit, not the byte. A physics actor's
@@ -9366,6 +10003,81 @@ static void Test_Serie_FirstEntryAfterNone() {
     EXPECT_EQ_U64("bad stride -> -1",    Serie::FirstEntryAfterNone(2, 0), -1);
 }
 
+// [UE4-WIDE-FNAME] UE 4.10-4.22 keep a name's charset in its entry's first int32: NameTypes.h (4.10 and 4.18 alike)
+// declares `NAME_INDEX Index` first, with NAME_WIDE_MASK 0x1 and NAME_INDEX_SHIFT 1, and UnrealNames.cpp's
+// AllocateNameEntry stores `(Index << NAME_INDEX_SHIFT) | wide` where Index is the slot the entry is stored at. Serie
+// never read it, so every wide name decoded as narrow bytes: cut at its first zero byte, or rejected.
+static void Test_Serie_UE4EntryIsWide() {
+    std::printf("Test_Serie_UE4EntryIsWide\n");
+    EXPECT("UE4WIDE: a wide entry's word, (slot << 1) | 1, is wide", Serie::UE4EntryIsWide((5 << 1) | 1, 5));
+    EXPECT("UE4WIDE: at a slot past the first chunk too",
+           Serie::UE4EntryIsWide((0x123456 << 1) | 1, 0x123456));
+    EXPECT("UE4WIDE: an ANSI entry's word, slot << 1, is not", !Serie::UE4EntryIsWide(5 << 1, 5));
+    // The rest of the word names the entry's own slot, so a set bit counts only beside it: a layout whose first int32
+    // is something else keeps today's narrow read.
+    EXPECT("UE4WIDE: a set bit beside another slot is not believed", !Serie::UE4EntryIsWide((6 << 1) | 1, 5));
+    // The whole slot, not its low bits: a word that agrees only within a chunk (the element index GetEntry already
+    // has) or only in 16 bits would let a non-stock first int32 with bit 0 set through once in 2^15, not 2^32.
+    EXPECT("UE4WIDE: a slot that agrees only within the chunk is not believed",
+           !Serie::UE4EntryIsWide(((5 + 0x4000) << 1) | 1, 5));
+    EXPECT("UE4WIDE: a slot that agrees only in its low 16 bits is not believed",
+           !Serie::UE4EntryIsWide(((5 + 0x10000) << 1) | 1, 5));
+    EXPECT("UE4WIDE: a zeroed word is not wide", !Serie::UE4EntryIsWide(0, 1));
+    EXPECT("UE4WIDE: an all-ones word is not wide for a real slot", !Serie::UE4EntryIsWide(-1, 5));
+    static_assert(!Serie::UE4EntryIsWide(4 << 1, 4), "UE4EntryIsWide must be constexpr-evaluable");
+}
+
+// [UE4-WIDE-FNAME-CLEANCHECK] find_by_address's backward scan keeps a candidate only when its name and its class's name
+// read as genuine. The gate refused every non-ASCII byte, so since [UE4-WIDE-FNAME] decodes a pre-4.23 wide name whole
+// (it used to arrive cut to its first ASCII character, and pass), a Japanese-named sub-object went to 'nearest'. It now
+// accepts well-formed UTF-8 -- and must still refuse what the DQ3 HD-2D false positive decoded to.
+static void Test_Aura_IsCleanFName() {
+    std::printf("Test_Aura_IsCleanFName\n");
+    using Aura::IsCleanFName;
+    // Accepted: ASCII as before, and a localized name in any plane.
+    EXPECT("CLEANCHECK control: an ASCII name", IsCleanFName("BackgroundBlur"));
+    EXPECT("CLEANCHECK control: a numbered ASCII name", IsCleanFName("Default__BP_Hero_C_3"));
+    const wchar_t hpWide[] = { L'H', L'P', 0x4F53, 0x529B, 0 };   // "HP体力", the short CJK name IsImplausibleWideName keeps
+    EXPECT("CLEANCHECK ⭐: a wide CJK name, decoded whole", IsCleanFName(Utf8Helpers::EncodeUtf16(hpWide, 4)));
+    EXPECT("CLEANCHECK ⭐: katakana", IsCleanFName("\xE3\x82\xAB\xE3\x82\xBF\xE3\x82\xAB\xE3\x83\x8A"));   // カタカナ
+    EXPECT("CLEANCHECK ⭐: a Latin-1 letter from a wide entry (Caf\xC3\xA9)", IsCleanFName("Caf\xC3\xA9"));
+    EXPECT("CLEANCHECK: a supplementary-plane character, as EncodeUtf16 joins a pair",
+           IsCleanFName("Name\xF0\x9F\x98\x80"));
+    EXPECT("CLEANCHECK: a numbered wide name", IsCleanFName("\xE5\x89\xA3_1"));   // 剣_1
+    EXPECT("CLEANCHECK: 256 bytes is the longest kept", IsCleanFName(std::string(256, 'A')));
+
+    // The DQ3 HD-2D case the gate was written against: a value in raw heap, a junk header 0x20 before it whose name
+    // decoded to 'Property??IntProperty' and whose ClassPrivate's name was an ASCII asset path read as UTF-16 -- 435
+    // characters of mojibake. Serie::GetString returns "" for that decode; at full length it is also far past the cap.
+    EXPECT("CLEANCHECK DQ3 ⭐: the junk object's name is refused ('?')", !IsCleanFName("Property??IntProperty"));
+    EXPECT("CLEANCHECK DQ3 ⭐: what Serie returns for the mojibake class (\"\") is refused", !IsCleanFName(""));
+    std::string path;
+    while (path.size() < 870) path += "/Material/IMP_L_C01_Church_";
+    path.resize(870);
+    std::wstring moji(435, L'\0');
+    for (size_t i = 0; i < 435; ++i)
+        moji[i] = static_cast<wchar_t>(static_cast<uint8_t>(path[2 * i]) | (static_cast<uint8_t>(path[2 * i + 1]) << 8));
+    EXPECT("CLEANCHECK DQ3: Serie's wide guard still drops the 435-unit mojibake",
+           Utf8Helpers::IsImplausibleWideName(moji.data(), moji.size()));
+    EXPECT("CLEANCHECK DQ3 ⭐: the 435-unit mojibake, were it decoded, is refused here too",
+           !IsCleanFName(Utf8Helpers::EncodeUtf16(moji.data(), moji.size())));
+
+    // Refused: what no decode of a real name produces.
+    EXPECT("CLEANCHECK: 257 bytes", !IsCleanFName(std::string(257, 'A')));
+    EXPECT("CLEANCHECK: a C0 control", !IsCleanFName("Na\x01me"));
+    EXPECT("CLEANCHECK: a tab", !IsCleanFName("Na\tme"));
+    EXPECT("CLEANCHECK: DEL", !IsCleanFName("Na\x7Fme"));
+    EXPECT("CLEANCHECK: a C1 control (U+0085)", !IsCleanFName("Na\xC2\x85me"));
+    EXPECT("CLEANCHECK control: U+00A0 is past the C1 block, and kept", IsCleanFName("Na\xC2\xA0me"));
+    const wchar_t lone[] = { L'A', 0xD800, L'B', 0 };   // EncodeUtf16 turns a lone surrogate into '?'
+    EXPECT("CLEANCHECK: a lone surrogate in a wide name", !IsCleanFName(Utf8Helpers::EncodeUtf16(lone, 3)));
+    EXPECT("CLEANCHECK: a lone continuation byte", !IsCleanFName("Na\x80me"));
+    EXPECT("CLEANCHECK: a truncated sequence", !IsCleanFName("Name\xE4\xBD"));
+    EXPECT("CLEANCHECK: an overlong encoding", !IsCleanFName("Na\xC0\xAFme"));
+    EXPECT("CLEANCHECK: a CESU-8 surrogate", !IsCleanFName("Na\xED\xA0\x80me"));
+    EXPECT("CLEANCHECK: a raw Latin-1 byte (an ANSI decode Serie would have dropped)", !IsCleanFName("Caf\xE9"));
+}
+
 // audit #5 G5 — the UE4 TNameEntryArray index guard must reject a NEGATIVE nameIndex
 // (a poison 0xFFFFFFFF read into an int32 as -1), which under truncating division gives
 // chunkIndex 0 / elemIndex -1 and derefs chunk + (-1)*8. Negative control: a guard that
@@ -9387,6 +10099,551 @@ static void Test_Serie_UE4NameIndexInBounds() {
 // Print the test about to run, when DLL_TEST_TRACE is set. build.ps1 sets it under
 // CI. Off locally so the ordinary run stays two lines.
 static bool g_trace = false;
+// ----- Lager: MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY]) ------------------------------
+//
+// MH_CreateHook reports MH_ERROR_MEMORY_ALLOC and nothing more, so the DLL summarises the window MinHook searched,
+// through this model of vendor/minhook/src/buffer.c. Every map here is a synthetic VirtualQuery walk; the numbers
+// are FINAL FANTASY RESONANCE DEMO's where the shape matters: a 474 MB image without ASLR at 0x140000000 and
+// ProcessEvent at image + 0x1592D00.
+
+namespace {
+
+constexpr uint64_t kLgAppMin   = 0x10000ull;
+constexpr uint64_t kLgAppMax   = 0x7FFFFFFEFFFFull;
+constexpr uint64_t kLgGran     = 0x10000ull;
+constexpr uint64_t kFfrsBase   = 0x140000000ull;
+constexpr uint64_t kFfrsSize   = 0x1DA00000ull;
+constexpr uint64_t kFfrsEnd    = kFfrsBase + kFfrsSize;
+constexpr uint64_t kFfrsPe     = kFfrsBase + 0x1592D00ull;
+constexpr uint64_t kFfrsEntry  = kFfrsBase + 0x1000ull;
+
+Lager::Region LgFree(uint64_t b, uint64_t e)                 { return {b, e - b, Lager::kMemFree, 0, 0}; }
+Lager::Region LgCommit(uint64_t b, uint64_t e, uint64_t a)   { return {b, e - b, Lager::kMemCommit, a, Lager::kMemPrivate}; }
+Lager::Region LgReserve(uint64_t b, uint64_t e, uint64_t a)  { return {b, e - b, Lager::kMemReserve, a, Lager::kMemPrivate}; }
+Lager::Region LgTyped(uint64_t b, uint64_t e, uint64_t a, uint32_t type) { return {b, e - b, Lager::kMemCommit, a, type}; }
+
+// The image as one allocation of three regions (headers, code, data), the way VirtualQuery reports a mapped exe.
+void LgPushImage(std::vector<Lager::Region>& m) {
+    m.push_back(LgCommit(kFfrsBase, kFfrsBase + 0x1000, kFfrsBase));
+    m.push_back(LgCommit(kFfrsBase + 0x1000, kFfrsBase + 0x12000000, kFfrsBase));
+    m.push_back(LgCommit(kFfrsBase + 0x12000000, kFfrsEnd, kFfrsBase));
+}
+
+// At process start: nothing near the image.
+std::vector<Lager::Region> LgEmptyMap() {
+    std::vector<Lager::Region> m;
+    m.push_back(LgFree(kLgAppMin, kFfrsBase));
+    LgPushImage(m);
+    m.push_back(LgFree(kFfrsEnd, 0x7FF000000000ull));
+    return m;
+}
+
+// The heap grown through the whole +-1 GB window: allocations of 256 MB below the image and two above it.
+std::vector<Lager::Region> LgFullMap() {
+    std::vector<Lager::Region> m;
+    m.push_back(LgFree(kLgAppMin, 0xC0000000ull));
+    m.push_back(LgCommit(0xC0000000ull, 0x100000000ull, 0xC0000000ull));
+    for (uint64_t a = 0x100000000ull; a < kFfrsBase; a += 0x10000000ull)
+        m.push_back(LgCommit(a, a + 0x10000000ull, a));
+    LgPushImage(m);
+    m.push_back(LgCommit(kFfrsEnd, 0x170000000ull, kFfrsEnd));
+    m.push_back(LgReserve(0x170000000ull, 0x1C0000000ull, 0x170000000ull));
+    m.push_back(LgFree(0x1C0000000ull, 0x7FF000000000ull));
+    return m;
+}
+
+// The full map with the allocation at `allocBase` cut to `size`: the space it gave up is free.
+std::vector<Lager::Region> LgFullMapWithGap(uint64_t allocBase, uint64_t size) {
+    std::vector<Lager::Region> out;
+    for (const Lager::Region& r : LgFullMap()) {
+        if (r.base == allocBase) {
+            out.push_back(LgCommit(r.base, r.base + size, r.allocationBase));
+            out.push_back(LgFree(r.base + size, r.base + r.size));
+        } else {
+            out.push_back(r);
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+static void Test_Lager_SearchWindowMirrorsGetMemoryBlock() {
+    const Lager::Window w = Lager::SearchWindow(kFfrsPe, kLgAppMin, kLgAppMax);
+    EXPECT_EQ_U64("FFRS ProcessEvent: minAddr = origin - MAX_MEMORY_RANGE", w.minAddr, kFfrsPe - 0x40000000ull);
+    EXPECT_EQ_U64("FFRS ProcessEvent: maxAddr = origin + MAX_MEMORY_RANGE - (MEMORY_BLOCK_SIZE - 1)",
+                  w.maxAddr, kFfrsPe + 0x40000000ull - 0xFFFull);
+
+    // buffer.c narrows minAddr only when origin > MAX_MEMORY_RANGE: at exactly 1 GB the bound stays the app minimum.
+    EXPECT_EQ_U64("origin == MAX_MEMORY_RANGE keeps lpMinimumApplicationAddress",
+                  Lager::SearchWindow(0x40000000ull, kLgAppMin, kLgAppMax).minAddr, kLgAppMin);
+    EXPECT_EQ_U64("origin one past MAX_MEMORY_RANGE still keeps it (origin - RANGE = 1 < app min)",
+                  Lager::SearchWindow(0x40000001ull, kLgAppMin, kLgAppMax).minAddr, kLgAppMin);
+    EXPECT_EQ_U64("near the top: maxAddr = lpMaximumApplicationAddress - 0xFFF",
+                  Lager::SearchWindow(kLgAppMax - 0x1000, kLgAppMin, kLgAppMax).maxAddr, kLgAppMax - 0xFFFull);
+
+    // The reuse test is half-open: a block AT maxAddr is "too far".
+    EXPECT("a block at minAddr is reused",           Lager::BlockServes(w.minAddr, w));
+    EXPECT("a block one below minAddr is too far",  !Lager::BlockServes(w.minAddr - 1, w));
+    EXPECT("a block below maxAddr is reused",        Lager::BlockServes(w.maxAddr - 1, w));
+    EXPECT("a block AT maxAddr is too far",         !Lager::BlockServes(w.maxAddr, w));
+}
+
+static void Test_Lager_FindFreeRegionWalks() {
+    const auto empty = LgEmptyMap();
+    const Lager::Window w = Lager::SearchWindow(kFfrsPe, kLgAppMin, kLgAppMax);
+    // Down: the granule under ProcessEvent's is inside the image, so the walk jumps to the granule under the image's
+    // AllocationBase -- the first block lands 64 KB below the image.
+    EXPECT_EQ_U64("process start: FindPrevFreeRegion lands just below the image",
+                  Lager::FindPrevFreeRegion(empty, kFfrsPe, w.minAddr, kLgGran), kFfrsBase - kLgGran);
+    // Up: region by region to the image's end, rounded to a granule.
+    EXPECT_EQ_U64("process start: FindNextFreeRegion lands at the image's end",
+                  Lager::FindNextFreeRegion(empty, kFfrsPe, w.maxAddr, kLgGran), kFfrsEnd);
+    EXPECT_EQ_U64("process start: a new block goes below first",
+                  Lager::NewBlockAddress(empty, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran), kFfrsBase - kLgGran);
+
+    // The heap through the whole window: MH_ERROR_MEMORY_ALLOC.
+    const auto full = LgFullMap();
+    EXPECT_EQ_U64("full window: nothing below", Lager::FindPrevFreeRegion(full, kFfrsPe, w.minAddr, kLgGran), 0);
+    EXPECT_EQ_U64("full window: nothing above", Lager::FindNextFreeRegion(full, kFfrsPe, w.maxAddr, kLgGran), 0);
+    EXPECT_EQ_U64("full window: no new block", Lager::NewBlockAddress(full, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran), 0);
+
+    // A free tail that holds no granule-aligned address is no use to MinHook: the 0x120000000 allocation ends
+    // 44 KB short of the next one, and the walk steps past it.
+    const auto tail = LgFullMapWithGap(0x120000000ull, 0xFFF5000ull);
+    EXPECT("the tail map holds the free tail", Lager::QueryAt(tail, 0x12FFF5000ull) != nullptr &&
+                                               Lager::QueryAt(tail, 0x12FFF5000ull)->state == Lager::kMemFree);
+    EXPECT_EQ_U64("a sub-granule free tail is not a block", Lager::FindPrevFreeRegion(tail, kFfrsPe, w.minAddr, kLgGran), 0);
+
+    // One granule-aligned hole is: the allocation under it ends on the granule.
+    const auto hole = LgFullMapWithGap(0x120000000ull, 0xFFF0000ull);
+    EXPECT_EQ_U64("a granule-aligned hole is found", Lager::FindPrevFreeRegion(hole, kFfrsPe, w.minAddr, kLgGran),
+                  0x12FFF0000ull);
+
+    // FindNextFreeRegion rounds a region's END up to a granule: a free run that starts mid-granule is entered at
+    // the next granule, not at its own first page.
+    std::vector<Lager::Region> up;
+    up.push_back(LgFree(kLgAppMin, kFfrsBase));
+    LgPushImage(up);
+    up.push_back(LgCommit(kFfrsEnd, kFfrsEnd + 0x5000, kFfrsEnd));
+    up.push_back(LgFree(kFfrsEnd + 0x5000, 0x7FF000000000ull));
+    EXPECT_EQ_U64("FindNextFreeRegion enters a mid-granule free run at the next granule",
+                  Lager::FindNextFreeRegion(up, kFfrsPe, w.maxAddr, kLgGran), kFfrsEnd + kLgGran);
+
+    // A VirtualQuery that fails ends the walk: buffer.c breaks, it does not skip ahead.
+    std::vector<Lager::Region> gap;
+    LgPushImage(gap);
+    EXPECT_EQ_U64("an unmapped query ends FindPrevFreeRegion", Lager::FindPrevFreeRegion(gap, kFfrsPe, w.minAddr, kLgGran), 0);
+    EXPECT("QueryAt answers nullptr outside the map", Lager::QueryAt(gap, kFfrsBase - 1) == nullptr);
+    EXPECT("QueryAt finds the region holding an address", Lager::QueryAt(gap, kFfrsPe) == &gap[1]);
+}
+
+static void Test_Lager_SummarizeWindow() {
+    const auto full = LgFullMap();
+    const Lager::WindowSummary s = Lager::SummarizeWindow(full, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+    EXPECT("full: the map covers the window", s.covered);
+    EXPECT("full: no free region inside the window", s.freeRegions == 0 && s.freeBytes == 0);
+    EXPECT("full: nothing can start a block", s.blockableRegions == 0);
+    EXPECT_EQ_U64("full: no pick below", s.pickBelow, 0);
+    EXPECT_EQ_U64("full: no pick above", s.pickAbove, 0);
+    // Reserved: [0x170000000, 0x1C0000000) clipped at the span's end (maxAddr + one block).
+    EXPECT_EQ_U64("full: spanEnd = maxAddr + MEMORY_BLOCK_SIZE", s.spanEnd, kFfrsPe + 0x40000000ull + 1);
+    EXPECT_EQ_U64("full: reserved bytes, clipped", s.reservedBytes, s.spanEnd - 0x170000000ull);
+    EXPECT_EQ_U64("full: committed bytes, clipped",
+                  s.committedBytes, 0x170000000ull - (kFfrsPe - 0x40000000ull));
+
+    const auto hole = LgFullMapWithGap(0x120000000ull, 0xFFF0000ull);
+    const Lager::WindowSummary h = Lager::SummarizeWindow(hole, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+    EXPECT("hole: one free region, and it can start a block", h.freeRegions == 1 && h.blockableRegions == 1);
+    EXPECT_EQ_U64("hole: its bytes", h.freeBytes, 0x10000ull);
+    EXPECT_EQ_U64("hole: the largest free region is it", h.largestFreeBase, 0x12FFF0000ull);
+    EXPECT_EQ_U64("hole: FindPrevFreeRegion picks it", h.pickBelow, 0x12FFF0000ull);
+
+    const auto tail = LgFullMapWithGap(0x120000000ull, 0xFFF5000ull);
+    const Lager::WindowSummary t = Lager::SummarizeWindow(tail, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+    EXPECT("tail: free, but cannot start a block", t.freeRegions == 1 && t.blockableRegions == 0);
+
+    std::vector<Lager::Region> gap;
+    LgPushImage(gap);
+    EXPECT("a walk that stops inside the window is reported as incomplete",
+           !Lager::SummarizeWindow(gap, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran).covered);
+
+    // Who took the space: the byte totals are split by VirtualQuery Type, so the heap hypothesis can be confirmed or
+    // refuted. Build a window of heap (private), a loaded module (image) and a pak view (mapped), all non-free.
+    {
+        const uint64_t base = kFfrsPe - 0x20000000ull;   // somewhere low in the window, granule-aligned enough
+        std::vector<Lager::Region> m;
+        m.push_back(LgFree(kLgAppMin, base));
+        m.push_back(LgTyped(base,              base + 0x8000000ull, base,              Lager::kMemPrivate));  // 128 MB heap
+        m.push_back(LgTyped(base + 0x8000000ull, base + 0xA000000ull, base + 0x8000000ull, Lager::kMemImage)); // 32 MB module
+        m.push_back(LgTyped(base + 0xA000000ull, base + 0xB000000ull, base + 0xA000000ull, Lager::kMemMapped));// 16 MB view
+        m.push_back(LgFree(base + 0xB000000ull, 0x7FF000000000ull));
+        const Lager::WindowSummary s = Lager::SummarizeWindow(m, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+        EXPECT_EQ_U64("heap bytes are totalled as private", s.privateBytes, 0x8000000ull);
+        EXPECT_EQ_U64("module bytes as image", s.imageBytes, 0x2000000ull);
+        EXPECT_EQ_U64("view bytes as mapped", s.mappedBytes, 0x1000000ull);
+        EXPECT("the largest occupant is the heap allocation",
+               s.largestTakenType == Lager::kMemPrivate && s.largestTakenBase == base);
+        EXPECT("free is not typed", Lager::MemTypeName(0) == std::string("other"));
+    }
+}
+
+// A PE32+ header in a buffer: MZ, e_lfanew 0x80, three sections.
+static std::vector<uint8_t> LgPeHeader(uint16_t magic, uint16_t dllChars, uint32_t entryRva, uint32_t sizeOfImage) {
+    std::vector<uint8_t> b(0x400, 0);
+    auto put16 = [&](size_t o, uint32_t v) { b[o] = (uint8_t)v; b[o + 1] = (uint8_t)(v >> 8); };
+    auto put32 = [&](size_t o, uint32_t v) { put16(o, v & 0xFFFF); put16(o + 2, v >> 16); };
+    put16(0, 0x5A4D);
+    put32(0x3C, 0x80);
+    put32(0x80, 0x00004550);
+    put16(0x80 + 4, 0x8664);
+    put16(0x80 + 6, 3);              // NumberOfSections
+    put16(0x80 + 20, 0xF0);          // SizeOfOptionalHeader
+    const size_t opt = 0x80 + 24;
+    put16(opt, magic);
+    put32(opt + 16, entryRva);
+    put32(opt + 56, sizeOfImage);
+    put16(opt + 70, dllChars);
+    const size_t table = opt + 0xF0;
+    struct S { uint32_t va, vs, raw, ch; } secs[3] = {
+        {0x1000,   0x12000000, 0x12000000, 0x60000020},   // code: CNT_CODE | MEM_EXECUTE | MEM_READ
+        {0x12001000, 0x100000, 0x100000,   0x40000040},   // data: read-only
+        {0x13000000, 0,        0x3000,     0xE0000020},   // a protector's RWX section, VirtualSize left 0
+    };
+    for (int i = 0; i < 3; ++i) {
+        put32(table + i * 40 + 8, secs[i].vs);
+        put32(table + i * 40 + 12, secs[i].va);
+        put32(table + i * 40 + 16, secs[i].raw);
+        put32(table + i * 40 + 36, secs[i].ch);
+    }
+    return b;
+}
+
+static void Test_Lager_ParseImageLayout() {
+    // FFRS shipped without DYNAMICBASE (0x8120: TS-aware, NX, high-entropy only).
+    const auto noAslr = LgPeHeader(0x20B, 0x8120, 0x1000, (uint32_t)kFfrsSize);
+    const Lager::ImageLayout a = Lager::ParseImageLayout(noAslr.data(), noAslr.size(), kFfrsBase);
+    EXPECT("a PE32+ header parses", a.valid);
+    EXPECT_EQ_U64("SizeOfImage", a.sizeOfImage, kFfrsSize);
+    EXPECT_EQ_U64("AddressOfEntryPoint", a.entryRva, 0x1000);
+    EXPECT("no DYNAMICBASE bit -> dynamicBase false", !a.dynamicBase);
+    EXPECT("three sections", a.sections.size() == 3);
+    EXPECT("section 3 keeps its zero VirtualSize and its raw size",
+           a.sections.size() == 3 && a.sections[2].virtualSize == 0 && a.sections[2].rawSize == 0x3000);
+
+    const auto aslr = LgPeHeader(0x20B, 0x8160, 0x1000, (uint32_t)kFfrsSize);
+    EXPECT("DYNAMICBASE bit -> dynamicBase true",
+           Lager::ParseImageLayout(aslr.data(), aslr.size(), kFfrsBase).dynamicBase);
+
+    // A short copy loses the sections that do not fit, never the header fields.
+    const size_t cut = 0x80 + 24 + 0xF0 + 40 + 39;
+    const Lager::ImageLayout s = Lager::ParseImageLayout(noAslr.data(), cut, kFfrsBase);
+    EXPECT("a short copy keeps the header", s.valid && s.sizeOfImage == kFfrsSize);
+    EXPECT("a short copy keeps only the whole section entries", s.sections.size() == 1);
+
+    const auto pe32 = LgPeHeader(0x10B, 0x8160, 0x1000, (uint32_t)kFfrsSize);
+    EXPECT("a PE32 (x86) header is refused", !Lager::ParseImageLayout(pe32.data(), pe32.size(), kFfrsBase).valid);
+    auto noMz = noAslr; noMz[0] = 0;
+    EXPECT("no MZ -> invalid", !Lager::ParseImageLayout(noMz.data(), noMz.size(), kFfrsBase).valid);
+    EXPECT("null bytes -> invalid", !Lager::ParseImageLayout(nullptr, 0x400, kFfrsBase).valid);
+}
+
+static void Test_Lager_FormatWindowSummary() {
+    const auto noAslr = LgPeHeader(0x20B, 0x8120, 0x1000, (uint32_t)kFfrsSize);
+    const Lager::ImageLayout img = Lager::ParseImageLayout(noAslr.data(), noAslr.size(), kFfrsBase);
+    const Lager::WindowSummary full =
+        Lager::SummarizeWindow(LgFullMap(), kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+    const std::string line = Lager::FormatWindowSummary(full, kFfrsPe, img, 0);
+    EXPECT("names the target", line.find("MinHook block window for 0x141592D00") != std::string::npos);
+    EXPECT("names the block-start bounds", line.find("[0x101592D00, 0x181591D01]") != std::string::npos);
+    EXPECT("both searches came back empty",
+           line.find("FindPrevFreeRegion -> none, FindNextFreeRegion -> none") != std::string::npos);
+    EXPECT("no held block", line.find("held block none;") != std::string::npos);
+    EXPECT("the image and its ASLR bit",
+           line.find("main image 0x140000000 + 0x1DA00000, DYNAMICBASE no") != std::string::npos);
+    EXPECT("a complete map says nothing about incompleteness", line.find("INCOMPLETE") == std::string::npos);
+    EXPECT("the line names who took the space, split by type", line.find("taken by private 0x") != std::string::npos);
+
+    EXPECT("a full window says nothing about VirtualAlloc being refused",
+           line.find("the window is not the cause") == std::string::npos);
+
+    // When the address search found room beside a real MH_ERROR_MEMORY_ALLOC, the failure was not the window: the
+    // line says so and carries LastError. A pick below (the held block in reach) is the simplest way to show room.
+    const Lager::WindowSummary hole =
+        Lager::SummarizeWindow(LgFullMapWithGap(0x120000000ull, 0xFFF0000ull), kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+    const std::string refusal = Lager::FormatWindowSummary(hole, kFfrsPe, img, 0, Lager::WalkStop::Complete, 1455u);
+    EXPECT("a non-zero pick beside MEMORY_ALLOC blames VirtualAlloc / the heap, not the window",
+           refusal.find("a block start WAS free, so the window is not the cause") != std::string::npos);
+    EXPECT("and carries the captured LastError", refusal.find("LastError 1455") != std::string::npos);
+    EXPECT("a held block that serves the target also counts as room found",
+           Lager::FormatWindowSummary(full, kFfrsPe, img, kFfrsBase - kLgGran, Lager::WalkStop::Complete, 8u).find(
+               "the window is not the cause") != std::string::npos);
+
+    EXPECT("a held block in reach says so",
+           Lager::FormatWindowSummary(full, kFfrsPe, img, kFfrsBase - kLgGran).find(
+               "held block 0x13FFF0000 (serves this target)") != std::string::npos);
+    EXPECT("a held block out of reach says so",
+           Lager::FormatWindowSummary(full, kFfrsPe, img, 0x100000000ull).find(
+               "(out of this target's reach)") != std::string::npos);
+    std::vector<Lager::Region> gap;
+    LgPushImage(gap);
+    const Lager::WindowSummary gapSum = Lager::SummarizeWindow(gap, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+    EXPECT("an incomplete map says so", !gapSum.covered);
+    // The incomplete note names the TRUE cause: a budget or cap stop is not blamed on a phantom VirtualQuery failure.
+    EXPECT("a query-failed stop reads as a VirtualQuery failure",
+           Lager::FormatWindowSummary(gapSum, kFfrsPe, img, 0, Lager::WalkStop::QueryFailed).find(
+               "a VirtualQuery failed inside the window") != std::string::npos);
+    EXPECT("a budget stop reads as the budget, not a query failure",
+           Lager::FormatWindowSummary(gapSum, kFfrsPe, img, 0, Lager::WalkStop::Budget).find(
+               "time budget was spent") != std::string::npos);
+    EXPECT("a budget stop does NOT claim a VirtualQuery failed",
+           Lager::FormatWindowSummary(gapSum, kFfrsPe, img, 0, Lager::WalkStop::Budget).find(
+               "a VirtualQuery failed") == std::string::npos);
+    EXPECT("a region-cap stop reads as the cap",
+           Lager::FormatWindowSummary(gapSum, kFfrsPe, img, 0, Lager::WalkStop::RegionCap).find(
+               "region cap was hit") != std::string::npos);
+    EXPECT("a complete walk over a covered map prints no note whatever the enum default",
+           Lager::FormatWindowSummary(full, kFfrsPe, img, 0, Lager::WalkStop::Budget).find("INCOMPLETE")
+               == std::string::npos);
+    EXPECT("unreadable headers say so",
+           Lager::FormatWindowSummary(full, kFfrsPe, Lager::ImageLayout{}, 0).find("DYNAMICBASE unknown")
+               != std::string::npos);
+
+    // The live callback walk and the synthetic-map walk are one implementation: the map overload delegates to the
+    // *With core, so FindPrev/FindNextFreeRegionWith over a QueryMap lambda give the map overload's own answers.
+    const auto empty = LgEmptyMap();
+    const Lager::Window w = Lager::SearchWindow(kFfrsPe, kLgAppMin, kLgAppMax);
+    auto q = [&](uint64_t a, Lager::Region& out) { return Lager::QueryMap(empty, a, out); };
+    EXPECT_EQ_U64("FindPrevFreeRegionWith matches the map overload",
+                  Lager::FindPrevFreeRegionWith(q, kFfrsPe, w.minAddr, kLgGran),
+                  Lager::FindPrevFreeRegion(empty, kFfrsPe, w.minAddr, kLgGran));
+    EXPECT_EQ_U64("FindNextFreeRegionWith matches the map overload",
+                  Lager::FindNextFreeRegionWith(q, kFfrsPe, w.maxAddr, kLgGran),
+                  Lager::FindNextFreeRegion(empty, kFfrsPe, w.maxAddr, kLgGran));
+}
+
+// ----- Stark::DescribeHookAttempt ([MH-PRERESERVE-PROXY], B24's log line) ----------------------------------------
+//
+// A forced install attempt (a feature switched on) is not counted against the automatic budget (B24). Its failure
+// line used to print the automatic counter as "attempt N/8" all the same, so on FINAL FANTASY RESONANCE DEMO each
+// failing Live Funcs Start logged the same "attempt N/8" twice: the counted automatic attempt and the forced one.
+
+static void Test_Stark_DescribeHookAttempt() {
+    EXPECT_EQ_STR("an automatic attempt is numbered against the budget",
+                  Stark::DescribeHookAttempt(false, 1, 8), "attempt 1/8");
+    const std::string forced = Stark::DescribeHookAttempt(true, 1, 8);
+    EXPECT("a forced attempt does not read as the automatic attempt with the same counter",
+           forced != Stark::DescribeHookAttempt(false, 1, 8));
+    EXPECT("a forced attempt says it was forced", forced.find("forced") != std::string::npos);
+    EXPECT("and that it was not counted", forced.find("not counted") != std::string::npos);
+    EXPECT_EQ_STR("its whole text", forced, "forced attempt, not counted -- 1/8 automatic attempt(s) used");
+    EXPECT_EQ_STR("a forced attempt before any automatic one",
+                  Stark::DescribeHookAttempt(true, 0, 8), "forced attempt, not counted -- 0/8 automatic attempt(s) used");
+}
+
+// ----- Lager: the held block ([MH-PRERESERVE-PROXY]) ------------------------------------------------------------
+//
+// A hook created early on a target inside the main image and never enabled keeps its MinHook block for the process
+// lifetime, and a later hook that the block serves lands in it. These are the rules that decide where that block
+// goes, whom it serves, and which target may hold it.
+
+static void Test_Lager_OriginsServedBy() {
+    const uint64_t block = kFfrsBase - kLgGran;   // where the block goes at process start: just below the image
+    const Lager::Span s = Lager::OriginsServedBy(block, kLgAppMin, kLgAppMax);
+    EXPECT("a block in the application range serves something", !s.empty);
+    EXPECT_EQ_U64("lowest origin served = block + MEMORY_BLOCK_SIZE - MAX_MEMORY_RANGE", s.lo,
+                  block + 0x1000ull - 0x40000000ull);
+    EXPECT_EQ_U64("highest origin served = block + MAX_MEMORY_RANGE", s.hi, block + 0x40000000ull);
+    // The span is the reuse test solved for origin: check both ends against GetMemoryBlock's own test.
+    auto served = [&](uint64_t origin) {
+        return Lager::BlockServes(block, Lager::SearchWindow(origin, kLgAppMin, kLgAppMax));
+    };
+    EXPECT("served at the span's low end",      served(s.lo));
+    EXPECT("not served one below it",          !served(s.lo - 1));
+    EXPECT("served at the span's high end",     served(s.hi));
+    EXPECT("not served one above it",          !served(s.hi + 1));
+
+    EXPECT_EQ_U64("a block under 1 GB serves every origin from 0", Lager::OriginsServedBy(0x20000ull, kLgAppMin, kLgAppMax).lo, 0);
+    EXPECT("a block below the application range serves nothing",
+           Lager::OriginsServedBy(0x1000ull, kLgAppMin, kLgAppMax).empty);
+    EXPECT("a block at the top of the range serves nothing",
+           Lager::OriginsServedBy(kLgAppMax - 0xFFFull, kLgAppMin, kLgAppMax).empty);
+}
+
+// The arithmetic the change rests on, on FFRS's numbers: the block a holder on the entry point takes at process
+// start serves ProcessEvent and every executable byte of the 474 MB image; the same holder on a heap that has
+// already filled the space under the image gets a block too far down to serve ProcessEvent.
+static void Test_Lager_HeldBlockReachesProcessEvent() {
+    const auto noAslr = LgPeHeader(0x20B, 0x8120, 0x1000, (uint32_t)kFfrsSize);
+    const Lager::ImageLayout img = Lager::ParseImageLayout(noAslr.data(), noAslr.size(), kFfrsBase);
+    const Lager::ExecRange code = Lager::ExecutableRange(img);
+    EXPECT_EQ_U64("the executable range starts at the code section", code.lo, kFfrsBase + 0x1000);
+    EXPECT_EQ_U64("and ends with the RWX section (raw size standing in for VirtualSize 0)", code.hi,
+                  kFfrsBase + 0x13003000ull);
+
+    const uint64_t block = Lager::NewBlockAddress(LgEmptyMap(), kFfrsEntry, kLgAppMin, kLgAppMax, kLgGran);
+    EXPECT_EQ_U64("process start: the holder's block lands 64 KB below the image", block, kFfrsBase - kLgGran);
+    EXPECT("it serves ProcessEvent",
+           Lager::BlockServes(block, Lager::SearchWindow(kFfrsPe, kLgAppMin, kLgAppMax)));
+    EXPECT("it serves every executable byte of the image",
+           Lager::SpanCovers(Lager::OriginsServedBy(block, kLgAppMin, kLgAppMax), code));
+
+    // Late: the heap took everything from 0x100020000 up to the image. The highest free granule under it,
+    // 0x100010000, is just inside the entry point's window (entry - 1 GB = 0x100001000), so the block goes there.
+    std::vector<Lager::Region> late;
+    late.push_back(LgFree(kLgAppMin, 0x100020000ull));
+    late.push_back(LgCommit(0x100020000ull, kFfrsBase, 0x100020000ull));
+    LgPushImage(late);
+    late.push_back(LgFree(kFfrsEnd, 0x7FF000000000ull));
+    const uint64_t deep = Lager::NewBlockAddress(late, kFfrsEntry, kLgAppMin, kLgAppMax, kLgGran);
+    EXPECT_EQ_U64("late: the holder's block lands ~1 GB down", deep, 0x100010000ull);
+    EXPECT("late: it does not serve ProcessEvent",
+           !Lager::BlockServes(deep, Lager::SearchWindow(kFfrsPe, kLgAppMin, kLgAppMax)));
+    EXPECT("late: it does not cover the image's executable range",
+           !Lager::SpanCovers(Lager::OriginsServedBy(deep, kLgAppMin, kLgAppMax), code));
+    EXPECT("an empty executable range is never covered", !Lager::SpanCovers(Lager::OriginsServedBy(block, kLgAppMin, kLgAppMax),
+                                                                            Lager::ExecRange{}));
+}
+
+static void Test_Lager_ChooseHolderTargets() {
+    const auto hdr = LgPeHeader(0x20B, 0x8120, 0x2340, (uint32_t)kFfrsSize);
+    const Lager::ImageLayout img = Lager::ParseImageLayout(hdr.data(), hdr.size(), kFfrsBase);
+    const auto c = Lager::ChooseHolderTargets(img);
+    EXPECT("entry point + two executable section starts", c.size() == 3);
+    EXPECT("the entry point comes first",
+           c.size() == 3 && c[0].address == kFfrsBase + 0x2340 && c[0].kind == Lager::HolderKind::EntryPoint);
+    EXPECT("then the code section's start",
+           c.size() == 3 && c[1].address == kFfrsBase + 0x1000 && c[1].kind == Lager::HolderKind::SectionStart);
+    EXPECT("then the RWX section's start (the read-only data section is skipped)",
+           c.size() == 3 && c[2].address == kFfrsBase + 0x13000000ull);
+
+    // An entry point AT a section start is offered once.
+    const auto atStart = LgPeHeader(0x20B, 0x8120, 0x1000, (uint32_t)kFfrsSize);
+    const auto d = Lager::ChooseHolderTargets(Lager::ParseImageLayout(atStart.data(), atStart.size(), kFfrsBase));
+    EXPECT("an entry point at a section start is not offered twice", d.size() == 2 && d[0].address == kFfrsBase + 0x1000 &&
+                                                                     d[0].kind == Lager::HolderKind::EntryPoint);
+
+    const auto noEntry = LgPeHeader(0x20B, 0x8120, 0, (uint32_t)kFfrsSize);
+    const auto e = Lager::ChooseHolderTargets(Lager::ParseImageLayout(noEntry.data(), noEntry.size(), kFfrsBase));
+    EXPECT("no entry point: section starts only", e.size() == 2 && e[0].kind == Lager::HolderKind::SectionStart);
+
+    const auto outside = LgPeHeader(0x20B, 0x8120, (uint32_t)kFfrsSize, (uint32_t)kFfrsSize);
+    const auto f = Lager::ChooseHolderTargets(Lager::ParseImageLayout(outside.data(), outside.size(), kFfrsBase));
+    EXPECT("an entry point past SizeOfImage is not offered", f.size() == 2 && f[0].kind == Lager::HolderKind::SectionStart);
+
+    EXPECT("the candidate count is capped", Lager::ChooseHolderTargets(img, 1).size() == 1);
+    EXPECT("unreadable headers give no candidate", Lager::ChooseHolderTargets(Lager::ImageLayout{}).empty());
+
+    Lager::ImageLayout empty = img;
+    empty.sections[0].virtualSize = 0;
+    empty.sections[0].rawSize = 0;
+    const auto g = Lager::ChooseHolderTargets(empty);
+    EXPECT("an executable section that maps nothing is skipped",
+           g.size() == 2 && g[1].address == kFfrsBase + 0x13000000ull);
+    EXPECT("the kinds are named for the log",
+           std::string(Lager::HolderKindName(Lager::HolderKind::EntryPoint)) == "the image's entry point" &&
+           std::string(Lager::HolderKindName(Lager::HolderKind::SectionStart)) == "the start of an executable section");
+}
+
+static void Test_Lager_HolderCandidateReadable() {
+    using namespace Lager;
+    EXPECT("execute-read code is readable", ProtectIsReadableCode(kPageExecuteRead));
+    EXPECT("execute-read-write code is readable", ProtectIsReadableCode(kPageExecuteReadWrite));
+    EXPECT("execute-only code is NOT readable", !ProtectIsReadableCode(kPageExecute));
+    EXPECT("a guard page is NOT readable", !ProtectIsReadableCode(kPageExecuteRead | kPageGuard));
+    EXPECT("a read-only page is not code", !ProtectIsReadableCode(0x02));
+    EXPECT("MinHook calls execute-only executable", ProtectIsExecutable(kPageExecute));
+    EXPECT("MinHook calls read-only not executable", !ProtectIsExecutable(0x02));
+
+    EXPECT("an ordinary entry point is taken",
+           HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead));
+    EXPECT("an execute-only target is refused",
+           !HolderCandidateReadable(kMemCommit, kPageExecute, kMemCommit, kPageExecute, kMemCommit, kPageExecute));
+    EXPECT("a target whose next page is not readable is refused",
+           !HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, 0x01, kMemCommit, kPageExecuteRead));
+    EXPECT("a target whose next page is reserved is refused",
+           !HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemReserve, 0, kMemCommit, kPageExecuteRead));
+    EXPECT("an uncommitted target is refused",
+           !HolderCandidateReadable(kMemReserve, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead));
+    // target - 5: MinHook reads it only when IsExecutableAddress calls it executable.
+    EXPECT("a read-only page before a section start is fine (MinHook does not read it)",
+           HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, 0x02));
+    EXPECT("a free page before is fine",
+           HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemFree, 0x01));
+    EXPECT("an execute-only page before is refused (MinHook would read it)",
+           !HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, kPageExecute));
+}
+
+// buffer.c's boundary rules, each pinned by a map that lands exactly on the boundary -- a review found that moving a
+// `>=` to `>`, an `<=` to `<`, dropping a window guard or a clip all changed a live log line and no test noticed.
+static void Test_Lager_BufferCBoundaryRules() {
+    using namespace Lager;
+
+    // buffer.c GetMemoryBlock: minAddr is pulled to origin - MAX_MEMORY_RANGE ONLY when origin > MAX_MEMORY_RANGE.
+    // Without that guard, an origin below 1 GB computes origin - 1 GB as a huge wrapped value and inverts the window.
+    EXPECT_EQ_U64("origin below 1 GB keeps lpMinimumApplicationAddress (the origin > RANGE guard)",
+                  SearchWindow(0x30000000ull, kLgAppMin, kLgAppMax).minAddr, kLgAppMin);
+
+    // FindPrevFreeRegion's loop is `tryAddr >= minAddr`: a free granule EXACTLY at minAddr is found, not skipped.
+    {
+        const uint64_t origin  = 0x141590000ull;             // 64K-aligned, so the window bounds are too
+        const Window   w       = SearchWindow(origin, kLgAppMin, kLgAppMax);
+        EXPECT_EQ_U64("aligned origin -> aligned minAddr", w.minAddr, origin - kMaxMemoryRange);
+        std::vector<Region> m;
+        m.push_back(LgFree(kLgAppMin, w.minAddr + kLgGran));            // the free granule sits at minAddr
+        m.push_back(LgCommit(w.minAddr + kLgGran, kFfrsBase, w.minAddr + kLgGran));
+        LgPushImage(m);
+        m.push_back(LgFree(kFfrsEnd, 0x7FF000000000ull));
+        EXPECT_EQ_U64("a free granule at minAddr is found (>= minAddr, not > )",
+                      FindPrevFreeRegion(m, origin, w.minAddr, kLgGran), w.minAddr);
+    }
+
+    // FindNextFreeRegion's loop is `tryAddr <= maxAddr`: a free granule EXACTLY at maxAddr is found. Pick origin so
+    // maxAddr lands on a 64K boundary (origin % 64K == 0xFFF, since maxAddr = origin + RANGE - 0xFFF).
+    {
+        const uint64_t origin = 0x200000FFFull;
+        const Window   w      = SearchWindow(origin, kLgAppMin, kLgAppMax);
+        EXPECT_EQ_U64("maxAddr lands on a granule", w.maxAddr, 0x240000000ull);
+        std::vector<Region> m;
+        m.push_back(LgFree(kLgAppMin, 0x200010000ull));
+        m.push_back(LgCommit(0x200010000ull, w.maxAddr, 0x200010000ull));   // committed right up to maxAddr
+        m.push_back(LgFree(w.maxAddr, 0x7FF000000000ull));                  // free begins AT maxAddr
+        EXPECT_EQ_U64("a free granule at maxAddr is found (<= maxAddr, not < )",
+                      FindNextFreeRegion(m, origin, w.maxAddr, kLgGran), w.maxAddr);
+    }
+
+    // SummarizeWindow counts a free region as blockable only when its first granule-aligned address is <= maxAddr.
+    // A granule that falls between maxAddr and spanEnd (inside the last block's own bytes) can hold no block START.
+    {
+        const uint64_t origin = 0x1C00007FFull;                  // maxAddr = 0x1FFFFF800, spanEnd = 0x200000800
+        const Window   w      = SearchWindow(origin, kLgAppMin, kLgAppMax);
+        EXPECT_EQ_U64("maxAddr sits just below a granule", w.maxAddr, 0x1FFFFF800ull);
+        std::vector<Region> m;
+        m.push_back(LgCommit(kLgAppMin, 0x1FFFFF800ull, kLgAppMin));
+        m.push_back(LgFree(0x1FFFFF800ull, 0x200000900ull));     // first aligned addr = 0x200000000, past maxAddr
+        m.push_back(LgFree(0x200000900ull, 0x7FF000000000ull));  // starts past spanEnd -> clipped away
+        const WindowSummary s = SummarizeWindow(m, origin, kLgAppMin, kLgAppMax, kLgGran);
+        EXPECT("the sub-maxAddr free region is seen", s.freeRegions == 1);
+        EXPECT("but its only granule is past maxAddr, so it can start no block", s.blockableRegions == 0);
+    }
+
+    // SectionSpanEnd clips a section's mapped extent to SizeOfImage: a linker (or a packer) that writes a VirtualSize
+    // running past the image must not widen the executable range past the image.
+    {
+        ImageLayout img; img.valid = true; img.base = kFfrsBase; img.sizeOfImage = 0x1000000;
+        Section s; s.rva = 0x1000; s.virtualSize = 0x2000000; s.characteristics = kScnMemExecute;   // overruns
+        EXPECT_EQ_U64("an overrunning section is clipped to SizeOfImage", SectionSpanEnd(img, s), img.sizeOfImage);
+        img.sections.push_back(s);
+        EXPECT_EQ_U64("the executable range is clipped with it", ExecutableRange(img).hi, kFfrsBase + img.sizeOfImage);
+    }
+
+    // BlockOfSlot is FreeBuffer's slot -> block rule, one copy: slot rounded down to MEMORY_BLOCK_SIZE.
+    EXPECT_EQ_U64("a slot inside a block maps to the block base", BlockOfSlot(0x13FFF0A40ull), 0x13FFF0000ull);
+    EXPECT_EQ_U64("a block base maps to itself", BlockOfSlot(0x13FFF0000ull), 0x13FFF0000ull);
+    EXPECT_EQ_U64("it is FreeBuffer's (slot / BLOCK) * BLOCK",
+                  BlockOfSlot(0x13FFF0A40ull), (0x13FFF0A40ull / kMemoryBlockSize) * kMemoryBlockSize);
+}
+
 #define RUN(fn) do { if (g_trace) std::printf("[run] %s\n", #fn); fn(); } while (0)
 
 // [PATH-MODULE-NAME-UTF8] get_ce_pointer_info's ce_base was snprintf'd into char[128]: a long stem lost the closing
@@ -9693,6 +10950,8 @@ int main() {
 
     // Solitar GodMode — FBoolProperty single-bit read-modify-write
     RUN(Test_Solitar_ApplyBoolBit);
+    RUN(Test_Solitar_BoolBits);   // [SOLIDE-NATIVE-BOOL] God Mode / Force on a native bool
+    RUN(Test_Solitar_TrainerMaskFor);   // ...and the mask the standalone trainer bakes for one
     RUN(Test_Solitar_MatchProtectionBool);
     RUN(Test_Solide_MatchStealthField);
     RUN(Test_Solide_IntWidthAndRange);
@@ -9747,12 +11006,15 @@ int main() {
     RUN(Test_FunctionFlagsOffset);
     RUN(Test_ProcessEventBufferBytes);
     RUN(Test_CheckTailForVersion);
+    RUN(Test_OverrideContradictsTail);   // [OVERRIDE-REVIEW2-LOWS] get_pointers' override_contradicted
     RUN(Test_FunctionTailReadBase);
     RUN(Test_PickMeasuredTailBase);
     RUN(Test_UFieldNextFProperty);
     RUN(Test_FNameAlign);
     RUN(Test_CmcMarkerVersion);
-    RUN(Test_VersionLadder);         // [UE-OVERRIDE-HINT-AUTO] the init ladder, as one function
+    RUN(Test_EnumPackageProbe);      // [VER-MARKERS-PAST-504] the 5.5 rung's evidence
+    RUN(Test_StructStateProbe);      // [VER-MARKERS-PAST-504] the 5.6 rung's evidence
+    RUN(Test_VersionLadder);        // [UE-OVERRIDE-HINT-AUTO] the init ladder, as one function
     RUN(Test_CachedDetectionRules);  // [UE-OVERRIDE-HINT-AUTO] the cache-reuse rule and the too-old verdict
     RUN(Test_PlanAutoRestore);       // [UE-OVERRIDE-HINT-AUTO] what Auto hands back, or that it waits
     RUN(Test_WeakTargetGarbage);
@@ -9768,6 +11030,7 @@ int main() {
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);
     RUN(Test_UPropertyFamilyFor);
+    RUN(Test_UPropertyUStructHeadFor);
     RUN(Test_PropertyFamilyForIsAligned);
     RUN(Test_PropertyFamilyIsCoherent);
     RUN(Test_NameWitness);
@@ -9776,6 +11039,7 @@ int main() {
     // Macht — AOB pattern parser: nibble wildcards (4? / ?5) + anchor selection
     RUN(Test_Sig_IsCeReplayableAob);
     RUN(Test_Genau_AdmitMultiModuleCandidate);
+    RUN(Test_Macht_ClassifyModuleForScan);       // [AOB-SKIP-OWN-DLL] the walk leaves the dumper's own images out
     RUN(Test_Radar_RefineContainerAnchor);
     RUN(Test_Radar_LeafAnchor);
     RUN(Test_Macht_ParsePattern_Nibble);
@@ -9828,6 +11092,8 @@ int main() {
     RUN(Test_Ubel_IsPlausibleStringCount);    // U10 — FString cap bounds a garbage Count
     RUN(Test_Serie_BlockBitsProbe);           // G4  — idx-1 probe cannot distinguish 14 vs 16
     RUN(Test_Serie_FirstEntryAfterNone);      //     — idx 1 is INTERIOR to "None"; derive the boundary
+    RUN(Test_Serie_UE4EntryIsWide);           // [UE4-WIDE-FNAME] the pre-4.23 entry's wide bit, beside its own slot
+    RUN(Test_Aura_IsCleanFName);              // [UE4-WIDE-FNAME-CLEANCHECK] the backward scan's name gate keeps wide names
     RUN(Test_Serie_UE4NameIndexInBounds);     // G5  — reject negative UE4 name index
 
     // [INVOKEINHERIT-2026-08-20] by-name resolution must climb SuperStruct
@@ -9846,6 +11112,20 @@ int main() {
     // [RELAUNCHPIPE-2026-08-19] a held pipe must be watched, not surrendered
     RUN(Test_Voll_DecideStart);
     RUN(Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway);
+
+    // [MH-PRERESERVE-PROXY] MinHook's trampoline-block search, modelled for the MH_ERROR_MEMORY_ALLOC diagnostic
+    RUN(Test_Lager_SearchWindowMirrorsGetMemoryBlock);
+    RUN(Test_Lager_FindFreeRegionWalks);
+    RUN(Test_Lager_SummarizeWindow);
+    RUN(Test_Lager_ParseImageLayout);
+    RUN(Test_Lager_FormatWindowSummary);
+    RUN(Test_Stark_DescribeHookAttempt);       // B24's log line: a forced attempt says so
+    // [MH-PRERESERVE-PROXY] the held block: where it lands, whom it serves, which target may hold it
+    RUN(Test_Lager_OriginsServedBy);
+    RUN(Test_Lager_HeldBlockReachesProcessEvent);
+    RUN(Test_Lager_ChooseHolderTargets);
+    RUN(Test_Lager_HolderCandidateReadable);
+    RUN(Test_Lager_BufferCBoundaryRules);      // buffer.c's >= / <= / clip boundaries, one map each
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

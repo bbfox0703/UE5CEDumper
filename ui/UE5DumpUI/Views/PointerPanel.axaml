@@ -59,6 +59,13 @@
                            FontWeight="SemiBold"
                            IsVisible="{Binding ShowUserOverrideBadge}"
                            ToolTip.Tip="{StaticResource str.Pointers.VersionUserOverrideTooltip}"/>
+                <!-- [OVERRIDE-REVIEW2-LOWS] The override in force does not fit this game's UFunctions. Amber, the
+                     low-confidence colour: the version may misread, and only the user can take the pick back. -->
+                <TextBlock Text="{StaticResource str.Pointers.VersionOverrideContradictedBadge}"
+                           Foreground="#E6A817" FontSize="11" VerticalAlignment="Center"
+                           FontWeight="SemiBold"
+                           IsVisible="{Binding ShowOverrideContradictedNote}"
+                           ToolTip.Tip="{StaticResource str.Pointers.VersionOverrideContradictedText}"/>
                 <!-- Low confidence — amber warning -->
                 <TextBlock Text="{StaticResource str.Pointers.VersionLowConfidenceBadge}"
                            Foreground="#E6A817" FontSize="11" VerticalAlignment="Center"
@@ -83,6 +90,11 @@
                      Foreground="#E6A817" FontSize="11" TextWrapping="Wrap"
                      Margin="0,6,0,0"
                      IsVisible="{Binding ShowLowConfidenceWarning}"/>
+          <!-- [OVERRIDE-REVIEW2-LOWS] The full text behind the badge beside the override badge. -->
+          <TextBlock Text="{StaticResource str.Pointers.VersionOverrideContradictedText}"
+                     Foreground="#E6A817" FontSize="11" TextWrapping="Wrap"
+                     Margin="0,6,0,0"
+                     IsVisible="{Binding ShowOverrideContradictedNote}"/>
           <!-- [UE-OVERRIDE-HINT-AUTO] Auto chosen with no detection on record to return to: the ComboBox
                shows the choice, the override badge what is still in force, and this when Auto lands.
                Blue, the override badge's colour: nothing is wrong, the change is only deferred. -->
@@ -843,13 +855,16 @@
          the System tab so the attribution doesn't depend on a live DLL connection. -->
     <StackPanel Spacing="3" HorizontalAlignment="Center" Margin="0,8,0,4">
       <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
-        <!-- Bare, faint experimental opt-in checkbox (no label of its own). -->
+        <!-- Bare, faint experimental opt-in checkbox (no label of its own). [LF-EXPOFF-TRACE] Disabled once the
+             session lock holds it, when its tooltip says why; ShowOnDisabled lets a disabled box open its tooltip
+             at all. -->
         <CheckBox IsChecked="{Binding ExperimentalEnabled}"
                   IsEnabled="{Binding CanToggleExperimental}"
                   Opacity="0.1"
                   Padding="0" MinWidth="0"
                   VerticalAlignment="Center"
-                  ToolTip.Tip="{StaticResource str.Experimental.EnableHint}"/>
+                  ToolTip.Tip="{Binding ExperimentalToggleTip}"
+                  ToolTip.ShowOnDisabled="True"/>
         <!-- AOBMaker link: plain label + clickable link, full opacity. -->
         <StackPanel Orientation="Horizontal" Spacing="0" VerticalAlignment="Center">
           <TextBlock Text="{StaticResource str.Credit.AobMakerPrefix}"

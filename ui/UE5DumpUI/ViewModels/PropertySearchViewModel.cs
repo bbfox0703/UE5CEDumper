@@ -223,8 +223,8 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         _isAobMakerAvailable = aobMaker?.IsAvailable ?? false;
     }
 
-    /// <summary>[R7-D-08] The re-read <see cref="OnConnected"/> started. A test seam, like
-    /// <c>TeleportViewModel.ConnectPrime</c>: production code never awaits it.</summary>
+    /// <summary>[R7-D-08] The re-read <see cref="OnConnected"/> started. A test seam: production code never awaits
+    /// it.</summary>
     internal Task ConnectPrime { get; private set; } = Task.CompletedTask;
 
     /// <summary>[R7-D-08] Called once a (re)connected session's DLL is scanned. The DLL's force-holds survive a pipe drop
@@ -428,6 +428,12 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
 
     private void OnExperimentalGateChanged(object? sender, EventArgs e)
     {
+        // [EXPOFF-TEARDOWN] Turning the features off hides the Force submenu but releases no hold: the forced-fields
+        // strip stays, whatever the gate, with its own remove and Clear all. It lists the holds as last read -- at a
+        // connect, when the panel attaches, after its own actions -- so a hold made elsewhere since shows at the next
+        // of those. (The Teleport Stealth card releases its own meter hold, holding or armed for an instance to spawn,
+        // whose card does hide; one the card could not claim, as when the connect found no pawn to match it to, is left
+        // to this strip.)
         OnPropertyChanged(nameof(ForceEnabled));
         OnPropertyChanged(nameof(ForceMenuVisible));
     }

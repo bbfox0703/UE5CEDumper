@@ -88,7 +88,7 @@ extern "C" bool      UE5_IsGameThreadHookActive();
 extern "C" int       UE5_GetProcessEventOffset();
 
 // [R7-C-05] Frieren.cpp: the init fence apply_rescan holds (see FrierenInit there).
-// [UE-OVERRIDE-HINT-AUTO] ...and init's version ladder, which Auto climbs from the detection it hands back.
+// [UE-OVERRIDE-HINT-AUTO] ...and init's version ladder, which a version settled here climbs as init's does.
 namespace FrierenInit {
 void BeginApply();
 void EndApply();
@@ -1342,6 +1342,9 @@ static void FillPointerSnapshot(json& data) {
     // [UE-OVERRIDE-HINT-AUTO] On every snapshot, so a UI that reconnects mid-session still says Auto waits for the
     // next launch rather than offering the override's version back as the choice.
     data["auto_pending"]         = g_cachedAutoPending;
+    // [OVERRIDE-REVIEW2-LOWS] Judged on every snapshot, not latched here, so the panel's note follows Auto, a new
+    // override and a structural raise of the one in force.
+    data["override_contradicted"] = Ubel::OverrideInForceContradicted(g_cachedUEVersion, g_cachedIsUserOverride);
     data["is_version_too_old"]   = g_cachedVersionTooOld;
     // build_number: compile-time DLL build (e.g. 648). Also emitted on the
     // init response; surfacing it on every snapshot lets the UI's
@@ -2813,9 +2816,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     pj["parm"]   = p.isParm;
                     if (!p.structType.empty())
                         pj["struct_type"] = p.structType;
-                    // Stage 1 (Invoke param picker): target UClass for
-                    // Object/Class/Soft/Weak/Lazy/Interface params. Mirrors
-                    // the field-side `obj_class` key used by walk_class.
+                    // Stage 1 (Invoke param picker): an object-family param's
+                    // target UClass. Mirrors the field-side `obj_class` key used
+                    // by walk_class. The UI's picker list is narrower: it offers
+                    // a pick only where it can write one (ParamBufferBuilder).
                     if (!p.objClassName.empty())
                         pj["obj_class"] = p.objClassName;
                     if (!p.structFields.empty()) {
@@ -6554,6 +6558,16 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 if (!Genau::ValidateAndFixOffsets(g_cachedUEVersion)) {
                     Sein::Warn("PIPE:cmd", "apply_rescan: ValidateAndFixOffsets returned false");
                 }
+                // [VER-MARKERS-PAST-504] Init climbs its version ladder right after this probe and skipped both, so the
+                // first probe climbs it here -- else a stripped UE5 title revived by a rescan keeps its raw label (a
+                // 4.27 publisher fallback, say) for the session. Applied as UE5_Init applies it.
+                extern bool g_cachedIsUserOverride;
+                extern bool g_cachedIsLowConfidence;
+                const DynOff::StructuralVersion climbed = FrierenInit::CorrectVersionStructurally(
+                    g_cachedUEVersion, g_cachedIsUserOverride, "apply_rescan");
+                g_cachedUEVersion = climbed.version;
+                if (climbed.loweredToUE4)
+                    g_cachedIsLowConfidence = true;
             }
 
             // GEngine's second pass is HOISTED out of the block above (G3): it must still run

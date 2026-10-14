@@ -209,9 +209,9 @@ public class ParamBufferBuilderTests
     [InlineData("LazyObjectProperty")]
     public void IsPickablePointerType_PointerTypes_True(string typeName)
     {
-        // Mirrors the DLL-side WalkFunctions enrichment list. If a new pointer
-        // type gets added to one side, the other side must follow — this
-        // theory locks the contract.
+        // The types WriteParam writes as one 8-byte value. Not the DLL-side
+        // WalkFunctions list: that one also names a class for 4.11-4.17's asset
+        // pointers, which the theory below keeps out of the picker.
         Assert.True(ParamBufferBuilder.IsPickablePointerType(typeName));
     }
 
@@ -230,11 +230,15 @@ public class ParamBufferBuilderTests
     [InlineData("ByteProperty")]
     [InlineData("")]
     [InlineData("UnknownProperty")]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
     public void IsPickablePointerType_NonPointerTypes_False(string typeName)
     {
         // Scalars / containers / bool / string-likes don't get the picker UI.
         // Empty + unknown type names also fall through to false so the dialog
-        // doesn't render orphan buttons for surprise inputs.
+        // doesn't render orphan buttons for surprise inputs. 4.11-4.17's asset
+        // pointers carry a class from the DLL, but WriteParam cannot put a
+        // picked instance into an FAssetPtr, so they get no picker either.
         Assert.False(ParamBufferBuilder.IsPickablePointerType(typeName));
     }
 

@@ -8,7 +8,9 @@
 > `docs/todo.md` carries the phased work block.
 
 This brings three analysis features from `discrete` into UE5CEDumper, gated
-behind an opt-in "experimental" flag so the default UI stays unchanged:
+behind an opt-in "experimental" flag so the default UI stays unchanged (the
+reason for the gate is the maintainer's, in Phase 0's *Purpose of the gate*: to
+keep a new user's effort off the advanced features, not to save tabs):
 
 - **Snapshot** — point-in-time capture of all numeric UPROPERTY values across
   GObjects, persisted for diff / SPC / pivot.
@@ -145,6 +147,65 @@ is **persisted**.
 > `IsLocked` + `Lock()`; `MainTabs_SelectionChanged` locks on first
 > experimental-tab open; the checkbox `IsEnabled` binds to
 > `PointerPanelViewModel.CanToggleExperimental`.
+
+> **Purpose of the gate (the maintainer, 2026-10-09, `[LF-EXPOFF-TRACE]`):**
+> 「實驗性功能是較複雜功能，例如SPC, Snapshot等，沒有一點電腦知識的話，根本不知道那是什麼，我特地一開始不開，就是要使用者別花太多精神在這些進階功能上，等工具熟了後自然會用。故並不是為了UI要少幾個 tabs」
+> In English: the experimental features are the complex ones (SPC, Snapshot,
+> ...) that a user without some computer knowledge cannot make sense of. They
+> start OFF on purpose, so that users do not spend effort on advanced features
+> before they know the tool, and pick them up naturally once familiar. It is
+> **not** about having fewer tabs: "the default UI stays unchanged", at the top
+> of this document, is the effect, not the reason. Settled in
+> [working-lessons.md](working-lessons.md) §6.
+
+> **Update (2026-10-09, `[LF-EXPOFF-TRACE]` `[EXPOFF-TEARDOWN]`):** the opt-in
+> **ticks and unticks at any time, connected or not**. `CanToggleExperimental`
+> is the session lock alone, and the locked box -- the only disabled state --
+> shows its tooltip (`ToolTip.ShowOnDisabled`), `str.Experimental.LockedForSession`:
+> the features stay on until the UI restarts, because a tab that locks them was
+> opened this session. An untick **turns off what the features run in the
+> game**: while connected, at once -- `TeleportViewModel`'s teardown turns off
+> Fly when the DLL last said its worker runs (with no pawn too: the card then
+> reads Unavailable, and the worker flies the next pawn), See-through when its
+> card reads it running and the Stealth card's own hold (holding, or armed for
+> an instance to spawn, which Solide keeps however the badge reads), then Keep Foreground --
+> last, because the game is unfocused at an untick and one that idles then
+> could not run the un-hide or the collision restore, which need its game
+> thread -- and releases the experimental hotkeys only after; a
+> running Detect Stats scan is discarded -- and while disconnected, at the next
+> connect with the features still off, after the connect prime, from what it
+> reads in the DLL (never at a connect with them on). The untick stays owed in
+> `experimental.json` (`teardownOwed`) until a teardown over a live connection
+> has known what ran and turned it all off -- every reading it decided from a
+> reply, every OFF it sent answered (a failed read or OFF, or a connect that
+> could not read Keep Foreground, leaves it to the next connect) -- so a restart
+> in between keeps it; and only an owed untick
+> is paid -- a connect with the features off and nothing owed leaves alone what
+> a CE record runs (Fly, Keep Foreground and See-through have mailbox
+> commands). Live Funcs gives a kept trace back to the game at the untick (its
+> buffer and parameter block, by its generation) and drops its Open in Call
+> Trace and status sentences with it, as a disconnect does; when the stop that
+> leaving Live Funcs sent has not answered by the untick, the trace goes back as
+> the reply lands, so the order changes nothing. Behind it, a
+> defence line: Live Funcs offers a kept trace and opens the Call Trace tab only
+> while the switch is on. The rest needs nothing: Snapshot, SPC Query, Class
+> Pivot and Call Trace lock the opt-in when opened; leaving Live Funcs for the
+> System tab stops a recording; Property Search's forced-fields strip stays
+> whatever the switch, listing the holds as last read (at a connect, when its
+> panel attaches, after its own actions) -- the way out for a Stealth hold the
+> card could not claim, as when the connect found no pawn to match it to.
+> Detect, pressed while the Stealth card's hold is holding or armed, only
+> reads: it keeps the badge and the held meter that Reset and the teardown
+> release.
+> **How it got here.** The maintainer first chose 「只能在斷線時取消 + 保留防線」
+> (untick only while disconnected, plus the defence line), on the premise that
+> a disconnect ends what an experimental feature holds. The review found it
+> does not -- the DLL's last-client teardown in `Fern` ends the trace and
+> See-through, not Keep Foreground, Fly or a Solide hold -- so the rule left
+> them running behind hidden cards with their hotkeys gone; offered three ways
+> out, the maintainer chose 「連線中也可取消，立即清理」 (untick while connected
+> too, and clean up at once). The record is `[LF-EXPOFF-TRACE]` in
+> [todo.md](todo.md).
 
 -----
 

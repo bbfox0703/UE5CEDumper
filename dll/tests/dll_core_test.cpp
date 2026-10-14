@@ -300,7 +300,7 @@ int main() {
 
     // [VER-410-GATE] review: the same decision with its glue -- the VERSIONINFO reads, the ProductVersion string handed
     // on, and the tier-1 short-circuit -- on real files. dll/CMakeLists.txt builds each dll/tests/res/*.rc into a
-    // resource-only DLL beside this exe; b25c / b25d are the resources the b25 rig's live marker exes carry. Only the
+    // resource-only DLL beside this exe; the b25 rig's live marker exes carry some of the same scripts. Only the
     // pure helpers were pinned before, and a refactor that dropped the string or the short-circuit stayed green.
     {   blk("VER-410-GATE glue - the resource half of detection, run on built VERSIONINFO files");
         wchar_t self[MAX_PATH] = {};
@@ -438,6 +438,89 @@ int main() {
         // one for ever: the string fallback's widening is a logic change, rev 8 -> 9.
         check("VER-410-GATE rev 9: the detection logic rev was bumped for the string fallback",
               Genau::kVersionDetectLogicRev >= 9);
+
+        // [VER-410-FIXED-VS-STRING] A game version in the fixed fields that lands inside 4.0-4.27 / 5.0-5.9 was taken
+        // before any string was read, so it beat the exe's own engine build string -- the engine-stamped signal. Where
+        // the two name different versions the build string's code is taken, as a string reading (fromFixedField false):
+        // at or above the floor that is tier 1, below it only an agreeing CrashReportClient can make it one.
+        const std::wstring fixed405 = res(L"game_fixed405_buildstring_415");
+        const std::wstring fixed501 = res(L"game_fixed501_buildstring_415");
+        const std::wstring fixed420 = res(L"game_fixed420_buildstring_410");
+        for (const std::wstring* f : { &fixed405, &fixed501, &fixed420 })
+            check("VER-410-FIXED-VS-STRING setup: the resource fixture was built beside the test",
+                  GetFileAttributesW(f->c_str()) != INVALID_FILE_ATTRIBUTES,
+                  Utf8Helpers::EncodeUtf16(f->c_str(), f->size()).c_str());
+        auto f405 = phase(fixed405, L"");
+        check("VER-410-FIXED-VS-STRING ⭐: fixed 4.5 under a 4.15 build string reads 415, from the string",
+              f405.exeVersion == 415 && !f405.exeReading.fromFixedField, gb);
+        check("VER-410-FIXED-VS-STRING ⭐: ...at tier 1, the floor and above needing no second signal",
+              f405.done && f405.result.version == 415 && f405.result.tier == 1, gb);
+        auto f501 = phase(fixed501, L"");
+        check("VER-410-FIXED-VS-STRING ⭐: fixed 5.1 under a branch-first 4.15 build string in FileVersion reads 415",
+              f501.done && f501.result.version == 415 && f501.result.tier == 1 && f501.exeVersion == 415
+              && !f501.exeReading.fromFixedField, gb);
+        // The refusal's direction: a sub-floor build string under a supported fixed field is a string reading, which
+        // cannot corroborate itself -- it must not refuse on its own.
+        auto f420 = phase(fixed420, L"");
+        check("VER-410-FIXED-VS-STRING ⭐: fixed 4.20 under IS Defense's 4.10 build string reads 410, from the string",
+              f420.exeVersion == 410 && !f420.exeReading.fromFixedField, gb);
+        check("VER-410-FIXED-VS-STRING ⭐: ...which alone stays tier 3 -- the string does not corroborate itself",
+              !f420.done && f420.result.version == 410 && f420.result.tier == 3 && !f420.verdict.byBuildString, gb);
+        auto f420c = phase(fixed420, b25c.c_str());
+        check("VER-410-FIXED-VS-STRING: ...and beside a CrashReportClient agreeing on 410 it stops at tier 1, the exe's",
+              f420c.done && f420c.result.version == 410 && f420c.result.tier == 1 && f420c.verdict.byCrc
+              && !f420c.verdict.byBuildString && f420c.verdict.source == Genau::VersionSource::Exe, gb);
+        // Controls: a fixed field the build string agrees with stays a fixed-field reading (b25c above is one, with the
+        // string in ProductVersion), so it still corroborates itself below the floor.
+        auto agree = phase(b25c, L"");
+        check("VER-410-FIXED-VS-STRING control: b25c's fixed 4.10.2 and its own 4.10 build string agree -- still fixed",
+              agree.exeReading.fromFixedField && agree.exeVersion == 410 && agree.verdict.byBuildString
+              && agree.exeReading.overruledFixedCode == 0, gb);
+        auto bare = phase(b25d, L"");
+        check("VER-410-FIXED-VS-STRING control: a fixed 4.10.3 beside a bare '4.10.3' (no build string) stays fixed",
+              bare.exeReading.fromFixedField && bare.exeVersion == 410 && bare.exeReading.overruledFixedCode == 0, gb);
+        // The fixed FileVersion is the second fixed field read and takes the same rule: every fixture above carries its
+        // game version in PRODUCTVERSION, so the FileVersion branch could take its fixed code unchecked with all of them
+        // green. [VER-410-FIXED-VS-STRING] review
+        const std::wstring fileFixed405 = res(L"game_filefixed405_buildstring_415");
+        check("VER-410-FIXED-VS-STRING setup: the resource fixture was built beside the test",
+              GetFileAttributesW(fileFixed405.c_str()) != INVALID_FILE_ATTRIBUTES,
+              Utf8Helpers::EncodeUtf16(fileFixed405.c_str(), fileFixed405.size()).c_str());
+        auto ff405 = phase(fileFixed405, L"");
+        check("VER-410-FIXED-VS-STRING ⭐: a fixed FileVersion of 4.5 under a game ProductVersion and a 4.15 build string "
+              "reads 415, from the string",
+              ff405.exeVersion == 415 && !ff405.exeReading.fromFixedField && ff405.exeReading.overruledFixedCode == 405,
+              gb);
+        check("VER-410-FIXED-VS-STRING ⭐: ...at tier 1",
+              ff405.done && ff405.result.version == 415 && ff405.result.tier == 1, gb);
+        // Which string is the build string when both are one: ProductVersion's, as the string fallback reads them. Below
+        // the floor the order is the verdict, not the log's wording -- read FileVersion's first and this fixed 4.10 is
+        // overruled to 415 and scanned, where ProductVersion's agreeing string corroborates it and the scan is refused.
+        const std::wstring twoBuild = res(L"game_fixed410_two_buildstrings");
+        check("VER-410-FIXED-VS-STRING setup: the resource fixture was built beside the test",
+              GetFileAttributesW(twoBuild.c_str()) != INVALID_FILE_ATTRIBUTES,
+              Utf8Helpers::EncodeUtf16(twoBuild.c_str(), twoBuild.size()).c_str());
+        auto two = phase(twoBuild, L"");
+        check("VER-410-FIXED-VS-STRING ⭐: fixed 4.10.2 with an agreeing ProductVersion build string and a 4.15 FileVersion "
+              "one stays a fixed reading of 410 -- ProductVersion's string is the one compared",
+              two.exeVersion == 410 && two.exeReading.fromFixedField && two.exeReading.overruledFixedCode == 0, gb);
+        check("VER-410-FIXED-VS-STRING ⭐: ...corroborated by that string, so it stops at tier 1 and the scan is refused",
+              two.done && two.result.version == 410 && two.result.tier == 1 && two.verdict.byBuildString, gb);
+        // The reading says which fixed-field code it overruled, which is what the SOURCES DISAGREE line names.
+        check("VER-410-FIXED-VS-STRING: each overruling reading names the fixed code it overruled (405 / 501 / 420)",
+              f405.exeReading.overruledFixedCode == 405 && f501.exeReading.overruledFixedCode == 501
+              && f420.exeReading.overruledFixedCode == 420);
+        const std::string over = Genau::FixedFieldOverruledNote("PE VERSIONINFO", 405, "ProductVersion", "4.15.0-0+UE4", 415);
+        check("VER-410-FIXED-VS-STRING note ⭐: the disagreement is logged as SOURCES DISAGREE, naming both readings",
+              over.find("SOURCES DISAGREE") != std::string::npos && over.find("says UE 405") != std::string::npos
+              && over.find("'4.15.0-0+UE4'") != std::string::npos && over.find("Taking 415") != std::string::npos,
+              over.c_str());
+        // b25's judge_d refuses a log carrying CORROBORATED, and the line must not claim the string was taken because it
+        // corroborated anything.
+        check("VER-410-FIXED-VS-STRING note: it carries no 'CORROBORATED'", over.find("CORROBORATED") == std::string::npos,
+              over.c_str());
+        // A cached title holds the fixed field's verdict, and the cache-reuse branch would restore it for ever.
+        check("VER-410-FIXED-VS-STRING: the detection logic rev was bumped (9 -> 10)", Genau::kVersionDetectLogicRev >= 10);
     }
 
     {   blk("A7 — ForEach honours Tot::Requested() and stops");
@@ -1216,6 +1299,23 @@ int main() {
               pv == "{bA=false, bB=true, bU=true}", pv.c_str());
     }
 
+    // -- INT8-PREVIEW -- the struct preview reads an Int8Property signed ----------------------
+    //
+    // [INT8-PREVIEW]. The struct preview decodes each member through Ubel::PreviewScalarValue, which read
+    // an Int8Property through uint8_t, so a member holding -1 previewed as 255. A ByteProperty beside it
+    // holds the same byte and is the unsigned type, so it must still read 255.
+    {
+        blk("INT8-PREVIEW - a struct's Int8 member previews signed, its Byte neighbour unsigned");
+        ClassInfo si{};
+        FieldInfo i8{};  i8.Name = "Delta"; i8.TypeName = "Int8Property"; i8.Offset = 0; i8.Size = 1;
+        FieldInfo by{};  by.Name = "Count"; by.TypeName = "ByteProperty"; by.Offset = 1; by.Size = 1;
+        si.Fields.push_back(i8);
+        si.Fields.push_back(by);
+        const uint8_t sbuf[2] = { 0xFF, 0xFF };
+        const std::string pv = Ubel::InterpretStructByLayout(sbuf, 2, si, 8);
+        check("INT8-PREVIEW ⭐: Int8 0xFF is -1, ByteProperty 0xFF is 255", pv == "{Delta=-1, Count=255}", pv.c_str());
+    }
+
     // -- UFUNCTAIL-2026-09-11 -- NumParms / ParmsSize / ReturnValueOffset on UE 4.11-4.17 ----
     //
     // [A2-UFUNC-TAIL-4X]. FunctionFlags is measured per version, but the three fields behind it
@@ -1453,11 +1553,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL and the LIVEFUNCS-STEP2 name / layout blocks below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -3661,6 +3761,29 @@ int main() {
         DynOff::bUEnumNamesFailed.store(false);
     }
 
+    // -- ENUMNAMESNOLATCH-2026-10-13 -- the version ladder's UEnum::Names detection latches no failure ------------
+    //
+    // [VER-MARKERS-PAST-504] Init's 5.5 rung reads UEnum::EnumPackage behind the MEASURED Names, so init runs the lazy
+    // detection early -- on a title that may not have registered ENetRole yet. A FAILED latched there would switch enum
+    // names off for the whole process, so that call must report the miss and leave both flags for the lazy path.
+    // Its positive arm -- the same call still finds and latches a registered ENetRole -- needs a built ENetRole, so it
+    // sits in ENUMU8, which builds one.
+    {
+        blk("ENUMNAMESNOLATCH - a detection told not to latch a failure leaves the next lookup free to retry");
+        ResetCancel();
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+        DynOff::bUEnumNamesDetected.store(false);
+        DynOff::bUEnumNamesFailed.store(false);
+        const bool soft = Genau::DetectUEnumNames(/*latchFailure=*/false);
+        check("ENUMNAMESNOLATCH ⭐: finding no known enum, it reports the miss and latches neither flag",
+              !soft && !DynOff::bUEnumNamesFailed.load() && !DynOff::bUEnumNamesDetected.load());
+        const bool hard = Genau::DetectUEnumNames();
+        check("ENUMNAMESNOLATCH control: the lazy path's own call, on the same pool, still latches FAILED",
+              !hard && DynOff::bUEnumNamesFailed.load() && DynOff::bUEnumNamesDetected.load());
+        DynOff::bUEnumNamesDetected.store(false);
+        DynOff::bUEnumNamesFailed.store(false);
+    }
+
     // -- DELEGATEARRAYPAD-2026-09-12 -- a TArray<FScriptDelegate> publishes its PER-ELEMENT detector pad -----------
     //
     // ⛔ POOL-FAKING, like STRARRAYWALK: own pool, last. [A4-DELEGATE-ARRAY-PAD] The elements of a TArray<FScriptDelegate>
@@ -4525,6 +4648,7 @@ int main() {
         const int      svFlagsO = DynOff::UFUNCTION_FLAGS;
         const int      svExtraO = DynOff::UFUNCTION_TAIL_EXTRA;
         const int      svMeasO  = DynOff::UFUNCTION_TAIL_MEASURED.load();
+        const int      svPropsO = DynOff::USTRUCT_PROPSSIZE;
         DynOff::bCasePreservingName = false;
         DynOff::bUseFProperty       = false;    // UProperty mode: a function's parameters are its Children
         DynOff::bOffsetsValidated.store(false); // the version table is the primary: 0x88 on both sides of 4.18
@@ -4660,8 +4784,9 @@ int main() {
               readsRight(readOf(bFn0 + 2)), rb);
 
         // [UE-OVERRIDE-411] review 2: a tail 4 past the version's shift, Split Fiction's shape. The vote absorbs it as
-        // UFUNCTION_TAIL_EXTRA, and the override check has to add that extra to the version it judges: without it
-        // every override on such a title is refused, the right one included.
+        // UFUNCTION_TAIL_EXTRA, and the override check has to allow that extra in the version it judges: without it
+        // every override on such a title is refused, the right one included. (It takes the extra the measurement
+        // implies, not the vote's: OVERRIDEEXTRA below is why.)
         build(0x8C);
         resetVote();
         g_cachedUEVersion = 505;
@@ -4708,6 +4833,92 @@ int main() {
         DynOff::bOffsetsProbeRan.store(false);
         check("OVERRIDETAIL: before the offsets probe an override is Unmeasured, not refused",
               verdictOf(417).verdict == TailCheck::Unmeasured, ob);
+
+        // [OVERRIDE-REVIEW2-LOWS] What get_pointers publishes as override_contradicted. An override persisted before
+        // the refusal existed, or chosen before any scan, is handed in ahead of the scan at every launch; the vote
+        // then measured the contradiction and said so in the log alone. Nothing has read a function yet here: the
+        // judgement runs the vote itself, under the version in force, as the first function read would.
+        DynOff::bOffsetsProbeRan.store(true);
+        build(0x88);
+        resetVote();
+        g_cachedUEVersion = 417;
+        check("OVERRIDENOTE ⭐: a persisted 4.17 on a 4.18 title is published as contradicted",
+              Ubel::OverrideInForceContradicted(417, true));
+        check("OVERRIDENOTE: ...the judgement ran the vote, which measured the tail at +0x88",
+              DynOff::bUFunctionFlagsDetected.load() && DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x88,
+              std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()).c_str());
+        check("OVERRIDENOTE: ...and the same version, detected, is not the user's to take back",
+              !Ubel::OverrideInForceContradicted(417, false));
+        check("OVERRIDENOTE control: an override that fits the measured tail is not contradicted",
+              !Ubel::OverrideInForceContradicted(418, true));
+
+        // With no override in force nothing is read: the vote stays for the first function read to run.
+        resetVote();
+        g_cachedUEVersion = 418;
+        check("OVERRIDENOTE: no override is never contradicted", !Ubel::OverrideInForceContradicted(418, false));
+        check("OVERRIDENOTE: ...and asking ran no vote", !DynOff::bUFunctionFlagsDetected.load());
+
+        // The inverse: a 4.15 title under a 4.18 override.
+        build(0x8A);
+        resetVote();
+        g_cachedUEVersion = 418;
+        check("OVERRIDENOTE ⭐: 4.18 on a 4.15 tail is published as contradicted",
+              Ubel::OverrideInForceContradicted(418, true));
+        check("OVERRIDENOTE control: 4.15 there is not", !Ubel::OverrideInForceContradicted(415, true));
+
+        // The vote's +4 extra counts, as it does for the refusal.
+        build(0x8C);
+        resetVote();
+        g_cachedUEVersion = 505;
+        check("OVERRIDENOTE control: 5.5 on a +4 tail is not contradicted", !Ubel::OverrideInForceContradicted(505, true));
+        check("OVERRIDENOTE: ...4.17 there is", Ubel::OverrideInForceContradicted(417, true));
+
+        // A measurement the vote could not make stays unmade: the snapshot asks on every refresh, so it never samples
+        // again (the override's refusal does, once, when the user picks a version).
+        build(0x88);
+        resetVote();
+        g_cachedUEVersion = 417;
+        for (int i = bFn0 + 3; i < kOT; ++i) setItem(i, 0);
+        check("OVERRIDENOTE: three samples measure nothing, so nothing is contradicted",
+              !Ubel::OverrideInForceContradicted(417, true));
+        for (int i = bFn0 + 3; i < kOT; ++i) setItem(i, A(i));
+        check("OVERRIDENOTE: ...and asking again does not sample again",
+              !Ubel::OverrideInForceContradicted(417, true) && DynOff::UFUNCTION_TAIL_MEASURED.load() == -1,
+              std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()).c_str());
+
+        // Before any scan: nothing to judge.
+        resetVote();
+        DynOff::bOffsetsProbeRan.store(false);
+        check("OVERRIDENOTE: before the offsets probe nothing is contradicted", !Ubel::OverrideInForceContradicted(417, true));
+
+        // [OVERRIDE-REVIEW2-LOWS] review: the note tells the user to choose a version that fits, so the one that fits
+        // must be accepted. A persisted 4.17 on a +4 tail: the vote runs under 4.17, cannot find the tail, and latches
+        // the primary with extra 0. The probe validated here, as on a real FProperty title, so FunctionFlags' primary
+        // comes from PropertiesSize and is the same under every version (0x40 + 0x48 in UProperty mode = 0x88).
+        DynOff::bOffsetsProbeRan.store(true);
+        DynOff::bOffsetsValidated.store(true);
+        DynOff::USTRUCT_PROPSSIZE = 0x40;
+        build(0x8C);
+        resetVote();
+        g_cachedUEVersion = 417;
+        check("OVERRIDEEXTRA setup: a persisted 4.17 on a +4 tail is published as contradicted",
+              Ubel::OverrideInForceContradicted(417, true));
+        snprintf(ob, sizeof(ob), "flags +0x%X extra %d measured +0x%X", DynOff::UFUNCTION_FLAGS,
+                 DynOff::UFUNCTION_TAIL_EXTRA, DynOff::UFUNCTION_TAIL_MEASURED.load());
+        check("OVERRIDEEXTRA setup: ...its vote kept the primary +0x88 with extra 0; the measurement found +0x8C",
+              DynOff::UFUNCTION_FLAGS == 0x88 && DynOff::UFUNCTION_TAIL_EXTRA == 0
+                  && DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x8C, ob);
+        auto pick505 = verdictOf(505);
+        check("OVERRIDEEXTRA ⭐: the user then picks 5.5, which fits the +4 tail -- accepted, not refused for that 0",
+              pick505.verdict == TailCheck::Agrees, ob);
+        check("OVERRIDEEXTRA ⭐: ...5.0 as well", verdictOf(500).verdict == TailCheck::Agrees, ob);
+        check("OVERRIDEEXTRA control: ...4.17 is still refused", verdictOf(417).verdict == TailCheck::Contradicts, ob);
+        check("OVERRIDEEXTRA ⭐: ...and 5.5 in force is not published as contradicted",
+              !Ubel::OverrideInForceContradicted(505, true));
+        check("OVERRIDEEXTRA measured control: the readers keep the measured +4 tail: NumParms 3, ParmsSize 12",
+              readsRight(readOf(bFn0 + 2)), rb);
+        DynOff::USTRUCT_PROPSSIZE = svPropsO;
+        DynOff::bOffsetsValidated.store(false);
 
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
         DynOff::bCasePreservingName = svCpnO;
@@ -4931,6 +5142,18 @@ int main() {
         const std::string c2 = Ubel::ResolveEnumValue(A(bNetRole), 2);
         check("ENUMU8 control: 4.18's int64 values stay 8 bytes and resolve",
               DynOff::UENUM_VALUE_SIZE == 8 && c2 == "ROLE_AutonomousProxy", c2.c_str());
+
+        // [VER-MARKERS-PAST-504] ENUMNAMESNOLATCH's positive arm: the version ladder's early call is told not to latch a
+        // MISS, and must still search and latch a FIND -- the 5.5 rung reads behind the Names offset it measures, so a
+        // call that gave up early would leave that rung silent on every title.
+        build(8, 16);
+        g_cachedUEVersion   = 504;
+        DynOff::UENUM_NAMES = 0x88;   // not where ENetRole keeps it, so only a measurement passes
+        const bool early = Genau::DetectUEnumNames(/*latchFailure=*/false);
+        check("ENUMNAMESNOLATCH ⭐ positive: the ladder's early call finds ENetRole's Names and latches the find",
+              early && DynOff::bUEnumNamesDetected.load() && !DynOff::bUEnumNamesFailed.load()
+              && DynOff::UENUM_NAMES == 0x40 && !DynOff::bEnumNamesNewContainer,
+              std::to_string(DynOff::UENUM_NAMES).c_str());
 
         {
             std::lock_guard<std::mutex> lk(Ubel::s_enumCacheMutex);
@@ -5764,6 +5987,82 @@ int main() {
         }
     }
 
+    // [AOB-SKIP-OWN-DLL] The multi-module walk on real images. On IS Defense GOBJ_V1 matched twice inside our own
+    // version.dll proxy, so every Pass 2 scan had the dumper as a source of false candidates. Two fixtures beside this
+    // exe (dll/tests/res/owncopy_fixture.cpp) carry one marker in an executable section above the walk's size floor;
+    // one exports the dumper's mailbox contract, the other the same name with a wrong magic. Here the dumper's own
+    // image IS this exe, so the own-image arm is reached through the walk's seam with a fixture standing in for it.
+    {   blk("AOB-SKIP-OWN-DLL - the multi-module walk leaves out every build of the dumper, and only those");
+        wchar_t self[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, self, MAX_PATH);
+        std::wstring dir(self);
+        dir.resize(dir.find_last_of(L"\\/") + 1);
+        HMODULE dumper   = LoadLibraryW((dir + L"owncopy_dumper.dll").c_str());
+        HMODULE impostor = LoadLibraryW((dir + L"owncopy_impostor.dll").c_str());
+        // A build from before the mailbox contract (2026-08-06) exports UE5_Init and no contract; a stale proxy left
+        // in a game folder beside a current one is that build.
+        HMODULE legacy   = LoadLibraryW((dir + L"owncopy_legacy.dll").c_str());
+        check("AOB-SKIP-OWN-DLL setup: both fixtures load from beside the test", dumper && impostor);
+        check("AOB-SKIP-OWN-DLL setup: ...and the pre-contract build", legacy != nullptr);
+        if (dumper && impostor && legacy) {
+            const char* marker = "E8 4F 57 4E 43 4F 50 59 9C 37 B1 D4 2A 6E 05 F3";
+            const uintptr_t db = reinterpret_cast<uintptr_t>(dumper), ib = reinterpret_cast<uintptr_t>(impostor);
+            MODULEINFO dmi{}, imi{};
+            const bool infoOk = GetModuleInformation(GetCurrentProcess(), dumper, &dmi, sizeof dmi)
+                             && GetModuleInformation(GetCurrentProcess(), impostor, &imi, sizeof imi);
+            check("AOB-SKIP-OWN-DLL setup: both images are above the walk's size floor", infoOk
+                  && dmi.SizeOfImage >= Macht::kMinScannedModuleSize && imi.SizeOfImage >= Macht::kMinScannedModuleSize);
+            const uintptr_t lb = reinterpret_cast<uintptr_t>(legacy);
+            MODULEINFO lmi{};
+            check("AOB-SKIP-OWN-DLL setup: the pre-contract build is above the size floor too",
+                  GetModuleInformation(GetCurrentProcess(), legacy, &lmi, sizeof lmi)
+                  && lmi.SizeOfImage >= Macht::kMinScannedModuleSize);
+            auto inImage = [](uintptr_t a, uintptr_t base, const MODULEINFO& mi) {
+                return a >= base && a < base + mi.SizeOfImage;
+            };
+            // Controls: the marker is in each image, so a walk that reports none from one has LEFT IT OUT.
+            check("AOB-SKIP-OWN-DLL control: scanned directly, the dumper fixture holds the marker",
+                  Macht::AOBScanAll(marker, db).size() == 1);
+            check("AOB-SKIP-OWN-DLL control: ...and so does the impostor", Macht::AOBScanAll(marker, ib).size() == 1);
+            check("AOB-SKIP-OWN-DLL control: ...and so does the pre-contract build",
+                  Macht::AOBScanAll(marker, lb).size() == 1);
+
+            check("AOB-SKIP-OWN-DLL identity: a module exporting the contract with its magic is a dumper build",
+                  Macht::IsDumperModule(dumper));
+            check("AOB-SKIP-OWN-DLL identity: the same export name with a wrong magic is not",
+                  !Macht::IsDumperModule(impostor));
+            check("AOB-SKIP-OWN-DLL identity ⭐ a build from before the contract, exporting UE5_Init, is a dumper build",
+                  Macht::IsDumperModule(legacy));
+            check("AOB-SKIP-OWN-DLL identity: a module without the export is not",
+                  !Macht::IsDumperModule(GetModuleHandleW(L"kernel32.dll")));
+            check("AOB-SKIP-OWN-DLL identity: this exe, which exports no contract, is not",
+                  !Macht::IsDumperModule(GetModuleHandleW(nullptr)));
+            check("AOB-SKIP-OWN-DLL identity: no module is not", !Macht::IsDumperModule(nullptr));
+
+            const std::vector<uintptr_t> walk = Macht::AOBScanAllModules(marker);
+            size_t inDumper = 0, inImpostor = 0, inLegacy = 0;
+            for (uintptr_t a : walk) {
+                if (inImage(a, db, dmi)) ++inDumper;
+                if (inImage(a, ib, imi)) ++inImpostor;
+                if (inImage(a, lb, lmi)) ++inLegacy;
+            }
+            check("AOB-SKIP-OWN-DLL ⭐ the walk reports nothing from another build of the dumper", inDumper == 0,
+                  std::to_string(inDumper).c_str());
+            check("AOB-SKIP-OWN-DLL ⭐ ...nor from one built before the contract", inLegacy == 0,
+                  std::to_string(inLegacy).c_str());
+            check("AOB-SKIP-OWN-DLL ⭐ ...and still reports the module that only shares the export's name",
+                  inImpostor == 1, std::to_string(inImpostor).c_str());
+            check("AOB-SKIP-OWN-DLL ...and nothing else", walk.size() == 1, std::to_string(walk.size()).c_str());
+
+            const std::vector<uintptr_t> walkOwn = Macht::ScanAllModulesExcept(marker, ib);
+            check("AOB-SKIP-OWN-DLL ⭐ the walk leaves out the image it holds as its own", walkOwn.empty(),
+                  std::to_string(walkOwn.size()).c_str());
+        }
+        if (legacy)   FreeLibrary(legacy);
+        if (impostor) FreeLibrary(impostor);
+        if (dumper)   FreeLibrary(dumper);
+    }
+
     // -- UPROPSLOT-2026-09-27 -- a UProperty engine gets the property subclass family at ITS start -------------------
     //
     // ⛔ POOL-FAKING (own GObjects, own name table; the LAST block, and it restores every DynOff Genau writes).
@@ -5946,6 +6245,85 @@ int main() {
         check("UPROPSLOT ⭐: ...and so do the readers outside the family (UPropertySubclassStart), not 0x6C",
               DynOff::UPropertySubclassStart(415) == 0x78, std::to_string(DynOff::UPropertySubclassStart(415)).c_str());
 
+        // [UE4-USTRUCT-GIVEUP] The same give-up shipped the 4.25+ UStruct head (Super 0x40, Children 0x48, PropertiesSize
+        // 0x58, Script 0x60) on a UProperty engine. Measured: 4.11-4.21 put SuperStruct right behind UField::Next (0x30 /
+        // 0x38 / 0x40 / 0x48 -- UE_4.18 Class.h, EVERSPACE's 4.20 PDB); 4.22-4.24 game builds add the 16-byte
+        // FStructBaseChain base first (0x40 / 0x48 / 0x50 / 0x58 -- UE_4.23 Class.h, UE423_Flying's Shipping PDB), so
+        // there the old default read PropertiesSize from Script's data pointer. Each run starts from the load-time head,
+        // because the measured runs above left 4.23's real one behind.
+        {
+            auto ustructAtLoad = [] {
+                DynOff::USTRUCT_SUPER = 0x40;      DynOff::USTRUCT_CHILDREN = 0x48;
+                DynOff::USTRUCT_PROPSSIZE = 0x58;  DynOff::USTRUCT_SCRIPT = 0x60;
+            };
+            auto head = [] {
+                char b[64];
+                snprintf(b, sizeof b, "%02X/%02X/%02X/%02X", DynOff::USTRUCT_SUPER, DynOff::USTRUCT_CHILDREN,
+                         DynOff::USTRUCT_PROPSSIZE, DynOff::USTRUCT_SCRIPT);
+                return std::string(b);
+            };
+            auto giveUpAt = [&](uint32_t ver) {
+                ustructAtLoad();
+                runGenau(ver);
+                return std::string(DynOff::g_offsetsFallbackReason) == "no-guid-or-vector-struct" && !DynOff::bUseFProperty;
+            };
+            layout(4, 0x28, 0x34, 0x44);   // still no Guid / Vector
+            const bool gu423 = giveUpAt(423);
+            check("USTRUCT-GIVEUP setup: 4.23 takes the give-up in UProperty mode", gu423, DynOff::g_offsetsFallbackReason);
+            check("USTRUCT-GIVEUP ⭐: a 4.23 give-up ships 4.23's head 40/48/50/58, PropertiesSize not on Script's pointer",
+                  head() == "40/48/50/58", head().c_str());
+            giveUpAt(422);
+            check("USTRUCT-GIVEUP ⭐: 4.22, FStructBaseChain's first version, ships 40/48/50/58", head() == "40/48/50/58",
+                  head().c_str());
+            giveUpAt(421);
+            check("USTRUCT-GIVEUP ⭐: 4.21, the last without it, ships 30/38/40/48", head() == "30/38/40/48", head().c_str());
+            const bool gu418 = giveUpAt(418);
+            check("USTRUCT-GIVEUP ⭐: a 4.18 give-up ships 30/38/40/48", gu418 && head() == "30/38/40/48", head().c_str());
+            giveUpAt(415);
+            check("USTRUCT-GIVEUP ⭐: a 4.15 give-up ships 30/38/40/48", head() == "30/38/40/48", head().c_str());
+            // The head follows the run's UField::Next, not a constant. Case-preserving names are the one 0x30 a give-up
+            // can see: the UObject repeats its ComparisonIndex as DisplayIndex. (A STATS build's 0x30 it cannot see --
+            // DynOff::UPropertyUStructHeadFor says what that costs.)
+            put32(upGuid, Grimoire::OFF_UOBJECT_NAME + 4, 4);   // DisplayIndex == ComparisonIndex ("A")
+            const bool cpn415 = giveUpAt(415);
+            check("USTRUCT-GIVEUP setup: a case-preserving 4.15 gives up with UField::Next 0x30",
+                  cpn415 && DynOff::bCasePreservingName && DynOff::UFIELD_NEXT == 0x30,
+                  std::to_string(DynOff::UFIELD_NEXT).c_str());
+            check("USTRUCT-GIVEUP ⭐: ...and ships the head one slot on, 38/40/48/50", head() == "38/40/48/50",
+                  head().c_str());
+            giveUpAt(423);
+            check("USTRUCT-GIVEUP ⭐: a case-preserving 4.23 give-up ships 48/50/58/60",
+                  DynOff::bCasePreservingName && head() == "48/50/58/60", head().c_str());
+            put32(upGuid, Grimoire::OFF_UOBJECT_NAME + 4, 0);
+
+            // Control: a version default never overrides a measurement. The fixture's Guid holds Children at +0x48, so a
+            // measured 4.18 run derives Super 0x40 from it -- not the 4.18 default 0x30.
+            layout(2, 0x28, 0x34, 0x44);
+            ustructAtLoad();
+            runGenau(418);
+            check("USTRUCT-GIVEUP control: a measured 4.18 run keeps the head its Children measurement gives, 40/48/50/58",
+                  DynOff::bOffsetsValidated.load() && head() == "40/48/50/58", head().c_str());
+
+            // The other give-up exit: Guid is found, but none of its slots heads a *Property chain (a stripped or
+            // obfuscated build). It ships the version's head too -- which only holds while the head is set before both
+            // exits, not inside the no-Guid one.
+            auto childPropsGiveUpAt = [&](uint32_t ver) {
+                ustructAtLoad();
+                runGenau(ver);
+                return std::string(DynOff::g_offsetsFallbackReason) == "childprops-probe-failed" && !DynOff::bUseFProperty;
+            };
+            putP(upGuid, 0x48, 0);   // Guid keeps its name, loses its Children
+            const bool cp418 = childPropsGiveUpAt(418);
+            check("USTRUCT-GIVEUP setup: a 4.18 Guid with no property chain takes the childprops-probe-failed give-up",
+                  cp418, DynOff::g_offsetsFallbackReason);
+            check("USTRUCT-GIVEUP ⭐: ...and that exit ships 4.18's head 30/38/40/48 as well", head() == "30/38/40/48",
+                  head().c_str());
+            const bool cp423 = childPropsGiveUpAt(423);
+            check("USTRUCT-GIVEUP ⭐: a 4.23 childprops-probe-failed give-up ships 40/48/50/58",
+                  cp423 && head() == "40/48/50/58", head().c_str());
+            putP(upGuid, 0x48, A(upProp[0]));
+        }
+
         // Review wf_b99fb861-680 (F5), pinned after the review of build 3594 found it untested: a 4.18-4.24 title
         // labelled 4.25+ (Square Enix's 427 bias) starts in FProperty mode, so Step 2.5 set no UProperty family; the
         // ChildProperties scan then fails over to UProperty mode, and if the Offset_Internal probe fails too, the run
@@ -6064,6 +6442,211 @@ int main() {
         DynOff::bUseFProperty = svFProp;  DynOff::bCasePreservingName = svCpn;  g_cachedUEVersion = svVer;
         DynOff::UFIELD_NEXT = svNext;     DynOff::USTRUCT_CHILDREN = svChildren; DynOff::USTRUCT_PROPSSIZE = svPropsSize;
         DynOff::UPROPERTY_OFFSET = svUOff; DynOff::UPROPERTY_ELEMSIZE = svUElem;
+    }
+
+    // -- ASSETPTR-2026-10-13 -- UE 4.11-4.17's soft pointers are read in their own layout ----------------------------------
+    //
+    // ⛔ OWN name table (after UPROPINNER). [UE4-ASSETPTR-PROPS] AssetObjectProperty / AssetClassProperty, the soft
+    // pointers before 4.18 renamed them, hold an FAssetPtr: FWeakObjectPtr +0, TagAtLastTest +8, and the path as ONE
+    // FString (FStringAssetReference::AssetLongPathname) at +0x10, 0x20 in all (UE_4.10 PersistentObjectPtr.h /
+    // StringAssetReference.h; UE415_Flyinh's 4.15 PDB). Nothing read them: a walk row showed bytes, the class no
+    // PropertyClass / MetaClass. And the 4.18+ reader must not take them either -- its envelope arithmetic reads a 0x20
+    // element as a 5.3+ untagged pointer (0x20 - an FName/FString path's 0x18 = 0x08) and LATCHES that for the session.
+    // A 4.15-sized class: Next +0x28, ElementSize +0x34, Offset_Internal +0x50, subclass start 0x78.
+    {
+        blk("ASSETPTR - a 4.11-4.17 AssetObject / AssetClass property: its path, its classes, its array, its preview");
+
+        const auto svFProp = DynOff::bUseFProperty;       const auto svNext = DynOff::UFIELD_NEXT;
+        const auto svChildren = DynOff::USTRUCT_CHILDREN; const auto svPropsSize = DynOff::USTRUCT_PROPSSIZE;
+        const auto svSuper = DynOff::USTRUCT_SUPER;
+        const auto svUOff = DynOff::UPROPERTY_OFFSET;     const auto svUElem = DynOff::UPROPERTY_ELEMSIZE;
+        const auto svUStart = DynOff::UPROPERTY_SUBCLASS_START;
+        const auto svCpn = DynOff::bCasePreservingName;   const auto svSoft = DynOff::SOFTPTR_PATH;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        const uint32_t svVer = g_cachedUEVersion;
+        DynOff::bUseFProperty = false;  DynOff::bCasePreservingName = false;  g_cachedUEVersion = 415;
+        DynOff::UFIELD_NEXT = 0x28;     DynOff::USTRUCT_SUPER = 0x30;  DynOff::USTRUCT_CHILDREN = 0x38;
+        DynOff::USTRUCT_PROPSSIZE = 0x40;
+        DynOff::UPROPERTY_OFFSET = 0x50; DynOff::UPROPERTY_ELEMSIZE = 0x34;
+        DynOff::ApplyPropertyFamily(DynOff::UPropertyFamilyFor(0x50, 415, false));
+        DynOff::UPROPERTY_SUBCLASS_START = DynOff::FSTRUCTPROP_STRUCT;
+        DynOff::SOFTPTR_PATH = -1;   // nothing measured: a 4.18+ envelope latched here would be the misread
+        const int S = DynOff::FSTRUCTPROP_STRUCT;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t apEntry[19][0x40] = {};
+        const char* apNames[19] = { "", "AssetObjectProperty", "AssetClassProperty", "ArrayProperty", "StructProperty",
+                                    "Class", "Texture2D", "Actor", "Icon", "Spawn", "Icons", "Inner", "Rows", "Row",
+                                    "ScriptStruct", "Pic", "Function", "Load", "Which" };
+        static uintptr_t apChunk[20] = {};
+        for (int i = 1; i <= 18; ++i) {
+            memcpy(apEntry[i] + 0x10, apNames[i], strlen(apNames[i]) + 1);
+            apChunk[i] = A(apEntry[i]);
+        }
+        static uintptr_t apChunks[2] = { reinterpret_cast<uintptr_t>(apChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(apChunks), 0x10);
+
+        static uint8_t apPC[5][0x100] = {};
+        auto pcls = [&](int nameIdx) { put32(apPC[nameIdx], Grimoire::OFF_UOBJECT_NAME, nameIdx); return A(apPC[nameIdx]); };
+        static uint8_t apClass[0x100] = {}, apTex[0x100] = {}, apActor[0x100] = {}, apSSCls[0x100] = {},
+                       apFnCls[0x100] = {};
+        put32(apClass, Grimoire::OFF_UOBJECT_NAME, 5);  putP(apClass, Grimoire::OFF_UOBJECT_CLASS, A(apClass));
+        put32(apTex, Grimoire::OFF_UOBJECT_NAME, 6);    putP(apTex, Grimoire::OFF_UOBJECT_CLASS, A(apClass));
+        put32(apActor, Grimoire::OFF_UOBJECT_NAME, 7);  putP(apActor, Grimoire::OFF_UOBJECT_CLASS, A(apClass));
+        put32(apSSCls, Grimoire::OFF_UOBJECT_NAME, 14);
+        put32(apFnCls, Grimoire::OFF_UOBJECT_NAME, 16);
+
+        // TAssetPtr<UTexture2D> Icon; TAssetSubclassOf<AActor> Spawn; TArray<TAssetPtr<UTexture2D>> Icons;
+        // TArray<FRow> Rows, FRow { TAssetPtr<UTexture2D> Pic; }; and a function Load(TAssetPtr<UTexture2D> Which).
+        static uint8_t apIcon[0x100] = {}, apSpawn[0x100] = {}, apIcons[0x100] = {}, apInner[0x100] = {},
+                       apRows[0x100] = {}, apRowInner[0x100] = {}, apRow[0x100] = {}, apPic[0x100] = {},
+                       apFn[0x100] = {}, apWhich[0x100] = {}, apCls[0x100] = {};
+        auto prop = [&](uint8_t* p, uintptr_t cls, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, Grimoire::OFF_UOBJECT_CLASS, cls);  put32(p, Grimoire::OFF_UOBJECT_NAME, nameIdx);
+            put32(p, DynOff::UPROPERTY_ELEMSIZE - 4, 1);  put32(p, DynOff::UPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::UPROPERTY_OFFSET, off);
+            putP(p, DynOff::UFIELD_NEXT, next ? A(next) : 0);
+        };
+        prop(apIcon, pcls(1), 8, 0x28, 0x20, apSpawn);    putP(apIcon, S, A(apTex));
+        prop(apSpawn, pcls(2), 9, 0x48, 0x20, apIcons);   putP(apSpawn, S, A(apClass));  putP(apSpawn, S + 8, A(apActor));
+        prop(apIcons, pcls(3), 10, 0x68, 0x10, apRows);   putP(apIcons, S, A(apInner));
+        prop(apInner, pcls(1), 11, 0, 0x20, nullptr);     putP(apInner, S, A(apTex));
+        prop(apRows, pcls(3), 12, 0x78, 0x10, apFn);      putP(apRows, S, A(apRowInner));
+        prop(apRowInner, pcls(4), 11, 0, 0x20, nullptr);  putP(apRowInner, S, A(apRow));
+        putP(apRow, Grimoire::OFF_UOBJECT_CLASS, A(apSSCls));  put32(apRow, Grimoire::OFF_UOBJECT_NAME, 13);
+        put32(apRow, DynOff::USTRUCT_PROPSSIZE, 0x20);   putP(apRow, DynOff::USTRUCT_CHILDREN, A(apPic));
+        prop(apPic, pcls(1), 15, 0, 0x20, nullptr);       putP(apPic, S, A(apTex));
+        putP(apFn, Grimoire::OFF_UOBJECT_CLASS, A(apFnCls));  put32(apFn, Grimoire::OFF_UOBJECT_NAME, 17);
+        putP(apFn, DynOff::USTRUCT_CHILDREN, A(apWhich));
+        prop(apWhich, pcls(1), 18, 0, 0x20, nullptr);     putP(apWhich, S, A(apTex));
+        { const uint64_t kParm = 0x80; memcpy(apWhich + DynOff::UPROPERTY_FLAGS, &kParm, sizeof kParm); }
+        put32(apCls, DynOff::USTRUCT_PROPSSIZE, 0x88);
+        putP(apCls, DynOff::USTRUCT_CHILDREN, A(apIcon));
+
+        // The instance: Icon names its asset, Spawn is empty, Icons holds one named element and one empty one, and
+        // Rows one FRow naming its own. The weak halves are {0, 0} -- serial 0 is null -- so every value below comes
+        // from the path alone.
+        static const wchar_t kIcon[] = L"/Game/UI/Icon.Icon";
+        static const wchar_t kElem[] = L"/Game/UI/A.A";
+        static const wchar_t kRow[]  = L"/Game/UI/B.B";
+        auto fstr = [&](uint8_t* b, int off, const wchar_t* s) {
+            putP(b, off, A(s));
+            put32(b, off + 8, static_cast<int32_t>(wcslen(s) + 1));
+            put32(b, off + 12, static_cast<int32_t>(wcslen(s) + 1));
+        };
+        alignas(8) static uint8_t apElems[2][0x20] = {};
+        fstr(apElems[0], 0x10, kElem);
+        alignas(8) static uint8_t apRowElems[1][0x20] = {};
+        fstr(apRowElems[0], 0x10, kRow);
+        alignas(8) static uint8_t apInst[0x90] = {};
+        fstr(apInst, 0x28 + 0x10, kIcon);
+        putP(apInst, 0x68, A(apElems));     put32(apInst, 0x70, 2);  put32(apInst, 0x74, 2);
+        putP(apInst, 0x78, A(apRowElems));  put32(apInst, 0x80, 1);  put32(apInst, 0x84, 1);
+
+        const auto& apInfo = Ubel::WalkClassEx(A(apCls));
+        auto field = [&](const char* n) -> const FieldInfo* {
+            for (const auto& f : apInfo.Fields) if (f.Name == n) return &f;
+            return nullptr;
+        };
+        const FieldInfo* fI = field("Icon"); const FieldInfo* fS = field("Spawn"); const FieldInfo* fA = field("Icons");
+        auto s = [](const FieldInfo* f, std::string FieldInfo::* m) { return f ? (f->*m).c_str() : "(no field)"; };
+        check("ASSETPTR setup: the 4.15 class walked its three properties",
+              fI && fS && fA && fI->TypeName == "AssetObjectProperty" && fS->TypeName == "AssetClassProperty"
+                && fA->TypeName == "ArrayProperty" && fA->innerType == "AssetObjectProperty",
+              std::to_string(apInfo.Fields.size()).c_str());
+        check("ASSETPTR ⭐: an AssetObjectProperty names its PropertyClass", fI && fI->objClassName == "Texture2D",
+              s(fI, &FieldInfo::objClassName));
+        check("ASSETPTR ⭐: an AssetClassProperty names its MetaClass, the class it holds a subclass of",
+              fS && fS->metaClassName == "Actor", s(fS, &FieldInfo::metaClassName));
+        check("ASSETPTR ⭐: ...and an array of them names its inner's class", fA && fA->innerObjClass == "Texture2D",
+              s(fA, &FieldInfo::innerObjClass));
+
+        const auto apWalk = Ubel::WalkInstance(A(apInst), A(apCls), 64, 2, false);
+        auto row = [&](const char* n) -> Ubel::LiveFieldValue {
+            for (const auto& f : apWalk.fields) if (f.name == n) return f;
+            return Ubel::LiveFieldValue{};
+        };
+        const auto rI = row("Icon"), rS = row("Spawn"), rA = row("Icons"), rR = row("Rows");
+        check("ASSETPTR setup: the walk produced the four rows",
+              rI.typeName == "AssetObjectProperty" && rS.typeName == "AssetClassProperty" && rA.typeName == "ArrayProperty"
+                && rR.typeName == "ArrayProperty" && rR.arrayElements.size() == 1,
+              std::to_string(apWalk.fields.size()).c_str());
+        const auto& rowSub = rR.arrayElements.empty() ? std::vector<Ubel::LiveFieldValue::ArrayElement::StructSubField>{}
+                                                      : rR.arrayElements[0].structFields;
+        check("ASSETPTR ⭐: a struct array's asset member reads its path",
+              rowSub.size() == 1 && rowSub[0].name == "Pic" && rowSub[0].value == "/Game/UI/B.B",
+              rowSub.empty() ? "(no sub-fields)" : rowSub[0].value.c_str());
+        check("ASSETPTR ⭐: a walk row reads the asset path out of the FString at +0x10",
+              rI.typedValue == "/Game/UI/Icon.Icon" && rI.strValue == "/Game/UI/Icon.Icon", rI.typedValue.c_str());
+        check("ASSETPTR ⭐: ...and an empty one says (none)", rS.typedValue == "(none)", rS.typedValue.c_str());
+        check("ASSETPTR ⭐: an array of them reads each element's path",
+              rA.arrayElements.size() == 2 && rA.arrayElements[0].value == "/Game/UI/A.A"
+                && rA.arrayElements[1].value == "(none)",
+              rA.arrayElements.empty() ? "(no elements)" : rA.arrayElements[0].value.c_str());
+        check("ASSETPTR ⭐: ...without the 4.18+ soft-array layout, which places an FName path the CE export would read",
+              rA.softArrayPathOffset == 0 && rA.softArrayFNameSize == 0, std::to_string(rA.softArrayPathOffset).c_str());
+        check("ASSETPTR ⭐: ...and without an FName index for the CE DropDownList (+0x10 holds the FString's pointer)",
+              rA.arrayElements.size() == 2 && rA.arrayElements[0].rawIntValue == 0,
+              rA.arrayElements.empty() ? "(no elements)" : std::to_string(rA.arrayElements[0].rawIntValue).c_str());
+        check("ASSETPTR ⭐: no 4.18+ soft-path envelope was latched from a 0x20 asset pointer",
+              DynOff::SOFTPTR_PATH == -1, std::to_string(DynOff::SOFTPTR_PATH).c_str());
+
+        // FAssetPtr has one size, so an inner ElementSize that says otherwise is a misread. The elements are read at 0x20
+        // regardless -- the second one now names its own asset, so a 0x28 stride would miss it -- and the row must
+        // publish that stride, the one the UI lays the elements out by, not the misread.
+        put32(apInner, DynOff::UPROPERTY_ELEMSIZE, 0x28);
+        static const wchar_t kElem2[] = L"/Game/UI/C.C";
+        fstr(apElems[1], 0x10, kElem2);
+        const auto apWalk2 = Ubel::WalkInstance(A(apInst), A(apCls), 64, 2, false);
+        Ubel::LiveFieldValue rA2{};
+        for (const auto& f : apWalk2.fields) if (f.name == "Icons") rA2 = f;
+        check("ASSETPTR ⭐: a misread inner ElementSize (0x28) still reads both elements at FAssetPtr's 0x20",
+              rA2.arrayElements.size() == 2 && rA2.arrayElements[0].value == "/Game/UI/A.A"
+                && rA2.arrayElements[1].value == "/Game/UI/C.C",
+              rA2.arrayElements.size() == 2 ? rA2.arrayElements[1].value.c_str() : "(not two elements)");
+        check("ASSETPTR ⭐: ...and the row publishes that stride, not the misread one", rA2.arrayElemSize == 0x20,
+              std::to_string(rA2.arrayElemSize).c_str());
+        put32(apInner, DynOff::UPROPERTY_ELEMSIZE, 0x20);
+        memset(apElems[1], 0, sizeof apElems[1]);
+
+        // Property Search's preview column reads the same path.
+        std::vector<Aura::PropertyMatch> apMatches(1);
+        apMatches[0].classAddr  = A(apCls);
+        apMatches[0].propType   = "AssetObjectProperty";
+        apMatches[0].propOffset = 0x28;
+        apMatches[0].propSize   = 0x20;
+        std::unordered_map<uintptr_t, uintptr_t> apMap{ { A(apCls), A(apInst) } };
+        Ubel::ResolvePropertyPreviews(apMatches, apMap);
+        check("ASSETPTR ⭐: Property Search previews the asset path", apMatches[0].preview == "/Game/UI/Icon.Icon",
+              apMatches[0].preview.c_str());
+        // Find References takes the weak half at +0 of either era's soft pointer.
+        check("ASSETPTR ⭐: Find References treats both as weak-like holders",
+              Aura::IsWeakLikeProp("AssetObjectProperty") && Aura::IsWeakLikeProp("AssetClassProperty"));
+        // A function's asset parameter: the Functions list and a Live Funcs layout both name its class.
+        const auto apFns = Ubel::WalkFunctions(A(apCls));
+        check("ASSETPTR setup: the class lists Load with its one parameter",
+              apFns.size() == 1 && apFns[0].params.size() == 1 && apFns[0].params[0].typeName == "AssetObjectProperty",
+              std::to_string(apFns.size()).c_str());
+        check("ASSETPTR ⭐: WalkFunctions names an asset parameter's class",
+              apFns.size() == 1 && apFns[0].params.size() == 1 && apFns[0].params[0].objClassName == "Texture2D",
+              apFns.empty() || apFns[0].params.empty() ? "(none)" : apFns[0].params[0].objClassName.c_str());
+        check("ASSETPTR ⭐: ...and so does a Live Funcs parameter layout",
+              Ubel::ParamSlotObject(A(apWhich), "AssetObjectProperty") == A(apTex));
+        check("ASSETPTR ⭐: ...and the functions-taking-a-class matcher",
+              Aura::ParamTargetType(A(apWhich)) == A(apTex));
+        check("ASSETPTR ⭐: the class scorer weighs them as the object references they are",
+              Aura::GetFieldTypeWeight("AssetObjectProperty") == 2 && Aura::GetFieldTypeWeight("AssetClassProperty") == 2);
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;  DynOff::bCasePreservingName = svCpn;  g_cachedUEVersion = svVer;
+        DynOff::UFIELD_NEXT = svNext;     DynOff::USTRUCT_CHILDREN = svChildren; DynOff::USTRUCT_PROPSSIZE = svPropsSize;
+        DynOff::USTRUCT_SUPER = svSuper;
+        DynOff::UPROPERTY_OFFSET = svUOff; DynOff::UPROPERTY_ELEMSIZE = svUElem;
+        DynOff::UPROPERTY_SUBCLASS_START = svUStart;  DynOff::SOFTPTR_PATH = svSoft;
     }
 
     // -- FAMILYEPOCH-2026-09-28 -- a class walked before the family moves is walked again after it ----------------------
@@ -10032,6 +10615,21 @@ int main() {
         check("a soft path with a sub-path says so, and that its text was not copied",
               vs.size() == 1 && vs[0].text == "/Game/Maps/Arena.Arena:<sub-path, 33 chars, not copied>" &&
               vs[0].mark == SM::Header, vs.empty() ? "" : vs[0].text.c_str());
+        // [UE4-ASSETPTR-PROPS] A 4.11-4.17 asset pointer's path is ONE FString at +0x10, whose text is on the heap, not
+        // in the copy: said, with its length. Read with the 4.18+ arm, its Data pointer's halves were taken for FNames.
+        alignas(8) uint8_t ap[0x40] = {};
+        const uint64_t apData = 0xA550;
+        const int32_t apNum = 19;
+        memcpy(ap + 0x10, &apData, 8);
+        memcpy(ap + 0x18, &apNum, 4);
+        Ubel::ParamLayout apL;
+        apL.params = { field("Icon", "AssetObjectProperty", 0, 0x20), field("Spawn", "AssetClassProperty", 0x20, 0x20) };
+        const auto va = Ubel::DecodeParamSnapshot(apL, ap, sizeof ap, false, ctx);
+        check("an asset pointer (4.11-4.17): its path's length, its text not copied",
+              va.size() == 2 && va[0].text == "<asset path, 18 chars, not copied>" && va[0].mark == SM::Header,
+              va.empty() ? "" : va[0].text.c_str());
+        check("...and an empty one is null", va.size() == 2 && va[1].text == "null" && va[1].mark == SM::Exact,
+              va.size() < 2 ? "" : va[1].text.c_str());
     }
 
     {
@@ -10481,6 +11079,173 @@ int main() {
         DynOff::bUEnumNamesFailed = savedFailed;
         DynOff::bFNameAlignProbed = savedProbed;
         DynOff::FNAME_ALIGN_MEASURED = savedAlign;
+    }
+
+    // -- UE4-WIDE-FNAME -- a pre-4.23 wide FName decodes as UTF-16 ------------------------------------------------
+    //
+    // ⛔ POOL-FAKING: installs its own UE4 name table first, and Serie's pool state cannot be restored -- keep it last.
+    // UE 4.10-4.22 entries as NameTypes.h declares them (4.10 and 4.18 alike, x64): `NAME_INDEX Index` at +0x00,
+    // `FNameEntry* HashNext` at +0x08, the AnsiName / WideName union at +0x10. AllocateNameEntry (UnrealNames.cpp)
+    // stores Index = (slot << NAME_INDEX_SHIFT) | wide. Serie never read the bit: a wide name was read as narrow bytes,
+    // cut at its first zero byte ("Café" came back "C") or rejected outright (any CJK name came back empty).
+    {
+        blk("UE4WIDE - a pre-4.23 wide FName decodes as UTF-16; the narrow read keeps its window, up to a page's edge");
+        auto makeEntry = [](std::vector<uint8_t>& e, int32_t word, const void* chars, size_t bytes) {
+            e.assign(0x10 + bytes + sizeof(wchar_t), 0);   // terminated, whichever width the payload is
+            memcpy(e.data(), &word, sizeof word);
+            memcpy(e.data() + 0x10, chars, bytes);
+            return reinterpret_cast<uintptr_t>(e.data());
+        };
+        static std::vector<uint8_t> eAnsi, eCjk, eLatin, eStray, eLong;
+        static const char    ansi[]  = "ByteProperty";
+        static const wchar_t cjk[]   = { 0x65E5, 0x672C, 0x8A9E, 0 };   // 日本語
+        static const wchar_t latin[] = { L'C', L'a', L'f', 0x00E9, 0 };  // Café: every code unit has a zero high byte
+        static const char    plain[] = "Plain";
+        static uintptr_t chunk[16] = {};
+        chunk[1] = makeEntry(eAnsi, 1 << 1, ansi, sizeof ansi - 1);
+        chunk[2] = makeEntry(eCjk, (2 << 1) | 1, cjk, sizeof cjk - sizeof(wchar_t));
+        chunk[3] = makeEntry(eLatin, (3 << 1) | 1, latin, sizeof latin - sizeof(wchar_t));
+        chunk[4] = makeEntry(eStray, (9 << 1) | 1, plain, sizeof plain - 1);   // the bit, beside ANOTHER slot
+        // No terminator within NAME_SIZE (1024 units), all of it readable.
+        std::vector<wchar_t> longName(1100, L'A');
+        chunk[7] = makeEntry(eLong, (7 << 1) | 1, longName.data(), longName.size() * sizeof(wchar_t));
+        reinterpret_cast<wchar_t*>(eLong.data() + 0x10)[longName.size()] = L'A';   // overwrite the helper's terminator
+        // The longest name the engine makes: NAME_SIZE counts the terminator, so 1023 units and then the terminator.
+        // The terminator is the first unit of the second of two committed pages: the reads before it end at the page
+        // boundary with 1023 units in hand, so the loop's own bound decides whether the terminator is read at all --
+        // anywhere else it arrives inside a read and a bound one unit short goes unseen.
+        uint8_t* mpage = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x2000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        check("UE4WIDE setup: committed two pages for the NAME_SIZE - 1 fixture", mpage != nullptr);
+        if (mpage) {
+            wchar_t* name = reinterpret_cast<wchar_t*>(mpage + 0x1000) - 1023;
+            for (int i = 0; i < 1023; ++i) name[i] = L'D';
+            name[1023] = 0;
+            uint8_t* e12 = reinterpret_cast<uint8_t*>(name) - 0x10;
+            const int32_t w12 = (12 << 1) | 1;
+            memcpy(e12, &w12, sizeof w12);
+            chunk[12] = reinterpret_cast<uintptr_t>(e12);
+        }
+
+        // Four pages reserved, the first and third committed: a name that ends at an unreadable page, in the first,
+        // and one that runs into one, in the third -- apart, so filling the one cannot overwrite the other.
+        uint8_t* wpage = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x4000, MEM_RESERVE, PAGE_READWRITE));
+        check("UE4WIDE setup: reserved four pages", wpage != nullptr);
+        if (wpage) {
+            VirtualAlloc(wpage, 0x1000, MEM_COMMIT, PAGE_READWRITE);
+            VirtualAlloc(wpage + 0x2000, 0x1000, MEM_COMMIT, PAGE_READWRITE);
+            // Ångström and its terminator end exactly at the page's end.
+            static const wchar_t edge[] = { 0x00C5, L'n', L'g', L's', L't', L'r', 0x00F6, L'm', 0 };
+            uint8_t* e5 = wpage + 0x1000 - 0x10 - sizeof edge;
+            const int32_t w5 = (5 << 1) | 1;
+            memcpy(e5, &w5, sizeof w5);
+            memcpy(e5 + 0x10, edge, sizeof edge);
+            chunk[5] = reinterpret_cast<uintptr_t>(e5);
+            // Unterminated up to the third page's end, so the next unit to read is unreadable.
+            uint8_t* e6 = wpage + 0x2800;
+            const int32_t w6 = (6 << 1) | 1;
+            memcpy(e6, &w6, sizeof w6);
+            for (wchar_t* c = reinterpret_cast<wchar_t*>(e6 + 0x10); reinterpret_cast<uint8_t*>(c) < wpage + 0x3000; ++c)
+                *c = L'B';
+            chunk[6] = reinterpret_cast<uintptr_t>(e6);
+        }
+
+        // [UE4-WIDE-FNAME] review: the narrow read asked for a fixed 255-byte window, so an ANSI name allocated within
+        // 255 bytes of an unreadable page failed whole and came back "". UnrealNames.cpp packs entries end to end in
+        // pools of 64 KB (4.10) / 256 KB (4.18) from FMemory::Malloc, so the last entry of each pool can sit right
+        // before one. Six pages reserved, the first, third and fifth committed, one fixture at the end of each.
+        uint8_t* npage = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x6000, MEM_RESERVE, PAGE_READWRITE));
+        check("UE4WIDE setup: reserved six pages for the narrow fixtures", npage != nullptr);
+        static std::vector<uint8_t> eLongAnsi;
+        if (npage) {
+            for (size_t p = 0; p < 0x6000; p += 0x2000) VirtualAlloc(npage + p, 0x1000, MEM_COMMIT, PAGE_READWRITE);
+            auto atPageEnd = [](uint8_t* pageEnd, int32_t slot, size_t strBytes) {
+                uint8_t* e = pageEnd - 0x10 - strBytes;
+                const int32_t word = slot << 1;   // narrow: bit 0 clear beside its own slot
+                memcpy(e, &word, sizeof word);
+                return e;
+            };
+            // An ANSI name whose terminator is the committed page's last byte.
+            static const char edge[] = "PageEdgeName";
+            uint8_t* e8 = atPageEnd(npage + 0x1000, 8, sizeof edge);
+            memcpy(e8 + 0x10, edge, sizeof edge);
+            chunk[8] = reinterpret_cast<uintptr_t>(e8);
+            // 100 bytes up to the page's end with no terminator: the next byte to read is unreadable.
+            uint8_t* e9 = atPageEnd(npage + 0x3000, 9, 100);
+            memset(e9 + 0x10, 'B', 100);
+            chunk[9] = reinterpret_cast<uintptr_t>(e9);
+            // Exactly the 255-byte window, ending at the page's end, no terminator: the window fits and is kept.
+            uint8_t* e10 = atPageEnd(npage + 0x5000, 10, 255);
+            memset(e10 + 0x10, 'C', 255);
+            chunk[10] = reinterpret_cast<uintptr_t>(e10);
+        }
+        // Longer than the window, all readable: cut to its first 255 bytes, as it always was.
+        {
+            std::string longAnsi(300, 'A');
+            chunk[11] = makeEntry(eLongAnsi, 11 << 1, longAnsi.data(), longAnsi.size());
+        }
+
+        static uintptr_t chunks[2] = { reinterpret_cast<uintptr_t>(chunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(chunks), 0x10);
+
+        check("UE4WIDE control: an ANSI entry reads as before", Serie::GetString(1) == "ByteProperty",
+              Serie::GetString(1).c_str());
+        check("UE4WIDE control: a set bit beside another slot keeps the narrow read", Serie::GetString(4) == "Plain",
+              Serie::GetString(4).c_str());
+        check("UE4WIDE ⭐ a wide CJK name decodes to UTF-8", Serie::GetString(2) == "\xE6\x97\xA5\xE6\x9C\xAC\xE8\xAA\x9E",
+              Serie::GetString(2).c_str());
+        check("UE4WIDE ⭐ a wide name with zero high bytes is whole, not cut at its first zero byte",
+              Serie::GetString(3) == "Caf\xC3\xA9", Serie::GetString(3).c_str());
+        check("UE4WIDE: a wide name keeps its number suffix", Serie::GetString(3, 2) == "Caf\xC3\xA9_1",
+              Serie::GetString(3, 2).c_str());
+        check("UE4WIDE: no terminator within NAME_SIZE is refused", Serie::GetString(7).empty(),
+              Serie::GetString(7).c_str());
+        if (mpage) {
+            check("UE4WIDE: a name of NAME_SIZE - 1 units, terminator last, is read whole",
+                  Serie::GetString(12) == std::string(1023, 'D'), std::to_string(Serie::GetString(12).size()).c_str());
+            VirtualFree(mpage, 0, MEM_RELEASE);
+        }
+        if (wpage) {
+            check("UE4WIDE: a wide name ending at an unreadable page's edge is read whole",
+                  Serie::GetString(5) == "\xC3\x85ngstr\xC3\xB6m", Serie::GetString(5).c_str());
+            check("UE4WIDE: one running into an unreadable page is refused, not read past",
+                  Serie::GetString(6).empty(), Serie::GetString(6).c_str());
+            VirtualFree(wpage, 0, MEM_RELEASE);
+        }
+        check("UE4WIDE narrow control: a name longer than the window is cut to its first 255 bytes",
+              Serie::GetString(11) == std::string(255, 'A'), std::to_string(Serie::GetString(11).size()).c_str());
+        if (npage) {
+            check("UE4WIDE narrow page edge ⭐ an ANSI name ending at an unreadable page's edge is read whole",
+                  Serie::GetString(8) == "PageEdgeName", Serie::GetString(8).c_str());
+            check("UE4WIDE narrow page edge ⭐ ...and keeps its number suffix", Serie::GetString(8, 3) == "PageEdgeName_2",
+                  Serie::GetString(8, 3).c_str());
+            check("UE4WIDE narrow page edge: one running into an unreadable page is refused, not read past",
+                  Serie::GetString(9).empty(), Serie::GetString(9).c_str());
+            check("UE4WIDE narrow page edge: a window that ends exactly at the page's end is kept, 255 bytes",
+                  Serie::GetString(10) == std::string(255, 'C'), std::to_string(Serie::GetString(10).size()).c_str());
+            VirtualFree(npage, 0, MEM_RELEASE);
+        }
+
+        // Both reads take the string offset Genau latched, not the stock +0x10: ValidateGNamesUE4 can latch another
+        // (0x06 / 0x0C / 0x08). No stock layout with Index first and a non-0x10 string is established, so this pins
+        // the seam only: the same table re-installed at +0x0C, each payload four bytes earlier than the stock one.
+        {
+            auto makeAt0C = [](std::vector<uint8_t>& e, int32_t word, const void* chars, size_t bytes) {
+                e.assign(0x0C + bytes + sizeof(wchar_t), 0);
+                memcpy(e.data(), &word, sizeof word);
+                memcpy(e.data() + 0x0C, chars, bytes);
+                return reinterpret_cast<uintptr_t>(e.data());
+            };
+            static std::vector<uint8_t> cAnsi, cLatin;
+            static uintptr_t chunkC[4] = {};
+            chunkC[1] = makeAt0C(cAnsi, 1 << 1, ansi, sizeof ansi - 1);
+            chunkC[2] = makeAt0C(cLatin, (2 << 1) | 1, latin, sizeof latin - sizeof(wchar_t));
+            static uintptr_t chunksC[2] = { reinterpret_cast<uintptr_t>(chunkC), 0 };
+            Serie::InitUE4(reinterpret_cast<uintptr_t>(chunksC), 0x0C);
+            check("UE4WIDE string offset 0x0C control: the narrow read takes it", Serie::GetString(1) == "ByteProperty",
+                  Serie::GetString(1).c_str());
+            check("UE4WIDE string offset 0x0C: so does the wide read", Serie::GetString(2) == "Caf\xC3\xA9",
+                  Serie::GetString(2).c_str());
+        }
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

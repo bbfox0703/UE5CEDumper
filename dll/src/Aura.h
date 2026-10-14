@@ -19,6 +19,7 @@
 #include "Radar.h"
 #include "Orden.h"  // For Radar::Candidate / DataType / ScanType used by ScanForValue / RefineCandidates
 #include "GraphPath.h"   // GraphPathResult / GraphPathStep + the pure BFS core used by FindObjectGraphPath
+#include "Utf8Helpers.h" // IsWellFormedUtf8, for the header-inline FName gate (header-only, no cycle)
 
 // FUObjectItem structure (in FChunkedFixedUObjectArray)
 // Size varies by UE version — auto-detected at Init() time:
@@ -1055,6 +1056,37 @@ inline std::string PathLeafName(const std::string& raw) {
     const std::string canon = CanonicalizeObjectPath(raw);
     const size_t slash = canon.find_last_of('/');
     return (slash == std::string::npos) ? canon : canon.substr(slash + 1);
+}
+
+// Whether a decoded FName reads as a genuine name: the gate find_by_address's backward scan puts on a candidate's name
+// and its class's, because the scan's candidates are arbitrary bytes that merely look like a UObject header and their
+// +0x18 can resolve to garbage -- surfaced, the Live Walker walks a misidentified "object" into 亂碼 (DQ3 HD-2D: a junk
+// header named 'Property??IntProperty' whose class decoded to 435 characters of mojibake).
+// What Serie::GetString already returns "" for: a narrow decode holding any byte outside printable ASCII, under either
+// name layout, and -- on the 4.23+ FNamePool only -- a wide one long or dense enough to be ASCII bytes read as UTF-16
+// (IsImplausibleWideName, which drops that 435-character class). A pre-4.23 wide decode has no such check: Serie admits
+// it on the entry's own slot word (UE4EntryIsWide) and reads up to UE4_NAME_SIZE units, so there this gate's 256-byte
+// cap is the only bound on its length. Both wide paths write '?' for a lone surrogate. So refused here: empty, over 256
+// bytes, a '?', a C0 control, DEL, a C1 control (U+0080-U+009F, which no decode of a real name yields), or anything that
+// is not well-formed UTF-8. A wide (localized) name -- UE5's, and pre-4.23's since [UE4-WIDE-FNAME] decodes it whole --
+// is well-formed UTF-8 and passes; refusing every non-ASCII byte sent a wide-named sub-object to the low-confidence
+// 'nearest' path. [UE4-WIDE-FNAME-CLEANCHECK]
+// Trade: wide mojibake that Serie lets through -- under IsImplausibleWideName's thresholds on the pool, anything up to
+// the 256-byte cap before 4.23 -- now passes this check, as it already reaches every other view; the backward scan still
+// requires an in-module vtable on the object and on its class, a sane InternalIndex and PropertiesSize, and that the
+// object contain the queried address.
+// Header-inline and pure so dll_helpers_test can pin it.
+inline bool IsCleanFName(const std::string& s) {
+    if (s.empty() || s.size() > 256) return false;
+    bool multiByte = false;
+    if (!Utf8Helpers::IsWellFormedUtf8(reinterpret_cast<const uint8_t*>(s.data()), s.size(), multiByte)) return false;
+    for (size_t i = 0; i < s.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        if (c == '?' || c < 0x20 || c == 0x7F) return false;
+        // Well-formed, so a 0xC2 here leads a two-byte sequence: C2 80..C2 9F is the C1 block.
+        if (c == 0xC2 && static_cast<unsigned char>(s[i + 1]) <= 0x9F) return false;
+    }
+    return true;
 }
 
 // IsListedEnumObject -- which GObjects rows list_enums publishes. [USMAP-UDE-MISSING]

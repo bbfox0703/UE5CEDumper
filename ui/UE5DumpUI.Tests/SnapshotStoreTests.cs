@@ -197,6 +197,209 @@ public class SnapshotStoreTests : IDisposable
         Assert.Equal(2, (await _store.ListSnapshotsAsync(ct)).Count);
     }
 
+    // [SNAPSHOT-CRASH-PARTIAL] A capture is written chunk by chunk and committed every few chunks, so a process that
+    // dies mid-capture leaves its row and the rows committed so far, never completed. Nothing in-process removes them
+    // (the capture's own cleanup died with it), so the row must not read as a snapshot, and the next capture's start
+    // must remove it -- while a capture this process still has open is left alone.
+
+    private async Task<long> FieldRowsOfAsync(long snapshotId, CancellationToken ct)
+    {
+        await using var conn = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = _store.DatabasePath }.ToString());
+        await conn.OpenAsync(ct);
+        await using var cmd = conn.CreateCommand();
+        cmd.CommandText = "SELECT COUNT(*) FROM fields WHERE snapshot_id=$id;";
+        cmd.Parameters.AddWithValue("$id", snapshotId);
+        return (long)(await cmd.ExecuteScalarAsync(ct) ?? 0L);
+    }
+
+    [Fact]
+    public async Task A_capture_its_process_left_unfinished_is_not_listed_and_the_next_capture_start_removes_it()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        // The process that died: its row and a chunk it committed (a session disposed without completing commits its
+        // tail, as a crash after a commit leaves it), never completed.
+        var died = new SnapshotStore(new MockPlatformService(_tempDir), log: null, captureOwner: "a process that died");
+        died.SetActiveGame("CRASH");
+        long dead = await died.CreateSnapshotAsync(new SnapshotMeta { Label = "cut short", Scope = "NumericNoByte" }, ct);
+        await using (var s = await died.BeginCaptureSessionAsync(ct))
+            s.WriteChunk(dead, new[] { MakeObject(1, ("HP", "IntProperty", "0A000000")) }, ct);
+
+        // This process: a capture of its own, completed.
+        _store.SetActiveGame("CRASH");
+        long whole = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "whole", Scope = "NumericNoByte" }, ct);
+        await using (var s = await _store.BeginCaptureSessionAsync(ct))
+        {
+            int n = s.WriteChunk(whole, new[] { MakeObject(2, ("HP", "IntProperty", "14000000")) }, ct);
+            await s.CompleteSnapshotAsync(whole, 1, n, ct: ct);
+        }
+
+        Assert.Equal(new[] { whole }, (await _store.ListSnapshotsAsync(ct)).Select(m => m.Id));
+        Assert.Equal(1, (await _store.GetUsageAsync(ct)).SnapshotCount);
+        Assert.Equal(1L, await FieldRowsOfAsync(dead, ct));   // precondition: the dead capture's rows are there
+
+        Assert.Equal(1, await _store.DeleteUnusableSnapshotsAsync(ct));
+        Assert.Equal(0L, await FieldRowsOfAsync(dead, ct));
+        Assert.Equal(new[] { whole }, (await _store.ListSnapshotsAsync(ct)).Select(m => m.Id));
+        Assert.Equal(0, await _store.DeleteUnusableSnapshotsAsync(ct));
+    }
+
+    [Fact]
+    public async Task A_capture_this_process_has_open_is_not_listed_and_survives_the_cleanup()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        _store.SetActiveGame("OPEN");
+        long open = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "open", Scope = "NumericNoByte" }, ct);
+        await using var s = await _store.BeginCaptureSessionAsync(ct);
+        int n = s.WriteChunk(open, new[] { MakeObject(1, ("HP", "IntProperty", "0A000000")) }, ct);
+
+        // Half written: no list or picker may offer it, and it is not a dead process's to clean up.
+        Assert.Empty(await _store.ListSnapshotsAsync(ct));
+        Assert.Equal(0, await _store.DeleteUnusableSnapshotsAsync(ct));
+
+        await s.CompleteSnapshotAsync(open, 1, n, ct: ct);
+        var done = Assert.Single(await _store.ListSnapshotsAsync(ct));
+        Assert.Equal((open, true, 1), (done.Id, done.IsUsable, done.ObjectCount));
+    }
+
+    [Fact]
+    public async Task A_capture_another_store_of_this_process_has_open_survives_the_cleanup()
+    {
+        // The mark names the process, not the store: a second store of this process is no dead writer.
+        var ct = TestContext.Current.CancellationToken;
+        var other = new SnapshotStore(new MockPlatformService(_tempDir));
+        other.SetActiveGame("SIBLING");
+        _store.SetActiveGame("SIBLING");
+        long open = await other.CreateSnapshotAsync(new SnapshotMeta { Label = "open", Scope = "NumericNoByte" }, ct);
+
+        Assert.Equal(0, await _store.DeleteUnusableSnapshotsAsync(ct));
+
+        await other.FinalizeSnapshotAsync(open, 0, 0, ct);
+        Assert.Equal(open, Assert.Single(await _store.ListSnapshotsAsync(ct)).Id);
+    }
+
+    [Fact]
+    public async Task A_dead_capture_is_removed_on_its_own_and_rows_only()
+    {
+        // The free-disk guard refuses a capture before its start-of-capture cleanup runs, so a capture a dead process
+        // left -- listed nowhere, so no Delete reaches it -- needs a removal of its own, and one without the VACUUM
+        // that cleanup runs: on a drive the guard has just called low, VACUUM's scratch copy is the risk. Everything
+        // else stays: this process's open capture, a flagged-unusable snapshot (listed, so the user still sees it
+        // until a capture starts), and a whole one.
+        var ct = TestContext.Current.CancellationToken;
+        var died = new SnapshotStore(new MockPlatformService(_tempDir), log: null, captureOwner: "a process that died");
+        died.SetActiveGame("LOWDISK");
+        _store.SetActiveGame("LOWDISK");
+        long dead = await died.CreateSnapshotAsync(new SnapshotMeta { Label = "cut short" }, ct);
+        await died.WriteChunkAsync(dead, Enumerable.Range(1, 400)
+            .Select(i => MakeObject(i, ("HP", "IntProperty", "0A000000"), ("MP", "IntProperty", "0B000000")))
+            .ToList(), ct);
+
+        long flagged = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "drifted" }, ct);
+        await using (var s = await _store.BeginCaptureSessionAsync(ct))
+        {
+            int n = s.WriteChunk(flagged, new[] { MakeObject(1, ("HP", "IntProperty", "0A000000")) }, ct);
+            await s.CompleteSnapshotAsync(flagged, 1, n, isUsable: false, ct: ct);
+        }
+        long whole = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "whole" }, ct);
+        await _store.WriteChunkAsync(whole, new[] { MakeObject(2, ("HP", "IntProperty", "14000000")) }, ct);
+        await _store.FinalizeSnapshotAsync(whole, 1, 1, ct);
+        long open = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "open" }, ct);
+        Assert.Equal(800L, await FieldRowsOfAsync(dead, ct));   // precondition
+
+        Assert.Equal(1, await _store.DeleteDeadCapturesAsync(ct));
+
+        Assert.Equal(0L, await FieldRowsOfAsync(dead, ct));
+        await using var conn = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = _store.DatabasePath, Pooling = false }.ToString());
+        await conn.OpenAsync(ct);
+        var ids = new List<long>();
+        await using (var cmd = conn.CreateCommand())
+        {
+            cmd.CommandText = "SELECT id FROM snapshots ORDER BY id;";
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct)) ids.Add(r.GetInt64(0));
+        }
+        Assert.Equal(new[] { flagged, whole, open }, ids);
+        // Rows only: the dead capture's pages are free inside the file, not handed back by a VACUUM.
+        Assert.True(await ScalarAsync(conn, "PRAGMA freelist_count;", ct) > 0);
+        Assert.Equal(0, await _store.DeleteDeadCapturesAsync(ct));
+    }
+
+    [Fact]
+    public async Task A_kept_partial_is_listed_usable_once_completed_and_a_seeded_snapshot_once_finalized()
+    {
+        // [W1-PARTIAL-MARK] A cap / low-disk stop completes its partial usable: being in progress until then must not
+        // leave it hidden. The one-shot seeding path finalizes through FinalizeSnapshotAsync, which ends it the same way.
+        var ct = TestContext.Current.CancellationToken;
+        _store.SetActiveGame("KEPT");
+        long capped = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "capped", Scope = "NumericNoByte" }, ct);
+        await using (var s = await _store.BeginCaptureSessionAsync(ct))
+        {
+            int n = s.WriteChunk(capped, new[] { MakeObject(1, ("HP", "IntProperty", "0A000000")) }, ct);
+            await s.CompleteSnapshotAsync(capped, 1, n, isUsable: true, partialReason: Constants.SnapshotPartialDiskLow,
+                                          ct: ct);
+        }
+        long seeded = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "seeded" }, ct);
+        await _store.WriteChunkAsync(seeded, new[] { MakeObject(2, ("HP", "IntProperty", "14000000")) }, ct);
+        Assert.DoesNotContain(await _store.ListSnapshotsAsync(ct), m => m.Id == seeded);
+        await _store.FinalizeSnapshotAsync(seeded, 1, 1, ct);
+
+        var list = await _store.ListSnapshotsAsync(ct);
+        Assert.Equal(new[] { seeded, capped }, list.Select(m => m.Id));
+        var c = list.Single(m => m.Id == capped);
+        Assert.True(c.IsUsable);
+        Assert.Equal(Constants.SnapshotPartialDiskLow, c.PartialReason);
+        Assert.Equal(0, await _store.DeleteUnusableSnapshotsAsync(ct));
+    }
+
+    [Fact]
+    public async Task A_capture_completes_under_synchronous_NORMAL()
+    {
+        // [SNAPSHOT-CRASH-PARTIAL] The bulk load runs synchronous=OFF, so its checkpoints do not sync, and a checkpoint
+        // syncs the db file only when it has frames left to copy: once an OFF checkpoint has folded every frame in,
+        // the post-capture TRUNCATE checkpoint finds nothing and syncs nothing. A completion -- a kept partial's
+        // [W1-PARTIAL-MARK] as much as a whole capture's -- committed under NORMAL leaves frames that only a checkpoint
+        // which syncs folds in, and that sync flushes the file the OFF checkpoints wrote.
+        var ct = TestContext.Current.CancellationToken;
+        _store.SetActiveGame("DURABLE");
+        long kept = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "kept", Scope = "NumericNoByte" }, ct);
+        await using var s = await _store.BeginCaptureSessionAsync(ct);
+        Assert.Equal(0L, SnapshotStore.SessionSynchronousForTests(s));   // the bulk load: OFF
+
+        int n = s.WriteChunk(kept, new[] { MakeObject(1, ("HP", "IntProperty", "0A000000")) }, ct);
+        await s.CompleteSnapshotAsync(kept, 1, n, isUsable: true, partialReason: Constants.SnapshotPartialDiskLow, ct: ct);
+
+        Assert.Equal(1L, SnapshotStore.SessionSynchronousForTests(s));   // NORMAL before the session is even disposed
+    }
+
+    [Fact]
+    public async Task A_capture_is_back_at_synchronous_NORMAL_before_its_completion_commits()
+    {
+        // The order, not just the end state: a switch made after the completion's commit leaves that commit's own
+        // autocheckpoint -- the one that may fold every frame in -- running OFF. Traced on the session's connection.
+        var ct = TestContext.Current.CancellationToken;
+        _store.SetActiveGame("DURABLE");
+        long kept = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "kept", Scope = "NumericNoByte" }, ct);
+        await using var s = await _store.BeginCaptureSessionAsync(ct);
+        var handle = SnapshotStore.SessionConnectionForTests(s).Handle!;
+        var ran = new List<string>();
+        SQLitePCL.raw.sqlite3_trace(handle, (SQLitePCL.strdelegate_trace)((_, sql) => { lock (ran) ran.Add(sql); }), null);
+        try
+        {
+            int n = s.WriteChunk(kept, new[] { MakeObject(1, ("HP", "IntProperty", "0A000000")) }, ct);
+            await s.CompleteSnapshotAsync(kept, 1, n, ct: ct);
+        }
+        finally
+        {
+            SQLitePCL.raw.sqlite3_trace(handle, (SQLitePCL.strdelegate_trace?)null, null);   // the handle goes back to the pool
+        }
+
+        int normal = ran.FindIndex(q => q.Contains("PRAGMA synchronous=NORMAL", StringComparison.Ordinal));
+        int totals = ran.FindIndex(q => q.StartsWith("UPDATE snapshots SET object_count", StringComparison.Ordinal));
+        Assert.True(normal >= 0 && totals > normal, string.Join(" | ", ran));
+    }
+
     [Fact]
     public void PartialMarker_ShowsInTheGridLabel_AndEveryPickerLine()
     {
@@ -303,6 +506,7 @@ public class SnapshotStoreTests : IDisposable
         // The DB must be left usable (WAL restored, no wedged lock) — a follow-up write works.
         long id2 = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "y", Scope = "NumericNoByte" }, ct);
         await _store.WriteChunkAsync(id2, new[] { MakeObject(2, ("HP", "IntProperty", "14000000")) }, ct);
+        await _store.FinalizeSnapshotAsync(id2, 1, 1, ct);
         Assert.Single(await _store.ListSnapshotsAsync(ct));
     }
 
@@ -692,11 +896,13 @@ public class SnapshotStoreTests : IDisposable
 
         _store.SetActiveGame("GAMEA");
         var pathA = _store.DatabasePath;
-        await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "a", PeHash = "GAMEA" }, ct);
+        long a = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "a", PeHash = "GAMEA" }, ct);
+        await _store.FinalizeSnapshotAsync(a, 0, 0, ct);   // listed once finished [SNAPSHOT-CRASH-PARTIAL]
 
         _store.SetActiveGame("GAMEB");
         var pathB = _store.DatabasePath;
-        await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "b", PeHash = "GAMEB" }, ct);
+        long b = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "b", PeHash = "GAMEB" }, ct);
+        await _store.FinalizeSnapshotAsync(b, 0, 0, ct);
 
         Assert.NotEqual(pathA, pathB);
         Assert.Contains("GAMEA", pathA);
@@ -805,6 +1011,8 @@ public class SnapshotStoreTests : IDisposable
         var ct = TestContext.Current.CancellationToken;
         long a = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "a" }, ct);
         long b = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "b" }, ct);
+        await _store.FinalizeSnapshotAsync(b, 0, 0, ct);   // finished out of order: the list still goes by id
+        await _store.FinalizeSnapshotAsync(a, 0, 0, ct);
         var list = await _store.ListSnapshotsAsync(ct);
         Assert.Equal(2, list.Count);
         Assert.Equal(b, list[0].Id);  // newest (higher id) first
@@ -1100,12 +1308,13 @@ public class SnapshotStoreTests : IDisposable
             store.SetActiveGame($"PE{iter:D4}");
 
             // Every one of these drives an independent OpenAsync on the same new file.
+            var create = Task.Run(() => store.CreateSnapshotAsync(
+                new SnapshotMeta { Label = "a", CapturedAt = "t", PeHash = "PE", GameSessionId = "S", UeVersion = 504, Scope = "NumericNoByte" }, ct), ct);
             var ops = new List<Task>
             {
                 Task.Run(() => store.ListSnapshotsAsync(ct), ct),
                 Task.Run(() => store.ListSnapshotsAsync(ct), ct),
-                Task.Run(() => store.CreateSnapshotAsync(
-                    new SnapshotMeta { Label = "a", CapturedAt = "t", PeHash = "PE", GameSessionId = "S", UeVersion = 504, Scope = "NumericNoByte" }, ct), ct),
+                create,
                 Task.Run(async () => { await using var s = await store.BeginCaptureSessionAsync(ct); }, ct),
                 Task.Run(() => store.GetUsageAsync(ct), ct),
             };
@@ -1122,7 +1331,9 @@ public class SnapshotStoreTests : IDisposable
                             string.Join(Environment.NewLine + "  ", failed));
             }
 
-            // The schema is actually usable afterwards (not just "no exception").
+            // The schema is actually usable afterwards (not just "no exception"): the created row is there, and is
+            // listed once finished [SNAPSHOT-CRASH-PARTIAL].
+            await store.FinalizeSnapshotAsync(await create, 0, 0, ct);
             Assert.Single(await store.ListSnapshotsAsync(ct));
         }
     }

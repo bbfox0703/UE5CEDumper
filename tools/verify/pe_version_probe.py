@@ -7,9 +7,13 @@ THROUGH Tier 0 to the memory-string needle -- and five candidates were listed th
 structurally cannot, for the same reason Lushfoil could not. One offline sweep
 answers "which titles can even reach the tier I want" before anything is launched.
 
-Mirrors `Genau::DetectVersionFromPEResource` (dll/src/Genau.cpp) in order -- `read_resource()`:
+Mirrors `Genau::DetectVersionFromPEResource` (dll/src/Genau.cpp) in order -- `read_resource()` reads the fields,
+`decide()` makes the decision (pure, so `--selftest` runs it on every dll/tests/res fixture's own .rc fields):
   1. VS_FIXEDFILEINFO.dwProductVersionMS   5.x -> 500+minor | 4.x -> 400+minor
   2. VS_FIXEDFILEINFO.dwFileVersionMS      same
+     (rev 10) either fixed reading yields to the file's own engine build string when that names another version
+     (`fixed_reading`): ProductVersion's string, then FileVersion's, read by `engine_build_string_code`; the result is
+     a 'build string' reading recording the fixed code it `overruled`
   3. StringFileInfo ProductVersion, then FileVersion, each the first non-empty value over EVERY
      VarFileInfo translation (`first_nonempty`): a '++UEn+Release-' prefix found anywhere whose
      %u.%u gives a version code, else (rev 9) the engine's own build string --
@@ -178,6 +182,68 @@ _READER_SELFTEST = [
     ("a game version alone reads nothing", {"ProductVersion": "1.0.0.0", "FileVersion": "1.0.10897.0"}, None),
 ]
 
+def build_string_of(strs):
+    """The file's own engine build string, as the C++ looks for it beside a fixed-field reading: ProductVersion's string,
+    then FileVersion's, the first that `engine_build_string_code` reads. -> (key, string, code) or None."""
+    for key in STRING_KEYS:
+        s = strs.get(key, "")
+        code = engine_build_string_code(s)
+        if code:
+            return key, s, code
+    return None
+
+
+def fixed_reading(fixed_key, fixed_code, strs):
+    """A fixed field's code, as ReadUeVersionFromFile takes it. -> the fields read_resource() reports.
+    ([VER-410-FIXED-VS-STRING] rev 10) The fixed fields are the game's to set; where the file's own engine build string
+    names another version, the string's is taken, as a 'build string' reading that records the code it `overruled`."""
+    b = build_string_of(strs)
+    if b and b[2] != fixed_code:
+        return {"kind": "build string", "code": b[2], "key": b[0], "string": b[1], "overruled": fixed_code}
+    return {"kind": "fixed", "code": fixed_code, "key": fixed_key, "string": None, "overruled": None}
+
+
+def decide(pmaj, pmin, fmaj, fmin, strs):
+    """What ReadUeVersionFromFile takes from one file once its VS_FIXEDFILEINFO and strings are in hand: the fixed
+    ProductVersion, then the fixed FileVersion, each through `fixed_reading`; with neither a version code, the strings
+    (`string_reading`); else 'unrecognised'. -> the decision fields read_resource() reports (kind, code, key, string,
+    overruled). Pure, and split from the reading, so --selftest runs the whole decision: while it sat inline in
+    read_resource, the fixed-field branch could be reverted to rev 9 with every selftest case still green
+    ([VER-410-FIXED-VS-STRING] review)."""
+    for key, (maj, mnr) in (("ProductVersion", (pmaj, pmin)), ("FileVersion", (fmaj, fmin))):
+        code = ue_version_code(maj, mnr)
+        if code:
+            return fixed_reading(key, code, strs)
+    r = string_reading(strs)
+    if r:
+        return {"kind": r[0].lower(), "code": r[3], "key": r[1], "string": r[2], "overruled": None}
+    return {"kind": "unrecognised", "code": None, "key": None, "string": None, "overruled": None}
+
+
+_IS_DEFENSE = "4.10.2-0+++depot+UE4-Releases+4.10"
+# ([VER-410-FIXED-VS-STRING] rev 10) (name, fixed key, fixed code, strings, want (kind, key, code, overruled)). The first
+# three are dll_core_test's fixtures game_fixed405_buildstring_415 / game_fixed501_buildstring_415 /
+# game_fixed420_buildstring_410; the agreeing and bare ones are b25c's and b25d's.
+_FIXED_SELFTEST = [
+    ("4.5 fixed under a 4.15 build string reads 415", "ProductVersion", 405, {"ProductVersion": "4.15.0-0+UE4"},
+     ("build string", "ProductVersion", 415, 405)),
+    ("5.1 fixed under FileVersion's branch-first 4.15 reads 415", "ProductVersion", 501,
+     {"ProductVersion": "5.1.0.0", "FileVersion": "++UE4+Release-4.15-CL-0"}, ("build string", "FileVersion", 415, 501)),
+    ("4.20 fixed under IS Defense's 4.10 string reads 410", "ProductVersion", 420, {"ProductVersion": _IS_DEFENSE},
+     ("build string", "ProductVersion", 410, 420)),
+    ("an agreeing build string keeps the fixed reading", "ProductVersion", 410, {"ProductVersion": _IS_DEFENSE},
+     ("fixed", "ProductVersion", 410, None)),
+    ("a bare version string keeps the fixed reading", "ProductVersion", 410, {"ProductVersion": "4.10.3"},
+     ("fixed", "ProductVersion", 410, None)),
+    ("a prefix-only string (its branch disagrees) is no build string", "ProductVersion", 427,
+     {"ProductVersion": "4.10.2-0+++UE4+Release-4.11"}, ("fixed", "ProductVersion", 427, None)),
+    ("ProductVersion's build string is looked at before FileVersion's", "ProductVersion", 405,
+     {"ProductVersion": "4.15.0-0+UE4", "FileVersion": "++UE4+Release-4.18-CL-0"},
+     ("build string", "ProductVersion", 415, 405)),
+    ("a FileVersion fixed reading keeps its key", "FileVersion", 410, {"ProductVersion": "1.0.0.0"},
+     ("fixed", "FileVersion", 410, None)),
+]
+
 _TRANSLATION_SELFTEST = [
     # DropIn's shape: nothing under the first translation, the value under the second.
     ("the second translation answers when the first has nothing",
@@ -188,6 +254,70 @@ _TRANSLATION_SELFTEST = [
     ("the first non-empty wins", [(0x409, 1200), (0x411, 1200)],
      {(0x409, 1200): "A", (0x411, 1200): "B"}, "A"),
     ("no translation, no value", [], {}, ""),
+]
+
+# ── dll_core_test's VERSIONINFO fixtures, read from their own .rc scripts ([VER-410-FIXED-VS-STRING] review) ──────────
+# dll_core_test builds each dll/tests/res/*.rc into a resource-only DLL and asserts what Genau reads from it. --selftest
+# reads the same scripts' fields and runs `decide` on them, so the port is held to the C++ test's answers on the same
+# bytes -- that agreement had been checked by hand. A fixture with no row here fails, so a shape the C++ test gains is one
+# this port must answer too. Each row is dll_core_test's assertion on that fixture: (kind, key, code, overruled).
+_RES_DIR = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "dll", "tests", "res"))
+_RC_EXPECT = {
+    "b25c_corroborated":             ("fixed", "ProductVersion", 410, None),
+    "b25d_bare":                     ("fixed", "ProductVersion", 410, None),
+    "game_buildstring_410":          ("build string", "ProductVersion", 410, None),
+    "game_buildstring_411":          ("build string", "FileVersion", 411, None),
+    "game_only":                     ("unrecognised", None, None, None),
+    "game_product_fixedfile_410":    ("fixed", "FileVersion", 410, None),
+    "game_fixed405_buildstring_415": ("build string", "ProductVersion", 415, 405),
+    "game_fixed501_buildstring_415": ("build string", "FileVersion", 415, 501),
+    "game_fixed420_buildstring_410": ("build string", "ProductVersion", 410, 420),
+    "game_filefixed405_buildstring_415": ("build string", "ProductVersion", 415, 405),
+    "game_fixed410_two_buildstrings": ("fixed", "ProductVersion", 410, None),
+}
+_RC_FIXED = re.compile(r"(FILEVERSION|PRODUCTVERSION)[ \t]+(\d+),(\d+),(\d+),(\d+)")
+_RC_VALUE = re.compile(r'VALUE "(ProductVersion|FileVersion)", "([^"\\]*)"')
+_RC_LANG_BLOCK = re.compile(r'BLOCK "[0-9A-Fa-f]{8}"')
+
+
+def rc_fields(text):
+    """A fixture script's ((pmaj, pmin, fmaj, fmin), {key: value}), in the one shape those scripts are written in: one
+    FILEVERSION and one PRODUCTVERSION line, one StringFileInfo language block, no escape in a value. Anything else
+    raises ValueError, so a script this reader cannot see whole fails the selftest instead of answering for part of it."""
+    fixed, strs = {}, {}
+    for raw in text.splitlines():
+        line = raw.strip()
+        m = _RC_FIXED.fullmatch(line)
+        if m:
+            if m.group(1) in fixed:
+                raise ValueError(f"two {m.group(1)} lines")
+            fixed[m.group(1)] = (int(m.group(2)), int(m.group(3)))
+        elif line.startswith(("FILEVERSION", "PRODUCTVERSION")):
+            raise ValueError(f"unread fixed-field line {line!r}")
+        elif line.startswith(('VALUE "ProductVersion"', 'VALUE "FileVersion"')):
+            v = _RC_VALUE.fullmatch(line)
+            if not v or v.group(1) in strs:
+                raise ValueError(f"unread or repeated string line {line!r}")
+            strs[v.group(1)] = v.group(2)
+    if set(fixed) != {"FILEVERSION", "PRODUCTVERSION"}:
+        raise ValueError("a fixed field is missing")
+    if len(_RC_LANG_BLOCK.findall(text)) != 1:
+        raise ValueError("not exactly one StringFileInfo language block")
+    (pmaj, pmin), (fmaj, fmin) = fixed["PRODUCTVERSION"], fixed["FILEVERSION"]
+    return (pmaj, pmin, fmaj, fmin), {k: v for k, v in strs.items() if v}
+
+
+# Shapes no fixture carries: (name, (pmaj, pmin, fmaj, fmin), strings, want (kind, key, code, overruled)).
+_DECIDE_SELFTEST = [
+    ("a fixed ProductVersion outside 4.x / 5.x falls to the fixed FileVersion", (4, 99, 4, 10), {},
+     ("fixed", "FileVersion", 410, None)),
+    ("the fixed ProductVersion is read before the fixed FileVersion", (4, 20, 4, 10), {},
+     ("fixed", "ProductVersion", 420, None)),
+    ("a 5.x fixed field its own branch-first build string agrees with stays fixed", (5, 4, 5, 4),
+     {"ProductVersion": "++UE5+Release-5.4-CL-0"}, ("fixed", "ProductVersion", 504, None)),
+    ("no fixed code: a prefix string reads", (1, 0, 1, 0), {"ProductVersion": "++UE4+Release-4.27-CL-18319896"},
+     ("string", "ProductVersion", 427, None)),
+    ("no fixed code and no strings: unrecognised", (0, 0, 0, 0), {}, ("unrecognised", None, None, None)),
 ]
 
 
@@ -214,7 +344,39 @@ def selftest():
         ok = got == want
         bad += not ok
         print(f"  {'ok ' if ok else 'BAD'}  translations: {name} -> {got!r} (want {want!r})")
-    total = len(_SELFTEST) + len(_READER_SELFTEST) + len(_TRANSLATION_SELFTEST)
+    for name, fkey, fcode, strs, want in _FIXED_SELFTEST:
+        r = fixed_reading(fkey, fcode, strs)
+        got = (r["kind"], r["key"], r["code"], r["overruled"])
+        ok = got == want
+        bad += not ok
+        print(f"  {'ok ' if ok else 'BAD'}  fixed vs build string: {name} -> {got} (want {want})")
+    for name, fields, strs, want in _DECIDE_SELFTEST:
+        r = decide(*fields, strs)
+        got = (r["kind"], r["key"], r["code"], r["overruled"])
+        ok = got == want
+        bad += not ok
+        print(f"  {'ok ' if ok else 'BAD'}  decide: {name} -> {got} (want {want})")
+    rcs = sorted(f[:-3] for f in os.listdir(_RES_DIR) if f.endswith(".rc"))
+    fixtures = sorted(set(rcs) | set(_RC_EXPECT))
+    for name in fixtures:
+        want = _RC_EXPECT.get(name)
+        if name not in rcs:
+            got = "no such fixture in dll/tests/res"
+        elif want is None:
+            got = "a fixture with no expected reading in _RC_EXPECT"
+        else:
+            try:
+                with open(os.path.join(_RES_DIR, name + ".rc"), encoding="utf-8") as fh:
+                    fields, strs = rc_fields(fh.read())
+                r = decide(*fields, strs)
+                got = (r["kind"], r["key"], r["code"], r["overruled"])
+            except ValueError as e:
+                got = f"unreadable: {e}"
+        ok = got == want
+        bad += not ok
+        print(f"  {'ok ' if ok else 'BAD'}  fixture {name}.rc -> {got} (want {want})")
+    total = (len(_SELFTEST) + len(_READER_SELFTEST) + len(_TRANSLATION_SELFTEST) + len(_FIXED_SELFTEST)
+             + len(_DECIDE_SELFTEST) + len(fixtures))
     print(f"selftest: {total - bad}/{total} passed")
     return 1 if bad else 0
 
@@ -224,9 +386,11 @@ def read_resource(path):
       code   the version code the DLL takes at Tier 0 (None when it falls through to the memory scan)
       key    for a fixed reading 'ProductVersion' / 'FileVersion' (which fixed field), else the string's key
       string the string read, when the reading came from one
+      overruled  the fixed fields' code when the file's engine build string named another and was taken, else None
       prod / fver   the fixed fields as dotted text (None without a VS_FIXEDFILEINFO)
       strs   {key: first non-empty value over every translation}"""
-    out = {"kind": "no resource", "code": None, "key": None, "string": None, "prod": None, "fver": None, "strs": {}}
+    out = {"kind": "no resource", "code": None, "key": None, "string": None, "overruled": None,
+           "prod": None, "fver": None, "strs": {}}
     dummy = wintypes.DWORD(0)
     size = ver.GetFileVersionInfoSizeW(path, ctypes.byref(dummy))
     if not size:
@@ -263,37 +427,43 @@ def read_resource(path):
     out["prod"] = f"{pmaj}.{pmin}.{pls >> 16}.{pls & 0xFFFF}"
     out["fver"] = f"{fmaj}.{fmin}.{fls >> 16}.{fls & 0xFFFF}"
 
-    for key, (maj, mnr) in (("ProductVersion", (pmaj, pmin)), ("FileVersion", (fmaj, fmin))):
-        code = ue_version_code(maj, mnr)
-        if code:
-            out.update(kind="fixed", code=code, key=key)
-            return out
-    r = string_reading(out["strs"])
-    if r:
-        out.update(kind=r[0].lower(), key=r[1], string=r[2], code=r[3])
-    else:
-        out["kind"] = "unrecognised"
+    out.update(decide(pmaj, pmin, fmaj, fmin, out["strs"]))
     return out
 
 
 def probe(path):
     """-> (verdict, product, file, strings). Verdict contains FALLTHROUGH when usable."""
     r = read_resource(path)
+    if r["kind"] in ("no resource", "unreadable", "no fixedinfo"):
+        return (verdict_text(r), None, None, {})
+    return (verdict_text(r), r["prod"], r["fver"], r["strs"])
+
+
+def verdict_text(r):
+    """A read_resource() result as the one-line verdict main() prints. Pure and apart from the read because
+    crc_authority_survey.py reads the version code back out of the printed line (fallback_probe), and its --selftest
+    runs that parse on each kind of verdict made here, through output_line."""
     k = r["kind"]
     if k == "no resource":
-        return (f"no resource -- {FALLTHROUGH}", None, None, {})
+        return f"no resource -- {FALLTHROUGH}"
     if k == "unreadable":
-        return ("resource UNREADABLE", None, None, {})
+        return "resource UNREADABLE"
     if k == "no fixedinfo":
-        return (f"no VS_FIXEDFILEINFO -- {FALLTHROUGH}", None, None, {})
-    strs = r["strs"]
+        return f"no VS_FIXEDFILEINFO -- {FALLTHROUGH}"
     if k == "fixed":
-        return (f"Tier0 {r['key']} -> {r['code']}", r["prod"], r["fver"], strs)
+        return f"Tier0 {r['key']} -> {r['code']}"
     if k == "string":
-        return (f"Tier0 STRING {r['key']}='{r['string']}'", r["prod"], r["fver"], strs)
+        return f"Tier0 STRING {r['key']}='{r['string']}' -> {r['code']}"
     if k == "build string":
-        return (f"Tier0 BUILD STRING {r['key']}='{r['string']}' -> {r['code']}", r["prod"], r["fver"], strs)
-    return (f"unrecognised -- {FALLTHROUGH}", r["prod"], r["fver"], strs)
+        over = f" (overrules fixed {r['overruled']})" if r["overruled"] else ""
+        return f"Tier0 BUILD STRING {r['key']}='{r['string']}' -> {r['code']}{over}"
+    return f"unrecognised -- {FALLTHROUGH}"
+
+
+def output_line(label, verdict, prod, fver):
+    """One file's line as main() prints it -- the text crc_authority_survey.py's fallback_probe parses."""
+    flag = "  <== usable for a Tier-1 row" if FALLTHROUGH in verdict else ""
+    return f"{label[:44]:45} prod={str(prod):11} file={str(fver):11} {verdict}{flag}"
 
 def collect(roots):
     out = []
@@ -317,9 +487,7 @@ def main():
     usable = []
     for t in targets:
         verdict, prod, fver, strs = probe(t)
-        label = os.path.basename(t)
-        flag = "  <== usable for a Tier-1 row" if FALLTHROUGH in verdict else ""
-        print(f"{label[:44]:45} prod={str(prod):11} file={str(fver):11} {verdict}{flag}")
+        print(output_line(os.path.basename(t), verdict, prod, fver))
         if FALLTHROUGH in verdict:
             usable.append((t, strs))
     print(f"\n{len(targets)} scanned, {len(usable)} fall through Tier 0")

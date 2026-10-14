@@ -143,15 +143,16 @@ static bool CopyToBuffer(const std::string& src, char* buf, int32_t bufLen) {
 }
 
 namespace FrierenInit {
-// The live half of DynOff::ApplyVersionLadder: the probe's facts, the CMC read and the log lines. Init runs it after
-// the offsets probe, and Auto chosen over an override runs it on the detection it restores, so both land on the
-// version the same evidence proves. `who` prefixes the log lines, which the A4 rig greps for.
+// The live half of DynOff::ApplyVersionLadder: the probe's facts, the reads its rungs ask for and the log lines.
+// Every path that settles the session's version after an offsets probe runs it, so each lands on the version the
+// same evidence proves. `who` prefixes the log lines, which the A4 rig greps for.
 DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool userOverride, const char* who) {
     DynOff::StructuralVersionFacts f;
     f.measured            = DynOff::bOffsetsProbeRan.load(std::memory_order_acquire);
     f.fproperty           = DynOff::bUseFProperty;
     f.flatObjectArray     = Aura::IsFlat();
     f.taggedFFieldVariant = DynOff::bTaggedFFieldVariant;
+    f.userOverride        = userOverride;
     // The UE5.7 reordered FUObjectItem: the Object* moved to +0x08 (e.g. Solarpunk, the stock-UE5.7 repro). Detected
     // during the GObjects scan, so reliable even in a menu. The item SIZE grows with the build configuration -- 24
     // Shipping, 32 Development (STATS=1 appends TStatId), 40 Test (UE 5.7's Build.h added
@@ -200,6 +201,53 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
         return false;
     };
 
+    // [VER-MARKERS-PAST-504] The 5.5 and 5.6 rungs' probes, the classes they sample and how many are
+    // DynOff::ProbeEnumPackages / ProbeStructStates; this hands them the object array. The search is by EXACT class
+    // name: a substring match would let any object whose class merely contains "Class" vote.
+    const auto findExact = [](const char* cls, int limit) {
+        std::vector<uintptr_t> out;
+        for (const auto& r : Aura::FindInstancesByClass(cls, /*exactMatch=*/true, limit).results)
+            out.push_back(r.addr);
+        return out;
+    };
+    const auto read = [](uintptr_t a, void* out, size_t n) { return Macht::ReadBytesSafe(a, out, n); };
+
+    // [VER-MARKERS-PAST-504] UE5.5 moved UEnum::EnumPackage ahead of EnumDisplayNameFn; the layouts and the rule are
+    // DynOff::SampleEnumPackage / EnumPackageProves55. Both slots sit behind the MEASURED Names, so the enum reader's
+    // own detection runs first if no enum read has yet -- told not to latch a miss, since this may run before the
+    // engine has registered the enums it looks for. When the probe reads at all is DynOff::EnumPackageProbeSkip; the
+    // flags are loaded in order, because bEnumNamesNewContainer is published by the detection's release-store.
+    DynOff::EnumPackageTally enumTally;
+    auto probeEnumPackage = [&]() -> DynOff::EnumPackageTally {
+        if (!DynOff::bUEnumNamesDetected.load(std::memory_order_acquire))
+            Genau::DetectUEnumNames(/*latchFailure=*/false);
+        const bool namesDetected = DynOff::bUEnumNamesDetected.load(std::memory_order_acquire);
+        const bool namesFailed   = DynOff::bUEnumNamesFailed.load(std::memory_order_acquire);
+        const DynOff::EnumProbeSkip skip =
+            DynOff::EnumPackageProbeSkip(namesDetected, namesFailed, DynOff::bEnumNamesNewContainer);
+        if (skip != DynOff::EnumProbeSkip::None) {
+            LOG_INFO("%s: UEnum::EnumPackage probe skipped -- %s.", who,
+                     skip == DynOff::EnumProbeSkip::NamesAreFNameData ? "UEnum::Names is the UE5.7+ FNameData"
+                                                                     : "UEnum::Names not located");
+            return enumTally;
+        }
+        enumTally = DynOff::ProbeEnumPackages(findExact, DynOff::UENUM_NAMES, DynOff::UOBJECT_OUTER, read);
+        LOG_INFO("%s: UEnum::EnumPackage probe -- %d enum(s) sampled; the package name at Names+0x14 (UE5.5+) "
+                 "on %d, at Names+0x20 (UE5.1-5.4) on %d.", who, enumTally.sampled, enumTally.at55, enumTally.at51);
+        return enumTally;
+    };
+
+    // [VER-MARKERS-PAST-504] UE5.6 split UStruct::MinAlignment into int16 + StructStateFlags, which UStruct::Link sets;
+    // the layouts and the rule are DynOff::SampleStructState / StructStateProves56, read behind the MEASURED
+    // PropertiesSize.
+    DynOff::StructStateTally structTally;
+    auto probeStructState = [&]() -> DynOff::StructStateTally {
+        structTally = DynOff::ProbeStructStates(findExact, DynOff::USTRUCT_PROPSSIZE, read);
+        LOG_INFO("%s: UStruct::StructStateFlags probe -- %d struct(s) sampled; PropertyDataAvailable at "
+                 "PropertiesSize+6 (UE5.6+) on %d.", who, structTally.sampled, structTally.linked);
+        return structTally;
+    };
+
     auto onRung = [&](DynOff::VersionRung rung, unsigned from, unsigned to) {
         switch (rung) {
         case DynOff::VersionRung::UPropertyMode:
@@ -226,6 +274,15 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
                      "function=%s) -- raising version %u -> %u.", who, cmcProp ? "yes" : "no",
                      cmcFunc ? "yes" : "no", from, to);
             break;
+        case DynOff::VersionRung::EnumPackage55:
+            LOG_WARN("%s: structural marker (UEnum::EnumPackage at Names+0x14 on %d of %d sampled enums = UE5.5+) "
+                     "but version=%u — raising to 505.", who, enumTally.at55, enumTally.sampled, from);
+            break;
+        case DynOff::VersionRung::StructStateFlags56:
+            LOG_WARN("%s: structural marker (UStruct::StructStateFlags = PropertyDataAvailable on %d of %d sampled "
+                     "structs = UE5.6+) but version=%u — raising to 506.", who, structTally.linked,
+                     structTally.sampled, from);
+            break;
         case DynOff::VersionRung::ReorderedItem:
             LOG_WARN("%s: structural marker (FUObjectItem Object@+0x08, %dB = UE5.7+) "
                      "but version=%u — raising floor to 507.", who, itemSz, from);
@@ -243,7 +300,15 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
         }
     };
 
-    return DynOff::ApplyVersionLadder(ueVersion, f, probeCmc, onRung);
+    const DynOff::StructuralVersion climbed =
+        DynOff::ApplyVersionLadder(ueVersion, f, probeCmc, probeEnumPackage, probeStructState, onRung);
+    // [VER-MARKERS-PAST-504] The rung lines above read "version=N" whether N was detected or chosen; this says it was
+    // chosen, so triage does not read an overruled override as a raised detection.
+    if (climbed.overrideRaised)
+        LOG_WARN("%s: User override = %u overruled -- the structural markers above raise it to %u; no override "
+                 "holds a version below what the layout proves. If %u is wrong for this game, a marker misfired: "
+                 "keep this log for the report.", who, ueVersion, climbed.version, climbed.version);
+    return climbed;
 }
 } // namespace FrierenInit
 
@@ -722,8 +787,8 @@ void UE5_Shutdown() {
     Dunste::StopWorker();    // join the fly worker before unload
     Schlacht::SetEnabled(false);  // un-hide occluders (contract) THEN join the worker; runs before Stark::Shutdown so the un-hide invokes can still dispatch (M3)
     Grausam::SetForegroundLock(false);  // soft-disable: g_enabled=false so the GFW/WndProc hooks pass through + release the masked cursor clip — otherwise the game believes it's foreground forever after a CE-Lua Disable (L10)
-    // Full teardown: RemoveHook + MH_Uninitialize + drain pending invoke queue.
-    // Pipe server is stopped after Shutdown() so any in-flight pipe thread
+    // Teardown: soft RemoveHook + drain the pending invoke queue (MinHook stays
+    // initialised -- see Stark::Shutdown). Pipe server is stopped after Shutdown() so any in-flight pipe thread
     // blocked on EnqueueInvoke receives its -7 result and unwinds cleanly.
     Stark::Shutdown();
     s_pipeServer.Stop();
@@ -742,11 +807,11 @@ void UE5_Shutdown() {
 
 uint32_t UE5_GetVersion() {
     // Lazy UE5.5 / 5.7 refines off markers discovered during walks / enum access (the
-    // structural item + property markers ran at init; these two only surface later):
+    // structural ladder ran at init; these two can surface later):
     //   • a reflected Utf8StrProperty / AnsiStrProperty (Ubel flag) ⇒ UE5.5+
     //   • the FNameData struct-of-arrays UEnum::Names container (DynOff flag, set by
-    //     the lazy DetectUEnumNames) ⇒ UE5.7+ (this is the layout whose enum bug the
-    //     Neu reader fixed; e.g. Titan Quest II). [VND583-12] It was 5.6+ -- see
+    //     DetectUEnumNames, which may first run at the first enum read) ⇒ UE5.7+ (this
+    //     is the layout whose enum bug the Neu reader fixed; e.g. Titan Quest II). [VND583-12] It was 5.6+ -- see
     //     DynOff::RefineVersionFromLazyMarkers, which holds the rule and its citations.
     // Cheap reads; the UI polls this for the badge, so the version self-corrects as the
     // user browses.
@@ -1908,6 +1973,11 @@ static constexpr int      kMaxHookAttempts    = 8;
 static constexpr uint64_t kHookRetryCooldownMs = 5000;
 static std::atomic<int>      s_hookAttempts{0};
 static std::atomic<uint64_t> s_lastHookAttemptMs{0};
+// Did the PREVIOUS install attempt fail? Set on any failed attempt, cleared on success -- the one signal that a
+// success is a RECOVERY. The automatic counter cannot stand in: a forced attempt does not spend it (B24) and a
+// recovery that skips the cooldown's automatic attempt leaves it at 1, so gating RECOVERED on `attempts > 1` drops
+// the FFRS case (two Starts fail, the third succeeds). ([MH-PRERESERVE-PROXY])
+static std::atomic<bool>     s_lastInstallFailed{false};
 
 // ---------------------------------------------------------------------------
 // DETECTION retry state — deliberately its OWN budget, separate from the
@@ -2021,16 +2091,21 @@ static void TryInstallGameThreadHook(bool force = false) {
         return;
     }
 
+    // A forced attempt names itself: the counter beside it is the automatic budget, which it did not spend.
+    const std::string attemptLabel = Stark::DescribeHookAttempt(force, attempts, kMaxHookAttempts);
     if (!Stark::InstallHook(peAddr)) {
-        LOG_WARN("GameThreadDispatch: hook install failed (attempt %d/%d), invoke will "
+        s_lastInstallFailed.store(true, std::memory_order_relaxed);
+        LOG_WARN("GameThreadDispatch: hook install failed (%s), invoke will "
                  "use direct call (unsafe)%s",
-                 attempts, kMaxHookAttempts,
+                 attemptLabel.c_str(),
                  attempts < kMaxHookAttempts ? " — will retry" : " — giving up");
         return;
     }
-    if (attempts > 1) {
-        LOG_INFO("GameThreadDispatch: hook RECOVERED on attempt %d — game-thread "
-                 "dispatch is available again", attempts);
+    // A success that follows a failed attempt is a recovery, whichever path reached it (forced, or an automatic
+    // attempt after the cooldown). Clear the flag as we read it so the line fires once.
+    if (s_lastInstallFailed.exchange(false, std::memory_order_relaxed)) {
+        LOG_INFO("GameThreadDispatch: hook RECOVERED on %s — game-thread "
+                 "dispatch is available again", attemptLabel.c_str());
     }
     LOG_INFO("GameThreadDispatch: hook installed at 0x%llX, validator armed (1500ms)",
              (unsigned long long)peAddr);
@@ -2334,8 +2409,8 @@ extern "C" bool UE5_EnsureGameThreadHook() {
     }
 
     // Then the install. It can fail transiently — e.g. MH_ERROR_MEMORY_ALLOC, when
-    // MinHook can't place a trampoline near ProcessEvent this session (reachable
-    // ±2GB region occupied by another injected tool / a stale prior injection).
+    // MinHook finds no free block start within its ±1 GB of ProcessEvent this session
+    // (MAX_MEMORY_RANGE; Stark logs the window's map when it happens, [MH-PRERESERVE-PROXY]).
     // Retry through the ONE install path. Stark::InstallHook is idempotent +
     // mutex-guarded, so repeated clicks safely re-attempt.
     TryInstallGameThreadHook(/*force=*/true);

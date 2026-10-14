@@ -2,6 +2,7 @@ using System;
 using System.IO;
 using System.Linq;
 using System.Text.RegularExpressions;
+using Microsoft.Data.Sqlite;
 using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
@@ -187,6 +188,23 @@ public class SnapshotViewModelTests : IDisposable
         }
     }
 
+    // The rows the active game's DB holds, listed or not. A capture that never completed is still in progress, and the
+    // list shows no capture in progress [SNAPSHOT-CRASH-PARTIAL], so an empty list cannot tell a deleted partial from
+    // one left behind: only the tables can. Unpooled, so no handle outlives the read.
+    private async Task<(long Snapshots, long Fields)> RawRowsAsync(CancellationToken ct)
+    {
+        await using var conn = new SqliteConnection(
+            new SqliteConnectionStringBuilder { DataSource = _store.DatabasePath, Pooling = false }.ToString());
+        await conn.OpenAsync(ct);
+        async Task<long> CountAsync(string table)
+        {
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText = $"SELECT COUNT(*) FROM {table};";
+            return (long)(await cmd.ExecuteScalarAsync(ct) ?? 0L);
+        }
+        return (await CountAsync("snapshots"), await CountAsync("fields"));
+    }
+
     [Fact]
     public async Task Capture_CancelMidStream_DeletesPartialSnapshot()
     {
@@ -200,12 +218,14 @@ public class SnapshotViewModelTests : IDisposable
 
         var task = vm.CaptureCommand.ExecuteAsync(null);
         await dump.SecondChunkReached.Task.WaitAsync(TimeSpan.FromSeconds(10), ct);   // producer blocked on chunk 2
+        Assert.Equal(1L, (await RawRowsAsync(ct)).Snapshots);   // precondition: the partial's row is there to delete
         vm.CancelCommand.Execute(null);
         await task;
 
         Assert.False(vm.IsCapturing);
         Assert.Contains("cancel", vm.StatusText, StringComparison.OrdinalIgnoreCase);
-        Assert.Empty(await _store.ListSnapshotsAsync(ct));   // the partial snapshot was deleted
+        Assert.Empty(await _store.ListSnapshotsAsync(ct));   // not finalised as a snapshot
+        Assert.Equal((0L, 0L), await RawRowsAsync(ct));      // and deleted, row and fields
     }
 
     // Simulates a pipe DISCONNECT mid-capture: delivers one chunk, then the second
@@ -264,6 +284,8 @@ public class SnapshotViewModelTests : IDisposable
         // No snapshot may survive as usable — the truncated partial is deleted, not
         // finalised. (Before the fix this list held one usable, truncated snapshot.)
         Assert.Empty(await _store.ListSnapshotsAsync(ct));
+        // The list hides a capture in progress, so the delete itself shows only in the tables.
+        Assert.Equal((0L, 0L), await RawRowsAsync(ct));
     }
 
     // A disconnect BEFORE any snapshot row is created (bare OCE from BeginSnapshotAsync,
@@ -303,8 +325,10 @@ public class SnapshotViewModelTests : IDisposable
         // The loop stopped itself (not wedged): toggle reset + manual capture re-enabled.
         Assert.False(vm.AutoSnapshotEnabled);
         Assert.True(vm.CanManualCapture);
-        // No usable snapshot was left behind (none was even created).
+        // No usable snapshot was left behind (none was even created): the list hides a capture in
+        // progress, so "none created" is the tables' to say.
         Assert.Empty(await _store.ListSnapshotsAsync(ct));
+        Assert.Equal((0L, 0L), await RawRowsAsync(ct));
     }
 
     // [AUTOSNAP-STOP-STALE-STATUS] Turning Auto OFF by hand cancels the loop mid-countdown, and
@@ -1389,8 +1413,65 @@ public class SnapshotViewModelTests : IDisposable
 
         Assert.False(vm.IsCapturing);
         Assert.Empty(await _store.ListSnapshotsAsync(ct));   // guard refused before any write
+        Assert.Equal((0L, 0L), await RawRowsAsync(ct));      // not even a row in progress, which no list shows
         Assert.Null(dump.LastDataType);                      // BeginSnapshot never reached
         Assert.Contains("disk", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // [SNAPSHOT-CRASH-PARTIAL] A capture a crashed run left is listed nowhere, so no Delete reaches it, and the cleanup
+    // at a capture's start is what removes it. A capture the free-disk guard refuses never gets that far, and a drive
+    // that stays low would keep the dead capture's rows -- possibly the very space it is short of -- for good.
+    [Fact]
+    public async Task Capture_RefusedForLowDisk_StillRemovesACaptureACrashedRunLeft()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        static SnapshotCapturedObject Obj(int i)
+        {
+            var o = new SnapshotCapturedObject
+            {
+                Index = i, Addr = $"0x{i:X}", Name = $"O_{i}", ClassName = "C", OuterClassName = "World", Path = $"/G.M:L.O_{i}",
+            };
+            o.Fields.Add(new SnapshotCapturedField { Name = "HP", Type = "IntProperty", Hex = "64000000", Offset = 0x10 });
+            return o;
+        }
+        var died = new SnapshotStore(new MockPlatformService(_tempDir), log: null, captureOwner: "a run that crashed");
+        died.SetActiveGame("PEHASH");
+        long dead = await died.CreateSnapshotAsync(new SnapshotMeta { Label = "cut short", Scope = "NumericNoByte" }, ct);
+        await died.WriteChunkAsync(dead, new[] { Obj(1) }, ct);
+        _store.SetActiveGame("PEHASH");
+        long whole = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "whole", Scope = "NumericNoByte" }, ct);
+        await _store.WriteChunkAsync(whole, new[] { Obj(2) }, ct);
+        await _store.FinalizeSnapshotAsync(whole, 1, 1, ct);
+        // A drift-flagged snapshot is listed, so the user sees and can delete it: it waits for a capture that starts,
+        // and a refused one is not that -- nor may a refusal run that cleanup's VACUUM on a low drive.
+        long flagged = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "drifted", Scope = "NumericNoByte" }, ct);
+        await using (var s = await _store.BeginCaptureSessionAsync(ct))
+        {
+            int n = s.WriteChunk(flagged, new[] { Obj(3) }, ct);
+            await s.CompleteSnapshotAsync(flagged, 1, n, isUsable: false, ct: ct);
+        }
+
+        var dump = new CaptureStub();
+        // 1 GB free on a 1 TB drive: the 10% / 50 GB guard refuses.
+        var platform = new DiskStubPlatformService(_tempDir)
+        {
+            FreeBytes  = 1L * 1024 * 1024 * 1024,
+            TotalBytes = 1024L * 1024 * 1024 * 1024,
+        };
+        var vm = new SnapshotViewModel(dump, _store, new MockLoggingService(), gate: null, platform: platform)
+        {
+            SelectedScope = "NumericNoByte",
+        };
+        vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
+        await vm.PendingRefresh!;
+        Assert.Equal((3L, 3L), await RawRowsAsync(ct));   // precondition: the dead capture, the whole and the flagged
+
+        await vm.CaptureCommand.ExecuteAsync(null);
+
+        Assert.Null(dump.LastDataType);                   // still refused: BeginSnapshot never reached
+        Assert.Contains("disk", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal((2L, 2L), await RawRowsAsync(ct));   // the dead capture's row and field are gone, no more
+        Assert.Equal(new[] { flagged, whole }, (await _store.ListSnapshotsAsync(ct)).Select(m => m.Id));
     }
 
     [Fact]

@@ -674,11 +674,13 @@ if(BUILD_DLL_TESTS)
     # Genau reads a UE version out of a FILE (GetFileVersionInfoW), and one file carries one
     # VERSIONINFO, so every resource shape the version gate must judge is a file of its own: a DLL
     # holding nothing but that resource, linked /NOENTRY. dll_core_test finds them beside itself.
-    # The b25c / b25d scripts are the very resources tools/verify/b25_marker_exes.py stamps into its
-    # live marker exes -- it reads them from tests/res -- so the offline test and the live one judge
-    # the same bytes.
+    # Some of these scripts are the very resources tools/verify/b25_marker_exes.py stamps into its
+    # live marker exes -- it reads them from tests/res, and says which -- so the offline test and the
+    # live one judge the same bytes. tools/verify/pe_version_probe.py --selftest reads every script there
+    # as well and fails on one it holds no expected reading for: the offline port answers each shape too.
     foreach(_vr b25c_corroborated b25d_bare game_buildstring_410 game_buildstring_411 game_only
-                game_product_fixedfile_410)
+                game_product_fixedfile_410 game_fixed405_buildstring_415 game_fixed501_buildstring_415
+                game_fixed420_buildstring_410 game_filefixed405_buildstring_415 game_fixed410_two_buildstrings)
         add_library(verres_${_vr} MODULE ${CMAKE_CURRENT_SOURCE_DIR}/tests/res/${_vr}.rc)
         set_target_properties(verres_${_vr} PROPERTIES LINKER_LANGUAGE CXX)
         if(MSVC)
@@ -715,4 +717,23 @@ if(BUILD_DLL_TESTS)
         VERBATIM)
     add_custom_target(verres_tree DEPENDS ${_vtree_outputs})
     add_dependencies(dll_core_test verres_tree)
+
+    # ---- dll_core_test's other-dumper fixtures ([AOB-SKIP-OWN-DLL]) --------------------------------
+    #
+    # Macht's multi-module walk skips any module that is a build of the dumper, and in the test process the dumper's
+    # own image IS the main exe, so the walk can only be shown a second copy as a DLL of its own. One source, three
+    # DLLs, no CRT (/NOENTRY): the contract export with the real magic, the same name with a wrong one, and a build
+    # from before the contract, which exports UE5_Init alone.
+    foreach(_oc dumper impostor legacy)
+        add_library(owncopy_${_oc} MODULE ${CMAKE_CURRENT_SOURCE_DIR}/tests/res/owncopy_fixture.cpp)
+        if(_oc STREQUAL "impostor")
+            target_compile_definitions(owncopy_${_oc} PRIVATE OWNCOPY_FIXTURE_IMPOSTOR)
+        elseif(_oc STREQUAL "legacy")
+            target_compile_definitions(owncopy_${_oc} PRIVATE OWNCOPY_FIXTURE_LEGACY)
+        endif()
+        if(MSVC)
+            target_link_options(owncopy_${_oc} PRIVATE /NOENTRY)
+        endif()
+        add_dependencies(dll_core_test owncopy_${_oc})
+    endforeach()
 endif()

@@ -69,7 +69,7 @@
               Padding="6,2" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" Cursor="Hand"/>
       <Button DockPanel.Dock="Right" Content="{StaticResource str.LF.Trace.Open}"
               Command="{Binding OpenCallTraceCommand}"
-              IsVisible="{Binding HasTraceToOpen}"
+              IsVisible="{Binding CanOpenCallTrace}"
               ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Open}"
               Foreground="#4EC9B0" Background="Transparent"
               BorderThickness="1" BorderBrush="#4EC9B0"

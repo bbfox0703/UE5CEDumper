@@ -121,12 +121,16 @@ public partial class CallTraceViewModel : ViewModelBase
     internal const double MinFunctionWidth = 160;
     /// <summary>A row is narrower than the list by its item's padding, Fluent's 12 on each side.</summary>
     internal const double RowChrome = 24;
-    /// <summary>[CT-DETAIL-COVERS-LIST] The list's floor, 512: a row with Time, Duration and Thread at their default
-    /// widths, Object at its floor and Function's slice, so a call can still be told and picked. The pane is never
-    /// shown so wide that the list has less: a remembered or dragged width covered the whole list, its rows and the
-    /// pane's own handle.</summary>
-    internal const double MinListWidth = RowChrome + DefaultTimeColWidth + DefaultDurationColWidth
-                                         + DefaultThreadColWidth + MinObjectColWidth + MinFunctionWidth;
+    /// <summary>[CT-DETAIL-COVERS-LIST] The list's floor, 208: a row's item padding (24) and Time and Duration at their
+    /// default widths (96 + 88), so a call can be told by when it ran and clicked. The pane is never shown so
+    /// wide that the list has less, its own 200 included: a remembered or dragged width covered the whole list, its
+    /// rows and the pane's own handle, and the pane has nothing to show until a row is chosen. The maintainer chose 208
+    /// (2026-10-09) over a floor that kept Function's slice too: that one capped the pane near 502 px at the default
+    /// window with the object tree unfolded, too narrow for a Call stack's Where.</summary>
+    internal const double MinListWidth = RowChrome + DefaultTimeColWidth + DefaultDurationColWidth;
+    /// <summary>The narrowest list a row's columns are fitted to: the floor, Thread at its default, Object at its floor
+    /// and Function's slice, 512 in all.</summary>
+    internal const double MinFittedListWidth = MinListWidth + DefaultThreadColWidth + MinObjectColWidth + MinFunctionWidth;
 
     // The remembered widths: what the user dragged, saved in ui-options.json. A layout never writes them, so a width
     // the panel cannot show now comes back when it can.
@@ -204,17 +208,17 @@ public partial class CallTraceViewModel : ViewModelBase
     }
 
     /// <summary>The pane as shown: as remembered, but never so wide that the list loses its floor. Where the panel is
-    /// narrower than both floors the pane keeps its own 200 and the list takes what is left: the list below its floor
-    /// still shows a row's Time and Duration to click, and the pane is where the chosen call is read -- cut below 200
-    /// it wraps the call's text into fragments and its tabs into rows.</summary>
+    /// narrower than both floors the pane gives way, under its own 200 and to nothing if it must: below 200 it wraps the
+    /// call's text into fragments and its tabs into rows, which is a smaller loss than a list nobody can click.</summary>
     internal static double FitPane(double remembered, double split)
-        => double.IsNaN(split) ? remembered : Math.Min(remembered, Math.Max(MinDetailPaneWidth, split - MinListWidth));
+        => double.IsNaN(split) ? remembered : Math.Max(0, Math.Min(remembered, split - MinListWidth));
 
-    /// <summary>The room a row gives its cells beside a pane <paramref name="shownPane"/> wide. A list below its floor
-    /// is laid out as at its floor and cut at its edge ([CT-COLUMNS-OVERLAP]): fitted to the narrower list, every
-    /// column would shrink to its floor, Time and Duration included, to keep a Function slice that is cut anyway.</summary>
+    /// <summary>The room a row gives its cells beside a pane <paramref name="shownPane"/> wide. A list narrower than
+    /// <see cref="MinFittedListWidth"/> is laid out as at that width and cut at its edge ([CT-COLUMNS-OVERLAP]): fitted
+    /// to the narrower list, every column would shrink to its floor, Time and Duration included, to keep a Function
+    /// slice that is cut anyway.</summary>
     internal static double RowRoom(double split, double shownPane)
-        => double.IsNaN(split) ? double.NaN : Math.Max(split - shownPane, MinListWidth) - RowChrome;
+        => double.IsNaN(split) ? double.NaN : Math.Max(split - shownPane, MinFittedListWidth) - RowChrome;
 
     /// <summary>The widest column <paramref name="i"/> can show in a row of <paramref name="room"/>: what is left after
     /// Function's slice, the columns before it as <paramref name="shown"/> and the floors of the ones after it. So the
@@ -240,20 +244,30 @@ public partial class CallTraceViewModel : ViewModelBase
 
     // [CT-DETAIL-COVERS-LIST] A drag adds its step to the width SHOWN and remembers what it leaves shown. Added to a
     // remembered width the panel does not show, a drag past the limit would keep a margin that the next drag back has
-    // to undo first, with nothing moving meanwhile.
-    internal void DragTime(double step) => TimeColWidth = DraggedColumn(0, step);
-    internal void DragDuration(double step) => DurationColWidth = DraggedColumn(1, step);
-    internal void DragThread(double step) => ThreadColWidth = DraggedColumn(2, step);
+    // to undo first, with nothing moving meanwhile. [CT-FLOOR-208] A drag that leaves the width where it was writes
+    // nothing: a press with only a vertical jiggle, or a push into the limit, is not the user choosing the width
+    // shown, and written it replaced the remembered one in ui-options.json, so a wider window never gave it back.
+    internal void DragTime(double step) { if (DraggedColumn(0, step) is { } w) TimeColWidth = w; }
+    internal void DragDuration(double step) { if (DraggedColumn(1, step) is { } w) DurationColWidth = w; }
+    internal void DragThread(double step) { if (DraggedColumn(2, step) is { } w) ThreadColWidth = w; }
     /// <summary>Object's step widens it: its handle is on its left edge.</summary>
-    internal void DragObject(double step) => ObjectColWidth = DraggedColumn(3, step);
-    /// <summary>The pane's step widens it: its handle is on its left edge.</summary>
+    internal void DragObject(double step) { if (DraggedColumn(3, step) is { } w) ObjectColWidth = w; }
+    /// <summary>The pane's step widens it: its handle is on its left edge. A pane the list has taken below its own 200
+    /// cannot move: narrower is under the width it can remember, and wider takes the list's floor.</summary>
     internal void DragDetailPane(double step)
-        => DetailPaneWidth = Math.Clamp(_shownPane + step, MinDetailPaneWidth, FitPane(MaxWidth, _splitWidth));
+    {
+        double cap = FitPane(MaxWidth, _splitWidth);
+        if (cap < MinDetailPaneWidth) return;
+        double next = Math.Clamp(_shownPane + step, MinDetailPaneWidth, cap);
+        if (next != _shownPane) DetailPaneWidth = next;
+    }
 
-    private double DraggedColumn(int i, double step)
+    /// <summary>Column <paramref name="i"/>'s width after a step from the width shown, or null where it does not move.</summary>
+    private double? DraggedColumn(int i, double step)
     {
         double[] shown = ShownColumns;
-        return Math.Clamp(shown[i] + step, ColumnFloors[i], ColumnCap(i, shown, RowRoom(_splitWidth, _shownPane)));
+        double next = Math.Clamp(shown[i] + step, ColumnFloors[i], ColumnCap(i, shown, RowRoom(_splitWidth, _shownPane)));
+        return next == shown[i] ? null : next;
     }
 
     internal CallTrace? Trace => _trace;

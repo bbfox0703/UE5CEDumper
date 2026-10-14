@@ -50,6 +50,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private bool _versionDetected = true;
     [ObservableProperty] private bool _isUserOverride;
     [ObservableProperty] private bool _isAutoPending;   // [UE-OVERRIDE-HINT-AUTO] see EngineState.IsAutoPending
+    [ObservableProperty] private bool _isOverrideContradicted;   // [OVERRIDE-REVIEW2-LOWS] see EngineState.IsOverrideContradicted
     [ObservableProperty] private bool _isLowConfidence;
     // Default true so a DLL that predates get_offsets shows no banner — see EngineState.
     [ObservableProperty] private bool _offsetsValidated = true;
@@ -289,8 +290,9 @@ public partial class PointerPanelViewModel : ViewModelBase
 
     /// <summary>Drives the GLOBAL "stride is a guess" badge in the top bar: a tentative or undetected stride
     /// means object counts and names may be an alias of the real pool (a stride dividing the real one reads
-    /// every k-th object).</summary>
-    public bool ShowStrideGuessBadge => HasData && EngineState.IsStrideUntrusted(ItemDetect);
+    /// every k-th object). Silent on a refused engine, whose "undetected" is no verdict -- see
+    /// <see cref="EngineState.IsStrideUntrusted"/>.</summary>
+    public bool ShowStrideGuessBadge => HasData && EngineState.IsStrideUntrusted(ItemDetect, IsVersionTooOld);
 
     /// <summary>Text for the global stride-guess badge.</summary>
     public string StrideGuessBadgeText =>
@@ -316,6 +318,11 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>[UE-OVERRIDE-HINT-AUTO] Auto was chosen, but this session keeps the override's version until the next
     /// launch: the ComboBox shows the choice, the override badge what is in force, and this note when Auto lands.</summary>
     public bool ShowAutoPendingNote => HasData && IsAutoPending;
+
+    /// <summary>[OVERRIDE-REVIEW2-LOWS] The override in force does not fit this game's UFunctions: the note beside its
+    /// badge tells the user to choose Auto or a version that fits. Not while Auto is pending -- that is already chosen,
+    /// and its own note says when it lands.</summary>
+    public bool ShowOverrideContradictedNote => HasData && IsUserOverride && !IsAutoPending && IsOverrideContradicted;
 
     /// <summary>True when detection succeeded but used the low-confidence Tier 3 / publisher-bias path.</summary>
     public bool ShowLowConfidenceWarning => HasData && IsLowConfidence && !IsUserOverride;
@@ -605,16 +612,33 @@ public partial class PointerPanelViewModel : ViewModelBase
             experimentalGate.Changed += (_, _) =>
             {
                 OnPropertyChanged(nameof(ExperimentalEnabled));
-                OnPropertyChanged(nameof(CanToggleExperimental));
+                RaiseExperimentalToggle();
             };
     }
 
     /// <summary>
-    /// False once the experimental opt-in has been locked (the user opened an
-    /// experimental tab while enabled). The System-tab checkbox binds its
-    /// <c>IsEnabled</c> to this so a locked opt-in can no longer be unticked.
+    /// False once the experimental opt-in has been locked for the session (the user opened a tab that locks it while
+    /// enabled). The System-tab checkbox binds its <c>IsEnabled</c> to this so a locked opt-in can no longer be
+    /// unticked. [LF-EXPOFF-TRACE] The connection does not enter into it (the maintainer's choice after the review,
+    /// 2026-10-09: an untick while connected turns off at once what the features run in the game, and one while
+    /// disconnected at the next connect -- Teleport's teardown).
     /// </summary>
-    public bool CanToggleExperimental => !(_experimentalGate?.IsLocked ?? false);
+    public bool CanToggleExperimental => !ExperimentalLocked;
+
+    private bool ExperimentalLocked => _experimentalGate?.IsLocked ?? false;
+
+    /// <summary>[LF-EXPOFF-TRACE] The checkbox's tooltip. Locked, the box is disabled, and its tooltip says why it
+    /// cannot be unticked and until when; the box opens it while disabled too (ToolTip.ShowOnDisabled), or the reason
+    /// would never be seen.</summary>
+    public string ExperimentalToggleTip
+        => Res.Get(ExperimentalLocked ? "str.Experimental.LockedForSession" : "str.Experimental.EnableHint");
+
+    /// <summary>What the checkbox binds besides its tick, each read from the gate.</summary>
+    private void RaiseExperimentalToggle()
+    {
+        OnPropertyChanged(nameof(CanToggleExperimental));
+        OnPropertyChanged(nameof(ExperimentalToggleTip));
+    }
 
     /// <summary>
     /// Opt-in toggle for the experimental analysis tabs (Snapshot / SPC Query /
@@ -642,6 +666,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         VersionDetected = state.VersionDetected;
         IsUserOverride = state.IsUserOverride;
         IsAutoPending = state.IsAutoPending;
+        IsOverrideContradicted = state.IsOverrideContradicted;
         IsLowConfidence = state.IsLowConfidence;
         IsVersionTooOld = state.IsVersionTooOld;
         OffsetsValidated = state.OffsetsValidated;
@@ -784,6 +809,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(ShowVersionWarning));
         OnPropertyChanged(nameof(ShowUserOverrideBadge));
         OnPropertyChanged(nameof(ShowAutoPendingNote));
+        OnPropertyChanged(nameof(ShowOverrideContradictedNote));
         OnPropertyChanged(nameof(ShowLowConfidenceWarning));
         OnPropertyChanged(nameof(ShowVersionDetectedBadge));
         // Both refusal banners. ShowVersionTooOldWarning was MISSING here before the pre-UE4
@@ -1629,6 +1655,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     {
         // Defense in depth: the button is hidden unless experimental is enabled, but
         // guard the command too (and no-op without a store).
+        // [EXPOFF-TEARDOWN] An untick does not stop a run: the confirmation is modal, and the
+        // delete after it touches local files only, which cut short would be half deleted.
         if (_snapshotStore == null || !(_experimentalGate?.IsEnabled ?? false)) return;
 
         bool confirmed = await UE5DumpUI.Views.ConfirmDialog.ShowAsync(

@@ -749,6 +749,17 @@ public partial class SnapshotViewModel : ViewModelBase
             var msg = DiskGuardMessage();
             StatusText = msg;
             _log.Warn(Constants.LogCatView, "Snapshot: " + msg);
+            // A capture a crashed run left is listed nowhere, so no Delete reaches it, and the cleanup at a capture's
+            // start below never runs while the drive stays low: remove it here, rows only [SNAPSHOT-CRASH-PARTIAL].
+            // Best-effort, as that cleanup is.
+            try
+            {
+                int dead = await Task.Run(() => _store.DeleteDeadCapturesAsync());
+                if (dead > 0)
+                    _log.Info(Constants.LogCatView,
+                        $"Snapshot: removed {dead} unfinished snapshot(s) a crashed run left (capture refused, low disk)");
+            }
+            catch (Exception ex) { _log.Warn(Constants.LogCatView, $"Snapshot: unfinished-capture cleanup skipped: {ex.Message}"); }
             return CaptureOutcome.DiskLow;
         }
 
@@ -807,9 +818,12 @@ public partial class SnapshotViewModel : ViewModelBase
 
         // Delete + reclaim the partial snapshot left by ANY abnormal exit — user cancel,
         // pipe disconnect (bare OCE), an unexpected pipe death (IOException), or any other
-        // mid-capture failure. is_usable defaults to 1 and CompleteSnapshotAsync never ran,
-        // so leaving the row would surface a truncated snapshot to SPC/Pivot/diff as if
-        // complete. Reclaim too: a cancelled snapshot can be multi-GB and DELETE alone
+        // mid-capture failure. CompleteSnapshotAsync never ran, so the row is still a
+        // capture in progress: listed nowhere, but the start-of-capture cleanup leaves this
+        // process's own in-progress rows alone (only a dead process's are its to remove),
+        // so its rows would stay until a later run of the app tries a capture in this game
+        // [SNAPSHOT-CRASH-PARTIAL]. Reclaim
+        // too: a cancelled snapshot can be multi-GB and DELETE alone
         // leaves the file size unchanged until a Delete All. NO ct: the capture token may
         // already be cancelled, but this cleanup (incl. a possibly multi-second VACUUM)
         // must run to completion.
@@ -826,13 +840,15 @@ public partial class SnapshotViewModel : ViewModelBase
         {
             // Auto-reclaim any previously-flagged UNUSABLE snapshots (captures that
             // spanned a GObjects drift) before starting a fresh one — deferred cleanup
-            // so the user saw them flagged in the list until now. Best-effort: a
+            // so the user saw them flagged in the list until now — and any capture a
+            // crashed run of the app left in progress [SNAPSHOT-CRASH-PARTIAL]. Best-effort: a
             // cleanup hiccup must never block a new capture.
             try
             {
                 int purged = await Task.Run(() => _store.DeleteUnusableSnapshotsAsync(ct), ct);
                 if (purged > 0)
-                    _log.Info(Constants.LogCatView, $"Snapshot: auto-removed {purged} unusable snapshot(s) before capture");
+                    _log.Info(Constants.LogCatView,
+                        $"Snapshot: auto-removed {purged} unusable or unfinished snapshot(s) before capture");
             }
             catch (OperationCanceledException) { throw; }
             catch (Exception ex) { _log.Warn(Constants.LogCatView, $"Snapshot: unusable cleanup skipped: {ex.Message}"); }
@@ -943,10 +959,10 @@ public partial class SnapshotViewModel : ViewModelBase
                     // OperationCanceledException (PipeClient completes pending requests via
                     // TrySetCanceled() with NO token) while lct is NOT cancelled — that must
                     // NOT be swallowed: letting it fault the producer makes Task.WhenAll
-                    // rethrow, so CompleteSnapshotAsync (which would mark the row usable) is
-                    // skipped and the outer catch deletes the partial. Swallowing it would
-                    // finalise a half-captured snapshot as is_usable=1 (the column default),
-                    // poisoning SPC/Pivot/diff with a truncated-but-"complete" dataset.
+                    // rethrow, so CompleteSnapshotAsync (which would end the row as a usable
+                    // snapshot) is skipped and the outer catch deletes the partial. Swallowing
+                    // it would finalise a half-captured snapshot as usable, poisoning
+                    // SPC/Pivot/diff with a truncated-but-"complete" dataset.
                     catch (OperationCanceledException) when (lct.IsCancellationRequested) { }
                     finally { channel.Writer.TryComplete(); }
                 }, lct);
@@ -1098,7 +1114,7 @@ public partial class SnapshotViewModel : ViewModelBase
             // disconnect as a FAILURE, not a cancel: outcome=Cancelled would make the
             // auto-loop's `case Cancelled` skip StopAutoSnapshot() and wedge
             // (AutoSnapshotEnabled stuck true, _autoCts leaked, manual capture disabled). (M7)
-            // BOTH paths still delete the partial — it is is_usable=1 by default. (H1)
+            // BOTH paths still delete the partial (H1): see RemovePartialAsync.
             bool userCancelled = ct.IsCancellationRequested;
             outcome = userCancelled ? CaptureOutcome.Cancelled : CaptureOutcome.Failed;
             StopCaptureHeartbeat();
@@ -1122,7 +1138,7 @@ public partial class SnapshotViewModel : ViewModelBase
             SetError(ex);
             // A non-OCE mid-capture failure (e.g. an unexpected pipe death → IOException,
             // or a between-chunks disconnect → InvalidOperationException) leaves the same
-            // is_usable=1 partial — delete it so it can't surface as a complete snapshot. (H1)
+            // partial, still in progress — delete it (H1): see RemovePartialAsync.
             if (snapshotId > 0)
             {
                 await RemovePartialAsync();

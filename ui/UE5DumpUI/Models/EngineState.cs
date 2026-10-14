@@ -17,6 +17,11 @@ public sealed class EngineState
     /// in force, so <see cref="IsUserOverride"/> stays true beside this.</summary>
     public bool IsAutoPending { get; init; }
 
+    /// <summary>[OVERRIDE-REVIEW2-LOWS] True when the version in force is the user's override and this game's sampled
+    /// UFunctions contradict it (DynOff::OverrideContradictsTail): the DLL refuses such a pick while a scan has measured
+    /// the tail, so this is one saved before that check existed, or chosen before a scan could make it.</summary>
+    public bool IsOverrideContradicted { get; init; }
+
     /// <summary>True when ueVersion came from Tier 3 bare-pattern OR publisher-bias fallback — UI surfaces a warning.</summary>
     public bool IsLowConfidence { get; init; }
 
@@ -96,10 +101,15 @@ public sealed class EngineState
     public int ItemDetectProbes { get; init; }
 
     /// <summary>True when the stride is a guess: object counts and names may be an alias of the real pool.</summary>
-    public bool ItemStrideUntrusted => IsStrideUntrusted(ItemDetect);
+    public bool ItemStrideUntrusted => IsStrideUntrusted(ItemDetect, IsVersionTooOld);
 
-    /// <summary>The rule, shared by the badge and the dump stamp: tentative and undetected are guesses.</summary>
-    public static bool IsStrideUntrusted(string detect) => detect is "tentative" or "undetected";
+    /// <summary>The one rule for every surface that reports the stride verdict, so a badge and a dump stamp cannot
+    /// disagree: tentative and undetected are guesses. Never on a refused engine (<see cref="IsVersionTooOld"/>): the
+    /// scan was skipped, so its "undetected" is only the value the DLL starts with -- no stride was guessed and no
+    /// object was read with one, and the refusal banner already says why everything is empty.
+    /// [REFUSED-STRIDE-NOTICE]</summary>
+    public static bool IsStrideUntrusted(string detect, bool versionTooOld) =>
+        !versionTooOld && detect is ("tentative" or "undetected");
 
     /// <summary>The badge's words for a guessed stride; "" when the stride is not a guess.</summary>
     public static string StrideGuessText(string detect, int validated, int probes) => detect switch

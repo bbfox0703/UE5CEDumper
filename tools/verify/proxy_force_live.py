@@ -23,7 +23,7 @@ import sys
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from proxy_refresh import BACKUPS, deployed, dist_map, running, say, sha   # noqa: E402
+from proxy_refresh import BACKUPS, busy, deployed, dist_map, say, sha      # noqa: E402
 from b29_product_name import product_name                                 # noqa: E402
 
 ver = ctypes.WinDLL("version")
@@ -51,13 +51,13 @@ def file_version(p):
 
 
 def ours():
-    return [(d, exe, q) for d, exe, q in deployed() if product_name(str(q)) == "UE5CEDumper"]
+    return [(d, exes, q) for d, exes, q in deployed() if product_name(str(q)) == "UE5CEDumper"]
 
 
 def report():
     dm = dist_map()
     say(f"dist/proxy: " + ", ".join(f"{n}={file_version(p)} {sha(p)[:12]}" for n, p in sorted(dm.items())))
-    for d, exe, q in ours():
+    for d, _exes, q in ours():
         src = dm.get(q.name.lower())
         same = src is not None and sha(src) == sha(q)
         say(f"  {d.name[:34]:34} {q.name:12} v{file_version(q)}  {q.stat().st_size:>10,}  {sha(q)[:12]}"
@@ -67,8 +67,10 @@ def report():
 def backup():
     dest = BACKUPS / time.strftime("force-live-%Y%m%d-%H%M%S")
     dest.mkdir(parents=True, exist_ok=False)
-    for d, exe, q in ours():
-        to = dest / d.name / q.name
+    # One folder per PROXY, not per game: a game can carry ours in two folders, or two of ours in one, and restore
+    # reads the one source.txt beside each copy -- a shared folder sent every copy to the last one's path.
+    for i, (d, _exes, q) in enumerate(ours()):
+        to = dest / f"{i:02d} {d.name}" / q.name
         to.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(q, to)
         (to.parent / "source.txt").write_text(f"{q}\n{sha(q)}\n", encoding="utf-8")
@@ -76,12 +78,13 @@ def backup():
 
 
 def tamper(match):
-    hits = [(d, exe, q) for d, exe, q in ours() if match.lower() in d.name.lower()]
+    hits = [(d, exes, q) for d, exes, q in ours() if match.lower() in d.name.lower()]
     if len(hits) != 1:
         raise SystemExit(f"{match!r} must match exactly one game with our proxy, matched {len(hits)}")
-    d, exe, q = hits[0]
-    if running(exe.name):
-        raise SystemExit(f"{exe.name} is running -- refusing")
+    d, exes, q = hits[0]
+    up = busy(exes)
+    if up:
+        raise SystemExit(f"{', '.join(up)} is running -- refusing")
     v0, s0 = file_version(q), sha(q)
     with open(q, "ab") as f:
         f.write(b"PROXYFORCELIVE!!")   # 16 bytes past the PE image: version resource untouched

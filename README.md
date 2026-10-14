@@ -63,7 +63,7 @@ Games grouped by UE version range. Per-game detail — layout quirks, proxy note
 
 *UE 4.11 is the supported floor; 4.10 and older are reported as unsupported.*
 
-*The Adventures of Elliot and FINAL FANTASY RESONANCE DEMO hide their engine version: the tool shows 5.4 for them, and this table places them by the engine files they ship (5.6).*
+*The Adventures of Elliot and FINAL FANTASY RESONANCE DEMO hide their engine version; since build 3647 the tool reads 5.6 from their structure (builds before it showed 5.4).*
 
 ---
 

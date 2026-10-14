@@ -53,6 +53,8 @@ public class PointerPanelVersionGateTests
         GNamesMethod = "not_found",
         GWorldMethod = "not_found",
         ObjectCount = 0,
+        // What the wire carries on a refusal: Aura's static default, because its detection never ran.
+        ItemDetect = "undetected",
     };
 
     [Fact]
@@ -166,6 +168,23 @@ public class PointerPanelVersionGateTests
         // The Sparse card must stay silent too — neither "unsupported" nor "AOB not found".
         Assert.False(vm.IsSparseDelegatesUnsupported);
         Assert.False(vm.IsSparseDelegatesNotFound);
+    }
+
+    [Theory]
+    [InlineData(PointerPanelViewModel.PreUE4SentinelVersion)]
+    [InlineData(410)]
+    public void RefusedEngine_ShowsNoStrideGuess(int ueVersion)
+    {
+        // [REFUSED-STRIDE-NOTICE] LIVE-OBSERVED on IS Defense (UE 4.10.2), build 3646: the top bar said the
+        // object-array stride was not detected and "the default is in use" under the refusal banner. No scan ran,
+        // so no stride was guessed and nothing was read with one; the "undetected" on the wire is only the value
+        // Aura starts with. The dump stamp shares the rule, so it must not call the stride untrusted either.
+        var state = Refused(ueVersion);
+        var vm = NewVm();
+        vm.Update(state);
+
+        Assert.False(vm.ShowStrideGuessBadge);
+        Assert.False(state.ItemStrideUntrusted);
     }
 
     [Fact]
@@ -391,5 +410,118 @@ public class PointerPanelVersionGateTests
         vm.Update(AutoPending(427));
 
         Assert.Contains(nameof(PointerPanelViewModel.ShowAutoPendingNote), raised);
+    }
+
+    // ══ [OVERRIDE-REVIEW2-LOWS] An override this game's UFunctions contradict ═════════════════════
+    //
+    // The DLL refuses such a pick while a scan has measured the UFunction tail. One saved before that check existed, or
+    // chosen before any scan, is applied at every launch anyway; the vote that measures the contradiction said so in
+    // the log alone. get_pointers now says it (override_contradicted), and the panel shows it beside the override badge.
+
+    private static EngineState Contradicted(int ueVersion) => new()
+    {
+        UEVersion = ueVersion, VersionDetected = true, IsUserOverride = true, IsOverrideContradicted = true,
+        ObjectCount = 1,
+    };
+
+    [Fact]
+    public void AContradictedOverride_ShowsTheNoteBesideTheBadge()
+    {
+        var vm = NewVm();
+        vm.Update(Contradicted(417));
+
+        Assert.True(vm.ShowOverrideContradictedNote);
+        Assert.True(vm.ShowUserOverrideBadge);
+        Assert.Equal("UE 4.17", vm.SelectedUeVersionOverride);
+    }
+
+    [Fact]
+    public void AFittingOverride_ShowsNoNote()
+    {
+        var vm = NewVm();
+        vm.Update(Overridden(418));
+
+        Assert.False(vm.ShowOverrideContradictedNote);
+    }
+
+    [Fact]
+    public void ADetectedVersion_NeverShowsTheNote()
+    {
+        // The note tells the user to choose Auto or another version; with no override in force there is none to take
+        // back. The DLL never sends the flag without an override -- this holds the panel to it as well.
+        var vm = NewVm();
+        vm.Update(new EngineState
+        {
+            UEVersion = 417, VersionDetected = true, IsOverrideContradicted = true, ObjectCount = 1,
+        });
+
+        Assert.False(vm.ShowOverrideContradictedNote);
+    }
+
+    [Fact]
+    public void AutoPending_ShowsItsOwnNote_NotTheContradiction()
+    {
+        // Auto is already chosen and waits for the next launch: telling the user to choose Auto again would contradict
+        // the pending note beside it.
+        var vm = NewVm();
+        vm.Update(new EngineState
+        {
+            UEVersion = 417, VersionDetected = true, IsUserOverride = true, IsAutoPending = true,
+            IsOverrideContradicted = true, ObjectCount = 1,
+        });
+
+        Assert.True(vm.ShowAutoPendingNote);
+        Assert.False(vm.ShowOverrideContradictedNote);
+    }
+
+    [Fact]
+    public void Auto_RestoringTheDetection_TakesTheNoteAway()
+    {
+        var dump = new AutoRecorder(new EngineState { UEVersion = 418, VersionDetected = true, ObjectCount = 1 });
+        var vm = new PointerPanelViewModel(new StubPlatform(), dump);
+        vm.Update(Contradicted(417));
+        Assert.True(vm.ShowOverrideContradictedNote);
+
+        vm.SelectedUeVersionOverride = "Auto";
+
+        Assert.Equal(new[] { 0 }, dump.Sent);
+        Assert.False(vm.ShowOverrideContradictedNote);
+        Assert.True(vm.ShowVersionDetectedBadge);
+    }
+
+    [Fact]
+    public void Update_RaisesTheOverrideContradictedNote()
+    {
+        var vm = NewVm();
+        var raised = new List<string>();
+        ((INotifyPropertyChanged)vm).PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != null) raised.Add(e.PropertyName);
+        };
+
+        vm.Update(Contradicted(417));
+
+        Assert.Contains(nameof(PointerPanelViewModel.ShowOverrideContradictedNote), raised);
+    }
+
+    [Fact]
+    public void ThePanel_ShowsTheContradictionBesideTheOverrideBadge()
+    {
+        var doc = System.Xml.Linq.XDocument.Load(
+            NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/PointerPanel.axaml"));
+        string? Attr(System.Xml.Linq.XElement e, string name) => e.Attribute(name)?.Value;
+        var blocks = doc.Descendants().Where(e => e.Name.LocalName == "TextBlock").ToList();
+
+        var badge = blocks.Single(e => Attr(e, "IsVisible") == "{Binding ShowUserOverrideBadge}");
+        var beside = badge.ElementsAfterSelf().FirstOrDefault();
+        Assert.NotNull(beside);
+        Assert.Equal("{Binding ShowOverrideContradictedNote}", Attr(beside!, "IsVisible"));
+        Assert.Equal("{StaticResource str.Pointers.VersionOverrideContradictedBadge}", Attr(beside!, "Text"));
+        Assert.Equal("{StaticResource str.Pointers.VersionOverrideContradictedText}", Attr(beside!, "ToolTip.Tip"));
+
+        // ...and the full text under the version row, as the low-confidence warning has.
+        Assert.Contains(blocks, e => Attr(e, "IsVisible") == "{Binding ShowOverrideContradictedNote}"
+                                     && Attr(e, "Text") == "{StaticResource str.Pointers.VersionOverrideContradictedText}"
+                                     && Attr(e, "TextWrapping") == "Wrap");
     }
 }

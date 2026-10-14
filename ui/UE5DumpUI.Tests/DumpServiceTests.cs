@@ -478,6 +478,58 @@ public class DumpServiceTests
         Assert.False(state.IsAutoPending);
     }
 
+    [Fact]
+    public async Task GetPointersAsync_CarriesOverrideContradicted()
+    {
+        // [OVERRIDE-REVIEW2-LOWS] An override saved before the DLL refused a version the UFunctions contradict, or chosen
+        // before any scan, is applied at every launch; get_pointers now says so, and every refresh must keep saying it.
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["ue_version"] = 417,
+                    ["is_user_override"] = true,
+                    ["override_contradicted"] = true,
+                    ["gobjects"] = "0x1",
+                    ["gnames"] = "0x2",
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var state = await CreateService().GetPointersAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(state.IsOverrideContradicted);
+        Assert.True(state.IsUserOverride);
+    }
+
+    [Fact]
+    public async Task GetPointersAsync_OmittedOverrideContradictedReadsAsFitting()
+    {
+        // An older DLL omits override_contradicted; it never measured the override in force against anything it could
+        // publish, so no note is the right default.
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["ue_version"] = 417,
+                    ["is_user_override"] = true,
+                    ["gobjects"] = "0x1",
+                    ["gnames"] = "0x2",
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var state = await CreateService().GetPointersAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(state.IsOverrideContradicted);
+    }
+
     [Theory]
     [InlineData("restored", "restored the detection on record")]
     [InlineData("no_detection", "Auto applies at the next launch")]

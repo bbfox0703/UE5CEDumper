@@ -1,7 +1,7 @@
 """Build the synthetic marker exes B25 and [VER-410-GATE] need, and judge their scan logs.
 No game, no PowerShell.
 
-    py b25_marker_exes.py build      # compile all four into out/b25/
+    py b25_marker_exes.py build      # compile all six into out/b25/ (E and F inside install trees)
     py b25_marker_exes.py check      # judge each exe's scan-0.log, once the DLL has scanned it
     py b25_marker_exes.py selftest   # the judges against canned logs, offline
     py b25_marker_exes.py clean
@@ -46,12 +46,40 @@ first genuine 4.10 title met (IS Defense, 4.10.2) was scanned instead of refused
   C without D would pass a gate that refuses every 4.10 reading again, which is the
   B25 defect; D without C would pass today's broken build.
 
+[VER-410-RIG-EF] adds the two shapes a CrashReportClient decides. Each exe is laid out
+as an install -- out/b25/<stem>_root/B25Game/Binaries/Win64/<stem>.exe, with a copy of
+C (fixed 4.10.2.0 + IS Defense's build string) at <stem>_root/Engine/Binaries/Win64/
+CrashReportClient.exe, the first place Grimoire::CrashReportCandidates looks -- and is
+started from THERE, not from out/b25/. A-D have no CrashReportClient above them, and
+`build` checks both, through a port of that lookup.
+
+  E  `b25e_crc_agrees.exe` -- game fixed fields 1.0.0.0 under IS Defense's
+     ProductVersion string (dll/tests/res/game_buildstring_410.rc). The exe reads 410
+     out of its own build string, which cannot corroborate itself; the
+     CrashReportClient agreeing with it does, so it is refused.
+     PASS = "is the engine's build string -> 410", the CrashReportClient in the layout
+     read as 410, "AGREE on 410", "CORROBORATED by a CrashReportClient agreeing with
+     the exe", "UE Version = 410 (tier=1", the SKIPPING line, and none of: the exe's
+     own build string corroborating, "NOT accepting", a GObjects batch.
+
+  F  `b25f_crc_alone.exe` -- a game version and nothing else
+     (dll/tests/res/game_only.rc), so the exe reads nothing and the CrashReportClient's
+     410 stands alone: one signal, scanned at tier 3. PASS = the CrashReportClient line,
+     "CrashReportClient says UE 410, below the <floor> floor, and the game exe's own PE
+     VERSIONINFO read nothing usable", "PE resource failed", the note under it naming
+     the CrashReportClient, "UE Version = 410 (tier=3", and no "SKIPPING the scan",
+     "CORROBORATED", "AGREE on" or "PE VERSIONINFO says UE 410" (its number in the
+     exe's mouth, the wording before the [VER-410-GATE] review).
+
+  E without F would pass a gate that lets one CrashReportClient refuse on its own; F
+  without E would pass rev 8, which read nothing out of E's string.
+
 RUNNING THEM is a live step this script does not take: start an exe, inject the DLL
 (tools/verify/inject.py, or CE + the .CT's init), and trigger the scan -- injection
 alone starts the pipe and scans nothing. Then `check`. The floor is read from
-Grimoire.h, never typed. ⚠ A and D are SAVED to the hint cache after their scan, so a
+Grimoire.h, never typed. ⚠ A, D and F are SAVED to the hint cache after their scan, so a
 second run of the same exe skips detection; `check` says so, and `build` mints a new PE
-hash. B and C are refused before the save, so they re-detect on every run.
+hash. B, C and E are refused before the save, so they re-detect on every run.
 
 THE NEGATIVE CONTROL IS FREE AND ALREADY MEASURED. A stock `python.exe` reaches the
 identical terminal branch and logs "pre-UE4 markers 0/4, below the 2 needed" -- same
@@ -139,6 +167,16 @@ RC_D = (RES / "b25d_bare.rc").read_text(encoding="ascii")
 if f'"ProductVersion", "{BARE_STRING}"' not in RC_D:
     raise SystemExit("b25: FAILED -- dll/tests/res/b25d_bare.rc lost its bare version string")
 
+# [VER-410-RIG-EF] E and F carry dll_core_test's own fixtures too: E the game-versioned exe with IS Defense's build string
+# (`verres_game_buildstring_410`, the exe of dll_core_test's install tree), F a game version and nothing else.
+RC_E = (RES / "game_buildstring_410.rc").read_text(encoding="ascii")
+if f'"ProductVersion", "{IS_DEFENSE_BUILD_STRING}"' not in RC_E or "PRODUCTVERSION 1,0,0,0" not in RC_E:
+    raise SystemExit("b25: FAILED -- dll/tests/res/game_buildstring_410.rc lost its game fixed fields or the build string")
+GAME_ONLY_STRING = "1.0.10897.0"
+RC_F = (RES / "game_only.rc").read_text(encoding="ascii")
+if f'"ProductVersion", "{GAME_ONLY_STRING}"' not in RC_F or "+UE" in RC_F:
+    raise SystemExit("b25: FAILED -- dll/tests/res/game_only.rc is no longer a game version alone")
+
 # (exe stem, C source, resource script or None, the fixed version its resource must carry)
 BRANCHES = (
     ("b25a_subfloor", "b25a.c", "b25a.rc", (4, 5, 0, 0)),
@@ -146,6 +184,62 @@ BRANCHES = (
     ("b25c_corroborated", "b25c.c", "b25c.rc", (4, 10, 2, 0)),
     ("b25d_bare", "b25d.c", "b25d.rc", (4, 10, 3, 0)),
 )
+
+# [VER-410-RIG-EF] The two shapes a CrashReportClient decides, so each exe is laid out as an install: the exe at
+# <root>/B25Game/Binaries/Win64/<stem>.exe and a 4.10.2 CrashReportClient -- a copy of b25c, whose resource is the one
+# dll_core_test's install tree puts there -- at <root>/Engine/Binaries/Win64/CrashReportClient.exe, the first place
+# Grimoire::CrashReportCandidates looks above that exe. Same columns as BRANCHES.
+TREE_BRANCHES = (
+    ("b25e_crc_agrees", "b25e.c", "b25e.rc", (1, 0, 0, 0)),
+    ("b25f_crc_alone", "b25f.c", "b25f.rc", (1, 0, 10897, 0)),
+)
+CRC_SOURCE = "b25c_corroborated"   # the BRANCHES exe copied in as each tree's CrashReportClient
+
+
+def tree_root(name):
+    return OUT / f"{name}_root"
+
+
+def exe_path(name):
+    """Where the marker exe runs from: OUT itself for A-D, its install tree for E and F."""
+    if any(name == t[0] for t in TREE_BRANCHES):
+        return tree_root(name) / "B25Game" / "Binaries" / "Win64" / f"{name}.exe"
+    return OUT / f"{name}.exe"
+
+
+def tree_crc(name):
+    return tree_root(name) / "Engine" / "Binaries" / "Win64" / "CrashReportClient.exe"
+
+
+def crc_max_ancestors():
+    """Grimoire::CRC_MAX_ANCESTORS, read from source: never typed here."""
+    src = (ROOT / "dll" / "src" / "Grimoire.h").read_text(encoding="utf-8")
+    m = re.search(r"constexpr\s+int\s+CRC_MAX_ANCESTORS\s*=\s*(\d+)\s*;", src)
+    if not m:
+        raise SystemExit("b25: FAILED -- CRC_MAX_ANCESTORS not found in Grimoire.h")
+    return int(m.group(1))
+
+
+def crash_report_candidates(exe):
+    """Grimoire::CrashReportCandidates, ported: nearest ancestor first, Win64 before Win32, a drive root ends it."""
+    out = []
+    p = str(exe).replace("/", "\\")
+    if "\\" not in p:
+        return out
+    d = p.rsplit("\\", 1)[0]
+    for _ in range(crc_max_ancestors()):
+        if len(d) <= 2:
+            break
+        out += [d + r"\Engine\Binaries\Win64\CrashReportClient.exe", d + r"\Engine\Binaries\Win32\CrashReportClient.exe"]
+        if "\\" not in d:
+            break
+        d = d.rsplit("\\", 1)[0]
+    return out
+
+
+def crc_found(exe):
+    """The CrashReportClient the DLL reads for this exe: the first candidate that exists, or None."""
+    return next((c for c in crash_report_candidates(exe) if os.path.isfile(c)), None)
 
 
 def msvc_env():
@@ -202,9 +296,15 @@ def build():
     (OUT / "b25d.c").write_text(SRC_COMMON % "    if (argc > 99) printf(\"d\\n\");",
                                 encoding="ascii")
     (OUT / "b25d.rc").write_text(RC_D, encoding="ascii")
+    (OUT / "b25e.c").write_text(SRC_COMMON % "    if (argc > 99) printf(\"e\\n\");",
+                                encoding="ascii")
+    (OUT / "b25e.rc").write_text(RC_E, encoding="ascii")
+    (OUT / "b25f.c").write_text(SRC_COMMON % "    if (argc > 99) printf(\"f\\n\");",
+                                encoding="ascii")
+    (OUT / "b25f.rc").write_text(RC_F, encoding="ascii")
 
-    # A, C, D: with a version resource. B: deliberately WITHOUT one.
-    for _, _, rcfile, _ in BRANCHES:
+    # A, C, D, E, F: with a version resource. B: deliberately WITHOUT one.
+    for _, _, rcfile, _ in BRANCHES + TREE_BRANCHES:
         if not rcfile:
             continue
         res = rcfile[:-3] + ".res"
@@ -214,7 +314,7 @@ def build():
             raise SystemExit(f"b25: FAILED -- rc.exe {rc.returncode} for {rcfile}: "
                              f"{rc.stdout}{rc.stderr}")
 
-    for name, src, rcfile, _ in BRANCHES:
+    for name, src, rcfile, _ in BRANCHES + TREE_BRANCHES:
         extra = [rcfile[:-3] + ".res"] if rcfile else []
         cl = subprocess.run([_tool(env, "cl"), "/nologo", "/O2", "/W3", src,
                              f"/Fe:{name}.exe", f"/Fo:{name}.obj",
@@ -227,6 +327,18 @@ def build():
         if not exe.is_file():
             raise SystemExit(f"b25: FAILED -- cl reported success but {exe} is absent")
         print(f"built {exe}  ({exe.stat().st_size:,} bytes)")
+
+    # [VER-410-RIG-EF] E and F move into their install trees, each beside its own CrashReportClient copy. A tree from an
+    # earlier build goes first, so no stale exe or CrashReportClient survives into this one.
+    import shutil
+    for name, _, _, _ in TREE_BRANCHES:
+        if tree_root(name).exists():
+            shutil.rmtree(tree_root(name))
+        exe_path(name).parent.mkdir(parents=True)
+        tree_crc(name).parent.mkdir(parents=True)
+        os.replace(OUT / f"{name}.exe", exe_path(name))
+        shutil.copy2(OUT / f"{CRC_SOURCE}.exe", tree_crc(name))
+        print(f"laid out {exe_path(name)}\n      with {tree_crc(name)}")
 
     _verify_artifacts()
 
@@ -275,6 +387,27 @@ def _verify_artifacts():
             got = _fixed_version(exe[name])
             checks.append((f"{name} fixed file/product version is {fixed}",
                            got == (fixed, fixed)))
+    # [VER-410-RIG-EF] E and F are told apart by their resources alone, and each is judged on the CrashReportClient the
+    # DLL finds above it -- so that copy is checked where the ported lookup finds it, and A-D are checked to find none.
+    e, f = (exe_path(n).read_bytes() for n, _, _, _ in TREE_BRANCHES)
+    checks += [
+        ("E and F carry no UE3 marker", no_ue3(e) and no_ue3(f)),
+        ("E carries IS Defense's engine build string", _wide(IS_DEFENSE_BUILD_STRING) in e),
+        ("F carries its game version string and no '+UE'", _wide(GAME_ONLY_STRING) in f and _wide("+UE") not in f),
+    ]
+    for name, _, _, fixed in TREE_BRANCHES:
+        crc = tree_crc(name)
+        checks.append((f"{name} fixed file/product version is {fixed}",
+                       _fixed_version(exe_path(name).read_bytes()) == (fixed, fixed)))
+        checks.append((f"{name}: the DLL's lookup finds its own CrashReportClient first",
+                       crc_found(exe_path(name)) == str(crc).replace("/", "\\")))
+        if crc.is_file():
+            data = crc.read_bytes()
+            checks.append((f"{name}: that CrashReportClient is fixed 4.10.2.0 with IS Defense's build string",
+                           _fixed_version(data) == ((4, 10, 2, 0), (4, 10, 2, 0))
+                           and _wide(IS_DEFENSE_BUILD_STRING) in data))
+    for name, _, _, _ in BRANCHES:
+        checks.append((f"{name}: no CrashReportClient above it", crc_found(exe_path(name)) is None))
     bad = [n for n, ok in checks if not ok]
     for n, ok in checks:
         print(f"  {'ok  ' if ok else 'FAIL'} {n}")
@@ -335,8 +468,45 @@ def judge_d(text, floor):
                     ["SKIPPING the scan", "CORROBORATED"])
 
 
+# [VER-410-RIG-EF] The CrashReportClient line both trees must show: the copy in the install layout, read as 410.
+CRC_IN_LAYOUT = r"\Engine\Binaries\Win64\CrashReportClient.exe' -> 410"
+
+
+def clauses_e(floor):
+    """E: the exe's 4.10 reading comes out of its build string, which cannot corroborate itself; the CrashReportClient
+    agreeing with it does, so it is refused before any scan. -> (must, must_not)"""
+    return (["is the engine's build string -> 410", CRC_IN_LAYOUT,
+             "CrashReportClient and the game exe AGREE on 410",
+             "CORROBORATED by a CrashReportClient agreeing with the exe",
+             "UE Version = 410 (tier=1",
+             f"older than the minimum supported {floor}", "SKIPPING the scan"],
+            ["CORROBORATED by the exe's own engine build string", "NOT accepting that on its own",
+             "SOURCES DISAGREE", "[GObjects] Batch"])
+
+
+def clauses_f(floor):
+    """F: the exe reads nothing, so the CrashReportClient's 410 stands alone -- said as the CrashReportClient's, never
+    put in the exe's mouth -- and the scan runs. -> (must, must_not)"""
+    return ([CRC_IN_LAYOUT,
+             f"CrashReportClient says UE 410, below the {floor} floor, and the game exe's own PE VERSIONINFO "
+             "read nothing usable", "NOT accepting that on its own",
+             "PE resource failed",
+             f"the game exe's resource read nothing usable; CrashReportClient says UE 410, below the {floor} "
+             "floor", "UE Version = 410 (tier=3"],
+            ["SKIPPING the scan", "CORROBORATED", "AGREE on", "PE VERSIONINFO says UE 410"])
+
+
+def judge_e(text, floor):
+    return _verdict(text, *clauses_e(floor))
+
+
+def judge_f(text, floor):
+    return _verdict(text, *clauses_f(floor))
+
+
 JUDGES = {"b25a_subfloor": judge_a, "b25b_ue3": judge_b,
-          "b25c_corroborated": judge_c, "b25d_bare": judge_d}
+          "b25c_corroborated": judge_c, "b25d_bare": judge_d,
+          "b25e_crc_agrees": judge_e, "b25f_crc_alone": judge_f}
 
 
 def check():
@@ -345,9 +515,9 @@ def check():
     floor = support_floor()
     print(f"support floor (read from Grimoire.h): {floor}")
     verdicts = []
-    for name, _, _, _ in BRANCHES:
+    for name, _, _, _ in BRANCHES + TREE_BRANCHES:
         log = LOGS / name / "scan-0.log"
-        exe = OUT / f"{name}.exe"
+        exe = exe_path(name)
         if not log.is_file():
             print(f"  NOT RUN  {name}: no {log}")
             verdicts.append("NOT RUN")
@@ -384,6 +554,29 @@ def selftest():
     d_ok = below % 410 + "FindAll: UE Version = 410 (tier=3, detected=yes)\n[GObjects] Batch 1/7\n"
     rev7 = below % 410 + "FindAll: UE Version = 410 (tier=3, detected=yes)\n"  # IS Defense's rev-7 run
     cached = "FindAll: UE Version = 410 (cached, rev=8) — skipped DetectVersion\n"
+    # [VER-410-RIG-EF] E and F, in the DLL's own wording (Genau's resource half).
+    crc = (f"{stamp}DetectVersion: CrashReportClient at 'D:\\rig\\out\\b25\\b25x_root\\Engine\\Binaries\\Win64\\"
+           "CrashReportClient.exe' -> 410\n")
+    e_read = (f"{stamp}DetectVersion: VERSIONINFO string 'ProductVersion' = '{IS_DEFENSE_BUILD_STRING}' is the "
+              "engine's build string -> 410\n")
+    e_ok = (e_read + crc + "DetectVersion: CrashReportClient and the game exe AGREE on 410\n"
+            f"DetectVersion: PE VERSIONINFO says UE 410, below the {floor} floor, CORROBORATED by a CrashReportClient "
+            "agreeing with the exe — accepting it at tier 1, so the scan will be refused as too old.\n"
+            "FindAll: UE Version = 410 (tier=1, detected=yes, lowConfidence=no)\n"
+            f"FindAll: UE 410 is older than the minimum supported {floor} — SKIPPING the scan.\n")
+    f_ok = (crc + f"{stamp}DetectVersion: CrashReportClient says UE 410, below the {floor} floor, and the game exe's own "
+            "PE VERSIONINFO read nothing usable — NOT accepting that on its own (it would refuse the whole scan). "
+            "Corroborating against the memory string scan.\n"
+            "DetectVersion: PE resource failed, falling back to memory string scan\n"
+            "DetectVersion: (the game exe's resource read nothing usable; CrashReportClient says UE 410, below the "
+            f"{floor} floor, which alone does not corroborate a reading below it — the memory scan decides)\n"
+            "FindAll: UE Version = 410 (tier=3, detected=yes)\n[GObjects] Batch 1/7\n")
+    # E before rev 9: the version-first string read nothing, so E's log was F's.
+    e_rev8 = f_ok
+    # F before the review: the CrashReportClient's 410 logged as the exe's own reading.
+    f_mouth = f_ok.replace("CrashReportClient says UE 410, below the "
+                           f"{floor} floor, and the game exe's own PE VERSIONINFO read nothing usable",
+                           f"PE VERSIONINFO says UE 410, below the {floor} floor")
     cases = [
         ("A passes its own log", judge_a, a_ok, "PASS"),
         ("A fails on a refusal", judge_a, a_ok + "SKIPPING the scan\n", "FAIL"),
@@ -398,14 +591,79 @@ def selftest():
         ("D fails when corroborated but still scanned", judge_d, d_ok + "CORROBORATED\n", "FAIL"),
         ("a cached run is CACHED, never PASS", judge_d, cached + d_ok, "CACHED"),
         ("an empty log fails every judge", judge_c, "", "FAIL"),
+        ("E passes its own log", judge_e, e_ok, "PASS"),
+        ("E fails on its rev-8 run (the string read nothing, scanned)", judge_e, e_rev8, "FAIL"),
+        ("E fails when the exe's own build string corroborated itself", judge_e,
+         e_ok.replace("by a CrashReportClient agreeing with the exe",
+                      f"by the exe's own engine build string '{IS_DEFENSE_BUILD_STRING}'"), "FAIL"),
+        # ...and with the CrashReportClient's line still there, only the must-not can see it.
+        ("E fails when the exe's own build string corroborated it as well", judge_e,
+         e_ok + f"{stamp}DetectVersion: CORROBORATED by the exe's own engine build string "
+         f"'{IS_DEFENSE_BUILD_STRING}'\n", "FAIL"),
+        ("E fails if a GObjects batch ran", judge_e, e_ok + "[GObjects] Batch 1/7\n", "FAIL"),
+        ("E fails if a NOT-accepting line came too", judge_e, e_ok + f"{stamp}DetectVersion: PE VERSIONINFO says UE "
+         f"410, below the {floor} floor — NOT accepting that on its own (it would refuse the whole scan).\n", "FAIL"),
+        ("E fails if the exe and the CrashReportClient disagreed", judge_e, e_ok + f"{stamp}DetectVersion: SOURCES "
+         "DISAGREE — CrashReportClient says 410, the game exe's own VERSIONINFO says 427.\n", "FAIL"),
+        ("E fails without the CrashReportClient its install layout puts above it", judge_e,
+         e_ok.replace(crc, ""), "FAIL"),
+        ("E fails on C's log (the exe corroborating itself, no CrashReportClient)", judge_e, c_ok, "FAIL"),
+        ("F passes its own log", judge_f, f_ok, "PASS"),
+        ("F fails on E's log (a CrashReportClient alone must not refuse)", judge_f, e_ok, "FAIL"),
+        ("F fails when the CrashReportClient's 410 is put in the exe's mouth", judge_f, f_mouth, "FAIL"),
+        ("F fails when the exe's mouth line comes beside the right one", judge_f,
+         f_ok + f"{stamp}DetectVersion: PE VERSIONINFO says UE 410, below the {floor} floor — NOT accepting that on its "
+         "own (it would refuse the whole scan).\n", "FAIL"),
+        ("F fails on a refusal", judge_f, f_ok + f"FindAll: UE 410 is older than the minimum supported {floor} — "
+         "SKIPPING the scan.\n", "FAIL"),
+        ("F fails on D's log (the exe's own reading, no CrashReportClient)", judge_f, d_ok, "FAIL"),
+        ("F fails if anything was CORROBORATED", judge_f,
+         f_ok + "DetectVersion: CORROBORATED by a CrashReportClient agreeing with the exe\n", "FAIL"),
+        ("F fails if the exe agreed with the CrashReportClient", judge_f,
+         f_ok + "DetectVersion: CrashReportClient and the game exe AGREE on 410\n", "FAIL"),
+        ("a cached F is CACHED, never PASS", judge_f, cached + f_ok, "CACHED"),
+        ("an empty log fails E", judge_e, "", "FAIL"),
+        ("an empty log fails F", judge_f, "", "FAIL"),
     ]
+    # [VER-410-RIG-EF] Every clause of E's and F's judges carries weight: the PASS log with the lines holding one `must`
+    # taken out fails, and so does the PASS log with one `must_not` added.
+    for tag, clauses, judge, ok_log in (("E", clauses_e, judge_e, e_ok), ("F", clauses_f, judge_f, f_ok)):
+        must, must_not = clauses(floor)
+        for s in must:
+            cut = "".join(l for l in ok_log.splitlines(True) if s not in l)
+            cases.append((f"{tag} fails without {s[:60]!r}", judge, cut, "FAIL"))
+        for s in must_not:
+            cases.append((f"{tag} fails with {s[:60]!r} added", judge, ok_log + s + "\n", "FAIL"))
     bad = 0
     for label, judge, text, want in cases:
         got, why = judge(text, floor)
         ok = got == want
         bad += not ok
         print(f"  {'ok  ' if ok else 'FAIL'} {label}: {got}" + ("" if ok else f" (want {want}) {why}"))
-    print(f"selftest: {len(cases) - bad}/{len(cases)} passed")
+    # [VER-410-RIG-EF] The CrashReportClient lookup's port, against Test_CrashReportCandidates' own cases: `build`
+    # checks each tree's copy is the first one it finds, which is only as good as the port.
+    p3r = r"D:\SteamLibrary\steamapps\common\P3R\P3R\Binaries\Win64\P3R.exe"
+    c = crash_report_candidates(p3r)
+    lookups = [
+        ("the real P3R path is produced",
+         r"D:\SteamLibrary\steamapps\common\P3R\Engine\Binaries\Win64\CrashReportClient.exe" in c),
+        ("nearest ancestor first -- the exe's own dir leads",
+         bool(c) and c[0].startswith(r"D:\SteamLibrary\steamapps\common\P3R\P3R\Binaries\Win64\Engine")),
+        ("Win64 before Win32 at each level", len(c) % 2 == 0 and all(
+            c[i].endswith(r"\Win64\CrashReportClient.exe") and c[i + 1].endswith(r"\Win32\CrashReportClient.exe")
+            for i in range(0, len(c), 2))),
+        ("at most CRC_MAX_ANCESTORS levels are probed", len(c) <= 2 * crc_max_ancestors()),
+        ("forward slashes are a separator too", bool(crash_report_candidates("D:/Games/X/Binaries/Win64/X.exe"))),
+        ("a bare filename yields nothing", crash_report_candidates("Game.exe") == []),
+        ("a drive root stops the walk", crash_report_candidates(r"D:\Game.exe") == []),
+        ("E's layout: its CrashReportClient is three levels above the exe's folder, the fourth Win64 candidate",
+         crash_report_candidates(exe_path("b25e_crc_agrees"))[6] == str(tree_crc("b25e_crc_agrees"))),
+    ]
+    for label, ok in lookups:
+        bad += not ok
+        print(f"  {'ok  ' if ok else 'FAIL'} lookup: {label}")
+    total = len(cases) + len(lookups)
+    print(f"selftest: {total - bad}/{total} passed")
     return 1 if bad else 0
 
 

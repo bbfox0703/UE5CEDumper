@@ -2221,6 +2221,53 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void InitVersionLadder_PastFiveFour_ReadsTheMeasuredEnumAndStructLayouts()
+    {
+        // [VER-MARKERS-PAST-504] The 5.5 and 5.6 rungs' rules, samplers and probes -- which classes they sample, how
+        // many, and when the enum probe skips -- are pinned in dll_helpers_test (Test_EnumPackageProbe,
+        // Test_StructStateProbe, Test_VersionLadder). Frieren.cpp reaches no test target, so the wiring is pinned here:
+        // the ladder is handed both probes, each probe reads behind the MEASURED offset, the object array is searched
+        // by EXACT class name (a substring match would let any object whose class merely contains "Class" vote), the
+        // skip rule is fed the detection's own flags, and the early UEnum::Names detection is told not to latch a miss
+        // -- a latched FAILED would switch enum names off for the whole process on a title that had not registered its
+        // enums yet.
+        var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
+        int fn = frieren.IndexOf("DynOff::StructuralVersion CorrectVersionStructurally(", StringComparison.Ordinal);
+        Assert.True(fn >= 0, "CorrectVersionStructurally was not found");
+        int end = frieren.IndexOf("} // namespace FrierenInit", fn, StringComparison.Ordinal);
+        Assert.True(end > fn, "the end of CorrectVersionStructurally was not found");
+        var body = frieren[fn..end];
+        Assert.Contains("Genau::DetectUEnumNames(/*latchFailure=*/false);", body);
+        Assert.Contains("Aura::FindInstancesByClass(cls, /*exactMatch=*/true, limit).results", body);
+        Assert.Contains("DynOff::EnumPackageProbeSkip(namesDetected, namesFailed, DynOff::bEnumNamesNewContainer);", body);
+        Assert.Contains("enumTally = DynOff::ProbeEnumPackages(findExact, DynOff::UENUM_NAMES, DynOff::UOBJECT_OUTER, read);",
+                        body);
+        Assert.Contains("structTally = DynOff::ProbeStructStates(findExact, DynOff::USTRUCT_PROPSSIZE, read);", body);
+        Assert.Contains("DynOff::ApplyVersionLadder(ueVersion, f, probeCmc, probeEnumPackage, probeStructState, onRung);",
+                        body);
+    }
+
+    [Fact]
+    public void InitVersionLadder_SaysWhenAStructuralRungRaisesAUserOverride()
+    {
+        // [VER-MARKERS-PAST-504] A raise rung lifts a persisted override as it lifts a detection, and its own line reads
+        // "version=N" either way. The ladder reports that the N was the user's (StructuralVersion::overrideRaised,
+        // pinned in dll_helpers_test Test_VersionLadder); Frieren.cpp reaches no test target, so the wiring is pinned
+        // here: the ladder is told when the label is an override, and the log names the override it overruled.
+        var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
+        int fn = frieren.IndexOf("DynOff::StructuralVersion CorrectVersionStructurally(", StringComparison.Ordinal);
+        Assert.True(fn >= 0, "CorrectVersionStructurally was not found");
+        int end = frieren.IndexOf("} // namespace FrierenInit", fn, StringComparison.Ordinal);
+        Assert.True(end > fn, "the end of CorrectVersionStructurally was not found");
+        var body = frieren[fn..end];
+        Assert.Contains("f.userOverride        = userOverride;", body);
+        int ladder = body.IndexOf("DynOff::ApplyVersionLadder(", StringComparison.Ordinal);
+        int said = body.IndexOf("if (climbed.overrideRaised)", StringComparison.Ordinal);
+        Assert.True(ladder >= 0 && said > ladder, "the override line must follow the ladder and read its result");
+        Assert.Contains("User override = %u overruled", body[said..]);
+    }
+
+    [Fact]
     public void AutoOverAnOverride_HandsBackTheDetection_OrSaysItWaitsForTheNextLaunch()
     {
         // [UE-OVERRIDE-HINT-AUTO] set_ue_version_override(0) used to clear only the override flag, so the session kept
@@ -2265,6 +2312,79 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void AutoOverAnOverride_PutsTheClimbedVersionInForce()
+    {
+        // [OVERRIDE-REVIEW2-LOWS] The record holds the version from BEFORE init's structural ladder, so the version Auto
+        // hands back is the one the ladder climbs it to -- Elliot's cached 4.27 fallback is a UE5 title. The pin above
+        // checks only that the ladder is CALLED; a Restored arm that climbed and then put the record's own version in
+        // force (the review's mutant M2) kept it green. Fern.cpp reaches no test target, so the value is pinned here:
+        // the record's version goes into the ladder, the ladder's result is the one refined and put in force, nothing
+        // else in the arm assigns the version, and a ladder that lowered the label to UE4 leaves it low-confidence.
+        var fern = DllSource("Fern.cpp").Replace("\r\n", "\n");
+        int handler = fern.IndexOf("if (cmd == Renge::CMD_SET_UE_VERSION_OVERRIDE)", StringComparison.Ordinal);
+        Assert.True(handler >= 0, "the set_ue_version_override handler was not found");
+        int restored = fern.IndexOf("if (plan.outcome == Flamme::AutoRestore::Restored) {", handler,
+                                    StringComparison.Ordinal);
+        Assert.True(restored > handler, "the Restored arm was not found");
+        int pending = fern.IndexOf("} else if (plan.outcome != Flamme::AutoRestore::NotOverridden) {", restored,
+                                   StringComparison.Ordinal);
+        Assert.True(pending > restored, "the Restored arm's end was not found");
+        var arm = fern[restored..pending];
+
+        var climb = System.Text.RegularExpressions.Regex.Match(arm,
+            @"const DynOff::StructuralVersion climbed = FrierenInit::CorrectVersionStructurally\(\s*plan\.version,\s*/\*userOverride=\*/false,");
+        Assert.True(climb.Success, "the record's version must be what climbs the ladder, as a detection");
+        var inForce = System.Text.RegularExpressions.Regex.Match(arm,
+            @"g_cachedUEVersion\s*=\s*DynOff::RefineVersionFromLazyMarkers\(\s*climbed\.version,");
+        Assert.True(inForce.Success, "the version put in force must be the ladder's result, refined");
+        Assert.True(inForce.Index > climb.Index, "the version must be put in force after the ladder has climbed");
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(arm, @"\bg_cachedUEVersion\s*=[^=]"));
+        Assert.Contains("g_cachedIsLowConfidence = plan.lowConfidence || climbed.loweredToUE4;", arm);
+    }
+
+    [Fact]
+    public void PointerSnapshot_SaysWhenTheOverrideInForceIsContradicted()
+    {
+        // [OVERRIDE-REVIEW2-LOWS] The verdict is DynOff::OverrideContradictsTail and its live half
+        // Ubel::OverrideInForceContradicted (pinned in dll_helpers_test / dll_core_test). Fern.cpp reaches no test
+        // target, so the wiring is pinned here: every pointer snapshot judges the version in force, and whether it is
+        // the user's, at the moment it is published.
+        var fern = DllSource("Fern.cpp").Replace("\r\n", "\n");
+        int snapshot = fern.IndexOf("static void FillPointerSnapshot(json& data) {", StringComparison.Ordinal);
+        Assert.True(snapshot >= 0, "FillPointerSnapshot was not found");
+        int end = fern.IndexOf("\n}\n", snapshot, StringComparison.Ordinal);
+        Assert.True(end > snapshot, "the end of FillPointerSnapshot was not found");
+        Assert.Matches(@"data\[""override_contradicted""\]\s*=\s*Ubel::OverrideInForceContradicted\(g_cachedUEVersion, g_cachedIsUserOverride\);",
+                       fern[snapshot..end]);
+    }
+
+    [Fact]
+    public void ApplyRescan_ClimbsTheVersionLadder_WhenItRunsTheFirstOffsetsProbe()
+    {
+        // [VER-MARKERS-PAST-504] Init climbs its version ladder right after the offsets probe, and skips both when
+        // GObjects is missing. apply_rescan then runs that first probe -- and never climbed, so a stripped UE5 title
+        // revived by a rescan kept its raw label (a 4.27 publisher fallback, say) for the whole session, with every
+        // version gate reading it. The ladder is DynOff::ApplyVersionLadder (pinned in dll_helpers_test); Fern.cpp
+        // reaches no test target, so the wiring is pinned here: the first-probe block climbs it, as the user's
+        // override if it is one, and applies the result as UE5_Init does.
+        var fern = DllSource("Fern.cpp").Replace("\r\n", "\n");
+        int handler = fern.IndexOf("if (cmd == Renge::CMD_APPLY_RESCAN) {", StringComparison.Ordinal);
+        Assert.True(handler >= 0, "the apply_rescan handler was not found");
+        int next = fern.IndexOf("if (cmd == Renge::CMD_TRIGGER_SCAN) {", handler, StringComparison.Ordinal);
+        Assert.True(next > handler, "the apply_rescan handler's end was not found");
+        var body = fern[handler..next];
+        int probe = body.IndexOf("if (!Genau::ValidateAndFixOffsets(g_cachedUEVersion)) {", StringComparison.Ordinal);
+        int hoisted = body.IndexOf("// GEngine's second pass is HOISTED", StringComparison.Ordinal);
+        Assert.True(probe >= 0 && hoisted > probe, "the first-probe block was not found");
+        var firstProbe = body[probe..hoisted];
+        Assert.Contains("FrierenInit::CorrectVersionStructurally(", firstProbe);
+        Assert.Contains("g_cachedUEVersion, g_cachedIsUserOverride, \"apply_rescan\");", firstProbe);
+        Assert.Contains("g_cachedUEVersion = climbed.version;", firstProbe);
+        Assert.Contains("if (climbed.loweredToUE4)", firstProbe);
+        Assert.Contains("g_cachedIsLowConfidence = true;", firstProbe);
+    }
+
+    [Fact]
     public void MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Init()
     {
         // [R7-S9] Two windows R7-C-05 left open. (1) EnsureInitialized passed `g_cachedGObjects != 0` and the flag load as
@@ -2296,6 +2416,142 @@ public class InvokeScriptTests
         int begin = frieren.IndexOf("void BeginApply()", StringComparison.Ordinal);
         Assert.Contains("std::atomic_thread_fence(std::memory_order_seq_cst)",
                         frieren[begin..frieren.IndexOf('\n', begin)]);
+    }
+
+    [Fact]
+    public void MailboxInvoke_SizesTheParametersByTheChain_AndRefusesBeforeProcessEvent()
+    {
+        // [OVERRIDE-REVIEW2-LOWS] CMD_INVOKE hands ProcessEvent the fixed paramsData slab (or the queued path's owned
+        // copy of it), so a parameter block that ends past it is written into whatever follows the mailbox. The verdict
+        // is Mimic::InvokeSlabRefusal (pinned in dll_helpers_test); HandleInvoke's glue -- the block measured by the
+        // function's own chain, the verdict asked before the first ProcessEvent, a refusal that returns -- had no pin,
+        // and the review's mutant M1 survived. Mimic.cpp reaches no test target, so the glue is pinned here.
+        var mimic = DllSource("Mimic.cpp").Replace("\r\n", "\n");
+        int fn = mimic.IndexOf("static void HandleInvoke() {", StringComparison.Ordinal);
+        Assert.True(fn >= 0, "HandleInvoke was not found");
+        int end = mimic.IndexOf("\n}\n", fn, StringComparison.Ordinal);
+        Assert.True(end > fn, "the end of HandleInvoke was not found");
+        var body = mimic[fn..end];
+
+        int resolved = body.IndexOf("const bool flagsResolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);",
+                                    StringComparison.Ordinal);
+        Assert.True(resolved >= 0, "the invoked function must be resolved at the address being invoked");
+        // A ParmsSize alone is read where the version puts the tail; the chain's end is where ProcessEvent writes.
+        var need = System.Text.RegularExpressions.Regex.Match(body,
+            @"const uint32_t needBytes = flagsResolved \? Ubel::ParamBufferSize\(ufuncAddr, fi\.parmsSize\) : 0;");
+        Assert.True(need.Success, "the parameter block must be measured by Ubel::ParamBufferSize");
+        var verdict = System.Text.RegularExpressions.Regex.Match(body,
+            @"const int32_t refusal = InvokeSlabRefusal\(flagsResolved, needBytes,\s*static_cast<uint32_t>\(sizeof\(g_invokeMailbox\.paramsData\)\)\);");
+        Assert.True(verdict.Success, "the verdict must weigh that block against the slab ProcessEvent is handed");
+        var refused = System.Text.RegularExpressions.Regex.Match(body,
+            @"if \(refusal != 0\) \{(?:(?!\n    \}).)*?\bSetError\(refusal, msg\);\s*return;\s*\n    \}",
+            System.Text.RegularExpressions.RegexOptions.Singleline);
+        Assert.True(refused.Success, "a refusal must publish its own code and return before anything is invoked");
+
+        int direct = body.IndexOf("UE5_CallProcessEventDirect(", StringComparison.Ordinal);
+        int queued = body.IndexOf("UE5_CallProcessEventEx(", StringComparison.Ordinal);
+        Assert.True(direct >= 0 && queued >= 0, "both ProcessEvent routes must be in HandleInvoke");
+        Assert.True(resolved < need.Index && need.Index < verdict.Index && verdict.Index < refused.Index,
+                    "resolve, measure, judge, refuse -- in that order");
+        Assert.True(refused.Index + refused.Length < Math.Min(direct, queued),
+                    "the slab must be judged before the first ProcessEvent call");
+    }
+
+    [Fact]
+    public void SolitarBools_ResolveAndWriteThroughTheBoolBitsHelpers()
+    {
+        // [SOLIDE-NATIVE-BOOL] Which probed layout a God Mode target or a forced bool takes, and how its byte is read
+        // and written, are Solitar::PickBoolBits / ReadBoolValue / WriteBoolValue (pinned in dll_helpers_test): a native
+        // bool owns the whole byte and is written 0x01 / 0x00. Solitar.cpp reaches no test target, so the glue is
+        // pinned here: the probe hands every quad to PickBoolBits, and nothing in the file masks a byte with a bare mask
+        // -- ApplyBoolBit with a native bool's FieldMask would stamp 0xFF, which C++ that XORs a bool reads as still true.
+        // A path that skips the helpers WITHOUT a bitwise mask is the next test's to catch.
+        var src = DllSource("Solitar.cpp").Replace("\r\n", "\n");
+        int fn = src.IndexOf("bool ReadBoolLayout(uintptr_t fpropAddr, BoolBits& bits) {", StringComparison.Ordinal);
+        Assert.True(fn >= 0, "ReadBoolLayout(fpropAddr, BoolBits&) was not found");
+        int end = src.IndexOf("\n}\n", fn, StringComparison.Ordinal);
+        Assert.Contains("return PickBoolBits(quads, readOk, kTries, bits);", src[fn..end]);
+        Assert.DoesNotMatch(@"ReadBoolLayout\([^()]*,[^()]*,[^()]*\)", src);   // the old (byteOff, mask) form
+        Assert.DoesNotContain("ApplyBoolBit(", src);
+        Assert.DoesNotMatch(@"[&|~]\s*(?:\w+\.)*(?:mask|fieldMask|byteMask)\b", src);
+        Assert.DoesNotMatch(@"\b(?:mask|fieldMask|byteMask)\s*\)?\s*[&|]", src);
+        Assert.Contains("WriteBoolValue(", src);
+        Assert.Contains("ReadBoolValue(", src);
+    }
+
+    [Fact]
+    public void SolitarBools_EachPathReadsAndWritesItsByteThroughTheHelpers()
+    {
+        // [SOLIDE-NATIVE-BOOL] review: the file-wide pin above sees a bare mask only where it meets & | ~, so
+        // `on ? bits.byteMask : 0` passed it -- a whole-byte stamp that, on a packed bool, clears the 7 bools sharing its
+        // byte on every re-assert tick (the AA1 corruption), and none of the tests that compile helpers can see it.
+        // So each function that reads or writes a bool's byte is held on its own: the byte it writes is the one
+        // WriteBoolValue made, and every read of a byte it fetched goes through ReadBoolValue. The masks a path may still
+        // touch are an allow-list, so a new use has to be argued for here.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string BodyOf(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " was not found -- re-point this pin");
+            int open = src.IndexOf('{', at);
+            int depth = 0;
+            for (int i = open; i < src.Length; i++)
+            {
+                if (src[i] == '{') depth++;
+                else if (src[i] == '}' && --depth == 0) return src[open..(i + 1)];
+            }
+            throw new InvalidOperationException(signature + " has no closing brace");
+        }
+
+        var src = CodeOnly(DllSource("Solitar.cpp").Replace("\r\n", "\n"));
+
+        // Outside the helpers one mask is read: the God Mode scan logs the FieldMask it resolved. The trainer export's
+        // single-bit mask is Solitar::TrainerMaskFor's (dll_helpers_test): its Lua does its own read-modify-write.
+        var maskUses = System.Text.RegularExpressions.Regex.Matches(src, @"[\w.]*\.(?:mask|fieldMask|byteMask)\b")
+            .Select(m => m.Value).OrderBy(v => v, StringComparer.Ordinal).ToArray();
+        Assert.Equal(new[] { "b.mask", "t.bits.fieldMask" }, maskUses);
+        Assert.Contains("b.mask = TrainerMaskFor(bits);", src, StringComparison.Ordinal);
+
+        var paths = new (string Signature, string? Write)[]
+        {
+            ("int32_t ApplyGodNowLocked(bool verbose, bool* outDrifted", "uint8_t nb = WriteBoolValue(b, t.bits, want);"),
+            ("int32_t SetActorBool(uintptr_t obj, uintptr_t classAddr, const char* propName, bool on)",
+             "uint8_t nb = WriteBoolValue(b, bits, on);"),
+            ("int32_t GetActorBool(uintptr_t obj, uintptr_t classAddr, const char* propName)", null),
+            ("int32_t GetGodMode()", null),
+        };
+        foreach (var (signature, write) in paths)
+        {
+            var body = BodyOf(src, signature);
+            var writes = System.Text.RegularExpressions.Regex.Matches(body, @"Macht::WriteBytes\(([^()]*)\)")
+                .Select(m => m.Groups[1].Value).ToArray();
+            if (write is null)
+            {
+                Assert.True(writes.Length == 0, signature + " reads a bool; it must not write one");
+            }
+            else
+            {
+                Assert.True(writes.Length == 1 && writes[0] == "byteAddr, &nb, 1",
+                            signature + " must write exactly the one byte WriteBoolValue made");
+                Assert.Contains(write, body, StringComparison.Ordinal);
+                Assert.Single(System.Text.RegularExpressions.Regex.Matches(body, @"\bnb\s*=(?!=)"));
+            }
+
+            // Every use of a fetched byte, once the allowed forms are taken out, must be gone: a bare `b ? 1 : 0` or
+            // `b != want` reads a packed bool's siblings as its value.
+            var rest = System.Text.RegularExpressions.Regex.Replace(body,
+                @"uint8_t (?:b|after) = 0;"
+                + @"|Macht::ReadSafe\(byteAddr, (?:b|after)\)"
+                + @"|ReadBoolValue\((?:b|after), (?:t\.)?bits\)"
+                + @"|WriteBoolValue\(b, (?:t\.)?bits, (?:want|on)\)"
+                + @"|\bnb != b\b", "");
+            Assert.True(!System.Text.RegularExpressions.Regex.IsMatch(rest, @"\b(?:b|after)\b"),
+                        signature + " uses a fetched byte outside ReadBoolValue / WriteBoolValue");
+        }
     }
 
     [Fact]
@@ -2447,6 +2703,358 @@ public class InvokeScriptTests
         Assert.Contains("__try", seh, StringComparison.Ordinal);
         Assert.Contains("reinterpret_cast<FnProcessEvent>(peAddr)(", seh, StringComparison.Ordinal);   // the RESOLVED address
         Assert.DoesNotContain("s_originalPE", seh, StringComparison.Ordinal);                      // never the trampoline
+    }
+
+    // [MH-PRERESERVE-PROXY] Stark's MinHook glue. No test target compiles Stark.cpp, Frieren.cpp or Heiter.cpp, so these
+    // pin their source with comments removed; the rules the glue calls are dll_helpers_test's (Test_Lager_*).
+    private static string MinHookGlue(string file) => string.Join('\n', DllSource(file).Split('\n').Select(l =>
+    {
+        int c = l.IndexOf("//", StringComparison.Ordinal);
+        return c >= 0 ? l[..c] : l;
+    }));
+
+    private static string MinHookGlueBody(string code, string signature)
+    {
+        int at = code.IndexOf(signature, StringComparison.Ordinal);
+        Assert.True(at >= 0, signature + " was not found -- re-point this pin");
+        int end = code.IndexOf("\n}", at, StringComparison.Ordinal);
+        Assert.True(end > at, signature + ": no closing brace at column 0");
+        return code[at..end];
+    }
+
+    [Fact]
+    public void HookAllocFailure_LogsTheWindowMinHookSearched()
+    {
+        // MH_CreateHook answers MH_ERROR_MEMORY_ALLOC and nothing more. On that answer Stark walks the window MinHook's
+        // GetMemoryBlock searched for ProcessEvent and logs Lager's summary of it: what is free, where a new block would
+        // go, what took the rest, and the main image with its ASLR bit.
+        var stark = MinHookGlue("Stark.cpp");
+        var install = MinHookGlueBody(stark, "bool InstallHook(uintptr_t processEventAddr) {");
+        int create = install.IndexOf("reinterpret_cast<LPVOID*>(&s_originalPE));", StringComparison.Ordinal);
+        int enable = install.IndexOf("status = MH_EnableHook(reinterpret_cast<LPVOID>(processEventAddr));", StringComparison.Ordinal);
+        Assert.True(create >= 0 && enable > create, "InstallHook's MH_CreateHook / MH_EnableHook pair not found");
+        Assert.Contains("if (status == MH_ERROR_MEMORY_ALLOC) LogTrampolineWindow(processEventAddr, mhLastError);",
+            install[create..enable], StringComparison.Ordinal);
+
+        var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {");
+        Assert.Contains("GetSystemInfo(&si);", log, StringComparison.Ordinal);
+        Assert.Contains("Lager::SearchWindow(target, appMin, appMax)", log, StringComparison.Ordinal);
+        // The walk spans every byte a block could occupy: up to the last block start plus the block.
+        Assert.Contains("WalkRegions(w.minAddr, w.maxAddr + Lager::kMemoryBlockSize, stop)", log, StringComparison.Ordinal);
+        Assert.Contains("Lager::SummarizeWindow(map, target, appMin, appMax, si.dwAllocationGranularity)", log,
+            StringComparison.Ordinal);
+        Assert.Contains("Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock, stop, lastError)",
+            log, StringComparison.Ordinal);
+        // The picks are measured LIVE, not read from the (possibly budget-truncated) byte-totals map, so a cut-short
+        // map never makes a pick read "none".
+        Assert.Contains("summary.pickBelow = Lager::FindPrevFreeRegionWith(LiveQueryRegion, target, w.minAddr", log,
+            StringComparison.Ordinal);
+        Assert.Contains("summary.pickAbove = Lager::FindNextFreeRegionWith(LiveQueryRegion, target, w.maxAddr", log,
+            StringComparison.Ordinal);
+        // WalkRegions reports WHY it stopped, so a budget/cap stop is not logged as a phantom VirtualQuery failure.
+        var walkStop = MinHookGlueBody(stark, "static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive, Lager::WalkStop& stop) {");
+        Assert.Contains("stop = Lager::WalkStop::QueryFailed;", walkStop, StringComparison.Ordinal);
+        Assert.Contains("stop = Lager::WalkStop::Budget;", walkStop, StringComparison.Ordinal);
+        Assert.Contains("stop = Lager::WalkStop::RegionCap;", walkStop, StringComparison.Ordinal);
+
+        var walk = MinHookGlueBody(stark, "static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive, Lager::WalkStop& stop) {");
+        Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi))", walk, StringComparison.Ordinal);
+        Assert.Contains("reinterpret_cast<uint64_t>(mbi.AllocationBase)", walk, StringComparison.Ordinal);
+        Assert.Contains("r.type           = mbi.Type;", walk, StringComparison.Ordinal);   // so the line can say who took the space
+        // The walk is bounded two ways, neither depending on the other: a time budget AND a region count. A review
+        // found that removing the deadline alone held s_mhMutex for ~157 s on a heap-filled window.
+        Assert.Contains("const uint64_t deadline = GetTickCount64() + kWindowWalkBudgetMs;", walk, StringComparison.Ordinal);
+        Assert.Contains("GetTickCount64() > deadline", walk, StringComparison.Ordinal);
+        Assert.Contains("map.size() >= kWindowWalkMaxRegions", walk, StringComparison.Ordinal);
+        Assert.Contains("kWindowWalkBudgetMs = 2000;", stark, StringComparison.Ordinal);
+        Assert.Contains("kWindowWalkMaxRegions = 200000;", stark, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MemoryAllocDiagnostic_CapturesLastErrorBeforeItIsClobbered()
+    {
+        // MH_ERROR_MEMORY_ALLOC is not only "no free block start": MinHook returns it when a found granule's
+        // VirtualAlloc(PAGE_EXECUTE_READWRITE) is refused (commit limit, ACG/ProhibitDynamicCode) or when AddHookEntry's
+        // HeapAlloc on MinHook's private heap fails. LastError tells those apart, but the LOG_ERROR that runs before the
+        // window walk clobbers it. Capture it right after MH_CreateHook so the window line can say "a block start WAS
+        // free -- the failure is not the window". Stark.cpp reaches no test target: pin the capture.
+        var stark = MinHookGlue("Stark.cpp");
+        var install = MinHookGlueBody(stark, "bool InstallHook(uintptr_t processEventAddr) {");
+        int zero = install.IndexOf("SetLastError(0);", StringComparison.Ordinal);
+        int create = install.IndexOf("MH_STATUS status = MH_CreateHook(", StringComparison.Ordinal);
+        int grab = install.IndexOf("const DWORD mhLastError = GetLastError();", StringComparison.Ordinal);
+        Assert.True(zero >= 0 && create > zero, "SetLastError(0) must come before ProcessEvent's MH_CreateHook");
+        Assert.True(grab > create, "GetLastError() must be captured right after MH_CreateHook, before any LOG_ERROR");
+        Assert.Contains("LogTrampolineWindow(processEventAddr, mhLastError);", install, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void MemoryAllocWindow_WalkIsThrottledPerTarget()
+    {
+        // Each failing Live Funcs Start fails twice (EnsureProcessEventReady's automatic attempt, then the forced one),
+        // so an unthrottled window walk runs twice -- up to ~4 s under s_mhMutex, holding the pe_profile_start reply.
+        // LogTrampolineWindow skips a re-walk for the same target within a short window and says it did. Stark.cpp
+        // reaches no test target: pin the throttle.
+        var stark = MinHookGlue("Stark.cpp");
+        Assert.Contains("kWindowLogThrottleMs", stark, StringComparison.Ordinal);
+        var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {");
+        Assert.Contains("s_lastWindowLogTarget", log, StringComparison.Ordinal);
+        Assert.Contains("s_lastWindowLogMs", log, StringComparison.Ordinal);
+        int gate = log.IndexOf("kWindowLogThrottleMs", StringComparison.Ordinal);
+        int walk = log.IndexOf("WalkRegions(", StringComparison.Ordinal);
+        Assert.True(gate >= 0 && walk > gate, "the throttle must be decided before the (expensive) WalkRegions call");
+        Assert.Contains("return;", log[..walk], StringComparison.Ordinal);   // an early return skips the walk
+    }
+
+    [Fact]
+    public void MainImageHeaderRead_QueriesThePageBeforeCopyingIt()
+    {
+        // In proxy mode the holder runs at every process start, before the game's init -- including launches where
+        // Live Funcs is never opened. ReadMainImageLayout copies the 4 KB header page; a protector that PAGE_GUARDs its
+        // header to detect dumpers would have the guard consumed and its vectored handler see the read. Query the page
+        // first and skip the copy unless it is committed and readable with no PAGE_GUARD, reporting an unknown layout
+        // instead. Stark.cpp reaches no test target: pin the guard.
+        var stark = MinHookGlue("Stark.cpp");
+        var body = MinHookGlueBody(stark, "static Lager::ImageLayout ReadMainImageLayout() {");
+        int query = body.IndexOf("VirtualQuery(base", StringComparison.Ordinal);
+        int gate = body.IndexOf("PageReadableNoGuard(hdrMbi)", StringComparison.Ordinal);
+        int copy = body.IndexOf("CopyBytesSEH(base, hdr, sizeof(hdr))", StringComparison.Ordinal);
+        Assert.True(query >= 0 && gate > query && copy > gate,
+            "the header page must be queried, then checked readable/non-guarded, before it is copied");
+        // The readability helper refuses a guarded or uncommitted page.
+        var guard = MinHookGlueBody(stark, "static bool PageReadableNoGuard(const MEMORY_BASIC_INFORMATION& mbi) {");
+        Assert.Contains("PAGE_GUARD", guard, StringComparison.Ordinal);
+        Assert.Contains("MEM_COMMIT", guard, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HookInstallLines_SayWhenAnAttemptWasForced()
+    {
+        // B24 stopped counting a forced attempt against the automatic budget, but its failure line still printed
+        // "attempt N/8" from the automatic counter, so each failing Live Funcs Start on FFRS logged the same N twice.
+        // Both of TryInstallGameThreadHook's lines now name the attempt through Stark::DescribeHookAttempt.
+        var frieren = MinHookGlue("Frieren.cpp");
+        var body = MinHookGlueBody(frieren, "static void TryInstallGameThreadHook(bool force = false) {");
+        Assert.Contains("Stark::DescribeHookAttempt(force, attempts, kMaxHookAttempts)", body, StringComparison.Ordinal);
+        Assert.Contains("hook install failed (%s), invoke will", body, StringComparison.Ordinal);
+        Assert.Contains("hook RECOVERED on %s", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("(attempt %d/%d)", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("RECOVERED on attempt %d", body, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HookRecoveredLine_DoesNotDependOnTheAutomaticCounter()
+    {
+        // The "hook RECOVERED" line used to be gated on `attempts > 1`, the AUTOMATIC counter. A forced attempt does
+        // not spend that counter (B24), and a recovery after the 5 s cooldown skipped the automatic attempt, so the
+        // FFRS pattern (two Starts fail, the third succeeds) could succeed with attempts <= 1 and log no RECOVERED
+        // line. Gate it on a "last install attempt failed" flag instead, set on any failed attempt and cleared on
+        // success, so a recovery is logged however it was reached. Frieren.cpp reaches no test target: pin the source.
+        var frieren = MinHookGlue("Frieren.cpp");
+        Assert.Contains("s_lastInstallFailed", frieren, StringComparison.Ordinal);
+        var body = MinHookGlueBody(frieren, "static void TryInstallGameThreadHook(bool force = false) {");
+        Assert.Contains("s_lastInstallFailed.store(true", body, StringComparison.Ordinal);      // set on a failed attempt
+        Assert.Contains("s_lastInstallFailed.exchange(false", body, StringComparison.Ordinal);  // gates RECOVERED, clears it
+        Assert.Contains("hook RECOVERED on %s", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("if (attempts > 1)", body, StringComparison.Ordinal);             // the automatic-counter gate is gone
+    }
+
+    [Fact]
+    public void HeldBlock_IsTakenAtAutoStart_AndNeverEnabled()
+    {
+        // The holder: a MinHook hook created early on a target inside the main image and never enabled, so its block
+        // stays next to the image for the process lifetime and the ProcessEvent hook can land in it later. Taken on the
+        // auto-start thread of both DLL flavours (the proxy's runs at process start, while the window is still empty),
+        // never in DllMain, where MinHook would run under the loader lock.
+        var heiter = MinHookGlue("Heiter.cpp");
+        Assert.Equal(2, MinHookCount(heiter, "Stark::HoldTrampolineBlock();"));
+        int proxy = heiter.IndexOf("LOG_INFO(\"DllMain ProxyStart: proxy DLL mode", StringComparison.Ordinal);
+        int proxyHold = heiter.IndexOf("Stark::HoldTrampolineBlock();", Math.Max(proxy, 0), StringComparison.Ordinal);
+        int proxySleep = heiter.IndexOf("Sleep(500);", Math.Max(proxy, 0), StringComparison.Ordinal);
+        Assert.True(proxy >= 0 && proxyHold > proxy && proxySleep > proxyHold,
+            "the proxy flavour must hold the block first thing, before its start-up delay and the pipe server");
+        int ceGuard = heiter.IndexOf("if (IsCheatEngineExeName(leaf)) {", StringComparison.Ordinal);
+        int injectHold = heiter.IndexOf("Stark::HoldTrampolineBlock();", Math.Max(ceGuard, 0), StringComparison.Ordinal);
+        int pipeProbe = heiter.IndexOf("HANDLE testPipe = CreateFileW(", Math.Max(ceGuard, 0), StringComparison.Ordinal);
+        Assert.True(ceGuard >= 0 && injectHold > ceGuard && pipeProbe > injectHold,
+            "the injected flavour must hold the block after the Cheat Engine guard and before the pipe probe");
+        var dllMain = MinHookGlueBody(heiter, "BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {");
+        Assert.DoesNotContain("HoldTrampolineBlock", dllMain, StringComparison.Ordinal);
+
+        var stark = MinHookGlue("Stark.cpp");
+        var hold = MinHookGlueBody(stark, "void HoldTrampolineBlock() {");
+        Assert.Contains("std::lock_guard<std::mutex> lock(s_mhMutex);", hold, StringComparison.Ordinal);
+        Assert.Contains("Lager::ChooseHolderTargets(img)", hold, StringComparison.Ordinal);
+        int safe = hold.IndexOf("if (!HolderCandidateSafe(target))", StringComparison.Ordinal);
+        int create = hold.IndexOf("MH_CreateHook(reinterpret_cast<LPVOID>(target), reinterpret_cast<LPVOID>(&HolderDetour),",
+            StringComparison.Ordinal);
+        Assert.True(safe >= 0 && create > safe, "every candidate must be checked readable before MinHook reads it");
+        Assert.DoesNotContain("MH_EnableHook", hold, StringComparison.Ordinal);
+        Assert.DoesNotContain("MH_QueueEnableHook", hold, StringComparison.Ordinal);
+        // An empty executable range (header-only copy, or a packer that cleared the EXECUTE flag) is reported UNKNOWN,
+        // not "does NOT cover" -- the block may serve ProcessEvent, it just cannot be verified from the headers.
+        Assert.Contains("const bool codeKnown = code.hi > code.lo;", hold, StringComparison.Ordinal);
+        Assert.Contains("executable range is unknown", hold, StringComparison.Ordinal);
+        // The only hook Stark enables is ProcessEvent's.
+        Assert.Equal(1, MinHookCount(stark, "MH_EnableHook("));
+        Assert.Contains("MH_EnableHook(reinterpret_cast<LPVOID>(processEventAddr))", stark, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HeldBlock_NothingEnablesEveryHook_NorTearsMinHookDown()
+    {
+        // MH_CreateHook never writes its target; MH_EnableHook does (hook.c, EnableHookLL). The holder stays harmless
+        // only while nothing enables it: no MH_ALL_HOOKS (MH_EnableHook(MH_ALL_HOOKS) and MH_QueueEnableHook(
+        // MH_ALL_HOOKS) + MH_ApplyQueued would patch the holder's target too), and no MH_Uninitialize, which frees
+        // every block -- the held one and every live trampoline with it. MH_ALL_HOOKS is just NULL, and EnableHook
+        // takes the enable-every-hook path for ANY null target, so the token ban alone is bypassable: ban enabling (or
+        // disabling) a null-literal target too, so a future `MH_EnableHook(nullptr)` cannot patch the section-start
+        // holder to a no-op and corrupt the game.
+        var files = new List<string>();
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var c = Path.Combine(dir.FullName, "dll", "src");
+            if (Directory.Exists(c)) { files.AddRange(Directory.GetFiles(c, "*.cpp")); files.AddRange(Directory.GetFiles(c, "*.h")); break; }
+        }
+        Assert.NotEmpty(files);
+        var banned = new[]
+        {
+            "MH_ALL_HOOKS", "MH_QueueEnableHook", "MH_ApplyQueued", "MH_Uninitialize",
+            "MH_EnableHook(nullptr", "MH_EnableHook(NULL", "MH_EnableHook(0)",
+            "MH_DisableHook(nullptr", "MH_DisableHook(NULL", "MH_DisableHook(0)",
+        };
+        foreach (var f in files)
+        {
+            // Collapse the whitespace after each '(' so "MH_EnableHook( NULL" is caught the same as "MH_EnableHook(NULL".
+            var code = System.Text.RegularExpressions.Regex.Replace(MinHookGlue(Path.GetFileName(f)), @"\(\s+", "(");
+            foreach (var b in banned)
+                Assert.False(code.Contains(b, StringComparison.Ordinal), Path.GetFileName(f) + " calls " + b);
+        }
+    }
+
+    [Fact]
+    public void HeldBlock_StepsAsideForARealHook_AndTheInstallSaysWhereItsTrampolineWent()
+    {
+        var stark = MinHookGlue("Stark.cpp");
+        var install = MinHookGlueBody(stark, "bool InstallHook(uintptr_t processEventAddr) {");
+        Assert.Contains("std::lock_guard<std::mutex> lock(s_mhMutex);", install, StringComparison.Ordinal);
+        Assert.Contains("if (!EnsureMinHookLocked()) return false;", install, StringComparison.Ordinal);
+        // A real hook outranks the holder: MinHook keys hooks by target, so ProcessEvent at the holder's address would
+        // fail MH_ERROR_ALREADY_CREATED.
+        int aside = install.IndexOf("if (s_heldTarget != 0 && s_heldTarget == processEventAddr) {", StringComparison.Ordinal);
+        int remove = install.IndexOf("MH_RemoveHook(reinterpret_cast<LPVOID>(s_heldTarget))", Math.Max(aside, 0), StringComparison.Ordinal);
+        int create = install.IndexOf("reinterpret_cast<LPVOID*>(&s_originalPE));", StringComparison.Ordinal);
+        Assert.True(aside >= 0 && remove > aside && create > remove, "the holder must step aside before ProcessEvent's MH_CreateHook");
+        // Out of reach is said before the attempt; where the trampoline went, after it.
+        int reach = install.IndexOf("if (!Lager::BlockServes(s_heldBlock, Lager::SearchWindow(processEventAddr, appMin, appMax)))",
+            StringComparison.Ordinal);
+        Assert.True(reach >= 0 && reach < create, "the reach check must come before MH_CreateHook");
+        int where = install.IndexOf("const uintptr_t peBlock = static_cast<uintptr_t>(Lager::BlockOfSlot(", StringComparison.Ordinal);
+        Assert.True(where > create, "the trampoline's block must be reported after MH_CreateHook");
+        Assert.Contains("peBlock == s_heldBlock", install, StringComparison.Ordinal);
+
+        // Both slot->block computations (the held block and the installed hook's block) go through Lager::BlockOfSlot,
+        // which mirrors FreeBuffer, not a hand-rolled mask: a review found a raw `trampoline & ~(BLOCK-1)` mutant
+        // reported "NOT in the held block" on a run where the fix worked, and no test noticed.
+        Assert.Equal(2, MinHookCount(stark, "Lager::BlockOfSlot("));
+        Assert.DoesNotContain("reinterpret_cast<uintptr_t>(trampoline) &", stark, StringComparison.Ordinal);
+
+        var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {");
+        Assert.Contains("Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock, stop, lastError)", log,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EveryMinHookInitializeSite_AcceptsAlreadyInitialized()
+    {
+        // MinHook's HeapCreate lives once per process, shared by every module in this DLL that hooks (Stark's holder
+        // and ProcessEvent hook, Grausam's foreground lock). Whoever calls MH_Initialize() first gets MH_OK; everyone
+        // after gets MH_ERROR_ALREADY_INITIALIZED, which is SUCCESS. Since the holder now initialises MinHook at proxy
+        // process start (or ~1 s after injection), Grausam is practically always the second caller, so treating
+        // ALREADY_INITIALIZED as a failure would break Foreground Lock on every enable. No C++ test target compiles a
+        // file that calls MH_Initialize, so pin the acceptance in source: every call site must OR it in beside MH_OK.
+        var files = new List<string>();
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var c = Path.Combine(dir.FullName, "dll", "src");
+            if (Directory.Exists(c)) { files.AddRange(Directory.GetFiles(c, "*.cpp")); files.AddRange(Directory.GetFiles(c, "*.h")); break; }
+        }
+        Assert.NotEmpty(files);
+        int sites = 0;
+        foreach (var f in files)
+        {
+            var code = MinHookGlue(Path.GetFileName(f));   // comments stripped: a "MH_Initialize failed" log string is not a call
+            for (int i = code.IndexOf("MH_Initialize()", StringComparison.Ordinal); i >= 0;
+                 i = code.IndexOf("MH_Initialize()", i + 1, StringComparison.Ordinal))
+            {
+                sites++;
+                // The acceptance sits in the same statement that tests the status, right after the call.
+                int window = Math.Min(code.Length, i + 300);
+                Assert.True(code.IndexOf("MH_ERROR_ALREADY_INITIALIZED", i, window - i, StringComparison.Ordinal) >= 0,
+                    Path.GetFileName(f) + ": an MH_Initialize() call does not accept MH_ERROR_ALREADY_INITIALIZED, so a "
+                    + "second initialiser (the holder always is one) reads a successful init as a failure");
+            }
+        }
+        Assert.True(sites >= 2, "expected MH_Initialize() in at least Stark.cpp and Grausam.cpp -- found " + sites);
+    }
+
+    [Fact]
+    public void HolderReadabilityGuard_CoversEveryByteMinHookDecodes()
+    {
+        // The guard before MH_CreateHook(holder) is the only thing that stops an access violation inside MinHook's
+        // spin lock, on the proxy's auto-start thread, at process start. MinHook reads the target with no SEH, and
+        // CreateTrampolineFunction decodes PAST the prologue: the last instruction it disassembles can start ~19 bytes
+        // in, and hde64 reads ~33 more of it, so a 32-byte probe understates the reach. Lager::kHolderReadSpan names
+        // the span with its derivation; HolderCandidateSafe must query the page of target + span - 1 and probe span
+        // bytes, not 32. No test target compiles Stark.cpp, so pin the body.
+        var lager = MinHookGlue("Lager.h");
+        var m = System.Text.RegularExpressions.Regex.Match(lager, @"kHolderReadSpan\s*=\s*(\d+)");
+        Assert.True(m.Success, "Lager::kHolderReadSpan not defined -- the holder read span must be a named constant");
+        Assert.True(int.Parse(m.Groups[1].Value) >= 52,
+            "kHolderReadSpan must cover MinHook's worst-case decode (final start <= 19 + hde64's ~33) = 52");
+
+        var stark = MinHookGlue("Stark.cpp");
+        var safe = MinHookGlueBody(stark, "static bool HolderCandidateSafe(uintptr_t target) {");
+        Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(target), &at", safe, StringComparison.Ordinal);
+        Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(target + Lager::kHolderReadSpan - 1), &end", safe,
+            StringComparison.Ordinal);
+        Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(target - 5), &before", safe, StringComparison.Ordinal);
+        Assert.Contains("Lager::HolderCandidateReadable(at.State, at.Protect, end.State, end.Protect, before.State, before.Protect)",
+            safe, StringComparison.Ordinal);
+        Assert.Contains("uint8_t probe[Lager::kHolderReadSpan]", safe, StringComparison.Ordinal);
+        Assert.Contains("CopyBytesSEH(reinterpret_cast<const void*>(target), probe, sizeof(probe))", safe,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("target + 31", safe, StringComparison.Ordinal);   // the understated 32-byte reach
+        Assert.DoesNotContain("uint8_t probe[32]", safe, StringComparison.Ordinal);
+
+        // The 4 KB header copy is read under SEH too, so a guarded/no-access header page is refused, not faulted on.
+        var readLayout = MinHookGlueBody(stark, "static Lager::ImageLayout ReadMainImageLayout() {");
+        Assert.Contains("CopyBytesSEH(base, hdr, sizeof(hdr))", readLayout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void HeldBlockSuccess_SaysWhetherAFreshBlockWasAlsoAvailable()
+    {
+        // GetMemoryBlock reuses a serving block before it tries to allocate one, so "trampoline is in the held block"
+        // is logged whenever the held block serves ProcessEvent -- whether or not the window was starved. A live run
+        // then cannot tell "the hold fixed it" from "a block was free anyway". On a successful install whose trampoline
+        // landed in the held block, run buffer.c's two walks live and say whether a NEW block could have gone anywhere:
+        // none -> the held block was needed; some -> reuse happened but a fresh block was available too.
+        var stark = MinHookGlue("Stark.cpp");
+        var install = MinHookGlueBody(stark, "bool InstallHook(uintptr_t processEventAddr) {");
+        int inHeld = install.IndexOf("peBlock == s_heldBlock", StringComparison.Ordinal);
+        int below = install.IndexOf("Lager::FindPrevFreeRegionWith(LiveQueryRegion, processEventAddr", StringComparison.Ordinal);
+        int above = install.IndexOf("Lager::FindNextFreeRegionWith(LiveQueryRegion, processEventAddr", StringComparison.Ordinal);
+        Assert.True(inHeld >= 0 && below > inHeld && above > below,
+            "a successful install in the held block must run the two live walks to show whether a fresh block was available");
+        Assert.Contains("the held block was NEEDED", install, StringComparison.Ordinal);
+    }
+
+    private static int MinHookCount(string s, string what)
+    {
+        int n = 0;
+        for (int i = s.IndexOf(what, StringComparison.Ordinal); i >= 0; i = s.IndexOf(what, i + what.Length, StringComparison.Ordinal)) n++;
+        return n;
     }
 
     [Fact]

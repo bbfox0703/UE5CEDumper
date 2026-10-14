@@ -466,6 +466,10 @@ public static class DumpAllService
         sb.Append(CultureInfo.InvariantCulture, $",\"ue_version\":{es.UEVersion}");
         sb.Append(",\"ue_version_detected\":").Append(es.VersionDetected ? "true" : "false");
         sb.Append(",\"is_user_override\":").Append(es.IsUserOverride ? "true" : "false");
+        // [REFUSED-STRIDE-NOTICE] A refused engine's scan never ran, so the item_detect below is the DLL's starting
+        // value and stride_untrusted is false on purpose; without this field an offline reader sees the two disagree
+        // with no reason given.
+        sb.Append(",\"version_too_old\":").Append(es.IsVersionTooOld ? "true" : "false");
         AppendJsonString(sb, ",\"module\":", es.ModuleName ?? "");
         AppendJsonString(sb, ",\"module_base\":", es.ModuleBase ?? "");
         AppendJsonString(sb, ",\"gobjects\":", es.GObjectsAddr ?? "");

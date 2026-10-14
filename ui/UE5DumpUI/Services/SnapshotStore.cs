@@ -34,6 +34,13 @@ public sealed class SnapshotStore : ISnapshotStore
     // SetActiveGame is called — falls back to a shared "default" db.
     private string _peHash = "";
 
+    // [SNAPSHOT-CRASH-PARTIAL] What a capture's row holds in snapshots.capture_owner from CreateSnapshotAsync until its
+    // capture completes: this process, so the start-of-capture cleanup can tell a capture still being written here
+    // from one a dead process left behind. One token per process, not per store: a store of this process must never
+    // clean up a capture another store of it is writing.
+    private static readonly string s_processCaptureOwner = Guid.NewGuid().ToString("N");
+    private readonly string _captureOwner = s_processCaptureOwner;
+
     // SQLitePCLRaw provider init is idempotent; do it once before first use so
     // the bundled native e_sqlite3 is registered under Native AOT.
     private static readonly object s_initLock = new();
@@ -85,6 +92,13 @@ public sealed class SnapshotStore : ISnapshotStore
             Constants.DataMaxAgeDays,
             log);
         EnsureProviderInitialised();
+    }
+
+    /// <summary>A store whose captures are marked in progress by <paramref name="captureOwner"/> rather than by this
+    /// process: the tests' stand-in for another process, in-process.</summary>
+    internal SnapshotStore(IPlatformService platform, ILoggingService? log, string captureOwner) : this(platform, log)
+    {
+        _captureOwner = captureOwner;
     }
 
     public void SetActiveGame(string? peHash)
@@ -326,6 +340,13 @@ public sealed class SnapshotStore : ISnapshotStore
         // (DeleteUnusableSnapshotsAsync), destroying exactly what the cap / low-disk stop keeps.
         await AddColumnIfMissingAsync(conn, "snapshots", "partial_reason", "TEXT NOT NULL DEFAULT ''", ct);
 
+        // capture_owner [SNAPSHOT-CRASH-PARTIAL] (additive, same as is_usable): '' once a capture is complete, else the
+        // token of the process still writing it (s_processCaptureOwner). A row is inserted before its capture runs and
+        // committed chunks follow, so a process that dies mid-capture leaves a row with part of its fields; this marks
+        // it as no snapshot until the capture ends, and names whose it is, so a later process can tell it is dead.
+        // DEFAULT '' keeps every row written before the column existed a finished snapshot.
+        await AddColumnIfMissingAsync(conn, "snapshots", "capture_owner", "TEXT NOT NULL DEFAULT ''", ct);
+
         if (ver < SchemaVersion)
             await ExecAsync(conn, $"PRAGMA user_version={SchemaVersion};", ct);
     }
@@ -334,11 +355,14 @@ public sealed class SnapshotStore : ISnapshotStore
     {
         await using var conn = await OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
+        // In progress until CompleteSnapshotAsync / FinalizeSnapshotAsync ends it [SNAPSHOT-CRASH-PARTIAL].
         cmd.CommandText = """
-            INSERT INTO snapshots(label, captured_at, pe_hash, game_session_id, ue_version, object_count, field_count, scope)
-            VALUES ($label, $at, $pe, $sess, $ue, 0, 0, $scope);
+            INSERT INTO snapshots(label, captured_at, pe_hash, game_session_id, ue_version, object_count, field_count, scope,
+                                  capture_owner)
+            VALUES ($label, $at, $pe, $sess, $ue, 0, 0, $scope, $owner);
             SELECT last_insert_rowid();
             """;
+        cmd.Parameters.AddWithValue("$owner", _captureOwner);
         cmd.Parameters.AddWithValue("$label", meta.Label);
         cmd.Parameters.AddWithValue("$at",    meta.CapturedAt);
         cmd.Parameters.AddWithValue("$pe",    meta.PeHash);
@@ -368,9 +392,16 @@ public sealed class SnapshotStore : ISnapshotStore
         var conn = await OpenAsync(ct);   // WAL + synchronous=NORMAL + EnsureSchema
         try
         {
-            // Bulk-load pragmas: a snapshot is rebuildable (a crash mid-capture leaves a
-            // partial DB the next open/cleanup discards), so trade durability for speed
-            // during capture. Restored to NORMAL when the session disposes.
+            // Bulk-load pragmas: trade durability for speed during the capture, as snapshot data is rebuildable (a
+            // recapture). synchronous only decides when SQLite fsyncs, so an APP crash loses nothing committed: the
+            // capture's row stays in progress, and the next capture removes it [SNAPSHOT-CRASH-PARTIAL]. What
+            // OFF exposes is an OS crash or power loss: commits not yet on disk lost, and, as its checkpoints run
+            // unsynced, the per-game file corrupted -- every snapshot of the game, not this capture alone. A
+            // checkpoint syncs only when it has frames to copy, so a NORMAL one after an OFF one that folded
+            // everything in would sync nothing: the session goes back to NORMAL before the completion commits
+            // (CompleteSnapshotAsync), whose frames a syncing checkpoint then folds in, and on dispose otherwise.
+            // A kept partial [W1-PARTIAL-MARK] completes the same way as a whole capture; in WAL mode NORMAL does
+            // not sync a commit, and a completion that is lost leaves the row in progress again.
             await ExecAsync(conn, "PRAGMA synchronous=OFF; PRAGMA temp_store=MEMORY; PRAGMA cache_size=-262144;", ct);
             return new CaptureSession(conn, _log, DatabasePath);
         }
@@ -380,6 +411,14 @@ public sealed class SnapshotStore : ISnapshotStore
             throw;
         }
     }
+
+    /// <summary>A capture session's PRAGMA synchronous (0 OFF, 1 NORMAL): the tests' view of when its bulk load ends.</summary>
+    internal static long SessionSynchronousForTests(ICaptureSession session)
+        => ((CaptureSession)session).SynchronousLevel();
+
+    /// <summary>A capture session's connection, for a test that traces the order of what it runs.</summary>
+    internal static SqliteConnection SessionConnectionForTests(ICaptureSession session)
+        => ((CaptureSession)session).Connection;
 
     // Builds + binds the scalar + struct-array INSERT commands for the `fields` table
     // once, then inserts each captured object's rows. Shared by the one-shot
@@ -612,12 +651,21 @@ public sealed class SnapshotStore : ISnapshotStore
             await _tx.DisposeAsync();
             _tx = null;
 
+            // The bulk load ends here, before the completion commits [SNAPSHOT-CRASH-PARTIAL]. Its checkpoints ran OFF,
+            // unsynced, and a checkpoint syncs the db file only when it has frames left to copy, so had an OFF one
+            // folded the completion in too, no later checkpoint would sync the pages they wrote. Committed under
+            // NORMAL, the completion's frames are folded in by a checkpoint that syncs (its own autocheckpoint, or
+            // the post-capture quota pass's), and that sync flushes the whole file. Between transactions: SQLite
+            // refuses to change the safety level inside one.
+            await ExecAsync(_conn, "PRAGMA synchronous=NORMAL;", ct);
+
             await using var tx = (SqliteTransaction)await _conn.BeginTransactionAsync(ct);
 
             await using (var u = _conn.CreateCommand())
             {
                 u.Transaction = tx;
-                u.CommandText = "UPDATE snapshots SET object_count=$oc, field_count=$fc, is_usable=$us, partial_reason=$pr WHERE id=$id;";
+                u.CommandText = "UPDATE snapshots SET object_count=$oc, field_count=$fc, is_usable=$us, partial_reason=$pr, " +
+                                "capture_owner='' WHERE id=$id;";
                 u.Parameters.AddWithValue("$oc", objectCount);
                 u.Parameters.AddWithValue("$fc", fieldCount);
                 u.Parameters.AddWithValue("$us", isUsable ? 1 : 0);
@@ -665,13 +713,25 @@ public sealed class SnapshotStore : ISnapshotStore
             _completed = true;
         }
 
+        internal SqliteConnection Connection => _conn;
+
+        /// <summary>The session connection's PRAGMA synchronous (0 OFF, 1 NORMAL), for the tests.</summary>
+        internal long SynchronousLevel()
+        {
+            using var cmd = _conn.CreateCommand();
+            cmd.Transaction = _tx;   // the session keeps a batch transaction open between commits
+            cmd.CommandText = "PRAGMA synchronous;";
+            return (long)(cmd.ExecuteScalar() ?? -1L);
+        }
+
         public async ValueTask DisposeAsync()
         {
             if (_disposed) return;
             _disposed = true;
             // CompleteSnapshotAsync already committed + nulled _tx; only commit here when
             // disposing WITHOUT completing (a cancelled / failed capture — the partial rows
-            // are discarded by the caller's DeleteSnapshotAsync afterwards).
+            // are discarded by the caller's DeleteSnapshotAsync afterwards, and until then,
+            // or if that fails, the row stays in progress: no snapshot).
             if (!_completed && _tx != null)
             {
                 try { _tx.Commit(); }
@@ -690,7 +750,7 @@ public sealed class SnapshotStore : ISnapshotStore
     {
         await using var conn = await OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = "UPDATE snapshots SET object_count=$oc, field_count=$fc WHERE id=$id;";
+        cmd.CommandText = "UPDATE snapshots SET object_count=$oc, field_count=$fc, capture_owner='' WHERE id=$id;";
         cmd.Parameters.AddWithValue("$oc", objectCount);
         cmd.Parameters.AddWithValue("$fc", fieldCount);
         cmd.Parameters.AddWithValue("$id", snapshotId);
@@ -725,9 +785,11 @@ public sealed class SnapshotStore : ISnapshotStore
     {
         await using var conn = await OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
+        // A capture still in progress -- this process's, half written, or a dead process's [SNAPSHOT-CRASH-PARTIAL] --
+        // is no snapshot yet: every list and picker reads this one.
         cmd.CommandText = """
             SELECT id, label, captured_at, pe_hash, game_session_id, ue_version, object_count, field_count, scope, is_usable, partial_reason
-            FROM snapshots ORDER BY id DESC;
+            FROM snapshots WHERE capture_owner = '' ORDER BY id DESC;
             """;
         var list = new List<SnapshotMeta>();
         await using var reader = await cmd.ExecuteReaderAsync(ct);
@@ -771,7 +833,7 @@ public sealed class SnapshotStore : ISnapshotStore
             // Fold the WAL back into the .db so the file size reflects all data.
             await ExecAsync(conn, "PRAGMA wal_checkpoint(TRUNCATE);", ct);
             await using var cmd = conn.CreateCommand();
-            cmd.CommandText = "SELECT COUNT(*) FROM snapshots;";
+            cmd.CommandText = "SELECT COUNT(*) FROM snapshots WHERE capture_owner = '';";   // the snapshots listed
             usage.SnapshotCount = (int)(long)(await cmd.ExecuteScalarAsync(ct) ?? 0L);
         }
         usage.GameDbBytes   = FileSizeOf(DatabasePath);
@@ -2430,32 +2492,50 @@ public sealed class SnapshotStore : ISnapshotStore
         return result;
     }
 
-    public async Task<int> DeleteUnusableSnapshotsAsync(CancellationToken ct = default)
+    // A capture still in progress for a writer other than this process: a process that died mid-capture
+    // [SNAPSHOT-CRASH-PARTIAL]. This process's own open capture is never one of them, so removing them is safe beside a
+    // running capture. Binds $me to _captureOwner.
+    private const string DeadCaptureWhere = "capture_owner NOT IN ('', $me)";
+
+    public Task<int> DeleteUnusableSnapshotsAsync(CancellationToken ct = default)
+        // Flagged unusable, or a dead process's capture. Not done when the store opens instead: an open can run on the
+        // UI thread (Microsoft.Data.Sqlite's async calls run synchronously), and a dead capture's rows can run to
+        // gigabytes. Reclaim the disk: an unusable capture can still be large, and this runs at the START of a new
+        // capture, so freeing it now keeps the file from bloating.
+        => DeleteSnapshotsWhereAsync("is_usable=0 OR " + DeadCaptureWhere, reclaim: true, "unusable or unfinished", ct);
+
+    public Task<int> DeleteDeadCapturesAsync(CancellationToken ct = default)
+        // No reclaim: VACUUM copies the live data aside first, which a drive the free-disk guard calls low cannot
+        // spare. The freed pages stay in the file, and the next capture fills them before it grows the file.
+        => DeleteSnapshotsWhereAsync(DeadCaptureWhere, reclaim: false, "unfinished", ct);
+
+    private async Task<int> DeleteSnapshotsWhereAsync(string doomed, bool reclaim, string what, CancellationToken ct)
     {
         await using var conn = await OpenAsync(ct);
         int removed;
         await using (var count = conn.CreateCommand())
         {
-            count.CommandText = "SELECT COUNT(*) FROM snapshots WHERE is_usable=0;";
+            count.CommandText = $"SELECT COUNT(*) FROM snapshots WHERE {doomed};";
+            count.Parameters.AddWithValue("$me", _captureOwner);
             removed = (int)(long)(await count.ExecuteScalarAsync(ct) ?? 0L);
         }
         if (removed == 0) return 0;
 
-        // Delete the flagged snapshots' rows across all four tables in one statement
-        // (the per-row tables key on snapshot_id; the metadata row holds the flag).
+        // Delete those snapshots' rows across all four tables in one statement
+        // (the per-row tables key on snapshot_id; the metadata row holds the marks).
         await using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText =
-                "DELETE FROM fields            WHERE snapshot_id IN (SELECT id FROM snapshots WHERE is_usable=0); " +
-                "DELETE FROM class_counts      WHERE snapshot_id IN (SELECT id FROM snapshots WHERE is_usable=0); " +
-                "DELETE FROM pivot_index_built WHERE snapshot_id IN (SELECT id FROM snapshots WHERE is_usable=0); " +
-                "DELETE FROM snapshots         WHERE is_usable=0;";
+                $"DELETE FROM fields            WHERE snapshot_id IN (SELECT id FROM snapshots WHERE {doomed}); " +
+                $"DELETE FROM class_counts      WHERE snapshot_id IN (SELECT id FROM snapshots WHERE {doomed}); " +
+                $"DELETE FROM pivot_index_built WHERE snapshot_id IN (SELECT id FROM snapshots WHERE {doomed}); " +
+                $"DELETE FROM snapshots         WHERE {doomed};";
+            cmd.Parameters.AddWithValue("$me", _captureOwner);
             await cmd.ExecuteNonQueryAsync(ct);
         }
-        // Reclaim the disk: an unusable capture can still be large, and this runs at
-        // the START of a new capture, so freeing it now keeps the file from bloating.
-        await ReclaimDiskAsync(conn, ct);
-        _log?.Info(Constants.LogCatView, $"SnapshotStore: deleted {removed} unusable snapshot(s) (reclaimed disk)");
+        if (reclaim) await ReclaimDiskAsync(conn, ct);
+        _log?.Info(Constants.LogCatView,
+            $"SnapshotStore: deleted {removed} {what} snapshot(s){(reclaim ? " (reclaimed disk)" : "")}");
         return removed;
     }
 

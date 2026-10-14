@@ -889,6 +889,28 @@ frames). What to do:
 - A per-call kernel query (VirtualQuery) cost about 300 µs in the same uncapped game: anything that asks the kernel per
   item in a pass over the object array needs a cache (Aura::CodeRangeCache).
 
+### 1.ao Six traps the 2026-10-13/14 known-issues pass hit -- each cost a run before it was seen
+
+- **`py -I` and this repo's rigs do not mix.** `-I` implies `-P`: the script's own folder is not put on `sys.path`,
+  so a rig that imports a sibling silently loses it -- `inject.py` then cannot load `b29_product_name`, reports the
+  game's own `C:\Windows\System32\WINMM.dll` and `VERSION.dll` as stale copies of ours, and refuses to inject. Run
+  repo tools WITHOUT `-I`. The opposite holds for a script in the shared scratchpad: run it WITH `-I`, because a
+  sibling agent may have left a file there named like a stdlib module (a `struct.py` broke `import ctypes`).
+- **`python -c "..."` inside a bash double-quoted string runs every backtick as a command**, and a doc edit lost
+  `DumperTestActor.bPlainBool` to it without an error. Text with backticks goes through a patch-script FILE, the
+  rule CLAUDE.md already gives for backslashes.
+- **A file Python writes in text mode on Windows has CRLF**, and the Workflow tool refuses such a script as
+  "control characters". Write generated scripts as bytes, or with `newline=''`.
+- **A combo another program holds with `RegisterHotKey` never reaches anyone else's KeyDown**: Windows hands it to
+  the holder as `WM_HOTKEY`. So a hotkey capture box cannot even see a taken combo; its refusal path is reachable
+  only by a race, and a live check that "binds a combo another app holds" waits on "Press keys..." forever.
+- **A destroyed actor's objects stay in GObjects until the next garbage collection** (about a minute): Force and
+  `find_instances` still count them. And a pawn under Fly (`MOVE_Flying`) does not fall past KillZ: teleport it far
+  below KillZ instead, and wait for the collection before reading "no live instance".
+- **The UI's "Game thread paused" banner moves every row of the window down** while it shows -- a suspended or
+  unfocused game raises it, and it goes again once the game ticks -- so a coordinate measured on one side of it
+  lands on the wrong control on the other. Re-screenshot after any suspend, resume or focus change (§2.5d).
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
@@ -3577,6 +3599,49 @@ architecture or UX changes in these areas.
   - **Map / set element sizes cross the wire as 0.** `Fern` gates `array_elem_size` on `> 0` but emits
     `map_key_size` / `map_value_size` / `set_elem_size` unconditionally. Every consumer gates, and
     gating the emit would drop a field older UI builds read.
+- **The UI's JSON stays on System.Text.Json, not CAPCOM's RE:Dox (`CAPCOM.REDox`)** (maintainer, 2026-10-09,
+  after an evaluation of v1.0.1 at upstream `57a6aa3`). The shipped exe is Native-AOT trimmed, and RE:Dox binds
+  types by runtime reflection -- `MakeGenericType`, `Expression.Compile` and `Activator.CreateInstance` in its
+  core, no source generator, no trim annotations, no `IsAotCompatible` (its README calls AOT / source-generator
+  support future work). That is the shape behind every AOT bug in this repo, and our `JsonSerializerContext`s
+  are already AOT-safe. The gain is small and unmeasured here: its 1.4-1.8x is typed deserialisation against
+  STJ's `JsonSerializer`, while the pipe parses with `JsonNode.Parse`; the one measured workload (a CE export,
+  [multipipe-eval.md](multipipe-eval.md) §10.5) spent 653 of 3,437 ms parsing, against 1,506 in the DLL and
+  1,278 in IPC, so its lever is bytes. Its other features (CBOR / MessagePack / TOML, an editable DOM, JSON5
+  trivia, `$type` / `$ref`) meet no need here, and it had been public for nine days. **Revisit only when all
+  three hold:** it ships a source generator or `IsAotCompatible` and our `-Mode Publish` stays free of new
+  warnings with it; a user-visible path is measured to be bound by JSON parsing; it has a few months of releases
+  and issues behind it. A parse hotspot found before then takes STJ's `Utf8JsonReader` on that one path, as
+  `DumpDiffModels` does.
+- **The experimental opt-in is about where a new user spends effort, NOT about fewer tabs** (the
+  maintainer, 2026-10-09, `[LF-EXPOFF-TRACE]`), in their words (one line, so no renderer splits it):
+  「實驗性功能是較複雜功能，例如SPC, Snapshot等，沒有一點電腦知識的話，根本不知道那是什麼，我特地一開始不開，就是要使用者別花太多精神在這些進階功能上，等工具熟了後自然會用。故並不是為了UI要少幾個 tabs」
+  -- in English: the experimental features are the complex ones (SPC, Snapshot, ...) that a user without some computer
+  knowledge cannot make sense of; they start OFF on purpose, so that users do not spend effort on advanced features
+  before they know the tool, and pick them up naturally once they are familiar with it. It is not there to make the UI
+  a few tabs shorter. So do not judge an experimental-off layout by the lines or tabs it saves (a finding of that kind
+  was withdrawn on this ground), and do not propose ungating a feature because the UI has room for it. The switch's
+  rules, the same day: the System tab's checkbox **ticks and unticks at any time, connected or not**; only the session
+  lock (a tab that locks it, opened this session) disables it; and an untick **turns off what the features run in the
+  game** -- at once while connected, and at the next connect with the features off while disconnected, from what the
+  connect prime reads; only that connect, as the untick is kept owed until paid, and a connect owing nothing leaves alone
+  what a CE record runs. ⛔ Do not re-propose "untick only while disconnected": it was built and reversed the same day,
+  because a disconnect does not end Keep Foreground, Fly or a Solide hold (the DLL's last-client teardown ends the
+  trace and See-through only), so it left them running behind hidden cards (`[EXPOFF-TEARDOWN]`). Live Funcs gives a
+  kept trace back at the untick, and offers one only while the switch is on, as a defence line. Design record:
+  [experimental-snapshot-spc-pivot.md](experimental-snapshot-spc-pivot.md), Phase 0.
+- **The known-issues pass's open calls, decided by the maintainer 2026-10-14** (todo.md has each row):
+  - A persisted UE version override accepts the structural version checks' result: a raise rung lifts it as it lifts a
+    detection, and init logs that the override was overruled (`[OVERRIDE-RAISED-BY-LADDER]`).
+  - The "does not fit this game" note beside the override badge is re-derived on every snapshot from the UFunction
+    vote's measurement, not latched, and is hidden while Auto is pending (`[OVERRIDE-REVIEW2-LOWS]`).
+  - The Call Trace list may drop below its 208 floor only when the whole panel is narrower than 232 (the object
+    tree dragged very wide), and a pane the list has taken below 200 does not drag: kept, because nobody narrows it
+    that far in practice and anyone who does will widen the window (`[CT-FLOOR-208]`).
+  - A connect with the experimental features off tears down only an untick still owed; a Fly or Keep Foreground a
+    CE record started while the features are off is left alone (`[EXPOFF-ROUND3-PAUSED]`).
+  - `IsCleanFName` accepts a short CJK mojibake as a name, a known issue kept on purpose: refusing it would refuse
+    genuine short CJK names (`[UE4-WIDE-FNAME-CLEANCHECK]`).
 
 Evaluations that concluded "do not build" live in the repo rather than here — see [README.md](README.md)'s
 index for `text-translation-eval.md` and `multipipe-eval.md`; `Nibble-Mask-Evaluation.md` is in the

@@ -71,6 +71,7 @@ import time
 ROOT = pathlib.Path(r"D:\UE_Analyze_data\for testing\DumperTest")
 ROOT58 = pathlib.Path(r"D:\UE_Analyze_data\for testing\DumperTest58")
 ROOT51 = pathlib.Path(r"D:\UE_Analyze_data\for testing\DumperTest51")
+ROOT56 = pathlib.Path(r"D:\UE_Analyze_data\for testing\DumperTest56")
 FLAVOURS = {
     "dev": ROOT / "Development/Windows/DumperTest/Binaries/Win64/DumperTest.exe",
     "shipping": ROOT / "Shipping/Windows/DumperTest/Binaries/Win64/DumperTest-Win64-Shipping.exe",
@@ -99,9 +100,16 @@ FLAVOURS = {
     "dev51": ROOT51 / "Development/Windows/DumperTest51/Binaries/Win64/DumperTest51.exe",
     "shipping51": ROOT51 / "Shipping/Windows/DumperTest51/Binaries/Win64/DumperTest51-Win64-Shipping.exe",
     "debug51": ROOT51 / "DebugGame/Windows/DumperTest51/Binaries/Win64/DumperTest51-Win64-DebugGame.exe",
+    # The UE 5.6 fixture: the only 5.6 binary on this machine with a PDB, and the one place the 5.6 rung of the
+    # version ladder can be seen firing on a real 5.6 layout [VER-MARKERS-PAST-504]. Handled like the 5.8 / 5.1
+    # ones -- no DumperTest switches -- until its source is known to carry them.
+    "dev56": ROOT56 / "Development/Windows/DumperTest56/Binaries/Win64/DumperTest56.exe",
+    "shipping56": ROOT56 / "Shipping/Windows/DumperTest56/Binaries/Win64/DumperTest56-Win64-Shipping.exe",
+    "debug56": ROOT56 / "DebugGame/Windows/DumperTest56/Binaries/Win64/DumperTest56-Win64-DebugGame.exe",
 }
 # The 5.8 fixture takes NO sample-specific switch, because none of them exist in it.
-IS_58 = {"dev58", "shipping58", "dev51", "shipping51", "debug51"}   # every STOCK-template fixture (5.8 and 5.1)
+IS_58 = {"dev58", "shipping58", "dev51", "shipping51", "debug51",   # every fixture without DumperTest's switches
+         "dev56", "shipping56", "debug56"}
 # THREE flavours, and the exe NAME is not derivable from the folder: Development's binary is
 # plain `DumperTest.exe` with no suffix, the other two carry `-Win64-<Flavour>`. A glob written
 # as `DumperTest-Win64*.exe` silently finds two of three and reports the third as absent --
@@ -265,7 +273,7 @@ def main(argv=None):
         return 1
     args = [str(exe)] + house + (["-DumperTestIdle"] if (a.idle and a.flavour not in IS_58) else []) + a.extra
     print("launching:", " ".join(args))
-    if a.flavour in ("shipping58", "shipping51"):
+    if a.flavour in ("shipping58", "shipping51", "shipping56"):
         # The cap is not in the launch line at all here: see the module docstring's last lesson.
         project = exe.parents[2].name
         cap = saved_frame_rate_limit(project)

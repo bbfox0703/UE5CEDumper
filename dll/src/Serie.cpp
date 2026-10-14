@@ -28,6 +28,8 @@ static bool s_isUE4Mode = false;
 static int  s_ue4StringOffset = 0x10;  // Offset within FNameEntry to null-terminated string
 static constexpr int UE4_CHUNK_SIZE = 0x4000; // 16384 entries per chunk
 static constexpr int32_t UE4_NAME_MAX_CHUNKS = 256;   // UE4 TNameEntryArray max chunk count (256 * 16384 = 4M names)
+// UE4's NAME_SIZE (NameTypes.h, 4.10 and 4.18 alike): the characters a name may hold, its terminator included.
+static constexpr size_t  UE4_NAME_SIZE       = 1024;
 static constexpr int32_t UE5_NAME_MAX_CHUNKS = 8192;  // UE5 FNamePool max chunk count (8192 * 128KB = 1GB)
 static constexpr int     FNAME_MAX_LEN       = 1024;  // Max plausible decoded FName length (sanity ceiling)
 
@@ -543,6 +545,45 @@ uintptr_t GetEntry(int32_t nameIndex) {
     return chunkPtr + chunkOffset;
 }
 
+// [UE4-WIDE-FNAME] A pre-4.23 wide name: UTF-16 code units from `at` up to their terminator. An entry is allocated to
+// its length, so the name can end right before an unreadable page; each read therefore stops at a page boundary
+// rather than asking for a fixed window. False on an unreadable unit, or when no terminator comes within the engine's
+// NAME_SIZE -- a wide name never runs on that long.
+static bool ReadUE4WideName(uintptr_t at, std::vector<wchar_t>& out) {
+    out.clear();
+    constexpr size_t kChunk = 64;
+    wchar_t buf[kChunk];
+    while (out.size() < UE4_NAME_SIZE) {
+        size_t units = (0x1000 - (at & 0xFFF)) / sizeof(wchar_t);
+        if (units == 0) units = 1;   // an odd address one byte short of a page: that unit straddles the boundary
+        units = (std::min)({ units, kChunk, UE4_NAME_SIZE - out.size() });
+        if (!Macht::ReadBytesSafe(at, buf, units * sizeof(wchar_t))) return false;
+        for (size_t i = 0; i < units; ++i) {
+            if (buf[i] == 0) return true;
+            out.push_back(buf[i]);
+        }
+        at += units * sizeof(wchar_t);
+    }
+    return false;
+}
+
+// [UE4-WIDE-FNAME] review: a pre-4.23 narrow name, up to its terminator or the 255-byte window it has always been read
+// in. The window was one read, and an SEH read fails whole, so a name allocated within 255 bytes of an unreadable page
+// came back "" -- the pools pack entries end to end. Each read now stops at a page boundary and the next is made only
+// while no terminator has come, so wherever the old window was readable the sanitizer sees the same name.
+static bool ReadUE4NarrowName(uintptr_t at, char (&buf)[256]) {
+    constexpr size_t kWindow = 255;
+    size_t got = 0;
+    while (got < kWindow) {
+        const size_t n = (std::min)(static_cast<size_t>(0x1000 - (at & 0xFFF)), kWindow - got);
+        if (!Macht::ReadBytesSafe(at, buf + got, n)) return false;
+        if (memchr(buf + got, 0, n)) return true;
+        got += n;
+        at += n;
+    }
+    return true;
+}
+
 std::string GetString(int32_t nameIndex, int32_t number) {
     if (nameIndex <= 0 && number == 0) return "None";
 
@@ -550,9 +591,22 @@ std::string GetString(int32_t nameIndex, int32_t number) {
     if (!entry) return "";
 
     if (s_isUE4Mode) {
+        // [UE4-WIDE-FNAME] A wide entry holds UTF-16, which the narrow read below would cut at its first zero byte
+        // ("Café" read as "C") or reject outright (any CJK name). Its own first word says which it is.
+        int32_t indexWord = 0;
+        if (Macht::ReadSafe(entry, indexWord) && UE4EntryIsWide(indexWord, nameIndex)) {
+            std::vector<wchar_t> wide;
+            if (!ReadUE4WideName(entry + s_ue4StringOffset, wide) || wide.empty()) return "";
+            std::string result = Utf8Helpers::EncodeUtf16(wide.data(), wide.size());
+            if (number > 0) {
+                result += "_" + std::to_string(number - 1);
+            }
+            return result;
+        }
+
         // UE4: null-terminated string at fixed offset within FNameEntry
         char buf[256] = {};
-        if (!Macht::ReadBytesSafe(entry + s_ue4StringOffset, buf, 255)) return "";
+        if (!ReadUE4NarrowName(entry + s_ue4StringOffset, buf)) return "";
         buf[255] = '\0';
 
         // Sanitize to printable ASCII; reject a junk-laden decode (invalid/uninitialized

@@ -30,7 +30,9 @@ public interface ICaptureSession : IAsyncDisposable
     long CurrentSizeBytes();
 
     /// <summary>Finalise the captured snapshot on the session connection: commit the row
-    /// tail, stamp object/field totals, and write the per-class pivot counts (class_counts)
+    /// tail, end the bulk load's <c>synchronous=OFF</c> (the rest commits under NORMAL),
+    /// stamp object/field totals, end the row's in-progress mark (so it is listed),
+    /// and write the per-class pivot counts (class_counts)
     /// INCREMENTALLY from per-class distinct GObjects-index sets accumulated while writing —
     /// replacing the ~10 s <c>COUNT(DISTINCT) GROUP BY ×2</c> the lazy build runs. Call once,
     /// after the last <see cref="WriteChunk"/> and before disposing. The lazy GROUP-BY build
@@ -65,7 +67,11 @@ public interface ISnapshotStore
     /// </summary>
     void SetActiveGame(string? peHash);
 
-    /// <summary>Insert a new snapshot row; returns its generated id.</summary>
+    /// <summary>Insert a new snapshot row; returns its generated id. The row is a capture in progress, listed nowhere,
+    /// until <see cref="ICaptureSession.CompleteSnapshotAsync"/> or <see cref="FinalizeSnapshotAsync"/> ends it: a
+    /// process that dies before then leaves no snapshot, only rows the next capture removes, at its start
+    /// (<see cref="DeleteUnusableSnapshotsAsync"/>) or, when the free-disk guard refuses it,
+    /// <see cref="DeleteDeadCapturesAsync"/>.</summary>
     Task<long> CreateSnapshotAsync(SnapshotMeta meta, CancellationToken ct = default);
 
     /// <summary>Append one captured chunk (flattened to field rows) under one
@@ -76,7 +82,10 @@ public interface ISnapshotStore
                               CancellationToken ct = default);
 
     /// <summary>Open a bulk-capture write session: ONE connection with bulk-load pragmas
-    /// (`synchronous=OFF` etc., safe because a partial capture is discarded) + a
+    /// (`synchronous=OFF` etc.: an app crash loses nothing committed, an OS crash or power loss
+    /// can cost the game's whole file, accepted as snapshots are rebuildable; it lasts until the
+    /// checkpoint that folds in <see cref="ICaptureSession.CompleteSnapshotAsync"/>'s commit, made
+    /// under NORMAL so that checkpoint syncs) + a
     /// transaction committed every N chunks, so a multi-million-row capture isn't paying
     /// a fresh connection + `EnsureSchema` + fsync per chunk. The streaming capture loop
     /// writes each chunk via <see cref="ICaptureSession.WriteChunk"/> from a background
@@ -85,11 +94,13 @@ public interface ISnapshotStore
     /// <c>synchronous=NORMAL</c> (see <see cref="ICaptureSession"/>).</summary>
     Task<ICaptureSession> BeginCaptureSessionAsync(CancellationToken ct = default);
 
-    /// <summary>Record the final object/field totals on the snapshot row.</summary>
+    /// <summary>Record the final object/field totals on the snapshot row, which ends it as a capture in
+    /// progress.</summary>
     Task FinalizeSnapshotAsync(long snapshotId, int objectCount, int fieldCount,
                                CancellationToken ct = default);
 
-    /// <summary>All snapshots for the active game, newest first. Each row's
+    /// <summary>All snapshots for the active game, newest first; a capture still in progress (this
+    /// process's, or one a dead process left) is none. Each row's
     /// <see cref="SnapshotMeta.EstBytes"/> is set (pro-rated from the DB size).</summary>
     Task<IReadOnlyList<SnapshotMeta>> ListSnapshotsAsync(CancellationToken ct = default);
 
@@ -106,11 +117,21 @@ public interface ISnapshotStore
 
     /// <summary>Delete every snapshot flagged unusable (<c>is_usable=0</c>) for the
     /// active game — captures that spanned a GObjects drift and are temporally
-    /// inconsistent. Called at the START of a new capture so a flagged-but-kept
+    /// inconsistent — and every capture a process that is gone left in progress
+    /// (a crash mid-capture). Called at the START of a new capture so a flagged-but-kept
     /// snapshot is reclaimed once, deferred (the user sees it flagged in the list
-    /// until then). Returns how many were removed. Default no-op (returns 0) so
+    /// until then). A capture this process still has in progress is kept. Returns how
+    /// many were removed. Default no-op (returns 0) so
     /// lightweight test doubles need not implement it.</summary>
     Task<int> DeleteUnusableSnapshotsAsync(CancellationToken ct = default)
+        => Task.FromResult(0);
+
+    /// <summary>Delete every capture a process that is gone left in progress for the active game, and nothing
+    /// else: the half of <see cref="DeleteUnusableSnapshotsAsync"/> no list shows, for a capture the free-disk guard
+    /// refuses before that cleanup can run. Rows only, no VACUUM: the freed pages stay in the file for the next
+    /// capture, since VACUUM's scratch copy is what a drive the guard calls low cannot spare. Returns how many were
+    /// removed. Default no-op (returns 0) so lightweight test doubles need not implement it.</summary>
+    Task<int> DeleteDeadCapturesAsync(CancellationToken ct = default)
         => Task.FromResult(0);
 
     /// <summary>Delete the snapshot database FILES for EVERY game (all

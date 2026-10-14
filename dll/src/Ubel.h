@@ -33,11 +33,11 @@ struct FieldInfo {
 
     // === Extended type metadata (populated by WalkClassEx) ===
     std::string structType;      // StructProperty -> UScriptStruct name
-    std::string objClassName;    // Object-family property -> its PropertyClass. For a ClassProperty /
-                                 // SoftClassProperty that is the class of the VALUE (`Class`, or e.g.
-                                 // `BlueprintGeneratedClass`), never the class it holds a subclass of.
-    // [SDK-METACLASS] A ClassProperty's / SoftClassProperty's MetaClass: the UClass it holds a subclass
-    // of (TSubclassOf<X> / TSoftClassPtr<X>). Empty when unread or when the read did not validate.
+    std::string objClassName;    // Object-family property -> its PropertyClass. For a class-valued one
+                                 // (ClassProperty and the soft class pointers) that is the class of the VALUE
+                                 // (`Class`, or e.g. `BlueprintGeneratedClass`), never the class it holds a subclass of.
+    // [SDK-METACLASS] A class-valued property's MetaClass: the UClass it holds a subclass of (TSubclassOf<X> /
+    // TSoftClassPtr<X>, or 4.11-4.17's TAssetSubclassOf<X>). Empty when unread or when the read did not validate.
     std::string metaClassName;   // the field itself
     std::string innerMetaClass;  // ArrayProperty / OptionalProperty inner
     std::string keyMetaClass;    // MapProperty key
@@ -590,6 +590,13 @@ struct OverrideTailCheck {
 };
 OverrideTailCheck CheckVersionOverrideTail(unsigned newVersion);
 
+// [OVERRIDE-REVIEW2-LOWS] DynOff::OverrideContradictsTail for the version in force: judged as CheckVersionOverrideTail
+// judges a new one, but from the held measurement alone -- get_pointers asks it on every refresh, so it never samples
+// again. With an override in force it runs the one-time FunctionFlags vote first if nothing has asked for it yet (the
+// vote the first function read would run, under the same version), so the panel's note is there the first time it
+// looks; with none, it reads nothing.
+bool OverrideInForceContradicted(unsigned versionInForce, bool userOverride);
+
 // Get the UClass* of a UObject
 uintptr_t GetClass(uintptr_t uobjectAddr);
 
@@ -1105,8 +1112,23 @@ inline std::string PreviewScalarValue(const std::string& typeName,
     // read every bool as false. ⛔ Never a bare (p[0] & mask) != 0.
     if (typeName == "BoolProperty")
         return (boolMask != 0 ? (p[0] & boolMask) != 0 : p[0] != 0) ? "true" : "false";
-    if (typeName == "ByteProperty" || typeName == "Int8Property") return std::to_string(p[0]);
+    if (typeName == "ByteProperty") return std::to_string(p[0]);
+    // [INT8-PREVIEW] int8 in every engine: the game holds -1 as 0xFF, which a uint8_t read shows as 255.
+    if (typeName == "Int8Property") return std::to_string(static_cast<int8_t>(p[0]));
     return "";   // needs process state, or not previewable
+}
+
+// [UE4-ASSETPTR-PROPS] UE 4.11-4.17's soft pointers, before 4.18 renamed them Soft*. They hold an FAssetPtr =
+// TPersistentObjectPtr<FStringAssetReference>: FWeakObjectPtr at +0, TagAtLastTest at +8, and FStringAssetReference --
+// one FString, AssetLongPathname -- at +0x10, 0x20 in all (UE_4.10 PersistentObjectPtr.h / StringAssetReference.h;
+// UE415_Flyinh's 4.15 PDB). 4.18's FSoftObjectPtr keeps that envelope and makes the path an FName and an FString
+// sub-path, which the Soft* readers measure from ElementSize -- arithmetic that reads this 0x20 element as a 5.3+
+// untagged pointer (0x20 less an FName path's 0x18 is 0x08) and latches it. So these are read here, at their own
+// fixed offset, and never through that reader. The tag outlived their era (5.3 removed it), so +0x10 holds for all of it.
+inline constexpr int ASSETPTR_PATH = 0x10;
+inline constexpr int ASSETPTR_SIZE = ASSETPTR_PATH + 0x10;   // the FString closes it: one size, so an array's one stride
+inline bool IsAssetPtrProperty(const std::string& typeName) {
+    return typeName == "AssetObjectProperty" || typeName == "AssetClassProperty";
 }
 
 /// What an FBoolProperty / UBoolProperty's {FieldSize, ByteOffset, ByteMask, FieldMask} say.
@@ -1514,11 +1536,12 @@ ReadArrayResult ReadStructArrayElements(
     int32_t offset = 0, int32_t limit = 64);
 
 // Phase G: TSoftObjectPtr / TSoftClassPtr arrays — resolves FSoftObjectPath
-// asset name and embedded FWeakObjectPtr (when loaded) per element.
+// asset name and embedded FWeakObjectPtr (when loaded) per element. `assetPtr`
+// reads 4.11-4.17's TAssetPtr elements instead (IsAssetPtrProperty).
 bool IsSoftObjectArrayType(const std::string& innerTypeName);
 ReadArrayResult ReadSoftObjectArrayElements(
     uintptr_t instanceAddr, int32_t fieldOffset,
-    int32_t elemSize, int32_t offset = 0, int32_t limit = 64);
+    int32_t elemSize, int32_t offset = 0, int32_t limit = 64, bool assetPtr = false);
 
 // Phase H: TLazyObjectPtr arrays — resolves FGuid + embedded FWeakObjectPtr.
 bool IsLazyObjectArrayType(const std::string& innerTypeName);

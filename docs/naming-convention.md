@@ -61,6 +61,7 @@ narrative identity resonates with what the module *does*.
 | **Sense.cpp** | 森瑟 | ゼンセ | Second-exam proctor, tea ceremony ("scythe") | #14 | Diagnostics: per-command dispatcher timing + process counters | Measures with a steady hand — the numbers every perf claim is checked against |
 | **Neu.h** | 諾伊 | ノイ | — ("new") | — | `UEnum::Names` layout parse (legacy `TArray` vs UE5.6+ `FNameData`) | The NEW enum container — reads the struct-of-arrays UE 5.6 introduced |
 | **Routine.h** | 路蒂涅 | ルティーネ | Shadow Warrior librarian | — | Periodic-worker scaffolding shared by the six re-assert / hold modules | Scheduled, repeating work — the librarian's rounds (header-only) |
+| **Lager.h** | 拉格 | ラーガー | Special Forces trooper ("storage / depot") | — | TrampolineDepot: pure model of MinHook's trampoline-block search + the main image's PE layout ([MH-PRERESERVE-PROXY]) | The depot — knows where MinHook's block of trampolines can be stored, and why it could not (header-only) |
 | **Lugner_Dxgi.cpp / _Dinput8.cpp / _Winmm.cpp** | 琉古納 | リュグナー | Demon master of disguise | #12 | The other three proxy DLLs (dxgi / dinput8 / winmm) | Same deceiver, three more disguises — see `Lugner.cpp` |
 | **BuildStamp.h/.cpp** | — | — | — (generic leaf utility) | — | Build number / git hash / config string baked in at compile time | Kept English by design: a generic leaf utility, per the exception in Rules below |
 | **Utf8Helpers.h** | — | — | — (generic leaf utility) | — | UTF-8 sanitisation + UTF-16→UTF-8 encoding + FString/FUtf8String width decode | Kept English by design (the rule names this file explicitly) |
@@ -132,6 +133,7 @@ Denken::                    // NativeDisasm — Zydis x64 decode: native UFuncti
 Sense::                     // Diagnostics — per-command dispatcher timing + process counters
 Neu::                       // UEnum::Names layout parse (legacy TArray vs UE5.6+ FNameData; header-only)
 Routine::                   // Periodic-worker scaffolding for the six re-assert workers (header-only)
+Lager::                     // TrampolineDepot — pure model of MinHook's trampoline-block search + PE layout (header-only)
 BuildStamp::                // Build number / git hash / config (generic leaf utility, English by design)
 Utf8Helpers::               // UTF-8 sanitise / UTF-16 encode / FString width decode (English by design)
 Grimoire::                  // Constants — spell book
@@ -343,7 +345,7 @@ German spelling.
 | Neu | ノイ | Neu | Discovers undercover ("new") | 🟢 EnumNames | UEnum::Names parse — legacy `TArray<TPair<FName,int64>>` vs the UE5.6+ FNameData struct-of-arrays disguised at the same offset (`Neu.h`, build 1266) |
 | Weg | ヴェーク | Weg | Magic Special Forces trooper ("way/path") | ⬜ | Routing / path resolution / address-path walk |
 | Grau | グラウ | Grau | Straight-laced trooper ("gray") | ⬜ | Neutral baseline |
-| Lager | ラーガー | Lager | Carefree trooper ("storage/depot") | ⬜ | Cache / buffer pool / storage |
+| Lager | ラーガー | Lager | Special Forces trooper ("storage/depot") | 🟢 TrampolineDepot | Pure model of where MinHook puts a hook's trampoline block (`vendor/minhook/src/buffer.c`'s window and free-region walks) + the main image's PE layout: summarises the window when MH_CreateHook fails with MH_ERROR_MEMORY_ALLOC, and names where a held trampoline block goes, whom it serves and which target may hold it (ChooseHolderTargets / OriginsServedBy / SpanCovers) (`Lager.h`, header-only, [MH-PRERESERVE-PROXY]) |
 | Löwe (Held) | レーヴェ | Lowe | Governor / anti-magic ("lion") | ⬜ | Aggressive / dominant heuristic |
 | Radar | ラダール | Radar | Shadow Warrior chief | 🟢 ValueScan | CE-style by-value First/Next Scan (`Radar.cpp/.h`, was `ValueScan`) |
 | Schritt | シュリット | Schritt | Shadow Warrior ("step") | ⬜ | Stepping / single-step iteration |

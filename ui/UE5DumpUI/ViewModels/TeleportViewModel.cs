@@ -33,8 +33,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private readonly TeleportHotkeyStore? _hotkeyStore;
     private IGlobalHotkeyRegistration? _cursorHotkey;
     // Live marker-hotkey registrations + the persisted combos, both keyed by
-    // action id ("save0".."recall2").
-    private readonly Dictionary<string, IGlobalHotkeyRegistration> _markerHotkeys = new();
+    // action id ("save0".."recall2"). A registration keeps the combo it holds: a
+    // re-bind compares against it, since the OS refuses a combo we already hold.
+    private readonly Dictionary<string, (IGlobalHotkeyRegistration Registration, TeleportHotkeyBinding Binding)>
+        _markerHotkeys = new();
     private readonly Dictionary<string, TeleportHotkeyBinding> _bindings = new(StringComparer.Ordinal);
 
     // Hotkeys belonging to the experimental-gated cards (Keep Foreground / Fly).
@@ -170,7 +172,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public ObservableCollection<TeleportHotkeyRow> HotkeyRows { get; } = new();
 
     /// <summary>Hotkeys for the experimental-gated cards (Keep Foreground / Fly),
-    /// shown in their own card and only registered while <see cref="ExperimentalEnabled"/>.</summary>
+    /// shown in their own card and registered while <see cref="ExperimentalEnabled"/>, and after an
+    /// untick until its teardown has turned off what they drive.</summary>
     public ObservableCollection<TeleportHotkeyRow> ExperimentalHotkeyRows { get; } = new();
 
     /// <summary>All hotkey rows (both cards) — capture / registration / conflict-warning
@@ -770,9 +773,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty] private string _flyCurrentText = "—";
 
-    /// <summary>Tracks whether fly is currently engaged (so the global hotkey +
-    /// the toggle button can flip it).</summary>
+    /// <summary>Whether the DLL's Fly worker runs, as its last reply said -- also behind an Unavailable badge, since
+    /// with no pawn the worker waits and flies the next one: whether a flight is there to turn off is decided by this,
+    /// not by the badge. [EXPOFF-ROUND3-PAUSED]</summary>
     private bool _flyActive;
+    /// <summary>[EXPOFF-ROUND3-PAUSED] The last Fly reading was a reply, not a failure or a disconnect: only then does
+    /// <see cref="_flyActive"/> say whether the worker runs, so a teardown that left Fly alone may pay its debt.</summary>
+    private bool _flyKnown;
 
     /// <summary>Slider readout, e.g. "1200 uu/s".</summary>
     public string FlySpeedText => $"{Math.Round(FlySpeed)} uu/s";
@@ -799,6 +806,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     /// <summary>Tracks whether see-through is engaged (for the toggle hotkey/button).</summary>
     private bool _seeThroughActive;
+    /// <summary>[EXPOFF-ROUND3-PAUSED] The last See-through reading was a reply: see <see cref="_flyKnown"/>.</summary>
+    private bool _seeThroughKnown;
 
     // ── Gravity Direction (Laufen, UE5.3+ GravityDirection vector) ─────
     /// <summary>Tri-state badge: "ON" / "OFF" / "Unavailable" (pre-5.3 / no
@@ -906,6 +915,12 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // IsBusy, which flickers every CanOperate-bound button, and write
             // StatusText, which would overwrite the "Connected" just set above.
             ConnectPrime = PrimeHeldBadgesAsync();
+            // [EXPOFF-TEARDOWN] An untick still owed -- made while disconnected, or its teardown cut short, unable to
+            // read what ran, or refused an OFF -- is paid after the prime: what it finds running of theirs is turned off. Nothing owed, nothing is touched, as a CE
+            // record may be running it. A host with no gate has no opt-in to have turned off.
+            int gen = ++_connectTeardownGen;
+            if (_experimentalGate is { IsEnabled: false, TeardownOwed: true })
+                ExperimentalTeardown = TearDownAfterConnectPrimeAsync(ConnectPrime, gen);
         }
         else
         {
@@ -949,6 +964,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // game) shows the old game's hold and Hold @0 would send its stale
             // class::field. (L13)
             _stealthCandidate = null;
+            _stealthArmed = false;   // the hold outlives the pipe; the connect prime claims it again if it can
+            _stealthKnown = false;
             StealthFieldText = "—";
             ApplyStealthState(-1);   // [A4-STEALTH-PRIME] Unknown until the connect prime reads the DLL's holds
         }
@@ -1804,8 +1821,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             "God Mode (toggle)", UE5DumpUI.Services.ProtectionScriptGenerator.Generate());
 
     // ── Player stealth meter (Solide via find_stealth_meter + force_field) ──
-    /// <summary>Tri-state badge: "Holding @0" (green) / "Off" / "Ready" / "Not
-    /// found" (amber). The meter is auto-found on the local pawn + its owned
+    /// <summary>Badge: "Holding @0" (green) / "Armed @0" (amber: held as soon as an
+    /// instance spawns) / "Off" / "Ready" / "Not found" (amber) / "Unknown". The meter
+    /// is auto-found on the local pawn + its owned
     /// components (keyword-scored numeric field) and held at 0 by the DLL's
     /// force-and-hold worker — the honest, per-game subset of "enemies can't detect
     /// you" (there is no universal detection bool; docs/godmode-spec.md §3.2).</summary>
@@ -1815,10 +1833,25 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// the user can verify the auto-find picked the right meter before holding it.</summary>
     [ObservableProperty] private string _stealthFieldText = "—";
 
-    /// <summary>Badge text set while the meter is actively held at 0 — the single source
-    /// of truth for "a hold is live", so the experimental gate-off teardown knows to
-    /// release it. (M9)</summary>
+    /// <summary>Badge text while the meter is held at 0 on at least one live instance. What the card releases is
+    /// decided by <see cref="_stealthArmed"/>, not by this text: other answers overwrite the badge while the DLL's job
+    /// runs on.</summary>
     private const string StealthHoldingState = "Holding @0";
+
+    /// <summary>Badge text while the DLL keeps the card's hold armed with no live instance to write: Solide applies it
+    /// as soon as one spawns.</summary>
+    private const string StealthArmedState = "Armed @0";
+
+    /// <summary>[EXPOFF-ROUND3-PAUSED] The DLL keeps a hold job on <see cref="_stealthCandidate"/> that this card set,
+    /// or that the connect prime claimed as the meter's: what Reset releases, what Detect leaves alone, and what the
+    /// experimental teardown releases (M9). Its own flag because Solide keeps a job the card's answer does not say is
+    /// holding -- one that matched no instance yet, and an armed one whose re-arm was refused.</summary>
+    private bool _stealthArmed;
+    /// <summary>[EXPOFF-ROUND3-PAUSED] Since the connect, the prime read the DLL's holds, and no Hold has lost its answer
+    /// since (one may have armed a job the card never heard of): only then is <see cref="_stealthArmed"/> the whole
+    /// story, so a teardown may pay its debt. A later Hold does not restore it -- Detect may have moved the candidate
+    /// off a lost one's field -- the next connect's prime does.</summary>
+    private bool _stealthKnown;
 
     /// <summary>[A4-STEALTH-PRIME] The Stealth card's hold badge, in the shape every other card's badge has
     /// (<c>Apply&lt;X&gt;State</c>, which gate 17d reads): -1 Unknown, 0 Off, 1 Holding. The disconnect branch set "Off"
@@ -1845,6 +1878,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var cands = await _dump.FindStealthMeterAsync();
+            // [EXPOFF-ROUND3-PAUSED] While a hold is armed, the held meter is what Reset and the experimental teardown
+            // release, so Detect only reads: overwritten, they released the newly found field or none while Solide
+            // went on forcing the meter.
+            if (_stealthArmed && _stealthCandidate is { } held)
+            {
+                var now = cands.FirstOrDefault(c => c.ClassName == held.ClassName && c.FieldName == held.FieldName);
+                if (now != null) StealthFieldText = $"{held.ClassName}::{held.FieldName} = {now.Current:0.###} (held)";
+                StatusText = Res.Format("str.TP.StDetectWhileHolding", held.FieldName, cands.Count);
+                return;
+            }
             if (cands.Count == 0)
             {
                 _stealthCandidate = null;
@@ -1882,10 +1925,25 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var r = await _dump.ForceFieldAsync(c.ClassName, c.FieldName, "numeric", 0);
-            if (r.Code < 0 || r.Held == 0)
+            if (r.Code < 0)
             {
+                // Refused. Solide drops a new job it refused but keeps one already armed (it was asked to re-arm the
+                // hold, not to remove it), so the card's own hold, if it had one, still runs and stays its to release.
+                if (_stealthArmed)
+                {
+                    StatusText = Res.Format("str.TP.StRearmRefused", r.Code, c.FieldName);
+                    return;
+                }
                 (StealthState, StealthBadgeColor) = ("Not found", "#C9A04E");
-                StatusText = $"Hold failed: {(r.Held == 0 ? "no live instance matched" : $"DLL error {r.Code}")}.";
+                StatusText = $"Hold failed: DLL error {r.Code}.";
+                return;
+            }
+            // Code 0: Solide kept the job, whatever it holds this instant (audit #5 Z11, as Property Search's Force).
+            _stealthArmed = true;
+            if (r.Held == 0)
+            {
+                (StealthState, StealthBadgeColor) = (StealthArmedState, "#E0A050");
+                StatusText = Res.Format("str.TP.StArmed", c.FieldName, c.ClassName);
                 return;
             }
             (StealthState, StealthBadgeColor) = (StealthHoldingState, "#4EC9B0");
@@ -1897,6 +1955,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
+            _stealthKnown = false;   // the request may have reached Solide and armed a job
             SetError(ex);
             _log.Error("Teleport HoldStealth failed", ex);
         }
@@ -1905,22 +1964,28 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     /// <summary>Release the hold (restore the captured base) and reset the badge.</summary>
     [RelayCommand]
-    private async Task ResetStealthAsync()
+    private Task ResetStealthAsync() => ReleaseStealthAsync();
+
+    /// <returns>Whether the DLL answered, which a teardown needs of every OFF it sends before it pays its debt.</returns>
+    private async Task<bool> ReleaseStealthAsync()
     {
-        if (!IsConnected) return;
+        if (!IsConnected) return false;
         try
         {
             IsBusy = true;
             ClearError();
             if (_stealthCandidate != null)
                 await _dump.ResetFieldAsync(_stealthCandidate.ClassName, _stealthCandidate.FieldName);
+            _stealthArmed = false;
             (StealthState, StealthBadgeColor) = ("Off", "#999999");
             StatusText = "Released the stealth-meter hold.";
+            return true;
         }
         catch (Exception ex)
         {
             SetError(ex);
             _log.Error("Teleport ResetStealth failed", ex);
+            return false;
         }
         finally { IsBusy = false; }
     }
@@ -1929,12 +1994,23 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     /// <summary>Map the DLL state (1=on, 0=off, &lt;0=error/unknown) onto the badge.</summary>
     private void ApplyForegroundLockState(int state)
-        => (ForegroundLockState, ForegroundLockBadgeColor) = state switch
+    {
+        _foregroundLockOn = state == 1;
+        _foregroundKnown = state is 0 or 1;
+        (ForegroundLockState, ForegroundLockBadgeColor) = state switch
         {
             1 => ("ON",      "#4EC9B0"),   // green — game always sees itself as foreground
             0 => ("OFF",     "#999999"),   // grey — normal (idles/pauses when unfocused)
             _ => ("Unknown", "#888888"),
         };
+    }
+
+    /// <summary>[EXPOFF-TEARDOWN] The lock was last read or set ON: the connect-time teardown turns it off only then
+    /// (<see cref="TearDownAfterConnectPrimeAsync"/>).</summary>
+    private bool _foregroundLockOn;
+    /// <summary>[EXPOFF-ROUND3-PAUSED] The lock's last reading was a reply that said ON or OFF: a connect teardown that
+    /// left it alone on any other may not pay its debt, as the hook may hold.</summary>
+    private bool _foregroundKnown;
 
     [RelayCommand]
     private Task ForceForegroundLockOnAsync()  => ForceForegroundLockAsync(wantOn: true);
@@ -1966,9 +2042,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     /// <summary>Enable/disable the foreground lock — the DLL hooks
     /// GetForegroundWindow so the game never idles/pauses on focus loss. Idempotent.</summary>
-    private async Task ForceForegroundLockAsync(bool wantOn)
+    /// <returns>Whether the DLL answered the lock is now as asked, which a teardown needs of its OFF before it pays its
+    /// debt.</returns>
+    private async Task<bool> ForceForegroundLockAsync(bool wantOn)
     {
-        if (!IsConnected) return;
+        if (!IsConnected) return false;
         string want = wantOn ? "ON" : "OFF";
         try
         {
@@ -1982,12 +2060,14 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 0 => "Foreground lock OFF",
                 _ => $"Foreground lock {want} failed (hook error {state})",
             };
+            return state == (wantOn ? 1 : 0);
         }
         catch (Exception ex)
         {
             SetError(ex);
             StatusText = $"Foreground lock {want} failed: {ex.Message}";
             _log.Error($"Teleport ForceForegroundLock({want}) failed", ex);
+            return false;
         }
         finally { IsBusy = false; }
     }
@@ -2385,6 +2465,17 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     }
 
 
+    /// <summary>The in-flight connect prime, so a test can await it instead of racing it.</summary>
+    /// <remarks>⚠ NOT just a convenience. The prime is fire-and-forget by design (a
+    /// reconnect must not block the UI thread on eight pipe round-trips), which makes any
+    /// assertion that COUNTS calls non-deterministic: `RefreshCursor_reads_live_state`
+    /// asserts one <c>GetMouseCursorAsync</c> and would see one or two depending on whether
+    /// the background prime had landed yet. Weakening that assertion to ">= 1" would hide
+    /// exactly the kind of duplicate-call regression it exists to catch, so the seam is the
+    /// honest fix. The UI thread never waits on it: what awaits it in production is the
+    /// experimental teardown, itself fire-and-forget, which must act on what the prime read.</remarks>
+    internal Task ConnectPrime { get; private set; } = Task.CompletedTask;
+
     /// <summary>
     /// Quiet read-back of EVERY badge the disconnect branch resets, run once on connect.
     /// </summary>
@@ -2418,16 +2509,6 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// here. The two lists are kept honest by <c>tools/check_badge_prime_symmetry.py</c>,
     /// which fails if a badge is reset on disconnect and primed by nothing on connect.</para>
     /// </remarks>
-    /// <summary>The in-flight connect prime, so a test can await it instead of racing it.</summary>
-    /// <remarks>⚠ NOT just a convenience. The prime is fire-and-forget by design (a
-    /// reconnect must not block the UI thread on eight pipe round-trips), which makes any
-    /// assertion that COUNTS calls non-deterministic: `RefreshCursor_reads_live_state`
-    /// asserts one <c>GetMouseCursorAsync</c> and would see one or two depending on whether
-    /// the background prime had landed yet. Weakening that assertion to ">= 1" would hide
-    /// exactly the kind of duplicate-call regression it exists to catch, so the seam is the
-    /// honest fix. Production code never awaits this.</remarks>
-    internal Task ConnectPrime { get; private set; } = Task.CompletedTask;
-
     private async Task PrimeHeldBadgesAsync()
     {
         // God Mode, and the two time lanes — the three that were already primed.
@@ -2488,8 +2569,17 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         if (!IsConnected) return;
         var forced = await _dump.GetForcedFieldsAsync();
-        if (forced.Count == 0) { ApplyStealthState(0); return; }
+        if (forced.Count == 0)
+        {
+            _stealthArmed = false;
+            _stealthKnown = true;
+            ApplyStealthState(0);
+            return;
+        }
         var cands = await _dump.FindStealthMeterAsync();
+        // [EXPOFF-ROUND3-PAUSED] Read, whatever the match: a hold it cannot match to a meter may be a Property Search
+        // Force, which no teardown may release, so leaving it to that panel's strip is the answer, not a gap.
+        _stealthKnown = true;
         UE5DumpUI.Models.StealthCandidate? held = null;
         foreach (var c in cands)
         {
@@ -2503,8 +2593,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             }
             if (held != null) break;
         }
+        // Unmatched, the hold is left as the card knew it: a disconnect has already cleared the card's claim, and the
+        // main window's second prime of one connect must not drop a hold made between the two.
         if (held == null) { ApplyStealthState(-1); return; }
         _stealthCandidate = held;
+        _stealthArmed = true;
         StealthFieldText = $"{held.ClassName}::{held.FieldName} = 0 (held)";
         ApplyStealthState(1);
     }
@@ -2751,6 +2844,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private void ApplyFlyState(int state)
     {
         _flyActive = state == 1;
+        _flyKnown = state >= 0;   // -1 is a failure or a disconnect, unless ApplyFlyReadout's no-pawn reply sets it
         (FlyState, FlyBadgeColor) = state switch
         {
             1 => ("ON",          "#4EC9B0"),
@@ -2765,6 +2859,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             FlyCurrentText = "Current: unavailable (no CharacterMovement on this pawn)";
             ApplyFlyState(-1);
+            // Dunste answers `active` whatever the pawn, and its worker flies the next pawn: the flight is not over.
+            _flyActive = st.Active;
+            _flyKnown = true;
             return;
         }
         FlyCurrentText = st.Active
@@ -2809,9 +2906,14 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     /// <summary>Disable Fly: restore the captured MovementMode + stop the worker.</summary>
     [RelayCommand]
-    private async Task ResetFlyAsync()
+    private Task ResetFlyAsync() => TurnFlyOffAsync();
+
+    /// <returns>Whether the DLL answered that its worker stopped, which a teardown needs of every OFF it sends before
+    /// it pays its debt. A MovementMode it could not restore does not count against it: sent again, the OFF finds an
+    /// idle worker and restores nothing more.</returns>
+    private async Task<bool> TurnFlyOffAsync()
     {
-        if (!IsConnected) return;
+        if (!IsConnected) return false;
         try
         {
             IsBusy = true;
@@ -2825,12 +2927,14 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             StatusText = st.State < 0
                 ? $"Fly stopped, but the MovementMode was NOT restored (code {st.State}) — the pawn may still be flying (MovementMode {st.CurrentMode})."
                 : "Fly OFF.";
+            return !st.Active;
         }
         catch (Exception ex)
         {
             ApplyFlyState(-1);
             SetError(ex);
             _log.Error("Teleport ResetFly failed", ex);
+            return false;
         }
         finally { IsBusy = false; }
     }
@@ -2899,6 +3003,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private void ApplySeeThroughState(int state)
     {
         _seeThroughActive = state == 1;
+        _seeThroughKnown = state >= 0;   // -1 is a failure or a disconnect
         (SeeThroughState, SeeThroughBadgeColor) = state switch
         {
             1 => ("ON",          "#4EC9B0"),
@@ -3005,9 +3110,14 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     }
 
     [RelayCommand]
-    private async Task ResetSeeThroughAsync()
+    private Task ResetSeeThroughAsync() => TurnSeeThroughOffAsync();
+
+    /// <returns>Whether the DLL answered that See-through is off, which a teardown needs of every OFF it sends before
+    /// it pays its debt. Actors a paused game thread could not un-hide yet do not count against it: Schlacht keeps
+    /// their record and restores them once the game thread runs.</returns>
+    private async Task<bool> TurnSeeThroughOffAsync()
     {
-        if (!IsConnected) return;
+        if (!IsConnected) return false;
         try
         {
             IsBusy = true; ClearError();
@@ -3023,8 +3133,15 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                   + "thread is paused (game in the background?). They are restored automatically as "
                   + "soon as you click back into the game. Keep Foreground prevents this."
                 : "See-through OFF.";
+            return !st.Active;
         }
-        catch (Exception ex) { ApplySeeThroughState(-1); SetError(ex); _log.Error("Teleport ResetSeeThrough failed", ex); }
+        catch (Exception ex)
+        {
+            ApplySeeThroughState(-1);
+            SetError(ex);
+            _log.Error("Teleport ResetSeeThrough failed", ex);
+            return false;
+        }
         finally { IsBusy = false; }
     }
 
@@ -4760,19 +4877,19 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // when registration fails — otherwise a hotkey silently goes dead and
             // the row looks unbound.
             row.Label = b.Label;
+            // Retained whether or not it registers below: every re-bind or clear rewrites the file from _bindings,
+            // so a combo left out of it would be erased by the first one, and the experimental gate re-registers
+            // only what it holds.
+            _bindings[row.ActionId] = b;
 
             // Experimental-feature hotkeys stay UNregistered until the experimental
-            // gate is enabled (their card is hidden anyway). Retain the binding so
-            // enabling later re-registers it (see RegisterExperimentalHotkeys).
+            // gate is enabled (their card is hidden anyway); enabling it later
+            // registers them (see RegisterExperimentalHotkeys).
             if (s_experimentalHotkeyIds.Contains(row.ActionId) && !ExperimentalEnabled)
-            {
-                _bindings[row.ActionId] = b;
                 continue;
-            }
 
             if (RegisterMarkerHotkey(row.ActionId, b))
             {
-                _bindings[row.ActionId] = b;
                 row.Conflicted = false;
             }
             else
@@ -4796,6 +4913,20 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
               $"{string.Join(", ", failed)}. Free the combo and reconnect, or re-bind below.";
     }
 
+    /// <summary>[EXPOFF-TEARDOWN] The experimental teardown last started -- an untick's, or a connect's with the features
+    /// off -- so a test can await it. Production never awaits it.</summary>
+    internal Task ExperimentalTeardown { get; private set; } = Task.CompletedTask;
+
+    /// <summary>[EXPOFF-TEARDOWN] Moved by every gate change, so an untick's teardown that is still running when the box
+    /// is ticked again leaves the hotkeys registered: they are wanted again. A teardown pays what the gate owes only
+    /// while this has not moved, so it never pays for a later untick it did not serve.</summary>
+    private int _hotkeyReleaseGen;
+
+    /// <summary>[EXPOFF-TEARDOWN] Moved by every connect, so only the last connect's teardown runs: the main window calls
+    /// <see cref="SetConnected"/> twice for one connect (its pipe's state handler, then the finished scan), and the
+    /// later prime reads the DLL again.</summary>
+    private int _connectTeardownGen;
+
     /// <summary>Experimental gate flipped (System-tab checkbox). Refresh the gated
     /// card visibility and (dis)engage the experimental-feature hotkeys. On disable
     /// we FIRST force the features off (user choice) so a live cursor-lock/flight is
@@ -4806,6 +4937,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         // Lock), so act synchronously — same pattern as MainWindowViewModel.
         OnPropertyChanged(nameof(ExperimentalEnabled));
         OnPropertyChanged(nameof(ShowExperimentalHotkeys));
+        _hotkeyReleaseGen++;
 
         if (ExperimentalEnabled)
         {
@@ -4813,26 +4945,95 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
         else
         {
-            // Clean teardown before hiding: force the experimental features OFF
-            // (best-effort; needs a live connection to reach the DLL) so the game
-            // can't stay cursor-locked / flying with no visible way to undo.
-            if (IsConnected)
-            {
-                _ = ForceForegroundLockOffCommand.ExecuteAsync(null);
-                if (_flyActive) _ = ResetFlyCommand.ExecuteAsync(null);
-                if (_seeThroughActive) _ = ResetSeeThroughCommand.ExecuteAsync(null);
-                // Release an active Solide stealth-meter hold too — its card is about to be
-                // hidden (IsVisible=ExperimentalEnabled), so a live re-assert worker would
-                // otherwise keep writing game memory with no visible way to stop it. (M9)
-                if (StealthState == StealthHoldingState) _ = ResetStealthCommand.ExecuteAsync(null);
-            }
             // The Coordinate Library holds no live game-side state, so there is
             // nothing to force off -- but an un-applied import preview must not
             // survive behind a hidden card, where the user can neither see it nor
             // cancel it. The library itself stays on disk; only the pending diff goes.
             if (HasPendingCoordImport) CancelCoordImportCommand.Execute(null);
-            UnregisterExperimentalHotkeys();
+            ExperimentalTeardown = TearDownOnUntickAsync(_hotkeyReleaseGen);
         }
+    }
+
+    /// <summary>[EXPOFF-TEARDOWN] The untick's teardown (the maintainer's choice after the review, 2026-10-09: the box
+    /// unticks while connected, and what the features run goes off at once). Connected, the features are forced OFF
+    /// before their hotkeys go, so the game cannot stay cursor-locked, flying or held behind hidden cards. Disconnected,
+    /// nothing reaches the DLL, and the gate keeps the untick owed: the next connect pays it from the DLL's own state
+    /// (<see cref="TearDownAfterConnectPrimeAsync"/>), as the DLL's last-client teardown does not end these.</summary>
+    private async Task TearDownOnUntickAsync(int gen)
+    {
+        try
+        {
+            if (IsConnected)
+            {
+                // A connect's prime may still be reading the DLL, and until it lands the cards hold what the disconnect
+                // reset: what it then found running would stay on. It is quiet and catches its own failures.
+                await ConnectPrime;
+                bool done = await TurnOffRunningExperimentalAsync();
+                // Keep Foreground last: an untick is a click in the UI, so the game is unfocused, and a game that idles
+                // then could not run the un-hide and collision restore above, which need its game thread.
+                // Unconditionally: the badge can read Unknown over a hook that holds, and OFF is idempotent -- so its
+                // answer is all this teardown needs to know of it.
+                done &= await ForceForegroundLockAsync(wantOn: false);
+                if (done) PayOwedTeardown(gen);
+            }
+        }
+        catch (Exception ex) { _log.Error("Teleport experimental teardown failed", ex); }
+        // The keys go last, once every OFF above has been answered, so none is given back while what it drives may
+        // still run. A key pressed meanwhile does nothing: OnMarkerHotkeyPressed drops one while the gate is off.
+        if (gen == _hotkeyReleaseGen) UnregisterExperimentalHotkeys();
+    }
+
+    /// <summary>[EXPOFF-TEARDOWN] A connect that owes an untick's teardown -- the box unticked while disconnected, or a
+    /// teardown cut short or left unpaid, even before a restart -- once its prime has read the DLL: whatever of theirs
+    /// the DLL still runs runs behind hidden cards, so it is turned off. Not when a later connect primes again, when
+    /// the connection went, or when the box was ticked meanwhile: with the features on, the cards show what
+    /// runs.</summary>
+    private async Task TearDownAfterConnectPrimeAsync(Task prime, int gen)
+    {
+        try
+        {
+            await prime;
+            if (gen != _connectTeardownGen || !IsConnected || ExperimentalEnabled) return;
+            int gateGen = _hotkeyReleaseGen;
+            bool done = _foregroundKnown;
+            done &= await TurnOffRunningExperimentalAsync();
+            // Keep Foreground last, for the untick's reason. Only when the prime read it ON: an OFF at every such
+            // connect would cost a round trip and stamp over its "Connected", and a read that failed keeps its honest
+            // Unknown -- and leaves the untick owed, as the hook may hold behind it.
+            if (_foregroundLockOn) done &= await ForceForegroundLockAsync(wantOn: false);
+            if (done && gen == _connectTeardownGen) PayOwedTeardown(gateGen);
+        }
+        catch (Exception ex) { _log.Error("Teleport connect-time experimental teardown failed", ex); }
+    }
+
+    /// <summary>[EXPOFF-ROUND3-PAUSED] A teardown knew what ran and every OFF it sent landed (its caller decides that):
+    /// what the gate owes is paid, so a later connect leaves alone what a CE record runs. Not when the connection went
+    /// meanwhile, nor after a gate change since the teardown began (that untick has a teardown of its own). An OFF that
+    /// failed is not enough to tell the two orders apart -- the pipe faults its pending requests before it raises the
+    /// disconnect, so IsConnected can still read true -- which is why the caller counts the answers.</summary>
+    private void PayOwedTeardown(int gateGen)
+    {
+        if (IsConnected && gateGen == _hotkeyReleaseGen && _experimentalGate != null)
+            _experimentalGate.TeardownOwed = false;
+    }
+
+    /// <summary>[EXPOFF-TEARDOWN] Fly, See-through and a Stealth hold, each only when the last reading says it runs
+    /// (Fly's is the DLL's own flag, which a no-pawn badge does not show; Stealth's is the card's own armed hold, which
+    /// its badge does not always show). One at a time: each command sets IsBusy and the status line, and the pipe
+    /// serves them in order anyway.</summary>
+    /// <returns>Whether those readings were replies and every OFF sent landed: what a teardown needs of these three to
+    /// pay its debt. A reading that failed decides nothing, so it sends nothing for that feature and leaves the debt
+    /// to the next connect's prime.</returns>
+    private async Task<bool> TurnOffRunningExperimentalAsync()
+    {
+        bool done = _flyKnown && _seeThroughKnown && _stealthKnown;
+        if (_flyActive) done &= await TurnFlyOffAsync();
+        if (_seeThroughActive) done &= await TurnSeeThroughOffAsync();
+        // Release the card's Solide stealth-meter hold too, holding or armed — its card is about to be
+        // hidden (IsVisible=ExperimentalEnabled), so a live re-assert worker would
+        // otherwise keep writing game memory with no visible way to stop it. (M9)
+        if (_stealthArmed) done &= await ReleaseStealthAsync();
+        return done;
     }
 
     /// <summary>Register the saved combos for the experimental-feature hotkeys.
@@ -4858,9 +5059,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         foreach (var row in ExperimentalHotkeyRows)
         {
-            if (_markerHotkeys.TryGetValue(row.ActionId, out var reg))
+            if (_markerHotkeys.TryGetValue(row.ActionId, out var live))
             {
-                reg.Dispose();
+                live.Registration.Dispose();
                 _markerHotkeys.Remove(row.ActionId);
             }
             row.Conflicted = false;
@@ -4876,18 +5077,21 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             .Select(r => $"{r.DisplayName} ({r.Label})")
             .ToList());
 
+    /// <summary>Make <paramref name="b"/> the action's live hotkey. The new combo is claimed while the action's
+    /// current registration still holds, and that one is let go only once the claim succeeds: a combo another app or
+    /// another row holds must not leave the action with no hotkey at all [HOTKEY-REBIND-DEAD]. The combo the action
+    /// already holds is kept as it is, since the OS refuses a combo that is registered, ours included.</summary>
+    /// <returns>Whether <paramref name="b"/> is now live; on false the action keeps what it had.</returns>
     private bool RegisterMarkerHotkey(string actionId, TeleportHotkeyBinding b)
     {
         if (_globalHotkeys == null) return false;
-        if (_markerHotkeys.TryGetValue(actionId, out var old))
-        {
-            old.Dispose();
-            _markerHotkeys.Remove(actionId);
-        }
+        bool hadLive = _markerHotkeys.TryGetValue(actionId, out var old);
+        if (hadLive && old.Binding == b) return true;
         var reg = _globalHotkeys.RegisterSpecific(b.WinMods, b.Vk, b.Label,
             () => OnMarkerHotkeyPressed(actionId));
         if (reg == null) return false;
-        _markerHotkeys[actionId] = reg;
+        if (hadLive) old.Registration.Dispose();
+        _markerHotkeys[actionId] = (reg, b);
         return true;
     }
 
@@ -5008,7 +5212,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         var binding = new TeleportHotkeyBinding(winMods, vk);
         if (!RegisterMarkerHotkey(row.ActionId, binding))
         {
-            StatusText = $"'{label}' is already in use by another app — pick a different combo.";
+            // The row's binding, label and flags stay as they were: a hotkey it had is still registered.
+            string kept = _markerHotkeys.ContainsKey(row.ActionId) ? $" '{row.DisplayName}' keeps {row.Label}." : "";
+            StatusText = $"'{label}' {HotkeyHolderOf(binding, label)} — pick a different combo.{kept}";
             return true;
         }
         _bindings[row.ActionId] = binding;
@@ -5021,13 +5227,28 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         return true;
     }
 
+    /// <summary>Who holds a combo the OS refused, as the refusal says it: one of our own registrations when it is ours,
+    /// since "another app" would send the user looking for a program that is not there. The cursor hotkey is known
+    /// only by its label, which the ladder names as <see cref="HotkeyKeyMap"/> does.</summary>
+    private string HotkeyHolderOf(TeleportHotkeyBinding binding, string label)
+    {
+        foreach (var (actionId, live) in _markerHotkeys)
+        {
+            if (live.Binding != binding) continue;
+            string name = AllHotkeyRows.FirstOrDefault(r => r.ActionId == actionId)?.DisplayName ?? actionId;
+            return $"is already bound to '{name}'";
+        }
+        if (_cursorHotkey != null && _cursorHotkey.Label == label) return "is the cursor-teleport hotkey";
+        return "is already in use by another app";
+    }
+
     [RelayCommand]
     private void ClearHotkey(TeleportHotkeyRow? row)
     {
         if (row == null) return;
-        if (_markerHotkeys.TryGetValue(row.ActionId, out var reg))
+        if (_markerHotkeys.TryGetValue(row.ActionId, out var live))
         {
-            reg.Dispose();
+            live.Registration.Dispose();
             _markerHotkeys.Remove(row.ActionId);
         }
         _bindings.Remove(row.ActionId);
@@ -5398,7 +5619,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             _experimentalGate.Changed -= OnExperimentalGateChanged;
         _cursorHotkey?.Dispose();
         _cursorHotkey = null;
-        foreach (var reg in _markerHotkeys.Values) reg.Dispose();
+        foreach (var live in _markerHotkeys.Values) live.Registration.Dispose();
         _markerHotkeys.Clear();
         // The other five disposable VMs dispose their KeywordSearchMemory; this one
         // was the holdout, so its debounce timer outlived the VM. (B20)

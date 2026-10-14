@@ -1036,8 +1036,10 @@ public class CallTraceViewModelTests
     }
 
     // ---- [CT-DETAIL-COVERS-LIST] the remembered widths fitted to the room the panel has ----
-    // SplitWidth is the width the list and the detail pane share. The list's floor is 512: a row's item padding (24),
-    // Time, Duration and Thread at their default widths (96 + 88 + 64), Object at its floor (80), and 160 of Function.
+    // SplitWidth is the width the list and the detail pane share. The list's floor is 208, the maintainer's choice
+    // (2026-10-09): a row's item padding (24) and Time and Duration at their default widths (96 + 88), so a call can
+    // always be clicked. A row's columns are fitted to a list of 512 or wider: the floor, Thread at its default (64),
+    // Object at its floor (80) and 160 of Function.
 
     private static (double time, double duration, double thread, double obj) ShownColumns(CallTraceViewModel vm)
         => (vm.ShownTimeColWidth, vm.ShownDurationColWidth, vm.ShownThreadColWidth, vm.ShownObjectColWidth);
@@ -1049,22 +1051,42 @@ public class CallTraceViewModelTests
         var (vm, _) = MakeVm(Dump());
         vm.DetailPaneWidth = 766;
         Assert.Equal(766.0, vm.ShownDetailPaneWidth);       // not laid out yet: nothing to fit it to
-        vm.SplitWidth = 1000;
-        Assert.Equal(1000.0 - 512, vm.ShownDetailPaneWidth);
+        vm.SplitWidth = 900;
+        Assert.Equal(900.0 - 208, vm.ShownDetailPaneWidth);
         Assert.Equal(766.0, vm.DetailPaneWidth);            // still the user's
         vm.SplitWidth = 1600;                               // a wider window gives it back
         Assert.Equal(766.0, vm.ShownDetailPaneWidth);
     }
 
     [Fact]
-    public void A_panel_narrower_than_both_floors_keeps_the_pane_at_its_200_and_gives_the_list_the_rest()
+    public void A_panel_narrower_than_both_floors_gives_the_pane_way_so_the_list_keeps_its_208()
     {
+        // The pane's 200 gives way to the list's floor, not the other way round: the list is how a call is chosen, and
+        // the pane has nothing to show until one is.
         var (vm, _) = MakeVm(Dump());
         vm.DetailPaneWidth = 4096;
-        vm.SplitWidth = 600;
+        vm.SplitWidth = 408;                                // both floors exactly
         Assert.Equal(200.0, vm.ShownDetailPaneWidth);
-        vm.SplitWidth = 50;
-        Assert.Equal(200.0, vm.ShownDetailPaneWidth);
+        vm.SplitWidth = 300;
+        Assert.Equal(300.0 - 208, vm.ShownDetailPaneWidth);
+        vm.SplitWidth = 208;
+        Assert.Equal(0.0, vm.ShownDetailPaneWidth);
+        vm.SplitWidth = 50;                                 // under the list's floor: the list has it all
+        Assert.Equal(0.0, vm.ShownDetailPaneWidth);
+        Assert.Equal(4096.0, vm.DetailPaneWidth);
+    }
+
+    [Fact]
+    public void A_pane_the_list_has_taken_below_its_200_cannot_be_dragged()
+    {
+        // Narrower would remember a width under the pane's floor, and wider takes the list's: neither moves it.
+        var (vm, _) = MakeVm(Dump());
+        vm.SplitWidth = 300;                                // the pane shows 92 of its 380
+        foreach (double step in new[] { 60.0, -60.0, 0.0 })
+        {
+            vm.DragDetailPane(step);
+            Assert.Equal((92.0, 380.0), (vm.ShownDetailPaneWidth, vm.DetailPaneWidth));
+        }
     }
 
     [Fact]
@@ -1095,25 +1117,82 @@ public class CallTraceViewModelTests
     public void A_pane_drag_past_the_limit_stops_there_and_the_next_drag_back_moves_at_once()
     {
         var (vm, _) = MakeVm(Dump());
-        vm.SplitWidth = 1000;          // the pane may show 488
-        vm.DragDetailPane(+400);       // from 380, asks for 780
-        Assert.Equal(488.0, vm.ShownDetailPaneWidth);
-        Assert.Equal(488.0, vm.DetailPaneWidth);   // what a drag leaves shown is what is remembered
+        vm.SplitWidth = 1000;          // the pane may show 792
+        vm.DragDetailPane(+500);       // from 380, asks for 880
+        Assert.Equal(792.0, vm.ShownDetailPaneWidth);
+        Assert.Equal(792.0, vm.DetailPaneWidth);   // what a drag leaves shown is what is remembered
         vm.DragDetailPane(-30);
-        Assert.Equal(458.0, vm.ShownDetailPaneWidth);
+        Assert.Equal(762.0, vm.ShownDetailPaneWidth);
     }
 
     [Fact]
     public void A_pane_drag_starts_from_the_width_shown_not_the_one_remembered()
     {
-        // The remembered 766 shows as 488: a drag 10 narrower moves the pane at once, with no margin to undo first.
+        // The remembered 766 shows as 692: a drag 10 narrower moves the pane at once, with no margin to undo first.
         var (vm, _) = MakeVm(Dump());
         vm.DetailPaneWidth = 766;
-        vm.SplitWidth = 1000;
+        vm.SplitWidth = 900;
         vm.DragDetailPane(-10);
-        Assert.Equal((478.0, 478.0), (vm.ShownDetailPaneWidth, vm.DetailPaneWidth));
+        Assert.Equal((682.0, 682.0), (vm.ShownDetailPaneWidth, vm.DetailPaneWidth));
         vm.DragDetailPane(-1000);
         Assert.Equal(200.0, vm.ShownDetailPaneWidth);   // its own floor
+    }
+
+    private static readonly string[] RememberedWidths =
+    {
+        nameof(CallTraceViewModel.TimeColWidth), nameof(CallTraceViewModel.DurationColWidth),
+        nameof(CallTraceViewModel.ThreadColWidth), nameof(CallTraceViewModel.ObjectColWidth),
+        nameof(CallTraceViewModel.DetailPaneWidth),
+    };
+
+    [Fact]
+    public void A_pane_drag_that_moves_nothing_keeps_the_remembered_width()
+    {
+        // [CT-FLOOR-208] A remembered width is what ui-options.json saves. A drag that leaves the pane where it was --
+        // a press with only a vertical jiggle, or a push into the limit -- is not the user choosing the width shown:
+        // written, it replaced the 766 for good and a wider window gave back the narrower one.
+        var (vm, _) = MakeVm(Dump());
+        vm.DetailPaneWidth = 766;
+        vm.SplitWidth = 900;                                // shown as 692
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        vm.DragDetailPane(0);
+        vm.DragDetailPane(+60);                             // into the limit: still 692
+        Assert.Equal((692.0, 766.0), (vm.ShownDetailPaneWidth, vm.DetailPaneWidth));
+        vm.SplitWidth = 408;                                // the list keeps 208: the pane shows its own floor, 200
+        vm.DragDetailPane(-10);                             // into that floor
+        Assert.Equal((200.0, 766.0), (vm.ShownDetailPaneWidth, vm.DetailPaneWidth));
+        Assert.DoesNotContain(raised, n => RememberedWidths.Contains(n));
+        vm.SplitWidth = 1600;
+        Assert.Equal(766.0, vm.ShownDetailPaneWidth);
+        vm.SplitWidth = 900;
+        vm.DragDetailPane(-10);                             // a drag that moves still remembers what it leaves
+        Assert.Equal((682.0, 682.0), (vm.ShownDetailPaneWidth, vm.DetailPaneWidth));
+    }
+
+    [Fact]
+    public void A_column_drag_that_moves_nothing_keeps_the_remembered_width()
+    {
+        var (vm, _) = MakeVm(Dump());
+        vm.TimeColWidth = 4096;
+        vm.SplitWidth = 1000;                               // 596 for the cells: Time shows 284, Object its 80 of 260
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        vm.DragTime(+30);                                   // into Time's limit
+        vm.DragObject(+30);                                 // into Object's, held at its floor by Time
+        vm.DragThread(0);
+        vm.DragDuration(0);
+        vm.DragObject(0);
+        // A push into a column's own floor is a push into a limit too. The setter's clamp would put a width written
+        // under the floor back at 40 / 32 / 80, so a drag's clamp that let it through would look harmless, and it would
+        // still replace the remembered 88 / 64 / 260 with the floor. Time is left out: a row is fitted to at least 512,
+        // so Time is never shown at its floor with more remembered.
+        vm.DragDuration(-10);
+        vm.DragThread(-10);
+        vm.DragObject(-10);
+        Assert.Equal((284.0, 40.0, 32.0, 80.0), ShownColumns(vm));
+        Assert.Equal((4096.0, 88.0, 64.0, 260.0), (vm.TimeColWidth, vm.DurationColWidth, vm.ThreadColWidth, vm.ObjectColWidth));
+        Assert.DoesNotContain(raised, n => RememberedWidths.Contains(n));
     }
 
     [Fact]
@@ -1138,10 +1217,11 @@ public class CallTraceViewModelTests
     }
 
     [Fact]
-    public void A_list_below_its_floor_is_laid_out_as_at_its_floor_and_cut_at_its_edge()
+    public void A_list_narrower_than_a_fitted_row_is_laid_out_as_at_512_and_cut_at_its_edge()
     {
-        // The pane keeps its 200 and the list has 400 of its 512. Squeezed to their floors instead, the columns would
-        // show less of every one of them, Time included; laid out as at the floor, Time and Duration stay whole.
+        // The pane shows its 380 and the list has 220: over its floor of 208, under the 512 a row's columns are fitted
+        // to. Squeezed to their floors instead, the columns would show less of every one of them, Time included; laid
+        // out as at 512, Time and Duration stay whole.
         var (vm, _) = MakeVm(Dump());
         vm.SplitWidth = 600;
         Assert.Equal((96.0, 88.0, 64.0, 80.0), ShownColumns(vm));

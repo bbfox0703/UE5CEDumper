@@ -636,7 +636,8 @@ the three `pe_trace_*` commands read it afterwards. The plan and its decisions: 
 // [TRACE-UNLOADED-NAMES]
 { "id": 75, "cmd": "pe_trace_names", "kind": "objs", "gen": 3, "offset": 0, "limit": 2000 }
 
-// Release the ring now (the UI has read it) instead of at the next Start or when the last client leaves. gen
+// Release the ring now (the UI has read it, or turned the experimental features off over it) instead of at the next
+// Start or when the last client leaves. gen
 // (optional): free only that recording, and only once it has stopped, so a reader never frees a newer recording.
 // Reply: released (bool).
 { "id": 76, "cmd": "pe_trace_release", "gen": 3 }
@@ -1013,7 +1014,8 @@ in the `Dump All Metadata` JSONL. `search_properties` / `search_properties_batch
 match rows also carry **`prop_flags`** (same `"0x…"` hex form, omitted when 0) so
 the Interesting Properties scorer can gate on `SaveGame`/`BlueprintVisible`/`EditorOnly`.
 
-**`obj_class` vs `meta_class` on a `ClassProperty` / `SoftClassProperty`** `[SDK-METACLASS]`:
+**`obj_class` vs `meta_class` on a `ClassProperty` / `SoftClassProperty`** (and 4.11-4.17's
+`AssetClassProperty`, the soft class property before 4.18 renamed it) `[SDK-METACLASS]`:
 `obj_class` is the PropertyClass — the class of the *value*, which for a class-valued property
 is `Class` (or a UClass subclass such as `BlueprintGeneratedClass`). `meta_class` is the class
 it holds a *subclass of*: `TSubclassOf<APawn>` arrives as `obj_class: "Class"`,

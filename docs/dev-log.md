@@ -27,6 +27,51 @@ builds ≤696 in
 
 -----
 
+## 2026-10-14 (build 3649) — the ProcessEvent hook no longer depends on free memory near the game `[MH-PRERESERVE-PROXY]`
+
+- **Live Funcs, Call Trace and game-thread calls no longer fail with "the trampoline could not be placed".** On
+  some games (FINAL FANTASY RESONANCE DEMO, The Adventures of Elliot) the hook on ProcessEvent sometimes failed the
+  first tries because no memory was free near the game's code. The DLL now keeps that memory from the moment the
+  game starts (through a proxy DLL) and uses it later. Checked live: with the memory deliberately exhausted the hook
+  still installed on the first try, where build 3648 failed; FINAL FANTASY RESONANCE DEMO hooked first time.
+- If the hook still cannot be placed, the log now says why: what holds the memory near the game, and whether it was
+  full or refused. A forced retry is labelled as forced in the log.
+- Tests: dll_core_test 1,280 checks and dll_helpers_test 3,568, 0 failures; C# 6,669 run, 0 failed; 36 gates.
+
+## 2026-10-14 (build 3648, with 3647) — games that hide their engine version read UE 5.5 / 5.6; turning the experimental features off stops what they run; the Call Trace list keeps Time and Duration clickable; a batch of known issues fixed `[VER-MARKERS-PAST-504]` `[EXPOFF-ROUND3-PAUSED]` `[CT-FLOOR-208]`
+
+- **Games that strip their version now read their real UE 5.5 / 5.6.** When a game hides its engine version, the
+  tool works it out from the engine's own memory layout; that used to stop at 5.4. It now also recognises 5.5 and 5.6
+  from two layout changes those versions made. Checked live: FINAL FANTASY RESONANCE DEMO and The Adventures of Elliot
+  read **UE 5.6** (they read 5.4 before), and the fixture games for 5.1, 5.4, 5.5 (Manor Lords), 5.6 and 5.8 each kept or
+  reached their own version.
+- **Unticking "experimental features" turns off what they were running**, connected or not: Fly, See-through, a
+  Stealth hold, Keep Foreground (last), a running Detect Stats scan, and Live Funcs' kept trace, which also stops being
+  offered in Call Trace. Unticked while disconnected, the cleanup happens at the next connect, even after a restart.
+  A Stealth hold with no live target yet now shows "Armed @0" instead of "Hold failed".
+- **The Call Trace list keeps Time and Duration clickable beside the detail pane** (208 px), so at the default window
+  the pane can be widened to about 800 px and the Call stack shows Where whole. Dragging a pane or column edge into its
+  limit no longer changes the remembered width.
+- **The UE version override warns when it does not fit the game**: an amber "Does not fit this game" badge beside the
+  override badge, with a note.
+- **Force and God Mode work on Blueprint (native) bools**, written as 01 / 00; packed bitfield bools are unchanged.
+- **Hotkeys:** re-binding a hotkey to a combo another program holds keeps the old one working, and says which of our
+  hotkeys holds it when it is ours; a saved combo that was taken at startup is no longer erased by the next save.
+- **Snapshots:** a capture cut short by a crash is no longer listed as a snapshot, and the next capture removes it.
+- **Older UE4 games:** UE 4.11-4.17 asset pointers read their paths (checked live on Extinction, UE 4.15); non-ASCII
+  names in UE 4.10-4.22 games decode properly; Int8 values in struct previews show -1, not 255; the AOB scan no longer
+  matches inside our own proxy DLL; when offset detection gives up on a UE4 game, it uses that version's UStruct layout.
+- **Version detection:** when a game's version fields disagree with the engine build string in the same exe, the
+  build string wins and the log says so. Every game re-detects its version once after updating (checked live on
+  three titles: unchanged).
+- **On a game refused as too old**, the "Object-array stride not detected" badge no longer appears. (The "UE 411"
+  wording listed under build 3646's known issues was not reproducible: the notice has always read UE 4.11 / 4.10.)
+- Known issues in this build: a persisted user override is raised by the structural version checks like a detection
+  (the maintainer's call, `[OVERRIDE-RAISED-BY-LADDER]`); the export formats (SDK, CE XML, CSX, USMAP) do not yet
+  decode UE 4.11-4.17 asset pointers `[UE4-ASSETPTR-EXPORTS]`.
+- Tests: dll_core_test 1,280 checks and dll_helpers_test 3,429, 0 failures; C# 6,657 run, 0 failed; headless 68 / 68;
+  35 gates. `UE5DumpUI.exe` 61,138,432 bytes, Native-AOT.
+
 ## 2026-10-09 (build 3646) — the version override says what it changes and Auto restores at once; UFunction parameters follow the measured layout; a UE 4.10 game refused live; the Call Trace list keeps its room `[UE-OVERRIDE-411]` `[UE-OVERRIDE-HINT-AUTO]` `[VER-410-GATE]` `[CT-DETAIL-COVERS-LIST]` `[LIVE-3646]`
 
 - **The UE version override is safer and says what it does.** Its tooltip now explains that it changes how the

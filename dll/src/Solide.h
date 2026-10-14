@@ -16,7 +16,8 @@
 // same "no cached instance pointers — re-resolve every tick" discipline. The
 // difference: the target is a POOL (Aura::FindInstancesByClass(className) each
 // tick, bounded + CDO-skipped), not one re-resolved pawn. Reuses the public
-// Solitar bit-write (SetActorBool/GetActorBool) for the bool kind and clones
+// Solitar bool write (SetActorBool/GetActorBool -- a packed bit, or a native
+// bool's whole byte, Solitar::PickBoolBits) for the bool kind and clones
 // Hemmung's LWC-width-aware float read/write for the numeric kind. Pure reflected
 // memory read/write via Macht (SEH) — NO UFunction invoke, NO game thread.
 // ============================================================
@@ -202,7 +203,7 @@ inline int32_t MatchStealthField(const std::string& nameLower) {
 // `className` to a value, and hold it via the re-assert worker. `kind` selects
 // bool/object-null/numeric; for K_BOOL `value` is 1.0 (ON) / 0.0 (OFF), for
 // K_NUMERIC it is the absolute value, for K_OBJECT_NULL it is ignored. Captures a
-// representative restore base (bool bit / numeric value) so RemoveForce can undo
+// representative restore base (bool value / numeric value) so RemoveForce can undo
 // it (object-null is not reversible). Applies once immediately + starts the
 // worker. Returns the live "N held" count (>= 0) or a negative ForceResult.
 int32_t AddForce(const char* className, const char* fieldName, int32_t kind, double value);

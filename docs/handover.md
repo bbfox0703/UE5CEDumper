@@ -334,6 +334,9 @@ machine — this PC also drives the game under test). ⚠ It is `t.MaxFPS`, **no
 which would switch UE to a fixed timestep and silently change what every timing row measures. It
 writes the PID to `out/host.pid` so the injector and the killer agree on one target, and it **fails
 loudly** if the process died — a dead host makes every downstream "nothing found" meaningless.
+`shipping56` (DumperTest56, the UE 5.6 fixture with a PDB; launcher flavours since 2026-10-14) is handled like them:
+no DumperTest switch. `tools/verify/call_export.py <export> --arg N` calls a one-argument export the way a CE record
+does (`UE5_SetFly --arg 1`).
 ⚠ The stock-template Shipping fixtures (`shipping58`, `shipping51`) have no self-cap and drop `-ExecCmds`: their
 cap is whatever `FrameRateLimit` the machine saved in the game's `GameUserSettings.ini` (set through the pipe,
 working-lessons §1), and the launcher prints it. Another PC may run them uncapped.

@@ -121,6 +121,7 @@ public class DumpAllServiceTests
         Assert.StartsWith("{\"kind\":\"summary\"", lines[^1]);
         // Meta contains UE version + module name + GObjects
         Assert.Contains("\"ue_version\":427", lines[0]);
+        Assert.Contains("\"version_too_old\":false", lines[0]);
         Assert.Contains("TestGame-Win64-Shipping.exe", lines[0]);
         // FUObjectItem layout defaults to classic (no UE5.7+ packing).
         Assert.Contains("\"item_layout\":\"classic\"", lines[0]);
@@ -178,6 +179,29 @@ public class DumpAllServiceTests
 
         Assert.Contains("\"item_detect\":\"undetected\"", lines[0]);
         Assert.Contains("\"stride_untrusted\":true", lines[0]);
+    }
+
+    [Fact]
+    public void Generate_RefusedEngine_MetaDoesNotCallTheStrideAGuess()
+    {
+        // [REFUSED-STRIDE-NOTICE] On an engine refused as too old the scan never ran: "undetected" is only Aura's
+        // starting value, and not one object was read with any stride, so there is no alias for the stamp to flag.
+        var dump = new FakeDumpForDump();
+        var refused = new EngineState
+        {
+            UEVersion = 410,
+            IsVersionTooOld = true,
+            ModuleName = "Old-Win64-Shipping.exe",
+            ObjectCount = 0,
+            ItemDetect = "undetected",
+        };
+
+        var lines = Dump(dump, engineState: refused);
+
+        Assert.Contains("\"stride_untrusted\":false", lines[0]);
+        // The stamp and the raw "undetected" verdict beside it disagree on a refused engine, so the line says why: an
+        // offline reader keyed on item_detect would otherwise call a dump of nothing stride-untrusted.
+        Assert.Contains("\"version_too_old\":true", lines[0]);
     }
 
     // ==================================================================

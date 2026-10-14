@@ -1,0 +1,8 @@
+capstone==5.0.9
+git-filter-repo==2.47.0
+maturin==1.15.0
+minidump==0.0.24
+numpy==2.5.3
+pefile==2024.8.26
+PyYAML==6.0.3
+zstandard==0.25.0

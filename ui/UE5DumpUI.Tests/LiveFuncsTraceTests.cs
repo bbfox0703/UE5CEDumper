@@ -16,6 +16,7 @@ public class LiveFuncsTraceTests
     {
         public bool IsEnabled { get; set; } = enabled;
         public int SnapshotQuotaMb { get; set; }
+        public bool TeardownOwed { get; set; }
         public bool IsLocked => false;
         public void Lock() { }
         public event EventHandler? Changed { add { } remove { } }
@@ -38,6 +39,8 @@ public class LiveFuncsTraceTests
         public bool StartOmitsNames { get; set; }
         public List<ulong> Released { get; } = new();
         public int StopCalls { get; private set; }
+        /// <summary>When set, a stop's reply waits for it: the reply still in flight while the user acts.</summary>
+        public TaskCompletionSource<TraceInfo?>? HeldStop { get; set; }
 
         Task IDumpService.PeTraceReleaseAsync(ulong gen, CancellationToken ct)
         {
@@ -77,6 +80,7 @@ public class LiveFuncsTraceTests
         Task<TraceInfo?> IDumpService.PeProfileStopWithTraceAsync(CancellationToken ct)
         {
             StopCalls++;
+            if (HeldStop != null) return HeldStop.Task;
             return StopThrows ? throw new InvalidOperationException("pipe closed") : Task.FromResult(StopTrace);
         }
 
@@ -481,6 +485,7 @@ public class LiveFuncsTraceTests
     {
         public bool IsEnabled { get; set; }
         public int SnapshotQuotaMb { get; set; }
+        public bool TeardownOwed { get; set; }
         public bool IsLocked => false;
         public void Lock() { }
         public event EventHandler? Changed;
@@ -766,5 +771,312 @@ public class LiveFuncsTraceTests
         Assert.False(vm.HasTraceToOpen);
         Assert.Null(vm.LastTraceInfo);
         Assert.Equal(0, vm.LastCallsPerSecond);
+    }
+
+    // ---- [LF-EXPOFF-TRACE] The defence line behind the System tab's box: a trace kept while the features were on, and
+    // then they are off by any path, is neither offered nor opened, and the status line drops its sentences. The Call
+    // Trace tab is hidden then, and opening its content anyway would bypass the opt-out. [EXPOFF-ROUND3-PAUSED] And the
+    // DLL gives the trace back at once, so nothing returns when they are on again.
+
+    /// <summary>Trace on, a Stop that keeps <paramref name="firstValid"/>..1000, the strings by their keys, and an
+    /// experimental switch the test flips.</summary>
+    private static (LiveFuncsViewModel vm, RaisingGate gate) MakeSwitchable(ulong firstValid = 0)
+    {
+        var (vm, gate, _) = MakeSwitchableWithDll(firstValid);
+        return (vm, gate);
+    }
+
+    /// <summary>The generation of the trace a switchable recording keeps.</summary>
+    private const ulong KeptGen = 7;
+
+    private static (LiveFuncsViewModel vm, RaisingGate gate, FakeDumpService dump) MakeSwitchableWithDll(ulong firstValid = 0)
+        => MakeSwitchableStoppingWith(new TraceInfo
+        {
+            Allocated = true, Quiesced = true, Written = 1000, FirstValid = firstValid, Gen = KeptGen,
+        });
+
+    [Theory]
+    [InlineData(0UL, "str.LF.Trace.KeptAll")]
+    [InlineData(200UL, "str.LF.Trace.KeptLast")]
+    public async Task Off_a_kept_trace_is_released_and_neither_offered_nor_opened_again(ulong firstValid, string kept)
+    {
+        var (vm, gate, dump) = MakeSwitchableWithDll(firstValid);
+        int navigated = 0;
+        vm.NavigateToCallTrace += () => navigated++;
+        await RecordOnce(vm);
+        string on = vm.StatusText;
+        Assert.Contains(kept, on, StringComparison.Ordinal);
+        Assert.True(vm.CanOpenCallTrace);
+
+        var raised = new List<string>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName ?? "");
+        gate.Turn(false);
+        // The round-3 review's LOW, by the maintainer's rule (an untick tears down at once what the features keep): the
+        // buffer and its parameter block go back to the game now, not at the next Start or when the client leaves.
+        Assert.Equal(new[] { KeptGen }, dump.Released);
+        Assert.False(vm.HasTraceToOpen);
+        Assert.Null(vm.LastTraceInfo);
+        Assert.False(vm.CanOpenCallTrace);
+        Assert.Contains(nameof(LiveFuncsViewModel.CanOpenCallTrace), raised);
+        Assert.Contains(nameof(LiveFuncsViewModel.StatusText), raised);
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+        // What is left is the Stop's own line: exactly what came before the sentences, not a blank one.
+        Assert.NotEmpty(vm.StatusText);
+        Assert.StartsWith(vm.StatusText + " " + kept, on, StringComparison.Ordinal);
+        vm.OpenCallTraceCommand.Execute(null);
+        Assert.Equal(0, navigated);
+
+        // On again: the trace is gone, so neither the offer nor the sentences come back, and nothing is released twice.
+        string off = vm.StatusText;
+        gate.Turn(true);
+        Assert.False(vm.CanOpenCallTrace);
+        Assert.Equal(off, vm.StatusText);
+        Assert.Single(dump.Released);
+    }
+
+    [Fact]
+    public async Task A_change_that_leaves_the_features_on_keeps_the_trace()
+    {
+        // The gate raises Changed for its session lock too, with the features still on.
+        var (vm, gate, dump) = MakeSwitchableWithDll();
+        await RecordOnce(vm);
+        gate.Turn(true);
+        Assert.Empty(dump.Released);
+        Assert.True(vm.CanOpenCallTrace);
+    }
+
+    [Fact]
+    public async Task Off_a_trace_that_could_not_be_stopped_cleanly_is_released_too()
+    {
+        // Not offered, as it will not be read -- but the DLL still holds its buffer.
+        var (vm, gate, dump) = MakeSwitchableStoppingWith(
+            new TraceInfo { Allocated = true, Quiesced = false, Written = 1000, Gen = KeptGen });
+        await RecordOnce(vm);
+        Assert.Contains("str.LF.Trace.NotQuiesced", vm.StatusText, StringComparison.Ordinal);
+
+        gate.Turn(false);
+        Assert.Equal(new[] { KeptGen }, dump.Released);
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+        gate.Turn(true);
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_status_that_replaced_the_Stops_is_left_alone_by_the_switch()
+    {
+        var (vm, gate) = MakeSwitchable();
+        await RecordOnce(vm);
+        vm.ClearCommand.Execute(null);
+        string cleared = vm.StatusText;
+
+        gate.Turn(false);
+        Assert.Equal(cleared, vm.StatusText);
+        gate.Turn(true);
+        Assert.Equal(cleared, vm.StatusText);   // the Stop's trace sentences do not come back over a later status
+    }
+
+    [Fact]
+    public async Task The_stop_on_leaving_the_tab_keeps_a_trace_the_untick_releases_for_good()
+    {
+        // Reaching the System tab's box leaves this tab, so this is the path an untick takes.
+        var (vm, gate, dump) = MakeSwitchableWithDll();
+        await vm.StartCommand.ExecuteAsync(null);
+        vm.OnLeavingTab();
+        await vm.PendingAutoStop;
+        Assert.Contains("str.LF.Trace.KeptAll", vm.StatusText, StringComparison.Ordinal);
+
+        gate.Turn(false);
+        Assert.Equal(new[] { KeptGen }, dump.Released);
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+        Assert.False(vm.CanOpenCallTrace);
+        gate.Turn(true);
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+        Assert.False(vm.CanOpenCallTrace);
+    }
+
+    /// <summary>The round-3 re-review's LOW: the untick releases only a trace the last Stop's reply already brought, and
+    /// a reply can still be in flight when the box is unticked -- Linie's stop waits up to two seconds for the hooks to
+    /// leave. What lands after the untick is given back as it lands, as the untick would have done.</summary>
+    private static async Task AssertGivenBackAsItLands(LiveFuncsViewModel vm, RaisingGate gate, FakeDumpService dump,
+                                                       TaskCompletionSource<TraceInfo?> stop, TraceInfo? reply, Task stopping)
+    {
+        Assert.Empty(dump.Released);   // nothing was kept yet for the untick to give back
+        stop.SetResult(reply);
+        await stopping;
+        Assert.Equal(new[] { KeptGen }, dump.Released);
+        Assert.False(vm.HasTraceToOpen);
+        Assert.Null(vm.LastTraceInfo);
+        Assert.False(vm.CanOpenCallTrace);
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+
+        // On again: the trace is gone, so neither the offer nor the sentences come back, and nothing is released twice.
+        gate.Turn(true);
+        Assert.False(vm.CanOpenCallTrace);
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+        Assert.Single(dump.Released);
+    }
+
+    [Fact]
+    public async Task A_Stop_whose_reply_lands_after_an_untick_gives_its_trace_back()
+    {
+        // Stop clicked, then the System tab and its box before the reply came back.
+        var (vm, gate, dump) = MakeSwitchableWithDll();
+        await vm.StartCommand.ExecuteAsync(null);
+        var stop = new TaskCompletionSource<TraceInfo?>();
+        dump.HeldStop = stop;
+        var stopping = vm.StopCommand.ExecuteAsync(null);
+        gate.Turn(false);
+        await AssertGivenBackAsItLands(vm, gate, dump, stop, dump.StopTrace, stopping);
+    }
+
+    [Fact]
+    public async Task The_stop_on_leaving_the_tab_whose_reply_lands_after_the_untick_gives_its_trace_back()
+    {
+        // Reaching the System tab's box leaves this tab, which sends the stop: the untick can beat its reply.
+        var (vm, gate, dump) = MakeSwitchableWithDll();
+        await vm.StartCommand.ExecuteAsync(null);
+        var stop = new TaskCompletionSource<TraceInfo?>();
+        dump.HeldStop = stop;
+        vm.OnLeavingTab();
+        gate.Turn(false);
+        await AssertGivenBackAsItLands(vm, gate, dump, stop, dump.StopTrace, vm.PendingAutoStop);
+        Assert.Contains("auto-stopped", vm.StatusText, StringComparison.Ordinal);   // the stop's own line stays
+    }
+
+    [Theory]
+    [InlineData("empty", "str.LF.Trace.Empty")]
+    [InlineData("not allocated", "str.LF.Trace.NoneKept")]
+    [InlineData("no trace object", "str.LF.Trace.NoneKept")]
+    public async Task A_reply_that_lands_after_an_untick_with_no_buffer_releases_nothing(string stop, string key)
+    {
+        // The same rule as an untick after the reply: the DLL holds nothing for these, so nothing is sent, and the
+        // sentences follow the switch.
+        TraceInfo? info = stop switch
+        {
+            "empty" => new TraceInfo { Allocated = true, Quiesced = true, Written = 0, Gen = KeptGen },
+            "not allocated" => new TraceInfo { Allocated = false, Quiesced = true, Written = 1000, Gen = KeptGen },
+            _ => null,
+        };
+        var (vm, gate, dump) = MakeSwitchableStoppingWith(info);
+        await vm.StartCommand.ExecuteAsync(null);
+        var held = new TaskCompletionSource<TraceInfo?>();
+        dump.HeldStop = held;
+        var stopping = vm.StopCommand.ExecuteAsync(null);
+        gate.Turn(false);
+        held.SetResult(info);
+        await stopping;
+        Assert.Empty(dump.Released);
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+        gate.Turn(true);
+        Assert.Contains(key, vm.StatusText, StringComparison.Ordinal);
+        Assert.Empty(dump.Released);
+    }
+
+    [Fact]
+    public async Task A_reply_that_lands_after_an_untick_and_a_tick_keeps_its_trace()
+    {
+        // On again before the reply landed: the features are on when it does, so the trace is offered as usual.
+        var (vm, gate, dump) = MakeSwitchableWithDll();
+        await vm.StartCommand.ExecuteAsync(null);
+        var stop = new TaskCompletionSource<TraceInfo?>();
+        dump.HeldStop = stop;
+        vm.OnLeavingTab();
+        gate.Turn(false);
+        gate.Turn(true);
+        stop.SetResult(dump.StopTrace);
+        await vm.PendingAutoStop;
+        Assert.Empty(dump.Released);
+        Assert.True(vm.CanOpenCallTrace);
+        Assert.Contains("str.LF.Trace.KeptAll", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_offer_is_raised_when_a_trace_is_kept_and_when_it_is_withdrawn()
+    {
+        var (vm, _) = MakeSwitchable();
+        var raised = new List<string>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName ?? "");
+        await RecordOnce(vm);
+        Assert.True(vm.CanOpenCallTrace);
+        Assert.Contains(nameof(LiveFuncsViewModel.CanOpenCallTrace), raised);
+
+        raised.Clear();
+        vm.ResetOnDisconnect();
+        Assert.False(vm.CanOpenCallTrace);
+        Assert.Contains(nameof(LiveFuncsViewModel.CanOpenCallTrace), raised);
+    }
+
+    /// <summary>A traced Stop that reports <paramref name="stop"/>, the strings by their keys, and an experimental switch
+    /// the test flips.</summary>
+    private static (LiveFuncsViewModel vm, RaisingGate gate, FakeDumpService dump) MakeSwitchableStoppingWith(TraceInfo? stop)
+    {
+        var dump = new FakeDumpService { StopTrace = stop };
+        var gate = new RaisingGate();
+        gate.Turn(true);
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger(), experimentalGate: gate) { StringLookup = k => k };
+        vm.TraceEnabled = true;
+        return (vm, gate, dump);
+    }
+
+    /// <summary>The review's R2: the Stop sentences that offer nothing were moved into the switched clause with the
+    /// offer, and nothing read them across the switch, so keying the clause on the offer instead of the switch passed.</summary>
+    [Theory]
+    [InlineData("empty", "str.LF.Trace.Empty")]
+    [InlineData("not allocated", "str.LF.Trace.NoneKept")]
+    [InlineData("no trace object", "str.LF.Trace.NoneKept")]
+    public async Task The_Stops_sentences_that_offer_no_trace_follow_the_switch_too(string stop, string key)
+    {
+        TraceInfo? info = stop switch
+        {
+            "empty" => new TraceInfo { Allocated = true, Quiesced = true, Written = 0 },
+            "not allocated" => new TraceInfo { Allocated = false, Quiesced = true, Written = 1000 },
+            _ => null,
+        };
+        var (vm, gate, dump) = MakeSwitchableStoppingWith(info);
+        await RecordOnce(vm);
+        string on = vm.StatusText;
+        Assert.Contains(key, on, StringComparison.Ordinal);
+        Assert.False(vm.CanOpenCallTrace);
+
+        gate.Turn(false);
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+        Assert.StartsWith(vm.StatusText + " " + key, on, StringComparison.Ordinal);
+        Assert.Empty(dump.Released);   // the DLL holds no buffer for these
+        gate.Turn(true);
+        Assert.Equal(on, vm.StatusText);
+    }
+
+    /// <summary>The review's LOW: a disconnect withdrew the offer but left the sentences, so the line kept sending the
+    /// user to a trace the DLL had dropped with the client, and a switch turned off and on again put them back.</summary>
+    [Fact]
+    public async Task A_disconnect_takes_the_trace_sentences_off_the_status_line()
+    {
+        var (vm, _) = MakeSwitchable();
+        await RecordOnce(vm);
+        string on = vm.StatusText;
+
+        vm.ResetOnDisconnect();
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+        Assert.StartsWith(vm.StatusText + " str.LF.Trace.KeptAll", on, StringComparison.Ordinal);   // the Stop's own line
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task After_a_disconnect_a_re_tick_never_brings_back_a_dead_traces_sentences(bool offBeforeTheDisconnect)
+    {
+        var (vm, gate) = MakeSwitchable();
+        await RecordOnce(vm);
+        string on = vm.StatusText;
+
+        if (offBeforeTheDisconnect) gate.Turn(false);
+        vm.ResetOnDisconnect();
+        if (!offBeforeTheDisconnect) gate.Turn(false);
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+
+        gate.Turn(true);
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+        Assert.False(vm.CanOpenCallTrace);
+        Assert.StartsWith(vm.StatusText + " str.LF.Trace.KeptAll", on, StringComparison.Ordinal);
     }
 }

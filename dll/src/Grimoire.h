@@ -27,6 +27,18 @@ constexpr size_t         LOG_MAX_SIZE     = LOG_MAX_SIZE_MB * 1024 * 1024;
 // --- Hint Cache ---
 constexpr const wchar_t* HINT_CACHE_PREFIX = L"UE5CEDumper";  // File: UE5CEDumper.{COMPUTERNAME}.json
 
+// --- Dumper identity ---
+// [AOB-SKIP-OWN-DLL] The exported symbol every current build of the dumper carries, UE5Dumper.dll and each proxy
+// alike: the mailbox contract (defined in Mimic.cpp), whose magic (Mimic::MAILBOX_CONTRACT_MAGIC) tells a build of
+// ours from a module that merely exports the same name. It is how one copy recognises another mapped in the same
+// process.
+constexpr const char*    DUMPER_IDENTITY_EXPORT = "g_mailboxContract";
+// The contract only exists since 2026-08-06, so a build from before it -- a stale proxy left in a game folder -- is
+// recognised by the C ABI's init entry instead, which every build has exported (the version.dll proxy since
+// 2026-03-05) and the CE scripts look for by name. It carries no magic to check; no engine module exports that name,
+// so a module that does is not one the walk needs.
+constexpr const char*    DUMPER_LEGACY_IDENTITY_EXPORT = "UE5_Init";
+
 // --- Named Pipe ---
 constexpr const wchar_t* PIPE_NAME        = L"\\\\.\\pipe\\UE5DumpBfx";
 constexpr const char*    PIPE_NAME_NARROW  = "\\\\.\\pipe\\UE5DumpBfx";
@@ -157,6 +169,38 @@ inline int USTRUCT_PROPSSIZE  = 0x58;
 // RE-UE4SS MemberVariableLayout templates). Set in Genau from the calibrated
 // PROPSSIZE; default mirrors the UE4.25+/UE5 standard (0x58 + 8 = 0x60).
 inline int USTRUCT_SCRIPT     = 0x60;
+
+// [UE4-USTRUCT-GIVEUP] The head above is 4.25's. A UProperty engine (UE < 4.25) has no ChildProperties, and its
+// SuperStruct sits right behind UField::Next -- unless the build carries FStructBaseChain, a 16-byte private base that
+// 4.22-4.24 put between UField and SuperStruct in every non-editor build (ObjectMacros.h picks the struct-array IsChildOf
+// outside UE_EDITOR). Measured: UE_4.18 Class.h and EVERSPACE's 4.20 Shipping PDB give 0x30/0x38/0x40/0x48 for
+// Super/Children/PropertiesSize/Script; UE_4.23 Class.h and UE423_Flying's 4.23 Shipping PDB give 0x40/0x48/0x50/0x58
+// (its Development PDB, whose UObject carries a StatID, is the same head 8 further on, as UField::Next is). Where between
+// 4.21 and 4.22 the base arrived is RE-UE4SS's MemberVariableLayout templates' answer; no header or PDB of either is here.
+// Genau measures Children and derives the rest from it, so this is only what a run that cannot measure ships. An unknown
+// version gets the 4.22-4.24 head: Super and Children where 4.25's default already put them, so it is never further off
+// than that default was.
+// ⚠ The head follows the UField::Next it is GIVEN, and a give-up has no measured one: only DetectUPropertyMode's guess,
+// 0x30 for case-preserving names and 0x28 otherwise. A STATS build's TStatId (Development, DebugGame) moves Next to 0x30
+// as well, and nothing on the give-up path can see it, so such a build that gives up ships this head 8 short. The STATS
+// figures above hold for a measured Next; a give-up is version-correct on Shipping builds only.
+struct UStructHead {
+    int super;
+    int children;
+    int propsSize;   // MinAlignment follows at +4
+    int script;
+};
+inline constexpr UStructHead UPropertyUStructHeadFor(int ufieldNext, unsigned ueVersion) {
+    const bool baseChain = ueVersion == 0 || ueVersion >= 422;
+    const int super = ufieldNext + 8 + (baseChain ? 0x10 : 0);
+    return UStructHead{ super, super + 8, super + 0x10, super + 0x18 };
+}
+inline void ApplyUStructHead(const UStructHead& h) {
+    USTRUCT_SUPER = h.super;
+    USTRUCT_CHILDREN = h.children;
+    USTRUCT_PROPSSIZE = h.propsSize;
+    USTRUCT_SCRIPT = h.script;
+}
 
 // === UFunction::Func — native exec-thunk pointer (Path 2 disassembly) ===
 // FNativeFuncPtr at the tail of UFunction. For native functions it points at
@@ -425,12 +469,14 @@ constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
 // === Raise-only version markers (the structural half) ===
 //
 // UE5_Init runs a raise-only ladder every init: 503 (tagged FFieldVariant) -> 504
-// (CMC::SetGravityDirection UFUNCTION; the property alone only floors at 503 -- [R7-X4]) -> 507 (reordered FUObjectItem) -> 508 (virtual ~FFieldClass).
+// (CMC::SetGravityDirection UFUNCTION; the property alone only floors at 503 -- [R7-X4]) -> 505 (UEnum::EnumPackage
+// ahead of EnumDisplayNameFn) -> 506 (UStruct::StructStateFlags behind an int16 MinAlignment; both
+// [VER-MARKERS-PAST-504]) -> 507 (reordered FUObjectItem) -> 508 (virtual ~FFieldClass).
 // It exists because heavily-stripped titles lose every version string and fall back to
-// 4.27 while the structural probes have already proved otherwise. The PURE predicates
-// live in this header so the tests can pin them (the two below, and the CMC rule as
-// DynOff::CmcMarkerVersion), and so does the ladder's order (DynOff::ApplyVersionLadder);
-// the live reads that feed them stay in Frieren.cpp.
+// 4.27 while the structural probes have already proved otherwise. The PURE predicates,
+// the per-object samplers and the probes over the object array live in this header so the
+// tests can pin them, and so does the ladder's order (DynOff::ApplyVersionLadder); the live
+// reads that feed them stay in Frieren.cpp.
 //
 // ⚠ Every rung is RAISE-ONLY, and whether it is also guarded on `ver >= 500` is decided
 // PER RUNG in DynOff::ApplyVersionLadder: a rung whose probe could misfire on a UE4 title must
@@ -541,6 +587,9 @@ constexpr bool FunctionTailMatches(int numParms, int parmsSize, int paramCount, 
 // FunctionTailShiftFor -- upstream puts Split Fiction's tail +4 later (RE-UE4SS config).
 inline int UFUNCTION_FLAGS      = 0;
 inline int UFUNCTION_TAIL_EXTRA = 0;
+// The extras a game's tail can carry: none, or Split Fiction's +4. The vote weighs exactly these, and a version is
+// judged against them (CheckTailForVersion), so the two cannot disagree about what a tail may look like.
+inline constexpr int UFUNCTION_TAIL_EXTRAS[] = { 0, 4 };
 inline std::atomic<bool> bUFunctionFlagsDetected{false};
 // [UE-OVERRIDE-411] review: where the sampled UFunctions themselves keep NumParms / ParmsSize, as the base those two
 // sit +4 / +6 behind -- measured against every candidate, whatever the version says. -1 = not measured.
@@ -631,7 +680,7 @@ constexpr bool IsCompactSetLayout(int32_t elementSize, unsigned ueVersion) {
 }
 inline std::atomic<bool> bCompactSets{false};
 
-// [VND583-12] UE5_GetVersion's lazy refine, from two markers that surface only after init.
+// [VND583-12] UE5_GetVersion's lazy refine, from two markers that can surface after init.
 // A reflected Utf8StrProperty / AnsiStrProperty => 5.5+ (AnsiStrProperty.h first ships in 5.5.0-release).
 // The UEnum::FNameData struct-of-arrays => **5.7+**: Class.h at 5.6.0-release still declares
 // `TArray<TPair<FName, int64>> Names;`, and 5.7.0-release declares `class FNameData`. It raised to 506,
@@ -671,18 +720,162 @@ constexpr unsigned CmcMarkerVersion(unsigned ueVersion, bool fproperty, bool has
     return ueVersion;
 }
 
+// === [VER-MARKERS-PAST-504] Rungs past 5.4, from layouts every loaded enum and struct carries ===
+//
+// A title whose PE version is stripped and whose exe holds no build string climbed no further than the CMC rung's
+// 504 -- FINAL FANTASY RESONANCE DEMO and The Adventures of Elliot both read 504, while every engine file they ship
+// matches the 5.6 installs. Such a title has no version string left to read, so these rungs read reflection objects.
+//
+// A rung fires on a clear majority of what it sampled: at least kLadderProbeMinAgree agreeing samples, and three
+// quarters of all. One stray object (a class default, a half-built enum) must not decide a version, and neither may a
+// handful.
+constexpr int kLadderProbeMinAgree = 5;
+constexpr bool LadderProbeMajority(int agree, int sampled) {
+    return agree >= kLadderProbeMinAgree && agree * 4 >= sampled * 3;
+}
+
+// UE 5.5: UEnum's CppForm shrank to uint8 and EnumPackage moved ahead of EnumDisplayNameFn. Measured from the Shipping
+// fixtures' PDBs (UEnum, relative to Names):
+//   DumperTest51 (5.1)  CppForm int32 +0x10, EnumFlags int32 +0x14, EnumDisplayNameFn +0x18, EnumPackage +0x20
+//   DumperTest   (5.4)  CppForm int32 +0x10, EnumFlags uint8 +0x14, EnumDisplayNameFn +0x18, EnumPackage +0x20
+//   DumperTest56 (5.6)  CppForm uint8 +0x10, EnumFlags uint8 +0x11, EnumPackage +0x14,       EnumDisplayNameFn +0x20
+// and RE-UE4SS's 5_05 template is 5_06's. (5.7 replaced Names itself with FNameData, which DetectUEnumNames tells
+// apart and the lazy refine already reads as 507.) EnumPackage is the enum's package's own FName: Enum.cpp sets it
+// from GetPackage()->GetFName() wherever an enum's names are registered, constructed (SetEnums) or loaded
+// (Serialize). So on an enum with names, the slot that repeats the package's ComparisonIndex says which layout this
+// is. Names is an 8-aligned TArray, and every member after it keeps its place relative to Names on a
+// case-preserving build (a 12-byte FName ends where the 8-byte one's padding did), so the slots are read relative
+// to the MEASURED DynOff::UENUM_NAMES. Before 5.5 the +0x14 slot holds EnumFlags (EEnumFlags: 0 to 3), never a
+// package name.
+constexpr int kEnumPackageAfterNames55 = 0x14;
+constexpr int kEnumPackageAfterNames51 = 0x20;   // 5.1-5.4; counted for the log, not needed by the verdict
+constexpr int kLadderMaxOuterDepth = 16;
+
+struct EnumPackageTally {
+    int sampled = 0;   // enums with names whose package has a name to compare
+    int at55    = 0;   // ...whose package name sits at Names + 0x14 (5.5+)
+    int at51    = 0;   // ...at Names + 0x20 (5.1-5.4)
+};
+constexpr bool EnumPackageProves55(const EnumPackageTally& t) { return LadderProbeMajority(t.at55, t.sampled); }
+
+// One enum's sample; false when it is not one. `read(addr, out, size)` is a guarded read. The package is the
+// outermost object (GetPackage()), reached through OuterPrivate at `outerOff`; `nameOff` is UObject::NamePrivate.
+template <class ReadMem>
+bool SampleEnumPackage(EnumPackageTally& t, uintptr_t enumAddr, int namesOff, int outerOff, int nameOff,
+                       ReadMem&& read) {
+    // The class default object never ran SetEnums: no names, and no EnumPackage either.
+    int32_t numNames = 0;
+    if (!read(enumAddr + namesOff + 8, &numNames, sizeof numNames) || numNames <= 0 || numNames > 0x10000)
+        return false;
+    uintptr_t pkg = enumAddr;
+    bool top = false;
+    for (int depth = 0; depth < kLadderMaxOuterDepth && !top; ++depth) {
+        uintptr_t outer = 0;
+        if (!read(pkg + outerOff, &outer, sizeof outer)) return false;
+        if (outer) pkg = outer;
+        else       top = true;
+    }
+    if (!top || pkg == enumAddr) return false;
+    int32_t pkgName = 0, slot55 = 0, slot51 = 0;
+    if (!read(pkg + nameOff, &pkgName, sizeof pkgName) || pkgName == 0) return false;
+    if (!read(enumAddr + namesOff + kEnumPackageAfterNames55, &slot55, sizeof slot55)) return false;
+    if (!read(enumAddr + namesOff + kEnumPackageAfterNames51, &slot51, sizeof slot51)) return false;
+    ++t.sampled;
+    if (slot55 == pkgName) ++t.at55;
+    if (slot51 == pkgName) ++t.at51;
+    return true;
+}
+
+// UE 5.6: UStruct::MinAlignment shrank to int16, and `std::atomic<uint16> StructStateFlags` took the other half of
+// the word. Measured from the Shipping fixtures' PDBs (UStruct, relative to PropertiesSize):
+//   DumperTest51 (5.1), DumperTest (5.4)       MinAlignment int32 +4                        (RE-UE4SS 5_05: the same)
+//   DumperTest56 (5.6), DumperTest58 (5.8)     MinAlignment int16 +4, StructStateFlags +6   (RE-UE4SS 5_06-5_08: the same)
+// UStruct::Link ends with StructStateFlags.fetch_or(PropertyDataAvailable) in Class.cpp of 5.6, 5.7 and 5.8, the only
+// flag any of them defines, so a linked class, script struct or function reads exactly 1 there; through 5.5 the
+// same two bytes are MinAlignment's high half, 0 for any alignment a struct can have. The word sits at the same
+// distance from the MEASURED DynOff::USTRUCT_PROPSSIZE on a case-preserving build, whose UObject only moves the
+// whole block.
+constexpr int kStructStateAfterPropsSize = 6;
+constexpr uint16_t kStructPropertyDataAvailable = 1;
+
+struct StructStateTally {
+    int sampled = 0;   // structs whose MinAlignment reads as one
+    int linked  = 0;   // ...whose next 16 bits read PropertyDataAvailable (5.6+)
+};
+constexpr bool StructStateProves56(const StructStateTally& t) { return LadderProbeMajority(t.linked, t.sampled); }
+
+// One struct's sample; false when it is not one. A MinAlignment that is not a power of two up to 256 is not a linked
+// UStruct's -- the class default object's is 0 -- so it is not counted at all.
+template <class ReadMem>
+bool SampleStructState(StructStateTally& t, uintptr_t structAddr, int propsSizeOff, ReadMem&& read) {
+    int16_t minAlign = 0;
+    if (!read(structAddr + propsSizeOff + 4, &minAlign, sizeof minAlign)) return false;
+    if (minAlign <= 0 || minAlign > 256 || (minAlign & (minAlign - 1)) != 0) return false;
+    uint16_t state = 0;
+    if (!read(structAddr + propsSizeOff + kStructStateAfterPropsSize, &state, sizeof state)) return false;
+    ++t.sampled;
+    if (state == kStructPropertyDataAvailable) ++t.linked;
+    return true;
+}
+
+// The two probes those rungs ask, over the object array. `findExact(className, limit)` returns the addresses of the
+// first `limit` objects whose class is exactly `className`; native reflection objects sit at the front of the array,
+// so a first-N search ends early. Each sample must be able to reach kLadderProbeMinAgree by itself, or its rung could
+// never fire.
+constexpr int kLadderEnumSample   = 32;   // enums
+constexpr int kLadderStructSample = 16;   // structs of each kind
+static_assert(kLadderEnumSample >= kLadderProbeMinAgree && kLadderStructSample >= kLadderProbeMinAgree,
+              "a ladder sample smaller than kLadderProbeMinAgree can never reach a verdict");
+// Every kind of linked UStruct carries StructStateFlags, so classes, script structs and functions all vote.
+inline constexpr const char* kLadderStructKinds[] = { "Class", "ScriptStruct", "Function" };
+
+// Why the enum probe reads nothing. Its slots sit behind the MEASURED Names, so it waits for a detection that found
+// them -- a latched FAILED leaves only the default offset -- and the 5.7+ FNameData container has no EnumPackage
+// slot behind it at all (the lazy refine reads that container as 5.7).
+enum class EnumProbeSkip { None, NamesNotLocated, NamesAreFNameData };
+constexpr EnumProbeSkip EnumPackageProbeSkip(bool namesDetected, bool namesFailed, bool fnameDataContainer) {
+    if (!namesDetected || namesFailed) return EnumProbeSkip::NamesNotLocated;
+    return fnameDataContainer ? EnumProbeSkip::NamesAreFNameData : EnumProbeSkip::None;
+}
+
+// The 5.5 rung's probe. The package's name is its UObject::NamePrivate; the way to the package is the measured
+// OuterPrivate at `outerOff`.
+template <class FindExact, class ReadMem>
+EnumPackageTally ProbeEnumPackages(FindExact&& findExact, int namesOff, int outerOff, ReadMem&& read) {
+    EnumPackageTally t;
+    for (const uintptr_t e : findExact("Enum", kLadderEnumSample))
+        SampleEnumPackage(t, e, namesOff, outerOff, Grimoire::OFF_UOBJECT_NAME, read);
+    return t;
+}
+
+// The 5.6 rung's probe.
+template <class FindExact, class ReadMem>
+StructStateTally ProbeStructStates(FindExact&& findExact, int propsSizeOff, ReadMem&& read) {
+    StructStateTally t;
+    for (const char* kind : kLadderStructKinds)
+        for (const uintptr_t s : findExact(kind, kLadderStructSample))
+            SampleStructState(t, s, propsSizeOff, read);
+    return t;
+}
+
 // === The init version ladder, in one place [UE-OVERRIDE-HINT-AUTO] ===
 //
 // After the offsets probe, init corrects the scan's version from what the probe measured: UProperty mode is UE4
 // before 4.25 whatever the label says, and the raise-only rungs above lift a stripped title to the UE5 minor its
-// layout proves. The DLL caches its detection before this ladder runs, so anything that hands a cached detection
-// back to the session -- Auto chosen over an override -- has to climb the same ladder, or a UE5 title whose strings
-// were stripped lands on its 4.27 fallback. One function, so the two cannot drift. Climbing twice changes nothing
+// layout proves. The DLL caches its detection before this ladder runs, so anything else that settles the session's
+// version -- handing a cached detection back (Auto chosen over an override), or running the first offsets probe
+// after an init that had none to run -- has to climb the same ladder, or a UE5 title whose strings were stripped
+// lands on its 4.27 fallback. One function, so they cannot drift. Climbing twice changes nothing
 // (every rung is a floor or a window it leaves), so a cached value that already climbed -- the UI records the
 // version it was shown -- lands in the same place.
 //
 // The facts are the probe's. None of them is a fact until it has run (`measured`): a default FFIELDCLASS_NAME or
 // bUseFProperty would pass for a measurement, so the ladder then leaves the version alone.
+//
+// A user override climbs too: Genau hands a persisted override in as the label, and no rung asks where the label
+// came from, so an override cannot hold a title below what its layout proves -- the rule the UProperty rung states
+// for the other direction. [VER-MARKERS-PAST-504] `userOverride` changes no rung; it lets the result say that the
+// version a raise rung moved was the user's (`overrideRaised`), which the rung's own line cannot.
 struct StructuralVersionFacts {
     bool measured            = false;  // DynOff::bOffsetsProbeRan
     bool fproperty           = false;  // DynOff::bUseFProperty
@@ -690,21 +883,31 @@ struct StructuralVersionFacts {
     bool taggedFFieldVariant = false;  // DynOff::bTaggedFFieldVariant
     bool reorderedItem57     = false;  // IsReorderedFUObjectItem57 over the measured item layout
     bool virtualDtor58       = false;  // IsVirtualDtorFFieldClass58(FFIELDCLASS_NAME)
+    bool userOverride        = false;  // the label is the user's override, not a detection
 };
 
-enum class VersionRung { UPropertyMode, TaggedFieldVariant, CmcMarkers, ReorderedItem, VirtualFieldClassDtor };
+enum class VersionRung { UPropertyMode, TaggedFieldVariant, CmcMarkers, EnumPackage55, StructStateFlags56,
+                         ReorderedItem, VirtualFieldClassDtor };
 
 struct StructuralVersion {
-    unsigned version      = 0;
-    bool     loweredToUE4 = false;   // the UProperty rung fired: the label was wrong, so it is not trusted as detected
+    unsigned version        = 0;
+    bool     loweredToUE4   = false;   // the UProperty rung fired: the label was wrong, so it is not trusted as detected
+    bool     overrideRaised = false;   // a raise rung lifted the user's override (the UProperty rung says so itself)
 };
 
 // `probeCmc(bool& hasGravityDirectionProperty, bool& hasSetGravityDirectionFunction)` reads one loaded
 // CharacterMovementComponent class and returns false when there is none. It is asked only inside the CMC rung's
-// window (FProperty mode, 5.0-5.3), because it walks the object array and a UE4 title must never pay for that.
+// window (FProperty mode, 5.0-5.3), because it walks the object array and a UE4 label must never pay for that.
+// `probeEnumPackage()` returns an EnumPackageTally over sampled enums, and `probeStructState()` a StructStateTally
+// over sampled structs; each is asked only inside its own rung's window (FProperty mode, 5.0-5.4 and 5.0-5.5) for the
+// same reason. The windows go by the LABEL, not the engine: a UE4 title that carries a 5.x label -- Genau's flat 504
+// default when detection fails, as on Persona 3 Reload, a UE4.27 fork on UE5-style structures -- sits inside the 5.5
+// and 5.6 windows, pays both walks at every init, and keeps its label only because both probes read negative there:
+// stock 4.27 keeps EnumFlags at Names+0x14 and MinAlignment's high half at PropertiesSize+6.
 // `onRung(rung, from, to)` hears each rung that changed the version, so the caller's log names the evidence.
-template <class ProbeCmc, class OnRung>
+template <class ProbeCmc, class ProbeEnumPackage, class ProbeStructState, class OnRung>
 StructuralVersion ApplyVersionLadder(unsigned ueVersion, const StructuralVersionFacts& f, ProbeCmc&& probeCmc,
+                                     ProbeEnumPackage&& probeEnumPackage, ProbeStructState&& probeStructState,
                                      OnRung&& onRung) {
     StructuralVersion r{ueVersion, false};
     if (!f.measured) return r;
@@ -724,12 +927,17 @@ StructuralVersion ApplyVersionLadder(unsigned ueVersion, const StructuralVersion
         if (probeCmc(prop, func))
             step(VersionRung::CmcMarkers, CmcMarkerVersion(r.version, true, prop, func));
     }
+    if (f.fproperty && r.version >= 500 && r.version < 505 && EnumPackageProves55(probeEnumPackage()))
+        step(VersionRung::EnumPackage55, 505u);
+    if (f.fproperty && r.version >= 500 && r.version < 506 && StructStateProves56(probeStructState()))
+        step(VersionRung::StructStateFlags56, 506u);
     if (f.fproperty && r.version < 507 && f.reorderedItem57)
         step(VersionRung::ReorderedItem, 507u);
     // The >= 500 guard is the rung's, not cosmetic: a false 0x08 on a UE4 title would raise 427 to 508 and cross the
     // >= 500 / >= 501 layout gates in Aura and Ubel.
     if (f.fproperty && r.version >= 500 && r.version < 508 && f.virtualDtor58)
         step(VersionRung::VirtualFieldClassDtor, 508u);
+    r.overrideRaised = f.userOverride && r.version > ueVersion;
     return r;
 }
 
@@ -829,13 +1037,30 @@ constexpr int FunctionTailReadBase(unsigned ueVersion, int flagsOff, int tailExt
 
 enum class TailCheck { Agrees, Contradicts, Unmeasured };
 
-// `flagsOff` / `tailExtra` are what the vote latched, or `ueVersion`'s own primary when it decided nothing;
-// `measuredBase` is UFUNCTION_TAIL_MEASURED. Nothing measured (no scan yet, or samples that do not decide) is never
-// a refusal: the too-old refusal sends the user to the override precisely when no scan has run.
-constexpr TailCheck CheckTailForVersion(unsigned ueVersion, int flagsOff, int tailExtra, int measuredBase) {
+// `flagsOff` is the FunctionFlags offset the vote latched, or `ueVersion`'s own primary when it decided nothing;
+// `measuredBase` is UFUNCTION_TAIL_MEASURED. A version fits when the measurement sits at its own shift plus an extra
+// a game's tail can carry (UFUNCTION_TAIL_EXTRAS) -- the extra the MEASUREMENT implies, never the one the vote latched
+// ([OVERRIDE-REVIEW2-LOWS] review). The extra is the game's, not the version's, and a vote run under a version from
+// the wrong side of 4.18 decides nothing and latches 0: judged with that 0, the version that fits a +4 tail was
+// refused for the rest of the session. Whatever the extra, the two sides of 4.18 differ by a shift of 2, so 0 or 4
+// explains a measurement for one side only. Nothing measured (no scan yet, or samples that do not decide) is never a
+// refusal: the too-old refusal sends the user to the override precisely when no scan has run.
+constexpr TailCheck CheckTailForVersion(unsigned ueVersion, int flagsOff, int measuredBase) {
     if (measuredBase < 0 || flagsOff <= 0) return TailCheck::Unmeasured;
-    return FunctionTailBaseFor(ueVersion, flagsOff, tailExtra) == measuredBase ? TailCheck::Agrees
-                                                                               : TailCheck::Contradicts;
+    const int extra = measuredBase - FunctionTailBaseFor(ueVersion, flagsOff, 0);
+    for (int e : UFUNCTION_TAIL_EXTRAS)
+        if (extra == e) return TailCheck::Agrees;
+    return TailCheck::Contradicts;
+}
+
+// [OVERRIDE-REVIEW2-LOWS] Whether the version in force is a user override this game's UFunctions contradict -- what
+// get_pointers publishes, so the Pointers panel can say so beside the override badge. set_ue_version_override refuses
+// such a version only while a measurement exists, so one persisted before [UE-OVERRIDE-411], or chosen before any scan,
+// is still handed in ahead of the scan at every launch; the vote that then measures the contradiction said so in the
+// log alone. The verdict is the refusal's own over the same inputs, so the note and the refusal cannot disagree.
+// Nothing measured is never a contradiction, and a detected version is not one the user can take back.
+constexpr bool OverrideContradictsTail(bool userOverride, unsigned ueVersion, int flagsOff, int measuredBase) {
+    return userOverride && CheckTailForVersion(ueVersion, flagsOff, measuredBase) == TailCheck::Contradicts;
 }
 
 // The measurement's winner among candidate tail bases, given each one's hits over `samples` sampled
@@ -1074,7 +1299,7 @@ inline void ApplyPropertyFamily(const PropertyFamily& f) {
     if (moved) g_propertyFamilyEpoch.fetch_add(1, std::memory_order_acq_rel);
 }
 
-// === UEnum — lazy-detected by DetectUEnumNames() ===
+// === UEnum — detected by DetectUEnumNames(), on first use or by the version ladder at init ===
 inline int UENUM_NAMES          = 0x40;  // UEnum::Names (Neu::EnumNamesLayout region offset)
 // [VND583-04] The legacy pair's value width (8 = int64; 1 = uint8 on UE 4.9-4.14) and stride
 // (0 = the int64 pair's own), decided by DetectUEnumNames and applied by the enum reader (Ubel).

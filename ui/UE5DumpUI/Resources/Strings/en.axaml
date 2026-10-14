@@ -403,6 +403,11 @@
          set_ue_version_override handler does. -->
     <sys:String x:Key="str.Pointers.VersionOverrideTooltip">Not just a label: it changes how the DLL reads this game. GObjects, GNames and the property offsets are measured from the game and stay as they are; what cannot be measured follows this version, including UE4 property fields, soft and lazy pointers, sets and maps, the CE export layout, and UFunction parameters until a scan has measured them. A wrong version misreads those, and a write or function call built on a misread can crash the game. Use it only when detection is wrong. Saved per game and applied at every launch, where it also skips the too-old check; that check and the sparse-delegate scan follow a change only at the next launch. Auto returns to the detected version at once, or at the next launch if none is on record.</sys:String>
     <sys:String x:Key="str.Pointers.VersionAutoPendingText">Auto applies at the next launch: there is no detection of this game on record that this session can return to, so the overridden version above stays in force until the game restarts.</sys:String>
+    <!-- [OVERRIDE-REVIEW2-LOWS] The DLL refuses an override the game's UFunctions contradict, but only once a scan has
+         measured them; this is shown for one saved before that check existed, or chosen before a scan. Keep it in step
+         with set_ue_version_override's refusal message. -->
+    <sys:String x:Key="str.Pointers.VersionOverrideContradictedBadge">&#x26A0; Does not fit this game</sys:String>
+    <sys:String x:Key="str.Pointers.VersionOverrideContradictedText">This override does not fit this game: its UFunctions keep their parameter count and size where another UE version's layout puts them (4.11-4.17 carry a field that 4.18 dropped). Function parameters are still read where the game keeps them, but anything else this version decides may be misread. The override was saved before that check existed, or chosen before a scan could measure it. Choose Auto, or a version that fits.</sys:String>
     <sys:String x:Key="str.Pointers.InvokeTimeoutLabel">Invoke timeout (ms):</sys:String>
     <sys:String x:Key="str.Pointers.InvokeTimeoutTooltip">UFunction call wait time. Default 5000 = 5s. Increase if "GameThreadDispatch: invoke timeout" appears in logs (Blueprint widget delegates often need 10-30s). Saved per-game; reset to 5000 to clear.</sys:String>
     <sys:String x:Key="str.Pointers.InvokeTimeoutOverrideBadge">&#x23F1; Custom</sys:String>
@@ -628,6 +633,7 @@
 
     <!-- Experimental features gate (System-tab credit checkbox) -->
     <sys:String x:Key="str.Experimental.EnableHint">Enable advanced experimental features</sys:String>
+    <sys:String x:Key="str.Experimental.LockedForSession">Advanced experimental features stay on until the UI restarts, because Snapshot, SPC Query, Class Pivot or Call Trace was opened this session.</sys:String>
 
     <!-- Snapshot tab (experimental — Phase A) -->
     <sys:String x:Key="str.Snapshot.Intro">Capture every numeric UPROPERTY of every (scoped) object into a persisted snapshot. Snapshots feed SPC Query and Class Pivot. Enable "Native-C" to also capture unmanaged (non-UPROPERTY) raw values.</sys:String>
@@ -1576,9 +1582,12 @@
     <sys:String x:Key="str.TP.StDetect">Detect meter</sys:String>
     <sys:String x:Key="str.TP.StHold">Hold @0</sys:String>
     <sys:String x:Key="str.TP.StReset">Reset</sys:String>
-    <sys:String x:Key="str.Tip.TP.StDetect">Resolve the player pawn + its owned components and keyword-score reflected numeric fields for a stealth/visibility/detection meter. Read-only — loads the top candidate into the readout for you to verify before holding it.</sys:String>
-    <sys:String x:Key="str.Tip.TP.StHold">Force the detected meter to 0 on every live instance of its class and hold it there (re-asserted on a timer). "N held" shows how many instances are held.</sys:String>
+    <sys:String x:Key="str.Tip.TP.StDetect">Resolve the player pawn + its owned components and keyword-score reflected numeric fields for a stealth/visibility/detection meter. Read-only — loads the top candidate into the readout for you to verify before holding it. While a hold runs, it reads the held meter again and keeps holding it.</sys:String>
+    <sys:String x:Key="str.Tip.TP.StHold">Force the detected meter to 0 on every live instance of its class and hold it there (re-asserted on a timer). "N held" shows how many instances are held. With no live instance yet, the hold is armed and applies as soon as one spawns.</sys:String>
     <sys:String x:Key="str.Tip.TP.StReset">Release the hold — restore the captured base value and stop holding the meter.</sys:String>
+    <sys:String x:Key="str.TP.StDetectWhileHolding">Still holding {0} at 0 (Detect found {1} candidate(s)). Reset first to hold a different meter.</sys:String>
+    <sys:String x:Key="str.TP.StArmed">⏳ Hold @0 on {0} is ARMED but holding nothing yet — no live instance of {1} or any subclass exists right now. It applies as soon as one spawns; Reset releases it.</sys:String>
+    <sys:String x:Key="str.TP.StRearmRefused">Hold @0 refused (DLL error {0}). The earlier hold on {1} stays armed; Reset releases it.</sys:String>
     <sys:String x:Key="str.TP.FgHeader">Keep Foreground</sys:String>
     <sys:String x:Key="str.TP.FgState">State:</sys:String>
     <sys:String x:Key="str.TP.FgHint">Force the game to always behave as the foreground app so it doesn't idle/pause its game thread when unfocused (t.IdleWhenNotForeground). Needed for POV / UFunction invokes on games that halt when backgrounded — e.g. Persona 3 Reload. Off by default.</sys:String>

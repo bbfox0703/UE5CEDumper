@@ -24,6 +24,7 @@ internal static class LiveFuncsLayout
     {
         public bool IsEnabled { get; set; } = enabled;
         public int SnapshotQuotaMb { get; set; }
+        public bool TeardownOwed { get; set; }
         public bool IsLocked => false;
         public void Lock() { }
         public event EventHandler? Changed { add { } remove { } }
@@ -126,9 +127,11 @@ internal static class LiveFuncsLayout
     }
 
     /// <summary>The panel shown, nothing fetched. <paramref name="availableBytes"/> is the free memory the platform
-    /// reports (unknown by default, so no memory warning).</summary>
+    /// reports (unknown by default, so no memory warning). <paramref name="gate"/>, when given, replaces the fixed
+    /// switch <paramref name="experimental"/> makes, for a test that flips it.</summary>
     public static (LiveFuncsPanel panel, LiveFuncsViewModel vm) Laid(bool experimental = true,
-                                                                     long availableBytes = long.MaxValue)
+                                                                     long availableBytes = long.MaxValue,
+                                                                     IExperimentalGate? gate = null)
     {
         LoadAppResources();
         Memory.AvailableBytes = availableBytes;
@@ -136,7 +139,7 @@ internal static class LiveFuncsLayout
         var dump = DispatchProxy.Create<IDumpService, Canned>();
         var log = DispatchProxy.Create<ILoggingService, Canned>();
         var platform = DispatchProxy.Create<IPlatformService, Memory>();
-        var vm = new LiveFuncsViewModel(dump, log, platform, experimentalGate: new Gate(experimental));
+        var vm = new LiveFuncsViewModel(dump, log, platform, experimentalGate: gate ?? new Gate(experimental));
         var panel = new LiveFuncsPanel { DataContext = vm };
         var window = new Window { Content = panel, Width = 1389, Height = 868 };
         window.Show();
@@ -148,9 +151,10 @@ internal static class LiveFuncsLayout
     /// <paramref name="usPerCapture"/>, a traced recording is run first whose Stop measured that cost a capture, so the
     /// stack estimate weighs it (25 captures a second for A::F under Standard).</summary>
     public static (LiveFuncsPanel panel, LiveFuncsViewModel vm) LaidWithAStackChosen(double? usPerCapture = null,
-                                                                                     long availableBytes = long.MaxValue)
+                                                                                     long availableBytes = long.MaxValue,
+                                                                                     IExperimentalGate? gate = null)
     {
-        var (panel, vm) = Laid(availableBytes: availableBytes);
+        var (panel, vm) = Laid(availableBytes: availableBytes, gate: gate);
         Run(vm.RefreshCommand.ExecuteAsync(null));
         vm.TraceEnabled = true;
         Run(vm.ToggleStackCommand.ExecuteAsync(vm.Results.Single(r => r.FuncName == "F")));

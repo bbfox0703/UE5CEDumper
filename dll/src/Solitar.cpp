@@ -68,8 +68,7 @@ std::atomic<bool> s_workerStop{false};
 // Guarded by s_mutex (only touched inside ApplyGodNowLocked).
 struct BoolTarget {
     int32_t     fieldOffset = 0;        // Offset_Internal of the property in the object
-    uint8_t     byteOff = 0;            // ByteOffset within the FBoolProperty
-    uint8_t     mask = 0;              // FieldMask (single bit)
+    BoolBits    bits;                   // where the value sits in its byte, and how it is read and written
     bool        protect = false;       // value written when GodMode is ON
     bool        isCanBeDamaged = false; // the canonical badge indicator
     std::string name;
@@ -177,38 +176,32 @@ int32_t ResolvePawnRef(PawnRef& out) {
 // Read an FBoolProperty's [FieldSize, ByteOffset, ByteMask, FieldMask] layout from
 // the FProperty address (probed ±4/±8, same as Wirbel::ResolveCursorBit). FindField
 // only surfaces FieldMask, so the within-byte offset must be read here directly.
-bool ReadBoolLayout(uintptr_t fpropAddr, uint8_t& byteOff, uint8_t& mask) {
+// Which probed layout counts is Solitar::PickBoolBits.
+bool ReadBoolLayout(uintptr_t fpropAddr, BoolBits& bits) {
     if (!fpropAddr) return false;
     int baseOff = DynOff::bUseFProperty ? DynOff::FBOOLPROP_FIELDSIZE
                                         : DynOff::UBOOLPROP_FIELDSIZE;
-    for (int tryOff : { baseOff, baseOff - 4, baseOff + 4, baseOff + 8, baseOff - 8 }) {
-        if (tryOff < 0) continue;
-        uint8_t b[4] = {};
-        if (!Macht::ReadBytesSafe(fpropAddr + tryOff, b, 4)) continue;
-        uint8_t fieldSize = b[0], bo = b[1], bm = b[2], fm = b[3];
-        if (fieldSize == 1 && fm && (fm & (fm - 1)) == 0
-            && bo <= 7 && bm && (bm & (bm - 1)) == 0) {
-            byteOff = bo;
-            mask = fm;
-            return true;
-        }
-    }
-    return false;
+    const int tryOffs[] = { baseOff, baseOff - 4, baseOff + 4, baseOff + 8, baseOff - 8 };
+    constexpr int kTries = static_cast<int>(sizeof(tryOffs) / sizeof(tryOffs[0]));
+    uint8_t quads[kTries][4] = {};
+    bool readOk[kTries] = {};
+    for (int i = 0; i < kTries; ++i)
+        readOk[i] = tryOffs[i] >= 0 && Macht::ReadBytesSafe(fpropAddr + tryOffs[i], quads[i], 4);
+    return PickBoolBits(quads, readOk, kTries, bits);
 }
 
-// Resolve a reflected FBoolProperty (by name) down to a single byte address + bit
-// mask on a live object. Generalized from Wirbel::ResolveCursorBit.
+// Resolve a reflected FBoolProperty (by name) down to a single byte address + its
+// read/write masks on a live object. Generalized from Wirbel::ResolveCursorBit.
 int32_t ResolveActorBoolBit(uintptr_t obj, uintptr_t classAddr,
                             const char* exact, const char* contains,
-                            uintptr_t& byteAddr, uint8_t& mask) {
+                            uintptr_t& byteAddr, BoolBits& bits) {
     if (!obj || !classAddr) return PR_ERR_REFLECT;
     FieldInfo fi{};
     if (!Ubel::FindField(classAddr, exact, contains, nullptr, "BoolProperty", fi)
         || !fi.Address)
         return PR_ERR_REFLECT;
-    uint8_t byteOff = 0;
-    if (!ReadBoolLayout(fi.Address, byteOff, mask)) return PR_ERR_REFLECT;
-    byteAddr = obj + static_cast<uintptr_t>(fi.Offset) + byteOff;
+    if (!ReadBoolLayout(fi.Address, bits)) return PR_ERR_REFLECT;
+    byteAddr = obj + static_cast<uintptr_t>(fi.Offset) + bits.byteOff;
     return PR_OK;
 }
 
@@ -233,12 +226,11 @@ void BuildTargets(uintptr_t pawnClass, bool verbose) {
         std::string lower = ToLower(f.Name);
         bool protect = false;
         if (!MatchProtectionBool(lower, protect)) continue;
-        uint8_t byteOff = 0, mask = 0;
-        if (!ReadBoolLayout(f.Address, byteOff, mask)) continue;
+        BoolBits bits;
+        if (!ReadBoolLayout(f.Address, bits)) continue;
         BoolTarget t;
         t.fieldOffset = f.Offset;
-        t.byteOff = byteOff;
-        t.mask = mask;
+        t.bits = bits;
         t.protect = protect;
         t.isCanBeDamaged = (lower.find("canbedamaged") != std::string::npos);
         t.name = f.Name;
@@ -251,7 +243,7 @@ void BuildTargets(uintptr_t pawnClass, bool verbose) {
                  s_targets.size());
         for (const auto& t : s_targets)
             LOG_INFO("GodMode:   '%s' @+0x%X mask=0x%02X protect=%d%s",
-                     t.name.c_str(), t.fieldOffset, t.mask, t.protect ? 1 : 0,
+                     t.name.c_str(), t.fieldOffset, t.bits.fieldMask, t.protect ? 1 : 0,
                      t.isCanBeDamaged ? " [canonical]" : "");
     }
 }
@@ -282,18 +274,18 @@ int32_t ApplyGodNowLocked(bool verbose, bool* outDrifted = nullptr) {
     int32_t observed = desiredOn ? 1 : 0;   // fallback if no canonical target
 
     for (const auto& t : s_targets) {
-        uintptr_t byteAddr = p.pawn + static_cast<uintptr_t>(t.fieldOffset) + t.byteOff;
+        uintptr_t byteAddr = p.pawn + static_cast<uintptr_t>(t.fieldOffset) + t.bits.byteOff;
         uint8_t b = 0;
         if (!Macht::ReadSafe(byteAddr, b)) continue;
         bool want = desiredOn ? t.protect : !t.protect;   // ON = protect, OFF = normal
-        if (((b & t.mask) != 0) != want) {
+        if (ReadBoolValue(b, t.bits) != want) {
             anyDrift = true;
-            uint8_t nb = ApplyBoolBit(b, t.mask, want);
+            uint8_t nb = WriteBoolValue(b, t.bits, want);
             if (!Macht::WriteBytes(byteAddr, &nb, 1)) continue;
         }
         if (t.isCanBeDamaged) {
             uint8_t after = 0;
-            bool canDmg = Macht::ReadSafe(byteAddr, after) ? ((after & t.mask) != 0)
+            bool canDmg = Macht::ReadSafe(byteAddr, after) ? ReadBoolValue(after, t.bits)
                                                            : !desiredOn;
             observed = canDmg ? 0 : 1;   // godmode = NOT can-be-damaged
         }
@@ -367,12 +359,12 @@ int32_t ResolveProtectBits(std::vector<ProtectBit>& out) {
         std::string lower = ToLower(f.Name);
         bool protect = false;
         if (!MatchProtectionBool(lower, protect)) continue;
-        uint8_t byteOff = 0, mask = 0;
-        if (!ReadBoolLayout(f.Address, byteOff, mask)) continue;
+        BoolBits bits;
+        if (!ReadBoolLayout(f.Address, bits)) continue;
         ProtectBit b;
         b.name = f.Name;
-        b.byteOffset = f.Offset + static_cast<int32_t>(byteOff);
-        b.mask = mask;
+        b.byteOffset = f.Offset + static_cast<int32_t>(bits.byteOff);
+        b.mask = TrainerMaskFor(bits);
         b.protect = protect ? 1 : 0;
         out.push_back(std::move(b));
         if (out.size() >= 16) break;   // mirror BuildTargets sanity cap
@@ -406,13 +398,13 @@ int32_t GetGodMode() {
     int32_t rc = ResolvePawnRef(p);
     if (rc != PR_OK) return rc;
     uintptr_t byteAddr = 0;
-    uint8_t mask = 0;
+    BoolBits bits;
     rc = ResolveActorBoolBit(p.pawn, p.pawnClass, "bCanBeDamaged", "CanBeDamaged",
-                             byteAddr, mask);
+                             byteAddr, bits);
     if (rc != PR_OK) return rc;
     uint8_t b = 0;
     if (!Macht::ReadSafe(byteAddr, b)) return PR_ERR_REFLECT;
-    return (b & mask) ? 0 : 1;   // bit set ⇒ can be damaged ⇒ godmode off
+    return ReadBoolValue(b, bits) ? 0 : 1;   // set ⇒ can be damaged ⇒ godmode off
 }
 
 bool IsGodModeWanted() {
@@ -437,15 +429,15 @@ int32_t SetActorBool(uintptr_t obj, uintptr_t classAddr, const char* propName, b
     if (!obj || !classAddr || !propName) return PR_ERR_REFLECT;
     std::lock_guard<std::mutex> lk(s_mutex);
     uintptr_t byteAddr = 0;
-    uint8_t mask = 0;
-    int32_t rc = ResolveActorBoolBit(obj, classAddr, propName, propName, byteAddr, mask);
+    BoolBits bits;
+    int32_t rc = ResolveActorBoolBit(obj, classAddr, propName, propName, byteAddr, bits);
     if (rc != PR_OK) return rc;
     uint8_t b = 0;
     if (!Macht::ReadSafe(byteAddr, b)) return PR_ERR_REFLECT;
-    uint8_t nb = ApplyBoolBit(b, mask, on);
+    uint8_t nb = WriteBoolValue(b, bits, on);
     if (nb != b && !Macht::WriteBytes(byteAddr, &nb, 1)) return PR_ERR_WRITE;
     uint8_t after = 0;
-    bool v = Macht::ReadSafe(byteAddr, after) ? ((after & mask) != 0) : on;
+    bool v = Macht::ReadSafe(byteAddr, after) ? ReadBoolValue(after, bits) : on;
     return v ? 1 : 0;
 }
 
@@ -453,12 +445,12 @@ int32_t GetActorBool(uintptr_t obj, uintptr_t classAddr, const char* propName) {
     if (!obj || !classAddr || !propName) return PR_ERR_REFLECT;
     std::lock_guard<std::mutex> lk(s_mutex);
     uintptr_t byteAddr = 0;
-    uint8_t mask = 0;
-    int32_t rc = ResolveActorBoolBit(obj, classAddr, propName, propName, byteAddr, mask);
+    BoolBits bits;
+    int32_t rc = ResolveActorBoolBit(obj, classAddr, propName, propName, byteAddr, bits);
     if (rc != PR_OK) return rc;
     uint8_t b = 0;
     if (!Macht::ReadSafe(byteAddr, b)) return PR_ERR_REFLECT;
-    return ((b & mask) != 0) ? 1 : 0;
+    return ReadBoolValue(b, bits) ? 1 : 0;
 }
 
 void StopWorker() {
