@@ -1973,6 +1973,11 @@ static constexpr int      kMaxHookAttempts    = 8;
 static constexpr uint64_t kHookRetryCooldownMs = 5000;
 static std::atomic<int>      s_hookAttempts{0};
 static std::atomic<uint64_t> s_lastHookAttemptMs{0};
+// Did the PREVIOUS install attempt fail? Set on any failed attempt, cleared on success -- the one signal that a
+// success is a RECOVERY. The automatic counter cannot stand in: a forced attempt does not spend it (B24) and a
+// recovery that skips the cooldown's automatic attempt leaves it at 1, so gating RECOVERED on `attempts > 1` drops
+// the FFRS case (two Starts fail, the third succeeds). ([MH-PRERESERVE-PROXY])
+static std::atomic<bool>     s_lastInstallFailed{false};
 
 // ---------------------------------------------------------------------------
 // DETECTION retry state — deliberately its OWN budget, separate from the
@@ -2089,13 +2094,16 @@ static void TryInstallGameThreadHook(bool force = false) {
     // A forced attempt names itself: the counter beside it is the automatic budget, which it did not spend.
     const std::string attemptLabel = Stark::DescribeHookAttempt(force, attempts, kMaxHookAttempts);
     if (!Stark::InstallHook(peAddr)) {
+        s_lastInstallFailed.store(true, std::memory_order_relaxed);
         LOG_WARN("GameThreadDispatch: hook install failed (%s), invoke will "
                  "use direct call (unsafe)%s",
                  attemptLabel.c_str(),
                  attempts < kMaxHookAttempts ? " — will retry" : " — giving up");
         return;
     }
-    if (attempts > 1) {
+    // A success that follows a failed attempt is a recovery, whichever path reached it (forced, or an automatic
+    // attempt after the cooldown). Clear the flag as we read it so the line fires once.
+    if (s_lastInstallFailed.exchange(false, std::memory_order_relaxed)) {
         LOG_INFO("GameThreadDispatch: hook RECOVERED on %s — game-thread "
                  "dispatch is available again", attemptLabel.c_str());
     }
