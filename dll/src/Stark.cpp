@@ -85,6 +85,15 @@ static std::atomic<bool> s_hookActive{false};
 static std::atomic<bool> s_mhInitialized{false};
 static uintptr_t s_hookedAddr = 0;
 
+// Every MinHook call Stark makes runs under this one mutex: InstallHook's check-then-create and the block holder
+// must not interleave (audit #3: two MH_CreateHook calls racing on one target corrupt MinHook's tables).
+static std::mutex s_mhMutex;
+
+// [MH-PRERESERVE-PROXY] The held trampoline block (HoldTrampolineBlock). Written under s_mhMutex.
+static uintptr_t s_heldTarget = 0;   // the holder hook's target: created, never enabled; 0 = nothing held
+static uintptr_t s_heldBlock  = 0;   // the MinHook block the holder's slot sits in
+static bool      s_holdTried  = false;
+
 // Timeout for waiting on game-thread execution. Atomic so the pipe thread
 // (handling set_invoke_timeout) can update it while another pipe call is
 // already blocked in EnqueueInvoke without locking. Re-read on each invoke;
@@ -295,7 +304,7 @@ static void __fastcall HookedProcessEvent(void* thisObj, void* ufunc, void* para
 
 // ---- MinHook's trampoline window ([MH-PRERESERVE-PROXY]) ----
 
-// The copy faults only when a page under it is unmapped; SEH needs a frame with no C++ objects (C2712).
+// The copy faults when a page under it cannot be read; SEH needs a frame with no C++ objects (C2712).
 static bool CopyBytesSEH(const void* src, void* dst, size_t len) {
     __try {
         memcpy(dst, src, len);
@@ -358,12 +367,116 @@ static void LogTrampolineWindow(uintptr_t target) {
     const uint64_t walkMs = GetTickCount64() - t0;
     const Lager::WindowSummary summary =
         Lager::SummarizeWindow(map, target, appMin, appMax, si.dwAllocationGranularity);
-    const std::string line = Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), 0);
+    const std::string line = Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock);
     LOG_ERROR("GameThreadDispatch: %s (%zu region(s) walked in %llu ms)", line.c_str(), map.size(),
               (unsigned long long)walkMs);
 }
 
+// MinHook's own state (its private heap) is the one record of whether it is initialised, shared by every module in
+// this DLL that hooks: each accepts MH_ERROR_ALREADY_INITIALIZED, and none calls MH_Uninitialize, which would free
+// the held block and every live trampoline with it (InvokeScriptTests pins the absence). Call under s_mhMutex.
+static bool EnsureMinHookLocked() {
+    if (s_mhInitialized.load()) return true;
+    const MH_STATUS status = MH_Initialize();
+    if (status != MH_OK && status != MH_ERROR_ALREADY_INITIALIZED) {
+        LOG_ERROR("GameThreadDispatch: MH_Initialize failed: %s", MH_StatusToString(status));
+        return false;
+    }
+    s_mhInitialized.store(true);
+    return true;
+}
+
+// MH_CreateHook refuses a detour that is not executable (IsExecutableAddress), so the holder needs one. It never
+// runs: the holder is created and never enabled, and nothing in this DLL enables every hook at once
+// (InvokeScriptTests pins both).
+static void HolderDetour() {}
+
+// May MinHook read `target`? It reads a hook target with no SEH, inside its spin lock, so a fault there would end
+// the game and a caught one would leave the lock taken for every later MinHook call. Lager decides from the page
+// protections; the SEH copy then proves the bytes are really there.
+static bool HolderCandidateSafe(uintptr_t target) {
+    MEMORY_BASIC_INFORMATION at{}, end{}, before{};
+    if (!VirtualQuery(reinterpret_cast<LPCVOID>(target), &at, sizeof(at)) ||
+        !VirtualQuery(reinterpret_cast<LPCVOID>(target + 31), &end, sizeof(end)) ||
+        !VirtualQuery(reinterpret_cast<LPCVOID>(target - 5), &before, sizeof(before))) {
+        return false;
+    }
+    if (!Lager::HolderCandidateReadable(at.State, at.Protect, end.State, end.Protect, before.State, before.Protect))
+        return false;
+    uint8_t probe[32];
+    return CopyBytesSEH(reinterpret_cast<const void*>(target), probe, sizeof(probe));
+}
+
 // ---- Public API ----
+
+void HoldTrampolineBlock() {
+    std::lock_guard<std::mutex> lock(s_mhMutex);
+    if (s_holdTried) return;   // once per process (per copy of this DLL: each copy links its own MinHook)
+    s_holdTried = true;
+    if (!EnsureMinHookLocked()) {
+        LOG_WARN("GameThreadDispatch: no MinHook trampoline block held -- MinHook did not initialise; "
+                 "nothing else changes");
+        return;
+    }
+
+    SYSTEM_INFO si{};
+    GetSystemInfo(&si);
+    const uint64_t appMin = reinterpret_cast<uint64_t>(si.lpMinimumApplicationAddress);
+    const uint64_t appMax = reinterpret_cast<uint64_t>(si.lpMaximumApplicationAddress);
+    const Lager::ImageLayout img = ReadMainImageLayout();
+    std::string refused;
+    for (const Lager::HolderCandidate& c : Lager::ChooseHolderTargets(img)) {
+        const uintptr_t target = static_cast<uintptr_t>(c.address);
+        char why[160];
+        if (target == s_hookedAddr) {   // a real hook already owns this address
+            std::snprintf(why, sizeof(why), "0x%llX: a real hook's target; ", (unsigned long long)target);
+            refused += why;
+            continue;
+        }
+        if (!HolderCandidateSafe(target)) {
+            std::snprintf(why, sizeof(why), "0x%llX: not readable code; ", (unsigned long long)target);
+            refused += why;
+            continue;
+        }
+        LPVOID trampoline = nullptr;
+        const MH_STATUS status =
+            MH_CreateHook(reinterpret_cast<LPVOID>(target), reinterpret_cast<LPVOID>(&HolderDetour),
+                          &trampoline);
+        if (status != MH_OK) {
+            std::snprintf(why, sizeof(why), "0x%llX: %s; ", (unsigned long long)target, MH_StatusToString(status));
+            refused += why;
+            continue;
+        }
+        // FreeBuffer finds a slot's block the same way: the slot address rounded down to MEMORY_BLOCK_SIZE.
+        s_heldTarget = target;
+        s_heldBlock  = reinterpret_cast<uintptr_t>(trampoline) &
+                       ~static_cast<uintptr_t>(Lager::kMemoryBlockSize - 1);
+        const Lager::Span served = Lager::OriginsServedBy(s_heldBlock, appMin, appMax);
+        const Lager::ExecRange code = Lager::ExecutableRange(img);
+        const bool covers = Lager::SpanCovers(served, code);
+        const char* fmt =
+            "GameThreadDispatch: held a MinHook trampoline block for the process lifetime: block 0x%llX, taken "
+            "by a hook created (never enabled) on 0x%llX, %s; it serves hook targets [0x%llX, 0x%llX], %s the "
+            "image's executable range [0x%llX, 0x%llX) (image 0x%llX + 0x%X, DYNAMICBASE %s)";
+        const char* verdict = covers ? "which covers" : "which does NOT cover -- a hook outside it needs a block of "
+                                                        "its own --";
+        if (covers) {
+            LOG_INFO(fmt, (unsigned long long)s_heldBlock, (unsigned long long)target, Lager::HolderKindName(c.kind),
+                     (unsigned long long)served.lo, (unsigned long long)served.hi, verdict,
+                     (unsigned long long)code.lo, (unsigned long long)code.hi, (unsigned long long)img.base,
+                     img.sizeOfImage, img.dynamicBase ? "yes" : "no");
+        } else {
+            LOG_WARN(fmt, (unsigned long long)s_heldBlock, (unsigned long long)target, Lager::HolderKindName(c.kind),
+                     (unsigned long long)served.lo, (unsigned long long)served.hi, verdict,
+                     (unsigned long long)code.lo, (unsigned long long)code.hi, (unsigned long long)img.base,
+                     img.sizeOfImage, img.dynamicBase ? "yes" : "no");
+        }
+        return;
+    }
+    LOG_WARN("GameThreadDispatch: no MinHook trampoline block held (%s) -- nothing else changes: a hook allocates "
+             "its own block as before",
+             refused.empty() ? "the main image's headers named no candidate" : refused.c_str());
+}
 
 bool InstallHook(uintptr_t processEventAddr) {
     // Serialize the whole check-then-MH_CreateHook/MH_EnableHook sequence. This is
@@ -371,9 +484,8 @@ bool InstallHook(uintptr_t processEventAddr) {
     // dispatch path — a concurrent (or future) caller must never race two
     // MH_CreateHook calls on the same target, which can corrupt MinHook's internal
     // tables (audit #3). A second caller blocks here, then hits the s_hookActive /
-    // s_hookedAddr fast-paths below and no-ops.
-    static std::mutex s_installMutex;
-    std::lock_guard<std::mutex> lock(s_installMutex);
+    // s_hookedAddr fast-paths below and no-ops. The block holder takes the same mutex.
+    std::lock_guard<std::mutex> lock(s_mhMutex);
 
     if (s_hookActive.load()) {
         LOG_WARN("GameThreadDispatch: hook already active");
@@ -397,15 +509,31 @@ bool InstallHook(uintptr_t processEventAddr) {
         return true;
     }
 
-    // Initialize MinHook (once)
-    if (!s_mhInitialized.load()) {
-        MH_STATUS status = MH_Initialize();
-        if (status != MH_OK && status != MH_ERROR_ALREADY_INITIALIZED) {
-            LOG_ERROR("GameThreadDispatch: MH_Initialize failed: %s",
-                      MH_StatusToString(status));
-            return false;
+    if (!EnsureMinHookLocked()) return false;
+
+    // [MH-PRERESERVE-PROXY] A real hook outranks the holder. MinHook keys hooks by target, so ProcessEvent at the
+    // holder's address would fail MH_ERROR_ALREADY_CREATED. The holder was never enabled, so removing it writes
+    // nothing to the target (MH_RemoveHook restores code only for an enabled hook); its block goes with it when it
+    // was the last slot in use.
+    if (s_heldTarget != 0 && s_heldTarget == processEventAddr) {
+        const MH_STATUS removed = MH_RemoveHook(reinterpret_cast<LPVOID>(s_heldTarget));
+        LOG_WARN("GameThreadDispatch: ProcessEvent 0x%llX is the held block's holder target -- holder removed (%s) "
+                 "so the real hook can take the address", (unsigned long long)processEventAddr,
+                 MH_StatusToString(removed));
+        s_heldTarget = 0;
+        s_heldBlock  = 0;
+    }
+    // Say before the attempt when the held block cannot serve ProcessEvent: MinHook then needs a block of its own.
+    if (s_heldBlock != 0) {
+        SYSTEM_INFO si{};
+        GetSystemInfo(&si);
+        const uint64_t appMin = reinterpret_cast<uint64_t>(si.lpMinimumApplicationAddress);
+        const uint64_t appMax = reinterpret_cast<uint64_t>(si.lpMaximumApplicationAddress);
+        if (!Lager::BlockServes(s_heldBlock, Lager::SearchWindow(processEventAddr, appMin, appMax))) {
+            LOG_WARN("GameThreadDispatch: the held block 0x%llX is out of reach of ProcessEvent 0x%llX "
+                     "(MinHook reuses a block only within +-1 GB) -- it must find a block of its own",
+                     (unsigned long long)s_heldBlock, (unsigned long long)processEventAddr);
         }
-        s_mhInitialized.store(true);
     }
 
     // Create hook
@@ -435,6 +563,17 @@ bool InstallHook(uintptr_t processEventAddr) {
     s_hookActive.store(true);
     LOG_INFO("GameThreadDispatch: ProcessEvent hook installed at 0x%llX",
              (unsigned long long)processEventAddr);
+    // [MH-PRERESERVE-PROXY] Where its trampoline went: the evidence that the held block did its job.
+    const uintptr_t peBlock = reinterpret_cast<uintptr_t>(s_originalPE) &
+                              ~static_cast<uintptr_t>(Lager::kMemoryBlockSize - 1);
+    if (s_heldBlock != 0) {
+        LOG_INFO("GameThreadDispatch: ProcessEvent's trampoline 0x%llX is %s the held block 0x%llX",
+                 (unsigned long long)reinterpret_cast<uintptr_t>(s_originalPE),
+                 peBlock == s_heldBlock ? "in" : "NOT in", (unsigned long long)s_heldBlock);
+    } else {
+        LOG_INFO("GameThreadDispatch: ProcessEvent's trampoline 0x%llX is in block 0x%llX (no block was held)",
+                 (unsigned long long)reinterpret_cast<uintptr_t>(s_originalPE), (unsigned long long)peBlock);
+    }
     return true;
 }
 

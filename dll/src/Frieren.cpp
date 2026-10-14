@@ -787,8 +787,8 @@ void UE5_Shutdown() {
     Dunste::StopWorker();    // join the fly worker before unload
     Schlacht::SetEnabled(false);  // un-hide occluders (contract) THEN join the worker; runs before Stark::Shutdown so the un-hide invokes can still dispatch (M3)
     Grausam::SetForegroundLock(false);  // soft-disable: g_enabled=false so the GFW/WndProc hooks pass through + release the masked cursor clip — otherwise the game believes it's foreground forever after a CE-Lua Disable (L10)
-    // Full teardown: RemoveHook + MH_Uninitialize + drain pending invoke queue.
-    // Pipe server is stopped after Shutdown() so any in-flight pipe thread
+    // Teardown: soft RemoveHook + drain the pending invoke queue (MinHook stays
+    // initialised -- see Stark::Shutdown). Pipe server is stopped after Shutdown() so any in-flight pipe thread
     // blocked on EnqueueInvoke receives its -7 result and unwinds cleanly.
     Stark::Shutdown();
     s_pipeServer.Stop();

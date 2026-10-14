@@ -23,13 +23,22 @@ namespace Stark {
 /// @return true if hook installed successfully
 bool InstallHook(uintptr_t processEventAddr);
 
-/// Remove the hook and clean up. Safe to call even if not installed.
-/// Does NOT call MH_Uninitialize — use Shutdown() at DLL unload instead.
+/// [MH-PRERESERVE-PROXY] Take a MinHook trampoline block next to the main image now, and keep it for the process
+/// lifetime. MinHook reuses a block that serves a new target before it allocates one, so the ProcessEvent hook later
+/// lands in this block instead of needing a free block start within +-1 GB of ProcessEvent at install time -- which
+/// a heap grown through that window can deny on an image without ASLR (FINAL FANTASY RESONANCE DEMO). The block is
+/// held by a hook created on the image's entry point (else an executable section's start) and never enabled, so no
+/// code of the game is written. Call from a thread, never from DllMain (MinHook under the loader lock). Once per
+/// process; what was held and where is logged, and a failure is logged and changes nothing else.
+void HoldTrampolineBlock();
+
+/// Soft-disable the hook: clear the active flag and leave MinHook's patch and trampoline in place, because unhooking
+/// under a game thread inside the trampoline crashes. Safe to call even if not installed.
 void RemoveHook();
 
-/// Full teardown: remove hook AND uninitialize MinHook globally.
-/// Call ONLY from DLL_PROCESS_DETACH (via UE5_Shutdown). After this,
-/// InstallHook() can no longer be used unless MinHook is re-initialized.
+/// Teardown (UE5_Shutdown): RemoveHook, then answer every queued invoke with -7. MinHook is deliberately left
+/// initialised: MH_Uninitialize would unpatch and free every trampoline under an in-flight call, and the held block
+/// with them. InstallHook still works afterwards.
 void Shutdown();
 
 /// @return true if the ProcessEvent hook is active

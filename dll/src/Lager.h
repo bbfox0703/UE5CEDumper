@@ -277,13 +277,20 @@ struct Span {
     bool empty = true;
 };
 inline Span OriginsServedBy(uint64_t block, uint64_t appMin, uint64_t appMax) {
-    (void)block; (void)appMin; (void)appMax; return Span{};   // RED stub
+    Span s;
+    if (block < appMin || appMax < kMemoryBlockSize - 1 || block >= appMax - (kMemoryBlockSize - 1)) return s;
+    s.lo = (block + kMemoryBlockSize > kMaxMemoryRange) ? block + kMemoryBlockSize - kMaxMemoryRange : 0;
+    s.hi = block + kMaxMemoryRange;
+    s.empty = false;
+    return s;
 }
 
 /// A section's mapped extent: the loader maps VirtualSize (some linkers leave it 0, then SizeOfRawData stands in),
 /// clipped to SizeOfImage.
 inline uint64_t SectionSpanEnd(const ImageLayout& img, const Section& s) {
-    (void)img; (void)s; return 0;   // RED stub
+    const uint64_t size = s.virtualSize ? s.virtualSize : s.rawSize;
+    const uint64_t end  = (uint64_t)s.rva + size;
+    return end < img.sizeOfImage ? end : img.sizeOfImage;
 }
 
 /// [lo, hi) spanning every executable section, as absolute addresses; lo == hi when none is marked executable.
@@ -292,12 +299,24 @@ struct ExecRange {
     uint64_t hi = 0;
 };
 inline ExecRange ExecutableRange(const ImageLayout& img) {
-    (void)img; return ExecRange{};   // RED stub
+    ExecRange r;
+    bool any = false;
+    for (const Section& s : img.sections) {
+        if (!(s.characteristics & kScnMemExecute)) continue;
+        const uint64_t end = SectionSpanEnd(img, s);
+        if (end <= s.rva) continue;
+        const uint64_t lo = img.base + s.rva, hi = img.base + end;
+        if (!any || lo < r.lo) r.lo = lo;
+        if (!any || hi > r.hi) r.hi = hi;
+        any = true;
+    }
+    return r;
 }
 
 /// True when the block whose served span is `served` serves every address in [range.lo, range.hi).
 inline bool SpanCovers(const Span& served, const ExecRange& range) {
-    (void)served; (void)range; return false;   // RED stub
+    if (range.hi <= range.lo || served.empty) return false;
+    return served.lo <= range.lo && range.hi - 1 <= served.hi;
 }
 
 /// Where the holder hook goes, best first. MH_CreateHook only READS its target (CreateTrampolineFunction copies the
@@ -314,11 +333,24 @@ struct HolderCandidate {
 };
 
 inline const char* HolderKindName(HolderKind k) {
-    (void)k; return "";   // RED stub
+    return k == HolderKind::EntryPoint ? "the image's entry point" : "the start of an executable section";
 }
 
 inline std::vector<HolderCandidate> ChooseHolderTargets(const ImageLayout& img, size_t maxCandidates = 4) {
-    (void)img; (void)maxCandidates; return {};   // RED stub
+    std::vector<HolderCandidate> out;
+    if (!img.valid) return out;
+    auto add = [&](uint64_t addr, HolderKind kind) {
+        if (out.size() >= maxCandidates) return;
+        for (const HolderCandidate& c : out) if (c.address == addr) return;
+        out.push_back({addr, kind});
+    };
+    if (img.entryRva != 0 && img.entryRva < img.sizeOfImage) add(img.base + img.entryRva, HolderKind::EntryPoint);
+    for (const Section& s : img.sections) {
+        if (!(s.characteristics & kScnMemExecute)) continue;
+        if (SectionSpanEnd(img, s) <= s.rva) continue;
+        add(img.base + s.rva, HolderKind::SectionStart);
+    }
+    return out;
 }
 
 /// MinHook reads a holder target with no SEH, inside its own spin lock: a fault there kills the game, and a caught
@@ -326,10 +358,11 @@ inline std::vector<HolderCandidate> ChooseHolderTargets(const ImageLayout& img, 
 /// MinHook reads is readable. Its IsExecutableAddress accepts any PAGE_EXECUTE_* page, execute-only PAGE_EXECUTE
 /// included, and a guard page faults on its first read.
 inline bool ProtectIsExecutable(uint32_t protect) {
-    (void)protect; return false;   // RED stub
+    return (protect & (kPageExecute | kPageExecuteRead | kPageExecuteReadWrite | kPageExecuteWriteCopy)) != 0;
 }
 inline bool ProtectIsReadableCode(uint32_t protect) {
-    (void)protect; return false;   // RED stub
+    return (protect & kPageGuard) == 0 &&
+           (protect & (kPageExecuteRead | kPageExecuteReadWrite | kPageExecuteWriteCopy)) != 0;
 }
 
 /// at / end: the pages holding the candidate and its 32nd byte (CreateTrampolineFunction decodes forward from the
@@ -337,7 +370,11 @@ inline bool ProtectIsReadableCode(uint32_t protect) {
 /// executable (the hot-patch path).
 inline bool HolderCandidateReadable(uint32_t stateAt, uint32_t protectAt, uint32_t stateEnd, uint32_t protectEnd,
                                     uint32_t stateBefore, uint32_t protectBefore) {
-    (void)stateAt; (void)protectAt; (void)stateEnd; (void)protectEnd; (void)stateBefore; (void)protectBefore; return false;   // RED stub
+    if (stateAt != kMemCommit || !ProtectIsReadableCode(protectAt)) return false;
+    if (stateEnd != kMemCommit || !ProtectIsReadableCode(protectEnd)) return false;
+    if (stateBefore == kMemCommit && ProtectIsExecutable(protectBefore) && !ProtectIsReadableCode(protectBefore))
+        return false;
+    return true;
 }
 
 } // namespace Lager

@@ -13,6 +13,7 @@
 #include "Voll.h"
 #include "Utf8Helpers.h"
 #include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate (B14)
+#include "Stark.h"     // Stark::HoldTrampolineBlock ([MH-PRERESERVE-PROXY])
 #ifdef UE5_PROXY_BUILD
 #include "Lugner.h"    // Lugner::MarkCrtReady — the latch the forwarding thunks gate on
 #endif
@@ -119,6 +120,10 @@ static void AutoStartBody()
     LOG_INFO("DllMain ProxyStart: proxy DLL mode — starting pipe server only (no scan)");
     g_invokeMailbox.initState = Mimic::INIT_RUNNING;
 
+    // [MH-PRERESERVE-PROXY] First, while the address space around the main image is still empty: a proxy is
+    // loaded at process start, long before anything asks for the ProcessEvent hook.
+    Stark::HoldTrampolineBlock();
+
     // Brief delay for game to finish early init (avoid pipe creation during process startup)
     Sleep(500);
 
@@ -195,6 +200,11 @@ static void AutoStartBody()
             }
         }
     }
+
+    // [MH-PRERESERVE-PROXY] An injection arrives late, after the game's heap has grown, so the block held here may
+    // already sit far from the image (the log says whether it serves the image's code); it costs one 4 KB block and
+    // never hurts the later install.
+    Stark::HoldTrampolineBlock();
 
     // Is another UE5Dumper instance already serving? [RELAUNCHPIPE-2026-08-19]
     //
