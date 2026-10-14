@@ -2826,7 +2826,10 @@ public class InvokeScriptTests
         // MH_CreateHook never writes its target; MH_EnableHook does (hook.c, EnableHookLL). The holder stays harmless
         // only while nothing enables it: no MH_ALL_HOOKS (MH_EnableHook(MH_ALL_HOOKS) and MH_QueueEnableHook(
         // MH_ALL_HOOKS) + MH_ApplyQueued would patch the holder's target too), and no MH_Uninitialize, which frees
-        // every block -- the held one and every live trampoline with it.
+        // every block -- the held one and every live trampoline with it. MH_ALL_HOOKS is just NULL, and EnableHook
+        // takes the enable-every-hook path for ANY null target, so the token ban alone is bypassable: ban enabling (or
+        // disabling) a null-literal target too, so a future `MH_EnableHook(nullptr)` cannot patch the section-start
+        // holder to a no-op and corrupt the game.
         var files = new List<string>();
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
         {
@@ -2834,11 +2837,18 @@ public class InvokeScriptTests
             if (Directory.Exists(c)) { files.AddRange(Directory.GetFiles(c, "*.cpp")); files.AddRange(Directory.GetFiles(c, "*.h")); break; }
         }
         Assert.NotEmpty(files);
+        var banned = new[]
+        {
+            "MH_ALL_HOOKS", "MH_QueueEnableHook", "MH_ApplyQueued", "MH_Uninitialize",
+            "MH_EnableHook(nullptr", "MH_EnableHook(NULL", "MH_EnableHook(0)",
+            "MH_DisableHook(nullptr", "MH_DisableHook(NULL", "MH_DisableHook(0)",
+        };
         foreach (var f in files)
         {
-            var code = MinHookGlue(Path.GetFileName(f));
-            foreach (var banned in new[] { "MH_ALL_HOOKS", "MH_QueueEnableHook", "MH_ApplyQueued", "MH_Uninitialize" })
-                Assert.False(code.Contains(banned, StringComparison.Ordinal), Path.GetFileName(f) + " calls " + banned);
+            // Collapse the whitespace after each '(' so "MH_EnableHook( NULL" is caught the same as "MH_EnableHook(NULL".
+            var code = System.Text.RegularExpressions.Regex.Replace(MinHookGlue(Path.GetFileName(f)), @"\(\s+", "(");
+            foreach (var b in banned)
+                Assert.False(code.Contains(b, StringComparison.Ordinal), Path.GetFileName(f) + " calls " + b);
         }
     }
 
