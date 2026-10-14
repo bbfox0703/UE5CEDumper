@@ -2885,6 +2885,40 @@ public class InvokeScriptTests
         Assert.True(sites >= 2, "expected MH_Initialize() in at least Stark.cpp and Grausam.cpp -- found " + sites);
     }
 
+    [Fact]
+    public void HolderReadabilityGuard_CoversEveryByteMinHookDecodes()
+    {
+        // The guard before MH_CreateHook(holder) is the only thing that stops an access violation inside MinHook's
+        // spin lock, on the proxy's auto-start thread, at process start. MinHook reads the target with no SEH, and
+        // CreateTrampolineFunction decodes PAST the prologue: the last instruction it disassembles can start ~19 bytes
+        // in, and hde64 reads ~33 more of it, so a 32-byte probe understates the reach. Lager::kHolderReadSpan names
+        // the span with its derivation; HolderCandidateSafe must query the page of target + span - 1 and probe span
+        // bytes, not 32. No test target compiles Stark.cpp, so pin the body.
+        var lager = MinHookGlue("Lager.h");
+        var m = System.Text.RegularExpressions.Regex.Match(lager, @"kHolderReadSpan\s*=\s*(\d+)");
+        Assert.True(m.Success, "Lager::kHolderReadSpan not defined -- the holder read span must be a named constant");
+        Assert.True(int.Parse(m.Groups[1].Value) >= 52,
+            "kHolderReadSpan must cover MinHook's worst-case decode (final start <= 19 + hde64's ~33) = 52");
+
+        var stark = MinHookGlue("Stark.cpp");
+        var safe = MinHookGlueBody(stark, "static bool HolderCandidateSafe(uintptr_t target) {");
+        Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(target), &at", safe, StringComparison.Ordinal);
+        Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(target + Lager::kHolderReadSpan - 1), &end", safe,
+            StringComparison.Ordinal);
+        Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(target - 5), &before", safe, StringComparison.Ordinal);
+        Assert.Contains("Lager::HolderCandidateReadable(at.State, at.Protect, end.State, end.Protect, before.State, before.Protect)",
+            safe, StringComparison.Ordinal);
+        Assert.Contains("uint8_t probe[Lager::kHolderReadSpan]", safe, StringComparison.Ordinal);
+        Assert.Contains("CopyBytesSEH(reinterpret_cast<const void*>(target), probe, sizeof(probe))", safe,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("target + 31", safe, StringComparison.Ordinal);   // the understated 32-byte reach
+        Assert.DoesNotContain("uint8_t probe[32]", safe, StringComparison.Ordinal);
+
+        // The 4 KB header copy is read under SEH too, so a guarded/no-access header page is refused, not faulted on.
+        var readLayout = MinHookGlueBody(stark, "static Lager::ImageLayout ReadMainImageLayout() {");
+        Assert.Contains("CopyBytesSEH(base, hdr, sizeof(hdr))", readLayout, StringComparison.Ordinal);
+    }
+
     private static int MinHookCount(string s, string what)
     {
         int n = 0;
