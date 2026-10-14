@@ -889,6 +889,28 @@ frames). What to do:
 - A per-call kernel query (VirtualQuery) cost about 300 µs in the same uncapped game: anything that asks the kernel per
   item in a pass over the object array needs a cache (Aura::CodeRangeCache).
 
+### 1.ao Six traps the 2026-10-13/14 known-issues pass hit -- each cost a run before it was seen
+
+- **`py -I` and this repo's rigs do not mix.** `-I` implies `-P`: the script's own folder is not put on `sys.path`,
+  so a rig that imports a sibling silently loses it -- `inject.py` then cannot load `b29_product_name`, reports the
+  game's own `C:\Windows\System32\WINMM.dll` and `VERSION.dll` as stale copies of ours, and refuses to inject. Run
+  repo tools WITHOUT `-I`. The opposite holds for a script in the shared scratchpad: run it WITH `-I`, because a
+  sibling agent may have left a file there named like a stdlib module (a `struct.py` broke `import ctypes`).
+- **`python -c "..."` inside a bash double-quoted string runs every backtick as a command**, and a doc edit lost
+  `DumperTestActor.bPlainBool` to it without an error. Text with backticks goes through a patch-script FILE, the
+  rule CLAUDE.md already gives for backslashes.
+- **A file Python writes in text mode on Windows has CRLF**, and the Workflow tool refuses such a script as
+  "control characters". Write generated scripts as bytes, or with `newline=''`.
+- **A combo another program holds with `RegisterHotKey` never reaches anyone else's KeyDown**: Windows hands it to
+  the holder as `WM_HOTKEY`. So a hotkey capture box cannot even see a taken combo; its refusal path is reachable
+  only by a race, and a live check that "binds a combo another app holds" waits on "Press keys..." forever.
+- **A destroyed actor's objects stay in GObjects until the next garbage collection** (about a minute): Force and
+  `find_instances` still count them. And a pawn under Fly (`MOVE_Flying`) does not fall past KillZ: teleport it far
+  below KillZ instead, and wait for the collection before reading "no live instance".
+- **The UI's "Game thread paused" banner moves every row of the window down** while it shows -- a suspended or
+  unfocused game raises it, and it goes again once the game ticks -- so a coordinate measured on one side of it
+  lands on the wrong control on the other. Re-screenshot after any suspend, resume or focus change (§2.5d).
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an

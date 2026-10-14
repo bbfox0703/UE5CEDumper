@@ -4,10 +4,13 @@ Open work only. **Read this when deciding what to do next.**
 
 > 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
 >
-> ▶ **Current programme:** the known-issues fix pass of 2026-10-13/14 -- four batches built in source (builds 3647 /
-> 3648, dev-log 3648); live PASS so far: `[VER-MARKERS-PAST-504]`, `[PROXYREFRESH-NONSHIPPING-EXE]`,
-> `[UE4-ASSETPTR-PROPS]`, `[VER-410-FIXED-VS-STRING]`. Next: the live checks the other rows owe (most need the UI) and
-> `[MH-PRERESERVE-PROXY]`; the maintainer's calls of 2026-10-14 are recorded in the rows and working-lessons §6 ·
+> ▶ **Current programme:** none open -- the known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
+> 3649): every row it took is built and checked live, `[MH-PRERESERVE-PROXY]` included; the maintainer's calls are in
+> the rows and working-lessons §6. Still owed live, each row says how: a crash mid-capture on a large title
+> (`[SNAPSHOT-CRASH-PARTIAL]`), the Call Trace window-size steps (`[CT-FLOOR-208]`), Auto clearing a contradicted
+> override at once (`[OVERRIDE-REVIEW2-LOWS]`), `[INT8-PREVIEW]`, `[UE4-USTRUCT-GIVEUP]`, `[AOB-SKIP-OWN-DLL]`; open LOW
+> rows it left: `[UE4-ASSETPTR-EXPORTS]`, `[UE4-USTRUCT-GIVEUP-STATS]`, `[DUMPER-SECOND-COPY-AUTOSTART]`,
+> `[UBEL-ASCII-FIRSTCHAR]` ·
 > `[LIVEFUNCS-TIMELINE-2026-10-04]` (Live Funcs) · open but idle: the `[FIXPASS-2026-09-10]` live-check backlog. Change this line in the commit that starts or ends a programme.
 
 > ## ⛔ BEFORE YOU PLAN OFF ANY HEADING IN THIS FILE — READ THIS 2026-08-24 RECONCILIATION
