@@ -34,6 +34,8 @@
 // Lager models buffer.c without <Windows.h>; its constants must be the SDK's.
 static_assert(Lager::kMemCommit == MEM_COMMIT && Lager::kMemReserve == MEM_RESERVE && Lager::kMemFree == MEM_FREE,
               "Lager's MEM_* states drifted from the SDK");
+static_assert(Lager::kMemPrivate == MEM_PRIVATE && Lager::kMemMapped == MEM_MAPPED && Lager::kMemImage == MEM_IMAGE,
+              "Lager's MEM_* types drifted from the SDK");
 static_assert(Lager::kPageExecute == PAGE_EXECUTE && Lager::kPageExecuteRead == PAGE_EXECUTE_READ &&
               Lager::kPageExecuteReadWrite == PAGE_EXECUTE_READWRITE &&
               Lager::kPageExecuteWriteCopy == PAGE_EXECUTE_WRITECOPY && Lager::kPageGuard == PAGE_GUARD,
@@ -352,6 +354,7 @@ static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive
         r.size           = mbi.RegionSize;
         r.state          = mbi.State;
         r.allocationBase = reinterpret_cast<uint64_t>(mbi.AllocationBase);
+        r.type           = mbi.Type;   // MEM_PRIVATE / MEM_IMAGE / MEM_MAPPED -- who took the space
         map.push_back(r);
         const uint64_t next = r.base + r.size;
         if (next <= addr || GetTickCount64() > deadline) break;

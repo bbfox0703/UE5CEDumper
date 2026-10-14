@@ -29,6 +29,12 @@ constexpr uint64_t kMemorySlotSize  = 64;           // MEMORY_SLOT_SIZE: one tra
 constexpr uint32_t kMemCommit  = 0x1000;
 constexpr uint32_t kMemReserve = 0x2000;
 constexpr uint32_t kMemFree    = 0x10000;
+// VirtualQuery's Type field: what occupies a non-free region. The hypothesis [MH-PRERESERVE-PROXY] rests on is that
+// the game's HEAP (MEM_PRIVATE) grows through the window; loaded modules (MEM_IMAGE) and mapped pak/section views
+// (MEM_MAPPED) would fit the byte totals just as well, so the summary separates them.
+constexpr uint32_t kMemPrivate = 0x20000;
+constexpr uint32_t kMemMapped  = 0x40000;
+constexpr uint32_t kMemImage   = 0x1000000;
 constexpr uint32_t kPageExecute          = 0x10;
 constexpr uint32_t kPageExecuteRead      = 0x20;
 constexpr uint32_t kPageExecuteReadWrite = 0x40;
@@ -42,6 +48,7 @@ struct Region {
     uint64_t size = 0;
     uint32_t state = 0;
     uint64_t allocationBase = 0;
+    uint32_t type = 0;            // mbi.Type for a non-free region: MEM_PRIVATE / MEM_IMAGE / MEM_MAPPED
 };
 
 /// GetMemoryBlock's search bounds for one hook target: a new block may start at any address in [minAddr, maxAddr],
@@ -141,10 +148,24 @@ struct WindowSummary {
     uint32_t blockableRegions = 0;    // free regions holding a granule-aligned address a block could start at
     uint64_t reservedBytes = 0;
     uint64_t committedBytes = 0;
+    uint64_t privateBytes = 0;        // non-free MEM_PRIVATE bytes in span -- the heap, the hypothesised occupant
+    uint64_t imageBytes = 0;          // non-free MEM_IMAGE bytes -- loaded modules
+    uint64_t mappedBytes = 0;         // non-free MEM_MAPPED bytes -- file/section views (pak)
+    uint64_t largestTakenBase = 0;    // the single largest non-free region in span, and what holds it
+    uint64_t largestTakenSize = 0;
+    uint32_t largestTakenType = 0;
     uint64_t pickBelow = 0;           // FindPrevFreeRegion's answer, 0 = none
     uint64_t pickAbove = 0;           // FindNextFreeRegion's answer, 0 = none
     bool     covered = false;         // the map runs unbroken over [minAddr, spanEnd)
 };
+
+/// A one-word name for a VirtualQuery Type, for the log line.
+inline const char* MemTypeName(uint32_t type) {
+    if (type == kMemPrivate) return "private/heap";
+    if (type == kMemImage)   return "image/module";
+    if (type == kMemMapped)  return "mapped/view";
+    return "other";
+}
 
 inline WindowSummary SummarizeWindow(const std::vector<Region>& map, uint64_t origin, uint64_t appMin,
                                      uint64_t appMax, uint64_t granularity) {
@@ -165,10 +186,17 @@ inline WindowSummary SummarizeWindow(const std::vector<Region>& map, uint64_t or
             if (bytes > s.largestFreeSize) { s.largestFreeSize = bytes; s.largestFreeBase = lo; }
             const uint64_t first = lo + (granularity - lo % granularity) % granularity;
             if (first < hi && first <= s.window.maxAddr) ++s.blockableRegions;
-        } else if (r.state == kMemReserve) {
-            s.reservedBytes += bytes;
-        } else if (r.state == kMemCommit) {
-            s.committedBytes += bytes;
+        } else if (r.state == kMemReserve || r.state == kMemCommit) {
+            if (r.state == kMemReserve) s.reservedBytes += bytes;
+            else                        s.committedBytes += bytes;
+            if (r.type == kMemPrivate)      s.privateBytes += bytes;
+            else if (r.type == kMemImage)   s.imageBytes += bytes;
+            else if (r.type == kMemMapped)  s.mappedBytes += bytes;
+            if (bytes > s.largestTakenSize) {
+                s.largestTakenSize = bytes;
+                s.largestTakenBase = r.allocationBase ? r.allocationBase : lo;
+                s.largestTakenType = r.type;
+            }
         }
     }
     s.covered   = reached >= s.spanEnd;
@@ -251,22 +279,28 @@ inline std::string FormatWindowSummary(const WindowSummary& s, uint64_t origin, 
     const std::string below = hex(s.pickBelow), above = hex(s.pickAbove), held = hex(heldBlock);
     const bool roomFound = s.pickBelow != 0 || s.pickAbove != 0 ||
                            (heldBlock != 0 && BlockServes(heldBlock, s.window));
+    char taken[224];
+    std::snprintf(taken, sizeof taken,
+        "; taken by private 0x%llX, image 0x%llX, mapped 0x%llX, largest occupant 0x%llX x 0x%llX (%s)",
+        (unsigned long long)s.privateBytes, (unsigned long long)s.imageBytes, (unsigned long long)s.mappedBytes,
+        (unsigned long long)s.largestTakenBase, (unsigned long long)s.largestTakenSize,
+        MemTypeName(s.largestTakenType));
     char refused[224] = "";
     if (roomFound)
         std::snprintf(refused, sizeof refused,
             " -- NB a block start WAS free, so the window is not the cause: VirtualAlloc refused the page "
             "(commit limit / ACG) or MinHook's hook table could not grow (LastError %u)", (unsigned)lastError);
-    char buf[1200];
+    char buf[1536];
     std::snprintf(buf, sizeof buf,
         "MinHook block window for 0x%llX: block starts [0x%llX, 0x%llX]%s -- %u free region(s), 0x%llX bytes free, "
-        "largest 0x%llX at 0x%llX, %u can start a block; reserved 0x%llX, committed 0x%llX; "
+        "largest 0x%llX at 0x%llX, %u can start a block; reserved 0x%llX, committed 0x%llX%s; "
         "FindPrevFreeRegion -> %s, FindNextFreeRegion -> %s; held block %s%s; main image 0x%llX + 0x%X, "
         "DYNAMICBASE %s%s",
         (unsigned long long)origin, (unsigned long long)s.window.minAddr, (unsigned long long)s.window.maxAddr,
         s.covered ? "" : " (map INCOMPLETE: a VirtualQuery failed inside the window)",
         s.freeRegions, (unsigned long long)s.freeBytes, (unsigned long long)s.largestFreeSize,
         (unsigned long long)s.largestFreeBase, s.blockableRegions, (unsigned long long)s.reservedBytes,
-        (unsigned long long)s.committedBytes, below.c_str(), above.c_str(), held.c_str(),
+        (unsigned long long)s.committedBytes, taken, below.c_str(), above.c_str(), held.c_str(),
         heldBlock == 0 ? "" : (BlockServes(heldBlock, s.window) ? " (serves this target)"
                                                                 : " (out of this target's reach)"),
         (unsigned long long)img.base, img.sizeOfImage,

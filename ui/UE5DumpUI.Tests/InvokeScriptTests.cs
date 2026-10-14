@@ -2733,10 +2733,10 @@ public class InvokeScriptTests
         int create = install.IndexOf("reinterpret_cast<LPVOID*>(&s_originalPE));", StringComparison.Ordinal);
         int enable = install.IndexOf("status = MH_EnableHook(reinterpret_cast<LPVOID>(processEventAddr));", StringComparison.Ordinal);
         Assert.True(create >= 0 && enable > create, "InstallHook's MH_CreateHook / MH_EnableHook pair not found");
-        Assert.Contains("if (status == MH_ERROR_MEMORY_ALLOC) LogTrampolineWindow(processEventAddr);",
+        Assert.Contains("if (status == MH_ERROR_MEMORY_ALLOC) LogTrampolineWindow(processEventAddr, mhLastError);",
             install[create..enable], StringComparison.Ordinal);
 
-        var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target) {");
+        var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {");
         Assert.Contains("GetSystemInfo(&si);", log, StringComparison.Ordinal);
         Assert.Contains("Lager::SearchWindow(target, appMin, appMax)", log, StringComparison.Ordinal);
         // The walk spans every byte a block could occupy: up to the last block start plus the block.
@@ -2749,6 +2749,7 @@ public class InvokeScriptTests
         var walk = MinHookGlueBody(stark, "static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive) {");
         Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi))", walk, StringComparison.Ordinal);
         Assert.Contains("reinterpret_cast<uint64_t>(mbi.AllocationBase)", walk, StringComparison.Ordinal);
+        Assert.Contains("r.type           = mbi.Type;", walk, StringComparison.Ordinal);   // so the line can say who took the space
     }
 
     [Fact]
@@ -2915,8 +2916,8 @@ public class InvokeScriptTests
         Assert.Equal(2, MinHookCount(stark, "Lager::BlockOfSlot("));
         Assert.DoesNotContain("reinterpret_cast<uintptr_t>(trampoline) &", stark, StringComparison.Ordinal);
 
-        var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target) {");
-        Assert.Contains("Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock)", log,
+        var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target, uint32_t lastError) {");
+        Assert.Contains("Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock, lastError)", log,
             StringComparison.Ordinal);
     }
 

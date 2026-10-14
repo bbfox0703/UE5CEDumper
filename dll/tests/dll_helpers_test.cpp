@@ -10117,9 +10117,10 @@ constexpr uint64_t kFfrsEnd    = kFfrsBase + kFfrsSize;
 constexpr uint64_t kFfrsPe     = kFfrsBase + 0x1592D00ull;
 constexpr uint64_t kFfrsEntry  = kFfrsBase + 0x1000ull;
 
-Lager::Region LgFree(uint64_t b, uint64_t e)                 { return {b, e - b, Lager::kMemFree, 0}; }
-Lager::Region LgCommit(uint64_t b, uint64_t e, uint64_t a)   { return {b, e - b, Lager::kMemCommit, a}; }
-Lager::Region LgReserve(uint64_t b, uint64_t e, uint64_t a)  { return {b, e - b, Lager::kMemReserve, a}; }
+Lager::Region LgFree(uint64_t b, uint64_t e)                 { return {b, e - b, Lager::kMemFree, 0, 0}; }
+Lager::Region LgCommit(uint64_t b, uint64_t e, uint64_t a)   { return {b, e - b, Lager::kMemCommit, a, Lager::kMemPrivate}; }
+Lager::Region LgReserve(uint64_t b, uint64_t e, uint64_t a)  { return {b, e - b, Lager::kMemReserve, a, Lager::kMemPrivate}; }
+Lager::Region LgTyped(uint64_t b, uint64_t e, uint64_t a, uint32_t type) { return {b, e - b, Lager::kMemCommit, a, type}; }
 
 // The image as one allocation of three regions (headers, code, data), the way VirtualQuery reports a mapped exe.
 void LgPushImage(std::vector<Lager::Region>& m) {
@@ -10266,6 +10267,25 @@ static void Test_Lager_SummarizeWindow() {
     LgPushImage(gap);
     EXPECT("a walk that stops inside the window is reported as incomplete",
            !Lager::SummarizeWindow(gap, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran).covered);
+
+    // Who took the space: the byte totals are split by VirtualQuery Type, so the heap hypothesis can be confirmed or
+    // refuted. Build a window of heap (private), a loaded module (image) and a pak view (mapped), all non-free.
+    {
+        const uint64_t base = kFfrsPe - 0x20000000ull;   // somewhere low in the window, granule-aligned enough
+        std::vector<Lager::Region> m;
+        m.push_back(LgFree(kLgAppMin, base));
+        m.push_back(LgTyped(base,              base + 0x8000000ull, base,              Lager::kMemPrivate));  // 128 MB heap
+        m.push_back(LgTyped(base + 0x8000000ull, base + 0xA000000ull, base + 0x8000000ull, Lager::kMemImage)); // 32 MB module
+        m.push_back(LgTyped(base + 0xA000000ull, base + 0xB000000ull, base + 0xA000000ull, Lager::kMemMapped));// 16 MB view
+        m.push_back(LgFree(base + 0xB000000ull, 0x7FF000000000ull));
+        const Lager::WindowSummary s = Lager::SummarizeWindow(m, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+        EXPECT_EQ_U64("heap bytes are totalled as private", s.privateBytes, 0x8000000ull);
+        EXPECT_EQ_U64("module bytes as image", s.imageBytes, 0x2000000ull);
+        EXPECT_EQ_U64("view bytes as mapped", s.mappedBytes, 0x1000000ull);
+        EXPECT("the largest occupant is the heap allocation",
+               s.largestTakenType == Lager::kMemPrivate && s.largestTakenBase == base);
+        EXPECT("free is not typed", Lager::MemTypeName(0) == std::string("other"));
+    }
 }
 
 // A PE32+ header in a buffer: MZ, e_lfanew 0x80, three sections.
@@ -10342,6 +10362,7 @@ static void Test_Lager_FormatWindowSummary() {
     EXPECT("the image and its ASLR bit",
            line.find("main image 0x140000000 + 0x1DA00000, DYNAMICBASE no") != std::string::npos);
     EXPECT("a complete map says nothing about incompleteness", line.find("INCOMPLETE") == std::string::npos);
+    EXPECT("the line names who took the space, split by type", line.find("taken by private 0x") != std::string::npos);
 
     EXPECT("a full window says nothing about VirtualAlloc being refused",
            line.find("the window is not the cause") == std::string::npos);
