@@ -268,6 +268,13 @@ inline std::string FormatWindowSummary(const WindowSummary& s, uint64_t origin, 
 // inside the main image -- and never enabled, never removed -- keeps a block next to the image for the process
 // lifetime, and every later hook in the image that the block serves lands in it whatever the heap has done since.
 
+/// The MinHook block a trampoline slot belongs to, the way FreeBuffer finds it: the slot address rounded down to
+/// MEMORY_BLOCK_SIZE (buffer.c: `(slot / MEMORY_BLOCK_SIZE) * MEMORY_BLOCK_SIZE`). One place, so the held block and a
+/// freshly-installed hook's block are computed by the same rule MinHook frees by.
+inline uint64_t BlockOfSlot(uint64_t slot) {
+    return slot & ~(kMemoryBlockSize - 1);
+}
+
 /// The hook targets a block at `block` serves: BlockServes(block, SearchWindow(origin, ...)) solved for origin.
 /// origin <= block + MAX_MEMORY_RANGE keeps minAddr at or below the block; origin >= block + MEMORY_BLOCK_SIZE -
 /// MAX_MEMORY_RANGE keeps maxAddr above it. `empty` when no origin is served (a block outside the application range).

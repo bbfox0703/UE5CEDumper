@@ -10511,6 +10511,76 @@ static void Test_Lager_HolderCandidateReadable() {
            !HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, kPageExecute));
 }
 
+// buffer.c's boundary rules, each pinned by a map that lands exactly on the boundary -- a review found that moving a
+// `>=` to `>`, an `<=` to `<`, dropping a window guard or a clip all changed a live log line and no test noticed.
+static void Test_Lager_BufferCBoundaryRules() {
+    using namespace Lager;
+
+    // buffer.c GetMemoryBlock: minAddr is pulled to origin - MAX_MEMORY_RANGE ONLY when origin > MAX_MEMORY_RANGE.
+    // Without that guard, an origin below 1 GB computes origin - 1 GB as a huge wrapped value and inverts the window.
+    EXPECT_EQ_U64("origin below 1 GB keeps lpMinimumApplicationAddress (the origin > RANGE guard)",
+                  SearchWindow(0x30000000ull, kLgAppMin, kLgAppMax).minAddr, kLgAppMin);
+
+    // FindPrevFreeRegion's loop is `tryAddr >= minAddr`: a free granule EXACTLY at minAddr is found, not skipped.
+    {
+        const uint64_t origin  = 0x141590000ull;             // 64K-aligned, so the window bounds are too
+        const Window   w       = SearchWindow(origin, kLgAppMin, kLgAppMax);
+        EXPECT_EQ_U64("aligned origin -> aligned minAddr", w.minAddr, origin - kMaxMemoryRange);
+        std::vector<Region> m;
+        m.push_back(LgFree(kLgAppMin, w.minAddr + kLgGran));            // the free granule sits at minAddr
+        m.push_back(LgCommit(w.minAddr + kLgGran, kFfrsBase, w.minAddr + kLgGran));
+        LgPushImage(m);
+        m.push_back(LgFree(kFfrsEnd, 0x7FF000000000ull));
+        EXPECT_EQ_U64("a free granule at minAddr is found (>= minAddr, not > )",
+                      FindPrevFreeRegion(m, origin, w.minAddr, kLgGran), w.minAddr);
+    }
+
+    // FindNextFreeRegion's loop is `tryAddr <= maxAddr`: a free granule EXACTLY at maxAddr is found. Pick origin so
+    // maxAddr lands on a 64K boundary (origin % 64K == 0xFFF, since maxAddr = origin + RANGE - 0xFFF).
+    {
+        const uint64_t origin = 0x200000FFFull;
+        const Window   w      = SearchWindow(origin, kLgAppMin, kLgAppMax);
+        EXPECT_EQ_U64("maxAddr lands on a granule", w.maxAddr, 0x240000000ull);
+        std::vector<Region> m;
+        m.push_back(LgFree(kLgAppMin, 0x200010000ull));
+        m.push_back(LgCommit(0x200010000ull, w.maxAddr, 0x200010000ull));   // committed right up to maxAddr
+        m.push_back(LgFree(w.maxAddr, 0x7FF000000000ull));                  // free begins AT maxAddr
+        EXPECT_EQ_U64("a free granule at maxAddr is found (<= maxAddr, not < )",
+                      FindNextFreeRegion(m, origin, w.maxAddr, kLgGran), w.maxAddr);
+    }
+
+    // SummarizeWindow counts a free region as blockable only when its first granule-aligned address is <= maxAddr.
+    // A granule that falls between maxAddr and spanEnd (inside the last block's own bytes) can hold no block START.
+    {
+        const uint64_t origin = 0x1C00007FFull;                  // maxAddr = 0x1FFFFF800, spanEnd = 0x200000800
+        const Window   w      = SearchWindow(origin, kLgAppMin, kLgAppMax);
+        EXPECT_EQ_U64("maxAddr sits just below a granule", w.maxAddr, 0x1FFFFF800ull);
+        std::vector<Region> m;
+        m.push_back(LgCommit(kLgAppMin, 0x1FFFFF800ull, kLgAppMin));
+        m.push_back(LgFree(0x1FFFFF800ull, 0x200000900ull));     // first aligned addr = 0x200000000, past maxAddr
+        m.push_back(LgFree(0x200000900ull, 0x7FF000000000ull));  // starts past spanEnd -> clipped away
+        const WindowSummary s = SummarizeWindow(m, origin, kLgAppMin, kLgAppMax, kLgGran);
+        EXPECT("the sub-maxAddr free region is seen", s.freeRegions == 1);
+        EXPECT("but its only granule is past maxAddr, so it can start no block", s.blockableRegions == 0);
+    }
+
+    // SectionSpanEnd clips a section's mapped extent to SizeOfImage: a linker (or a packer) that writes a VirtualSize
+    // running past the image must not widen the executable range past the image.
+    {
+        ImageLayout img; img.valid = true; img.base = kFfrsBase; img.sizeOfImage = 0x1000000;
+        Section s; s.rva = 0x1000; s.virtualSize = 0x2000000; s.characteristics = kScnMemExecute;   // overruns
+        EXPECT_EQ_U64("an overrunning section is clipped to SizeOfImage", SectionSpanEnd(img, s), img.sizeOfImage);
+        img.sections.push_back(s);
+        EXPECT_EQ_U64("the executable range is clipped with it", ExecutableRange(img).hi, kFfrsBase + img.sizeOfImage);
+    }
+
+    // BlockOfSlot is FreeBuffer's slot -> block rule, one copy: slot rounded down to MEMORY_BLOCK_SIZE.
+    EXPECT_EQ_U64("a slot inside a block maps to the block base", BlockOfSlot(0x13FFF0A40ull), 0x13FFF0000ull);
+    EXPECT_EQ_U64("a block base maps to itself", BlockOfSlot(0x13FFF0000ull), 0x13FFF0000ull);
+    EXPECT_EQ_U64("it is FreeBuffer's (slot / BLOCK) * BLOCK",
+                  BlockOfSlot(0x13FFF0A40ull), (0x13FFF0A40ull / kMemoryBlockSize) * kMemoryBlockSize);
+}
+
 #define RUN(fn) do { if (g_trace) std::printf("[run] %s\n", #fn); fn(); } while (0)
 
 // [PATH-MODULE-NAME-UTF8] get_ce_pointer_info's ce_base was snprintf'd into char[128]: a long stem lost the closing
@@ -10992,6 +11062,7 @@ int main() {
     RUN(Test_Lager_HeldBlockReachesProcessEvent);
     RUN(Test_Lager_ChooseHolderTargets);
     RUN(Test_Lager_HolderCandidateReadable);
+    RUN(Test_Lager_BufferCBoundaryRules);      // buffer.c's >= / <= / clip boundaries, one map each
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

@@ -452,8 +452,7 @@ void HoldTrampolineBlock() {
         }
         // FreeBuffer finds a slot's block the same way: the slot address rounded down to MEMORY_BLOCK_SIZE.
         s_heldTarget = target;
-        s_heldBlock  = reinterpret_cast<uintptr_t>(trampoline) &
-                       ~static_cast<uintptr_t>(Lager::kMemoryBlockSize - 1);
+        s_heldBlock  = static_cast<uintptr_t>(Lager::BlockOfSlot(reinterpret_cast<uintptr_t>(trampoline)));
         const Lager::Span served = Lager::OriginsServedBy(s_heldBlock, appMin, appMax);
         const Lager::ExecRange code = Lager::ExecutableRange(img);
         const bool covers = Lager::SpanCovers(served, code);
@@ -567,8 +566,7 @@ bool InstallHook(uintptr_t processEventAddr) {
     LOG_INFO("GameThreadDispatch: ProcessEvent hook installed at 0x%llX",
              (unsigned long long)processEventAddr);
     // [MH-PRERESERVE-PROXY] Where its trampoline went: the evidence that the held block did its job.
-    const uintptr_t peBlock = reinterpret_cast<uintptr_t>(s_originalPE) &
-                              ~static_cast<uintptr_t>(Lager::kMemoryBlockSize - 1);
+    const uintptr_t peBlock = static_cast<uintptr_t>(Lager::BlockOfSlot(reinterpret_cast<uintptr_t>(s_originalPE)));
     if (s_heldBlock != 0) {
         LOG_INFO("GameThreadDispatch: ProcessEvent's trampoline 0x%llX is %s the held block 0x%llX",
                  (unsigned long long)reinterpret_cast<uintptr_t>(s_originalPE),

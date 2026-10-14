@@ -2842,9 +2842,15 @@ public class InvokeScriptTests
         int reach = install.IndexOf("if (!Lager::BlockServes(s_heldBlock, Lager::SearchWindow(processEventAddr, appMin, appMax)))",
             StringComparison.Ordinal);
         Assert.True(reach >= 0 && reach < create, "the reach check must come before MH_CreateHook");
-        int where = install.IndexOf("const uintptr_t peBlock = reinterpret_cast<uintptr_t>(s_originalPE) &", StringComparison.Ordinal);
+        int where = install.IndexOf("const uintptr_t peBlock = static_cast<uintptr_t>(Lager::BlockOfSlot(", StringComparison.Ordinal);
         Assert.True(where > create, "the trampoline's block must be reported after MH_CreateHook");
         Assert.Contains("peBlock == s_heldBlock", install, StringComparison.Ordinal);
+
+        // Both slot->block computations (the held block and the installed hook's block) go through Lager::BlockOfSlot,
+        // which mirrors FreeBuffer, not a hand-rolled mask: a review found a raw `trampoline & ~(BLOCK-1)` mutant
+        // reported "NOT in the held block" on a run where the fix worked, and no test noticed.
+        Assert.Equal(2, MinHookCount(stark, "Lager::BlockOfSlot("));
+        Assert.DoesNotContain("reinterpret_cast<uintptr_t>(trampoline) &", stark, StringComparison.Ordinal);
 
         var log = MinHookGlueBody(stark, "static void LogTrampolineWindow(uintptr_t target) {");
         Assert.Contains("Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), s_heldBlock)", log,
