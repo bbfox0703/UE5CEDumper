@@ -15,6 +15,7 @@
 #include "Stark.h"
 #include "Linie.h"   // Live PE profiler — opt-in per-UFunction fire counting
 #include "Routine.h"   // Routine::RunThreadGuarded — a throw out of the PE hook fast-fails the GAME (B14)
+#include "Lager.h"     // MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY])
 
 #include <MinHook.h>
 #include <Windows.h>
@@ -27,7 +28,19 @@
 #include <memory>
 #include <mutex>
 #include <queue>
+#include <string>
 #include <vector>
+
+// Lager models buffer.c without <Windows.h>; its constants must be the SDK's.
+static_assert(Lager::kMemCommit == MEM_COMMIT && Lager::kMemReserve == MEM_RESERVE && Lager::kMemFree == MEM_FREE,
+              "Lager's MEM_* states drifted from the SDK");
+static_assert(Lager::kPageExecute == PAGE_EXECUTE && Lager::kPageExecuteRead == PAGE_EXECUTE_READ &&
+              Lager::kPageExecuteReadWrite == PAGE_EXECUTE_READWRITE &&
+              Lager::kPageExecuteWriteCopy == PAGE_EXECUTE_WRITECOPY && Lager::kPageGuard == PAGE_GUARD,
+              "Lager's PAGE_* protections drifted from the SDK");
+static_assert(Lager::kScnMemExecute == IMAGE_SCN_MEM_EXECUTE &&
+              Lager::kDllCharDynamicBase == IMAGE_DLLCHARACTERISTICS_DYNAMIC_BASE,
+              "Lager's PE constants drifted from the SDK");
 
 namespace Stark {
 
@@ -280,6 +293,76 @@ static void __fastcall HookedProcessEvent(void* thisObj, void* ufunc, void* para
     }
 }
 
+// ---- MinHook's trampoline window ([MH-PRERESERVE-PROXY]) ----
+
+// The copy faults only when a page under it is unmapped; SEH needs a frame with no C++ objects (C2712).
+static bool CopyBytesSEH(const void* src, void* dst, size_t len) {
+    __try {
+        memcpy(dst, src, len);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+    return true;
+}
+
+// The main image's PE layout, read from its mapped headers. A header page that cannot be read gives an invalid
+// layout, which the summary reports as unknown rather than guessing.
+static Lager::ImageLayout ReadMainImageLayout() {
+    const auto* base = reinterpret_cast<const uint8_t*>(GetModuleHandleW(nullptr));
+    uint8_t hdr[0x1000];
+    if (!base || !CopyBytesSEH(base, hdr, sizeof(hdr))) {
+        Lager::ImageLayout img;
+        img.base = reinterpret_cast<uint64_t>(base);
+        return img;
+    }
+    return Lager::ParseImageLayout(hdr, sizeof(hdr), reinterpret_cast<uint64_t>(base));
+}
+
+// A VirtualQuery was measured at about 300 µs on a game running uncapped (Aura.h, CodeRangeCache), and a heap grown
+// through the window can be thousands of regions. The walk runs on a pipe thread the user is waiting on, so it stops
+// at this budget, and the summary then says its map is incomplete.
+static constexpr uint64_t kWindowWalkBudgetMs = 2000;
+
+// The regions VirtualQuery reports over [lo, endExclusive), in address order: the map Lager models MinHook's walks on.
+static std::vector<Lager::Region> WalkRegions(uint64_t lo, uint64_t endExclusive) {
+    std::vector<Lager::Region> map;
+    const uint64_t deadline = GetTickCount64() + kWindowWalkBudgetMs;
+    uint64_t addr = lo & ~static_cast<uint64_t>(0xFFF);
+    while (addr < endExclusive) {
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) == 0) break;
+        Lager::Region r;
+        r.base           = reinterpret_cast<uint64_t>(mbi.BaseAddress);
+        r.size           = mbi.RegionSize;
+        r.state          = mbi.State;
+        r.allocationBase = reinterpret_cast<uint64_t>(mbi.AllocationBase);
+        map.push_back(r);
+        const uint64_t next = r.base + r.size;
+        if (next <= addr || GetTickCount64() > deadline) break;
+        addr = next;
+    }
+    return map;
+}
+
+// MH_CreateHook answers MH_ERROR_MEMORY_ALLOC and nothing more. Walk the window GetMemoryBlock searched for `target`
+// and log what held it, so a failure on a live game says whether the space was taken, by what, and where the main
+// image sits -- the evidence [MH-PRERESERVE-PROXY] was proposed without.
+static void LogTrampolineWindow(uintptr_t target) {
+    SYSTEM_INFO si{};
+    GetSystemInfo(&si);
+    const uint64_t appMin = reinterpret_cast<uint64_t>(si.lpMinimumApplicationAddress);
+    const uint64_t appMax = reinterpret_cast<uint64_t>(si.lpMaximumApplicationAddress);
+    const Lager::Window w = Lager::SearchWindow(target, appMin, appMax);
+    const uint64_t t0 = GetTickCount64();
+    const std::vector<Lager::Region> map = WalkRegions(w.minAddr, w.maxAddr + Lager::kMemoryBlockSize);
+    const uint64_t walkMs = GetTickCount64() - t0;
+    const Lager::WindowSummary summary =
+        Lager::SummarizeWindow(map, target, appMin, appMax, si.dwAllocationGranularity);
+    const std::string line = Lager::FormatWindowSummary(summary, target, ReadMainImageLayout(), 0);
+    LOG_ERROR("GameThreadDispatch: %s (%zu region(s) walked in %llu ms)", line.c_str(), map.size(),
+              (unsigned long long)walkMs);
+}
+
 // ---- Public API ----
 
 bool InstallHook(uintptr_t processEventAddr) {
@@ -334,6 +417,7 @@ bool InstallHook(uintptr_t processEventAddr) {
     if (status != MH_OK) {
         LOG_ERROR("GameThreadDispatch: MH_CreateHook failed: %s",
                   MH_StatusToString(status));
+        if (status == MH_ERROR_MEMORY_ALLOC) LogTrampolineWindow(processEventAddr);
         return false;
     }
 
