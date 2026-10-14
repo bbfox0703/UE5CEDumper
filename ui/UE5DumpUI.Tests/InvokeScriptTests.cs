@@ -3032,6 +3032,24 @@ public class InvokeScriptTests
         Assert.Contains("CopyBytesSEH(base, hdr, sizeof(hdr))", readLayout, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void HeldBlockSuccess_SaysWhetherAFreshBlockWasAlsoAvailable()
+    {
+        // GetMemoryBlock reuses a serving block before it tries to allocate one, so "trampoline is in the held block"
+        // is logged whenever the held block serves ProcessEvent -- whether or not the window was starved. A live run
+        // then cannot tell "the hold fixed it" from "a block was free anyway". On a successful install whose trampoline
+        // landed in the held block, run buffer.c's two walks live and say whether a NEW block could have gone anywhere:
+        // none -> the held block was needed; some -> reuse happened but a fresh block was available too.
+        var stark = MinHookGlue("Stark.cpp");
+        var install = MinHookGlueBody(stark, "bool InstallHook(uintptr_t processEventAddr) {");
+        int inHeld = install.IndexOf("peBlock == s_heldBlock", StringComparison.Ordinal);
+        int below = install.IndexOf("Lager::FindPrevFreeRegionWith(LiveQueryRegion, processEventAddr", StringComparison.Ordinal);
+        int above = install.IndexOf("Lager::FindNextFreeRegionWith(LiveQueryRegion, processEventAddr", StringComparison.Ordinal);
+        Assert.True(inHeld >= 0 && below > inHeld && above > below,
+            "a successful install in the held block must run the two live walks to show whether a fresh block was available");
+        Assert.Contains("the held block was NEEDED", install, StringComparison.Ordinal);
+    }
+
     private static int MinHookCount(string s, string what)
     {
         int n = 0;
