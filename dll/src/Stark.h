@@ -255,8 +255,9 @@ inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs) {
 /// (a feature being switched on) is not counted against the automatic budget (B24), so printing the automatic counter
 /// beside it as "attempt N/M" read as a second attempt with the same number.
 inline std::string DescribeHookAttempt(bool forced, int automaticAttempts, int maxAttempts) {
-    (void)forced;   // RED stub: today's wording, the same for both
-    return "attempt " + std::to_string(automaticAttempts) + "/" + std::to_string(maxAttempts);
+    const std::string budget = std::to_string(automaticAttempts) + "/" + std::to_string(maxAttempts);
+    return forced ? "forced attempt, not counted -- " + budget + " automatic attempt(s) used"
+                  : "attempt " + budget;
 }
 
 /// Detected ProcessEvent vtable offset sentinels. >=0 is a real byte offset.

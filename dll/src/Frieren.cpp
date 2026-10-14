@@ -2086,16 +2086,18 @@ static void TryInstallGameThreadHook(bool force = false) {
         return;
     }
 
+    // A forced attempt names itself: the counter beside it is the automatic budget, which it did not spend.
+    const std::string attemptLabel = Stark::DescribeHookAttempt(force, attempts, kMaxHookAttempts);
     if (!Stark::InstallHook(peAddr)) {
-        LOG_WARN("GameThreadDispatch: hook install failed (attempt %d/%d), invoke will "
+        LOG_WARN("GameThreadDispatch: hook install failed (%s), invoke will "
                  "use direct call (unsafe)%s",
-                 attempts, kMaxHookAttempts,
+                 attemptLabel.c_str(),
                  attempts < kMaxHookAttempts ? " — will retry" : " — giving up");
         return;
     }
     if (attempts > 1) {
-        LOG_INFO("GameThreadDispatch: hook RECOVERED on attempt %d — game-thread "
-                 "dispatch is available again", attempts);
+        LOG_INFO("GameThreadDispatch: hook RECOVERED on %s — game-thread "
+                 "dispatch is available again", attemptLabel.c_str());
     }
     LOG_INFO("GameThreadDispatch: hook installed at 0x%llX, validator armed (1500ms)",
              (unsigned long long)peAddr);
@@ -2399,8 +2401,8 @@ extern "C" bool UE5_EnsureGameThreadHook() {
     }
 
     // Then the install. It can fail transiently — e.g. MH_ERROR_MEMORY_ALLOC, when
-    // MinHook can't place a trampoline near ProcessEvent this session (reachable
-    // ±2GB region occupied by another injected tool / a stale prior injection).
+    // MinHook finds no free block start within its ±1 GB of ProcessEvent this session
+    // (MAX_MEMORY_RANGE; Stark logs the window's map when it happens, [MH-PRERESERVE-PROXY]).
     // Retry through the ONE install path. Stark::InstallHook is idempotent +
     // mutex-guarded, so repeated clicks safely re-attempt.
     TryInstallGameThreadHook(/*force=*/true);
