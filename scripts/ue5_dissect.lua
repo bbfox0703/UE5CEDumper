@@ -162,10 +162,12 @@ local TYPE_MAP = {
     MapProperty      = { vt = vtPointer, size = 8 },
     SetProperty      = { vt = vtPointer, size = 8 },
 
-    -- Soft / Lazy / Interface — treated as pointer
-    SoftObjectProperty    = { vt = vtPointer, size = 8 },
-    SoftClassProperty     = { vt = vtPointer, size = 8 },
-    LazyObjectProperty    = { vt = vtPointer, size = 8 },
+    -- Soft / Lazy lead with an FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber }, not an
+    -- address: as a pointer, CE expanded that pair into garbage. 8 hex bytes, like Weak below and
+    -- like the CE-XML / CSX exports. An interface's first 8 bytes ARE its UObject*.
+    SoftObjectProperty    = { vt = vtQword,   size = 8 },
+    SoftClassProperty     = { vt = vtQword,   size = 8 },
+    LazyObjectProperty    = { vt = vtQword,   size = 8 },
     InterfaceProperty     = { vt = vtPointer, size = 8 },
     WeakObjectProperty    = { vt = vtQword,   size = 8 },
 
