@@ -776,6 +776,48 @@ static void Test_Stark_ShouldDrainQueue() {
            !Stark::ShouldDrainQueue(64, true));
 }
 
+// [VND584-05] The ProcessEvent fingerprint's byte-narrowed (clang) form, with Avowed's own bytes.
+static void Test_Stark_NarrowedFlagTests() {
+    std::vector<uint8_t> body(0x400, 0x90);
+    const uint8_t p1[] = { 0xF6, 0x82, 0xB1, 0x00, 0x00, 0x00, 0x04 };   // test byte [rdx+0xB1], 4   (Avowed +0x2E)
+    const uint8_t p2[] = { 0xF6, 0x83, 0xB2, 0x00, 0x00, 0x00, 0x40 };   // test byte [rbx+0xB2], 0x40 (Avowed +0x17B)
+    memcpy(body.data() + 0x2E, p1, sizeof(p1));
+    memcpy(body.data() + 0x17B, p2, sizeof(p2));
+    EXPECT("NARROW ⭐: Avowed's pair implies FunctionFlags +0xB0",
+           Stark::NarrowedFlagTestsFunctionFlags(body.data(), body.size(), 0x400) == 0xB0);
+
+    // The SIB form (the UFunction* in r8-r15): 41 F6 84 24 B1 00 00 00 04.
+    std::vector<uint8_t> sib(0x400, 0x90);
+    const uint8_t s1[] = { 0x41, 0xF6, 0x84, 0x24, 0xB1, 0x00, 0x00, 0x00, 0x04 };
+    memcpy(sib.data() + 0x40, s1, sizeof(s1));
+    memcpy(sib.data() + 0x200, p2, sizeof(p2));
+    EXPECT("NARROW: a SIB-form FUNC_Native test pairs too",
+           Stark::NarrowedFlagTestsFunctionFlags(sib.data(), sib.size(), 0x400) == 0xB0);
+
+    // CONTROLS: what must not count as the fingerprint.
+    std::vector<uint8_t> lone(0x400, 0x90);
+    memcpy(lone.data() + 0x2E, p1, sizeof(p1));
+    EXPECT("NARROW control: a lone FUNC_Native byte test is not enough",
+           Stark::NarrowedFlagTestsFunctionFlags(lone.data(), lone.size(), 0x400) == -1);
+    std::vector<uint8_t> apart(0x400, 0x90);
+    const uint8_t p2far[] = { 0xF6, 0x83, 0xC6, 0x00, 0x00, 0x00, 0x40 };   // a different field (+0xC4)
+    memcpy(apart.data() + 0x2E, p1, sizeof(p1));
+    memcpy(apart.data() + 0x17B, p2far, sizeof(p2far));
+    EXPECT("NARROW control: two tests of different fields do not pair",
+           Stark::NarrowedFlagTestsFunctionFlags(apart.data(), apart.size(), 0x400) == -1);
+    std::vector<uint8_t> late(0x800, 0x90);
+    memcpy(late.data() + 0x500, p1, sizeof(p1));
+    memcpy(late.data() + 0x600, p2, sizeof(p2));
+    EXPECT("NARROW control: the FUNC_Native test must sit in the prologue window",
+           Stark::NarrowedFlagTestsFunctionFlags(late.data(), late.size(), 0x400) == -1);
+    std::vector<uint8_t> otherReg(0x400, 0x90);
+    const uint8_t notTest[] = { 0xF6, 0x8A, 0xB1, 0x00, 0x00, 0x00, 0x04 };   // ModRM reg=001: not TEST (/0)
+    memcpy(otherReg.data() + 0x2E, notTest, sizeof(notTest));
+    memcpy(otherReg.data() + 0x17B, p2, sizeof(p2));
+    EXPECT("NARROW control: F6 with ModRM.reg != 0 is not a TEST",
+           Stark::NarrowedFlagTestsFunctionFlags(otherReg.data(), otherReg.size(), 0x400) == -1);
+}
+
 // [VND584-01] A request its waiter may abandon: whichever of the drain and the timed-out waiter moves it out of Queued
 // first decides, and the other learns it lost.
 static void Test_Stark_ClaimRequest() {
@@ -10899,6 +10941,7 @@ int main() {
     RUN(Test_Stark_ShouldUseTrampoline);
     RUN(Test_Stark_ShouldDrainQueue);
     RUN(Test_Stark_ClaimRequest);
+    RUN(Test_Stark_NarrowedFlagTests);
     RUN(Test_Stark_PeOffsetSentinels);
     RUN(Test_Stark_ShouldRetryPeDetection);
     RUN(Test_Stark_PeValidationFailureVerdict);

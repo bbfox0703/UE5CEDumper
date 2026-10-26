@@ -241,6 +241,18 @@ inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs) {
 /// invoke's caller picked, which the engine call dereferences -- a late run could touch a freed object. Such a request
 /// either is already running when its waiter gives up (the waiter then waits it out and takes its result) or never
 /// runs. The drain and the waiter race on one compare-exchange out of Queued; whichever moves it first decides.
+/// [VND584-05] clang narrows `test dword ptr [reg+disp32], imm32` whose immediate has a single set byte to
+/// `test byte ptr [reg+disp32+k], imm8`. Avowed (clang, no Rich header) tests FUNC_Native as `F6 82 B1 00 00 00 04`
+/// and the 0x400000 flag as `F6 83 B2 00 00 00 40` -- FunctionFlags at +0xB0 both times -- so the dword patterns
+/// never match and every run fell back to the stock version table. The FunctionFlags offset such a body tests, when
+/// a FUNC_Native byte test (imm8 0x04 at FunctionFlags+1, within `p1Limit`) and a 0x400000 byte test (imm8 0x40 at
+/// FunctionFlags+2, anywhere) both imply the SAME offset; -1 otherwise. One lone `test byte [reg+disp],4` is too
+/// common to mean anything; two agreeing on one field are the fingerprint.
+inline int NarrowedFlagTestsFunctionFlags(const uint8_t* body, size_t size, size_t p1Limit) {
+    (void)body; (void)size; (void)p1Limit;
+    return -1;   // red: not matched yet
+}
+
 constexpr int32_t kRequestQueued = 0, kRequestRunning = 1, kRequestAbandoned = 2;
 inline bool ClaimRequest(std::atomic<int32_t>& state, int32_t to) {
     int32_t expected = kRequestQueued;
