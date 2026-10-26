@@ -572,10 +572,10 @@ inline ParamKind ParamKindOf(uint64_t propertyFlags) {
 }
 
 // [VND584-01] An invoke's object-pointer parameters. TWeakObjectPtr / TSoftObjectPtr / TSoftClassPtr begin with
-// FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber } (UE 5.8 WeakObjectPtr.h, PersistentObjectPtr.h), yet every
-// invoke path -- the UI's FIRE, the CE form, the baked script, the Lua helper -- writes the address of the object the
-// user picked there. The engine read that address as the pair, resolved it to null, and ProcessEvent still reported
-// success. The DLL now swaps a picked address for the engine's own value before ProcessEvent; this says which slots.
+// FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber } (UE 5.8 WeakObjectPtr.h, PersistentObjectPtr.h), yet the
+// invoke paths write the address of the object the user picked there. The engine read that address as the pair,
+// resolved it to null, and ProcessEvent still reported success. The DLL now swaps a picked address for the engine's
+// own value before ProcessEvent; this says which slots.
 enum class ObjectParamAction : uint8_t { Leave, ConvertWeak, ConvertSoft, Refuse };
 inline ObjectParamAction ClassifyObjectParam(const std::string& typeName, int32_t size, ParamKind kind,
                                              uint64_t leadingQword, bool leadsWithLiveObject) {

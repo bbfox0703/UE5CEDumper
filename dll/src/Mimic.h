@@ -483,6 +483,11 @@ constexpr bool ShouldRouteDirectInvoke(uint32_t functionFlags, bool flagsResolve
 /// failure and shows errorMsg.
 constexpr int32_t MB_ERR_INVOKE_UNRESOLVED = -12;   // ufuncAddr is not a live UFunction
 constexpr int32_t MB_ERR_INVOKE_TOO_LARGE  = -13;   // its parameter block ends past the slab
+/// [VND584-01] A weak / soft / lazy parameter holds an object the engine could not turn into one (errorMsg names it).
+/// A picked object's address in such a slot is now swapped for the engine's own value before ProcessEvent; a script
+/// writes exactly what it always wrote, and an older DLL passes it raw as it always did, so the MEANING the scripts
+/// depend on does not move -- like -12 / -13, not a contract change.
+constexpr int32_t MB_ERR_INVOKE_OBJECT_PARAM = -14;
 
 /// May CMD_INVOKE hand ProcessEvent the slab? 0 = yes, otherwise the refusal to publish.
 ///

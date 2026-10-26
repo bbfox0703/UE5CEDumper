@@ -2385,6 +2385,110 @@ int32_t UE5_CallProcessEvent(uintptr_t instance, uintptr_t ufunc, uintptr_t para
     return UE5_CallProcessEventEx(instance, ufunc, params, 0);
 }
 
+// [VND584-01] The live half of Ubel::PrepareObjectParams, for an invoke that carries a caller's parameter bytes. The
+// engine's own value for a picked object comes from
+// KismetSystemLibrary::Conv_ObjectToSoftObjectReference (4.18 to 5.8): building its TSoftObjectPtr assigns the
+// object's weak serial -- most objects carry 0 until something holds a weak pointer to them -- and its path. The soft
+// pointer's FString, when it has one, is the engine's allocation and is never freed: ProcessEvent byte-copies
+// parameters and never destroys the caller's block, so leaking it is the only way nothing frees it twice.
+// extern "C++": this sits inside the file's extern "C" block, and Fern / Mimic link to it by its C++ name.
+extern "C++" {
+namespace FrierenInvoke {
+namespace {
+// A function library's CDO and UFunction live as long as the process; resolved once, re-resolved if the cached
+// address stops naming the function. A failure is not kept, so a library that loads later is still found.
+std::mutex s_convMutex;
+uintptr_t  s_ksl = 0, s_conv = 0;
+int32_t    s_objOff = -1, s_retOff = -1, s_retSize = 0;
+uint32_t   s_convBytes = 0;
+
+bool ResolveConv(std::string& why) {
+    if (s_conv) {
+        FunctionInfo fi{};
+        if (Ubel::ResolveFunctionInfo(s_conv, fi) && fi.name == "Conv_ObjectToSoftObjectReference") return true;
+        s_conv = 0;
+    }
+    const uintptr_t ksl = Aura::FindLiveOrDefaultOf("KismetSystemLibrary");
+    if (!ksl) { why = "KismetSystemLibrary not found"; return false; }
+    const uintptr_t conv = UE5_FindFunctionByName(Ubel::GetClass(ksl), "Conv_ObjectToSoftObjectReference");
+    if (!conv) { why = "KismetSystemLibrary::Conv_ObjectToSoftObjectReference not found"; return false; }
+    Ubel::ParamLayout layout;
+    std::string capWhy;
+    if (!Ubel::CaptureParamLayout(conv, layout, capWhy)) {
+        why = "Conv_ObjectToSoftObjectReference's parameters: " + capWhy;
+        return false;
+    }
+    int32_t objOff = -1, retOff = -1, retSize = 0;
+    for (const Ubel::ParamField& p : layout.params) {
+        if (p.kind == Ubel::ParamKind::Return) { retOff = p.offset; retSize = p.size; }
+        else if (p.typeName == "ObjectProperty" && p.size == 8) objOff = p.offset;
+    }
+    FunctionInfo fi{};
+    const bool resolved = Ubel::ResolveFunctionInfo(conv, fi);
+    const uint32_t bytes = Ubel::ParamBufferSize(conv, resolved ? fi.parmsSize : 0);
+    if (objOff < 0 || retOff < 0 || retSize < 8 || static_cast<uint32_t>(objOff) + 8 > bytes
+        || static_cast<uint32_t>(retOff) + static_cast<uint32_t>(retSize) > bytes) {
+        why = "Conv_ObjectToSoftObjectReference reads as an unexpected shape";
+        return false;
+    }
+    s_ksl = ksl; s_conv = conv; s_objOff = objOff; s_retOff = retOff; s_retSize = retSize; s_convBytes = bytes;
+    return true;
+}
+
+bool IsLiveObject(uintptr_t addr) {
+    const int32_t idx = Ubel::GetIndex(addr);
+    return idx >= 0 && Aura::GetByIndex(idx) == addr;
+}
+
+// ctx: the route the invoke itself takes. A static-native target runs off the game thread, so the conversion does
+// too (Conv_ObjectToSoftObjectReference is Native|Static, the same class of call); anything else queues both.
+bool MakeSoftReference(uintptr_t object, void* ctx, std::vector<uint8_t>& out, std::string& why) {
+    const bool direct = ctx && *static_cast<const bool*>(ctx);
+    uintptr_t ksl = 0, conv = 0;
+    int32_t objOff = -1, retOff = -1, retSize = 0;
+    uint32_t bytes = 0;
+    {
+        std::lock_guard<std::mutex> lock(s_convMutex);
+        if (!ResolveConv(why)) return false;
+        ksl = s_ksl; conv = s_conv; objOff = s_objOff; retOff = s_retOff; retSize = s_retSize; bytes = s_convBytes;
+    }
+    std::vector<uint8_t> buf(bytes, 0);
+    memcpy(buf.data() + objOff, &object, sizeof(object));
+    const int32_t rc = direct
+        ? UE5_CallProcessEventDirect(ksl, conv, reinterpret_cast<uintptr_t>(buf.data()))
+        : UE5_CallProcessEventEx(ksl, conv, reinterpret_cast<uintptr_t>(buf.data()), static_cast<uint32_t>(buf.size()));
+    if (rc != 0) {
+        why = "Conv_ObjectToSoftObjectReference: ProcessEvent returned " + std::to_string(rc);
+        return false;
+    }
+    out.assign(buf.begin() + retOff, buf.begin() + retOff + retSize);
+    return true;
+}
+}  // namespace
+
+// True when the invoke may go ahead; false with `why` when a slot holds an object it cannot pass. A function whose
+// parameters cannot be read is sent exactly as before.
+bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why) {
+    Ubel::ParamLayout layout;
+    std::string capWhy;
+    if (!ufunc || !params || !Ubel::CaptureParamLayout(ufunc, layout, capWhy)) return true;
+    bool route = direct;
+    Ubel::ObjectParamOps ops;
+    ops.isLiveObject      = &IsLiveObject;
+    ops.makeSoftReference = &MakeSoftReference;
+    ops.resolveWeak       = &Ubel::ResolveWeakObjectPtr;
+    ops.ctx               = &route;
+    int converted = 0;
+    const bool ok = Ubel::PrepareObjectParams(layout, params, size, ops, converted, why);
+    if (converted > 0)
+        LOG_INFO("invoke: %s passes %d picked object(s) as the engine's weak / soft pointer", layout.funcName.c_str(),
+                 converted);
+    if (!ok) LOG_WARN("invoke: %s refused -- %s", layout.funcName.c_str(), why.c_str());
+    return ok;
+}
+}  // namespace FrierenInvoke
+}  // extern "C++"
+
 // Force the game-thread ProcessEvent hook to install NOW (reuses the audit-#3
 // call_once, so it is race-safe and idempotent). Normally the hook installs
 // lazily on the first invoke; the Live PE profiler (Linie) needs it up before

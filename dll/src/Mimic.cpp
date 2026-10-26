@@ -43,6 +43,10 @@ extern "C" bool     UE5_Init();
 extern "C" int32_t  UE5_CallProcessEvent(uintptr_t, uintptr_t, uintptr_t);
 extern "C" int32_t  UE5_CallProcessEventEx(uintptr_t, uintptr_t, uintptr_t, uint32_t);
 extern "C" int32_t  UE5_CallProcessEventDirect(uintptr_t, uintptr_t, uintptr_t);
+// [VND584-01] Frieren.cpp: a picked object in a weak / soft parameter becomes the engine's own value before the call.
+namespace FrierenInvoke {
+bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why);
+}
 extern uintptr_t    g_cachedGObjects;
 extern uintptr_t    g_cachedGNames;
 extern uintptr_t    g_cachedGWorld;   // &GWorld (address of the global UWorld* pointer)
@@ -743,6 +747,15 @@ static void HandleInvoke() {
         } else {
             memset(g_invokeMailbox.paramsData + off, 0, len);
             LOG_DEBUG("Mailbox: INVOKE cleared ReturnValue slot +%zu (%zu bytes)", off, len);
+        }
+    }
+
+    {
+        std::string objWhy;
+        if (!FrierenInvoke::PrepareObjectParams(ufuncAddr, g_invokeMailbox.paramsData,
+                                                sizeof(g_invokeMailbox.paramsData), isStaticNative, objWhy)) {
+            SetError(MB_ERR_INVOKE_OBJECT_PARAM, ("Not invoked: " + objWhy).c_str());
+            return;
         }
     }
 
