@@ -353,7 +353,22 @@ public static class BakedScriptGenerator
                 var readType = displayType == "pointer" ? "qword" : displayType;
                 var fmt = ReturnPrintFormat(returnParam.UeTypeName);
 
-                if (IsComplexReturnType(returnParam.UeTypeName))
+                if (IsWeakPairType(returnParam.UeTypeName))
+                {
+                    // [VND584-01] The engine's pair, as FIRE and the CE form print it; null at serial 0 for a WEAK
+                    // pointer only (a soft / lazy one is null by its path / GUID, which this does not read). The
+                    // names are concatenated, never formatted: a '%' in one would break string.format.
+                    var head = $"[Invoke] OK: {EscapeLua(className)}::{EscapeLua(funcName)} -> " +
+                               $"{EscapeLua(returnParam.ParamName)} (weak@{returnParam.Offset}) = ";
+                    Line(sb, $"  local _wi = readUFunctionReturn({returnParam.Offset}, 'int32') or 0");
+                    Line(sb, $"  local _ws = readUFunctionReturn({returnParam.Offset + 4}, 'int32') or 0");
+                    if (returnParam.UeTypeName == "WeakObjectProperty")
+                        Line(sb, $"  if _ws == 0 then print('{head}null') else print('{head}' .. " +
+                                 "string.format('{index %d, serial %d}', _wi, _ws)) end");
+                    else
+                        Line(sb, $"  print('{head}' .. string.format('{{index %d, serial %d}}', _wi, _ws))");
+                }
+                else if (IsComplexReturnType(returnParam.UeTypeName))
                 {
                     // FString / FText / TArray / TMap / TSet / FStruct etc. are
                     // multi-byte buffer layouts the helper has no decoder for.
@@ -499,9 +514,9 @@ public static class BakedScriptGenerator
     /// (see <c>writeBakedParams</c> in scripts/ue5_invoke_helper.lua).
     /// </summary>
     /// <remarks>
-    /// All pointer-shaped types (object/class/name/soft/weak/lazy/interface/
-    /// uint64) collapse to <c>'pointer'</c>; the helper writes them as a
-    /// qword. Unrecognised types fall through to <c>'int32'</c> and the
+    /// The pointer-shaped types collapse to <c>'pointer'</c>; the helper writes them as a
+    /// qword. A lazy pointer is not one of them: <c>'lazy'</c>, which the helper refuses
+    /// unless it is 0 (<c>[VND584-01]</c>). Unrecognised types fall through to <c>'int32'</c> and the
     /// generator stamps a TODO in the literal so the user notices.
     /// </remarks>
     /// <param name="size">
@@ -550,8 +565,11 @@ public static class BakedScriptGenerator
         "DoubleProperty"                              => "double",
         "ObjectProperty" or "ClassProperty" or "NameProperty"
             or "SoftObjectProperty" or "SoftClassProperty"
-            or "WeakObjectProperty" or "LazyObjectProperty"
+            or "WeakObjectProperty"
             or "InterfaceProperty"                    => "pointer",
+        // [VND584-01] A lazy pointer is found by a GUID nothing can make: the helper refuses any value but 0 for it,
+        // as FIRE and the CE form do (ParamBufferBuilder.IsEmptyOnlyParam). As 'pointer' it was written as an address.
+        "LazyObjectProperty"                          => "lazy",
         // Complex multi-byte buffer types -- the helper has no scalar
         // decoder for these, so the verify-mode emit treats them as a
         // raw region (size taken from the param) and tells the user to
@@ -608,6 +626,13 @@ public static class BakedScriptGenerator
         return t is "fstring" or "ftext" or "tarray" or "tmap"
                  or "tset" or "fstruct" or "delegate";
     }
+
+    /// <summary>
+    /// [VND584-01] True for the types that lead with <c>FWeakObjectPtr { ObjectIndex, SerialNumber }</c>: a return
+    /// of one is printed as that pair on every invoke path, never as an address.
+    /// </summary>
+    public static bool IsWeakPairType(string ueTypeName) =>
+        ueTypeName is "WeakObjectProperty" or "SoftObjectProperty" or "SoftClassProperty" or "LazyObjectProperty";
 
     /// <summary>
     /// Render a user-entered text value as a Lua numeric literal, picking

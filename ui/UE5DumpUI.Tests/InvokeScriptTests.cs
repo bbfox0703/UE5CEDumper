@@ -1776,6 +1776,7 @@ public class InvokeScriptTests
     [Theory]
     [InlineData("ArrayProperty", 16)]
     [InlineData("StructProperty", 24)]
+    [InlineData("LazyObjectProperty", 32)]   // [VND584-01] its own message, the same shape
     public void CeForm_TheEmptyOnlyGate_IsWellFormedLua(string typeName, int size)
     {
         var pre = BeforeTheMailbox(FireHandler(InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc(typeName, size))));

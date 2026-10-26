@@ -428,10 +428,10 @@ public sealed class InvokeParamDialog : Window
                         : "";
                     var label = $"{p.Name}  [{shortType}{objClassSuffix}{structSuffix}, {p.Size}B, off={p.Offset}{(p.IsOut ? ", out" : "")}]";
 
-                    // Stage 2: pointer-flavoured params (UObject*/UClass*/Soft*/
-                    // Weak*/Lazy*/Interface) get three extra buttons after the
-                    // textbox — [Pick…] [null] [self]. Non-pointer params keep
-                    // the original two-column layout.
+                    // Stage 2: the pickable pointer-flavoured params (see
+                    // ParamBufferBuilder.IsPickablePointerType) get three extra
+                    // buttons after the textbox — [Pick…] [null] [self].
+                    // Non-pointer params keep the original two-column layout.
                     bool isPointer = ParamBufferBuilder.IsPickablePointerType(p.TypeName);
                     var row = new Grid
                     {
@@ -1148,13 +1148,15 @@ public sealed class InvokeParamDialog : Window
             "Int64Property" when available >= 8
                 => BinaryPrimitives.ReadInt64LittleEndian(span).ToString(),
             // [VND584-01] A weak / soft / lazy slot leads with FWeakObjectPtr { ObjectIndex, SerialNumber }: after the
-            // call it holds the engine's pair (the DLL swapped a picked address for it), never an address. Serial 0 is
-            // null whatever the index, as UE's Internal_GetObjectItem says.
+            // call it holds the engine's pair (the DLL swapped a picked address for it), never an address. Serial 0
+            // makes a WEAK pointer null whatever the index (UE's Internal_GetObjectItem). A soft / lazy one is null
+            // only when its path / GUID is (IsNull is !ObjectID.IsValid()), so an unset weak half there is not null:
+            // a reference to an asset not loaded yet looks exactly like that.
+            "WeakObjectProperty" when available >= 8 && BinaryPrimitives.ReadInt32LittleEndian(span[4..]) == 0
+                => "null",
             "WeakObjectProperty" or "SoftObjectProperty" or "SoftClassProperty"
                 or "LazyObjectProperty" when available >= 8
-                => BinaryPrimitives.ReadInt32LittleEndian(span[4..]) == 0
-                    ? "null"
-                    : $"{{index {BinaryPrimitives.ReadInt32LittleEndian(span)}, serial {BinaryPrimitives.ReadInt32LittleEndian(span[4..])}}}",
+                => $"{{index {BinaryPrimitives.ReadInt32LittleEndian(span)}, serial {BinaryPrimitives.ReadInt32LittleEndian(span[4..])}}}",
             "UInt64Property" or "ObjectProperty" or "ClassProperty"
                 or "NameProperty" or "InterfaceProperty" when available >= 8
                 => $"0x{BinaryPrimitives.ReadUInt64LittleEndian(span):X}",

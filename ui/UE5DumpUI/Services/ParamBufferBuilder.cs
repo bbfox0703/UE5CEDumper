@@ -261,7 +261,7 @@ public static class ParamBufferBuilder
         "EnumProperty" => size > 0 ? size : 4,
         "BoolProperty" or "FloatProperty" or "DoubleProperty" => 0,
         // Pointer-ish types are written as a raw 8-byte address, not a ranged integer (the DLL turns a weak / soft
-        // one into the engine's own value, [VND584-01]).
+        // one into the engine's own value, [VND584-01]); a lazy one is not written at all (IsEmptyOnlyParam).
         "NameProperty" or "ObjectProperty" or "ClassProperty" or "SoftObjectProperty"
             or "SoftClassProperty" or "WeakObjectProperty" or "LazyObjectProperty"
             or "InterfaceProperty" => 0,
@@ -292,7 +292,9 @@ public static class ParamBufferBuilder
     ///
     /// <para><c>LazyObjectProperty</c> too (<c>[VND584-01]</c>): a weak pointer plus a
     /// GUID nothing can make, so the DLL refuses a picked object in one; all-zero is
-    /// its null.</para>
+    /// its null. The helper's own <c>lazy</c> arm refuses any other value, so the
+    /// parity above holds for it as well; its refusal text is
+    /// <see cref="LazyRefusalText"/>, not the containers'.</para>
     /// </summary>
     public static bool IsEmptyOnlyParam(string typeName) =>
         typeName is "ArrayProperty"
@@ -318,6 +320,14 @@ public static class ParamBufferBuilder
     /// dialog input had two different wrong answers (audit #5 Y11).</para>
     /// </summary>
     public static bool IsRefusedParam(string typeName) => typeName == "TextProperty";
+
+    /// <summary>
+    /// [VND584-01] Why a lazy pointer takes only 0: not the containers' reason. One message, shared with the CE form's
+    /// gate so the two paths cannot word it differently.
+    /// </summary>
+    internal const string LazyRefusalText =
+        "LazyObject parameters cannot be built from a textbox -- a lazy pointer is found by a GUID " +
+        "this cannot make, so only 0 (null) can be sent.";
 
     /// <summary>Everything <see cref="WriteParam"/> must not write.</summary>
     public static bool IsUnwritableParam(string typeName) =>
@@ -370,6 +380,11 @@ public static class ParamBufferBuilder
         if (IsEmptyOnlyParam(typeName))
         {
             if (IsZeroDefaultText(text)) return true;
+            if (typeName == "LazyObjectProperty")
+            {
+                error = LazyRefusalText;
+                return false;
+            }
             error = $"{ShortTypeName(typeName)} parameters cannot be built from a textbox " +
                     "— this is a multi-word structure whose contents must be allocated " +
                     "inside the game, and the value you typed would be dropped. Clear the " +

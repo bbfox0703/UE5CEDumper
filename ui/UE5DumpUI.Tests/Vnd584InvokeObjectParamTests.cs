@@ -120,6 +120,7 @@ public class Vnd584InvokeObjectParamTests
         var func = new FunctionInfoModel
         {
             Name = "Take",
+            NumParms = 1,
             ParmsSize = 0x20,
             Params = { new FunctionParamModel { Name = "Ref", TypeName = "LazyObjectProperty", Size = 0x20, Offset = 0 } },
         };
