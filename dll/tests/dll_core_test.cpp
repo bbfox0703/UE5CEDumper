@@ -5410,6 +5410,7 @@ int main() {
             put32(spField, DynOff::FFIELD_NAME, fieldName);
             DynOff::bSoftPathProbed = false;
             DynOff::SOFTPATH_TOPLEVEL_MEASURED = -1;
+            DynOff::SOFTPATH_SIZE_MEASURED = 0;
         };
         FakePool spPool;
         spPool.Build(kSB);
@@ -5436,9 +5437,54 @@ int main() {
         check("SOFTPATH ⭐ VND583-14: AssetPath measured on a title labelled 5.0 -> Package.Asset",
               p51 == "/Game/Pkg.Asset", p51.c_str());
 
+        // [VND584-08] A 5.1 / 5.2 build with an outlined FName (UE_FNAME_OUTLINE_NUMBER: sizeof(FName) 4). Before the
+        // FName probe has run SizeofFName() answers the rule's 8, so the payload read 0x20 against a real 0x18, and a
+        // tagged soft pointer of 0x28 gave the 5.3+ envelope 0x08 -- accepted and latched -- where +0x10 is right. The
+        // struct's own PropertiesSize (0x18) is the measurement.
+        {
+            const int  svFn  = DynOff::FNAME_SIZE_MEASURED.load();
+            const bool svCpn = DynOff::bCasePreservingName;
+            const int  svEnv = DynOff::SOFTPTR_PATH;
+            DynOff::FNAME_SIZE_MEASURED = 0;
+            DynOff::bCasePreservingName = false;
+            g_cachedUEVersion = 502;
+
+            build(nAssetPath);
+            put32(spB[bStruct], DynOff::USTRUCT_PROPSSIZE, 0x18);
+            DynOff::SOFTPTR_PATH = -1;
+            const int env = Ubel::SoftPathOffset(0x28);
+            check("SOFTPATH ⭐ VND584-08: an outlined-FName 5.2 soft pointer (0x28) has its path at +0x10, not +0x08",
+                  env == 0x10, std::to_string(env).c_str());
+            // Number is not modelled on an outlined build (ReadFName reads +4), so only the AssetName's place is pinned.
+            static int32_t outlined[8] = { nPkg, nAsset, 0, 0, 0, 0, 0, 0 };
+            const std::string po = Ubel::ReadSoftObjectPath(reinterpret_cast<uintptr_t>(outlined));
+            check("SOFTPATH ⭐ VND584-08: ...and its AssetName is read 4 bytes after its PackageName",
+                  po.size() > 6 && po.compare(po.size() - 6, 6, ".Asset") == 0, po.c_str());
+
+            // CONTROLS: the stock 8-byte FName keeps its answers; a PropertiesSize no path shape has is not taken.
+            build(nAssetPath);
+            put32(spB[bStruct], DynOff::USTRUCT_PROPSSIZE, 0x20);
+            DynOff::SOFTPTR_PATH = -1;
+            check("SOFTPATH control: a stock 5.2 path (0x20) in a 0x30 soft pointer stays at +0x10",
+                  Ubel::SoftPathOffset(0x30) == 0x10);
+            const std::string ps = Ubel::ReadSoftObjectPath(pathAddr);
+            check("SOFTPATH control: ...and reads its AssetName 8 bytes on", ps == "/Game/Pkg.Asset", ps.c_str());
+            build(nAssetPath);
+            put32(spB[bStruct], DynOff::USTRUCT_PROPSSIZE, 0x1234);
+            DynOff::SOFTPTR_PATH = -1;
+            g_cachedUEVersion = 505;
+            check("SOFTPATH control: a misread PropertiesSize falls back to the rule (5.5, 0x28 -> +0x08)",
+                  Ubel::SoftPathOffset(0x28) == 0x08);
+
+            DynOff::FNAME_SIZE_MEASURED = svFn;
+            DynOff::bCasePreservingName = svCpn;
+            DynOff::SOFTPTR_PATH        = svEnv;
+        }
+
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
         DynOff::bSoftPathProbed = false;
         DynOff::SOFTPATH_TOPLEVEL_MEASURED = -1;
+        DynOff::SOFTPATH_SIZE_MEASURED = 0;
         DynOff::bUseFProperty     = svFPropS;
         DynOff::bOffsetsValidated = svValidS;
         g_cachedUEVersion         = svVerS;

@@ -663,6 +663,26 @@ constexpr bool SoftPathIsTopLevelFor(int measured, unsigned ueVersion) {
 }
 inline std::atomic<int>  SOFTPATH_TOPLEVEL_MEASURED{-1};
 inline std::atomic<bool> bSoftPathProbed{false};
+// [VND584-08] ...and its SIZE, measured the same way: the ScriptStruct's PropertiesSize (0 = unmeasured). The rule from
+// sizeof(FName) needs the FName probe to have run, and the soft readers do not ask for it: on a 5.1 / 5.2 build with an
+// outlined FName (4 bytes) the rule's 0x20 against a real 0x18 turned a tagged 0x28 soft pointer's +0x10 into an
+// accepted, latched +0x08. Taken only when it is a size this path shape can have, so a misread PropertiesSize falls
+// back to the rule instead of steering the envelope.
+inline std::atomic<int>  SOFTPATH_SIZE_MEASURED{0};
+constexpr int SoftObjectPathPayloadFor(int measuredSize, int fnameSize, bool isTopLevelAssetPath) {
+    return (measuredSize == FSoftObjectPathSizeFor(4, isTopLevelAssetPath)
+            || measuredSize == FSoftObjectPathSizeFor(8, isTopLevelAssetPath)
+            || measuredSize == FSoftObjectPathSizeFor(12, isTopLevelAssetPath))
+        ? measuredSize : FSoftObjectPathSizeFor(fnameSize, isTopLevelAssetPath);
+}
+// How far a top-level path's AssetName sits after its PackageName: the FName size its measured size implies, else
+// `fallback`. (A one-FName path has no second FName to find.)
+constexpr int SoftPathFNameStrideFor(int measuredSize, bool isTopLevelAssetPath, int fallback) {
+    return !isTopLevelAssetPath ? fallback
+         : measuredSize == FSoftObjectPathSizeFor(4, true)  ? 4
+         : measuredSize == FSoftObjectPathSizeFor(8, true)  ? 8
+         : measuredSize == FSoftObjectPathSizeFor(12, true) ? 12 : fallback;
+}
 
 // [VND583-13] Compact TSet / TMap. UE 5.7+ has an opt-in, UE_USE_COMPACT_SET_AS_DEFAULT (0 in the stock
 // engine, ContainerAllocationPolicies.h), that makes every reflected TSet / TMap a TCompactSet:
