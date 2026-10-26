@@ -27,6 +27,23 @@ builds ≤696 in
 
 -----
 
+## 2026-10-27 (build 3650) — a picked object reaches weak / soft parameters of an invoke `[VND584-01]` `[VND584-02]`
+
+- **Invoke now passes a picked object into `TWeakObjectPtr` / `TSoftObjectPtr` / `TSoftClassPtr` parameters.** Every
+  invoke path -- FIRE, the CE form, a baked script, the Lua helper -- wrote the object's address there, which the
+  engine reads as a weak pointer's index and serial: the function received null while the call reported OK. The DLL
+  now hands the engine its own value for that object, made by the engine itself (path included), on the pipe and
+  through the CE mailbox, struct members included. Checked live on DumperTest 5.4: build 3649 failed all 9 cases,
+  build 3650 passes all 10 (`Conv_SoftObjectReferenceToObject`, `IsValidSoftObjectReference`,
+  `Conv_SoftClassReferenceToClass` and the new DumperTest fixtures return the picked object).
+- A lazy pointer can only be sent as 0 (null), on every path, and each says why. After a call, a weak / soft value
+  shows as `{index, serial}`; only a weak one is called null at serial 0.
+- CE Structure Dissect shows a soft / lazy field as 8 hex bytes, not a pointer to follow.
+- Found on the way, an engine fact: before UE 5.8 a by-value `TWeakObjectPtr` UFunction parameter is lost by the
+  engine's own code, whatever the caller sends (working-lessons §4.8).
+- Tests: dll_core_test 1,311 checks and dll_helpers_test 3,573, 0 failures; C# 6,691 run, 0 failed; Lua suites pass;
+  36 gates.
+
 ## 2026-10-14 (build 3649) — the ProcessEvent hook no longer depends on free memory near the game `[MH-PRERESERVE-PROXY]`
 
 - **Live Funcs, Call Trace and game-thread calls no longer fail with "the trampoline could not be placed".** On

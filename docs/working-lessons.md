@@ -3425,6 +3425,22 @@ and the verification register (`[PEHOOK-6-2026-08-20]`, `[A2-ES2-506-2026-09-05]
   route: inject, then read the version from the `[SUMMARY]` lines and the slot from the
   `DetectProcessEvent (pattern)` line, after refreshing any deployed proxy (handover §3).
 
+### 4.8 Before UE 5.8 the engine loses a by-value `TWeakObjectPtr` UFunction parameter itself
+
+Measured 2026-10-27 on DumperTest 5.4 Shipping ([VND584-01]). `Vnd584_EchoWeak(TWeakObjectPtr<AActor> Target)`
+returned null with the engine's OWN pair for the actor in its slot -- and with that pair typed by hand. The cause is
+in the engine: `P_GET_WEAKOBJECT` declared the thunk's local as the `TWeakObjectPtr` type, and `FFrame::
+StepExplicitProperty` fills a non-out local through `CopyCompleteValueToScriptVM`, which for `FWeakObjectProperty`
+stores a raw `UObject*` (the script VM's representation). `Get()` then reads the pointer's two halves as
+`{ObjectIndex, SerialNumber}`. UE 5.8 fixed the macro (`399f2949c408`: the local became `ElementType*`); 5.4, 5.6.1 and
+5.7.0 still have it.
+
+- **What it means for a verification:** a by-value weak parameter's RETURN says nothing about what the invoke sent.
+  Check the slot instead, or use a `const TWeakObjectPtr<T>&` parameter -- it is `CPF_OutParm`, so its thunk refers to
+  the caller's block (`Vnd584_EchoWeakRef`).
+- **What it does not mean:** that our weak conversion is wrong on those versions. The bytes in the slot are the engine's
+  own pair; a const-ref or a 5.8 callee receives the object.
+
 -----
 
 ## 5. Triage recipes
