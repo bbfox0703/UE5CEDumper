@@ -1306,15 +1306,17 @@ static void Test_Mimic_InvokeSlab() {
 
     // ProcessEvent's own codes ride the same `result` field (Frieren.h), and so do -10 / -11.
     // [VND584-01] -14, the object-parameter refusal, rides the same field.
+    // [VND584-06] ...and -15, a UFunction that is not the instance's class chain's.
     const int32_t refusals[] = { Mimic::MB_ERR_INVOKE_UNRESOLVED, Mimic::MB_ERR_INVOKE_TOO_LARGE,
-                                 Mimic::MB_ERR_INVOKE_OBJECT_PARAM };
+                                 Mimic::MB_ERR_INVOKE_OBJECT_PARAM, Mimic::MB_ERR_INVOKE_NOT_OWNED };
+    constexpr size_t kRefusals = sizeof(refusals) / sizeof(refusals[0]);
     bool distinct = true;
-    for (size_t i = 0; i < 3; ++i) {
+    for (size_t i = 0; i < kRefusals; ++i) {
         distinct = distinct && refusals[i] < 0;
-        for (size_t j = i + 1; j < 3; ++j) distinct = distinct && refusals[i] != refusals[j];
+        for (size_t j = i + 1; j < kRefusals; ++j) distinct = distinct && refusals[i] != refusals[j];
         for (int32_t taken : { -1, -2, -3, -4, -5, -6, -7, -8, -10, -11 }) distinct = distinct && taken != refusals[i];
     }
-    EXPECT("INVOKESLAB: the three refusals are negative, distinct, and apart from every code already in `result`",
+    EXPECT("INVOKESLAB: the refusals are negative, distinct, and apart from every code already in `result`",
            distinct);
 }
 
@@ -9129,6 +9131,25 @@ static void Test_Radar_LeafAnchor() {
                   "a direct anchor must carry the no-count sentinel");
 }
 
+// [VND584-06] A cached UFunction* must belong to the instance's class chain before CMD_INVOKE runs it.
+static void Test_Ubel_IsClassInChain() {
+    // A small fake hierarchy: Pawn -> Actor -> Object, and an unrelated Widget class; a cyclic pair for the bound.
+    const uintptr_t Object = 0x1000, Actor = 0x2000, Pawn = 0x3000, Widget = 0x4000, CycA = 0x5000, CycB = 0x6000;
+    auto readSuper = [&](uintptr_t cls, uintptr_t& super) {
+        super = cls == Pawn ? Actor : cls == Actor ? Object : cls == Widget ? Object
+              : cls == CycA ? CycB : cls == CycB ? CycA : 0;
+        return true;
+    };
+    EXPECT("OWNED control: the class itself", Ubel::IsClassInChain(Pawn, Pawn, readSuper));
+    EXPECT("OWNED control: a function its base declares", Ubel::IsClassInChain(Pawn, Actor, readSuper)
+           && Ubel::IsClassInChain(Pawn, Object, readSuper));
+    EXPECT("OWNED ⭐: another class's function is not the instance's", !Ubel::IsClassInChain(Pawn, Widget, readSuper));
+    EXPECT("OWNED ⭐: a subclass's function is not its base's", !Ubel::IsClassInChain(Actor, Pawn, readSuper));
+    EXPECT("OWNED ⭐: a cyclic SuperStruct chain ends, and answers no", !Ubel::IsClassInChain(CycA, Widget, readSuper));
+    EXPECT("OWNED: nothing owns a null", !Ubel::IsClassInChain(Pawn, 0, readSuper)
+           && !Ubel::IsClassInChain(0, Pawn, readSuper));
+}
+
 // [VND584-07] A non-case-preserving FName keeps the casing of its FIRST registration, so a game can carry "a" / "x"
 // where stock carries "A" / "X" -- Dumper-7 met FBox2D members spelled "min" / "max". A miss in the FField::Name probe
 // leaves UNMEASURED_FFIELD_NAME, and in the Offset_Internal probe the version table's offsets.
@@ -11080,6 +11101,7 @@ int main() {
     RUN(Test_Sig_IsCeReplayableAob);
     RUN(Test_Genau_AdmitMultiModuleCandidate);
     RUN(Test_Genau_ProbeNamesIgnoreCase);
+    RUN(Test_Ubel_IsClassInChain);
     RUN(Test_Macht_ClassifyModuleForScan);       // [AOB-SKIP-OWN-DLL] the walk leaves the dumper's own images out
     RUN(Test_Radar_RefineContainerAnchor);
     RUN(Test_Radar_LeafAnchor);

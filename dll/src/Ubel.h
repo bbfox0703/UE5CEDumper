@@ -358,6 +358,16 @@ inline bool ResolveFunctionInChain(uintptr_t classAddr, const char* funcName,
     return false;
 }
 
+// [VND584-06] Is `owner` -- a UFunction's Outer, the class that declares it -- `classAddr` or one of its SuperStructs?
+// A CE invoke form resolves its UFunction* once and FIRE sends it back later; a Blueprint class reloaded meanwhile can
+// leave that address holding another class's UFunction, which still passes the meta-class check, and ProcessEvent then
+// runs it on an instance of the wrong class (Dumper-7 015c04b met the same hazard). Bounded like the resolver above.
+template <class ReadSuper>
+inline bool IsClassInChain(uintptr_t classAddr, uintptr_t owner, ReadSuper readSuper) {
+    (void)classAddr; (void)owner; (void)readSuper;
+    return true;   // red: no check yet
+}
+
 // Resolve a SINGLE UFunction* to its (name, fullName, functionFlags, numParms,
 // parmsSize) — no param-chain walk. Validates the meta-class name == "Function"
 // first so a stale/recycled pointer (e.g. one recorded by the Live PE profiler

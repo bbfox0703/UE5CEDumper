@@ -490,6 +490,10 @@ constexpr int32_t MB_ERR_INVOKE_TOO_LARGE  = -13;   // its parameter block ends 
 /// them exactly as before the fix, so a script on an older DLL is no worse off than it already was, while a bump would
 /// refuse every new script there, the many with no such slot included. Like -12 / -13, the code itself is additive.
 constexpr int32_t MB_ERR_INVOKE_OBJECT_PARAM = -14;
+/// [VND584-06] ufuncAddr is a live UFunction, but not one of the instance's class chain: a cached address a reloaded
+/// Blueprint class left to another class's function. Additive like -12 / -13: a script on an older DLL never gets it,
+/// and every script shows errorMsg for a non-zero result -- which says to re-open the form, whose creation re-runs FIND.
+constexpr int32_t MB_ERR_INVOKE_NOT_OWNED = -15;
 
 /// May CMD_INVOKE hand ProcessEvent the slab? 0 = yes, otherwise the refusal to publish.
 ///
