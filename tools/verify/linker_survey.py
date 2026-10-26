@@ -16,7 +16,7 @@ The three signals, strongest first:
 Verdict: anything with an MSVC mark (a Rich header, an MSVC debug entry, a linker minor other than 00) is "msvc";
 linker 14.00 with a debug directory holding no MSVC entry is "lld"; linker 14.00 with no Rich header and no debug
 directory at all is "lld*" -- lld's signature, or a VS 2015 link.exe build with both marks stripped, which a UE5 title
-cannot be (UE5 needs VS 2019 or later). Avowed (UE 5.3) is an "lld*".
+cannot be (UE5 needs VS 2019 or later). Avowed (UE 5.3) is an "lld": CODEVIEW and REPRO entries, no MSVC one.
 
     py tools/verify/linker_survey.py <exe> [<exe> ...]
     py tools/verify/linker_survey.py --scan <root> [<root> ...]     # every UE-sized exe under each root
