@@ -364,8 +364,16 @@ inline bool ResolveFunctionInChain(uintptr_t classAddr, const char* funcName,
 // runs it on an instance of the wrong class (Dumper-7 015c04b met the same hazard). Bounded like the resolver above.
 template <class ReadSuper>
 inline bool IsClassInChain(uintptr_t classAddr, uintptr_t owner, ReadSuper readSuper) {
-    (void)classAddr; (void)owner; (void)readSuper;
-    return true;   // red: no check yet
+    if (!classAddr || !owner) return false;
+    constexpr int kMaxSuperDepth = 64;
+    uintptr_t cls = classAddr;
+    for (int depth = 0; cls && depth < kMaxSuperDepth; ++depth) {
+        if (cls == owner) return true;
+        uintptr_t super = 0;
+        if (!readSuper(cls, super) || super == cls) break;
+        cls = super;
+    }
+    return false;
 }
 
 // Resolve a SINGLE UFunction* to its (name, fullName, functionFlags, numParms,

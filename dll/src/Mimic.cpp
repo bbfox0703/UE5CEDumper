@@ -697,6 +697,25 @@ static void HandleInvoke() {
         SetError(refusal, msg);
         return;
     }
+    // [VND584-06] CMD_INVOKE takes ufuncAddr on trust: a CE form resolves it once and FIRE sends it back later, and a
+    // Blueprint class reloaded in between can leave that address holding another class's UFunction -- which still
+    // passes ResolveFunctionInfo's meta-class check. A static function ignores `this`, so any instance may call it.
+    if (!(fi.functionFlags & FUNC_FLAG_STATIC)) {
+        const uintptr_t owner = Ubel::GetOuter(ufuncAddr);
+        const uintptr_t cls   = Ubel::GetClass(instanceAddr);
+        const bool owned = Ubel::IsClassInChain(cls, owner, [](uintptr_t c, uintptr_t& super) {
+            return Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
+        });
+        if (!owned) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "'%s' (0x%llX) is not a function of this instance's class -- it may have been "
+                     "reloaded; re-open the invoke form so it finds the function again", fi.name.c_str(),
+                     (unsigned long long)ufuncAddr);
+            SetError(MB_ERR_INVOKE_NOT_OWNED, msg);
+            return;
+        }
+    }
+
     const bool isStaticNative = ShouldRouteDirectInvoke(fi.functionFlags, flagsResolved);
 
     if (fi.functionFlags != g_invokeMailbox.functionFlags) {
