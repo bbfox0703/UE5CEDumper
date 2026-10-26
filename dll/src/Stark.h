@@ -249,8 +249,31 @@ inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs) {
 /// FunctionFlags+2, anywhere) both imply the SAME offset; -1 otherwise. One lone `test byte [reg+disp],4` is too
 /// common to mean anything; two agreeing on one field are the fingerprint.
 inline int NarrowedFlagTestsFunctionFlags(const uint8_t* body, size_t size, size_t p1Limit) {
-    (void)body; (void)size; (void)p1Limit;
-    return -1;   // red: not matched yet
+    // One `test byte ptr [reg+disp32], imm8` ending by `limit`: F6, ModRM mod=10 reg=000 (/0 is TEST), a SIB byte when
+    // rm=100, a disp32 whose upper three bytes are 0 (FunctionFlags sits below +0x100), then the imm8. Its disp's low
+    // byte, or -1.
+    auto testAt = [&](size_t i, uint8_t imm, size_t limit) -> int {
+        if (i + 7 > limit || body[i] != 0xF6) return -1;
+        const uint8_t modrm = body[i + 1];
+        if ((modrm & 0xF8) != 0x80) return -1;
+        const size_t d = ((modrm & 7) == 4) ? i + 3 : i + 2;
+        if (d + 5 > limit) return -1;
+        if (body[d + 1] != 0 || body[d + 2] != 0 || body[d + 3] != 0 || body[d + 4] != imm) return -1;
+        return body[d];
+    };
+    bool highTest[256] = {};
+    bool anyHigh = false;
+    for (size_t j = 0; j < size; ++j) {
+        const int d2 = testAt(j, 0x40, size);
+        if (d2 >= 2) { highTest[d2 - 2] = true; anyHigh = true; }
+    }
+    if (!anyHigh) return -1;
+    const size_t lim1 = p1Limit < size ? p1Limit : size;
+    for (size_t i = 0; i < lim1; ++i) {
+        const int d1 = testAt(i, 0x04, lim1);
+        if (d1 >= 1 && highTest[d1 - 1]) return d1 - 1;
+    }
+    return -1;
 }
 
 constexpr int32_t kRequestQueued = 0, kRequestRunning = 1, kRequestAbandoned = 2;

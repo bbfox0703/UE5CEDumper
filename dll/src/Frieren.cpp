@@ -1784,6 +1784,21 @@ static int DetectProcessEventVTableOffsetByPattern(uintptr_t vtable) {
                  off, (unsigned long long)funcAddr);
         return off;
     }
+
+    // [VND584-05] A clang build narrows both tests to byte tests (Stark::NarrowedFlagTestsFunctionFlags), so the pass
+    // above never matches it and the version table answered -- right on Avowed only because its slot is stock, wrong on
+    // a licensee vtable (RE-UE4SS's configs: TOW2 +0x278, Conan +0x268, Dune +0x2A8). A SECOND pass, run only when the
+    // first found nothing, so no binary the first pass answers can get a different answer.
+    for (int off = kMinOffset; off <= kMaxOffset; off += 8) {
+        uintptr_t funcAddr = 0;
+        if (!Macht::ReadSafe(vtable + off, funcAddr) || !funcAddr) continue;
+        if (!Macht::ReadBytesSafe(funcAddr, body, kBodySize)) continue;
+        const int flagsOff = Stark::NarrowedFlagTestsFunctionFlags(body, kBodySize, 0x400);
+        if (flagsOff < 0) continue;
+        LOG_INFO("DetectProcessEvent (pattern, byte tests): match at vtable+0x%X -> 0x%llX "
+                 "(FunctionFlags +0x%X)", off, (unsigned long long)funcAddr, flagsOff);
+        return off;
+    }
     return -1;
 }
 

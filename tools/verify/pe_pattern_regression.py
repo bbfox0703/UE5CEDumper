@@ -15,6 +15,10 @@ the per-offset tallies below are NOT "the ProcessEvent slot" -- only the
 current-vs-proposed COMPARISON per base is meaningful. Binaries reporting
 vtables=0 are packed/obfuscated and are simply not covered.
 
+[VND584-05, 2026-10-27] CURRENT is now the shipped first pass (dword forms, SIB included) and PROPOSED adds the
+byte-narrowed second pass that runs only when the first found nothing; the sweep reports where that second pass
+adds a match. The paragraph below is the [PEHOOK-2026-08-17] change this rig was written for.
+
 The change under test relaxes pattern 1 to tolerate a mandatory SIB byte. Relaxing a
 pattern can only do two things: find a slot it used to miss (the fix), or find an
 EARLIER slot on a binary it already got right (a regression -- the detector returns
@@ -43,6 +47,25 @@ RX_PAT2 = re.compile(rb"\xf7..\x00\x00\x00\x00\x00\x40\x00", re.S)
 # PROPOSED: one extra wildcard between ModRM and disp32 (the SIB byte).
 RX_PAT1_SIB = re.compile(rb"\xf7...\x00\x00\x00\x00\x04\x00\x00", re.S)
 RX_PAT2_SIB = re.compile(rb"\xf7...\x00\x00\x00\x00\x00\x40\x00", re.S)
+
+# [VND584-05] clang's byte-narrowed forms (Stark::NarrowedFlagTestsFunctionFlags): `test byte [reg+disp32], imm8`,
+# ModRM mod=10 reg=000, a SIB byte when rm=100. Group 1 is the disp's low byte.
+RX_NARROW = {imm: (re.compile(rb"\xf6[\x80-\x83\x85-\x87](.)\x00\x00\x00" + bytes([imm]), re.S),
+                   re.compile(rb"\xf6\x84.(.)\x00\x00\x00" + bytes([imm]), re.S))
+             for imm in (0x04, 0x40)}
+
+
+def narrowed_flags(body):
+    """The FunctionFlags offset a body's FUNC_Native (0x04 at +1, first 0x400) and 0x400000 (0x40 at +2) byte tests
+    agree on, or None -- the same answer as Stark::NarrowedFlagTestsFunctionFlags."""
+    high = {m.group(1)[0] - 2 for rx in RX_NARROW[0x40] for m in rx.finditer(body) if m.group(1)[0] >= 2}
+    if not high:
+        return None
+    for rx in RX_NARROW[0x04]:
+        for m in rx.finditer(body, 0, 0x400):
+            if m.end() <= 0x400 and m.group(1)[0] >= 1 and m.group(1)[0] - 1 in high:
+                return m.group(1)[0] - 1
+    return None
 
 
 class PE:
@@ -122,6 +145,21 @@ def vtable_bases(pe):
     return out[:MAX_BASES]
 
 
+def first_narrowed(pe, vt):
+    """[VND584-05] The second pass: the first slot whose body pairs two narrowed byte tests."""
+    for off in range(MIN_OFF, MAX_OFF + 1, 8):
+        raw = pe.read(vt + off, 8)
+        if not raw or len(raw) < 8:
+            continue
+        va = struct.unpack("<Q", raw)[0]
+        if not va or va <= pe.image_base:
+            continue
+        body = pe.body(va - pe.image_base)
+        if body and narrowed_flags(body) is not None:
+            return off
+    return None
+
+
 def first_match(pe, vt, proposed):
     for off in range(MIN_OFF, MAX_OFF + 1, 8):
         raw = pe.read(vt + off, 8)
@@ -154,8 +192,10 @@ def check(path):
     bases = vtable_bases(pe)
     cur, new, regress, fixed = {}, {}, 0, 0
     for vt in bases:
-        c = first_match(pe, vt, False)
-        p = first_match(pe, vt, True)
+        c = first_match(pe, vt, True)
+        # PROPOSED = the shipped first pass, then [VND584-05]'s narrowed pass only when it found nothing. By
+        # construction it cannot change a first match; what this measures is where the second pass adds one.
+        p = c if c is not None else first_narrowed(pe, vt)
         if c is not None:
             cur[c] = cur.get(c, 0) + 1
         if p is not None:
