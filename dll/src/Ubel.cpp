@@ -387,11 +387,13 @@ static void ProbeSoftPathShape() {
     std::lock_guard<std::mutex> lk(s_mutex);
     if (DynOff::bSoftPathProbed.load(std::memory_order_relaxed)) return;
     int measured = -1;
+    int32_t size = 0;   // [VND584-08] its PropertiesSize, beside its shape
     const bool complete = Aura::ForEach([&](int32_t, uintptr_t obj) -> bool {
         if (ReadFName(obj + Grimoire::OFF_UOBJECT_NAME) != "SoftObjectPath") return true;
         uintptr_t cls = 0;
         if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) return true;
         if (ReadFName(cls + Grimoire::OFF_UOBJECT_NAME) != "ScriptStruct") return true;
+        Macht::ReadSafe(obj + DynOff::USTRUCT_PROPSSIZE, size);
         uintptr_t field = 0;
         Macht::ReadSafe(obj + DynOff::USTRUCT_CHILDPROPS, field);
         for (int i = 0; i < 8 && field && Grimoire::IsUserspacePointer(field); ++i) {
@@ -406,9 +408,10 @@ static void ProbeSoftPathShape() {
     });
     if (!complete) return;
     if (measured >= 0) {
-        LOG_INFO("DetectSoftPath: FSoftObjectPath holds %s (measured on ScriptStruct SoftObjectPath; version rule says %s)",
-                 measured ? "FTopLevelAssetPath AssetPath" : "FName AssetPathName",
+        LOG_INFO("DetectSoftPath: FSoftObjectPath holds %s, %d bytes (measured on ScriptStruct SoftObjectPath; version "
+                 "rule says %s)", measured ? "FTopLevelAssetPath AssetPath" : "FName AssetPathName", size,
                  g_cachedUEVersion >= 501 ? "AssetPath" : "AssetPathName");
+        DynOff::SOFTPATH_SIZE_MEASURED.store(size, std::memory_order_release);
     } else {
         LOG_WARN("DetectSoftPath: ScriptStruct SoftObjectPath not measured -- the version rule answers (%s)",
                  g_cachedUEVersion >= 501 ? "AssetPath" : "AssetPathName");
@@ -428,9 +431,10 @@ static bool SoftPathIsTopLevel() {
 static std::string ReadSoftObjectPath(uintptr_t addr) {
     if (!addr) return "";
 
-    int fnameSize = DynOff::SizeofFName();
-
     bool isTopLevelAssetPath = SoftPathIsTopLevel();   // [VND583-14] measured; the version rule is the fallback
+    // [VND584-08] The AssetName's place from the struct's measured size; sizeof(FName) only when there is none.
+    const int fnameSize = DynOff::SoftPathFNameStrideFor(DynOff::SOFTPATH_SIZE_MEASURED.load(std::memory_order_acquire),
+                                                         isTopLevelAssetPath, DynOff::SizeofFName());
 
     if (isTopLevelAssetPath) {
         // UE5.1+: FTopLevelAssetPath = { FName PackageName, FName AssetName }
@@ -506,12 +510,12 @@ static int PersistentObjectPtrEnvelope(int32_t elemSize, int32_t payloadSize,
 
 // FSoftObjectPath payload size: FTopLevelAssetPath (2 FNames) or FName, + FString header.
 static int32_t SoftObjectPathPayloadSize() {
-    // sizeof(FName), NOT the UObject Name->Outer slot. See DynOff::bCasePreservingName.
-    const int fnameSize = DynOff::SizeofFName();
-    // The AlignUp and the reason it is load-bearing live on DynOff::FSoftObjectPathSizeFor,
-    // in the header so the test target can pin it.
-    return static_cast<int32_t>(
-        DynOff::FSoftObjectPathSizeFor(fnameSize, SoftPathIsTopLevel()));   // [VND583-14]
+    // [VND583-14] the shape, then [VND584-08] the size the same probe measured. sizeof(FName) -- NOT the UObject
+    // Name->Outer slot, see DynOff::bCasePreservingName -- answers only when that size was not measured; the AlignUp
+    // and why it is load-bearing live on DynOff::FSoftObjectPathSizeFor, in the header so the test target can pin it.
+    const bool topLevel = SoftPathIsTopLevel();
+    return static_cast<int32_t>(DynOff::SoftObjectPathPayloadFor(
+        DynOff::SOFTPATH_SIZE_MEASURED.load(std::memory_order_acquire), DynOff::SizeofFName(), topLevel));
 }
 
 // Offset of FSoftObjectPath inside a TSoftObjectPtr. `elemSize` is the property's
