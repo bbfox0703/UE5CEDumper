@@ -2348,6 +2348,15 @@ static std::vector<ParamField> CaptureStructMembers(uintptr_t structAddr, int de
     return out;
 }
 
+// A struct whose members were not captured: kParamStructDepth reached, or its UScriptStruct unreadable.
+static bool HasUnexpandedStruct(const std::vector<ParamField>& fields) {
+    for (const ParamField& f : fields) {
+        if (f.typeName == "StructProperty" && f.size > 0 && f.sub.empty()) return true;
+        if (HasUnexpandedStruct(f.sub)) return true;
+    }
+    return false;
+}
+
 bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why) {
     out = ParamLayout{};
     why.clear();
@@ -2386,6 +2395,7 @@ bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why) {
         out.params.push_back(std::move(p));
     }
     if (out.params.empty()) { why = "no parameters"; return false; }
+    out.truncated = leaves >= kParamLeaves || HasUnexpandedStruct(out.params);
     return true;
 }
 

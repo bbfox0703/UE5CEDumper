@@ -484,6 +484,8 @@ struct ParamLayout {
     uint8_t     numParms      = 0;
     uint32_t    layoutEnd     = 0;   // past the last parameter: its offset + size * arrayDim
     std::vector<ParamField> params;
+    // kParamLeaves or kParamStructDepth stopped a struct's members short, so some member is not in `params`.
+    bool        truncated     = false;
 };
 // The function's OWN chain -- never its SuperStruct's (an override's parent) -- in this engine's property model, kept
 // to its CPF_Parm entries (a Blueprint function's locals follow them). False with `why` when `func` is not a

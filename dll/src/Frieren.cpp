@@ -2481,7 +2481,18 @@ bool MakeSoftReference(uintptr_t object, void* ctx, std::vector<uint8_t>& out, s
 bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why) {
     Ubel::ParamLayout layout;
     std::string capWhy;
-    if (!ufunc || !params || !Ubel::CaptureParamLayout(ufunc, layout, capWhy)) return true;
+    if (!ufunc || !params) return true;
+    // Neither case refuses -- nothing says the unread part holds an object -- but both say so, because a picked object
+    // there reaches the engine as written, which it reads as a null weak pointer.
+    if (!Ubel::CaptureParamLayout(ufunc, layout, capWhy)) {
+        if (capWhy != "no parameters")
+            LOG_WARN("invoke: the parameters of 0x%llX were not read (%s) -- a weak / soft one goes as written",
+                     (unsigned long long)ufunc, capWhy.c_str());
+        return true;
+    }
+    if (layout.truncated)
+        LOG_WARN("invoke: %s's struct parameters were read only in part -- a weak / soft member past that goes as "
+                 "written", layout.funcName.c_str());
     bool route = direct;
     Ubel::ObjectParamOps ops;
     ops.isLiveObject      = &IsLiveObject;
