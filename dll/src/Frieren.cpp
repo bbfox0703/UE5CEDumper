@@ -1217,6 +1217,10 @@ static inline std::vector<FunctionInfo> ChainListFuncs(uintptr_t cls) {
 static inline bool ChainReadSuper(uintptr_t cls, uintptr_t& super) {
     return Macht::ReadSafe(cls + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
 }
+// [VND584-04] A class's own implemented interfaces (empty while UClass::Interfaces is unmeasured).
+static inline std::vector<Ubel::ImplementedInterface> ChainListInterfaces(uintptr_t cls) {
+    return Ubel::ClassInterfaces(cls);
+}
 }  // extern "C++"
 
 // Resolve a UFunction by name on a class OR ANY OF ITS BASES.
@@ -1232,15 +1236,17 @@ uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName) {
 
     FunctionInfo hit;
     int levels = 0;
-    if (Ubel::ResolveFunctionInChain(classAddr, funcName, ChainListFuncs, ChainReadSuper,
-                                     hit, &levels)) {
+    // [VND584-04] The chain first, then its implemented interfaces, as UClass::FindFunctionByName does.
+    if (Ubel::ResolveFunctionInChainOrInterfaces(classAddr, funcName, ChainListFuncs, ChainReadSuper,
+                                                 ChainListInterfaces, hit, &levels)) {
         LOG_INFO("UE5_FindFunctionByName: '%s' -> 0x%llX (%d class level(s) searched)",
                  funcName, (unsigned long long)hit.address, levels);
         return hit.address;
     }
 
     LOG_WARN("UE5_FindFunctionByName: '%s' not found (%d class level(s) searched, "
-             "own class + supers)", funcName, levels);
+             "own class + supers%s)", funcName, levels,
+             Ubel::ClassInterfacesMeasured() ? " + their interfaces" : "; interfaces not read on this build");
     return 0;
 }
 
@@ -2462,6 +2468,15 @@ bool IsLiveObject(uintptr_t addr) {
     return idx >= 0 && Aura::GetByIndex(idx) == addr;
 }
 
+// [VND584-04] ObjectParamOps.interfaceAddress: UObject::GetInterfaceAddress through the measured UClass::Interfaces.
+int InterfaceAddress(uintptr_t object, uintptr_t iface, void*, uintptr_t& out, std::string& why) {
+    if (!Ubel::ClassInterfacesMeasured()) return -1;
+    const bool implemented = Ubel::InterfaceAddressFor(object, Ubel::GetClass(object), iface, Ubel::IsNativeClass(iface),
+                                                       ChainReadSuper, ChainListInterfaces, out);
+    if (!implemented) why = "its class implements no " + Ubel::GetName(iface);
+    return implemented ? 1 : 0;
+}
+
 // ctx: the route the invoke itself takes. A static-native target runs off the game thread, so the conversion does
 // too (Conv_ObjectToSoftObjectReference is Native|Static, the same class of call); anything else queues both. A queued
 // conversion is dropped if it times out: it dereferences the picked object, which may be freed by the time a late
@@ -2514,6 +2529,7 @@ bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool dir
     ops.makeSoftReference = &MakeSoftReference;
     ops.resolveWeak       = &Ubel::ResolveWeakObjectPtr;
     ops.ctx               = &route;
+    ops.interfaceAddress  = &InterfaceAddress;
     int converted = 0;
     const bool ok = Ubel::PrepareObjectParams(layout, params, size, ops, converted, why);
     if (converted > 0)

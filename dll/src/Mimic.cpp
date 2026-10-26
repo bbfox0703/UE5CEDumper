@@ -572,6 +572,10 @@ static inline std::vector<FunctionInfo> ChainListFuncs(uintptr_t cls) {
 static inline bool ChainReadSuper(uintptr_t cls, uintptr_t& super) {
     return Macht::ReadSafe(cls + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
 }
+// [VND584-04] A class's own implemented interfaces (empty while UClass::Interfaces is unmeasured).
+static inline std::vector<Ubel::ImplementedInterface> ChainListInterfaces(uintptr_t cls) {
+    return Ubel::ClassInterfaces(cls);
+}
 
 static void HandleFindFunction() {
     uintptr_t instanceAddr = g_invokeMailbox.instanceAddr;
@@ -605,8 +609,9 @@ static void HandleFindFunction() {
     // the mailbox cannot answer the same question differently.
     FunctionInfo hit;
     int levels = 0;
-    const bool found = Ubel::ResolveFunctionInChain(
-        classAddr, funcName, ChainListFuncs, ChainReadSuper, hit, &levels);
+    // [VND584-04] ...and then their implemented interfaces, as UClass::FindFunctionByName does.
+    const bool found = Ubel::ResolveFunctionInChainOrInterfaces(
+        classAddr, funcName, ChainListFuncs, ChainReadSuper, ChainListInterfaces, hit, &levels);
 
     uintptr_t ufuncAddr = found ? hit.address : 0;
     uint16_t parmsSize = found ? hit.parmsSize : 0;
@@ -703,9 +708,10 @@ static void HandleInvoke() {
     if (!(fi.functionFlags & FUNC_FLAG_STATIC)) {
         const uintptr_t owner = Ubel::GetOuter(ufuncAddr);
         const uintptr_t cls   = Ubel::GetClass(instanceAddr);
-        const bool owned = Ubel::IsClassInChain(cls, owner, [](uintptr_t c, uintptr_t& super) {
-            return Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
-        });
+        // [VND584-04] An interface's function belongs to every class that implements the interface.
+        Ubel::ImplementedInterface viaInterface;
+        const bool owned = Ubel::IsClassInChain(cls, owner, ChainReadSuper)
+            || Ubel::FindImplementedInterface(cls, owner, false, ChainReadSuper, ChainListInterfaces, viaInterface);
         if (!owned) {
             char msg[256];
             snprintf(msg, sizeof(msg), "'%s' (0x%llX) is not a function of this instance's class -- it may have been "
