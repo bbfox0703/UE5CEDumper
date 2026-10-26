@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-10-27 (build 3653) — Ghostwire: Tokyo is read as UE 4.27 `[GWT-BRANCH]` `[VND584-04]` `[VND584-05]`
+
+- **A game built from a licensee's own engine branch is now recognised.** Ghostwire: Tokyo carries no Epic release
+  tag, only its own branch name (`++ue4+ue4_main+4.27`), and its file version is the game's, so detection gave up
+  and fell back to UE 5.4. The DLL now reads such a branch name when Epic's tag is absent, and refuses the licensee
+  branches that name a game release instead. With the wrong version Ghostwire had also read one engine structure the
+  UE 5.3+ way; it reads it as 4.27 now.
+- Checked live on Ghostwire: build 3652 logged the 5.4 default, build 3653 reads 4.27, and the verdict saved by the
+  earlier run was re-detected on its own.
+- The interface lookup from build 3652, checked live on two UE4 games: OCTOPATH TRAVELER (4.18) and Ghostwire: Tokyo
+  (4.27), interface functions found by name 1/1 and 6/6.
+- Tools: `tier1_host_survey.py` reports the new branch shape. New `linker_survey.py` tells a clang build from an MSVC
+  one, which a missing Rich header alone does not: on this PC Avowed is the one clang-built UE game, and the analysis
+  corpus already holds it.
+- Tests: dll_core_test 1,328 checks and dll_helpers_test 3,619, 0 failures; C# 6,692 passed, 1 skipped; 36 gates.
+
 ## 2026-10-27 (build 3652) — invoke understands interfaces `[VND584-04]` `[VND584-DOC]`
 
 - **An interface's function can be invoked by name on a class that implements it.** A function a class gets from an

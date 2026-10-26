@@ -3441,6 +3441,30 @@ stores a raw `UObject*` (the script VM's representation). `Get()` then reads the
 - **What it does not mean:** that our weak conversion is wrong on those versions. The bytes in the slot are the engine's
   own pair; a const-ref or a 5.8 callee receives the object.
 
+### 4.9 A `UE=` line can be the 504 DEFAULT, not a reading
+
+Measured 2026-10-27 on Ghostwire: Tokyo ([GWT-BRANCH]). `[SUMMARY] ... UE=504` reads exactly like a detection, and
+`docs/test-games.md` carried this title as "UE505 detected" for months. The line that tells them apart is the one
+before it in `scan-0.log`: `FindAll: UE Version = 504 (tier=0, detected=no, lowConfidence=yes, ...)`, after
+`DetectVersion: Could not detect UE version ...`. A cached verdict says the same on its own line
+(`(cached, rev=N, detected=no, ...)`).
+
+- **What it costs:** every `>= 500` / `>= 503` default then picks the UE5 shape. On Ghostwire (4.27) the DLL read the
+  FFieldVariant as 5.3+'s tagged pointer (`TagFFV=yes`); the correct 4.27 reading is `no`.
+- **Before recording a version:** quote `detected=` and `tier=` with it. `detected=no` is a missing detection to fix
+  or an override to set, never a version.
+
+### 4.10 A missing Rich header is not a clang build
+
+Measured 2026-10-27 ([VND584-05]). Eight distinct UE exes on this PC carry no Rich header; one, Avowed, is an lld
+(clang) build. The other seven are MSVC builds: their linker version names a real toolset (14.29, 14.38, 14.43), or
+their debug directory holds VC_FEATURE / POGO entries, which lld never writes. lld-link always writes linker 14.00.
+
+- **Ask the tool, not the stub:** `py tools/verify/linker_survey.py <exe>` (or `--scan <root>`) combines the three
+  signals and explains them in its header.
+- **Why it matters:** compiler-shape fixes (the ProcessEvent byte-test pass, AOB shapes) need clang samples, and a
+  Rich-header count over-reports them by a factor of eight here.
+
 -----
 
 ## 5. Triage recipes
