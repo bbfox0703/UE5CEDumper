@@ -2463,9 +2463,64 @@ size_t RunArmCapturePass(Linie::ArmState& st, size_t maxArms, const ArmCaptureOp
     return arms.size();
 }
 
-// [VND584-01] Red stub: converts nothing.
-bool PrepareObjectParams(const ParamLayout&, uint8_t*, size_t, const ObjectParamOps&, int& converted, std::string&) {
+// [VND584-01] ClassifyObjectParam (Ubel.h) says why. Each element of a static array is a slot of its own.
+bool PrepareObjectParams(const ParamLayout& layout, uint8_t* params, size_t size, const ObjectParamOps& ops,
+                         int& converted, std::string& why) {
     converted = 0;
+    if (!params || !ops.isLiveObject) return true;
+    for (const ParamField& p : layout.params) {
+        const int32_t dim = p.arrayDim > 0 ? p.arrayDim : 1;
+        for (int32_t e = 0; e < dim; ++e) {
+            const int64_t off = static_cast<int64_t>(p.offset) + static_cast<int64_t>(e) * p.size;
+            if (p.offset < 0 || p.size < 8 || off + p.size > static_cast<int64_t>(size)) break;
+            uint8_t* slot = params + off;
+            uint64_t lead = 0;
+            memcpy(&lead, slot, sizeof(lead));
+            const ObjectParamAction act = ClassifyObjectParam(
+                p.typeName, p.size, p.kind, lead, lead != 0 && ops.isLiveObject(static_cast<uintptr_t>(lead)));
+            if (act == ObjectParamAction::Leave) continue;
+
+            char addr[32];
+            snprintf(addr, sizeof(addr), "0x%llX", static_cast<unsigned long long>(lead));
+            const std::string what = "'" + p.name + "' (" + p.typeName + ")";
+            if (act == ObjectParamAction::Refuse) {
+                why = what + (p.typeName == "LazyObjectProperty"
+                    ? " holds the object at " + std::string(addr) + ", but a lazy pointer is found by a GUID this "
+                      "cannot make -- pass 0 (null)"
+                    : " is " + std::to_string(p.size) + " bytes, a remote-handle weak pointer this does not model -- "
+                      "pass 0 (null)");
+                return false;
+            }
+            std::vector<uint8_t> made;
+            std::string err;
+            if (!ops.makeSoftReference || !ops.makeSoftReference(static_cast<uintptr_t>(lead), ops.ctx, made, err)) {
+                why = what + ": the engine could not make a reference to " + addr + " (" + err + ") -- not sent";
+                return false;
+            }
+            int32_t idx = -1, serial = 0;
+            if (made.size() >= 8) {
+                memcpy(&idx, made.data(), 4);
+                memcpy(&serial, made.data() + 4, 4);
+            }
+            // The engine's own resolve of the pair it made must give the object back; anything else means the bytes
+            // were read from the wrong place, and sending them would pass some other object or a null.
+            if (made.size() < 8 || !ops.resolveWeak || ops.resolveWeak(idx, serial) != static_cast<uintptr_t>(lead)) {
+                why = what + ": the engine's weak pointer for " + addr + " does not lead back to it -- not sent";
+                return false;
+            }
+            if (act == ObjectParamAction::ConvertWeak) {
+                memcpy(slot, made.data(), 8);
+            } else {
+                if (made.size() != static_cast<size_t>(p.size)) {
+                    why = what + ": the engine's soft pointer is " + std::to_string(made.size()) + " bytes, the "
+                          "parameter " + std::to_string(p.size) + " -- not sent";
+                    return false;
+                }
+                memcpy(slot, made.data(), made.size());
+            }
+            ++converted;
+        }
+    }
     return true;
 }
 
