@@ -358,6 +358,47 @@ inline bool ResolveFunctionInChain(uintptr_t classAddr, const char* funcName,
     return false;
 }
 
+// [VND584-04] UClass::Interfaces holds TArray<FImplementedInterface>: 16-byte elements { UClass* Class; int32
+// PointerOffset; bool bImplementedByK2; } (4.18 .. 5.8). One entry, as Ubel reads it.
+struct ImplementedInterface {
+    uintptr_t cls = 0;
+    int32_t   pointerOffset = 0;
+    bool      byK2 = false;
+};
+
+// The entry through which `classAddr`'s chain implements `iface`, most-derived level first: an entry whose class is
+// `iface` or derives from it (UClass::IsChildOf). `nativeOnly` skips entries a Blueprint implements, as
+// UObject::GetInterfaceAddress does for a native interface. False when there is none.
+template <class ReadSuper, class ListInterfaces>
+inline bool FindImplementedInterface(uintptr_t classAddr, uintptr_t iface, bool nativeOnly, ReadSuper readSuper,
+                                     ListInterfaces listInterfaces, ImplementedInterface& out) {
+    (void)classAddr; (void)iface; (void)nativeOnly; (void)readSuper; (void)listInterfaces; (void)out;
+    return false;   // red: not implemented yet
+}
+
+// UObject::GetInterfaceAddress, for an invoke's InterfaceProperty parameter: a Blueprint (non-native) interface's
+// address is the object itself; a native interface's is the object + the PointerOffset of the first entry implemented
+// natively, and null when only a Blueprint implements it. False when the class does not implement `iface` at all.
+template <class ReadSuper, class ListInterfaces>
+inline bool InterfaceAddressFor(uintptr_t object, uintptr_t objectClass, uintptr_t iface, bool ifaceIsNative,
+                                ReadSuper readSuper, ListInterfaces listInterfaces, uintptr_t& out) {
+    (void)object; (void)objectClass; (void)iface; (void)ifaceIsNative; (void)readSuper; (void)listInterfaces;
+    out = 0;
+    return false;   // red: not implemented yet
+}
+
+// UClass::FindFunctionByName's order: the class chain (ResolveFunctionInChain), then -- only when no level declares the
+// name -- each level's implemented interfaces with their SuperStructs, most-derived level first. A function an
+// implementer does not redeclare (a native implementor of a BlueprintCallable interface function) lives only on the
+// interface class, so the chain alone answered "not found".
+template <class ListFuncs, class ReadSuper, class ListInterfaces>
+inline bool ResolveFunctionInChainOrInterfaces(uintptr_t classAddr, const char* funcName, ListFuncs listFuncs,
+                                               ReadSuper readSuper, ListInterfaces listInterfaces, FunctionInfo& out,
+                                               int* levelsWalked = nullptr) {
+    (void)listInterfaces;
+    return ResolveFunctionInChain(classAddr, funcName, listFuncs, readSuper, out, levelsWalked);   // red: chain only
+}
+
 // [VND584-06] Is `owner` -- a UFunction's Outer, the class that declares it -- `classAddr` or one of its SuperStructs?
 // A CE invoke form resolves its UFunction* once and FIRE sends it back later; a Blueprint class reloaded meanwhile can
 // leave that address holding another class's UFunction, which still passes the meta-class check, and ProcessEvent then

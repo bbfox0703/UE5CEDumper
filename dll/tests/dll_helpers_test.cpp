@@ -9173,6 +9173,62 @@ static void Test_Radar_LeafAnchor() {
                   "a direct anchor must carry the no-count sentinel");
 }
 
+// [VND584-04] Interfaces: the by-name lookup UClass::FindFunctionByName does, ImplementsInterface, and
+// GetInterfaceAddress -- against a fake hierarchy.
+static void Test_Ubel_Interfaces() {
+    // Classes: Pawn -> Actor -> Object; Widget -> Object. Interfaces: IBar -> IFoo -> UInterface; IBaz -> UInterface.
+    // Actor implements IBar natively at +0x28; Pawn implements IBaz in Blueprint (byK2).
+    const uintptr_t Object = 0x1000, Actor = 0x2000, Pawn = 0x3000, Widget = 0x4000;
+    const uintptr_t UInterfaceC = 0x5000, IFoo = 0x6000, IBar = 0x7000, IBaz = 0x8000;
+    auto readSuper = [&](uintptr_t c, uintptr_t& s) {
+        s = c == Pawn ? Actor : c == Actor ? Object : c == Widget ? Object
+          : c == IBar ? IFoo : c == IFoo ? UInterfaceC : c == IBaz ? UInterfaceC : 0;
+        return true;
+    };
+    auto listIfaces = [&](uintptr_t c) {
+        std::vector<Ubel::ImplementedInterface> v;
+        if (c == Actor) v.push_back({ IBar, 0x28, false });
+        if (c == Pawn)  v.push_back({ IBaz, 0, true });
+        return v;
+    };
+    auto fn = [](const char* name, uintptr_t addr) { FunctionInfo f; f.name = name; f.address = addr; return f; };
+    auto listFuncs = [&](uintptr_t c) {
+        std::vector<FunctionInfo> v;
+        if (c == Actor) { v.push_back(fn("Tick", 0xA1)); v.push_back(fn("Shared", 0xA2)); }
+        if (c == IFoo)  { v.push_back(fn("DoFoo", 0xF1)); v.push_back(fn("Shared", 0xF2)); }
+        return v;
+    };
+
+    FunctionInfo hit;
+    EXPECT("IFACE ⭐: an interface function the class does not redeclare is found through its interfaces",
+           Ubel::ResolveFunctionInChainOrInterfaces(Pawn, "DoFoo", listFuncs, readSuper, listIfaces, hit)
+           && hit.address == 0xF1);
+    EXPECT("IFACE control: the class chain answers first", Ubel::ResolveFunctionInChainOrInterfaces(
+           Pawn, "Shared", listFuncs, readSuper, listIfaces, hit) && hit.address == 0xA2);
+    EXPECT("IFACE control: a name nowhere is not found",
+           !Ubel::ResolveFunctionInChainOrInterfaces(Pawn, "Nope", listFuncs, readSuper, listIfaces, hit));
+
+    Ubel::ImplementedInterface ii;
+    EXPECT("IFACE ⭐: Pawn implements IFoo (through its base's IBar, which derives from IFoo)",
+           Ubel::FindImplementedInterface(Pawn, IFoo, false, readSuper, listIfaces, ii) && ii.cls == IBar);
+    EXPECT("IFACE control: Widget implements nothing",
+           !Ubel::FindImplementedInterface(Widget, IFoo, false, readSuper, listIfaces, ii));
+    EXPECT("IFACE: a Blueprint-only implementation is skipped when only native ones count",
+           !Ubel::FindImplementedInterface(Pawn, IBaz, true, readSuper, listIfaces, ii)
+           && Ubel::FindImplementedInterface(Pawn, IBaz, false, readSuper, listIfaces, ii));
+
+    uintptr_t addr = 1;
+    const uintptr_t obj = 0x100000;
+    EXPECT("IFACE ⭐: a native interface's address is the object + its PointerOffset",
+           Ubel::InterfaceAddressFor(obj, Pawn, IFoo, true, readSuper, listIfaces, addr) && addr == obj + 0x28);
+    EXPECT("IFACE ⭐: a native interface implemented only in Blueprint has a null address (the engine's own value)",
+           Ubel::InterfaceAddressFor(obj, Pawn, IBaz, true, readSuper, listIfaces, addr) && addr == 0);
+    EXPECT("IFACE: a Blueprint interface's address is the object itself",
+           Ubel::InterfaceAddressFor(obj, Pawn, IBaz, false, readSuper, listIfaces, addr) && addr == obj);
+    EXPECT("IFACE ⭐: a class that does not implement it answers false",
+           !Ubel::InterfaceAddressFor(obj, Widget, IFoo, true, readSuper, listIfaces, addr));
+}
+
 // [VND584-06] A cached UFunction* must belong to the instance's class chain before CMD_INVOKE runs it.
 static void Test_Ubel_IsClassInChain() {
     // A small fake hierarchy: Pawn -> Actor -> Object, and an unrelated Widget class; a cyclic pair for the bound.
@@ -11145,6 +11201,7 @@ int main() {
     RUN(Test_Genau_AdmitMultiModuleCandidate);
     RUN(Test_Genau_ProbeNamesIgnoreCase);
     RUN(Test_Ubel_IsClassInChain);
+    RUN(Test_Ubel_Interfaces);
     RUN(Test_Macht_ClassifyModuleForScan);       // [AOB-SKIP-OWN-DLL] the walk leaves the dumper's own images out
     RUN(Test_Radar_RefineContainerAnchor);
     RUN(Test_Radar_LeafAnchor);
