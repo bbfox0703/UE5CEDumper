@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-10-27 (build 3651) — the ProcessEvent hook finds itself on clang-built games; four more fixes from vendor audit #8 `[VND584-03]` `[VND584-05]` `[VND584-06]` `[VND584-07]` `[VND584-08]`
+
+- **The ProcessEvent hook is found by its own code on clang-built games.** Avowed's compiler tests the function
+  flags a byte at a time, which the detector did not recognise, so it always fell back to a version table that only
+  happened to be right there. Checked live on Avowed: the hook is now found by pattern at the same slot and receives
+  the game's calls. Every other game on file gives the same answer as before (36 of 37 binaries unchanged).
+- A Cheat Engine invoke form whose function was replaced by another class's (a Blueprint reloaded while the form was
+  open) is refused with a message saying to re-open the form, instead of running the wrong function. Checked live.
+- A UE 5.7 object-array layout seen in one licensee game (from Dumper-7) is read whole instead of as a few hundred
+  objects.
+- The offsets probe recognises its test structure's members whatever their letter case, and a soft pointer's path is
+  located from the engine's own measurement of it rather than from a size rule.
+- Tests: dll_core_test 1,320 checks and dll_helpers_test 3,589, 0 failures; C# 6,692 run, 0 failed; 36 gates.
+
 ## 2026-10-27 (build 3650) — a picked object reaches weak / soft parameters of an invoke `[VND584-01]` `[VND584-02]`
 
 - **Invoke now passes a picked object into `TWeakObjectPtr` / `TSoftObjectPtr` / `TSoftClassPtr` parameters.** Every
