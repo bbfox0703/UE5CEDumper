@@ -244,6 +244,17 @@ struct FDumperTestNestedBag
 	UPROPERTY() TMap<int32, int32> PairsB;
 };
 
+/// [VND584-01] A struct parameter holding a soft member: the invoke dialog writes a struct's sub-fields through the
+/// same 8-byte arm as a top-level parameter, so the picked object's ADDRESS landed in Icon. See Vnd584_EchoSoftSpec.
+USTRUCT()
+struct FDumperTestSoftSpec
+{
+	GENERATED_BODY()
+
+	UPROPERTY() int32 Count = 0;
+	UPROPERTY() TSoftObjectPtr<UObject> Icon;
+};
+
 UCLASS()
 class DUMPERTEST_API ADumperTestActor : public AActor
 {
@@ -1200,4 +1211,14 @@ public:
 	/// (20000 pairs push a CE XML export past its 60,000-entry cap). Count 0 empties them.
 	UFUNCTION(BlueprintCallable, Category = "DumperTest|R7")
 	void S11_SetNestedBag(int32 Count);
+
+	// [VND584-01] An invoke's weak / soft parameters. Every invoke path wrote the picked object's ADDRESS there, which
+	// the engine reads as FWeakObjectPtr { ObjectIndex, SerialNumber } and resolved to null while ProcessEvent reported
+	// success. Each returns what the ENGINE resolved, so an invoke can compare it with the object it passed. Engine
+	// libraries take soft pointers (KismetSystemLibrary::Conv_SoftObjectReferenceToObject); none takes a weak one or a
+	// struct holding a soft one, hence these two.
+	UFUNCTION()
+	AActor* Vnd584_EchoWeak(TWeakObjectPtr<AActor> Target) const { return Target.Get(); }
+	UFUNCTION()
+	UObject* Vnd584_EchoSoftSpec(const FDumperTestSoftSpec& Spec) const { return Spec.Icon.Get(); }
 };
