@@ -624,7 +624,10 @@ repackaged; their PE hashes changed. The rig is `tools/verify/vnd584_invoke_obje
 | function | parameter | check |
 |---|---|---|
 | `Vnd584_EchoWeak(TWeakObjectPtr<AActor> Target)` → `AActor*` | `Target` = a picked actor | **VND584-01**: returns that actor. A pre-fix DLL wrote the address into the weak pair, so it returned null while ProcessEvent said OK |
-| `Vnd584_EchoSoftSpec(const FDumperTestSoftSpec& Spec)` → `UObject*` | `Spec` → `Count` (`int32`) = 3, `Icon` (`TSoftObjectPtr<UObject>`) = a picked actor | **VND584-01**: returns that actor -- a soft MEMBER of a struct parameter is converted too |
+| `Vnd584_EchoSoftSpec(const FDumperTestSoftSpec& Spec)` → `UObject*` | `Spec` → `Count` (`int32`) = 3, `Icon` (`TSoftObjectPtr<UObject>`) = a picked actor |
+| `Vnd584_EchoWeakRef(const TWeakObjectPtr<AActor>& Target)` → `AActor*` | `Target` = a picked actor | **VND584-01**: returns that actor. A const reference is CPF_OutParm, so its thunk reads the caller's block -- the shape that shows on 5.4 (before UE 5.8 the by-value form above loses the pointer in the engine itself) |
+| `Vnd584_CallIface(const TScriptInterface<IDumperTestIface>& Target)` → `int32` | `Target` = `Vnd584_IfaceActor` (an `ADumperTestIfaceActor`, spawned in BeginPlay, implementing the native `IDumperTestIface` in C++) | **VND584-04**: returns 584 -- the interface half is the object + its PointerOffset. A pre-fix DLL sent the object half only, so `Target` read as null and it returned -1 |
+| `IDumperTestIface::Vnd584_IfaceMagic()` → `int32`, invoked by NAME on `Vnd584_IfaceActor` | -- | **VND584-04**: found through the class's implemented interfaces (it lives only on `UDumperTestIface`) and returns 584; a pre-fix DLL answered "Function not found" | **VND584-01**: returns that actor -- a soft MEMBER of a struct parameter is converted too |
 
 ### DumperTest58 (2026-09-16) — the 5.5+ half of the optional family, and ONLY that
 

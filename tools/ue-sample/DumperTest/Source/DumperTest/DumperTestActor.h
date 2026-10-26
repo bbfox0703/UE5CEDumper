@@ -255,6 +255,36 @@ struct FDumperTestSoftSpec
 	UPROPERTY() TSoftObjectPtr<UObject> Icon;
 };
 
+/// [VND584-04] A native interface with a BlueprintCallable function. ADumperTestIfaceActor implements it in C++ and
+/// does NOT redeclare the function as a UFUNCTION, so it lives only on UDumperTestIface: a by-name lookup has to read
+/// the class's implemented interfaces (UClass::Interfaces) to find it, as UClass::FindFunctionByName does.
+UINTERFACE(MinimalAPI, meta = (CannotImplementInterfaceInBlueprint))
+class UDumperTestIface : public UInterface
+{
+	GENERATED_BODY()
+};
+
+class IDumperTestIface
+{
+	GENERATED_BODY()
+
+public:
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|VND584")
+	virtual int32 Vnd584_IfaceMagic() const { return 0; }
+};
+
+/// [VND584-04] Implements IDumperTestIface natively, so its FImplementedInterface has a non-zero PointerOffset and a
+/// TScriptInterface to it needs that offset in its InterfacePointer. A separate class, so ADumperTestActor's own field
+/// offsets do not move. Spawned by ADumperTestActor::BeginPlay.
+UCLASS()
+class DUMPERTEST_API ADumperTestIfaceActor : public AActor, public IDumperTestIface
+{
+	GENERATED_BODY()
+
+public:
+	virtual int32 Vnd584_IfaceMagic() const override { return 584; }
+};
+
 UCLASS()
 class DUMPERTEST_API ADumperTestActor : public AActor
 {
@@ -1227,6 +1257,15 @@ public:
 	// on 5.4 whether the weak pair an invoke sends is right.
 	UFUNCTION()
 	AActor* Vnd584_EchoWeakRef(const TWeakObjectPtr<AActor>& Target) const { return Target.Get(); }
+	/// [VND584-04] Spawned in BeginPlay; see ADumperTestIfaceActor.
+	UPROPERTY() TObjectPtr<ADumperTestIfaceActor> Vnd584_IfaceActor;
+	/// [VND584-04] What a native callee does with an interface parameter: test it, then call through it. The invoke
+	/// paths filled only its object half, so `Target` read as null here and this returned -1.
+	UFUNCTION()
+	int32 Vnd584_CallIface(const TScriptInterface<IDumperTestIface>& Target) const
+	{
+		return Target ? Target->Vnd584_IfaceMagic() : -1;
+	}
 	UFUNCTION()
 	UObject* Vnd584_EchoSoftSpec(const FDumperTestSoftSpec& Spec) const { return Spec.Icon.Get(); }
 };
