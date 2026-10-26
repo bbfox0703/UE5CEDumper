@@ -64,11 +64,13 @@ informational line instead. This is not laziness: `docs/archive/README.md` docum
 ("nothing was edited, only moved") and repairing the links would destroy the byte-identity that
 makes an archived doc citable.
 
-⚠ But the invariant is "unedited since the move", NOT "lives in docs/archive/", and exactly three
-files there do not have it -- so they stay INSIDE the gate:
+⚠ But the invariant is "unedited since the move", NOT "lives in docs/archive/", and the files there
+that do not have it stay INSIDE the gate (ARCHIVE_INCLUDED below):
   * `README.md`                          -- authored in place (git `A`, no rename source)
   * `godmode-implementation-plan.md`     -- git R099; its whole archive diff is two link fixes
   * `audit-2026-08-16-med-rederivation.md` -- git R098; documented at `archive/README.md`
+  * `handover-retired-*.md`              -- authored in place: its own text is new, only the quoted
+                                            passages were moved
 """
 import argparse
 import collections
@@ -89,6 +91,7 @@ ARCHIVE_INCLUDED = {
     "docs/archive/README.md",
     "docs/archive/godmode-implementation-plan.md",
     "docs/archive/audit-2026-08-16-med-rederivation.md",
+    "docs/archive/handover-retired-2026-10-27.md",
 }
 
 LINK = re.compile(r"\[(?P<text>[^\]\n]*)\]\(\s*(?P<target>[^)\s]+)(?:\s+\"[^\"]*\")?\s*\)")

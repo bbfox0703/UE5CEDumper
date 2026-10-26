@@ -43,7 +43,8 @@ in [`../../CLAUDE.md`](../../CLAUDE.md).
 > different sets of files fail it. They are listed separately because only one of them is fixed.
 >
 > **1. Files the link gate deliberately covers** — a fixed set, in `check_md_links.py`'s
-> `ARCHIVE_INCLUDED`, held at zero broken links: `README.md` (authored in place, never moved),
+> `ARCHIVE_INCLUDED`, held at zero broken links: `README.md` and `handover-retired-2026-10-27.md`
+> (authored in place, never moved; the second only quotes the passages it holds),
 > `godmode-implementation-plan.md` and `audit-2026-08-16-med-rederivation.md` (both had their links
 > corrected *at archive time* — see their rows).
 >
