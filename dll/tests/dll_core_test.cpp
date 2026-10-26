@@ -11248,6 +11248,148 @@ int main() {
         }
     }
 
+    // [VND584-01] Every invoke path writes the PICKED OBJECT'S ADDRESS into a weak / soft parameter, which the engine
+    // reads as FWeakObjectPtr { ObjectIndex, SerialNumber } and resolves to null. The DLL now swaps it for the engine's
+    // own value; the fakes below stand in for the live-object test, Conv_ObjectToSoftObjectReference and UE's resolve.
+    {   blk("VND584-01: a picked object becomes the engine's weak / soft pointer, never its raw address");
+        using Ubel::ObjectParamAction;
+        using Ubel::ParamKind;
+        const uint64_t obj = 0x1F2A3B4C5D0ull;
+        auto cls = [](const char* t, int32_t size, ParamKind k, uint64_t lead, bool live) {
+            return Ubel::ClassifyObjectParam(t, size, k, lead, live);
+        };
+        check("VND584-01 classify ⭐: a picked object in a weak slot is converted",
+              cls("WeakObjectProperty", 8, ParamKind::In, obj, true) == ObjectParamAction::ConvertWeak);
+        check("VND584-01 classify ⭐: ...in a const-ref soft slot too",
+              cls("SoftObjectProperty", 0x28, ParamKind::ConstRef, obj, true) == ObjectParamAction::ConvertSoft);
+        check("VND584-01 classify: ...and a soft class slot",
+              cls("SoftClassProperty", 0x28, ParamKind::In, obj, true) == ObjectParamAction::ConvertSoft);
+        check("VND584-01 classify: an in-out soft slot is the caller's value too",
+              cls("SoftObjectProperty", 0x28, ParamKind::InOut, obj, true) == ObjectParamAction::ConvertSoft);
+        check("VND584-01 classify: a lazy slot holding an object is refused (no GUID can be made)",
+              cls("LazyObjectProperty", 0x20, ParamKind::In, obj, true) == ObjectParamAction::Refuse);
+        check("VND584-01 classify: a 16-byte (remote-handle) weak slot is refused",
+              cls("WeakObjectProperty", 16, ParamKind::In, obj, true) == ObjectParamAction::Refuse);
+        // CONTROLS: what must keep going through untouched.
+        check("VND584-01 classify control: zero is null and stays",
+              cls("WeakObjectProperty", 8, ParamKind::In, 0, false) == ObjectParamAction::Leave);
+        check("VND584-01 classify control: a value that is no live object (a pair the caller encoded) stays",
+              cls("SoftObjectProperty", 0x28, ParamKind::In, 0x0000000500001234ull, false) == ObjectParamAction::Leave);
+        check("VND584-01 classify control: a lazy slot that is no object stays (nothing to refuse)",
+              cls("LazyObjectProperty", 0x20, ParamKind::In, 0x0000000500001234ull, false) == ObjectParamAction::Leave);
+        check("VND584-01 classify control: a pure out parameter is the callee's",
+              cls("SoftObjectProperty", 0x28, ParamKind::Out, obj, true) == ObjectParamAction::Leave);
+        check("VND584-01 classify control: so is the return value",
+              cls("SoftObjectProperty", 0x28, ParamKind::Return, obj, true) == ObjectParamAction::Leave);
+        check("VND584-01 classify control: a UObject* IS its address",
+              cls("ObjectProperty", 8, ParamKind::In, obj, true) == ObjectParamAction::Leave);
+        check("VND584-01 classify control: an interface leads with its UObject*",
+              cls("InterfaceProperty", 16, ParamKind::In, obj, true) == ObjectParamAction::Leave);
+
+        // The rewrite, against fakes: one live object; the engine's soft pointer for it is {77, 5} + a path head 0xAB.
+        static uintptr_t s_live = 0;
+        static int s_made = 0;
+        static size_t s_madeSize = 0x28;
+        static bool s_makeFails = false;
+        static int32_t s_resolvesTo = 77;   // the index UE's resolve accepts
+        s_live = static_cast<uintptr_t>(obj);
+        Ubel::ObjectParamOps ops;
+        ops.isLiveObject = [](uintptr_t a) { return a == s_live; };
+        ops.makeSoftReference = [](uintptr_t o, void*, std::vector<uint8_t>& out, std::string& why) {
+            ++s_made;
+            if (s_makeFails) { why = "Conv_ObjectToSoftObjectReference not found"; return false; }
+            out.assign(s_madeSize, 0);
+            const int32_t idx = 77, ser = 5;
+            memcpy(out.data(), &idx, 4);
+            memcpy(out.data() + 4, &ser, 4);
+            out[8] = 0xAB;
+            (void)o;
+            return true;
+        };
+        ops.resolveWeak = [](int32_t i, int32_t s) -> uintptr_t { return (i == s_resolvesTo && s == 5) ? s_live : 0; };
+
+        auto field = [](const char* name, const char* type, int32_t off, int32_t size, uint64_t flags) {
+            Ubel::ParamField f;
+            f.name = name; f.typeName = type; f.offset = off; f.size = size; f.flags = flags;
+            f.kind = Ubel::ParamKindOf(flags);
+            return f;
+        };
+        constexpr uint64_t kParm = 0x80, kOut = 0x100, kConst = 0x2, kRef = 0x08000000, kRet = 0x400;
+        Ubel::ParamLayout L;
+        L.params = { field("Target",   "WeakObjectProperty", 0x00, 8,    kParm),
+                     field("Asset",    "SoftObjectProperty", 0x08, 0x28, kParm | kOut | kConst | kRef),
+                     field("Plain",    "ObjectProperty",     0x30, 8,    kParm),
+                     field("OutAsset", "SoftObjectProperty", 0x38, 0x28, kParm | kOut),
+                     field("Ret",      "SoftObjectProperty", 0x60, 0x28, kParm | kOut | kRet) };
+        auto fill = [&](std::vector<uint8_t>& b) {
+            b.assign(0x88, 0);
+            for (int32_t off : { 0x00, 0x08, 0x30, 0x38, 0x60 }) memcpy(b.data() + off, &obj, 8);
+        };
+        std::vector<uint8_t> buf;
+        fill(buf);
+        int converted = -1;
+        std::string why;
+        bool ok = Ubel::PrepareObjectParams(L, buf.data(), buf.size(), ops, converted, why);
+        int32_t wIdx = 0, wSer = 0;
+        memcpy(&wIdx, buf.data(), 4);
+        memcpy(&wSer, buf.data() + 4, 4);
+        check("VND584-01 rewrite ⭐: accepted, two slots rewritten", ok && converted == 2, why.c_str());
+        check("VND584-01 rewrite ⭐: the weak slot holds the engine's pair {77, 5}, not the address",
+              wIdx == 77 && wSer == 5);
+        int32_t sIdx = 0;
+        memcpy(&sIdx, buf.data() + 0x08, 4);
+        check("VND584-01 rewrite ⭐: the soft slot holds the engine's whole pointer, its path included",
+              sIdx == 77 && buf[0x08 + 8] == 0xAB);
+        uint64_t plain = 0, outSoft = 0, ret = 0;
+        memcpy(&plain, buf.data() + 0x30, 8);
+        memcpy(&outSoft, buf.data() + 0x38, 8);
+        memcpy(&ret, buf.data() + 0x60, 8);
+        check("VND584-01 rewrite control: the UObject* slot keeps the address", plain == obj);
+        check("VND584-01 rewrite control: the pure out and the return slots are left alone", outSoft == obj && ret == obj);
+
+        // Refusals: each one names the parameter and leaves the call unsent.
+        Ubel::ParamLayout lazyL;
+        lazyL.params = { field("Lazy", "LazyObjectProperty", 0x00, 0x20, kParm) };
+        fill(buf);
+        ok = Ubel::PrepareObjectParams(lazyL, buf.data(), buf.size(), ops, converted, why);
+        check("VND584-01 refuse ⭐: a lazy slot holding an object is refused, by name",
+              !ok && why.find("Lazy") != std::string::npos, why.c_str());
+
+        s_makeFails = true;
+        fill(buf);
+        ok = Ubel::PrepareObjectParams(L, buf.data(), buf.size(), ops, converted, why);
+        s_makeFails = false;
+        check("VND584-01 refuse: no engine reference, no call (never the raw address)",
+              !ok && why.find("Target") != std::string::npos, why.c_str());
+
+        s_resolvesTo = 78;
+        fill(buf);
+        ok = Ubel::PrepareObjectParams(L, buf.data(), buf.size(), ops, converted, why);
+        s_resolvesTo = 77;
+        check("VND584-01 refuse: a pair that does not lead back to the object is not sent", !ok, why.c_str());
+
+        s_madeSize = 0x30;
+        Ubel::ParamLayout softOnly;
+        softOnly.params = { field("Asset", "SoftObjectProperty", 0x08, 0x28, kParm) };
+        fill(buf);
+        ok = Ubel::PrepareObjectParams(softOnly, buf.data(), buf.size(), ops, converted, why);
+        s_madeSize = 0x28;
+        check("VND584-01 refuse: an engine pointer of another size is not copied over the slot",
+              !ok && why.find("Asset") != std::string::npos, why.c_str());
+
+        // CONTROLS: nothing to convert asks the engine for nothing.
+        s_made = 0;
+        std::vector<uint8_t> zero(0x88, 0);
+        ok = Ubel::PrepareObjectParams(L, zero.data(), zero.size(), ops, converted, why);
+        check("VND584-01 control: an all-null buffer is accepted and the engine is not called",
+              ok && converted == 0 && s_made == 0);
+        Ubel::ParamLayout pastEnd;
+        pastEnd.params = { field("Far", "WeakObjectProperty", 0x84, 8, kParm) };
+        fill(buf);
+        ok = Ubel::PrepareObjectParams(pastEnd, buf.data(), buf.size(), ops, converted, why);
+        check("VND584-01 control: a slot running past the buffer is left alone", ok && converted == 0 && s_made == 0);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

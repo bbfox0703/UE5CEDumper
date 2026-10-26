@@ -2463,6 +2463,12 @@ size_t RunArmCapturePass(Linie::ArmState& st, size_t maxArms, const ArmCaptureOp
     return arms.size();
 }
 
+// [VND584-01] Red stub: converts nothing.
+bool PrepareObjectParams(const ParamLayout&, uint8_t*, size_t, const ObjectParamOps&, int& converted, std::string&) {
+    converted = 0;
+    return true;
+}
+
 // [LIVEFUNCS-STEP2] The decoder. Pure: the copy's bytes, the arm's layout, and what the ctx answers; nothing here reads
 // the game, so it runs after Stop, on the pipe thread, from a layout read while the function was alive.
 static std::string SnapHex(const uint8_t* p, size_t n) {

@@ -571,6 +571,44 @@ inline ParamKind ParamKindOf(uint64_t propertyFlags) {
     return (propertyFlags & kReference) ? ParamKind::InOut : ParamKind::Out;
 }
 
+// [VND584-01] An invoke's object-pointer parameters. TWeakObjectPtr / TSoftObjectPtr / TSoftClassPtr begin with
+// FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber } (UE 5.8 WeakObjectPtr.h, PersistentObjectPtr.h), yet every
+// invoke path -- the UI's FIRE, the CE form, the baked script, the Lua helper -- writes the address of the object the
+// user picked there. The engine read that address as the pair, resolved it to null, and ProcessEvent still reported
+// success. The DLL now swaps a picked address for the engine's own value before ProcessEvent; this says which slots.
+enum class ObjectParamAction : uint8_t { Leave, ConvertWeak, ConvertSoft, Refuse };
+inline ObjectParamAction ClassifyObjectParam(const std::string& typeName, int32_t size, ParamKind kind,
+                                             uint64_t leadingQword, bool leadsWithLiveObject) {
+    const bool weak = typeName == "WeakObjectProperty";
+    const bool soft = typeName == "SoftObjectProperty" || typeName == "SoftClassProperty";
+    const bool lazy = typeName == "LazyObjectProperty";
+    // Only what the caller hands in: a pure out parameter and the return value are the callee's to write.
+    if (!(weak || soft || lazy) || kind == ParamKind::Out || kind == ParamKind::Return) return ObjectParamAction::Leave;
+    // Zero is null in all three. A value that is not a live object's address is one the caller encoded itself, and it
+    // goes through as it always did.
+    if (leadingQword == 0 || !leadsWithLiveObject) return ObjectParamAction::Leave;
+    // A lazy pointer resolves by a GUID nothing here can make (UHT refuses lazy UFunction parameters anyway), and a weak
+    // pointer of any size but 8 is the remote-handle shape (VND583-15) this does not model.
+    if (lazy || (weak && size != 8)) return ObjectParamAction::Refuse;
+    return weak ? ObjectParamAction::ConvertWeak : ObjectParamAction::ConvertSoft;
+}
+
+// What PrepareObjectParams asks of the process, injectable so a test needs no game memory.
+struct ObjectParamOps {
+    bool (*isLiveObject)(uintptr_t addr) = nullptr;
+    // The engine's TSoftObjectPtr for `object`, as bytes: KismetSystemLibrary::Conv_ObjectToSoftObjectReference, which
+    // assigns the object's weak serial and builds its FSoftObjectPath (4.18 to 5.8). False with `why` when it cannot.
+    bool (*makeSoftReference)(uintptr_t object, void* ctx, std::vector<uint8_t>& out, std::string& why) = nullptr;
+    // UE's own weak resolve (ResolveWeakObjectPtr): the pair the engine made must lead back to the object.
+    uintptr_t (*resolveWeak)(int32_t index, int32_t serial) = nullptr;
+    void* ctx = nullptr;
+};
+// Rewrite every input slot of `layout` in `params` that holds a picked object's address into the engine's value for
+// it. False with `why` when a slot holds an object that cannot be passed: the invoke is then refused, not sent with a
+// null the caller did not ask for. `converted` counts the slots rewritten.
+bool PrepareObjectParams(const ParamLayout& layout, uint8_t* params, size_t size, const ObjectParamOps& ops,
+                         int& converted, std::string& why);
+
 // [VND583-01] UFunction::FunctionFlags' offset as decided by the one-shot vote
 // (DynOff::UFUNCTION_FLAGS), running the vote on first use. 0 = undecided (the offsets probe
 // has not run, or it could not measure) -- the caller then keeps its primary + sweep.
