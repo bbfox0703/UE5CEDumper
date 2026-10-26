@@ -27,6 +27,19 @@ builds ≤696 in
 
 -----
 
+## 2026-10-27 (build 3652) — invoke understands interfaces `[VND584-04]` `[VND584-DOC]`
+
+- **An interface's function can be invoked by name on a class that implements it.** A function a class gets from an
+  interface without redeclaring it used to come back "Function not found"; the lookup now also searches the
+  interfaces a class implements, as the engine does. Pipe and Cheat Engine both.
+- **An interface parameter reaches the callee whole.** Every invoke path filled only the object half of an
+  interface parameter, so a native function that checked or called through it saw nothing. The DLL now fills the
+  interface half the way the engine does, and refuses an object that does not implement the interface.
+- Both checked live on DumperTest 5.4 (a new interface fixture): build 3651 failed all three cases, build 3652 passes
+  them. The DLL measures where a class keeps its interfaces; measured on UE 5.1, 5.4 and 5.8.
+- Docs: soft-pointer sizes corrected, and several notes taken from the RE-UE4SS configs brought up to date.
+- Tests: dll_core_test 1,326 checks and dll_helpers_test 3,599, 0 failures; C# 6,692 run, 0 failed; 36 gates.
+
 ## 2026-10-27 (build 3651) — the ProcessEvent hook finds itself on clang-built games; four more fixes from vendor audit #8 `[VND584-03]` `[VND584-05]` `[VND584-06]` `[VND584-07]` `[VND584-08]`
 
 - **The ProcessEvent hook is found by its own code on clang-built games.** Avowed's compiler tests the function
