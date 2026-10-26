@@ -11510,29 +11510,33 @@ int main() {
     {
         blk("VND584-03: a chunk-counts-first UE 5.7 FUObjectArray is read whole, and the relaxed rows have a floor");
         alignas(16) static uint8_t mist[0x40] = {};
-        memset(mist, 0, sizeof(mist));
         const uintptr_t table = reinterpret_cast<uintptr_t>(pool.chunkTable.data());
-        const int32_t maxChunks = 6, numChunks = static_cast<int32_t>(pool.chunkTable.size());
-        memcpy(mist + 0x04, &maxChunks, 4);
-        memcpy(mist + 0x08, &numChunks, 4);
-        memcpy(mist + 0x10, &table, 8);
-        memcpy(mist + 0x20, &kCount, 4);
-        memcpy(mist + 0x24, &kCount, 4);
+        // Strict-valid numbers: 6 chunks of 0x10000 (MaxElements 0x60000), one in use for 16,384 objects.
+        auto buildMist = [&](int32_t maxChunks, int32_t maxElements) {
+            memset(mist, 0, sizeof(mist));
+            const int32_t numChunks = static_cast<int32_t>(pool.chunkTable.size());
+            memcpy(mist + 0x04, &maxChunks, 4);
+            memcpy(mist + 0x08, &numChunks, 4);
+            memcpy(mist + 0x10, &table, 8);
+            memcpy(mist + 0x20, &maxElements, 4);
+            memcpy(mist + 0x24, &kCount, 4);
+        };
+        buildMist(6, 0x60000);
         Aura::Init(reinterpret_cast<uintptr_t>(mist));
-        const int32_t got = Aura::GetCount();
+        int32_t got = Aura::GetCount();
         check("VND584-03 ⭐: the Mistfall-shaped array reports every object", got == kCount, std::to_string(got).c_str());
+        check("VND584-03 ⭐: ...through its own row, chunk counts at +0x04 / +0x08",
+              Aura::s_layout.maxChunksOffset == 0x04 && Aura::s_layout.numChunksOffset == 0x08,
+              std::to_string(Aura::s_layout.maxChunksOffset).c_str());
 
-        // The floor alone: a header only the relaxed A/C row would take, with a count no UE game has (0x200).
-        alignas(16) static uint8_t lowCount[0x40] = {};   // not "small": a Windows header #defines it
-        memset(lowCount, 0, sizeof(lowCount));
-        const int32_t tiny = 0x200;
-        memcpy(lowCount + 0x00, &table, 8);
-        memcpy(lowCount + 0x10, &tiny, 4);
-        memcpy(lowCount + 0x14, &tiny, 4);
-        Aura::Init(reinterpret_cast<uintptr_t>(lowCount));
-        const int32_t gotSmall = Aura::GetCount();
-        check("VND584-03 ⭐: the relaxed A/C row refuses a count below Genau's 0x1000 floor",
-              gotSmall != tiny, std::to_string(gotSmall).c_str());
+        // The floor, alone: the same shape with chunk numbers no strict row accepts (one chunk of 16,384). Without
+        // the floor relaxed A/C takes the Objects pointer's high dword as the count; with it the relaxed E row, which
+        // reads Objects / Max / Num from the right places, is reached.
+        buildMist(1, kCount);
+        Aura::Init(reinterpret_cast<uintptr_t>(mist));
+        got = Aura::GetCount();
+        check("VND584-03 ⭐: with no strict row, the relaxed rows' 0x1000 floor still reaches every object",
+              got == kCount, std::to_string(got).c_str());
 
         // CONTROL: the main fixture's stock UE5-Extended array still reads whole through detection.
         Aura::Init(pool.Addr());
