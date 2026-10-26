@@ -16,8 +16,11 @@ THE CASES. Each starred case asks the ENGINE what it received, so a pre-fix DLL 
     (static native) and through the game-thread queue;
   * KismetSystemLibrary::IsValidSoftObjectReference(picked actor) must return true -- the PATH, not only the weak half;
   * KismetSystemLibrary::Conv_SoftClassReferenceToClass(the actor's class) must return the class;
-  * DumperTestActor::Vnd584_EchoWeak(picked actor) / Vnd584_EchoSoftSpec({Icon = picked actor}) must return the actor
-    (fixtures packaged 2026-10-26 -- no engine library takes a weak parameter or a struct holding a soft one);
+  * DumperTestActor::Vnd584_EchoWeakRef(picked actor) / Vnd584_EchoSoftSpec({Icon = picked actor}) must return the
+    actor (fixtures packaged 2026-10-26 -- no engine library takes a weak parameter or a struct holding a soft one);
+  * Vnd584_EchoWeak (BY VALUE): the slot must hold the engine's pair for the actor. Its return is not checked: before
+    UE 5.8 the engine's own thunk loses a by-value weak pointer (CopyCompleteValueToScriptVM stores a raw UObject* in
+    its TWeakObjectPtr local; fixed by 399f2949c408), so it returns null whatever the caller sends;
   * the same weak and soft cases through the CE mailbox (CMD_INVOKE), the path CE scripts use.
 Controls, which must pass on every build: a null stays null, and a value that is no live object (an encoded pair the
 caller built) goes through unrefused and unchanged.
@@ -168,15 +171,26 @@ def main():
 
         # ---- pipe: the DumperTest fixtures ---------------------------------------------------------------
         weak_fn = af.get("Vnd584_EchoWeak")
+        weak_ref_fn = af.get("Vnd584_EchoWeakRef")
         spec_fn = af.get("Vnd584_EchoSoftSpec")
-        if not weak_fn or not spec_fn:
+        if not weak_fn or not weak_ref_fn or not spec_fn:
             say("  ----  the DumperTest fixtures are missing: package it with them (tools/ue-sample, 2026-10-26)")
             rig.results.append(("fixtures present", False, True))
         else:
+            # By VALUE, the engine's own thunk loses the pointer before UE 5.8 (its TWeakObjectPtr local is filled
+            # through CopyCompleteValueToScriptVM with a raw UObject*; fixed by 399f2949c408), so its return says
+            # nothing about the invoke. What the invoke owes is the slot: the engine's pair for the actor.
             wp = first(weak_fn, "WeakObjectProperty")
             r, out = rig.invoke(act, "DumperTestActor", weak_fn, [(wp["offset"], q(act))], False)
             got = ret_u64(weak_fn, out)
-            rig.record("pipe Vnd584_EchoWeak(actor) returns the actor", got == act,
+            idx, ser = struct.unpack_from("<ii", out, wp["offset"]) if out else (None, None)
+            rig.record("pipe Vnd584_EchoWeak: the by-value weak slot holds the engine's pair for the actor",
+                       idx == act_idx and bool(ser), "{index %s, serial %s}; ret=%s (null before UE 5.8: engine)"
+                       % (idx, ser, hexaddr(got) if got is not None else None))
+            wrp = first(weak_ref_fn, "WeakObjectProperty")
+            r, out = rig.invoke(act, "DumperTestActor", weak_ref_fn, [(wrp["offset"], q(act))], False)
+            got = ret_u64(weak_ref_fn, out)
+            rig.record("pipe Vnd584_EchoWeakRef(actor) returns the actor", got == act,
                        "result=%s ret=%s %s" % (r.get("result"), hexaddr(got) if got is not None else None,
                                                 r.get("error", "")))
             sp2 = first(spec_fn, "StructProperty")
@@ -228,11 +242,11 @@ def main():
             got = ret_u64(conv, out)
             rig.record("mailbox Conv_SoftObjectReferenceToObject(actor) returns the actor", got == act,
                        "result=%s ret=%s %s" % (res, hexaddr(got) if got is not None else None, err))
-            if weak_fn:
-                wp = first(weak_fn, "WeakObjectProperty")
-                res, out, err = mailbox_invoke(act, weak_fn, [(wp["offset"], q(act))])
-                got = ret_u64(weak_fn, out)
-                rig.record("mailbox Vnd584_EchoWeak(actor) returns the actor", got == act,
+            if weak_ref_fn:
+                wrp = first(weak_ref_fn, "WeakObjectProperty")
+                res, out, err = mailbox_invoke(act, weak_ref_fn, [(wrp["offset"], q(act))])
+                got = ret_u64(weak_ref_fn, out)
+                rig.record("mailbox Vnd584_EchoWeakRef(actor) returns the actor", got == act,
                            "result=%s ret=%s %s" % (res, hexaddr(got) if got is not None else None, err))
 
         starred = [r for r in rig.results if r[2]]
