@@ -13,6 +13,7 @@
 // ============================================================
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 
@@ -58,8 +59,10 @@ bool IsHookActive();
 ///                    thread). Pass 0 only when `params` outlives the request AND
 ///                    nothing rewrites it meanwhile: Mimic's mailbox does not
 ///                    qualify, because CE rewrites it with its next command.
+/// @param dropIfAbandoned  [VND584-01] see ClaimRequest: on a timeout the request never runs later.
 /// @return 0 on success, -4 if SEH exception, -5 if timeout, -7 if hook not active
-int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize);
+int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize,
+                      bool dropIfAbandoned = false);
 
 /// [W3-DEBUGCAM-QUEUED] EnqueueInvoke's -5: the game-thread dispatch TIMED OUT and the request STAYS QUEUED -- it still
 /// runs when the game thread next drains. Mirrored UI-side as Constants.InvokeDispatchTimeoutResult.
@@ -231,6 +234,17 @@ inline bool ShouldUseTrampoline(uintptr_t resolvedPeAddr,
 /// shipped gate, not a mirror of it: HookedProcessEventBody calls exactly this.
 inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs) {
     return queueDepth != 0 && !entryIsOurs;
+}
+
+/// [VND584-01] A queued request its waiter may abandon. A timed-out request normally stays queued and runs later from
+/// its own copy of the parameters; for a helper call made from a value that may not outlive the wait -- the object an
+/// invoke's caller picked, which the engine call dereferences -- a late run could touch a freed object. Such a request
+/// either is already running when its waiter gives up (the waiter then waits it out and takes its result) or never
+/// runs. The drain and the waiter race on one compare-exchange out of Queued; whichever moves it first decides.
+constexpr int32_t kRequestQueued = 0, kRequestRunning = 1, kRequestAbandoned = 2;
+inline bool ClaimRequest(std::atomic<int32_t>& state, int32_t to) {
+    int32_t expected = kRequestQueued;
+    return state.compare_exchange_strong(expected, to, std::memory_order_acq_rel);
 }
 
 // ============================================================

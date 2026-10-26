@@ -2302,8 +2302,10 @@ static void ReportHookState(bool active) {
 // can't dereference a freed caller buffer (use-after-free). Out-params are copied
 // back on success. The direct fallback is synchronous (buffer stays alive), so
 // size is irrelevant there. Declared extern "C" so Fern links to it directly.
-extern "C" int32_t UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
-                                          uintptr_t params, uint32_t paramsSize) {
+// The body of UE5_CallProcessEventEx. dropIfAbandoned: Stark::ClaimRequest -- a queued request whose waiter times out
+// never runs later. [VND584-01]
+static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintptr_t params, uint32_t paramsSize,
+                                      bool dropIfAbandoned) {
     if (!instance || !ufunc) return -1;
 
     // Lazy, race-safe one-time detection + (retryable) hook install (audit #3).
@@ -2316,7 +2318,7 @@ extern "C" int32_t UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
         ReportHookState(true);
         LOG_INFO("UE5_CallProcessEvent: dispatching to game thread inst=0x%llX func=0x%llX",
                  (unsigned long long)instance, (unsigned long long)ufunc);
-        return Stark::EnqueueInvoke(instance, ufunc, params, paramsSize);
+        return Stark::EnqueueInvoke(instance, ufunc, params, paramsSize, dropIfAbandoned);
     }
 
     // Hook is down. Log the fallback ONCE per state transition, not once per
@@ -2375,6 +2377,11 @@ extern "C" int32_t UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
         return -4;
     }
     return 0;
+}
+
+extern "C" int32_t UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
+                                          uintptr_t params, uint32_t paramsSize) {
+    return CallProcessEventRouted(instance, ufunc, params, paramsSize, false);
 }
 
 extern "C" bool UE5_IsGameThreadHookActive() { return Stark::IsHookActive(); }
@@ -2441,7 +2448,9 @@ bool IsLiveObject(uintptr_t addr) {
 }
 
 // ctx: the route the invoke itself takes. A static-native target runs off the game thread, so the conversion does
-// too (Conv_ObjectToSoftObjectReference is Native|Static, the same class of call); anything else queues both.
+// too (Conv_ObjectToSoftObjectReference is Native|Static, the same class of call); anything else queues both. A queued
+// conversion is dropped if it times out: it dereferences the picked object, which may be freed by the time a late
+// drain would run it, and its result has no consumer once the invoke was refused.
 bool MakeSoftReference(uintptr_t object, void* ctx, std::vector<uint8_t>& out, std::string& why) {
     const bool direct = ctx && *static_cast<const bool*>(ctx);
     uintptr_t ksl = 0, conv = 0;
@@ -2456,7 +2465,8 @@ bool MakeSoftReference(uintptr_t object, void* ctx, std::vector<uint8_t>& out, s
     memcpy(buf.data() + objOff, &object, sizeof(object));
     const int32_t rc = direct
         ? UE5_CallProcessEventDirect(ksl, conv, reinterpret_cast<uintptr_t>(buf.data()))
-        : UE5_CallProcessEventEx(ksl, conv, reinterpret_cast<uintptr_t>(buf.data()), static_cast<uint32_t>(buf.size()));
+        : CallProcessEventRouted(ksl, conv, reinterpret_cast<uintptr_t>(buf.data()),
+                                 static_cast<uint32_t>(buf.size()), /*dropIfAbandoned=*/true);
     if (rc != 0) {
         why = "Conv_ObjectToSoftObjectReference: ProcessEvent returned " + std::to_string(rc);
         return false;

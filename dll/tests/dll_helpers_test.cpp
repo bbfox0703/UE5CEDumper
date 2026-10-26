@@ -776,6 +776,21 @@ static void Test_Stark_ShouldDrainQueue() {
            !Stark::ShouldDrainQueue(64, true));
 }
 
+// [VND584-01] A request its waiter may abandon: whichever of the drain and the timed-out waiter moves it out of Queued
+// first decides, and the other learns it lost.
+static void Test_Stark_ClaimRequest() {
+    std::atomic<int32_t> s{Stark::kRequestQueued};
+    EXPECT("CLAIM ⭐: the drain claims a queued request", Stark::ClaimRequest(s, Stark::kRequestRunning));
+    EXPECT("CLAIM ⭐: ...so the timed-out waiter cannot abandon it (it waits the call out)",
+           !Stark::ClaimRequest(s, Stark::kRequestAbandoned) && s.load() == Stark::kRequestRunning);
+    std::atomic<int32_t> t{Stark::kRequestQueued};
+    EXPECT("CLAIM ⭐: the waiter abandons a request still queued", Stark::ClaimRequest(t, Stark::kRequestAbandoned));
+    EXPECT("CLAIM ⭐: ...so a late drain does not run it",
+           !Stark::ClaimRequest(t, Stark::kRequestRunning) && t.load() == Stark::kRequestAbandoned);
+    EXPECT("CLAIM: the three states are distinct", Stark::kRequestQueued != Stark::kRequestRunning
+           && Stark::kRequestRunning != Stark::kRequestAbandoned && Stark::kRequestQueued != Stark::kRequestAbandoned);
+}
+
 // ----- Stark: ProcessEvent detection lifecycle ---------------------------------
 //
 // [PEHOOKONCE-2026-08-18]. The field defect: a detection that failed because there
@@ -10844,6 +10859,7 @@ int main() {
     RUN(Test_Ubel_EstimateClassInfoBytes);
     RUN(Test_Stark_ShouldUseTrampoline);
     RUN(Test_Stark_ShouldDrainQueue);
+    RUN(Test_Stark_ClaimRequest);
     RUN(Test_Stark_PeOffsetSentinels);
     RUN(Test_Stark_ShouldRetryPeDetection);
     RUN(Test_Stark_PeValidationFailureVerdict);
