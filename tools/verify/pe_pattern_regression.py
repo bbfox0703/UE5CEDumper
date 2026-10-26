@@ -209,6 +209,8 @@ def check(path):
 
 
 def main(paths):
+    # A corpus folder name can carry a trademark sign, which a cp950 console cannot print.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     worst = 0
     for p in paths:
         status, name, err, nb, cur, new = check(p)
