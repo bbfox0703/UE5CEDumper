@@ -45,9 +45,30 @@ def tier0(path):
 # Genau::ScanVersionBranchName's grammar, ported: a NUL-terminated printable string of at most 96 characters,
 # "++UE4+" / "++UE5+" with the UE in either case, holding a whole "M.m" token after a '+' or '-', followed by the end,
 # a '+' or a '-', M the depot's major and M.m a row of kVersionNeedles. Keep in step with that function.
-BRANCH_ASCII = re.compile(rb"\+\+[Uu][Ee][45]\+[\x20-\x7e]{0,90}?\x00")
-BRANCH_UTF16 = re.compile(rb"\+\x00\+\x00[Uu]\x00[Ee]\x00[45]\x00\+\x00(?:[\x20-\x7e]\x00){0,90}?\x00\x00")
-TABLE = {(5, m) for m in range(0, 9)} | {(4, m) for m in range(18, 28)}   # kVersionNeedles
+# A lookahead, so every start offset is tried as the DLL tries every '+': a refused run must not hide a branch that
+# starts inside it ("++UE5+x++UE4+4.27").
+BRANCH_ASCII = re.compile(rb"(?=(\+\+[Uu][Ee][45]\+[\x20-\x7e]{0,90}?\x00))")
+BRANCH_UTF16 = re.compile(rb"(?=(\+\x00\+\x00[Uu]\x00[Ee]\x00[45]\x00\+\x00(?:[\x20-\x7e]\x00){0,90}?\x00\x00))")
+# kVersionNeedles' rows without the trailing dot, in the table's order.
+BARE = ["5.8", "5.7", "5.6", "5.5", "5.4", "5.3", "5.2", "5.1", "5.0", "4.27", "4.26", "4.25", "4.24", "4.23", "4.22",
+        "4.21", "4.20", "4.19", "4.18"]
+TABLE = {tuple(int(x) for x in b.split(".")) for b in BARE}
+TIER1_PREFIXES = ("++UE5+Release-", "++UE4+Release-")
+
+
+def tier1_finds(data):
+    """Genau::ScanVersionTier1's verdict: an Epic prefix followed at once by a table version, either encoding.
+    Only then does the DLL stop before the branch reader; an Epic tag naming a version outside the table does not."""
+    for enc in ("ascii", "utf-16-le"):
+        bares = [b.encode(enc) for b in BARE]
+        for prefix in TIER1_PREFIXES:
+            pre = prefix.encode(enc)
+            i = data.find(pre)
+            while i >= 0:
+                if any(data.startswith(b, i + len(pre)) for b in bares):
+                    return True
+                i = data.find(pre, i + 1)
+    return False
 
 
 def branch_name_version(text):
@@ -79,11 +100,11 @@ def needles(path):
         t = ("++UE%s+Release-%s.%s" % (m.group(1).decode(),
              m.group(2).replace(b"\x00", b"").decode(), m.group(3).replace(b"\x00", b"").decode()))
         out[("utf16", t)] = out.get(("utf16", t), 0) + 1
-    if out:
+    if out and tier1_finds(data):
         return out   # Epic's tag wins, as ScanVersionTier1 runs first
     for enc, rx, width in (("ascii", BRANCH_ASCII, 1), ("utf16", BRANCH_UTF16, 2)):
         for m in rx.finditer(data):
-            raw = m.group(0)[:-width]
+            raw = m.group(1)[:-width]
             text = raw.decode("utf-16-le" if width == 2 else "ascii")
             if branch_name_version(text):
                 t = "branch " + text
