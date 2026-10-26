@@ -11503,6 +11503,43 @@ int main() {
         check("VND584-01 probe control: a weak slot is probed once", ok && converted == 1 && s_probes == 1);
     }
 
+    // [VND584-03] Dumper-7's "UE5.7 variant observed in Mistfall Hunter": an FUObjectArray (base-relative) with the
+    // chunk counts BEFORE Objects -- MaxChunks +0x04, NumChunks +0x08, Objects +0x10, MaxElements +0x20,
+    // NumElements +0x24. No strict row fit it, and the relaxed A/C row took it: NumElements read from +0x14, the high
+    // dword of the Objects pointer, so every GObjects walk saw a few hundred objects through a garbage table.
+    {
+        blk("VND584-03: a chunk-counts-first UE 5.7 FUObjectArray is read whole, and the relaxed rows have a floor");
+        alignas(16) static uint8_t mist[0x40] = {};
+        memset(mist, 0, sizeof(mist));
+        const uintptr_t table = reinterpret_cast<uintptr_t>(pool.chunkTable.data());
+        const int32_t maxChunks = 6, numChunks = static_cast<int32_t>(pool.chunkTable.size());
+        memcpy(mist + 0x04, &maxChunks, 4);
+        memcpy(mist + 0x08, &numChunks, 4);
+        memcpy(mist + 0x10, &table, 8);
+        memcpy(mist + 0x20, &kCount, 4);
+        memcpy(mist + 0x24, &kCount, 4);
+        Aura::Init(reinterpret_cast<uintptr_t>(mist));
+        const int32_t got = Aura::GetCount();
+        check("VND584-03 ⭐: the Mistfall-shaped array reports every object", got == kCount, std::to_string(got).c_str());
+
+        // The floor alone: a header only the relaxed A/C row would take, with a count no UE game has (0x200).
+        alignas(16) static uint8_t lowCount[0x40] = {};   // not "small": a Windows header #defines it
+        memset(lowCount, 0, sizeof(lowCount));
+        const int32_t tiny = 0x200;
+        memcpy(lowCount + 0x00, &table, 8);
+        memcpy(lowCount + 0x10, &tiny, 4);
+        memcpy(lowCount + 0x14, &tiny, 4);
+        Aura::Init(reinterpret_cast<uintptr_t>(lowCount));
+        const int32_t gotSmall = Aura::GetCount();
+        check("VND584-03 ⭐: the relaxed A/C row refuses a count below Genau's 0x1000 floor",
+              gotSmall != tiny, std::to_string(gotSmall).c_str());
+
+        // CONTROL: the main fixture's stock UE5-Extended array still reads whole through detection.
+        Aura::Init(pool.Addr());
+        check("VND584-03 control: a stock UE5-Extended array is still detected whole", Aura::GetCount() == kCount);
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
