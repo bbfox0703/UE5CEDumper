@@ -17,7 +17,9 @@
 > section keeps its heading and says where its content went.
 >
 > Its two predecessors, and this file's own former name, are recorded in
-> [`archive/README.md`](archive/README.md).
+> [`archive/README.md`](archive/README.md). Passages that stopped being true are moved, unedited, to an
+> archive file of their own; the first is
+> [`archive/handover-retired-2026-10-27.md`](archive/handover-retired-2026-10-27.md).
 >
 > ⚠ **`out/` is gitignored and does NOT travel.** Two of the most useful records of what was
 > actually done (`out/NIGHT-RUN-2026-08-19.md`, `out/KILLED-2026-08-21.md`) exist only on this
@@ -85,22 +87,13 @@ exe is 54.7 MB too. Checking the size is no longer the test.
 
 ### ⭐ First: CHECK what is held. Grants both outlive sessions and vanish without one.
 
-Two measurements, hours apart on the same machine, and they point opposite ways:
+Grants have outlived sessions for days, and have vanished within one boot with no reboot in between
+(both measured 2026-08-22; the readings are in
+[`archive/handover-retired-2026-10-27.md`](archive/handover-retired-2026-10-27.md)). What clears them is
+unidentified: ⛔ **"a reboot clears them" is refuted**, and an MCP-server or app restart is unmeasured, so
+do not write either down as the cause.
 
-* **2026-08-22 morning** — `list_granted_applications` returned **20 grants made on 2026-08-19
-  19:31–19:36**, still valid three days and many sessions later. So a new session does **not** clear
-  them: the plan doc's "grants do not survive a session" (removed from it on 2026-10-08) is FALSE
-  here.
-* **2026-08-22 18:20, same boot** — the list came back **empty**, and all 20 had to be re-requested
-  (batches of 7 · 7 · 6; every one granted, same names, same tiers). `GetTickCount64` puts the
-  last boot at **2026-08-21 14:31**, *before* the morning reading — so **no reboot happened
-  between the two**.
-
-⛔ **"A reboot is the real invalidation event" is therefore REFUTED** — do not re-assert it. What
-actually clears them is unidentified; an MCP-server or app restart is the obvious suspect and is
-**unmeasured**, so do not write that down as the cause either.
-
-⇒ The only safe rule, and it was already the right one:
+⇒ The only safe rule:
 
 ```
 call list_granted_applications  →  request only what is missing
@@ -110,10 +103,12 @@ A blanket re-request costs three or four dialogs and, if the maintainer is away,
 nothing. An *assumed* grant is worse: it fails at the first click, mid-row. The check is one call
 with no side effects — make it the first one, every time.
 
-### System key combos are not granted
+### System key combos: read the flag, and close a window with `WM_CLOSE`
 
-⚠ **`systemKeyCombos` is NOT granted.** `alt+F4`, `ctrl+alt+del` and friends are refused with
-*"is a system-level shortcut"*. To close a window, post `WM_CLOSE` yourself:
+`list_granted_applications` reports `grantFlags.systemKeyCombos`. It was **false** in August 2026, when
+`alt+F4`, `ctrl+alt+del` and friends were refused with *"is a system-level shortcut"*, and **true** on
+2026-10-27: read it, never assume it. Whatever it says, close a window by posting `WM_CLOSE` yourself —
+a key chord goes to whichever window holds the focus, and game windows steal it (§4 rule 8):
 
 ```python
 import ctypes, ctypes.wintypes as w
@@ -124,7 +119,8 @@ u = ctypes.windll.user32
 ### Non-game grants — request these on a new PC, or when the list comes back empty
 
 Games are granted per title (and their exe separately, see below). These are the **tools and
-system windows** a session needs, recorded 2026-09-27 from `list_granted_applications`. Request
+system windows** a session needs, recorded 2026-09-27 from `list_granted_applications` and checked
+against it again on 2026-10-27. Request
 them in the two batches below (the ≤7 rule). **A `notInstalled` name fails its whole batch**, so on
 a PC that lacks one (no NVIDIA App, no Everything), drop it from the batch rather than retrying.
 Names are the Start-menu names of a **zh-TW Windows**; an English Windows says `Notepad` and
@@ -144,6 +140,7 @@ Names are the Start-menu names of a **zh-TW Windows**; an English Windows says `
 | `nvidia overlay.exe` | Nvidia overlay | the NVIDIA App overlay: after a SendInput key it takes the foreground, and every later call is refused as *"The user doesn't want to take this action right now"* (2026-09-27) |
 | `Steam` | Steam | `steam.exe`, the bootstrapper (not in the 2026-09-27 list) |
 | `steamwebhelper.exe` | Steamwebhelper | the Steam library window — **with `.exe`** (a bare name resolves back to `Steam`); only grantable while Steam runs |
+| its exe, while it runs | Aobmaker.ui | the AOBMaker sibling's own UI (`publish\AOBMaker.UI.exe`), for rows that drive it; in neither batch below |
 
 - **Batch 1:** `UE5DumpUI`, `Cheat Engine (64-bit SSE4-AVX2)`, `Cheat Engine (64-bit)`, `Notepad++`,
   `記事本`, `Everything`, `檔案總管`.
@@ -152,7 +149,8 @@ Names are the Start-menu names of a **zh-TW Windows**; an English Windows says `
 
 ### Game grants — nice to have; when one is missing, say so and let the user decide
 
-The titles the verification rows have used, recorded 2026-09-27. **None is required to start a
+The titles the verification rows have used, recorded 2026-09-27; the last eight rows were added from
+the 2026-10-27 list. **None is required to start a
 session**, and a PC may simply not own a game: when a row needs a title that is not installed or
 not granted, **tell the user which one and why, and let them decide** whether to install it — never
 install, download or buy anything yourself, and never assume the user owns a title. Check what is
@@ -175,6 +173,14 @@ installed with `fixture_census.py` (§3) before planning around one.
 | `Titan Quest II` | 1154030 | |
 | `The Artisan of Glimmith` | 4160210 | Geri; in-game clicks need `Geri-Win64-Shipping.exe` (with `.exe`) |
 | `Gg2game` | exe | GalGun Double Peace |
+| `Avowed` | 2457220 | the name resolves to the launcher shim `Avowed.exe`: front and screenshot with it, never `open_application` it (§3); in-game clicks need `Avowed-win64-shipping` |
+| `Gwt` | 1475810 | Ghostwire: Tokyo. No Start-menu entry: launch with `-applaunch`, then request the running exe. The root `GWT.exe` is a bootstrap; both requests resolved to `Snowfall\Binaries\Win64\GWT.exe` |
+| `Ffrs-win64-shipping` | 4474710 | FINAL FANTASY RESONANCE DEMO; the exe, requested while it runs |
+| `Dragon quest xi s` | 1295510 | the exe |
+| `Isdefense-win64-shipping` | 448370 | IS Defense; the exe |
+| `Extinction` | 570710 | the exe |
+| `Nekopara` | 469990 | NEKOPALIVE; the exe |
+| `Dumpertest56-win64-shipping` | fixture (UE 5.6) | the inner exe, requested while it runs |
 
 The Steam titles are granted by name (a `steam://rungameid/<appid>` grant) and their shipping exe
 separately, only while it runs; `list_granted_applications` says what is granted now.
@@ -222,8 +228,6 @@ dialog **taller than the display**, the Accept button could not be reached, and 
   refused with *"The user doesn't want to take this action right now"* — which reads like a human
   refusal and is not one. `front_window.py front UE5DumpUI` clears it for a moment; the grant
   (made the same day) removes the block.
-* **Avowed is installed but ungrantable** — absent from the Start menu, so `request_access` cannot
-  resolve it. Perfectly usable for headless pipe/log rows.
 * Not needed: browsers (read-only tier anyway), terminals/IDEs (all shell work goes through Bash),
   `python.exe`.
 * ⚠ `tools/verify/register_apps.py` is a **refuted hypothesis** (per-user registry registration made
@@ -574,14 +578,12 @@ preconditions and a few refuse to run in the wrong state rather than degrading i
 ```bash
 py tools/check_audit_register.py --list          # audit #5 register (manual since 2026-09-03; no longer a gate)
 grep -c '^> | `\[' docs/todo.md                  # OPEN FIXES INDEX rows -- the defect queue (still todo.md)
-grep -c '^### ⬜ NEW DEFECT' docs/todo.md         # defect WRITE-UPS (not the queue!)
 awk '/^## Pending live-game verification/,0' docs/verification-register.md \
   | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜
 ```
 
-⚠⚠ **The two defect greps answer different questions and the obvious one is wrong.** The
-OPEN FIXES INDEX table near the top of `todo.md` sits **inside a blockquote** (`> ###`, `> |`), so it
-is invisible to any `grep '^### '`; the `^### ⬜ NEW DEFECT` grep finds only the long write-ups.
+⚠ **The OPEN FIXES INDEX table near the top of `todo.md` sits inside a blockquote** (`> ###`, `> |`),
+so any `grep '^### '` misses it; the second command above counts its rows.
 
 Run the commands above for the counts; numbers written into this file go stale.
 
@@ -626,11 +628,6 @@ inside a row is a **sub-step**.
   watermark finer than its 1 s resolution allows (working-lessons §1.x).
 * ⚠ **ProcessEvent vtable slots: the PATTERN SCAN is primary, the version table only the fallback** —
   how to read which one answered, and how to re-check a slot offline: working-lessons §4.7.
-* ⚠ **Invoke order is `init → trigger_scan → invoke → pe_profile_start`.** Profiler-first used to
-  poison the PE hook permanently.
-* ⚠ **Elliot's PE hook is intermittent by title** ("sometimes yes, sometimes no"). Switch host to
-  Lushfoil rather than retrying. Elliot also *detects* as UE 427 while really being 5.04 — honestly
-  flagged `detected=no, lowConfidence=yes`, not a bug.
 * ⚠ **OCTOPATH's `version.dll` proxy is silently bypassed** (only System32's VERSION.dll maps). Use
   `winmm.dll` or `dxgi.dll` there (dxgi crashed it until the fix in
   `docs/audit-2026-08-26-dxgi-appcompat-crash.md`). The honest check after launching any proxy title is
@@ -662,7 +659,7 @@ This is one of the two PCs — `%COMPUTERNAME%` says which. Things that are true
 * `lua` 5.4.6 at `%LOCALAPPDATA%\Programs\Lua\bin\lua`; `scripts/tests/` rigs run the real CE helpers.
   Since 2026-09-25 they are gate `check_lua_suites`, on CE's own Lua VM (`out/ce_lua53`); where that host
   is not built -- CI included -- the gate reports SKIPPED, so a green CI run says nothing about them.
-* CE source clone `D:\Github\cheat-engine` (tag **7.5**) vs installed **7.7** docs at
+* CE source clone `D:\Github\cheat-engine` (tag **7.5** plus later `master` commits; `git describe --tags` says how many) vs installed **7.7** docs at
   `C:\Program Files\Cheat Engine\celua.txt` — **the public source lags the release**, so "absent from
   the source" does not prove "fixed in 7.7".
 * Siblings: `D:\Github\AOBMaker` (the CE plugin), `D:\Github\CrimsonAtomtic` (AOT reference).
