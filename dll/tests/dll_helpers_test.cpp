@@ -6434,10 +6434,11 @@ static void Test_VersionBranchName() {
         EXPECT("GWT-BRANCH: ...where Epic's Release-tag Tier 1 finds nothing",
                !Genau::ScanVersionTier1(b.data(), b.size()).found());
     }
-    {   auto b = fresh(4096);
-        plantNarrow(b, 1500, "++UE4+4.27-Nitro");
+    {   // UTF-16, as Dolls Nest's exe holds it: three wide copies and no narrow one.
+        auto b = fresh(4096);
+        plantWide(b, 1500, "++UE4+4.27-Nitro");
         auto r = scan(b);
-        EXPECT("GWT-BRANCH: Dolls Nest's ascii '++UE4+4.27-Nitro' reads 427", r.tier == 1 && val(r) == 427 && !r.wide);
+        EXPECT("GWT-BRANCH: Dolls Nest's utf16 '++UE4+4.27-Nitro' reads 427", r.tier == 1 && val(r) == 427 && r.wide);
     }
     {   auto b = fresh(4096);
         plantNarrow(b, 1500, "++UE5+ue5_main+5.4");
@@ -6456,6 +6457,8 @@ static void Test_VersionBranchName() {
         "++SNAPSHOTFOOTER+.",            // a footer marker several titles carry
         "++ue4+ue4_main+5.4",            // the version's major disagrees with the depot's
         "++ue4+ue4_main+4.270",          // not a whole token
+        "++ue4+ue4_main+4.27.2",         // a token followed by '.', not a separator or the end
+        "++ue4+ue4_main+4.27_hotfix",    // ...or by '_'
         "++ue4+ue4_main+14.27",          // a digit before it
         "++ue4+ue4_main_4.27",           // '_' does not separate a branch's parts
         "++ue4+ue4_main+4.17",           // below the needle table's 4.18 floor
@@ -6468,6 +6471,26 @@ static void Test_VersionBranchName() {
         plantWide(w, 1500, s);
         const std::string label = std::string("GWT-BRANCH: refused, ascii and utf16: '") + s + "'";
         EXPECT(label.c_str(), !scan(b).found() && !scan(w).found());
+    }
+    {   // A non-printable byte inside an otherwise good, NUL-terminated branch: the printable rule alone refuses it.
+        auto b = fresh(4096);
+        plantNarrow(b, 1500, "++UE4+4.27-Nitro\x01");
+        EXPECT("GWT-BRANCH: a branch holding a non-printable byte before its NUL is refused", !scan(b).found());
+    }
+    for (int wide = 0; wide <= 1; ++wide) {
+        // kBranchMaxChars is the bound on a 97-byte stack buffer: 96 characters are read, 97 are not a branch name.
+        const std::string at96 = "++UE4+4.27-" + std::string(Genau::kBranchMaxChars - 11, 'a');
+        const std::string at97 = at96 + "a";
+        auto b96 = fresh(4096);
+        auto b97 = fresh(4096);
+        if (wide) { plantWide(b96, 1500, at96.c_str()); plantWide(b97, 1500, at97.c_str()); }
+        else      { plantNarrow(b96, 1500, at96.c_str()); plantNarrow(b97, 1500, at97.c_str()); }
+        auto r96 = scan(b96);
+        EXPECT(wide ? "GWT-BRANCH cap: a 96-character utf16 branch is read whole"
+                    : "GWT-BRANCH cap: a 96-character ascii branch is read whole",
+               val(r96) == 427 && strlen(r96.branch) == Genau::kBranchMaxChars);
+        EXPECT(wide ? "GWT-BRANCH cap: a 97-character utf16 run is refused"
+                    : "GWT-BRANCH cap: a 97-character ascii run is refused", !scan(b97).found());
     }
     {   // No NUL before a non-printable byte: the run is not a string, whatever it starts with.
         auto b = fresh(4096);
