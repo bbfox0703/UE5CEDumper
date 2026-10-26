@@ -248,6 +248,9 @@ static bool ValidateGObjects(uintptr_t addr) {
         //   MaxElements +0x10, NumChunks +0x14, MaxChunks +0x20, NumElements +0x24, Objects +0x28.
         // Appended LAST: any address matching an earlier preset never reaches it.
         { 0x28, 0x10, 0x24, 0x20, 0x14, "MindsEye-Extended" },
+        // [VND584-03] Dumper-7's UE 5.7 "Mistfall Hunter" variant (a508058): MaxChunks +0x04, NumChunks +0x08,
+        // Objects +0x10, MaxElements +0x20, NumElements +0x24, from the FUObjectArray base. Aura carries the same row.
+        { 0x10, 0x20, 0x24, 0x04, 0x08, "UE5.7-Mistfall" },
     };
 
     for (auto& P : presets) {
