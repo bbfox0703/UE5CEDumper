@@ -11,7 +11,8 @@ Open work only. **Read this when deciding what to do next.**
 > override at once (`[OVERRIDE-REVIEW2-LOWS]`), `[INT8-PREVIEW]`, `[UE4-USTRUCT-GIVEUP]`, `[AOB-SKIP-OWN-DLL]`; open LOW
 > rows it left: `[UE4-ASSETPTR-EXPORTS]`, `[UE4-USTRUCT-GIVEUP-STATS]`, `[DUMPER-SECOND-COPY-AUTOSTART]`,
 > `[UBEL-ASCII-FIRSTCHAR]` ·
-> `[LIVEFUNCS-TIMELINE-2026-10-04]` (Live Funcs) · open but idle: the `[FIXPASS-2026-09-10]` live-check backlog. Change this line in the commit that starts or ends a programme.
+> `[LIVEFUNCS-TIMELINE-2026-10-04]` (Live Funcs) · filed, not started: `[VENDOR-UE584-2026-10-26]` (vendor audit #8:
+> two breaking rows, invoke into weak/soft params and the dissect soft type) · open but idle: the `[FIXPASS-2026-09-10]` live-check backlog. Change this line in the commit that starts or ends a programme.
 
 > ## ⛔ BEFORE YOU PLAN OFF ANY HEADING IN THIS FILE — READ THIS 2026-08-24 RECONCILIATION
 >
@@ -1562,6 +1563,27 @@ testable. After each group of fixes, one skeptic reviews that group's commits. N
     disabled controls; the Teleport ExportTrainer line is gated by `CanExportTrainer`.
   - **R7-C-01:** the CE Disable→Enable route cannot land an invoke during init; the enable block polls paint-only.
   - **R7-D-07:** the slider's setter re-walks, so the premise "changing the slider does not re-walk" is false.
+
+## 🔎 Vendor audit #8 — UE 5.8.4 + RE-UE4SS / UEPseudo / Dumper-7 deltas `[VENDOR-UE584-2026-10-26]`
+
+Full detail, both-side citations and fix shapes: [audit-2026-10-26-vendor-ue584.md](audit-2026-10-26-vendor-ue584.md).
+**UE 5.8.4 itself needs nothing**, and no upstream change forces code on us (UEPseudo's 5.3+ `TSoftObjectPtr`
+fix is what `Ubel` already does). Every row below is **pre-existing**, exposed by reading how upstream handles the
+same types. All are read from source: none is measured on a running game yet. Fix-pass rules apply: one row per
+commit, red before green where testable.
+
+| id | sev | effort | what | where |
+|---|---|---|---|---|
+| `[VND584-01]` | ⬜ breaking | M | Invoke writes a picked `UObject*` raw into `TWeakObjectPtr` / `TSoftObjectPtr` / `TSoftClassPtr` / `TLazyObjectPtr` params; the engine reads `{ObjectIndex, SerialNumber}`, resolves null, and FIRE still reports OK (every 4.18+ title; flagged 2026-08-13, never filed). Weak: convert DLL-side to `{InternalIndex, SerialNumber}`, refuse serial 0 and the 16-byte remote-handle shape. Soft / SoftClass / Lazy: empty-only (`0x0`) with a UI string, for now. Check `InterfaceProperty` (16-byte `FScriptInterface`) in the same pass. Rewrite `PickablePointerType_WriteParam_WritesFullEightBytes` red first; fix `docs/roadmap.md`'s "correctly written 8-byte values". **Live acceptance:** on DumperTest, invoke `KismetSystemLibrary::IsValidSoftObjectReference` with a picked object (refused, not false) and a weak param with a picked object (the callee sees the object). | `ParamBufferBuilder.cs`, `InvokeScriptGenerator.cs`, `BakedScriptGenerator.cs`, `scripts/ue5_invoke_helper.lua`, `InvokeParamDialog.cs`, Fern `invoke_function`, Mimic `HandleInvoke` |
+| `[VND584-02]` | ⬜ breaking | S | `ue5_dissect.lua` types `SoftObjectProperty` / `SoftClassProperty` / `LazyObjectProperty` as `vtPointer`: CE Structure Dissect shows the weak pair as a pointer (third copy of W5 / W9; the CE-XML and CSX copies were fixed). Make them `vtQword` like Weak; add a `dissect_test.lua` case. | `scripts/ue5_dissect.lua` |
+| `[VND584-03]` | ⬜ gap | S | Dumper-7's UE 5.7 "Mistfall Hunter" `FUObjectArray` variant (chunk counts at +0x04 / +0x08): Genau validates it, `Aura`'s relaxed A/C reads the count from the Objects pointer's high dword, and every GObjects walk goes near-empty. Predicted, not measured. Give Aura's relaxed A/C and B Genau's floor (`num >= 0x1000`, `max >= num`); add the preset row after UE5-Extended. | `Aura.cpp`, `Genau.cpp` |
+| `[VND584-04]` | ⬜ gap | M | By-name function lookup never searches `UClass::Interfaces` (UE's `FindFunctionByName` does): an interface UFunction the implementer does not redeclare is "Function not found". Probe the `TArray<FImplementedInterface>` offset; add a fallback pass after both existing passes. | `Ubel.h` `ResolveFunctionInChain` |
+| `[VND584-05]` | ⬜ latent | S | The ProcessEvent fingerprint matches only MSVC's dword tests; clang-built Avowed always falls back to the stock table (measured: 9 of 9 logs). Licensee vtables deviate (TOW2 +0x278, Conan +0x268, Dune +0x2A8 per RE-UE4SS). Add the byte-narrowed forms inside the two-pattern conjunction; rerun the corpus no-regression sweep. **Live acceptance:** Avowed logs `(pattern): match at vtable+0x268`. | `Frieren.cpp`, `Grimoire.h` |
+| `[VND584-06]` | ⬜ latent | S | `CMD_INVOKE` trusts the CE form's cached `UFunction*` (Dumper-7's Blueprint-reload hazard): require its Outer on the instance's class chain, else a new code that makes FIRE re-run FIND once. A contract-meaning change: record it in `Mimic.h`. | `Mimic.cpp`, `InvokeScriptGenerator.cs` |
+| `[VND584-07]` | ⬜ latent | S | `Genau`'s FField::Name and Offset_Internal probes compare member FNames case-sensitively; a non-CPN pool keeps the casing of the first registration (Dumper-7's lowercase `min`/`max`). Compare case-insensitively; a `dll_core_test` case with lowercase names. | `Genau.cpp` |
+| `[VND584-08]` | ⬜ latent | S | The soft payload size uses `DynOff::SizeofFName()`, which never triggers the FName probe: on a 5.1 / 5.2 outlined-FName build a soft read before any NameProperty latches +0x08. Latch `SoftObjectPath`'s `PropertiesSize` in `ProbeSoftPathShape` (residual of VND583-14). | `Ubel.cpp` |
+| `[VND584-DOC]` | ⬜ doc | S | Seven doc items, the audit's table: `Ubel.cpp` soft-array comments + technical-notes (0x38, not 0x48); `Himmel.h` 5.8 PointerHash; Ghostwire: Tokyo = customized 4.27; the Halo paste-ready AOB; TOW2's two extra virtuals; the RE-UE4SS profile count (57 at `cdbc0b66`); Jedi: Survivor = 4.26. | various |
+| `[VND584-09]` | — | — | minhook: **HOLD** unchanged (upstream has nothing after `8af6b4a`); audit #7's triggers stand. `sync_tools.ps1` fixed in `19953711` (it never fetched RE-UE4SS's submodules). | `vendor/minhook` |
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
