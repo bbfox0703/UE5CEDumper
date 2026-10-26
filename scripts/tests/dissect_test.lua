@@ -1803,6 +1803,29 @@ do
 end
 
 -- ============================================================
+-- VND584-02 -- a soft / lazy pointer leads with a weak pair, not an address
+-- ============================================================
+-- TSoftObjectPtr / TSoftClassPtr / TLazyObjectPtr start with FWeakObjectPtr { int32 ObjectIndex,
+-- int32 SerialNumber } (UE 5.8 PersistentObjectPtr.h, WeakObjectPtr.h). Typed vtPointer, CE showed
+-- that pair as "P->..." and expanding the row dereferenced garbage. The CE-XML (W5) and CSX (W9)
+-- exports already show it as 8 hex bytes, and Weak was always vtQword here.
+do
+  local gti = dissect._getTypeInfo
+  for _, t in ipairs({ 'SoftObjectProperty', 'SoftClassProperty', 'LazyObjectProperty' }) do
+    local vt, n = gti(t, 0x28)
+    eq(vt, vtQword, 'VND584-02: ' .. t .. ' shows its weak pair as 8 hex bytes')
+    eq(n, 8, 'VND584-02: ' .. t .. ' row stays 8 bytes')
+  end
+  -- CONTROLS: the neighbours keep their types.
+  local wv = gti('WeakObjectProperty', 8)
+  eq(wv, vtQword, 'VND584-02 control: Weak stays vtQword')
+  local iv = gti('InterfaceProperty', 16)
+  eq(iv, vtPointer, 'VND584-02 control: an interface leads with a real UObject*, so it stays a pointer')
+  local ov = gti('ObjectProperty', 8)
+  eq(ov, vtPointer, 'VND584-02 control: ObjectProperty stays a pointer')
+end
+
+-- ============================================================
 
 realPrint(string.format('\n%d checks, %d failure(s)', checks, failures))
 os.exit(failures == 0 and 0 or 1)
