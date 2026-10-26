@@ -1290,11 +1290,17 @@ static void Test_Mimic_InvokeSlab() {
            && Mimic::InvokeSlabRefusal(false, 16, slab) == Mimic::MB_ERR_INVOKE_UNRESOLVED);
 
     // ProcessEvent's own codes ride the same `result` field (Frieren.h), and so do -10 / -11.
-    bool distinct = Mimic::MB_ERR_INVOKE_UNRESOLVED != Mimic::MB_ERR_INVOKE_TOO_LARGE
-                 && Mimic::MB_ERR_INVOKE_UNRESOLVED < 0 && Mimic::MB_ERR_INVOKE_TOO_LARGE < 0;
-    for (int32_t taken : { -1, -2, -3, -4, -5, -6, -7, -8, -10, -11 })
-        distinct = distinct && taken != Mimic::MB_ERR_INVOKE_UNRESOLVED && taken != Mimic::MB_ERR_INVOKE_TOO_LARGE;
-    EXPECT("INVOKESLAB: the two refusals are negative and apart from every code already in `result`", distinct);
+    // [VND584-01] -14, the object-parameter refusal, rides the same field.
+    const int32_t refusals[] = { Mimic::MB_ERR_INVOKE_UNRESOLVED, Mimic::MB_ERR_INVOKE_TOO_LARGE,
+                                 Mimic::MB_ERR_INVOKE_OBJECT_PARAM };
+    bool distinct = true;
+    for (size_t i = 0; i < 3; ++i) {
+        distinct = distinct && refusals[i] < 0;
+        for (size_t j = i + 1; j < 3; ++j) distinct = distinct && refusals[i] != refusals[j];
+        for (int32_t taken : { -1, -2, -3, -4, -5, -6, -7, -8, -10, -11 }) distinct = distinct && taken != refusals[i];
+    }
+    EXPECT("INVOKESLAB: the three refusals are negative, distinct, and apart from every code already in `result`",
+           distinct);
 }
 
 static void Test_Mimic_CommandRequiresInit() {

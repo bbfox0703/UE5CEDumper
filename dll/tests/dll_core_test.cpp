@@ -11277,8 +11277,12 @@ int main() {
               cls("SoftObjectProperty", 0x28, ParamKind::In, 0x0000000500001234ull, false) == ObjectParamAction::Leave);
         check("VND584-01 classify control: a lazy slot that is no object stays (nothing to refuse)",
               cls("LazyObjectProperty", 0x20, ParamKind::In, 0x0000000500001234ull, false) == ObjectParamAction::Leave);
-        check("VND584-01 classify control: a pure out parameter is the callee's",
-              cls("SoftObjectProperty", 0x28, ParamKind::Out, obj, true) == ObjectParamAction::Leave);
+        // UHT gives a non-const `T&` CPF_OutParm alone (CPF_ReferenceParm only with const), so an in/out C++ reference
+        // reads as Out; a picked object there must reach the callee too (review R2).
+        check("VND584-01 classify ⭐: an out slot holding a picked object is converted (a non-const & reads as Out)",
+              cls("SoftObjectProperty", 0x28, ParamKind::Out, obj, true) == ObjectParamAction::ConvertSoft);
+        check("VND584-01 classify: ...a weak one too",
+              cls("WeakObjectProperty", 8, ParamKind::Out, obj, true) == ObjectParamAction::ConvertWeak);
         check("VND584-01 classify control: so is the return value",
               cls("SoftObjectProperty", 0x28, ParamKind::Return, obj, true) == ObjectParamAction::Leave);
         check("VND584-01 classify control: a UObject* IS its address",
@@ -11333,7 +11337,7 @@ int main() {
         int32_t wIdx = 0, wSer = 0;
         memcpy(&wIdx, buf.data(), 4);
         memcpy(&wSer, buf.data() + 4, 4);
-        check("VND584-01 rewrite ⭐: accepted, two slots rewritten", ok && converted == 2, why.c_str());
+        check("VND584-01 rewrite ⭐: accepted, three slots rewritten", ok && converted == 3, why.c_str());
         check("VND584-01 rewrite ⭐: the weak slot holds the engine's pair {77, 5}, not the address",
               wIdx == 77 && wSer == 5);
         int32_t sIdx = 0;
@@ -11345,7 +11349,10 @@ int main() {
         memcpy(&outSoft, buf.data() + 0x38, 8);
         memcpy(&ret, buf.data() + 0x60, 8);
         check("VND584-01 rewrite control: the UObject* slot keeps the address", plain == obj);
-        check("VND584-01 rewrite control: the pure out and the return slots are left alone", outSoft == obj && ret == obj);
+        int32_t oIdx = 0;
+        memcpy(&oIdx, buf.data() + 0x38, 4);
+        check("VND584-01 rewrite ⭐: the out slot holding a picked object is converted", oIdx == 77 && outSoft != obj);
+        check("VND584-01 rewrite control: the return slot is left alone", ret == obj);
 
         // Refusals: each one names the parameter and leaves the call unsent.
         Ubel::ParamLayout lazyL;
@@ -11410,8 +11417,8 @@ int main() {
         uint64_t outMember = 0;
         memcpy(&outMember, nb.data() + 0x38, 8);
         check("VND584-01 nested ⭐: a soft member of a struct passed in is converted",
-              ok && converted == 1 && nIdx == 77 && nb[0x08 + 8] == 0xAB, why.c_str());
-        check("VND584-01 nested control: the same member of an OUT struct is the callee's", outMember == obj);
+              ok && converted == 2 && nIdx == 77 && nb[0x08 + 8] == 0xAB, why.c_str());
+        check("VND584-01 nested: ...and so is the same member of an out struct", outMember != obj);
         Ubel::ParamLayout nestedLazy;
         nestedLazy.params = { structOf("Spec", 0x00, kParm, { field("Ref", "LazyObjectProperty", 0x08, 0x20, 0) }) };
         std::fill(nb.begin(), nb.end(), 0);
@@ -11419,6 +11426,35 @@ int main() {
         ok = Ubel::PrepareObjectParams(nestedLazy, nb.data(), nb.size(), ops, converted, why);
         check("VND584-01 nested: a refusal names the member through its struct",
               !ok && why.find("Spec.Ref") != std::string::npos, why.c_str());
+
+        // The live-object probe reads value+0x0C. Every double, int64, FName and UObject* of a call used to be probed
+        // too -- 1000.0 is 0x408F400000000000, a non-canonical address, so each invoke with an FVector raised a
+        // first-chance access violation every vectored handler saw (review SAFE-2). Only a weak / soft / lazy slot in a
+        // caller's direction is probed now.
+        static int s_probes = 0;
+        Ubel::ObjectParamOps counting = ops;
+        counting.isLiveObject = [](uintptr_t a) { ++s_probes; return a == s_live; };
+        Ubel::ParamLayout scalars;
+        scalars.params = { field("X",     "DoubleProperty",     0x00, 8, kParm),
+                           field("N",     "Int64Property",      0x08, 8, kParm),
+                           field("Name",  "NameProperty",       0x10, 8, kParm),
+                           field("Obj",   "ObjectProperty",     0x18, 8, kParm),
+                           field("Ret",   "WeakObjectProperty", 0x20, 8, kParm | kOut | kRet) };
+        std::vector<uint8_t> sb(0x28, 0);
+        const double x = 1000.0;
+        memcpy(sb.data(), &x, 8);
+        for (int32_t off : { 0x08, 0x10, 0x18, 0x20 }) memcpy(sb.data() + off, &obj, 8);
+        s_probes = 0;
+        ok = Ubel::PrepareObjectParams(scalars, sb.data(), sb.size(), counting, converted, why);
+        check("VND584-01 probe ⭐: no double / int64 / FName / UObject* / return slot is probed",
+              ok && converted == 0 && s_probes == 0, std::to_string(s_probes).c_str());
+        Ubel::ParamLayout oneWeak;
+        oneWeak.params = { field("Target", "WeakObjectProperty", 0x00, 8, kParm) };
+        std::vector<uint8_t> wb(8, 0);
+        memcpy(wb.data(), &obj, 8);
+        s_probes = 0;
+        ok = Ubel::PrepareObjectParams(oneWeak, wb.data(), wb.size(), counting, converted, why);
+        check("VND584-01 probe control: a weak slot is probed once", ok && converted == 1 && s_probes == 1);
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
