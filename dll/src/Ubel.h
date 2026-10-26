@@ -372,8 +372,28 @@ struct ImplementedInterface {
 template <class ReadSuper, class ListInterfaces>
 inline bool FindImplementedInterface(uintptr_t classAddr, uintptr_t iface, bool nativeOnly, ReadSuper readSuper,
                                      ListInterfaces listInterfaces, ImplementedInterface& out) {
-    (void)classAddr; (void)iface; (void)nativeOnly; (void)readSuper; (void)listInterfaces; (void)out;
-    return false;   // red: not implemented yet
+    if (!classAddr || !iface) return false;
+    constexpr int kMaxSuperDepth = 64;
+    auto isChildOf = [&](uintptr_t c) {
+        for (int depth = 0; c && depth < kMaxSuperDepth; ++depth) {
+            if (c == iface) return true;
+            uintptr_t s = 0;
+            if (!readSuper(c, s) || s == c) break;
+            c = s;
+        }
+        return false;
+    };
+    uintptr_t cls = classAddr;
+    for (int depth = 0; cls && depth < kMaxSuperDepth; ++depth) {
+        for (const ImplementedInterface& ii : listInterfaces(cls)) {
+            if (nativeOnly && ii.byK2) continue;
+            if (isChildOf(ii.cls)) { out = ii; return true; }
+        }
+        uintptr_t super = 0;
+        if (!readSuper(cls, super) || super == cls) break;
+        cls = super;
+    }
+    return false;
 }
 
 // UObject::GetInterfaceAddress, for an invoke's InterfaceProperty parameter: a Blueprint (non-native) interface's
@@ -382,9 +402,13 @@ inline bool FindImplementedInterface(uintptr_t classAddr, uintptr_t iface, bool 
 template <class ReadSuper, class ListInterfaces>
 inline bool InterfaceAddressFor(uintptr_t object, uintptr_t objectClass, uintptr_t iface, bool ifaceIsNative,
                                 ReadSuper readSuper, ListInterfaces listInterfaces, uintptr_t& out) {
-    (void)object; (void)objectClass; (void)iface; (void)ifaceIsNative; (void)readSuper; (void)listInterfaces;
     out = 0;
-    return false;   // red: not implemented yet
+    ImplementedInterface ii;
+    if (!FindImplementedInterface(objectClass, iface, false, readSuper, listInterfaces, ii)) return false;
+    if (!ifaceIsNative) { out = object; return true; }
+    if (FindImplementedInterface(objectClass, iface, true, readSuper, listInterfaces, ii))
+        out = object + static_cast<uintptr_t>(static_cast<intptr_t>(ii.pointerOffset));
+    return true;
 }
 
 // UClass::FindFunctionByName's order: the class chain (ResolveFunctionInChain), then -- only when no level declares the
@@ -395,8 +419,17 @@ template <class ListFuncs, class ReadSuper, class ListInterfaces>
 inline bool ResolveFunctionInChainOrInterfaces(uintptr_t classAddr, const char* funcName, ListFuncs listFuncs,
                                                ReadSuper readSuper, ListInterfaces listInterfaces, FunctionInfo& out,
                                                int* levelsWalked = nullptr) {
-    (void)listInterfaces;
-    return ResolveFunctionInChain(classAddr, funcName, listFuncs, readSuper, out, levelsWalked);   // red: chain only
+    if (ResolveFunctionInChain(classAddr, funcName, listFuncs, readSuper, out, levelsWalked)) return true;
+    constexpr int kMaxSuperDepth = 64;
+    uintptr_t cls = classAddr;
+    for (int depth = 0; cls && depth < kMaxSuperDepth; ++depth) {
+        for (const ImplementedInterface& ii : listInterfaces(cls))
+            if (ii.cls && ResolveFunctionInChain(ii.cls, funcName, listFuncs, readSuper, out)) return true;
+        uintptr_t super = 0;
+        if (!readSuper(cls, super) || super == cls) break;
+        cls = super;
+    }
+    return false;
 }
 
 // [VND584-06] Is `owner` -- a UFunction's Outer, the class that declares it -- `classAddr` or one of its SuperStructs?
