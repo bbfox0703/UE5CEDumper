@@ -2546,6 +2546,12 @@ static bool PrepareObjectSlots(const std::vector<ParamField>& fields, int64_t ba
     return true;
 }
 
+// [VND584-04] Red stubs.
+int FindClassInterfacesOffset(uintptr_t, uintptr_t, int, int) { return -1; }
+std::vector<ImplementedInterface> ClassInterfaces(uintptr_t) { return {}; }
+bool ClassInterfacesMeasured() { return false; }
+bool IsNativeClass(uintptr_t) { return false; }
+
 bool PrepareObjectParams(const ParamLayout& layout, uint8_t* params, size_t size, const ObjectParamOps& ops,
                          int& converted, std::string& why) {
     converted = 0;

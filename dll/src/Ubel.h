@@ -557,6 +557,9 @@ struct ParamField {
     bool        boolNative = false;
     std::string structType;       // a StructProperty's UScriptStruct
     std::string objClass;         // an object-family property's PropertyClass
+    // [VND584-04] An InterfaceProperty's InterfaceClass ADDRESS -- the one engine pointer here, for an invoke that
+    // reads it at once, while the function is alive. A layout kept past an unload must not use it.
+    uintptr_t   interfaceClass = 0;
     std::vector<ParamField> sub;  // a struct's members, its supers' first, kParamStructDepth deep at most
     std::string enumName;         // an EnumProperty's UEnum, or a ByteProperty's with one
     std::vector<std::pair<int64_t, std::string>> enumEntries;   // that enum's table, read fresh (never a cache's)
@@ -698,6 +701,10 @@ inline ObjectParamAction ClassifyObjectParam(const std::string& typeName, int32_
 // What PrepareObjectParams asks of the process, injectable so a test needs no game memory.
 struct ObjectParamOps {
     bool (*isLiveObject)(uintptr_t addr) = nullptr;
+    // [VND584-04] UObject::GetInterfaceAddress for an InterfaceProperty slot (InterfaceAddressFor): 1 with `out` set
+    // (null is a legal answer -- a native interface only a Blueprint implements), 0 when the object does not implement
+    // `iface` (`why` says so), -1 when it cannot be told on this build (UClass::Interfaces unmeasured).
+    int (*interfaceAddress)(uintptr_t object, uintptr_t iface, void* ctx, uintptr_t& out, std::string& why) = nullptr;
     // The engine's TSoftObjectPtr for `object`, as bytes: KismetSystemLibrary::Conv_ObjectToSoftObjectReference, which
     // assigns the object's weak serial and builds its FSoftObjectPath (4.18 to 5.8). False with `why` when it cannot.
     bool (*makeSoftReference)(uintptr_t object, void* ctx, std::vector<uint8_t>& out, std::string& why) = nullptr;
@@ -710,6 +717,17 @@ struct ObjectParamOps {
 // null the caller did not ask for. `converted` counts the slots rewritten.
 bool PrepareObjectParams(const ParamLayout& layout, uint8_t* params, size_t size, const ObjectParamOps& ops,
                          int& converted, std::string& why);
+
+// [VND584-04] Where UClass::Interfaces sits in `cls`: the first 8-aligned offset in [from, to] holding a TArray
+// { Data, Num, Max } of 16-byte FImplementedInterface entries that are all plausible and include `knownIface` --
+// Dumper-7's FindImplementedInterfacesOffset, with ActorComponent and Interface_AssetUserData. -1 when none fits.
+int FindClassInterfacesOffset(uintptr_t cls, uintptr_t knownIface, int from, int to);
+// The interfaces `cls` itself implements (its own entries), read at the measured offset, measuring it on first use;
+// empty while it is unmeasured. ClassInterfacesMeasured() says which.
+std::vector<ImplementedInterface> ClassInterfaces(uintptr_t cls);
+bool ClassInterfacesMeasured();
+// A native (C++) class lives in a /Script/ package; a Blueprint one does not. UObject::GetInterfaceAddress branches on it.
+bool IsNativeClass(uintptr_t cls);
 
 // [VND583-01] UFunction::FunctionFlags' offset as decided by the one-shot vote
 // (DynOff::UFUNCTION_FLAGS), running the vote on first use. 0 = undecided (the offsets probe

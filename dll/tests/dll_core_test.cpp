@@ -11503,6 +11503,83 @@ int main() {
         check("VND584-01 probe control: a weak slot is probed once", ok && converted == 1 && s_probes == 1);
     }
 
+    // [VND584-04] UClass::Interfaces, found the way Dumper-7 finds it, and an invoke's InterfaceProperty filled the way
+    // UObject::GetInterfaceAddress fills it.
+    {
+        blk("VND584-04: UClass::Interfaces is found by content; an interface parameter gets its interface half");
+        alignas(16) static uint8_t comp[0x400] = {};
+        alignas(16) static uint8_t entries[2][16] = {};
+        alignas(16) static uint8_t decoyEntries[2][16] = {};
+        alignas(16) static uint8_t knownIface[0x40] = {}, otherIface[0x40] = {};
+        memset(comp, 0, sizeof(comp));
+        auto put = [](uint8_t* b, uintptr_t cls, int32_t off, uint8_t k2) {
+            memcpy(b, &cls, 8); memcpy(b + 8, &off, 4); b[12] = k2;
+        };
+        auto putArray = [&](int at, uintptr_t data, int32_t num) {
+            memcpy(comp + at, &data, 8); memcpy(comp + at + 8, &num, 4); memcpy(comp + at + 12, &num, 4);
+        };
+        const uintptr_t known = reinterpret_cast<uintptr_t>(knownIface), other = reinterpret_cast<uintptr_t>(otherIface);
+        // A decoy at 0x80: plausible 16-byte entries, but not the known interface. The real array at 0x1A8.
+        put(decoyEntries[0], other, 0x30, 0); put(decoyEntries[1], other, 0x38, 0);
+        putArray(0x80, reinterpret_cast<uintptr_t>(decoyEntries), 2);
+        put(entries[0], other, 0x30, 0); put(entries[1], known, 0x28, 0);
+        putArray(0x1A8, reinterpret_cast<uintptr_t>(entries), 2);
+        const int found = Ubel::FindClassInterfacesOffset(reinterpret_cast<uintptr_t>(comp), known, 0x58, 0x3F0);
+        check("VND584-04 ⭐: UClass::Interfaces is the array that holds the known interface (0x1A8), not a decoy",
+              found == 0x1A8, std::to_string(found).c_str());
+        put(entries[0], other, 0x30, 7);   // an entry whose bImplementedByK2 is no bool
+        const int insane = Ubel::FindClassInterfacesOffset(reinterpret_cast<uintptr_t>(comp), known, 0x58, 0x3F0);
+        check("VND584-04 control: an array with an implausible entry is not taken", insane == -1,
+              std::to_string(insane).c_str());
+
+        // The fill, against a fake GetInterfaceAddress: the picked object implements the interface at +0x28.
+        static uintptr_t s_obj = 0;
+        static int s_answer = 1;
+        s_obj = 0x1F2A3B4C5D0ull;
+        Ubel::ObjectParamOps iops;
+        iops.isLiveObject = [](uintptr_t a) { return a == s_obj; };
+        iops.interfaceAddress = [](uintptr_t o, uintptr_t, void*, uintptr_t& out, std::string& why) {
+            if (s_answer == 0) why = "does not implement it";
+            out = s_answer == 1 ? o + 0x28 : 0;
+            return s_answer;
+        };
+        auto ifield = [](uint64_t flags, uintptr_t iface) {
+            Ubel::ParamField f;
+            f.name = "Target"; f.typeName = "InterfaceProperty"; f.offset = 0; f.size = 16; f.flags = flags;
+            f.kind = Ubel::ParamKindOf(flags); f.interfaceClass = iface;
+            return f;
+        };
+        Ubel::ParamLayout il;
+        il.params = { ifield(0x80, known) };
+        uint8_t ib[16] = {};
+        memcpy(ib, &s_obj, 8);
+        int converted = -1;
+        std::string why;
+        bool ok = Ubel::PrepareObjectParams(il, ib, sizeof(ib), iops, converted, why);
+        uint64_t half = 0;
+        memcpy(&half, ib + 8, 8);
+        check("VND584-04 ⭐: the interface half is the object + its PointerOffset", ok && converted == 1
+              && half == s_obj + 0x28, why.c_str());
+        s_answer = 0;
+        memset(ib + 8, 0, 8);
+        ok = Ubel::PrepareObjectParams(il, ib, sizeof(ib), iops, converted, why);
+        check("VND584-04 ⭐: an object that does not implement the interface is refused, by name",
+              !ok && why.find("Target") != std::string::npos, why.c_str());
+        // CONTROLS: an unmeasured build sends what it always sent; a caller's own interface half stays.
+        s_answer = -1;
+        memset(ib + 8, 0, 8);
+        ok = Ubel::PrepareObjectParams(il, ib, sizeof(ib), iops, converted, why);
+        memcpy(&half, ib + 8, 8);
+        check("VND584-04 control: unmeasured Interfaces leave the slot as it was", ok && converted == 0 && half == 0);
+        s_answer = 1;
+        const uint64_t given = 0x1234;
+        memcpy(ib + 8, &given, 8);
+        ok = Ubel::PrepareObjectParams(il, ib, sizeof(ib), iops, converted, why);
+        memcpy(&half, ib + 8, 8);
+        check("VND584-04 control: an interface half the caller filled is not overwritten",
+              ok && converted == 0 && half == given);
+    }
+
     // [VND584-03] Dumper-7's "UE5.7 variant observed in Mistfall Hunter": an FUObjectArray (base-relative) with the
     // chunk counts BEFORE Objects -- MaxChunks +0x04, NumChunks +0x08, Objects +0x10, MaxElements +0x20,
     // NumElements +0x24. No strict row fit it, and the relaxed A/C row took it: NumElements read from +0x14, the high
