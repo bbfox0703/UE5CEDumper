@@ -1219,6 +1219,14 @@ public:
 	// struct holding a soft one, hence these two.
 	UFUNCTION()
 	AActor* Vnd584_EchoWeak(TWeakObjectPtr<AActor> Target) const { return Target.Get(); }
+	// ⚠ Before UE 5.8 the BY-VALUE form above returns null whatever the caller passes: its generated thunk declares a
+	// TWeakObjectPtr local, and the frame copies the parameter in through FWeakObjectProperty::
+	// CopyCompleteValueToScriptVM, which stores a raw UObject* there, so Get() reads the pointer's halves as
+	// { ObjectIndex, SerialNumber }. UE 5.8 fixed the macro (399f2949c408: the local became ElementType*). A const
+	// reference is CPF_OutParm, so the thunk refers to the caller's own parameter block instead -- the shape that shows
+	// on 5.4 whether the weak pair an invoke sends is right.
+	UFUNCTION()
+	AActor* Vnd584_EchoWeakRef(const TWeakObjectPtr<AActor>& Target) const { return Target.Get(); }
 	UFUNCTION()
 	UObject* Vnd584_EchoSoftSpec(const FDumperTestSoftSpec& Spec) const { return Spec.Icon.Get(); }
 };
