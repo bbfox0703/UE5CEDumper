@@ -87,6 +87,9 @@ static_assert(detail::AllNeedlesGateable(),
 
 // ── results ──────────────────────────────────────────────────────────────────
 
+// The longest branch name ScanVersionBranchName reads, in characters; a longer run is not a branch name.
+inline constexpr size_t kBranchMaxChars = 96;
+
 struct NeedleScanResult {
     // Index into kVersionNeedles, or kVersionNeedleCount for "no hit".
     size_t   index  = kVersionNeedleCount;
@@ -95,6 +98,8 @@ struct NeedleScanResult {
     // Tier 1 only: which prefix/encoding matched, for the log line.
     bool     wide   = false;
     size_t   prefixIndex = 0;
+    // ScanVersionBranchName only: the branch name it read, narrowed, for the log line.
+    char     branch[kBranchMaxChars + 1] = {};
     // Instrumentation, so a test can assert the GATE still works without a wall clock.
     // Counts full needle memcmp calls actually issued. A deterministic stand-in for
     // "is this still fast", which a timing assertion could never be in CI.
@@ -226,6 +231,12 @@ inline NeedleScanResult ScanVersionTier1(const uint8_t* scan, size_t size) {
         }
     }
     return r;
+}
+
+// [GWT-BRANCH] red stub: finds nothing.
+inline NeedleScanResult ScanVersionBranchName(const uint8_t* scan, size_t size) {
+    (void)scan; (void)size;
+    return NeedleScanResult{};
 }
 
 // ── Tier 2 + 3 ───────────────────────────────────────────────────────────────

@@ -426,6 +426,23 @@ int main() {
         check("VER-410-GATE tree control: an undecided one goes on to the memory scan, which finds the image's 4.27",
               dLone.version == 427 && dLone.tier == 1, gb);
 
+        // [GWT-BRANCH] An image whose one engine tag is a licensee branch -- Ghostwire's, UTF-16 -- reads at tier 1 instead
+        // of falling through every tier to the 504 default.
+        std::vector<uint8_t> branchImage(256, '.');
+        {
+            const char* s = "++ue4+ue4_main+4.27";
+            size_t i = 0;
+            for (; s[i]; ++i) { branchImage[64 + i * 2] = static_cast<uint8_t>(s[i]); branchImage[64 + i * 2 + 1] = 0; }
+            branchImage[64 + i * 2] = 0; branchImage[64 + i * 2 + 1] = 0;
+        }
+        const auto dBranch = Genau::DetectVersionDetailed(loneExe.c_str(), reinterpret_cast<uintptr_t>(branchImage.data()),
+                                                          branchImage.size());
+        snprintf(gb, sizeof(gb), "version %u tier %d", dBranch.version, dBranch.tier);
+        check("GWT-BRANCH: an undecided resource beside an image carrying only Ghostwire's branch reads 427 at tier 1",
+              dBranch.version == 427 && dBranch.tier == 1, gb);
+        // Ghostwire is cached as the 504 default under rev 10, and the cache-reuse branch would restore that for ever.
+        check("GWT-BRANCH: the detection logic rev was bumped (10 -> 11)", Genau::kVersionDetectLogicRev >= 11);
+
         // A game version in the fixed ProductVersion, the engine's 4.10.2 in the fixed FileVersion and its build string
         // in the ProductVersion string: the FileVersion branch is a fixed-field reading, so the string corroborates it.
         const std::wstring productFixedFile = res(L"game_product_fixedfile_410");

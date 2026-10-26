@@ -6402,6 +6402,89 @@ static void Test_VersionTier2_BareNeedle_G11() {
     }
 }
 
+// ── [GWT-BRANCH] Tier 1's second shape: a licensee's engine branch name ──────
+//
+// Ghostwire: Tokyo, a customized UE 4.27, carries no "++UE4+Release-4.27" anywhere. Its one engine tag is its own
+// branch, UTF-16 "++ue4+ue4_main+4.27", and its PE resource holds the game's 1.0, so detection fell through every tier
+// to the 504 default. These are absolute answers over the shapes measured in this machine's UE binaries: the two that
+// name an engine version are read, and the licensee branches that name a GAME version are refused.
+static void Test_VersionBranchName() {
+    auto fresh = [](size_t n) { return std::vector<uint8_t>(n, 'x'); };
+    auto plantNarrow = [](std::vector<uint8_t>& b, size_t at, const char* s) {
+        size_t i = 0;
+        for (; s[i]; ++i) b[at + i] = static_cast<uint8_t>(s[i]);
+        b[at + i] = 0;
+    };
+    auto plantWide = [](std::vector<uint8_t>& b, size_t at, const char* s) {
+        size_t i = 0;
+        for (; s[i]; ++i) { b[at + i * 2] = static_cast<uint8_t>(s[i]); b[at + i * 2 + 1] = 0; }
+        b[at + i * 2] = 0; b[at + i * 2 + 1] = 0;
+    };
+    auto scan = [](std::vector<uint8_t>& b) { return Genau::ScanVersionBranchName(b.data(), b.size()); };
+    auto val = [](const Genau::NeedleScanResult& r) {
+        return r.found() ? Genau::kVersionNeedles[r.index].value : 0u;
+    };
+
+    {   auto b = fresh(4096);
+        plantWide(b, 1500, "++ue4+ue4_main+4.27");
+        auto r = scan(b);
+        EXPECT("GWT-BRANCH: Ghostwire's utf16 '++ue4+ue4_main+4.27' reads 427 at tier 1",
+               r.tier == 1 && val(r) == 427 && r.wide && r.offset == 1500);
+        EXPECT_EQ_STR("GWT-BRANCH: ...and names the branch it read", r.branch, "++ue4+ue4_main+4.27");
+        EXPECT("GWT-BRANCH: ...where Epic's Release-tag Tier 1 finds nothing",
+               !Genau::ScanVersionTier1(b.data(), b.size()).found());
+    }
+    {   auto b = fresh(4096);
+        plantNarrow(b, 1500, "++UE4+4.27-Nitro");
+        auto r = scan(b);
+        EXPECT("GWT-BRANCH: Dolls Nest's ascii '++UE4+4.27-Nitro' reads 427", r.tier == 1 && val(r) == 427 && !r.wide);
+    }
+    {   auto b = fresh(4096);
+        plantNarrow(b, 1500, "++UE5+ue5_main+5.4");
+        EXPECT("GWT-BRANCH: a UE5 depot's '++UE5+ue5_main+5.4' reads 504", val(scan(b)) == 504);
+    }
+    {   // Epic's own tag is a branch name of the same grammar, so it reads the same; the caller tries Tier 1 first.
+        auto b = fresh(4096);
+        plantWide(b, 1500, "++UE4+Release-4.26-CL-0");
+        EXPECT("GWT-BRANCH: Epic's '++UE4+Release-4.26-CL-0' reads 426 too", val(scan(b)) == 426);
+    }
+    static const char* kRefused[] = {
+        "++Alabama+release.2.1",         // Avowed: a game release on a licensee depot
+        "++Arkansas+release-1.2.0.1",    // The Outer Worlds 2
+        "++TQ2S+tq2-beta-no-binaries",   // Titan Quest II
+        "++stream+Main_TeamCity_Code",   // Hogwarts Legacy
+        "++SNAPSHOTFOOTER+.",            // a footer marker several titles carry
+        "++ue4+ue4_main+5.4",            // the version's major disagrees with the depot's
+        "++ue4+ue4_main+4.270",          // not a whole token
+        "++ue4+ue4_main+14.27",          // a digit before it
+        "++ue4+ue4_main_4.27",           // '_' does not separate a branch's parts
+        "++ue4+ue4_main+4.17",           // below the needle table's 4.18 floor
+        "++ue6+ue6_main+6.0",            // not a UE4 or UE5 depot
+    };
+    for (const char* s : kRefused) {
+        auto b = fresh(4096);
+        plantNarrow(b, 1500, s);
+        auto w = fresh(4096);
+        plantWide(w, 1500, s);
+        const std::string label = std::string("GWT-BRANCH: refused, ascii and utf16: '") + s + "'";
+        EXPECT(label.c_str(), !scan(b).found() && !scan(w).found());
+    }
+    {   // No NUL before a non-printable byte: the run is not a string, whatever it starts with.
+        auto b = fresh(4096);
+        Plant(b, 1500, "++ue4+main+4.27");
+        b[1500 + 15] = 0x01;
+        EXPECT("GWT-BRANCH: a run that ends in a non-printable byte, not a NUL, is refused", !scan(b).found());
+    }
+    {   // The cost property, as Tier 1's: no '+' byte, no compare.
+        std::vector<uint8_t> nb(1u << 20, 'x');
+        auto r = Genau::ScanVersionBranchName(nb.data(), nb.size());
+        EXPECT("GWT-BRANCH gate: no '+' byte -> zero prefix compares", r.needlesCompared == 0 && !r.found());
+        auto b = fresh(4096);
+        plantWide(b, 1500, "++ue4+ue4_main+4.27");
+        EXPECT("GWT-BRANCH gate: a planted branch issues compares", scan(b).needlesCompared > 0);
+    }
+}
+
 // ── audit #5 G12: the sizeof(FProperty) family must move as ONE ─────────────
 //
 // FSTRUCTPROP_STRUCT / FARRAYPROP_INNER / FBOOLPROP_FIELDSIZE / FBYTEPROP_ENUM all name the
@@ -11162,6 +11245,7 @@ int main() {
     RUN(Test_VersionNeedleScan_GateStillGates);
     RUN(Test_VersionTierRules_G8_G9);
     RUN(Test_VersionTier2_BareNeedle_G11);
+    RUN(Test_VersionBranchName);
     RUN(Test_SoftObjectPathSize);
     RUN(Test_FunctionFlagsOffset);
     RUN(Test_ProcessEventBufferBytes);
