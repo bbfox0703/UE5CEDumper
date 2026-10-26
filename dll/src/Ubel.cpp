@@ -4767,9 +4767,9 @@ ReadArrayResult ReadStructArrayElements(
 
 // ============================================================
 // Phase G: IsSoftObjectArrayType — TSoftObjectPtr / TSoftClassPtr arrays.
-// Element layout: FWeakObjectPtr(8B) + Tag(4B) + pad(4B) + FSoftObjectPath
-// Stride varies by UE version; reader falls back to 0x28 when elemSize is
-// invalid. Per-element data resolves to the asset path string and (when
+// Element layout: FWeakObjectPtr(8B) [+ Tag(4B) + pad(4B), UE <= 5.2 only] + FSoftObjectPath
+// Stride varies by UE version; when elemSize is invalid the reader falls back to the
+// measured (else version) envelope + the path's size. Per-element data resolves to the asset path string and (when
 // loaded) the live UObject* via the embedded FWeakObjectPtr.
 // ============================================================
 bool IsSoftObjectArrayType(const std::string& innerTypeName) {
@@ -4794,11 +4794,12 @@ ReadArrayResult ReadSoftObjectArrayElements(
 
     // Validate stride. TSoftObjectPtr layout:
     //   FWeakObjectPtr(8) [+ Tag(4) + pad(4), UE ≤ 5.2 only] + FSoftObjectPath
-    // FSoftObjectPath spans:
-    //   UE4 / UE5.0: FName + FString(16)         → 8|16 + 16 = 24 or 32
-    //   UE5.1+:      FName x2 + FString(16)      → 16|32 + 16 = 32 or 48
-    // Combined element size ranges 0x20 .. 0x48 across versions — the low end
-    // dropped from 0x28 when UE 5.3 deleted TagAtLastTest (see DynOff::SOFTPTR_PATH).
+    // FSoftObjectPath spans (DynOff::FSoftObjectPathSizeFor: the FNames AlignUp'd to 8, + the FString's 16;
+    // sizeof(FName) is 4 outlined, 8 stock, 0xC case-preserving):
+    //   UE4 / UE5.0: FName + FString          → 0x18, or 0x20 case-preserving
+    //   UE5.1+:      FName x2 + FString       → 0x18 outlined, 0x20 stock, 0x28 case-preserving
+    // The envelope is 0x10 up to 5.2 and 0x08 from 5.3, which deleted TagAtLastTest (see
+    // DynOff::SOFTPTR_PATH), so an element runs 0x20 (5.3+, outlined) .. 0x38 (5.1-5.2, case-preserving).
     // When FPROPERTY_ELEMSIZE returned garbage, derive a plausible fallback.
     if (assetPtr && elemSize != ASSETPTR_SIZE) {
         Sein::Warn("WALK:ArrayG", "Invalid AssetPtr elemSize=%d, using 0x%X", elemSize, ASSETPTR_SIZE);
@@ -4865,7 +4866,7 @@ ReadArrayResult ReadSoftObjectArrayElements(
             elem.rawIntValue = static_cast<int64_t>(pathFNameIdx);
         }
 
-        // Hex of the first 16 bytes (FWeakObjectPtr + Tag)
+        // Hex of the first 16 bytes: the weak pair, then the tag (<= 5.2) or the path's head (5.3+)
         uint8_t headerBuf[16] = {};
         if (Macht::ReadBytesSafe(elemAddr, headerBuf, 16)) {
             std::string hex;

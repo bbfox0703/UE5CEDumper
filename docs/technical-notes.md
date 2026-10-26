@@ -439,7 +439,7 @@ TSoftObjectPtr<T> / TSoftClassPtr<T>      // Phase G
 +0x10 (<=5.2) / +0x08 (>=5.3) FSoftObjectPath
         UE4 / UE5.0:  FName AssetPathName + FString SubPathString
         UE5.1+:       FName PackageName + FName AssetName + FString SubPathString
-total: 0x28 (UE4, and UE5.3+ non-CPN) ... 0x48 (UE5.1-5.2 with CasePreservingName)
+total: 0x20 (UE5.3+, outlined FName) ... 0x38 (UE5.1-5.2 with CasePreservingName); 0x28 for UE4 and stock UE5.3+
 ```
 
 ```
@@ -663,7 +663,8 @@ reader picks one of three strategies:
 
 - **Force a fixed value** when the layout is invariant: Object/Weak (8),
   Interface (16), Lazy (0x20), Delegate-via-CasePreservingName (16 or 24)
-- **Sanity-clamp + fallback** when version-dependent: Soft (0x28..0x48),
+- **Sanity-clamp + fallback** when version-dependent: Soft (0x20..0x38 in the engine's shapes; the stride guard
+  takes 0x18..0x80),
   with fallback formula `0x10 + (isTopLevelAssetPath ? 2*fnameSize : fnameSize) + 0x10`
 - **Trust the read** when the inner has a real size: Struct (use
   `UScriptStruct::PropertiesSize`), Scalar (4/8/etc.)
@@ -683,7 +684,7 @@ override — the readers self-correct.
 | D | `ObjectProperty` / `ClassProperty` | 8 (forced) | `ReadPointerArrayElements` — resolves `UObject*` name + class |
 | E | `WeakObjectProperty` | 8 (forced) | `ReadWeakObjectArrayElements` — verify SerialNumber |
 | F | `StructProperty` | `PropertiesSize` of inner UScriptStruct | `ReadStructArrayElements` — populates `StructSubField[]` |
-| G | `SoftObjectProperty` / `SoftClassProperty` | 0x28..0x48 (validated/derived) | `ReadSoftObjectArrayElements` — asset path + resolved live `UObject*` |
+| G | `SoftObjectProperty` / `SoftClassProperty` | 0x20..0x38 (validated/derived) | `ReadSoftObjectArrayElements` — asset path + resolved live `UObject*` |
 | H | `LazyObjectProperty` | 0x20 (forced) | `ReadLazyObjectArrayElements` — FGuid + resolved live `UObject*` |
 | I | `InterfaceProperty` | 16 (forced) | `ReadInterfaceArrayElements` — UObject* exposed |
 | J | `DelegateProperty` | 16 or 24 | `ReadDelegateArrayElements` — Target::FunctionName + drill-into-target |

@@ -66,9 +66,11 @@ FindAll: Complete — GObjects=0x2077FF02800 (data_scan) ...   → Count=7,667,8
 
 RE-UE4SS notes, for the sibling Obsidian/UE5 title **The Outer Worlds 2**, *"Changes were made to UObject"*.
 ⚠ That is **not** a layout note `[VND583-DOC CGC-6]`. The TOW2 config ships no `MemberVariableLayout.ini`
-at all, and the change is in its `VTableLayout.ini`: `[UObject]` gains an extra virtual (`Unk_0`)
-between `PreSave_1` and `ResolveSubobject`, which is a vtable override. It says nothing about
-Obsidian's object or array layout, so it does not corroborate the failure above.
+at all, and the change is in its `VTableLayout.ini`: `[UObject]` gains TWO extra virtuals
+(`Unk_ResolveSubobject_0` and `Unk_GetConfigOverridePlatform_0` in RE-UE4SS `e7ad28df`; already two at `f58e8f84`),
+a vtable override that puts ProcessEvent at +0x278 where stock 5.4 has +0x268 -- so a fallback keyed on the stock
+table would be wrong there (`[VND584-05]`; TOW2 is MSVC-built, and our pattern scan finds the slot itself). It says
+nothing about Obsidian's object or array layout, so it does not corroborate the failure above.
 
 ---
 

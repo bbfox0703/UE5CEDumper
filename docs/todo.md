@@ -11615,7 +11615,7 @@ Pick up when the active plan finishes or when blocked.
   classes) — genuinely low priority.
 
 - **GWorld coverage** — Effort: **S each** · Risk: low. Two remaining titles:
-  - **Star Wars Jedi: Survivor** (UE 4.27?) — untested; needs an AOB sweep + result triage.
+  - **Star Wars Jedi: Survivor** (UE 4.26, per its RE-UE4SS config) — untested; needs an AOB sweep + result triage.
   - **Satisfactory** (UE 5.3, modular DLL build) — (1) proxy DLL injection fails (loader
     bypasses normal proxy hooking; workaround = CE manual injection); (2) GWorld pattern
     likely lives in `CoreUObject-Win64-Shipping.dll` — adapt `Genau::FindAll` to scan
