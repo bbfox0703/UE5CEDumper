@@ -2480,7 +2480,7 @@ static bool PrepareObjectSlots(const std::vector<ParamField>& fields, int64_t ba
                     return false;
                 continue;
             }
-            if (p.size < 8) break;
+            if (p.size < 8 || !IsObjectPointerSlot(p.typeName, kind)) break;
             uint8_t* slot = params + off;
             uint64_t lead = 0;
             memcpy(&lead, slot, sizeof(lead));

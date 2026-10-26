@@ -577,13 +577,21 @@ inline ParamKind ParamKindOf(uint64_t propertyFlags) {
 // resolved it to null, and ProcessEvent still reported success. The DLL now swaps a picked address for the engine's
 // own value before ProcessEvent; this says which slots.
 enum class ObjectParamAction : uint8_t { Leave, ConvertWeak, ConvertSoft, Refuse };
+// The slots the rewrite looks at, and so the only ones probed for a live object: the probe reads value+0x0C, and every
+// double / int64 / FName of a call would otherwise be a faulting read (1000.0 is a non-canonical address). The return
+// value is the callee's. An Out slot is not: UHT gives a non-const `T&` CPF_OutParm alone (CPF_ReferenceParm only with
+// const), so an in/out C++ reference reads as Out, and a callee that assigns it frees the engine-made path through
+// FMemory, the allocator that made it.
+inline bool IsObjectPointerSlot(const std::string& typeName, ParamKind kind) {
+    return kind != ParamKind::Return
+        && (typeName == "WeakObjectProperty" || typeName == "SoftObjectProperty" || typeName == "SoftClassProperty"
+            || typeName == "LazyObjectProperty");
+}
 inline ObjectParamAction ClassifyObjectParam(const std::string& typeName, int32_t size, ParamKind kind,
                                              uint64_t leadingQword, bool leadsWithLiveObject) {
     const bool weak = typeName == "WeakObjectProperty";
-    const bool soft = typeName == "SoftObjectProperty" || typeName == "SoftClassProperty";
     const bool lazy = typeName == "LazyObjectProperty";
-    // Only what the caller hands in: a pure out parameter and the return value are the callee's to write.
-    if (!(weak || soft || lazy) || kind == ParamKind::Out || kind == ParamKind::Return) return ObjectParamAction::Leave;
+    if (!IsObjectPointerSlot(typeName, kind)) return ObjectParamAction::Leave;
     // Zero is null in all three. A value that is not a live object's address is one the caller encoded itself, and it
     // goes through as it always did.
     if (leadingQword == 0 || !leadsWithLiveObject) return ObjectParamAction::Leave;
