@@ -3447,6 +3447,18 @@ static VersionScanResult DetectVersionDetailed(const wchar_t* exePath, uintptr_t
         }
     }
 
+    // === Tier 1, a licensee's own branch name: "++ue4+ue4_main+4.27" ([GWT-BRANCH]) ===
+    // After Epic's tag, never before: its grammar admits that tag too (see ScanVersionBranchName).
+    {
+        NeedleScanResult tb = ScanVersionBranchName(scan, size);
+        if (tb.found()) {
+            Sein::Info("SCAN:Ver", "DetectVersion: Tier 1 (%s) '%s' -> %u at 0x%zX (the engine's own branch name, "
+                       "not Epic's Release tag)", tb.wide ? "utf16" : "ascii", tb.branch,
+                       kVersionNeedles[tb.index].value, tb.offset);
+            r.version = kVersionNeedles[tb.index].value; r.tier = 1; return r;
+        }
+    }
+
     // === Tier 2 + 3: needle scan with context checks ===
     // Tier 3 hardening: defer first hit and prefer Tier 2 hits across all
     // patterns. If no Tier 2 hit exists, the deferred Tier 3 hit is returned (low

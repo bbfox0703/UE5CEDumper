@@ -98,7 +98,7 @@ struct NeedleScanResult {
     // Tier 1 only: which prefix/encoding matched, for the log line.
     bool     wide   = false;
     size_t   prefixIndex = 0;
-    // ScanVersionBranchName only: the branch name it read, narrowed, for the log line.
+    // Set by ScanVersionBranchName: the branch name it read, narrowed, for the log line.
     char     branch[kBranchMaxChars + 1] = {};
     // Instrumentation, so a test can assert the GATE still works without a wall clock.
     // Counts full needle memcmp calls actually issued. A deterministic stand-in for
@@ -233,10 +233,93 @@ inline NeedleScanResult ScanVersionTier1(const uint8_t* scan, size_t size) {
     return r;
 }
 
-// [GWT-BRANCH] red stub: finds nothing.
+// ── Tier 1, second shape: a licensee's engine branch name ([GWT-BRANCH]) ───────
+//
+// The engine stamps its build with a branch name, "++<depot>+<stream>", and ScanVersionTier1 reads Epic's own: depot
+// UE4/UE5, stream "Release-M.m". A licensee building from a stream of its own keeps the depot and names the stream
+// itself, so the tag ScanVersionTier1 looks for is not in the image at all.
+// MEASURED (2026-10-27, the 64 UE exes in the maintainer's two Steam libraries and the analyze corpus): two carry a
+// UE depot with a stream of their own that names the engine version -- Ghostwire: Tokyo's UTF-16 "++ue4+ue4_main+4.27"
+// (a customized 4.27 whose PE resource holds the game's 1.0, so it fell through every tier to the 504 default) and
+// Dolls Nest's "++UE4+4.27-Nitro" (answered first by its PE resource). The licensee depots ("++Alabama+release.2.1",
+// "++Arkansas+release-1.2.0.1") name a GAME release, which is why the depot itself must be UE4 or UE5.
+//
+// The grammar is deliberately narrow; each rule is a refusal in dll_helpers_test:
+//   * a NUL-terminated printable string, narrow or UTF-16LE, of at most kBranchMaxChars;
+//   * starting "++UE4+" or "++UE5+", the "UE" in either case (Ghostwire's is lower);
+//   * holding a whole token "M.m": after a '+' or a '-', followed by the end, a '+' or a '-', M the depot's own
+//     major and "M.m." a row of kVersionNeedles, so the table's 4.18 floor holds here as in every tier.
+// Epic's own tag fits the same grammar (its token follows "Release-"), so the caller runs this after ScanVersionTier1
+// has found nothing, and no verdict that function reaches can change. The first match in encoding-major, then
+// ascending-offset order wins, as there.
+
+// The kVersionNeedles row a branch name names, from its text; false when it names none under the grammar above.
+inline bool BranchNameVersionIndex(const char* text, size_t n, size_t& index) {
+    if (n < 6 || text[0] != '+' || text[1] != '+' || (text[2] != 'U' && text[2] != 'u') ||
+        (text[3] != 'E' && text[3] != 'e') || (text[4] != '4' && text[4] != '5') || text[5] != '+')
+        return false;
+    const char major = text[4];
+    // text[p] is the separator before a candidate token; the token needs "M." and one digit after it.
+    for (size_t p = 5; p + 3 < n; ++p) {
+        if (text[p] != '+' && text[p] != '-') continue;
+        if (text[p + 1] != major || text[p + 2] != '.') continue;
+        size_t q = p + 3;
+        while (q < n && text[q] >= '0' && text[q] <= '9') ++q;
+        if (q == p + 3) continue;
+        if (q < n && text[q] != '+' && text[q] != '-') continue;
+        const size_t tokenLen = q - (p + 1);
+        for (size_t k = 0; k < kVersionNeedleCount; ++k) {
+            const char* needle = kVersionNeedles[k].needle;   // "M.m.": the token plus the table's trailing dot
+            if (strlen(needle) == tokenLen + 1 && memcmp(needle, text + p + 1, tokenLen) == 0) {
+                index = k;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 inline NeedleScanResult ScanVersionBranchName(const uint8_t* scan, size_t size) {
-    (void)scan; (void)size;
-    return NeedleScanResult{};
+    NeedleScanResult r;
+    if (!scan) return r;
+    for (int wide = 0; wide <= 1; ++wide) {
+        const size_t step = wide ? 2 : 1;
+        for (size_t off = 0; off + 6 * step <= size; ++off) {
+            if (scan[off] != '+') continue;   // the gate: every branch name starts '+', narrow and widened
+            ++r.needlesCompared;
+            // The i-th character at `off` in this encoding, or -1 where there is none.
+            auto at = [&](size_t i) -> int {
+                const size_t b = off + i * step;
+                if (b + step > size || (wide && scan[b + 1] != 0)) return -1;
+                return scan[b];
+            };
+            // The fixed prefix first: most '+' bytes in an image are code, and this rejects them before any decode.
+            const int u = at(2), e = at(3), m = at(4);
+            if (at(0) != '+' || at(1) != '+' || (u != 'U' && u != 'u') || (e != 'E' && e != 'e') ||
+                (m != '4' && m != '5') || at(5) != '+')
+                continue;
+            char text[kBranchMaxChars + 1];
+            size_t n = 0;
+            bool terminated = false;
+            for (size_t i = 0; ; ++i) {
+                const int c = at(i);
+                if (c == 0) { terminated = true; break; }
+                if (c < 0x20 || c > 0x7E || n == kBranchMaxChars) break;   // -1 included: not a string
+                text[n++] = static_cast<char>(c);
+            }
+            if (!terminated) continue;
+            text[n] = '\0';
+            size_t k = 0;
+            if (!BranchNameVersionIndex(text, n, k)) continue;
+            r.index = k;
+            r.offset = off;
+            r.tier = 1;
+            r.wide = (wide != 0);
+            memcpy(r.branch, text, n + 1);
+            return r;
+        }
+    }
+    return r;
 }
 
 // ── Tier 2 + 3 ───────────────────────────────────────────────────────────────
