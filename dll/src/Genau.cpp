@@ -4325,7 +4325,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
             if (nameIdx == 0 || nameIdx > 0x00FFFFFF) continue;
 
             std::string name = Serie::GetString(nameIdx);
-            if (name == expectedFirst || name == expectedSecond) {
+            if (ProbeNameIs(name, expectedFirst) || ProbeNameIs(name, expectedSecond)) {
                 nameOff = off;
                 Sein::Info("DYNO", "ValidateAndFixOffsets: FField::Name at FField+0x%02X (resolved='%s')",
                          off, name.c_str());
@@ -4487,12 +4487,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
             fields[fieldCount].name = Serie::GetString(ni);
         }
 
-        const auto& fn = fields[fieldCount].name;
-        if (fn == "A" || fn == "X") fields[fieldCount].expectedOffset = 0;
-        else if (fn == "B" || fn == "Y") fields[fieldCount].expectedOffset = 4;
-        else if (fn == "C" || fn == "Z") fields[fieldCount].expectedOffset = 8;
-        else if (fn == "D") fields[fieldCount].expectedOffset = 12;
-        else fields[fieldCount].expectedOffset = -1;
+        fields[fieldCount].expectedOffset = ProbeFieldExpectedOffset(fields[fieldCount].name);
 
         ++fieldCount;
 

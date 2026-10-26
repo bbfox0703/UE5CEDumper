@@ -9129,6 +9129,24 @@ static void Test_Radar_LeafAnchor() {
                   "a direct anchor must carry the no-count sentinel");
 }
 
+// [VND584-07] A non-case-preserving FName keeps the casing of its FIRST registration, so a game can carry "a" / "x"
+// where stock carries "A" / "X" -- Dumper-7 met FBox2D members spelled "min" / "max". A miss in the FField::Name probe
+// leaves UNMEASURED_FFIELD_NAME, and in the Offset_Internal probe the version table's offsets.
+static void Test_Genau_ProbeNamesIgnoreCase() {
+    EXPECT("PROBENAME ⭐: a lowercase Guid member is still A", Genau::ProbeNameIs("a", "A"));
+    EXPECT("PROBENAME ⭐: lowercase Guid / Vector members keep their offsets",
+           Genau::ProbeFieldExpectedOffset("a") == 0 && Genau::ProbeFieldExpectedOffset("b") == 4
+           && Genau::ProbeFieldExpectedOffset("c") == 8 && Genau::ProbeFieldExpectedOffset("d") == 12
+           && Genau::ProbeFieldExpectedOffset("x") == 0 && Genau::ProbeFieldExpectedOffset("y") == 4
+           && Genau::ProbeFieldExpectedOffset("z") == 8);
+    // CONTROLS: stock casing, and names that are no member.
+    EXPECT("PROBENAME control: stock A..D / X..Z", Genau::ProbeFieldExpectedOffset("A") == 0
+           && Genau::ProbeFieldExpectedOffset("D") == 12 && Genau::ProbeFieldExpectedOffset("Z") == 8);
+    EXPECT("PROBENAME control: other names are no member", Genau::ProbeFieldExpectedOffset("E") == -1
+           && Genau::ProbeFieldExpectedOffset("AB") == -1 && Genau::ProbeFieldExpectedOffset("") == -1
+           && !Genau::ProbeNameIs("A", "B"));
+}
+
 static void Test_Genau_AdmitMultiModuleCandidate() {
     std::printf("Test_Genau_AdmitMultiModuleCandidate\n");
     using Genau::AnchorState;
@@ -11061,6 +11079,7 @@ int main() {
     // Macht — AOB pattern parser: nibble wildcards (4? / ?5) + anchor selection
     RUN(Test_Sig_IsCeReplayableAob);
     RUN(Test_Genau_AdmitMultiModuleCandidate);
+    RUN(Test_Genau_ProbeNamesIgnoreCase);
     RUN(Test_Macht_ClassifyModuleForScan);       // [AOB-SKIP-OWN-DLL] the walk leaves the dumper's own images out
     RUN(Test_Radar_RefineContainerAnchor);
     RUN(Test_Radar_LeafAnchor);

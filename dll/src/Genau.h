@@ -229,6 +229,20 @@ constexpr ModuleAdmission AdmitMultiModuleCandidate(AnchorState anchor,
     return ModuleAdmission::RefuseUnanchored;
 }
 
+/// [VND584-07] The offsets probe recognises Guid's / Vector's members by their FNames.
+inline bool ProbeNameIs(const std::string& name, const char* want) {
+    return name == want;
+}
+/// The byte offset a Guid / Vector member holds in the offsets probe: A / X 0, B / Y 4, C / Z 8, D 12, -1 for
+/// anything else.
+inline int ProbeFieldExpectedOffset(const std::string& name) {
+    if (ProbeNameIs(name, "A") || ProbeNameIs(name, "X")) return 0;
+    if (ProbeNameIs(name, "B") || ProbeNameIs(name, "Y")) return 4;
+    if (ProbeNameIs(name, "C") || ProbeNameIs(name, "Z")) return 8;
+    if (ProbeNameIs(name, "D")) return 12;
+    return -1;
+}
+
 struct EnginePointers {
     uintptr_t GObjects  = 0;   // FUObjectArray*
     uintptr_t GNames    = 0;   // FNamePool* or TNameEntryArray*
