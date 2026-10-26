@@ -229,9 +229,18 @@ constexpr ModuleAdmission AdmitMultiModuleCandidate(AnchorState anchor,
     return ModuleAdmission::RefuseUnanchored;
 }
 
-/// [VND584-07] The offsets probe recognises Guid's / Vector's members by their FNames.
+/// [VND584-07] The offsets probe recognises Guid's / Vector's members by their FNames, ignoring case: a
+/// non-case-preserving FName keeps the casing of its first registration, so a game can carry "a" / "x" where stock
+/// carries "A" / "X" (Dumper-7 met FBox2D members spelled "min" / "max"). A miss leaves FField::Name unmeasured and
+/// Offset_Internal / ElementSize on the version table.
 inline bool ProbeNameIs(const std::string& name, const char* want) {
-    return name == want;
+    size_t i = 0;
+    for (; want[i] != '\0'; ++i) {
+        if (i >= name.size()) return false;
+        const unsigned char a = static_cast<unsigned char>(name[i]), b = static_cast<unsigned char>(want[i]);
+        if ((a >= 'A' && a <= 'Z' ? a + 32 : a) != (b >= 'A' && b <= 'Z' ? b + 32 : b)) return false;
+    }
+    return i == name.size();
 }
 /// The byte offset a Guid / Vector member holds in the offsets probe: A / X 0, B / Y 4, C / Z 8, D 12, -1 for
 /// anything else.
