@@ -669,6 +669,9 @@ inline std::atomic<bool> bSoftPathProbed{false};
 // accepted, latched +0x08. Taken only when it is a size this path shape can have, so a misread PropertiesSize falls
 // back to the rule instead of steering the envelope.
 inline std::atomic<int>  SOFTPATH_SIZE_MEASURED{0};
+// [VND584-04] UClass::Interfaces' offset, MEASURED by Ubel's probe (FindClassInterfacesOffset on ActorComponent): 0 = not
+// yet, -1 = both classes found and no offset fit, so nothing here reads a class's interfaces.
+inline std::atomic<int>  UCLASS_INTERFACES{0};
 constexpr int SoftObjectPathPayloadFor(int measuredSize, int fnameSize, bool isTopLevelAssetPath) {
     return (measuredSize == FSoftObjectPathSizeFor(4, isTopLevelAssetPath)
             || measuredSize == FSoftObjectPathSizeFor(8, isTopLevelAssetPath)

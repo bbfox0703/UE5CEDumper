@@ -2266,6 +2266,7 @@ static uintptr_t ParamSlotObject(uintptr_t prop, const std::string& typeName) {
 static void ReadParamSlotNames(uintptr_t prop, ParamField& p) {
     const uintptr_t ptr = ParamSlotObject(prop, p.typeName);
     if (!ptr) return;
+    if (p.typeName == "InterfaceProperty") p.interfaceClass = ptr;   // [VND584-04]
     std::string name = GetName(ptr);
     if (name.empty() || name[0] < 0x20 || name[0] >= 0x7F) return;
     (p.typeName == "StructProperty" ? p.structType : p.objClass) = std::move(name);
@@ -2494,6 +2495,32 @@ static bool PrepareObjectSlots(const std::vector<ParamField>& fields, int64_t ba
                     return false;
                 continue;
             }
+            // [VND584-04] An FScriptInterface { UObject* ObjectPointer; void* InterfacePointer }: the invoke paths write
+            // the picked object into the first half only, so a native callee testing or calling through the interface
+            // saw null. The second half is the engine's GetInterfaceAddress for it -- unless the caller filled it.
+            if (p.typeName == "InterfaceProperty") {
+                if (kind == ParamKind::Return || p.size < 16 || !ops.interfaceAddress || !p.interfaceClass) break;
+                uint8_t* slot = params + off;
+                uint64_t object = 0, half = 0;
+                memcpy(&object, slot, 8);
+                memcpy(&half, slot + 8, 8);
+                if (object == 0 || half != 0 || !ops.isLiveObject(static_cast<uintptr_t>(object))) continue;
+                uintptr_t addr = 0;
+                std::string err;
+                const int answer = ops.interfaceAddress(static_cast<uintptr_t>(object), p.interfaceClass, ops.ctx,
+                                                        addr, err);
+                if (answer < 0) continue;   // not measured here: sent as it always was
+                if (answer == 0) {
+                    char a[32];
+                    snprintf(a, sizeof(a), "0x%llX", static_cast<unsigned long long>(object));
+                    why = "'" + prefix + p.name + "' (InterfaceProperty): the object at " + a +
+                          " does not implement the parameter's interface (" + err + ") -- not sent";
+                    return false;
+                }
+                memcpy(slot + 8, &addr, 8);
+                ++converted;
+                continue;
+            }
             if (p.size < 8 || !IsObjectPointerSlot(p.typeName, kind)) break;
             uint8_t* slot = params + off;
             uint64_t lead = 0;
@@ -2546,11 +2573,84 @@ static bool PrepareObjectSlots(const std::vector<ParamField>& fields, int64_t ba
     return true;
 }
 
-// [VND584-04] Red stubs.
-int FindClassInterfacesOffset(uintptr_t, uintptr_t, int, int) { return -1; }
-std::vector<ImplementedInterface> ClassInterfaces(uintptr_t) { return {}; }
-bool ClassInterfacesMeasured() { return false; }
-bool IsNativeClass(uintptr_t) { return false; }
+// [VND584-04] FImplementedInterface is 16 bytes: { UClass* Class; int32 PointerOffset; bool bImplementedByK2; }.
+static constexpr int kImplementedInterfaceStride = 0x10;
+static constexpr int32_t kMaxClassInterfaces = 64;
+
+static bool ReadImplementedInterface(uintptr_t entry, ImplementedInterface& out) {
+    uintptr_t cls = 0;
+    int32_t off = 0;
+    uint8_t k2 = 0;
+    if (!Macht::ReadSafe(entry, cls) || !Macht::ReadSafe(entry + 8, off) || !Macht::ReadSafe(entry + 12, k2)) return false;
+    // A class pointer, a PointerOffset inside an object, a bool: anything else is not this array.
+    if (!cls || !Grimoire::IsUserspacePointer(cls) || off < 0 || off > 0x10000 || k2 > 1) return false;
+    out = { cls, off, k2 != 0 };
+    return true;
+}
+
+int FindClassInterfacesOffset(uintptr_t cls, uintptr_t knownIface, int from, int to) {
+    if (!cls || !knownIface) return -1;
+    for (int off = (from + 7) & ~7; off <= to; off += 8) {
+        uintptr_t data = 0;
+        int32_t num = 0, max = 0;
+        if (!Macht::ReadSafe(cls + off, data) || !Macht::ReadSafe(cls + off + 8, num)
+            || !Macht::ReadSafe(cls + off + 12, max))
+            continue;
+        if (!data || !Grimoire::IsUserspacePointer(data) || num < 1 || num > kMaxClassInterfaces || max < num
+            || max > kMaxClassInterfaces)
+            continue;
+        bool sane = true, found = false;
+        for (int32_t i = 0; i < num && sane; ++i) {
+            ImplementedInterface ii;
+            sane = ReadImplementedInterface(data + static_cast<uintptr_t>(i) * kImplementedInterfaceStride, ii);
+            found = found || (sane && ii.cls == knownIface);
+        }
+        if (sane && found) return off;
+    }
+    return -1;
+}
+
+// Once per process, like ProbeSoftPathShape. ActorComponent implements Interface_AssetUserData on every version we
+// support; until both classes are loaded nothing is latched, so a probe that ran too early runs again.
+static void ProbeClassInterfaces() {
+    static std::mutex s_mutex;
+    std::lock_guard<std::mutex> lk(s_mutex);
+    if (DynOff::UCLASS_INTERFACES.load(std::memory_order_acquire) != 0) return;
+    const uintptr_t comp  = Aura::FindClassByPath("/Script/Engine.ActorComponent");
+    const uintptr_t iface = Aura::FindClassByPath("/Script/Engine.Interface_AssetUserData");
+    if (!comp || !iface) return;
+    const int off = FindClassInterfacesOffset(comp, iface, DynOff::USTRUCT_PROPSSIZE, 0x400);
+    if (off > 0) LOG_INFO("DetectClassInterfaces: UClass::Interfaces at +0x%X (measured on ActorComponent)", off);
+    else         LOG_WARN("DetectClassInterfaces: UClass::Interfaces not found on ActorComponent -- interfaces are not read");
+    DynOff::UCLASS_INTERFACES.store(off > 0 ? off : -1, std::memory_order_release);
+}
+
+bool ClassInterfacesMeasured() {
+    if (DynOff::UCLASS_INTERFACES.load(std::memory_order_acquire) == 0) ProbeClassInterfaces();
+    return DynOff::UCLASS_INTERFACES.load(std::memory_order_acquire) > 0;
+}
+
+std::vector<ImplementedInterface> ClassInterfaces(uintptr_t cls) {
+    std::vector<ImplementedInterface> out;
+    if (!cls || !ClassInterfacesMeasured()) return out;
+    const int off = DynOff::UCLASS_INTERFACES.load(std::memory_order_acquire);
+    uintptr_t data = 0;
+    int32_t num = 0;
+    if (!Macht::ReadSafe(cls + off, data) || !Macht::ReadSafe(cls + off + 8, num) || !data || num <= 0
+        || num > kMaxClassInterfaces)
+        return out;
+    for (int32_t i = 0; i < num; ++i) {
+        ImplementedInterface ii;
+        if (ReadImplementedInterface(data + static_cast<uintptr_t>(i) * kImplementedInterfaceStride, ii))
+            out.push_back(ii);
+    }
+    return out;
+}
+
+bool IsNativeClass(uintptr_t cls) {
+    const uintptr_t pkg = cls ? GetOuter(cls) : 0;
+    return pkg && GetName(pkg).rfind("/Script/", 0) == 0;
+}
 
 bool PrepareObjectParams(const ParamLayout& layout, uint8_t* params, size_t size, const ObjectParamOps& ops,
                          int& converted, std::string& why) {
