@@ -308,6 +308,10 @@ void ADumperTestActor::BeginPlay()
 {
 	Super::BeginPlay();
 
+	// [VND584-04] The interface fixture's instance (see ADumperTestIfaceActor).
+	if (UWorld* World = GetWorld())
+		Vnd584_IfaceActor = World->SpawnActor<ADumperTestIfaceActor>();
+
 	// D4: bind ONE sparse delegate so it reads bIsBound == 1 with a real
 	// FSparseDelegateStorage entry. Without this every MulticastSparseDelegateProperty on
 	// this actor is unbound, Ubel rejects before Aura::WalkSparseDelegateBindings is

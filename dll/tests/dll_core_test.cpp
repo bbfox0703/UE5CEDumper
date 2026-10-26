@@ -426,6 +426,23 @@ int main() {
         check("VER-410-GATE tree control: an undecided one goes on to the memory scan, which finds the image's 4.27",
               dLone.version == 427 && dLone.tier == 1, gb);
 
+        // [GWT-BRANCH] An image whose one engine tag is a licensee branch -- Ghostwire's, UTF-16 -- reads at tier 1 instead
+        // of falling through every tier to the 504 default.
+        std::vector<uint8_t> branchImage(256, '.');
+        {
+            const char* s = "++ue4+ue4_main+4.27";
+            size_t i = 0;
+            for (; s[i]; ++i) { branchImage[64 + i * 2] = static_cast<uint8_t>(s[i]); branchImage[64 + i * 2 + 1] = 0; }
+            branchImage[64 + i * 2] = 0; branchImage[64 + i * 2 + 1] = 0;
+        }
+        const auto dBranch = Genau::DetectVersionDetailed(loneExe.c_str(), reinterpret_cast<uintptr_t>(branchImage.data()),
+                                                          branchImage.size());
+        snprintf(gb, sizeof(gb), "version %u tier %d", dBranch.version, dBranch.tier);
+        check("GWT-BRANCH: an undecided resource beside an image carrying only Ghostwire's branch reads 427 at tier 1",
+              dBranch.version == 427 && dBranch.tier == 1, gb);
+        // Ghostwire is cached as the 504 default under rev 10, and the cache-reuse branch would restore that for ever.
+        check("GWT-BRANCH: the detection logic rev was bumped (10 -> 11)", Genau::kVersionDetectLogicRev >= 11);
+
         // A game version in the fixed ProductVersion, the engine's 4.10.2 in the fixed FileVersion and its build string
         // in the ProductVersion string: the FileVersion branch is a fixed-field reading, so the string corroborates it.
         const std::wstring productFixedFile = res(L"game_product_fixedfile_410");
@@ -5410,6 +5427,7 @@ int main() {
             put32(spField, DynOff::FFIELD_NAME, fieldName);
             DynOff::bSoftPathProbed = false;
             DynOff::SOFTPATH_TOPLEVEL_MEASURED = -1;
+            DynOff::SOFTPATH_SIZE_MEASURED = 0;
         };
         FakePool spPool;
         spPool.Build(kSB);
@@ -5436,9 +5454,54 @@ int main() {
         check("SOFTPATH ⭐ VND583-14: AssetPath measured on a title labelled 5.0 -> Package.Asset",
               p51 == "/Game/Pkg.Asset", p51.c_str());
 
+        // [VND584-08] A 5.1 / 5.2 build with an outlined FName (UE_FNAME_OUTLINE_NUMBER: sizeof(FName) 4). Before the
+        // FName probe has run SizeofFName() answers the rule's 8, so the payload read 0x20 against a real 0x18, and a
+        // tagged soft pointer of 0x28 gave the 5.3+ envelope 0x08 -- accepted and latched -- where +0x10 is right. The
+        // struct's own PropertiesSize (0x18) is the measurement.
+        {
+            const int  svFn  = DynOff::FNAME_SIZE_MEASURED.load();
+            const bool svCpn = DynOff::bCasePreservingName;
+            const int  svEnv = DynOff::SOFTPTR_PATH;
+            DynOff::FNAME_SIZE_MEASURED = 0;
+            DynOff::bCasePreservingName = false;
+            g_cachedUEVersion = 502;
+
+            build(nAssetPath);
+            put32(spB[bStruct], DynOff::USTRUCT_PROPSSIZE, 0x18);
+            DynOff::SOFTPTR_PATH = -1;
+            const int env = Ubel::SoftPathOffset(0x28);
+            check("SOFTPATH ⭐ VND584-08: an outlined-FName 5.2 soft pointer (0x28) has its path at +0x10, not +0x08",
+                  env == 0x10, std::to_string(env).c_str());
+            // Number is not modelled on an outlined build (ReadFName reads +4), so only the AssetName's place is pinned.
+            static int32_t outlined[8] = { nPkg, nAsset, 0, 0, 0, 0, 0, 0 };
+            const std::string po = Ubel::ReadSoftObjectPath(reinterpret_cast<uintptr_t>(outlined));
+            check("SOFTPATH ⭐ VND584-08: ...and its AssetName is read 4 bytes after its PackageName",
+                  po.size() > 6 && po.compare(po.size() - 6, 6, ".Asset") == 0, po.c_str());
+
+            // CONTROLS: the stock 8-byte FName keeps its answers; a PropertiesSize no path shape has is not taken.
+            build(nAssetPath);
+            put32(spB[bStruct], DynOff::USTRUCT_PROPSSIZE, 0x20);
+            DynOff::SOFTPTR_PATH = -1;
+            check("SOFTPATH control: a stock 5.2 path (0x20) in a 0x30 soft pointer stays at +0x10",
+                  Ubel::SoftPathOffset(0x30) == 0x10);
+            const std::string ps = Ubel::ReadSoftObjectPath(pathAddr);
+            check("SOFTPATH control: ...and reads its AssetName 8 bytes on", ps == "/Game/Pkg.Asset", ps.c_str());
+            build(nAssetPath);
+            put32(spB[bStruct], DynOff::USTRUCT_PROPSSIZE, 0x1234);
+            DynOff::SOFTPTR_PATH = -1;
+            g_cachedUEVersion = 505;
+            check("SOFTPATH control: a misread PropertiesSize falls back to the rule (5.5, 0x28 -> +0x08)",
+                  Ubel::SoftPathOffset(0x28) == 0x08);
+
+            DynOff::FNAME_SIZE_MEASURED = svFn;
+            DynOff::bCasePreservingName = svCpn;
+            DynOff::SOFTPTR_PATH        = svEnv;
+        }
+
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
         DynOff::bSoftPathProbed = false;
         DynOff::SOFTPATH_TOPLEVEL_MEASURED = -1;
+        DynOff::SOFTPATH_SIZE_MEASURED = 0;
         DynOff::bUseFProperty     = svFPropS;
         DynOff::bOffsetsValidated = svValidS;
         g_cachedUEVersion         = svVerS;
@@ -11246,6 +11309,333 @@ int main() {
             check("UE4WIDE string offset 0x0C: so does the wide read", Serie::GetString(2) == "Caf\xC3\xA9",
                   Serie::GetString(2).c_str());
         }
+    }
+
+    // [VND584-01] Every invoke path writes the PICKED OBJECT'S ADDRESS into a weak / soft parameter, which the engine
+    // reads as FWeakObjectPtr { ObjectIndex, SerialNumber } and resolves to null. The DLL now swaps it for the engine's
+    // own value; the fakes below stand in for the live-object test, Conv_ObjectToSoftObjectReference and UE's resolve.
+    {   blk("VND584-01: a picked object becomes the engine's weak / soft pointer, never its raw address");
+        using Ubel::ObjectParamAction;
+        using Ubel::ParamKind;
+        const uint64_t obj = 0x1F2A3B4C5D0ull;
+        auto cls = [](const char* t, int32_t size, ParamKind k, uint64_t lead, bool live) {
+            return Ubel::ClassifyObjectParam(t, size, k, lead, live);
+        };
+        check("VND584-01 classify ⭐: a picked object in a weak slot is converted",
+              cls("WeakObjectProperty", 8, ParamKind::In, obj, true) == ObjectParamAction::ConvertWeak);
+        check("VND584-01 classify ⭐: ...in a const-ref soft slot too",
+              cls("SoftObjectProperty", 0x28, ParamKind::ConstRef, obj, true) == ObjectParamAction::ConvertSoft);
+        check("VND584-01 classify: ...and a soft class slot",
+              cls("SoftClassProperty", 0x28, ParamKind::In, obj, true) == ObjectParamAction::ConvertSoft);
+        check("VND584-01 classify: an in-out soft slot is the caller's value too",
+              cls("SoftObjectProperty", 0x28, ParamKind::InOut, obj, true) == ObjectParamAction::ConvertSoft);
+        check("VND584-01 classify: a lazy slot holding an object is refused (no GUID can be made)",
+              cls("LazyObjectProperty", 0x20, ParamKind::In, obj, true) == ObjectParamAction::Refuse);
+        check("VND584-01 classify: a 16-byte (remote-handle) weak slot is refused",
+              cls("WeakObjectProperty", 16, ParamKind::In, obj, true) == ObjectParamAction::Refuse);
+        // CONTROLS: what must keep going through untouched.
+        check("VND584-01 classify control: zero is null and stays",
+              cls("WeakObjectProperty", 8, ParamKind::In, 0, false) == ObjectParamAction::Leave);
+        check("VND584-01 classify control: a value that is no live object (a pair the caller encoded) stays",
+              cls("SoftObjectProperty", 0x28, ParamKind::In, 0x0000000500001234ull, false) == ObjectParamAction::Leave);
+        check("VND584-01 classify control: a lazy slot that is no object stays (nothing to refuse)",
+              cls("LazyObjectProperty", 0x20, ParamKind::In, 0x0000000500001234ull, false) == ObjectParamAction::Leave);
+        // UHT gives a non-const `T&` CPF_OutParm alone (CPF_ReferenceParm only with const), so an in/out C++ reference
+        // reads as Out; a picked object there must reach the callee too (review R2).
+        check("VND584-01 classify ⭐: an out slot holding a picked object is converted (a non-const & reads as Out)",
+              cls("SoftObjectProperty", 0x28, ParamKind::Out, obj, true) == ObjectParamAction::ConvertSoft);
+        check("VND584-01 classify: ...a weak one too",
+              cls("WeakObjectProperty", 8, ParamKind::Out, obj, true) == ObjectParamAction::ConvertWeak);
+        check("VND584-01 classify control: so is the return value",
+              cls("SoftObjectProperty", 0x28, ParamKind::Return, obj, true) == ObjectParamAction::Leave);
+        check("VND584-01 classify control: a UObject* IS its address",
+              cls("ObjectProperty", 8, ParamKind::In, obj, true) == ObjectParamAction::Leave);
+        check("VND584-01 classify control: an interface leads with its UObject*",
+              cls("InterfaceProperty", 16, ParamKind::In, obj, true) == ObjectParamAction::Leave);
+
+        // The rewrite, against fakes: one live object; the engine's soft pointer for it is {77, 5} + a path head 0xAB.
+        static uintptr_t s_live = 0;
+        static int s_made = 0;
+        static size_t s_madeSize = 0x28;
+        static bool s_makeFails = false;
+        static int32_t s_resolvesTo = 77;   // the index UE's resolve accepts
+        s_live = static_cast<uintptr_t>(obj);
+        Ubel::ObjectParamOps ops;
+        ops.isLiveObject = [](uintptr_t a) { return a == s_live; };
+        ops.makeSoftReference = [](uintptr_t o, void*, std::vector<uint8_t>& out, std::string& why) {
+            ++s_made;
+            if (s_makeFails) { why = "Conv_ObjectToSoftObjectReference not found"; return false; }
+            out.assign(s_madeSize, 0);
+            const int32_t idx = 77, ser = 5;
+            memcpy(out.data(), &idx, 4);
+            memcpy(out.data() + 4, &ser, 4);
+            out[8] = 0xAB;
+            (void)o;
+            return true;
+        };
+        ops.resolveWeak = [](int32_t i, int32_t s) -> uintptr_t { return (i == s_resolvesTo && s == 5) ? s_live : 0; };
+
+        auto field = [](const char* name, const char* type, int32_t off, int32_t size, uint64_t flags) {
+            Ubel::ParamField f;
+            f.name = name; f.typeName = type; f.offset = off; f.size = size; f.flags = flags;
+            f.kind = Ubel::ParamKindOf(flags);
+            return f;
+        };
+        constexpr uint64_t kParm = 0x80, kOut = 0x100, kConst = 0x2, kRef = 0x08000000, kRet = 0x400;
+        Ubel::ParamLayout L;
+        L.params = { field("Target",   "WeakObjectProperty", 0x00, 8,    kParm),
+                     field("Asset",    "SoftObjectProperty", 0x08, 0x28, kParm | kOut | kConst | kRef),
+                     field("Plain",    "ObjectProperty",     0x30, 8,    kParm),
+                     field("OutAsset", "SoftObjectProperty", 0x38, 0x28, kParm | kOut),
+                     field("Ret",      "SoftObjectProperty", 0x60, 0x28, kParm | kOut | kRet) };
+        auto fill = [&](std::vector<uint8_t>& b) {
+            b.assign(0x88, 0);
+            for (int32_t off : { 0x00, 0x08, 0x30, 0x38, 0x60 }) memcpy(b.data() + off, &obj, 8);
+        };
+        std::vector<uint8_t> buf;
+        fill(buf);
+        int converted = -1;
+        std::string why;
+        bool ok = Ubel::PrepareObjectParams(L, buf.data(), buf.size(), ops, converted, why);
+        int32_t wIdx = 0, wSer = 0;
+        memcpy(&wIdx, buf.data(), 4);
+        memcpy(&wSer, buf.data() + 4, 4);
+        check("VND584-01 rewrite ⭐: accepted, three slots rewritten", ok && converted == 3, why.c_str());
+        check("VND584-01 rewrite ⭐: the weak slot holds the engine's pair {77, 5}, not the address",
+              wIdx == 77 && wSer == 5);
+        int32_t sIdx = 0;
+        memcpy(&sIdx, buf.data() + 0x08, 4);
+        check("VND584-01 rewrite ⭐: the soft slot holds the engine's whole pointer, its path included",
+              sIdx == 77 && buf[0x08 + 8] == 0xAB);
+        uint64_t plain = 0, outSoft = 0, ret = 0;
+        memcpy(&plain, buf.data() + 0x30, 8);
+        memcpy(&outSoft, buf.data() + 0x38, 8);
+        memcpy(&ret, buf.data() + 0x60, 8);
+        check("VND584-01 rewrite control: the UObject* slot keeps the address", plain == obj);
+        int32_t oIdx = 0;
+        memcpy(&oIdx, buf.data() + 0x38, 4);
+        check("VND584-01 rewrite ⭐: the out slot holding a picked object is converted", oIdx == 77 && outSoft != obj);
+        check("VND584-01 rewrite control: the return slot is left alone", ret == obj);
+
+        // Refusals: each one names the parameter and leaves the call unsent.
+        Ubel::ParamLayout lazyL;
+        lazyL.params = { field("Lazy", "LazyObjectProperty", 0x00, 0x20, kParm) };
+        fill(buf);
+        ok = Ubel::PrepareObjectParams(lazyL, buf.data(), buf.size(), ops, converted, why);
+        check("VND584-01 refuse ⭐: a lazy slot holding an object is refused, by name",
+              !ok && why.find("Lazy") != std::string::npos, why.c_str());
+
+        s_makeFails = true;
+        fill(buf);
+        ok = Ubel::PrepareObjectParams(L, buf.data(), buf.size(), ops, converted, why);
+        s_makeFails = false;
+        check("VND584-01 refuse: no engine reference, no call (never the raw address)",
+              !ok && why.find("Target") != std::string::npos, why.c_str());
+
+        s_resolvesTo = 78;
+        fill(buf);
+        ok = Ubel::PrepareObjectParams(L, buf.data(), buf.size(), ops, converted, why);
+        s_resolvesTo = 77;
+        check("VND584-01 refuse: a pair that does not lead back to the object is not sent", !ok, why.c_str());
+
+        s_madeSize = 0x30;
+        Ubel::ParamLayout softOnly;
+        softOnly.params = { field("Asset", "SoftObjectProperty", 0x08, 0x28, kParm) };
+        fill(buf);
+        ok = Ubel::PrepareObjectParams(softOnly, buf.data(), buf.size(), ops, converted, why);
+        s_madeSize = 0x28;
+        check("VND584-01 refuse: an engine pointer of another size is not copied over the slot",
+              !ok && why.find("Asset") != std::string::npos, why.c_str());
+
+        // CONTROLS: nothing to convert asks the engine for nothing.
+        s_made = 0;
+        std::vector<uint8_t> zero(0x88, 0);
+        ok = Ubel::PrepareObjectParams(L, zero.data(), zero.size(), ops, converted, why);
+        check("VND584-01 control: an all-null buffer is accepted and the engine is not called",
+              ok && converted == 0 && s_made == 0);
+        Ubel::ParamLayout pastEnd;
+        pastEnd.params = { field("Far", "WeakObjectProperty", 0x84, 8, kParm) };
+        fill(buf);
+        ok = Ubel::PrepareObjectParams(pastEnd, buf.data(), buf.size(), ops, converted, why);
+        check("VND584-01 control: a slot running past the buffer is left alone", ok && converted == 0 && s_made == 0);
+
+        // A struct parameter's members: the dialog writes a struct's sub-fields through the same 8-byte arm, so a
+        // soft member inside a struct the caller passes in is the same bug one level down. Member offsets are the
+        // struct's own; the member carries no CPF_Parm, so the direction is the parameter's.
+        auto structOf = [&](const char* name, int32_t off, uint64_t flags, std::vector<Ubel::ParamField> members) {
+            Ubel::ParamField f = field(name, "StructProperty", off, 0x30, flags);
+            f.sub = std::move(members);
+            return f;
+        };
+        Ubel::ParamLayout nested;
+        nested.params = { structOf("Spec",    0x00, kParm,        { field("Count", "IntProperty",        0x00, 4,    0),
+                                                                      field("Icon",  "SoftObjectProperty", 0x08, 0x28, 0) }),
+                          structOf("OutSpec", 0x30, kParm | kOut, { field("Icon",  "SoftObjectProperty", 0x08, 0x28, 0) }) };
+        std::vector<uint8_t> nb(0x60, 0);
+        memcpy(nb.data() + 0x08, &obj, 8);
+        memcpy(nb.data() + 0x38, &obj, 8);
+        ok = Ubel::PrepareObjectParams(nested, nb.data(), nb.size(), ops, converted, why);
+        int32_t nIdx = 0;
+        memcpy(&nIdx, nb.data() + 0x08, 4);
+        uint64_t outMember = 0;
+        memcpy(&outMember, nb.data() + 0x38, 8);
+        check("VND584-01 nested ⭐: a soft member of a struct passed in is converted",
+              ok && converted == 2 && nIdx == 77 && nb[0x08 + 8] == 0xAB, why.c_str());
+        check("VND584-01 nested: ...and so is the same member of an out struct", outMember != obj);
+        Ubel::ParamLayout nestedLazy;
+        nestedLazy.params = { structOf("Spec", 0x00, kParm, { field("Ref", "LazyObjectProperty", 0x08, 0x20, 0) }) };
+        std::fill(nb.begin(), nb.end(), 0);
+        memcpy(nb.data() + 0x08, &obj, 8);
+        ok = Ubel::PrepareObjectParams(nestedLazy, nb.data(), nb.size(), ops, converted, why);
+        check("VND584-01 nested: a refusal names the member through its struct",
+              !ok && why.find("Spec.Ref") != std::string::npos, why.c_str());
+
+        // The live-object probe reads value+0x0C. Every double, int64, FName and UObject* of a call used to be probed
+        // too -- 1000.0 is 0x408F400000000000, a non-canonical address, so each invoke with an FVector raised a
+        // first-chance access violation every vectored handler saw (review SAFE-2). Only a weak / soft / lazy slot in a
+        // caller's direction is probed now.
+        static int s_probes = 0;
+        Ubel::ObjectParamOps counting = ops;
+        counting.isLiveObject = [](uintptr_t a) { ++s_probes; return a == s_live; };
+        Ubel::ParamLayout scalars;
+        scalars.params = { field("X",     "DoubleProperty",     0x00, 8, kParm),
+                           field("N",     "Int64Property",      0x08, 8, kParm),
+                           field("Name",  "NameProperty",       0x10, 8, kParm),
+                           field("Obj",   "ObjectProperty",     0x18, 8, kParm),
+                           field("Ret",   "WeakObjectProperty", 0x20, 8, kParm | kOut | kRet) };
+        std::vector<uint8_t> sb(0x28, 0);
+        const double x = 1000.0;
+        memcpy(sb.data(), &x, 8);
+        for (int32_t off : { 0x08, 0x10, 0x18, 0x20 }) memcpy(sb.data() + off, &obj, 8);
+        s_probes = 0;
+        ok = Ubel::PrepareObjectParams(scalars, sb.data(), sb.size(), counting, converted, why);
+        check("VND584-01 probe ⭐: no double / int64 / FName / UObject* / return slot is probed",
+              ok && converted == 0 && s_probes == 0, std::to_string(s_probes).c_str());
+        Ubel::ParamLayout oneWeak;
+        oneWeak.params = { field("Target", "WeakObjectProperty", 0x00, 8, kParm) };
+        std::vector<uint8_t> wb(8, 0);
+        memcpy(wb.data(), &obj, 8);
+        s_probes = 0;
+        ok = Ubel::PrepareObjectParams(oneWeak, wb.data(), wb.size(), counting, converted, why);
+        check("VND584-01 probe control: a weak slot is probed once", ok && converted == 1 && s_probes == 1);
+    }
+
+    // [VND584-04] UClass::Interfaces, found the way Dumper-7 finds it, and an invoke's InterfaceProperty filled the way
+    // UObject::GetInterfaceAddress fills it.
+    {
+        blk("VND584-04: UClass::Interfaces is found by content; an interface parameter gets its interface half");
+        alignas(16) static uint8_t comp[0x400] = {};
+        alignas(16) static uint8_t entries[2][16] = {};
+        alignas(16) static uint8_t decoyEntries[2][16] = {};
+        alignas(16) static uint8_t knownIface[0x40] = {}, otherIface[0x40] = {};
+        memset(comp, 0, sizeof(comp));
+        auto put = [](uint8_t* b, uintptr_t cls, int32_t off, uint8_t k2) {
+            memcpy(b, &cls, 8); memcpy(b + 8, &off, 4); b[12] = k2;
+        };
+        auto putArray = [&](int at, uintptr_t data, int32_t num) {
+            memcpy(comp + at, &data, 8); memcpy(comp + at + 8, &num, 4); memcpy(comp + at + 12, &num, 4);
+        };
+        const uintptr_t known = reinterpret_cast<uintptr_t>(knownIface), other = reinterpret_cast<uintptr_t>(otherIface);
+        // A decoy at 0x80: plausible 16-byte entries, but not the known interface. The real array at 0x1A8.
+        put(decoyEntries[0], other, 0x30, 0); put(decoyEntries[1], other, 0x38, 0);
+        putArray(0x80, reinterpret_cast<uintptr_t>(decoyEntries), 2);
+        put(entries[0], other, 0x30, 0); put(entries[1], known, 0x28, 0);
+        putArray(0x1A8, reinterpret_cast<uintptr_t>(entries), 2);
+        const int found = Ubel::FindClassInterfacesOffset(reinterpret_cast<uintptr_t>(comp), known, 0x58, 0x3F0);
+        check("VND584-04 ⭐: UClass::Interfaces is the array that holds the known interface (0x1A8), not a decoy",
+              found == 0x1A8, std::to_string(found).c_str());
+        put(entries[0], other, 0x30, 7);   // an entry whose bImplementedByK2 is no bool
+        const int insane = Ubel::FindClassInterfacesOffset(reinterpret_cast<uintptr_t>(comp), known, 0x58, 0x3F0);
+        check("VND584-04 control: an array with an implausible entry is not taken", insane == -1,
+              std::to_string(insane).c_str());
+
+        // The fill, against a fake GetInterfaceAddress: the picked object implements the interface at +0x28.
+        static uintptr_t s_obj = 0;
+        static int s_answer = 1;
+        s_obj = 0x1F2A3B4C5D0ull;
+        Ubel::ObjectParamOps iops;
+        iops.isLiveObject = [](uintptr_t a) { return a == s_obj; };
+        iops.interfaceAddress = [](uintptr_t o, uintptr_t, void*, uintptr_t& out, std::string& why) {
+            if (s_answer == 0) why = "does not implement it";
+            out = s_answer == 1 ? o + 0x28 : 0;
+            return s_answer;
+        };
+        auto ifield = [](uint64_t flags, uintptr_t iface) {
+            Ubel::ParamField f;
+            f.name = "Target"; f.typeName = "InterfaceProperty"; f.offset = 0; f.size = 16; f.flags = flags;
+            f.kind = Ubel::ParamKindOf(flags); f.interfaceClass = iface;
+            return f;
+        };
+        Ubel::ParamLayout il;
+        il.params = { ifield(0x80, known) };
+        uint8_t ib[16] = {};
+        memcpy(ib, &s_obj, 8);
+        int converted = -1;
+        std::string why;
+        bool ok = Ubel::PrepareObjectParams(il, ib, sizeof(ib), iops, converted, why);
+        uint64_t half = 0;
+        memcpy(&half, ib + 8, 8);
+        check("VND584-04 ⭐: the interface half is the object + its PointerOffset", ok && converted == 1
+              && half == s_obj + 0x28, why.c_str());
+        s_answer = 0;
+        memset(ib + 8, 0, 8);
+        ok = Ubel::PrepareObjectParams(il, ib, sizeof(ib), iops, converted, why);
+        check("VND584-04 ⭐: an object that does not implement the interface is refused, by name",
+              !ok && why.find("Target") != std::string::npos, why.c_str());
+        // CONTROLS: an unmeasured build sends what it always sent; a caller's own interface half stays.
+        s_answer = -1;
+        memset(ib + 8, 0, 8);
+        ok = Ubel::PrepareObjectParams(il, ib, sizeof(ib), iops, converted, why);
+        memcpy(&half, ib + 8, 8);
+        check("VND584-04 control: unmeasured Interfaces leave the slot as it was", ok && converted == 0 && half == 0);
+        s_answer = 1;
+        const uint64_t given = 0x1234;
+        memcpy(ib + 8, &given, 8);
+        ok = Ubel::PrepareObjectParams(il, ib, sizeof(ib), iops, converted, why);
+        memcpy(&half, ib + 8, 8);
+        check("VND584-04 control: an interface half the caller filled is not overwritten",
+              ok && converted == 0 && half == given);
+    }
+
+    // [VND584-03] Dumper-7's "UE5.7 variant observed in Mistfall Hunter": an FUObjectArray (base-relative) with the
+    // chunk counts BEFORE Objects -- MaxChunks +0x04, NumChunks +0x08, Objects +0x10, MaxElements +0x20,
+    // NumElements +0x24. No strict row fit it, and the relaxed A/C row took it: NumElements read from +0x14, the high
+    // dword of the Objects pointer, so every GObjects walk saw a few hundred objects through a garbage table.
+    {
+        blk("VND584-03: a chunk-counts-first UE 5.7 FUObjectArray is read whole, and the relaxed rows have a floor");
+        alignas(16) static uint8_t mist[0x40] = {};
+        const uintptr_t table = reinterpret_cast<uintptr_t>(pool.chunkTable.data());
+        // Strict-valid numbers: 6 chunks of 0x10000 (MaxElements 0x60000), one in use for 16,384 objects.
+        auto buildMist = [&](int32_t maxChunks, int32_t maxElements) {
+            memset(mist, 0, sizeof(mist));
+            const int32_t numChunks = static_cast<int32_t>(pool.chunkTable.size());
+            memcpy(mist + 0x04, &maxChunks, 4);
+            memcpy(mist + 0x08, &numChunks, 4);
+            memcpy(mist + 0x10, &table, 8);
+            memcpy(mist + 0x20, &maxElements, 4);
+            memcpy(mist + 0x24, &kCount, 4);
+        };
+        buildMist(6, 0x60000);
+        Aura::Init(reinterpret_cast<uintptr_t>(mist));
+        int32_t got = Aura::GetCount();
+        check("VND584-03 ⭐: the Mistfall-shaped array reports every object", got == kCount, std::to_string(got).c_str());
+        check("VND584-03 ⭐: ...through its own row, chunk counts at +0x04 / +0x08",
+              Aura::s_layout.maxChunksOffset == 0x04 && Aura::s_layout.numChunksOffset == 0x08,
+              std::to_string(Aura::s_layout.maxChunksOffset).c_str());
+
+        // The floor, alone: the same shape with chunk numbers no strict row accepts (one chunk of 16,384). Without
+        // the floor relaxed A/C takes the Objects pointer's high dword as the count; with it the relaxed E row, which
+        // reads Objects / Max / Num from the right places, is reached.
+        buildMist(1, kCount);
+        Aura::Init(reinterpret_cast<uintptr_t>(mist));
+        got = Aura::GetCount();
+        check("VND584-03 ⭐: with no strict row, the relaxed rows' 0x1000 floor still reaches every object",
+              got == kCount, std::to_string(got).c_str());
+
+        // CONTROL: the main fixture's stock UE5-Extended array still reads whole through detection.
+        Aura::Init(pool.Addr());
+        check("VND584-03 control: a stock UE5-Extended array is still detected whole", Aura::GetCount() == kCount);
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

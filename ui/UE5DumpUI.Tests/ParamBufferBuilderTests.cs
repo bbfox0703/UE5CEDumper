@@ -206,7 +206,6 @@ public class ParamBufferBuilderTests
     [InlineData("SoftObjectProperty")]
     [InlineData("SoftClassProperty")]
     [InlineData("InterfaceProperty")]
-    [InlineData("LazyObjectProperty")]
     public void IsPickablePointerType_PointerTypes_True(string typeName)
     {
         // The types WriteParam writes as one 8-byte value. Not the DLL-side
@@ -232,6 +231,7 @@ public class ParamBufferBuilderTests
     [InlineData("UnknownProperty")]
     [InlineData("AssetObjectProperty")]
     [InlineData("AssetClassProperty")]
+    [InlineData("LazyObjectProperty")]   // [VND584-01] no GUID can be made; UHT refuses lazy params anyway
     public void IsPickablePointerType_NonPointerTypes_False(string typeName)
     {
         // Scalars / containers / bool / string-likes don't get the picker UI.
@@ -389,7 +389,6 @@ public class ParamBufferBuilderTests
         "SoftObjectProperty",
         "SoftClassProperty",
         "InterfaceProperty",
-        "LazyObjectProperty",
     };
 
     [Theory]

@@ -358,6 +358,98 @@ inline bool ResolveFunctionInChain(uintptr_t classAddr, const char* funcName,
     return false;
 }
 
+// [VND584-04] UClass::Interfaces holds TArray<FImplementedInterface>: 16-byte elements { UClass* Class; int32
+// PointerOffset; bool bImplementedByK2; } (4.18 .. 5.8). One entry, as Ubel reads it.
+struct ImplementedInterface {
+    uintptr_t cls = 0;
+    int32_t   pointerOffset = 0;
+    bool      byK2 = false;
+};
+
+// The entry through which `classAddr`'s chain implements `iface`, most-derived level first: an entry whose class is
+// `iface` or derives from it (UClass::IsChildOf). `nativeOnly` skips entries a Blueprint implements, as
+// UObject::GetInterfaceAddress does for a native interface. False when there is none.
+template <class ReadSuper, class ListInterfaces>
+inline bool FindImplementedInterface(uintptr_t classAddr, uintptr_t iface, bool nativeOnly, ReadSuper readSuper,
+                                     ListInterfaces listInterfaces, ImplementedInterface& out) {
+    if (!classAddr || !iface) return false;
+    constexpr int kMaxSuperDepth = 64;
+    auto isChildOf = [&](uintptr_t c) {
+        for (int depth = 0; c && depth < kMaxSuperDepth; ++depth) {
+            if (c == iface) return true;
+            uintptr_t s = 0;
+            if (!readSuper(c, s) || s == c) break;
+            c = s;
+        }
+        return false;
+    };
+    uintptr_t cls = classAddr;
+    for (int depth = 0; cls && depth < kMaxSuperDepth; ++depth) {
+        for (const ImplementedInterface& ii : listInterfaces(cls)) {
+            if (nativeOnly && ii.byK2) continue;
+            if (isChildOf(ii.cls)) { out = ii; return true; }
+        }
+        uintptr_t super = 0;
+        if (!readSuper(cls, super) || super == cls) break;
+        cls = super;
+    }
+    return false;
+}
+
+// UObject::GetInterfaceAddress, for an invoke's InterfaceProperty parameter: a Blueprint (non-native) interface's
+// address is the object itself; a native interface's is the object + the PointerOffset of the first entry implemented
+// natively, and null when only a Blueprint implements it. False when the class does not implement `iface` at all.
+template <class ReadSuper, class ListInterfaces>
+inline bool InterfaceAddressFor(uintptr_t object, uintptr_t objectClass, uintptr_t iface, bool ifaceIsNative,
+                                ReadSuper readSuper, ListInterfaces listInterfaces, uintptr_t& out) {
+    out = 0;
+    ImplementedInterface ii;
+    if (!FindImplementedInterface(objectClass, iface, false, readSuper, listInterfaces, ii)) return false;
+    if (!ifaceIsNative) { out = object; return true; }
+    if (FindImplementedInterface(objectClass, iface, true, readSuper, listInterfaces, ii))
+        out = object + static_cast<uintptr_t>(static_cast<intptr_t>(ii.pointerOffset));
+    return true;
+}
+
+// UClass::FindFunctionByName's order: the class chain (ResolveFunctionInChain), then -- only when no level declares the
+// name -- each level's implemented interfaces with their SuperStructs, most-derived level first. A function an
+// implementer does not redeclare (a native implementor of a BlueprintCallable interface function) lives only on the
+// interface class, so the chain alone answered "not found".
+template <class ListFuncs, class ReadSuper, class ListInterfaces>
+inline bool ResolveFunctionInChainOrInterfaces(uintptr_t classAddr, const char* funcName, ListFuncs listFuncs,
+                                               ReadSuper readSuper, ListInterfaces listInterfaces, FunctionInfo& out,
+                                               int* levelsWalked = nullptr) {
+    if (ResolveFunctionInChain(classAddr, funcName, listFuncs, readSuper, out, levelsWalked)) return true;
+    constexpr int kMaxSuperDepth = 64;
+    uintptr_t cls = classAddr;
+    for (int depth = 0; cls && depth < kMaxSuperDepth; ++depth) {
+        for (const ImplementedInterface& ii : listInterfaces(cls))
+            if (ii.cls && ResolveFunctionInChain(ii.cls, funcName, listFuncs, readSuper, out)) return true;
+        uintptr_t super = 0;
+        if (!readSuper(cls, super) || super == cls) break;
+        cls = super;
+    }
+    return false;
+}
+
+// [VND584-06] Is `owner` -- a UFunction's Outer, the class that declares it -- `classAddr` or one of its SuperStructs?
+// A CE invoke form resolves its UFunction* once and FIRE sends it back later; a Blueprint class reloaded meanwhile can
+// leave that address holding another class's UFunction, which still passes the meta-class check, and ProcessEvent then
+// runs it on an instance of the wrong class (Dumper-7 015c04b met the same hazard). Bounded like the resolver above.
+template <class ReadSuper>
+inline bool IsClassInChain(uintptr_t classAddr, uintptr_t owner, ReadSuper readSuper) {
+    if (!classAddr || !owner) return false;
+    constexpr int kMaxSuperDepth = 64;
+    uintptr_t cls = classAddr;
+    for (int depth = 0; cls && depth < kMaxSuperDepth; ++depth) {
+        if (cls == owner) return true;
+        uintptr_t super = 0;
+        if (!readSuper(cls, super) || super == cls) break;
+        cls = super;
+    }
+    return false;
+}
+
 // Resolve a SINGLE UFunction* to its (name, fullName, functionFlags, numParms,
 // parmsSize) — no param-chain walk. Validates the meta-class name == "Function"
 // first so a stale/recycled pointer (e.g. one recorded by the Live PE profiler
@@ -465,6 +557,9 @@ struct ParamField {
     bool        boolNative = false;
     std::string structType;       // a StructProperty's UScriptStruct
     std::string objClass;         // an object-family property's PropertyClass
+    // [VND584-04] An InterfaceProperty's InterfaceClass ADDRESS -- the one engine pointer here, for an invoke that
+    // reads it at once, while the function is alive. A layout kept past an unload must not use it.
+    uintptr_t   interfaceClass = 0;
     std::vector<ParamField> sub;  // a struct's members, its supers' first, kParamStructDepth deep at most
     std::string enumName;         // an EnumProperty's UEnum, or a ByteProperty's with one
     std::vector<std::pair<int64_t, std::string>> enumEntries;   // that enum's table, read fresh (never a cache's)
@@ -484,6 +579,8 @@ struct ParamLayout {
     uint8_t     numParms      = 0;
     uint32_t    layoutEnd     = 0;   // past the last parameter: its offset + size * arrayDim
     std::vector<ParamField> params;
+    // kParamLeaves or kParamStructDepth stopped a struct's members short, so some member is not in `params`.
+    bool        truncated     = false;
 };
 // The function's OWN chain -- never its SuperStruct's (an override's parent) -- in this engine's property model, kept
 // to its CPF_Parm entries (a Blueprint function's locals follow them). False with `why` when `func` is not a
@@ -570,6 +667,67 @@ inline ParamKind ParamKindOf(uint64_t propertyFlags) {
     if (propertyFlags & kConst) return ParamKind::ConstRef;
     return (propertyFlags & kReference) ? ParamKind::InOut : ParamKind::Out;
 }
+
+// [VND584-01] An invoke's object-pointer parameters. TWeakObjectPtr / TSoftObjectPtr / TSoftClassPtr begin with
+// FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber } (UE 5.8 WeakObjectPtr.h, PersistentObjectPtr.h), yet the
+// invoke paths write the address of the object the user picked there. The engine read that address as the pair,
+// resolved it to null, and ProcessEvent still reported success. The DLL now swaps a picked address for the engine's
+// own value before ProcessEvent; this says which slots.
+enum class ObjectParamAction : uint8_t { Leave, ConvertWeak, ConvertSoft, Refuse };
+// The slots the rewrite looks at, and so the only ones probed for a live object: the probe reads value+0x0C, and every
+// double / int64 / FName of a call would otherwise be a faulting read (1000.0 is a non-canonical address). The return
+// value is the callee's. An Out slot is not: UHT gives a non-const `T&` CPF_OutParm alone (CPF_ReferenceParm only with
+// const), so an in/out C++ reference reads as Out, and a callee that assigns it frees the engine-made path through
+// FMemory, the allocator that made it.
+inline bool IsObjectPointerSlot(const std::string& typeName, ParamKind kind) {
+    return kind != ParamKind::Return
+        && (typeName == "WeakObjectProperty" || typeName == "SoftObjectProperty" || typeName == "SoftClassProperty"
+            || typeName == "LazyObjectProperty");
+}
+inline ObjectParamAction ClassifyObjectParam(const std::string& typeName, int32_t size, ParamKind kind,
+                                             uint64_t leadingQword, bool leadsWithLiveObject) {
+    const bool weak = typeName == "WeakObjectProperty";
+    const bool lazy = typeName == "LazyObjectProperty";
+    if (!IsObjectPointerSlot(typeName, kind)) return ObjectParamAction::Leave;
+    // Zero is null in all three. A value that is not a live object's address is one the caller encoded itself, and it
+    // goes through as it always did.
+    if (leadingQword == 0 || !leadsWithLiveObject) return ObjectParamAction::Leave;
+    // A lazy pointer resolves by a GUID nothing here can make (UHT refuses lazy UFunction parameters anyway), and a weak
+    // pointer of any size but 8 is the remote-handle shape (VND583-15) this does not model.
+    if (lazy || (weak && size != 8)) return ObjectParamAction::Refuse;
+    return weak ? ObjectParamAction::ConvertWeak : ObjectParamAction::ConvertSoft;
+}
+
+// What PrepareObjectParams asks of the process, injectable so a test needs no game memory.
+struct ObjectParamOps {
+    bool (*isLiveObject)(uintptr_t addr) = nullptr;
+    // [VND584-04] UObject::GetInterfaceAddress for an InterfaceProperty slot (InterfaceAddressFor): 1 with `out` set
+    // (null is a legal answer -- a native interface only a Blueprint implements), 0 when the object does not implement
+    // `iface` (`why` says so), -1 when it cannot be told on this build (UClass::Interfaces unmeasured).
+    int (*interfaceAddress)(uintptr_t object, uintptr_t iface, void* ctx, uintptr_t& out, std::string& why) = nullptr;
+    // The engine's TSoftObjectPtr for `object`, as bytes: KismetSystemLibrary::Conv_ObjectToSoftObjectReference, which
+    // assigns the object's weak serial and builds its FSoftObjectPath (4.18 to 5.8). False with `why` when it cannot.
+    bool (*makeSoftReference)(uintptr_t object, void* ctx, std::vector<uint8_t>& out, std::string& why) = nullptr;
+    // UE's own weak resolve (ResolveWeakObjectPtr): the pair the engine made must lead back to the object.
+    uintptr_t (*resolveWeak)(int32_t index, int32_t serial) = nullptr;
+    void* ctx = nullptr;
+};
+// Rewrite every input slot of `layout` in `params` that holds a picked object's address into the engine's value for
+// it. False with `why` when a slot holds an object that cannot be passed: the invoke is then refused, not sent with a
+// null the caller did not ask for. `converted` counts the slots rewritten.
+bool PrepareObjectParams(const ParamLayout& layout, uint8_t* params, size_t size, const ObjectParamOps& ops,
+                         int& converted, std::string& why);
+
+// [VND584-04] Where UClass::Interfaces sits in `cls`: the first 8-aligned offset in [from, to] holding a TArray
+// { Data, Num, Max } of 16-byte FImplementedInterface entries that are all plausible and include `knownIface` --
+// Dumper-7's FindImplementedInterfacesOffset, with ActorComponent and Interface_AssetUserData. -1 when none fits.
+int FindClassInterfacesOffset(uintptr_t cls, uintptr_t knownIface, int from, int to);
+// The interfaces `cls` itself implements (its own entries), read at the measured offset, measuring it on first use;
+// empty while it is unmeasured. ClassInterfacesMeasured() says which.
+std::vector<ImplementedInterface> ClassInterfaces(uintptr_t cls);
+bool ClassInterfacesMeasured();
+// A native (C++) class lives in a /Script/ package; a Blueprint one does not. UObject::GetInterfaceAddress branches on it.
+bool IsNativeClass(uintptr_t cls);
 
 // [VND583-01] UFunction::FunctionFlags' offset as decided by the one-shot vote
 // (DynOff::UFUNCTION_FLAGS), running the vote on first use. 0 = undecided (the offsets probe

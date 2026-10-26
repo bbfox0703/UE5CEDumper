@@ -13,6 +13,7 @@
 // ============================================================
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <string>
 
@@ -58,8 +59,10 @@ bool IsHookActive();
 ///                    thread). Pass 0 only when `params` outlives the request AND
 ///                    nothing rewrites it meanwhile: Mimic's mailbox does not
 ///                    qualify, because CE rewrites it with its next command.
+/// @param dropIfAbandoned  [VND584-01] see ClaimRequest: on a timeout the request never runs later.
 /// @return 0 on success, -4 if SEH exception, -5 if timeout, -7 if hook not active
-int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize);
+int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize,
+                      bool dropIfAbandoned = false);
 
 /// [W3-DEBUGCAM-QUEUED] EnqueueInvoke's -5: the game-thread dispatch TIMED OUT and the request STAYS QUEUED -- it still
 /// runs when the game thread next drains. Mirrored UI-side as Constants.InvokeDispatchTimeoutResult.
@@ -231,6 +234,52 @@ inline bool ShouldUseTrampoline(uintptr_t resolvedPeAddr,
 /// shipped gate, not a mirror of it: HookedProcessEventBody calls exactly this.
 inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs) {
     return queueDepth != 0 && !entryIsOurs;
+}
+
+/// [VND584-01] A queued request its waiter may abandon. A timed-out request normally stays queued and runs later from
+/// its own copy of the parameters; for a helper call made from a value that may not outlive the wait -- the object an
+/// invoke's caller picked, which the engine call dereferences -- a late run could touch a freed object. Such a request
+/// either is already running when its waiter gives up (the waiter then waits it out and takes its result) or never
+/// runs. The drain and the waiter race on one compare-exchange out of Queued; whichever moves it first decides.
+/// [VND584-05] clang narrows `test dword ptr [reg+disp32], imm32` whose immediate has a single set byte to
+/// `test byte ptr [reg+disp32+k], imm8`. Avowed (clang, no Rich header) tests FUNC_Native as `F6 82 B1 00 00 00 04`
+/// and the 0x400000 flag as `F6 83 B2 00 00 00 40` -- FunctionFlags at +0xB0 both times -- so the dword patterns
+/// never match and every run fell back to the stock version table. The FunctionFlags offset such a body tests, when
+/// a FUNC_Native byte test (imm8 0x04 at FunctionFlags+1, within `p1Limit`) and a 0x400000 byte test (imm8 0x40 at
+/// FunctionFlags+2, anywhere) both imply the SAME offset; -1 otherwise. One lone `test byte [reg+disp],4` is too
+/// common to mean anything; two agreeing on one field are the fingerprint.
+inline int NarrowedFlagTestsFunctionFlags(const uint8_t* body, size_t size, size_t p1Limit) {
+    // One `test byte ptr [reg+disp32], imm8` ending by `limit`: F6, ModRM mod=10 reg=000 (/0 is TEST), a SIB byte when
+    // rm=100, a disp32 whose upper three bytes are 0 (FunctionFlags sits below +0x100), then the imm8. Its disp's low
+    // byte, or -1.
+    auto testAt = [&](size_t i, uint8_t imm, size_t limit) -> int {
+        if (i + 7 > limit || body[i] != 0xF6) return -1;
+        const uint8_t modrm = body[i + 1];
+        if ((modrm & 0xF8) != 0x80) return -1;
+        const size_t d = ((modrm & 7) == 4) ? i + 3 : i + 2;
+        if (d + 5 > limit) return -1;
+        if (body[d + 1] != 0 || body[d + 2] != 0 || body[d + 3] != 0 || body[d + 4] != imm) return -1;
+        return body[d];
+    };
+    bool highTest[256] = {};
+    bool anyHigh = false;
+    for (size_t j = 0; j < size; ++j) {
+        const int d2 = testAt(j, 0x40, size);
+        if (d2 >= 2) { highTest[d2 - 2] = true; anyHigh = true; }
+    }
+    if (!anyHigh) return -1;
+    const size_t lim1 = p1Limit < size ? p1Limit : size;
+    for (size_t i = 0; i < lim1; ++i) {
+        const int d1 = testAt(i, 0x04, lim1);
+        if (d1 >= 1 && highTest[d1 - 1]) return d1 - 1;
+    }
+    return -1;
+}
+
+constexpr int32_t kRequestQueued = 0, kRequestRunning = 1, kRequestAbandoned = 2;
+inline bool ClaimRequest(std::atomic<int32_t>& state, int32_t to) {
+    int32_t expected = kRequestQueued;
+    return state.compare_exchange_strong(expected, to, std::memory_order_acq_rel);
 }
 
 // ============================================================

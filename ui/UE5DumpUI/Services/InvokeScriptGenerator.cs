@@ -656,9 +656,13 @@ public static class InvokeScriptGenerator
                 helperEmitted = true;
             }
             Line(sb, $"    if not _isZeroDefault(edits[{i + 1}]) then");
-            Line(sb, $"        showMessage('[Invoke] {what} parameters cannot be built from a textbox -- " +
-                     "a multi-word structure whose contents must be allocated inside the game, so the " +
-                     $"value you typed would be dropped. Clear the box (or leave 0) to send it empty.{nothingSent}')");
+            if (p.TypeName == "LazyObjectProperty")
+                Line(sb, $"        showMessage('[Invoke] {EscapeLua(p.Name)}: " +
+                         $"{EscapeLua(ParamBufferBuilder.LazyRefusalText)}{nothingSent}')");
+            else
+                Line(sb, $"        showMessage('[Invoke] {what} parameters cannot be built from a textbox -- " +
+                         "a multi-word structure whose contents must be allocated inside the game, so the " +
+                         $"value you typed would be dropped. Clear the box (or leave 0) to send it empty.{nothingSent}')");
             Line(sb, "        return");
             Line(sb, "    end");
         }

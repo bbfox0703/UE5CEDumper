@@ -3425,6 +3425,46 @@ and the verification register (`[PEHOOK-6-2026-08-20]`, `[A2-ES2-506-2026-09-05]
   route: inject, then read the version from the `[SUMMARY]` lines and the slot from the
   `DetectProcessEvent (pattern)` line, after refreshing any deployed proxy (handover §3).
 
+### 4.8 Before UE 5.8 the engine loses a by-value `TWeakObjectPtr` UFunction parameter itself
+
+Measured 2026-10-27 on DumperTest 5.4 Shipping ([VND584-01]). `Vnd584_EchoWeak(TWeakObjectPtr<AActor> Target)`
+returned null with the engine's OWN pair for the actor in its slot -- and with that pair typed by hand. The cause is
+in the engine: `P_GET_WEAKOBJECT` declared the thunk's local as the `TWeakObjectPtr` type, and `FFrame::
+StepExplicitProperty` fills a non-out local through `CopyCompleteValueToScriptVM`, which for `FWeakObjectProperty`
+stores a raw `UObject*` (the script VM's representation). `Get()` then reads the pointer's two halves as
+`{ObjectIndex, SerialNumber}`. UE 5.8 fixed the macro (`399f2949c408`: the local became `ElementType*`); 5.4, 5.6.1 and
+5.7.0 still have it.
+
+- **What it means for a verification:** a by-value weak parameter's RETURN says nothing about what the invoke sent.
+  Check the slot instead, or use a `const TWeakObjectPtr<T>&` parameter -- it is `CPF_OutParm`, so its thunk refers to
+  the caller's block (`Vnd584_EchoWeakRef`).
+- **What it does not mean:** that our weak conversion is wrong on those versions. The bytes in the slot are the engine's
+  own pair; a const-ref or a 5.8 callee receives the object.
+
+### 4.9 A `UE=` line can be the 504 DEFAULT, not a reading
+
+Measured 2026-10-27 on Ghostwire: Tokyo ([GWT-BRANCH]). `[SUMMARY] ... UE=504` reads exactly like a detection, and
+`docs/test-games.md` carried this title as "UE505 detected" for months. The line that tells them apart is the one
+before it in `scan-0.log`: `FindAll: UE Version = 504 (tier=0, detected=no, lowConfidence=yes, ...)`, after
+`DetectVersion: Could not detect UE version ...`. A cached verdict says the same on its own line
+(`(cached, rev=N, detected=no, ...)`).
+
+- **What it costs:** every `>= 500` / `>= 503` default then picks the UE5 shape. On Ghostwire (4.27) the DLL read the
+  FFieldVariant as 5.3+'s tagged pointer (`TagFFV=yes`); the correct 4.27 reading is `no`.
+- **Before recording a version:** quote `detected=` and `tier=` with it. `detected=no` is a missing detection to fix
+  or an override to set, never a version.
+
+### 4.10 A missing Rich header is not a clang build
+
+Measured 2026-10-27 ([VND584-05]). Eight distinct UE exes on this PC carry no Rich header; one, Avowed, is an lld
+(clang) build. The other seven are MSVC builds: their linker version names a real toolset (14.29, 14.38, 14.43), or
+their debug directory holds VC_FEATURE / POGO entries, which lld never writes. lld-link always writes linker 14.00.
+
+- **Ask the tool, not the stub:** `py tools/verify/linker_survey.py <exe>` (or `--scan <root>`) combines the three
+  signals and explains them in its header.
+- **Why it matters:** compiler-shape fixes (the ProcessEvent byte-test pass, AOB shapes) need clang samples, and a
+  Rich-header count over-reports them by a factor of eight here.
+
 -----
 
 ## 5. Triage recipes
@@ -3796,7 +3836,8 @@ ran to 8,300 characters; the maintainer had it cut to 3,700. Aim for 20–30
 user-facing items and leave small fixes out, but do not pad: a release with twelve has twelve. Two
 kinds of work get one line each, never an item per change: Wiki work ("Updated the Wiki.") and bulk
 hint or tooltip corrections. Copy the `## Setup` block from the last PUBLISHED release, which the
-maintainer may have edited after publishing, not from a local draft. Check each claim against its row
+maintainer may have edited after publishing, not from a local draft. An `@` before a word becomes a user mention in
+release notes -- v3649's "Hold @0" linked to someone's account -- so such text goes in a code span. Check each claim against its row
 before writing it, name a game only where the fix was measured on it, and say so when the previous
 release shipped a regression. Neither the merge nor the release run wakes the session; the maintainer
 says when CI is done.

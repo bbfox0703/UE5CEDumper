@@ -70,6 +70,30 @@ public static class CeInvokeReturn
                 return;
         }
 
+        // [VND584-01] A weak / soft / lazy return leads with FWeakObjectPtr { ObjectIndex, SerialNumber }: the same
+        // pair FIRE prints (InvokeParamDialog.DecodeParamValue), never an address to follow. Only a WEAK pointer is
+        // null at serial 0; a soft / lazy one is null by its path / GUID, which this does not read.
+        if (BakedScriptGenerator.IsWeakPairType(ueType))
+        {
+            Line(sb, $"{indent}do");
+            Line(sb, $"{indent}  local _wi = readInteger({pdLocal} + {offset}, true) or 0");
+            Line(sb, $"{indent}  local _ws = readInteger({pdLocal} + {offset} + 4, true) or 0");
+            // The label is concatenated, never formatted: a '%' in a cooked name would break string.format.
+            if (ueType == "WeakObjectProperty")
+            {
+                Line(sb, $"{indent}  if _ws == 0 then print('[Invoke] return: {label} (weak@{offset}) = null') else");
+                Line(sb, $"{indent}  print('[Invoke] return: {label} (weak@{offset}) = ' .. " +
+                         "string.format('{index %d, serial %d}', _wi, _ws)) end");
+            }
+            else
+            {
+                Line(sb, $"{indent}  print('[Invoke] return: {label} (weak half@{offset}) = ' .. " +
+                         "string.format('{index %d, serial %d}', _wi, _ws))");
+            }
+            Line(sb, $"{indent}end");
+            return;
+        }
+
         // Everything else is classified via the same table the baked helper uses,
         // so scalar reads stay consistent with writeBakedParams.
         // `size` is already a parameter of this method; without it a 1-byte enum

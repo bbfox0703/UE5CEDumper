@@ -776,6 +776,63 @@ static void Test_Stark_ShouldDrainQueue() {
            !Stark::ShouldDrainQueue(64, true));
 }
 
+// [VND584-05] The ProcessEvent fingerprint's byte-narrowed (clang) form, with Avowed's own bytes.
+static void Test_Stark_NarrowedFlagTests() {
+    std::vector<uint8_t> body(0x400, 0x90);
+    const uint8_t p1[] = { 0xF6, 0x82, 0xB1, 0x00, 0x00, 0x00, 0x04 };   // test byte [rdx+0xB1], 4   (Avowed +0x2E)
+    const uint8_t p2[] = { 0xF6, 0x83, 0xB2, 0x00, 0x00, 0x00, 0x40 };   // test byte [rbx+0xB2], 0x40 (Avowed +0x17B)
+    memcpy(body.data() + 0x2E, p1, sizeof(p1));
+    memcpy(body.data() + 0x17B, p2, sizeof(p2));
+    EXPECT("NARROW ⭐: Avowed's pair implies FunctionFlags +0xB0",
+           Stark::NarrowedFlagTestsFunctionFlags(body.data(), body.size(), 0x400) == 0xB0);
+
+    // The SIB form (the UFunction* in r8-r15): 41 F6 84 24 B1 00 00 00 04.
+    std::vector<uint8_t> sib(0x400, 0x90);
+    const uint8_t s1[] = { 0x41, 0xF6, 0x84, 0x24, 0xB1, 0x00, 0x00, 0x00, 0x04 };
+    memcpy(sib.data() + 0x40, s1, sizeof(s1));
+    memcpy(sib.data() + 0x200, p2, sizeof(p2));
+    EXPECT("NARROW: a SIB-form FUNC_Native test pairs too",
+           Stark::NarrowedFlagTestsFunctionFlags(sib.data(), sib.size(), 0x400) == 0xB0);
+
+    // CONTROLS: what must not count as the fingerprint.
+    std::vector<uint8_t> lone(0x400, 0x90);
+    memcpy(lone.data() + 0x2E, p1, sizeof(p1));
+    EXPECT("NARROW control: a lone FUNC_Native byte test is not enough",
+           Stark::NarrowedFlagTestsFunctionFlags(lone.data(), lone.size(), 0x400) == -1);
+    std::vector<uint8_t> apart(0x400, 0x90);
+    const uint8_t p2far[] = { 0xF6, 0x83, 0xC6, 0x00, 0x00, 0x00, 0x40 };   // a different field (+0xC4)
+    memcpy(apart.data() + 0x2E, p1, sizeof(p1));
+    memcpy(apart.data() + 0x17B, p2far, sizeof(p2far));
+    EXPECT("NARROW control: two tests of different fields do not pair",
+           Stark::NarrowedFlagTestsFunctionFlags(apart.data(), apart.size(), 0x400) == -1);
+    std::vector<uint8_t> late(0x800, 0x90);
+    memcpy(late.data() + 0x500, p1, sizeof(p1));
+    memcpy(late.data() + 0x600, p2, sizeof(p2));
+    EXPECT("NARROW control: the FUNC_Native test must sit in the prologue window",
+           Stark::NarrowedFlagTestsFunctionFlags(late.data(), late.size(), 0x400) == -1);
+    std::vector<uint8_t> otherReg(0x400, 0x90);
+    const uint8_t notTest[] = { 0xF6, 0x8A, 0xB1, 0x00, 0x00, 0x00, 0x04 };   // ModRM reg=001: not TEST (/0)
+    memcpy(otherReg.data() + 0x2E, notTest, sizeof(notTest));
+    memcpy(otherReg.data() + 0x17B, p2, sizeof(p2));
+    EXPECT("NARROW control: F6 with ModRM.reg != 0 is not a TEST",
+           Stark::NarrowedFlagTestsFunctionFlags(otherReg.data(), otherReg.size(), 0x400) == -1);
+}
+
+// [VND584-01] A request its waiter may abandon: whichever of the drain and the timed-out waiter moves it out of Queued
+// first decides, and the other learns it lost.
+static void Test_Stark_ClaimRequest() {
+    std::atomic<int32_t> s{Stark::kRequestQueued};
+    EXPECT("CLAIM ⭐: the drain claims a queued request", Stark::ClaimRequest(s, Stark::kRequestRunning));
+    EXPECT("CLAIM ⭐: ...so the timed-out waiter cannot abandon it (it waits the call out)",
+           !Stark::ClaimRequest(s, Stark::kRequestAbandoned) && s.load() == Stark::kRequestRunning);
+    std::atomic<int32_t> t{Stark::kRequestQueued};
+    EXPECT("CLAIM ⭐: the waiter abandons a request still queued", Stark::ClaimRequest(t, Stark::kRequestAbandoned));
+    EXPECT("CLAIM ⭐: ...so a late drain does not run it",
+           !Stark::ClaimRequest(t, Stark::kRequestRunning) && t.load() == Stark::kRequestAbandoned);
+    EXPECT("CLAIM: the three states are distinct", Stark::kRequestQueued != Stark::kRequestRunning
+           && Stark::kRequestRunning != Stark::kRequestAbandoned && Stark::kRequestQueued != Stark::kRequestAbandoned);
+}
+
 // ----- Stark: ProcessEvent detection lifecycle ---------------------------------
 //
 // [PEHOOKONCE-2026-08-18]. The field defect: a detection that failed because there
@@ -1290,11 +1347,19 @@ static void Test_Mimic_InvokeSlab() {
            && Mimic::InvokeSlabRefusal(false, 16, slab) == Mimic::MB_ERR_INVOKE_UNRESOLVED);
 
     // ProcessEvent's own codes ride the same `result` field (Frieren.h), and so do -10 / -11.
-    bool distinct = Mimic::MB_ERR_INVOKE_UNRESOLVED != Mimic::MB_ERR_INVOKE_TOO_LARGE
-                 && Mimic::MB_ERR_INVOKE_UNRESOLVED < 0 && Mimic::MB_ERR_INVOKE_TOO_LARGE < 0;
-    for (int32_t taken : { -1, -2, -3, -4, -5, -6, -7, -8, -10, -11 })
-        distinct = distinct && taken != Mimic::MB_ERR_INVOKE_UNRESOLVED && taken != Mimic::MB_ERR_INVOKE_TOO_LARGE;
-    EXPECT("INVOKESLAB: the two refusals are negative and apart from every code already in `result`", distinct);
+    // [VND584-01] -14, the object-parameter refusal, rides the same field.
+    // [VND584-06] ...and -15, a UFunction that is not the instance's class chain's.
+    const int32_t refusals[] = { Mimic::MB_ERR_INVOKE_UNRESOLVED, Mimic::MB_ERR_INVOKE_TOO_LARGE,
+                                 Mimic::MB_ERR_INVOKE_OBJECT_PARAM, Mimic::MB_ERR_INVOKE_NOT_OWNED };
+    constexpr size_t kRefusals = sizeof(refusals) / sizeof(refusals[0]);
+    bool distinct = true;
+    for (size_t i = 0; i < kRefusals; ++i) {
+        distinct = distinct && refusals[i] < 0;
+        for (size_t j = i + 1; j < kRefusals; ++j) distinct = distinct && refusals[i] != refusals[j];
+        for (int32_t taken : { -1, -2, -3, -4, -5, -6, -7, -8, -10, -11 }) distinct = distinct && taken != refusals[i];
+    }
+    EXPECT("INVOKESLAB: the refusals are negative, distinct, and apart from every code already in `result`",
+           distinct);
 }
 
 static void Test_Mimic_CommandRequiresInit() {
@@ -6337,6 +6402,112 @@ static void Test_VersionTier2_BareNeedle_G11() {
     }
 }
 
+// ── [GWT-BRANCH] Tier 1's second shape: a licensee's engine branch name ──────
+//
+// Ghostwire: Tokyo, a customized UE 4.27, carries no "++UE4+Release-4.27" anywhere. Its one engine tag is its own
+// branch, UTF-16 "++ue4+ue4_main+4.27", and its PE resource holds the game's 1.0, so detection fell through every tier
+// to the 504 default. These are absolute answers over the shapes measured in this machine's UE binaries: the two that
+// name an engine version are read, and the licensee branches that name a GAME version are refused.
+static void Test_VersionBranchName() {
+    auto fresh = [](size_t n) { return std::vector<uint8_t>(n, 'x'); };
+    auto plantNarrow = [](std::vector<uint8_t>& b, size_t at, const char* s) {
+        size_t i = 0;
+        for (; s[i]; ++i) b[at + i] = static_cast<uint8_t>(s[i]);
+        b[at + i] = 0;
+    };
+    auto plantWide = [](std::vector<uint8_t>& b, size_t at, const char* s) {
+        size_t i = 0;
+        for (; s[i]; ++i) { b[at + i * 2] = static_cast<uint8_t>(s[i]); b[at + i * 2 + 1] = 0; }
+        b[at + i * 2] = 0; b[at + i * 2 + 1] = 0;
+    };
+    auto scan = [](std::vector<uint8_t>& b) { return Genau::ScanVersionBranchName(b.data(), b.size()); };
+    auto val = [](const Genau::NeedleScanResult& r) {
+        return r.found() ? Genau::kVersionNeedles[r.index].value : 0u;
+    };
+
+    {   auto b = fresh(4096);
+        plantWide(b, 1500, "++ue4+ue4_main+4.27");
+        auto r = scan(b);
+        EXPECT("GWT-BRANCH: Ghostwire's utf16 '++ue4+ue4_main+4.27' reads 427 at tier 1",
+               r.tier == 1 && val(r) == 427 && r.wide && r.offset == 1500);
+        EXPECT_EQ_STR("GWT-BRANCH: ...and names the branch it read", r.branch, "++ue4+ue4_main+4.27");
+        EXPECT("GWT-BRANCH: ...where Epic's Release-tag Tier 1 finds nothing",
+               !Genau::ScanVersionTier1(b.data(), b.size()).found());
+    }
+    {   // UTF-16, as Dolls Nest's exe holds it: three wide copies and no narrow one.
+        auto b = fresh(4096);
+        plantWide(b, 1500, "++UE4+4.27-Nitro");
+        auto r = scan(b);
+        EXPECT("GWT-BRANCH: Dolls Nest's utf16 '++UE4+4.27-Nitro' reads 427", r.tier == 1 && val(r) == 427 && r.wide);
+    }
+    {   auto b = fresh(4096);
+        plantNarrow(b, 1500, "++UE5+ue5_main+5.4");
+        EXPECT("GWT-BRANCH: a UE5 depot's '++UE5+ue5_main+5.4' reads 504", val(scan(b)) == 504);
+    }
+    {   // Epic's own tag is a branch name of the same grammar, so it reads the same; the caller tries Tier 1 first.
+        auto b = fresh(4096);
+        plantWide(b, 1500, "++UE4+Release-4.26-CL-0");
+        EXPECT("GWT-BRANCH: Epic's '++UE4+Release-4.26-CL-0' reads 426 too", val(scan(b)) == 426);
+    }
+    static const char* kRefused[] = {
+        "++Alabama+release.2.1",         // Avowed: a game release on a licensee depot
+        "++Arkansas+release-1.2.0.1",    // The Outer Worlds 2
+        "++TQ2S+tq2-beta-no-binaries",   // Titan Quest II
+        "++stream+Main_TeamCity_Code",   // Hogwarts Legacy
+        "++SNAPSHOTFOOTER+.",            // a footer marker several titles carry
+        "++ue4+ue4_main+5.4",            // the version's major disagrees with the depot's
+        "++ue4+ue4_main+4.270",          // not a whole token
+        "++ue4+ue4_main+4.27.2",         // a token followed by '.', not a separator or the end
+        "++ue4+ue4_main+4.27_hotfix",    // ...or by '_'
+        "++ue4+ue4_main+14.27",          // a digit before it
+        "++ue4+ue4_main_4.27",           // '_' does not separate a branch's parts
+        "++ue4+ue4_main+4.17",           // below the needle table's 4.18 floor
+        "++ue6+ue6_main+6.0",            // not a UE4 or UE5 depot
+    };
+    for (const char* s : kRefused) {
+        auto b = fresh(4096);
+        plantNarrow(b, 1500, s);
+        auto w = fresh(4096);
+        plantWide(w, 1500, s);
+        const std::string label = std::string("GWT-BRANCH: refused, ascii and utf16: '") + s + "'";
+        EXPECT(label.c_str(), !scan(b).found() && !scan(w).found());
+    }
+    {   // A non-printable byte inside an otherwise good, NUL-terminated branch: the printable rule alone refuses it.
+        auto b = fresh(4096);
+        plantNarrow(b, 1500, "++UE4+4.27-Nitro\x01");
+        EXPECT("GWT-BRANCH: a branch holding a non-printable byte before its NUL is refused", !scan(b).found());
+    }
+    for (int wide = 0; wide <= 1; ++wide) {
+        // kBranchMaxChars is the bound on a 97-byte stack buffer: 96 characters are read, 97 are not a branch name.
+        const std::string at96 = "++UE4+4.27-" + std::string(Genau::kBranchMaxChars - 11, 'a');
+        const std::string at97 = at96 + "a";
+        auto b96 = fresh(4096);
+        auto b97 = fresh(4096);
+        if (wide) { plantWide(b96, 1500, at96.c_str()); plantWide(b97, 1500, at97.c_str()); }
+        else      { plantNarrow(b96, 1500, at96.c_str()); plantNarrow(b97, 1500, at97.c_str()); }
+        auto r96 = scan(b96);
+        EXPECT(wide ? "GWT-BRANCH cap: a 96-character utf16 branch is read whole"
+                    : "GWT-BRANCH cap: a 96-character ascii branch is read whole",
+               val(r96) == 427 && strlen(r96.branch) == Genau::kBranchMaxChars);
+        EXPECT(wide ? "GWT-BRANCH cap: a 97-character utf16 run is refused"
+                    : "GWT-BRANCH cap: a 97-character ascii run is refused", !scan(b97).found());
+    }
+    {   // No NUL before a non-printable byte: the run is not a string, whatever it starts with.
+        auto b = fresh(4096);
+        Plant(b, 1500, "++ue4+main+4.27");
+        b[1500 + 15] = 0x01;
+        EXPECT("GWT-BRANCH: a run that ends in a non-printable byte, not a NUL, is refused", !scan(b).found());
+    }
+    {   // The cost property, as Tier 1's: no '+' byte, no compare.
+        std::vector<uint8_t> nb(1u << 20, 'x');
+        auto r = Genau::ScanVersionBranchName(nb.data(), nb.size());
+        EXPECT("GWT-BRANCH gate: no '+' byte -> zero prefix compares", r.needlesCompared == 0 && !r.found());
+        auto b = fresh(4096);
+        plantWide(b, 1500, "++ue4+ue4_main+4.27");
+        EXPECT("GWT-BRANCH gate: a planted branch issues compares", scan(b).needlesCompared > 0);
+    }
+}
+
 // ── audit #5 G12: the sizeof(FProperty) family must move as ONE ─────────────
 //
 // FSTRUCTPROP_STRUCT / FARRAYPROP_INNER / FBOOLPROP_FIELDSIZE / FBYTEPROP_ENUM all name the
@@ -9108,6 +9279,99 @@ static void Test_Radar_LeafAnchor() {
                   "a direct anchor must carry the no-count sentinel");
 }
 
+// [VND584-04] Interfaces: the by-name lookup UClass::FindFunctionByName does, ImplementsInterface, and
+// GetInterfaceAddress -- against a fake hierarchy.
+static void Test_Ubel_Interfaces() {
+    // Classes: Pawn -> Actor -> Object; Widget -> Object. Interfaces: IBar -> IFoo -> UInterface; IBaz -> UInterface.
+    // Actor implements IBar natively at +0x28; Pawn implements IBaz in Blueprint (byK2).
+    const uintptr_t Object = 0x1000, Actor = 0x2000, Pawn = 0x3000, Widget = 0x4000;
+    const uintptr_t UInterfaceC = 0x5000, IFoo = 0x6000, IBar = 0x7000, IBaz = 0x8000;
+    auto readSuper = [&](uintptr_t c, uintptr_t& s) {
+        s = c == Pawn ? Actor : c == Actor ? Object : c == Widget ? Object
+          : c == IBar ? IFoo : c == IFoo ? UInterfaceC : c == IBaz ? UInterfaceC : 0;
+        return true;
+    };
+    auto listIfaces = [&](uintptr_t c) {
+        std::vector<Ubel::ImplementedInterface> v;
+        if (c == Actor) v.push_back({ IBar, 0x28, false });
+        if (c == Pawn)  v.push_back({ IBaz, 0, true });
+        return v;
+    };
+    auto fn = [](const char* name, uintptr_t addr) { FunctionInfo f; f.name = name; f.address = addr; return f; };
+    auto listFuncs = [&](uintptr_t c) {
+        std::vector<FunctionInfo> v;
+        if (c == Actor) { v.push_back(fn("Tick", 0xA1)); v.push_back(fn("Shared", 0xA2)); }
+        if (c == IFoo)  { v.push_back(fn("DoFoo", 0xF1)); v.push_back(fn("Shared", 0xF2)); }
+        return v;
+    };
+
+    FunctionInfo hit;
+    EXPECT("IFACE ⭐: an interface function the class does not redeclare is found through its interfaces",
+           Ubel::ResolveFunctionInChainOrInterfaces(Pawn, "DoFoo", listFuncs, readSuper, listIfaces, hit)
+           && hit.address == 0xF1);
+    EXPECT("IFACE control: the class chain answers first", Ubel::ResolveFunctionInChainOrInterfaces(
+           Pawn, "Shared", listFuncs, readSuper, listIfaces, hit) && hit.address == 0xA2);
+    EXPECT("IFACE control: a name nowhere is not found",
+           !Ubel::ResolveFunctionInChainOrInterfaces(Pawn, "Nope", listFuncs, readSuper, listIfaces, hit));
+
+    Ubel::ImplementedInterface ii;
+    EXPECT("IFACE ⭐: Pawn implements IFoo (through its base's IBar, which derives from IFoo)",
+           Ubel::FindImplementedInterface(Pawn, IFoo, false, readSuper, listIfaces, ii) && ii.cls == IBar);
+    EXPECT("IFACE control: Widget implements nothing",
+           !Ubel::FindImplementedInterface(Widget, IFoo, false, readSuper, listIfaces, ii));
+    EXPECT("IFACE: a Blueprint-only implementation is skipped when only native ones count",
+           !Ubel::FindImplementedInterface(Pawn, IBaz, true, readSuper, listIfaces, ii)
+           && Ubel::FindImplementedInterface(Pawn, IBaz, false, readSuper, listIfaces, ii));
+
+    uintptr_t addr = 1;
+    const uintptr_t obj = 0x100000;
+    EXPECT("IFACE ⭐: a native interface's address is the object + its PointerOffset",
+           Ubel::InterfaceAddressFor(obj, Pawn, IFoo, true, readSuper, listIfaces, addr) && addr == obj + 0x28);
+    EXPECT("IFACE ⭐: a native interface implemented only in Blueprint has a null address (the engine's own value)",
+           Ubel::InterfaceAddressFor(obj, Pawn, IBaz, true, readSuper, listIfaces, addr) && addr == 0);
+    EXPECT("IFACE: a Blueprint interface's address is the object itself",
+           Ubel::InterfaceAddressFor(obj, Pawn, IBaz, false, readSuper, listIfaces, addr) && addr == obj);
+    EXPECT("IFACE ⭐: a class that does not implement it answers false",
+           !Ubel::InterfaceAddressFor(obj, Widget, IFoo, true, readSuper, listIfaces, addr));
+}
+
+// [VND584-06] A cached UFunction* must belong to the instance's class chain before CMD_INVOKE runs it.
+static void Test_Ubel_IsClassInChain() {
+    // A small fake hierarchy: Pawn -> Actor -> Object, and an unrelated Widget class; a cyclic pair for the bound.
+    const uintptr_t Object = 0x1000, Actor = 0x2000, Pawn = 0x3000, Widget = 0x4000, CycA = 0x5000, CycB = 0x6000;
+    auto readSuper = [&](uintptr_t cls, uintptr_t& super) {
+        super = cls == Pawn ? Actor : cls == Actor ? Object : cls == Widget ? Object
+              : cls == CycA ? CycB : cls == CycB ? CycA : 0;
+        return true;
+    };
+    EXPECT("OWNED control: the class itself", Ubel::IsClassInChain(Pawn, Pawn, readSuper));
+    EXPECT("OWNED control: a function its base declares", Ubel::IsClassInChain(Pawn, Actor, readSuper)
+           && Ubel::IsClassInChain(Pawn, Object, readSuper));
+    EXPECT("OWNED ⭐: another class's function is not the instance's", !Ubel::IsClassInChain(Pawn, Widget, readSuper));
+    EXPECT("OWNED ⭐: a subclass's function is not its base's", !Ubel::IsClassInChain(Actor, Pawn, readSuper));
+    EXPECT("OWNED ⭐: a cyclic SuperStruct chain ends, and answers no", !Ubel::IsClassInChain(CycA, Widget, readSuper));
+    EXPECT("OWNED: nothing owns a null", !Ubel::IsClassInChain(Pawn, 0, readSuper)
+           && !Ubel::IsClassInChain(0, Pawn, readSuper));
+}
+
+// [VND584-07] A non-case-preserving FName keeps the casing of its FIRST registration, so a game can carry "a" / "x"
+// where stock carries "A" / "X" -- Dumper-7 met FBox2D members spelled "min" / "max". A miss in the FField::Name probe
+// leaves UNMEASURED_FFIELD_NAME, and in the Offset_Internal probe the version table's offsets.
+static void Test_Genau_ProbeNamesIgnoreCase() {
+    EXPECT("PROBENAME ⭐: a lowercase Guid member is still A", Genau::ProbeNameIs("a", "A"));
+    EXPECT("PROBENAME ⭐: lowercase Guid / Vector members keep their offsets",
+           Genau::ProbeFieldExpectedOffset("a") == 0 && Genau::ProbeFieldExpectedOffset("b") == 4
+           && Genau::ProbeFieldExpectedOffset("c") == 8 && Genau::ProbeFieldExpectedOffset("d") == 12
+           && Genau::ProbeFieldExpectedOffset("x") == 0 && Genau::ProbeFieldExpectedOffset("y") == 4
+           && Genau::ProbeFieldExpectedOffset("z") == 8);
+    // CONTROLS: stock casing, and names that are no member.
+    EXPECT("PROBENAME control: stock A..D / X..Z", Genau::ProbeFieldExpectedOffset("A") == 0
+           && Genau::ProbeFieldExpectedOffset("D") == 12 && Genau::ProbeFieldExpectedOffset("Z") == 8);
+    EXPECT("PROBENAME control: other names are no member", Genau::ProbeFieldExpectedOffset("E") == -1
+           && Genau::ProbeFieldExpectedOffset("AB") == -1 && Genau::ProbeFieldExpectedOffset("") == -1
+           && !Genau::ProbeNameIs("A", "B"));
+}
+
 static void Test_Genau_AdmitMultiModuleCandidate() {
     std::printf("Test_Genau_AdmitMultiModuleCandidate\n");
     using Genau::AnchorState;
@@ -10838,6 +11102,8 @@ int main() {
     RUN(Test_Ubel_EstimateClassInfoBytes);
     RUN(Test_Stark_ShouldUseTrampoline);
     RUN(Test_Stark_ShouldDrainQueue);
+    RUN(Test_Stark_ClaimRequest);
+    RUN(Test_Stark_NarrowedFlagTests);
     RUN(Test_Stark_PeOffsetSentinels);
     RUN(Test_Stark_ShouldRetryPeDetection);
     RUN(Test_Stark_PeValidationFailureVerdict);
@@ -11002,6 +11268,7 @@ int main() {
     RUN(Test_VersionNeedleScan_GateStillGates);
     RUN(Test_VersionTierRules_G8_G9);
     RUN(Test_VersionTier2_BareNeedle_G11);
+    RUN(Test_VersionBranchName);
     RUN(Test_SoftObjectPathSize);
     RUN(Test_FunctionFlagsOffset);
     RUN(Test_ProcessEventBufferBytes);
@@ -11039,6 +11306,9 @@ int main() {
     // Macht — AOB pattern parser: nibble wildcards (4? / ?5) + anchor selection
     RUN(Test_Sig_IsCeReplayableAob);
     RUN(Test_Genau_AdmitMultiModuleCandidate);
+    RUN(Test_Genau_ProbeNamesIgnoreCase);
+    RUN(Test_Ubel_IsClassInChain);
+    RUN(Test_Ubel_Interfaces);
     RUN(Test_Macht_ClassifyModuleForScan);       // [AOB-SKIP-OWN-DLL] the walk leaves the dumper's own images out
     RUN(Test_Radar_RefineContainerAnchor);
     RUN(Test_Radar_LeafAnchor);

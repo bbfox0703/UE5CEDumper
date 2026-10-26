@@ -165,7 +165,7 @@ either range's changed filenames or commit subjects, and RE-UE4SS's `src`/`inclu
   member) `[VND583-DOC PS-11]`, and a PAK key is not object-pointer decryption anyway. It copes with hard games via `CustomGameConfigs/*/UE4SS-settings.ini` — signature /
   offset / engine-version / vtable *overrides*, not decryption. It assumes `GUObjectArray` /
   `FName` are directly readable, so it does not target pointer-encrypted / strong-anti-cheat
-  titles. Its 36 shipped profiles (34 when first counted) (FF7 Rebirth/Remake, Atomic Heart, Borderlands 3, Jedi
+  titles. Its shipped profiles (57 at RE-UE4SS `cdbc0b66`; 34 when first counted) (FF7 Rebirth/Remake, Atomic Heart, Borderlands 3, Jedi
   Survivor, Lies of P, …) are forked-engine tuning, not encrypted-pointer cases.
 - **This project already has parity** with Dumper-7's pointer-decrypt hook: `Aura::SetDecryptFunc`
   / `Aura::DecryptObjectPtr` (`dll/src/Aura.cpp`), wired through the CE-Lua export

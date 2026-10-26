@@ -248,6 +248,9 @@ static bool ValidateGObjects(uintptr_t addr) {
         //   MaxElements +0x10, NumChunks +0x14, MaxChunks +0x20, NumElements +0x24, Objects +0x28.
         // Appended LAST: any address matching an earlier preset never reaches it.
         { 0x28, 0x10, 0x24, 0x20, 0x14, "MindsEye-Extended" },
+        // [VND584-03] Dumper-7's UE 5.7 "Mistfall Hunter" variant (a508058): MaxChunks +0x04, NumChunks +0x08,
+        // Objects +0x10, MaxElements +0x20, NumElements +0x24, from the FUObjectArray base. Aura carries the same row.
+        { 0x10, 0x20, 0x24, 0x04, 0x08, "UE5.7-Mistfall" },
     };
 
     for (auto& P : presets) {
@@ -3444,6 +3447,18 @@ static VersionScanResult DetectVersionDetailed(const wchar_t* exePath, uintptr_t
         }
     }
 
+    // === Tier 1, a licensee's own branch name: "++ue4+ue4_main+4.27" ([GWT-BRANCH]) ===
+    // After Epic's tag, never before: its grammar admits that tag too (see ScanVersionBranchName).
+    {
+        NeedleScanResult tb = ScanVersionBranchName(scan, size);
+        if (tb.found()) {
+            Sein::Info("SCAN:Ver", "DetectVersion: Tier 1 (%s) '%s' -> %u at 0x%zX (the engine's own branch name, "
+                       "not Epic's Release tag)", tb.wide ? "utf16" : "ascii", tb.branch,
+                       kVersionNeedles[tb.index].value, tb.offset);
+            r.version = kVersionNeedles[tb.index].value; r.tier = 1; return r;
+        }
+    }
+
     // === Tier 2 + 3: needle scan with context checks ===
     // Tier 3 hardening: defer first hit and prefer Tier 2 hits across all
     // patterns. If no Tier 2 hit exists, the deferred Tier 3 hit is returned (low
@@ -4325,7 +4340,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
             if (nameIdx == 0 || nameIdx > 0x00FFFFFF) continue;
 
             std::string name = Serie::GetString(nameIdx);
-            if (name == expectedFirst || name == expectedSecond) {
+            if (ProbeNameIs(name, expectedFirst) || ProbeNameIs(name, expectedSecond)) {
                 nameOff = off;
                 Sein::Info("DYNO", "ValidateAndFixOffsets: FField::Name at FField+0x%02X (resolved='%s')",
                          off, name.c_str());
@@ -4487,12 +4502,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
             fields[fieldCount].name = Serie::GetString(ni);
         }
 
-        const auto& fn = fields[fieldCount].name;
-        if (fn == "A" || fn == "X") fields[fieldCount].expectedOffset = 0;
-        else if (fn == "B" || fn == "Y") fields[fieldCount].expectedOffset = 4;
-        else if (fn == "C" || fn == "Z") fields[fieldCount].expectedOffset = 8;
-        else if (fn == "D") fields[fieldCount].expectedOffset = 12;
-        else fields[fieldCount].expectedOffset = -1;
+        fields[fieldCount].expectedOffset = ProbeFieldExpectedOffset(fields[fieldCount].name);
 
         ++fieldCount;
 

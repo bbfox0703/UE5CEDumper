@@ -329,6 +329,23 @@ do
   contains(e, 'wat', 'the message names the token')
 end
 
+case('VND584-01: a lazy pointer is refused unless it is 0 -- the answer FIRE and the CE form give')
+do
+  -- It is found by a GUID nothing here can make. As a 'pointer' token the helper wrote the value as an address,
+  -- which the engine read as a weak pair, while FIRE and the CE form refused the same input.
+  resetWorld()
+  local ok, e = invokeUFunction('C', 'F', 32,
+                                { { name = 'ref', type = 'lazy', offset = 0, size = 32, value = 0x1234 } })
+  eq(ok, false, 'a value in a lazy slot is refused')
+  contains(e, 'GUID', 'and the message says why')
+  resetWorld()
+  dirtyParams()
+  ok = invokeUFunction('C', 'F', 32,
+                       { { name = 'ref', type = 'lazy', offset = 0, size = 32, value = 0 } })
+  eq(ok, true, '0 (null) goes through')
+  eq(nonZeroParams(0, 32), 0, 'as an all-zero slot')
+end
+
 -- ============================================================
 -- AA17 -- the params buffer must be zeroed to the DLL's view, not the caller's
 -- ============================================================

@@ -244,6 +244,47 @@ struct FDumperTestNestedBag
 	UPROPERTY() TMap<int32, int32> PairsB;
 };
 
+/// [VND584-01] A struct parameter holding a soft member: the invoke dialog writes a struct's sub-fields through the
+/// same 8-byte arm as a top-level parameter, so the picked object's ADDRESS landed in Icon. See Vnd584_EchoSoftSpec.
+USTRUCT()
+struct FDumperTestSoftSpec
+{
+	GENERATED_BODY()
+
+	UPROPERTY() int32 Count = 0;
+	UPROPERTY() TSoftObjectPtr<UObject> Icon;
+};
+
+/// [VND584-04] A native interface with a BlueprintCallable function. ADumperTestIfaceActor implements it in C++ and
+/// does NOT redeclare the function as a UFUNCTION, so it lives only on UDumperTestIface: a by-name lookup has to read
+/// the class's implemented interfaces (UClass::Interfaces) to find it, as UClass::FindFunctionByName does.
+UINTERFACE(MinimalAPI, meta = (CannotImplementInterfaceInBlueprint))
+class UDumperTestIface : public UInterface
+{
+	GENERATED_BODY()
+};
+
+class IDumperTestIface
+{
+	GENERATED_BODY()
+
+public:
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|VND584")
+	virtual int32 Vnd584_IfaceMagic() const { return 0; }
+};
+
+/// [VND584-04] Implements IDumperTestIface natively, so its FImplementedInterface has a non-zero PointerOffset and a
+/// TScriptInterface to it needs that offset in its InterfacePointer. A separate class, so ADumperTestActor's own field
+/// offsets do not move. Spawned by ADumperTestActor::BeginPlay.
+UCLASS()
+class DUMPERTEST_API ADumperTestIfaceActor : public AActor, public IDumperTestIface
+{
+	GENERATED_BODY()
+
+public:
+	virtual int32 Vnd584_IfaceMagic() const override { return 584; }
+};
+
 UCLASS()
 class DUMPERTEST_API ADumperTestActor : public AActor
 {
@@ -1200,4 +1241,31 @@ public:
 	/// (20000 pairs push a CE XML export past its 60,000-entry cap). Count 0 empties them.
 	UFUNCTION(BlueprintCallable, Category = "DumperTest|R7")
 	void S11_SetNestedBag(int32 Count);
+
+	// [VND584-01] An invoke's weak / soft parameters. Every invoke path wrote the picked object's ADDRESS there, which
+	// the engine reads as FWeakObjectPtr { ObjectIndex, SerialNumber } and resolved to null while ProcessEvent reported
+	// success. Each returns what the ENGINE resolved, so an invoke can compare it with the object it passed. Engine
+	// libraries take soft pointers (KismetSystemLibrary::Conv_SoftObjectReferenceToObject); none takes a weak one or a
+	// struct holding a soft one, hence these two.
+	UFUNCTION()
+	AActor* Vnd584_EchoWeak(TWeakObjectPtr<AActor> Target) const { return Target.Get(); }
+	// ⚠ Before UE 5.8 the BY-VALUE form above returns null whatever the caller passes: its generated thunk declares a
+	// TWeakObjectPtr local, and the frame copies the parameter in through FWeakObjectProperty::
+	// CopyCompleteValueToScriptVM, which stores a raw UObject* there, so Get() reads the pointer's halves as
+	// { ObjectIndex, SerialNumber }. UE 5.8 fixed the macro (399f2949c408: the local became ElementType*). A const
+	// reference is CPF_OutParm, so the thunk refers to the caller's own parameter block instead -- the shape that shows
+	// on 5.4 whether the weak pair an invoke sends is right.
+	UFUNCTION()
+	AActor* Vnd584_EchoWeakRef(const TWeakObjectPtr<AActor>& Target) const { return Target.Get(); }
+	/// [VND584-04] Spawned in BeginPlay; see ADumperTestIfaceActor.
+	UPROPERTY() TObjectPtr<ADumperTestIfaceActor> Vnd584_IfaceActor;
+	/// [VND584-04] What a native callee does with an interface parameter: test it, then call through it. The invoke
+	/// paths filled only its object half, so `Target` read as null here and this returned -1.
+	UFUNCTION()
+	int32 Vnd584_CallIface(const TScriptInterface<IDumperTestIface>& Target) const
+	{
+		return Target ? Target->Vnd584_IfaceMagic() : -1;
+	}
+	UFUNCTION()
+	UObject* Vnd584_EchoSoftSpec(const FDumperTestSoftSpec& Spec) const { return Spec.Icon.Get(); }
 };

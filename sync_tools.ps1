@@ -20,7 +20,12 @@
 
     The report always FETCHES before counting. A behind-count taken without a
     fetch reads the last-fetched remote ref and happily reports "0 behind" against
-    a remote that moved weeks ago.
+    a remote that moved weeks ago. A fetch that FAILS is reported as such, never
+    followed by a count. That covers RE-UE4SS's own submodules (UEPseudo,
+    patternsleuth) too: the report says how far each upstream is past their pin.
+
+    UnrealEngine is never moved: it sits on a release tag checked out by hand,
+    and the report names a newer release tag when one arrives.
 
 .PARAMETER SkipClones
     Do not touch the reference clones; only report (or update) submodules.
@@ -66,8 +71,9 @@ function Write-Section($text) {
 #     throwaway clones: 'git ls-files vendor' returns three entries, and one of
 #     them is a genuinely tracked FILE.
 #
-#       vendor/nlohmann/json.hpp   TRACKED CONTENT (v3.11.3, ~900 KB, a committed
-#                                  header copy, not a submodule). It is on the
+#       vendor/nlohmann/json.hpp   TRACKED CONTENT (~900 KB, a committed header
+#                                  copy, not a submodule; the end of this script
+#                                  prints its version). It is on the
 #                                  include path at dll/CMakeLists.txt:171,547,656
 #                                  and is included by Fern.cpp / Flamme.cpp /
 #                                  Renge.h (which the rest pull in; Serie.cpp and
@@ -121,10 +127,22 @@ if (-not $SkipClones) {
         if (Test-Path "$dir\.git") {
             # fetch + ff-only, never a merge. A merge commit in a read-only oracle
             # is pure confusion, and 'git pull' on a detached HEAD just errors out.
+            $before = (git -C $dir rev-parse --short HEAD 2>$null)
             git -C $dir fetch --prune origin
+            if ($LASTEXITCODE -ne 0) {
+                # Without this the HEAD line below reads like a fresh sync.
+                Write-Host "  FETCH FAILED - nothing below is newer than the last successful fetch" -ForegroundColor Red
+            }
             $branch = (git -C $dir rev-parse --abbrev-ref HEAD 2>$null)
             if ($branch -and $branch -ne "HEAD") {
                 git -C $dir merge --ff-only "@{u}" 2>&1 | Write-Host
+                # The count, not the dates, says how much arrived: a merged branch
+                # brings commits dated BEFORE the old HEAD (Dumper-7, 2026-10-26).
+                $after = (git -C $dir rev-parse --short HEAD 2>$null)
+                if ($before -and $after -ne $before) {
+                    $moved = (git -C $dir rev-list --count "$before..$after" 2>$null)
+                    Write-Host "  moved $before -> $after ($moved commits)" -ForegroundColor Green
+                }
             } else {
                 Write-Host "  detached HEAD - fetched only, not moved" -ForegroundColor Yellow
             }
@@ -148,6 +166,16 @@ if (-not $SkipClones) {
             $desc = (git -C $dir describe --tags --abbrev=0 2>$null)
             Write-Host "  HEAD: $head"
             if ($desc) { Write-Host "  tag:  $desc" }
+
+            # UnrealEngine stays on the tag someone checked out by hand (a blob:none
+            # checkout downloads that tag's blobs, so this script never moves it). The
+            # fetch brings a new release tag in with one easily-missed line; name it.
+            if ($name -eq "UnrealEngine") {
+                $newest = (git -C $dir tag -l "*-release" --sort=-v:refname 2>$null | Select-Object -First 1)
+                if ($newest -and $newest -ne $desc) {
+                    Write-Host "  newer release tag: $newest - check it out by hand: git -C $dir checkout $newest" -ForegroundColor Yellow
+                }
+            }
         }
 
         # RE-UE4SS keeps its engine-layout knowledge in submodules, not in the main
@@ -170,6 +198,38 @@ if (-not $SkipClones) {
                 Where-Object { $_ -notmatch '^Cloning into' } | Write-Host
             git -C $dir submodule status deps/first/Unreal deps/first/patternsleuth 2>$null |
                 ForEach-Object { Write-Host "    $_" }
+
+            # 'submodule update' fetches only when the pin is missing locally, so each
+            # child's origin refs stay frozen at the day it was cloned. Measured
+            # 2026-10-26: patternsleuth's frozen origin showed nothing after 1d90b02c
+            # while upstream had 8bcbd43 -- and "has upstream moved past what we
+            # audited?" is exactly the question vendor audit #7 says to ask first.
+            foreach ($sub in @("deps/first/Unreal", "deps/first/patternsleuth")) {
+                $sp = "$dir\$sub"
+                if (!(Test-Path "$sp\.git")) { continue }
+                git -C $sp -c url."https://github.com/".insteadOf="git@github.com:" `
+                    fetch --quiet --prune origin 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    Write-Host "    ${sub}: FETCH FAILED - upstream count not taken" -ForegroundColor Red
+                    continue
+                }
+                $up = $null
+                foreach ($cand in @("origin/HEAD", "origin/master", "origin/main")) {
+                    git -C $sp rev-parse --verify --quiet $cand > $null 2>&1
+                    if ($LASTEXITCODE -eq 0) { $up = $cand; break }
+                }
+                if (-not $up) {
+                    Write-Host "    ${sub}: no upstream branch found" -ForegroundColor Yellow
+                    continue
+                }
+                $ahead  = (git -C $sp rev-list --count "HEAD..$up" 2>$null)
+                $colour = if ($ahead -eq "0") { "DarkGray" } else { "Yellow" }
+                Write-Host "    ${sub}: $up is $ahead commit(s) past the RE-UE4SS pin" -ForegroundColor $colour
+                if ($ahead -ne "0") {
+                    git -C $sp log --format='      %h %ad %s' --date=short "HEAD..$up" 2>$null |
+                        Select-Object -First 10 | ForEach-Object { Write-Host $_ }
+                }
+            }
         }
     }
 }
@@ -212,8 +272,13 @@ foreach ($s in $subs) {
         continue
     }
 
-    # Fetch FIRST. Counting against an unfetched origin reports a stale zero.
+    # Fetch FIRST. Counting against an unfetched origin reports a stale zero --
+    # and so does counting after a FAILED fetch, whose output is swallowed here.
     git -C $p fetch --quiet --prune origin 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "  $($s.Name): FETCH FAILED - behind-count not taken (it would read a stale ref)" -ForegroundColor Red
+        continue
+    }
 
     $upstream = $null
     foreach ($cand in @("origin/master", "origin/main")) {
@@ -251,6 +316,18 @@ if (Test-Path $zydisHeader) {
         $patch = ($val -shr 16) -band 0xFFFF
         Write-Host "  zydis real version: $major.$minor.$patch (from Zydis.h; 'git describe' lies here)" -ForegroundColor DarkGray
     }
+}
+
+# json.hpp is committed content: its version moves only when someone replaces the
+# file, and a version typed into a comment went stale once already. The header's
+# own macros are the fact; compare with github.com/nlohmann/json/releases.
+$jsonHeader = "vendor/nlohmann/json.hpp"
+if (Test-Path $jsonHeader) {
+    $parts = foreach ($k in @("MAJOR", "MINOR", "PATCH")) {
+        $m = Select-String -Path $jsonHeader -Pattern "define\s+NLOHMANN_JSON_VERSION_$k\s+(\d+)" | Select-Object -First 1
+        if ($m) { $m.Matches[0].Groups[1].Value } else { "?" }
+    }
+    Write-Host "  nlohmann/json version: $($parts -join '.') (from json.hpp)" -ForegroundColor DarkGray
 }
 
 # Pin drift: a leading +/- from 'git submodule status' means the working tree is

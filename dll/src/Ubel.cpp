@@ -387,11 +387,13 @@ static void ProbeSoftPathShape() {
     std::lock_guard<std::mutex> lk(s_mutex);
     if (DynOff::bSoftPathProbed.load(std::memory_order_relaxed)) return;
     int measured = -1;
+    int32_t size = 0;   // [VND584-08] its PropertiesSize, beside its shape
     const bool complete = Aura::ForEach([&](int32_t, uintptr_t obj) -> bool {
         if (ReadFName(obj + Grimoire::OFF_UOBJECT_NAME) != "SoftObjectPath") return true;
         uintptr_t cls = 0;
         if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) return true;
         if (ReadFName(cls + Grimoire::OFF_UOBJECT_NAME) != "ScriptStruct") return true;
+        Macht::ReadSafe(obj + DynOff::USTRUCT_PROPSSIZE, size);
         uintptr_t field = 0;
         Macht::ReadSafe(obj + DynOff::USTRUCT_CHILDPROPS, field);
         for (int i = 0; i < 8 && field && Grimoire::IsUserspacePointer(field); ++i) {
@@ -406,9 +408,10 @@ static void ProbeSoftPathShape() {
     });
     if (!complete) return;
     if (measured >= 0) {
-        LOG_INFO("DetectSoftPath: FSoftObjectPath holds %s (measured on ScriptStruct SoftObjectPath; version rule says %s)",
-                 measured ? "FTopLevelAssetPath AssetPath" : "FName AssetPathName",
+        LOG_INFO("DetectSoftPath: FSoftObjectPath holds %s, %d bytes (measured on ScriptStruct SoftObjectPath; version "
+                 "rule says %s)", measured ? "FTopLevelAssetPath AssetPath" : "FName AssetPathName", size,
                  g_cachedUEVersion >= 501 ? "AssetPath" : "AssetPathName");
+        DynOff::SOFTPATH_SIZE_MEASURED.store(size, std::memory_order_release);
     } else {
         LOG_WARN("DetectSoftPath: ScriptStruct SoftObjectPath not measured -- the version rule answers (%s)",
                  g_cachedUEVersion >= 501 ? "AssetPath" : "AssetPathName");
@@ -428,9 +431,10 @@ static bool SoftPathIsTopLevel() {
 static std::string ReadSoftObjectPath(uintptr_t addr) {
     if (!addr) return "";
 
-    int fnameSize = DynOff::SizeofFName();
-
     bool isTopLevelAssetPath = SoftPathIsTopLevel();   // [VND583-14] measured; the version rule is the fallback
+    // [VND584-08] The AssetName's place from the struct's measured size; sizeof(FName) only when there is none.
+    const int fnameSize = DynOff::SoftPathFNameStrideFor(DynOff::SOFTPATH_SIZE_MEASURED.load(std::memory_order_acquire),
+                                                         isTopLevelAssetPath, DynOff::SizeofFName());
 
     if (isTopLevelAssetPath) {
         // UE5.1+: FTopLevelAssetPath = { FName PackageName, FName AssetName }
@@ -506,12 +510,12 @@ static int PersistentObjectPtrEnvelope(int32_t elemSize, int32_t payloadSize,
 
 // FSoftObjectPath payload size: FTopLevelAssetPath (2 FNames) or FName, + FString header.
 static int32_t SoftObjectPathPayloadSize() {
-    // sizeof(FName), NOT the UObject Name->Outer slot. See DynOff::bCasePreservingName.
-    const int fnameSize = DynOff::SizeofFName();
-    // The AlignUp and the reason it is load-bearing live on DynOff::FSoftObjectPathSizeFor,
-    // in the header so the test target can pin it.
-    return static_cast<int32_t>(
-        DynOff::FSoftObjectPathSizeFor(fnameSize, SoftPathIsTopLevel()));   // [VND583-14]
+    // [VND583-14] the shape, then [VND584-08] the size the same probe measured. sizeof(FName) -- NOT the UObject
+    // Name->Outer slot, see DynOff::bCasePreservingName -- answers only when that size was not measured; the AlignUp
+    // and why it is load-bearing live on DynOff::FSoftObjectPathSizeFor, in the header so the test target can pin it.
+    const bool topLevel = SoftPathIsTopLevel();
+    return static_cast<int32_t>(DynOff::SoftObjectPathPayloadFor(
+        DynOff::SOFTPATH_SIZE_MEASURED.load(std::memory_order_acquire), DynOff::SizeofFName(), topLevel));
 }
 
 // Offset of FSoftObjectPath inside a TSoftObjectPtr. `elemSize` is the property's
@@ -2262,6 +2266,7 @@ static uintptr_t ParamSlotObject(uintptr_t prop, const std::string& typeName) {
 static void ReadParamSlotNames(uintptr_t prop, ParamField& p) {
     const uintptr_t ptr = ParamSlotObject(prop, p.typeName);
     if (!ptr) return;
+    if (p.typeName == "InterfaceProperty") p.interfaceClass = ptr;   // [VND584-04]
     std::string name = GetName(ptr);
     if (name.empty() || name[0] < 0x20 || name[0] >= 0x7F) return;
     (p.typeName == "StructProperty" ? p.structType : p.objClass) = std::move(name);
@@ -2348,6 +2353,15 @@ static std::vector<ParamField> CaptureStructMembers(uintptr_t structAddr, int de
     return out;
 }
 
+// A struct whose members were not captured: kParamStructDepth reached, or its UScriptStruct unreadable.
+static bool HasUnexpandedStruct(const std::vector<ParamField>& fields) {
+    for (const ParamField& f : fields) {
+        if (f.typeName == "StructProperty" && f.size > 0 && f.sub.empty()) return true;
+        if (HasUnexpandedStruct(f.sub)) return true;
+    }
+    return false;
+}
+
 bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why) {
     out = ParamLayout{};
     why.clear();
@@ -2386,6 +2400,7 @@ bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why) {
         out.params.push_back(std::move(p));
     }
     if (out.params.empty()) { why = "no parameters"; return false; }
+    out.truncated = leaves >= kParamLeaves || HasUnexpandedStruct(out.params);
     return true;
 }
 
@@ -2461,6 +2476,188 @@ size_t RunArmCapturePass(Linie::ArmState& st, size_t maxArms, const ArmCaptureOp
         Linie::PublishArmLayout(st, pa.index, doubtful ? LS::Doubtful : LS::Read, published, {}, waited);
     }
     return arms.size();
+}
+
+// [VND584-01] ClassifyObjectParam (Ubel.h) says why. Each element of a static array is a slot of its own, and so is
+// each member of a struct the caller passes in: the dialog writes a struct's sub-fields through the same 8-byte arm.
+// A member carries no CPF_Parm, so its direction is its parameter's; its offset is its struct's own.
+static bool PrepareObjectSlots(const std::vector<ParamField>& fields, int64_t base, const ParamKind* outerKind,
+                               const std::string& prefix, uint8_t* params, size_t size, const ObjectParamOps& ops,
+                               int& converted, std::string& why) {
+    for (const ParamField& p : fields) {
+        const ParamKind kind = outerKind ? *outerKind : p.kind;
+        const int32_t dim = p.arrayDim > 0 ? p.arrayDim : 1;
+        for (int32_t e = 0; e < dim; ++e) {
+            const int64_t off = base + static_cast<int64_t>(p.offset) + static_cast<int64_t>(e) * p.size;
+            if (p.offset < 0 || p.size <= 0 || off < 0 || off + p.size > static_cast<int64_t>(size)) break;
+            if (p.typeName == "StructProperty") {
+                if (!PrepareObjectSlots(p.sub, off, &kind, prefix + p.name + ".", params, size, ops, converted, why))
+                    return false;
+                continue;
+            }
+            // [VND584-04] An FScriptInterface { UObject* ObjectPointer; void* InterfacePointer }: the invoke paths write
+            // the picked object into the first half only, so a native callee testing or calling through the interface
+            // saw null. The second half is the engine's GetInterfaceAddress for it -- unless the caller filled it.
+            if (p.typeName == "InterfaceProperty") {
+                if (kind == ParamKind::Return || p.size < 16 || !ops.interfaceAddress || !p.interfaceClass) break;
+                uint8_t* slot = params + off;
+                uint64_t object = 0, half = 0;
+                memcpy(&object, slot, 8);
+                memcpy(&half, slot + 8, 8);
+                if (object == 0 || half != 0 || !ops.isLiveObject(static_cast<uintptr_t>(object))) continue;
+                uintptr_t addr = 0;
+                std::string err;
+                const int answer = ops.interfaceAddress(static_cast<uintptr_t>(object), p.interfaceClass, ops.ctx,
+                                                        addr, err);
+                if (answer < 0) continue;   // not measured here: sent as it always was
+                if (answer == 0) {
+                    char a[32];
+                    snprintf(a, sizeof(a), "0x%llX", static_cast<unsigned long long>(object));
+                    why = "'" + prefix + p.name + "' (InterfaceProperty): the object at " + a +
+                          " does not implement the parameter's interface (" + err + ") -- not sent";
+                    return false;
+                }
+                memcpy(slot + 8, &addr, 8);
+                ++converted;
+                continue;
+            }
+            if (p.size < 8 || !IsObjectPointerSlot(p.typeName, kind)) break;
+            uint8_t* slot = params + off;
+            uint64_t lead = 0;
+            memcpy(&lead, slot, sizeof(lead));
+            const ObjectParamAction act = ClassifyObjectParam(
+                p.typeName, p.size, kind, lead, lead != 0 && ops.isLiveObject(static_cast<uintptr_t>(lead)));
+            if (act == ObjectParamAction::Leave) continue;
+
+            char addr[32];
+            snprintf(addr, sizeof(addr), "0x%llX", static_cast<unsigned long long>(lead));
+            const std::string what = "'" + prefix + p.name + "' (" + p.typeName + ")";
+            if (act == ObjectParamAction::Refuse) {
+                why = what + (p.typeName == "LazyObjectProperty"
+                    ? " holds the object at " + std::string(addr) + ", but a lazy pointer is found by a GUID this "
+                      "cannot make -- pass 0 (null)"
+                    : " is " + std::to_string(p.size) + " bytes, a remote-handle weak pointer this does not model -- "
+                      "pass 0 (null)");
+                return false;
+            }
+            std::vector<uint8_t> made;
+            std::string err;
+            if (!ops.makeSoftReference || !ops.makeSoftReference(static_cast<uintptr_t>(lead), ops.ctx, made, err)) {
+                why = what + ": the engine could not make a reference to " + addr + " (" + err + ") -- not sent";
+                return false;
+            }
+            int32_t idx = -1, serial = 0;
+            if (made.size() >= 8) {
+                memcpy(&idx, made.data(), 4);
+                memcpy(&serial, made.data() + 4, 4);
+            }
+            // The engine's own resolve of the pair it made must give the object back; anything else means the bytes
+            // were read from the wrong place, and sending them would pass some other object or a null.
+            if (made.size() < 8 || !ops.resolveWeak || ops.resolveWeak(idx, serial) != static_cast<uintptr_t>(lead)) {
+                why = what + ": the engine's weak pointer for " + addr + " does not lead back to it -- not sent";
+                return false;
+            }
+            if (act == ObjectParamAction::ConvertWeak) {
+                memcpy(slot, made.data(), 8);
+            } else {
+                if (made.size() != static_cast<size_t>(p.size)) {
+                    why = what + ": the engine's soft pointer is " + std::to_string(made.size()) + " bytes, the "
+                          "parameter " + std::to_string(p.size) + " -- not sent";
+                    return false;
+                }
+                memcpy(slot, made.data(), made.size());
+            }
+            ++converted;
+        }
+    }
+    return true;
+}
+
+// [VND584-04] FImplementedInterface is 16 bytes: { UClass* Class; int32 PointerOffset; bool bImplementedByK2; }.
+static constexpr int kImplementedInterfaceStride = 0x10;
+static constexpr int32_t kMaxClassInterfaces = 64;
+
+static bool ReadImplementedInterface(uintptr_t entry, ImplementedInterface& out) {
+    uintptr_t cls = 0;
+    int32_t off = 0;
+    uint8_t k2 = 0;
+    if (!Macht::ReadSafe(entry, cls) || !Macht::ReadSafe(entry + 8, off) || !Macht::ReadSafe(entry + 12, k2)) return false;
+    // A class pointer, a PointerOffset inside an object, a bool: anything else is not this array.
+    if (!cls || !Grimoire::IsUserspacePointer(cls) || off < 0 || off > 0x10000 || k2 > 1) return false;
+    out = { cls, off, k2 != 0 };
+    return true;
+}
+
+int FindClassInterfacesOffset(uintptr_t cls, uintptr_t knownIface, int from, int to) {
+    if (!cls || !knownIface) return -1;
+    for (int off = (from + 7) & ~7; off <= to; off += 8) {
+        uintptr_t data = 0;
+        int32_t num = 0, max = 0;
+        if (!Macht::ReadSafe(cls + off, data) || !Macht::ReadSafe(cls + off + 8, num)
+            || !Macht::ReadSafe(cls + off + 12, max))
+            continue;
+        if (!data || !Grimoire::IsUserspacePointer(data) || num < 1 || num > kMaxClassInterfaces || max < num
+            || max > kMaxClassInterfaces)
+            continue;
+        bool sane = true, found = false;
+        for (int32_t i = 0; i < num && sane; ++i) {
+            ImplementedInterface ii;
+            sane = ReadImplementedInterface(data + static_cast<uintptr_t>(i) * kImplementedInterfaceStride, ii);
+            found = found || (sane && ii.cls == knownIface);
+        }
+        if (sane && found) return off;
+    }
+    return -1;
+}
+
+// Once per process, like ProbeSoftPathShape. ActorComponent implements Interface_AssetUserData on every version we
+// support; until both classes are loaded nothing is latched, so a probe that ran too early runs again.
+static void ProbeClassInterfaces() {
+    static std::mutex s_mutex;
+    std::lock_guard<std::mutex> lk(s_mutex);
+    if (DynOff::UCLASS_INTERFACES.load(std::memory_order_acquire) != 0) return;
+    const uintptr_t comp  = Aura::FindClassByPath("/Script/Engine.ActorComponent");
+    const uintptr_t iface = Aura::FindClassByPath("/Script/Engine.Interface_AssetUserData");
+    if (!comp || !iface) return;
+    const int off = FindClassInterfacesOffset(comp, iface, DynOff::USTRUCT_PROPSSIZE, 0x400);
+    if (off > 0) LOG_INFO("DetectClassInterfaces: UClass::Interfaces at +0x%X (measured on ActorComponent)", off);
+    else         LOG_WARN("DetectClassInterfaces: UClass::Interfaces not found on ActorComponent -- interfaces are not read");
+    DynOff::UCLASS_INTERFACES.store(off > 0 ? off : -1, std::memory_order_release);
+}
+
+bool ClassInterfacesMeasured() {
+    if (DynOff::UCLASS_INTERFACES.load(std::memory_order_acquire) == 0) ProbeClassInterfaces();
+    return DynOff::UCLASS_INTERFACES.load(std::memory_order_acquire) > 0;
+}
+
+std::vector<ImplementedInterface> ClassInterfaces(uintptr_t cls) {
+    std::vector<ImplementedInterface> out;
+    if (!cls || !ClassInterfacesMeasured()) return out;
+    const int off = DynOff::UCLASS_INTERFACES.load(std::memory_order_acquire);
+    uintptr_t data = 0;
+    int32_t num = 0;
+    if (!Macht::ReadSafe(cls + off, data) || !Macht::ReadSafe(cls + off + 8, num) || !data || num <= 0
+        || num > kMaxClassInterfaces)
+        return out;
+    for (int32_t i = 0; i < num; ++i) {
+        ImplementedInterface ii;
+        if (ReadImplementedInterface(data + static_cast<uintptr_t>(i) * kImplementedInterfaceStride, ii))
+            out.push_back(ii);
+    }
+    return out;
+}
+
+bool IsNativeClass(uintptr_t cls) {
+    const uintptr_t pkg = cls ? GetOuter(cls) : 0;
+    return pkg && GetName(pkg).rfind("/Script/", 0) == 0;
+}
+
+bool PrepareObjectParams(const ParamLayout& layout, uint8_t* params, size_t size, const ObjectParamOps& ops,
+                         int& converted, std::string& why) {
+    converted = 0;
+    why.clear();
+    if (!params || !ops.isLiveObject) return true;
+    return PrepareObjectSlots(layout.params, 0, nullptr, "", params, size, ops, converted, why);
 }
 
 // [LIVEFUNCS-STEP2] The decoder. Pure: the copy's bytes, the arm's layout, and what the ctx answers; nothing here reads
@@ -4570,9 +4767,9 @@ ReadArrayResult ReadStructArrayElements(
 
 // ============================================================
 // Phase G: IsSoftObjectArrayType — TSoftObjectPtr / TSoftClassPtr arrays.
-// Element layout: FWeakObjectPtr(8B) + Tag(4B) + pad(4B) + FSoftObjectPath
-// Stride varies by UE version; reader falls back to 0x28 when elemSize is
-// invalid. Per-element data resolves to the asset path string and (when
+// Element layout: FWeakObjectPtr(8B) [+ Tag(4B) + pad(4B), UE <= 5.2 only] + FSoftObjectPath
+// Stride varies by UE version; when elemSize is invalid the reader falls back to the
+// measured (else version) envelope + the path's size. Per-element data resolves to the asset path string and (when
 // loaded) the live UObject* via the embedded FWeakObjectPtr.
 // ============================================================
 bool IsSoftObjectArrayType(const std::string& innerTypeName) {
@@ -4597,11 +4794,12 @@ ReadArrayResult ReadSoftObjectArrayElements(
 
     // Validate stride. TSoftObjectPtr layout:
     //   FWeakObjectPtr(8) [+ Tag(4) + pad(4), UE ≤ 5.2 only] + FSoftObjectPath
-    // FSoftObjectPath spans:
-    //   UE4 / UE5.0: FName + FString(16)         → 8|16 + 16 = 24 or 32
-    //   UE5.1+:      FName x2 + FString(16)      → 16|32 + 16 = 32 or 48
-    // Combined element size ranges 0x20 .. 0x48 across versions — the low end
-    // dropped from 0x28 when UE 5.3 deleted TagAtLastTest (see DynOff::SOFTPTR_PATH).
+    // FSoftObjectPath spans (DynOff::FSoftObjectPathSizeFor: the FNames AlignUp'd to 8, + the FString's 16;
+    // sizeof(FName) is 4 outlined, 8 stock, 0xC case-preserving):
+    //   UE4 / UE5.0: FName + FString          → 0x18, or 0x20 case-preserving
+    //   UE5.1+:      FName x2 + FString       → 0x18 outlined, 0x20 stock, 0x28 case-preserving
+    // The envelope is 0x10 up to 5.2 and 0x08 from 5.3, which deleted TagAtLastTest (see
+    // DynOff::SOFTPTR_PATH), so an element runs 0x20 (5.3+, outlined) .. 0x38 (5.1-5.2, case-preserving).
     // When FPROPERTY_ELEMSIZE returned garbage, derive a plausible fallback.
     if (assetPtr && elemSize != ASSETPTR_SIZE) {
         Sein::Warn("WALK:ArrayG", "Invalid AssetPtr elemSize=%d, using 0x%X", elemSize, ASSETPTR_SIZE);
@@ -4668,7 +4866,7 @@ ReadArrayResult ReadSoftObjectArrayElements(
             elem.rawIntValue = static_cast<int64_t>(pathFNameIdx);
         }
 
-        // Hex of the first 16 bytes (FWeakObjectPtr + Tag)
+        // Hex of the first 16 bytes: the weak pair, then the tag (<= 5.2) or the path's head (5.3+)
         uint8_t headerBuf[16] = {};
         if (Macht::ReadBytesSafe(elemAddr, headerBuf, 16)) {
             std::string hex;

@@ -43,6 +43,10 @@ extern "C" bool     UE5_Init();
 extern "C" int32_t  UE5_CallProcessEvent(uintptr_t, uintptr_t, uintptr_t);
 extern "C" int32_t  UE5_CallProcessEventEx(uintptr_t, uintptr_t, uintptr_t, uint32_t);
 extern "C" int32_t  UE5_CallProcessEventDirect(uintptr_t, uintptr_t, uintptr_t);
+// [VND584-01] Frieren.cpp: a picked object in a weak / soft parameter becomes the engine's own value before the call.
+namespace FrierenInvoke {
+bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why);
+}
 extern uintptr_t    g_cachedGObjects;
 extern uintptr_t    g_cachedGNames;
 extern uintptr_t    g_cachedGWorld;   // &GWorld (address of the global UWorld* pointer)
@@ -568,6 +572,10 @@ static inline std::vector<FunctionInfo> ChainListFuncs(uintptr_t cls) {
 static inline bool ChainReadSuper(uintptr_t cls, uintptr_t& super) {
     return Macht::ReadSafe(cls + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
 }
+// [VND584-04] A class's own implemented interfaces (empty while UClass::Interfaces is unmeasured).
+static inline std::vector<Ubel::ImplementedInterface> ChainListInterfaces(uintptr_t cls) {
+    return Ubel::ClassInterfaces(cls);
+}
 
 static void HandleFindFunction() {
     uintptr_t instanceAddr = g_invokeMailbox.instanceAddr;
@@ -601,8 +609,9 @@ static void HandleFindFunction() {
     // the mailbox cannot answer the same question differently.
     FunctionInfo hit;
     int levels = 0;
-    const bool found = Ubel::ResolveFunctionInChain(
-        classAddr, funcName, ChainListFuncs, ChainReadSuper, hit, &levels);
+    // [VND584-04] ...and then their implemented interfaces, as UClass::FindFunctionByName does.
+    const bool found = Ubel::ResolveFunctionInChainOrInterfaces(
+        classAddr, funcName, ChainListFuncs, ChainReadSuper, ChainListInterfaces, hit, &levels);
 
     uintptr_t ufuncAddr = found ? hit.address : 0;
     uint16_t parmsSize = found ? hit.parmsSize : 0;
@@ -693,6 +702,26 @@ static void HandleInvoke() {
         SetError(refusal, msg);
         return;
     }
+    // [VND584-06] CMD_INVOKE takes ufuncAddr on trust: a CE form resolves it once and FIRE sends it back later, and a
+    // Blueprint class reloaded in between can leave that address holding another class's UFunction -- which still
+    // passes ResolveFunctionInfo's meta-class check. A static function ignores `this`, so any instance may call it.
+    if (!(fi.functionFlags & FUNC_FLAG_STATIC)) {
+        const uintptr_t owner = Ubel::GetOuter(ufuncAddr);
+        const uintptr_t cls   = Ubel::GetClass(instanceAddr);
+        // [VND584-04] An interface's function belongs to every class that implements the interface.
+        Ubel::ImplementedInterface viaInterface;
+        const bool owned = Ubel::IsClassInChain(cls, owner, ChainReadSuper)
+            || Ubel::FindImplementedInterface(cls, owner, false, ChainReadSuper, ChainListInterfaces, viaInterface);
+        if (!owned) {
+            char msg[256];
+            snprintf(msg, sizeof(msg), "'%s' (0x%llX) is not a function of this instance's class -- it may have been "
+                     "reloaded; re-open the invoke form so it finds the function again", fi.name.c_str(),
+                     (unsigned long long)ufuncAddr);
+            SetError(MB_ERR_INVOKE_NOT_OWNED, msg);
+            return;
+        }
+    }
+
     const bool isStaticNative = ShouldRouteDirectInvoke(fi.functionFlags, flagsResolved);
 
     if (fi.functionFlags != g_invokeMailbox.functionFlags) {
@@ -743,6 +772,15 @@ static void HandleInvoke() {
         } else {
             memset(g_invokeMailbox.paramsData + off, 0, len);
             LOG_DEBUG("Mailbox: INVOKE cleared ReturnValue slot +%zu (%zu bytes)", off, len);
+        }
+    }
+
+    {
+        std::string objWhy;
+        if (!FrierenInvoke::PrepareObjectParams(ufuncAddr, g_invokeMailbox.paramsData,
+                                                sizeof(g_invokeMailbox.paramsData), isStaticNative, objWhy)) {
+            SetError(MB_ERR_INVOKE_OBJECT_PARAM, ("Not invoked: " + objWhy).c_str());
+            return;
         }
     }
 

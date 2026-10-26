@@ -94,6 +94,10 @@ void BeginApply();
 void EndApply();
 DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool userOverride, const char* who);
 }
+// [VND584-01] Frieren.cpp: a picked object in a weak / soft parameter becomes the engine's own value before the call.
+namespace FrierenInvoke {
+bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why);
+}
 
 // ============================================================
 // Radar wire helpers — parse "100" / "-42" / "3.14" / "true" /
@@ -6807,6 +6811,15 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 size_t copyLen = (std::min)(hexBytes.size(), paramBuf.size());
                 if (copyLen > 0) {
                     memcpy(paramBuf.data(), hexBytes.data(), copyLen);
+                }
+            }
+
+            // [VND584-01] Before any FString below is allocated, so a refusal has nothing to free.
+            {
+                std::string objWhy;
+                if (!FrierenInvoke::PrepareObjectParams(ufuncAddr, paramBuf.data(), paramBuf.size(), directCall,
+                                                        objWhy)) {
+                    return Renge::MakeError(id, "Not invoked: " + objWhy).dump();
                 }
             }
 

@@ -1217,6 +1217,10 @@ static inline std::vector<FunctionInfo> ChainListFuncs(uintptr_t cls) {
 static inline bool ChainReadSuper(uintptr_t cls, uintptr_t& super) {
     return Macht::ReadSafe(cls + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
 }
+// [VND584-04] A class's own implemented interfaces (empty while UClass::Interfaces is unmeasured).
+static inline std::vector<Ubel::ImplementedInterface> ChainListInterfaces(uintptr_t cls) {
+    return Ubel::ClassInterfaces(cls);
+}
 }  // extern "C++"
 
 // Resolve a UFunction by name on a class OR ANY OF ITS BASES.
@@ -1232,15 +1236,17 @@ uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName) {
 
     FunctionInfo hit;
     int levels = 0;
-    if (Ubel::ResolveFunctionInChain(classAddr, funcName, ChainListFuncs, ChainReadSuper,
-                                     hit, &levels)) {
+    // [VND584-04] The chain first, then its implemented interfaces, as UClass::FindFunctionByName does.
+    if (Ubel::ResolveFunctionInChainOrInterfaces(classAddr, funcName, ChainListFuncs, ChainReadSuper,
+                                                 ChainListInterfaces, hit, &levels)) {
         LOG_INFO("UE5_FindFunctionByName: '%s' -> 0x%llX (%d class level(s) searched)",
                  funcName, (unsigned long long)hit.address, levels);
         return hit.address;
     }
 
     LOG_WARN("UE5_FindFunctionByName: '%s' not found (%d class level(s) searched, "
-             "own class + supers)", funcName, levels);
+             "own class + supers%s)", funcName, levels,
+             Ubel::ClassInterfacesMeasured() ? " + their interfaces" : "; interfaces not read on this build");
     return 0;
 }
 
@@ -1784,6 +1790,21 @@ static int DetectProcessEventVTableOffsetByPattern(uintptr_t vtable) {
                  off, (unsigned long long)funcAddr);
         return off;
     }
+
+    // [VND584-05] A clang build narrows both tests to byte tests (Stark::NarrowedFlagTestsFunctionFlags), so the pass
+    // above never matches it and the version table answered -- right on Avowed only because its slot is stock, wrong on
+    // a licensee vtable (RE-UE4SS's configs: TOW2 +0x278, Conan +0x268, Dune +0x2A8). A SECOND pass, run only when the
+    // first found nothing, so no binary the first pass answers can get a different answer.
+    for (int off = kMinOffset; off <= kMaxOffset; off += 8) {
+        uintptr_t funcAddr = 0;
+        if (!Macht::ReadSafe(vtable + off, funcAddr) || !funcAddr) continue;
+        if (!Macht::ReadBytesSafe(funcAddr, body, kBodySize)) continue;
+        const int flagsOff = Stark::NarrowedFlagTestsFunctionFlags(body, kBodySize, 0x400);
+        if (flagsOff < 0) continue;
+        LOG_INFO("DetectProcessEvent (pattern, byte tests): match at vtable+0x%X -> 0x%llX "
+                 "(FunctionFlags +0x%X)", off, (unsigned long long)funcAddr, flagsOff);
+        return off;
+    }
     return -1;
 }
 
@@ -2302,8 +2323,10 @@ static void ReportHookState(bool active) {
 // can't dereference a freed caller buffer (use-after-free). Out-params are copied
 // back on success. The direct fallback is synchronous (buffer stays alive), so
 // size is irrelevant there. Declared extern "C" so Fern links to it directly.
-extern "C" int32_t UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
-                                          uintptr_t params, uint32_t paramsSize) {
+// The body of UE5_CallProcessEventEx. dropIfAbandoned: Stark::ClaimRequest -- a queued request whose waiter times out
+// never runs later. [VND584-01]
+static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintptr_t params, uint32_t paramsSize,
+                                      bool dropIfAbandoned) {
     if (!instance || !ufunc) return -1;
 
     // Lazy, race-safe one-time detection + (retryable) hook install (audit #3).
@@ -2316,7 +2339,7 @@ extern "C" int32_t UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
         ReportHookState(true);
         LOG_INFO("UE5_CallProcessEvent: dispatching to game thread inst=0x%llX func=0x%llX",
                  (unsigned long long)instance, (unsigned long long)ufunc);
-        return Stark::EnqueueInvoke(instance, ufunc, params, paramsSize);
+        return Stark::EnqueueInvoke(instance, ufunc, params, paramsSize, dropIfAbandoned);
     }
 
     // Hook is down. Log the fallback ONCE per state transition, not once per
@@ -2377,6 +2400,11 @@ extern "C" int32_t UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
     return 0;
 }
 
+extern "C" int32_t UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
+                                          uintptr_t params, uint32_t paramsSize) {
+    return CallProcessEventRouted(instance, ufunc, params, paramsSize, false);
+}
+
 extern "C" bool UE5_IsGameThreadHookActive() { return Stark::IsHookActive(); }
 
 int32_t UE5_CallProcessEvent(uintptr_t instance, uintptr_t ufunc, uintptr_t params) {
@@ -2384,6 +2412,134 @@ int32_t UE5_CallProcessEvent(uintptr_t instance, uintptr_t ufunc, uintptr_t para
     // callers here pass persistent buffers that outlive the queued request.
     return UE5_CallProcessEventEx(instance, ufunc, params, 0);
 }
+
+// [VND584-01] The live half of Ubel::PrepareObjectParams, for an invoke that carries a caller's parameter bytes. The
+// engine's own value for a picked object comes from
+// KismetSystemLibrary::Conv_ObjectToSoftObjectReference (4.18 to 5.8): building its TSoftObjectPtr assigns the
+// object's weak serial -- most objects carry 0 until something holds a weak pointer to them -- and its path. The soft
+// pointer's FString, when it has one, is the engine's allocation and is never freed: ProcessEvent byte-copies
+// parameters and never destroys the caller's block, so leaking it is the only way nothing frees it twice.
+// extern "C++": this sits inside the file's extern "C" block, and Fern / Mimic link to it by its C++ name.
+extern "C++" {
+namespace FrierenInvoke {
+namespace {
+// A function library's CDO and UFunction live as long as the process; resolved once, re-resolved if the cached
+// address stops naming the function. A failure is not kept, so a library that loads later is still found.
+std::mutex s_convMutex;
+uintptr_t  s_ksl = 0, s_conv = 0;
+int32_t    s_objOff = -1, s_retOff = -1, s_retSize = 0;
+uint32_t   s_convBytes = 0;
+
+bool ResolveConv(std::string& why) {
+    if (s_conv) {
+        FunctionInfo fi{};
+        if (Ubel::ResolveFunctionInfo(s_conv, fi) && fi.name == "Conv_ObjectToSoftObjectReference") return true;
+        s_conv = 0;
+    }
+    const uintptr_t ksl = Aura::FindLiveOrDefaultOf("KismetSystemLibrary");
+    if (!ksl) { why = "KismetSystemLibrary not found"; return false; }
+    const uintptr_t conv = UE5_FindFunctionByName(Ubel::GetClass(ksl), "Conv_ObjectToSoftObjectReference");
+    if (!conv) { why = "KismetSystemLibrary::Conv_ObjectToSoftObjectReference not found"; return false; }
+    Ubel::ParamLayout layout;
+    std::string capWhy;
+    if (!Ubel::CaptureParamLayout(conv, layout, capWhy)) {
+        why = "Conv_ObjectToSoftObjectReference's parameters: " + capWhy;
+        return false;
+    }
+    int32_t objOff = -1, retOff = -1, retSize = 0;
+    for (const Ubel::ParamField& p : layout.params) {
+        if (p.kind == Ubel::ParamKind::Return) { retOff = p.offset; retSize = p.size; }
+        else if (p.typeName == "ObjectProperty" && p.size == 8) objOff = p.offset;
+    }
+    FunctionInfo fi{};
+    const bool resolved = Ubel::ResolveFunctionInfo(conv, fi);
+    const uint32_t bytes = Ubel::ParamBufferSize(conv, resolved ? fi.parmsSize : 0);
+    if (objOff < 0 || retOff < 0 || retSize < 8 || static_cast<uint32_t>(objOff) + 8 > bytes
+        || static_cast<uint32_t>(retOff) + static_cast<uint32_t>(retSize) > bytes) {
+        why = "Conv_ObjectToSoftObjectReference reads as an unexpected shape";
+        return false;
+    }
+    s_ksl = ksl; s_conv = conv; s_objOff = objOff; s_retOff = retOff; s_retSize = retSize; s_convBytes = bytes;
+    return true;
+}
+
+bool IsLiveObject(uintptr_t addr) {
+    const int32_t idx = Ubel::GetIndex(addr);
+    return idx >= 0 && Aura::GetByIndex(idx) == addr;
+}
+
+// [VND584-04] ObjectParamOps.interfaceAddress: UObject::GetInterfaceAddress through the measured UClass::Interfaces.
+int InterfaceAddress(uintptr_t object, uintptr_t iface, void*, uintptr_t& out, std::string& why) {
+    if (!Ubel::ClassInterfacesMeasured()) return -1;
+    const bool implemented = Ubel::InterfaceAddressFor(object, Ubel::GetClass(object), iface, Ubel::IsNativeClass(iface),
+                                                       ChainReadSuper, ChainListInterfaces, out);
+    if (!implemented) why = "its class implements no " + Ubel::GetName(iface);
+    return implemented ? 1 : 0;
+}
+
+// ctx: the route the invoke itself takes. A static-native target runs off the game thread, so the conversion does
+// too (Conv_ObjectToSoftObjectReference is Native|Static, the same class of call); anything else queues both. A queued
+// conversion is dropped if it times out: it dereferences the picked object, which may be freed by the time a late
+// drain would run it, and its result has no consumer once the invoke was refused.
+bool MakeSoftReference(uintptr_t object, void* ctx, std::vector<uint8_t>& out, std::string& why) {
+    const bool direct = ctx && *static_cast<const bool*>(ctx);
+    uintptr_t ksl = 0, conv = 0;
+    int32_t objOff = -1, retOff = -1, retSize = 0;
+    uint32_t bytes = 0;
+    {
+        std::lock_guard<std::mutex> lock(s_convMutex);
+        if (!ResolveConv(why)) return false;
+        ksl = s_ksl; conv = s_conv; objOff = s_objOff; retOff = s_retOff; retSize = s_retSize; bytes = s_convBytes;
+    }
+    std::vector<uint8_t> buf(bytes, 0);
+    memcpy(buf.data() + objOff, &object, sizeof(object));
+    const int32_t rc = direct
+        ? UE5_CallProcessEventDirect(ksl, conv, reinterpret_cast<uintptr_t>(buf.data()))
+        : CallProcessEventRouted(ksl, conv, reinterpret_cast<uintptr_t>(buf.data()),
+                                 static_cast<uint32_t>(buf.size()), /*dropIfAbandoned=*/true);
+    if (rc != 0) {
+        why = "Conv_ObjectToSoftObjectReference: ProcessEvent returned " + std::to_string(rc);
+        return false;
+    }
+    out.assign(buf.begin() + retOff, buf.begin() + retOff + retSize);
+    return true;
+}
+}  // namespace
+
+// True when the invoke may go ahead; false with `why` when a slot holds an object it cannot pass. A function whose
+// parameters cannot be read is sent exactly as before.
+bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why) {
+    Ubel::ParamLayout layout;
+    std::string capWhy;
+    if (!ufunc || !params) return true;
+    // Neither case refuses -- nothing says the unread part holds an object -- but both say so, because a picked object
+    // there reaches the engine as written, which it reads as a null weak pointer.
+    if (!Ubel::CaptureParamLayout(ufunc, layout, capWhy)) {
+        if (capWhy != "no parameters")
+            LOG_WARN("invoke: the parameters of 0x%llX were not read (%s) -- a weak / soft one goes as written",
+                     (unsigned long long)ufunc, capWhy.c_str());
+        return true;
+    }
+    if (layout.truncated)
+        LOG_WARN("invoke: %s's struct parameters were read only in part -- a weak / soft member past that goes as "
+                 "written", layout.funcName.c_str());
+    bool route = direct;
+    Ubel::ObjectParamOps ops;
+    ops.isLiveObject      = &IsLiveObject;
+    ops.makeSoftReference = &MakeSoftReference;
+    ops.resolveWeak       = &Ubel::ResolveWeakObjectPtr;
+    ops.ctx               = &route;
+    ops.interfaceAddress  = &InterfaceAddress;
+    int converted = 0;
+    const bool ok = Ubel::PrepareObjectParams(layout, params, size, ops, converted, why);
+    if (converted > 0)
+        LOG_INFO("invoke: %s passes %d picked object(s) as the engine's weak / soft pointer", layout.funcName.c_str(),
+                 converted);
+    if (!ok) LOG_WARN("invoke: %s refused -- %s", layout.funcName.c_str(), why.c_str());
+    return ok;
+}
+}  // namespace FrierenInvoke
+}  // extern "C++"
 
 // Force the game-thread ProcessEvent hook to install NOW (reuses the audit-#3
 // call_once, so it is race-safe and idempotent). Normally the hook installs

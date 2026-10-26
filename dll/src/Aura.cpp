@@ -409,6 +409,11 @@ static const LayoutPreset s_ue4ExtendedPresets[] = {
     // index->object accessors (e.g. RVA 0x0191AA10): `shr rcx,0x10 / movzx edx,bx /
     // shl rdx,5 / add rdx,[r9+rcx*8] / cmp qword [rdx+0x10],0`.
     { "MindsEye-Extended", { 0x28, 0x10, 0x24, 0x20, 0x14 }, { 32, 0x10 } },
+    // [VND584-03] Dumper-7's "UE5.7 variant observed in Mistfall Hunter" (a508058): the chunk counts BEFORE Objects.
+    // Without it no strict row fit and the relaxed A/C row read NumElements out of the Objects pointer's high dword.
+    // Appended after the rows above for the same first-match reason; on a stock UE5-Extended array +0x04 is
+    // ObjLastNonGCIndex, which fails ValidateChunkedLayout's maxChunks bound, so it cannot steal one.
+    { "UE5.7-Mistfall",    { 0x10, 0x20, 0x24, 0x04, 0x08 } },
 };
 static constexpr int NUM_UE4_EXTENDED_PRESETS = sizeof(s_ue4ExtendedPresets) / sizeof(s_ue4ExtendedPresets[0]);
 
@@ -597,11 +602,17 @@ static bool DetectLayout(uintptr_t addr) {
     // Some games pass weak checks but fail strict Dumper-7 chunk consistency.
     LOG_INFO("ObjectArray: Strict validation failed for all presets, trying relaxed fallback...");
 
-    // Layout A/C (relaxed): Objects@+0x00, Num@+0x14
+    // [VND584-03] The relaxed rows take Genau's floor: Genau refuses a NumElements below kRelaxedMinObjects for every
+    // address it hands over, and below it a "count" is usually half of a pointer (the Objects pointer's high dword on a
+    // layout no row fits). No UE game runs with fewer objects.
+    constexpr int32_t kRelaxedMinObjects = 0x1000;
+
+    // Layout A/C (relaxed): Objects@+0x00, Num@+0x14, Max@+0x10
     {
-        int32_t num = 0;
+        int32_t num = 0, max = 0;
         Macht::ReadSafe(addr + 0x14, num);
-        if (num > 0 && num <= Grimoire::SANITY_MAX_UOBJECTS) {
+        Macht::ReadSafe(addr + 0x10, max);
+        if (num >= kRelaxedMinObjects && num <= Grimoire::SANITY_MAX_UOBJECTS && max >= num) {
             uintptr_t objPtr = 0;
             Macht::ReadSafe(addr + 0x00, objPtr);
             objPtr = DecryptObjectPtr(objPtr);
@@ -634,7 +645,7 @@ static bool DetectLayout(uintptr_t addr) {
         Macht::ReadSafe(addr + 0x08, maxChunks);
         Macht::ReadSafe(addr + 0x0C, numChunks);
         const bool chunksPlausible = (numChunks >= 1 && maxChunks >= 1 && numChunks <= maxChunks);
-        if (num > 0 && num <= Grimoire::SANITY_MAX_UOBJECTS && chunksPlausible) {
+        if (num >= kRelaxedMinObjects && num <= Grimoire::SANITY_MAX_UOBJECTS && chunksPlausible) {
             uintptr_t objPtr = 0;
             Macht::ReadSafe(addr + 0x10, objPtr);
             objPtr = DecryptObjectPtr(objPtr);

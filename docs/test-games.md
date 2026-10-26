@@ -61,7 +61,7 @@
 | IDOLM@STER STARLIT SEASON | UE4.24 | Working. GWorld ✅ (build 1.0.0.27). CDO skip fix effective |
 | Romancing SaGa 2 | UE4.27 | Working (build 1.0.0.27). GWorld ✅ |
 | Star Wars Jedi: Fallen Order | UE4.21 | Working — 313 887 objects, **GWorld ✅** (`0x7FF7317EBAB8`) re-verified build 704 (2026-05-12) via CE injection. EA-launcher title: `version.dll` / `dinput8.dll` proxies do NOT load (EA app restricts the DLL search path); must inject via CE after the game is running. Install at `SwGame\Binaries\Win64\` holds TWO 58.4 MB exes side-by-side (`SwGame-Win64-Shipping.exe` + `starwarsjedifallenorder.exe`); CE sees the launcher exe as the running process. |
-| Ghostwire: Tokyo | UE505 detected (possibly UE4) | Working (build 1.0.0.27). 254493 objects. GWorld ✅. UE version likely incorrect. RE-UE4SS has only AOB signatures, no version override |
+| Ghostwire: Tokyo | **customized UE 4.27** (RE-UE4SS `e7ad28df`: "GWT.exe, UE 4.27"); this row's UE505 reading predates the raise-only ladder | Working (build 1.0.0.27). 254493 objects. GWorld ✅. **`UE=` recorded 2026-10-27:** build 3652 logged `UE=504`, the DEFAULT after detection failed (PE resource 1.0, no `++UE4+Release-` tag); build 3653 reads `UE=427` at tier 1 from the exe's own branch name `++ue4+ue4_main+4.27` (`[GWT-BRANCH]`). 82,123 objects at the title screen. README already lists it under 4.25-4.27. RE-UE4SS has only AOB signatures, no version override |
 | Lushfoil Photography Sim | UE5.6 (PE: 506) | NEW (build 1.0.0.40). All working. 58630 objects |
 | Manor Lords | UE5.5 | NEW (build 1.0.0.40). All working |
 | Satisfactory (v1.1.3.1) | UE5.3 (PE: 503) | Working — modular UE build with separate `FactoryGameSteam-CoreUObject-Win64-Shipping.dll` under `Engine\Binaries\Win64\`. `Macht::AOBScanAllModules` falls through to the CoreUObject DLL; the 15-game dump corpus (build 678 + 687) contains its 4 868 BPGCs cleanly. **GWorld ✅** re-verified build 704 (2026-05-12); the original "GWorld fails" note was stale (pre-`AOBScanAllModules`). Proxy deploy fixed build 691 — UI now finds the launcher at `Engine\Binaries\Win64\FactoryGameSteam-Win64-Shipping.exe` (real .exe is in `Engine\`, not `FactoryGame\`). |
@@ -128,7 +128,8 @@ RE-UE4SS added a per-game config for this title (upstream commit `4b96f82b`,
 2026-07-25). It is **stock UE 5.5, standard layout** (no packed/reordered item, no
 licensee fork) — the only reason RE-UE4SS ships a custom config is a game-specific
 GUObjectArray AOB, not a non-standard structure. Their signature (from
-`assets/CustomGameConfigs/Halo Campaign Evolved/UE4SS_Signatures/GUObjectArray.lua`):
+`assets/CustomGameConfigs/Halo Campaign Evolved/UE4SS_Signatures/GUObjectArray.lua`, since split into `steam/` and
+`gamepass/`, `e7ad28df`):
 
 ```
 45 84 C0                test r8b, r8b
@@ -145,8 +146,8 @@ B8 FF FF FF FF          mov  eax, -1
 > `48 C7 ? 10 00 00 00 00 48 8D 05 ? ? ? ? ? ? ? 48 89 ? ? FF FF FF FF 89 ? 08`. It drops the
 > leading `45 84 C0`, and it WILDCARDS the three bytes after the `lea` and the ModRM of the
 > `mov [..],rax`. The Game Pass build uses other registers there. Those are exactly the literal
-> `4C 8B C9 48 89 01` bytes `GOBJ_V11` depends on, so the prediction below is for the Steam build
-> at best, and doubtful for Game Pass.
+> `4C 8B C9 48 89 01` bytes `GOBJ_V11` depends on. Since `e7ad28df` (vendor audit #8) Steam ships the same wildcarded
+> pattern as Game Pass, so neither store is known to keep the literal tail `GOBJ_V11` needs.
 
 **Prediction: our existing `GOBJ_V11` already matches this** (byte-for-byte over the
 tail). `GOBJ_V11` = `48 8D ?? ?? ?? ?? ?? 4C 8B C9 48 89 01 B8 FF FF FF FF` (Himmel.h,
@@ -185,18 +186,17 @@ precedence). It is safe to rank high because the `45 84 C0 48 C7 41 10 00000000`
 prefix is specific enough that it will not steal LN3 or other `GOBJ_V11` games:
 
 ```cpp
-// In the AOB definitions:
+// In the AOB definitions -- the CURRENT upstream pattern (both stores, `e7ad28df`): the lea sits 8 bytes in.
 constexpr const char* AOB_GOBJECTS_HALO_1 =
-    "45 84 C0 48 C7 41 10 00 00 00 00 48 8D 05 ?? ?? ?? ?? 4C 8B C9 48 89 01 B8 FF FF FF FF 89 41 08";
+    "48 C7 ?? 10 00 00 00 00 48 8D 05 ?? ?? ?? ?? ?? ?? ?? 48 89 ?? ?? FF FF FF FF 89 ?? 08";
 
 // In GOBJECTS_PATTERNS[] (priority ~11, above GOBJ_RE3=13 / GOBJ_V11=14):
-//   instrOffset=0x0B (the lea sits 11 bytes into the match — RE-UE4SS's OnMatchFound
-//   uses MatchAddress+0xB), ripOffsetInInstr=3, instrLen=7, adjustment=0.
-SIG_RIP("GOBJ_HALO_1", AOB_GOBJECTS_HALO_1, AobTarget::GObjects, 0x0B, 3, 7, 0, 11,
+//   instrOffset=0x08 (the lea sits 8 bytes into the match), ripOffsetInInstr=3, instrLen=7, adjustment=0.
+SIG_RIP("GOBJ_HALO_1", AOB_GOBJECTS_HALO_1, AobTarget::GObjects, 0x08, 3, 7, 0, 11,
         "HALO", "Halo Campaign Evolved UE5.5 FUObjectArray init (unique prefix)"),
 ```
 
-Source: RE-UE4SS `assets/CustomGameConfigs/Halo Campaign Evolved/UE4SS_Signatures/GUObjectArray.lua` — its `OnMatchFound` resolves `MatchAddress + 0xB` as the `lea`, confirming the `0x0B` instruction offset.
+Source: RE-UE4SS `assets/CustomGameConfigs/Halo Campaign Evolved/{steam,gamepass}/UE4SS_Signatures/GUObjectArray.lua` (`e7ad28df`). The superseded single-file pattern began with `45 84 C0` and put the `lea` at +0x0B; the current one drops that prefix, so the `lea` is at +0x08.
 
 -----
 

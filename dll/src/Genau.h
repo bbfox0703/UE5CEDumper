@@ -137,7 +137,13 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 // folder in the maintainer's two Steam libraries, 36 read through the fixed fields, 14 of those beside a build string
 // that AGREES, and none is overruled; adding the local analyze corpus and the Epic Games folder, 389 exes, 343 fixed
 // readings, 206 agreeing, still none. So no reading on this machine changes, and the shape stays unmeasured in the wild.
-constexpr uint32_t kVersionDetectLogicRev = 10;
+// rev 11 (2026-10-27, [GWT-BRANCH]): the memory scan reads a licensee's engine branch name ("++ue4+ue4_main+4.27",
+// VersionNeedleScan.h's ScanVersionBranchName) once Epic's "++UE<M>+Release-" tag is not found. Mandatory under the
+// rule at the top: the maintainer's machine holds Ghostwire: Tokyo as the 504 default {detected no, rev 10}, and the
+// cache-reuse branch would restore it for ever. MEASURED (2026-10-27): of the 64 UE exes in the two Steam libraries and
+// the analyze corpus, two carry such a branch, and Dolls Nest's PE resource answers first -- so Ghostwire's is the one
+// verdict on this machine that changes (504 default -> 427, tier 1).
+constexpr uint32_t kVersionDetectLogicRev = 11;
 
 // ============================================================
 // Multi-module candidate admission (audit #5 AA38)
@@ -227,6 +233,29 @@ constexpr ModuleAdmission AdmitMultiModuleCandidate(AnchorState anchor,
     // Unreachable for every value above; keeps every compiler quiet. [A2-HEAP-ANCHOR-TEXT] It used to ACCEPT, so a
     // new AnchorState added without its case was silently admitted. It fails closed now.
     return ModuleAdmission::RefuseUnanchored;
+}
+
+/// [VND584-07] The offsets probe recognises Guid's / Vector's members by their FNames, ignoring case: a
+/// non-case-preserving FName keeps the casing of its first registration, so a game can carry "a" / "x" where stock
+/// carries "A" / "X" (Dumper-7 met FBox2D members spelled "min" / "max"). A miss leaves FField::Name unmeasured and
+/// Offset_Internal / ElementSize on the version table.
+inline bool ProbeNameIs(const std::string& name, const char* want) {
+    size_t i = 0;
+    for (; want[i] != '\0'; ++i) {
+        if (i >= name.size()) return false;
+        const unsigned char a = static_cast<unsigned char>(name[i]), b = static_cast<unsigned char>(want[i]);
+        if ((a >= 'A' && a <= 'Z' ? a + 32 : a) != (b >= 'A' && b <= 'Z' ? b + 32 : b)) return false;
+    }
+    return i == name.size();
+}
+/// The byte offset a Guid / Vector member holds in the offsets probe: A / X 0, B / Y 4, C / Z 8, D 12, -1 for
+/// anything else.
+inline int ProbeFieldExpectedOffset(const std::string& name) {
+    if (ProbeNameIs(name, "A") || ProbeNameIs(name, "X")) return 0;
+    if (ProbeNameIs(name, "B") || ProbeNameIs(name, "Y")) return 4;
+    if (ProbeNameIs(name, "C") || ProbeNameIs(name, "Z")) return 8;
+    if (ProbeNameIs(name, "D")) return 12;
+    return -1;
 }
 
 struct EnginePointers {

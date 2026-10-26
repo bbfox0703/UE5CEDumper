@@ -27,6 +27,66 @@ builds ≤696 in
 
 -----
 
+## 2026-10-27 (build 3653) — Ghostwire: Tokyo is read as UE 4.27 `[GWT-BRANCH]` `[VND584-04]` `[VND584-05]`
+
+- **A game built from a licensee's own engine branch is now recognised.** Ghostwire: Tokyo carries no Epic release
+  tag, only its own branch name (`++ue4+ue4_main+4.27`), and its file version is the game's, so detection gave up
+  and fell back to UE 5.4. The DLL now reads such a branch name when Epic's tag is absent, and refuses the licensee
+  branches that name a game release instead. With the wrong version Ghostwire had also read one engine structure the
+  UE 5.3+ way; it reads it as 4.27 now.
+- Checked live on Ghostwire: build 3652 logged the 5.4 default, build 3653 reads 4.27, and the verdict saved by the
+  earlier run was re-detected on its own.
+- The interface lookup from build 3652, checked live on two UE4 games: OCTOPATH TRAVELER (4.18) and Ghostwire: Tokyo
+  (4.27), interface functions found by name 1/1 and 6/6.
+- Tools: `tier1_host_survey.py` reports the new branch shape. New `linker_survey.py` tells a clang build from an MSVC
+  one, which a missing Rich header alone does not: on this PC Avowed is the one clang-built UE game, and the analysis
+  corpus already holds it.
+- Tests: dll_core_test 1,328 checks and dll_helpers_test 3,619, 0 failures; C# 6,692 passed, 1 skipped; 36 gates.
+
+## 2026-10-27 (build 3652) — invoke understands interfaces `[VND584-04]` `[VND584-DOC]`
+
+- **An interface's function can be invoked by name on a class that implements it.** A function a class gets from an
+  interface without redeclaring it used to come back "Function not found"; the lookup now also searches the
+  interfaces a class implements, as the engine does. Pipe and Cheat Engine both.
+- **An interface parameter reaches the callee whole.** Every invoke path filled only the object half of an
+  interface parameter, so a native function that checked or called through it saw nothing. The DLL now fills the
+  interface half the way the engine does, and refuses an object that does not implement the interface.
+- Both checked live on DumperTest 5.4 (a new interface fixture): build 3651 failed all three cases, build 3652 passes
+  them. The DLL measures where a class keeps its interfaces; measured on UE 5.1, 5.4 and 5.8.
+- Docs: soft-pointer sizes corrected, and several notes taken from the RE-UE4SS configs brought up to date.
+- Tests: dll_core_test 1,326 checks and dll_helpers_test 3,599, 0 failures; C# 6,692 run, 0 failed; 36 gates.
+
+## 2026-10-27 (build 3651) — the ProcessEvent hook finds itself on clang-built games; four more fixes from vendor audit #8 `[VND584-03]` `[VND584-05]` `[VND584-06]` `[VND584-07]` `[VND584-08]`
+
+- **The ProcessEvent hook is found by its own code on clang-built games.** Avowed's compiler tests the function
+  flags a byte at a time, which the detector did not recognise, so it always fell back to a version table that only
+  happened to be right there. Checked live on Avowed: the hook is now found by pattern at the same slot and receives
+  the game's calls. Every other game on file gives the same answer as before (36 of 37 binaries unchanged).
+- A Cheat Engine invoke form whose function was replaced by another class's (a Blueprint reloaded while the form was
+  open) is refused with a message saying to re-open the form, instead of running the wrong function. Checked live.
+- A UE 5.7 object-array layout seen in one licensee game (from Dumper-7) is read whole instead of as a few hundred
+  objects.
+- The offsets probe recognises its test structure's members whatever their letter case, and a soft pointer's path is
+  located from the engine's own measurement of it rather than from a size rule.
+- Tests: dll_core_test 1,320 checks and dll_helpers_test 3,589, 0 failures; C# 6,692 run, 0 failed; 36 gates.
+
+## 2026-10-27 (build 3650) — a picked object reaches weak / soft parameters of an invoke `[VND584-01]` `[VND584-02]`
+
+- **Invoke now passes a picked object into `TWeakObjectPtr` / `TSoftObjectPtr` / `TSoftClassPtr` parameters.** Every
+  invoke path -- FIRE, the CE form, a baked script, the Lua helper -- wrote the object's address there, which the
+  engine reads as a weak pointer's index and serial: the function received null while the call reported OK. The DLL
+  now hands the engine its own value for that object, made by the engine itself (path included), on the pipe and
+  through the CE mailbox, struct members included. Checked live on DumperTest 5.4: build 3649 failed all 9 cases,
+  build 3650 passes all 10 (`Conv_SoftObjectReferenceToObject`, `IsValidSoftObjectReference`,
+  `Conv_SoftClassReferenceToClass` and the new DumperTest fixtures return the picked object).
+- A lazy pointer can only be sent as 0 (null), on every path, and each says why. After a call, a weak / soft value
+  shows as `{index, serial}`; only a weak one is called null at serial 0.
+- CE Structure Dissect shows a soft / lazy field as 8 hex bytes, not a pointer to follow.
+- Found on the way, an engine fact: before UE 5.8 a by-value `TWeakObjectPtr` UFunction parameter is lost by the
+  engine's own code, whatever the caller sends (working-lessons §4.8).
+- Tests: dll_core_test 1,311 checks and dll_helpers_test 3,573, 0 failures; C# 6,691 run, 0 failed; Lua suites pass;
+  36 gates.
+
 ## 2026-10-14 (build 3649) — the ProcessEvent hook no longer depends on free memory near the game `[MH-PRERESERVE-PROXY]`
 
 - **Live Funcs, Call Trace and game-thread calls no longer fail with "the trampoline could not be placed".** On

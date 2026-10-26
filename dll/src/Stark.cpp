@@ -66,6 +66,8 @@ struct InvokeRequest {
     uintptr_t params;
     std::vector<uint8_t> ownedParams;   // owns the param bytes when copied (size>0)
     std::promise<int32_t> promise;
+    bool dropIfAbandoned = false;                   // [VND584-01] ClaimRequest (Stark.h)
+    std::atomic<int32_t> state{kRequestQueued};
 };
 
 // ---- State ----
@@ -238,6 +240,12 @@ static void HookedProcessEventBody(void* ufunc, uint64_t nowMs, Linie::ArmHint& 
 
         // Execute all pending requests outside the lock
         for (auto& req : pending) {
+            if (req->dropIfAbandoned && !ClaimRequest(req->state, kRequestRunning)) {
+                LOG_INFO("GameThreadDispatch: dropped an abandoned request func=0x%llX",
+                         (unsigned long long)req->ufunc);
+                try { req->promise.set_value(kInvokeTimedOutStillQueued); } catch (...) {}
+                continue;
+            }
             int32_t result = CallProcessEventSEH(req->instance, req->ufunc, req->params);
 
             if (result == -4) {
@@ -749,7 +757,8 @@ bool IsHookActive() {
     return s_hookActive.load();
 }
 
-int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize) {
+int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize,
+                      bool dropIfAbandoned) {
     if (!s_hookActive.load()) {
         return -7; // Hook not active
     }
@@ -757,6 +766,7 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
     auto req = std::make_shared<InvokeRequest>();
     req->instance = instance;
     req->ufunc = ufunc;
+    req->dropIfAbandoned = dropIfAbandoned;
     // Own a copy of the param bytes so a timed-out-but-still-queued request can
     // never dereference a freed caller buffer (use-after-free). When the caller
     // passes size 0 (a persistent buffer like Mimic's global), use the pointer
@@ -786,6 +796,11 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
     // Wait for game thread to execute the request
     int32_t timeoutMs = s_invokeTimeoutMs.load();
     auto status = future.wait_for(std::chrono::milliseconds(timeoutMs));
+    if (status == std::future_status::timeout && dropIfAbandoned && !ClaimRequest(req->state, kRequestAbandoned)) {
+        // [VND584-01] The drain claimed it first: it is running now. Wait it out and take its result.
+        future.wait();
+        status = std::future_status::ready;
+    }
     if (status == std::future_status::timeout) {
         LOG_ERROR("GameThreadDispatch: invoke timeout (%dms) inst=0x%llX func=0x%llX",
                   timeoutMs,
@@ -796,7 +811,8 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
         // freed — and no copy-back runs on this timeout path, so the caller's
         // buffer is never clobbered after we return. Size-0 callers (a persistent
         // buffer whose CONTENT must also stay valid until drained) get no such
-        // protection. We just abandon the (now stale) result.
+        // protection. We just abandon the (now stale) result. A dropIfAbandoned
+        // request was claimed as abandoned above: the drain skips it.
         return -5;
     }
 

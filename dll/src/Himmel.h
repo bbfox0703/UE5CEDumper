@@ -1224,7 +1224,8 @@ constexpr const char* AOB_SPARSE_MEL55_1 =
 // The fork does NOT change this structure. Measured against stock UE 5.x at
 // FSparseDelegateStorage::GetSparseDelegate: outer stride 0x60, TSet::HashSize at +0x48,
 // element HashNextId at +0x58, inner TMap at element+8, inner stride 0x20 with the value at
-// +8, PointerHash = ptr>>4 into the Murmur finalizer. So Avowed's known deviations (packed
+// +8, PointerHash = ptr>>4 into the 32-bit Murmur finalizer (stock 5.0-5.7; 5.8 hashes the raw pointer with
+// MurmurFinalize64). So Avowed's known deviations (packed
 // 20-byte FUObjectItem, static FUObjectArray) stop at the object array — ValidateSparseDelegates'
 // hardcoded kOuterStride = 0x60 was already correct for it.
 //
