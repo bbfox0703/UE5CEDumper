@@ -151,13 +151,19 @@ target UClass and provide one-click filling:
 - **[self]** — fills the invoke target's own address (for utility functions
   that re-target themselves).
 
-`ParamBufferBuilder.IsPickablePointerType` is the canonical 7-type list
-locked by test theories: the types `WriteParam` writes as one 8-byte value.
-It is narrower than the DLL `WalkFunctions` extraction, which also names a
-class for 4.11-4.17's `AssetObjectProperty` / `AssetClassProperty`; those
-stay out of the picker, because nothing could write a picked instance into
-an `FAssetPtr` (the theories pin that too). A new pointer property type joins
-the list only with a `WriteParam` arm.
+`ParamBufferBuilder.IsPickablePointerType` is the canonical type list
+locked by test theories: the types `WriteParam` writes as one 8-byte value,
+the picked instance's address. For a weak / soft / soft-class parameter that
+address is NOT the engine's value -- those lead with `FWeakObjectPtr
+{ ObjectIndex, SerialNumber }` -- so the DLL swaps it for the engine's own,
+made by `KismetSystemLibrary::Conv_ObjectToSoftObjectReference`, before
+ProcessEvent (`[VND584-01]`; until then the callee received null). A lazy
+pointer cannot be made (a GUID; UHT refuses lazy UFunction parameters), so it
+is empty-only. The list is narrower than the DLL `WalkFunctions` extraction,
+which also names a class for 4.11-4.17's `AssetObjectProperty` /
+`AssetClassProperty`; those stay out of the picker, because nothing could
+write a picked instance into an `FAssetPtr` (the theories pin that too). A new
+pointer property type joins the list only with a `WriteParam` arm.
 
 Stage 3 (class validation — DLL `validate_object_class` round-trip before
 invoke) deferred until a real class-mismatch crash motivates it; picker
