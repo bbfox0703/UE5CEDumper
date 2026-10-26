@@ -614,6 +614,18 @@ Appended to `ADumperTestActor` (after every existing member, so no earlier field
 Package identity recaptured the same day (`package-identity.json`); the PE hash changed, so snapshot, bookmark and
 teleport-coordinate data keyed by the old hash is orphaned, as after every repackage.
 
+### VND584-01 hosts (2026-10-26) — an invoke's weak parameter, and a struct parameter holding a soft member
+
+Two `UFUNCTION()`s appended to `ADumperTestActor`, and the struct the second takes. No engine library takes a weak
+parameter or a struct holding a soft one (`KismetSystemLibrary::Conv_SoftObjectReferenceToObject` covers a plain soft
+one), so these exist only to be invoked. UHT 5.4 accepts the `TWeakObjectPtr` parameter. All three configs were
+repackaged; their PE hashes changed. The rig is `tools/verify/vnd584_invoke_object_params.py`.
+
+| function | parameter | check |
+|---|---|---|
+| `Vnd584_EchoWeak(TWeakObjectPtr<AActor> Target)` → `AActor*` | `Target` = a picked actor | **VND584-01**: returns that actor. A pre-fix DLL wrote the address into the weak pair, so it returned null while ProcessEvent said OK |
+| `Vnd584_EchoSoftSpec(const FDumperTestSoftSpec& Spec)` → `UObject*` | `Spec` → `Count` (`int32`) = 3, `Icon` (`TSoftObjectPtr<UObject>`) = a picked actor | **VND584-01**: returns that actor -- a soft MEMBER of a struct parameter is converted too |
+
 ### DumperTest58 (2026-09-16) — the 5.5+ half of the optional family, and ONLY that
 
 ⛔ **`DumperTest58` is NOT a copy of this zoo, deliberately.** Two copies of every acceptance value
