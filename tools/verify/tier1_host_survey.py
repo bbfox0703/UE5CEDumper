@@ -2,7 +2,10 @@ r"""Which titles can produce a `DetectVersion: Tier 1 (ascii|utf16)` line -- dec
 
 Two independent facts per binary, because BOTH are required and either alone misleads:
   1. Does it fall THROUGH Tier 0? (replays Genau::DetectVersionFromPEResource's order)
-  2. Does the `++UEn+Release-N.N` needle actually EXIST in the image, and in which encoding?
+  2. Does the `++UEn+Release-N.N` needle actually EXIST in the image, and in which encoding? Or, since
+     [GWT-BRANCH], a licensee's own branch on a UE depot that names the engine version (Ghostwire's
+     `++ue4+ue4_main+4.27`), which Genau::ScanVersionBranchName reads when the first is absent -- reported
+     as `branch ...`, so a title that only it can detect is not mis-planned as "NO NEEDLE".
 A title that falls through but has no needle detects nothing (Elliot, Echoes of Aincrad);
 a title with a needle that resolves at Tier 0 never looks (every stock UE5 title).
 
@@ -39,6 +42,33 @@ def tier0(path):
         return f"Tier0 {k.upper()} '{r['string']}' -> {r['code']}", prod
     return "FALLS THROUGH (unrecognised)", prod
 
+# Genau::ScanVersionBranchName's grammar, ported: a NUL-terminated printable string of at most 96 characters,
+# "++UE4+" / "++UE5+" with the UE in either case, holding a whole "M.m" token after a '+' or '-', followed by the end,
+# a '+' or a '-', M the depot's major and M.m a row of kVersionNeedles. Keep in step with that function.
+BRANCH_ASCII = re.compile(rb"\+\+[Uu][Ee][45]\+[\x20-\x7e]{0,90}?\x00")
+BRANCH_UTF16 = re.compile(rb"\+\x00\+\x00[Uu]\x00[Ee]\x00[45]\x00\+\x00(?:[\x20-\x7e]\x00){0,90}?\x00\x00")
+TABLE = {(5, m) for m in range(0, 9)} | {(4, m) for m in range(18, 28)}   # kVersionNeedles
+
+
+def branch_name_version(text):
+    """Genau::BranchNameVersionIndex: the (major, minor) a branch name names, else None."""
+    if len(text) < 6 or not re.fullmatch(r"\+\+[Uu][Ee][45]\+", text[:6]):
+        return None
+    major = text[4]
+    for p in range(5, len(text) - 3):
+        if text[p] not in "+-" or text[p + 1] != major or text[p + 2] != ".":
+            continue
+        m = re.match(r"[0-9]+", text[p + 3:])
+        if not m:
+            continue
+        q = p + 3 + m.end()
+        if q < len(text) and text[q] not in "+-":
+            continue
+        if (int(major), int(m.group(0))) in TABLE and str(int(m.group(0))) == m.group(0):
+            return int(major), int(m.group(0))
+    return None
+
+
 def needles(path):
     data = open(path, "rb").read()
     out = {}
@@ -49,6 +79,15 @@ def needles(path):
         t = ("++UE%s+Release-%s.%s" % (m.group(1).decode(),
              m.group(2).replace(b"\x00", b"").decode(), m.group(3).replace(b"\x00", b"").decode()))
         out[("utf16", t)] = out.get(("utf16", t), 0) + 1
+    if out:
+        return out   # Epic's tag wins, as ScanVersionTier1 runs first
+    for enc, rx, width in (("ascii", BRANCH_ASCII, 1), ("utf16", BRANCH_UTF16, 2)):
+        for m in rx.finditer(data):
+            raw = m.group(0)[:-width]
+            text = raw.decode("utf-16-le" if width == 2 else "ascii")
+            if branch_name_version(text):
+                t = "branch " + text
+                out[(enc, t)] = out.get((enc, t), 0) + 1
     return out
 
 def main():
