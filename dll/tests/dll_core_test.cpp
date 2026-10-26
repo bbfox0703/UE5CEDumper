@@ -11388,6 +11388,37 @@ int main() {
         fill(buf);
         ok = Ubel::PrepareObjectParams(pastEnd, buf.data(), buf.size(), ops, converted, why);
         check("VND584-01 control: a slot running past the buffer is left alone", ok && converted == 0 && s_made == 0);
+
+        // A struct parameter's members: the dialog writes a struct's sub-fields through the same 8-byte arm, so a
+        // soft member inside a struct the caller passes in is the same bug one level down. Member offsets are the
+        // struct's own; the member carries no CPF_Parm, so the direction is the parameter's.
+        auto structOf = [&](const char* name, int32_t off, uint64_t flags, std::vector<Ubel::ParamField> members) {
+            Ubel::ParamField f = field(name, "StructProperty", off, 0x30, flags);
+            f.sub = std::move(members);
+            return f;
+        };
+        Ubel::ParamLayout nested;
+        nested.params = { structOf("Spec",    0x00, kParm,        { field("Count", "IntProperty",        0x00, 4,    0),
+                                                                      field("Icon",  "SoftObjectProperty", 0x08, 0x28, 0) }),
+                          structOf("OutSpec", 0x30, kParm | kOut, { field("Icon",  "SoftObjectProperty", 0x08, 0x28, 0) }) };
+        std::vector<uint8_t> nb(0x60, 0);
+        memcpy(nb.data() + 0x08, &obj, 8);
+        memcpy(nb.data() + 0x38, &obj, 8);
+        ok = Ubel::PrepareObjectParams(nested, nb.data(), nb.size(), ops, converted, why);
+        int32_t nIdx = 0;
+        memcpy(&nIdx, nb.data() + 0x08, 4);
+        uint64_t outMember = 0;
+        memcpy(&outMember, nb.data() + 0x38, 8);
+        check("VND584-01 nested ⭐: a soft member of a struct passed in is converted",
+              ok && converted == 1 && nIdx == 77 && nb[0x08 + 8] == 0xAB, why.c_str());
+        check("VND584-01 nested control: the same member of an OUT struct is the callee's", outMember == obj);
+        Ubel::ParamLayout nestedLazy;
+        nestedLazy.params = { structOf("Spec", 0x00, kParm, { field("Ref", "LazyObjectProperty", 0x08, 0x20, 0) }) };
+        std::fill(nb.begin(), nb.end(), 0);
+        memcpy(nb.data() + 0x08, &obj, 8);
+        ok = Ubel::PrepareObjectParams(nestedLazy, nb.data(), nb.size(), ops, converted, why);
+        check("VND584-01 nested: a refusal names the member through its struct",
+              !ok && why.find("Spec.Ref") != std::string::npos, why.c_str());
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
