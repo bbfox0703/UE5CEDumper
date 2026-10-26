@@ -2463,26 +2463,34 @@ size_t RunArmCapturePass(Linie::ArmState& st, size_t maxArms, const ArmCaptureOp
     return arms.size();
 }
 
-// [VND584-01] ClassifyObjectParam (Ubel.h) says why. Each element of a static array is a slot of its own.
-bool PrepareObjectParams(const ParamLayout& layout, uint8_t* params, size_t size, const ObjectParamOps& ops,
-                         int& converted, std::string& why) {
-    converted = 0;
-    if (!params || !ops.isLiveObject) return true;
-    for (const ParamField& p : layout.params) {
+// [VND584-01] ClassifyObjectParam (Ubel.h) says why. Each element of a static array is a slot of its own, and so is
+// each member of a struct the caller passes in: the dialog writes a struct's sub-fields through the same 8-byte arm.
+// A member carries no CPF_Parm, so its direction is its parameter's; its offset is its struct's own.
+static bool PrepareObjectSlots(const std::vector<ParamField>& fields, int64_t base, const ParamKind* outerKind,
+                               const std::string& prefix, uint8_t* params, size_t size, const ObjectParamOps& ops,
+                               int& converted, std::string& why) {
+    for (const ParamField& p : fields) {
+        const ParamKind kind = outerKind ? *outerKind : p.kind;
         const int32_t dim = p.arrayDim > 0 ? p.arrayDim : 1;
         for (int32_t e = 0; e < dim; ++e) {
-            const int64_t off = static_cast<int64_t>(p.offset) + static_cast<int64_t>(e) * p.size;
-            if (p.offset < 0 || p.size < 8 || off + p.size > static_cast<int64_t>(size)) break;
+            const int64_t off = base + static_cast<int64_t>(p.offset) + static_cast<int64_t>(e) * p.size;
+            if (p.offset < 0 || p.size <= 0 || off < 0 || off + p.size > static_cast<int64_t>(size)) break;
+            if (p.typeName == "StructProperty") {
+                if (!PrepareObjectSlots(p.sub, off, &kind, prefix + p.name + ".", params, size, ops, converted, why))
+                    return false;
+                continue;
+            }
+            if (p.size < 8) break;
             uint8_t* slot = params + off;
             uint64_t lead = 0;
             memcpy(&lead, slot, sizeof(lead));
             const ObjectParamAction act = ClassifyObjectParam(
-                p.typeName, p.size, p.kind, lead, lead != 0 && ops.isLiveObject(static_cast<uintptr_t>(lead)));
+                p.typeName, p.size, kind, lead, lead != 0 && ops.isLiveObject(static_cast<uintptr_t>(lead)));
             if (act == ObjectParamAction::Leave) continue;
 
             char addr[32];
             snprintf(addr, sizeof(addr), "0x%llX", static_cast<unsigned long long>(lead));
-            const std::string what = "'" + p.name + "' (" + p.typeName + ")";
+            const std::string what = "'" + prefix + p.name + "' (" + p.typeName + ")";
             if (act == ObjectParamAction::Refuse) {
                 why = what + (p.typeName == "LazyObjectProperty"
                     ? " holds the object at " + std::string(addr) + ", but a lazy pointer is found by a GUID this "
@@ -2522,6 +2530,14 @@ bool PrepareObjectParams(const ParamLayout& layout, uint8_t* params, size_t size
         }
     }
     return true;
+}
+
+bool PrepareObjectParams(const ParamLayout& layout, uint8_t* params, size_t size, const ObjectParamOps& ops,
+                         int& converted, std::string& why) {
+    converted = 0;
+    why.clear();
+    if (!params || !ops.isLiveObject) return true;
+    return PrepareObjectSlots(layout.params, 0, nullptr, "", params, size, ops, converted, why);
 }
 
 // [LIVEFUNCS-STEP2] The decoder. Pure: the copy's bytes, the arm's layout, and what the ctx answers; nothing here reads
