@@ -1147,9 +1147,16 @@ public sealed class InvokeParamDialog : Window
             "EnumProperty" => DecodeBySize(buf, p.Offset, available, p.Size),
             "Int64Property" when available >= 8
                 => BinaryPrimitives.ReadInt64LittleEndian(span).ToString(),
+            // [VND584-01] A weak / soft / lazy slot leads with FWeakObjectPtr { ObjectIndex, SerialNumber }: after the
+            // call it holds the engine's pair (the DLL swapped a picked address for it), never an address. Serial 0 is
+            // null whatever the index, as UE's Internal_GetObjectItem says.
+            "WeakObjectProperty" or "SoftObjectProperty" or "SoftClassProperty"
+                or "LazyObjectProperty" when available >= 8
+                => BinaryPrimitives.ReadInt32LittleEndian(span[4..]) == 0
+                    ? "null"
+                    : $"{{index {BinaryPrimitives.ReadInt32LittleEndian(span)}, serial {BinaryPrimitives.ReadInt32LittleEndian(span[4..])}}}",
             "UInt64Property" or "ObjectProperty" or "ClassProperty"
-                or "NameProperty" or "SoftObjectProperty" or "WeakObjectProperty"
-                or "InterfaceProperty" when available >= 8
+                or "NameProperty" or "InterfaceProperty" when available >= 8
                 => $"0x{BinaryPrimitives.ReadUInt64LittleEndian(span):X}",
             // Shared with EnumProperty above so the two cannot drift -- the mirror
             // of ParamBufferBuilder.WriteBySize on the write side.

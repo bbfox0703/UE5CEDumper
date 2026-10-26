@@ -62,8 +62,14 @@ public static class ParamBufferBuilder
     /// the live-instance picker pre-filtered to the param's expected UClass).
     ///
     /// The pointer-flavoured types <see cref="WriteParam"/> writes as one 8-byte
-    /// value, which is what a picked instance becomes. That is NOT every type the
-    /// DLL's WalkFunctions names an <c>objClassName</c> for: 4.11-4.17's
+    /// value, which is what a picked instance becomes. A weak / soft / soft-class
+    /// parameter is NOT that address to the engine — it leads with
+    /// <c>FWeakObjectPtr { ObjectIndex, SerialNumber }</c> — so the DLL swaps the
+    /// picked address for the engine's own value before ProcessEvent
+    /// (<c>[VND584-01]</c>). A lazy pointer is found by a GUID nothing can make
+    /// (and UHT refuses lazy UFunction parameters), so it gets no picker and is
+    /// empty-only. Not every type the DLL's WalkFunctions names an
+    /// <c>objClassName</c> for: 4.11-4.17's
     /// <c>AssetObjectProperty</c> / <c>AssetClassProperty</c> get one too, but an
     /// <c>FAssetPtr</c> is a weak-pointer envelope plus a path string, and
     /// WriteParam has no arm that could put a picked instance into it (its size
@@ -78,8 +84,7 @@ public static class ParamBufferBuilder
                  or "WeakObjectProperty"
                  or "SoftObjectProperty"
                  or "SoftClassProperty"
-                 or "InterfaceProperty"
-                 or "LazyObjectProperty";
+                 or "InterfaceProperty";
 
     /// <summary>
     /// True for UE string property types (FString / FUtf8String / FAnsiString).
@@ -255,7 +260,8 @@ public static class ParamBufferBuilder
         // Anything unrecognised takes the same size-driven path in WriteBySize.
         "EnumProperty" => size > 0 ? size : 4,
         "BoolProperty" or "FloatProperty" or "DoubleProperty" => 0,
-        // Pointer-ish types are written as a raw 8-byte address, not a ranged integer.
+        // Pointer-ish types are written as a raw 8-byte address, not a ranged integer (the DLL turns a weak / soft
+        // one into the engine's own value, [VND584-01]).
         "NameProperty" or "ObjectProperty" or "ClassProperty" or "SoftObjectProperty"
             or "SoftClassProperty" or "WeakObjectProperty" or "LazyObjectProperty"
             or "InterfaceProperty" => 0,
@@ -283,6 +289,10 @@ public static class ParamBufferBuilder
     /// <para>This is the exact set the exported script's helper already refuses to
     /// fabricate (<c>writeParams</c>' <c>tarray/tmap/tset/delegate</c> arm, audit #5
     /// AA16), so the two invoke paths now answer the same input the same way.</para>
+    ///
+    /// <para><c>LazyObjectProperty</c> too (<c>[VND584-01]</c>): a weak pointer plus a
+    /// GUID nothing can make, so the DLL refuses a picked object in one; all-zero is
+    /// its null.</para>
     /// </summary>
     public static bool IsEmptyOnlyParam(string typeName) =>
         typeName is "ArrayProperty"
@@ -294,7 +304,8 @@ public static class ParamBufferBuilder
                  or "DelegateProperty"
                  or "MulticastDelegateProperty"
                  or "MulticastInlineDelegateProperty"
-                 or "MulticastSparseDelegateProperty";
+                 or "MulticastSparseDelegateProperty"
+                 or "LazyObjectProperty";
 
     /// <summary>
     /// Params FIRE must refuse OUTRIGHT — not even a zeroed slot is a safe answer.
@@ -464,7 +475,6 @@ public static class ParamBufferBuilder
             case "SoftObjectProperty":
             case "SoftClassProperty":
             case "WeakObjectProperty":
-            case "LazyObjectProperty":
             case "InterfaceProperty":
             {
                 ulong val = ParseULong(text);
