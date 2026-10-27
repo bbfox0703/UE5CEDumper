@@ -1510,6 +1510,25 @@ public class TeleportViewModelTests
         Assert.Contains("press Force OFF again once the game responds", vm.StatusText);
     }
 
+    [Theory]
+    [InlineData(false, "Queued", "Force OFF was not sent — an earlier Force ON is still queued")]
+    [InlineData(true, "ON", "Force ON was not sent — an earlier Force OFF is still queued")]
+    public async Task ForceDebugCamera_over_an_opposite_queued_toggle_says_it_was_not_sent(bool wantOn, string badge,
+                                                                                           string says)
+    {
+        // [DBGCAM-OFF-OVER-QUEUED-ON] review: the Teleport card's twin of the Console's -6 handling.
+        var fake = new FakeDumpService { NextDebugCameraState = -6 };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        if (wantOn) await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+        else await vm.ForceDebugCameraOffCommand.ExecuteAsync(null);
+
+        Assert.Equal(badge, vm.DebugCameraState);
+        Assert.Contains(says, vm.StatusText);
+        Assert.Contains("again once the game responds", vm.StatusText);
+    }
+
     [Fact]
     public async Task ForceGodModeOn_calls_dll_and_sets_badge()
     {

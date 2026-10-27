@@ -101,7 +101,7 @@ public class DebugCameraScriptGeneratorTests
         Assert.True(q >= 0, "no queued branch in [ENABLE]");
         int f = enable.IndexOf("elseif state ~= 1 then", q, System.StringComparison.Ordinal);
         Assert.True(f > q, "the queued test must come BEFORE the failure test, or -5 reads as a failure");
-        var queued = enable[q..f];
+        var queued = enable[q..enable.IndexOf("\nelseif", q, System.StringComparison.Ordinal)];
         Assert.Contains("showMessage('[DebugCamera] ON queued", queued);
         Assert.Contains("Do not tick again: the toggle is already queued.", queued);
         Assert.DoesNotContain("undo", queued);
@@ -125,13 +125,39 @@ public class DebugCameraScriptGeneratorTests
         Assert.True(q >= 0, "no queued branch in [DISABLE]");
         int f = disable.IndexOf("elseif state ~= 0 then", q, System.StringComparison.Ordinal);
         Assert.True(f > q, "the queued test must come BEFORE the failure test");
-        var queued = disable[q..f];
+        var queued = disable[q..disable.IndexOf("\nelseif", q, System.StringComparison.Ordinal)];
         Assert.Contains("print('[DebugCamera] OFF did not complete", queued);   // ungated: a real problem
         Assert.DoesNotContain("dbg(", queued);
         Assert.DoesNotContain("will run", queued);
         Assert.Contains("error('[DebugCamera]", queued);                        // keeps the record ticked
         Assert.DoesNotContain("showMessage(", queued);                         // no modal on an untick
         Assert.DoesNotContain(CeLuaHygiene.CloseCall, queued);
+    }
+
+    // [DBGCAM-OFF-OVER-QUEUED-ON] review: -6 is a toggle the DLL did NOT send, because an earlier one of the other
+    // direction is still queued. Read as "state ~= req", [DISABLE] unticked quietly while a queued ON still turns the
+    // camera on, and [ENABLE] blamed a missing CheatManager. Each branch says what happened, before the failure test.
+    [Fact]
+    public void A_toggle_refused_over_an_opposite_queued_one_says_it_was_not_sent()
+    {
+        var s = DebugCameraScriptGenerator.Generate();
+        int d = s.IndexOf("[DISABLE]", System.StringComparison.Ordinal);
+        string Branch(string block, string failTest)
+        {
+            int b = block.IndexOf("elseif state == -6 then", System.StringComparison.Ordinal);
+            Assert.True(b >= 0, "no -6 branch");
+            Assert.True(b < block.IndexOf(failTest, System.StringComparison.Ordinal), "-6 must be tested before the failure");
+            return block[b..block.IndexOf("\nelseif", b + 1, System.StringComparison.Ordinal)];
+        }
+
+        var on = Branch(s[..d], "elseif state ~= 1 then");
+        Assert.Contains("showMessage('[DebugCamera] ON not sent -- an earlier OFF is still queued", on);
+        Assert.Contains("memrec.Active = false", on);                          // nothing was applied: untick
+
+        var off = Branch(s[d..], "elseif state ~= 0 then");
+        Assert.Contains("print('[DebugCamera] OFF not sent -- an earlier ON is still queued", off);   // ungated
+        Assert.Contains("error('[DebugCamera]", off);                          // keeps the record ticked
+        Assert.DoesNotContain("showMessage(", off);
     }
 
     // [DEBUGCAM-QUEUED-OFF-NOESCALATE] (review): ue5_invoke_helper.lua's copy-me Debug Camera example kept the old

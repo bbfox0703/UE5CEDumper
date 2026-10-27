@@ -1126,6 +1126,28 @@ public class ConsoleViewModelTests
         Assert.Contains("press Force OFF again once the game responds", vm.StatusText);
     }
 
+    // [DBGCAM-OFF-OVER-QUEUED-ON] review: -6 is a Force the DLL did NOT send, because an earlier one of the other direction
+    // is still queued. Read as -5 it described a toggle of its own direction as queued; as an unknown code, a refusal.
+    // An OFF over a queued ON: the camera is not on yet, the ON will turn it on -- the badge reads Queued, as the ON's did.
+    // An ON over a queued OFF: the camera is still on -- the badge reads ON.
+    [Theory]
+    [InlineData(false, "Queued", "Force OFF was not sent — an earlier Force ON is still queued")]
+    [InlineData(true, "ON", "Force ON was not sent — an earlier Force OFF is still queued")]
+    public async Task Force_over_an_opposite_queued_toggle_says_it_was_not_sent(bool wantOn, string badge, string says)
+    {
+        var fake = new FakeDumpService { SetDebugCameraResult = -6 };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+
+        if (wantOn) await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+        else await vm.ForceDebugCameraOffCommand.ExecuteAsync(null);
+
+        Assert.Equal(badge, vm.DebugCameraState);
+        Assert.Contains(says, vm.StatusText);
+        Assert.Contains("again once the game responds", vm.StatusText);
+        Assert.DoesNotContain("state is now", vm.StatusText);
+    }
+
     [Fact]
     public void CopyDebugCameraScript_raises_RequestDebugCameraCeScript()
     {

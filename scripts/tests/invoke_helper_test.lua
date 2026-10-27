@@ -673,6 +673,32 @@ do
   check(not said:find('showMessage', 1, true), 'no modal on an untick', said)
 end
 
+-- [DBGCAM-OFF-OVER-QUEUED-ON] -6: an earlier toggle of the OTHER direction is still queued, so this one sent nothing.
+-- An untick there must not untick silently: the queued ON will still turn the camera on.
+case('DBGCAM-OFF-OVER-QUEUED-ON: the [DISABLE] sample raises and says so when the OFF was not sent (-6)')
+do
+  resetWorld()
+  UE5_DEBUG = nil
+  DLL = function() I32[MB + OFF_RESULT] = -6; I32[MB + OFF_STATUS] = 1 end   -- an earlier ON is still queued
+  local blocks = extractSampleBlocks(HELPER)
+  local ok = runAsCeChunk(blocks[2], makeCeRecord())
+  eq(ok, false, 'the [DISABLE] sample raises, so CE keeps the record ticked')
+  local said = table.concat(PRINTS, '\n')
+  contains(said, 'not sent', 'and says the OFF was not sent, ungated')
+  check(not said:find('showMessage', 1, true), 'no modal on an untick', said)
+end
+
+case('DBGCAM-OFF-OVER-QUEUED-ON: the [ENABLE] sample unticks and says why when the ON was not sent (-6)')
+do
+  resetWorld()
+  DLL = function() I32[MB + OFF_RESULT] = -6; I32[MB + OFF_STATUS] = 1 end   -- an earlier OFF is still queued
+  local blocks = extractSampleBlocks(HELPER)
+  local ok, err, st = runEnableLikeCe(blocks[1])
+  check(ok, 'the sample runs', err)
+  eq(st.fActive, false, 'nothing was sent, so the record is unticked')
+  contains(table.concat(PRINTS, '\n'), 'not sent', 'and the message says the ON was not sent')
+end
+
 case('DEBUGCAM-QUEUED-OFF-NOESCALATE: a completed OFF (state 0) unticks cleanly and quietly -- the control')
 do
   resetWorld()
