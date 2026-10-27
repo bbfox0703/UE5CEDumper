@@ -1968,7 +1968,7 @@ public class DumpServiceTests
         Assert.True(page.Items[3].Reused && page.Items[3].Live);
     }
 
-    // ---- [LIVEFUNCS-STEP2] following functions by name, and parameter snapshots (docs/live-funcs-step2-items.md, U1) ----
+    // ---- [LIVEFUNCS-STEP2] following functions by name, and parameter snapshots (docs/archive/live-funcs-step2-items.md, U1) ----
 
     [Fact]
     public async Task PeProfileGetAsync_ReadsTheNameKeyAndPerFrame_AndAnOlderDllHasNoKey()

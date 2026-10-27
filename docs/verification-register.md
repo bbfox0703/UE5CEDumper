@@ -3966,6 +3966,11 @@ un-exercised in the field**, so nothing here can say whether it reports the righ
 confidence)". **Zero** Tier 3 lines exist, so no such game has ever been seen here. The step cannot
 be run rather than has not been.
 
+⛔ **And no fixture can supply one** (copied 2026-10-27 from the 2026-08-23 classification, now in
+[`archive/`](archive/auto-verification-classification-2026-08-23.md)): a planted decoy loses — Tier 1 scans the
+whole image first, and game C++ cannot strip the engine's own tag. The same holds for G2's Tier 2/3. Do not
+re-propose a fixture for either.
+
 ℹ️ This also **corroborates `G2` step 2's blocker independently**. That row's `tier1_host_survey.py`
 sweep concluded the only Tier-1-capable hosts installed are UE4; the log corpus agrees from the
 other direction — all three games that actually produced a Tier 1 line are UE4 (4.18 / 4.27), so the
@@ -6088,7 +6093,7 @@ target compiles `Ubel.cpp`. **Every step below is about the call sites, not the 
 
    ⭐ **THE SURVEY ANSWERED THE FIXTURE QUESTION, AND THE ANSWER IS "NO FIXTURE".** 500 `ScriptStruct`
    objects: **432 with fields, 68 with none, 67 usable** (named + `props_size>0`). The classification
-   doc's drafted `USTRUCT() struct FDumperTestEmpty` (`auto-verification-classification-2026-08-23.md:352`)
+   doc's drafted `USTRUCT() struct FDumperTestEmpty` (`archive/auto-verification-classification-2026-08-23.md:352`)
    is **not needed** — which also removes one item from the C-bucket fixture list and its UE repackage.
 
    ⚠ **The survey is half the test, and reading it wrong manufactures a fixture out of nothing.**
@@ -6437,7 +6442,7 @@ feature WRITES TO (the Stealth Meter card), so the regression half matters as mu
 > `{"error":…}`. 50 mod 3 == 2, so with uniform 3-byte CJK the cut *always* lands mid-sequence.
 >
 > **X3 — `[G1-AMBER-2026-08-24]`.** X3 is the offset banner, not a CJK row; it closed with G1 the
-> same day. ⚠ `auto-verification-classification-2026-08-23.md` mislabels X3 as the CJK item, which
+> same day. ⚠ `archive/auto-verification-classification-2026-08-23.md` mislabels X3 as the CJK item, which
 > sent one triage down the wrong path.
 
 Eight of the fourteen now carry a PASS block below (A5 · V6 · AE9 · V7 · AF4 · AB6 · AE8 · AF6) —

@@ -597,7 +597,7 @@ the rows that measure exactly those (`Spawn_RecycleChurn`, `Spawn_LastRecycledAd
 ### Review 7 hosts (2026-09-25) — TOptional weak / soft / lazy, and a container nested in a struct
 
 Appended to `ADumperTestActor` (after every existing member, so no earlier field moved) for the Review 7 live checks
-(`docs/review7-live-plan.md`). UHT accepted every `TOptional` below on 5.4 (the container optional stays refused).
+(`docs/archive/review7-live-plan.md`). UHT accepted every `TOptional` below on 5.4 (the container optional stays refused).
 
 | field | value | check |
 |---|---|---|

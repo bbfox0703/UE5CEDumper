@@ -678,7 +678,7 @@ forward as reasons a row needed a commercial game.
 
 ⛔⛔ **AND THE SEARCH ITSELF HAS A FAILURE MODE I COMMITTED THE SAME HOUR.** Auditing that
 checklist I wrote two rows up as *"no closure found"* — because I had grepped only
-`verification-register.md`. Both were closed: one in `auto-verification-classification-2026-08-23.md`,
+`verification-register.md`. Both were closed: one in `auto-verification-classification-2026-08-23.md` (archived since),
 one in `docs/archive/`. **A closure is recorded where the WORK happened, not where the row lives.**
 So rule 1 above is not "grep the whole file", it is:
 

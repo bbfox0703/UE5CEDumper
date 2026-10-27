@@ -1,6 +1,6 @@
 {
  "name": "r7-mixed-red",
- "why": "One red DLL for R7-B-02, R7-B-04, R7-S1 and R7-S2 (docs/review7-live-plan.md, Pre-fix binaries A.2). 9ea4bb2f (S1) reversed whole; B-02(a) the delegate labeller calls {-1,0} stale; B-02(b) the TOptional weak arm says (stale); B-04(a) the sparse element is labelled without the garbage tag; B-04(b) the TOptional resolved name drops its tag; S2 the Find References sparse pass is gated on UE >= 5.0 again. Each reading depends on exactly one of these (the plan's attribution table).",
+ "why": "One red DLL for R7-B-02, R7-B-04, R7-S1 and R7-S2 (docs/archive/review7-live-plan.md, Pre-fix binaries A.2). 9ea4bb2f (S1) reversed whole; B-02(a) the delegate labeller calls {-1,0} stale; B-02(b) the TOptional weak arm says (stale); B-04(a) the sparse element is labelled without the garbage tag; B-04(b) the TOptional resolved name drops its tag; S2 the Find References sparse pass is gated on UE >= 5.0 again. Each reading depends on exactly one of these (the plan's attribution table).",
  "reverse_commit": "9ea4bb2f",
  "paths": [
   "dll/src"

@@ -5,7 +5,7 @@
 
 WHY. `[PROXY-CONFIRM-SHARED-EXE]` (docs/todo.md) is about two games in DIFFERENT folders that ship one exe name: the
 confirmed / injected records are keyed by the bare name, so neither folder may use them, and the Proxy Deploy panel
-must say so. Its live check (docs/path-shape-live-plan.md S5 #18) needs Scan drives to list two such rows. This makes
+must say so. Its live check (docs/archive/path-shape-live-plan.md S5 #18) needs Scan drives to list two such rows. This makes
 the second one without a second multi-GB package: `<shape>/SharedExeTwin/DumperTest51/Binaries/Win64/<exe-name>` is a
 HARD LINK to the fixture's real exe (same bytes, so the import-table analysis is the real one), beside an empty
 `Engine/Binaries/Win64` so `LooksLikeUeGameRoot` accepts the folder as a cooked tree.

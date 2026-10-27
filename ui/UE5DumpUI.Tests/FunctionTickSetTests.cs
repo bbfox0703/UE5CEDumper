@@ -6,7 +6,7 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// [LIVEFUNCS-STEP2] The store behind Live Funcs' ticks and snapshot choices: functions followed by name across
-/// fetches, with their keys, live addresses and parameter size (docs/live-funcs-step2-items.md, U3).
+/// fetches, with their keys, live addresses and parameter size (docs/archive/live-funcs-step2-items.md, U3).
 /// </summary>
 public class FunctionTickSetTests
 {

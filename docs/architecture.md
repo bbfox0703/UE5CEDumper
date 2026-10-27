@@ -85,7 +85,6 @@ UE5CEDumper/
 │   ├── test-games.md               ← 30+ test games with UE version + status
 │   ├── naming-convention.md        ← Frieren-themed file / namespace mapping
 │   ├── aobmaker-integration.md     ← AOBMaker CE Plugin pipe bridge spec
-│   ├── simd-scanning-notes.md      ← AOBMaker SIMD scanning research (reference)
 │   ├── CE-Bugs-Minesweeper.md      ← CE-specific bug notes (evergreen)
 │   ├── archive/                    ← Outdated design docs preserved for history
 │   └── private/                    ← Private/scratch notes (gitignored if listed in .gitignore)
