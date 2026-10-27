@@ -1862,6 +1862,49 @@ do
 end
 
 -- ============================================================
+-- VND584-02 follow-up -- a DelegateProperty row is its bound object's weak pair, in hex,
+-- and on a CHECKED build that pair sits behind the access detector
+-- ============================================================
+-- FScriptDelegate is { FWeakObjectPtr Object; FName FunctionName }. UE 5.3+ with DO_CHECK on puts an
+-- 8-byte FMRSWRecursiveAccessDetector in front of a STANDALONE one, so the row at the field offset
+-- showed the detector, not the object. The CE-XML and CSX exports emit one 8-byte hex leaf at
+-- offset + DelegatePad; the DLL derives that pad from the ENGINE'S ElementSize
+-- (DynOff::DelegatePadFromElementSize, base 8 + sizeof(FName)). The script cannot ask which FName
+-- width this build has, but the two answers cannot collide: 16 / 20 are pad 0, 24 / 28 are pad 8.
+-- Any other size is refused by the DLL; here the row stays where it was and SAYS so.
+case('VND584-02: a DelegateProperty row is the weak pair in hex, behind the detector on a checked build')
+do
+  resetWorld(); dissect.clearAll(); injectDll()
+  serveWalk({
+    { name = 'Del_Ship',      typeName = 'DelegateProperty', offset = 0x30, size = 16 },
+    { name = 'Del_Checked',   typeName = 'DelegateProperty', offset = 0x40, size = 24 },
+    { name = 'Del_CaseName',  typeName = 'DelegateProperty', offset = 0x58, size = 20 },
+    { name = 'Del_CaseCheck', typeName = 'DelegateProperty', offset = 0x70, size = 28 },
+    { name = 'Del_Odd',       typeName = 'DelegateProperty', offset = 0x90, size = 12 },
+    -- CONTROL: a Shipping multicast is a pointer row at its own offset, as before.
+    { name = 'Multi',         typeName = 'MulticastInlineDelegateProperty', offset = 0xA0, size = 16 },
+  })
+  local s = dissect.createFromClass(0xC1A55, 'DelegateHex')
+  local want = { { 'Del_Ship', 0x30 }, { 'Del_Checked', 0x48 }, { 'Del_CaseName', 0x58 }, { 'Del_CaseCheck', 0x78 } }
+  for i, w in ipairs(want) do
+    local e = s.Element[i - 1]
+    eq(e.Name, w[1], 'VND584-02: ' .. w[1] .. ' keeps its name')
+    eq(e.Offset, w[2], 'VND584-02: ' .. w[1] .. ' row sits on the weak pair')
+    eq(e.Vartype, vtQword, 'VND584-02: ' .. w[1] .. ' is an 8-byte row')
+    eq(e.DisplayMethod, 'dtHexadecimal', 'VND584-02: ' .. w[1] .. ' is shown in hex')
+  end
+  local odd = s.Element[4]
+  eq(odd.Offset, 0x90, 'VND584-02: a size no build has leaves the row at the field offset')
+  contains(odd.Name, 'ElementSize 12', 'VND584-02: ... and the row says it could not place the payload')
+  eq(odd.DisplayMethod, 'dtHexadecimal', 'VND584-02: ... still as 8 hex bytes')
+  local m = s.Element[5]
+  eq(m.Name, 'Multi', 'VND584-02 control: the multicast row follows')
+  eq(m.Offset, 0xA0, 'VND584-02 control: a Shipping multicast stays at its offset')
+  eq(m.Vartype, vtPointer, 'VND584-02 control: a multicast stays a pointer row')
+  eq(m.DisplayMethod, nil, 'VND584-02 control: a multicast keeps CE\'s default display')
+end
+
+-- ============================================================
 
 realPrint(string.format('\n%d checks, %d failure(s)', checks, failures))
 os.exit(failures == 0 and 0 or 1)
