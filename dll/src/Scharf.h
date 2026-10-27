@@ -69,10 +69,12 @@ inline int32_t RequiredAlignment(const std::string& typeName, int32_t elemSize,
     // Heap-backed strings/text contain a pointer.
     if (typeName == "StrProperty" || typeName == "TextProperty") return 8;
 
-    // Delegates contain a FWeakObjectPtr + FName, 4-byte aligned baseline,
-    // but multicast variants embed pointers/arrays — 8-byte safer.
-    if (typeName == "DelegateProperty") return 4;
-    if (typeName.find("MulticastDelegateProperty") != std::string::npos) return 8;
+    // A standalone FScriptDelegate is a FWeakObjectPtr + an FName, alignof 4 -- 12, 16 or 20 bytes. On a UE 5.3+
+    // checked build the 8-aligned std::atomic<uint64> access detector leads it, which makes it alignof 8 and rounds
+    // it to 24 or 32 (DynOff::DelegatePaddedSize); the two size sets do not meet, so the size says which.
+    if (typeName == "DelegateProperty") return elemSize >= 24 ? 8 : 4;
+    // A multicast is a TArray header (a pointer first) in both spellings, UE4's and 4.23+'s inline one.
+    if (typeName == "MulticastInlineDelegateProperty" || typeName == "MulticastDelegateProperty") return 8;
     if (typeName == "MulticastSparseDelegateProperty") return 1;  // FSparseDelegate { uint8 bIsBound; }
 
     // FName: 8 bytes (non-CPN) or 12 bytes (CPN) -- three int32, alignof 4 in BOTH modes.
