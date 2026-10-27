@@ -1905,6 +1905,45 @@ do
 end
 
 -- ============================================================
+-- VND584-02 follow-up -- a multicast row is InvocationList.Data, behind the detector on a checked build
+-- ============================================================
+-- FMulticastScriptDelegate is a bare TArray<FScriptDelegate> header: 16 bytes whatever the FName width,
+-- 24 on a UE 5.3+ checked build, where the access detector comes first (Grimoire.h measured it on
+-- DumperTest Development: +0x00 the detector, +0x08 Data). The dissect's pointer row sat on the
+-- detector. The DLL takes the pad from ElementSize against base 16 for BOTH spellings -- UE4 <= 4.22
+-- names the type MulticastDelegateProperty -- and the CSX export hangs its InvocationList pointer at
+-- offset + DelegatePad. 20 is a UNICAST size (case-preserving FName) and no multicast has it.
+case('VND584-02: a multicast row is its InvocationList pointer, behind the detector on a checked build')
+do
+  resetWorld(); dissect.clearAll(); injectDll()
+  serveWalk({
+    { name = 'Mc_Ship',       typeName = 'MulticastInlineDelegateProperty', offset = 0x30, size = 16 },
+    { name = 'Mc_Checked',    typeName = 'MulticastInlineDelegateProperty', offset = 0x40, size = 24 },
+    { name = 'Mc_UE4',        typeName = 'MulticastDelegateProperty',       offset = 0x58, size = 16 },
+    { name = 'Mc_UE4Checked', typeName = 'MulticastDelegateProperty',       offset = 0x68, size = 24 },
+    { name = 'Mc_Odd',        typeName = 'MulticastInlineDelegateProperty', offset = 0x80, size = 20 },
+    -- CONTROL: the sparse row is the ⛔ KNOWN WRONG one in TYPE_MAP and is not moved here.
+    { name = 'Mc_Sparse',     typeName = 'MulticastSparseDelegateProperty', offset = 0x98, size = 1 },
+  })
+  local s = dissect.createFromClass(0xC1A55, 'MulticastPad')
+  local want = { { 'Mc_Ship', 0x30 }, { 'Mc_Checked', 0x48 }, { 'Mc_UE4', 0x58 }, { 'Mc_UE4Checked', 0x70 } }
+  for i, w in ipairs(want) do
+    local e = s.Element[i - 1]
+    eq(e.Name, w[1], 'VND584-02: ' .. w[1] .. ' keeps its name')
+    eq(e.Offset, w[2], 'VND584-02: ' .. w[1] .. ' row sits on InvocationList.Data')
+    eq(e.Vartype, vtPointer, 'VND584-02: ' .. w[1] .. ' is a pointer row CE can follow')
+    eq(e.DisplayMethod, nil, 'VND584-02: ' .. w[1] .. ' keeps CE\'s default display')
+  end
+  local odd = s.Element[4]
+  eq(odd.Offset, 0x80, 'VND584-02: a size no multicast has leaves the row at the field offset')
+  contains(odd.Name, 'ElementSize 20', 'VND584-02: ... and the row says it could not place the payload')
+  local sp = s.Element[5]
+  eq(sp.Name, 'Mc_Sparse', 'VND584-02 control: the sparse row follows')
+  eq(sp.Offset, 0x98, 'VND584-02 control: a sparse delegate is not moved')
+  eq(sp.Vartype, vtPointer, 'VND584-02 control: ... and keeps its TYPE_MAP type')
+end
+
+-- ============================================================
 
 realPrint(string.format('\n%d checks, %d failure(s)', checks, failures))
 os.exit(failures == 0 and 0 or 1)
