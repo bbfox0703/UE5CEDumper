@@ -285,10 +285,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         "Check Cheat Engine's address list before pressing again.");
 
     internal const string KeyCoordNoDllNotReached = "str.TP.LibNoDllNotReached";
-    /// <summary>[COORDPICK-TIMEDOUT-TEXT] What is left once a reply, a reason and a lost reply are ruled out: the pipe
-    /// never opened, so nothing was sent, or the plugin said no without saying why.</summary>
-    internal static string CoordNoDllNotReachedText => AobMakerStatus.Say(KeyCoordNoDllNotReached,
-        "⚠ AOBMaker could not be reached, or refused the no-DLL picker without a reason (CE closed?) — nothing was added.");
+    /// <summary>[COORDPICK-TIMEDOUT-TEXT] The pipe never opened, so nothing was sent. <paramref name="unavailable"/> is
+    /// the bridge's own reason: a pipe another client holds is not a closed Cheat Engine ([W1-PIPEBUSY-STATUS]).</summary>
+    internal static string CoordNoDllNotReachedText(string unavailable) => AobMakerStatus.Say(KeyCoordNoDllNotReached,
+        "⚠ {0}; nothing was added.", unavailable);
+
+    internal const string KeyCoordNoDllRefusedNoReason = "str.TP.LibNoDllRefusedNoReason";
+    /// <summary>[COORDPICK-TIMEDOUT-TEXT] A reply came back, not created and with no reason: the plugin was reached, so
+    /// the line says it refused.</summary>
+    internal static string CoordNoDllRefusedNoReasonText => AobMakerStatus.Say(KeyCoordNoDllRefusedNoReason,
+        "⚠ Cheat Engine refused the no-DLL picker without a reason; nothing was added.");
 
     /// <summary>[AOBM-TRAINER-SETUP-MODAL] The trainer arrives unticked, so the success line has to say what to tick.</summary>
     internal static string TrainerPushedText(int entries)
@@ -4821,7 +4827,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                     ? CoordNoDllTimedOutText
                 : pushed.Message is { } why
                     ? CoordNoDllNotAddedText(why)
-                    : CoordNoDllNotReachedText;
+                : _aobMaker.IsAvailable   // a reply arrived; only a connect that failed leaves the bridge unavailable
+                    ? CoordNoDllRefusedNoReasonText
+                    : CoordNoDllNotReachedText(AobMakerUnavailable.Text(_aobMaker));
             if (sent)
                 _log.Info($"Coordinate library (no-DLL) -> CE via AOBMaker ({_coordAll.Count} entries)");
         }
