@@ -296,12 +296,13 @@ public class PanelSpaceBudgetTests
         Assert.Equal("Horizontal", Attr(group, "Orientation"));
 
         // A generous bound for a button: 10 DIP a character at the default 14 px font, its padding, a 1-DIP border.
+        // A fixed Width is the element's real width, so it wins over the estimate ([TOOLBAR-CONNECT-WIDTH]).
         double ButtonBound(XElement b) => 10 * EnText(Attr(b, "Content")).Length + Horizontal(Attr(b, "Padding")) + 2;
-        double Bound(XElement e) => e.Name.LocalName == "Button"
-            ? ButtonBound(e)
-            : Num(Attr(e, "Width") ?? Attr(e, "MaxWidth")
-                  ?? throw new InvalidOperationException($"{e.Name.LocalName} in the connection group has no bounded width"))
-              + Horizontal(Attr(e, "Margin"));
+        double Bound(XElement e) => (Attr(e, "Width") is { } width ? Num(width)
+              : e.Name.LocalName == "Button" ? ButtonBound(e)
+              : Num(Attr(e, "MaxWidth")
+                    ?? throw new InvalidOperationException($"{e.Name.LocalName} in the connection group has no bounded width")))
+            + Horizontal(Attr(e, "Margin"));
 
         // Connect and Disconnect show one at a time: the pair counts once, at the wider of the two.
         var pair = group.Elements().Where(e => Attr(e, "IsVisible") is "{Binding !IsConnected}" or "{Binding IsConnected}").ToList();
@@ -313,6 +314,38 @@ public class PanelSpaceBudgetTests
         double available = Num(Attr(doc.Root!, "MinWidth")) - Horizontal(Attr(border, "Padding"));
         Assert.True(widest <= available,
             $"the connection group can be {widest} DIP wide, but the toolbar has {available} at the minimum window width");
+    }
+
+    [Fact]
+    public void Toolbar_ConnectAndDisconnect_OccupyOneWidth()
+    {
+        // [TOOLBAR-CONNECT-WIDTH] Connect and Disconnect show one at a time in the slot before the status line, and each
+        // took its own label's width: about 20 DIP apart, so every control after them -- the AOBMaker ⟳ included --
+        // moved once at connect and back at disconnect. One shared fixed Width keeps them still.
+        var doc = Axaml("MainWindow.axaml");
+        XElement ButtonFor(string command) => Assert.Single(doc.Descendants(),
+            e => e.Name.LocalName == "Button" && Attr(e, "Command") == $"{{Binding {command}}}");
+        var pair = new[] { ButtonFor("ConnectCommand"), ButtonFor("DisconnectCommand") };
+        Assert.Same(pair[0].Parent, pair[1].Parent);
+        Assert.True(pair[1].IsBefore(AobMakerRefresh(doc)), "⟳ no longer follows the pair: re-check what this pin protects");
+
+        var width = Attr(pair[0], "Width");
+        Assert.True(width is not null, "Connect has no fixed Width: its label's width moves every control after it");
+        foreach (var b in pair)
+        {
+            var name = EnText(Attr(b, "Content"));
+            Assert.Equal(width, Attr(b, "Width"));
+            // Either one would override the shared Width in Avalonia's layout.
+            Assert.Null(Attr(b, "MinWidth"));
+            Assert.Null(Attr(b, "MaxWidth"));
+            // A margin sits outside the Width, so a different one would still move what follows.
+            Assert.Equal(Horizontal(Attr(pair[0], "Margin")), Horizontal(Attr(b, "Margin")));
+            // The label must fit, or a fixed Width cuts it. Measured in Segoe UI at the default 14 px, "Disconnect" is
+            // 68 DIP; 8 DIP a character keeps a margin over that. The estimate holds only at the default font size.
+            Assert.Null(Attr(b, "FontSize"));
+            double needed = 8 * name.Length + Horizontal(Attr(b, "Padding")) + 2;
+            Assert.True(Num(width) >= needed, $"'{name}' needs about {needed} DIP, but the shared Width is {width}");
+        }
     }
 
     [Fact]
