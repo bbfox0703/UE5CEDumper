@@ -1112,7 +1112,7 @@ static void HandleListInstances() {
 // CMD_SET_DEBUG_CAMERA: robust Debug Camera force on/off, shared with the UI
 // pipe (set_debug_camera). instanceAddr carries the request: 0=OFF, 1=ON,
 // 2=query (read state, no change). result gets the resulting state (1/0/-1), or
-// -5 when the toggle is QUEUED (it will still run; errorMsg says not to re-send).
+// -5 when the toggle is QUEUED (errorMsg says what to do, which depends on the direction).
 // Delegates entirely to the Frieren exports, which own the toggle +
 // controller-swap fallback.
 static void HandleSetDebugCamera() {
@@ -1126,12 +1126,15 @@ static void HandleSetDebugCamera() {
                 sizeof(g_invokeMailbox.errorMsg) - 1);
         g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
     } else if (state == Stark::kInvokeTimedOutStillQueued) {
-        // [W3-DEBUGCAM-QUEUED] The toggle timed out on the game thread and STAYS QUEUED: it will still run. Not a
-        // contract change (MB3 above: a new negative result code; every script treats non-zero as failure and renders
-        // errorMsg verbatim) -- so errorMsg carries the one thing that matters: do not send it again.
-        strncpy(g_invokeMailbox.errorMsg,
-                "Debug Camera: toggle queued -- it will run when the game thread is free; do not re-send",
-                sizeof(g_invokeMailbox.errorMsg) - 1);
+        // [W3-DEBUGCAM-QUEUED] The toggle timed out on the game thread and STAYS QUEUED. Not a contract change (MB3
+        // above: a new negative result code; every script treats non-zero as failure and renders errorMsg verbatim) --
+        // so errorMsg carries what to do. A queued ON will run, and a second one is not wanted. A queued OFF drains on
+        // the original controller's CheatManager and leaves the camera on (stock UE 4.18-5.7), so the user sends it
+        // again [DEBUGCAM-QUEUED-OFF-NOESCALATE].
+        const char* queued = (req == 0)
+            ? "Debug Camera: OFF did not complete -- the game thread is busy; send OFF again once the game responds"
+            : "Debug Camera: ON queued -- it will run when the game thread is free; do not re-send";
+        strncpy(g_invokeMailbox.errorMsg, queued, sizeof(g_invokeMailbox.errorMsg) - 1);
         g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
     }
     LOG_INFO("Mailbox: SET_DEBUG_CAMERA req=%llu -> state=%d",

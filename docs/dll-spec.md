@@ -568,8 +568,10 @@ extern "C" {
     // Two-hop reflection state read + ToggleDebugCamera invoke + controller-swap
     // fallback for Shipping builds that strip DisableDebugCamera. state: 1=ON,
     // 0=OFF, -1=unknown/error. All offsets resolved live (UE4/UE5-agnostic).
-    // Set only: -5 = the toggle timed out on the game thread and stays QUEUED; it
-    // will still run, so never re-send it. [W3-DEBUGCAM-QUEUED]
+    // Set only: -5 = the toggle timed out on the game thread and stays QUEUED. A
+    // queued ON will still run: do not re-send it. A queued OFF does not turn the
+    // camera off on stock UE 4.18-5.7: send OFF again once the game responds.
+    // [W3-DEBUGCAM-QUEUED]
     __declspec(dllexport) int32_t   UE5_GetDebugCameraState();
     __declspec(dllexport) int32_t   UE5_SetDebugCamera(int32_t enable);
 

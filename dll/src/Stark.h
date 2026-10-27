@@ -68,8 +68,9 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
 /// runs when the game thread next drains. Mirrored UI-side as Constants.InvokeDispatchTimeoutResult.
 constexpr int32_t kInvokeTimedOutStillQueued = -5;
 /// [W3-DEBUGCAM-QUEUED] What a STATEFUL toggle export returns when its queued call did not return 0. A timed-out call
-/// passes through as kInvokeTimedOutStillQueued: the toggle WILL run, so the caller must say "queued, do not re-send" --
-/// a re-send queues a second toggle that drains after the first and undoes it. Every other failure ran nothing: -1.
+/// passes through as kInvokeTimedOutStillQueued: the toggle stays queued and runs when the game thread next drains, so
+/// the caller reports it as queued, never as a failure that ran nothing. What that means for the user is the toggle's
+/// own (UE5_SetDebugCamera's doc in Frieren.h). Every other failure ran nothing: -1.
 constexpr int32_t StatefulToggleFailure(int32_t callResult) {
     return callResult == kInvokeTimedOutStillQueued ? kInvokeTimedOutStillQueued : -1;
 }

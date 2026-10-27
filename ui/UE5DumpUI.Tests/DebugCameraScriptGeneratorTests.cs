@@ -184,7 +184,7 @@ public class DebugCameraScriptGeneratorTests
     {
         string Src(string p) => System.IO.File.ReadAllText(NumericInputCoercionTests.RepoFile(p)).Replace("\r\n", "\n");
         var mimic = Src("dll/src/Mimic.cpp");
-        int at = mimic.IndexOf("static void HandleSetDebugCamera()", System.StringComparison.Ordinal);
+        int at = mimic.IndexOf("static void HandleSetDebugCamera() {", System.StringComparison.Ordinal);   // not the declaration
         Assert.True(at >= 0, "HandleSetDebugCamera is gone");
         var body = mimic.Substring(at, mimic.IndexOf("\n}\n", at, System.StringComparison.Ordinal) - at);
         Assert.Contains("Debug Camera: OFF did not complete", body);

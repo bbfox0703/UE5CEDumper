@@ -180,8 +180,10 @@ __declspec(dllexport) int32_t   UE5_GetDebugCameraState();
 // the local player's controller back to the original PlayerController by hand.
 // Returns the resulting state (1/0) or -1 on error. All offsets resolved live
 // from reflection (UE4/UE5 version-agnostic).
-// -5 = the toggle TIMED OUT on the game thread and stays QUEUED: it will still run, so
-// it must not be re-sent -- a second toggle drains after it and undoes it. [W3-DEBUGCAM-QUEUED]
+// -5 = the toggle TIMED OUT on the game thread and stays QUEUED. A queued ON will still
+// run, so it is not re-sent. A queued OFF drains on the original controller's
+// CheatManager, which on stock UE 4.18-5.7 leaves the camera on, so the OFF is sent
+// again once the game responds. [W3-DEBUGCAM-QUEUED] [DEBUGCAM-QUEUED-OFF-NOESCALATE]
 __declspec(dllexport) int32_t   UE5_SetDebugCamera(int32_t enable);
 
 // === Teleport (Wirbel: marker save/recall + cursor teleport) ===
