@@ -228,6 +228,133 @@ public class AobMakerInjectTableFileTests
         return axaml[start..end];
     }
 
+    // ---- a request over AOBMaker's message cap is refused HERE, before a byte is sent ----
+    // (the client-side pre-flight size check, teleport-coord-library-spec.md §10, item 6)
+    //
+    // The read path has always rejected a reply over the cap; the write path sent anything. Both AOBMaker pipes reject a
+    // length prefix over 10 MiB, and a plugin from before AOBMaker's oversize reply (its EXT-5) hangs up WITHOUT
+    // replying -- so the user got a broken pipe or a timeout, read as "AOBMaker not connected", for a request that was
+    // simply too big. The fake below answers the way such a plugin did.
+
+    /// <summary>One framed message's cap on both AOBMaker pipes (CE plugin <c>kMaxMessageBytes</c>, AOBMaker.UI
+    /// <c>PipeProtocol.MaxMessageSize</c>): a length prefix over it is rejected.</summary>
+    private const int AobMakerCap = 10 * 1024 * 1024;
+
+    /// <summary>ASCII, one byte per char, so any request carrying it is over the cap.</summary>
+    private static string OverTheCap() => new('x', AobMakerCap + 1);
+
+    /// <summary>Serve one connection per entry of <paramref name="replies"/> as a pre-EXT-5 AOBMaker plugin did: read
+    /// the length prefix and, over the cap, hang up with no reply. Returns each connection's declared length, null
+    /// when the client sent nothing at all.</summary>
+    private static async Task<List<uint?>> ServeLikeAnOldPluginAsync(string pipe, string[] replies, CancellationToken ct)
+    {
+        var declared = new List<uint?>();
+        foreach (var reply in replies)
+        {
+            using var server = new NamedPipeServerStream(pipe, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+                                                         PipeOptions.Asynchronous);
+            await server.WaitForConnectionAsync(ct);
+            var len = new byte[4];
+            if (await server.ReadAtLeastAsync(len, 4, throwOnEndOfStream: false, ct) < 4)
+            {
+                declared.Add(null);
+                continue;
+            }
+            uint n = BitConverter.ToUInt32(len, 0);
+            declared.Add(n);
+            if (n > AobMakerCap) continue;   // dropped, no reply: what the user saw as a dead pipe
+            await server.ReadExactlyAsync(new byte[n], ct);
+            var payload = System.Text.Encoding.UTF8.GetBytes(reply);
+            await server.WriteAsync(BitConverter.GetBytes((uint)payload.Length), ct);
+            await server.WriteAsync(payload, ct);
+            await server.FlushAsync(ct);
+            server.WaitForPipeDrain();
+        }
+        return declared;
+    }
+
+    [Fact]
+    public async Task An_inject_over_the_cap_is_refused_before_a_byte_is_sent_and_says_why()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var pipe = NobodysPipe();
+        var serving = ServeLikeAnOldPluginAsync(pipe, new[] { "" }, ct);
+        var bridge = new AobMakerBridgeService(new MockLoggingService(), pipe, 2000, _ => true);
+
+        var (ok, error) = await bridge.InjectTableFileAsync("big.lua", OverTheCap(), ct);
+        var declared = await serving.WaitAsync(TimeSpan.FromSeconds(10), ct);
+
+        Assert.False(ok);
+        Assert.Null(Assert.Single(declared));   // the plugin never saw a length prefix
+        Assert.NotNull(error);
+        Assert.Contains("too large", error, StringComparison.Ordinal);
+        Assert.Contains("10 MiB", error, StringComparison.Ordinal);
+        Assert.True(bridge.IsAvailable, "the pipe is fine: only this request was refused");
+    }
+
+    [Fact]
+    public async Task An_AA_script_over_the_cap_is_a_size_failure_not_a_timeout()
+    {
+        // A timeout here is not neutral: it tells the caller the record MAY exist (AOBMaker reply §3 rule 8).
+        var ct = TestContext.Current.CancellationToken;
+        var pipe = NobodysPipe();
+        var serving = ServeLikeAnOldPluginAsync(pipe, new[] { "" }, ct);
+        IAobMakerBridge bridge = new AobMakerBridgeService(new MockLoggingService(), pipe, 2000, _ => true);
+
+        var result = await bridge.CreateAAScriptDetailedAsync("big", OverTheCap(), autoActivate: false, ct: ct);
+        var declared = await serving.WaitAsync(TimeSpan.FromSeconds(10), ct);
+
+        Assert.False(result.Created);
+        Assert.False(result.TimedOut);
+        Assert.Contains("too large", result.Message ?? "", StringComparison.Ordinal);
+        Assert.Null(Assert.Single(declared));
+        Assert.True(bridge.IsAvailable);
+    }
+
+    [Fact]
+    public async Task A_plain_AA_push_over_the_cap_returns_false_without_marking_AOBMaker_offline()
+    {
+        // The bool call has no reason channel; its callers fall back to the clipboard, which has no such cap. What
+        // must not happen is the toolbar flipping to "not connected" and the log blaming the pipe.
+        var ct = TestContext.Current.CancellationToken;
+        var pipe = NobodysPipe();
+        var serving = ServeLikeAnOldPluginAsync(pipe, new[] { "" }, ct);
+        var log = new MockLoggingService();
+        var bridge = new AobMakerBridgeService(log, pipe, 2000, _ => true);
+
+        Assert.False(await bridge.CreateAAScriptAsync("big", OverTheCap(), autoActivate: false, ct: ct));
+        var declared = await serving.WaitAsync(TimeSpan.FromSeconds(10), ct);
+
+        Assert.Null(Assert.Single(declared));
+        Assert.True(bridge.IsAvailable);
+        Assert.Contains(log.Messages, m => m.StartsWith("[WARN", StringComparison.Ordinal)
+                                         && m.Contains("too large", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task A_record_tree_chunk_over_the_cap_is_not_sent_and_the_batch_is_still_closed()
+    {
+        const string begin = "{\"type\":\"CreateRecordTreeBeginResult\",\"success\":true,\"batchId\":\"batch_9\"," +
+                             "\"features\":[\"bulk.plainGroupHeader\",\"bulk.binaryBits\"]}";
+        const string end0 = "{\"type\":\"CreateRecordTreeEndResult\",\"success\":true,\"totalCreated\":0}";
+        var ct = TestContext.Current.CancellationToken;
+        var pipe = NobodysPipe();
+        var serving = ServeLikeAnOldPluginAsync(pipe, new[] { begin, "", end0 }, ct);
+        IAobMakerBridge bridge = new AobMakerBridgeService(new MockLoggingService(), pipe, 2000, _ => true);
+
+        var result = await bridge.CreateRecordTreeAsync("UE5CEDumper +CE",
+            new[] { new CeRecordNode(OverTheCap(), "7FF600001458", "Binary", BitStart: 3, BitLength: 1) }, ct);
+        var declared = await serving.WaitAsync(TimeSpan.FromSeconds(10), ct);
+
+        Assert.Equal(RecordTreeOutcome.Failed, result.Outcome);
+        Assert.Equal(0, result.Created);
+        Assert.Contains("too large", result.Message ?? "", StringComparison.Ordinal);
+        Assert.Equal(3, declared.Count);
+        Assert.NotNull(declared[0]);
+        Assert.Null(declared[1]);              // the chunk never reached the wire
+        Assert.NotNull(declared[2]);           // End still frees the batch Begin opened
+    }
+
     // Note: a "no-CE-plugin -> graceful false" test through the PUBLIC constructor is still
     // omitted -- it would attempt the real 2 s connect, and could reach a real Cheat Engine.
     // The two tests above go through the internal seam instead; the MainWindowViewModel-level
