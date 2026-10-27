@@ -26,11 +26,13 @@
 #include "Sein.h"
 
 // [METHODE-STALE-LOGPATH] Logs are per process and per category (Sein): this plugin's CEPlugin: lines land in Cheat
-// Engine's own folder, the DLL's scan in the game's. A dialog that sends the reader to a log names both. A macro so the
-// dialogs can stay single string literals.
-#define METHODE_LOG_DETAILS                                                                     \
-    "Details: init-0.log under %LOCALAPPDATA%\\UE5CEDumper\\Logs\\, in Cheat Engine's own\n"   \
-    "folder (cheatengine-x86_64) and in the game's (named after its exe)."
+// Engine's own folder, the DLL's scan in the game's. A dialog that sends the reader to a log names both. Sein names a
+// folder after its exe, and CE's launcher picks the AVX2 build on any CPU that has it, so both CE names are given. A
+// macro so the dialogs can stay single string literals.
+#define METHODE_LOG_DETAILS                                                                       \
+    "Details: init-0.log under %LOCALAPPDATA%\\UE5CEDumper\\Logs\\, in Cheat Engine's own\n"     \
+    "folder (cheatengine-x86_64-SSE4-AVX2 on most CPUs, else cheatengine-x86_64)\n"               \
+    "and in the game's (named after its exe)."
 
 // ── Externals from dllmain.cpp ────────────────────────────────────────────
 extern HMODULE g_hDllModule;           // DLL module handle
