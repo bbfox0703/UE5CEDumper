@@ -2878,8 +2878,9 @@ static void Test_Stark_QueuedInvoke() {
     EXPECT("QUEUEDINV ...on every ask until it runs", q.StillQueued());
 
     p.set_value(0);   // the game thread drained it
+    EXPECT("QUEUEDINV a completed request is still on record until asked", q.HasRecord());
     EXPECT("QUEUEDINV once it has run it is not", !q.StillQueued());
-    EXPECT("QUEUEDINV ...and the record has cleared itself", !q.StillQueued());
+    EXPECT("QUEUEDINV ...and the record has cleared itself", !q.HasRecord());
 
     std::promise<int32_t> p2;
     q.Record(p2.get_future().share());

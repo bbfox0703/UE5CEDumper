@@ -283,18 +283,22 @@ inline int NarrowedFlagTestsFunctionFlags(const uint8_t* body, size_t size, size
 
 /// [DBGCAM-OFF-OVER-QUEUED-ON] A request EnqueueInvoke stopped waiting on and left queued, kept by a caller that must
 /// know whether it has run since: a STATEFUL toggle reads its state before it fires, and a toggle still queued will
-/// flip whatever that read said. Answered from the request's own promise, which the drain fulfils when it runs it.
+/// flip whatever that read said. Answered from the request's own promise: the drain fulfils it when it runs the
+/// request, and Shutdown answers it -7 without running it -- either way nothing is left to flip the state.
 /// Not thread-safe: the caller holds its own lock.
 class QueuedInvoke {
 public:
     void Record(std::shared_future<int32_t> done) { m_done = std::move(done); }
-    /// True while a recorded request has not run. Once it has -- with any result -- the record clears itself.
+    /// True while a recorded request has not completed. Once it has -- run with any result, or answered without
+    /// running -- the record clears itself.
     bool StillQueued() {
         if (!m_done.valid()) return false;
         if (m_done.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return true;
         m_done = {};
         return false;
     }
+    /// Whether a request is recorded at all (a completed one is cleared by the next StillQueued).
+    bool HasRecord() const { return m_done.valid(); }
 private:
     std::shared_future<int32_t> m_done;
 };
