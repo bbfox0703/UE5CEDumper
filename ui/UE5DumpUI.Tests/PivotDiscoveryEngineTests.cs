@@ -287,6 +287,21 @@ public class PivotDiscoveryEngineTests
     }
 
     [Fact]
+    public void TwoCopiesTiedOnEveryScore_ComeOutInOffsetOrder()
+    {
+        // Review: the last tie-break (offset) was unpinned -- the shadowed-name test's copies differ in changed count, so
+        // they never reach it, and it re-sorted before asserting. Fed in REVERSE offset order, fully tied copies must
+        // still come out +0xC4 first: List.Sort alone keeps no order.
+        var r = PivotDiscoveryEngine.Rank(new[]
+        {
+            At(In("Shot", "PrerollTime", "FloatProperty", "/b", new[] { "00", "01" }), 0x128),
+            At(In("Shot", "PrerollTime", "FloatProperty", "/a", new[] { "00", "01" }), 0xC4),
+        }, 2);
+
+        Assert.Equal(new[] { 0xC4, 0x128 }, r.Rows.Select(x => x.PropOffset));
+    }
+
+    [Fact]
     public void ANameUsedOnce_KeepsItsBareLabel_AndPoolsItsInstances()
     {
         // CONTROL: one copy, several instances -- one candidate, as before.
