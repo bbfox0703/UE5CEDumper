@@ -1869,12 +1869,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         var field = result.Fields.FirstOrDefault(f => f.Name == item.FieldName && f.Offset == item.FieldOffset);
         if (field == null) return false;
 
-        // Only handle when the matched field resolves to a container that holds
-        // elements; otherwise let the caller fall through to a normal re-walk.
+        // Only handle when the matched field resolves to a container; otherwise let the caller fall through to a
+        // normal re-walk. [LW-SYNTH-EMPTIED-BACK] Kinds as RepopulateContainerView keys them: one emptied since the
+        // path was found is a count of 0, still its kind, and shows empty -- not as the parent's grid.
         bool willRepopulate =
-            (field.ArrayCount > 0 && !string.IsNullOrEmpty(field.ArrayInnerType)) ||
-            (field.MapCount > 0 && !string.IsNullOrEmpty(field.MapKeyType)) ||
-            (field.SetCount > 0 && !string.IsNullOrEmpty(field.SetElemType));
+            (field.ArrayCount >= 0 && !string.IsNullOrEmpty(field.ArrayInnerType)) ||
+            (field.MapCount >= 0 && !string.IsNullOrEmpty(field.MapKeyType)) ||
+            (field.SetCount >= 0 && !string.IsNullOrEmpty(field.SetElemType));
         if (!willRepopulate) return false;
 
         RepopulateContainerView(field, item);
