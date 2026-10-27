@@ -1839,7 +1839,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.TP.LibNoDllNotAdded">⚠ The no-DLL picker was not added to Cheat Engine: {0}.</sys:String>
     <!-- [COORDPICK-TIMEDOUT-TEXT] No reply in time: the plugin may have made the record after the wait gave up
          (AOBMaker reply section 3 rule 8), so the line warns against a second press rather than saying nothing was added. -->
-    <sys:String x:Key="str.TP.LibNoDllTimedOut">⚠ No reply from Cheat Engine in time for the no-DLL picker: it may still have been added. Check Cheat Engine's address list before pressing again.</sys:String>
+    <sys:String x:Key="str.TP.LibNoDllTimedOut">⚠ No reply from Cheat Engine for the no-DLL picker (it timed out, or the pipe closed): it may still have been added. Check Cheat Engine's address list before pressing again.</sys:String>
 
     <sys:String x:Key="str.TP.LibZTol">Z tolerance:</sys:String>
     <sys:String x:Key="str.Tip.TP.LibZTol">Extra height (uu) added to Z on arrival, so landing exactly on the floor the position was captured on does not drop you through it. 0 = off. Applied at teleport time only — the saved entry keeps its exact captured Z — and baked into the Lua export so the generated picker behaves the same. Not part of the CSV.</sys:String>

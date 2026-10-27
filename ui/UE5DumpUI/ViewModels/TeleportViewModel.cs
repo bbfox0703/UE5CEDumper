@@ -277,10 +277,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                               why.TrimEnd('.'));
 
     internal const string KeyCoordNoDllTimedOut = "str.TP.LibNoDllTimedOut";
-    /// <summary>[COORDPICK-TIMEDOUT-TEXT] No reply in time is not "nothing was added": the plugin may have made the
-    /// record after the wait gave up (AOBMaker reply section 3 rule 8), and a second press would add a second picker.</summary>
+    /// <summary>[COORDPICK-TIMEDOUT-TEXT] No reply is not "nothing was added": the plugin may have made the record
+    /// after the wait gave up (AOBMaker reply section 3 rule 8), and a second press would add a second picker. The
+    /// bridge reports a pipe that broke after the request the same way, so the line names both causes.</summary>
     internal static string CoordNoDllTimedOutText => AobMakerStatus.Say(KeyCoordNoDllTimedOut,
-        "⚠ No reply from Cheat Engine in time for the no-DLL picker: it may still have been added. " +
+        "⚠ No reply from Cheat Engine for the no-DLL picker (it timed out, or the pipe closed): it may still have been added. " +
         "Check Cheat Engine's address list before pressing again.");
 
     /// <summary>[AOBM-TRAINER-SETUP-MODAL] The trainer arrives unticked, so the success line has to say what to tick.</summary>
