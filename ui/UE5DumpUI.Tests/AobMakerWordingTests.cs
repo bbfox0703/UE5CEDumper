@@ -181,8 +181,18 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyStealthNothingHeld,
              UE5DumpUI.ViewModels.TeleportViewModel.StealthNothingHeldText);
 
+        // [TRAINER-PUSH-TIMEDOUT-TEXT] the Standalone Trainer push stopped at an entry
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyTrainerTimedOut,
+             UE5DumpUI.ViewModels.TeleportViewModel.TrainerTimedOutText(1, 9, "E"), "1", "9", "E");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyTrainerNotAdded,
+             UE5DumpUI.ViewModels.TeleportViewModel.TrainerNotAddedText(1, 9, "E", "W"), "1", "9", "E", "W");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyTrainerNotReached,
+             UE5DumpUI.ViewModels.TeleportViewModel.TrainerNotReachedText(1, 9, "E", "U"), "1", "9", "E", "U");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyTrainerRefusedNoReason,
+             UE5DumpUI.ViewModels.TeleportViewModel.TrainerRefusedNoReasonText(1, 9, "E"), "1", "9", "E");
+
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(60, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(64, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

@@ -1639,6 +1639,13 @@
     <sys:String x:Key="str.Tip.TP.TrainerExport">Bake this game's GWorld chain + offsets into a self-contained CE Lua trainer (Move Speed / Gravity / Super Jump / GodMode / coordinate TP) and push it straight into Cheat Engine via the AOBMaker plugin. Runs WITHOUT the DLL afterwards. Valid only for this exact game build — regenerate after a patch. Requires the AOBMaker plugin.</sys:String>
     <!-- [AOBM-TRAINER-SETUP-MODAL] Every entry lands unticked, Setup included. {0} = entries pushed. -->
     <sys:String x:Key="str.TP.Trainer.Pushed">Standalone trainer pushed to CE ({0} entries): tick Setup first, then the features you want. No DLL needed henceforth.</sys:String>
+    <!-- [TRAINER-PUSH-TIMEDOUT-TEXT] Why the push stopped: {0} pushed of {1}, {2} the entry it stopped at. A lost reply may
+         have made that entry (AOBMaker reply section 3 rule 8); the other three made nothing. NotReached's {3} is the
+         bridge's own unavailable sentence (busy, refused, absent). -->
+    <sys:String x:Key="str.TP.Trainer.TimedOut">⚠ Pushed {0}/{1} entries — no reply from Cheat Engine for '{2}' (it timed out, or the pipe closed): it may still have been added. Check Cheat Engine's address list before pushing again.</sys:String>
+    <sys:String x:Key="str.TP.Trainer.NotAdded">⚠ Pushed {0}/{1} entries — '{2}' was not added: {3}.</sys:String>
+    <sys:String x:Key="str.TP.Trainer.NotReached">⚠ Pushed {0}/{1} entries — {3}; '{2}' and the rest were not added.</sys:String>
+    <sys:String x:Key="str.TP.Trainer.RefusedNoReason">⚠ Pushed {0}/{1} entries — Cheat Engine refused '{2}' without a reason; it and the rest were not added.</sys:String>
 
     <!-- Move Speed multiplier (Laufen — force UCharacterMovementComponent.MaxWalkSpeed) -->
     <sys:String x:Key="str.TP.MsHeader">Move Speed</sys:String>

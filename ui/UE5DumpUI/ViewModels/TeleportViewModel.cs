@@ -305,6 +305,28 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             "Standalone trainer pushed to CE ({0} entries): tick Setup first, then the features you want. No DLL needed henceforth.",
             entries);
 
+    // [TRAINER-PUSH-TIMEDOUT-TEXT] Why the push stopped at an entry, split as the no-DLL picker's is
+    // ([COORDPICK-TIMEDOUT-TEXT]): a lost reply may have made the entry, the others made nothing. {0} entries were
+    // pushed of {1}; {2} names the entry the push stopped at.
+    internal const string KeyTrainerTimedOut = "str.TP.Trainer.TimedOut";
+    internal const string KeyTrainerNotAdded = "str.TP.Trainer.NotAdded";
+    internal const string KeyTrainerNotReached = "str.TP.Trainer.NotReached";
+    internal const string KeyTrainerRefusedNoReason = "str.TP.Trainer.RefusedNoReason";
+    internal static string TrainerTimedOutText(int ok, int total, string entry)
+        => AobMakerStatus.Say(KeyTrainerTimedOut,
+            "⚠ Pushed {0}/{1} entries — no reply from Cheat Engine for '{2}' (it timed out, or the pipe closed): it may " +
+            "still have been added. Check Cheat Engine's address list before pushing again.", ok, total, entry);
+    internal static string TrainerNotAddedText(int ok, int total, string entry, string why)
+        => AobMakerStatus.Say(KeyTrainerNotAdded, "⚠ Pushed {0}/{1} entries — '{2}' was not added: {3}.",
+            ok, total, entry, why.TrimEnd('.'));
+    internal static string TrainerNotReachedText(int ok, int total, string entry, string unavailable)
+        => AobMakerStatus.Say(KeyTrainerNotReached, "⚠ Pushed {0}/{1} entries — {3}; '{2}' and the rest were not added.",
+            ok, total, entry, unavailable);
+    internal static string TrainerRefusedNoReasonText(int ok, int total, string entry)
+        => AobMakerStatus.Say(KeyTrainerRefusedNoReason,
+            "⚠ Pushed {0}/{1} entries — Cheat Engine refused '{2}' without a reason; it and the rest were not added.",
+            ok, total, entry);
+
     /// <summary>
     /// Fetch baked offsets from the DLL, emit a no-DLL standalone CE-Lua trainer
     /// (Move Speed / Gravity / Super Jump / GodMode / coordinate TP), and push each
@@ -345,6 +367,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
             var entries = StandaloneTrainerScriptGenerator.Generate(offs);
             int ok = 0;
+            string? stopped = null;   // why the push stopped short, null when every entry went in
             foreach (var e in entries)
             {
                 // [AOBM-TRAINER-SETUP-MODAL] Unticked, Setup included. A Setup that fails calls showMessage, the house
@@ -355,15 +378,20 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 // activation, and the bridge keeps serving other clients while that modal is open (measured live
                 // 2026-09-29, build 3603: a GetAttachedProcess and a CreateAAScript whose Lua runs on CE's main
                 // thread both answered at once) -- only the worker that is itself waiting on the activation stalls.
-                var sent = await _aobMaker.CreateAAScriptAsync(e.Description, e.Script, autoActivate: false,
-                                                               group: CeGroupTrainer);
-                if (sent) { ok++; }
-                else { break; }   // pipe dropped mid-push (CE closed?)
+                var pushed = await _aobMaker.CreateAAScriptDetailedAsync(e.Description, e.Script, autoActivate: false,
+                                                                         group: CeGroupTrainer);
+                if (pushed.Created) { ok++; continue; }
+                stopped = pushed.TimedOut
+                    ? TrainerTimedOutText(ok, entries.Count, e.Description)
+                    : pushed.Message is { } why
+                        ? TrainerNotAddedText(ok, entries.Count, e.Description, why)
+                    : _aobMaker.IsAvailable   // a reply arrived; only a connect that failed leaves the bridge unavailable
+                        ? TrainerRefusedNoReasonText(ok, entries.Count, e.Description)
+                        : TrainerNotReachedText(ok, entries.Count, e.Description, AobMakerUnavailable.Text(_aobMaker));
+                break;
             }
             IsAobMakerAvailable = _aobMaker.IsAvailable;
-            StatusText = ok == entries.Count
-                ? TrainerPushedText(ok)
-                : $"⚠ Pushed {ok}/{entries.Count} entries — AOBMaker pipe dropped (CE closed?).";
+            StatusText = stopped ?? TrainerPushedText(ok);
             _log.Info($"Standalone trainer export: {ok}/{entries.Count} entries pushed to CE");
         }
         catch (Exception ex)
