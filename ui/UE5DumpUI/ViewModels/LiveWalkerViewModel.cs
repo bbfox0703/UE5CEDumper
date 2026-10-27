@@ -4883,8 +4883,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
+            // [CSX-PUSH-DISCONNECT-LOG] The resolve runs on the export token a disconnect cancels too, so ask who did.
             StatusText = "";
-            _log.Info("[AOBM-DISSECT-INJECT] structure push cancelled by user");
+            ExportCancelledByUser(cts, "[AOBM-DISSECT-INJECT] structure push");
         }
         catch (Exception ex)
         {
