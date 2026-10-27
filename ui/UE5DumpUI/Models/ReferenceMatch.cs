@@ -29,9 +29,10 @@ public sealed class ReferenceMatch
 
     /// <summary>
     /// The UE property type name of the field that held the reference, as the DLL's scan reports it: any type
-    /// that can carry an object reference, a container or wrapper of one included. Not a closed set here -- the
-    /// scan decides which types it reads, and 4.11-4.17's asset pointers joined it under their own names
-    /// ([UE4-ASSETPTR-EXPORTS]) while a list in this comment still named only their 4.18 successors.
+    /// that can carry an object reference, a container or wrapper of one included. Not a closed set here: the
+    /// scan decides which types it reads and reports each under the engine's own spelling, so the same kind of
+    /// reference arrives under an era's name (UE 4.17's asset pointer is the later soft pointer;
+    /// [UE4-ASSETPTR-PROPS]). Match on it as an open string, never against a fixed list.
     /// </summary>
     public string FieldType { get; init; } = "";
 
