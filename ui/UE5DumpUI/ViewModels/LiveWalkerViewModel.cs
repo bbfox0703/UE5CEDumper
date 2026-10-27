@@ -6332,6 +6332,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         ClearDisplayedNode();
         // The References header and its flag, not only the rows.
         ClearReferences();
+        // [LW-DISCONNECT-STALE-STATUS] And the status and error lines. The panel shows each whenever it is non-empty,
+        // so a Find Refs line quoted a scan of the dead process above the next game's landing view.
+        ClearStatus();
         // And the FULL function list the Functions filter rebuilds from. Clearing only the visible list let the next
         // filter edit bring the previous game's UFunctions back. (The filter box is not blanked, so there is nothing
         // for the keyword memory to Flush.)
