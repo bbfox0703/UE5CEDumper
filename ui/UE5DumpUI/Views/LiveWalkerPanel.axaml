@@ -960,6 +960,7 @@
                           BorderThickness="1" BorderBrush="#DCDCAA"
                           Cursor="Hand" FontWeight="Bold" FontSize="11"
                           ToolTip.Tip="{StaticResource str.Tip.LiveWalker.FuncGenScript}"
+                          ToolTip.ShowOnDisabled="True"
                           ClickMode="Press"/>
                   <Button Content="{StaticResource str.LiveWalker.FuncPipeInvoke}"
                           Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).InvokeViaPipeCommand}"
