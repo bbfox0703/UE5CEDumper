@@ -1991,6 +1991,8 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.LiveWalker.FuncFilterHint">Filter by name...</sys:String>
     <sys:String x:Key="str.LiveWalker.Clear">Clear</sys:String>
     <sys:String x:Key="str.LiveWalker.Col.Name">Name</sys:String>
+    <!-- [VND584-04] A function the class gets only through an interface: {0} = function, {1} = the interface. -->
+    <sys:String x:Key="str.LiveWalker.ViaInterface">{0}  (via {1})</sys:String>
     <sys:String x:Key="str.LiveWalker.Col.Return">Return</sys:String>
     <sys:String x:Key="str.LiveWalker.Col.Params">Params</sys:String>
     <sys:String x:Key="str.LiveWalker.Col.Address">Address</sys:String>

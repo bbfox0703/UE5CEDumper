@@ -1704,13 +1704,22 @@ public sealed class DumpService : IDumpService
     }
 
 
-    public async Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
+    public Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
+        => WalkFunctionsCoreAsync(addr, includeInterfaces: false, ct);
+
+    public Task<List<FunctionInfoModel>> WalkFunctionsWithInterfacesAsync(string addr, CancellationToken ct = default)
+        => WalkFunctionsCoreAsync(addr, includeInterfaces: true, ct);
+
+    private async Task<List<FunctionInfoModel>> WalkFunctionsCoreAsync(string addr, bool includeInterfaces,
+                                                                  CancellationToken ct)
     {
         var req = new JsonObject
         {
             ["cmd"] = "walk_functions",
             ["addr"] = addr,
         };
+        // [VND584-04] Sent only when asked: without it the DLL's reply is the class's own functions, as before.
+        if (includeInterfaces) req["include_interfaces"] = true;
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
 
@@ -1774,6 +1783,7 @@ public sealed class DumpService : IDumpService
                     ReturnValueOffset = fo["ret_offset"]?.GetValue<ushort>() ?? 0xFFFF,
                     ReturnType = fo["ret"]?.GetValue<string>() ?? "",
                     Params = parms,
+                    ViaInterface = fo["interface"]?.GetValue<string>() ?? "",   // [VND584-04] additive
                 });
             }
         }

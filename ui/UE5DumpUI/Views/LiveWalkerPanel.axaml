@@ -923,7 +923,7 @@
                 FontFamily="Consolas" FontSize="12"
                 Focusable="False">
         <DataGrid.Columns>
-          <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.Name}" Binding="{Binding Name}" SortMemberPath="Name" Width="200" MinWidth="120"/>
+          <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.Name}" Binding="{Binding DisplayName}" SortMemberPath="DisplayName" Width="200" MinWidth="120"/>
           <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.Return}" Binding="{Binding ReturnType}" SortMemberPath="ReturnType" Width="100"/>
           <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.Params}" Width="90" SortMemberPath="NumParms">
             <DataGridTextColumn.Binding>

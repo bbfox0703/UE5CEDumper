@@ -7574,7 +7574,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         try
         {
-            var funcs = await _dump.WalkFunctionsAsync(classAddr);
+            // [VND584-04] With the functions the class gets only through an interface: FIRE reaches them by name, so
+            // they belong on the list it is fired from.
+            var funcs = await _dump.WalkFunctionsWithInterfacesAsync(classAddr);
             // Every walk -- each Refresh and Auto Refresh tick included -- re-reads the class's
             // functions. The same UFunctions keep their rows, so the Functions grid keeps its
             // place instead of jumping to the top on every tick [KEYWORD-BOX-VIEW-KEEP].
