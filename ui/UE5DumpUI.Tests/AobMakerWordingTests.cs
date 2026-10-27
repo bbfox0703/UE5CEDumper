@@ -193,6 +193,9 @@ public class AobMakerWordingTests
         var element = panel[btn..panel.IndexOf("/>", btn, StringComparison.Ordinal)];
         Assert.Contains("IsEnabled=\"{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).IsAobMakerAvailable}\"",
                         element, StringComparison.Ordinal);
+        // [INV-TOOLTIP-DISABLED] Avalonia opens no tooltip on a disabled control unless told to, so the tip that
+        // explains the grey button was never seen while AOBMaker is off -- the only time it says anything.
+        Assert.Contains("ToolTip.ShowOnDisabled=\"True\"", element, StringComparison.Ordinal);
     }
 
     private const string RecordXml =
