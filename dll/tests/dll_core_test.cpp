@@ -10754,6 +10754,49 @@ int main() {
     }
 
     {
+        blk("CT-MULTICAST-PARAM-PAD: a multicast delegate parameter's invocation list is read past the access detector");
+        // A FMulticastScriptDelegate is a bare TArray header (16 bytes, whatever the FName width); a UE 5.3+ checked build
+        // puts the same 8-byte detector in front (DynOff::kDelegateDetectorPad). Read at +0 there, Data is the detector
+        // and Num the low half of Data. UHT lets a native UFunction take one by value (it only drops Blueprint support),
+        // and a struct parameter can carry one.
+        using PK = Ubel::ParamKind;
+        using SM = Ubel::SnapMark;
+        auto field = [](const char* name, const char* type, int32_t off, int32_t size) {
+            Ubel::ParamField f; f.name = name; f.typeName = type; f.offset = off; f.size = size; f.kind = PK::In; return f;
+        };
+        alignas(8) uint8_t b[0x80] = {};
+        auto put64 = [&](int off, uint64_t v) { memcpy(b + off, &v, 8); };
+        auto put32 = [&](int off, int32_t v) { memcpy(b + off, &v, 4); };
+        put64(0x00, 0x7770); put32(0x08, 2); put32(0x0C, 4);                    // 16: {Data, Num 2, Max 4} at +0
+        put64(0x18, 0x7770); put32(0x20, 2); put32(0x24, 4);                    // 24: detector 0, the header at +8
+        put64(0x30 + 0x08 + 0x08, 0x7770); put32(0x30 + 0x08 + 0x10, 2);         // a struct, its 24-byte member at +8
+        put64(0x58, 0x7770); put32(0x60, 2); put32(0x64, 4);                    // 20: no such size
+        Ubel::ParamLayout L;
+        auto st = field("Bag", "StructProperty", 0x30, 0x20);
+        st.sub = { field("Id", "IntProperty", 0, 4), field("OnPing", "MulticastInlineDelegateProperty", 8, 24) };
+        L.params = { field("Pad0", "MulticastInlineDelegateProperty", 0x00, 16),
+                     field("Pad8", "MulticastInlineDelegateProperty", 0x10, 24), st,
+                     field("Odd", "MulticastInlineDelegateProperty", 0x58, 20) };
+        Ubel::SnapDecodeCtx ctx;
+        ctx.fnameSize = 8;
+
+        const auto v = Ubel::DecodeParamSnapshot(L, b, sizeof b, false, ctx);
+        const bool shaped = v.size() == L.params.size();
+        check("one value per parameter", shaped, std::to_string(v.size()).c_str());
+        if (shaped) {
+            check("control: ElementSize 16 (no detector) reads the header at +0",
+                  v[0].text == "Num=2 (Data 0x7770)" && v[0].mark == SM::Header, v[0].text.c_str());
+            check("ElementSize 24 reads the header at +8, past the detector",
+                  v[1].text == "Num=2 (Data 0x7770)" && v[1].mark == SM::Header, v[1].text.c_str());
+            check("...and so does a struct parameter's 24-byte member", v[2].sub.size() == 2 &&
+                  v[2].sub[1].text == "Num=2 (Data 0x7770)" && v[2].sub[1].mark == SM::Header, v[2].text.c_str());
+            check("an ElementSize that is neither 16 nor 24 is not read, and says why", v[3].mark == SM::Raw &&
+                  v[3].text.rfind("(multicast \xE2\x80\x94 unexpected ElementSize 20, not read)", 0) == 0,
+                  v[3].text.c_str());
+        }
+    }
+
+    {
         blk("LIVEFUNCS-STEP2: a slot decoded with its own arm's layout -- two loads of one name, arms without one");
         // docs/archive/live-funcs-step2-items.md, F5. The pipe's pe_snap_get decodes through this; nothing here reads the game.
         using LS = Linie::ArmLayoutState;
