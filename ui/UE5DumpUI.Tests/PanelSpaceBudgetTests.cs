@@ -175,8 +175,8 @@ public class PanelSpaceBudgetTests
             return en.Descendants().Single(e => Attr(e, X + "Key") == key).Value;
         }
 
-        // Always shown: every TextBlock without a visibility binding of its own. The ⚠ has one -- it shows only with an
-        // attach warning -- and it was conditional before this change too.
+        // Always shown: every TextBlock without a visibility binding of its own. The ⚠ is no longer in the chip at all
+        // ([TOOLBAR-OTHER-MOVERS]), and it shows only with an attach warning.
         var shown = chip.Descendants().Where(e => e.Name.LocalName == "TextBlock" && Attr(e, "IsVisible") is null)
                         .Select(e => Text(Attr(e, "Text"))).ToList();
         Assert.Equal(new[] { "AOBMaker", "DLL", "/", "UI" }, shown);

@@ -109,17 +109,20 @@
             <Ellipse Width="9" Height="9" Fill="#888888" VerticalAlignment="Center"
                      IsVisible="{Binding !AobMakerUi.IsRunning}"/>
           </StackPanel>
-          <!-- [AOBM-ATTACH-CHECK] Reachable but aimed elsewhere: CE has another process open, or none.
-               The tooltip carries the full sentence, with both process names and ids. -->
-          <TextBlock Text="{StaticResource str.Toolbar.AobMakerWrongProcess}"
-                     Foreground="#E0A050" FontSize="12" VerticalAlignment="Center"
-                     IsVisible="{Binding AobMakerShared.HasAttachWarning}"
-                     ToolTip.Tip="{Binding AobMakerShared.AttachWarning}"/>
           <Button Content="{StaticResource str.Toolbar.AobMakerRefresh}"
                   Command="{Binding RefreshAobMakerCommand}"
                   ToolTip.Tip="{StaticResource str.Tip.Toolbar.AobMakerRefresh}"
                   Padding="6,2" FontSize="12" VerticalAlignment="Center"/>
         </StackPanel>
+        <!-- [AOBM-ATTACH-CHECK] Reachable but aimed elsewhere: CE has another process open, or none.
+             The tooltip carries the full sentence, with both process names and ids. Its own toolbar item AFTER the
+             chip ([TOOLBAR-OTHER-MOVERS]): inside it, before ⟳, its appearing pushed ⟳ right and widened the chip,
+             which can wrap the chip to the next row. Only a configured bridge ever sets it, so it never shows
+             without the chip. -->
+        <TextBlock Text="{StaticResource str.Toolbar.AobMakerWrongProcess}"
+                   Foreground="#E0A050" FontSize="12" VerticalAlignment="Center" Margin="0,2"
+                   IsVisible="{Binding AobMakerShared.HasAttachWarning}"
+                   ToolTip.Tip="{Binding AobMakerShared.AttachWarning}"/>
 
         <!-- Options popover (⚙):
              Collapses 5 export-shape controls (Collapse Pointers + 4 slider
