@@ -28,12 +28,10 @@ public sealed class ReferenceMatch
     public string FieldName { get; init; } = "";
 
     /// <summary>
-    /// One of: "ObjectProperty", "ClassProperty", "InterfaceProperty",
-    /// "WeakObjectProperty", "SoftObjectProperty", "SoftClassProperty",
-    /// "LazyObjectProperty", "OptionalProperty", "DelegateProperty",
-    /// "MulticastInlineDelegateProperty", "MulticastDelegateProperty",
-    /// "MulticastSparseDelegateProperty",
-    /// "ArrayProperty", "MapProperty", "SetProperty".
+    /// The UE property type name of the field that held the reference, as the DLL's scan reports it: any type
+    /// that can carry an object reference, a container or wrapper of one included. Not a closed set here -- the
+    /// scan decides which types it reads, and 4.11-4.17's asset pointers joined it under their own names
+    /// ([UE4-ASSETPTR-EXPORTS]) while a list in this comment still named only their 4.18 successors.
     /// </summary>
     public string FieldType { get; init; } = "";
 
