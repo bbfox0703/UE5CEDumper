@@ -139,6 +139,19 @@ public class PropertySearchFilterTests
         vm.Dispose();
     }
 
+    // [UE4-ASSETPTR-EXPORTS] The DLL walks and searches UE 4.11-4.17's soft pointers by their own names
+    // ([UE4-ASSETPTR-PROPS]); the Type Filter's suggestions listed only the 4.18+ Soft* spellings, so on such a title
+    // "asset" suggested nothing and "soft" suggested two types the game has none of.
+    [Theory]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
+    public void TypeFilterSuggestions_IncludeTheUE4AssetPointers(string typeName)
+    {
+        var vm = new PropertySearchViewModel(new SearchDump(), new NoopLog());
+        Assert.Contains(typeName, vm.PropertyTypeSuggestions);
+        vm.Dispose();
+    }
+
     // ==================================================================
     // Audit #5 Z4 / Z10 — the cap must reach BOTH surfaces, and the advice
     // must name a control the panel actually has.
