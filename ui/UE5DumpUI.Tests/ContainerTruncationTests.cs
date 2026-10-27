@@ -327,6 +327,8 @@ public class ContainerTruncationTests
         public int ElementReads { get; private set; }
         /// <summary>When set, every walk answers this instead: the parent object is gone.</summary>
         public InstanceWalkResult? Gone { get; set; }
+        /// <summary>When set, the count the element READ sees: the array changed between the walk and the read.</summary>
+        public int? ReadSees { get; set; }
 
         public override Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
             int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
@@ -341,10 +343,11 @@ public class ContainerTruncationTests
             string innerType, int elemSize, int offset = 0, int limit = 64, CancellationToken ct = default)
         {
             ElementReads++;
-            int n = Math.Max(0, Math.Min(Math.Min(limit, DllCap), Count - offset));
+            int live = ReadSees ?? Count;
+            int n = Math.Max(0, Math.Min(Math.Min(limit, DllCap), live - offset));
             return Task.FromResult(new ArrayElementsResult
             {
-                TotalCount = Count, ReadCount = n, InnerType = innerType, ElemSize = elemSize,
+                TotalCount = live, ReadCount = n, InnerType = innerType, ElemSize = elemSize,
                 Elements = Enumerable.Range(offset, n).Select(i => new ArrayElementValue { Index = i, Value = $"{i}" }).ToList(),
             });
         }
@@ -467,6 +470,79 @@ public class ContainerTruncationTests
         Assert.Contains("showing 128 of 205", vm.CurrentObjectName);
         Assert.Contains("showing 128 of 205", vm.Breadcrumbs[^1].Label);
         Assert.Contains("Array Limit", vm.StatusText);
+    }
+
+    // [WALK-REFRESH-SCALAR-SHRINK] review F2: the element read reports the array's count AT READ TIME (TotalCount), and
+    // the view took its total and its "asked for" from the WALK's count instead. An array that shrank between the two
+    // reads came back complete but short of the walk's count, and the view said "capped at N per fetch" over it.
+
+    [Fact]
+    public async Task Drill_ScalarArrayThatShrankBeforeTheRead_IsShownWhole_NotCalledCapped()
+    {
+        var dump = new RewalkStub { Row = ScalarRow, Count = 5_004, ReadSees = 300 };
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()))
+        {
+            ArrayLimit = 64,
+        };
+        vm.CurrentAddress = RewalkStub.Parent;
+        var parentRow = (await dump.WalkInstanceAsync(RewalkStub.Parent, arrayLimit: 64,
+                                                      ct: TestContext.Current.CancellationToken)).Fields[0];
+
+        await vm.NavigateToContainerCommand.ExecuteAsync(parentRow);
+
+        Assert.Equal(300, vm.Fields.Count);
+        Assert.DoesNotContain("per fetch", vm.StatusText);
+        Assert.Contains("[300 x IntProperty]", vm.Breadcrumbs[^1].Label);
+        Assert.DoesNotContain("showing", vm.Breadcrumbs[^1].Label);
+        Assert.DoesNotContain("showing", vm.CurrentObjectName);
+    }
+
+    [Fact]
+    public async Task Refresh_ScalarArrayThatShrankBeforeTheRead_IsShownWhole_NotCalledCapped()
+    {
+        var (vm, dump) = await DrillLiveAsync(ScalarRow, count: 5_004, arrayLimit: 64);
+        dump.ReadSees = 300;                                                 // the walk still says 5,004
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(300, vm.Fields.Count);
+        Assert.DoesNotContain("per fetch", vm.StatusText);
+        Assert.DoesNotContain("showing", vm.CurrentObjectName);
+        Assert.Contains("[300 x IntProperty]", vm.Breadcrumbs[^1].Label);
+        Assert.DoesNotContain("showing", vm.Breadcrumbs[^1].Label);
+        Assert.Equal(300, vm.Breadcrumbs[^1].ContainerField!.ArrayCount);   // what Back and the exporters read
+    }
+
+    [Fact]
+    public async Task Refresh_ScalarArrayThatShrankButIsStillOverTheDllCap_IsCappedAtTheLiveCount()
+    {
+        // Fewer back than both the request and the live count: that IS the DLL's per-fetch cap, of the LIVE total.
+        var (vm, dump) = await DrillLiveAsync(ScalarRow, count: 10_000, arrayLimit: 64);
+        dump.ReadSees = 5_000;
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(4_096, vm.Fields.Count);
+        Assert.Contains("showing 4,096 of 5,000", vm.CurrentObjectName);
+        Assert.Contains("showing 4,096 of 5,000", vm.Breadcrumbs[^1].Label);
+        Assert.Contains("capped at 4,096 per fetch", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Refresh_ScalarArrayThatGrewBeforeTheRead_SaysSo_WithoutBlamingACapOrTheSlider()
+    {
+        // The read asked for the walk's 200 and the array now holds 210: neither the DLL's cap nor the Array Limit
+        // (which does not govern a scalar view) bounded it, the walk's count did -- a re-read asks for the new one.
+        var (vm, dump) = await DrillLiveAsync(ScalarRow, count: 200, arrayLimit: 64);
+        dump.ReadSees = 210;
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(200, vm.Fields.Count);
+        Assert.Contains("showing 200 of 210", vm.Breadcrumbs[^1].Label);
+        Assert.DoesNotContain("per fetch", vm.StatusText);
+        Assert.DoesNotContain("Array Limit", vm.StatusText);
+        Assert.Contains("re-open", vm.StatusText);
     }
 
     // [WALK-NULLCLASS-SILENT] review F1: the container branch acted only when the parent walk found the field again. A
