@@ -3909,6 +3909,91 @@ int main() {
         DynOff::bCasePreservingName = savedCpnD;
     }
 
+    // -- FINDREFSPAD-2026-10-27 -- Find Refs reads a delegate field's payload past a checked build's detector ---------
+    //
+    // ⛔ POOL-FAKING (own pool). [DELEGATE-PAD-ALIGN]'s second review: CollectRefMetaRecursive took a standalone
+    // DelegateProperty's weak pair and an inline multicast's TArray header at the FIELD offset, so on a UE 5.3+ checked
+    // build Find Refs read the access detector there and silently found nothing; and its TArray<FScriptDelegate> stride
+    // is the engine's element size, which only a 12- or 4-byte FName tells apart from base + pad.
+    {
+        blk("FINDREFSPAD - Find Refs reads a delegate's payload past the detector, and steps a delegate array by its size");
+        ResetCancel();
+
+        static uint8_t frEntry[7][0x40] = {};
+        const char* frNames[7] = { "", "DelegateProperty", "MulticastInlineDelegateProperty", "ArrayProperty",
+                                   "Del", "Multi", "Arr" };
+        static uintptr_t frChunk[8] = {};
+        for (int i = 1; i <= 6; ++i) {
+            memcpy(frEntry[i] + 0x10, frNames[i], strlen(frNames[i]) + 1);
+            frChunk[i] = reinterpret_cast<uintptr_t>(frEntry[i]);
+        }
+        static uintptr_t frChunks[2] = { reinterpret_cast<uintptr_t>(frChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(frChunks), 0x10);
+        check("FINDREFSPAD setup: the pool resolves MulticastInlineDelegateProperty",
+              Serie::GetString(2) == "MulticastInlineDelegateProperty", Serie::GetString(2).c_str());
+
+        const bool savedFPropR = DynOff::bUseFProperty;
+        const bool savedCpnR   = DynOff::bCasePreservingName;
+        DynOff::bUseFProperty = true;
+
+        static uint8_t frDelFC[0x20] = {}, frMcFC[0x20] = {}, frArrFC[0x20] = {};
+        *reinterpret_cast<int32_t*>(frDelFC + DynOff::FFIELDCLASS_NAME) = 1;   // "DelegateProperty"
+        *reinterpret_cast<int32_t*>(frMcFC + DynOff::FFIELDCLASS_NAME)  = 2;   // "MulticastInlineDelegateProperty"
+        *reinterpret_cast<int32_t*>(frArrFC + DynOff::FFIELDCLASS_NAME) = 3;   // "ArrayProperty"
+        auto prop = [](uint8_t* p, uint8_t* fc, int32_t name, int32_t off, int32_t size) {
+            *reinterpret_cast<uintptr_t*>(p + DynOff::FFIELD_CLASS)       = reinterpret_cast<uintptr_t>(fc);
+            *reinterpret_cast<int32_t*>(p + DynOff::FFIELD_NAME)          = name;
+            *reinterpret_cast<int32_t*>(p + DynOff::FPROPERTY_OFFSET)     = off;
+            *reinterpret_cast<int32_t*>(p + DynOff::FPROPERTY_ELEMSIZE)   = size;
+            *reinterpret_cast<int32_t*>(p + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;   // ArrayDim
+        };
+
+        // Class A, an 8-byte FName on a checked build: a 24-byte DelegateProperty and a 24-byte inline multicast.
+        static uint8_t frDel[0x100] = {}, frMc[0x100] = {}, frClsA[0x100] = {};
+        prop(frDel, frDelFC, 4, 0x30, 24);
+        prop(frMc, frMcFC, 5, 0x50, 24);
+        *reinterpret_cast<uintptr_t*>(frDel + DynOff::FFIELD_NEXT)         = reinterpret_cast<uintptr_t>(frMc);
+        *reinterpret_cast<int32_t*>(frClsA + DynOff::USTRUCT_PROPSSIZE)    = 0x100;
+        *reinterpret_cast<uintptr_t*>(frClsA + DynOff::USTRUCT_CHILDPROPS) = reinterpret_cast<uintptr_t>(frDel);
+        DynOff::bCasePreservingName = false;
+        const auto& ma = Aura::GetClassRefMeta(reinterpret_cast<uintptr_t>(frClsA));
+        const auto wd = std::find_if(ma.weakLikePointers.begin(), ma.weakLikePointers.end(),
+                                     [](const auto& e) { return e.name == "Del"; });
+        const auto wm = std::find_if(ma.weakLikeArrays.begin(), ma.weakLikeArrays.end(),
+                                     [](const auto& e) { return e.name == "Multi"; });
+        check("FINDREFSPAD ⭐: a checked DelegateProperty's weak pair is read 8 past the field, which keeps its offset",
+              wd != ma.weakLikePointers.end() && wd->offset == 0x30 && wd->payloadOffset == 8,
+              wd == ma.weakLikePointers.end() ? "no entry"
+                  : (std::to_string(wd->offset) + " +" + std::to_string(wd->payloadOffset)).c_str());
+        check("FINDREFSPAD ⭐: a checked inline multicast's TArray header is read 8 past the field",
+              wm != ma.weakLikeArrays.end() && wm->offset == 0x50 && wm->headerOffset == 8,
+              wm == ma.weakLikeArrays.end() ? "no entry"
+                  : (std::to_string(wm->offset) + " +" + std::to_string(wm->headerOffset)).c_str());
+        check("FINDREFSPAD control: ...while its invocation-list elements stay unpadded (8 + 8, the pair at +0)",
+              wm != ma.weakLikeArrays.end() && wm->elemStride == 16 && wm->elemWeakOffset == 0,
+              wm == ma.weakLikeArrays.end() ? "no entry" : std::to_string(wm->elemStride).c_str());
+
+        // Class B, a 12-byte FName on a checked build: a TArray<FScriptDelegate> whose elements are 32 bytes.
+        static uint8_t frArr[0x100] = {}, frInner[0x100] = {}, frClsB[0x100] = {};
+        prop(frArr, frArrFC, 6, 0x40, 16);
+        *reinterpret_cast<uintptr_t*>(frInner + DynOff::FFIELD_CLASS)        = reinterpret_cast<uintptr_t>(frDelFC);
+        *reinterpret_cast<int32_t*>(frInner + DynOff::FPROPERTY_ELEMSIZE)    = 32;
+        *reinterpret_cast<uintptr_t*>(frArr + DynOff::FARRAYPROP_INNER)      = reinterpret_cast<uintptr_t>(frInner);
+        *reinterpret_cast<int32_t*>(frClsB + DynOff::USTRUCT_PROPSSIZE)      = 0x100;
+        *reinterpret_cast<uintptr_t*>(frClsB + DynOff::USTRUCT_CHILDPROPS)   = reinterpret_cast<uintptr_t>(frArr);
+        DynOff::bCasePreservingName = true;
+        const auto& mb = Aura::GetClassRefMeta(reinterpret_cast<uintptr_t>(frClsB));
+        const auto wa = std::find_if(mb.weakLikeArrays.begin(), mb.weakLikeArrays.end(),
+                                     [](const auto& e) { return e.name == "Arr"; });
+        check("FINDREFSPAD ⭐: a case-preserving checked delegate array steps by its 32-byte elements, not base + pad (28)",
+              wa != mb.weakLikeArrays.end() && wa->elemStride == 32 && wa->elemWeakOffset == 8,
+              wa == mb.weakLikeArrays.end() ? "no entry"
+                  : (std::to_string(wa->elemStride) + " +" + std::to_string(wa->elemWeakOffset)).c_str());
+
+        DynOff::bUseFProperty       = savedFPropR;
+        DynOff::bCasePreservingName = savedCpnR;
+    }
+
     // -- UPROPDELEGATE-2026-09-12 -- the UProperty-mode delegate-array arms name the readers' refusal ---------------
     //
     // ⛔ POOL-FAKING (own pool, last). [P1-UPROP-DELEGATE] e16d2052 fixed the FProperty arms; the UProperty-mode

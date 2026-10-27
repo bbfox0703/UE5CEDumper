@@ -3289,6 +3289,9 @@ struct WeakLikePointerEntry {
     std::string typeName;     // the holder's type: one IsWeakLikeProp accepts, a DelegateProperty, or the
                               // OptionalProperty that wraps a weak-like value
     int32_t     setFlagOffset = -1;   // TOptional bIsSet byte, relative to offset; -1 = none
+    // Where the FWeakObjectPtr sits inside the field: the access-detector pad for a DelegateProperty on a UE 5.3+
+    // checked build, 0 otherwise. `offset` stays the field's own, which is what a reference reports.
+    int32_t     payloadOffset = 0;
 };
 
 // [A2-TOPTIONAL-INTRUSIVE] A trailing-flag TOptional keeps its old value bytes after Reset(): only
@@ -3326,6 +3329,9 @@ struct WeakLikeArrayEntry {
     // inner type whose payload does not start at the element's own address.
     int32_t     elemWeakOffset = 0;
     int32_t     setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
+    // Where the TArray header sits inside the field: the access-detector pad for a multicast delegate on a UE 5.3+
+    // checked build, 0 otherwise. `offset` stays the field's own, which is what a reference reports.
+    int32_t     headerOffset = 0;
 };
 
 // TMap with at least one Object/Class side. Both flags can be true for a
