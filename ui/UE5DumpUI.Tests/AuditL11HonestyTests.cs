@@ -745,6 +745,35 @@ public class AuditL11HonestyTests
         Assert.Equal("", vm.StatusText);
     }
 
+    private sealed class DataTableRewalkStub : StubDumpService
+    {
+        public int Total { get; set; }
+        public override Task<DataTableWalkResult> WalkDataTableRowsAsync(string addr, int offset = 0, int limit = 64,
+            CancellationToken ct = default)
+            => Task.FromResult(DataTable(Total, fetched: 64));
+    }
+
+    [Fact]
+    public async Task V8_DataTableRefresh_KeepsItsStatusLine_AndTheCrumbTakesTheNewTotal()
+    {
+        // [WALK-REFRESH-SCALAR-SHRINK] Refresh re-fetched the rows and re-rendered the header, but cleared the status
+        // line and left the crumb (its label, and the ContainerField the exporters read) on the drill's reading.
+        var dump = new DataTableRewalkStub { Total = 5000 };
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        vm.CurrentAddress = "0x10000000";
+        var dt = DataTable(total: 5000, fetched: 64);
+        vm.NavigateToDataTableContainer(RowMapField(dt), dt);
+        dump.Total = 5100;
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Contains("showing 64 of 5,100", vm.CurrentObjectName);
+        Assert.Contains("showing 64 of 5,100", vm.Breadcrumbs[^1].Label);
+        Assert.Contains("5,100", vm.StatusText);
+        Assert.DoesNotContain("Array Limit", vm.StatusText);
+        Assert.Equal(5100, vm.Breadcrumbs[^1].ContainerField!.DataTableRowCount);
+    }
+
     [Fact]
     public void V8_DataTableDrill_RowsStillRender()
     {
