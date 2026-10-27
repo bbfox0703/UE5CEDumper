@@ -399,6 +399,8 @@ public static class PropertyScoringTable
         "ArrayProperty" or "MapProperty" or "SetProperty"
             or "ObjectProperty" or "ClassProperty" or "WeakObjectProperty"
             or "SoftObjectProperty" or "SoftClassProperty" or "LazyObjectProperty"
+            // [UE4-ASSETPTR-EXPORTS] the Soft* pair's names before 4.18
+            or "AssetObjectProperty" or "AssetClassProperty"
             or "InterfaceProperty"
             or "DelegateProperty" or "MulticastInlineDelegateProperty"
             or "MulticastSparseDelegateProperty"

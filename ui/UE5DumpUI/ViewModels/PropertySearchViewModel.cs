@@ -132,7 +132,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         "ClassProperty",
         "InterfaceProperty",
         "ObjectProperty",
-        // Weak / soft / lazy
+        // Weak / soft / lazy -- and UE 4.11-4.17's soft pointers, before 4.18 renamed them [UE4-ASSETPTR-EXPORTS]
+        "AssetClassProperty",
+        "AssetObjectProperty",
         "LazyObjectProperty",
         "SoftClassProperty",
         "SoftObjectProperty",
