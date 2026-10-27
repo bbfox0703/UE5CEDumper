@@ -1593,6 +1593,7 @@ public class InvokeScriptTests
         "StructProperty", "TextProperty", "ArrayProperty", "MapProperty", "SetProperty",
         "FieldPathProperty", "OptionalProperty", "DelegateProperty", "MulticastDelegateProperty",
         "MulticastInlineDelegateProperty", "MulticastSparseDelegateProperty",
+        "AssetObjectProperty", "AssetClassProperty",   // [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17
     };
 
     [Theory]
@@ -1777,6 +1778,8 @@ public class InvokeScriptTests
     [InlineData("ArrayProperty", 16)]
     [InlineData("StructProperty", 24)]
     [InlineData("LazyObjectProperty", 32)]   // [VND584-01] its own message, the same shape
+    [InlineData("AssetObjectProperty", 32)]  // [UE4-ASSETPTR-EXPORTS] an FAssetPtr's FString path needs the engine's storage
+    [InlineData("AssetClassProperty", 32)]
     public void CeForm_TheEmptyOnlyGate_IsWellFormedLua(string typeName, int size)
     {
         var pre = BeforeTheMailbox(FireHandler(InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc(typeName, size))));
