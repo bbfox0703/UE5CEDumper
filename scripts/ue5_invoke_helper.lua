@@ -54,7 +54,9 @@
       -- row would stay ticked over a camera that never turned on. Byte-identical to
       -- CeLuaHygiene.DeferredUntickLua. [FREEZEUNTICK-2026-08-20]
       if memrec then local _u=createTimer(nil,false) _u.Interval=50 _u.OnTimer=function(x) x.destroy() memrec.Active = false end _u.Enabled=true end  -- deferred: CE sets Active AFTER this block, so an immediate untick is a no-op
-      local why = ok and ('returned state ' .. tostring(state)) or ('error: ' .. tostring(state))
+      -- -6: NOT SENT, an earlier OFF is still queued -- tick again once the game responds. [DBGCAM-OFF-OVER-QUEUED-ON]
+      local why = (ok and state == -6) and 'not sent -- an earlier OFF is still queued; tick again once the game responds'
+                  or ok and ('returned state ' .. tostring(state)) or ('error: ' .. tostring(state))
       showMessage('[Debug Camera] could not enable -- ' .. why)
       return
     end
@@ -73,6 +75,12 @@
       -- again once the game responds runs this block again. [DEBUGCAM-QUEUED-OFF-NOESCALATE]
       print('[Debug Camera] OFF did not complete -- the game thread is busy, and a queued OFF does not turn the camera off on most engines. The record stays ticked: untick it again once the game responds.')
       error('[Debug Camera] OFF queued; the camera is still on')
+    end
+    if ok and state == -6 then
+      -- NOT SENT: an earlier ON is still queued and will turn the camera on. Same answer as a queued OFF: say so ungated
+      -- and RAISE, so the record stays ticked. [DBGCAM-OFF-OVER-QUEUED-ON]
+      print('[Debug Camera] OFF not sent -- an earlier ON is still queued and will turn the camera on. The record stays ticked: untick it again once the game responds.')
+      error('[Debug Camera] OFF not sent; an earlier ON is still queued')
     end
     if not ok and (UE5_DEBUG or 0) ~= 0 then print('[Debug Camera] disable error: ' .. tostring(state)) end
     {$asm}
@@ -929,7 +937,9 @@ if not setDebugCamera or _invokeOutdated then
   --- Force Debug Camera ON (enable ~= 0) or OFF. Idempotent.
   --- @param enable number|boolean
   --- @return number state  1=ON, 0=OFF, -1=error, -5=toggle queued (an ON will run: do not re-send;
-  ---                       an OFF leaves the camera on, stock UE 4.18-5.7: send it again once the game responds)
+  ---                       an OFF leaves the camera on, stock UE 4.18-5.7: send it again once the game responds),
+  ---                       -6=not sent (an earlier toggle of the other direction is still queued: send it again once
+  ---                       the game responds)
   function setDebugCamera(enable)
     return dbgCamMailbox((enable and enable ~= 0) and 1 or 0)
   end

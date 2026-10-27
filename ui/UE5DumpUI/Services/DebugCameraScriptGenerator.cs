@@ -86,7 +86,7 @@ public static class DebugCameraScriptGenerator
         // Shared wait: real-time deadline, status-specific diagnosis, and the untick
         // that stops a timed-out row claiming to be active.
         CeLuaHygiene.AppendMailboxWait(sb, "DebugCamera", bail);
-        Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=ON, 0=OFF, -1=error, -5=queued");
+        Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=ON, 0=OFF, -1=error, -5=queued, -6=not sent");
         Line(sb, $"dbg('[DebugCamera] {label} -> state=' .. tostring(state))");
         // Test against the REQUEST, not against -1. `UE5_SetDebugCamera` re-reads the
         // state after firing ToggleDebugCamera and returns whatever it finds
@@ -115,6 +115,22 @@ public static class DebugCameraScriptGenerator
                       "not turn the camera off on most engines. The record stays ticked: untick it again once the game " +
                       "responds.')");
             Line(sb, $"  error('[DebugCamera] {label} queued; the camera is still on')");
+        }
+        // [DBGCAM-OFF-OVER-QUEUED-ON] -6: NOT SENT -- an earlier toggle of the other direction is still queued. [ENABLE]
+        // applied nothing, so it says so and unticks; [DISABLE] sits over an earlier ON that will still turn the camera
+        // on, so it says so ungated and raises, as the queued OFF does. Tested before `state ~= req` too.
+        Line(sb, $"elseif state == {Constants.DebugCameraToggleBlockedResult} then");
+        if (enable)
+        {
+            Line(sb, $"  showMessage('[DebugCamera] {label} not sent -- an earlier OFF is still queued (the game thread " +
+                      "is busy). Tick again once the game responds.')");
+            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        }
+        else
+        {
+            Line(sb, $"  print('[DebugCamera] {label} not sent -- an earlier ON is still queued and will turn the camera " +
+                      "on. The record stays ticked: untick it again once the game responds.')");
+            Line(sb, $"  error('[DebugCamera] {label} not sent; an earlier ON is still queued')");
         }
         Line(sb, $"elseif state ~= {req} then");
         if (enable)

@@ -1104,6 +1104,9 @@ public class ConsoleViewModelTests
         Assert.Equal(UE5DumpUI.Helpers.DebugCameraText.Queued(wantOn: true), En(UE5DumpUI.Helpers.DebugCameraText.KeyQueuedOn));
         Assert.Equal(UE5DumpUI.Helpers.DebugCameraText.Queued(wantOn: false), En(UE5DumpUI.Helpers.DebugCameraText.KeyQueuedOff));
         Assert.DoesNotContain("undo", En(UE5DumpUI.Helpers.DebugCameraText.KeyQueuedOn));
+        // [DBGCAM-OFF-OVER-QUEUED-ON] the not-sent texts
+        Assert.Equal(UE5DumpUI.Helpers.DebugCameraText.Blocked(wantOn: true), En(UE5DumpUI.Helpers.DebugCameraText.KeyBlockedOn));
+        Assert.Equal(UE5DumpUI.Helpers.DebugCameraText.Blocked(wantOn: false), En(UE5DumpUI.Helpers.DebugCameraText.KeyBlockedOff));
     }
 
     [Fact]

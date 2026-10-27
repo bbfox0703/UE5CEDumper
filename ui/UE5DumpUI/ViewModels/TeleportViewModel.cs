@@ -1686,6 +1686,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             Constants.DebugCameraToggleQueuedResult when forcingOff => ("ON", "#4EC9B0"),
             // [W3-DEBUGCAM-QUEUED] A queued ON is neither ON nor OFF yet, and not "unknown": the toggle will run.
             Constants.DebugCameraToggleQueuedResult => ("Queued", "#D7BA7D"),   // amber — pending
+            // [DBGCAM-OFF-OVER-QUEUED-ON] Nothing was sent; the earlier toggle of the other direction is still queued. An
+            // OFF over a queued ON shows what the ON showed; an ON over a queued OFF shows the camera that is still on.
+            Constants.DebugCameraToggleBlockedResult when forcingOff => ("Queued", "#D7BA7D"),
+            Constants.DebugCameraToggleBlockedResult => ("ON", "#4EC9B0"),
             _  => ("Unknown", "#888888"),
         };
 
@@ -1746,6 +1750,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 // [W3-DEBUGCAM-QUEUED] Not a failure. [DEBUGCAM-QUEUED-OFF-NOESCALATE] But only a queued ON will still
                 // take; a queued OFF does not turn the camera off -- DebugCameraText says why.
                 Constants.DebugCameraToggleQueuedResult => DebugCameraText.Queued(wantOn),
+                Constants.DebugCameraToggleBlockedResult => DebugCameraText.Blocked(wantOn),
                 _  => $"⚠ Force {want}: state is now {(state == 1 ? "ON" : "OFF")} " +
                       "— the game may re-drive the camera.",
             };

@@ -1488,6 +1488,9 @@
          A queued OFF does not turn the camera off on stock UE 4.18-5.7, so it must not promise to run. -->
     <sys:String x:Key="str.DbgCam.QueuedOn">⏳ Force ON: the toggle is QUEUED — the game thread is busy (stalled or unfocused). It will run when the game thread is free. Do not press Force ON again: the toggle is already queued.</sys:String>
     <sys:String x:Key="str.DbgCam.QueuedOff">⏳ Force OFF did not complete — the game thread is busy (stalled or unfocused), and a queued OFF does not turn the camera off on most engines: press Force OFF again once the game responds.</sys:String>
+    <!-- [DBGCAM-OFF-OVER-QUEUED-ON] The DLL's -6: this Force was NOT sent, because an earlier one of the other direction is still queued. -->
+    <sys:String x:Key="str.DbgCam.BlockedOn">⏳ Force ON was not sent — an earlier Force OFF is still queued (the game thread is busy). Press Force ON again once the game responds.</sys:String>
+    <sys:String x:Key="str.DbgCam.BlockedOff">⏳ Force OFF was not sent — an earlier Force ON is still queued (the game thread is busy) and will turn the camera on. Press Force OFF again once the game responds.</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.CopyCe">Generate a stateful CE memory-record AA Script (tick = camera ON, untick = camera OFF) — the same robust DLL path as Force On/Off. Self-contained: talks to the DLL mailbox directly, so NO ue5_invoke_helper.lua embed is needed (just UE5Dumper.dll injected). Ships to AOBMaker if connected, else the clipboard.</sys:String>
 
     <!-- Teleport panel (BugIt-style: marker save/recall + cursor teleport) -->

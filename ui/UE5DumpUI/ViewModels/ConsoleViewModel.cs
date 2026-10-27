@@ -728,6 +728,14 @@ public partial class ConsoleViewModel : ViewModelBase
             (DebugCameraState, DebugCameraBadgeColor) = ("Queued", "#D7BA7D");   // amber — pending
             return;
         }
+        if (state == Constants.DebugCameraToggleBlockedResult)
+        {
+            // [DBGCAM-OFF-OVER-QUEUED-ON] Nothing was sent; the earlier toggle of the other direction is still queued. An
+            // OFF over a queued ON shows what the ON showed; an ON over a queued OFF shows the camera that is still on.
+            if (forcingOff) (DebugCameraState, DebugCameraBadgeColor) = ("Queued", "#D7BA7D");
+            else SetDebugCameraState(true);
+            return;
+        }
         SetDebugCameraState(state switch { 1 => true, 0 => false, _ => (bool?)null });
     }
 
@@ -803,6 +811,7 @@ public partial class ConsoleViewModel : ViewModelBase
                 // [W3-DEBUGCAM-QUEUED] Not a failure. [DEBUGCAM-QUEUED-OFF-NOESCALATE] But only a queued ON will still
                 // take; a queued OFF does not turn the camera off -- DebugCameraText says why.
                 Constants.DebugCameraToggleQueuedResult => DebugCameraText.Queued(wantOn),
+                Constants.DebugCameraToggleBlockedResult => DebugCameraText.Blocked(wantOn),
                 _  => $"⚠ Force {want}: state is now {(state == 1 ? "ON" : "OFF")} " +
                       "— the game may re-drive the camera.",
             };

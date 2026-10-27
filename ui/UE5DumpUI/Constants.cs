@@ -103,6 +103,11 @@ public static class Constants
     // passes through (Stark::StatefulToggleFailure).
     public const int DebugCameraToggleQueuedResult = InvokeDispatchTimeoutResult;
 
+    // [DBGCAM-OFF-OVER-QUEUED-ON] set_debug_camera's `state` -6 (Stark::kToggleBlockedByQueued): NOT SENT, because an earlier
+    // toggle of the other direction is still queued and the state the DLL would read predates it. Not a queued toggle of
+    // the caller's own direction, so it is never read as -5: send it again once the game responds.
+    public const int DebugCameraToggleBlockedResult = -6;
+
     // ── Movement result codes (Laufen) ──────────────────────────────────────
     // set_gravity_direction's `state` carries Laufen::MoveResult (dll/src/Laufen.h). -4, MR_ERR_REFLECT,
     // is what a pre-5.3 engine returns: the CMC exists but has no reflected GravityDirection. It is NOT

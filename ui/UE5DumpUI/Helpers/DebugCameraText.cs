@@ -31,6 +31,17 @@ internal static class DebugCameraText
                             "queued OFF does not turn the camera off on most engines: " +
                             "press Force OFF again once the game responds.");
 
+    internal const string KeyBlockedOn = "str.DbgCam.BlockedOn";
+    internal const string KeyBlockedOff = "str.DbgCam.BlockedOff";
+
+    /// <summary>[DBGCAM-OFF-OVER-QUEUED-ON] A Force the DLL did not send (<see cref="Constants.DebugCameraToggleBlockedResult"/>):
+    /// an earlier toggle of the other direction is still queued, so the state it would read predates that toggle.</summary>
+    internal static string Blocked(bool wantOn) => wantOn
+        ? Say(KeyBlockedOn, "⏳ Force ON was not sent — an earlier Force OFF is still queued (the game thread is busy). " +
+                            "Press Force ON again once the game responds.")
+        : Say(KeyBlockedOff, "⏳ Force OFF was not sent — an earlier Force ON is still queued (the game thread is busy) " +
+                             "and will turn the camera on. Press Force OFF again once the game responds.");
+
     /// <summary><c>Res.Get</c> answers "" for a key it cannot resolve, and always does headless, so each sentence keeps
     /// its literal (the <see cref="AobMakerStatus"/> pattern).</summary>
     private static string Say(string key, string fallback)
