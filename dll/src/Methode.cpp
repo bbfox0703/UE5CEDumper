@@ -25,6 +25,13 @@
 #define LOG_CAT "CEP"
 #include "Sein.h"
 
+// [METHODE-STALE-LOGPATH] Logs are per process and per category (Sein): this plugin's CEPlugin: lines land in Cheat
+// Engine's own folder, the DLL's scan in the game's. A dialog that sends the reader to a log names both. A macro so the
+// dialogs can stay single string literals.
+#define METHODE_LOG_DETAILS                                                                     \
+    "Details: init-0.log under %LOCALAPPDATA%\\UE5CEDumper\\Logs\\, in Cheat Engine's own\n"   \
+    "folder (cheatengine-x86_64) and in the game's (named after its exe)."
+
 // ── Externals from dllmain.cpp ────────────────────────────────────────────
 extern HMODULE g_hDllModule;           // DLL module handle
 extern std::atomic<bool> g_isCEPlugin; // Set true here to suppress game-process auto-start
@@ -431,7 +438,7 @@ static void __stdcall OnInjectAndConnect()
             "    when Settings -> \"Always force load modules\" is ticked. A manually mapped\n"
             "    UE5Dumper.dll cannot handle exceptions, so the game is likely to crash:\n"
             "    untick that setting, restart the game, and inject again.\n\n"
-            "Details: Logs\\UE5Dumper-*.log"));
+            METHODE_LOG_DETAILS));
         return;
     }
     if (!present) {
@@ -440,7 +447,7 @@ static void __stdcall OnInjectAndConnect()
             "(Cheat Engine also reported failure.)\n\n"
             "Usual causes: the target is 32-bit, anti-cheat blocked the load, or CE\n"
             "needs to run as administrator.\n"
-            "Details: Logs\\UE5Dumper-*.log"));
+            METHODE_LOG_DETAILS));
         return;
     }
 
