@@ -3531,9 +3531,13 @@ public class TeleportViewModelTests
         Assert.DoesNotContain("pipe dropped", vm.CoordStatus);
     }
 
-    private static async Task<string> NoDllPushStatusAsync(SymbolScriptResult detail)
+    private static async Task<string> NoDllPushStatusAsync(SymbolScriptResult detail, bool? availableAfter = null,
+                                                           AobMakerFailure? failure = null)
     {
-        var bridge = new ScriptedAobMakerBridge { Available = true, AaResult = false, AaDetail = detail };
+        var bridge = new ScriptedAobMakerBridge
+        {
+            Available = true, AaResult = false, AaDetail = detail, AvailableAfterCall = availableAfter, Failure = failure,
+        };
         var vm = new TeleportViewModel(new FakeDumpService(), new NoopLogger(), new FakePlatform(), aobMaker: bridge,
                                        experimentalGate: new FakeExperimentalGate(enabled: true));
         vm.LoadCoordLibraryForGame("Game.exe");
@@ -3564,14 +3568,42 @@ public class TeleportViewModelTests
     [Fact]
     public async Task CoordLibrary_noDll_push_that_never_reached_the_plugin_still_says_nothing_was_added()
     {
-        // [COORDPICK-TIMEDOUT-TEXT] The control: a request that never reached the plugin made nothing, and says so.
-        var status = await NoDllPushStatusAsync(new SymbolScriptResult(false, null, null, null));
+        // [COORDPICK-TIMEDOUT-TEXT] The control: a request that never reached the plugin made nothing, and says so. The
+        // pipe never opened, so the bridge reads unavailable afterwards, with the reason it recorded.
+        var status = await NoDllPushStatusAsync(new SymbolScriptResult(false, null, null, null), availableAfter: false);
 
         Assert.Contains("nothing was added", status, StringComparison.Ordinal);
         Assert.DoesNotContain("may still have been added", status, StringComparison.Ordinal);
-        // This arm is a pipe that never opened (nothing sent) or a refusal with no reason; a pipe that broke after the
-        // request is TimedOut above. "Dropped mid-push" names the one case that never lands here.
+        // A pipe that broke after the request is TimedOut above; "dropped mid-push" names the one case that never
+        // lands here.
         Assert.DoesNotContain("mid-push", status, StringComparison.Ordinal);
+        Assert.Contains("open Cheat Engine", status, StringComparison.Ordinal);   // absent: the bridge's own remedy
+    }
+
+    [Fact]
+    public async Task CoordLibrary_noDll_push_to_a_busy_pipe_names_the_busy_pipe_not_a_closed_CE()
+    {
+        // [COORDPICK-TIMEDOUT-TEXT] A pipe another client holds fails the connect too, and the bridge records Busy.
+        // Starting or checking Cheat Engine cannot help there ([W1-PIPEBUSY-STATUS]), so the line takes the bridge's
+        // own sentence, as the guard above this push already does (review of the final review's fixes).
+        var status = await NoDllPushStatusAsync(new SymbolScriptResult(false, null, null, null),
+                                                availableAfter: false, failure: AobMakerFailure.Busy);
+
+        Assert.Contains("busy", status, StringComparison.Ordinal);
+        Assert.Contains("nothing was added", status, StringComparison.Ordinal);
+        Assert.DoesNotContain("CE closed", status, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CoordLibrary_noDll_push_refused_without_a_reason_says_it_was_refused()
+    {
+        // [COORDPICK-TIMEDOUT-TEXT] A reply came back (the bridge stays available) saying not created, with no reason:
+        // the plugin was reached, so "could not be reached" would be false.
+        var status = await NoDllPushStatusAsync(new SymbolScriptResult(false, null, null, null));
+
+        Assert.Contains("refused", status, StringComparison.Ordinal);
+        Assert.Contains("nothing was added", status, StringComparison.Ordinal);
+        Assert.DoesNotContain("could not be reached", status, StringComparison.Ordinal);
     }
 
     [Fact]

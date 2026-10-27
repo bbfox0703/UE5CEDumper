@@ -460,6 +460,10 @@ internal sealed class ScriptedAobMakerBridge : IAobMakerBridge
 
     public bool IsAvailable => Available;
 
+    /// <summary>What <see cref="LastFailure"/> reads while unavailable; null reads as the interface's default, absent.</summary>
+    public AobMakerFailure? Failure { get; set; }
+    public AobMakerFailure LastFailure => IsAvailable ? AobMakerFailure.None : Failure ?? AobMakerFailure.Absent;
+
     private T After<T>(T result)
     {
         if (AvailableAfterCall is bool a) Available = a;
