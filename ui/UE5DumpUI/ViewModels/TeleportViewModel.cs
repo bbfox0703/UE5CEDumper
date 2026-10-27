@@ -259,7 +259,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     internal const string KeyStealthNothing = "str.TP.StNothingToRelease";
     private static string StealthReleasedText => AobMakerStatus.Say(KeyStealthReleased, "Released the stealth-meter hold.");
     private static string StealthNothingText => AobMakerStatus.Say(KeyStealthNothing,
-        "No stealth meter was detected, so there was no hold to release.");
+        "No stealth meter is known to this card, so Reset sent nothing. Detect the meter first, then Reset.");
 
     /// <summary>[AOBM-TRAINER-SETUP-MODAL] The trainer arrives unticked, so the success line has to say what to tick.</summary>
     internal static string TrainerPushedText(int entries)
@@ -1978,14 +1978,21 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var c = _stealthCandidate;
-            if (c != null)
-                await _dump.ResetFieldAsync(c.ClassName, c.FieldName);
+            if (c == null)
+            {
+                // [STEALTH-RESET-STALE-HELD] No meter is known to the card: none detected yet, or a reconnect whose
+                // prime could not match a forced field to one (a loading screen has no candidates). Nothing is sent,
+                // so the badge keeps what the card knew -- "Off" was a claim over a hold Solide may still run.
+                StatusText = StealthNothingText;
+                return true;   // nothing was sent, so nothing failed to land
+            }
+            await _dump.ResetFieldAsync(c.ClassName, c.FieldName);
             _stealthArmed = false;
             (StealthState, StealthBadgeColor) = ("Off", "#999999");
             // [STEALTH-RESET-STALE-HELD] The readout named the hold ("= 0 (held)"); after a release it keeps the meter's
-            // name and drops a value it no longer knows. With no meter nothing was sent, so nothing is claimed.
-            if (c != null) StealthFieldText = $"{c.ClassName}::{c.FieldName}";
-            StatusText = c != null ? StealthReleasedText : StealthNothingText;
+            // name and drops a value it no longer knows.
+            StealthFieldText = $"{c.ClassName}::{c.FieldName}";
+            StatusText = StealthReleasedText;
             return true;
         }
         catch (Exception ex)
