@@ -1717,16 +1717,42 @@ objects bound to a delegate field, which it used to miss."
 `[PIVOT-ARRAY-LOADID]`, `[QUOTA-NONPRESET-LOWER]`, `[L64-TOOLBAR-FIXED-SLOT]`, `[QUERYPTR-LOG-ABSENT-LABEL]`,
 `[AOBM-SEND-PREFLIGHT]`, `[CE-CLEARALL-3DIALOGS]` -- each red then green, closed in its own row. Leads the fixes left, each
 LOW and open:
-- ⬜ `[LW-EMPTIED-CONTAINER-REFRESH]` `RepopulateContainerView` ignores a container whose count dropped to 0, so a Refresh of
+- ✅ `[LW-EMPTIED-CONTAINER-REFRESH]` **FIXED 2026-10-27** (red `c5fd9ceb` / green `fb2a8a60`). Was: `RepopulateContainerView` ignores a container whose count dropped to 0, so a Refresh of
   an emptied array, map or set keeps the old rows, label and status (found by `[WALK-REFRESH-SCALAR-SHRINK]`). S.
-- ⬜ `[CLASSSTRUCT-DISCONNECT-ERROR]` ClassStruct's ClearOnDisconnect never calls ClearError, the sibling of
+- ✅ `[CLASSSTRUCT-DISCONNECT-ERROR]` **FIXED 2026-10-27** (red `0b13f6b9` / green `55df2b3c`). Was: ClassStruct's ClearOnDisconnect never calls ClearError, the sibling of
   `[LW-DISCONNECT-STALE-STATUS]`. S.
-- ⬜ `[INV-TOOLTIP-DISABLED]` the INV button sets no `ToolTip.ShowOnDisabled`, and Avalonia shows no tooltip on a disabled
+- ✅ `[INV-TOOLTIP-DISABLED]` **FIXED 2026-10-27** (red `c073ba4c` / green `6a3b5136`). Was: the INV button sets no `ToolTip.ShowOnDisabled`, and Avalonia shows no tooltip on a disabled
   control, so the corrected tooltip is never seen while AOBMaker is off -- the only time it matters. S (one attribute).
-- ⬜ `[TOOLBAR-OTHER-MOVERS]` besides the status line, the toolbar's ErrorMessage line, Start Scan (NeedsScan) and the
+- ✅ `[TOOLBAR-OTHER-MOVERS]` **FIXED 2026-10-27** (red `230f45da` / green `a0bba08a` + `cd50b98a`: Start Scan and the error line share the fixed status slot, which fits at 800 DIP; the attach warning is its own item after the AOBMaker chip). Was: besides the status line, the toolbar's ErrorMessage line, Start Scan (NeedsScan) and the
   `[AOBM-ATTACH-CHECK]` warning (inside the AOBMaker group, before ⟳) can still move the refresh button. S.
-- ⬜ `[COORDPICK-OVERSIZE-REASON]` the no-DLL coordinate-picker push calls the bool `CreateAAScriptAsync`, so an oversize
+- ✅ `[COORDPICK-OVERSIZE-REASON]` **FIXED 2026-10-27** (red `8091d54f` / green `2fcd1b06`). Was: the no-DLL coordinate-picker push calls the bool `CreateAAScriptAsync`, so an oversize
   push still reads "AOBMaker pipe dropped mid-push"; `CreateAAScriptDetailedAsync` carries the size reason. S.
+
+🔎 **Review of the batch** (2026-10-27, `wf_c716aff9-63a`: three lenses, each finding put to a refuter): no HIGH; two
+MEDs lowered to LOW by their refuters; every confirmed finding fixed red then green, with the five leads above:
+Live Walker -- a container Refresh whose parent is gone says so and drops the rows (`c19ac52c` / `14e9e429`), an array
+view takes its total from the read's live count (`adba0f02` / `d1272917`), a disconnect-cancelled export is not a user
+cancel (`556fbb20` / `855c0829`), the fill_gaps skip log names its verdict (`be295bd0` / `7d04a464`), comments
+(`15fbf21e`); Class Pivot -- a source / snapshot switch supersedes the array-field load (`448370c5` / `495fc7cf`), a
+shadowed name's two copies are told apart (`7c2e88a8` / `b0fe95af`); the toolbar fits at 800 DIP (above); the injection
+dialogs name CE's AVX2 log folder (`e344ebb4` / `3f77727f`); Stealth Reset with no meter known claims nothing
+(`36d79dad` / `39a61460`); the invoke helper's Debug Camera example keeps a queued OFF's record ticked (`763188cf` /
+`8ea53986`); a queued OFF's badge reads ON (`4c3aa4f2` / `f27687fe`); the coordinate-library spec records the size cap
+(`00e1f90a`). Leads these left, each LOW and open:
+- ⬜ `[CSX-PUSH-DISCONNECT-LOG]` Push to CE Structure Dissect still logs "cancelled by user" when a disconnect cancels it.
+- ⬜ `[LW-SYNTH-EMPTIED-BACK]` Back onto a path-synthetic container emptied since falls through to a parent re-walk:
+  `TryRepopulateSyntheticContainerAsync` still requires elements.
+- ⬜ `[CLASSSTRUCT-DISCONNECT-LOADING]` ClassStruct's IsLoading stays true after a disconnect mid-walk (ClearOnDisconnect
+  bumps the load id, so the walk's finally never clears it).
+- ⬜ `[TOOLBAR-CONNECT-WIDTH]` Connect and Disconnect differ by about 20 DIP, so the AOBMaker refresh button shifts once
+  at connect.
+- ⬜ `[PIVOT-HANDOFF-SHADOWED]` Pivot handoffs (PivotForAsync, "Use ->") carry no offset, so they tick only the first
+  copy of a shadowed name.
+- ⬜ `[COORDPICK-TIMEDOUT-TEXT]` the no-DLL push's TimedOut result still reads "pipe dropped mid-push ... nothing was
+  added" although the record may exist (AOBMaker reply §3 rule 8).
+- ⬜ `[DBGCAM-QUEUEDON-UNDO-TEXT]` the queued-ON text (en.axaml `str.DbgCam.QueuedOn`, the helper's [ENABLE] example)
+  says "a second toggle would undo the first", which holds only where the toggled CheatManager can disable -- not on
+  stock UE 4.18-5.7 (`[DEBUGCAM-QUEUED-OFF-NOESCALATE]`'s reading); the advice not to press again stands.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
