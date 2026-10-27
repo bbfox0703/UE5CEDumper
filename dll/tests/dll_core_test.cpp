@@ -10797,6 +10797,28 @@ int main() {
     }
 
     {
+        blk("CT-UE4-MULTICAST-SPELLING: UE 4.18-4.22's MulticastDelegateProperty decodes as its invocation list's header");
+        // Before 4.23 a multicast property's class is UMulticastDelegateProperty, with no "Inline", and the walk reads
+        // that spelling too. No build before UE 5.3 has the access detector, so its ElementSize is the bare header.
+        using PK = Ubel::ParamKind;
+        using SM = Ubel::SnapMark;
+        Ubel::ParamField f;
+        f.name = "OnPing"; f.typeName = "MulticastDelegateProperty"; f.offset = 0; f.size = 16; f.kind = PK::In;
+        alignas(8) uint8_t b[0x10] = {};
+        const uint64_t data = 0x7770;
+        const int32_t num = 2, max = 4;
+        memcpy(b, &data, 8); memcpy(b + 8, &num, 4); memcpy(b + 12, &max, 4);
+        Ubel::ParamLayout L;
+        L.params = { f };
+        Ubel::SnapDecodeCtx ctx;
+        ctx.fnameSize = 8;
+        const auto v = Ubel::DecodeParamSnapshot(L, b, sizeof b, false, ctx);
+        check("UE4's spelling reads Num and Data as the Inline spelling does",
+              v.size() == 1 && v[0].text == "Num=2 (Data 0x7770)" && v[0].mark == SM::Header,
+              v.empty() ? "" : v[0].text.c_str());
+    }
+
+    {
         blk("LIVEFUNCS-STEP2: a slot decoded with its own arm's layout -- two loads of one name, arms without one");
         // docs/archive/live-funcs-step2-items.md, F5. The pipe's pe_snap_get decodes through this; nothing here reads the game.
         using LS = Linie::ArmLayoutState;
