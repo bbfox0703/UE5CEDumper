@@ -498,12 +498,15 @@ internal sealed class ScriptedAobMakerBridge : IAobMakerBridge
     /// <summary>[AOBM-EXPORT-GWORLD-AOB] What the detailed AA call answers; null answers as a current plugin would for
     /// <see cref="AaResult"/>: created and active, or not created.</summary>
     public SymbolScriptResult? AaDetail { get; set; }
+    /// <summary>What the detailed AA call answers on its Nth call (0-based); null falls back to <see cref="AaDetail"/>.</summary>
+    public Func<int, SymbolScriptResult?>? AaDetailByCall { get; set; }
 
     public Task<SymbolScriptResult> CreateAAScriptDetailedAsync(string description, string script,
         bool autoActivate = true, string? group = null, CancellationToken ct = default)
     {
+        int call = AaScripts.Count;
         AaScripts.Add((description, script, autoActivate, group));
-        return Task.FromResult(After(AaDetail
+        return Task.FromResult(After(AaDetailByCall?.Invoke(call) ?? AaDetail
             ?? new SymbolScriptResult(AaResult, AaResult ? true : null, null, null)));
     }
 

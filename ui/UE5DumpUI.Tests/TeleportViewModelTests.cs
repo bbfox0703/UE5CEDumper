@@ -3682,6 +3682,71 @@ public class TeleportViewModelTests
         Assert.Contains("tick Setup first", vm.StatusText, StringComparison.Ordinal);
     }
 
+    // [TRAINER-PUSH-TIMEDOUT-TEXT] The trainer pushed each entry through the bool call, so any failure on entry k read
+    // "AOBMaker pipe dropped (CE closed?)": a lost reply although that entry may exist (AOBMaker reply section 3 rule 8),
+    // a refusal that carried its reason (the send-side size cap), a busy pipe. The [COORDPICK-TIMEDOUT-TEXT] split applies.
+    private static async Task<(TeleportViewModel Vm, ScriptedAobMakerBridge Bridge)> TrainerPushFailingAsync(
+        int failAt, SymbolScriptResult failure, bool? availableAfter = null, AobMakerFailure? lastFailure = null)
+    {
+        var bridge = new ScriptedAobMakerBridge
+        {
+            Available = true, Failure = lastFailure,
+            AaDetailByCall = i => i == failAt ? failure : null,
+        };
+        var vm = new TeleportViewModel(new TrainerDump(), new NoopLogger(), new FakePlatform(), aobMaker: bridge);
+        vm.SetEngineState(new EngineState
+        {
+            ModuleName = "Game.exe", GWorldAob = "48 8B 1D ?? ?? ?? ??", GWorldAobPos = 3, GWorldAobLen = 7,
+        });
+        if (availableAfter is bool a)
+            bridge.AaDetailByCall = i => { if (i == failAt) bridge.Available = a; return i == failAt ? failure : null; };
+        await vm.ExportTrainerCommand.ExecuteAsync(null);
+        return (vm, bridge);
+    }
+
+    [Fact]
+    public async Task Trainer_push_with_no_reply_on_an_entry_says_it_may_have_been_added()
+    {
+        var (vm, bridge) = await TrainerPushFailingAsync(1, new SymbolScriptResult(false, null, null, null, TimedOut: true));
+
+        Assert.Equal(2, bridge.AaScripts.Count);                                    // stops at the lost reply
+        Assert.Contains("Pushed 1/", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("may still have been added", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains(bridge.AaScripts[1].Description, vm.StatusText, StringComparison.Ordinal);   // names the entry
+        Assert.DoesNotContain("pipe dropped", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Trainer_push_refused_with_a_reason_says_the_reason()
+    {
+        const string why = "the request is 11.0 MiB, over AOBMaker's 10 MiB message limit";
+        var (vm, _) = await TrainerPushFailingAsync(0, new SymbolScriptResult(false, null, null, why));
+
+        Assert.Contains("Pushed 0/", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains(why, vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("pipe dropped", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Trainer_push_to_a_busy_pipe_names_the_busy_pipe()
+    {
+        var (vm, _) = await TrainerPushFailingAsync(0, new SymbolScriptResult(false, null, null, null),
+                                                   availableAfter: false, lastFailure: AobMakerFailure.Busy);
+
+        Assert.Contains("busy", vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("CE closed", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Trainer_push_refused_without_a_reason_says_it_was_refused()
+    {
+        var (vm, _) = await TrainerPushFailingAsync(2, new SymbolScriptResult(false, null, null, null));
+
+        Assert.Contains("Pushed 2/", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("refused", vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("pipe dropped", vm.StatusText, StringComparison.Ordinal);
+    }
+
     /// <summary>Offsets <see cref="TrainerOffsets.IsUsable"/> accepts, with every optional feature resolved.</summary>
     private sealed class TrainerDump : StubDumpService
     {
