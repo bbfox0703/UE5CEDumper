@@ -3491,9 +3491,9 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                 // TScriptDelegate<FNotThreadSafeDelegateMode>, which carries the 8-byte access
                 // detector in a checked build; a multicast's invocation list holds the
                 // ...NotChecked... variant, which never does.
-                const int32_t base = 8 + DynOff::SizeofFName();
-                const int32_t pad  = DynOff::DelegatePadFromElementSize(
-                                         Ubel::GetArrayInnerElemSize(f.Address), base);
+                const int32_t base     = 8 + DynOff::SizeofFName();
+                const int32_t elemSize = Ubel::GetArrayInnerElemSize(f.Address);
+                const int32_t pad      = DynOff::DelegatePadFromElementSize(elemSize, base);
                 // Falling back to the historical layout rather than skipping: a wrong stride
                 // here cannot manufacture a reference (ResolveWeakAt validates every hit
                 // against GObjects), so both a wrong stride and a skip fail the same way —
@@ -3504,11 +3504,13 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                              "ElementSize is neither %d nor %d; scanning at the unpadded "
                              "stride, so bindings may be MISSING from Find Refs",
                              fullName.c_str(), base,
-                             base + DynOff::kDelegateDetectorPad);
+                             DynOff::DelegatePaddedSize(base));
                 }
                 const int32_t elemPad = (pad < 0) ? 0 : pad;
+                // A recognised size IS the stride; base + pad is 28 with a 12-byte FName, where the
+                // element is 32 (Grimoire.h, DelegatePaddedSize).
                 out.weakLikeArrays.push_back({ absOffset, fullName, f.innerType,
-                                               base + elemPad, elemPad, underGate });
+                                               (pad < 0) ? base : elemSize, elemPad, underGate });
             }
         }
         // --- Map with pointer-shaped key and/or value ---

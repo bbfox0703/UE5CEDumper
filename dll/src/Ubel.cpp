@@ -5183,9 +5183,10 @@ bool IsDelegateArrayType(const std::string& innerTypeName) {
 
 int32_t DelegateArrayElemPad(int32_t elemSize) {
     // The element is the STANDALONE unicast type, TScriptDelegate<FNotThreadSafeDelegateMode> -- padded on a checked
-    // build, unlike a multicast's invocation-list elements (Grimoire.h: two types, one spelling). The same derivation
-    // as ReadDelegateArrayElements' stride, so the published pad and the reader's stride cannot disagree. A size that
-    // matches neither (-1) publishes 0: the reader refused those elements, and the field's value says so.
+    // build, unlike a multicast's invocation-list elements (Grimoire.h: two types, one spelling). The same rule
+    // ReadDelegateArrayElements accepts a size by, so the published pad and the elements the reader read cannot
+    // disagree. A size that matches neither (-1) publishes 0: the reader refused those elements, and the field's value
+    // says so.
     const int32_t pad = DynOff::DelegatePadFromElementSize(elemSize, 8 + DynOff::SizeofFName());
     return pad < 0 ? 0 : pad;
 }
@@ -5223,10 +5224,12 @@ ReadArrayResult ReadDelegateArrayElements(
         result.error = "unexpected FScriptDelegate element size " + std::to_string(elemSize);
         Sein::Warn("WALK", "ReadDelegateArrayElements: ElementSize=%d is neither %d nor %d "
                            "(+detector) -- refusing to guess a stride", elemSize, kSdBase,
-                   kSdBase + DynOff::kDelegateDetectorPad);
+                   DynOff::DelegatePaddedSize(kSdBase));
         return result;
     }
-    const int32_t stride = kSdBase + pad;
+    // The engine's own size, now that the rule recognised it: kSdBase + pad is 28 with a 12-byte FName, where the
+    // element is 32 (the detector's alignment), and every index >= 1 would drift.
+    const int32_t stride = elemSize;
 
     Macht::TArrayView arr;
     if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
@@ -5356,10 +5359,10 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
         result.error = "unexpected multicast element size " + std::to_string(elemSize);
         Sein::Warn("WALK", "ReadMulticastDelegateArrayElements: ElementSize=%d is neither %d "
                            "nor %d (+detector) -- refusing to guess a stride",
-                   elemSize, kMcdBaseSize, kMcdBaseSize + DynOff::kDelegateDetectorPad);
+                   elemSize, kMcdBaseSize, DynOff::DelegatePaddedSize(kMcdBaseSize));
         return result;
     }
-    const int32_t stride = kMcdBaseSize + pad;
+    const int32_t stride = elemSize;   // the engine's own size, as ReadDelegateArrayElements steps
     int fnameSize = DynOff::SizeofFName();
     // The invocation list's ELEMENTS are the never-padded unicast type -- see the ⚠ in
     // Grimoire.h. This one must NOT gain `pad`.
@@ -7745,7 +7748,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 Sein::Warn("WALK", "DelegateProperty '%s': ElementSize=%d is neither %d nor %d "
                                    "(+detector) -- refusing to read the delegate",
                            fi.Name.c_str(), fi.Size, 8 + fnameSize,
-                           8 + fnameSize + DynOff::kDelegateDetectorPad);
+                           DynOff::DelegatePaddedSize(8 + fnameSize));
                 fv.typedValue = "(delegate — unexpected ElementSize "
                               + std::to_string(fi.Size) + ", not read)";
                 result.fields.push_back(std::move(fv));
@@ -8272,7 +8275,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // every arm rather than on the two array ones only.
                 Sein::Warn("WALK", "MulticastDelegateProperty '%s': ElementSize=%d is neither "
                                    "16 nor %d (+detector) -- refusing to read the delegate",
-                           fi.Name.c_str(), fi.Size, 16 + DynOff::kDelegateDetectorPad);
+                           fi.Name.c_str(), fi.Size, DynOff::DelegatePaddedSize(16));
                 fv.typedValue = "(multicast — unexpected ElementSize "
                               + std::to_string(fi.Size) + ", not read)";
                 result.fields.push_back(std::move(fv));

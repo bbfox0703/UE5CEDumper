@@ -1644,6 +1644,37 @@ re-run on the new packages: 10/10 on both. Evidence: `out/ct_delegate_param/` (`
 game, Call Trace shows a multicast delegate parameter's real handler count, instead of a number read from the bytes in
 front of it."
 
+🔎 **Review of the 21 commits above** (2026-10-27, `wf_2c0c898c-c5d`): three independent lenses -- the DLL decoder,
+the dissect script against CE's source, the rig / fixture / docs -- and each lens's findings put to a refuter. No HIGH
+or MED survived; every LOW and INFO is closed below or in its own commit: the rig exited 1 on set-up failures
+(`594ddc31`); `getTypeInfo`'s delegate width reached no row while its comments said it placed one, and the
+DisplayMethod note said "verbatim" where CE also takes the ordinal (`d806c06a`); `[CT-UE4-MULTICAST-SPELLING]`;
+`[DELEGATE-PAD-ALIGN]`.
+
+✅ `[CT-UE4-MULTICAST-SPELLING]` **FIXED 2026-10-27** (red `9dcaf143` / green `e239d721`, build 3655). Call Trace's
+decoder matched `MulticastInlineDelegateProperty` only, so on a UE 4.18-4.22 title, whose class is
+`UMulticastDelegateProperty`, a multicast parameter or struct member fell to raw hex; the walk and `ue5_dissect.lua`
+already took both spellings. No build before UE 5.3 has the detector, so the header is read at +0. dll_core_test 1341
+checks, 0 failures. Not checked live.
+
+⬜ `[DELEGATE-PAD-ALIGN]` **FIXED, live check owed** (LOW, fails safe; found by the review above as CT-PAD-CPN-ALIGN /
+DIS-1 / F2 / DIS-2). The delegate pad rule took a checked build's padded size as `base + 8`. The detector is a
+`std::atomic<uint64>` (`MTAccessDetector.h`), so a padded delegate is 8-aligned and its size rounds UP: a standalone
+FScriptDelegate with a 12-byte (case-preserving) FName is 8 + 8 + 12 -> **32**, not 28 -- the refuter read 0x20 for
+`TScriptDelegate<FNotThreadSafeDelegateMode>` from the UE 5.4 editor's `UnrealEditor-CoreUObject.pdb` (FName 0xC, the
+never-padded list element 0x14, a checked multicast 0x18) -- and with a 4-byte FName (UE_FNAME_OUTLINE_NUMBER) 8 + 8 + 4
+-> 24. With an 8-byte FName, and for every multicast, base + 8 is already a multiple of 8, which is why every live
+check passed. Before the fix, on a case-preserving checked host (the UE 5.4 editor running DumperTest `-game`,
+working-lessons §4.3h) the walk, Call Trace and the exports refused a delegate as "unexpected ElementSize 32", an array
+of them was refused, Find Refs scanned such an array at the unpadded stride, and the dissect row stayed on the detector;
+while 28, a size no build has, was accepted, and tests pinned it. A 4-byte-FName build split the two sides: the
+dissect labelled a Shipping 12 "payload start unknown" and placed a checked 24, which the DLL refused. **Fix:**
+`DynOff::DelegatePaddedSize` rounds base + 8 up to 8 and `DelegatePadFromElementSize` accepts only that; the array
+readers and Find Refs step by the engine's ElementSize once it is recognised, never base + pad (28 against 32 drifts
+every index >= 1). Red `191461d4` (dll_helpers_test 4, dll_core_test 7; a stride mutant goes red on element [1]).
+**Live check owed:** the UE 5.4 editor running DumperTest `-game` -- `Del_Unicast` read by the walk (ElementSize 32,
+`delegate_pad` 8, the actor named), by Call Trace (`ct_delegate_param_live.py`), and by the dissect.
+
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
 Full detail, both-side citations and fix shapes: [audit-2026-09-24-vendor-ue583.md](audit-2026-09-24-vendor-ue583.md).

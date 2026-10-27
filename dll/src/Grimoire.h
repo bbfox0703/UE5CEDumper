@@ -1439,10 +1439,20 @@ constexpr int32_t kDelegateDetectorPad = 0x08;
 /// Returns **-1** when the size matches neither candidate. Callers must then report that they
 /// could not read the field -- picking one would be the very claim-without-evidence this pad
 /// was found by.
+///
+/// ⚠ The padded size is NOT `baseSize + 8` for every base: the detector is a
+/// `std::atomic<uint64>`, so a padded delegate is 8-aligned and its size rounds up. With a
+/// 12-byte (case-preserving) FName a standalone FScriptDelegate is 8 + 8 + 12 -> **32**, not 28
+/// -- the UE 5.4 editor's own PDB gives `TScriptDelegate<FNotThreadSafeDelegateMode>` 0x20 --
+/// and with a 4-byte FName 8 + 8 + 4 -> 24. The unpadded struct is alignof 4, so it stays
+/// `baseSize`. An array of these steps by the engine's ElementSize, never by base + pad.
+constexpr int32_t DelegatePaddedSize(int32_t baseSize) {
+    return (baseSize + kDelegateDetectorPad + 7) & ~7;
+}
 inline int32_t DelegatePadFromElementSize(int32_t elementSize, int32_t baseSize) {
     if (baseSize <= 0) return -1;
     if (elementSize == baseSize) return 0;
-    if (elementSize == baseSize + kDelegateDetectorPad) return kDelegateDetectorPad;
+    if (elementSize == DelegatePaddedSize(baseSize)) return kDelegateDetectorPad;
     return -1;
 }
 inline bool bUseFProperty        = true;   // true = FField/FProperty (UE4.25+), false = UProperty (UE4 <4.25)
