@@ -5,8 +5,9 @@ r"""[CT-DELEGATE-PARAM-PAD] [CT-MULTICAST-PARAM-PAD] Call Trace decodes a delega
     py tools/verify/ct_delegate_param_live.py --case multicast --label dev-mc-green
 
 Runs against the injected DumperTest (one game at a time, never while the UI holds the pipe). Exits 1 while the
-defect stands, so it doubles as the regression check; 2 when the run could not set itself up or never reached a
-decoded call (a stale build, an unhooked ProcessEvent, a refused recording), so a 1 is never a set-up fault.
+defect stands, so it doubles as the regression check: a failed starred check exits 1 whatever stopped the run after
+it, and so does a failed witness. Exits 2 when the run never reached the starred check (a stale build, an unhooked
+ProcessEvent, a refused recording, a reply without the expected shape).
 
 THE CASES. `delegate` (the default): DumperTestActor::InvokeGate_TakeDelegate takes FDumperTestUnicastSignature BY
 VALUE, and its Callback is the actor's own Del_Unicast. `multicast`: InvokeGate_TakeMulticast takes
@@ -75,6 +76,10 @@ class Checks:
     @property
     def failed(self):
         return sum(1 for i in self.items if not i["ok"])
+
+    @property
+    def starred_failed(self):
+        return any(i["starred"] and not i["ok"] for i in self.items)
 
 
 def read_bytes(c, addr, n):
@@ -266,8 +271,12 @@ def main(argv=None):
         say("DLL build %s%s" % (out["build"], " sha256 %s" % out["dll"]["sha256"][:12] if a.dll else ""))
         rc = run(c, check, out, a)
     except PipeError as e:
-        # A stale build, a scan that timed out or a pipe that dropped: the decoder was never judged.
+        # A stale build, a scan that timed out or a pipe that dropped.
         check("the run reached its end", False, str(e))
+        rc = 2
+    except (KeyError, IndexError, StopIteration, ValueError) as e:
+        # A reply without the shape this rig reads -- the rig's problem or the wire's, not the decoder's verdict.
+        check("the run reached its end", False, "%s: %s" % (type(e).__name__, e))
         rc = 2
     finally:
         try:
@@ -281,6 +290,8 @@ def main(argv=None):
     path = OUT_DIR / ("%s.json" % a.label)
     path.write_text(json.dumps(out, indent=1, default=str), encoding="utf-8")
     say("\n%d/%d checks hold; written to %s" % (len(check.items) - check.failed, len(check.items), path))
+    if check.starred_failed:
+        return 1   # the decoder was judged and failed; a later stop must not turn that into "not judged"
     return rc if rc else (1 if check.failed else 0)
 
 
