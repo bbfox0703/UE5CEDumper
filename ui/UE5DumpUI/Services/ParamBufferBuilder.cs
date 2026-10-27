@@ -298,9 +298,8 @@ public static class ParamBufferBuilder
     /// <para>UE 4.11-4.17's <c>AssetObjectProperty</c> / <c>AssetClassProperty</c> too
     /// (<c>[UE4-ASSETPTR-EXPORTS]</c>): an <c>FAssetPtr</c> keeps its path as an <c>FString</c>
     /// that needs the engine's storage, and the DLL converts no picked object into one; all-zero
-    /// is its null. The containers' refusal text fits it. The baked script's helper has no token
-    /// that refuses it, so a hand-edited value there is not caught; the dialog's own gate runs
-    /// before Copy AA Script bakes anything.</para>
+    /// is its null. The containers' refusal text fits it. A baked script refuses it too: helper 1.5's
+    /// <c>asset</c> token takes nothing but 0 (<c>[ASSETPTR-BAKED-TOKEN]</c>).</para>
     /// </summary>
     public static bool IsEmptyOnlyParam(string typeName) =>
         typeName is "ArrayProperty"
