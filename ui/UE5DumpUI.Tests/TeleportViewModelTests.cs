@@ -3528,6 +3528,41 @@ public class TeleportViewModelTests
         Assert.DoesNotContain("pipe dropped", vm.CoordStatus);
     }
 
+    private static async Task<string> NoDllPushStatusAsync(SymbolScriptResult detail)
+    {
+        var bridge = new ScriptedAobMakerBridge { Available = true, AaResult = false, AaDetail = detail };
+        var vm = new TeleportViewModel(new FakeDumpService(), new NoopLogger(), new FakePlatform(), aobMaker: bridge,
+                                       experimentalGate: new FakeExperimentalGate(enabled: true));
+        vm.LoadCoordLibraryForGame("Game.exe");
+        vm.CoordX = 1; vm.CoordY = 2; vm.CoordZ = 3;
+        vm.AddCoordFromFieldsCommand.Execute(null);
+        await vm.ExportCoordLuaNoDllCommand.ExecuteAsync(null);
+        Assert.Single(bridge.AaScripts);
+        return vm.CoordStatus;
+    }
+
+    [Fact]
+    public async Task CoordLibrary_noDll_push_with_no_reply_says_it_may_have_been_added()
+    {
+        // [COORDPICK-TIMEDOUT-TEXT] No reply in time is not "nothing was added": the plugin may have made the record
+        // after the wait gave up, so a second press can add a second picker (AOBMaker reply section 3 rule 8). The
+        // other AOBMaker pushes say so already.
+        var status = await NoDllPushStatusAsync(new SymbolScriptResult(false, null, null, null, TimedOut: true));
+
+        Assert.DoesNotContain("nothing was added", status, StringComparison.Ordinal);
+        Assert.Contains("may still have been added", status, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CoordLibrary_noDll_push_that_never_reached_the_plugin_still_says_nothing_was_added()
+    {
+        // [COORDPICK-TIMEDOUT-TEXT] The control: a request that never reached the plugin made nothing, and says so.
+        var status = await NoDllPushStatusAsync(new SymbolScriptResult(false, null, null, null));
+
+        Assert.Contains("nothing was added", status, StringComparison.Ordinal);
+        Assert.DoesNotContain("may still have been added", status, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void CoordLibrary_load_without_a_store_is_a_no_op()
     {
