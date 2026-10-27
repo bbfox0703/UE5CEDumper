@@ -1385,6 +1385,52 @@ public class CsxExportServiceTests
         Assert.Contains("Vartype=\"8 Bytes\"", csx);    // the LazyObjectProperty leaves
     }
 
+    // [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's FAssetPtr (0x20: FWeakObjectPtr +0, the FString path +0x10) had no arm in
+    // MapCsxType, so it fell to the raw-byte fallback: a 32-byte "Array of byte" blob, not the weak pair's 8-byte hex
+    // leaf the Soft* pointers get.
+
+    [Theory]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
+    public async Task GenerateCsx_UE4AssetPointer_IsTheWeakPairsEightByteHexLeaf(string typeName)
+    {
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "PreGameWorld", TypeName = typeName, Offset = 0x30, Size = 0x20,
+                    StrValue = "/Game/Maps/PreGame/PreGameMap.PreGameMap" },
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("Offset=\"48\" Vartype=\"8 Bytes\" Bytesize=\"8\"", csx);
+        Assert.Contains("DisplayMethod=\"hexadecimal\"", csx);
+        Assert.DoesNotContain("Array of byte", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_ArrayProperty_UE4AssetPointerInner_DrilldownOne_EachElementIsAnEightByteHexLeaf()
+    {
+        // TArray<TAssetPtr<UWorld>>: 0x20 stride, the DLL's path per element.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "ZonesToUse", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = "AssetObjectProperty", ArrayElemSize = 0x20,
+                     ArrayDataAddr = "0x9000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, Value = "/Game/Maps/Zones/Zone_A.Zone_A" },
+                         new() { Index = 1, Value = "/Game/Maps/Zones/Zone_B.Zone_B" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("Offset=\"0\" Vartype=\"8 Bytes\" Bytesize=\"8\"", csx);   // [0]
+        Assert.Contains("Offset=\"32\" Vartype=\"8 Bytes\" Bytesize=\"8\"", csx);  // [1]: 1 x 0x20
+        Assert.DoesNotContain("Array of byte", csx);
+    }
+
     [Fact]
     public async Task GenerateCsx_ArrayProperty_DelegateInner_DrilldownOne_ShowsTargets()
     {
@@ -1888,6 +1934,8 @@ public class CsxExportServiceTests
     [InlineData("SoftObjectProperty")]   // FSoftObjectPath
     [InlineData("SoftClassProperty")]    // FSoftObjectPath
     [InlineData("LazyObjectProperty")]   // FWeakObjectPtr at +0, FGuid after it
+    [InlineData("AssetObjectProperty")]  // [UE4-ASSETPTR-EXPORTS] FWeakObjectPtr at +0, the FString path at +0x10
+    [InlineData("AssetClassProperty")]
     public async Task Csx_DrillDown_NonPointerSlot_IsNotDereferenced(string typeName)
     {
         var csx = await DrillCsxFor(typeName);

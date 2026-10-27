@@ -5641,4 +5641,92 @@ public class CeXmlExportServiceTests
         Assert.Contains("Health", xml);
         Assert.Contains("<Offsets>", xml);
     }
+
+    // ── [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's soft pointers ────────────────────
+    //
+    // FAssetPtr = FWeakObjectPtr +0, TagAtLastTest +8, the path as ONE FString at +0x10, 0x20 in all (the DLL's
+    // ASSETPTR_PATH / ASSETPTR_SIZE). MapCeField had no arm for AssetObject / AssetClass: an unloaded one was dropped
+    // from the export, a loaded one (the DLL resolves its weak half) became an empty folder with no VariableType, and a
+    // TArray<TAssetPtr> a bare placeholder, although the DLL sends every element's path.
+
+    private static System.Xml.Linq.XElement EntryNamed(string xml, string description) =>
+        System.Xml.Linq.XDocument.Parse(xml).Descendants("CheatEntry")
+            .Single(e => (string?)e.Element("Description") == $"\"{description}\"");
+
+    [Theory]
+    [InlineData("AssetObjectProperty", "")]
+    [InlineData("AssetObjectProperty", "0x7FF400001234")]   // loaded: the DLL resolved the weak half to an object
+    [InlineData("AssetClassProperty", "")]
+    [InlineData("AssetClassProperty", "0x7FF400001234")]
+    public void UE4AssetPointer_IsAnEightByteHexLeaf_NeverDereferenced(string typeName, string ptrAddr)
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "PreGameWorld", TypeName = typeName, Offset = 0x30, Size = 0x20,
+                StrValue = "/Game/Maps/PreGame/PreGameMap.PreGameMap",
+                PtrAddress = ptrAddr, PtrName = ptrAddr == "" ? "" : "PreGameMap",
+                PtrClassName = ptrAddr == "" ? "" : "World",
+            },
+        };
+        var resolved = ptrAddr == "" ? null : new Dictionary<string, List<LiveFieldValue>>
+        {
+            [ptrAddr] = new() { new LiveFieldValue { Name = "Health", TypeName = "FloatProperty", Offset = 0x40, Size = 4 } },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml(
+            "\"Game.exe\"+1000", "MyObj", "UMyClass", fields, resolvedInstances: resolved);
+
+        var e = EntryNamed(xml, "PreGameWorld");
+        Assert.Equal("8 Bytes", (string?)e.Element("VariableType"));            // the weak pair, watchable
+        Assert.Equal("1", (string?)e.Element("ShowAsHex"));
+        Assert.Equal("+30", (string?)e.Element("Address"));
+        Assert.Null(e.Element("Offsets"));                                        // the slot holds no address
+        Assert.Null(e.Element("GroupHeader"));
+        Assert.DoesNotContain("Health", xml);
+    }
+
+    [Theory]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
+    public void UE4AssetPointerArray_EachElementShowsItsWeakPairAndItsPathString(string innerType)
+    {
+        // TArray<TAssetPtr<UWorld>>: the DLL publishes FAssetPtr's one stride, 0x20, and each element's path.
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "ZonesToUse", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                ArrayCount = 2, ArrayInnerType = innerType, ArrayElemSize = 0x20,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new() { Index = 0, Value = "/Game/Maps/Zones/Zone_A.Zone_A" },
+                    new() { Index = 1, Value = "/Game/Maps/Zones/Zone_B.Zone_B" },
+                },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml("\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+
+        var array = EntryNamed(xml, "ZonesToUse");
+        Assert.Equal("+100", (string?)array.Element("Address"));
+        Assert.Equal("0", (string?)array.Element("Offsets")?.Element("Offset"));    // deref TArray.Data
+
+        var second = EntryNamed(xml, "[1] /Game/Maps/Zones/Zone_B.Zone_B");
+        Assert.Equal("+20", (string?)second.Element("Address"));                    // 1 x 0x20
+        Assert.Null(second.Element("Offsets"));                                      // inline in Data
+        var leaves = second.Element("CheatEntries")!.Elements("CheatEntry").ToList();
+
+        var weak = leaves.Single(l => (string?)l.Element("Description") == "\"WeakPtr\"");
+        Assert.Equal("8 Bytes", (string?)weak.Element("VariableType"));
+        Assert.Equal("+0", (string?)weak.Element("Address"));
+        Assert.Null(weak.Element("Offsets"));
+
+        var path = leaves.Single(l => (string?)l.Element("Description") == "\"AssetPath\"");
+        Assert.Equal("String", (string?)path.Element("VariableType"));
+        Assert.Equal("1", (string?)path.Element("Unicode"));                          // FString: UTF-16
+        Assert.Equal("+10", (string?)path.Element("Address"));
+        Assert.Equal("0", (string?)path.Element("Offsets")?.Element("Offset"));      // deref FString.Data
+    }
 }
