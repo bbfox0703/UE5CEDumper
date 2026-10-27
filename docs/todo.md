@@ -1772,9 +1772,19 @@ when the clipboard took it; the rest make no claim, by design), `[UE4-ASSETPTR-E
   `ue5_invoke_helper.lua`, so users re-embed the helper.
 - ⬜ `[L83-PLAN-QUEUED-STRINGS]` `docs/fixpass-low-live-plan.md` § L83 quotes the old queued-ON / queued-OFF strings;
   update them before L83 steps 6 / 9 are re-run.
-- The live checks this batch owes, all on the AOT build: the toolbar at 800 DIP (status slot, Connect / Disconnect
-  width), the Class Pivot shadowed-name labels and handoff, Live Walker's interface functions and their sort, and the
-  asset-pointer exports (`[UE4-ASSETPTR-EXPORTS]`'s row says where).
+- The live checks this batch owes, all on the AOT build: ✅ three done 2026-10-27 on **build 3657 (Native AOT, 58.4 MB),
+  DumperTest 5.4 Shipping**, UI at 225 % scale `[BATCH3-LIVE-3657]`:
+  - ✅ **Toolbar at 800 DIP** (client area set to 1800 px at DPI 216): one row, nothing clipped; Connect and Disconnect
+    fill the same width, and "Address:" and the AOBMaker ⟳ sit at the same x disconnected and connected, at 800 DIP and
+    maximised. The connected-only Export menu appears AFTER the ⟳, so it moves only Tools.
+  - ✅ **Live Walker's interface functions**: DumperTestIfaceActor lists `Vnd584_IfaceMagic  (via DumperTestIface)`;
+    the filter finds it by "DumperTestIface" (a term only the interface holds) and by "Magic DumperTestIface", and
+    "NoSuchIface" shows 0. The Name sort works trimmed: DumperTestActor's 40 functions go A9_ / AD4_ / D4_ first
+    ascending and Vnd584_EchoWeakRef first descending.
+  - ✅ **Class Pivot's shadowed names**: on a fresh snapshot (2,934 objects, 111,915 fields, Game objects only
+    unticked, then restored) MovieSceneCinematicShotSection lists `PrerollTime@+0xC4` and `PrerollTime@+0x128`; Live
+    Walker's "Pivot this property..." on the +0x128 row ticks that copy and leaves +0xC4 unticked.
+  - ⬜ the asset-pointer exports (`[UE4-ASSETPTR-EXPORTS]`'s row says where).
 
 🔍 **Final review of batches 1-3** `[BATCH3-FINAL-REVIEW-2026-10-27]` (workflow `wf_69ca757d-f90`, lenses then an
 adversarial verify per finding): 13 findings, 1 refuted (`ASSETPTR-USMAP-SLOT`: the USMAP slot is documented in code and
