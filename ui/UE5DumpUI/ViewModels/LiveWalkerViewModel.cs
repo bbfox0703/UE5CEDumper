@@ -1385,6 +1385,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (field.ArrayElements != null && field.ArrayElements.Count >= field.ArrayCount)
             return (field.ArrayElements, field.ArrayCount, field.ArrayCount);
 
+        // [LW-EMPTIED-CONTAINER-REFRESH] The walk saw it empty, and the wire sends no elements for that: nothing to read.
+        // A read would answer for whatever count it found a moment later, and read_array_elements refuses a struct inner
+        // over 256 bytes outright.
+        if (field.ArrayCount == 0)
+            return (new List<ArrayElementValue>(), 0, 0);
+
         // Pointer/struct arrays: use inline elements (Phase D/E/F resolved names).
         // read_array_elements is scalar-only and cannot resolve pointer names.
         // [R7-D-07] Only a CURRENT preview was asked for at the slider's value. The last refresh's may have been
