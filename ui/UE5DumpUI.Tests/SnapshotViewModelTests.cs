@@ -1519,7 +1519,7 @@ public class SnapshotViewModelTests : IDisposable
     }
 
     // The auto-quota raise picks from AutoSnapshotPlanner.QuotaPresetBytes and shows its pick through the combo's labels.
-    // A preset the labels do not name is a lowered quota, so the two lists are held equal here.
+    // A preset the labels do not name, or name as another size, is a lowered quota: every label must write its preset back.
     [Fact]
     public void TheQuotaCombosPresets_AreTheAutoQuotaPlannersPresets()
     {
