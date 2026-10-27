@@ -1155,7 +1155,7 @@ public sealed class InvokeParamDialog : Window
             "WeakObjectProperty" when available >= 8 && BinaryPrimitives.ReadInt32LittleEndian(span[4..]) == 0
                 => "null",
             "WeakObjectProperty" or "SoftObjectProperty" or "SoftClassProperty"
-                or "LazyObjectProperty" when available >= 8
+                or "LazyObjectProperty" or "AssetObjectProperty" or "AssetClassProperty" when available >= 8
                 => $"{{index {BinaryPrimitives.ReadInt32LittleEndian(span)}, serial {BinaryPrimitives.ReadInt32LittleEndian(span[4..])}}}",
             "UInt64Property" or "ObjectProperty" or "ClassProperty"
                 or "NameProperty" or "InterfaceProperty" when available >= 8

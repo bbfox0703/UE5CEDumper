@@ -570,6 +570,9 @@ public static class BakedScriptGenerator
         // [VND584-01] A lazy pointer is found by a GUID nothing can make: the helper refuses any value but 0 for it,
         // as FIRE and the CE form do (ParamBufferBuilder.IsEmptyOnlyParam). As 'pointer' it was written as an address.
         "LazyObjectProperty"                          => "lazy",
+        // [ASSETPTR-BAKED-TOKEN] UE 4.11-4.17's asset pointer: its path is an FString the helper cannot build, so it is
+        // empty-only too, under its own token (helper 1.5). The int32 default wrote a typed value over its weak index.
+        "AssetObjectProperty" or "AssetClassProperty" => "asset",
         // Complex multi-byte buffer types -- the helper has no scalar
         // decoder for these, so the verify-mode emit treats them as a
         // raw region (size taken from the param) and tells the user to
@@ -632,7 +635,8 @@ public static class BakedScriptGenerator
     /// of one is printed as that pair on every invoke path, never as an address.
     /// </summary>
     public static bool IsWeakPairType(string ueTypeName) =>
-        ueTypeName is "WeakObjectProperty" or "SoftObjectProperty" or "SoftClassProperty" or "LazyObjectProperty";
+        ueTypeName is "WeakObjectProperty" or "SoftObjectProperty" or "SoftClassProperty" or "LazyObjectProperty"
+            or "AssetObjectProperty" or "AssetClassProperty";   // [ASSETPTR-BAKED-TOKEN] the soft pointer before 4.18
 
     /// <summary>
     /// Render a user-entered text value as a Lua numeric literal, picking
@@ -655,6 +659,7 @@ public static class BakedScriptGenerator
         if (ueTypeName is "ObjectProperty" or "ClassProperty" or "NameProperty"
             or "SoftObjectProperty" or "SoftClassProperty"
             or "WeakObjectProperty" or "LazyObjectProperty"
+            or "AssetObjectProperty" or "AssetClassProperty"
             or "InterfaceProperty" or "UInt64Property" or "Int64Property")
         {
             if (TryParseHexOrDecimal(t, out ulong u))

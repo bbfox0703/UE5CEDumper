@@ -78,7 +78,7 @@
     {$asm}
 
   Constants exposed:
-    UE5_INVOKE_HELPER_VERSION  = '1.4'  (a newer copy re-loaded into a session replaces the resident one)
+    UE5_INVOKE_HELPER_VERSION  = '1.5'  (a newer copy re-loaded into a session replaces the resident one)
     UE5_INVOKE_PARAMS_OFFSET   = 0x328  (params_data offset within mailbox)
 ]]
 
@@ -92,7 +92,7 @@
 -- of it: R7-S3's latch release never reached a table opened before the update. The public functions below are
 -- therefore gated on VERSION: redefined only when this chunk is NEWER than the resident one, so an update takes
 -- effect while a same/older re-load stays a no-op that preserves state (the shared flags keep their own nil-init).
-local THIS_HELPER_VERSION = '1.4'   -- 1.4: this gate [R7-X5], and R7-S3's latch release on a reset mailbox
+local THIS_HELPER_VERSION = '1.5'   -- 1.4: this gate [R7-X5], and R7-S3's latch release on a reset mailbox; 1.5: 'asset'
 -- Compare dotted versions: true iff a < b. nil (nothing resident) is the oldest.
 local function versionLess(a, b)
   if not a then return true end
@@ -320,7 +320,7 @@ local function writeParams(base, regionSize, params)
   local WIDTHS = {
     bool = 1, byte = 1, int16 = 2, uint16 = 2, int32 = 4, uint32 = 4, enum = 4,
     int64 = 8, uint64 = 8, qword = 8, float = 4, double = 8,
-    pointer = 8, object = 8, class = 8, name = 8, soft = 8, weak = 8, lazy = 8, interface = 8,
+    pointer = 8, object = 8, class = 8, name = 8, soft = 8, weak = 8, lazy = 8, asset = 8, interface = 8,
   }
 
   for i, p in ipairs(params) do
@@ -368,6 +368,14 @@ local function writeParams(base, regionSize, params)
       if v ~= 0 and v ~= nil and v ~= false then
         error(string.format("[ue5_invoke] param '%s' is a lazy pointer -- it is found by a GUID this cannot make, " ..
                             "so only value=0 (null) can be sent", tostring(p.name or '?')))
+      end
+    elseif t == 'asset' then
+      -- [ASSETPTR-BAKED-TOKEN] UE 4.11-4.17's TAssetPtr: the weak pair, then the path as an FString that would have to
+      -- be allocated inside the game. Only 0 (null) can be sent, and the slot is already zeroed; FIRE and the CE form
+      -- refuse the same input.
+      if v ~= 0 and v ~= nil and v ~= false then
+        error(string.format("[ue5_invoke] param '%s' is an asset pointer -- its path is a string inside the game this " ..
+                            "cannot build, so only value=0 (null) can be sent", tostring(p.name or '?')))
       end
     elseif t == 'fstring' then
       -- Wide UE FString INPUT param (value = Lua string). Pass p.value, NOT v:
@@ -443,7 +451,7 @@ local function writeParams(base, regionSize, params)
       error(string.format(
         "[ue5_invoke] Unknown param type '%s' for '%s' -- " ..
         "supported: bool/byte/int16/uint16/int32/uint32/enum/int64/uint64/qword/" ..
-        "float/double/pointer/object/class/name/soft/weak/lazy/interface/" ..
+        "float/double/pointer/object/class/name/soft/weak/lazy/asset/interface/" ..
         "fstring/fstringn/fstruct/tarray/tmap/tset/delegate",
         tostring(t), tostring(p.name or '?')))
     end
