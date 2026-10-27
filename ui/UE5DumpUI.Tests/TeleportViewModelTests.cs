@@ -3569,6 +3569,9 @@ public class TeleportViewModelTests
 
         Assert.Contains("nothing was added", status, StringComparison.Ordinal);
         Assert.DoesNotContain("may still have been added", status, StringComparison.Ordinal);
+        // This arm is a pipe that never opened (nothing sent) or a refusal with no reason; a pipe that broke after the
+        // request is TimedOut above. "Dropped mid-push" names the one case that never lands here.
+        Assert.DoesNotContain("mid-push", status, StringComparison.Ordinal);
     }
 
     [Fact]
