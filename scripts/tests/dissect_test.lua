@@ -1826,6 +1826,42 @@ do
 end
 
 -- ============================================================
+-- VND584-02 follow-up -- "8 hex bytes" needs the DisplayMethod, not just vtQword
+-- ============================================================
+-- vtQword alone is an UNSIGNED DECIMAL row: TStructelement.create leaves fdisplayMethod at
+-- dtUnsignedInteger (CE StructuresFrm2.pas), so a weak pair { ObjectIndex 0x1234, Serial 0x56 } read
+-- as 369367192116 instead of 5600001234 -- the two int32 halves are unreadable. The CE-XML
+-- (ShowAsHex) and CSX (DisplayMethod="hexadecimal") exports show these four as hex. The value is
+-- pinned VERBATIM: CE sets a published enum through RTTI by NAME inside a bare try/except
+-- (LuaObject.pas lua_setProperty), so a wrong spelling -- the CSX file's "hexadecimal" included --
+-- is swallowed without a word and the row stays decimal.
+case('VND584-02: soft / soft-class / lazy / weak rows are hexadecimal, like the CE-XML and CSX exports')
+do
+  resetWorld(); dissect.clearAll(); injectDll()
+  serveWalk({
+    { name = 'SoftMesh',  typeName = 'SoftObjectProperty', offset = 0x30, size = 0x28 },
+    { name = 'SoftClass', typeName = 'SoftClassProperty',  offset = 0x58, size = 0x28 },
+    { name = 'LazyRef',   typeName = 'LazyObjectProperty', offset = 0x80, size = 0x18 },
+    { name = 'WeakRef',   typeName = 'WeakObjectProperty', offset = 0x98, size = 8 },
+    -- CONTROLS: a real 64-bit integer stays CE's unsigned default, and the pointer rows -- which CE
+    -- renders as "P->" addresses whatever the DisplayMethod -- are left alone.
+    { name = 'Big',       typeName = 'Int64Property',      offset = 0xA0, size = 8 },
+    { name = 'Target',    typeName = 'ObjectProperty',     offset = 0xA8, size = 8 },
+    { name = 'Iface',     typeName = 'InterfaceProperty',  offset = 0xB0, size = 16 },
+  })
+  local s = dissect.createFromClass(0xC1A55, 'SoftHex')
+  for i = 0, 3 do
+    local e = s.Element[i]
+    eq(e.Vartype, vtQword, 'VND584-02: ' .. e.Name .. ' is an 8-byte row')
+    eq(e.DisplayMethod, 'dtHexadecimal', 'VND584-02: ' .. e.Name .. ' is shown in hex, not unsigned decimal')
+  end
+  for i = 4, 6 do
+    local e = s.Element[i]
+    eq(e.DisplayMethod, nil, 'VND584-02 control: ' .. e.Name .. ' keeps CE\'s default display')
+  end
+end
+
+-- ============================================================
 
 realPrint(string.format('\n%d checks, %d failure(s)', checks, failures))
 os.exit(failures == 0 and 0 or 1)
