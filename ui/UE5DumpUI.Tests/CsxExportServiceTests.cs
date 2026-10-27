@@ -1431,6 +1431,36 @@ public class CsxExportServiceTests
         Assert.DoesNotContain("Array of byte", csx);
     }
 
+    // A loaded element carries its object's name (the DLL stamps ptrName for a loaded soft or asset element), and
+    // the pointer-family converter puts it in the label. The asset pair, missing from that family, went through the
+    // scalar converter, which labels by a short Value only -- an asset path never is one -- so it read "[0]".
+    [Theory]
+    [InlineData("SoftObjectProperty", 0x28)]   // CONTROL: the 4.18+ name
+    [InlineData("AssetObjectProperty", 0x20)]
+    [InlineData("AssetClassProperty", 0x20)]
+    public async Task GenerateCsx_ArrayProperty_LoadedAssetPointerElement_IsLabelledWithItsObject(string innerType, int stride)
+    {
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "ZonesToUse", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = innerType, ArrayElemSize = stride,
+                     ArrayDataAddr = "0x9000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, Value = "/Game/Maps/Zones/Zone_A.Zone_A",
+                                 PtrAddress = "0xE01", PtrName = "Zone_A", PtrClassName = "World" },
+                         new() { Index = 1, Value = "/Game/Maps/Zones/Zone_B.Zone_B" },   // not loaded
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("Description=\"[0] Zone_A\"", csx);
+        Assert.Contains("Description=\"[1]\"", csx);
+        Assert.Contains($"Offset=\"{stride}\" Vartype=\"8 Bytes\" Bytesize=\"8\"", csx);
+    }
+
     [Fact]
     public async Task GenerateCsx_ArrayProperty_DelegateInner_DrilldownOne_ShowsTargets()
     {
