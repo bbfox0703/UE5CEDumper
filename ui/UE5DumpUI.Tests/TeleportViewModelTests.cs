@@ -227,11 +227,13 @@ public class TeleportViewModelTests
         private readonly string _dir = Path.Combine(Path.GetTempPath(),
             "ue5cd-vmtest-" + Guid.NewGuid().ToString("N"));
         public string? LastClipboard { get; private set; }
+        /// <summary>Answer every copy with "did nothing" (a clipboard another application holds), the copy still recorded.</summary>
+        public bool RefuseClipboard { get; set; }
         public bool TryAcquireSingleInstance() => true;
         public void ReleaseSingleInstance() { }
         public string GetAppDataPath() => _dir;
         public string GetLogDirectoryPath() => _dir;
-        public Task<bool> CopyToClipboardAsync(string text) { LastClipboard = text; return Task.FromResult(true); }
+        public Task<bool> CopyToClipboardAsync(string text) { LastClipboard = text; return Task.FromResult(!RefuseClipboard); }
         public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
         public string GetMachineName() => "TEST";
         public void CloseImeForWindow(IntPtr windowHandle) { }
@@ -1120,6 +1122,25 @@ public class TeleportViewModelTests
         Assert.StartsWith("BugItGo 100.000 200.000 300.000", platform.LastClipboard);
         // Also pasted into the Run field so BugItGo can fire immediately.
         Assert.StartsWith("BugItGo 100.000 200.000 300.000", vm.BugItGoInput);
+    }
+
+    [Fact]
+    public async Task CopyAsBugItGo_a_refused_clipboard_is_not_claimed_and_the_run_field_is_still_filled()
+    {
+        // The blind-spot sweep's round-3 tail: the line said "copied + filled the Run field" whatever the clipboard answered, so a
+        // refused write sent the user to paste the previous clipboard into the console.
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, X = 100, Y = 200, Z = 300 } };
+        var vm = CreateVm(fake, out var platform);
+        vm.IsConnected = true;
+        platform.RefuseClipboard = true;
+
+        await vm.CopyAsBugItGoCommand.ExecuteAsync(null);
+
+        Assert.StartsWith("BugItGo 100.000 200.000 300.000", platform.LastClipboard);   // it tried
+        Assert.StartsWith("BugItGo 100.000 200.000 300.000", vm.BugItGoInput);         // the field does not depend on it
+        Assert.DoesNotContain("copied +", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("do not paste", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("filled the Run field", vm.StatusText, StringComparison.Ordinal);
     }
 
     [Fact]
