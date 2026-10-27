@@ -37,6 +37,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     // export; the Cancel button binds to CancelExportCommand.
     private CancellationTokenSource? _exportCts;
 
+    // [LW-DISCONNECT-STALE-STATUS] review F3: the export a disconnect cancelled. ClearOnDisconnect cancels through the
+    // export's own token, so without this its handler cannot tell a dropped game from the Cancel button.
+    private CancellationTokenSource? _exportCancelledByDisconnect;
+
     // Navigation breadcrumb stack
     [ObservableProperty] private ObservableCollection<BreadcrumbItem> _breadcrumbs = new();
 
@@ -4779,12 +4783,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
-            // User hit Cancel — not an error; leave the clipboard untouched. The token
-            // guard matters: a bare OCE that is NOT from our token (e.g. PipeClient's
-            // "Pipe disconnected during send") must fall through to the generic handler
-            // so a real mid-export disconnect isn't mislabeled as a user cancellation.
-            StatusText = "Export cancelled.";
-            _log.Info("CE XML export cancelled by user");
+            // Cancelled through our token — not an error (ExportCancelledByUser says by whom); leave
+            // the clipboard untouched. The token guard matters: a bare OCE that is NOT from our
+            // token (e.g. PipeClient's "Pipe disconnected during send") must fall through to the
+            // generic handler so a real mid-export disconnect isn't mislabeled as a user cancellation.
+            if (ExportCancelledByUser(cts, "CE XML export")) StatusText = "Export cancelled.";
         }
         catch (Exception ex)
         {
@@ -4806,6 +4809,21 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// time (guarded by <see cref="IsExporting"/>). No-op if nothing is exporting.</summary>
     [RelayCommand]
     private void CancelExport() => _exportCts?.Cancel();
+
+    /// <summary>Whether the user cancelled this export, logged either way. False when a disconnect did: the
+    /// disconnect already cleared the status line, and "Export cancelled." over it would claim a Cancel nobody
+    /// pressed. [LW-DISCONNECT-STALE-STATUS]</summary>
+    private bool ExportCancelledByUser(CancellationTokenSource cts, string what)
+    {
+        if (ReferenceEquals(_exportCancelledByDisconnect, cts))
+        {
+            _exportCancelledByDisconnect = null;
+            _log.Info($"{what} cancelled: the game disconnected");
+            return false;
+        }
+        _log.Info($"{what} cancelled by user");
+        return true;
+    }
 
     // Two thin commands feed the Export CSX dropdown (LiveWalkerPanel.axaml): the legacy
     // Pre-CE-7.7 byte form and the CE 7.7+ Binary (bit-switch) form. Both delegate to one core.
@@ -4939,10 +4957,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
         catch (OperationCanceledException) when (cts is { IsCancellationRequested: true })
         {
-            // User hit Cancel during the resolve — not an error. No file was written (the
-            // OCE unwinds before WriteAllTextAsync), so nothing partial is left behind.
-            StatusText = "Export cancelled.";
-            _log.Info("CSX export cancelled by user");
+            // Cancelled through our token during the resolve — not an error (ExportCancelledByUser
+            // says by whom). No file was written (the OCE unwinds before WriteAllTextAsync), so
+            // nothing partial is left behind.
+            if (ExportCancelledByUser(cts, "CSX export")) StatusText = "Export cancelled.";
         }
         catch (UnauthorizedAccessException)
         {
@@ -5217,12 +5235,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
-            // User hit Cancel — not an error; leave the clipboard untouched. The token
-            // guard matters: a bare OCE that is NOT from our token (e.g. PipeClient's
-            // "Pipe disconnected during send") must fall through to the generic handler
-            // so a real mid-export disconnect isn't mislabeled as a user cancellation.
-            StatusText = "Export cancelled.";
-            _log.Info("CE Field XML export cancelled by user");
+            // Cancelled through our token — not an error (ExportCancelledByUser says by whom); leave
+            // the clipboard untouched. The token guard matters: a bare OCE that is NOT from our
+            // token (e.g. PipeClient's "Pipe disconnected during send") must fall through to the
+            // generic handler so a real mid-export disconnect isn't mislabeled as a user cancellation.
+            if (ExportCancelledByUser(cts, "CE Field XML export")) StatusText = "Export cancelled.";
         }
         catch (Exception ex)
         {
@@ -6443,6 +6460,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // rooted on data again — NOT from UpdateDisplay, which "Start from GWorld" and
         // the container views never reach.
         StopAutoRefreshTimer(resumable: true);   // also sets IsAutoRefreshing = false
+        _exportCancelledByDisconnect = _exportCts;   // [LW-DISCONNECT-STALE-STATUS] nobody pressed Cancel
         _exportCts?.Cancel();
 
         // [A4-LW-DISCONNECT-PARENT] The whole displayed node, through the helper that owns it. HasParent and
