@@ -7605,13 +7605,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// <summary>
     /// Rebuild the visible <see cref="Functions"/> collection from
     /// <see cref="_allFunctions"/> using <see cref="FunctionFilter"/>.
-    /// Substring match on function name (case-insensitive). Empty filter
-    /// shows everything. Mirrors the InterestingFunctions filter pattern
+    /// Case-insensitive substring match on what the Name column shows. Empty
+    /// filter shows everything. Mirrors the InterestingFunctions filter pattern
     /// so the UX is consistent across the two UFunction views.
     /// </summary>
     private void ApplyFunctionFilter()
     {
-        // Space-separated terms are ANDed (each must hit the function name) — the
+        // Space-separated terms are ANDed, each hitting any of the row's fields -- the
         // shared Object Tree filter semantics. Empty filter shows everything.
         var terms = ObjectTreeFilter.SplitTerms(FunctionFilter);
         var rows = terms.Length == 0
