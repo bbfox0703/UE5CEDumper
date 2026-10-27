@@ -281,6 +281,22 @@ public class AuditL11HonestyTests
         Assert.Equal("", vm.LocateFailureMessage);
     }
 
+    [Fact]
+    public void ClassStruct_ClearOnDisconnect_LeavesNoErrorLine()
+    {
+        // [CLASSSTRUCT-DISCONNECT-ERROR] The sibling of [LW-DISCONNECT-STALE-STATUS]: ClassStruct's ClearOnDisconnect
+        // empties the class view but never its error, and the panel shows that line whenever it is non-empty -- a
+        // failed walk of a process that no longer exists, above the next game's empty panel.
+        var vm = new ClassStructViewModel(new StubDumpService(), new MockLoggingService(),
+                                          new MockPlatformService(Path.GetTempPath()));
+        vm.ErrorMessage = "WalkClass timed out after 10s";
+
+        vm.ClearOnDisconnect();
+
+        Assert.False(vm.HasClass);   // the view itself was already cleared
+        Assert.True(string.IsNullOrEmpty(vm.ErrorMessage), $"ErrorMessage survived: '{vm.ErrorMessage}'");
+    }
+
     private sealed class GatedBatchStub : StubDumpService
     {
         public TaskCompletionSource<PropertySearchBatchResult> Gate { get; } =
