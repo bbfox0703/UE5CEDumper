@@ -2887,6 +2887,19 @@ static void Test_Stark_QueuedInvoke() {
     EXPECT("QUEUEDINV a request that ran with an error is not queued either", !q.StillQueued());
 }
 
+// [DBGCAM-OFF-OVER-QUEUED-ON] review: while a toggle is still queued (or being dispatched), a Set sends nothing. The
+// same direction is the caller's toggle, already queued: -5, do not re-send. The opposite direction sent NOTHING and
+// the state it would read is from before the queued toggle: a code of its own, so no caller describes it as a queued
+// toggle of its own direction.
+static void Test_Stark_QueuedToggleAnswer() {
+    EXPECT("QTANSWER same direction is the queued toggle (-5)", Stark::QueuedToggleAnswer(true, true) == -5);
+    EXPECT("QTANSWER ...both ways", Stark::QueuedToggleAnswer(false, false) == -5);
+    EXPECT("QTANSWER an OFF over a queued ON was not sent (-6)", Stark::QueuedToggleAnswer(true, false) == -6);
+    EXPECT("QTANSWER an ON over a queued OFF was not sent (-6)", Stark::QueuedToggleAnswer(false, true) == -6);
+    EXPECT("QTANSWER -6 is its own code, not the timeout's",
+           Stark::kToggleBlockedByQueued != Stark::kInvokeTimedOutStillQueued);
+}
+
 // V3-C — server-side ordered view (filter + sort + window) over a candidate
 // pool. The DLL owns the full set; the UI is a window. These pure helpers run
 // over the DLL's own pools (no game memory), so filter/sort never touch the
@@ -11192,6 +11205,7 @@ int main() {
     RUN(Test_Stark_PeValidationFailureVerdict);
     RUN(Test_Stark_StatefulToggleFailure);
     RUN(Test_Stark_QueuedInvoke);
+    RUN(Test_Stark_QueuedToggleAnswer);
     RUN(Test_Lineal_StrideSweepRules);
     RUN(Test_Lineal_SerialOffsetForLayout);
     RUN(Test_Mimic_MailboxLayout);

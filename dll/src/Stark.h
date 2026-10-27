@@ -299,6 +299,13 @@ private:
     std::shared_future<int32_t> m_done;
 };
 
+/// [DBGCAM-OFF-OVER-QUEUED-ON] What a stateful toggle Set answers while an earlier toggle is still queued or in flight.
+constexpr int32_t kToggleBlockedByQueued = -6;
+inline int32_t QueuedToggleAnswer(bool queuedWant, bool want) {
+    (void)queuedWant; (void)want;
+    return kInvokeTimedOutStillQueued;
+}
+
 constexpr int32_t kRequestQueued = 0, kRequestRunning = 1, kRequestAbandoned = 2;
 inline bool ClaimRequest(std::atomic<int32_t>& state, int32_t to) {
     int32_t expected = kRequestQueued;

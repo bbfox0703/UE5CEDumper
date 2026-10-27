@@ -211,11 +211,33 @@ public class DebugCameraScriptGeneratorTests
         int at = fr.IndexOf("int32_t UE5_SetDebugCamera(int32_t enable) {", System.StringComparison.Ordinal);
         Assert.True(at >= 0, "UE5_SetDebugCamera is gone");
         var body = fr.Substring(at, fr.IndexOf("\n}\n", at, System.StringComparison.Ordinal) - at);
-        int ask = body.IndexOf("s_dbgCamQueuedOn.StillQueued()", System.StringComparison.Ordinal);
+        int ask = body.IndexOf("s_dbgCamQueued.StillQueued()", System.StringComparison.Ordinal);
         int read = body.IndexOf("DbgCam_ReadState(", System.StringComparison.Ordinal);
-        Assert.True(ask >= 0, "UE5_SetDebugCamera never asks whether a queued ON has run");
-        Assert.True(ask < read, "it asks only after reading a state the queued ON will change");
-        Assert.Contains("s_dbgCamQueuedOn.Record(", body);
-        Assert.Contains("*queuedOut = ", Src("dll/src/Stark.cpp"));   // EnqueueInvoke hands back what it left queued
+        Assert.True(ask >= 0, "UE5_SetDebugCamera never asks whether a queued toggle has run");
+        Assert.True(ask < read, "it asks only after reading a state the queued toggle will change");
+        Assert.Contains("s_dbgCamQueued.Record(", body);
+        // Review of the fix: the dispatch must hand the slot over, and EnqueueInvoke fill it -- a revert of either kept
+        // the record empty with every other pin green.
+        Assert.Contains("CallProcessEventRouted(cm, ufunc, 0, 0, false, &", body);
+        Assert.Contains("if (queuedOut && !dropIfAbandoned) *queuedOut = future;", Src("dll/src/Stark.cpp"));
+        // Both directions are tracked (a queued OFF does flip the camera on UE 5.8), and one being dispatched counts
+        // too: the lock is no longer held across the invoke wait, which pushed a CE untick past its 10 s deadline.
+        Assert.Contains("s_dbgCamInFlight", body);
+        Assert.Contains("QueuedToggleAnswer(", body);
+        Assert.DoesNotContain("s_dbgCamSetMutex", fr);
+    }
+
+    // [DBGCAM-OFF-OVER-QUEUED-ON] review: a Set refused over an opposite queued toggle sent nothing; the mailbox says so
+    // in each direction, where a CE script shows it verbatim.
+    [Fact]
+    public void The_mailbox_says_a_toggle_refused_over_an_opposite_queued_one_was_not_sent()
+    {
+        string Src(string p) => System.IO.File.ReadAllText(NumericInputCoercionTests.RepoFile(p)).Replace("\r\n", "\n");
+        var mimic = Src("dll/src/Mimic.cpp");
+        int at = mimic.IndexOf("static void HandleSetDebugCamera() {", System.StringComparison.Ordinal);
+        var body = mimic.Substring(at, mimic.IndexOf("\n}\n", at, System.StringComparison.Ordinal) - at);
+        Assert.Contains("Stark::kToggleBlockedByQueued", body);
+        Assert.Contains("Debug Camera: OFF not sent -- an earlier ON is still queued", body);
+        Assert.Contains("Debug Camera: ON not sent -- an earlier OFF is still queued", body);
     }
 }
