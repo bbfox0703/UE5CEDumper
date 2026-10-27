@@ -7616,7 +7616,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         var terms = ObjectTreeFilter.SplitTerms(FunctionFilter);
         var rows = terms.Length == 0
             ? new List<FunctionInfoModel>(_allFunctions)
-            : _allFunctions.Where(f => ObjectTreeFilter.MatchesAllTerms(terms, f.Name)).ToList();
+            // [VND584-04] Field-level OR over what the Name column shows: the name and, for an interface's, the interface.
+            : _allFunctions.Where(f => ObjectTreeFilter.MatchesAllTerms(terms, f.Name, f.ViaInterface)).ToList();
         // Detach before rebuilding the selection-bound grid; unchanged rows are not rebuilt.
         FunctionsView.Update(Functions, rows, () => SelectedFunction = null, FunctionFilter);
     }
