@@ -4,7 +4,12 @@ Open work only. **Read this when deciding what to do next.**
 
 > 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
 >
-> ▶ **Current programme:** none open -- the known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
+> ▶ **Current programme:** `[FIXPASS-2026-10-27]` (the maintainer: fix every open LOW / INFO). Batches 1-3 shipped in
+> build 3657 and passed live on its AOT build (`[BATCH3-LIVE-3657]`). Open: batch 2's own review
+> (`[BATCH2-REVIEW-2026-10-27]`), the five LOW leads batch 3 left (`[TRAINER-PUSH-TIMEDOUT-TEXT]`,
+> `[DISCOVER-SHADOWED-POOL]`, `[DBGCAM-OFF-OVER-QUEUED-ON]`, `[ASSETPTR-BAKED-TOKEN]`, `[L83-PLAN-QUEUED-STRINGS]`),
+> and the asset-pointer container shapes still owed live (`[UE4-ASSETPTR-EXPORTS]`'s row). · Before it, the
+> known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
 > 3649): every row it took is built and checked live, `[MH-PRERESERVE-PROXY]` included; the maintainer's calls are in
 > the rows and working-lessons §6. Still owed live, each row says how: a crash mid-capture on a large title
 > (`[SNAPSHOT-CRASH-PARTIAL]`), the Call Trace window-size steps (`[CT-FLOOR-208]`), Auto clearing a contradicted
@@ -1711,7 +1716,7 @@ case-preserving shape exists only in an editor build, where Call Trace cannot ru
 share). Notes draft (`## Fixed`): "On a Development or Debug build of a UE 5.3+ game, Find References lists
 objects bound to a delegate field, which it used to miss."
 
-🔧 **The 2026-10-27 fix batch** (the maintainer: fix every open LOW / INFO, in the recommended order): `[FABRICATE-DEFAULT-UNSEEDED]`,
+🔧 **The 2026-10-27 fix batch** `[FIXPASS-2026-10-27]` (the maintainer: fix every open LOW / INFO, in the recommended order): `[FABRICATE-DEFAULT-UNSEEDED]`,
 `[DEBUGCAM-QUEUED-OFF-NOESCALATE]` (c), `[SNAPDIFF-SHADOWED-PROP]`, `[STEALTH-RESET-STALE-HELD]`, `[WALK-NULLCLASS-SILENT]`,
 `[METHODE-STALE-LOGPATH]`, `[WALK-REFRESH-SCALAR-SHRINK]`, `[LW-DISCONNECT-STALE-STATUS]`, `[INV-TOOLTIP-CLIPBOARD]` (b),
 `[PIVOT-ARRAY-LOADID]`, `[QUOTA-NONPRESET-LOWER]`, `[L64-TOOLBAR-FIXED-SLOT]`, `[QUERYPTR-LOG-ABSENT-LABEL]`,
