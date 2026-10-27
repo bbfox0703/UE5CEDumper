@@ -14,7 +14,9 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <future>
 #include <string>
 
 namespace Stark {
@@ -276,6 +278,16 @@ inline int NarrowedFlagTestsFunctionFlags(const uint8_t* body, size_t size, size
     }
     return -1;
 }
+
+/// [DBGCAM-OFF-OVER-QUEUED-ON] A request EnqueueInvoke stopped waiting on and left queued, kept by a caller that must
+/// know whether it has run since.
+class QueuedInvoke {
+public:
+    void Record(std::shared_future<int32_t> done) { m_done = std::move(done); }
+    bool StillQueued() { return false; }
+private:
+    std::shared_future<int32_t> m_done;
+};
 
 constexpr int32_t kRequestQueued = 0, kRequestRunning = 1, kRequestAbandoned = 2;
 inline bool ClaimRequest(std::atomic<int32_t>& state, int32_t to) {

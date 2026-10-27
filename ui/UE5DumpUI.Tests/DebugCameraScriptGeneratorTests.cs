@@ -198,4 +198,24 @@ public class DebugCameraScriptGeneratorTests
             Assert.DoesNotContain("never re-send", text);
         }
     }
+
+    // [DBGCAM-OFF-OVER-QUEUED-ON] A Force OFF (or an untick) while a timed-out ON still sat in the game-thread queue read
+    // the camera OFF -- the ON had not run -- returned "already OFF", reported a clean OFF, and the queued ON then turned
+    // the camera on. UE5_SetDebugCamera must ask whether a queued ON has run BEFORE it reads the state, and record an ON
+    // it queues. Frieren.cpp and Stark.cpp are in no C++ test target (Stark::QueuedInvoke itself is tested in C++).
+    [Fact]
+    public void SetDebugCamera_asks_whether_a_queued_ON_has_run_before_it_reads_the_state_and_records_one_it_queues()
+    {
+        string Src(string p) => System.IO.File.ReadAllText(NumericInputCoercionTests.RepoFile(p)).Replace("\r\n", "\n");
+        var fr = Src("dll/src/Frieren.cpp");
+        int at = fr.IndexOf("int32_t UE5_SetDebugCamera(int32_t enable) {", System.StringComparison.Ordinal);
+        Assert.True(at >= 0, "UE5_SetDebugCamera is gone");
+        var body = fr.Substring(at, fr.IndexOf("\n}\n", at, System.StringComparison.Ordinal) - at);
+        int ask = body.IndexOf("s_dbgCamQueuedOn.StillQueued()", System.StringComparison.Ordinal);
+        int read = body.IndexOf("DbgCam_ReadState(", System.StringComparison.Ordinal);
+        Assert.True(ask >= 0, "UE5_SetDebugCamera never asks whether a queued ON has run");
+        Assert.True(ask < read, "it asks only after reading a state the queued ON will change");
+        Assert.Contains("s_dbgCamQueuedOn.Record(", body);
+        Assert.Contains("*queuedOut = ", Src("dll/src/Stark.cpp"));   // EnqueueInvoke hands back what it left queued
+    }
 }

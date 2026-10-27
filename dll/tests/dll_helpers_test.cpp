@@ -2865,6 +2865,28 @@ static void Test_Stark_StatefulToggleFailure() {
     EXPECT("DBGCAMQ control: no hook is a plain failure", Stark::StatefulToggleFailure(-7) == -1);
 }
 
+// [DBGCAM-OFF-OVER-QUEUED-ON] A Debug Camera toggle that timed out stays queued. A later Set read the camera's state
+// before it ran -- an OFF read "already OFF" and reported a clean OFF -- and the queued ON then turned it on. The
+// record says whether that request has run, from the request's own promise.
+static void Test_Stark_QueuedInvoke() {
+    Stark::QueuedInvoke q;
+    EXPECT("QUEUEDINV nothing recorded is not queued", !q.StillQueued());
+
+    std::promise<int32_t> p;
+    q.Record(p.get_future().share());
+    EXPECT("QUEUEDINV a recorded request that has not run is still queued", q.StillQueued());
+    EXPECT("QUEUEDINV ...on every ask until it runs", q.StillQueued());
+
+    p.set_value(0);   // the game thread drained it
+    EXPECT("QUEUEDINV once it has run it is not", !q.StillQueued());
+    EXPECT("QUEUEDINV ...and the record has cleared itself", !q.StillQueued());
+
+    std::promise<int32_t> p2;
+    q.Record(p2.get_future().share());
+    p2.set_value(-4);   // ran, and faulted: still not queued
+    EXPECT("QUEUEDINV a request that ran with an error is not queued either", !q.StillQueued());
+}
+
 // V3-C — server-side ordered view (filter + sort + window) over a candidate
 // pool. The DLL owns the full set; the UI is a window. These pure helpers run
 // over the DLL's own pools (no game memory), so filter/sort never touch the
@@ -11169,6 +11191,7 @@ int main() {
     RUN(Test_Stark_ShouldRetryPeDetection);
     RUN(Test_Stark_PeValidationFailureVerdict);
     RUN(Test_Stark_StatefulToggleFailure);
+    RUN(Test_Stark_QueuedInvoke);
     RUN(Test_Lineal_StrideSweepRules);
     RUN(Test_Lineal_SerialOffsetForLayout);
     RUN(Test_Mimic_MailboxLayout);
