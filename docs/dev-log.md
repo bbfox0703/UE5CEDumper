@@ -27,6 +27,29 @@ builds ≤696 in
 
 -----
 
+## 2026-10-27 (build 3659) — Debug Camera never acts on a stale state; the trainer push says why it stopped `[DBGCAM-OFF-OVER-QUEUED-ON]` `[TRAINER-PUSH-TIMEDOUT-TEXT]` `[DISCOVER-SHADOWED-POOL]` `[ASSETPTR-BAKED-TOKEN]` `[L83-PLAN-QUEUED-STRINGS]` `[LEADS-REVIEW-2026-10-27]`
+
+- **Debug Camera: a Force or an untick while an earlier toggle is still waiting for the game no longer acts on a
+  stale reading.** Before, a Force OFF while a Force ON was still queued read the camera as off, reported a clean OFF,
+  and the queued ON then turned the camera on. Now nothing is sent until the earlier toggle has run. The same
+  direction says it is already queued; the other direction says "was not sent — press again once the game responds",
+  on the Console and Teleport cards, in the Cheat Engine Debug Camera script (an untick keeps the record ticked) and in
+  the message the DLL hands a cheat table. A Cheat Engine untick no longer waits behind another request long enough to
+  pass its own deadline.
+- **The Standalone Trainer push says why it stopped**, naming the entry: no reply (it may still have been added —
+  check before pushing again), the reason Cheat Engine gave (the size limit among them), AOBMaker busy or not
+  reachable, or refused without a reason. It used to say "pipe dropped (CE closed?)" for all of these.
+- **Class Pivot's Discover keeps the two copies of a shadowed property apart**, labelled `Name@+0x…` like the picker,
+  even when only one copy changed.
+- **Baked invoke scripts refuse a value in an older UE4 asset-pointer parameter** (UE 4.11-4.17), as FIRE and the CE
+  form already did, and every invoke readout shows such a return as its index / serial pair. A script baked from
+  this build needs the invoke helper it carries (version 1.5).
+- Not checked live: these are unit-tested, red then green, several with a mutant that fails. The Debug Camera change
+  needs a stalled game thread (DumperTest Development `--idle`); the live-check plan's L83 now has a step for it.
+- Review: these fixes had their own review (13 findings, none above LOW, none refuted); every one is fixed.
+- Tests: dll_core_test 1,360 checks and dll_helpers_test 3,660, 0 failures; dissect_test.lua 425 and
+  invoke_helper_test.lua 142; C# 6,882 total, 0 failed, 1 skipped; headless UI 68; 36 gates.
+
 ## 2026-10-27 (build 3658) — Fixes from two more reviews; corrections to the 3657 notes `[BATCH2-REVIEW-2026-10-27]` `[FIXREVIEW-2026-10-27]` `[LW-EMPTIED-CONTAINER-REFRESH]` `[UE4-ASSETPTR-EXPORTS]` `[STEALTH-RESET-STALE-HELD]` `[DEBUGCAM-QUEUED-OFF-NOESCALATE]` `[COORDPICK-TIMEDOUT-TEXT]` `[PIVOT-ARRAY-LOADID]`
 
 - **Live Walker: Refresh of an array that has emptied shows it empty.** An emptied array of structs larger than 256
