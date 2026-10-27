@@ -1778,7 +1778,21 @@ when the clipboard took it; the rest make no claim, by design), `[UE4-ASSETPTR-E
 - ✅ `[DBGCAM-OFF-OVER-QUEUED-ON]` **FIXED 2026-10-27** (red `a7e3ae0f` / green `30f95baf`; DLL): `EnqueueInvoke` hands back
   the completion of a request it leaves queued, `Stark::QueuedInvoke` says whether it has run, and while a queued ON
   has not run every `UE5_SetDebugCamera` answers -5 and sends nothing. ⬜ Not checked live (the stall needs DumperTest
-  dev `--idle`, L83's rig). Was (inferred from `UE5_SetDebugCamera`, not measured): Force OFF / an untick while an ON
+  dev `--idle`, L83's rig; step 4b checks it). Its review changed it -- see `[LEADS-REVIEW-2026-10-27]` below.
+
+🔍 **Review of the five leads' fixes** `[LEADS-REVIEW-2026-10-27]` (workflow `wf_7ef3848e-f32`, range `92ed8aa8..9c7a17e8`,
+two lenses then one adversarial verifier per lens): 13 findings, none refuted, none above LOW; all fixed on 2026-10-27:
+- Debug Camera (DLL red `4bceabca` / green `daff8235`, consumers red `a26a2306` / green `69dfc25b`, doc/test `37928fc4`):
+  `DBGCAM-OFF-OVER-QUEUED-ON-TEXTS-DESCRIBE-A-QUEUED-OFF` (+ its twin `DBGCAM-QUEUED-OFF-TEXTS-ASSUME-AN-OFF-WAS-SENT`) --
+  a Set refused over an opposite queued toggle now answers -6 ("not sent"), which both cards, the generated CE script
+  and the helper's sample say as such; `DBGCAM-SETLOCK-PUSHES-CE-UNTICK-PAST-DEADLINE` -- the lock no longer spans the
+  invoke wait, a toggle being dispatched counts as queued; `DBGCAM-UE58-QUEUED-OFF-STALE-READ` -- both directions are
+  tracked; `DBGCAM-PIN-MISSES-QUEUED-WIRING` -- the pin sees the slot handed over and filled;
+  `QUEUEDINV-DOC-AND-LABEL-OVERSTATE` -- Shutdown's -7 counts as completed, and the test can see the record clear.
+- Discover: `DISCOVER-LABEL-ONLY-WHEN-BOTH-COPIES-MOVED` (red `1af9b4a2` / green `b39d8f08`: the Strict path asks the
+  snapshot which names are shadowed) and `DISCOVER-TIEBREAK-UNPINNED` (`e3814e9f`, a mutant fails).
+- `PARAMBUF-ASSET-NO-HELPER-TOKEN-COMMENT` (`2cff0272`); L83 plan -- `L83-STATUS-SAYS-STEPS-6-9-FAIL`,
+  `L83-TRAP-STALE-AFTER-DBGCAM-FIX` / `L83-TRAP-BOTH-DRAIN-STALE`, `L83-STALE-LINE-REFS` (`a3b21c30`, with step 4b). Was (inferred from `UE5_SetDebugCamera`, not measured): Force OFF / an untick while an ON
   is still queued reads the camera OFF ("already OFF -- no-op"), reports a clean OFF, and the queued ON then turns it on.
 - ✅ `[ASSETPTR-BAKED-TOKEN]` **FIXED 2026-10-27** (red `54e4c1ce` / green `03041d87`): `ue5_invoke_helper.lua` 1.5
   adds the empty-only `asset` token (refused unless 0), `MapToHelperType` sends Asset* there, and the CE, baked and FIRE
