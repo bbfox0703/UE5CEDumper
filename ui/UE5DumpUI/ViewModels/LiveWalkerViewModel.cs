@@ -1364,12 +1364,83 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
     /// <param name="inlineIsCurrent">[R7-D-07] The drill's re-read landed, so an inline preview was walked at the slider's
     /// CURRENT value. False when it fell back to the last refresh's values, walked at some earlier value.</param>
-    private async Task NavigateToArrayContainerAsync(LiveFieldValue field, bool inlineIsCurrent = true)
+    /// <summary>
+    /// The elements an array container view shows, and how many it ASKED for. Shared by the drill and Refresh's
+    /// container branch, so the two cannot disagree: that branch re-rendered the parent walk's inline preview, which
+    /// re-applied the Array Limit to a scalar view the slider does not govern. [WALK-REFRESH-SCALAR-SHRINK]
+    /// </summary>
+    /// <remarks>[A3-CONTAINER-4096-ADVICE] <c>Requested</c>: fewer back than asked means the DLL capped the reply
+    /// (4,096 per request today), which the Array Limit slider cannot raise -- so the status must not send the user to
+    /// it. Derived from the reply, never a hardcoded 4096. -1 means the bound that shortened the preview is unknown.
+    /// </remarks>
+    /// <param name="inlineIsCurrent">The inline preview was walked at the slider's CURRENT value: the drill's re-read
+    /// landed, or Refresh just walked it.</param>
+    private async Task<(List<ArrayElementValue> Elements, int Requested)> ReadArrayViewElementsAsync(
+        LiveFieldValue field, string parentAddr, bool inlineIsCurrent, CancellationToken ct = default)
+    {
+        // All elements already inline (complete set)
+        if (field.ArrayElements != null && field.ArrayElements.Count >= field.ArrayCount)
+            return (field.ArrayElements, field.ArrayCount);
+
+        // Pointer/struct arrays: use inline elements (Phase D/E/F resolved names).
+        // read_array_elements is scalar-only and cannot resolve pointer names.
+        // [R7-D-07] Only a CURRENT preview was asked for at the slider's value. The last refresh's may have been
+        // walked lower, and then a short reply is the old slider value, not the DLL's cap.
+        // [R7-S10] ...or it IS the DLL's cap (a large array at a high slider): unknown, marked -1, names no lever.
+        if (field.ArrayElements is { Count: > 0 } && IsPointerOrStructArrayType(field.ArrayInnerType))
+            return (field.ArrayElements, inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : -1);
+
+        // Scalar arrays: fetch full element list from DLL (Phase B)
+        if (!string.IsNullOrEmpty(field.ArrayInnerAddr) && !string.IsNullOrEmpty(parentAddr))
+        {
+            var result = await _dump.ReadArrayElementsAsync(
+                parentAddr, field.Offset, field.ArrayInnerAddr,
+                field.ArrayInnerType, field.ArrayElemSize, 0, field.ArrayCount, ct);
+            return (result.Elements, field.ArrayCount);
+        }
+
+        return (field.ArrayElements ?? new(),
+                inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : -1);   // [R7-D-07] [R7-S10]
+    }
+
+    /// <summary>An array view's crumb label: the TRUE count, badged when fewer elements are shown.</summary>
+    private static string ArrayViewLabel(LiveFieldValue field, int shown)
     {
         var typeLabel = !string.IsNullOrEmpty(field.ArrayStructType)
             ? field.ArrayStructType : field.ArrayInnerType;
-        var label = $"{field.Name} [{field.ArrayCount} x {typeLabel}]";
+        return $"{field.Name} [{field.ArrayCount} x {typeLabel}]"
+            + ContainerTruncation.BadgeSuffix(shown, field.ArrayCount);
+    }
 
+    /// <summary>An array view's truncation status line ("" when complete); see
+    /// <see cref="ReadArrayViewElementsAsync"/> for <paramref name="requested"/>.</summary>
+    private static string ArrayViewStatus(int shown, int total, int requested)
+        => requested < 0
+            ? ContainerTruncation.UnknownBoundStatusLine(shown, total)                     // [R7-S10]
+            : shown < requested
+                ? ContainerTruncation.FixedCapStatusLine(shown, total, "elements")         // [A3-CONTAINER-4096-ADVICE]
+                : ContainerTruncation.StatusLine(shown, total);
+
+    private static string MapViewLabel(LiveFieldValue field)
+    {
+        var keyLabel = !string.IsNullOrEmpty(field.MapKeyType) ? field.MapKeyType : "?";
+        var valLabel = !string.IsNullOrEmpty(field.MapValueType) ? field.MapValueType : "?";
+        return $"{field.Name} {{Map: {field.MapCount}, {keyLabel} → {valLabel}}}"
+            + ContainerTruncation.BadgeSuffix(field.MapElements?.Count ?? 0, field.MapCount);
+    }
+
+    private static string SetViewLabel(LiveFieldValue field)
+    {
+        var elemLabel = !string.IsNullOrEmpty(field.SetElemType) ? field.SetElemType : "?";
+        return $"{field.Name} {{Set: {field.SetCount}, {elemLabel}}}"
+            + ContainerTruncation.BadgeSuffix(field.SetElements?.Count ?? 0, field.SetCount);
+    }
+
+    private static string DataTableViewLabel(DataTableWalkResult dt)
+        => $"RowMap [{dt.RowCount} x {dt.RowStructName}]" + ContainerTruncation.BadgeSuffix(dt.Rows.Count, dt.RowCount);
+
+    private async Task NavigateToArrayContainerAsync(LiveFieldValue field, bool inlineIsCurrent = true)
+    {
         // Fetch elements BEFORE adding breadcrumb — if the DLL call fails,
         // we must not leave a stale breadcrumb that causes repeated entries.
         var parentAddr = CurrentAddress;
@@ -1377,42 +1448,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // identity: a container drill pushes a crumb without changing CurrentAddress,
         // so an address-only check lets the very mislabel this guards against through.
         var parentAtGesture = CurrentCrumb;
-        List<ArrayElementValue> elements;
-        // [A3-CONTAINER-4096-ADVICE] How many elements this view ASKED for. Fewer back than asked means the DLL capped
-        // the reply (4,096 per request today), which the Array Limit slider cannot raise -- so the status must not send
-        // the user to it. Derived from the reply, never a hardcoded 4096. The inline preview was walked at the slider's
-        // value (the drill re-reads the row first), so the slider is what it asked for.
-        int requested;
-        if (field.ArrayElements != null && field.ArrayElements.Count >= field.ArrayCount)
-        {
-            // All elements already inline (complete set)
-            elements = field.ArrayElements;
-            requested = field.ArrayCount;
-        }
-        else if (field.ArrayElements is { Count: > 0 } && IsPointerOrStructArrayType(field.ArrayInnerType))
-        {
-            // Pointer/struct arrays: use inline elements (Phase D/E/F resolved names).
-            // read_array_elements is scalar-only and cannot resolve pointer names.
-            elements = field.ArrayElements;
-            // [R7-D-07] Only a CURRENT preview was asked for at the slider's value. The last refresh's may have been
-            // walked lower, and then a short reply is the old slider value, not the DLL's cap.
-            // [R7-S10] ...or it IS the DLL's cap (a large array at a high slider): unknown, marked -1, names no lever.
-            requested = inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : -1;
-        }
-        else if (!string.IsNullOrEmpty(field.ArrayInnerAddr) && !string.IsNullOrEmpty(parentAddr))
-        {
-            // Scalar arrays: fetch full element list from DLL (Phase B)
-            var result = await _dump.ReadArrayElementsAsync(
-                parentAddr, field.Offset, field.ArrayInnerAddr,
-                field.ArrayInnerType, field.ArrayElemSize, 0, field.ArrayCount);
-            elements = result.Elements;
-            requested = field.ArrayCount;
-        }
-        else
-        {
-            elements = field.ArrayElements ?? new();
-            requested = inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : -1;   // [R7-D-07] [R7-S10]
-        }
+        // The inline preview was walked at the slider's value (the drill re-reads the row first), so the slider is
+        // what it asked for.
+        var (elements, requested) = await ReadArrayViewElementsAsync(field, parentAddr, inlineIsCurrent);
 
         // Only add breadcrumb after successful element retrieval — and only if the
         // user is still where they launched this from. parentAddr was captured before
@@ -1426,18 +1464,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         // Scalar arrays are re-fetched in full above -- up to the DLL's per-request cap; pointer/struct arrays fall back
         // to the capped inline preview. Compare the elements actually shown against the true count.
-        label += ContainerTruncation.BadgeSuffix(elements.Count, field.ArrayCount);
-        var arrTruncStatus = requested < 0
-            ? ContainerTruncation.UnknownBoundStatusLine(elements.Count, field.ArrayCount)           // [R7-S10]
-            : elements.Count < requested
-                ? ContainerTruncation.FixedCapStatusLine(elements.Count, field.ArrayCount, "elements")   // [A3-CONTAINER-4096-ADVICE]
-                : ContainerTruncation.StatusLine(elements.Count, field.ArrayCount);
+        var arrTruncStatus = ArrayViewStatus(elements.Count, field.ArrayCount, requested);
         if (arrTruncStatus.Length > 0) StatusText = arrTruncStatus;
 
         Breadcrumbs.Add(new BreadcrumbItem
         {
             Address = parentAddr,
-            Label = label,
+            Label = ArrayViewLabel(field, elements.Count),
             FieldOffset = field.Offset,
             FieldName = field.Name,
             IsPointerDeref = false,
@@ -1460,16 +1493,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
     private void NavigateToMapContainer(LiveFieldValue field)
     {
-        var keyLabel = !string.IsNullOrEmpty(field.MapKeyType) ? field.MapKeyType : "?";
-        var valLabel = !string.IsNullOrEmpty(field.MapValueType) ? field.MapValueType : "?";
         var received = field.MapElements?.Count ?? 0;
-        var label = $"{field.Name} {{Map: {field.MapCount}, {keyLabel} \u2192 {valLabel}}}"
-            + ContainerTruncation.BadgeSuffix(received, field.MapCount);
 
         Breadcrumbs.Add(new BreadcrumbItem
         {
             Address = CurrentAddress,
-            Label = label,
+            Label = MapViewLabel(field),
             FieldOffset = field.Offset,
             FieldName = field.Name,
             IsPointerDeref = false,
@@ -1486,15 +1515,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
     private void NavigateToSetContainer(LiveFieldValue field)
     {
-        var elemLabel = !string.IsNullOrEmpty(field.SetElemType) ? field.SetElemType : "?";
         var received = field.SetElements?.Count ?? 0;
-        var label = $"{field.Name} {{Set: {field.SetCount}, {elemLabel}}}"
-            + ContainerTruncation.BadgeSuffix(received, field.SetCount);
 
         Breadcrumbs.Add(new BreadcrumbItem
         {
             Address = CurrentAddress,
-            Label = label,
+            Label = SetViewLabel(field),
             FieldOffset = field.Offset,
             FieldName = field.Name,
             IsPointerDeref = false,
@@ -1529,13 +1555,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // announced "5000" and showed 64, so a row that simply had not been fetched
         // read as a row the table does not contain (audit #5 V8).
         var received = dtResult.Rows.Count;
-        var label = $"RowMap [{dtResult.RowCount} x {dtResult.RowStructName}]"
-            + ContainerTruncation.BadgeSuffix(received, dtResult.RowCount);
 
         Breadcrumbs.Add(new BreadcrumbItem
         {
             Address = CurrentAddress,
-            Label = label,
+            Label = DataTableViewLabel(dtResult),
             FieldOffset = dtResult.RowMapOffset,
             FieldName = field.Name,
             IsPointerDeref = false,
@@ -4334,8 +4358,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
     /// <summary>Build a fresh breadcrumb from a saved spine crumb with a re-resolved
     /// address / class / container field, copying the (stable) spine identity verbatim.
-    /// <see cref="BreadcrumbItem"/> is init-only, so re-resolution rebuilds rather than
-    /// mutates.</summary>
+    /// <see cref="BreadcrumbItem"/>'s address and class are init-only, so re-resolution rebuilds
+    /// rather than mutates.</summary>
     private static BreadcrumbItem CloneCrumbWithAddress(
         BreadcrumbItem src, string addr, string classAddr, LiveFieldValue? containerField)
         => new()
@@ -5591,6 +5615,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     var dtResult = await _dump.WalkDataTableRowsAsync(containerBc.Address, ct: ct);
                     if (Superseded()) return;
                     containerBc.DataTableData = dtResult;
+                    // [WALK-REFRESH-SCALAR-SHRINK] The crumb and the status line follow this reading, as the drill's
+                    // did. The crumb's RowMap field is the drill's shape (SyntheticRowMapField), rebuilt from it.
+                    containerBc.ContainerField = SyntheticRowMapField(dtResult);
+                    containerBc.Label = DataTableViewLabel(dtResult);
+                    var dtStatus = ContainerTruncation.FixedCapStatusLine(dtResult.Rows.Count, dtResult.RowCount, "rows");
+                    if (dtStatus.Length > 0) StatusText = dtStatus;
                     PopulateDataTableRowFields(dtResult);
                     return;
                 }
@@ -5616,6 +5646,46 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
                 if (updatedField != null)
                 {
+                    // [WALK-REFRESH-SCALAR-SHRINK] Show what the drill would show now, and say what the drill would say.
+                    // The parent walk's inline preview is cut at min(Array Limit, 4,096); a scalar array is re-fetched
+                    // in full by the drill, so rendering that preview shrank the view to the slider (and an edited
+                    // element [N >= Array Limit] vanished right after "Written").
+                    string? label = null;
+                    var status = "";
+                    if (updatedField.ArrayCount > 0 && !string.IsNullOrEmpty(updatedField.ArrayInnerType))
+                    {
+                        // Walked just now, at the slider's current value.
+                        var (elements, requested) = await ReadArrayViewElementsAsync(
+                            updatedField, containerBc.Address, inlineIsCurrent: true, ct);
+                        if (Superseded()) return;
+                        updatedField.ArrayElements = elements;   // what Back re-renders, as the drill persists it
+                        label = ArrayViewLabel(updatedField, elements.Count);
+                        status = ArrayViewStatus(elements.Count, updatedField.ArrayCount, requested);
+                    }
+                    else if (updatedField.MapCount > 0 && !string.IsNullOrEmpty(updatedField.MapKeyType))
+                    {
+                        label = MapViewLabel(updatedField);
+                        status = ContainerTruncation.StatusLine(updatedField.MapElements?.Count ?? 0, updatedField.MapCount);
+                    }
+                    else if (updatedField.SetCount > 0 && !string.IsNullOrEmpty(updatedField.SetElemType))
+                    {
+                        label = SetViewLabel(updatedField);
+                        status = ContainerTruncation.StatusLine(updatedField.SetElements?.Count ?? 0, updatedField.SetCount);
+                    }
+
+                    // Only an in-session crumb takes this reading. A path-synthetic one keeps its null ContainerField
+                    // and its bare name: Back re-hydrates it from a live walk, and the exporters branch on that null.
+                    if (label != null && containerBc.ContainerField is { } heldField)
+                    {
+                        // A walk row carries no FieldAddress (UpdateDisplay stamps it). Same parent, same offset:
+                        // the held one is still the right address by construction.
+                        if (string.IsNullOrEmpty(updatedField.FieldAddress))
+                            updatedField.FieldAddress = heldField.FieldAddress;
+                        containerBc.ContainerField = updatedField;
+                        containerBc.Label = label;
+                    }
+                    if (status.Length > 0) StatusText = status;
+
                     RepopulateContainerView(updatedField);
                     RestoreSelectedField(keepFieldName, keepFieldOffset);
                 }
@@ -7366,8 +7436,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// Called fire-and-forget from UpdateDisplay to avoid blocking the UI.
     /// </summary>
     /// <summary>The synthetic "RowMap" field a DataTable's grid carries: the row the user clicks to drill
-    /// into its rows, and the row view's <see cref="BreadcrumbItem.ContainerField"/>. Shared by the live
-    /// load and the bookmark restore ([W4-BOOKMARK-DT]), so a restored view has the in-session shape.</summary>
+    /// into its rows, and the row view's <see cref="BreadcrumbItem.ContainerField"/>. Every path that builds
+    /// or re-reads the row view takes it from here ([W4-BOOKMARK-DT], [WALK-REFRESH-SCALAR-SHRINK]), so a
+    /// restored or refreshed view has the in-session shape.</summary>
     internal static LiveFieldValue SyntheticRowMapField(DataTableWalkResult dtResult) => new()
     {
         Name = "RowMap",
@@ -7544,10 +7615,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 /// <summary>
 /// A breadcrumb navigation item, recording navigation history for CE XML export.
 /// </summary>
-public sealed class BreadcrumbItem
+public sealed class BreadcrumbItem : ObservableObject
 {
     public string Address { get; init; } = "";
-    public string Label { get; init; } = "";
+
+    private string _label = "";
+    /// <summary>The crumb's button text. Settable, and announced, because a container view's label carries the count
+    /// and the truncation badge, and a Refresh inside the view re-derives both from what it read.
+    /// [WALK-REFRESH-SCALAR-SHRINK]</summary>
+    public string Label { get => _label; set => SetProperty(ref _label, value); }
     public string ClassAddr { get; init; } = "";
 
     /// <summary>Offset of the field that was clicked to reach this level (hex).</summary>
@@ -7589,8 +7665,10 @@ public sealed class BreadcrumbItem
     /// <summary>True if this breadcrumb represents a container element view (Array/Map/Set/DataTable).</summary>
     public bool IsContainerView { get; init; }
 
-    /// <summary>The source container field (for refreshing container views).</summary>
-    public LiveFieldValue? ContainerField { get; init; }
+    /// <summary>The source container field (for refreshing container views). Settable for the same reason as
+    /// <see cref="Label"/>: Back re-renders it and the exporters read it, so a Refresh replaces it with its own reading.
+    /// [WALK-REFRESH-SCALAR-SHRINK]</summary>
+    public LiveFieldValue? ContainerField { get; set; }
 
     /// <summary>True if this breadcrumb represents a DataTable row container view.</summary>
     public bool IsDataTableView { get; init; }
