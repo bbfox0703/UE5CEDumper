@@ -1795,10 +1795,15 @@ when the clipboard took it; the rest make no claim, by design), `[UE4-ASSETPTR-E
     `BlinkMapGenerator` (+0x3A0), which has no instance at the main menu; it needs a run into a level. Unit-tested
     (`GenerateCsx_ArrayProperty_LoadedAssetPointerElement_IsLabelledWithItsObject`).
 
-🔍 **Final review of batches 1-3** `[BATCH3-FINAL-REVIEW-2026-10-27]` (workflow `wf_69ca757d-f90`, lenses then an
-adversarial verify per finding): 13 findings, 1 refuted (`ASSETPTR-USMAP-SLOT`: the USMAP slot is documented in code and
-the vendored writers have no branch that returns another), 12 confirmed: 11 fixed on 2026-10-27, and F4 is a check
-owed rather than a defect:
+🔍 **Batch 3's review** `[BATCH3-FINAL-REVIEW-2026-10-27]` (workflow `wf_69ca757d-f90`, range `19a16423..dev`: batch 3
+and `[VND584-04]`'s list half; lenses, then an adversarial verify per finding). ⚠ This block first called it a final
+review of batches 1-3. It was not: its prompt's range starts at `19a16423`, and batch 2 (`b1b5c782..19a16423`) had no
+review until `[BATCH2-REVIEW-2026-10-27]` below. 13 findings, 1 refuted (`ASSETPTR-USMAP-SLOT`: the USMAP slot is
+documented in code and the vendored writers have no branch that returns another), 12 confirmed: 11 fixed on
+2026-10-27, and F4 is a check owed rather than a defect. Finding ids, for the comments that cite them:
+`ASSETPTR-CEXML-INNER-UNPINNED`, `ASSETPTR-DISSECT-LUA-UNMAPPED`, `ASSETPTR-CSX-ELEM-LABELS`,
+`ASSETPTR-CEXML-SCALAR-NOPATH` (the single field and the DataTable row), `ASSETPTR-REFMATCH-COMMENT`,
+`ASSETPTR-TODO-STALE-OPEN`, `COORDPICK-TIMEDOUT-COVERS-PIPEBREAK`, F1-F5:
 - `[VND584-04]` F1 (LOW) walk_functions read `UClass::Interfaces` past the end of a struct view's UScriptStruct: red
   `bc838022` / green `a8d4b4db`. F2 + F3 (LOW) the Functions filter could not find the "(via X)" the Name column shows,
   and neither wiring hunk of the list half was pinned: red `232d69a0` / green `10398bab`. F4 (INFO) the DisplayName
@@ -1812,6 +1817,23 @@ owed rather than a defect:
   TimedOut (red `96b1e947` / green `e7f76e6e`), and the "nothing was added" line said "mid-push" for a pipe that never
   opened (red `932eb6fc` / green `48886407`).
 - `[TOOLBAR-CONNECT-WIDTH]` F5 (INFO) the fit note measured Segoe UI; the app renders Inter (`6d071f23`).
+
+🔍 **Review of those fixes** `[FIXREVIEW-2026-10-27]` (workflow `wf_a293ab76-cff`, range `636ac9a4..9a930a01`, three
+lenses then an adversarial verify per finding; 20 agents, over the "ask before 10" line because the verifiers scale with
+the findings): 17 findings, 1 refuted (`DEVLOG-EVERY-EXPORT-OVERCLAIM`), 16 confirmed, none HIGH or MED:
+- `ASSETPTR-CEXML-CONTAINER-NOPATH` (INFO) a map key or value, a set element and the struct-array preview still gave a
+  TAssetPtr only its weak pair: red `8a3353b4` / green `81b342d9`.
+- `VND584-GUARD-UNPINNED` (LOW) only the class-only predicate was tested, not its call: `f763621e` (WALKIFACEGUARD; a
+  mutant without the clause lists `DoFoo` for a struct view).
+- `COORDPICK-NOTREACHED-BUSY-HINT` (LOW) the not-reached line said "(CE closed?)" for a busy pipe and "could not be
+  reached" for a reply that refused: red `302ac64c` / green `795c39ea`.
+- Comments: `CEXML-ASSETPTR-NULL-PAIR` (`07136861`), `ASSETPTR-DISSECT-TEST-STALE-COMMENT` (`b0f7b942`),
+  `COORDPICK-AXAML-COMMENT-STALE` (`c69b1b47`), `VND584-FILTER-COMMENT-STALE` (`ee13e0ce`),
+  `TEST-COMMENT-UNRESOLVABLE-ID` (the ids above are now recorded here).
+- Docs: `PROGRAMME-LINE-MISSES-1027-PASS`, `ASSETPTR-TARRAY-LIVE-UNDERSTATED`, `VND584-04-ROW-STALE` (this file), and
+  five in the 3657 dev-log entry -- `DEVLOG3657-OMITS-FABRICATE`, `DEVLOG-NOHEADER-WAS-SILENT`, `DEVLOG-F4-NOT-FIXED`,
+  `DEVLOG-EACH-BATCH-REVIEWED`, `DEVLOG-CSX-WAS-HEX` -- corrected in the next build's entry, since the dev-log is
+  append-only.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
