@@ -3480,6 +3480,34 @@ public class TeleportViewModelTests
     }
 
     [Fact]
+    public async Task CoordLibrary_noDll_push_refused_for_its_size_says_the_size()
+    {
+        // [COORDPICK-OVERSIZE-REASON] The bridge refuses a request over AOBMaker's message cap before sending a byte
+        // and carries the size as the reason -- but only through the detailed call. The no-DLL push used the bool
+        // one, so a library too large to push read "AOBMaker pipe dropped mid-push (CE closed?)" over a CE that is fine.
+        const string reason = "the request is 11,000,000 bytes, too large for AOBMaker's 10 MiB message limit " +
+                              "(10,485,760 bytes); nothing was sent";
+        var bridge = new ScriptedAobMakerBridge
+        {
+            Available = true,
+            AaResult = false,
+            AaDetail = new SymbolScriptResult(false, null, null, reason),
+        };
+        var vm = new TeleportViewModel(new FakeDumpService(), new NoopLogger(), new FakePlatform(), aobMaker: bridge,
+                                       experimentalGate: new FakeExperimentalGate(enabled: true));
+        vm.LoadCoordLibraryForGame("Game.exe");
+        vm.CoordX = 1; vm.CoordY = 2; vm.CoordZ = 3;
+        vm.AddCoordFromFieldsCommand.Execute(null);
+
+        await vm.ExportCoordLuaNoDllCommand.ExecuteAsync(null);
+
+        Assert.Single(bridge.AaScripts);
+        Assert.False(bridge.AaScripts[0].AutoActivate);   // still pushed unticked, into the trainer's group
+        Assert.Contains(reason, vm.CoordStatus);
+        Assert.DoesNotContain("pipe dropped", vm.CoordStatus);
+    }
+
+    [Fact]
     public void CoordLibrary_load_without_a_store_is_a_no_op()
     {
         // Headless tests construct the VM with no store; it must not throw.
