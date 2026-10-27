@@ -156,8 +156,16 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyPtrTargetLabel,
              UE5DumpUI.ViewModels.LiveWalkerViewModel.PtrTargetLabel("P"), "P");
 
+        // [WALK-NULLCLASS-SILENT] Live Walker's warnings for a walk that found no object to read
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyUnreadable, UE5DumpUI.ViewModels.LiveWalkerViewModel
+             .GoneObjectStatus(new UE5DumpUI.Models.InstanceWalkResult { IsUnreadable = true })!);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyNoHeader, UE5DumpUI.ViewModels.LiveWalkerViewModel
+             .GoneObjectStatus(new UE5DumpUI.Models.InstanceWalkResult { IsNoHeader = true })!);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyStale, UE5DumpUI.ViewModels.LiveWalkerViewModel
+             .GoneObjectStatus(new UE5DumpUI.Models.InstanceWalkResult { IsStale = true })!);
+
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(51, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(54, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

@@ -5637,6 +5637,19 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 var parentResult = await _dump.WalkInstanceAsync(containerBc.Address, parentClassAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps, ct: ct);
                 if (Superseded()) return;
 
+                // [WALK-NULLCLASS-SILENT] review F1: a parent with no object to read carries no fields, so the match
+                // below finds nothing. Returning there left the element rows on screen under a blank status, still
+                // editable, their addresses in memory the game may have freed. Say what a walk of that object says,
+                // and leave no row to edit.
+                if (GoneObjectStatus(parentResult) is { } gone)
+                {
+                    StatusText = gone;
+                    SelectedField = null;   // detach before clearing the selection-bound grid
+                    Fields.Clear();         // fires OnFieldsRebuilt -> clears any stranded IsEditing latch
+                    _log.Warn($"Refresh: the container's parent {containerBc.Address} is {GoneVerdict(parentResult)} — dropped its element rows");
+                    return;
+                }
+
                 // Find the container field by name and offset in the refreshed result. Use the live
                 // ContainerField identity when present, else the crumb's own field name+offset.
                 var matchName   = containerBc.ContainerField?.Name   ?? containerBc.FieldName;
@@ -6031,6 +6044,28 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     internal const string KeyNoHeader = "str.LiveWalker.NoHeader";
     private static string NoHeaderText => AobMakerStatus.Say(KeyNoHeader,
         "⚠ No UObject header at this address — freed, or not an object. Re-open it from \U0001F30D GWorld or the finder.");
+    internal const string KeyUnreadable = "str.LiveWalker.Unreadable";
+    private static string UnreadableText => AobMakerStatus.Say(KeyUnreadable,
+        "⚠ This object is no longer readable (freed?) — re-open it from \U0001F30D GWorld or the finder.");
+    internal const string KeyStale = "str.LiveWalker.Stale";
+    private static string StaleText => AobMakerStatus.Say(KeyStale,
+        "⚠ This object appears to have been freed/recycled — re-open it from \U0001F30D GWorld or the finder.");
+
+    /// <summary>The status line for a walk that found no object to read, or null when it read one. One copy, because a
+    /// Refresh inside a container view walks the PARENT, and must say what a walk of that object says.
+    /// [WALK-NULLCLASS-SILENT]</summary>
+    internal static string? GoneObjectStatus(InstanceWalkResult result)
+        => result.IsUnreadable ? UnreadableText
+         : result.IsNoHeader ? NoHeaderText
+         : result.IsStale ? StaleText
+         : null;
+
+    /// <summary>The same verdict, named for a log line; null when the walk read an object.</summary>
+    private static string? GoneVerdict(InstanceWalkResult result)
+        => result.IsUnreadable ? "unreadable"
+         : result.IsNoHeader ? "no UObject header"
+         : result.IsStale ? "stale/recycled"
+         : null;
 
     /// <summary>A pointer field's HEX lands on what it points at; the field's name alone would read as the field.</summary>
     internal static string PtrTargetLabel(string field) => AobMakerStatus.Say(KeyPtrTargetLabel, "{0} target", field);
@@ -7194,7 +7229,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         {
             // [P1-WALK-UNREADABLE] The DLL could not even read the object's header -- freed, most likely. It used to
             // return a bare address, and the grid went silently blank.
-            StatusText = "⚠ This object is no longer readable (freed?) — re-open it from \U0001F30D GWorld or the finder.";
+            StatusText = UnreadableText;
             _log.Warn($"UpdateDisplay: unreadable object at {result.Address} — nothing walked");
         }
         else if (result.IsNoHeader)
@@ -7206,7 +7241,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
         else if (result.IsStale)
         {
-            StatusText = "⚠ This object appears to have been freed/recycled — re-open it from \U0001F30D GWorld or the finder.";
+            StatusText = StaleText;
             _log.Warn($"UpdateDisplay: stale/recycled object at {result.Address} (implausible PropertiesSize) — fields unavailable");
         }
         else if (result.GapFillSkipped)

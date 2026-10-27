@@ -266,6 +266,10 @@
     <sys:String x:Key="str.LiveWalker.PtrTargetLabel">{0} target</sys:String>
     <!-- [WALK-NULLCLASS-SILENT] The header names no readable class: freed, or never an object (Go takes any address). -->
     <sys:String x:Key="str.LiveWalker.NoHeader">⚠ No UObject header at this address — freed, or not an object. Re-open it from 🌍 GWorld or the finder.</sys:String>
+    <!-- [P1-WALK-UNREADABLE] The DLL could not read the object's header at all. -->
+    <sys:String x:Key="str.LiveWalker.Unreadable">⚠ This object is no longer readable (freed?) — re-open it from 🌍 GWorld or the finder.</sys:String>
+    <!-- The DLL judged the class pointer recycled: the instance was freed and its slot reused. -->
+    <sys:String x:Key="str.LiveWalker.Stale">⚠ This object appears to have been freed/recycled — re-open it from 🌍 GWorld or the finder.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.MatchPrev">Jump to the previous matching field (wraps to the last match)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.MatchNext">Jump to the next matching field (wraps to the first match)</sys:String>
     <sys:String x:Key="str.LiveWalker.GenerateCeAA">Copy CE AA Script</sys:String>
