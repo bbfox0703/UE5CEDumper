@@ -8657,6 +8657,20 @@ static void Test_Delegate_AccessDetectorPad() {
            DynOff::DelegatePadFromElementSize(1073742336, kMcd) < 0);
     EXPECT("pad: a zero baseSize cannot derive anything",
            DynOff::DelegatePadFromElementSize(16, 0) < 0);
+
+    // [DELEGATE-PAD-ALIGN] The detector is a std::atomic<uint64>, so the padded struct is 8-aligned and its size
+    // rounds UP to 8. A base that is not a multiple of 8 -- a 12-byte (case-preserving) or a 4-byte
+    // (UE_FNAME_OUTLINE_NUMBER) FName after the 8-byte weak pair -- is therefore not padded by exactly 8. The UE 5.4
+    // editor's own PDB gives TScriptDelegate<FNotThreadSafeDelegateMode> 0x20 with a 12-byte FName.
+    EXPECT("pad: a case-preserving checked FScriptDelegate (8 + 12, + detector, 8-aligned) is 32 -> 8",
+           DynOff::DelegatePadFromElementSize(32, 20) == 8);
+    EXPECT("pad: ...and 28, base + 8 unaligned, is no build's size", DynOff::DelegatePadFromElementSize(28, 20) < 0);
+    EXPECT("pad: a case-preserving Shipping FScriptDelegate (alignof 4) is 20 -> 0",
+           DynOff::DelegatePadFromElementSize(20, 20) == 0);
+    EXPECT("pad: a 4-byte-FName checked FScriptDelegate (8 + 4, + detector, 8-aligned) is 24 -> 8",
+           DynOff::DelegatePadFromElementSize(24, 12) == 8);
+    EXPECT("pad: ...and 20 is no build's size", DynOff::DelegatePadFromElementSize(20, 12) < 0);
+    EXPECT("pad: a 4-byte-FName Shipping FScriptDelegate is 12 -> 0", DynOff::DelegatePadFromElementSize(12, 12) == 0);
 }
 
 static void Test_Aura_IsBoundInvocationListHeader() {

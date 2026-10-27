@@ -3818,8 +3818,30 @@ int main() {
         check("DELEGATEARRAYPAD control: ...and 0, never negative, off a size that matches neither",
               Ubel::DelegateArrayElemPad(20) == 0, std::to_string(Ubel::DelegateArrayElemPad(20)).c_str());
         DynOff::bCasePreservingName = true;
-        check("DELEGATEARRAYPAD ⭐: with CasePreservingName (12-byte FName) a 28-byte element is padded 8",
-              Ubel::DelegateArrayElemPad(28) == 8, std::to_string(Ubel::DelegateArrayElemPad(28)).c_str());
+        // [DELEGATE-PAD-ALIGN] 8 + 12 + the detector rounds to 32 (the detector is 8-aligned), not 28.
+        check("DELEGATEARRAYPAD ⭐: with CasePreservingName (12-byte FName) a 32-byte element is padded 8",
+              Ubel::DelegateArrayElemPad(32) == 8, std::to_string(Ubel::DelegateArrayElemPad(32)).c_str());
+        check("DELEGATEARRAYPAD control: ...and 28, no build's element size, publishes 0",
+              Ubel::DelegateArrayElemPad(28) == 0, std::to_string(Ubel::DelegateArrayElemPad(28)).c_str());
+        {
+            // The reader's stride is the engine's own element size: base + pad is 28 here, where the element is 32,
+            // so element [1] would be read 4 bytes early. Its FName's last 4 bytes (the payload's bytes 16..20) carry
+            // a marker its hex must end with.
+            alignas(8) static uint8_t cpData[2 * 32] = {};
+            const uint32_t marker = 0x5A5A5A5A;
+            memcpy(cpData + 32 + 8 + 16, &marker, 4);
+            alignas(8) static uint8_t cpInst[0x20] = {};
+            *reinterpret_cast<uintptr_t*>(cpInst + 0x10) = reinterpret_cast<uintptr_t>(cpData);   // Data
+            *reinterpret_cast<int32_t*>(cpInst + 0x18) = 2;                                       // Num
+            *reinterpret_cast<int32_t*>(cpInst + 0x1C) = 2;                                       // Max
+            const auto rr = Ubel::ReadDelegateArrayElements(reinterpret_cast<uintptr_t>(cpInst), 0x10, 32, 0, 2);
+            check("DELEGATEARRAYPAD ⭐: a case-preserving checked array's 32-byte elements are read, not refused",
+                  rr.ok && rr.elements.size() == 2, rr.error.c_str());
+            check("DELEGATEARRAYPAD ⭐: ...at the engine's stride, so element [1]'s hex ends in its own FName's bytes",
+                  rr.elements.size() == 2 && rr.elements[1].hex.size() == 40 &&
+                  rr.elements[1].hex.compare(32, 8, "5A5A5A5A") == 0,
+                  rr.elements.size() == 2 ? rr.elements[1].hex.c_str() : "-");
+        }
         DynOff::bCasePreservingName = false;
 
         static uint8_t daEntry[4][0x40] = {};
@@ -10709,12 +10731,16 @@ int main() {
         put32(0x00, 5); put32(0x04, 7); put32(0x08, 33);                          // 16: the pair at +0, OnHit at +8
         put32(0x20, 5); put32(0x24, 7); put32(0x28, 33);                          // 24: detector 0, pair at +8, OnHit at +16
         put32(0x30, 5); put32(0x34, 7); put32(0x38, 6); put32(0x3C, 9); put32(0x40, 33);   // 24: a detector that looks live
-        put32(0x50, 5); put32(0x54, 7); put32(0x58, 33);                          // 28 (12-byte FName): pair at +8
+        put32(0x50, 5); put32(0x54, 7); put32(0x58, 33);                          // 32 (12-byte FName): pair at +8
         put32(0x68, 5); put32(0x6C, 7); put32(0x70, 33);                          // 20 with an 8-byte FName: no such size
         Ubel::ParamLayout L;
         L.params = { field("Pad0", 0x00, 16), field("Pad8", 0x18, 24), field("Decoy", 0x30, 24) };
         Ubel::ParamLayout cpn;
-        cpn.params = { field("Cpn8", 0x48, 28) };
+        cpn.params = { field("Cpn8", 0x48, 32) };
+        Ubel::ParamLayout cpn28;
+        cpn28.params = { field("Cpn28", 0x48, 28) };
+        Ubel::ParamLayout outline;   // a 4-byte FName: 12 bytes, or 24 behind the detector
+        outline.params = { field("Out0", 0x00, 12), field("Out8", 0x18, 24) };
         Ubel::ParamLayout odd;
         odd.params = { field("Odd", 0x68, 20) };
 
@@ -10742,8 +10768,23 @@ int main() {
         Ubel::SnapDecodeCtx ctx12 = ctx;
         ctx12.fnameSize = 12;
         const auto vc = Ubel::DecodeParamSnapshot(cpn, b, sizeof b, false, ctx12);
-        check("a case-preserving build: ElementSize 28 is 8 + 12 + the detector, the pair at +8",
+        // [DELEGATE-PAD-ALIGN] 8 + 12 + the detector is 28, but the detector's alignment rounds the struct to 32: the
+        // UE 5.4 editor's PDB gives TScriptDelegate<FNotThreadSafeDelegateMode> 0x20.
+        check("a case-preserving build: ElementSize 32 is 8 + 12 + the detector rounded to 8, the pair at +8",
               vc.size() == 1 && vc[0].text == "Pawn_0::OnHit" && vc[0].mark == SM::Now, vc.empty() ? "" : vc[0].text.c_str());
+        const auto vc28 = Ubel::DecodeParamSnapshot(cpn28, b, sizeof b, false, ctx12);
+        check("...and 28, no build's size, is not read",
+              vc28.size() == 1 && vc28[0].mark == SM::Raw &&
+              vc28[0].text.rfind("(delegate \xE2\x80\x94 unexpected ElementSize 28, not read)", 0) == 0,
+              vc28.empty() ? "" : vc28[0].text.c_str());
+        Ubel::SnapDecodeCtx ctx4 = ctx;
+        ctx4.fnameSize = 4;
+        const auto vn = Ubel::DecodeParamSnapshot(outline, b, sizeof b, false, ctx4);
+        check("a 4-byte FName: control, ElementSize 12 reads the pair at +0",
+              vn.size() == 2 && vn[0].text == "Pawn_0::OnHit" && vn[0].mark == SM::Now, vn.empty() ? "" : vn[0].text.c_str());
+        check("a 4-byte FName: ElementSize 24 is 8 + 4 + the detector rounded to 8, the pair at +8",
+              vn.size() == 2 && vn[1].text == "Pawn_0::OnHit" && vn[1].mark == SM::Now,
+              vn.size() < 2 ? "" : vn[1].text.c_str());
         weakCalls = 0;
         const auto vo = Ubel::DecodeParamSnapshot(odd, b, sizeof b, false, ctx);
         check("an ElementSize that is neither 16 nor 24 is not read, and says why",
