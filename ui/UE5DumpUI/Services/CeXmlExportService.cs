@@ -3766,6 +3766,14 @@ public static class CeXmlExportService
                     continue;
                 }
 
+                // [UE4-ASSETPTR-EXPORTS] As a scalar field: the path is the one name an unloaded asset shows.
+                if (IsAssetPtrType(rowField.TypeName))
+                {
+                    EmitAssetPtrGroup(sb, fieldIndent,
+                        DecorateDesc(rowField.Name, rowField.Offset, LeafTypeLabel(rowField)), $"+{rowField.Offset:X}");
+                    continue;
+                }
+
                 var ceField = MapCeField(rowField);
                 if (ceField != null)
                 {
