@@ -2781,9 +2781,22 @@ static SnapValue DecodeSnapElement(const ParamField& f, const uint8_t* p, uint32
         v.text = buf;
         return v;
     }
-    if (t == "StrProperty" || t == "Utf8StrProperty" || t == "AnsiStrProperty" || t == "ArrayProperty" ||
-        t == "MulticastInlineDelegateProperty") {   // a TArray header {Data, Num, Max}; the data was not copied
-        header(load32(8), load64(0));
+    if (t == "StrProperty" || t == "Utf8StrProperty" || t == "AnsiStrProperty" || t == "ArrayProperty") {
+        header(load32(8), load64(0));   // a TArray header {Data, Num, Max}; the data was not copied
+        return v;
+    }
+    if (t == "MulticastInlineDelegateProperty") {   // its invocation list's TArray header, after any pad
+        // The same detector as a DelegateProperty's sits in front of the header (16 bytes, FName-independent): read
+        // at +0, Data is the detector and Num Data's low half. A size that is neither shape is not read, as the walk
+        // refuses it.
+        const int32_t pad = DynOff::DelegatePadFromElementSize(f.size, 16);
+        if (pad < 0) {
+            v.text = "(multicast \xE2\x80\x94 unexpected ElementSize " + std::to_string(f.size) + ", not read) " +
+                     SnapHex(p, static_cast<size_t>(f.size));
+            v.mark = SnapMark::Raw;
+            return v;
+        }
+        header(load32(pad + 8), load64(pad));
         return v;
     }
     if (t == "SetProperty" || t == "MapProperty") {
