@@ -2805,6 +2805,16 @@ public static class CeXmlExportService
             return;
         }
 
+        // [UE4-ASSETPTR-EXPORTS] 4.11-4.17's TArray<TAssetPtr>: the same per-element group, with the path where that
+        // engine keeps it -- one FString. The DLL stamps no soft-array metadata for it (that describes an FName path).
+        if (IsAssetPtrType(field.ArrayInnerType)
+            && field.ArrayCount > 0 && field.ArrayElemSize > 0
+            && field.ArrayElements is { Count: > 0 })
+        {
+            EmitAssetPtrArrayProperty(sb, indent, field, desc);
+            return;
+        }
+
         // TArray<ObjectProperty> with pre-resolved element targets → per-element
         // drilled group (one EmitDrilledPointer per pointer slot). The array group
         // derefs TArray.Data (Offsets=[0]); each element pointer is then dereffed by
@@ -3238,6 +3248,43 @@ public static class CeXmlExportService
                     $"+{assetNameOffset:X}", null);
             }
 
+            EmitGroupClose(sb, elemIndent);
+        }
+
+        EmitGroupClose(sb, indent);
+    }
+
+    /// <summary>[UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's soft pointer properties, before 4.18 renamed them Soft*.</summary>
+    private static bool IsAssetPtrType(string? typeName) =>
+        typeName is "AssetObjectProperty" or "AssetClassProperty";
+
+    /// <summary>[UE4-ASSETPTR-EXPORTS] Where FAssetPtr keeps its path: one FString after the FWeakObjectPtr and
+    /// TagAtLastTest, the DLL's ASSETPTR_PATH. Fixed for the whole era, so not sent on the wire.</summary>
+    private const int AssetPtrPathOffset = 0x10;
+
+    /// <summary>
+    /// [UE4-ASSETPTR-EXPORTS] A TArray&lt;TAssetPtr&gt; (UE 4.11-4.17) laid out as the Phase G soft array is: one group
+    /// per element at its stride, holding the WeakPtr leaf at +0 and the asset path. That path is an FString, not an
+    /// FName, so it is a CE String one Data-pointer hop away -- readable as text, where the soft array needs a
+    /// DropDownList to name an FName index. The stride is the DLL's: it publishes FAssetPtr's one size for these.
+    /// </summary>
+    private static void EmitAssetPtrArrayProperty(StringBuilder sb, string indent, LiveFieldValue field, string desc)
+    {
+        EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 });
+        var elemIndent = indent + "  ";
+        var fieldIndent = elemIndent + "  ";
+        var ceWeakPtr = new CeFieldInfo("8 Bytes", ShowAsHex: true);
+
+        foreach (var elem in field.ArrayElements!)
+        {
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6], as the soft loop
+
+            int elemByteOffset = elem.Index * field.ArrayElemSize;
+            string elemKey = !string.IsNullOrEmpty(elem.Value) ? $"[{elem.Index}] {elem.Value}" : $"[{elem.Index}]";
+            EmitGroupOpen(sb, elemIndent, DecorateDesc(elemKey, elemByteOffset, null), $"+{elemByteOffset:X}", null);
+            EmitLeaf(sb, fieldIndent, DecorateDesc("WeakPtr", 0, null), ceWeakPtr, "+0", null);
+            EmitContainerStringLeaf(sb, fieldIndent, DecorateDesc("AssetPath", AssetPtrPathOffset, null),
+                $"+{AssetPtrPathOffset:X}", "StrProperty");
             EmitGroupClose(sb, elemIndent);
         }
 
@@ -4108,6 +4155,8 @@ public static class CeXmlExportService
             "SoftObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
             "SoftClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
             "LazyObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+            // [UE4-ASSETPTR-EXPORTS] 4.11-4.17's soft pointers: the same weak pair at +0, the path an FString after it.
+            "AssetObjectProperty" or "AssetClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
             // Interface: first 8 bytes is UObject*, show as pointer
             "InterfaceProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
@@ -4297,6 +4346,9 @@ public static class CeXmlExportService
 
             // Phase H: TLazyObjectPtr — first 8 bytes is FWeakObjectPtr
             "LazyObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            // [UE4-ASSETPTR-EXPORTS] 4.11-4.17's TAssetPtr / TAssetSubclassOf — first 8 bytes is FWeakObjectPtr too
+            "AssetObjectProperty" or "AssetClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
             // Phase I: TScriptInterface — first 8 bytes is UObject*, show as pointer
             "InterfaceProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),

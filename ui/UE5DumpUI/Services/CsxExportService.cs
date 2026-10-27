@@ -387,6 +387,8 @@ public static class CsxExportService
             "SoftObjectProperty"   => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
             "SoftClassProperty"    => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
             "LazyObjectProperty"   => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
+            // [UE4-ASSETPTR-EXPORTS] 4.11-4.17's soft pointers: the same weak pair at +0, an FString path after it.
+            "AssetObjectProperty" or "AssetClassProperty" => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
             "DelegateProperty"     => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
             "MulticastInlineDelegateProperty" =>
                 new CsxTypeInfo("Array of byte", fieldSize > 0 ? fieldSize : 16, "hexadecimal"),
