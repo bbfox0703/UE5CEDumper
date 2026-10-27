@@ -348,81 +348,90 @@ public class ClassPivotViewModelTests : IDisposable
 
     // ---- [PIVOT-HANDOFF-SHADOWED] a handoff names one copy of a shadowed name by its offset ----
     //
-    // The picker lists each copy apart (PrerollTime@+0xC4 / @+0x128), but the handoffs -- right-click "Pivot this
-    // property" (PivotForAsync) and discovery's "Use ->" -- carried the name alone and ticked the FIRST copy, whichever
-    // one the user had picked.
+    // The picker lists each copy apart (Zed@+0x10 / @+0x20), but the handoffs -- right-click "Pivot this property"
+    // (PivotForAsync) and discovery's "Use ->" -- carried the name alone and ticked the FIRST copy, whichever one the
+    // user had picked.
 
-    // The field load pre-ticks the copy whose values vary (+0x128 here) as a value field before any handoff ticks
-    // anything, so these assert on the copy a handoff must leave alone (+0xC4), not on the whole ticked set.
+    // ⚠ Not the PrerollTime fixture above: the field load pre-ticks fields by their NAME's interest score, so both
+    // PrerollTime copies arrive ticked and no handoff can be seen choosing one. "Zed" scores nothing and is a float
+    // (no key candidate, so the class opens in Identity mode): nothing is ticked until a handoff ticks it.
+    private static SnapshotCapturedObject ZedHolder(int idx, int zedAt20)
+    {
+        var o = new SnapshotCapturedObject
+        {
+            Index = idx, Addr = $"0x{0x3000 + idx:X}", Name = $"Holder{idx}", ClassName = "ShadowHolder",
+            OuterClassName = "World", Path = $"/G.M:L.Holder_{idx}",
+        };
+        o.Fields.Add(new SnapshotCapturedField { Name = "Zed", Type = "FloatProperty", Hex = IntHex(0), Offset = 0x10 });
+        o.Fields.Add(new SnapshotCapturedField { Name = "Zed", Type = "FloatProperty", Hex = IntHex(zedAt20), Offset = 0x20 });
+        return o;
+    }
+
     private static string[] TickedCopies(ClassPivotViewModel vm, string name)
         => vm.Fields.Where(f => f.Name == name && f.IsValue).Select(f => f.Label).ToArray();
 
-    private async Task<long> SeedShotSectionsAsync(string label, params int[] preroll296)
+    private async Task SeedZedHoldersAsync(string label, params int[] zedAt20)
     {
         var ct = TestContext.Current.CancellationToken;
         long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = label }, ct);
-        await _store.WriteChunkAsync(id, preroll296
-            .Select((v, i) => PivotStoreTests.ShotSection(i + 1, $"/G.M:L.Shot{i}", v)).ToArray(), ct);
-        await _store.FinalizeSnapshotAsync(id, preroll296.Length, preroll296.Length * 3, ct);
-        return id;
+        await _store.WriteChunkAsync(id, zedAt20.Select((v, i) => ZedHolder(i + 1, v)).ToArray(), ct);
+        await _store.FinalizeSnapshotAsync(id, zedAt20.Length, zedAt20.Length * 2, ct);
     }
 
     [Fact]
     public async Task PivotForAsync_WithAnOffset_TicksTheCopyAtThatOffset()
     {
-        await SeedShotSectionsAsync("shadow", 5, 6, 7);
+        await SeedZedHoldersAsync("shadow", 5, 6, 7);
         var vm = NewVm();
 
-        await vm.PivotForAsync("MovieSceneCinematicShotSection", "PrerollTime", 296);
+        await vm.PivotForAsync("ShadowHolder", "Zed", 0x20);
 
-        Assert.Contains("PrerollTime@+0x128", TickedCopies(vm, "PrerollTime"));
-        Assert.DoesNotContain("PrerollTime@+0xC4", TickedCopies(vm, "PrerollTime"));
-        Assert.Contains("PrerollTime@+0x128", vm.StatusText);   // "Ready" names the copy it ticked
+        Assert.Equal(new[] { "Zed@+0x20" }, TickedCopies(vm, "Zed"));
+        Assert.Contains("Zed@+0x20", vm.StatusText);   // "Ready" names the copy it ticked
     }
 
     [Fact]
     public async Task PivotForAsync_WithNoOffset_StillTicksTheFirstCopy()
     {
-        // The control: a source with no offset keeps the name match it always had.
-        await SeedShotSectionsAsync("shadow", 5, 6, 7);
+        // The control, and the fixture's own: nothing arrives pre-ticked, and a source with no offset keeps the
+        // name match it always had.
+        await SeedZedHoldersAsync("shadow", 5, 6, 7);
         var vm = NewVm();
 
-        await vm.PivotForAsync("MovieSceneCinematicShotSection", "PrerollTime");
+        await vm.PivotForAsync("ShadowHolder", "Zed");
 
-        Assert.Contains("PrerollTime@+0xC4", TickedCopies(vm, "PrerollTime"));
+        Assert.Equal(new[] { "Zed@+0x10" }, TickedCopies(vm, "Zed"));
     }
 
     [Fact]
     public async Task UseDiscoverCandidate_WithAnOffset_TicksTheCopyAtThatOffset()
     {
-        await SeedShotSectionsAsync("shadow", 5, 6, 7);
+        await SeedZedHoldersAsync("shadow", 5, 6, 7);
         var vm = NewVm();
         await vm.RefreshAsync();
 
-        await vm.UseDiscoverCandidateAsync(new DiscoveryCandidate
-            { ClassName = "MovieSceneCinematicShotSection", PropName = "PrerollTime", PropOffset = 296 });
+        await vm.UseDiscoverCandidateAsync(new DiscoveryCandidate { ClassName = "ShadowHolder", PropName = "Zed", PropOffset = 0x20 });
 
-        Assert.Contains("PrerollTime@+0x128", TickedCopies(vm, "PrerollTime"));
-        Assert.DoesNotContain("PrerollTime@+0xC4", TickedCopies(vm, "PrerollTime"));
-        Assert.Contains(vm.Results, r => r.ValuesDisplay.Contains("PrerollTime@+0x128=", StringComparison.Ordinal));
+        Assert.Equal(new[] { "Zed@+0x20" }, TickedCopies(vm, "Zed"));
+        Assert.NotEmpty(vm.Results);
+        Assert.All(vm.Results, r => Assert.StartsWith("Zed@+0x20=", r.ValuesDisplay, StringComparison.Ordinal));
     }
 
     [Fact]
     public async Task Discover_OnAShadowedName_CarriesTheOffsetOfTheCopyThatChanged()
     {
-        // Only the +296 copy moves between the two captures; "Use ->" on the candidate must reach that copy.
-        await SeedShotSectionsAsync("before", 5);
-        await SeedShotSectionsAsync("after", 9);
+        // Only the +0x20 copy moves between the two captures; "Use ->" on the candidate must reach that copy.
+        await SeedZedHoldersAsync("before", 5);
+        await SeedZedHoldersAsync("after", 9);
         var vm = NewVm();
         await vm.RefreshAsync();
         await vm.RunDiscoverCommand.ExecuteAsync(null);
 
-        var cand = Assert.Single(vm.DiscoverResults, c => c.PropName == "PrerollTime");
-        Assert.Equal(296, cand.PropOffset);
+        var cand = Assert.Single(vm.DiscoverResults, c => c.PropName == "Zed");
+        Assert.Equal(0x20, cand.PropOffset);
 
         await vm.UseDiscoverCandidateAsync(cand);
-        Assert.DoesNotContain("PrerollTime@+0xC4", TickedCopies(vm, "PrerollTime"));
-        Assert.Contains("PrerollTime@+0x128", TickedCopies(vm, "PrerollTime"));
+        Assert.Equal(new[] { "Zed@+0x20" }, TickedCopies(vm, "Zed"));
     }
 
     [Fact]
