@@ -27,6 +27,43 @@ builds ≤696 in
 
 -----
 
+## 2026-10-27 (build 3658) — Fixes from two more reviews; corrections to the 3657 notes `[BATCH2-REVIEW-2026-10-27]` `[FIXREVIEW-2026-10-27]` `[LW-EMPTIED-CONTAINER-REFRESH]` `[UE4-ASSETPTR-EXPORTS]` `[STEALTH-RESET-STALE-HELD]` `[DEBUGCAM-QUEUED-OFF-NOESCALATE]` `[COORDPICK-TIMEDOUT-TEXT]` `[PIVOT-ARRAY-LOADID]`
+
+- **Live Walker: Refresh of an array that has emptied shows it empty.** An emptied array of structs larger than 256
+  bytes (active effects, inventory entries) showed "DLL error: elem_size too large" and kept the old rows on screen,
+  editable at addresses the array no longer owns. An array the walk saw empty could also be relabelled with a count
+  that appeared a moment later, over an empty grid.
+- **CE XML: an older UE4 asset pointer shows its path wherever it sits** -- as a map key or value, a set element, or a
+  member of a struct in an array -- as a single field and an array element already did.
+- **Teleport, Stealth card: Reset says "Nothing is held" when the card knows nothing is held**, and sends nothing. It
+  used to tell you to Detect first, and Detect then Reset reported "Released the stealth-meter hold." for a hold that
+  never existed. When the card cannot tell (a hold it could not match to a meter), it still says to Detect first.
+- **Debug Camera from Cheat Engine: a queued OFF says to send OFF again.** The message the DLL hands a cheat table for
+  a toggle the game has not run yet said "do not re-send" for an OFF too; on most engines a queued OFF leaves the
+  camera on. A queued ON still says not to send it again.
+- **The no-DLL coordinate picker says why nothing was added**: AOBMaker's pipe is busy (another program holds it), not
+  connected, or the push was refused without a reason -- instead of "(CE closed?)" for all three.
+- **Class Pivot**: switching the source while a class's field list is still loading no longer lets that list land
+  under the new source (where a DataTable pivot then ran it against the table's rows).
+- **Corrections to the build 3657 notes** (that entry is kept as written):
+  - 3657 also shipped two fixes it did not list: Live Walker's Copy CE Field fabricated nothing at the default
+    Fabricate count until the slider was moved; and in Class Pivot's Snapshot Array source, clicking a class while a
+    newly picked snapshot's class list was loading left the previous snapshot's classes in the picker.
+  - "says when an address has no object header instead of calling it stale": before 3657 such an address showed no
+    status at all.
+  - "every LOW and INFO is fixed": one INFO item was a check, not a fix -- the trimmed build's Name sort, done live on
+    3657.
+  - "each fix batch had its own review": the second batch had none; its review is this build's.
+  - "CSX ... instead of a block of decimal numbers": in CSX those fields were a hex byte array; only the cheat table's
+    Structure Dissect showed decimal numbers.
+- Reviews: the fixes of the batch-3 review had a review of their own (17 findings, 16 confirmed, none HIGH or MED), and
+  batch 2 had its first (7 findings, 6 confirmed: one MED, the emptied-array Refresh). Every confirmed finding is
+  fixed; the ones in the 3657 notes are corrected above.
+- Not checked live: these are unit-tested, each red then green, several with a mutant that fails. Still owed live
+  from 3657: the asset-pointer container shapes (a map, set, array or struct member), which need a level on Extinction.
+- Tests: dll_core_test 1,360 checks and dll_helpers_test 3,648, 0 failures; dissect_test.lua 425; C# 6,859 total,
+  0 failed, 1 skipped; headless UI 68; 36 gates.
+
 ## 2026-10-27 (build 3657) — UE 4.11-4.17 asset pointers in every export; Live Walker lists interface functions; the toolbar holds still `[UE4-ASSETPTR-EXPORTS]` `[VND584-04]` `[L64-TOOLBAR-FIXED-SLOT]` `[TOOLBAR-CONNECT-WIDTH]` `[SNAPDIFF-SHADOWED-PROP]` `[PIVOT-HANDOFF-SHADOWED]` `[DEBUGCAM-QUEUED-OFF-NOESCALATE]` `[WALK-NULLCLASS-SILENT]` `[BATCH3-FINAL-REVIEW-2026-10-27]`
 
 - **Older UE4 games' asset pointers (TAssetPtr / TAssetSubclassOf, UE 4.11-4.17) come out right in every export.**
