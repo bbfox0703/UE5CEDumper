@@ -251,21 +251,6 @@ Open work only. **Read this when deciding what to do next.**
 
 -----
 
-## 🧭 Maintainer request 2026-10-27 — Call Trace: the parameter bytes read as 8-byte segments `[PARAM-BYTES-SEGMENTS]`
-
-Call Trace showed a call's parameter copies (the ProcessEvent `Parms` block, at the call and after it) only as one
-hex string per copy. A **Bytes** tab now cuts them into 8-byte segments, each read as two 32-bit halves (unsigned,
-signed, float), a double, and a 64-bit address with the byte order already swapped; a `params` cell names the
-parameters each segment holds when the function's layout was read. **Copy CSV** and **Copy raw** put either form on
-the clipboard. The maintainer chose the fixed 8-byte cut plus the `params` cell over cutting by parameter size
-(2026-10-27): the raw bytes matter most when the layout could not be read, and a size cut needs it.
-
-| id | status | effort | what | where |
-|---|---|---|---|---|
-| `[PARAM-BYTES-SEGMENTS]` | 🟡 **BUILT**, live check owed | S | Live: record a call with Params ticked on DumperTest Shipping and open it in Call Trace → Bytes: the segments line up, `params` names the parameters, Copy CSV pastes into a spreadsheet as columns, Copy raw gives the two hex lines. | `ParamBytesTable.cs`, `CallTraceViewModel.cs`, `CallTracePanel.axaml` |
-
------
-
 ## 🐞 Maintainer report 2026-10-09 — FINAL FANTASY RESONANCE DEMO's logs `[FFRS-2026-10-09]`
 
 The maintainer added FINAL FANTASY RESONANCE DEMO's logs (build 3646 through the dxgi.dll proxy; docs/test-games.md
