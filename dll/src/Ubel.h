@@ -771,6 +771,8 @@ bool ClassInterfacesMeasured();
 // [VND584-04] InterfaceFunctionsOf on the live class: the functions `cls` gets only through an implemented interface.
 // Empty while UClass::Interfaces is unmeasured.
 std::vector<FunctionInfo> WalkInterfaceFunctions(uintptr_t cls);
+// [VND584-04] Does a meta class's name name a CLASS (UClass and its Blueprint kinds), as against a struct? (red stub)
+inline bool IsClassMetaName(const std::string&) { return true; }
 // A native (C++) class lives in a /Script/ package; a Blueprint one does not. UObject::GetInterfaceAddress branches on it.
 bool IsNativeClass(uintptr_t cls);
 

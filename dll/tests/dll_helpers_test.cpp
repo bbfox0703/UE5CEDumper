@@ -9366,6 +9366,15 @@ static void Test_Ubel_Interfaces() {
     EXPECT("IFACE-LIST control: a class implementing nothing lists nothing",
            Ubel::InterfaceFunctionsOf(Widget, listFuncsU, readSuper, listIfaces, isInterfaceBase).empty());
 
+    // [VND584-04] Live Walker asks for a struct view's functions too, and a UScriptStruct has no UClass::Interfaces: read
+    // at that offset it is whatever the struct holds there. Only a class's meta class names a class.
+    EXPECT("IFACE-LIST ⭐: a UScriptStruct's meta class is not a class's", !Ubel::IsClassMetaName("ScriptStruct"));
+    EXPECT("IFACE-LIST ⭐: ...nor a user-defined struct's", !Ubel::IsClassMetaName("UserDefinedStruct"));
+    EXPECT("IFACE-LIST: a native class's meta class is Class", Ubel::IsClassMetaName("Class"));
+    EXPECT("IFACE-LIST: a Blueprint class's is a *Class", Ubel::IsClassMetaName("BlueprintGeneratedClass")
+           && Ubel::IsClassMetaName("WidgetBlueprintGeneratedClass"));
+    EXPECT("IFACE-LIST control: an unreadable meta class names nothing", !Ubel::IsClassMetaName(""));
+
     Ubel::ImplementedInterface ii;
     EXPECT("IFACE ⭐: Pawn implements IFoo (through its base's IBar, which derives from IFoo)",
            Ubel::FindImplementedInterface(Pawn, IFoo, false, readSuper, listIfaces, ii) && ii.cls == IBar);
