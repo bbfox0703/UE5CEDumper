@@ -715,12 +715,16 @@ public partial class ConsoleViewModel : ViewModelBase
     }
 
     /// <summary>Map the DLL's Debug Camera result (1=on, 0=off, -1=unknown,
-    /// -5=toggle queued) onto the badge.</summary>
-    private void ApplyDebugCameraState(int state)
+    /// -5=toggle queued) onto the badge. A queued toggle's badge depends on its
+    /// direction, so a Force OFF says <paramref name="forcingOff"/>.</summary>
+    private void ApplyDebugCameraState(int state, bool forcingOff = false)
     {
-        // [W3-DEBUGCAM-QUEUED] A queued toggle is neither ON nor OFF yet -- and not "unknown": it WILL run.
         if (state == Constants.DebugCameraToggleQueuedResult)
         {
+            // [DEBUGCAM-QUEUED-OFF-NOESCALATE] A queued OFF is no OFF on its way: the DLL queues it only after reading
+            // the camera ON, the toggle has not run, and on stock UE 4.18-5.7 it leaves the camera on.
+            if (forcingOff) { SetDebugCameraState(true); return; }
+            // [W3-DEBUGCAM-QUEUED] A queued ON is neither ON nor OFF yet -- and not "unknown": it will run.
             (DebugCameraState, DebugCameraBadgeColor) = ("Queued", "#D7BA7D");   // amber — pending
             return;
         }
@@ -789,7 +793,7 @@ public partial class ConsoleViewModel : ViewModelBase
             ClearError();
             IsDebugCameraBusy = true;
             var state = await _dump.SetDebugCameraAsync(wantOn);
-            ApplyDebugCameraState(state);
+            ApplyDebugCameraState(state, forcingOff: !wantOn);
             StatusText = state switch
             {
                 1 when wantOn  => "✓ Debug Camera forced ON.",

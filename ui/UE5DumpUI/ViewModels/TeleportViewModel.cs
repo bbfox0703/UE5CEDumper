@@ -1607,13 +1607,17 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     // ── Debug Camera (deterministic force on/off, shared with Console) ──
 
-    /// <summary>Map the DLL result (1=on, 0=off, -1=unknown, -5=toggle queued) onto the badge.</summary>
-    private void ApplyDebugCameraState(int state)
+    /// <summary>Map the DLL result (1=on, 0=off, -1=unknown, -5=toggle queued) onto the badge. A queued toggle's badge
+    /// depends on its direction, so a Force OFF says <paramref name="forcingOff"/>.</summary>
+    private void ApplyDebugCameraState(int state, bool forcingOff = false)
         => (DebugCameraState, DebugCameraBadgeColor) = state switch
         {
             1  => ("ON",      "#4EC9B0"),   // green — active
             0  => ("OFF",     "#999999"),   // grey — inactive
-            // [W3-DEBUGCAM-QUEUED] Neither ON nor OFF yet, and not "unknown": the toggle WILL run.
+            // [DEBUGCAM-QUEUED-OFF-NOESCALATE] A queued OFF is no OFF on its way: the DLL queues it only after reading
+            // the camera ON, the toggle has not run, and on stock UE 4.18-5.7 it leaves the camera on.
+            Constants.DebugCameraToggleQueuedResult when forcingOff => ("ON", "#4EC9B0"),
+            // [W3-DEBUGCAM-QUEUED] A queued ON is neither ON nor OFF yet, and not "unknown": the toggle will run.
             Constants.DebugCameraToggleQueuedResult => ("Queued", "#D7BA7D"),   // amber — pending
             _  => ("Unknown", "#888888"),
         };
@@ -1665,7 +1669,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var state = await _dump.SetDebugCameraAsync(wantOn);
-            ApplyDebugCameraState(state);
+            ApplyDebugCameraState(state, forcingOff: !wantOn);
             StatusText = state switch
             {
                 1 when wantOn  => "✓ Debug Camera forced ON.",
