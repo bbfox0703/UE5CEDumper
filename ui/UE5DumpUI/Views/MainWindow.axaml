@@ -27,33 +27,39 @@
                   IsVisible="{Binding IsConnected}"
                   ToolTip.Tip="{StaticResource str.Tip.Disconnect}"
                   Padding="12,4"/>
-          <Button Content="{StaticResource str.Toolbar.StartScan}"
-                  Command="{Binding TriggerScanCommand}"
-                  IsVisible="{Binding NeedsScan}"
-                  IsEnabled="{Binding !IsScanning}"
-                  ToolTip.Tip="{StaticResource str.Tip.StartScan}"
-                  Classes="accent" Padding="12,4"
-                  FontWeight="Bold"/>
-          <!-- Status: a FIXED width + ellipsis + tooltip, so long messages
-               (e.g. "Navigated to FooComponent::GetBar (live instance 0x…)")
-               don't push the rest of the toolbar off-screen and wrap. Fixed, not just capped
-               ([W1-PIPEBUSY-LOG], the L64 run): a capped line takes its text's width, so each new
-               status moved every control after it, and the AOBMaker ⟳ jumped out from under the
-               cursor when its own probe wrote the result here. -->
-          <TextBlock Text="{Binding StatusText}"
-                     Foreground="#4EC9B0"
-                     VerticalAlignment="Center"
-                     Margin="4,0"
-                     Width="360"
-                     TextTrimming="CharacterEllipsis"
-                     ToolTip.Tip="{Binding StatusText}"/>
-          <TextBlock Text="{Binding ErrorMessage}"
-                     Foreground="#F44747"
-                     VerticalAlignment="Center"
-                     MaxWidth="360"
-                     TextTrimming="CharacterEllipsis"
-                     ToolTip.Tip="{Binding ErrorMessage}"
-                     IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+          <!-- The status slot: a FIXED width, so nothing in it moves the controls after it. Fixed, not just
+               capped ([W1-PIPEBUSY-LOG], the L64 run): a capped status line took its text's width, so each new
+               status moved every control after it, and the AOBMaker ⟳ jumped out from under the cursor when its
+               own probe wrote the result here. Start Scan and the error line share the slot
+               ([L64-TOOLBAR-FIXED-SLOT] review, [TOOLBAR-OTHER-MOVERS]): beside it they moved ⟳ too, and this
+               StackPanel does not wrap, so at the minimum window width a visible error ran past the edge. The
+               status (ellipsis + tooltip) gets 360 when alone and what the other two leave when they show. -->
+          <Grid Width="368" ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+            <Button Grid.Column="0"
+                    Content="{StaticResource str.Toolbar.StartScan}"
+                    Command="{Binding TriggerScanCommand}"
+                    IsVisible="{Binding NeedsScan}"
+                    IsEnabled="{Binding !IsScanning}"
+                    ToolTip.Tip="{StaticResource str.Tip.StartScan}"
+                    Classes="accent" Padding="12,4" Margin="0,0,4,0"
+                    FontWeight="Bold"/>
+            <TextBlock Grid.Column="1"
+                       Text="{Binding StatusText}"
+                       Foreground="#4EC9B0"
+                       VerticalAlignment="Center"
+                       Margin="4,0"
+                       TextTrimming="CharacterEllipsis"
+                       ToolTip.Tip="{Binding StatusText}"/>
+            <TextBlock Grid.Column="2"
+                       Text="{Binding ErrorMessage}"
+                       Foreground="#F44747"
+                       VerticalAlignment="Center"
+                       Margin="4,0,0,0"
+                       MaxWidth="180"
+                       TextTrimming="CharacterEllipsis"
+                       ToolTip.Tip="{Binding ErrorMessage}"
+                       IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+          </Grid>
           <!-- The global stale-DLL badge now lives next to the version label (right
                edge of the toolbar) where users look for build info — see below. -->
         </StackPanel>
