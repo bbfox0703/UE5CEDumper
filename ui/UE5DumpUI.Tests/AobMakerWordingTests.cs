@@ -160,6 +160,33 @@ public class AobMakerWordingTests
         Assert.Equal(51, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
+    [Fact]
+    public void Inv_tooltip_promises_no_clipboard_route_the_greyed_button_cannot_reach()
+    {
+        // [INV-TOOLTIP-CLIPBOARD] Decided 2026-10-27 (the maintainer): (b), the tooltip is corrected and the button stays
+        // AOBMaker-only. The tip promised "push it to CE (or clipboard if AOBMaker is off)", but the button is IsEnabled
+        // only while AOBMaker is available, so with AOBMaker off it is greyed out (observed for the first half of L10)
+        // and that clipboard route cannot be reached from it. The two halves are pinned together: if the button ever
+        // gains a reachable clipboard route, this is the test to change along with the tip.
+        var axaml = ReadEnAxaml();
+        const string open = "x:Key=\"str.Tip.LiveWalker.FuncGenScript\">";
+        int start = axaml.IndexOf(open, StringComparison.Ordinal);
+        Assert.True(start >= 0, "str.Tip.LiveWalker.FuncGenScript is missing from en.axaml");
+        start += open.Length;
+        var tip = WebUtility.HtmlDecode(axaml[start..axaml.IndexOf("</sys:String>", start, StringComparison.Ordinal)]);
+
+        Assert.DoesNotContain("clipboard", tip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AOBMaker", tip, StringComparison.Ordinal);
+        Assert.Contains("greyed out", tip, StringComparison.Ordinal);
+
+        var panel = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/LiveWalkerPanel.axaml"));
+        int btn = panel.IndexOf("Content=\"{StaticResource str.LiveWalker.FuncGenScript}\"", StringComparison.Ordinal);
+        Assert.True(btn >= 0, "the INV button is missing from LiveWalkerPanel.axaml");
+        var element = panel[btn..panel.IndexOf("/>", btn, StringComparison.Ordinal)];
+        Assert.Contains("IsEnabled=\"{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).IsAobMakerAvailable}\"",
+                        element, StringComparison.Ordinal);
+    }
+
     private const string RecordXml =
         "<CheatTable><CheatEntries><CheatEntry><Description>D</Description>" +
         "<AssemblerScript>[ENABLE]\n[DISABLE]\n</AssemblerScript></CheatEntry></CheatEntries></CheatTable>";
