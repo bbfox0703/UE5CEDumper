@@ -2590,6 +2590,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // stale means a class pointer that read back implausible; this, a header that could not be read at all.
             if (result.unreadable)
                 data["unreadable"] = true;
+            // [WALK-NULLCLASS-SILENT] In both lean and full too: a header that names no readable class. Its own key, so
+            // the UI can say "freed, or not an object" rather than stale's or unreadable's narrower claims.
+            if (result.noHeader)
+                data["no_header"] = true;
             // Present only when true, and !lean because the lean contract above is
             // SUBTRACTIVE ONLY — an unconditional key would make lean stop being a
             // subset of full. A CE export reads `fields` and never this.

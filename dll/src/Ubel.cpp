@@ -5949,8 +5949,18 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         return result;
     }
 
+    const bool classPassed = classAddr != 0;
     if (!classAddr)
         classAddr = GetClass(instanceAddr);
+
+    // [WALK-NULLCLASS-SILENT] A live UObject never has a null ClassPrivate. Said apart from isStale, whose wording claims
+    // an implausible PropertiesSize, and from a "freed" claim: the Go box takes any address.
+    if (!classPassed && !classAddr) {
+        Sein::Warn("WALK:safe", "WalkInstance: 0x%llx has no UObject header (ClassPrivate is null) -- freed, or not an "
+                                "object; nothing walked", (unsigned long long)instanceAddr);
+        result.noHeader = true;
+        return result;
+    }
 
     result.classAddr = classAddr;
     result.className = classAddr ? GetName(classAddr) : "";
@@ -6028,8 +6038,21 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
     // Walk the class to get field layout (cached after first call)
     auto walkClassStart = std::chrono::steady_clock::now();
-    ClassInfo ci = WalkClass(classAddr);
+    bool classReadOk = true;
+    ClassInfo ci = WalkClassImpl(classAddr, classReadOk);   // WalkClass, keeping the read-fault verdict
     auto walkClassEnd = std::chrono::steady_clock::now();
+
+    // [WALK-NULLCLASS-SILENT] The sibling shape: a non-null but unmapped ClassPrivate. WalkClass's fault exit returns
+    // PropertiesSize 0, which the gate below accepts, so it read as an empty class. Only a walk that resolved its own
+    // class is judged: a raw-struct walk passes one, and its bytes were never a UObject header.
+    if (!classPassed && !classReadOk) {
+        Sein::Warn("WALK:safe", "WalkInstance: 0x%llx has no UObject header (ClassPrivate 0x%llx is unreadable) -- "
+                                "freed, or not an object; nothing walked",
+                   (unsigned long long)instanceAddr, (unsigned long long)classAddr);
+        result.noHeader  = true;
+        result.propsSize = 0;
+        return result;
+    }
     auto walkClassMs = std::chrono::duration_cast<std::chrono::milliseconds>(walkClassEnd - walkClassStart).count();
 
     result.propsSize = ci.PropertiesSize;
