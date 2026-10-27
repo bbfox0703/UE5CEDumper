@@ -545,12 +545,14 @@ public static class CsxExportService
     /// <summary>
     /// Check if a type name is an object/pointer property that can have a PropertyClass.
     /// DelegateProperty also exposes a single bound UObject* (the FWeakObjectPtr target),
-    /// so it gets the same pointer-style treatment in array element conversion.
+    /// so it gets the same pointer-style treatment in array element conversion. UE 4.17's
+    /// asset pointer is the soft pointer under its old name, and the DLL names a loaded
+    /// element's object for it the same way.
     /// </summary>
     private static bool IsObjectPropertyType(string typeName) => typeName is
         "ObjectProperty" or "ClassProperty" or "SoftObjectProperty" or
-        "SoftClassProperty" or "LazyObjectProperty" or "InterfaceProperty" or
-        "DelegateProperty";
+        "SoftClassProperty" or "AssetObjectProperty" or "AssetClassProperty" or
+        "LazyObjectProperty" or "InterfaceProperty" or "DelegateProperty";
 
     /// <summary>
     /// Resolve pointer targets within container elements (MapProperty, ArrayProperty, SetProperty).

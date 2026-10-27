@@ -482,7 +482,8 @@ public static class CeXmlExportService
     }
 
     /// <summary>
-    /// Object/Class pointer family — same set CsxExportService treats as drilldown-eligible.
+    /// Object/Class pointer family whose loaded target the drilldown resolver walks.
+    /// CsxExportService keeps its own list for the same purpose; the two are not kept equal.
     /// </summary>
     private static bool IsObjectPropertyType(string typeName) => typeName is
         "ObjectProperty" or "ClassProperty" or "WeakObjectProperty" or
