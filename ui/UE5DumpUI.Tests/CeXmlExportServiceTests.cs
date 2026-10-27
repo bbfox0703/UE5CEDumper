@@ -5658,8 +5658,11 @@ public class CeXmlExportServiceTests
     [InlineData("AssetObjectProperty", "0x7FF400001234")]   // loaded: the DLL resolved the weak half to an object
     [InlineData("AssetClassProperty", "")]
     [InlineData("AssetClassProperty", "0x7FF400001234")]
-    public void UE4AssetPointer_IsAnEightByteHexLeaf_NeverDereferenced(string typeName, string ptrAddr)
+    public void UE4AssetPointer_IsItsWeakPairAndItsPathString_NeverDrilled(string typeName, string ptrAddr)
     {
+        // The array element's group, for one field: the weak pair alone is {0,0} or stale for an unloaded asset --
+        // TAssetPtr's usual state -- so the FString path is the only readable name it has (final review,
+        // ASSETPTR-CEXML-SCALAR-NOPATH). The loaded object is still not drilled: the slot holds no address.
         var fields = new[]
         {
             new LiveFieldValue
@@ -5679,11 +5682,24 @@ public class CeXmlExportServiceTests
             "\"Game.exe\"+1000", "MyObj", "UMyClass", fields, resolvedInstances: resolved);
 
         var e = EntryNamed(xml, "PreGameWorld");
-        Assert.Equal("8 Bytes", (string?)e.Element("VariableType"));            // the weak pair, watchable
-        Assert.Equal("1", (string?)e.Element("ShowAsHex"));
+        Assert.Equal("1", (string?)e.Element("GroupHeader"));
         Assert.Equal("+30", (string?)e.Element("Address"));
         Assert.Null(e.Element("Offsets"));                                        // the slot holds no address
-        Assert.Null(e.Element("GroupHeader"));
+        var leaves = e.Element("CheatEntries")!.Elements("CheatEntry").ToList();
+        Assert.Equal(2, leaves.Count);
+
+        var weak = leaves.Single(l => (string?)l.Element("Description") == "\"WeakPtr\"");
+        Assert.Equal("8 Bytes", (string?)weak.Element("VariableType"));          // the weak pair, watchable
+        Assert.Equal("1", (string?)weak.Element("ShowAsHex"));
+        Assert.Equal("+0", (string?)weak.Element("Address"));
+        Assert.Null(weak.Element("Offsets"));
+
+        var path = leaves.Single(l => (string?)l.Element("Description") == "\"AssetPath\"");
+        Assert.Equal("String", (string?)path.Element("VariableType"));
+        Assert.Equal("1", (string?)path.Element("Unicode"));                        // FString: UTF-16
+        Assert.Equal("+10", (string?)path.Element("Address"));                      // Ubel's ASSETPTR_PATH
+        Assert.Equal("0", (string?)path.Element("Offsets")?.Element("Offset"));    // deref FString.Data
+
         Assert.DoesNotContain("Health", xml);
     }
 
