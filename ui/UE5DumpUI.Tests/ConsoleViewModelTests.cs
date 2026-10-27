@@ -1081,6 +1081,24 @@ public class ConsoleViewModelTests
     }
 
     [Fact]
+    public async Task Force_OFF_queued_does_not_promise_that_it_will_turn_the_camera_off()
+    {
+        // [DEBUGCAM-QUEUED-OFF-NOESCALATE] (c): a queued OFF drains as a toggle on the original controller's
+        // CheatManager, which on stock UE 4.18-5.7 can only enable -- only a COMPLETED OFF's swap back turns it off.
+        // So the text must not say it will run, and must ask for Force OFF again once the game responds.
+        var fake = new FakeDumpService { SetDebugCameraResult = Constants.DebugCameraToggleQueuedResult };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+
+        await vm.ForceDebugCameraOffCommand.ExecuteAsync(null);
+
+        Assert.Equal("Queued", vm.DebugCameraState);
+        Assert.DoesNotContain("will run", vm.StatusText);
+        Assert.DoesNotContain("Do not press Force OFF again", vm.StatusText);
+        Assert.Contains("press Force OFF again once the game responds", vm.StatusText);
+    }
+
+    [Fact]
     public void CopyDebugCameraScript_raises_RequestDebugCameraCeScript()
     {
         var vm = CreateVm(new FakeDumpService());

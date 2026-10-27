@@ -106,6 +106,27 @@ public class DebugCameraScriptGeneratorTests
 
         var disable = s[d..];
         Assert.Contains("if state == -5 then", disable);
-        Assert.Contains("dbg('[DebugCamera] OFF queued", disable);
+    }
+
+    // [DEBUGCAM-QUEUED-OFF-NOESCALATE] (c): a queued OFF drains as a toggle on the original controller's CheatManager,
+    // which on stock UE 4.18-5.7 can only enable, so the camera stays ON. The untick used to dbg() "the toggle will run"
+    // -- silent by default -- and end UNTICKED over a camera still on. It now says so ungated, and RAISES: CE's
+    // TMemoryRecord.setActive sets fActive only when the script succeeds, so a raised [DISABLE] leaves the record ticked.
+    [Fact]
+    public void A_queued_OFF_says_so_and_leaves_the_record_ticked()
+    {
+        var s = DebugCameraScriptGenerator.Generate();
+        var disable = s[s.IndexOf("[DISABLE]", System.StringComparison.Ordinal)..];
+        int q = disable.IndexOf("if state == -5 then", System.StringComparison.Ordinal);
+        Assert.True(q >= 0, "no queued branch in [DISABLE]");
+        int f = disable.IndexOf("elseif state ~= 0 then", q, System.StringComparison.Ordinal);
+        Assert.True(f > q, "the queued test must come BEFORE the failure test");
+        var queued = disable[q..f];
+        Assert.Contains("print('[DebugCamera] OFF did not complete", queued);   // ungated: a real problem
+        Assert.DoesNotContain("dbg(", queued);
+        Assert.DoesNotContain("will run", queued);
+        Assert.Contains("error('[DebugCamera]", queued);                        // keeps the record ticked
+        Assert.DoesNotContain("showMessage(", queued);                         // no modal on an untick
+        Assert.DoesNotContain(CeLuaHygiene.CloseCall, queued);
     }
 }
