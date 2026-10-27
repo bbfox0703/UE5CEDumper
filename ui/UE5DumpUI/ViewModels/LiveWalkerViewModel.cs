@@ -1366,20 +1366,18 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         return false;
     }
 
-    /// <param name="inlineIsCurrent">[R7-D-07] The drill's re-read landed, so an inline preview was walked at the slider's
-    /// CURRENT value. False when it fell back to the last refresh's values, walked at some earlier value.</param>
     /// <summary>
     /// The elements an array container view shows, how many it ASKED for, and the count they belong to (<c>Total</c>,
-    /// the element read's own when it read). Shared by the drill and Refresh's
-    /// container branch, so the two cannot disagree: that branch re-rendered the parent walk's inline preview, which
-    /// re-applied the Array Limit to a scalar view the slider does not govern. [WALK-REFRESH-SCALAR-SHRINK]
+    /// the element read's own when it read). A re-read of the view must show what opening it showed, and the parent
+    /// walk's inline preview does not: it re-applies the Array Limit to a scalar view the slider does not govern.
+    /// [WALK-REFRESH-SCALAR-SHRINK]
     /// </summary>
     /// <remarks>[A3-CONTAINER-4096-ADVICE] <c>Requested</c>: fewer back than asked means the DLL capped the reply
     /// (4,096 per request today), which the Array Limit slider cannot raise -- so the status must not send the user to
     /// it. Derived from the reply, never a hardcoded 4096. -1 means the bound that shortened the preview is unknown.
     /// </remarks>
-    /// <param name="inlineIsCurrent">The inline preview was walked at the slider's CURRENT value: the drill's re-read
-    /// landed, or Refresh just walked it.</param>
+    /// <param name="inlineIsCurrent">[R7-D-07] The inline preview was walked at the slider's CURRENT value. False for
+    /// values from an earlier walk, made at whatever the slider said then.</param>
     private async Task<(List<ArrayElementValue> Elements, int Requested, int Total)> ReadArrayViewElementsAsync(
         LiveFieldValue field, string parentAddr, bool inlineIsCurrent, CancellationToken ct = default)
     {
@@ -1452,6 +1450,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private static string DataTableViewLabel(DataTableWalkResult dt)
         => $"RowMap [{dt.RowCount} x {dt.RowStructName}]" + ContainerTruncation.BadgeSuffix(dt.Rows.Count, dt.RowCount);
 
+    /// <param name="inlineIsCurrent">[R7-D-07] The drill's re-read landed, so an inline preview was walked at the slider's
+    /// CURRENT value. False when it fell back to the last refresh's values, walked at some earlier value.</param>
     private async Task NavigateToArrayContainerAsync(LiveFieldValue field, bool inlineIsCurrent = true)
     {
         // Fetch elements BEFORE adding breadcrumb — if the DLL call fails,
@@ -1477,8 +1477,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         // Scalar arrays are re-fetched in full above -- up to the DLL's per-request cap; pointer/struct arrays fall back
         // to the capped inline preview. Compare the elements actually shown against the true count.
-        // [WALK-REFRESH-SCALAR-SHRINK] The field takes the count its elements were read at, so the view's label,
-        // header and held field cannot disagree with its rows.
+        // [WALK-REFRESH-SCALAR-SHRINK] The field takes the count its elements were read at, so nothing that reads its
+        // count can disagree with its rows.
         field.ArrayCount = total;
         var arrTruncStatus = ArrayViewStatus(elements.Count, field.ArrayCount, requested);
         if (arrTruncStatus.Length > 0) StatusText = arrTruncStatus;
@@ -5700,8 +5700,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                         var (elements, requested, total) = await ReadArrayViewElementsAsync(
                             updatedField, containerBc.Address, inlineIsCurrent: true, ct);
                         if (Superseded()) return;
-                        updatedField.ArrayElements = elements;   // what Back re-renders, as the drill persists it
-                        updatedField.ArrayCount = total;         // ...with the count they were read at
+                        // The field carries this reading whole: the rows, and the count they were read at.
+                        updatedField.ArrayElements = elements;
+                        updatedField.ArrayCount = total;
                         label = ArrayViewLabel(updatedField, elements.Count);
                         status = ArrayViewStatus(elements.Count, updatedField.ArrayCount, requested);
                     }
@@ -5716,8 +5717,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                         status = ContainerTruncation.StatusLine(updatedField.SetElements?.Count ?? 0, updatedField.SetCount);
                     }
 
-                    // Only an in-session crumb takes this reading. A path-synthetic one keeps its null ContainerField
-                    // and its bare name: Back re-hydrates it from a live walk, and the exporters branch on that null.
+                    // Only an in-session crumb takes this reading. A path-synthetic crumb's null ContainerField is what
+                    // marks it as one -- re-hydrated from a live walk, not held -- so it keeps that null and its bare name.
                     if (label != null && containerBc.ContainerField is { } heldField)
                     {
                         // A walk row carries no FieldAddress (UpdateDisplay stamps it). Same parent, same offset:
@@ -7497,14 +7498,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         return true;
     }
 
-    /// <summary>
-    /// Detect DataTable and inject a synthetic RowMap field for container navigation.
-    /// Called fire-and-forget from UpdateDisplay to avoid blocking the UI.
-    /// </summary>
     /// <summary>The synthetic "RowMap" field a DataTable's grid carries: the row the user clicks to drill
-    /// into its rows, and the row view's <see cref="BreadcrumbItem.ContainerField"/>. Every path that builds
-    /// or re-reads the row view takes it from here ([W4-BOOKMARK-DT], [WALK-REFRESH-SCALAR-SHRINK]), so a
-    /// restored or refreshed view has the in-session shape.</summary>
+    /// into its rows, and the row view's <see cref="BreadcrumbItem.ContainerField"/>. A row view's crumb holds
+    /// this shape however the view was reached ([W4-BOOKMARK-DT], [WALK-REFRESH-SCALAR-SHRINK]), so whatever
+    /// reads the crumb's field sees one shape.</summary>
     internal static LiveFieldValue SyntheticRowMapField(DataTableWalkResult dtResult) => new()
     {
         Name = "RowMap",
@@ -7523,6 +7520,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         DataTableRowData = dtResult.Rows,
     };
 
+    /// <summary>
+    /// Detect DataTable and inject a synthetic RowMap field for container navigation.
+    /// Fire-and-forget, so the row fetch never blocks the UI.
+    /// </summary>
     private async Task TryLoadDataTableRowsAsync(string dataTableAddr, int bcAtStart)
     {
         try
@@ -7732,8 +7733,8 @@ public sealed class BreadcrumbItem : ObservableObject
     public bool IsContainerView { get; init; }
 
     /// <summary>The source container field (for refreshing container views). Settable for the same reason as
-    /// <see cref="Label"/>: Back re-renders it and the exporters read it, so a Refresh replaces it with its own reading.
-    /// [WALK-REFRESH-SCALAR-SHRINK]</summary>
+    /// <see cref="Label"/>: what is read from the crumb later must be the latest reading of the container, not the
+    /// drill's, so a re-read inside the view replaces it. [WALK-REFRESH-SCALAR-SHRINK]</summary>
     public LiveFieldValue? ContainerField { get; set; }
 
     /// <summary>True if this breadcrumb represents a DataTable row container view.</summary>
