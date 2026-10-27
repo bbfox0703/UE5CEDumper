@@ -977,9 +977,9 @@ public class LiveWalkerMultiSelectTests
     [Fact]
     public async Task NavigateToBreadcrumb_SyntheticContainer_FieldFoundButNotPopulatable_FallsThrough()
     {
-        // willRepopulate==false branch: the field matches by name+offset but is no longer
-        // a populatable container (e.g. the array emptied to count 0 between scan and
-        // back-nav) → fall through to the parent grid rather than a stale/empty view.
+        // willRepopulate==false branch: the field matches by name+offset but carries no
+        // container reading at all (a count of -1: the walk did not read the header) →
+        // fall through to the parent grid rather than a view built from nothing.
         var dump = new StubDumpService();
         dump.RegisterStruct(SynthParentAddr, new InstanceWalkResult
         {
@@ -990,7 +990,7 @@ public class LiveWalkerMultiSelectTests
                 {
                     Name = "SpawnedAttributes", Offset = SynthArrayOffset,
                     TypeName = "ArrayProperty",
-                    ArrayCount = 0, ArrayInnerType = "ObjectProperty",   // present but empty
+                    ArrayCount = -1, ArrayInnerType = "ObjectProperty",   // present, never read
                 },
             },
         });
@@ -1004,6 +1004,87 @@ public class LiveWalkerMultiSelectTests
 
         Assert.NotEqual("Array<ObjectProperty>", vm.CurrentClassName);
         Assert.Contains(vm.Fields, f => f.Name == "SpawnedAttributes");
+    }
+
+    // [LW-SYNTH-EMPTIED-BACK] A container emptied since the path was found is still its kind: a count of 0, which
+    // RepopulateContainerView renders as the empty container ([LW-EMPTIED-CONTAINER-REFRESH]). The synthetic hop
+    // demanded elements before handing it over, so Back fell through to the parent grid under the container's crumb.
+
+    [Theory]
+    [InlineData("array", "Array<ObjectProperty>")]
+    [InlineData("set", "Set<ObjectProperty>")]
+    [InlineData("map", "Map<NameProperty, ObjectProperty>")]
+    public async Task NavigateToBreadcrumb_SyntheticContainer_EmptiedSince_ShowsItEmpty(string kind, string className)
+    {
+        var emptied = kind switch
+        {
+            "array" => new LiveFieldValue
+            {
+                Name = "SpawnedAttributes", Offset = SynthArrayOffset, TypeName = "ArrayProperty",
+                ArrayCount = 0, ArrayInnerType = "ObjectProperty", ArrayElemSize = 8, ArrayDataAddr = "0x5000",
+            },
+            "set" => new LiveFieldValue
+            {
+                Name = "SpawnedAttributes", Offset = SynthArrayOffset, TypeName = "SetProperty",
+                SetCount = 0, SetElemType = "ObjectProperty",
+            },
+            _ => new LiveFieldValue
+            {
+                Name = "SpawnedAttributes", Offset = SynthArrayOffset, TypeName = "MapProperty",
+                MapCount = 0, MapKeyType = "NameProperty", MapValueType = "ObjectProperty",
+            },
+        };
+        var dump = new StubDumpService();
+        dump.RegisterStruct(SynthParentAddr, new InstanceWalkResult
+        {
+            Name = "MyActor", ClassName = "ACharacter", Address = SynthParentAddr,
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "SomeOtherField", Offset = 0x10, TypeName = "IntProperty" },   // the parent-grid signature
+                emptied,
+            },
+        });
+        var vm = MakeVm(dump);
+        var container = SyntheticArrayContainerCrumb();
+        vm.Breadcrumbs.Clear();
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = SynthParentAddr, Label = "MyActor", FieldName = "MyActor" });
+        vm.Breadcrumbs.Add(container);
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = "0x6000", Label = "[0]", FieldName = "[0]", IsPointerDeref = true });
+
+        await vm.NavigateToBreadcrumbCommand.ExecuteAsync(container);
+
+        Assert.Equal(className, vm.CurrentClassName);
+        Assert.Empty(vm.Fields);                                             // no parent rows under the container's crumb
+        Assert.Equal(2, vm.Breadcrumbs.Count);
+    }
+
+    [Fact]
+    public async Task GoBack_SyntheticContainer_EmptiedSince_ShowsItEmpty()
+    {
+        var dump = new StubDumpService();
+        dump.RegisterStruct(SynthParentAddr, new InstanceWalkResult
+        {
+            Name = "MyActor", ClassName = "ACharacter", Address = SynthParentAddr,
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "SomeOtherField", Offset = 0x10, TypeName = "IntProperty" },
+                new()
+                {
+                    Name = "SpawnedAttributes", Offset = SynthArrayOffset, TypeName = "ArrayProperty",
+                    ArrayCount = 0, ArrayInnerType = "ObjectProperty", ArrayElemSize = 8, ArrayDataAddr = "0x5000",
+                },
+            },
+        });
+        var vm = MakeVm(dump);
+        vm.Breadcrumbs.Clear();
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = SynthParentAddr, Label = "MyActor", FieldName = "MyActor" });
+        vm.Breadcrumbs.Add(SyntheticArrayContainerCrumb());
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = "0x6000", Label = "[0]", FieldName = "[0]", IsPointerDeref = true });
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.Equal("Array<ObjectProperty>", vm.CurrentClassName);
+        Assert.Empty(vm.Fields);
     }
 
     private static int CountOccurrences(string source, string substring)
