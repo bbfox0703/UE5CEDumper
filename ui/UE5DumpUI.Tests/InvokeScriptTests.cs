@@ -2109,6 +2109,10 @@ public class InvokeScriptTests
         Assert.DoesNotContain("UE5Dumper-*.log", src, StringComparison.Ordinal);
         Assert.Contains("%LOCALAPPDATA%\\\\UE5CEDumper\\\\Logs", src, StringComparison.Ordinal);
         Assert.Contains("init-0.log", src, StringComparison.Ordinal);
+        // Sein names the folder after the host exe, and CE's launcher starts cheatengine-x86_64-SSE4-AVX2.exe on any
+        // AVX2 CPU (cheatengine.lpr reads cpuid leaf 7), so naming only "cheatengine-x86_64" sends the reader to a folder
+        // that is absent, or stale (this machine kept a build-3315 log there).
+        Assert.Contains("cheatengine-x86_64-SSE4-AVX2", src, StringComparison.Ordinal);
     }
 
     private static string DllSrcDir()
