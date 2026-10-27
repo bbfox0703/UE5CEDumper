@@ -231,12 +231,12 @@ public class AobMakerInjectTableFileTests
     // ---- a request over AOBMaker's message cap is refused HERE, before a byte is sent ----
     // (the client-side pre-flight size check, teleport-coord-library-spec.md §10, item 6)
     //
-    // The read path has always rejected a reply over the cap; the write path sent anything. Both AOBMaker pipes reject a
-    // length prefix over 10 MiB, and a plugin from before AOBMaker's oversize reply (its EXT-5) hangs up WITHOUT
-    // replying -- so the user got a broken pipe or a timeout, read as "AOBMaker not connected", for a request that was
-    // simply too big. The fake below answers the way such a plugin did.
+    // The read path has always rejected a reply over the cap; the write path sent anything. AOBMaker rejects a length
+    // prefix over 10 MiB, and a plugin from before AOBMaker's oversize reply (its EXT-5) hangs up WITHOUT replying --
+    // so the user got a broken pipe or a timeout, read as "AOBMaker not connected", for a request that was simply too
+    // big. The fake below answers the way such a plugin did.
 
-    /// <summary>One framed message's cap on both AOBMaker pipes (CE plugin <c>kMaxMessageBytes</c>, AOBMaker.UI
+    /// <summary>AOBMaker's cap on one framed message (its CE plugin's <c>kMaxMessageBytes</c>, AOBMaker.UI's
     /// <c>PipeProtocol.MaxMessageSize</c>): a length prefix over it is rejected.</summary>
     private const int AobMakerCap = 10 * 1024 * 1024;
 
