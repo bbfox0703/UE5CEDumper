@@ -1238,6 +1238,137 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.DoesNotContain(vm.Classes, c => c.ClassName == "A"); // and #1's is gone
     }
 
+    // ---- [PIVOT-ARRAY-LOADID] review: a source or snapshot switch supersedes an array-field load in flight ----
+    //
+    // The array-field load's own counter is bumped only by the next array-field load, so a slow load for the old class
+    // still landed after the source moved on: it refilled ArrayFields and auto-picked a field, whose prop load cleared
+    // the new source's Fields and listed the old array's props for whatever class was now selected. Class A's array
+    // fields are GATED here, and so is snapshot 2's array-class list.
+
+    private sealed class ArrayFieldGatedStore : ISnapshotStore
+    {
+        public readonly TaskCompletionSource<IReadOnlyList<PivotArrayFieldInfo>> ArrayFieldsOfA =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public readonly TaskCompletionSource<IReadOnlyList<PivotClassInfo>> Snap2ArrayClasses =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public string DatabasePath => "";
+        public void SetActiveGame(string? peHash) { }
+        public Task<IReadOnlyList<SnapshotMeta>> ListSnapshotsAsync(CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<SnapshotMeta>>(new[]
+            {
+                new SnapshotMeta { Id = 2, Label = "new" },
+                new SnapshotMeta { Id = 1, Label = "old" },
+            });
+        public Task<IReadOnlyList<PivotClassInfo>> ListPivotArrayClassesAsync(long s, CancellationToken ct = default)
+            => s == 2
+                ? Snap2ArrayClasses.Task.WaitAsync(ct)
+                : Task.FromResult<IReadOnlyList<PivotClassInfo>>(new[] { new PivotClassInfo { ClassName = "A", InstanceCount = 2 } });
+        public Task<IReadOnlyList<PivotArrayFieldInfo>> ListPivotArrayFieldsAsync(long s, string c, CancellationToken ct = default)
+            => ArrayFieldsOfA.Task;
+        public Task<IReadOnlyList<PivotFieldInfo>> ListPivotArrayPropsAsync(long s, string c, string af, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<PivotFieldInfo>>(new[] { Field("Count") });
+        public Task<IReadOnlyList<PivotClassInfo>> ListPivotClassesAsync(long s, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<PivotClassInfo>>(new[] { new PivotClassInfo { ClassName = "S", InstanceCount = 3 } });
+        public Task<IReadOnlyList<PivotFieldInfo>> ListPivotFieldsAsync(long s, string c, CancellationToken ct = default)
+            => Task.FromResult<IReadOnlyList<PivotFieldInfo>>(new[] { Field("Health") });
+
+        public Task<long> CreateSnapshotAsync(SnapshotMeta meta, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<int> WriteChunkAsync(long id, IReadOnlyList<SnapshotCapturedObject> o, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<ICaptureSession> BeginCaptureSessionAsync(CancellationToken ct = default) => throw new NotImplementedException();
+        public Task FinalizeSnapshotAsync(long id, int oc, int fc, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task DeleteSnapshotAsync(long id, bool reclaim = false, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task DeleteAllSnapshotsAsync(CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<SnapshotUsage> GetUsageAsync(CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<SnapshotDiffResult> DiffSnapshotsAsync(long a, long b, SnapshotDiffFilter f, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<SnapshotGroupResult> GroupMatchAsync(SnapshotGroupQuery q, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<SpcResult> SpcQueryAsync(SpcQuery q, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<SpcGroupResult> SpcGroupQueryAsync(SpcGroupQuery q, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<DiscoveryResult> DiscoverChangesAsync(DiscoveryQuery q, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<PivotResult> PivotAsync(PivotQuery q, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<int> EnforceQuotaAsync(long bytes, CancellationToken ct = default) => throw new NotImplementedException();
+        public Task<PivotResult> PivotArrayAsync(ArrayPivotQuery q, CancellationToken ct = default) => throw new NotImplementedException();
+        public HashSet<string> GetClassDenylist(DenylistScope scope) => new(StringComparer.Ordinal);
+        public void SetClassDenylist(DenylistScope scope, HashSet<string> classes) { }
+    }
+
+    private static readonly PivotArrayFieldInfo[] ItemsArray =
+        { new() { ArrayField = "Items", InnerKeyName = "ItemID", ElementCount = 4 } };
+
+    /// <summary>Array source on snapshot #1, class A picked: returns A's array-field load, still gated.</summary>
+    private static async Task<Task> PickArrayClassAAsync(ClassPivotViewModel vm)
+    {
+        vm.SelectedSource = "Snapshot Array";                       // no snapshot yet: nothing loads
+        await vm.RefreshAsync();                                    // the newest (#2) is selected: its class load is gated
+        vm.SelectedSnapshot = vm.Snapshots.First(s => s.Id == 1);
+        await SettleLoadsAsync(vm);                                 // #1's array classes: [A]
+        vm.SelectedClass = vm.Classes.First(c => c.ClassName == "A");
+        return vm.PendingLoad!;                                     // A's array fields, in flight
+    }
+
+    [Fact]
+    public async Task InArraySource_ASwitchToTheScalarSource_SupersedesTheArrayFieldLoadInFlight()
+    {
+        var store = new ArrayFieldGatedStore();
+        var vm = new ClassPivotViewModel(store, new MockLoggingService());
+        var arrayFieldLoad = await PickArrayClassAAsync(vm);
+
+        vm.SelectedSource = "Snapshot";                             // #1's scalar classes: [S]
+        await SettleLoadsAsync(vm);
+        vm.SelectedClass = vm.Classes.First(c => c.ClassName == "S");
+        await SettleLoadsAsync(vm);                                 // S's fields: [Health]
+
+        store.ArrayFieldsOfA.SetResult(ItemsArray);                 // the old class's array fields land late
+        await arrayFieldLoad;
+        await SettleLoadsAsync(vm);
+
+        Assert.Empty(vm.ArrayFields);
+        Assert.Null(vm.SelectedArrayField);
+        Assert.Equal(new[] { "Health" }, vm.Fields.Select(f => f.Name));
+    }
+
+    [Fact]
+    public async Task InArraySource_ASwitchToTheDataTableSource_SupersedesTheArrayFieldLoadInFlight()
+    {
+        var store = new ArrayFieldGatedStore();
+        var vm = new ClassPivotViewModel(store, new MockLoggingService(), null, new DtDumpService());
+        var arrayFieldLoad = await PickArrayClassAAsync(vm);
+
+        vm.SelectedSource = "DataTable";                            // lists the DataTables
+        await SettleLoadsAsync(vm);
+        vm.SelectedDataTable = vm.DataTables[0];
+        await SettleLoadsAsync(vm);                                 // the row struct's fields: [Damage]
+
+        store.ArrayFieldsOfA.SetResult(ItemsArray);
+        await arrayFieldLoad;
+        await SettleLoadsAsync(vm);
+
+        Assert.Empty(vm.ArrayFields);
+        Assert.Equal(new[] { "Damage" }, vm.Fields.Select(f => f.Name));
+    }
+
+    [Fact]
+    public async Task InArraySource_ASnapshotSwitch_SupersedesTheOldSnapshotsArrayFieldLoad()
+    {
+        var store = new ArrayFieldGatedStore();
+        var vm = new ClassPivotViewModel(store, new MockLoggingService());
+        var arrayFieldLoad = await PickArrayClassAAsync(vm);
+
+        vm.SelectedSnapshot = vm.Snapshots.First(s => s.Id == 2);
+        var classLoad = vm.PendingLoad!;                            // #2's array classes, gated
+
+        store.ArrayFieldsOfA.SetResult(ItemsArray);                 // #1's array fields of A land first
+        await arrayFieldLoad;
+        // Only a prop load the late list started -- SettleLoadsAsync would wait on #2's gated class load.
+        if (!ReferenceEquals(vm.PendingLoad, classLoad)) await vm.PendingLoad!;
+        Assert.Empty(vm.ArrayFields);                               // never shown under snapshot #2
+        Assert.Null(vm.SelectedArrayField);
+
+        store.Snap2ArrayClasses.SetResult(new[] { new PivotClassInfo { ClassName = "C", InstanceCount = 1 } });
+        await classLoad;
+        Assert.Contains(vm.Classes, c => c.ClassName == "C");       // and #2's class list still applies
+    }
+
     // ---- [A4-PIVOT-CROSSGAME-ID] a reconnect to a DIFFERENT game carries neither its pick nor its class list ----
     //
     // Snapshot ids are per-game-DB AUTOINCREMENT: after a reconnect to another game, "#2" names a different snapshot.
