@@ -1497,6 +1497,47 @@ public class SnapshotViewModelTests : IDisposable
         Assert.Single(await _store.ListSnapshotsAsync(ct));  // snapshot persisted
     }
 
+    // ---- a quota that is not a preset keeps its own value (the latent hazard [W1-QUOTA-UNLIMITED] records) ----
+    //
+    // A hand-edited experimental.json can hold any MB. The label map sent everything that is not a preset to "1 GB", and
+    // the label is what the combo and the auto-quota raise write back -- so a 3000 MB quota could come back as 1024.
+
+    [Fact]
+    public void ANonPresetQuota_IsShownAsItself_AndWritesItselfBack()
+    {
+        var gate = new ExperimentalGate(new MockPlatformService(_tempDir)) { SnapshotQuotaMb = 3000 };
+        var vm = new SnapshotViewModel(new StubDumpService(), _store, new MockLoggingService(), gate);
+
+        Assert.NotEqual("1 GB", vm.SelectedQuotaLabel);
+        Assert.Contains(vm.SelectedQuotaLabel, vm.QuotaOptions);    // the combo can show the label it holds
+        Assert.Equal(3000, gate.SnapshotQuotaMb);
+
+        var own = vm.SelectedQuotaLabel;
+        vm.SelectedQuotaLabel = "2 GB";
+        vm.SelectedQuotaLabel = own;                                // picked again from the combo
+        Assert.Equal(3000, gate.SnapshotQuotaMb);
+    }
+
+    // The auto-quota raise picks from AutoSnapshotPlanner.QuotaPresetBytes and shows its pick through the combo's labels.
+    // A preset the labels do not name is a lowered quota, so the two lists are held equal here.
+    [Fact]
+    public void TheQuotaCombosPresets_AreTheAutoQuotaPlannersPresets()
+    {
+        var gate = new ExperimentalGate(new MockPlatformService(_tempDir)) { SnapshotQuotaMb = 1024 };
+        var vm = new SnapshotViewModel(new StubDumpService(), _store, new MockLoggingService(), gate);
+
+        var presetBytes = new List<long>();
+        foreach (var label in vm.QuotaOptions.Where(l => l != "Unlimited"))
+        {
+            vm.SelectedQuotaLabel = label;
+            presetBytes.Add(gate.SnapshotQuotaMb * 1024L * 1024);
+        }
+        Assert.Equal(AutoSnapshotPlanner.QuotaPresetBytes, presetBytes);
+
+        vm.SelectedQuotaLabel = "Unlimited";
+        Assert.Equal(0, gate.SnapshotQuotaMb);
+    }
+
     // Platform double whose free/total disk space is configurable, for the free-disk-space
     // guard tests. Only the disk methods matter here; the rest are minimal no-ops.
     private sealed class DiskStubPlatformService : IPlatformService
