@@ -346,6 +346,23 @@ do
   eq(nonZeroParams(0, 32), 0, 'as an all-zero slot')
 end
 
+case('ASSETPTR-BAKED-TOKEN: an asset pointer is refused unless it is 0 -- its path is a string this cannot build')
+do
+  -- UE 4.11-4.17's TAssetPtr: the weak pair, then the path as an FString inside the game. As the int32 default the
+  -- helper wrote a typed value over the weak index; FIRE and the CE form refuse any value but empty.
+  resetWorld()
+  local ok, e = invokeUFunction('C', 'F', 32,
+                                { { name = 'map', type = 'asset', offset = 0, size = 32, value = 0x1234 } })
+  eq(ok, false, 'a value in an asset slot is refused')
+  contains(e, 'asset pointer', 'and the message says what it is')
+  resetWorld()
+  dirtyParams()
+  ok = invokeUFunction('C', 'F', 32,
+                       { { name = 'map', type = 'asset', offset = 0, size = 32, value = 0 } })
+  eq(ok, true, '0 (null) goes through')
+  eq(nonZeroParams(0, 32), 0, 'as an all-zero slot')
+end
+
 -- ============================================================
 -- AA17 -- the params buffer must be zeroed to the DLL's view, not the caller's
 -- ============================================================

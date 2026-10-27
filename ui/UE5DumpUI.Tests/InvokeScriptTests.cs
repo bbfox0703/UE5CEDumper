@@ -761,7 +761,8 @@ public class InvokeScriptTests
         Assert.Contains("t == 'fstring'", content);
         Assert.Contains("t == 'fstringn'", content);
         Assert.Contains("t == 'fstruct'", content);               // by-value struct param support
-        Assert.Contains("THIS_HELPER_VERSION = '1.4'", content);   // [R7-X5] the version gate; 1.4 replaces a resident 1.3
+        Assert.Contains("THIS_HELPER_VERSION = '1.5'", content);   // [R7-X5] the version gate; 1.5 ([ASSETPTR-BAKED-TOKEN]) replaces a resident 1.4
+        Assert.Contains("t == 'asset'", content);
     }
 
     // --- InputParams property ---
