@@ -6996,7 +6996,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             Sein::Info("PIPE:cmd", "set_debug_camera: enable=%d", enable ? 1 : 0);
             int32_t state = UE5_SetDebugCamera(enable ? 1 : 0);
             json data;
-            data["state"] = state;   // resulting state: 1=on, 0=off, -1=error, -5=toggle queued [W3-DEBUGCAM-QUEUED]
+            // resulting state: 1=on, 0=off, -1=error, -5=toggle queued [W3-DEBUGCAM-QUEUED], -6=not sent: an opposite
+            // toggle is still queued [DBGCAM-OFF-OVER-QUEUED-ON]
+            data["state"] = state;
             return Renge::MakeResponse(id, data).dump();
         }
 

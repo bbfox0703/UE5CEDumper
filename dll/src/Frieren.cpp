@@ -1379,32 +1379,56 @@ int32_t UE5_GetDebugCameraState() {
 static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintptr_t params, uint32_t paramsSize,
                                       bool dropIfAbandoned, std::shared_future<int32_t>* queuedOut = nullptr);
 
-// [DBGCAM-OFF-OVER-QUEUED-ON] The ON a Set left queued, until it has run. The pipe and the mailbox both call Set, so
-// one lock covers the whole call: two Sets must not both see "nothing queued" and both send.
-static std::mutex s_dbgCamSetMutex;
-static Stark::QueuedInvoke s_dbgCamQueuedOn;
+// [DBGCAM-OFF-OVER-QUEUED-ON] The toggle a Set left queued, until it has run, and the one a Set is dispatching now.
+// A toggle not yet run flips whatever the state reads, so no answer read before it runs is true: an OFF read "already
+// OFF" and reported a clean OFF that a queued ON then undid. Both directions: a queued OFF changes nothing on stock UE
+// 4.18-5.7 but does turn the camera off on 5.8. The pipe and the mailbox both call Set; the lock covers the check, the
+// read and the marking, never the invoke wait, which a CE untick behind another Set would otherwise sit through past
+// its own deadline.
+static std::mutex s_dbgCamMutex;
+static Stark::QueuedInvoke s_dbgCamQueued;
+static bool s_dbgCamQueuedWant = false;
+static int s_dbgCamInFlight = -1;   // -1 none, else the direction (0 OFF / 1 ON) being dispatched
 
 int32_t UE5_SetDebugCamera(int32_t enable) {
-    std::lock_guard<std::mutex> lk(s_dbgCamSetMutex);
-    bool want = (enable != 0);
-    // A queued ON will flip whatever the state reads now, so no answer read before it runs is true: an OFF read
-    // "already OFF" and reported a clean OFF that the queued ON then undid, and a second ON queues a second toggle.
-    // Send nothing and answer queued. A queued OFF is not tracked: on stock UE 4.18-5.7 it drains on the original
-    // controller's CheatManager and changes nothing, so the state read stays the truth.
-    if (s_dbgCamQueuedOn.StillQueued()) {
-        LOG_WARN("UE5_SetDebugCamera(%d): an earlier ON is still queued -- nothing sent", enable);
-        return Stark::kInvokeTimedOutStillQueued;
-    }
+    const bool want = (enable != 0);
     uintptr_t cm = 0, dcc = 0;
-    int state = DbgCam_ReadState(cm, dcc);
-    if (state < 0) {
-        LOG_WARN("UE5_SetDebugCamera: no readable CheatManager/DebugCamera state");
-        return -1;
+    int state = -1;
+    {
+        std::lock_guard<std::mutex> lk(s_dbgCamMutex);
+        if (s_dbgCamInFlight >= 0) {
+            LOG_WARN("UE5_SetDebugCamera(%d): a toggle is being dispatched -- nothing sent", enable);
+            return Stark::QueuedToggleAnswer(s_dbgCamInFlight == 1, want);
+        }
+        if (s_dbgCamQueued.StillQueued()) {
+            LOG_WARN("UE5_SetDebugCamera(%d): an earlier %s is still queued -- nothing sent", enable,
+                     s_dbgCamQueuedWant ? "ON" : "OFF");
+            return Stark::QueuedToggleAnswer(s_dbgCamQueuedWant, want);
+        }
+        state = DbgCam_ReadState(cm, dcc);
+        if (state < 0) {
+            LOG_WARN("UE5_SetDebugCamera: no readable CheatManager/DebugCamera state");
+            return -1;
+        }
+        if ((state == 1) == want) {
+            LOG_INFO("UE5_SetDebugCamera: already %s — no-op", want ? "ON" : "OFF");
+            return state;
+        }
+        s_dbgCamInFlight = want ? 1 : 0;
     }
-    if ((state == 1) == want) {
-        LOG_INFO("UE5_SetDebugCamera: already %s — no-op", want ? "ON" : "OFF");
-        return state;
-    }
+    // Every exit from here clears the in-flight mark, and keeps a toggle the dispatch left queued.
+    struct InFlight {
+        bool want;
+        std::shared_future<int32_t> queued;
+        ~InFlight() {
+            std::lock_guard<std::mutex> lk(s_dbgCamMutex);
+            s_dbgCamInFlight = -1;
+            if (queued.valid()) {
+                s_dbgCamQueued.Record(queued);
+                s_dbgCamQueuedWant = want;
+            }
+        }
+    } inFlight{ want, {} };
 
     // Known state, opposite of desired → fire ToggleDebugCamera once.
     uintptr_t cmClass = UE5_GetObjectClass(cm);
@@ -1413,11 +1437,9 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
         LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera UFunction not found");
         return -1;
     }
-    std::shared_future<int32_t> queued;
-    int32_t r = CallProcessEventRouted(cm, ufunc, 0, 0, false, &queued);
+    int32_t r = CallProcessEventRouted(cm, ufunc, 0, 0, false, &inFlight.queued);
     if (r != 0) {
         LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera ProcessEvent r=%d", r);
-        if (r == Stark::kInvokeTimedOutStillQueued && want && queued.valid()) s_dbgCamQueuedOn.Record(queued);
         // [W3-DEBUGCAM-QUEUED] A TIMED-OUT toggle (-5) stays queued and still runs: pass it through, so no caller reads
         // "nothing happened" and sends a second toggle that drains after it. Every other failure ran nothing: -1.
         return Stark::StatefulToggleFailure(r);

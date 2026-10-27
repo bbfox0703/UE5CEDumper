@@ -299,11 +299,13 @@ private:
     std::shared_future<int32_t> m_done;
 };
 
-/// [DBGCAM-OFF-OVER-QUEUED-ON] What a stateful toggle Set answers while an earlier toggle is still queued or in flight.
+/// [DBGCAM-OFF-OVER-QUEUED-ON] What a stateful toggle Set answers, sending nothing, while an earlier toggle is still
+/// queued or being dispatched. The same direction IS the caller's toggle, already queued: -5, do not re-send. The
+/// opposite direction was not sent, and the state it would read predates the queued toggle: -6, send it again once the
+/// game responds. A code of its own, so no caller describes it as a queued toggle of its own direction.
 constexpr int32_t kToggleBlockedByQueued = -6;
 inline int32_t QueuedToggleAnswer(bool queuedWant, bool want) {
-    (void)queuedWant; (void)want;
-    return kInvokeTimedOutStillQueued;
+    return queuedWant == want ? kInvokeTimedOutStillQueued : kToggleBlockedByQueued;
 }
 
 constexpr int32_t kRequestQueued = 0, kRequestRunning = 1, kRequestAbandoned = 2;

@@ -1136,6 +1136,14 @@ static void HandleSetDebugCamera() {
             : "Debug Camera: ON queued -- it will run when the game thread is free; do not re-send";
         strncpy(g_invokeMailbox.errorMsg, queued, sizeof(g_invokeMailbox.errorMsg) - 1);
         g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+    } else if (state == Stark::kToggleBlockedByQueued) {
+        // [DBGCAM-OFF-OVER-QUEUED-ON] An earlier toggle of the OTHER direction is still queued: this one sent nothing,
+        // and the state it would have read predates that toggle. A new negative code, the same MB3 reasoning as -5.
+        const char* blocked = (req == 0)
+            ? "Debug Camera: OFF not sent -- an earlier ON is still queued; send OFF again once the game responds"
+            : "Debug Camera: ON not sent -- an earlier OFF is still queued; send ON again once the game responds";
+        strncpy(g_invokeMailbox.errorMsg, blocked, sizeof(g_invokeMailbox.errorMsg) - 1);
+        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
     }
     LOG_INFO("Mailbox: SET_DEBUG_CAMERA req=%llu -> state=%d",
              (unsigned long long)req, state);
