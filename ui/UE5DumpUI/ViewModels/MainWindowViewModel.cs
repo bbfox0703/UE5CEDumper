@@ -599,7 +599,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         Pointers = new PointerPanelViewModel(platform, dump, log, aobMaker, aobUsage, experimentalGate, snapshotStore, pipeClient, logCompression,
             aobMakerUi == null ? null : AobMakerUi);
         LiveWalker = new LiveWalkerViewModel(dump, log, platform, aobMaker, bookmarks);
-        InstanceFinder = new InstanceFinderViewModel(dump, log, platform, AobMakerShared);
+        // [FABRICATE-DEFAULT-UNSEEDED] The exponent's change handler is the only other writer, and loading the default
+        // exponent is not a change -- so without this Copy CE Field fabricated nothing until the slider moved.
+        LiveWalker.FabricateArrayCount = FabricateArrayCount;
+        InstanceFinder =new InstanceFinderViewModel(dump, log, platform, AobMakerShared);
         PropertySearch = new PropertySearchViewModel(dump, log, aobMaker, platform, experimentalGate);
         GameClassFilter = new GameClassFilterViewModel(dump, log, platform);
         InterestingFunctions = new InterestingFunctionsViewModel(dump, log, aobMaker, platform);
