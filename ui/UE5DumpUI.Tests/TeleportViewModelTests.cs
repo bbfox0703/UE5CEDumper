@@ -1321,6 +1321,40 @@ public class TeleportViewModelTests
             "clipboard must be wrapped CE XML, not a bare AA body");
     }
 
+    /// <summary>
+    /// [QUERYPTR-LOG-ABSENT-LABEL] The global-pointer record reaches the clipboard on three different branches, and
+    /// the log has to say which. Measured in L80's run (2026-09-23): a second Get GWorld click takes the
+    /// already-pushed branch, where the push is never attempted -- and the log read only "was a push attempted", so
+    /// it wrote "(AOBMaker absent)" with the toolbar showing AOBMaker Connected. A reader chasing a failed push was
+    /// sent after a disconnect that never happened.
+    /// </summary>
+    [Theory]
+    [InlineData("already pushed", "(already pushed this session)")]
+    [InlineData("refused", "(AOBMaker refused)")]
+    [InlineData("absent", "(AOBMaker absent)")]
+    public async Task QueryPtr_clipboard_log_names_the_branch_that_was_taken(string branch, string expected)
+    {
+        var log = new MockLoggingService();
+        var bridge = new ScriptedAobMakerBridge
+        {
+            Available = branch != "absent",
+            AaResult = branch != "refused",
+        };
+        var platform = new FakePlatform();
+        var vm = new TeleportViewModel(new FakeDumpService(), log, platform, aobMaker: bridge);
+
+        if (branch == "already pushed")
+            await vm.GetGWorldAddressCommand.ExecuteAsync(null);   // the first click lands in CE
+        await vm.GetGWorldAddressCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        var line = Assert.Single(log.Messages,
+            m => m.Contains("Teleport query-ptr -> clipboard XML", StringComparison.Ordinal));
+        Assert.Contains(expected, line, StringComparison.Ordinal);
+        if (branch != "absent")
+            Assert.DoesNotContain("absent", line, StringComparison.Ordinal);
+    }
+
     // ── Debug Camera force on/off ──────────────────────────────────────
 
     [Fact]
