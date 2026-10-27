@@ -2099,6 +2099,18 @@ public class InvokeScriptTests
         Assert.DoesNotContain("its result cannot be trusted on its own", src, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void CePluginInject_Dialogs_PointAtTheLogsThatExist()
+    {
+        // [METHODE-STALE-LOGPATH] L53: both failure dialogs ended "Details: Logs\UE5Dumper-*.log", a flat layout gone since
+        // logs became per process and per category -- the CEPlugin: lines are in Cheat Engine's own folder, the scan in
+        // the game's, init-0.log in each. Methode.cpp reaches no test target, so this pins its source.
+        var src = DllSource("Methode.cpp");
+        Assert.DoesNotContain("UE5Dumper-*.log", src, StringComparison.Ordinal);
+        Assert.Contains("%LOCALAPPDATA%\\\\UE5CEDumper\\\\Logs", src, StringComparison.Ordinal);
+        Assert.Contains("init-0.log", src, StringComparison.Ordinal);
+    }
+
     private static string DllSrcDir()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
