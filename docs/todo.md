@@ -1686,6 +1686,24 @@ version table, which an editor build does not share (the register's PDB-oracle n
 it), so the validator turned the hook off and
 `ct_delegate_param_live.py` exits 2 before any call is traced; the decoder shares `DelegatePadFromElementSize` and its
 32-byte arm is unit-tested. The dissect consumes the ElementSize measured above; its placement is unit-tested.
+**Second review** (2026-10-27, `wf_590d9a97-4a4`: the fix range, two lenses, each put to a refuter) found older
+gaps of the same family, all closed in build 3656: **Find Refs** (MED) took a standalone DelegateProperty's weak pair
+and an inline multicast's TArray header at the FIELD offset, so on any UE 5.3+ checked build it read the detector
+and silently dropped those bindings -- red `f849e243` / green `c5aeea81` (`payloadOffset` / `headerOffset`; a
+reference still reports the field's offset), and its delegate-array stride got the test it lacked (a base + pad
+mutant goes red); **Scharf** answered alignment 4 for a checked delegate (8-aligned: a TMap<int32, FMyDelegate>
+value sits at +8) and 0 for every inline multicast (its search string was UE4's spelling) -- red `d4df1927` /
+green `28b7c656`; comments that gave delegate sizes as 16 / 24 or "8 bytes larger", and a pad test that read its
+base from global FName state (`fcca7cb6`); `ct_delegate_param_live.py` let a later stop hide a failed starred check
+(`b9e47ef3`); and the delegate rigs guessed the FName width from `case_preserving`, so `get_offsets` now carries
+`fname_size` and SW6 pokes 28, a size no build has (`85178079`). **Live, DumperTest 5.4 Development**
+(`tools/verify/findrefs_delegate_pad_live.py`: every fixture delegate is bound to its own actor, which Find Refs
+suppresses, so the rig lends the actor's bindings to the class default object for one call and restores them): build
+3655 found only the control (`Arr_Delegates`) of 25,264 objects scanned, missing `Del_Unicast` and `Multicast_Inline`
+(2/4); build 3656 (dist, AOT) found all three, 4/4, the CDO's bytes restored. On the same host with 3656:
+`ct_delegate_param_live.py` delegate and multicast 10/10 each, `d4b_delegate_pad.py` PASS, `get_offsets`
+`fname_size` 8. Notes draft (`## Fixed`): "On a Development or Debug build of a UE 5.3+ game, Find References lists
+objects bound to a delegate field, which it used to miss."
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
