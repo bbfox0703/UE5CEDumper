@@ -571,7 +571,8 @@ extern "C" {
     // Set only: -5 = the toggle timed out on the game thread and stays QUEUED. A
     // queued ON will still run: do not re-send it. A queued OFF does not turn the
     // camera off on stock UE 4.18-5.7: send OFF again once the game responds.
-    // [W3-DEBUGCAM-QUEUED]
+    // While a queued ON has not run, every Set answers -5 and sends nothing.
+    // [W3-DEBUGCAM-QUEUED] [DBGCAM-OFF-OVER-QUEUED-ON]
     __declspec(dllexport) int32_t   UE5_GetDebugCameraState();
     __declspec(dllexport) int32_t   UE5_SetDebugCamera(int32_t enable);
 

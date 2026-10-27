@@ -1376,8 +1376,25 @@ int32_t UE5_GetDebugCameraState() {
     return DbgCam_ReadState(cm, dcc);
 }
 
+static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintptr_t params, uint32_t paramsSize,
+                                      bool dropIfAbandoned, std::shared_future<int32_t>* queuedOut = nullptr);
+
+// [DBGCAM-OFF-OVER-QUEUED-ON] The ON a Set left queued, until it has run. The pipe and the mailbox both call Set, so
+// one lock covers the whole call: two Sets must not both see "nothing queued" and both send.
+static std::mutex s_dbgCamSetMutex;
+static Stark::QueuedInvoke s_dbgCamQueuedOn;
+
 int32_t UE5_SetDebugCamera(int32_t enable) {
+    std::lock_guard<std::mutex> lk(s_dbgCamSetMutex);
     bool want = (enable != 0);
+    // A queued ON will flip whatever the state reads now, so no answer read before it runs is true: an OFF read
+    // "already OFF" and reported a clean OFF that the queued ON then undid, and a second ON queues a second toggle.
+    // Send nothing and answer queued. A queued OFF is not tracked: on stock UE 4.18-5.7 it drains on the original
+    // controller's CheatManager and changes nothing, so the state read stays the truth.
+    if (s_dbgCamQueuedOn.StillQueued()) {
+        LOG_WARN("UE5_SetDebugCamera(%d): an earlier ON is still queued -- nothing sent", enable);
+        return Stark::kInvokeTimedOutStillQueued;
+    }
     uintptr_t cm = 0, dcc = 0;
     int state = DbgCam_ReadState(cm, dcc);
     if (state < 0) {
@@ -1396,9 +1413,11 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
         LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera UFunction not found");
         return -1;
     }
-    int32_t r = UE5_CallProcessEvent(cm, ufunc, 0);
+    std::shared_future<int32_t> queued;
+    int32_t r = CallProcessEventRouted(cm, ufunc, 0, 0, false, &queued);
     if (r != 0) {
         LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera ProcessEvent r=%d", r);
+        if (r == Stark::kInvokeTimedOutStillQueued && want && queued.valid()) s_dbgCamQueuedOn.Record(queued);
         // [W3-DEBUGCAM-QUEUED] A TIMED-OUT toggle (-5) stays queued and still runs: pass it through, so no caller reads
         // "nothing happened" and sends a second toggle that drains after it. Every other failure ran nothing: -1.
         return Stark::StatefulToggleFailure(r);
@@ -2326,7 +2345,7 @@ static void ReportHookState(bool active) {
 // The body of UE5_CallProcessEventEx. dropIfAbandoned: Stark::ClaimRequest -- a queued request whose waiter times out
 // never runs later. [VND584-01]
 static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintptr_t params, uint32_t paramsSize,
-                                      bool dropIfAbandoned) {
+                                      bool dropIfAbandoned, std::shared_future<int32_t>* queuedOut) {
     if (!instance || !ufunc) return -1;
 
     // Lazy, race-safe one-time detection + (retryable) hook install (audit #3).
@@ -2339,7 +2358,7 @@ static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintp
         ReportHookState(true);
         LOG_INFO("UE5_CallProcessEvent: dispatching to game thread inst=0x%llX func=0x%llX",
                  (unsigned long long)instance, (unsigned long long)ufunc);
-        return Stark::EnqueueInvoke(instance, ufunc, params, paramsSize, dropIfAbandoned);
+        return Stark::EnqueueInvoke(instance, ufunc, params, paramsSize, dropIfAbandoned, queuedOut);
     }
 
     // Hook is down. Log the fallback ONCE per state transition, not once per

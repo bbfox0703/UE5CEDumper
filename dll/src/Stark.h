@@ -62,9 +62,11 @@ bool IsHookActive();
 ///                    nothing rewrites it meanwhile: Mimic's mailbox does not
 ///                    qualify, because CE rewrites it with its next command.
 /// @param dropIfAbandoned  [VND584-01] see ClaimRequest: on a timeout the request never runs later.
+/// @param queuedOut  [DBGCAM-OFF-OVER-QUEUED-ON] on a timeout that leaves the request queued, receives its completion,
+///                   for a caller that must know when it has run (QueuedInvoke). Untouched otherwise.
 /// @return 0 on success, -4 if SEH exception, -5 if timeout, -7 if hook not active
 int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize,
-                      bool dropIfAbandoned = false);
+                      bool dropIfAbandoned = false, std::shared_future<int32_t>* queuedOut = nullptr);
 
 /// [W3-DEBUGCAM-QUEUED] EnqueueInvoke's -5: the game-thread dispatch TIMED OUT and the request STAYS QUEUED -- it still
 /// runs when the game thread next drains. Mirrored UI-side as Constants.InvokeDispatchTimeoutResult.
@@ -280,11 +282,19 @@ inline int NarrowedFlagTestsFunctionFlags(const uint8_t* body, size_t size, size
 }
 
 /// [DBGCAM-OFF-OVER-QUEUED-ON] A request EnqueueInvoke stopped waiting on and left queued, kept by a caller that must
-/// know whether it has run since.
+/// know whether it has run since: a STATEFUL toggle reads its state before it fires, and a toggle still queued will
+/// flip whatever that read said. Answered from the request's own promise, which the drain fulfils when it runs it.
+/// Not thread-safe: the caller holds its own lock.
 class QueuedInvoke {
 public:
     void Record(std::shared_future<int32_t> done) { m_done = std::move(done); }
-    bool StillQueued() { return false; }
+    /// True while a recorded request has not run. Once it has -- with any result -- the record clears itself.
+    bool StillQueued() {
+        if (!m_done.valid()) return false;
+        if (m_done.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return true;
+        m_done = {};
+        return false;
+    }
 private:
     std::shared_future<int32_t> m_done;
 };

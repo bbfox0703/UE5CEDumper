@@ -184,6 +184,8 @@ __declspec(dllexport) int32_t   UE5_GetDebugCameraState();
 // run, so it is not re-sent. A queued OFF drains on the original controller's
 // CheatManager, which on stock UE 4.18-5.7 leaves the camera on, so the OFF is sent
 // again once the game responds. [W3-DEBUGCAM-QUEUED] [DEBUGCAM-QUEUED-OFF-NOESCALATE]
+// While a queued ON has not run, every Set answers -5 and sends nothing: the state it
+// would read is from before the ON. [DBGCAM-OFF-OVER-QUEUED-ON]
 __declspec(dllexport) int32_t   UE5_SetDebugCamera(int32_t enable);
 
 // === Teleport (Wirbel: marker save/recall + cursor teleport) ===

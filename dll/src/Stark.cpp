@@ -758,7 +758,7 @@ bool IsHookActive() {
 }
 
 int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize,
-                      bool dropIfAbandoned) {
+                      bool dropIfAbandoned, std::shared_future<int32_t>* queuedOut) {
     if (!s_hookActive.load()) {
         return -7; // Hook not active
     }
@@ -779,7 +779,8 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
         req->params = params;
     }
 
-    auto future = req->promise.get_future();
+    // Shared, so a caller can keep it past a timeout and ask later whether the request has run (QueuedInvoke).
+    auto future = req->promise.get_future().share();
 
     {
         std::lock_guard<std::mutex> lock(s_queueMutex);
@@ -813,6 +814,7 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
         // buffer whose CONTENT must also stay valid until drained) get no such
         // protection. We just abandon the (now stale) result. A dropIfAbandoned
         // request was claimed as abandoned above: the drain skips it.
+        if (queuedOut && !dropIfAbandoned) *queuedOut = future;   // [DBGCAM-OFF-OVER-QUEUED-ON]
         return -5;
     }
 
