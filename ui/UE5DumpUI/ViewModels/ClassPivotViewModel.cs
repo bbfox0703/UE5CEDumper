@@ -402,6 +402,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         // field list or row can't be Run against the wrong source. Detach bound
         // selections before clearing (Avalonia selection-model safety).
         _arrayFieldLoadId++;   // [PIVOT-ARRAY-LOADID] a late array-field list would refill what this clears
+        _fieldLoadId++;        // ...and so would a late scalar or DataTable field list; not cancelled, so it still caches
         SelectedKeyField = null;
         SelectedArrayField = null;
         SelectedResult = null;
