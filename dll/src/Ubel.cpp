@@ -2800,10 +2800,18 @@ static SnapValue DecodeSnapElement(const ParamField& f, const uint8_t* p, uint32
         v.mark = SnapMark::Header;
         return v;
     }
-    if (t == "DelegateProperty") {   // FScriptDelegate: a weak object, then the function's FName (after any pad)
-        const int32_t idx = load32(0), serial = load32(4);
+    if (t == "DelegateProperty") {   // FScriptDelegate: a weak object, then the function's FName, both after any pad
+        // A UE 5.3+ checked build's access detector sits in front of the WHOLE payload (DynOff::kDelegateDetectorPad):
+        // read at +0, the pair is the detector's. A size that is neither shape is not read, as the walk refuses it.
         const int32_t pad = DynOff::DelegatePadFromElementSize(f.size, 8 + fsz);
-        const std::string fn = fnameAt(8 + (pad > 0 ? pad : 0), fsz);
+        if (pad < 0) {
+            v.text = "(delegate \xE2\x80\x94 unexpected ElementSize " + std::to_string(f.size) + ", not read) " +
+                     SnapHex(p, static_cast<size_t>(f.size));
+            v.mark = SnapMark::Raw;
+            return v;
+        }
+        const int32_t idx = load32(pad), serial = load32(pad + 4);
+        const std::string fn = fnameAt(pad + 8, fsz);
         const uintptr_t target = ctx.weak ? ctx.weak(idx, serial) : 0;
         std::string name, cls;
         const bool live = target && ctx.object && ctx.object(target, name, cls);
