@@ -180,6 +180,9 @@ public partial class ClassStructViewModel : ViewModelBase
         PropertiesSize = 0;
         LoadedClassAddr = "";
         HasClass = false;
+        // [CLASSSTRUCT-DISCONNECT-ERROR] The panel shows the error on its own line whenever it is set, so a failed walk
+        // of the process that just went away would stay above the next game's empty panel.
+        ClearError();
     }
 
     /// <summary>
