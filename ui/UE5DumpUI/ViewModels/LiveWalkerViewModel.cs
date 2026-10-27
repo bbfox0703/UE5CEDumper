@@ -1365,7 +1365,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// <param name="inlineIsCurrent">[R7-D-07] The drill's re-read landed, so an inline preview was walked at the slider's
     /// CURRENT value. False when it fell back to the last refresh's values, walked at some earlier value.</param>
     /// <summary>
-    /// The elements an array container view shows, and how many it ASKED for. Shared by the drill and Refresh's
+    /// The elements an array container view shows, how many it ASKED for, and the count they belong to (<c>Total</c>,
+    /// the element read's own when it read). Shared by the drill and Refresh's
     /// container branch, so the two cannot disagree: that branch re-rendered the parent walk's inline preview, which
     /// re-applied the Array Limit to a scalar view the slider does not govern. [WALK-REFRESH-SCALAR-SHRINK]
     /// </summary>
@@ -1375,12 +1376,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// </remarks>
     /// <param name="inlineIsCurrent">The inline preview was walked at the slider's CURRENT value: the drill's re-read
     /// landed, or Refresh just walked it.</param>
-    private async Task<(List<ArrayElementValue> Elements, int Requested)> ReadArrayViewElementsAsync(
+    private async Task<(List<ArrayElementValue> Elements, int Requested, int Total)> ReadArrayViewElementsAsync(
         LiveFieldValue field, string parentAddr, bool inlineIsCurrent, CancellationToken ct = default)
     {
         // All elements already inline (complete set)
         if (field.ArrayElements != null && field.ArrayElements.Count >= field.ArrayCount)
-            return (field.ArrayElements, field.ArrayCount);
+            return (field.ArrayElements, field.ArrayCount, field.ArrayCount);
 
         // Pointer/struct arrays: use inline elements (Phase D/E/F resolved names).
         // read_array_elements is scalar-only and cannot resolve pointer names.
@@ -1388,7 +1389,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // walked lower, and then a short reply is the old slider value, not the DLL's cap.
         // [R7-S10] ...or it IS the DLL's cap (a large array at a high slider): unknown, marked -1, names no lever.
         if (field.ArrayElements is { Count: > 0 } && IsPointerOrStructArrayType(field.ArrayInnerType))
-            return (field.ArrayElements, inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : -1);
+            return (field.ArrayElements, inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : -1, field.ArrayCount);
 
         // Scalar arrays: fetch full element list from DLL (Phase B)
         if (!string.IsNullOrEmpty(field.ArrayInnerAddr) && !string.IsNullOrEmpty(parentAddr))
@@ -1396,11 +1397,19 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var result = await _dump.ReadArrayElementsAsync(
                 parentAddr, field.Offset, field.ArrayInnerAddr,
                 field.ArrayInnerType, field.ArrayElemSize, 0, field.ArrayCount, ct);
-            return (result.Elements, field.ArrayCount);
+            // [WALK-REFRESH-SCALAR-SHRINK] review F2: the read counts the array again, and its elements belong to THAT
+            // count. Against the walk's, an array that shrank in between came back whole yet short, and read as a cap.
+            // A cap is fewer back than both what was asked and what is there. One that grew was bounded by the walk's
+            // own count, which no control governs: unknown (-1), and a re-read asks for the new count.
+            var total = result.TotalCount;
+            var requested = Math.Min(field.ArrayCount, total);
+            if (result.Elements.Count >= requested && total > field.ArrayCount) requested = -1;
+            return (result.Elements, requested, total);
         }
 
         return (field.ArrayElements ?? new(),
-                inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : -1);   // [R7-D-07] [R7-S10]
+                inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : -1,   // [R7-D-07] [R7-S10]
+                field.ArrayCount);
     }
 
     /// <summary>An array view's crumb label: the TRUE count, badged when fewer elements are shown.</summary>
@@ -1450,7 +1459,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         var parentAtGesture = CurrentCrumb;
         // The inline preview was walked at the slider's value (the drill re-reads the row first), so the slider is
         // what it asked for.
-        var (elements, requested) = await ReadArrayViewElementsAsync(field, parentAddr, inlineIsCurrent);
+        var (elements, requested, total) = await ReadArrayViewElementsAsync(field, parentAddr, inlineIsCurrent);
 
         // Only add breadcrumb after successful element retrieval — and only if the
         // user is still where they launched this from. parentAddr was captured before
@@ -1464,6 +1473,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         // Scalar arrays are re-fetched in full above -- up to the DLL's per-request cap; pointer/struct arrays fall back
         // to the capped inline preview. Compare the elements actually shown against the true count.
+        // [WALK-REFRESH-SCALAR-SHRINK] The field takes the count its elements were read at, so the view's label,
+        // header and held field cannot disagree with its rows.
+        field.ArrayCount = total;
         var arrTruncStatus = ArrayViewStatus(elements.Count, field.ArrayCount, requested);
         if (arrTruncStatus.Length > 0) StatusText = arrTruncStatus;
 
@@ -5668,10 +5680,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     if (updatedField.ArrayCount > 0 && !string.IsNullOrEmpty(updatedField.ArrayInnerType))
                     {
                         // Walked just now, at the slider's current value.
-                        var (elements, requested) = await ReadArrayViewElementsAsync(
+                        var (elements, requested, total) = await ReadArrayViewElementsAsync(
                             updatedField, containerBc.Address, inlineIsCurrent: true, ct);
                         if (Superseded()) return;
                         updatedField.ArrayElements = elements;   // what Back re-renders, as the drill persists it
+                        updatedField.ArrayCount = total;         // ...with the count they were read at
                         label = ArrayViewLabel(updatedField, elements.Count);
                         status = ArrayViewStatus(elements.Count, updatedField.ArrayCount, requested);
                     }
