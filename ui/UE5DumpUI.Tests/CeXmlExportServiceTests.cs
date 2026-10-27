@@ -5779,4 +5779,48 @@ public class CeXmlExportServiceTests
         Assert.Equal("+10", (string?)path.Element("Address"));
         Assert.Equal("0", (string?)path.Element("Offsets")?.Element("Offset"));      // deref FString.Data
     }
+
+    // A DataTable row's fields have their own emit loop, and a 4.17 row struct is where TAssetPtr is most often found
+    // (an icon, a mesh). It gets the scalar field's group.
+    [Theory]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
+    public void UE4AssetPointer_InADataTableRow_IsItsWeakPairAndItsPathString(string typeName)
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "RowMap", TypeName = "DataTableRows", Offset = 0xB0, Size = 0,
+                DataTableRowCount = 1, DataTableStructName = "ItemRow",
+                DataTableFNameSize = 8, DataTableStride = 24, DataTableRowStructAddr = "0xABC",
+                DataTableRowData = new List<DataTableRowInfo>
+                {
+                    new()
+                    {
+                        SparseIndex = 0, RowName = "Item_Potion", DataAddr = "0x1000",
+                        Fields = new List<LiveFieldValue>
+                        {
+                            new() { Name = "Icon", TypeName = typeName, Offset = 0x8, Size = 0x20,
+                                    StrValue = "/Game/UI/Icons/T_Potion.T_Potion" },
+                        }
+                    },
+                }
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml("\"Game.exe\"+1000", "DT_Items", "UDataTable", fields);
+
+        var icon = EntryNamed(xml, "Icon");
+        Assert.Equal("1", (string?)icon.Element("GroupHeader"));
+        Assert.Equal("+8", (string?)icon.Element("Address"));
+        Assert.Null(icon.Element("Offsets"));
+        var leaves = icon.Element("CheatEntries")!.Elements("CheatEntry").ToList();
+        Assert.Contains(leaves, l => (string?)l.Element("Description") == "\"WeakPtr\""
+                                     && (string?)l.Element("VariableType") == "8 Bytes");
+        var path = leaves.Single(l => (string?)l.Element("Description") == "\"AssetPath\"");
+        Assert.Equal("String", (string?)path.Element("VariableType"));
+        Assert.Equal("+10", (string?)path.Element("Address"));
+        Assert.Equal("0", (string?)path.Element("Offsets")?.Element("Offset"));
+    }
 }
