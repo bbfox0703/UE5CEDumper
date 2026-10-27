@@ -218,21 +218,26 @@ end
 -- CHECKED build puts in front of it), or nil when the ElementSize fits no build. It is the
 -- DLL's rule (DynOff::DelegatePadFromElementSize against the payload's own size), the pad the
 -- CE-XML / CSX exports add as DelegatePad. A standalone FScriptDelegate's payload holds an
--- FName, and this script cannot ask which width the build has, so both are tried; their
--- answers cannot collide (16 / 20 are pad 0, 24 / 28 pad 8). A multicast's payload is a bare
--- TArray header, the same 16 bytes whatever the FName. The DLL refuses any other size, and so
--- the caller must not guess one.
+-- FName, and this script cannot ask which width the build has, so all three are tried. The
+-- detector is an 8-aligned std::atomic<uint64>, so a padded struct's size rounds UP to 8
+-- (DynOff::DelegatePaddedSize): 12 / 16 / 20 are pad 0, 24 / 24 / 32 pad 8, and the two sets
+-- cannot collide. A multicast's payload is a bare TArray header, the same 16 bytes whatever the
+-- FName. The DLL refuses any other size, and so the caller must not guess one.
 -- ----------------------------------------------------------------
 local DELEGATE_DETECTOR_PAD = 8
 local DELEGATE_PAYLOAD_SIZES = {
-    DelegateProperty                = { 16, 20 },   -- the weak pair + an 8- or 12-byte FName
+    DelegateProperty                = { 12, 16, 20 },   -- the weak pair + a 4-, 8- or 12-byte FName
     MulticastInlineDelegateProperty = { 16 },
     MulticastDelegateProperty       = { 16 },
 }
+local function delegatePaddedSize(base)
+    local n = base + DELEGATE_DETECTOR_PAD
+    return n + (8 - n % 8) % 8
+end
 local function delegatePayloadPad(typeName, elementSize)
     for _, base in ipairs(DELEGATE_PAYLOAD_SIZES[typeName]) do
         if elementSize == base then return 0 end
-        if elementSize == base + DELEGATE_DETECTOR_PAD then return DELEGATE_DETECTOR_PAD end
+        if elementSize == delegatePaddedSize(base) then return DELEGATE_DETECTOR_PAD end
     end
     return nil
 end
