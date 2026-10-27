@@ -196,6 +196,28 @@ public class PanelSpaceBudgetTests
         Assert.All(groups, g => Assert.StartsWith("{Binding ", Attr(g, "ToolTip.Tip") ?? ""));
     }
 
+    [Fact]
+    public void Toolbar_StatusLine_IsAFixedWidthSlot()
+    {
+        // The L64 run of [W1-PIPEBUSY-LOG], observation (b), 2026-09-22: the toolbar status line was only CAPPED, so it took
+        // the width of its text. The ⟳ probe writes its "not connected" sentence there, the line widened, and every
+        // control after it in the WrapPanel moved: ⟳ went from about x 444 to x 658, out from under the cursor, and the
+        // next click opened the Address dropdown. A fixed Width keeps the controls after it still whatever the status says.
+        var doc = Axaml("MainWindow.axaml");
+        var status = Assert.Single(doc.Descendants(),
+            e => e.Name.LocalName == "TextBlock" && Attr(e, "Text") == "{Binding StatusText}");
+        var refresh = Assert.Single(doc.Descendants(),
+            e => e.Name.LocalName == "Button" && Attr(e, "Command") == "{Binding RefreshAobMakerCommand}");
+        Assert.True(status.IsBefore(refresh), "⟳ no longer follows the status line: re-check what this pin protects");
+
+        var width = Attr(status, "Width");
+        Assert.True(width is not null, "the toolbar status line has no fixed Width: its text moves every control after it");
+        // 360 is the budget the status sentences are written for (about 50 characters before the ellipsis).
+        Assert.Equal(360d, double.Parse(width!, System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Equal("CharacterEllipsis", Attr(status, "TextTrimming"));
+        Assert.Equal("{Binding StatusText}", Attr(status, "ToolTip.Tip"));   // the whole sentence stays one hover away
+    }
+
     /// <summary>Drop // and /* */ comments, so a pin cannot be satisfied by a commented-out line.</summary>
     private static string StripComments(string code) =>
         System.Text.RegularExpressions.Regex.Replace(code, @"/\*[\s\S]*?\*/|//[^\n]*", "");
