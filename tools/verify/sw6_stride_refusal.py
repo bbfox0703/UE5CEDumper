@@ -3,7 +3,7 @@ r"""SW6 — the delegate-stride REFUSAL, on the two arms that can actually reach
     py tools/verify/sw6_stride_refusal.py        # DumperTest must be running + injected
 
 THE ROW. `[D4B-DELEGATEPAD]` gave four readers a refusal: rather than guess a stride from an
-ElementSize that is neither *base* nor *base+8*, they decline. ⭐ A refusal is a NEW FAILURE MODE
+ElementSize that is neither *base* nor its padded size (*base+8*, rounded up to 8), they decline. ⭐ A refusal is a NEW FAILURE MODE
 the fix introduced — pre-fix the reader simply read the field — so if it ever fires wrongly it
 blanks working data. It had never fired at all: 5.4 / 5.7 / 5.8 and UE 4.23 / 4.27 all report one
 of the two legal sizes across 600 classes each, and the register recorded the arms as reachable
@@ -84,7 +84,8 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 CLIENT = HERE / "pipe_client.py"
 
-POKE = 32          # neither base nor base+8, for either reader -- see legal_sizes()
+POKE = 32          # legal for neither reader with an 8-byte FName -- see legal_sizes(); with a
+                   # 12-byte FName it IS the unicast's padded size, and the baseline guard refuses it
 
 # Each reader validates against its OWN FIXED base, not against whatever the field currently
 # reports. ⛔ Deriving the legal set from the LIVE value is wrong and this rig did it that way
@@ -99,8 +100,9 @@ SUBJECTS = [
 
 
 def legal_sizes(base: int) -> tuple[int, int]:
-    """`DelegatePadFromElementSize` accepts exactly these two (Grimoire.h:704-709)."""
-    return (base, base + 8)
+    """`DelegatePadFromElementSize` accepts exactly these two (Grimoire.h, `DelegatePaddedSize`): the
+    detector is 8-aligned, so the padded size is base + 8 rounded up to 8 -- 32, not 28, for base 20."""
+    return (base, (base + 8 + 7) & ~7)
 
 
 def call(cmd: str, args: dict | None = None) -> dict:

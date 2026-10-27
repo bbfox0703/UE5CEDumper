@@ -51,6 +51,11 @@ BATCH = 60          # walk_class_batch is the pipe-amortised form -- one call, m
 
 MCD_BASE = 16          # sizeof(FMulticastScriptDelegate) with no detector: a bare TArray header
 PAD = 8                # DynOff::kDelegateDetectorPad
+
+
+def padded(base: int) -> int:
+    """DynOff::DelegatePaddedSize: the detector is 8-aligned, so base + 8 rounds up to 8 (20 -> 32)."""
+    return (base + PAD + 7) & ~7
 MULTICAST = ("MulticastInlineDelegateProperty", "MulticastDelegateProperty")
 UNICAST = "DelegateProperty"
 SPARSE = "MulticastSparseDelegateProperty"
@@ -112,11 +117,11 @@ def main() -> int:
                     continue
                 if sz == base:
                     pads[0].append(where)
-                elif sz == base + PAD:
+                elif sz == padded(base):
                     pads[PAD].append(where)
                 else:
                     unknown.append("%s (%s, ElementSize=%d, expected %d or %d)"
-                                   % (where, t, sz, base, base + PAD))
+                                   % (where, t, sz, base, padded(base)))
 
     print("classes    : %d walked" % seen_classes)
     total = sum(len(v) for v in pads.values())
