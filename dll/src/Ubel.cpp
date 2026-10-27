@@ -2785,8 +2785,9 @@ static SnapValue DecodeSnapElement(const ParamField& f, const uint8_t* p, uint32
         header(load32(8), load64(0));   // a TArray header {Data, Num, Max}; the data was not copied
         return v;
     }
-    if (t == "MulticastInlineDelegateProperty") {   // its invocation list's TArray header, after any pad
-        // The same detector as a DelegateProperty's sits in front of the header (16 bytes, FName-independent): read
+    if (t == "MulticastInlineDelegateProperty" || t == "MulticastDelegateProperty") {   // UE4 < 4.23 has no "Inline"
+        // Its invocation list's TArray header, after any pad: the same detector as a DelegateProperty's sits in front
+        // of the header (16 bytes, FName-independent) on a UE 5.3+ checked build. Read
         // at +0, Data is the detector and Num Data's low half. A size that is neither shape is not read, as the walk
         // refuses it.
         const int32_t pad = DynOff::DelegatePadFromElementSize(f.size, 16);
