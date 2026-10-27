@@ -3554,6 +3554,11 @@ public class TeleportViewModelTests
 
         Assert.DoesNotContain("nothing was added", status, StringComparison.Ordinal);
         Assert.Contains("may still have been added", status, StringComparison.Ordinal);
+        // The bridge sets TimedOut for a pipe that broke or hit EOF after the request too (RoundTripAsync's IOException
+        // and ReadMessageAsync's short read both return no reply), so the line names neither cause alone -- the way
+        // str.AobMaker.Struct.TimedOut, fed by the same call, already reads.
+        Assert.DoesNotContain("in time", status, StringComparison.Ordinal);
+        Assert.Contains("the pipe closed", status, StringComparison.Ordinal);
     }
 
     [Fact]
