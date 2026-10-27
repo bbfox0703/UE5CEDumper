@@ -129,4 +129,27 @@ public class DebugCameraScriptGeneratorTests
         Assert.DoesNotContain("showMessage(", queued);                         // no modal on an untick
         Assert.DoesNotContain(CeLuaHygiene.CloseCall, queued);
     }
+
+    // [DEBUGCAM-QUEUED-OFF-NOESCALATE] (review): ue5_invoke_helper.lua's copy-me Debug Camera example kept the old
+    // [DISABLE] -- pcall(setDebugCamera, 0), reporting only a failed pcall -- so a queued OFF unticked silently over a
+    // camera that stays on. scripts/tests/invoke_helper_test.lua RUNS the block; this pins its shape where no CE Lua
+    // host is built.
+    [Fact]
+    public void Invoke_helper_example_disable_says_a_queued_OFF_and_keeps_the_record_ticked()
+    {
+        var src = System.IO.File.ReadAllText(NumericInputCoercionTests.RepoFile("scripts/ue5_invoke_helper.lua"))
+                                .Replace("\r\n", "\n");
+        int at = src.IndexOf("pcall(setDebugCamera, 0)", System.StringComparison.Ordinal);
+        Assert.True(at >= 0, "the Debug Camera example's [DISABLE] call is gone");
+        var block = src.Substring(at, src.IndexOf("{$asm}", at, System.StringComparison.Ordinal) - at);
+        int q = block.IndexOf("state == -5", System.StringComparison.Ordinal);
+        Assert.True(q >= 0, "no queued branch in the example's [DISABLE]");
+        int end = block.IndexOf("\n    end", q, System.StringComparison.Ordinal);
+        Assert.True(end > q, "the queued branch has no end");
+        var queued = block[q..end];
+        Assert.Contains("print('[Debug Camera] OFF did not complete", queued);
+        Assert.DoesNotContain("UE5_DEBUG", queued);                            // ungated: a real problem
+        Assert.Contains("error('[Debug Camera]", queued);                      // keeps the record ticked
+        Assert.DoesNotContain("showMessage(", queued);                         // no modal on an untick
+    }
 }
