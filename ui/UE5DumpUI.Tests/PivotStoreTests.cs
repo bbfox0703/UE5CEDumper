@@ -128,4 +128,42 @@ public class PivotStoreTests : IDisposable
         Assert.Equal(3, g.Count);
         Assert.Equal("Quantity=⟨3: 10,20,5⟩", g.ValuesDisplay);
     }
+
+    // [SNAPDIFF-SHADOWED-PROP] review: a class can carry two properties of one name at different offsets (measured on
+    // DumperTest: MovieSceneCinematicShotSection's PrerollTime at +196 and +296). The pivot field list grouped by
+    // (name, type), so the two copies were ONE picker entry with a doubled instance count and a distinct count pooled
+    // over both -- and that pooled count fed the key scorer.
+    internal static SnapshotCapturedObject ShotSection(int idx, string path, int preroll296)
+    {
+        var o = new SnapshotCapturedObject
+        {
+            Index = idx, Addr = $"0x{0x2000 + idx:X}", Name = $"Shot{idx}",
+            ClassName = "MovieSceneCinematicShotSection", OuterClassName = "World", Path = path,
+        };
+        o.Fields.Add(new SnapshotCapturedField { Name = "PrerollTime", Type = "IntProperty", Hex = IntHex(0), Offset = 196 });
+        o.Fields.Add(new SnapshotCapturedField { Name = "PrerollTime", Type = "IntProperty", Hex = IntHex(preroll296), Offset = 296 });
+        o.Fields.Add(new SnapshotCapturedField { Name = "RowIndex", Type = "IntProperty", Hex = IntHex(idx), Offset = 0x10 });
+        return o;
+    }
+
+    [Fact]
+    public async Task ListFields_KeepsTheTwoCopiesOfAShadowedNameApart()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "shadow" }, ct);
+        await _store.WriteChunkAsync(id, new[]
+        {
+            ShotSection(1, "/G.M:L.ShotA", 5), ShotSection(2, "/G.M:L.ShotB", 6), ShotSection(3, "/G.M:L.ShotC", 7),
+        }, ct);
+        await _store.FinalizeSnapshotAsync(id, 3, 9, ct);
+
+        var fields = await _store.ListPivotFieldsAsync(id, "MovieSceneCinematicShotSection", ct);
+
+        var preroll = fields.Where(f => f.Name == "PrerollTime").ToList();
+        Assert.Equal(2, preroll.Count);                                     // one entry per copy
+        Assert.All(preroll, f => Assert.Equal(3, f.InstanceCount));        // not 6
+        Assert.Equal(new[] { 1, 3 }, preroll.Select(f => f.DistinctCount).OrderBy(n => n));   // not 4, pooled
+        var row = Assert.Single(fields, f => f.Name == "RowIndex");
+        Assert.Equal(3, row.InstanceCount);
+    }
 }

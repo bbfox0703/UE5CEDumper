@@ -293,6 +293,59 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Contains(vm.Results, r => r.KeyValue == "2 · 5");
     }
 
+    // ---- [SNAPDIFF-SHADOWED-PROP] review: Class Pivot keyed a shadowed property name by name alone ----
+    //
+    // Two properties of one name at different offsets were one picker entry, and the pivot folded each instance's rows
+    // by name (the last row won, in no defined order), so a value or a key could be either copy's. Each copy is now its
+    // own field, labelled with its offset in the picker and the results; a name used once keeps its bare label.
+
+    private async Task<ClassPivotViewModel> ShadowedSectionVmAsync()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "shadow" }, ct);
+        await _store.WriteChunkAsync(id, new[]
+        {
+            PivotStoreTests.ShotSection(1, "/G.M:L.ShotA", 5),
+            PivotStoreTests.ShotSection(2, "/G.M:L.ShotB", 6),
+            PivotStoreTests.ShotSection(3, "/G.M:L.ShotC", 7),
+        }, ct);
+        await _store.FinalizeSnapshotAsync(id, 3, 9, ct);
+
+        var vm = NewVm();
+        await vm.RefreshAsync();
+        await SettleLoadsAsync(vm);
+        vm.SelectedClass = vm.Classes.First(c => c.ClassName == "MovieSceneCinematicShotSection");
+        await SettleLoadsAsync(vm);
+        foreach (var f in vm.Fields) { f.IsValue = false; f.IsKey = false; }
+        return vm;
+    }
+
+    [Fact]
+    public async Task AShadowedName_IsOnePickerEntryPerCopy_LabelledWithItsOffset()
+    {
+        var vm = await ShadowedSectionVmAsync();
+
+        // +196 = 0xC4, +296 = 0x128. RowIndex is used once, so its label is its bare name.
+        Assert.Equal(new[] { "PrerollTime@+0xC4", "PrerollTime@+0x128", "RowIndex" }, vm.KeyFieldOptions);
+    }
+
+    [Fact]
+    public async Task AShadowedName_PivotsEachCopyApart_UnderItsOwnLabel()
+    {
+        var vm = await ShadowedSectionVmAsync();
+
+        // Key on the +196 copy (0 on every instance), project the +296 copy (5 / 6 / 7).
+        vm.SelectedKeyMode  = "Field";
+        vm.SelectedKeyField = "PrerollTime@+0xC4";
+        vm.Fields.Single(f => f.Name == "PrerollTime" && f.DistinctCount == 3).IsValue = true;
+        await vm.RunPivotCommand.ExecuteAsync(null);
+
+        var row = Assert.Single(vm.Results);
+        Assert.Equal("0", row.KeyValue);
+        Assert.Equal(3, row.Count);
+        Assert.Equal("PrerollTime@+0x128=⟨3: 5,6,7⟩", row.ValuesDisplay);
+    }
+
     [Fact]
     public void OpenInLiveWalker_RaisesNavigate()
     {
