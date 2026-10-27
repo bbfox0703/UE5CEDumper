@@ -996,7 +996,8 @@ public sealed class SnapshotStore : ISnapshotStore
         // This is independent of index/schema shape — far faster than a SQL
         // self-join over ~1.8M rows, which only stays quick with a perfect
         // single-table composite covering index. Key = (class_fqn, gobjects_index,
-        // prop_name); unique within one snapshot.
+        // prop_name, prop_offset): the offset because a class can shadow a property name
+        // ([SNAPDIFF-SHADOWED-PROP]: PrerollTime at +196 and +296 on DumperTest).
 
         // Intern the high-repetition class/prop strings to cut allocations.
         var intern = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -1007,11 +1008,11 @@ public sealed class SnapshotStore : ISnapshotStore
         // The key includes array_field + elem_index so struct-array-element rows
         // (e.g. SaveSlotList[0].GP vs SaveSlotList[1].GP, same class/owner/inner
         // prop name) don't collide. Direct fields use "" / -1. (build 1203)
-        var aMap = new Dictionary<(string cls, long idx, string prop, string arr, int elem), (string hex, double? num)>();
+        var aMap = new Dictionary<(string cls, long idx, string prop, int off, string arr, int elem), (string hex, double? num)>();
         await using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = "SELECT class_fqn, gobjects_index, prop_name, hex, numeric_value, " +
-                              "array_field, elem_index FROM fields WHERE snapshot_id=$id;";
+                              "array_field, elem_index, prop_offset FROM fields WHERE snapshot_id=$id;";
             cmd.Parameters.AddWithValue("$id", idA);
             await using var r = await cmd.ExecuteReaderAsync(ct);
             int rowCount = 0;
@@ -1024,6 +1025,7 @@ public sealed class SnapshotStore : ISnapshotStore
                 var key = (Intern(aCls),
                            r.IsDBNull(1) ? -1L : r.GetInt64(1),
                            Intern(r.IsDBNull(2) ? "" : r.GetString(2)),
+                           r.IsDBNull(7) ? -1 : r.GetInt32(7),
                            Intern(r.IsDBNull(5) ? "" : r.GetString(5)),
                            r.IsDBNull(6) ? -1 : r.GetInt32(6));
                 aMap[key] = (r.IsDBNull(3) ? "" : r.GetString(3),
@@ -1055,7 +1057,8 @@ public sealed class SnapshotStore : ISnapshotStore
                 string prop = r.IsDBNull(2) ? "" : r.GetString(2);
                 string arr  = r.IsDBNull(9) ? "" : r.GetString(9);
                 int    elem = r.IsDBNull(10) ? -1 : r.GetInt32(10);
-                if (!aMap.TryGetValue((Intern(cls), idx, Intern(prop), Intern(arr), elem), out var a)) continue;  // B-only (added)
+                int    off  = r.IsDBNull(7) ? -1 : r.GetInt32(7);
+                if (!aMap.TryGetValue((Intern(cls), idx, Intern(prop), off, Intern(arr), elem), out var a)) continue;  // B-only (added)
                 matched++;
 
                 string bHex = r.IsDBNull(3) ? "" : r.GetString(3);
@@ -1774,7 +1777,10 @@ public sealed class SnapshotStore : ISnapshotStore
     private static string SpcKeyBase(SpcJoinMode mode, SqliteDataReader r, string cls, string prop) => mode switch
     {
         SpcJoinMode.Loose     => cls + "\u0001" + (r.IsDBNull(2) ? "" : r.GetString(2)) + "\u0001" + prop,
-        SpcJoinMode.InSession => cls + "\u0001" + (r.IsDBNull(9) ? -1L : r.GetInt64(9)) + "\u0001" + prop,
+        // [SNAPDIFF-SHADOWED-PROP] The offset, as Strict's: a class can shadow a property name. Loose stays
+        // name-only on purpose -- it matches across sessions and game patches, where an offset may move.
+        SpcJoinMode.InSession => cls + "\u0001" + (r.IsDBNull(9) ? -1L : r.GetInt64(9)) + "\u0001" + prop +
+                                 "\u0001" + (r.IsDBNull(5) ? 0 : r.GetInt32(5)),
         _ /* Strict */        => cls + "\u0001" + (r.IsDBNull(1) ? "" : r.GetString(1)) + "\u0001" + prop +
                                  "\u0001" + (r.IsDBNull(5) ? 0 : r.GetInt32(5)),
     };
