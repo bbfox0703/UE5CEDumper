@@ -2175,7 +2175,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 ? $"AOBMaker refused '{desc}' — copied it as CE memory-record XML instead. "
                 : $"AOBMaker not connected — copied '{desc}' as CE memory-record XML to the clipboard. ")
                 + $"Paste into Cheat Engine's address list (right-click → Paste), then enable it to register '{sym}'.";
-            _log.Info($"Teleport query-ptr -> clipboard XML (AOBMaker {(available ? "refused" : "absent")}): {desc}");
+            // [QUERYPTR-LOG-ABSENT-LABEL] Name the branch, the same three the status line tells apart. The
+            // already-pushed branch never asks AOBMaker, so `available` is false there too, and reading it alone
+            // logged "absent" with AOBMaker connected -- sending a log reader after a disconnect that did not happen.
+            string branch = alreadyPushed ? "already pushed this session"
+                          : available ? "AOBMaker refused"
+                          : "AOBMaker absent";
+            _log.Info($"Teleport query-ptr -> clipboard XML ({branch}): {desc}");
         }
         catch (Exception ex)
         {
