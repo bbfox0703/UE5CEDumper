@@ -6,9 +6,10 @@ Open work only. **Read this when deciding what to do next.**
 >
 > ▶ **Current programme:** `[FIXPASS-2026-10-27]` (the maintainer: fix every open LOW / INFO). Batches 1-3 shipped in
 > build 3657 and passed live on its AOT build (`[BATCH3-LIVE-3657]`); batch 2's own review and the review of batch 3's
-> fixes shipped in build 3658, not yet checked live (`[BATCH2-REVIEW-2026-10-27]`, `[FIXREVIEW-2026-10-27]`). Open: the five LOW leads batch 3 left (`[TRAINER-PUSH-TIMEDOUT-TEXT]`,
-> `[DISCOVER-SHADOWED-POOL]`, `[DBGCAM-OFF-OVER-QUEUED-ON]`, `[ASSETPTR-BAKED-TOKEN]`, `[L83-PLAN-QUEUED-STRINGS]`),
-> and the asset-pointer container shapes still owed live (`[UE4-ASSETPTR-EXPORTS]`'s row). · Before it, the
+> fixes shipped in build 3658, not yet checked live (`[BATCH2-REVIEW-2026-10-27]`, `[FIXREVIEW-2026-10-27]`). The five LOW leads batch 3 left are fixed
+> (`[TRAINER-PUSH-TIMEDOUT-TEXT]`, `[DISCOVER-SHADOWED-POOL]`, `[DBGCAM-OFF-OVER-QUEUED-ON]`, `[ASSETPTR-BAKED-TOKEN]`,
+> `[L83-PLAN-QUEUED-STRINGS]`). Open: the asset-pointer container shapes still owed live (`[UE4-ASSETPTR-EXPORTS]`'s
+> row), and live checks of 3658 and later. · Before it, the
 > known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
 > 3649): every row it took is built and checked live, `[MH-PRERESERVE-PROXY]` included; the maintainer's calls are in
 > the rows and working-lessons §6. Still owed live, each row says how: a crash mid-capture on a large title
@@ -1774,7 +1775,10 @@ when the clipboard took it; the rest make no claim, by design), `[UE4-ASSETPTR-E
   each copy is its own candidate, labelled Name@+0xOFF when the class shows the name at more than one offset; the
   Discover grid binds that label. Was: `PivotDiscoveryEngine.Rank` groups by (class, prop, type), so the two copies of a
   shadowed name of one type become ONE discovery candidate with pooled counts.
-- ⬜ `[DBGCAM-OFF-OVER-QUEUED-ON]` (inferred from `UE5_SetDebugCamera`, not measured) Force OFF / an untick while an ON
+- ✅ `[DBGCAM-OFF-OVER-QUEUED-ON]` **FIXED 2026-10-27** (red `a7e3ae0f` / green `30f95baf`; DLL): `EnqueueInvoke` hands back
+  the completion of a request it leaves queued, `Stark::QueuedInvoke` says whether it has run, and while a queued ON
+  has not run every `UE5_SetDebugCamera` answers -5 and sends nothing. ⬜ Not checked live (the stall needs DumperTest
+  dev `--idle`, L83's rig). Was (inferred from `UE5_SetDebugCamera`, not measured): Force OFF / an untick while an ON
   is still queued reads the camera OFF ("already OFF -- no-op"), reports a clean OFF, and the queued ON then turns it on.
 - ✅ `[ASSETPTR-BAKED-TOKEN]` **FIXED 2026-10-27** (red `54e4c1ce` / green `03041d87`): `ue5_invoke_helper.lua` 1.5
   adds the empty-only `asset` token (refused unless 0), `MapToHelperType` sends Asset* there, and the CE, baked and FIRE
