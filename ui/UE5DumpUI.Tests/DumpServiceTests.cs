@@ -2576,6 +2576,38 @@ public class DumpServiceTests
         Assert.Null(ps[2].IsParm);
     }
 
+    // [VND584-04] The function list's interface half: asked for with include_interfaces, read back as ViaInterface, and
+    // shown with the interface's name so the row says where the function comes from.
+    [Fact]
+    public async Task WalkFunctionsWithInterfacesAsync_AsksForThem_AndReadsTheInterface()
+    {
+        JsonObject? sent = null;
+        _pipe.SetHandler(req =>
+        {
+            sent = req;
+            return new JsonObject
+            {
+                ["ok"] = true, ["count"] = 2,
+                ["functions"] = new JsonArray
+                {
+                    new JsonObject { ["name"] = "Tick", ["addr"] = "0x100", ["params"] = new JsonArray() },
+                    new JsonObject { ["name"] = "DoFoo", ["addr"] = "0x200", ["interface"] = "FooInterface",
+                                     ["params"] = new JsonArray() },
+                },
+            };
+        });
+
+        IDumpService svc = CreateService();
+        var funcs = await svc.WalkFunctionsWithInterfacesAsync("0x7FF000", TestContext.Current.CancellationToken);
+
+        Assert.True(sent?["include_interfaces"]?.GetValue<bool>() ?? false);
+        Assert.Equal("", funcs[0].ViaInterface);
+        Assert.Equal("Tick", funcs[0].DisplayName);
+        Assert.Equal("FooInterface", funcs[1].ViaInterface);
+        Assert.Contains("FooInterface", funcs[1].DisplayName);
+        Assert.StartsWith("DoFoo", funcs[1].DisplayName);
+    }
+
     // [A3-FIRE-STRUCT-BOOLMASK] A packed bool sub-field carries its single-bit mask on the wire,
     // so FIRE and Copy AA Script can read-modify-write its bit instead of the whole byte.
     [Fact]

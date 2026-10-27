@@ -224,6 +224,12 @@ public interface IDumpService
     // --- Function Walking (for SDK export) ---
     Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default);
 
+    /// <summary>[VND584-04] <see cref="WalkFunctionsAsync"/> plus the functions the class gets only through an interface
+    /// its chain implements -- the names an invoke by name reaches -- each with <see cref="FunctionInfoModel.ViaInterface"/>.
+    /// For a function LIST; a dump or an export reads the class's own functions. The default serves fakes without it.</summary>
+    Task<List<FunctionInfoModel>> WalkFunctionsWithInterfacesAsync(string addr, CancellationToken ct = default)
+        => WalkFunctionsAsync(addr, ct);
+
     // --- Property Keyword Search ---
     // deep: opt-in descent into nested struct + struct-typed container element
     // schemas so a field like SaveSlotList[].MsTuneData.GP is findable by name.

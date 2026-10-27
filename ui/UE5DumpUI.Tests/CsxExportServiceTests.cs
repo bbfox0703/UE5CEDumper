@@ -113,6 +113,7 @@ public class StubDumpService : IDumpService
     // the CLASS collector (audit #5 W8) has to be able to answer this without throwing.
     public virtual Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<List<FunctionInfoModel>> WalkFunctionsWithInterfacesAsync(string addr, CancellationToken ct = default) => WalkFunctionsAsync(addr, ct);
     public virtual Task<PropertySearchResult> SearchPropertiesAsync(string query, string[]? types = null, bool gameOnly = true, bool deep = false, int limit = 200, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<PropertySearchBatchResult> SearchPropertiesBatchAsync(string[] queries, string[]? types = null, bool gameOnly = true, int limitPerQuery = 200, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<ClassListResult> ListClassesAsync(bool gameOnly = true, int limit = 5000, CancellationToken ct = default) => throw new NotImplementedException();
