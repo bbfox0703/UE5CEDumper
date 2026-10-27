@@ -1837,8 +1837,9 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <!-- [COORDPICK-OVERSIZE-REASON] A no-DLL push the bridge or Cheat Engine refused, with the reason it gave: a library
          over AOBMaker's message limit is refused before a byte is sent, and is no dropped pipe. -->
     <sys:String x:Key="str.TP.LibNoDllNotAdded">⚠ The no-DLL picker was not added to Cheat Engine: {0}.</sys:String>
-    <!-- [COORDPICK-TIMEDOUT-TEXT] No reply in time: the plugin may have made the record after the wait gave up
-         (AOBMaker reply section 3 rule 8), so the line warns against a second press rather than saying nothing was added. -->
+    <!-- [COORDPICK-TIMEDOUT-TEXT] No reply after the request was sent (the wait ran out, or the pipe broke or hit
+         end of file, which the bridge reports the same way): the plugin may have made the record (AOBMaker reply
+         section 3 rule 8), so the line warns against a second press rather than saying nothing was added. -->
     <sys:String x:Key="str.TP.LibNoDllTimedOut">⚠ No reply from Cheat Engine for the no-DLL picker (it timed out, or the pipe closed): it may still have been added. Check Cheat Engine's address list before pressing again.</sys:String>
     <!-- [COORDPICK-TIMEDOUT-TEXT] {0} is the bridge's own unavailable sentence (str.AobMaker.Unavailable.*): busy, refused, absent. -->
     <sys:String x:Key="str.TP.LibNoDllNotReached">⚠ {0}; nothing was added.</sys:String>
