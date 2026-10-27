@@ -783,6 +783,33 @@ public class TeleportViewModelTests
         Assert.Contains("no stealth meter", vm.StatusText, StringComparison.OrdinalIgnoreCase);
     }
 
+    // [STEALTH-RESET-STALE-HELD] (review): a reconnect during a loading screen -- find_stealth_meter answers nothing, so
+    // the prime cannot match the forced field and the card shows Unknown with no meter. Reset then sent nothing, yet set
+    // the badge Off and said there was no hold to release, over a hold Solide may still run.
+    [Fact]
+    public async Task Reset_with_no_known_meter_claims_neither_Off_nor_an_absent_hold()
+    {
+        var fake = new FakeDumpService
+        {
+            NextStealthCandidates = new List<StealthCandidate>(),   // no meter on any pawn while the level loads
+            NextForcedFields = new List<ForcedFieldInfo>
+            {
+                new() { ClassName = "BP_Player_C", FieldName = "Visibility", Kind = "numeric", Value = 0, Held = 0 },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+        Assert.Equal("Unknown", vm.StealthState);   // something is held, and the prime cannot say what
+
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, fake.ResetFieldCalls);      // no meter to name, so nothing was sent
+        Assert.Equal("Unknown", vm.StealthState);   // not "Off": nothing was released, and the hold may still run
+        Assert.DoesNotContain("no hold", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Detect", vm.StatusText);   // what the user can do about it
+    }
+
     [Fact]
     public async Task Connect_never_takes_a_Property_Search_force_for_the_Stealth_hold()
     {
