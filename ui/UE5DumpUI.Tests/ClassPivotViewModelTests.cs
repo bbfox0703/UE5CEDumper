@@ -1607,6 +1607,53 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.DoesNotContain(vm.Fields, f => f.Name is "Health" or "Level");
     }
 
+    // ---- [SNAPDIFF-SHADOWED-PROP] batch 2's review: the label is what the picker shows and what the key names ----
+    //
+    // The shadowed-name fixture's suggested key is RowIndex, used once, whose Label is its Name: a revert of the key
+    // suggestion or the pre-tick skip to Name kept every test green. Here the best key IS one copy of a shadowed name.
+
+    [Fact]
+    public async Task ASuggestedKeyThatIsOneCopyOfAShadowedName_IsNamedByItsLabel_AndOnlyTheOtherCopyIsProjected()
+    {
+        var store = new ScalarFieldGatedStore();
+        store.FieldsOfS.SetResult(new[]
+        {
+            // 2 distinct values over 4 instances: a real grouping key (0.35 x 0.8 + 0.30 = 0.58).
+            new PivotFieldInfo { Name = "Gold", DeclaredType = "IntProperty", DistinctCount = 2, InstanceCount = 4,
+                                 Offset = 0x30, Shadowed = true },
+            new PivotFieldInfo { Name = "Gold", DeclaredType = "IntProperty", DistinctCount = 1, InstanceCount = 4,
+                                 Offset = 0x60, Shadowed = true },
+        });
+        var vm = new ClassPivotViewModel(store, new MockLoggingService());
+        await PickScalarClassSAsync(vm);
+        await SettleLoadsAsync(vm);
+
+        Assert.Equal("Field", vm.SelectedKeyMode);
+        Assert.Equal("Gold@+0x30", vm.SelectedKeyField);                       // an entry KeyFieldOptions holds
+        Assert.Contains(vm.SelectedKeyField, vm.KeyFieldOptions);
+        Assert.False(vm.Fields.Single(f => f.Label == "Gold@+0x30").IsValue);  // the key is not projected
+        Assert.True(vm.Fields.Single(f => f.Label == "Gold@+0x60").IsValue);   // CONTROL: Gold is worth projecting
+    }
+
+    [Fact]
+    public void ThePickerGrid_ShowsAndSortsEachFieldByItsLabel()
+    {
+        // The Field column is where the two copies are told apart; Name would show two identical rows.
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        string? path = null;
+        for (int i = 0; i < 8 && dir is not null && path is null; i++, dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, "ui/UE5DumpUI/Views/ClassPivotPanel.axaml");
+            if (File.Exists(candidate)) path = candidate;
+        }
+        Assert.NotNull(path);
+        var doc = System.Xml.Linq.XDocument.Load(path!);
+        var column = Assert.Single(doc.Descendants(), e => e.Name.LocalName == "DataGridTextColumn"
+            && (string?)e.Attribute("Header") == "{StaticResource str.Pivot.Col.Field}");
+        Assert.Equal("{Binding Label}", (string?)column.Attribute("Binding"));
+        Assert.Equal("Label", (string?)column.Attribute("SortMemberPath"));
+    }
+
     // ---- [A4-PIVOT-CROSSGAME-ID] a reconnect to a DIFFERENT game carries neither its pick nor its class list ----
     //
     // Snapshot ids are per-game-DB AUTOINCREMENT: after a reconnect to another game, "#2" names a different snapshot.
