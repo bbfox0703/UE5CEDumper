@@ -284,6 +284,12 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         "⚠ No reply from Cheat Engine for the no-DLL picker (it timed out, or the pipe closed): it may still have been added. " +
         "Check Cheat Engine's address list before pressing again.");
 
+    internal const string KeyCoordNoDllNotReached = "str.TP.LibNoDllNotReached";
+    /// <summary>[COORDPICK-TIMEDOUT-TEXT] What is left once a reply, a reason and a lost reply are ruled out: the pipe
+    /// never opened, so nothing was sent, or the plugin said no without saying why.</summary>
+    internal static string CoordNoDllNotReachedText => AobMakerStatus.Say(KeyCoordNoDllNotReached,
+        "⚠ AOBMaker could not be reached, or refused the no-DLL picker without a reason (CE closed?) — nothing was added.");
+
     /// <summary>[AOBM-TRAINER-SETUP-MODAL] The trainer arrives unticked, so the success line has to say what to tick.</summary>
     internal static string TrainerPushedText(int entries)
         => AobMakerStatus.Say(KeyTrainerPushed,
@@ -4815,7 +4821,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                     ? CoordNoDllTimedOutText
                 : pushed.Message is { } why
                     ? CoordNoDllNotAddedText(why)
-                    : "⚠ AOBMaker pipe dropped mid-push (CE closed?) — nothing was added.";
+                    : CoordNoDllNotReachedText;
             if (sent)
                 _log.Info($"Coordinate library (no-DLL) -> CE via AOBMaker ({_coordAll.Count} entries)");
         }

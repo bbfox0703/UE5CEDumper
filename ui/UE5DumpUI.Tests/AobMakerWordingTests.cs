@@ -172,9 +172,11 @@ public class AobMakerWordingTests
         // [COORDPICK-TIMEDOUT-TEXT] The no-DLL coordinate picker's push with no reply in time
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordNoDllTimedOut,
              UE5DumpUI.ViewModels.TeleportViewModel.CoordNoDllTimedOutText);
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordNoDllNotReached,
+             UE5DumpUI.ViewModels.TeleportViewModel.CoordNoDllNotReachedText);
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(57, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(58, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]
