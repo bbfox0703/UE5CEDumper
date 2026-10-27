@@ -71,10 +71,9 @@ public static class ParamBufferBuilder
     /// empty-only. Not every type the DLL's WalkFunctions names an
     /// <c>objClassName</c> for: 4.11-4.17's
     /// <c>AssetObjectProperty</c> / <c>AssetClassProperty</c> get one too, but an
-    /// <c>FAssetPtr</c> is a weak-pointer envelope plus a path string, and
-    /// WriteParam has no arm that could put a picked instance into it (its size
-    /// fallback would write the address's low 4 bytes). They stay out, and the
-    /// tests say so. Excludes scalars / struct / containers / bool — those have
+    /// <c>FAssetPtr</c> is a weak-pointer envelope plus a path string that nothing
+    /// here can build, so they are empty-only (<see cref="IsEmptyOnlyParam"/>). They
+    /// stay out, and the tests say so. Excludes scalars / struct / containers / bool — those have
     /// their own editing paths (typed textbox, struct sub-field expansion, etc.)
     /// and shouldn't get a picker button.
     /// </summary>
@@ -295,6 +294,13 @@ public static class ParamBufferBuilder
     /// its null. The helper's own <c>lazy</c> arm refuses any other value, so the
     /// parity above holds for it as well; its refusal text is
     /// <see cref="LazyRefusalText"/>, not the containers'.</para>
+    ///
+    /// <para>UE 4.11-4.17's <c>AssetObjectProperty</c> / <c>AssetClassProperty</c> too
+    /// (<c>[UE4-ASSETPTR-EXPORTS]</c>): an <c>FAssetPtr</c> keeps its path as an <c>FString</c>
+    /// that needs the engine's storage, and the DLL converts no picked object into one; all-zero
+    /// is its null. The containers' refusal text fits it. The baked script's helper has no token
+    /// that refuses it, so a hand-edited value there is not caught; the dialog's own gate runs
+    /// before Copy AA Script bakes anything.</para>
     /// </summary>
     public static bool IsEmptyOnlyParam(string typeName) =>
         typeName is "ArrayProperty"
@@ -307,7 +313,9 @@ public static class ParamBufferBuilder
                  or "MulticastDelegateProperty"
                  or "MulticastInlineDelegateProperty"
                  or "MulticastSparseDelegateProperty"
-                 or "LazyObjectProperty";
+                 or "LazyObjectProperty"
+                 or "AssetObjectProperty"
+                 or "AssetClassProperty";
 
     /// <summary>
     /// Params FIRE must refuse OUTRIGHT — not even a zeroed slot is a safe answer.
