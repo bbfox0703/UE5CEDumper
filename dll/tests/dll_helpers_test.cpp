@@ -8648,7 +8648,10 @@ static void Test_Delegate_AccessDetectorPad() {
     // ⚠ Every one of the ~12 shipped titles measured in this repo is a Shipping build, i.e.
     // the pad-free side. Nothing red could ever have appeared there.
     constexpr int32_t kMcd = 16;              // sizeof(FMulticastScriptDelegate), unpadded
-    const int32_t kSd = 8 + DynOff::SizeofFName();   // sizeof(FScriptDelegate), unpadded
+    // sizeof(FScriptDelegate) unpadded with an 8-byte FName. A literal, not 8 + SizeofFName(): with a 12- or 4-byte
+    // FName "+ 8" is not the padded size ([DELEGATE-PAD-ALIGN]), so global FName state left by another test would turn
+    // this into a check of a size no build has.
+    constexpr int32_t kSd = 16;
 
     EXPECT("pad: Shipping FMulticastScriptDelegate (16) -> 0",
            DynOff::DelegatePadFromElementSize(kMcd, kMcd) == 0);

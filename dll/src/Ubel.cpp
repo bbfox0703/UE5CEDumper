@@ -3311,10 +3311,9 @@ static int32_t InferScalarSize(const std::string& typeName) {
     if (typeName == "LazyObjectProperty")  return LazyGuidOffset(0) + 0x10;
     // FScriptInterface = { UObject* + void* } — fixed 16
     if (typeName == "InterfaceProperty")   return 16;
-    // NOTE: FScriptDelegate ({ FWeakObjectPtr(8) + FName }) is 16 or 24 depending on
-    // CasePreservingName. TSoftObjectPtr / TSoftClassPtr also vary by UE version.
-    // Do NOT override these here — let readSize prevail; the array readers force
-    // their own correct stride.
+    // NOTE: FScriptDelegate ({ FWeakObjectPtr(8) + FName }) is 12, 16 or 20 with the FName's width, and 24 or 32
+    // behind a checked build's access detector (DynOff::DelegatePaddedSize). TSoftObjectPtr / TSoftClassPtr also
+    // vary by UE version. Do NOT override these here — let readSize prevail; the array readers step by it.
     return 0;
 }
 
@@ -7729,7 +7728,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             continue;
         }
 
-        // Handle DelegateProperty: single FScriptDelegate = { FWeakObjectPtr(8B), FName(8/16B) }
+        // Handle DelegateProperty: single FScriptDelegate = { FWeakObjectPtr(8B), FName(4/8/12B) }
         if (fi.TypeName == "DelegateProperty") {
             int fnameSize = DynOff::SizeofFName();
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
@@ -8252,7 +8251,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
         // Handle MulticastInlineDelegateProperty / MulticastDelegateProperty:
         // FMulticastScriptDelegate = { TArray<FScriptDelegate> InvocationList (16B) }
-        // FScriptDelegate = { FWeakObjectPtr(8B), FName(8/16B) }
+        // FScriptDelegate = { FWeakObjectPtr(8B), FName(4/8/12B) }
         //
         // Exposes the multicast as an implicit DelegateProperty array so the UI
         // can drill in and CE XML / CSX can emit the bindings. Layout matches

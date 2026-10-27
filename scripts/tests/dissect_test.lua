@@ -1765,8 +1765,9 @@ end
 -- D4b -- a delegate row's PLACE depends on the BUILD; its type does not
 -- ============================================================
 -- UE 5.3 gave TScriptDelegate / TMulticastScriptDelegate a TDelegateAccessHandlerBase base
--- whose DO_CHECK specialization holds one std::atomic<uint64>, so sizeof is 8 bytes larger in
--- Debug/Development/DebugGame than in Shipping/Test. getTypeInfo once answered that by widening
+-- whose DO_CHECK specialization holds one std::atomic<uint64>, so in Debug/Development/DebugGame
+-- the payload starts 8 bytes in and the 8-aligned struct rounds up (24, or 32 with a 12-byte
+-- FName; [DELEGATE-PAD-ALIGN]). getTypeInfo once answered that by widening
 -- the row to the engine's ElementSize, which still left it on the detector. Since VND584-02 a
 -- delegate is ONE 8-byte row that delegatePayloadPad places past the detector -- the VND584-02
 -- delegate and multicast cases below pin the placement -- and CE draws a vtQword / vtPointer

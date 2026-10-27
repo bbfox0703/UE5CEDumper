@@ -10,8 +10,9 @@ needs **no fixture at all**, so it runs on any injected title:
     does `DynOff::DelegatePadFromElementSize` recognise the sizes this engine actually reports?
 
 UE 5.3 gave `TScriptDelegate`/`TMulticastScriptDelegate` a `TDelegateAccessHandlerBase` base whose
-`DO_CHECK` specialization holds one `std::atomic<uint64>`, so a delegate payload is 8 bytes longer
-in Debug/Development/DebugGame than in Test/Shipping. The derivation refuses anything that is
+`DO_CHECK` specialization holds one `std::atomic<uint64>`, so in Debug/Development/DebugGame a delegate
+payload starts 8 bytes in and the 8-aligned struct rounds up to 8 (`DynOff::DelegatePaddedSize`: 24, or 32
+with a 12-byte FName), against the unpadded size in Test/Shipping. The derivation refuses anything that is
 neither, and a refusal means the field is reported as unread. **A size this repo has never seen
 would therefore turn a working read into a blank** -- which is the honest failure, but still a
 regression on that title. This is the cheap screen for it.
