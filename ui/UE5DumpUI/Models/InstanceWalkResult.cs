@@ -21,6 +21,10 @@ public sealed class InstanceWalkResult
     /// <summary>[P1-WALK-UNREADABLE] The DLL could not read the object's own header (freed, most likely), so nothing was
     /// walked. Distinct from <see cref="IsStale"/>, a narrower verdict. False from an older DLL.</summary>
     public bool IsUnreadable { get; init; }
+    /// <summary>[WALK-NULLCLASS-SILENT] The DLL resolved the class itself and the header named none it could read
+    /// (ClassPrivate null or unmapped): freed, or never an object. Distinct from <see cref="IsStale"/> and
+    /// <see cref="IsUnreadable"/>. False from an older DLL.</summary>
+    public bool IsNoHeader { get; init; }
     /// <summary>
     /// The reflected walk RAN and <see cref="Fields"/> is complete; only the DLL's
     /// Guess-What raw-byte pass was skipped, because the class is larger than the

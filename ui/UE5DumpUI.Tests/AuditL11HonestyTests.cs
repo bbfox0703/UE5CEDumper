@@ -90,6 +90,21 @@ public class AuditL11HonestyTests
         Assert.Contains("no longer readable", vm.StatusText);
     }
 
+    // [WALK-NULLCLASS-SILENT] L47: a header with a null (or unmapped) ClassPrivate came back classless and field-less with
+    // no flag, and the grid went blank with no status. The status must say so -- and claim neither "freed/recycled" nor
+    // an implausible PropertiesSize: the Go box takes any address, which may never have been an object.
+    [Fact]
+    public async Task Walk_OfAnAddressWithNoUObjectHeader_SaysSo_WithoutClaimingFreed()
+    {
+        var vm = WalkerWith(("0x4000", new InstanceWalkResult { Address = "0x4000", IsNoHeader = true }));
+
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x4000");
+
+        Assert.Contains("No UObject header", vm.StatusText);
+        Assert.DoesNotContain("freed/recycled", vm.StatusText);
+        Assert.DoesNotContain("implausible", vm.StatusText);
+    }
+
     [Theory]
     [InlineData("", "", "")]
     [InlineData("W", "", "W")]

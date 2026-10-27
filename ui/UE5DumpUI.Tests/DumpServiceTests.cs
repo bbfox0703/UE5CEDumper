@@ -1667,6 +1667,22 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task WalkInstanceAsync_ParsesNoHeader()
+    {
+        // [WALK-NULLCLASS-SILENT] Additive too: a header that names no readable class. Not stale, not unreadable.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["addr"] = "0x100", ["no_header"] = true, ["fields"] = new JsonArray(),
+        });
+
+        var r = await CreateService().WalkInstanceAsync("0x100", ct: TestContext.Current.CancellationToken);
+
+        Assert.True(r.IsNoHeader);
+        Assert.False(r.IsStale);
+        Assert.False(r.IsUnreadable);
+    }
+
+    [Fact]
     public async Task WalkInstanceAsync_ParsesEnumArrayElements()
     {
         _pipe.SetHandler(_ => new JsonObject
