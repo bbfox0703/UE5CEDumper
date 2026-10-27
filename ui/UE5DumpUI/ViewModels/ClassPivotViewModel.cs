@@ -87,9 +87,10 @@ public partial class ClassPivotViewModel : ViewModelBase
     private int _classLoadId;
     private int _fieldLoadId;
     // [PIVOT-ARRAY-LOADID] The array-field list's own counter. It used to take _classLoadId, so a class click in Array
-    // source superseded the class-list load in flight and the previous snapshot's classes stayed in the picker. A new
-    // snapshot's class list still supersedes a stale array-field load: applying it detaches SelectedClass, which
-    // re-runs this load.
+    // source superseded the class-list load in flight and the previous snapshot's classes stayed in the picker. A
+    // source or snapshot switch bumps it too: the class it was loading for belongs to the list being replaced, and a
+    // late result would auto-pick an array field whose prop load wipes the new source's Fields. Never the class load,
+    // and never on a Refresh that keeps the snapshot: there the class can stay selected, and nothing would re-run it.
     private int _arrayFieldLoadId;
     private CancellationTokenSource? _pivotCts;   // heavy pivot run
     // [W1-PIVOT-LOADCTS] One CTS per list, not one shared: a field load used to cancel an in-flight CLASS load, which
@@ -374,6 +375,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         // trips Avalonia's "Source collection was modified during selection update".
         // RefreshAsync triggers the load itself once the rebuild has settled.
         if (_refreshing) return;
+        _arrayFieldLoadId++;   // [PIVOT-ARRAY-LOADID] the old snapshot's array fields must not land under this one
         PendingLoad = LoadClassesAsync();
     }
     partial void OnSelectedKeyFieldChanged(string? value) => OnPropertyChanged(nameof(CanRunPivot));
@@ -395,6 +397,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         // Switching source clears the cross-source picker/result state so a stale
         // field list or row can't be Run against the wrong source. Detach bound
         // selections before clearing (Avalonia selection-model safety).
+        _arrayFieldLoadId++;   // [PIVOT-ARRAY-LOADID] a late array-field list would refill what this clears
         SelectedKeyField = null;
         SelectedArrayField = null;
         SelectedResult = null;
@@ -998,7 +1001,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         try
         {
             var list = await Task.Run(() => _store.ListPivotArrayFieldsAsync(snapId, cls));
-            if (id != _arrayFieldLoadId) return;   // a newer class/snapshot superseded us
+            if (id != _arrayFieldLoadId) return;   // a newer class, snapshot or source superseded us
             foreach (var af in list) ArrayFields.Add(af);
             // Auto-select the first array field (triggers prop load).
             SelectedArrayField = ArrayFields.FirstOrDefault();
