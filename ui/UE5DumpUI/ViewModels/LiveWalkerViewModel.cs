@@ -5958,6 +5958,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     internal const string KeyPtrTargetLabel = "str.LiveWalker.PtrTargetLabel";
+    internal const string KeyNoHeader = "str.LiveWalker.NoHeader";
+    private static string NoHeaderText => AobMakerStatus.Say(KeyNoHeader,
+        "⚠ No UObject header at this address — freed, or not an object. Re-open it from \U0001F30D GWorld or the finder.");
 
     /// <summary>A pointer field's HEX lands on what it points at; the field's name alone would read as the field.</summary>
     internal static string PtrTargetLabel(string field) => AobMakerStatus.Say(KeyPtrTargetLabel, "{0} target", field);
@@ -6806,7 +6809,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // types across a bogus multi-hundred-MB PropertiesSize, which wedges the
         // single-threaded pipe (the "switch back to Live Walker froze the pipe"
         // bug). The DLL caps this too, but bail here so we don't even send it.
-        if (result.IsStale || result.IsUnreadable)   // [P1-WALK-UNREADABLE] nothing to guess on either
+        if (result.IsStale || result.IsUnreadable || result.IsNoHeader)   // nothing to guess on any of them
         {
             _log.Warn($"Skipping fill_gaps auto-retry for {addr}: object is stale or unreadable");
             return result;
@@ -7120,6 +7123,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // return a bare address, and the grid went silently blank.
             StatusText = "⚠ This object is no longer readable (freed?) — re-open it from \U0001F30D GWorld or the finder.";
             _log.Warn($"UpdateDisplay: unreadable object at {result.Address} — nothing walked");
+        }
+        else if (result.IsNoHeader)
+        {
+            // [WALK-NULLCLASS-SILENT] The header names no readable class. Not "freed" and not stale's implausible
+            // PropertiesSize: the Go box takes any address, and this one may never have been an object.
+            StatusText = NoHeaderText;
+            _log.Warn($"UpdateDisplay: no UObject header at {result.Address} (ClassPrivate null or unreadable) — nothing walked");
         }
         else if (result.IsStale)
         {

@@ -608,6 +608,7 @@ public sealed class DumpService : IDumpService
             IsDefinition = o["is_definition"]?.GetValue<bool>() ?? false,
             IsStale = o["stale"]?.GetValue<bool>() ?? false,
             IsUnreadable = o["unreadable"]?.GetValue<bool>() ?? false,   // [P1-WALK-UNREADABLE] additive
+            IsNoHeader = o["no_header"]?.GetValue<bool>() ?? false,       // [WALK-NULLCLASS-SILENT] additive
             GapFillSkipped = o["gap_fill_skipped"]?.GetValue<bool>() ?? false,
             PropertiesSize = o["props_size"]?.GetValue<int>() ?? 0,
         };
