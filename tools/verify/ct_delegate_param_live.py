@@ -1,32 +1,38 @@
-r"""[CT-DELEGATE-PARAM-PAD] Call Trace names a delegate parameter's bound object, past a checked build's detector.
+r"""[CT-DELEGATE-PARAM-PAD] [CT-MULTICAST-PARAM-PAD] Call Trace decodes a delegate parameter past a checked build's detector.
 
     py tools/verify/ct_delegate_param_live.py --label dev-green
     py tools/verify/ct_delegate_param_live.py --label dev-red --any-build     # a DLL other than dist's (the red run)
+    py tools/verify/ct_delegate_param_live.py --case multicast --label dev-mc-green
 
 Runs against the injected DumperTest (one game at a time, never while the UI holds the pipe). Exits 1 while the
 defect stands, so it doubles as the regression check; 2 when the run could not set itself up.
 
-THE CALL. DumperTestActor::InvokeGate_TakeDelegate takes FDumperTestUnicastSignature BY VALUE, and nothing in the
-fixture calls it. A queued invoke runs through the trampoline, so the trace never sees it. A DIRECT invoke on an actor
-calls AActor::ProcessEvent (the class's own override, which MinHook did not patch), and its Super::ProcessEvent is the
-hooked entry, so that call is traced as the game's own are. Its Callback is the actor's own Del_Unicast copied byte for
-byte (on a UE 5.3+ checked build: the access detector, then the weak pair and the FName), so the bound object is the
-actor. A plain recording first gives the function's name key; a snapshots-only recording then copies the call.
+THE CASES. `delegate` (the default): DumperTestActor::InvokeGate_TakeDelegate takes FDumperTestUnicastSignature BY
+VALUE, and its Callback is the actor's own Del_Unicast. `multicast`: InvokeGate_TakeMulticast takes
+FDumperTestPingSignature by value (a package from 2026-10-27 or later), and its Handlers is the actor's own
+Multicast_Inline. Either way the argument is the actor's field copied byte for byte (on a UE 5.3+ checked build: the
+access detector, then the payload), so what the call received is known.
+
+THE CALL. Nothing in the fixture calls either function. A queued invoke runs through the trampoline, so the trace
+never sees it. A DIRECT invoke on an actor calls AActor::ProcessEvent (the class's own override, which MinHook did not
+patch), and its Super::ProcessEvent is the hooked entry, so that call is traced as the game's own are. A plain
+recording first gives the function's name key; a snapshots-only recording then copies the call.
 
 THE WITNESSES, none of them the decoder under test:
-  * the walk of Del_Unicast (walk_instance places it past the pad itself): its text, and its pair bytes, which must
-    equal the actor's memory at the field + delegate_pad;
-  * the slot's own bytes: the pair at Callback's offset + the pad equals that pair;
-  * the engine: InvokeGate_LastDelegateBound reads 1 after the calls (IsBound() on the copy it received), and
-    InvokeGate_DelegateCalls went up by two.
-The starred check: the slot's decoded Callback is the walk's text, marked "now". The output, with the slot's bytes, is
-written to out/ct_delegate_param/<label>.json.
+  * the walk of the field (walk_instance places it past the pad itself): a delegate's text and pair bytes, or a
+    multicast's InvocationList count and Data, which must equal the actor's memory at the field + delegate_pad;
+  * the slot's own bytes: the same payload at the parameter's offset + the pad;
+  * the engine: the fixture's IsBound() record reads 1 after the calls, and its counter went up by two.
+The starred check: the slot's decoded value is the walk's -- a delegate's text marked "now", a multicast's
+`Num=<count> (Data 0x<Data>)` marked "header". The output, with the slot's bytes, is written to
+out/ct_delegate_param/<label>.json.
 """
 import argparse
 import base64
 import hashlib
 import json
 import pathlib
+import struct
 import sys
 import time
 
@@ -36,9 +42,14 @@ from pipe_client import PipeClient, PipeError  # noqa: E402
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 OUT_DIR = ROOT / "out" / "ct_delegate_param"
 FIXTURE_CLASS = "DumperTestActor"
-FUNC = "InvokeGate_TakeDelegate"
-FIELD = "Del_Unicast"
-MARK_NOW = 1   # Ubel::SnapMark::Now
+MARK_NOW, MARK_HEADER = 1, 4   # Ubel::SnapMark
+CASES = {
+    "delegate": {"func": "InvokeGate_TakeDelegate", "field": "Del_Unicast", "type": "DelegateProperty",
+                 "calls": "InvokeGate_DelegateCalls", "bound": "InvokeGate_LastDelegateBound"},
+    "multicast": {"func": "InvokeGate_TakeMulticast", "field": "Multicast_Inline",
+                  "type": "MulticastInlineDelegateProperty",
+                  "calls": "InvokeGate_MulticastCalls", "bound": "InvokeGate_LastMulticastBound"},
+}
 
 
 def say(s):
@@ -82,14 +93,42 @@ def int_value(field):
         return None
 
 
-def invoke_direct(c, actor_addr, fn, cb, payload):
-    buf = bytearray(max(fn.get("parms_size", 0), cb["offset"] + len(payload)))
-    buf[cb["offset"]:cb["offset"] + len(payload)] = payload
-    return c.request("invoke_function", class_name=FIXTURE_CLASS, func_name=FUNC, instance_addr=actor_addr,
+def invoke_direct(c, actor_addr, func, fn, param, payload):
+    buf = bytearray(max(fn.get("parms_size", 0), param["offset"] + len(payload)))
+    buf[param["offset"]:param["offset"] + len(payload)] = payload
+    return c.request("invoke_function", class_name=FIXTURE_CLASS, func_name=func, instance_addr=actor_addr,
                      params_hex=buf.hex().upper(), parms_size=len(buf), direct_call=True)
 
 
+def field_witness(check, case_name, dl, raw, pad):
+    """What the walk and memory say the payload is: (its bytes, the expected decoded text and mark), or None."""
+    if case_name == "delegate":
+        if "::" not in str(dl.get("value", "")):
+            say("BLOCKED: the walk names no bound object: %s" % dl)
+            return None
+        pair = raw[pad:pad + 8]
+        if not check("the walk's pair is the actor's memory at the field + delegate_pad",
+                     len(pair) == 8 and str(dl.get("hex", "")).upper().startswith(pair.hex().upper()),
+                     "memory %s, walk hex %s" % (pair.hex().upper(), dl.get("hex"))):
+            return None
+        return pair, dl.get("value"), MARK_NOW
+    count = int(dl.get("count", 0) or 0)
+    walk_data = int(str(dl.get("array_data_addr", "0")), 16)
+    if count < 1 or not walk_data:
+        say("BLOCKED: the walk shows no bound handler: %s" % dl)
+        return None
+    head = raw[pad:pad + 12]
+    data, num = struct.unpack("<Qi", head) if len(head) == 12 else (None, None)
+    if not check("the walk's InvocationList is the actor's memory at the field + delegate_pad",
+                 data == walk_data and num == count,
+                 "memory Data 0x%X Num %s, walk Data 0x%X Num %d" % (data or 0, num, walk_data, count)):
+        return None
+    return head, "Num=%d (Data 0x%X)" % (num, data), MARK_HEADER
+
+
 def run(c, check, out, a):
+    case = CASES[a.case]
+    func, field = case["func"], case["field"]
     actors = [i for i in (c.request("find_instances", class_name=FIXTURE_CLASS, exact_match=True, max_results=50,
                                     limit=50).get("instances") or [])
               if not str(i.get("name", "")).startswith("Default__")]
@@ -99,34 +138,39 @@ def run(c, check, out, a):
     actor = actors[0]
     act = int(actor["addr"], 16)
     fields = walk_fields(c, actor["addr"])
-    dl = fields.get(FIELD)
-    if not dl or "::" not in str(dl.get("value", "")):
-        say("BLOCKED: the walk names no bound object for %s: %s" % (FIELD, dl))
+    dl = fields.get(field)
+    if not dl:
+        say("BLOCKED: the walk has no %s" % field)
         return 2
     pad, size = int(dl.get("delegate_pad", 0)), int(dl["size"])
     raw = read_bytes(c, act + int(dl["offset"]), size)
+    out["case"] = a.case
     out["actor"] = {"name": actor.get("name"), "addr": actor["addr"], "index": actor.get("index")}
-    out["field"] = {"size": size, "delegate_pad": pad, "value": dl.get("value"), "hex": dl.get("hex"),
+    out["field"] = {"name": field, "size": size, "delegate_pad": pad, "value": dl.get("value"), "hex": dl.get("hex"),
+                    "count": dl.get("count"), "array_data_addr": dl.get("array_data_addr"),
                     "memory": raw.hex().upper() if raw else None}
-    say("%s at %s: %s, ElementSize %d, delegate_pad %d" % (FIELD, actor["addr"], dl.get("value"), size, pad))
+    say("%s at %s: %s, ElementSize %d, delegate_pad %d" % (field, actor["addr"], dl.get("value"), size, pad))
     say("  memory %s" % (raw.hex(" ").upper() if raw else None))
-    pair = raw[pad:pad + 8] if raw and len(raw) == size else b""
-    if not check("the walk's pair is the actor's memory at the field + delegate_pad",
-                 pair and str(dl.get("hex", "")).upper().startswith(pair.hex().upper()),
-                 "memory %s, walk hex %s" % (pair.hex().upper(), dl.get("hex"))):
-        return 1
+    if not raw or len(raw) != size:
+        say("BLOCKED: the field's %d bytes could not be read" % size)
+        return 2
+    witness = field_witness(check, a.case, dl, raw, pad)
+    if witness is None:
+        return 1 if check.failed else 2
+    payload, want_text, want_mark = witness
 
     fl = {f["name"]: f for f in (c.request("walk_functions", addr=actor["class_addr"]).get("functions") or [])}
-    fn = fl.get(FUNC)
-    cb = next((p for p in (fn or {}).get("params", []) if p.get("type") == "DelegateProperty"), None)
-    if not cb:
-        say("BLOCKED: %s::%s has no DelegateProperty parameter (a package without the invoke gate?)" % (FIXTURE_CLASS, FUNC))
+    fn = fl.get(func)
+    param = next((p for p in (fn or {}).get("params", []) if p.get("type") == case["type"]), None)
+    if not param:
+        say("BLOCKED: %s::%s has no %s parameter (a package without the invoke gate?)"
+            % (FIXTURE_CLASS, func, case["type"]))
         return 2
-    out["param"] = {"name": cb.get("name"), "offset": cb["offset"], "size": cb["size"],
+    out["param"] = {"name": param.get("name"), "offset": param["offset"], "size": param["size"],
                     "parms_size": fn.get("parms_size")}
-    check("the parameter is the field's type, at its size", cb["size"] == size,
-          "%s +0x%X, %d bytes" % (cb.get("name"), cb["offset"], cb["size"]))
-    calls_before = int_value(fields.get("InvokeGate_DelegateCalls", {}))
+    check("the parameter is the field's type, at its size", param["size"] == size,
+          "%s +0x%X, %d bytes" % (param.get("name"), param["offset"], param["size"]))
+    calls_before = int_value(fields.get(case["calls"], {}))
 
     # The name key: a plain recording that holds the call (and shows the direct invoke reached the hook).
     plain = c.request("pe_profile_start")
@@ -134,13 +178,13 @@ def run(c, check, out, a):
         say("BLOCKED: pe_profile_start refused: %s" % plain.get("error"))
         return 2
     try:
-        r1 = invoke_direct(c, actor["addr"], fn, cb, raw)
+        r1 = invoke_direct(c, actor["addr"], func, fn, param, raw)
         time.sleep(a.settle_s)
     finally:
         c.request("pe_profile_stop")
     table = data_of(c.request("pe_profile_get", limit=32768, include_unloaded=True))
     row = next((f for f in table.get("functions", []) if f.get("class_name") == FIXTURE_CLASS
-                and f.get("func_name") == FUNC and isinstance(f.get("fname_key"), list)), None)
+                and f.get("func_name") == func and isinstance(f.get("fname_key"), list)), None)
     if not check("the direct invoke went through the hooked ProcessEvent", row is not None and row.get("count", 0) >= 1,
                  "result %s; row %s" % (r1.get("result"), row and {"count": row.get("count"), "key": row["fname_key"]})):
         return 1
@@ -151,13 +195,13 @@ def run(c, check, out, a):
     if not check("the snapshots-only Start is accepted", "error" not in start, str(start.get("error", ""))[:120]):
         return 1
     try:
-        r2 = invoke_direct(c, actor["addr"], fn, cb, raw)
+        r2 = invoke_direct(c, actor["addr"], func, fn, param, raw)
         time.sleep(a.settle_s)
     finally:
         stop = data_of(c.request("pe_profile_stop"))
     gen = stop.get("trace", {}).get("gen", 0)
     lay = data_of(c.request("pe_snap_layouts", gen=gen, offset=0))
-    arms = [x for x in lay.get("arms", []) if x.get("func_name") == FUNC]
+    arms = [x for x in lay.get("arms", []) if x.get("func_name") == func]
     layouts = lay.get("layouts", [])
     slots = []
     for ring in sorted({x["ring"] for x in arms}):
@@ -169,27 +213,27 @@ def run(c, check, out, a):
         return 1
     arm = next(x for x in arms if x.get("index") == entry.get("arm"))
     params = layouts[arm["layout"]].get("params", []) if "layout" in arm and arm["layout"] < len(layouts) else []
-    k = next((i for i, p in enumerate(params) if p.get("name") == cb.get("name")), None)
+    k = next((i for i, p in enumerate(params) if p.get("name") == param.get("name")), None)
     if not check("the arm's layout holds the parameter, at the walk's size", k is not None
                  and params[k].get("size") == size, json.dumps(params)[:200]):
         return 1
     text, mark = entry["values"][k][0], entry["values"][k][1]
     data = base64.b64decode(entry.get("data", ""))
     p_off = int(params[k]["offset"])
-    slot_pair = data[p_off + pad:p_off + pad + 8]
+    slot_payload = data[p_off + pad:p_off + pad + len(payload)]
     out["slot"] = {"value": text, "mark": mark, "bytes": data.hex().upper(), "param_offset": p_off}
-    say("  slot bytes at Callback: %s" % data[p_off:p_off + size].hex(" ").upper())
-    check("the slot's pair, at Callback + delegate_pad, is the actor's", slot_pair == pair,
-          "slot %s, actor %s" % (slot_pair.hex().upper(), pair.hex().upper()))
-    check("Call Trace decodes Callback as the walk names Del_Unicast, marked now",
-          text == dl.get("value") and mark == MARK_NOW,
-          "decoded %r mark %s, walk %r" % (text, mark, dl.get("value")), starred=True)
+    say("  slot bytes at %s: %s" % (param.get("name"), data[p_off:p_off + size].hex(" ").upper()))
+    check("the slot's payload, at the parameter + delegate_pad, is the actor's", slot_payload == payload,
+          "slot %s, actor %s" % (slot_payload.hex().upper(), payload.hex().upper()))
+    check("Call Trace decodes %s as the walk reads %s" % (param.get("name"), field),
+          text == want_text and mark == want_mark,
+          "decoded %r mark %s, want %r mark %s" % (text, mark, want_text, want_mark), starred=True)
 
     after = walk_fields(c, actor["addr"])
-    bound = int_value(after.get("InvokeGate_LastDelegateBound", {}))
-    calls_after = int_value(after.get("InvokeGate_DelegateCalls", {}))
+    bound = int_value(after.get(case["bound"], {}))
+    calls_after = int_value(after.get(case["calls"], {}))
     out["engine"] = {"last_bound": bound, "calls_before": calls_before, "calls_after": calls_after}
-    check("the engine received a bound delegate (InvokeGate_LastDelegateBound)", bound == 1, str(bound))
+    check("the engine received a bound delegate (%s)" % case["bound"], bound == 1, str(bound))
     check("...and was called twice", calls_before is not None and calls_after == calls_before + 2,
           "%s -> %s" % (calls_before, calls_after))
     return 0
@@ -198,6 +242,7 @@ def run(c, check, out, a):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--label", required=True, help="names the output file")
+    ap.add_argument("--case", choices=sorted(CASES), default="delegate")
     ap.add_argument("--any-build", action="store_true", help="do not require dist's build number")
     ap.add_argument("--dll", type=pathlib.Path, help="the injected DLL, recorded by its SHA-256")
     ap.add_argument("--settle-s", type=float, default=0.5)
