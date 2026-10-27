@@ -164,8 +164,13 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyStale, UE5DumpUI.ViewModels.LiveWalkerViewModel
              .GoneObjectStatus(new UE5DumpUI.Models.InstanceWalkResult { IsStale = true })!);
 
+        // A convenience copy the clipboard refused: the line that replaces "Copied ..."
+        Same(ClipboardConvenience.KeyNotCopied, ClipboardConvenience.NotCopiedText("7FF6"), "7FF6");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyBugItNotCopied,
+             UE5DumpUI.ViewModels.TeleportViewModel.BugItNotCopiedText("BugItGo 1 2 3"), "BugItGo 1 2 3");
+
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(54, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(56, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

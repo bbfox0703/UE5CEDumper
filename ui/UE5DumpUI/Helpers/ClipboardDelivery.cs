@@ -48,7 +48,9 @@ namespace UE5DumpUI.Helpers;
 /// payload is a generated script is always wrong. Diluting that with 26 legitimate
 /// address copies is what turns a 0-baseline check into a 26-line waiver list, which is
 /// the design this repo already refuted twice (see <c>check_property_family.py</c>'s
-/// header, and working-lessons §2.18).</para>
+/// header, and working-lessons §2.18). A convenience copy whose status line names what it
+/// copied tests the bool itself and says <see cref="ClipboardConvenience.NotCopiedText"/>
+/// on a refusal.</para>
 /// </summary>
 internal static class ClipboardDelivery
 {

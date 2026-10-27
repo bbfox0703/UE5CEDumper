@@ -261,6 +261,14 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private static string StealthNothingText => AobMakerStatus.Say(KeyStealthNothing,
         "No stealth meter is known to this card, so Reset sent nothing. Detect the meter first, then Reset.");
 
+    internal const string KeyBugItNotCopied = "str.TP.BugItNotCopied";
+    /// <summary>Copy as BugItGo fills the Run field whatever the clipboard does, so a refused copy keeps that half of
+    /// the line and drops the claim: the clipboard still holds what was there before.</summary>
+    internal static string BugItNotCopiedText(string bugItGo)
+        => AobMakerStatus.Say(KeyBugItNotCopied,
+            "BugIt: {0} (filled the Run field; not copied, so do not paste: the clipboard still holds what was there before).",
+            bugItGo);
+
     internal const string KeyCoordNoDllNotAdded = "str.TP.LibNoDllNotAdded";
     /// <summary>[COORDPICK-OVERSIZE-REASON] A no-DLL picker push refused with a reason says it; the reason's own closing
     /// period is dropped, as the sentence adds one.</summary>
@@ -1562,8 +1570,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // Paste straight into the Run field so the user can fire BugItGo
             // immediately, and keep the clipboard copy for pasting elsewhere.
             BugItGoInput = s;
-            await _platform.CopyToClipboardAsync(s);
-            StatusText = $"BugIt: {s} (copied + filled the Run field).";
+            bool copied = await _platform.CopyToClipboardAsync(s);
+            StatusText = copied ? $"BugIt: {s} (copied + filled the Run field)." : BugItNotCopiedText(s);
         }
         catch (Exception ex)
         {

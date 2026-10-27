@@ -1152,8 +1152,9 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         {
             var formatted = AddressHelper.FormatAddress(
                 match.OwnerAddress, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
-            await _platform.CopyToClipboardAsync(formatted);
-            LookupStatusText = $"Copied {formatted}  ({match.OwnerClassName})";
+            bool copied = await _platform.CopyToClipboardAsync(formatted);
+            LookupStatusText = copied ? $"Copied {formatted}  ({match.OwnerClassName})"
+                                      : Helpers.ClipboardConvenience.NotCopiedText(formatted);
         }
         catch (Exception ex)
         {

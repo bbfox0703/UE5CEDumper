@@ -1450,8 +1450,8 @@ public partial class ClassPivotViewModel : ViewModelBase
         {
             var hex = row.ObjAddr.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
                 ? row.ObjAddr.Substring(2) : row.ObjAddr;
-            await _platform.CopyToClipboardAsync(hex);
-            StatusText = $"Copied {hex}  ({row.KeyValue})";
+            bool copied = await _platform.CopyToClipboardAsync(hex);
+            StatusText = copied ? $"Copied {hex}  ({row.KeyValue})" : ClipboardConvenience.NotCopiedText(hex);
         }
         catch (Exception ex)
         {

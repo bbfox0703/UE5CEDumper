@@ -15,6 +15,10 @@
     <sys:String x:Key="str.Toolbar.PreviewLimit">Preview:</sys:String>
     <sys:String x:Key="str.Toolbar.CsxDepth">Drill Depth:</sys:String>
 
+    <!-- Clipboard: a convenience copy (an address, a path, a name) the clipboard refused. The status line names what
+         was copied only when the copy arrived; this replaces it on the same line when it did not. -->
+    <sys:String x:Key="str.Clipboard.NotCopied">Not copied, so do not paste: the clipboard still holds what was there before ({0} did not arrive). Try again.</sys:String>
+
     <!-- Banners -->
     <sys:String x:Key="str.Banner.GameThreadPaused">⏸ Game thread paused — the game isn't ticking (pause menu / alt-tab / breakpoint). Live camera &amp; function-invoke features will time out; memory scans still work. Un-pause / click back into the game for full speed.</sys:String>
 
@@ -1523,6 +1527,8 @@
     <sys:String x:Key="str.TP.CopyBugItGo">Copy as BugItGo</sys:String>
     <sys:String x:Key="str.TP.RunBugItGo">Run</sys:String>
     <sys:String x:Key="str.TP.BugHint">Paste 'BugItGo X Y Z', 'X Y Z', or a ?BugLoc=(...)?BugRot=(...) string</sys:String>
+    <!-- Copy as BugItGo fills the Run field whatever the clipboard does: a refused copy keeps that half and drops the claim. -->
+    <sys:String x:Key="str.TP.BugItNotCopied">BugIt: {0} (filled the Run field; not copied, so do not paste: the clipboard still holds what was there before).</sys:String>
     <sys:String x:Key="str.TP.LastHeader">Last Position (auto-saved)</sys:String>
     <sys:String x:Key="str.TP.LastHint">The dumper records where you were just before every Recall / Force / BugItGo / cursor teleport, so you can undo a jump that went wrong. This slot is managed by the system — you can't save into it, only recall it.</sys:String>
     <sys:String x:Key="str.TP.RecallLast">Recall last</sys:String>

@@ -1659,8 +1659,10 @@ public partial class SnapshotViewModel : ViewModelBase
             if (ulong.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var baseAddr))
             {
                 ulong addr = baseAddr + (ulong)row.PropOffset;
-                await _platform.CopyToClipboardAsync($"{addr:X}");
-                DiffStatusText = $"Copied {addr:X}  ({row.ClassName}::{row.PropName})";
+                var leaf = $"{addr:X}";
+                bool copied = await _platform.CopyToClipboardAsync(leaf);
+                DiffStatusText = copied ? $"Copied {leaf}  ({row.ClassName}::{row.PropName})"
+                                        : ClipboardConvenience.NotCopiedText(leaf);
             }
         }
         catch (Exception ex)
