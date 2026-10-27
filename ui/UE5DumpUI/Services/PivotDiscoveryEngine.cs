@@ -67,7 +67,8 @@ public static class PivotDiscoveryEngine
     /// on the result for display.</summary>
     public static DiscoveryResult Rank(
         IReadOnlyList<DiscoveryInput> inputs, int snapshotCount, int maxResults = 200,
-        IReadOnlyDictionary<string, int>? classTotals = null)
+        IReadOnlyDictionary<string, int>? classTotals = null,
+        IReadOnlySet<(string ClassName, string PropName)>? shadowedNames = null)
     {
         var result = new DiscoveryResult { SnapshotCount = snapshotCount };
 

@@ -274,6 +274,19 @@ public class PivotDiscoveryEngineTests
     }
 
     [Fact]
+    public void OneMovedCopyOfANameTheSnapshotShadows_IsStillLabelledWithItsOffset()
+    {
+        // The Strict path feeds only the CHANGED rows: when one copy did not move, Rank sees one offset. The store passes
+        // the names the snapshot shows at more than one offset, so the label matches Class Pivot's picker (review).
+        var r = PivotDiscoveryEngine.Rank(new[]
+        {
+            At(In("Shot", "PrerollTime", "FloatProperty", "/c", new[] { "10", "20" }), 0x128),
+        }, 2, shadowedNames: new HashSet<(string, string)> { ("Shot", "PrerollTime") });
+
+        Assert.Equal("PrerollTime@+0x128", Assert.Single(r.Rows).PropLabel);
+    }
+
+    [Fact]
     public void ANameUsedOnce_KeepsItsBareLabel_AndPoolsItsInstances()
     {
         // CONTROL: one copy, several instances -- one candidate, as before.
