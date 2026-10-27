@@ -174,6 +174,9 @@ local TYPE_MAP = {
     -- they are one meaningless number. An interface's first 8 bytes ARE its UObject*.
     SoftObjectProperty    = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
     SoftClassProperty     = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
+    -- UE <= 4.17 names the soft pointer TAssetPtr; same leading weak pair, same row.
+    AssetObjectProperty   = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
+    AssetClassProperty    = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
     LazyObjectProperty    = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
     InterfaceProperty     = { vt = vtPointer, size = 8 },
     WeakObjectProperty    = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
