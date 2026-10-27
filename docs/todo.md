@@ -1775,8 +1775,10 @@ when the clipboard took it; the rest make no claim, by design), `[UE4-ASSETPTR-E
   hand-edited baked value would write over the weak index; the dialog keeps it 0), and the return readouts decode an
   Asset* return as int32 / a hex dump rather than the {index, serial} pair. Needs a refusing token in
   `ue5_invoke_helper.lua`, so users re-embed the helper.
-- ⬜ `[L83-PLAN-QUEUED-STRINGS]` `docs/fixpass-low-live-plan.md` § L83 quotes the old queued-ON / queued-OFF strings;
-  update them before L83 steps 6 / 9 are re-run.
+- ✅ `[L83-PLAN-QUEUED-STRINGS]` **FIXED 2026-10-27**: § L83 quotes the current queued-ON / queued-OFF strings (UI,
+  CE dialog and [DISABLE] print, the DLL's direction-specific errorMsg from build 3658), and steps 6 / 9 now expect a
+  queued OFF to leave the camera ON and complete it under Keep Foreground. Was: § L83 quoted the old queued-ON /
+  queued-OFF strings; update them before L83 steps 6 / 9 are re-run.
 - The live checks this batch owes, all on the AOT build: ✅ three done 2026-10-27 on **build 3657 (Native AOT, 58.4 MB),
   DumperTest 5.4 Shipping**, UI at 225 % scale `[BATCH3-LIVE-3657]`:
   - ✅ **Toolbar at 800 DIP** (client area set to 1800 px at DPI 216): one row, nothing clipped; Connect and Disconnect
