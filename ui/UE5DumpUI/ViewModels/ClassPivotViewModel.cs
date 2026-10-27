@@ -33,6 +33,9 @@ public partial class PivotFieldPick : ObservableObject
     [ObservableProperty] private bool _isKey;
 
     public string Name          => Info.Name;
+    /// <summary>[SNAPDIFF-SHADOWED-PROP] What the picker shows and the pivot names this field by -- the name, with the
+    /// offset for one copy of a shadowed name. <see cref="Name"/> stays the property's own name, which the handoffs match.</summary>
+    public string Label         => Info.Label;
     public string DeclaredType  => Info.DeclaredType;
     public int    DistinctCount => Info.DistinctCount;
     public int    InstanceCount => Info.InstanceCount;
@@ -564,11 +567,11 @@ public partial class ClassPivotViewModel : ViewModelBase
         // [W1-DISCOVER-ARRAY] second review of 4880a779: only in FIELD mode is the key pick the grouping key.
         // In Identity mode it groups nothing, so skipping it there left the handed-off prop out of the pivot
         // under a "Ready" status.
-        if (!string.IsNullOrEmpty(propName) && !(IsFieldKeyMode && SelectedKeyField == propName))
-        {
-            var pick = Fields.FirstOrDefault(f => f.Name == propName);
-            if (pick != null) pick.IsValue = true;
-        }
+        // [SNAPDIFF-SHADOWED-PROP] Matched by the property's own name (the first copy of a shadowed one); the key
+        // pick holds a label.
+        var pick = string.IsNullOrEmpty(propName) ? null : Fields.FirstOrDefault(f => f.Name == propName);
+        if (pick != null && !(IsFieldKeyMode && SelectedKeyField == pick.Label))
+            pick.IsValue = true;
         return true;
     }
 
@@ -871,7 +874,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         {
             Fields.Add(new PivotFieldPick(f,
                 PivotKeyScorer.KeyScore(f), PivotKeyScorer.ValueScore(cls, f.Name)));
-            KeyFieldOptions.Add(f.Name);
+            KeyFieldOptions.Add(f.Label);   // [SNAPDIFF-SHADOWED-PROP] one entry per copy of a shadowed name
         }
 
         // Suggest a key: pick the best-scoring field. If it scores well, default
@@ -879,7 +882,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         var suggested = PivotKeyScorer.SuggestKey(fields);
         if (suggested != null && PivotKeyScorer.KeyScore(suggested) >= 0.5)
         {
-            SelectedKeyField = suggested.Name;
+            SelectedKeyField = suggested.Label;
             SelectedKeyMode  = "Field";
         }
         else
@@ -894,7 +897,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         foreach (var p in Fields.OrderByDescending(p => p.ValueScore))
         {
             if (ticked >= 3) break;
-            if (p.Name == SelectedKeyField) continue;
+            if (p.Label == SelectedKeyField) continue;
             if (p.ValueScore >= PropertyScoringTable.InterestingThreshold)
             {
                 p.IsValue = true;
@@ -1071,7 +1074,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         var keys = new List<string>();
         if (!string.IsNullOrEmpty(SelectedKeyField)) keys.Add(SelectedKeyField);
         foreach (var f in Fields)
-            if (f.IsKey && !keys.Contains(f.Name)) keys.Add(f.Name);
+            if (f.IsKey && !keys.Contains(f.Label)) keys.Add(f.Label);
         return keys;
     }
 
@@ -1153,8 +1156,10 @@ public partial class ClassPivotViewModel : ViewModelBase
                 KeyMode     = IsFieldKeyMode ? PivotKeyMode.Field : PivotKeyMode.Identity,
                 KeyField    = SelectedKeyField ?? "",
                 KeyFields   = IsFieldKeyMode ? CollectKeyFields() : new List<string>(),
-                ValueFields = Fields.Where(f => f.IsValue).Select(f => f.Name).ToList(),
+                ValueFields = Fields.Where(f => f.IsValue).Select(f => f.Label).ToList(),
             };
+            foreach (var f in Fields)   // [SNAPDIFF-SHADOWED-PROP] which labels name one copy of a shadowed name
+                if (f.Info.Shadowed) query.ShadowedFields[f.Label] = f.Info;
             var snapRes = await Task.Run(() => _store.PivotAsync(query, ct), ct);
             SetResults(snapRes.Rows, runSession);
 

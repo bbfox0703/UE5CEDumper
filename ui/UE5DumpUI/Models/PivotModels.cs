@@ -56,6 +56,18 @@ public sealed class PivotFieldInfo
     public int    DistinctCount { get; set; }
     /// <summary>Instances that carry this field (≈ class instance count).</summary>
     public int    InstanceCount { get; set; }
+    /// <summary>The property's offset in the instance; -1 where the source has none (DataTable rows, array props).</summary>
+    public int    Offset { get; set; } = -1;
+    /// <summary>[SNAPDIFF-SHADOWED-PROP] The class carries another property of this name at another offset (a subclass
+    /// shadowing a parent's), so this entry is ONE copy and its <see cref="Label"/> names the offset.</summary>
+    public bool   Shadowed { get; set; }
+    /// <summary>What the picker shows and a <see cref="PivotQuery"/> names the field by: the bare name, or
+    /// <see cref="LabelOf"/> for one copy of a shadowed name.</summary>
+    public string Label => Shadowed ? LabelOf(Name, Offset) : Name;
+
+    /// <summary>The label of the copy of <paramref name="name"/> at <paramref name="offset"/>, in the "+0x" offset style
+    /// the other panels print. One format for the picker and the engine, so a label resolves to the rows it names.</summary>
+    public static string LabelOf(string name, int offset) => $"{name}@+0x{offset:X}";
 }
 
 /// <summary>One captured struct-array field of a pivot class (Phase C6), with its
@@ -119,6 +131,12 @@ public sealed class PivotQuery
     public List<string> KeyFields { get; set; } = new();
     /// <summary>Fields whose values are projected per group.</summary>
     public List<string> ValueFields { get; set; } = new();
+    /// <summary>[SNAPDIFF-SHADOWED-PROP] The copies of a shadowed name, by <see cref="PivotFieldInfo.Label"/>: a key or
+    /// value label found here names ONE copy (its prop name + offset); any other label is the prop name itself.</summary>
+    public Dictionary<string, PivotFieldInfo> ShadowedFields { get; set; } = new(StringComparer.Ordinal);
+
+    /// <summary>The prop name a key / value label reads from the store.</summary>
+    public string PropNameOf(string label) => ShadowedFields.TryGetValue(label, out var f) ? f.Name : label;
     /// <summary>Max groups returned (default 5,000). One extra is probed to set
     /// <see cref="PivotResult.Truncated"/>.</summary>
     public int MaxGroups { get; set; } = Constants.DefaultMaxPivotGroups;

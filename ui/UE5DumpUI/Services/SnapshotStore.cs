@@ -2249,11 +2249,14 @@ public sealed class SnapshotStore : ISnapshotStore
         var list = new List<PivotFieldInfo>();
         await using var conn = await OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
+        // [SNAPDIFF-SHADOWED-PROP] Grouped by offset too: a class can carry two properties of one name (PrerollTime at
+        // +196 and +296 on DumperTest), and grouping by name pooled them into one entry with a doubled instance count
+        // and a distinct count over both copies, which the key scorer then ranked.
         cmd.CommandText = """
             SELECT prop_name, declared_type,
-                   COUNT(DISTINCT hex) AS distinctVals, COUNT(*) AS instances
+                   COUNT(DISTINCT hex) AS distinctVals, COUNT(*) AS instances, prop_offset
             FROM fields WHERE snapshot_id=$s AND class_fqn=$c AND array_field IS NULL
-            GROUP BY prop_name, declared_type ORDER BY prop_name;
+            GROUP BY prop_name, prop_offset, declared_type ORDER BY prop_name, prop_offset;
             """;
         cmd.Parameters.AddWithValue("$s", snapshotId);
         cmd.Parameters.AddWithValue("$c", className);
@@ -2265,7 +2268,12 @@ public sealed class SnapshotStore : ISnapshotStore
                 DeclaredType  = r.IsDBNull(1) ? "" : r.GetString(1),
                 DistinctCount = r.IsDBNull(2) ? 0  : r.GetInt32(2),
                 InstanceCount = r.IsDBNull(3) ? 0  : r.GetInt32(3),
+                Offset        = r.IsDBNull(4) ? -1 : r.GetInt32(4),
             });
+        // A name listed twice is shadowed: each copy's label then carries its offset. A name listed once keeps its bare
+        // label, so every class without a shadowed name reads exactly as before.
+        foreach (var dup in list.GroupBy(f => f.Name, StringComparer.Ordinal).Where(g => g.Count() > 1))
+            foreach (var f in dup) f.Shadowed = true;
         return list;
     }
 
@@ -2275,12 +2283,14 @@ public sealed class SnapshotStore : ISnapshotStore
         // Fetch only the rows the engine needs: the key field (Field mode) + the
         // value fields, for this class. Prop names come from our own field list
         // (DB-sourced identifiers) but are still parameterised defensively.
+        // [SNAPDIFF-SHADOWED-PROP] A field is named by its label; one copy of a shadowed name reads its prop name, and
+        // PivotEngine tells the copies apart by offset.
         var props = new List<string>();
         if (query.KeyMode == PivotKeyMode.Field)
             foreach (var kf in query.EffectiveKeyFields)
-                if (!string.IsNullOrEmpty(kf) && !props.Contains(kf)) props.Add(kf);
+                if (!string.IsNullOrEmpty(kf) && !props.Contains(query.PropNameOf(kf))) props.Add(query.PropNameOf(kf));
         foreach (var v in query.ValueFields)
-            if (!props.Contains(v)) props.Add(v);
+            if (!props.Contains(query.PropNameOf(v))) props.Add(query.PropNameOf(v));
 
         var rows = new List<PivotInputRow>();
         await using var conn = await OpenAsync(ct);

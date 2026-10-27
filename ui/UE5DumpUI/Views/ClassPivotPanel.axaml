@@ -272,7 +272,8 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTextColumn Header="{StaticResource str.Pivot.Col.Field}"    Binding="{Binding Name}"            SortMemberPath="Name"          IsReadOnly="True" Width="260" MinWidth="160"/>
+        <!-- Label, not Name ([SNAPDIFF-SHADOWED-PROP]): one copy of a shadowed name shows its offset. -->
+        <DataGridTextColumn Header="{StaticResource str.Pivot.Col.Field}"    Binding="{Binding Label}"           SortMemberPath="Label"         IsReadOnly="True" Width="260" MinWidth="160"/>
         <DataGridTextColumn Header="{StaticResource str.Pivot.Col.Type}"     Binding="{Binding DeclaredType}"    SortMemberPath="DeclaredType"  IsReadOnly="True" Width="130"/>
         <DataGridTextColumn Header="{StaticResource str.Pivot.Col.Distinct}" Binding="{Binding DistinctCount}"   SortMemberPath="DistinctCount" IsReadOnly="True" Width="80"/>
         <DataGridTextColumn Header="{StaticResource str.Pivot.Col.Insts}"    Binding="{Binding InstanceCount}"   SortMemberPath="InstanceCount" IsReadOnly="True" Width="90"/>
