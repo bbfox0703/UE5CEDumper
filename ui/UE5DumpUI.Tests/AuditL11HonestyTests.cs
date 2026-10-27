@@ -239,6 +239,25 @@ public class AuditL11HonestyTests
         Assert.Empty(vm.Functions);
     }
 
+    [Fact]
+    public void LiveWalker_ClearOnDisconnect_LeavesNoStatusLine_AndNoErrorLine()
+    {
+        // [LW-DISCONNECT-STALE-STATUS] Measured on DumperTest 5.4: a Find Refs line ("Found 4 reference(s) [scanned ...]")
+        // outlived the kill of its game and the connect of the next one, quoting a scan of a process that no longer
+        // exists above an empty landing view. The panel shows each of these on its own line whenever it is non-empty.
+        var vm = new LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(),
+                                         new MockPlatformService(Path.GetTempPath()));
+        vm.StatusText = "Found 4 reference(s)  [scanned 24516/24516 in 202ms]";
+        vm.ErrorMessage = "Refresh timed out after 10s";
+        vm.LocateFailureMessage = "Locate in GWorld failed: gone";
+
+        vm.ClearOnDisconnect();
+
+        Assert.Equal("", vm.StatusText);
+        Assert.True(string.IsNullOrEmpty(vm.ErrorMessage), $"ErrorMessage survived: '{vm.ErrorMessage}'");
+        Assert.Equal("", vm.LocateFailureMessage);
+    }
+
     private sealed class GatedBatchStub : StubDumpService
     {
         public TaskCompletionSource<PropertySearchBatchResult> Gate { get; } =
