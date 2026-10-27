@@ -5,7 +5,8 @@ r"""[CT-DELEGATE-PARAM-PAD] [CT-MULTICAST-PARAM-PAD] Call Trace decodes a delega
     py tools/verify/ct_delegate_param_live.py --case multicast --label dev-mc-green
 
 Runs against the injected DumperTest (one game at a time, never while the UI holds the pipe). Exits 1 while the
-defect stands, so it doubles as the regression check; 2 when the run could not set itself up.
+defect stands, so it doubles as the regression check; 2 when the run could not set itself up or never reached a
+decoded call (a stale build, an unhooked ProcessEvent, a refused recording), so a 1 is never a set-up fault.
 
 THE CASES. `delegate` (the default): DumperTestActor::InvokeGate_TakeDelegate takes FDumperTestUnicastSignature BY
 VALUE, and its Callback is the actor's own Del_Unicast. `multicast`: InvokeGate_TakeMulticast takes
@@ -187,13 +188,13 @@ def run(c, check, out, a):
                 and f.get("func_name") == func and isinstance(f.get("fname_key"), list)), None)
     if not check("the direct invoke went through the hooked ProcessEvent", row is not None and row.get("count", 0) >= 1,
                  "result %s; row %s" % (r1.get("result"), row and {"count": row.get("count"), "key": row["fname_key"]})):
-        return 1
+        return 2
 
     item = {"class": row["class_name"], "func": row["func_name"], "keys": [row["fname_key"]],
             "parms_size": row.get("parms_size", 0)}
     start = c.request("pe_profile_start", trace={"bytes": 32 << 20, "snapshots": {"funcs": [item], "bytes": 8 << 20}})
     if not check("the snapshots-only Start is accepted", "error" not in start, str(start.get("error", ""))[:120]):
-        return 1
+        return 2
     try:
         r2 = invoke_direct(c, actor["addr"], func, fn, param, raw)
         time.sleep(a.settle_s)
@@ -210,13 +211,13 @@ def run(c, check, out, a):
     out["invoke"] = {"plain": r1.get("result"), "traced": r2.get("result")}
     if not check("the traced call left a decoded entry slot", entry is not None,
                  "%d arm(s), %d slot(s), invoke result %s" % (len(arms), len(slots), r2.get("result"))):
-        return 1
+        return 2
     arm = next(x for x in arms if x.get("index") == entry.get("arm"))
     params = layouts[arm["layout"]].get("params", []) if "layout" in arm and arm["layout"] < len(layouts) else []
     k = next((i for i, p in enumerate(params) if p.get("name") == param.get("name")), None)
     if not check("the arm's layout holds the parameter, at the walk's size", k is not None
                  and params[k].get("size") == size, json.dumps(params)[:200]):
-        return 1
+        return 2
     text, mark = entry["values"][k][0], entry["values"][k][1]
     data = base64.b64decode(entry.get("data", ""))
     p_off = int(params[k]["offset"])
@@ -265,8 +266,9 @@ def main(argv=None):
         say("DLL build %s%s" % (out["build"], " sha256 %s" % out["dll"]["sha256"][:12] if a.dll else ""))
         rc = run(c, check, out, a)
     except PipeError as e:
+        # A stale build, a scan that timed out or a pipe that dropped: the decoder was never judged.
         check("the run reached its end", False, str(e))
-        rc = 1
+        rc = 2
     finally:
         try:
             c.request("pe_profile_stop")
