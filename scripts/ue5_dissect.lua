@@ -134,9 +134,10 @@ end
 --   vtBinary=9, vtPointer=12
 --
 -- dm, when present, is the element's DisplayMethod. Without it CE shows an integer
--- row as UNSIGNED DECIMAL (TStructelement.create's default). The value is CE's enum
--- NAME, verbatim: CE sets it through RTTI inside a bare try/except, so any other
--- spelling is dropped silently and the row stays decimal.
+-- row as UNSIGNED DECIMAL (TStructelement.create's default). The value names a
+-- TdisplayMethod member: CE sets it through RTTI inside a bare try/except, so a name
+-- the enum does not have (the CSX file's "hexadecimal", say) is dropped without a word
+-- and the row stays decimal.
 -- ----------------------------------------------------------------
 local TYPE_MAP = {
     -- Integer types
@@ -177,14 +178,13 @@ local TYPE_MAP = {
     InterfaceProperty     = { vt = vtPointer, size = 8 },
     WeakObjectProperty    = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
 
-    -- Delegates
-    -- ⚠ These sizes are FALLBACKS ONLY -- getTypeInfo prefers the engine's own ElementSize
-    -- off the wire for this family, because UE 5.3+ adds an 8-byte access detector in front
-    -- of a delegate payload in a CHECKED build (Debug/Development/DebugGame) and none in
-    -- Shipping/Test. A baked 16 reads the detector plus half the TArray header there.
-    -- A DelegateProperty row is its bound object's FWeakObjectPtr, so 8 hex bytes like Weak;
-    -- a multicast row is its InvocationList.Data pointer. addFieldsToStruct moves both past
-    -- that detector (delegatePayloadPad). UE4 <= 4.22 spells the multicast type without "Inline".
+    -- Delegates: ONE 8-byte row each, whatever `size` says (addFieldsToStruct gives them no
+    -- Bytesize). A DelegateProperty row is its bound object's FWeakObjectPtr, so 8 hex bytes
+    -- like Weak; a multicast row is its InvocationList.Data pointer. UE 5.3+ puts an 8-byte
+    -- access detector in front of a delegate payload in a CHECKED build (Debug/Development/
+    -- DebugGame) and none in Shipping/Test, so the row's PLACE comes from the engine's
+    -- ElementSize (delegatePayloadPad), never from this table. UE4 <= 4.22 spells the
+    -- multicast type without "Inline".
     DelegateProperty                  = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
     MulticastInlineDelegateProperty   = { vt = vtPointer, size = 16 },
     MulticastDelegateProperty         = { vt = vtPointer, size = 16 },
@@ -200,19 +200,6 @@ local TYPE_MAP = {
 local function getTypeInfo(typeName, fieldSize)
     local entry = TYPE_MAP[typeName]
     if entry then
-        -- ⭐ Delegates: prefer the engine's own ElementSize, exactly as EnumProperty does
-        -- below and for the same reason -- the baked number is right for only one build.
-        -- sizeof(FMulticastScriptDelegate) is 16 in Shipping/Test and 24 in a checked build
-        -- (UE 5.3+ TDelegateAccessHandlerBase contributes an 8-byte access detector); the
-        -- standalone FScriptDelegate behind a DelegateProperty moves the same way. Guarded to
-        -- the two plausible widths so a garbage ElementSize cannot widen a row arbitrarily.
-        if (typeName == "DelegateProperty"
-            or typeName == "MulticastInlineDelegateProperty"
-            or typeName == "MulticastDelegateProperty")
-           and (fieldSize == entry.size or fieldSize == entry.size + 8) then
-            return entry.vt, fieldSize, entry.dm
-        end
-
         -- For EnumProperty, prefer the actual field size
         if typeName == "EnumProperty" and fieldSize > 0 then
             if     fieldSize == 1 then return vtByte,   1
@@ -1198,12 +1185,10 @@ function dissect.clearAll()
 end
 
 -- ----------------------------------------------------------------
--- Exposed for tests only. getTypeInfo decides a row's CE type, WIDTH and display method, and its delegate
--- branch depends on the BUILD rather than on the property -- sizeof(FMulticastScriptDelegate)
--- is 16 in Shipping/Test and 24 in a checked build (UE 5.3+ adds an 8-byte access detector).
--- Nothing reachable through the public API returns that width on its own, so pinning it means
--- reaching the function. (delegatePayloadPad's answer IS reachable: it is a row's offset.) Same reason
--- DescribeSparseDelegateState is header-inline on the C++ side.
+-- Exposed for tests only. getTypeInfo maps a property type to a row's CE type, width and display
+-- method; reaching it pins that mapping without building a structure through the stubbed CE. Where
+-- a delegate row sits is delegatePayloadPad's answer, and that one IS reachable through the public
+-- API: it is the row's offset.
 -- ----------------------------------------------------------------
 dissect._getTypeInfo = getTypeInfo
 

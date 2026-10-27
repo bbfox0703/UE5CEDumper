@@ -1762,40 +1762,31 @@ do
 end
 
 -- ============================================================
--- D4b -- a delegate row's WIDTH depends on the BUILD, not on the property
+-- D4b -- a delegate row's PLACE depends on the BUILD; its type does not
 -- ============================================================
 -- UE 5.3 gave TScriptDelegate / TMulticastScriptDelegate a TDelegateAccessHandlerBase base
 -- whose DO_CHECK specialization holds one std::atomic<uint64>, so sizeof is 8 bytes larger in
--- Debug/Development/DebugGame than in Shipping/Test. This file baked
---   MulticastInlineDelegateProperty = { size = 16 }
--- and getTypeInfo returned it unconditionally, so on a checked build the row read the detector
--- plus half the TArray header. The engine's own ElementSize is already on the wire as f.size;
--- prefer it, exactly as the EnumProperty branch beside it already does.
+-- Debug/Development/DebugGame than in Shipping/Test. getTypeInfo once answered that by widening
+-- the row to the engine's ElementSize, which still left it on the detector. Since VND584-02 a
+-- delegate is ONE 8-byte row that delegatePayloadPad places past the detector -- the VND584-02
+-- delegate and multicast cases below pin the placement -- and CE draws a vtQword / vtPointer
+-- row 8 bytes wide whatever its Bytesize (StructuresFrm2.pas TStructelement.getBytesize). What
+-- is left for getTypeInfo: the row's type and display, which must not move with the ElementSize.
 do
   local gti = dissect._getTypeInfo
   check(gti ~= nil, 'D4b: getTypeInfo is reachable from the test')
 
-  local _, n16 = gti('MulticastInlineDelegateProperty', 16)
-  eq(n16, 16, 'D4b: Shipping multicast keeps 16')
-  local _, n24 = gti('MulticastInlineDelegateProperty', 24)
-  eq(n24, 24, 'D4b: checked-build multicast takes the reported 24')
+  for _, n in ipairs({ 16, 24, 1073742336, 0, 20 }) do
+    eq(gti('MulticastInlineDelegateProperty', n), vtPointer,
+       'D4b: a multicast row is a pointer at ElementSize ' .. n)
+  end
+  for _, n in ipairs({ 16, 24 }) do
+    local vt, _, dm = gti('DelegateProperty', n)
+    eq(vt, vtQword, 'D4b: a delegate row is 8 bytes at ElementSize ' .. n)
+    eq(dm, 'dtHexadecimal', 'D4b: ... in hex at ElementSize ' .. n)
+  end
 
-  local _, u8 = gti('DelegateProperty', 8)
-  eq(u8, 8, 'D4b: Shipping unicast keeps 8')
-  local _, u16 = gti('DelegateProperty', 16)
-  eq(u16, 16, 'D4b: checked-build unicast takes the reported 16')
-
-  -- ⭐ THE CONTROLS. The wire value is preferred only when it is one of the TWO widths the
-  -- layout can actually have; anything else falls back to the baked size rather than widening
-  -- a CE row by whatever number came off a garbage ElementSize.
-  local _, bad = gti('MulticastInlineDelegateProperty', 1073742336)
-  eq(bad, 16, 'D4b control: a garbage ElementSize falls back, it does not widen the row')
-  local _, zero = gti('MulticastInlineDelegateProperty', 0)
-  eq(zero, 16, 'D4b control: a missing size falls back')
-  local _, odd = gti('MulticastInlineDelegateProperty', 20)
-  eq(odd, 16, 'D4b control: a width the layout cannot have falls back')
-
-  -- Untouched neighbours: the branch must not leak into other types.
+  -- Untouched neighbours.
   local _, f = gti('FloatProperty', 24)
   eq(f, 4, 'D4b control: a non-delegate ignores the reported size as before')
   local _, sp = gti('MulticastSparseDelegateProperty', 1)
@@ -1832,9 +1823,9 @@ end
 -- dtUnsignedInteger (CE StructuresFrm2.pas), so a weak pair { ObjectIndex 0x1234, Serial 0x56 } read
 -- as 369367192116 instead of 5600001234 -- the two int32 halves are unreadable. The CE-XML
 -- (ShowAsHex) and CSX (DisplayMethod="hexadecimal") exports show these four as hex. The value is
--- pinned VERBATIM: CE sets a published enum through RTTI by NAME inside a bare try/except
--- (LuaObject.pas lua_setProperty), so a wrong spelling -- the CSX file's "hexadecimal" included --
--- is swallowed without a word and the row stays decimal.
+-- pinned to the enum member's name: CE sets a published enum through RTTI inside a bare try/except
+-- (LuaObject.pas lua_setProperty), so a name the enum does not have -- the CSX file's "hexadecimal"
+-- included -- is swallowed without a word and the row stays decimal.
 case('VND584-02: soft / soft-class / lazy / weak rows are hexadecimal, like the CE-XML and CSX exports')
 do
   resetWorld(); dissect.clearAll(); injectDll()
