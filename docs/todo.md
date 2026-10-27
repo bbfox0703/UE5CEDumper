@@ -1597,12 +1597,33 @@ the notes carry it.
 - On a Development or Debug build of a UE 5.3+ game, CE Structure Dissect's delegate and multicast delegate rows show the bound object and the invocation list instead of the 8 bytes in front of them.
 ```
 
-⬜ `[CT-DELEGATE-PARAM-PAD]` (found 2026-10-27 while placing the dissect's delegate row; read from source, not
-measured): Call Trace's parameter decoder reads a `DelegateProperty` parameter's bound object at +0 / +4 even when
-`DelegatePadFromElementSize` says 8, and applies the pad only to the FName. On a UE 5.3+ checked build the index and
-serial therefore come from the access detector, so the call's delegate names no object (or a wrong one). Fix: read
-the pair at `pad`, red test first; live on DumperTest Development with a UFunction that takes a delegate by value.
-Effort **S**. Where: `Ubel.cpp` `DecodeSnapElement`.
+✅ `[CT-DELEGATE-PARAM-PAD]` **FIXED + LIVE-VERIFIED 2026-10-27** (red `71c3dfa5` / green `e467f16d`, rig `2e20ba80`;
+in no build yet). Found the same day while placing the dissect's delegate row. Call Trace's parameter decoder
+(`Ubel.cpp` `DecodeSnapElement`) read a `DelegateProperty`'s weak pair at +0 / +4 and applied
+`DelegatePadFromElementSize` to the FName only, so on a UE 5.3+ checked build the pair came from the access detector.
+It now reads the pair at the pad too. An ElementSize that is neither shape is not read: the value says
+`(delegate — unexpected ElementSize N, not read)` and gives the copy's bytes, marked hex, and no pair is resolved, as the
+walk refuses the same size. dll_core_test CT-DELEGATE-PARAM-PAD (red: 5 -- ElementSize 24, 24 behind a detector that
+looks like a live pair, 28 with a 12-byte FName, and 20, which was read as a pair (two checks); the 16 control held).
+dll_core_test 1335 checks, dll_helpers_test 3626, 36 gates, 0 failed; the `UE5Dumper` target builds. **Live, DumperTest
+5.4** (`tools/verify/ct_delegate_param_live.py`): a DIRECT invoke of `InvokeGate_TakeDelegate` on the actor is traced,
+because `AActor::ProcessEvent`'s Super call is the hooked entry; its `Callback` is the actor's own `Del_Unicast`. The
+witnesses are the walk's text, the slot's own bytes and the fixture's `InvokeGate_LastDelegateBound`. **Development**
+(ElementSize 24, `delegate_pad` 8): dist 3654 (`422142ff`) decoded `(stale)::D4b_OnPingProbe` (exact), while the slot
+held the actor's pair `85620000 F0050000` at +8 behind the detector's 0 and the engine reported a bound delegate. The
+fixed DLL (`9476150f`, built by `build_dll.py`, so it still reports 3654) decoded `DumperTestActor_0::D4b_OnPingProbe`
+(now), 10/10 checks. **Shipping** (ElementSize 16, pad 0), fixed DLL: the same text, 10/10. Evidence:
+`out/ct_delegate_param/` (`dev-red-3654`, `dev-green`, `shipping-green`). Notes draft for the release that carries it
+(`## Fixed`): "On a Development or Debug build of a UE 5.3+ game, Call Trace names the object a delegate parameter is
+bound to, instead of showing it as stale."
+
+⬜ `[CT-MULTICAST-PARAM-PAD]` (found 2026-10-27 while fixing `[CT-DELEGATE-PARAM-PAD]`; read from source, not
+measured): the same decoder reads a `MulticastInlineDelegateProperty`'s invocation-list header at +0 / +8 whatever
+its ElementSize. On a UE 5.3+ checked build (ElementSize 24) it then shows the detector as Data and Data's low half as
+Num, the fingerprint `Grimoire.h`'s `kDelegateDetectorPad` block describes. Reached through a struct parameter with a
+multicast member; whether UHT accepts a multicast parameter itself is not checked. Fix:
+`DelegatePadFromElementSize(f.size, 16)`, the header at the pad, a refused size not read; red test first. The live
+check needs a fixture UFunction that takes such a struct. Effort **S**. Where: `Ubel.cpp` `DecodeSnapElement`.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
