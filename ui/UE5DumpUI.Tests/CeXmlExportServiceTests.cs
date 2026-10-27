@@ -5660,9 +5660,10 @@ public class CeXmlExportServiceTests
     [InlineData("AssetClassProperty", "0x7FF400001234")]
     public void UE4AssetPointer_IsItsWeakPairAndItsPathString_NeverDrilled(string typeName, string ptrAddr)
     {
-        // The array element's group, for one field: the weak pair alone is {0,0} or stale for an unloaded asset --
-        // TAssetPtr's usual state -- so the FString path is the only readable name it has (final review,
-        // ASSETPTR-CEXML-SCALAR-NOPATH). The loaded object is still not drilled: the slot holds no address.
+        // The array element's group, for one field: the weak pair alone is UE4's reset value {INDEX_NONE, 0} or stale
+        // for an unloaded asset -- TAssetPtr's usual state; Extinction's PreGameWorld read FFFFFFFF / 0 live -- so the
+        // FString path is the only readable name it has (batch 3's review, ASSETPTR-CEXML-SCALAR-NOPATH). The loaded
+        // object is still not drilled: the slot holds no address.
         var fields = new[]
         {
             new LiveFieldValue

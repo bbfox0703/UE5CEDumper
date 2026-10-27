@@ -2392,8 +2392,9 @@ public static class CeXmlExportService
                 continue;
             }
 
-            // [UE4-ASSETPTR-EXPORTS] A TAssetPtr gets an array element's group: its weak pair is {0,0} or stale while
-            // the asset is unloaded, TAssetPtr's usual state, so the FString path is the one name it can show.
+            // [UE4-ASSETPTR-EXPORTS] A TAssetPtr gets an array element's group: its weak pair is UE4's reset value
+            // {INDEX_NONE, 0} or stale while the asset is unloaded, TAssetPtr's usual state, so the FString path is the
+            // one name it can show.
             if (IsAssetPtrType(field.TypeName))
             {
                 EmitAssetPtrGroup(sb, indent, ScalarDesc(), $"+{CeOffset(field):X}");
