@@ -1770,7 +1770,9 @@ when the clipboard took it; the rest make no claim, by design), `[UE4-ASSETPTR-E
   without a reason. Was: the Standalone Trainer export still pushes through the bool `CreateAAScriptAsync`:
   a timeout on entry k reads "pipe dropped" although it may exist, and a refusal with a reason (the size cap) reads as a
   dropped pipe -- the `[COORDPICK-*]` fix applies.
-- ⬜ `[DISCOVER-SHADOWED-POOL]` `PivotDiscoveryEngine.Rank` groups by (class, prop, type), so the two copies of a
+- ✅ `[DISCOVER-SHADOWED-POOL]` **FIXED 2026-10-27** (red `b4086675` / green `fec23726`): Rank groups by offset too, so
+  each copy is its own candidate, labelled Name@+0xOFF when the class shows the name at more than one offset; the
+  Discover grid binds that label. Was: `PivotDiscoveryEngine.Rank` groups by (class, prop, type), so the two copies of a
   shadowed name of one type become ONE discovery candidate with pooled counts.
 - ⬜ `[DBGCAM-OFF-OVER-QUEUED-ON]` (inferred from `UE5_SetDebugCamera`, not measured) Force OFF / an untick while an ON
   is still queued reads the camera OFF ("already OFF -- no-op"), reports a clean OFF, and the queued ON then turns it on.
