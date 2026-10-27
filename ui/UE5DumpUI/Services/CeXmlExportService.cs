@@ -2392,6 +2392,14 @@ public static class CeXmlExportService
                 continue;
             }
 
+            // [UE4-ASSETPTR-EXPORTS] A TAssetPtr gets an array element's group: its weak pair is {0,0} or stale while
+            // the asset is unloaded, TAssetPtr's usual state, so the FString path is the one name it can show.
+            if (IsAssetPtrType(field.TypeName))
+            {
+                EmitAssetPtrGroup(sb, indent, ScalarDesc(), $"+{CeOffset(field):X}");
+                continue;
+            }
+
             var ceField = MapCeField(field);
             if (ceField != null)
             {
@@ -3273,8 +3281,6 @@ public static class CeXmlExportService
     {
         EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 });
         var elemIndent = indent + "  ";
-        var fieldIndent = elemIndent + "  ";
-        var ceWeakPtr = new CeFieldInfo("8 Bytes", ShowAsHex: true);
 
         foreach (var elem in field.ArrayElements!)
         {
@@ -3282,13 +3288,24 @@ public static class CeXmlExportService
 
             int elemByteOffset = elem.Index * field.ArrayElemSize;
             string elemKey = !string.IsNullOrEmpty(elem.Value) ? $"[{elem.Index}] {elem.Value}" : $"[{elem.Index}]";
-            EmitGroupOpen(sb, elemIndent, DecorateDesc(elemKey, elemByteOffset, null), $"+{elemByteOffset:X}", null);
-            EmitLeaf(sb, fieldIndent, DecorateDesc("WeakPtr", 0, null), ceWeakPtr, "+0", null);
-            EmitContainerStringLeaf(sb, fieldIndent, DecorateDesc("AssetPath", AssetPtrPathOffset, null),
-                $"+{AssetPtrPathOffset:X}", "StrProperty");
-            EmitGroupClose(sb, elemIndent);
+            EmitAssetPtrGroup(sb, elemIndent, DecorateDesc(elemKey, elemByteOffset, null), $"+{elemByteOffset:X}");
         }
 
+        EmitGroupClose(sb, indent);
+    }
+
+    /// <summary>
+    /// [UE4-ASSETPTR-EXPORTS] One FAssetPtr as a group at <paramref name="address"/>: the WeakPtr 8-byte hex leaf at +0
+    /// and the path a CE String one Data-pointer hop away. The group itself is not dereferenced -- the slot holds the
+    /// struct, not an address -- so a loaded target is never drilled from here.
+    /// </summary>
+    private static void EmitAssetPtrGroup(StringBuilder sb, string indent, string desc, string address)
+    {
+        var childIndent = indent + "  ";
+        EmitGroupOpen(sb, indent, desc, address, null);
+        EmitLeaf(sb, childIndent, DecorateDesc("WeakPtr", 0, null), new CeFieldInfo("8 Bytes", ShowAsHex: true), "+0", null);
+        EmitContainerStringLeaf(sb, childIndent, DecorateDesc("AssetPath", AssetPtrPathOffset, null),
+            $"+{AssetPtrPathOffset:X}", "StrProperty");
         EmitGroupClose(sb, indent);
     }
 
