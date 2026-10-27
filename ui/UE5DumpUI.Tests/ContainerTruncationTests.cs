@@ -308,6 +308,58 @@ public class ContainerTruncationTests
         Assert.Equal("", vm.StatusText);
     }
 
+    // ---- [UE4-ASSETPTR-EXPORTS] a TArray<TAssetPtr> keeps the walk's paths ----
+    //
+    // The DLL fills a UE 4.11-4.17 asset-pointer array's inline elements with each path ([UE4-ASSETPTR-PROPS]);
+    // read_array_elements is scalar-only and answers raw bytes for that inner. The drill took the scalar re-read for
+    // any inner IsPointerOrStructArrayType did not name, so a capped preview was replaced by rows of hex.
+
+    /// <summary>Answers an element read as read_array_elements does for an inner it cannot decode: raw bytes only.</summary>
+    private sealed class RawElementReadStub : StubDumpService
+    {
+        public int Reads { get; private set; }
+        public override Task<ArrayElementsResult> ReadArrayElementsAsync(string addr, int fieldOffset, string innerAddr,
+            string innerType, int elemSize, int offset = 0, int limit = 64, CancellationToken ct = default)
+        {
+            Reads++;
+            return Task.FromResult(new ArrayElementsResult
+            {
+                TotalCount = limit, ReadCount = limit, InnerType = innerType, ElemSize = elemSize,
+                Elements = Enumerable.Range(0, limit)
+                    .Select(i => new ArrayElementValue { Index = i, Hex = new string('0', elemSize * 2) }).ToList(),
+            });
+        }
+    }
+
+    [Theory]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
+    public async Task Drill_UE4AssetPointerArray_ShowsTheWalksPaths_NotARawReRead(string innerType)
+    {
+        var field = new LiveFieldValue
+        {
+            Name = "ZonesToUse", TypeName = "ArrayProperty", ArrayCount = 200,
+            ArrayInnerType = innerType, ArrayElemSize = 0x20, ArrayInnerAddr = "0x7FF600001000",
+            ArrayElements = Enumerable.Range(0, 64)
+                .Select(i => new ArrayElementValue { Index = i, Value = $"/Game/Maps/Zones/Zone_{i}.Zone_{i}" })
+                .ToList(),
+        };
+        var dump = new RawElementReadStub();
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Fields = new List<LiveFieldValue> { field },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        vm.CurrentAddress = "0x10000000";
+
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
+
+        Assert.Equal(0, dump.Reads);                                              // the walk's elements, as a pointer array's
+        Assert.Equal(64, vm.Fields.Count);
+        Assert.Equal("/Game/Maps/Zones/Zone_0.Zone_0", vm.Fields[0].TypedValue);
+        Assert.Contains("showing 64 of 200", vm.Breadcrumbs[^1].Label);
+    }
+
     // ---- [WALK-REFRESH-SCALAR-SHRINK] a Refresh inside a container view agrees with the drill ----
     //
     // Refresh's container branch re-walked the PARENT at the Array Limit and re-rendered the walk's inline preview: it
