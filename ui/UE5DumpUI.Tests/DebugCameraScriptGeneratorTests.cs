@@ -175,4 +175,27 @@ public class DebugCameraScriptGeneratorTests
         Assert.Contains("do not tick again -- the toggle is already queued.", queued);
         Assert.DoesNotContain("undo", queued);
     }
+
+    // [DEBUGCAM-QUEUED-OFF-NOESCALATE] batch 2's review: the DLL's own -5 texts kept the old advice for both directions.
+    // The mailbox writes one of them into errorMsg, which a CE script renders verbatim (MB3), so a script that sent OFF
+    // read "it will run ... do not re-send" over a camera that stays on. Mimic.cpp is in no C++ test target.
+    [Fact]
+    public void The_DLLs_queued_texts_tell_a_queued_OFF_to_be_sent_again_and_never_claim_a_second_toggle_undoes_the_first()
+    {
+        string Src(string p) => System.IO.File.ReadAllText(NumericInputCoercionTests.RepoFile(p)).Replace("\r\n", "\n");
+        var mimic = Src("dll/src/Mimic.cpp");
+        int at = mimic.IndexOf("static void HandleSetDebugCamera()", System.StringComparison.Ordinal);
+        Assert.True(at >= 0, "HandleSetDebugCamera is gone");
+        var body = mimic.Substring(at, mimic.IndexOf("\n}\n", at, System.StringComparison.Ordinal) - at);
+        Assert.Contains("Debug Camera: OFF did not complete", body);
+        Assert.Contains("send OFF again once the game responds", body);
+        Assert.Contains("Debug Camera: ON queued", body);                      // the ON keeps "do not re-send"
+
+        foreach (var file in new[] { "dll/src/Frieren.h", "dll/src/Stark.h", "dll/src/Mimic.h", "docs/dll-spec.md" })
+        {
+            var text = Src(file);
+            Assert.DoesNotContain("undoes it", text);
+            Assert.DoesNotContain("never re-send", text);
+        }
+    }
 }
