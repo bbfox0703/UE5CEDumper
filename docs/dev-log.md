@@ -27,6 +27,39 @@ builds ≤696 in
 
 -----
 
+## 2026-10-27 (build 3656) — Delegates read right on Development builds; CE Structure Dissect shows weak pairs in hex `[VND584-02]` `[CT-DELEGATE-PARAM-PAD]` `[CT-MULTICAST-PARAM-PAD]` `[CT-UE4-MULTICAST-SPELLING]` `[DELEGATE-PAD-ALIGN]`
+
+Build 3655 was published on the way with the first three items; 3656 carries everything below.
+
+- **CE Structure Dissect shows weak, soft and lazy pointer fields in hex.** Build 3650 made them 8-byte values, but
+  CE shows such a value as one unsigned decimal number unless told otherwise, so a weak pair's object index and
+  serial could not be read apart. They now show in hex, as the CE-XML and CSX exports already did.
+- **Delegate rows sit on what they hold.** A delegate field's row is its bound object's weak pair, in hex; a
+  multicast delegate's row is its invocation-list pointer. On a Development or Debug build of a UE 5.3+ game the
+  engine puts 8 bytes of race-detector state in front of both, and the rows used to sit on it; they now sit past it,
+  where the walk and the exports place them. UE4's older multicast spelling gets a pointer row.
+- **Call Trace reads delegate parameters on Development and Debug builds.** A delegate parameter's bound object was
+  read from those 8 bytes and showed as stale, and a multicast parameter's handler count was half of a pointer; both
+  are read past them now. A UE 4.18-4.22 multicast parameter reads as its handler count instead of raw bytes.
+- **Find References no longer misses delegate bindings on Development and Debug builds.** It read a delegate
+  field's bound object from the race-detector bytes too, found nothing there, and reported a complete scan without
+  the binding.
+- **Delegates on a case-preserving build** (an editor running a game, whose names are 12 bytes): a delegate there is
+  32 bytes behind the detector, not 28, so the dumper refused such delegates and delegate arrays as an "unexpected
+  ElementSize". It reads them now, and a map whose values are delegates is laid out with the delegate's real
+  alignment.
+- Checked live on DumperTest 5.4: the dissect rows through CE 7.7's own rendering (a weak pair 61300005FD2 = index
+  0x5FD2 / serial 0x613; on Development the delegate rows past the detector, where they used to show its 0); Call
+  Trace's delegate and multicast parameters equal to the walk, 10/10 each on Development and Shipping, and again on
+  the published 3656; Find References on Development, where 3655 listed only the control and 3656 all three
+  bindings. On the UE 5.4 editor running DumperTest as a game, 3655 refused the 32-byte delegate and its array, and
+  the fix reads both, element [1] included. DumperTest gained a native function taking a multicast delegate for this
+  and was repackaged. The UE4 multicast spelling is unit-tested only.
+- Two independent reviews (three lenses on the 21 commits that began this, two on the fixes) put every finding to a
+  refuter; none was HIGH, one MED (the Find References miss), and every LOW and INFO is fixed.
+- Tests: dll_core_test 1,352 checks and dll_helpers_test 3,639, 0 failures; dissect_test.lua 419 on CE's Lua 5.3 and
+  on Lua 5.4; C# 6,704 passed, 1 skipped; 36 gates.
+
 ## 2026-10-27 (build 3654) — Call Trace reads a call's parameter bytes for you `[PARAM-BYTES-SEGMENTS]`
 
 - **A new Bytes tab in Call Trace.** A call's parameter copies (the block ProcessEvent passes, at the call and after
