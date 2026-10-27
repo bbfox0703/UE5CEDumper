@@ -182,7 +182,9 @@ local TYPE_MAP = {
     -- off the wire for this family, because UE 5.3+ adds an 8-byte access detector in front
     -- of a delegate payload in a CHECKED build (Debug/Development/DebugGame) and none in
     -- Shipping/Test. A baked 16 reads the detector plus half the TArray header there.
-    DelegateProperty                  = { vt = vtQword,   size = 8 },
+    -- A DelegateProperty row is its bound object's FWeakObjectPtr, so 8 hex bytes like Weak;
+    -- addFieldsToStruct moves it past that detector (delegatePayloadPad).
+    DelegateProperty                  = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
     MulticastInlineDelegateProperty   = { vt = vtPointer, size = 16 },
     -- ⛔ KNOWN WRONG, and NOT what this 2026-09-09 change is about: an FSparseDelegate is
     -- ONE byte (bIsBound), not 16, so this row has always overrun into the next fields.
@@ -206,7 +208,7 @@ local function getTypeInfo(typeName, fieldSize)
             or typeName == "MulticastInlineDelegateProperty"
             or typeName == "MulticastDelegateProperty")
            and (fieldSize == entry.size or fieldSize == entry.size + 8) then
-            return entry.vt, fieldSize
+            return entry.vt, fieldSize, entry.dm
         end
 
         -- For EnumProperty, prefer the actual field size
@@ -220,6 +222,23 @@ local function getTypeInfo(typeName, fieldSize)
     end
     -- Unknown type: show as raw dword block
     return vtDword, (fieldSize > 0 and fieldSize or 4)
+end
+
+-- ----------------------------------------------------------------
+-- Where a standalone FScriptDelegate's payload starts: 0, 8 (behind the access detector a
+-- UE 5.3+ CHECKED build puts in front of it), or nil when the ElementSize fits no build.
+-- It is the DLL's rule (DynOff::DelegatePadFromElementSize, base 8 + sizeof(FName)), the pad
+-- the CE-XML / CSX exports add as DelegatePad. This script cannot ask which FName width the
+-- build has, so both bases are tried; their answers cannot collide (16 / 20 are pad 0,
+-- 24 / 28 pad 8). The DLL refuses any other size, and so the caller must not guess one.
+-- ----------------------------------------------------------------
+local DELEGATE_DETECTOR_PAD = 8
+local function delegatePayloadPad(elementSize)
+    for _, base in ipairs({ 16, 20 }) do   -- the weak pair + an 8- or 12-byte FName
+        if elementSize == base then return 0 end
+        if elementSize == base + DELEGATE_DETECTOR_PAD then return DELEGATE_DETECTOR_PAD end
+    end
+    return nil
 end
 
 -- ----------------------------------------------------------------
@@ -391,6 +410,18 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
                 e3.Name    = displayName .. "_capacity"
                 e3.Vartype = vtDword
             end
+
+        -- DelegateProperty: one row on the bound object's weak pair. A size no build has keeps
+        -- the field offset and says so, since the first 8 bytes may then be the detector.
+        elseif f.typeName == "DelegateProperty" then
+            local vt, _, dm = getTypeInfo(f.typeName, f.size)
+            local pad = delegatePayloadPad(f.size)
+            local e = ceStruct.addElement()
+            e.Offset  = absOffset + (pad or 0)
+            e.Name    = pad and displayName
+                or string.format("%s (ElementSize %d: payload start unknown)", displayName, f.size)
+            e.Vartype = vt
+            if dm then e.DisplayMethod = dm end
 
         -- Standard scalar / pointer types
         else
@@ -1158,10 +1189,10 @@ end
 
 -- ----------------------------------------------------------------
 -- Exposed for tests only. getTypeInfo decides a row's CE type, WIDTH and display method, and its delegate
--- branch is the one thing in this file that depends on the BUILD rather than on the property
--- -- sizeof(FMulticastScriptDelegate) is 16 in Shipping/Test and 24 in a checked build
--- (UE 5.3+ adds an 8-byte access detector). Nothing reachable through the public API returns
--- that width on its own, so pinning it means reaching the function. Same reason
+-- branch depends on the BUILD rather than on the property -- sizeof(FMulticastScriptDelegate)
+-- is 16 in Shipping/Test and 24 in a checked build (UE 5.3+ adds an 8-byte access detector).
+-- Nothing reachable through the public API returns that width on its own, so pinning it means
+-- reaching the function. (delegatePayloadPad's answer IS reachable: it is a row's offset.) Same reason
 -- DescribeSparseDelegateState is header-inline on the C++ side.
 -- ----------------------------------------------------------------
 dissect._getTypeInfo = getTypeInfo
