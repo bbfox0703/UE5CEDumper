@@ -1,15 +1,15 @@
 {
   "engine": "UE 5.4",
-  "source_commit": "39c2aeea",
-  "source_sha256": "397c3cedfcc510369a55b02e136d841bd7cafb415408bf10b1b4cb760c3ba20a",
-  "captured_utc": "2026-10-26T16:53:10+00:00",
+  "source_commit": "deb841ab",
+  "source_sha256": "98c77ada77dce6522eaae873c50c4284be66d3bb65646018a07e220f7b6aaa8d",
+  "captured_utc": "2026-10-27T04:01:10+00:00",
   "build_command": "\"<DRIVE>\\Program Files\\Epic Games\\UE_5.4\\Engine\\Build\\BatchFiles\\Build.bat\" DumperTestEditor Win64 Development -Project=\"<project>\\DumperTest.uproject\" -WaitMutex",
   "packaged_root": "<CORPUS>\\DumperTest",
   "configs": {
     "Development": {
       "file": "DumperTest.exe",
-      "size": 279326720,
-      "sha256": "fbba8440bbe9e8356de8fbb9d019ef2a76baf2331ef14a32c975002a7b92d4e8",
+      "size": 279327744,
+      "sha256": "790a3c50eefdd6af851580df2e8b6c515427013d4193ae823e3b092576e2881c",
       "reflected_present": {
         "DumperTestActor": 7,
         "DumperTestSubsystem": 2,
@@ -25,12 +25,12 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-10-26T16:51:36+00:00"
+      "exe_mtime": "2026-10-27T03:55:42+00:00"
     },
     "Shipping": {
       "file": "DumperTest-Win64-Shipping.exe",
-      "size": 132379648,
-      "sha256": "443c3cb2658e74481dfde639529583ca41115d4e5bde6ff98218faf258527b7b",
+      "size": 132384256,
+      "sha256": "d04558fe8aeb34f5d7f60dca7fc769fe15d76f212b56040f6790d0a2dd4efdca",
       "reflected_present": {
         "DumperTestActor": 4,
         "DumperTestSubsystem": 1,
@@ -46,12 +46,12 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-10-26T16:50:37+00:00"
+      "exe_mtime": "2026-10-27T03:57:30+00:00"
     },
     "DebugGame": {
       "file": "DumperTest-Win64-DebugGame.exe",
-      "size": 279520256,
-      "sha256": "e247721da0dd2971aabfc5b00b9068a61d748de4fda0ca52eda4589a94b2f686",
+      "size": 279522304,
+      "sha256": "b3a52a5831ad27b9a0e2d2e5c4ccfaf2ef6302db50cb2d4ba1737eb1a35ac7cd",
       "reflected_present": {
         "DumperTestActor": 11,
         "DumperTestSubsystem": 3,
@@ -67,12 +67,12 @@
         "RawFloat": 0,
         "RawDouble": 0
       },
-      "exe_mtime": "2026-10-26T16:52:35+00:00"
+      "exe_mtime": "2026-10-27T04:00:35+00:00"
     }
   },
   "problems": [],
   "built_from": {
     "path": "<PROJECT>\\Source\\DumperTest",
-    "source_sha256": "397c3cedfcc510369a55b02e136d841bd7cafb415408bf10b1b4cb760c3ba20a"
+    "source_sha256": "98c77ada77dce6522eaae873c50c4284be66d3bb65646018a07e220f7b6aaa8d"
   }
 }
