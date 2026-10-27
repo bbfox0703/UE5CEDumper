@@ -3372,6 +3372,12 @@ public static class CeXmlExportService
                             $"+{sf.Offset:X}", sf.TypeName);
                         continue;
                     }
+                    // [UE4-ASSETPTR-EXPORTS] As a field of its own: the path is the name an unloaded asset shows.
+                    if (IsAssetPtrType(sf.TypeName))
+                    {
+                        EmitAssetPtrGroup(sb, fieldIndent, DecorateDesc(sf.Name, sf.Offset, null), $"+{sf.Offset:X}");
+                        continue;
+                    }
                     var ceField = MapInnerTypeToCeField(sf.TypeName, sf.Size);
                     if (ceField != null)
                     {
@@ -3481,6 +3487,7 @@ public static class CeXmlExportService
 
         var ceKey = MapInnerTypeToCeField(field.MapKeyType, field.MapKeySize);
         bool keyString = IsStringProperty(field.MapKeyType);   // ceKey is null for these [W5-CEXML-FSTRING]
+        bool keyAsset = IsAssetPtrType(field.MapKeyType);      // checked before ceKey: its weak pair names nothing
 
         // Shared value DropDownList (rawInt → name) for Name/Enum values.
         string? valueDropDown = null;
@@ -3535,7 +3542,11 @@ public static class CeXmlExportService
                 // BOTH the Key leaf and the flattened value fields so the whole record reads as one.
                 _curRowColor = AltRowColor(elem.Index);
                 // Key as a flat sibling leaf at the element base ("[i] key ▸ Key").
-                if (ceKey != null)
+                if (keyAsset)
+                    EmitAssetPtrGroup(sb, elemIndent,
+                        $"{DecorateDesc(rawElemLabel, elemByteOffset, null, allowType: false)} ▸ Key",
+                        $"+{elemByteOffset:X}");
+                else if (ceKey != null)
                     EmitLeaf(sb, elemIndent,
                         $"{DecorateDesc(rawElemLabel, elemByteOffset, null, allowType: false)} ▸ Key",
                         ceKey, $"+{elemByteOffset:X}", null);
@@ -3569,7 +3580,9 @@ public static class CeXmlExportService
             var fieldIndent = elemIndent + "  ";
 
             // Key leaf at +0 — label only, no baked-in dynamic value.
-            if (ceKey != null)
+            if (keyAsset)
+                EmitAssetPtrGroup(sb, fieldIndent, DecorateDesc("Key", 0, null), "+0");
+            else if (ceKey != null)
                 EmitLeaf(sb, fieldIndent, DecorateDesc("Key", 0, null), ceKey, "+0", null);
             else if (keyString)
                 EmitContainerStringLeaf(sb, fieldIndent, DecorateDesc("Key", 0, null), "+0", field.MapKeyType);
@@ -3586,7 +3599,9 @@ public static class CeXmlExportService
             else
             {
                 var ceVal = MapInnerTypeToCeField(field.MapValueType, field.MapValueSize);
-                if (IsStringProperty(field.MapValueType))   // ceVal is null for these [W5-CEXML-FSTRING]
+                if (IsAssetPtrType(field.MapValueType))   // before ceVal: the asset's weak pair names nothing
+                    EmitAssetPtrGroup(sb, fieldIndent, DecorateDesc("Value", valOffset, null), $"+{valOffset:X}");
+                else if (IsStringProperty(field.MapValueType))   // ceVal is null for these [W5-CEXML-FSTRING]
                     EmitContainerStringLeaf(sb, fieldIndent, DecorateDesc("Value", valOffset, null),
                         $"+{valOffset:X}", field.MapValueType);
                 else if (ceVal != null)
@@ -3678,7 +3693,12 @@ public static class CeXmlExportService
                     ? $"[{elem.Index}] {elem.Key}"
                     : $"[{elem.Index}]";
 
-            if (ceElem != null)
+            if (IsAssetPtrType(field.SetElemType))
+            {
+                // [UE4-ASSETPTR-EXPORTS] Before the scalar leaf: the weak pair names nothing while unloaded.
+                EmitAssetPtrGroup(sb, childIndent, DecorateDesc(bareName, elemByteOffset, null), $"+{elemByteOffset:X}");
+            }
+            else if (ceElem != null)
             {
                 // Scalar element → flat leaf (decorated with +Offset; no class type).
                 EmitLeaf(sb, childIndent, DecorateDesc(bareName, elemByteOffset, null),
