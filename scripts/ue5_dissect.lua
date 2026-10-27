@@ -129,9 +129,9 @@ end
 -- ----------------------------------------------------------------
 -- UE type → CE Vartype mapping
 --
--- CE Lua constants (defined by CE):
---   vtByte=0, vtWord=1, vtDword=3, vtSingle=4, vtDouble=5,
---   vtQword=8, vtPointer=12
+-- CE Lua constants (CE's defines.lua; this file reads CE's globals, never these numbers):
+--   vtByte=0, vtWord=1, vtDword=2, vtQword=3, vtSingle=4, vtDouble=5,
+--   vtBinary=9, vtPointer=12
 --
 -- dm, when present, is the element's DisplayMethod. Without it CE shows an integer
 -- row as UNSIGNED DECIMAL (TStructelement.create's default). The value is CE's enum

@@ -41,7 +41,7 @@ local HELPER = (arg and arg[0] or ''):gsub('[^/\\]*$', '') .. '../ue5_dissect.lu
 -- ============================================================
 -- CE constants -- MUST exist before the chunk loads (trap 1 above)
 -- ============================================================
-vtByte, vtWord, vtDword, vtSingle, vtDouble, vtQword, vtPointer = 0, 1, 3, 4, 5, 8, 12
+vtByte, vtWord, vtDword, vtSingle, vtDouble, vtQword, vtPointer = 0, 1, 2, 4, 5, 3, 12   -- CE's defines.lua
 vtBinary = 9   -- CE's real value (defines.lua); a single bit uses vtBinary + BitStart/BitSize
 
 -- ============================================================
