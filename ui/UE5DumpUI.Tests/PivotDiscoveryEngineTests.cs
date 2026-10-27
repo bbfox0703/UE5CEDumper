@@ -250,4 +250,41 @@ public class PivotDiscoveryEngineTests
         Assert.Equal("100  →  50", c.SampleSequence);
         Assert.Equal("↓", c.Direction);
     }
+
+    // [DISCOVER-SHADOWED-POOL] A class can carry two properties of one name and type at different offsets (a shadowed
+    // name). Rank grouped by (class, prop, type), so the two copies became ONE candidate: their changed counts pooled,
+    // and the sample was whichever copy's instance sorted first. Each copy is its own candidate, labelled with its offset.
+    private static DiscoveryInput At(DiscoveryInput d, int offset) { d.PropOffset = offset; return d; }
+
+    [Fact]
+    public void TheTwoCopiesOfAShadowedName_AreTwoCandidates_EachLabelledWithItsOffset()
+    {
+        var r = PivotDiscoveryEngine.Rank(new[]
+        {
+            At(In("Shot", "PrerollTime", "FloatProperty", "/a", new[] { "00", "01" }), 0xC4),
+            At(In("Shot", "PrerollTime", "FloatProperty", "/b", new[] { "00", "02" }), 0xC4),
+            At(In("Shot", "PrerollTime", "FloatProperty", "/c", new[] { "10", "20" }), 0x128),
+        }, 2);
+
+        var rows = r.Rows.Where(x => x.PropName == "PrerollTime").OrderBy(x => x.PropOffset).ToList();
+        Assert.Equal(2, rows.Count);
+        Assert.Equal((0xC4, 2, "PrerollTime@+0xC4"), (rows[0].PropOffset, rows[0].InstancesChanged, rows[0].PropLabel));
+        Assert.Equal((0x128, 1, "PrerollTime@+0x128"), (rows[1].PropOffset, rows[1].InstancesChanged, rows[1].PropLabel));
+        Assert.Equal("/c", rows[1].NormPath);                                      // the sample is that copy's
+    }
+
+    [Fact]
+    public void ANameUsedOnce_KeepsItsBareLabel_AndPoolsItsInstances()
+    {
+        // CONTROL: one copy, several instances -- one candidate, as before.
+        var r = PivotDiscoveryEngine.Rank(new[]
+        {
+            At(In("C", "Gold", "IntProperty", "/a", new[] { "01", "02" }), 0x30),
+            At(In("C", "Gold", "IntProperty", "/b", new[] { "01", "03" }), 0x30),
+        }, 2);
+
+        var gold = Assert.Single(r.Rows);
+        Assert.Equal(2, gold.InstancesChanged);
+        Assert.Equal("Gold", gold.PropLabel);
+    }
 }
