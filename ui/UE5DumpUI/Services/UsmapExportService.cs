@@ -75,7 +75,7 @@ public static class UsmapExportService
         MulticastDelegateProperty = 13,
         WeakObjectProperty = 14,
         LazyObjectProperty = 15,
-        AssetObjectProperty = 16,  // SoftObjectProperty
+        AssetObjectProperty = 16,  // pre-4.18 soft pointers, before the Soft* rename [UE4-ASSETPTR-EXPORTS]
         SoftObjectProperty = 17,
         UInt64Property = 18,
         UInt32Property = 19,
@@ -545,6 +545,10 @@ public static class UsmapExportService
             "LazyObjectProperty" => EPropertyType.LazyObjectProperty,
             "SoftObjectProperty" => EPropertyType.SoftObjectProperty,
             "SoftClassProperty" => EPropertyType.SoftObjectProperty,
+            // [UE4-ASSETPTR-EXPORTS] 4.11-4.17's soft pointers, before 4.18 renamed them: the slot the format keeps for
+            // them, the class flavour with it as SoftClass goes with SoftObject.
+            "AssetObjectProperty" => EPropertyType.AssetObjectProperty,
+            "AssetClassProperty" => EPropertyType.AssetObjectProperty,
             "UInt64Property" => EPropertyType.UInt64Property,
             "UInt32Property" => EPropertyType.UInt32Property,
             "UInt16Property" => EPropertyType.UInt16Property,
