@@ -4677,6 +4677,85 @@ int main() {
         g_cachedUEVersion           = svVerP;
     }
 
+    // -- WALKIFACEGUARD-2026-10-27 -- WalkInterfaceFunctions asks only a class for its interfaces ------------------------
+    //
+    // [VND584-04] Live Walker asks walk_functions for interface functions on every view, and a struct view's address is
+    // its UScriptStruct, which has no Interfaces array: read at UClass's offset, the bytes past the struct can pass as
+    // one and list phantom functions. Here the struct view and the class view hold the SAME well-formed array, so only
+    // the meta-class check can tell them apart. Installs its own name pool, like PROBECLASS above.
+    {
+        blk("WALKIFACEGUARD - WalkInterfaceFunctions reads interfaces for a class and refuses a struct view");
+        ResetCancel();
+
+        enum : int32_t { gClass = 1, gScriptStruct, gFunction, gInterface, gFooIface, gDoFoo, gMyStruct, gMyClass, gNames };
+        const char* gNamesTxt[gNames] = { "", "Class", "ScriptStruct", "Function", "Interface", "FooInterface", "DoFoo",
+                                          "MyStruct", "MyClass" };
+        static uint8_t gEntry[gNames][0x40] = {};
+        static uintptr_t gChunk[gNames + 1] = {};
+        for (int i = 1; i < gNames; ++i) {
+            memcpy(gEntry[i] + 0x10, gNamesTxt[i], strlen(gNamesTxt[i]) + 1);
+            gChunk[i] = reinterpret_cast<uintptr_t>(gEntry[i]);
+        }
+        static uintptr_t gChunks[2] = { reinterpret_cast<uintptr_t>(gChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(gChunks), 0x10);
+
+        const bool     svCpnG   = DynOff::bCasePreservingName;
+        const bool     svFPropG = DynOff::bUseFProperty;
+        const uint32_t svVerG   = g_cachedUEVersion;
+        const int      svIfaceG = DynOff::UCLASS_INTERFACES.load();
+        DynOff::bCasePreservingName = false;
+        DynOff::bUseFProperty       = true;
+        g_cachedUEVersion           = 504;
+        constexpr int kIfaceOff = 0x1A0;                 // inside the blob, past every UStruct / UFunction key
+        DynOff::UCLASS_INTERFACES.store(kIfaceOff);      // measured, so nothing probes
+
+        enum { gbMeta, gbStructMeta, gbFunctionCls, gbInterface, gbFoo, gbDoFoo, gbStructView, gbClassView, kGBlobs };
+        alignas(16) static uint8_t gB[kGBlobs][0x200] = {};
+        auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(gB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto obj = [&](int b, int cls, int32_t name) {
+            memset(gB[b], 0, sizeof(gB[b]));
+            putP(gB[b], Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            put32(gB[b], Grimoire::OFF_UOBJECT_NAME, name);
+        };
+        obj(gbMeta, gbMeta, gClass);
+        obj(gbStructMeta, gbMeta, gScriptStruct);
+        obj(gbFunctionCls, gbMeta, gFunction);
+        obj(gbInterface, gbMeta, gInterface);                          // UInterface: where the walk stops
+        obj(gbFoo, gbMeta, gFooIface);
+        putP(gB[gbFoo], DynOff::USTRUCT_SUPER, A(gbInterface));
+        obj(gbDoFoo, gbFunctionCls, gDoFoo);
+        putP(gB[gbFoo], DynOff::USTRUCT_CHILDREN, A(gbDoFoo));          // FooInterface declares DoFoo
+
+        alignas(16) static uint8_t gIfaces[0x10] = {};                 // one FImplementedInterface: FooInterface
+        putP(gIfaces, 0, A(gbFoo));
+        auto withIfaces = [&](int b) {
+            putP(gB[b], kIfaceOff, reinterpret_cast<uintptr_t>(gIfaces));
+            put32(gB[b], kIfaceOff + 8, 1);
+            put32(gB[b], kIfaceOff + 12, 1);
+        };
+        obj(gbStructView, gbStructMeta, gMyStruct);
+        withIfaces(gbStructView);
+        obj(gbClassView, gbMeta, gMyClass);
+        withIfaces(gbClassView);
+
+        check("WALKIFACEGUARD setup: the struct view's array reads as one interface, so only the guard refuses it",
+              Ubel::ClassInterfaces(A(gbStructView)).size() == 1);
+        const auto viaClass = Ubel::WalkInterfaceFunctions(A(gbClassView));
+        check("WALKIFACEGUARD control: a class gets DoFoo through FooInterface",
+              viaClass.size() == 1 && viaClass[0].name == "DoFoo" && viaClass[0].viaInterface == A(gbFoo),
+              viaClass.empty() ? "(none)" : viaClass[0].name.c_str());
+        const auto viaStruct = Ubel::WalkInterfaceFunctions(A(gbStructView));
+        check("WALKIFACEGUARD ⭐: a struct view gets no interface functions, whatever its bytes hold",
+              viaStruct.empty(), viaStruct.empty() ? "" : viaStruct[0].name.c_str());
+
+        DynOff::UCLASS_INTERFACES.store(svIfaceG);
+        DynOff::bCasePreservingName = svCpnG;
+        DynOff::bUseFProperty       = svFPropG;
+        g_cachedUEVersion           = svVerG;
+    }
+
     // -- [VND583-02] UField::Next is MEASURED in FProperty mode -------------------------------
     //
     // Upstream's The Pathless config (a 4.25-layout licensee fork) puts UField::Next at 0x30: its
