@@ -1776,7 +1776,10 @@ when the clipboard took it; the rest make no claim, by design), `[UE4-ASSETPTR-E
   shadowed name of one type become ONE discovery candidate with pooled counts.
 - ⬜ `[DBGCAM-OFF-OVER-QUEUED-ON]` (inferred from `UE5_SetDebugCamera`, not measured) Force OFF / an untick while an ON
   is still queued reads the camera OFF ("already OFF -- no-op"), reports a clean OFF, and the queued ON then turns it on.
-- ⬜ `[ASSETPTR-BAKED-TOKEN]` `BakedScriptGenerator.MapToHelperType` falls to int32 for AssetObject / AssetClass (a
+- ✅ `[ASSETPTR-BAKED-TOKEN]` **FIXED 2026-10-27** (red `54e4c1ce` / green `03041d87`): `ue5_invoke_helper.lua` 1.5
+  adds the empty-only `asset` token (refused unless 0), `MapToHelperType` sends Asset* there, and the CE, baked and FIRE
+  readouts print the `{index, serial}` pair. A script baked from now on needs helper 1.5 resident; an older one refuses
+  the token as unknown rather than writing the value. Was: `BakedScriptGenerator.MapToHelperType` falls to int32 for AssetObject / AssetClass (a
   hand-edited baked value would write over the weak index; the dialog keeps it 0), and the return readouts decode an
   Asset* return as int32 / a hex dump rather than the {index, serial} pair. Needs a refusing token in
   `ue5_invoke_helper.lua`, so users re-embed the helper.
