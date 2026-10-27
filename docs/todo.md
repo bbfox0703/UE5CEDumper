@@ -6,7 +6,7 @@ Open work only. **Read this when deciding what to do next.**
 >
 > ▶ **Current programme:** `[FIXPASS-2026-10-27]` (the maintainer: fix every open LOW / INFO). Batches 1-3 shipped in
 > build 3657 and passed live on its AOT build (`[BATCH3-LIVE-3657]`); batch 2's own review and the review of batch 3's
-> fixes are fixed for build 3658 (`[BATCH2-REVIEW-2026-10-27]`, `[FIXREVIEW-2026-10-27]`). Open: the five LOW leads batch 3 left (`[TRAINER-PUSH-TIMEDOUT-TEXT]`,
+> fixes shipped in build 3658, not yet checked live (`[BATCH2-REVIEW-2026-10-27]`, `[FIXREVIEW-2026-10-27]`). Open: the five LOW leads batch 3 left (`[TRAINER-PUSH-TIMEDOUT-TEXT]`,
 > `[DISCOVER-SHADOWED-POOL]`, `[DBGCAM-OFF-OVER-QUEUED-ON]`, `[ASSETPTR-BAKED-TOKEN]`, `[L83-PLAN-QUEUED-STRINGS]`),
 > and the asset-pointer container shapes still owed live (`[UE4-ASSETPTR-EXPORTS]`'s row). · Before it, the
 > known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
@@ -1839,8 +1839,8 @@ the findings): 17 findings, 1 refuted (`DEVLOG-EVERY-EXPORT-OVERCLAIM`), 16 conf
 - Docs: `PROGRAMME-LINE-MISSES-1027-PASS` (`605cea6d`), `ASSETPTR-TARRAY-LIVE-UNDERSTATED` (`a3ab75ac`),
   `VND584-04-ROW-STALE` (`c37ca724`), and
   five in the 3657 dev-log entry -- `DEVLOG3657-OMITS-FABRICATE`, `DEVLOG-NOHEADER-WAS-SILENT`, `DEVLOG-F4-NOT-FIXED`,
-  `DEVLOG-EACH-BATCH-REVIEWED`, `DEVLOG-CSX-WAS-HEX` -- corrected in the next build's entry, since the dev-log is
-  append-only.
+  `DEVLOG-EACH-BATCH-REVIEWED`, `DEVLOG-CSX-WAS-HEX` -- corrected in build 3658's entry (`dc92c1ce`), since the
+  dev-log is append-only.
 
 🔍 **Batch 2's own review** `[BATCH2-REVIEW-2026-10-27]` (workflow `wf_0458321c-629`, range `b1b5c782..19a16423`, which
 shipped in 3657 unreviewed; three lenses, then one adversarial verifier per lens): 7 findings, 1 refuted
@@ -1858,6 +1858,9 @@ without the race), 6 confirmed, all fixed on 2026-10-27:
   Detect-then-Reset said "Released" for a job that never existed: red `dbaad9ed` / green `30a37f87`.
 - `DBGCAM-DLL-QUEUED-TEXT-STALE` (LOW) the DLL's -5 texts, and the mailbox errorMsg a CE script shows, told a queued
   OFF not to be re-sent: red `f30f8121` / green `224ae02b`.
+- Shipped in **build 3658** (AOT, 61,253,632 bytes) with `[FIXREVIEW-2026-10-27]`'s fixes. ⬜ **Not checked live**, any
+  of them: unit-tested only. The cheapest live check is the Stealth card on DumperTest 5.4 Shipping (connect, Reset:
+  "Nothing is held, so Reset sent nothing."); the queued-OFF errorMsg needs a busy game thread.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
