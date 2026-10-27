@@ -257,6 +257,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     internal const string KeyTrainerPushed = "str.TP.Trainer.Pushed";
     internal const string KeyStealthReleased = "str.TP.StReleased";
     internal const string KeyStealthNothing = "str.TP.StNothingToRelease";
+    private static string StealthReleasedText => AobMakerStatus.Say(KeyStealthReleased, "Released the stealth-meter hold.");
+    private static string StealthNothingText => AobMakerStatus.Say(KeyStealthNothing,
+        "No stealth meter was detected, so there was no hold to release.");
 
     /// <summary>[AOBM-TRAINER-SETUP-MODAL] The trainer arrives unticked, so the success line has to say what to tick.</summary>
     internal static string TrainerPushedText(int entries)
@@ -1981,15 +1984,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             (StealthState, StealthBadgeColor) = ("Off", "#999999");
             // [STEALTH-RESET-STALE-HELD] The readout named the hold ("= 0 (held)"); after a release it keeps the meter's
             // name and drops a value it no longer knows. With no meter nothing was sent, so nothing is claimed.
-            if (c != null)
-            {
-                StealthFieldText = $"{c.ClassName}::{c.FieldName}";
-                StatusText = AobMakerStatus.Say(KeyStealthReleased, "Released the stealth-meter hold.");
-            }
-            else
-            {
-                StatusText = AobMakerStatus.Say(KeyStealthNothing, "No stealth meter was detected, so there was no hold to release.");
-            }
+            if (c != null) StealthFieldText = $"{c.ClassName}::{c.FieldName}";
+            StatusText = c != null ? StealthReleasedText : StealthNothingText;
             return true;
         }
         catch (Exception ex)

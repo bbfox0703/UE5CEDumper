@@ -19,6 +19,6 @@
   "ui/UE5DumpUI/ViewModels/SnapshotViewModel.cs": 27,
   "ui/UE5DumpUI/ViewModels/SpcQueryViewModel.Group.cs": 7,
   "ui/UE5DumpUI/ViewModels/SpcQueryViewModel.cs": 7,
-  "ui/UE5DumpUI/ViewModels/TeleportViewModel.cs": 143,
+  "ui/UE5DumpUI/ViewModels/TeleportViewModel.cs": 142,
   "ui/UE5DumpUI/ViewModels/ValueSearchViewModel.cs": 17
 }
