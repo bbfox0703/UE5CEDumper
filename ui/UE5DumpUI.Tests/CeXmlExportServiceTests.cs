@@ -5687,6 +5687,40 @@ public class CeXmlExportServiceTests
         Assert.DoesNotContain("Health", xml);
     }
 
+    // [UE4-ASSETPTR-EXPORTS] The inner-type arm (MapInnerTypeToCeField) serves a TMap side and a TSet element; the
+    // scalar and TArray tests above reach neither, so a revert of that arm kept every test green (final review).
+    [Theory]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
+    public void UE4AssetPointer_AsAMapValueOrASetElement_IsAnEightByteHexLeaf(string innerType)
+    {
+        var fields = new[]
+        {
+            new LiveFieldValue
+            {
+                Name = "ZoneByIndex", TypeName = "MapProperty", Offset = 0x100, Size = 0x50,
+                MapCount = 1, MapKeyType = "IntProperty", MapValueType = innerType, MapKeySize = 4, MapValueSize = 0x20,
+                MapElements = new List<ContainerElementValue> { new() { Index = 0, Key = "7", KeyHex = "07000000" } },
+            },
+            new LiveFieldValue
+            {
+                Name = "Zones", TypeName = "SetProperty", Offset = 0x150, Size = 0x50,
+                SetCount = 1, SetElemType = innerType, SetElemSize = 0x20,
+                SetElements = new List<ContainerElementValue> { new() { Index = 0, Key = "/Game/Maps/A.A" } },
+            },
+        };
+
+        var xml = CeXmlExportService.GenerateInstanceXml("\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
+        var doc = System.Xml.Linq.XDocument.Parse(xml);
+        bool HexQword(System.Xml.Linq.XElement e) =>
+            (string?)e.Element("VariableType") == "8 Bytes" && (string?)e.Element("ShowAsHex") == "1";
+        var map = doc.Descendants("CheatEntry").Single(e => (string?)e.Element("Description") == "\"ZoneByIndex\"");
+        var set = doc.Descendants("CheatEntry").Single(e => (string?)e.Element("Description") == "\"Zones\"");
+
+        Assert.Contains(map.Descendants("CheatEntry"), e => (string?)e.Element("Description") == "\"Value\"" && HexQword(e));
+        Assert.Contains(set.Descendants("CheatEntry"), HexQword);
+    }
+
     [Theory]
     [InlineData("AssetObjectProperty")]
     [InlineData("AssetClassProperty")]
