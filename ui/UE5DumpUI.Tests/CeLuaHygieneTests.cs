@@ -404,7 +404,14 @@ public class CeLuaHygieneTests
 
         Assert.Contains("local DEBUG = UE5_DEBUG or 0", s);
         Assert.Contains("dbg('[DebugCamera]", s);
-        Assert.DoesNotContain("print('[DebugCamera]", s);
+        // [DEBUGCAM-QUEUED-OFF-NOESCALATE] One ungated print is allowed, and it is a warning that flags a genuine
+        // problem (CLAUDE.md's rule): a queued OFF leaves the camera on. It must be the only one, inside [DISABLE].
+        const string queuedOff = "print('[DebugCamera] OFF did not complete";
+        int p = s.IndexOf("print('[DebugCamera]", System.StringComparison.Ordinal);
+        Assert.True(p >= 0 && s.IndexOf(queuedOff, System.StringComparison.Ordinal) == p,
+                    "the only ungated [DebugCamera] print is the queued-OFF warning");
+        Assert.Equal(-1, s.IndexOf("print('[DebugCamera]", p + 1, System.StringComparison.Ordinal));
+        Assert.True(p > s.IndexOf("[DISABLE]", System.StringComparison.Ordinal), "the warning belongs to [DISABLE]");
         Assert.Contains(CeLuaHygiene.CloseCall, s);
         Assert.Contains("elseif DEBUG == 0 then", s);
         Assert.Contains("showMessage('[DebugCamera]", s);

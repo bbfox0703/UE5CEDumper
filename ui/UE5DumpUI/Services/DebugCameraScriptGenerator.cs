@@ -94,16 +94,26 @@ public static class DebugCameraScriptGenerator
         // returns 0 on an ENABLE, with no error code. Checking only -1 read that as
         // success: no message, window closed, row left ticked on a camera that never
         // turned on.
-        // [W3-DEBUGCAM-QUEUED] -5: the game thread did not answer in time, and the toggle STAYS QUEUED -- it will still
-        // run. Not a failure, so no untick, and nothing to re-send: a second tick would queue a second toggle, and the
-        // two drain ON then OFF. [ENABLE] says so (a real warning, ungated); [DISABLE] dbg()s it (no modal on an untick,
-        // [W2-CEGEN-MODAL]). Neither is a clean success, so neither closes the window. Tested BEFORE `state ~= req`.
+        // [W3-DEBUGCAM-QUEUED] -5: the game thread did not answer in time, and the toggle STAYS QUEUED. A queued ON will
+        // still run: not a failure, so no untick, and nothing to re-send ([ENABLE] says so, a real warning, ungated).
+        // [DEBUGCAM-QUEUED-OFF-NOESCALATE] A queued OFF will NOT turn the camera off (DebugCameraText has the stock-UE
+        // reason), so [DISABLE] says so ungated -- print, not a modal on an untick ([W2-CEGEN-MODAL]) -- and RAISES:
+        // CE's TMemoryRecord.setActive sets fActive only when the script succeeds, so the record stays ticked over a
+        // camera that is still on, and a later untick runs [DISABLE] again. Neither branch is a clean success, so
+        // neither closes the window. Tested BEFORE `state ~= req`.
         Line(sb, $"if state == {Constants.DebugCameraToggleQueuedResult} then");
         if (enable)
+        {
             Line(sb, $"  showMessage('[DebugCamera] {label} queued -- the game thread is busy; the toggle will run " +
                       "when it is free. Do not tick again: a second toggle would undo it.')");
+        }
         else
-            Line(sb, $"  dbg('[DebugCamera] {label} queued -- the toggle will run when the game thread is free')");
+        {
+            Line(sb, $"  print('[DebugCamera] {label} did not complete -- the game thread is busy, and a queued OFF does " +
+                      "not turn the camera off on most engines. The record stays ticked: untick it again once the game " +
+                      "responds.')");
+            Line(sb, $"  error('[DebugCamera] {label} queued; the camera is still on')");
+        }
         Line(sb, $"elseif state ~= {req} then");
         if (enable)
         {

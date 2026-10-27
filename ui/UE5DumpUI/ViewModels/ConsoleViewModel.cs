@@ -796,11 +796,9 @@ public partial class ConsoleViewModel : ViewModelBase
                 0 when !wantOn => "✓ Debug Camera forced OFF.",
                 -1 => $"Force {want}: no live CheatManager / unreadable state " +
                       "(enter gameplay first).",
-                // [W3-DEBUGCAM-QUEUED] Not a failure: the toggle WILL run. A second press would undo it.
-                Constants.DebugCameraToggleQueuedResult =>
-                      $"⏳ Force {want}: the toggle is QUEUED — the game thread is busy (stalled or unfocused). " +
-                      $"It will run when the game thread is free. Do not press Force {want} again: " +
-                      "a second toggle would undo the first.",
+                // [W3-DEBUGCAM-QUEUED] Not a failure. [DEBUGCAM-QUEUED-OFF-NOESCALATE] But only a queued ON will still
+                // take; a queued OFF does not turn the camera off -- DebugCameraText says why.
+                Constants.DebugCameraToggleQueuedResult => DebugCameraText.Queued(wantOn),
                 _  => $"⚠ Force {want}: state is now {(state == 1 ? "ON" : "OFF")} " +
                       "— the game may re-drive the camera.",
             };
