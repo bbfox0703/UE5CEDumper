@@ -4092,6 +4092,38 @@ int main() {
         check("WALKUNREADABLE control: a readable instance is not marked", !wl.unreadable);
     }
 
+    // -- WALKNOHEADER-2026-10-27 -- a walk that resolves its own class says when the header names none ----------------
+    //
+    // [WALK-NULLCLASS-SILENT] L47: a released page re-committed as zeros walked to a classless, field-less reply with no
+    // stale and no unreadable key, so Live Walker showed a blank 'None' grid with no status. WalkClass(0) gives
+    // PropertiesSize 0, which the plausibility gate accepts; an unmapped ClassPrivate takes WalkClass's fault exit to the
+    // same 0. A live UObject never has either.
+    {
+        blk("WALKNOHEADER - a no-class walk of a header with no class says so, distinct from stale");
+        alignas(8) static uint8_t nhZero[0x100] = {};
+        const auto wz = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(nhZero), 0, 64, 2, false);
+        check("WALKNOHEADER ⭐: a readable header whose ClassPrivate is 0 is marked no-header", wz.noHeader);
+        check("WALKNOHEADER control: ...and not stale, whose text claims an implausible PropertiesSize", !wz.isStale);
+
+        uint8_t* gone = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x1000, MEM_RESERVE, PAGE_NOACCESS));
+        check("WALKNOHEADER setup: reserved a page to release", gone != nullptr);
+        if (gone) {
+            VirtualFree(gone, 0, MEM_RELEASE);   // its address is now unmapped
+            alignas(8) static uint8_t nhUnmapped[0x100] = {};
+            const uintptr_t goneAddr = reinterpret_cast<uintptr_t>(gone);
+            memcpy(nhUnmapped + Grimoire::OFF_UOBJECT_CLASS, &goneAddr, sizeof goneAddr);
+            const auto wu = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(nhUnmapped), 0, 64, 2, false);
+            check("WALKNOHEADER ⭐: a header whose ClassPrivate is unmapped is marked no-header",
+                  wu.noHeader && !wu.isStale);
+        }
+
+        // A raw-struct walk passes its class: the bytes are not a UObject header, and that is not this verdict.
+        alignas(8) static uint8_t nhClass[0x100] = {};
+        const auto wr = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(nhZero), reinterpret_cast<uintptr_t>(nhClass),
+                                           64, 2, false);
+        check("WALKNOHEADER control: a walk given its class is never marked no-header", !wr.noHeader);
+    }
+
     // -- SPARSEVALIDATE-2026-09-25 -- the sparse-storage validator accepts a vtable in ANY mapped module ---------------
     //
     // [R7-X3] ValidateSparseDelegates' content check accepted a key only when its vtable lay inside the MAIN module.

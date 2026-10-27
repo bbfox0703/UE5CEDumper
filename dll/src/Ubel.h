@@ -1083,6 +1083,10 @@ struct InstanceWalkResult {
     // [P1-WALK-UNREADABLE] The instance's own header could not be read (freed?), so nothing was walked. Distinct from
     // isStale, which means a class pointer that read back implausible -- a narrower verdict.
     bool        unreadable = false;
+    // [WALK-NULLCLASS-SILENT] A walk that resolved its own class found none: the header's ClassPrivate is null or
+    // unmapped. Freed and re-committed (L47 measured a zeroed page), or never an object -- the Go box takes any
+    // address -- so neither isStale's "implausible PropertiesSize" nor a "freed" claim fits it.
+    bool        noHeader = false;
     int32_t     propsSize = 0;     // UStruct::PropertiesSize — total struct/class size in bytes
     // The reflected walk RAN and its fields below are real; only the Guess-What
     // raw-byte pass was skipped, because PropertiesSize exceeds kMaxGapFillBytes.
