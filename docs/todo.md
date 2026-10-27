@@ -1617,8 +1617,8 @@ fixed DLL (`9476150f`, built by `build_dll.py`, so it still reports 3654) decode
 (`## Fixed`): "On a Development or Debug build of a UE 5.3+ game, Call Trace names the object a delegate parameter is
 bound to, instead of showing it as stale."
 
-✅ `[CT-MULTICAST-PARAM-PAD]` **FIXED, unit-tested; the live check is owed** (red `4e074d71` / green `26c26f4b`, 2026-10-27;
-in no build yet). Found while fixing `[CT-DELEGATE-PARAM-PAD]`. The same decoder read a
+✅ `[CT-MULTICAST-PARAM-PAD]` **FIXED + LIVE-VERIFIED 2026-10-27** (red `4e074d71` / green `26c26f4b`; fixture `3c6faa2e`,
+rig `deb841ab`, package identity `921dd405`; in no build yet). Found while fixing `[CT-DELEGATE-PARAM-PAD]`. The same decoder read a
 `MulticastInlineDelegateProperty`'s invocation-list header at +0 / +8 whatever its ElementSize, so on a UE 5.3+
 checked build (ElementSize 24) it showed the detector as Data and Data's low half as Num: the fingerprint `Grimoire.h`'s
 `kDelegateDetectorPad` block describes. It now reads the header at `DelegatePadFromElementSize(ElementSize, 16)`. A size
@@ -1627,14 +1627,22 @@ the walk's own wording. Reached by a native UFunction taking a multicast by valu
 support for it: `UhtMulticastDelegateProperty` clears `IsParameterSupportedByBlueprint` and emits the thunk argument)
 and by a struct parameter's multicast member. dll_core_test CT-MULTICAST-PARAM-PAD (red: 3, `Num=30576 (Data 0x0)` for
 ElementSize 24, the same in a struct member, and 20 read as a header; the 16 control held). dll_core_test 1340 checks,
-dll_helpers_test 3626, 36 gates, 0 failed; the `UE5Dumper` target builds. **The live check needs a fixture change:**
-DumperTest has a bound `Multicast_Inline` but no UFunction that takes a multicast. Add a native
-`UFUNCTION() int32 InvokeGate_TakeMulticast(FDumperTestPingSignature Handlers)` (recording `Handlers.IsBound()`, as
-`InvokeGate_TakeDelegate` does) to `tools/ue-sample/DumperTest`, sync it into the project and repackage Development and
-Shipping (`py tools/ue-sample/repackage.py --engine 5.4 --project DumperTest --configs Development,Shipping`; its
-`--sync-mirror` copies repo to project, and on 2026-10-27 the two `DumperTestActor.h` copies differed by one comment
-line). Then extend `ct_delegate_param_live.py` to pass the actor's own `Multicast_Inline` the same way: Development must
-decode its walked header (Num and Data at +8), Shipping the same at +0.
+dll_helpers_test 3626, 36 gates, 0 failed; the `UE5Dumper` target builds. **The fixture:** DumperTest had a bound
+`Multicast_Inline` but no UFunction taking a multicast, so it gained a native
+`UFUNCTION() int32 InvokeGate_TakeMulticast(FDumperTestPingSignature Handlers)` with `InvokeGate_MulticastCalls` /
+`InvokeGate_LastMulticastBound` (`IsBound()`), mirroring `InvokeGate_TakeDelegate`. Development, Shipping and DebugGame
+were repackaged with `repackage.py --sync-mirror` (DebugGame too, so the identity record keeps no stale config; every
+pe_hash changed). **Live, DumperTest 5.4** (`ct_delegate_param_live.py --case multicast`: a direct invoke with the actor's
+own `Multicast_Inline` as `Handlers`; witnesses: the walk's count and Data, memory at the field + `delegate_pad`, the
+slot's bytes, `InvokeGate_LastMulticastBound`). **Development** (ElementSize 24, `delegate_pad` 8): the DLL with only
+the delegate fix (`9476150f`) decoded `Num=1627291968 (Data 0x0)`, Num being Data's low half (`0x60FE8140` of
+`0x24B60FE8140`) and Data the detector, while the slot held `Num 1` at +16 and the engine reported a bound multicast. The
+fixed DLL (`aec17750`, built by `build_dll.py`, so it still reports 3654) decoded `Num=1 (Data 0x1D485CD8740)`, equal to
+the walk, 10/10. **Shipping** (ElementSize 16, pad 0), fixed DLL: `Num=1 (Data 0x17422BA6480)`, 10/10. The delegate case
+re-run on the new packages: 10/10 on both. Evidence: `out/ct_delegate_param/` (`dev-mc-red`, `dev-mc-green`,
+`shipping-mc-green`, and the delegate runs). Notes draft (`## Fixed`): "On a Development or Debug build of a UE 5.3+
+game, Call Trace shows a multicast delegate parameter's real handler count, instead of a number read from the bytes in
+front of it."
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
