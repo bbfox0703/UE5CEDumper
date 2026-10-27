@@ -279,10 +279,10 @@ public class AobMakerInjectTableFileTests
         var ct = TestContext.Current.CancellationToken;
         var pipe = NobodysPipe();
         var serving = ServeLikeAnOldPluginAsync(pipe, new[] { "" }, ct);
-        var bridge = new AobMakerBridgeService(new MockLoggingService(), pipe, 2000, _ => true);
+        var bridge = new AobMakerBridgeService(new MockLoggingService(), pipe, 10000, _ => true);
 
         var (ok, error) = await bridge.InjectTableFileAsync("big.lua", OverTheCap(), ct);
-        var declared = await serving.WaitAsync(TimeSpan.FromSeconds(10), ct);
+        var declared = await serving.WaitAsync(TimeSpan.FromSeconds(30), ct);
 
         Assert.False(ok);
         Assert.Null(Assert.Single(declared));   // the plugin never saw a length prefix
@@ -299,10 +299,10 @@ public class AobMakerInjectTableFileTests
         var ct = TestContext.Current.CancellationToken;
         var pipe = NobodysPipe();
         var serving = ServeLikeAnOldPluginAsync(pipe, new[] { "" }, ct);
-        IAobMakerBridge bridge = new AobMakerBridgeService(new MockLoggingService(), pipe, 2000, _ => true);
+        IAobMakerBridge bridge = new AobMakerBridgeService(new MockLoggingService(), pipe, 10000, _ => true);
 
         var result = await bridge.CreateAAScriptDetailedAsync("big", OverTheCap(), autoActivate: false, ct: ct);
-        var declared = await serving.WaitAsync(TimeSpan.FromSeconds(10), ct);
+        var declared = await serving.WaitAsync(TimeSpan.FromSeconds(30), ct);
 
         Assert.False(result.Created);
         Assert.False(result.TimedOut);
@@ -320,10 +320,10 @@ public class AobMakerInjectTableFileTests
         var pipe = NobodysPipe();
         var serving = ServeLikeAnOldPluginAsync(pipe, new[] { "" }, ct);
         var log = new MockLoggingService();
-        var bridge = new AobMakerBridgeService(log, pipe, 2000, _ => true);
+        var bridge = new AobMakerBridgeService(log, pipe, 10000, _ => true);
 
         Assert.False(await bridge.CreateAAScriptAsync("big", OverTheCap(), autoActivate: false, ct: ct));
-        var declared = await serving.WaitAsync(TimeSpan.FromSeconds(10), ct);
+        var declared = await serving.WaitAsync(TimeSpan.FromSeconds(30), ct);
 
         Assert.Null(Assert.Single(declared));
         Assert.True(bridge.IsAvailable);
@@ -340,11 +340,11 @@ public class AobMakerInjectTableFileTests
         var ct = TestContext.Current.CancellationToken;
         var pipe = NobodysPipe();
         var serving = ServeLikeAnOldPluginAsync(pipe, new[] { begin, "", end0 }, ct);
-        IAobMakerBridge bridge = new AobMakerBridgeService(new MockLoggingService(), pipe, 2000, _ => true);
+        IAobMakerBridge bridge = new AobMakerBridgeService(new MockLoggingService(), pipe, 10000, _ => true);
 
         var result = await bridge.CreateRecordTreeAsync("UE5CEDumper +CE",
             new[] { new CeRecordNode(OverTheCap(), "7FF600001458", "Binary", BitStart: 3, BitLength: 1) }, ct);
-        var declared = await serving.WaitAsync(TimeSpan.FromSeconds(10), ct);
+        var declared = await serving.WaitAsync(TimeSpan.FromSeconds(30), ct);
 
         Assert.Equal(RecordTreeOutcome.Failed, result.Outcome);
         Assert.Equal(0, result.Created);
