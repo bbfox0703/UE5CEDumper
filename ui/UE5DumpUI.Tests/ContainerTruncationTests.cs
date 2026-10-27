@@ -325,11 +325,13 @@ public class ContainerTruncationTests
         public int Count { get; set; }
         public required Func<int, int, LiveFieldValue> Row { get; init; }   // (count, inline) -> a fresh row
         public int ElementReads { get; private set; }
+        /// <summary>When set, every walk answers this instead: the parent object is gone.</summary>
+        public InstanceWalkResult? Gone { get; set; }
 
         public override Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
             int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
             CancellationToken ct = default)
-            => Task.FromResult(new InstanceWalkResult
+            => Task.FromResult(Gone ?? new InstanceWalkResult
             {
                 Address = Parent,
                 Fields = new List<LiveFieldValue> { Row(Count, Math.Min(Count, Math.Min(arrayLimit, DllCap))) },
@@ -465,5 +467,29 @@ public class ContainerTruncationTests
         Assert.Contains("showing 128 of 205", vm.CurrentObjectName);
         Assert.Contains("showing 128 of 205", vm.Breadcrumbs[^1].Label);
         Assert.Contains("Array Limit", vm.StatusText);
+    }
+
+    // [WALK-NULLCLASS-SILENT] review F1: the container branch acted only when the parent walk found the field again. A
+    // parent that is gone (unreadable, no UObject header, stale) has no fields, so Refresh returned SILENTLY: a blank
+    // status over the old element rows, still editable, each FieldAddress pointing into memory the game had freed.
+
+    [Theory]
+    [InlineData("unreadable", "no longer readable")]
+    [InlineData("no_header", "No UObject header")]
+    [InlineData("stale", "freed/recycled")]
+    public async Task Refresh_WhenTheParentIsGone_SaysSo_AndLeavesNoRowsIntoItsMemory(string verdict, string says)
+    {
+        var (vm, dump) = await DrillLiveAsync(ScalarRow, count: 200, arrayLimit: 64);
+        Assert.Equal(200, vm.Fields.Count);                                  // the precondition: the drill's view
+        dump.Gone = new InstanceWalkResult
+        {
+            Address = RewalkStub.Parent,
+            IsUnreadable = verdict == "unreadable", IsNoHeader = verdict == "no_header", IsStale = verdict == "stale",
+        };
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Contains(says, vm.StatusText);                                // what UpdateDisplay says for the verdict
+        Assert.Empty(vm.Fields);
     }
 }
