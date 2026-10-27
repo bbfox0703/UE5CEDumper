@@ -1657,8 +1657,8 @@ decoder matched `MulticastInlineDelegateProperty` only, so on a UE 4.18-4.22 tit
 already took both spellings. No build before UE 5.3 has the detector, so the header is read at +0. dll_core_test 1341
 checks, 0 failures. Not checked live.
 
-⬜ `[DELEGATE-PAD-ALIGN]` **FIXED, live check owed** (LOW, fails safe; found by the review above as CT-PAD-CPN-ALIGN /
-DIS-1 / F2 / DIS-2). The delegate pad rule took a checked build's padded size as `base + 8`. The detector is a
+✅ `[DELEGATE-PAD-ALIGN]` **FIXED + LIVE-VERIFIED 2026-10-27** (LOW, failed safe; found by the review above as
+CT-PAD-CPN-ALIGN / DIS-1 / F2 / DIS-2). The delegate pad rule took a checked build's padded size as `base + 8`. The detector is a
 `std::atomic<uint64>` (`MTAccessDetector.h`), so a padded delegate is 8-aligned and its size rounds UP: a standalone
 FScriptDelegate with a 12-byte (case-preserving) FName is 8 + 8 + 12 -> **32**, not 28 -- the refuter read 0x20 for
 `TScriptDelegate<FNotThreadSafeDelegateMode>` from the UE 5.4 editor's `UnrealEditor-CoreUObject.pdb` (FName 0xC, the
@@ -1671,9 +1671,21 @@ while 28, a size no build has, was accepted, and tests pinned it. A 4-byte-FName
 dissect labelled a Shipping 12 "payload start unknown" and placed a checked 24, which the DLL refused. **Fix:**
 `DynOff::DelegatePaddedSize` rounds base + 8 up to 8 and `DelegatePadFromElementSize` accepts only that; the array
 readers and Find Refs step by the engine's ElementSize once it is recognised, never base + pad (28 against 32 drifts
-every index >= 1). Red `191461d4` (dll_helpers_test 4, dll_core_test 7; a stride mutant goes red on element [1]).
-**Live check owed:** the UE 5.4 editor running DumperTest `-game` -- `Del_Unicast` read by the walk (ElementSize 32,
-`delegate_pad` 8, the actor named), by Call Trace (`ct_delegate_param_live.py`), and by the dissect.
+every index >= 1). DLL red `191461d4` / green `ac8f5264` (dll_helpers_test 4, dll_core_test 7; a mutant restoring
+base + pad turns element [1]'s check red); dissect red `756b1dbc` / green `91bd17a7` (5; Lua 5.3 and 5.4); the rig
+mirrors `07afc413`. **Live, the UE 5.4 editor running DumperTest `-game`** (12-byte FName, DO_CHECK; 39,328
+objects): `Del_Unicast`'s 32 bytes in memory are the detector's 0, the actor's pair, a 12-byte FName and 4 bytes of
+tail padding -- the PDB's 0x20 in the flesh. **Build 3655** (dist, before the fix): `Del_Unicast` "(delegate —
+unexpected ElementSize 32, not read)", `Arr_Delegates` "(delegate array — unexpected FScriptDelegate element size 32,
+not read)". **The fixed DLL** (`a79d9f37`, built by `build_dll.py`, so it reports 3655): `Del_Unicast` ElementSize 32,
+`delegate_pad` 8, `DumperTestActor_0::D4b_OnPingProbe`; `Arr_Delegates` element size 32, per-element pad 8, element
+[0] unbound and element [1] `DumperTestActor_0::D4b_OnPingProbe` -- the element a base + pad stride reads 4 bytes
+early. The multicast (24, its list elements 20) reads the same on both. Evidence: `out/va9/cpn_probe_cpn-red-3655.json`,
+`out/va9/cpn_probe_cpn-green.json`. **Not run live here:** Call Trace -- the DLL took ProcessEvent's slot from the
+version table, which an editor build does not share (the register's PDB-oracle note: editor-only virtuals come before
+it), so the validator turned the hook off and
+`ct_delegate_param_live.py` exits 2 before any call is traced; the decoder shares `DelegatePadFromElementSize` and its
+32-byte arm is unit-tested. The dissect consumes the ElementSize measured above; its placement is unit-tested.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
