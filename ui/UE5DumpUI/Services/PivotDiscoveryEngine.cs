@@ -47,11 +47,15 @@ public static class PivotDiscoveryEngine
     // combines the interval count WITH monotonicity. Tunable; exposed on the candidate.
     public const double ShapeWeight       = 3.0;
 
-    // One rolled-up (class, prop, type) group: instance counts + a deterministic
+    // One rolled-up (class, prop, type, offset) group: instance counts + a deterministic
     // representative changed instance (smallest norm path) for display / handoff.
+    // [DISCOVER-SHADOWED-POOL] The offset is in the key: a class can carry two properties of
+    // one name and type (a shadowed name), and pooled they read as one field.
     private sealed class Group
     {
         public string ClassName = "", PropName = "", DeclaredType = "";
+        public int PropOffset = -1;
+        public string Label = "";
         public int Total;
         public int Changed;
         public DiscoveryInput? Rep;
@@ -67,13 +71,17 @@ public static class PivotDiscoveryEngine
     {
         var result = new DiscoveryResult { SnapshotCount = snapshotCount };
 
-        var groups = new Dictionary<(string, string, string), Group>();
+        var groups = new Dictionary<(string, string, string, int), Group>();
         foreach (var inp in inputs)
         {
-            var k = (inp.ClassName, inp.PropName, inp.DeclaredType);
+            var k = (inp.ClassName, inp.PropName, inp.DeclaredType, inp.PropOffset);
             if (!groups.TryGetValue(k, out var g))
             {
-                g = new Group { ClassName = inp.ClassName, PropName = inp.PropName, DeclaredType = inp.DeclaredType };
+                g = new Group
+                {
+                    ClassName = inp.ClassName, PropName = inp.PropName, DeclaredType = inp.DeclaredType,
+                    PropOffset = inp.PropOffset,
+                };
                 groups[k] = g;
             }
             g.Total++;
@@ -87,6 +95,15 @@ public static class PivotDiscoveryEngine
                     g.Rep = inp;
             }
         }
+
+        // A name the class shows at more than one offset is labelled with the offset, as Class Pivot's picker labels it
+        // (PivotFieldInfo.LabelOf); a name used once keeps its bare label.
+        var copies = groups.Values.GroupBy(g => (g.ClassName, g.PropName))
+                                  .ToDictionary(x => x.Key, x => x.Select(g => g.PropOffset).Distinct().Count());
+        foreach (var g in groups.Values)
+            g.Label = copies[(g.ClassName, g.PropName)] > 1 && g.PropOffset >= 0
+                ? PivotFieldInfo.LabelOf(g.PropName, g.PropOffset)
+                : g.PropName;
 
         var rows = new List<DiscoveryCandidate>();
         foreach (var g in groups.Values)
@@ -192,6 +209,7 @@ public static class PivotDiscoveryEngine
             ArrayField       = rep.ArrayField,     // [W1-DISCOVER-ARRAY] one array element per group
             InnerProp        = rep.InnerProp,
             PropOffset       = rep.PropOffset,     // [PIVOT-HANDOFF-SHADOWED] the copy whose sample is shown
+            PropLabel        = g.Label,
             InterestScore    = score.FinalScore,
             CategoryName     = PropertyScoringTable.DisplayName(score.Category),
             CategoryColor    = PropertyScoringTable.CategoryColor(score.Category),
@@ -233,6 +251,8 @@ public static class PivotDiscoveryEngine
         c = a.InstancesChanged.CompareTo(b.InstancesChanged);
         if (c != 0) return c;
         c = string.CompareOrdinal(a.ClassName, b.ClassName);
-        return c != 0 ? c : string.CompareOrdinal(a.PropName, b.PropName);
+        if (c != 0) return c;
+        c = string.CompareOrdinal(a.PropName, b.PropName);
+        return c != 0 ? c : a.PropOffset.CompareTo(b.PropOffset);   // the copies of a shadowed name, in offset order
     }
 }

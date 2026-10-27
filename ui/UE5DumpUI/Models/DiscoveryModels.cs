@@ -82,8 +82,14 @@ public sealed class DiscoveryCandidate
     /// "Use →" ticks the copy at this offset: a class can carry two properties of one name, and the sample sequence
     /// shown is the representative's copy.</summary>
     public int    PropOffset   { get; set; } = -1;
-    /// <summary>[DISCOVER-SHADOWED-POOL] What the Property column shows.</summary>
-    public string PropLabel => PropName;
+    /// <summary>[DISCOVER-SHADOWED-POOL] What the Property column shows: <see cref="PropName"/>, or Name@+0xOFF for one
+    /// copy of a name the class carries at more than one offset. Unset, it reads as the name.</summary>
+    public string PropLabel
+    {
+        get => string.IsNullOrEmpty(_propLabel) ? PropName : _propLabel;
+        set => _propLabel = value;
+    }
+    private string _propLabel = "";
 
     /// <summary>Instances of this (class, prop) present in ALL selected snapshots.</summary>
     public int InstancesTotal   { get; set; }

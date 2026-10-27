@@ -85,7 +85,8 @@
                   HorizontalScrollBarVisibility="Auto">
           <DataGrid.Columns>
             <DataGridTextColumn Header="{StaticResource str.Pivot.Discover.Col.Class}"   Binding="{Binding ClassName}"      SortMemberPath="ClassName"        Width="280" MinWidth="180"/>
-            <DataGridTextColumn Header="{StaticResource str.Pivot.Discover.Col.Prop}"    Binding="{Binding PropName}"       SortMemberPath="PropName"         Width="260" MinWidth="160"/>
+            <!-- PropLabel, not PropName ([DISCOVER-SHADOWED-POOL]): the two copies of a shadowed name are two rows. -->
+            <DataGridTextColumn Header="{StaticResource str.Pivot.Discover.Col.Prop}"    Binding="{Binding PropLabel}"      SortMemberPath="PropLabel"        Width="260" MinWidth="160"/>
             <DataGridTextColumn Header="{StaticResource str.Pivot.Discover.Col.Changed}" Binding="{Binding ChangedDisplay}" SortMemberPath="InstancesChanged" Width="80"/>
             <DataGridTextColumn Header="{StaticResource str.Pivot.Discover.Col.Dir}"     Binding="{Binding Direction}"      SortMemberPath="Direction"        Width="44"/>
             <DataGridTextColumn Header="{StaticResource str.Pivot.Discover.Col.Cat}"     Binding="{Binding CategoryName}"   SortMemberPath="InterestScore"    Width="90"/>

@@ -1652,6 +1652,12 @@ public class ClassPivotViewModelTests : IDisposable
             && (string?)e.Attribute("Header") == "{StaticResource str.Pivot.Col.Field}");
         Assert.Equal("{Binding Label}", (string?)column.Attribute("Binding"));
         Assert.Equal("Label", (string?)column.Attribute("SortMemberPath"));
+
+        // [DISCOVER-SHADOWED-POOL] Discover's candidates: the two copies are two rows, told apart by their label.
+        var prop = Assert.Single(doc.Descendants(), e => e.Name.LocalName == "DataGridTextColumn"
+            && (string?)e.Attribute("Header") == "{StaticResource str.Pivot.Discover.Col.Prop}");
+        Assert.Equal("{Binding PropLabel}", (string?)prop.Attribute("Binding"));
+        Assert.Equal("PropLabel", (string?)prop.Attribute("SortMemberPath"));
     }
 
     // ---- [A4-PIVOT-CROSSGAME-ID] a reconnect to a DIFFERENT game carries neither its pick nor its class list ----
