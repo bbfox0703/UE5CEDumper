@@ -10696,6 +10696,64 @@ int main() {
     }
 
     {
+        blk("CT-DELEGATE-PARAM-PAD: a delegate parameter's bound object is read past a checked build's access detector");
+        // A standalone FScriptDelegate on a UE 5.3+ Debug / Development / DebugGame build carries an 8-byte detector in
+        // front (DynOff::kDelegateDetectorPad); its ElementSize says so (DelegatePadFromElementSize). Measured on
+        // DumperTest 5.4 Development, 2026-10-27: Del_Unicast is 24 bytes, +0 reads 0 and the weak pair is at +8.
+        using SM = Ubel::SnapMark;
+        auto field = [](const char* name, int32_t off, int32_t size) {
+            Ubel::ParamField f; f.name = name; f.typeName = "DelegateProperty"; f.offset = off; f.size = size; return f;
+        };
+        alignas(8) uint8_t b[0x80] = {};
+        auto put32 = [&](int off, int32_t v) { memcpy(b + off, &v, 4); };
+        put32(0x00, 5); put32(0x04, 7); put32(0x08, 33);                          // 16: the pair at +0, OnHit at +8
+        put32(0x20, 5); put32(0x24, 7); put32(0x28, 33);                          // 24: detector 0, pair at +8, OnHit at +16
+        put32(0x30, 5); put32(0x34, 7); put32(0x38, 6); put32(0x3C, 9); put32(0x40, 33);   // 24: a detector that looks live
+        put32(0x50, 5); put32(0x54, 7); put32(0x58, 33);                          // 28 (12-byte FName): pair at +8
+        put32(0x68, 5); put32(0x6C, 7); put32(0x70, 33);                          // 20 with an 8-byte FName: no such size
+        Ubel::ParamLayout L;
+        L.params = { field("Pad0", 0x00, 16), field("Pad8", 0x18, 24), field("Decoy", 0x30, 24) };
+        Ubel::ParamLayout cpn;
+        cpn.params = { field("Cpn8", 0x48, 28) };
+        Ubel::ParamLayout odd;
+        odd.params = { field("Odd", 0x68, 20) };
+
+        static int weakCalls = 0;
+        Ubel::SnapDecodeCtx ctx;
+        ctx.fname = [](int32_t i, int32_t) -> std::string { return i == 33 ? "OnHit" : "None"; };
+        ctx.object = [](uintptr_t p, std::string& name, std::string& cls) -> bool {
+            if (p != 0x1000) return false;
+            name = "Pawn_0"; cls = "Pawn_C"; return true;
+        };
+        ctx.weak = [](int32_t idx, int32_t serial) -> uintptr_t { ++weakCalls; return (idx == 5 && serial == 7) ? 0x1000 : 0; };
+        ctx.fnameSize = 8;
+
+        const auto v = Ubel::DecodeParamSnapshot(L, b, sizeof b, false, ctx);
+        const bool shaped = v.size() == L.params.size();
+        check("one value per parameter", shaped, std::to_string(v.size()).c_str());
+        if (shaped) {
+            check("control: ElementSize 16 (no detector) reads the pair at +0", v[0].text == "Pawn_0::OnHit" && v[0].mark == SM::Now,
+                  v[0].text.c_str());
+            check("ElementSize 24 reads the pair at +8, past the detector", v[1].text == "Pawn_0::OnHit" && v[1].mark == SM::Now,
+                  v[1].text.c_str());
+            check("...and a detector that looks like a live pair does not name the bound object",
+                  v[2].text == "(stale)::OnHit" && v[2].mark == SM::Gone, v[2].text.c_str());
+        }
+        Ubel::SnapDecodeCtx ctx12 = ctx;
+        ctx12.fnameSize = 12;
+        const auto vc = Ubel::DecodeParamSnapshot(cpn, b, sizeof b, false, ctx12);
+        check("a case-preserving build: ElementSize 28 is 8 + 12 + the detector, the pair at +8",
+              vc.size() == 1 && vc[0].text == "Pawn_0::OnHit" && vc[0].mark == SM::Now, vc.empty() ? "" : vc[0].text.c_str());
+        weakCalls = 0;
+        const auto vo = Ubel::DecodeParamSnapshot(odd, b, sizeof b, false, ctx);
+        check("an ElementSize that is neither 16 nor 24 is not read, and says why",
+              vo.size() == 1 && vo[0].mark == SM::Raw &&
+              vo[0].text.rfind("(delegate \xE2\x80\x94 unexpected ElementSize 20, not read)", 0) == 0,
+              vo.empty() ? "" : vo[0].text.c_str());
+        check("...and resolves no pair", weakCalls == 0, std::to_string(weakCalls).c_str());
+    }
+
+    {
         blk("LIVEFUNCS-STEP2: a slot decoded with its own arm's layout -- two loads of one name, arms without one");
         // docs/archive/live-funcs-step2-items.md, F5. The pipe's pe_snap_get decodes through this; nothing here reads the game.
         using LS = Linie::ArmLayoutState;
