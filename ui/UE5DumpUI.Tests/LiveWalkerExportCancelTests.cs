@@ -36,10 +36,10 @@ public class LiveWalkerExportCancelTests
     }
 
     private static LiveWalkerViewModel MakeVm(WalkThrowStub dump, MockLoggingService? log = null,
-                                              IPlatformService? platform = null)
+                                              IPlatformService? platform = null, IAobMakerBridge? aobMaker = null)
     {
         var vm = new LiveWalkerViewModel(dump, log ?? new MockLoggingService(),
-            platform ?? new MockPlatformService(Path.GetTempPath()))
+            platform ?? new MockPlatformService(Path.GetTempPath()), aobMaker)
         {
             CurrentAddress = "0x1000",
             Breadcrumbs = new ObservableCollection<BreadcrumbItem>
@@ -186,5 +186,43 @@ public class LiveWalkerExportCancelTests
         await vm.ExportCsx77Command.ExecuteAsync(null);
 
         Assert.Equal("Export cancelled.", vm.StatusText);
+    }
+
+    // [CSX-PUSH-DISCONNECT-LOG] Push to CE Structure Dissect resolves the same CSX on the same export token, so a
+    // disconnect cancels it the same way -- and its handler logged "cancelled by user" for it, unconditionally.
+
+    [Fact]
+    public async Task PushCsxToCe_CancelledByADisconnect_IsNotReportedAsAUserCancel()
+    {
+        var log = new MockLoggingService();
+        var dump = new WalkThrowStub();
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = MakeVm(dump, log, aobMaker: bridge);
+        vm.HasData = true;
+        dump.BeforeThrow = vm.ClearOnDisconnect;
+
+        await vm.PushCsxToCeCommand.ExecuteAsync(null);
+
+        AssertSaysNothingOfAUserCancel(vm, log);
+        Assert.Contains(log.Messages, m => m.Contains("cancelled: the game disconnected", StringComparison.Ordinal));
+        Assert.Empty(bridge.AaScripts);                                      // nothing reached CE
+    }
+
+    [Fact]
+    public async Task PushCsxToCe_UserCancel_StillLogsTheUserCancel()
+    {
+        var log = new MockLoggingService();
+        var dump = new WalkThrowStub();
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = MakeVm(dump, log, aobMaker: bridge);
+        vm.HasData = true;
+        dump.BeforeThrow = () => vm.CancelExportCommand.Execute(null);
+
+        await vm.PushCsxToCeCommand.ExecuteAsync(null);
+
+        Assert.Contains(log.Messages, m => m.Contains("cancelled by user", StringComparison.Ordinal));
+        Assert.True(string.IsNullOrEmpty(vm.ErrorMessage), $"ErrorMessage: '{vm.ErrorMessage}'");
+        Assert.Empty(bridge.AaScripts);
+        Assert.False(vm.IsExporting);
     }
 }
