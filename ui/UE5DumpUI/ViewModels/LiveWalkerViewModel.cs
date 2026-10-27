@@ -2140,6 +2140,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         => innerType is "ObjectProperty" or "ClassProperty"
             or "WeakObjectProperty"
             or "SoftObjectProperty" or "SoftClassProperty"
+            // [UE4-ASSETPTR-EXPORTS] 4.11-4.17's soft pointers: the walk's elements carry each asset path
+            or "AssetObjectProperty" or "AssetClassProperty"
             or "LazyObjectProperty"
             or "InterfaceProperty"
             or "DelegateProperty"
