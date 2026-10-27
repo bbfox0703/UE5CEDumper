@@ -3963,6 +3963,22 @@ static void Test_ValueScan_SparseContainerGeometry() {
            Macht::ComputeSetElementStride(8, 8) == Macht::ComputeSetElementStride(8));
     EXPECT("Scharf NameProperty(8) align = 4",        Scharf::RequiredAlignment("NameProperty", 8, false) == 4);
     EXPECT("Scharf WeakObjectProperty align = 4",     Scharf::RequiredAlignment("WeakObjectProperty", 8, false) == 4);
+    // [DELEGATE-PAD-ALIGN] A checked build's standalone FScriptDelegate leads with the 8-aligned std::atomic<uint64>
+    // access detector, so it is alignof 8 (24, or 32 with a 12-byte FName); unpadded it is the weak pair and an FName,
+    // alignof 4 (12 / 16 / 20). A TMap<int32, FMyDelegate> value sits at +8 on a checked build, not +4.
+    EXPECT("Scharf DelegateProperty(16) align = 4",       Scharf::RequiredAlignment("DelegateProperty", 16, false) == 4);
+    EXPECT("Scharf DelegateProperty(20, CPN) align = 4",  Scharf::RequiredAlignment("DelegateProperty", 20, true) == 4);
+    EXPECT("Scharf DelegateProperty(24, checked) align = 8", Scharf::RequiredAlignment("DelegateProperty", 24, false) == 8);
+    EXPECT("Scharf DelegateProperty(32, CPN checked) align = 8",
+           Scharf::RequiredAlignment("DelegateProperty", 32, true) == 8);
+    // Both multicast spellings are a TArray header (a pointer first): the UE4 one and the UE 4.23+ inline one, which a
+    // substring search for the UE4 spelling does not match.
+    EXPECT("Scharf MulticastInlineDelegateProperty align = 8",
+           Scharf::RequiredAlignment("MulticastInlineDelegateProperty", 16, false) == 8);
+    EXPECT("Scharf MulticastDelegateProperty (UE4) align = 8",
+           Scharf::RequiredAlignment("MulticastDelegateProperty", 16, false) == 8);
+    EXPECT("Scharf MulticastSparseDelegateProperty align = 1",
+           Scharf::RequiredAlignment("MulticastSparseDelegateProperty", 1, false) == 1);
     // [UE4-ASSETPTR-PROPS] FAssetPtr, 4.11-4.17's soft pointer, ends in an FString, so it is 8-aligned (UE415_Flyinh's
     // PDB: 0x20, with 4 bytes of padding after TagAtLastTest). 0 ("not validated") left a TMap<TAssetPtr, int32>'s
     // pair aligned by its int32 -- the stride GetMapPairLayout derives, rebuilt here, came out 0x2C, not 0x30.
