@@ -2119,23 +2119,25 @@ public class ValueSearchTests
     public void GroupPivot_UsesOwnerClassForCrossObjectSlot()
     {
         var (vm, _) = MakeVm();
-        (string cls, string prop)? got = null;
-        vm.NavigateToPivot += (c, p) => got = (c, p);
+        (string cls, string prop, int off)? got = null;
+        vm.NavigateToPivot += (c, p, o) => got = (c, p, o);
 
         // A cross-object slot: Pivot must target the owned sub-object's class.
         vm.PivotGroupSlotCommand.Execute(new GroupSlotMatch
         {
             ClassName = "BP_Player_C", OwnerClass = "BP_HealthSet_C", FieldName = "CurrentHealth.BaseValue",
+            FieldOffset = 0x30,
         });
-        Assert.Equal(("BP_HealthSet_C", "CurrentHealth.BaseValue"), got);
+        Assert.Equal(("BP_HealthSet_C", "CurrentHealth.BaseValue", 0x30), got);
 
         // An own-block slot (no owner_class) falls back to the candidate actor's class.
+        // [PIVOT-HANDOFF-SHADOWED] The slot's offset travels with its name, so Pivot can tick the copy it names.
         got = null;
         vm.PivotGroupSlotCommand.Execute(new GroupSlotMatch
         {
-            ClassName = "BP_Player_C", OwnerClass = "", FieldName = "Gold",
+            ClassName = "BP_Player_C", OwnerClass = "", FieldName = "Gold", FieldOffset = 0x128,
         });
-        Assert.Equal(("BP_Player_C", "Gold"), got);
+        Assert.Equal(("BP_Player_C", "Gold", 0x128), got);
     }
 
     [Fact]

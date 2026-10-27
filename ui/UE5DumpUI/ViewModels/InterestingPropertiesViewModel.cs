@@ -117,8 +117,8 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
 
 
     /// <summary>Raised to pivot the selected property in the experimental Class
-    /// Pivot tab (className, propName). C5 right-click handoff.</summary>
-    public event Action<string, string>? NavigateToPivot;
+    /// Pivot tab (className, propName, propOffset). C5 right-click handoff.</summary>
+    public event Action<string, string, int>? NavigateToPivot;
 
     /// <summary>Gates the "Pivot this property" context-menu item — true only when
     /// the experimental Class Pivot tab is available (mirrors the gate).</summary>
@@ -555,7 +555,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
     {
         row ??= SelectedResult;
         if (row == null || string.IsNullOrEmpty(row.ClassName)) return;
-        NavigateToPivot?.Invoke(row.ClassName, row.PropName);
+        NavigateToPivot?.Invoke(row.ClassName, row.PropName, -1);
     }
 
     /// <summary>Per-row action: copy bare property name to clipboard.</summary>

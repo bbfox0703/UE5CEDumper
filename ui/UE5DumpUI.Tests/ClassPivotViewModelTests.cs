@@ -346,6 +346,85 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Equal("PrerollTime@+0x128=⟨3: 5,6,7⟩", row.ValuesDisplay);
     }
 
+    // ---- [PIVOT-HANDOFF-SHADOWED] a handoff names one copy of a shadowed name by its offset ----
+    //
+    // The picker lists each copy apart (PrerollTime@+0xC4 / @+0x128), but the handoffs -- right-click "Pivot this
+    // property" (PivotForAsync) and discovery's "Use ->" -- carried the name alone and ticked the FIRST copy, whichever
+    // one the user had picked.
+
+    // The field load pre-ticks the copy whose values vary (+0x128 here) as a value field before any handoff ticks
+    // anything, so these assert on the copy a handoff must leave alone (+0xC4), not on the whole ticked set.
+    private static string[] TickedCopies(ClassPivotViewModel vm, string name)
+        => vm.Fields.Where(f => f.Name == name && f.IsValue).Select(f => f.Label).ToArray();
+
+    private async Task<long> SeedShotSectionsAsync(string label, params int[] preroll296)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = label }, ct);
+        await _store.WriteChunkAsync(id, preroll296
+            .Select((v, i) => PivotStoreTests.ShotSection(i + 1, $"/G.M:L.Shot{i}", v)).ToArray(), ct);
+        await _store.FinalizeSnapshotAsync(id, preroll296.Length, preroll296.Length * 3, ct);
+        return id;
+    }
+
+    [Fact]
+    public async Task PivotForAsync_WithAnOffset_TicksTheCopyAtThatOffset()
+    {
+        await SeedShotSectionsAsync("shadow", 5, 6, 7);
+        var vm = NewVm();
+
+        await vm.PivotForAsync("MovieSceneCinematicShotSection", "PrerollTime", 296);
+
+        Assert.Contains("PrerollTime@+0x128", TickedCopies(vm, "PrerollTime"));
+        Assert.DoesNotContain("PrerollTime@+0xC4", TickedCopies(vm, "PrerollTime"));
+        Assert.Contains("PrerollTime@+0x128", vm.StatusText);   // "Ready" names the copy it ticked
+    }
+
+    [Fact]
+    public async Task PivotForAsync_WithNoOffset_StillTicksTheFirstCopy()
+    {
+        // The control: a source with no offset keeps the name match it always had.
+        await SeedShotSectionsAsync("shadow", 5, 6, 7);
+        var vm = NewVm();
+
+        await vm.PivotForAsync("MovieSceneCinematicShotSection", "PrerollTime");
+
+        Assert.Contains("PrerollTime@+0xC4", TickedCopies(vm, "PrerollTime"));
+    }
+
+    [Fact]
+    public async Task UseDiscoverCandidate_WithAnOffset_TicksTheCopyAtThatOffset()
+    {
+        await SeedShotSectionsAsync("shadow", 5, 6, 7);
+        var vm = NewVm();
+        await vm.RefreshAsync();
+
+        await vm.UseDiscoverCandidateAsync(new DiscoveryCandidate
+            { ClassName = "MovieSceneCinematicShotSection", PropName = "PrerollTime", PropOffset = 296 });
+
+        Assert.Contains("PrerollTime@+0x128", TickedCopies(vm, "PrerollTime"));
+        Assert.DoesNotContain("PrerollTime@+0xC4", TickedCopies(vm, "PrerollTime"));
+        Assert.Contains(vm.Results, r => r.ValuesDisplay.Contains("PrerollTime@+0x128=", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Discover_OnAShadowedName_CarriesTheOffsetOfTheCopyThatChanged()
+    {
+        // Only the +296 copy moves between the two captures; "Use ->" on the candidate must reach that copy.
+        await SeedShotSectionsAsync("before", 5);
+        await SeedShotSectionsAsync("after", 9);
+        var vm = NewVm();
+        await vm.RefreshAsync();
+        await vm.RunDiscoverCommand.ExecuteAsync(null);
+
+        var cand = Assert.Single(vm.DiscoverResults, c => c.PropName == "PrerollTime");
+        Assert.Equal(296, cand.PropOffset);
+
+        await vm.UseDiscoverCandidateAsync(cand);
+        Assert.DoesNotContain("PrerollTime@+0xC4", TickedCopies(vm, "PrerollTime"));
+        Assert.Contains("PrerollTime@+0x128", TickedCopies(vm, "PrerollTime"));
+    }
+
     [Fact]
     public void OpenInLiveWalker_RaisesNavigate()
     {

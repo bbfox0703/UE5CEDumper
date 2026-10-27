@@ -75,6 +75,8 @@ public sealed class DiscoveryCandidate
     /// scalar), so "Use →" can pivot it through the Snapshot Array source.</summary>
     public string ArrayField   { get; set; } = "";
     public string InnerProp    { get; set; } = "";
+    /// <summary>The representative's property offset in the instance; -1 when not known.</summary>
+    public int    PropOffset   { get; set; } = -1;
 
     /// <summary>Instances of this (class, prop) present in ALL selected snapshots.</summary>
     public int InstancesTotal   { get; set; }

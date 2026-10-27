@@ -682,8 +682,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private string _lastScrolledSearchText = "";
 
     /// <summary>Raised to pivot the selected field's owning class in the
-    /// experimental Class Pivot tab (className, fieldName). C5 right-click handoff.</summary>
-    public event Action<string, string>? NavigateToPivot;
+    /// experimental Class Pivot tab (className, fieldName, fieldOffset). C5 right-click handoff.</summary>
+    public event Action<string, string, int>? NavigateToPivot;
 
     /// <summary>
     /// Raised synchronously while saving a bookmark so the View can report the
@@ -723,7 +723,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         field ??= SelectedField;
         if (field == null || string.IsNullOrEmpty(CurrentClassName) || string.IsNullOrEmpty(field.Name))
             return;
-        NavigateToPivot?.Invoke(CurrentClassName, field.Name);
+        NavigateToPivot?.Invoke(CurrentClassName, field.Name, -1);
     }
 
     public LiveWalkerViewModel(IDumpService dump, ILoggingService log, IPlatformService platform,

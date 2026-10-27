@@ -742,11 +742,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             // C5: right-click "Pivot this property" from the three source panels ->
             // switch to the Class Pivot tab and pre-select the class/property.
-            PropertySearch.NavigateToPivot        += (cls, prop) => HandlePivotHandoff(cls, prop);
-            InterestingProperties.NavigateToPivot += (cls, prop) => HandlePivotHandoff(cls, prop);
-            LiveWalker.NavigateToPivot            += (cls, prop) => HandlePivotHandoff(cls, prop);
+            PropertySearch.NavigateToPivot        += (cls, prop, _) => HandlePivotHandoff(cls, prop);
+            InterestingProperties.NavigateToPivot += (cls, prop, _) => HandlePivotHandoff(cls, prop);
+            LiveWalker.NavigateToPivot            += (cls, prop, _) => HandlePivotHandoff(cls, prop);
             // Value-locator -> pivot: a value-scan hit already carries class + field.
-            ValueSearch.NavigateToPivot           += (cls, prop) => HandlePivotHandoff(cls, prop);
+            ValueSearch.NavigateToPivot           += (cls, prop, _) => HandlePivotHandoff(cls, prop);
 
             // "Remove all snapshot data" (System tab) deletes every snapshot DB file —
             // the experimental tabs' cached lists are now stale, so refresh them to the

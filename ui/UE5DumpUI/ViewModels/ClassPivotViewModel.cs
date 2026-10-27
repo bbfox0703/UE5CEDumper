@@ -444,8 +444,9 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// select <paramref name="className"/> in the newest snapshot, and surface
     /// <paramref name="propName"/> (ticked as a value field unless it became the
     /// auto-suggested key). No-op with a hint if no snapshot or class match. The
-    /// caller (MainWindowViewModel) has already switched to the Class Pivot tab.</summary>
-    public async Task PivotForAsync(string className, string? propName)
+    /// caller (MainWindowViewModel) has already switched to the Class Pivot tab.
+    /// <paramref name="propOffset"/> is the property's offset in the instance, -1 when the source has none.</summary>
+    public async Task PivotForAsync(string className, string? propName, int propOffset = -1)
     {
         try
         {
