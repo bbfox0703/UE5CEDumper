@@ -1752,7 +1752,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         Fields.Clear();
         _renderedCrumb = CurrentCrumb;   // [A4-NAV-BACKFIRST-GRAFT]
-        if (elements.Count == 0)
+        if (elements.Count == 0 && sourceField.MapCount > 0)   // an emptied map is complete, not unreadable
         {
             // Show metadata summary when element data couldn't be read
             StatusText = $"Map has {sourceField.MapCount} entries but element data could not be read (key={keyLabel} sz={sourceField.MapKeySize}, val={valLabel} sz={sourceField.MapValueSize})";
@@ -1815,20 +1815,22 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void RepopulateContainerView(LiveFieldValue containerField, BreadcrumbItem? bc = null)
     {
+        // [LW-EMPTIED-CONTAINER-REFRESH] A count of -1 is "not this kind"; 0 is a container emptied since the drill,
+        // still its kind. Keyed on a count above zero, an emptied one matched nothing and its old rows stayed on screen.
         // DataTable rows: use cached DataTableWalkResult from breadcrumb
         if (bc is { IsDataTableView: true, DataTableData: not null })
         {
             PopulateDataTableRowFields(bc.DataTableData);
         }
-        else if (containerField.ArrayCount > 0 && !string.IsNullOrEmpty(containerField.ArrayInnerType))
+        else if (containerField.ArrayCount >= 0 && !string.IsNullOrEmpty(containerField.ArrayInnerType))
         {
             PopulateArrayContainerFields(containerField.ArrayElements ?? new(), containerField);
         }
-        else if (containerField.MapCount > 0 && !string.IsNullOrEmpty(containerField.MapKeyType))
+        else if (containerField.MapCount >= 0 && !string.IsNullOrEmpty(containerField.MapKeyType))
         {
             PopulateMapContainerFields(containerField.MapElements ?? new(), containerField);
         }
-        else if (containerField.SetCount > 0 && !string.IsNullOrEmpty(containerField.SetElemType))
+        else if (containerField.SetCount >= 0 && !string.IsNullOrEmpty(containerField.SetElemType))
         {
             PopulateSetContainerFields(containerField.SetElements ?? new(), containerField);
         }
@@ -1848,7 +1850,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// mis-render — the crumb label says e.g. "SpawnedAttributes" but the grid shows
     /// the owning object). Here we lazily hydrate it: re-walk the parent object live
     /// (the crumb's Address is the parent), match the container field by name +
-    /// offset (the same lookup <c>RefreshCurrentView</c> uses), and re-populate the
+    /// offset (the same lookup <see cref="RefreshAsync"/> uses), and re-populate the
     /// container element view from the freshly-resolved field. Returns true if it
     /// handled the crumb; false (no live match / not a container) lets the caller
     /// fall through to the existing re-walk.
@@ -1867,9 +1869,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         var field = result.Fields.FirstOrDefault(f => f.Name == item.FieldName && f.Offset == item.FieldOffset);
         if (field == null) return false;
 
-        // Only handle when the matched field actually resolves to a populatable
-        // container (mirrors RepopulateContainerView's non-DataTable branches);
-        // otherwise let the caller fall through to a normal re-walk.
+        // Only handle when the matched field resolves to a container that holds
+        // elements; otherwise let the caller fall through to a normal re-walk.
         bool willRepopulate =
             (field.ArrayCount > 0 && !string.IsNullOrEmpty(field.ArrayInnerType)) ||
             (field.MapCount > 0 && !string.IsNullOrEmpty(field.MapKeyType)) ||
@@ -5692,9 +5693,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     // The parent walk's inline preview is cut at min(Array Limit, 4,096); a scalar array is re-fetched
                     // in full by the drill, so rendering that preview shrank the view to the slider (and an edited
                     // element [N >= Array Limit] vanished right after "Written").
+                    // [LW-EMPTIED-CONTAINER-REFRESH] Kinds as RepopulateContainerView keys them: a count of 0 is a
+                    // container emptied since the drill, and its crumb says so too.
                     string? label = null;
                     var status = "";
-                    if (updatedField.ArrayCount > 0 && !string.IsNullOrEmpty(updatedField.ArrayInnerType))
+                    if (updatedField.ArrayCount >= 0 && !string.IsNullOrEmpty(updatedField.ArrayInnerType))
                     {
                         // Walked just now, at the slider's current value.
                         var (elements, requested, total) = await ReadArrayViewElementsAsync(
@@ -5706,12 +5709,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                         label = ArrayViewLabel(updatedField, elements.Count);
                         status = ArrayViewStatus(elements.Count, updatedField.ArrayCount, requested);
                     }
-                    else if (updatedField.MapCount > 0 && !string.IsNullOrEmpty(updatedField.MapKeyType))
+                    else if (updatedField.MapCount >= 0 && !string.IsNullOrEmpty(updatedField.MapKeyType))
                     {
                         label = MapViewLabel(updatedField);
                         status = ContainerTruncation.StatusLine(updatedField.MapElements?.Count ?? 0, updatedField.MapCount);
                     }
-                    else if (updatedField.SetCount > 0 && !string.IsNullOrEmpty(updatedField.SetElemType))
+                    else if (updatedField.SetCount >= 0 && !string.IsNullOrEmpty(updatedField.SetElemType))
                     {
                         label = SetViewLabel(updatedField);
                         status = ContainerTruncation.StatusLine(updatedField.SetElements?.Count ?? 0, updatedField.SetCount);
