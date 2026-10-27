@@ -271,6 +271,56 @@
           </ScrollViewer>
         </DockPanel>
       </TabItem>
+      <!-- [PARAM-BYTES-SEGMENTS] The Parameters tab's raw copies again, here also read as 8-byte segments, and either
+           form to the clipboard. The segment view does not wrap: a wrapped segment no longer lines up with its
+           columns, so a narrow pane scrolls sideways instead. -->
+      <TabItem Header="{StaticResource str.CT.Tab.Bytes}" FontSize="12">
+        <DockPanel Background="#1E1E1E">
+          <TextBlock DockPanel.Dock="Top" Text="{Binding ParamsNote}" TextWrapping="Wrap"
+                     Foreground="#E5A050" FontSize="12" Margin="4,4,4,2"
+                     IsVisible="{Binding ParamsNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+          <WrapPanel DockPanel.Dock="Top" Orientation="Horizontal" Margin="4,2">
+            <RadioButton GroupName="CallTraceBytesView"
+                         Content="{StaticResource str.CT.Bytes.Segments}"
+                         IsChecked="{Binding BytesAsSegments, Mode=TwoWay}"
+                         ToolTip.Tip="{StaticResource str.Tip.CT.Bytes.Segments}"
+                         Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
+            <RadioButton GroupName="CallTraceBytesView"
+                         Content="{StaticResource str.CT.Bytes.Raw}"
+                         IsChecked="{Binding BytesAsRaw, Mode=TwoWay}"
+                         ToolTip.Tip="{StaticResource str.Tip.CT.Bytes.Raw}"
+                         Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center" Margin="0,0,12,0"/>
+            <Button Content="{StaticResource str.CT.Bytes.CopyCsv}"
+                    Command="{Binding CopyParamsCsvCommand}"
+                    IsEnabled="{Binding ParamsSegments, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                    ToolTip.Tip="{StaticResource str.Tip.CT.Bytes.CopyCsv}"
+                    ToolTip.ShowOnDisabled="True"
+                    Foreground="#DCDCAA" Background="Transparent"
+                    BorderThickness="1" BorderBrush="#DCDCAA"
+                    Padding="6,1" FontSize="11" Cursor="Hand" Margin="0,0,4,0"/>
+            <Button Content="{StaticResource str.CT.Bytes.CopyRaw}"
+                    Command="{Binding CopyParamsRawCommand}"
+                    IsEnabled="{Binding ParamsHex, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                    ToolTip.Tip="{StaticResource str.Tip.CT.Bytes.CopyRaw}"
+                    ToolTip.ShowOnDisabled="True"
+                    Foreground="#DCDCAA" Background="Transparent"
+                    BorderThickness="1" BorderBrush="#DCDCAA"
+                    Padding="6,1" FontSize="11" Cursor="Hand"/>
+          </WrapPanel>
+          <Panel>
+            <TextBox Text="{Binding ParamsSegments, Mode=OneWay}" IsVisible="{Binding BytesAsSegments}"
+                     IsReadOnly="True" AcceptsReturn="True" TextWrapping="NoWrap"
+                     ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     FontFamily="Consolas, Menlo, monospace" FontSize="11"
+                     Background="#252526" Foreground="#D4D4D4"/>
+            <TextBox Text="{Binding ParamsHex, Mode=OneWay}" IsVisible="{Binding BytesAsRaw}"
+                     IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                     FontFamily="Consolas, Menlo, monospace" FontSize="11"
+                     Background="#252526" Foreground="#9CA3AF"/>
+          </Panel>
+        </DockPanel>
+      </TabItem>
     </TabControl>
     <Thumb x:Name="PaneHandle" DockPanel.Dock="Right" Width="8" Cursor="SizeWestEast"
            Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="0,0,1,0"

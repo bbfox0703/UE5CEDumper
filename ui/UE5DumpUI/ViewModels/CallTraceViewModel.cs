@@ -714,6 +714,9 @@ public partial class CallTraceViewModel : ViewModelBase
         ParamRows = p.Rows;
         ParamsNote = string.Join(Environment.NewLine, p.Notes);
         ParamsHex = p.Hex;
+        ParamsSegments = ParamBytesTable.Aligned(p.Segments);
+        _paramsCsv = p.Segments.Count == 0 ? "" : ParamBytesTable.Csv(p.Segments);
+        _paramsSegmentCount = p.Segments.Count;
         ShowStack(call);
     }
 
@@ -723,13 +726,37 @@ public partial class CallTraceViewModel : ViewModelBase
     [ObservableProperty] private string _paramsNote = "";
     [ObservableProperty] private string _paramsHex = "";
 
+    // [PARAM-BYTES-SEGMENTS] The Bytes tab: the same copies as ParamsHex, read as 8-byte segments.
+    [ObservableProperty] private string _paramsSegments = "";
+    /// <summary>The Bytes tab shows the segments (true) or the raw copies (false).</summary>
+    [ObservableProperty] private bool _bytesAsSegments = true;
+    private string _paramsCsv = "";
+    private int _paramsSegmentCount;
+
+    /// <summary>The Raw radio's side of <see cref="BytesAsSegments"/>. Only a check writes: when the Segments radio is
+    /// checked, this one's uncheck must not flip the choice back.</summary>
+    public bool BytesAsRaw
+    {
+        get => !BytesAsSegments;
+        set { if (value) BytesAsSegments = false; }
+    }
+
+    partial void OnBytesAsSegmentsChanged(bool value) => OnPropertyChanged(nameof(BytesAsRaw));
+
+    /// <summary>The segments as the clipboard gets them; "" when the call has no copy.</summary>
+    internal string ParamsCsv => _paramsCsv;
+
+    private static readonly IReadOnlyList<string[]> NoSegments = Array.Empty<string[]>();
+
     /// <summary>What the Parameters tab shows for call <paramref name="i"/>: a row per parameter (a struct's members
-    /// under it), the reasons that qualify them or say why there are none, and the raw copies. Nothing at all for a
-    /// call that was not chosen: the tab then says so itself.</summary>
-    internal (IReadOnlyList<ParamRow> Rows, IReadOnlyList<string> Notes, string Hex) Params(int i)
+    /// under it), the reasons that qualify them or say why there are none, and the raw copies, as hex and as the
+    /// Bytes tab's segments. Nothing at all for a call that was not chosen: the tab then says so itself.</summary>
+    internal (IReadOnlyList<ParamRow> Rows, IReadOnlyList<string> Notes, string Hex, IReadOnlyList<string[]> Segments)
+        Params(int i)
     {
         var t = _trace;
-        var none = ((IReadOnlyList<ParamRow>)Array.Empty<ParamRow>(), (IReadOnlyList<string>)Array.Empty<string>(), "");
+        var none = ((IReadOnlyList<ParamRow>)Array.Empty<ParamRow>(), (IReadOnlyList<string>)Array.Empty<string>(), "",
+                    NoSegments);
         if (t == null || i < 0 || i >= t.Count) return none;
         uint f = t.Flags[i];
         var s = t.Snapshots;
@@ -739,21 +766,24 @@ public partial class CallTraceViewModel : ViewModelBase
         // [LIVEFUNCS-STEP3] Taken and Budget are the parameters' own flags; Lone and Excluded say a call was chosen
         // for something, and a call chosen for its stack alone carries them without a parameter to show.
         if ((f & (Taken | Budget)) == 0 && entry == null && after == null)
-            return (Array.Empty<ParamRow>(), new[] { StringLookup("str.CT.Param.NotChosen") }, "");
+            return (Array.Empty<ParamRow>(), new[] { StringLookup("str.CT.Param.NotChosen") }, "", NoSegments);
         var notes = new List<string>();
         if ((f & Lone) != 0) notes.Add(StringLookup("str.CT.Param.Lone"));
         if ((f & Excluded) != 0) notes.Add(StringLookup("str.CT.Param.Excluded"));
         if ((f & Budget) != 0)
         {
             notes.Add(StringLookup("str.CT.Param.Budget"));
-            return (Array.Empty<ParamRow>(), notes, "");
+            return (Array.Empty<ParamRow>(), notes, "", NoSegments);
         }
         if (entry == null && after == null)
         {
             notes.Add(StringLookup("str.CT.Param.Overwritten"));
-            return (Array.Empty<ParamRow>(), notes, "");
+            return (Array.Empty<ParamRow>(), notes, "", NoSegments);
         }
+        var arm = s!.ArmOf(entry ?? after!);
+        var layout = arm?.Layout;
         var hex = new StringBuilder();
+        var segments = new List<string[]>();
         foreach (var slot in new[] { entry, after })
         {
             if (slot == null) continue;
@@ -761,20 +791,39 @@ public partial class CallTraceViewModel : ViewModelBase
             if ((slot.Flags & SnapSlot.CopyFaultFlag) != 0) notes.Add(StringLookup("str.CT.Param.CopyFault"));
             if ((slot.Flags & SnapSlot.TruncatedFlag) != 0) notes.Add(StringLookup("str.CT.Param.Truncated"));
             hex.AppendLine(Say(slot.IsAfter ? "str.CT.Param.HexAfter" : "str.CT.Param.HexAt", Convert.ToHexString(slot.Data)));
+            segments.AddRange(ParamBytesTable.Rows(slot.IsAfter ? ParamBytesTable.After : ParamBytesTable.AtCall, slot.Data,
+                                                   layout?.Fields));
         }
-        var arm = s!.ArmOf(entry ?? after!);
-        var layout = arm?.Layout;
         if (layout == null)
         {
             notes.Add(Say("str.CT.Param.RawOnly", arm?.State ?? "", arm?.Why ?? ""));
-            return (Array.Empty<ParamRow>(), notes.Distinct().ToList(), hex.ToString());
+            return (Array.Empty<ParamRow>(), notes.Distinct().ToList(), hex.ToString(), segments);
         }
         bool hasOutputs = layout.Fields.Any(p => p.Kind is "out" or "in_out" or "return");
         if (after == null && hasOutputs && t.Returned[i]) notes.Add(StringLookup("str.CT.Param.NoAfter"));
         var rows = new List<ParamRow>();
         for (int k = 0; k < layout.Fields.Count; k++)
             AddParamRows(rows, layout.Fields[k], "", entry, after, entry?.Values, after?.Values, k, 0);
-        return (rows, notes.Distinct().ToList(), hex.ToString());
+        return (rows, notes.Distinct().ToList(), hex.ToString(), segments);
+    }
+
+    /// <summary>[PARAM-BYTES-SEGMENTS] The Bytes tab's raw view, as it shows it. The status says whether it arrived: a
+    /// copy that silently failed would leave older bytes to paste.</summary>
+    [RelayCommand]
+    private async Task CopyParamsRawAsync()
+    {
+        if (ParamsHex.Length == 0) return;
+        bool copied = await ClipboardDelivery.TryAsync(_platform, ParamsHex);
+        StatusText = StringLookup(copied ? "str.CT.Bytes.CopiedRaw" : "str.CT.Bytes.CopyFailed");
+    }
+
+    /// <summary>[PARAM-BYTES-SEGMENTS] The segments as CSV: unpadded, with a header, for a spreadsheet or a script.</summary>
+    [RelayCommand]
+    private async Task CopyParamsCsvAsync()
+    {
+        if (_paramsCsv.Length == 0) return;
+        bool copied = await ClipboardDelivery.TryAsync(_platform, _paramsCsv);
+        StatusText = copied ? Say("str.CT.Bytes.CopiedCsv", _paramsSegmentCount) : StringLookup("str.CT.Bytes.CopyFailed");
     }
 
     private static void AddParamRows(List<ParamRow> rows, SnapParam p, string prefix, SnapSlot? entry, SnapSlot? after,
