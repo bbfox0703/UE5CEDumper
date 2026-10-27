@@ -1764,7 +1764,10 @@ when the clipboard took it; the rest make no claim, by design), `[UE4-ASSETPTR-E
 `[VND584-04]`'s list half (core red `e1fd4e08` / green `c4ea4cfe`, UI red `820ea9fc` / green `3c1db3cb`: walk_functions'
 `include_interfaces` lists what a class gets only through an interface, and Live Walker's Functions list shows it as
 "DoFoo  (via FooInterface)"; dumps and exports keep the class's own functions). Leads these left, each LOW and open:
-- ⬜ `[TRAINER-PUSH-TIMEDOUT-TEXT]` the Standalone Trainer export still pushes through the bool `CreateAAScriptAsync`:
+- ✅ `[TRAINER-PUSH-TIMEDOUT-TEXT]` **FIXED 2026-10-27** (red `e5d9d1c8` / green `b8e1b251`): each entry goes through
+  `CreateAAScriptDetailedAsync`, and the push stops at the first one not created, naming it and saying why -- no
+  reply (may still have been added), the plugin's reason, the bridge's busy / refused / absent sentence, or a refusal
+  without a reason. Was: the Standalone Trainer export still pushes through the bool `CreateAAScriptAsync`:
   a timeout on entry k reads "pipe dropped" although it may exist, and a refusal with a reason (the size cap) reads as a
   dropped pipe -- the `[COORDPICK-*]` fix applies.
 - ⬜ `[DISCOVER-SHADOWED-POOL]` `PivotDiscoveryEngine.Rank` groups by (class, prop, type), so the two copies of a
