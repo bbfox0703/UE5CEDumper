@@ -177,8 +177,12 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordNoDllRefusedNoReason,
              UE5DumpUI.ViewModels.TeleportViewModel.CoordNoDllRefusedNoReasonText);
 
+        // [STEALTH-RESET-STALE-HELD] Reset on a card that knows nothing is held
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyStealthNothingHeld,
+             UE5DumpUI.ViewModels.TeleportViewModel.StealthNothingHeldText);
+
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(59, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(60, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

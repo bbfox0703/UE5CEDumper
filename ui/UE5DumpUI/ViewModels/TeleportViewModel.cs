@@ -260,6 +260,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private static string StealthReleasedText => AobMakerStatus.Say(KeyStealthReleased, "Released the stealth-meter hold.");
     private static string StealthNothingText => AobMakerStatus.Say(KeyStealthNothing,
         "No stealth meter is known to this card, so Reset sent nothing. Detect the meter first, then Reset.");
+    internal const string KeyStealthNothingHeld = "str.TP.StNothingHeld";
+    internal static string StealthNothingHeldText => AobMakerStatus.Say(KeyStealthNothingHeld,
+        "Nothing is held, so Reset sent nothing.");
 
     internal const string KeyBugItNotCopied = "str.TP.BugItNotCopied";
     /// <summary>Copy as BugItGo fills the Run field whatever the clipboard does, so a refused copy keeps that half of
@@ -1006,6 +1009,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             _stealthCandidate = null;
             _stealthArmed = false;   // the hold outlives the pipe; the connect prime claims it again if it can
             _stealthKnown = false;
+            _stealthNoneHeld = false;
             StealthFieldText = "—";
             ApplyStealthState(-1);   // [A4-STEALTH-PRIME] Unknown until the connect prime reads the DLL's holds
         }
@@ -1894,6 +1898,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// story, so a teardown may pay its debt. A later Hold does not restore it -- Detect may have moved the candidate
     /// off a lost one's field -- the next connect's prime does.</summary>
     private bool _stealthKnown;
+    /// <summary>[STEALTH-RESET-STALE-HELD] The DLL said no stealth hold exists: the prime read no forced field at all,
+    /// or a release was answered. Narrower than <see cref="_stealthKnown"/>, which a prime that saw a forced field it
+    /// could not match also sets, over a hold Solide may still run. Detect does not change it: it only reads.</summary>
+    private bool _stealthNoneHeld;
 
     /// <summary>[A4-STEALTH-PRIME] The Stealth card's hold badge, in the shape every other card's badge has
     /// (<c>Apply&lt;X&gt;State</c>, which gate 17d reads): -1 Unknown, 0 Off, 1 Holding. The disconnect branch set "Off"
@@ -1966,6 +1974,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             IsBusy = true;
             ClearError();
+            _stealthNoneHeld = false;   // from here a hold may exist, whatever the answer
             var r = await _dump.ForceFieldAsync(c.ClassName, c.FieldName, "numeric", 0);
             if (r.Code < 0)
             {
@@ -2017,6 +2026,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var c = _stealthCandidate;
+            if (_stealthNoneHeld)
+            {
+                // There is nothing to release. A reset_field sent now would be answered OK for a job that never
+                // existed, and read as "Released".
+                StatusText = StealthNothingHeldText;
+                return true;   // nothing was sent, so nothing failed to land
+            }
             if (c == null)
             {
                 // [STEALTH-RESET-STALE-HELD] No meter is known to the card: none detected yet, or a reconnect whose
@@ -2027,6 +2043,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             }
             await _dump.ResetFieldAsync(c.ClassName, c.FieldName);
             _stealthArmed = false;
+            _stealthNoneHeld = true;
             (StealthState, StealthBadgeColor) = ("Off", "#999999");
             // [STEALTH-RESET-STALE-HELD] The readout named the hold ("= 0 (held)"); after a release it keeps the meter's
             // name and drops a value it no longer knows.
@@ -2628,6 +2645,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         if (!IsConnected) return;
         var forced = await _dump.GetForcedFieldsAsync();
+        _stealthNoneHeld = forced.Count == 0;
         if (forced.Count == 0)
         {
             _stealthArmed = false;

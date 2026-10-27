@@ -1618,6 +1618,7 @@
          nothing is known about a hold: one set before a reconnect may still run). -->
     <sys:String x:Key="str.TP.StReleased">Released the stealth-meter hold.</sys:String>
     <sys:String x:Key="str.TP.StNothingToRelease">No stealth meter is known to this card, so Reset sent nothing. Detect the meter first, then Reset.</sys:String>
+    <sys:String x:Key="str.TP.StNothingHeld">Nothing is held, so Reset sent nothing.</sys:String>
     <sys:String x:Key="str.TP.StArmed">⏳ Hold @0 on {0} is ARMED but holding nothing yet — no live instance of {1} or any subclass exists right now. It applies as soon as one spawns; Reset releases it.</sys:String>
     <sys:String x:Key="str.TP.StRearmRefused">Hold @0 refused (DLL error {0}). The earlier hold on {1} stays armed; Reset releases it.</sys:String>
     <sys:String x:Key="str.TP.FgHeader">Keep Foreground</sys:String>
