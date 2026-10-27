@@ -343,8 +343,9 @@ public class PanelSpaceBudgetTests
             Assert.Null(Attr(b, "MaxWidth"));
             // A margin sits outside the Width, so a different one would still move what follows.
             Assert.Equal(Horizontal(Attr(pair[0], "Margin")), Horizontal(Attr(b, "Margin")));
-            // The label must fit, or a fixed Width cuts it. Measured in Segoe UI at the default 14 px, "Disconnect" is
-            // 68 DIP; 8 DIP a character keeps a margin over that. The estimate holds only at the default font size.
+            // The label must fit, or a fixed Width cuts it. The app renders Inter (Program.cs WithInterFont), where
+            // "Disconnect" at the default 14 px is about 74 DIP of advance width; 8 DIP a character keeps a margin over
+            // that. The estimate holds only at the default font size and font.
             Assert.Null(Attr(b, "FontSize"));
             double needed = 8 * name.Length + Horizontal(Attr(b, "Padding")) + 2;
             Assert.True(Num(width) >= needed, $"'{name}' needs about {needed} DIP, but the shared Width is {width}");
