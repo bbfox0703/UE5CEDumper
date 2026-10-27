@@ -744,6 +744,45 @@ public class TeleportViewModelTests
         Assert.Equal("Holding @0", vm.StealthState);
     }
 
+    // [STEALTH-RESET-STALE-HELD] L58: after a primed hold, Reset released it and set the badge Off, but left the readout
+    // claiming "= 0 (held)" -- ResetStealthAsync never touched StealthFieldText.
+    [Fact]
+    public async Task Reset_after_a_primed_hold_drops_the_held_readout()
+    {
+        var fake = new FakeDumpService
+        {
+            NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "BP_Player_C", FieldName = "Visibility" } },
+            NextForcedFields = new List<ForcedFieldInfo>
+            {
+                new() { ClassName = "BP_Player_C", FieldName = "Visibility", Kind = "numeric", Value = 0, Held = 1 },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+        Assert.Contains("(held)", vm.StealthFieldText);   // the prime's readout
+
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+
+        Assert.Equal("Off", vm.StealthState);
+        Assert.DoesNotContain("(held)", vm.StealthFieldText);
+        Assert.Contains("Visibility", vm.StealthFieldText);   // which meter it was stays readable
+    }
+
+    // [STEALTH-RESET-STALE-HELD] With no meter detected Reset sent nothing, yet said it released the hold.
+    [Fact]
+    public async Task Reset_with_no_meter_does_not_claim_a_release()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("Released", vm.StatusText);
+        Assert.Contains("no stealth meter", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Fact]
     public async Task Connect_never_takes_a_Property_Search_force_for_the_Stealth_hold()
     {
