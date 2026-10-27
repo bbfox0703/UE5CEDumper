@@ -703,7 +703,7 @@ source and editor are installed for when they are needed.
   `/Game/Maps/PreGame/PreGameMap.PreGameMap`, an empty one `(none)`; no envelope line from them. Was owed on NEKOPALIVE (4.11), Extinction (4.15) or Fantasynth (4.13): asset
   paths on AssetObjectProperty rows, a TArray<TAssetPtr>'s element paths, obj_class / meta_class in walk_class, and no
   "TSoftObjectPtr payload envelope measured" line from them.
-- ⬜ `[UE4-ASSETPTR-EXPORTS]` (LOW, left by `[UE4-ASSETPTR-PROPS]`): the UI consumers are still keyed on Soft* names --
+- ✅ `[UE4-ASSETPTR-EXPORTS]` **FIXED 2026-10-27** (six red/green pairs, e3a318e7 .. 0d55ecff; no DLL change): USMAP writes AssetObjectProperty = 16; the SDK declares TAssetPtr<T> / TAssetSubclassOf<T>; CE XML and CSX lay them out as Soft* (an 8-byte hex leaf; a TArray<TAssetPtr> gets each element's path as a CE String at +0x10); Property Search suggests them and the scorer penalises them; Live Walker's drill keeps the walk's paths; an invoke parameter is empty-only, as Lazy. Left: `[ASSETPTR-BAKED-TOKEN]` below. Live check owed on NEKOPALIVE / Extinction / Fantasynth. Was: (LOW, left by `[UE4-ASSETPTR-PROPS]`): the UI consumers are still keyed on Soft* names --
   the SDK export (`MapCppDeclCore` has no Asset arm, so the field is raw bytes), CE XML and CSX (unknown type), USMAP
   (maps by name, so Asset* is Unknown although `EPropertyType.AssetObjectProperty` = 16 exists), Property Search's
   type filter, Live Walker's array drill (read_array_elements returns raw bytes for an asset inner), and the invoke
@@ -1739,20 +1739,41 @@ dialogs name CE's AVX2 log folder (`e344ebb4` / `3f77727f`); Stealth Reset with 
 (`36d79dad` / `39a61460`); the invoke helper's Debug Camera example keeps a queued OFF's record ticked (`763188cf` /
 `8ea53986`); a queued OFF's badge reads ON (`4c3aa4f2` / `f27687fe`); the coordinate-library spec records the size cap
 (`00e1f90a`). Leads these left, each LOW and open:
-- ⬜ `[CSX-PUSH-DISCONNECT-LOG]` Push to CE Structure Dissect still logs "cancelled by user" when a disconnect cancels it.
-- ⬜ `[LW-SYNTH-EMPTIED-BACK]` Back onto a path-synthetic container emptied since falls through to a parent re-walk:
+- ✅ `[CSX-PUSH-DISCONNECT-LOG]` **FIXED 2026-10-27** (red `659a973f` / green `3d69eff4`). Was: Push to CE Structure Dissect still logs "cancelled by user" when a disconnect cancels it.
+- ✅ `[LW-SYNTH-EMPTIED-BACK]` **FIXED 2026-10-27** (red `86632e39` / green `57ca4625`). Was: Back onto a path-synthetic container emptied since falls through to a parent re-walk:
   `TryRepopulateSyntheticContainerAsync` still requires elements.
-- ⬜ `[CLASSSTRUCT-DISCONNECT-LOADING]` ClassStruct's IsLoading stays true after a disconnect mid-walk (ClearOnDisconnect
+- ✅ `[CLASSSTRUCT-DISCONNECT-LOADING]` **FIXED 2026-10-27** (red `0d234f68` / green `743d5a10`). Was: ClassStruct's IsLoading stays true after a disconnect mid-walk (ClearOnDisconnect
   bumps the load id, so the walk's finally never clears it).
-- ⬜ `[TOOLBAR-CONNECT-WIDTH]` Connect and Disconnect differ by about 20 DIP, so the AOBMaker refresh button shifts once
+- ✅ `[TOOLBAR-CONNECT-WIDTH]` **FIXED 2026-10-27** (red `5661b826` / green `e8891a78`). Was: Connect and Disconnect differ by about 20 DIP, so the AOBMaker refresh button shifts once
   at connect.
-- ⬜ `[PIVOT-HANDOFF-SHADOWED]` Pivot handoffs (PivotForAsync, "Use ->") carry no offset, so they tick only the first
+- ✅ `[PIVOT-HANDOFF-SHADOWED]` **FIXED 2026-10-27** (red `89748bd8` / green `8de2034a`). Was: Pivot handoffs (PivotForAsync, "Use ->") carry no offset, so they tick only the first
   copy of a shadowed name.
-- ⬜ `[COORDPICK-TIMEDOUT-TEXT]` the no-DLL push's TimedOut result still reads "pipe dropped mid-push ... nothing was
+- ✅ `[COORDPICK-TIMEDOUT-TEXT]` **FIXED 2026-10-27** (red `34c0af51` / green `83fb3ae8`). Was: the no-DLL push's TimedOut result still reads "pipe dropped mid-push ... nothing was
   added" although the record may exist (AOBMaker reply §3 rule 8).
-- ⬜ `[DBGCAM-QUEUEDON-UNDO-TEXT]` the queued-ON text (en.axaml `str.DbgCam.QueuedOn`, the helper's [ENABLE] example)
+- ✅ `[DBGCAM-QUEUEDON-UNDO-TEXT]` **FIXED 2026-10-27** (red `15f269db` / green `277b3ce4`). Was: the queued-ON text (en.axaml `str.DbgCam.QueuedOn`, the helper's [ENABLE] example)
   says "a second toggle would undo the first", which holds only where the toggled CheatManager can disable -- not on
   stock UE 4.18-5.7 (`[DEBUGCAM-QUEUED-OFF-NOESCALATE]`'s reading); the advice not to press again stands.
+
+🔧 **Batch 3** (2026-10-27): the leads above, `[CLIPBOARD-ROUND3-TAIL]` (red `78ef73aa` / green `00adb131`: eleven convenience copies claim "Copied" only
+when the clipboard took it; the rest make no claim, by design), `[UE4-ASSETPTR-EXPORTS]` (closed in its row) and
+`[VND584-04]`'s list half (core red `e1fd4e08` / green `c4ea4cfe`, UI red `820ea9fc` / green `3c1db3cb`: walk_functions'
+`include_interfaces` lists what a class gets only through an interface, and Live Walker's Functions list shows it as
+"DoFoo  (via FooInterface)"; dumps and exports keep the class's own functions). Leads these left, each LOW and open:
+- ⬜ `[TRAINER-PUSH-TIMEDOUT-TEXT]` the Standalone Trainer export still pushes through the bool `CreateAAScriptAsync`:
+  a timeout on entry k reads "pipe dropped" although it may exist, and a refusal with a reason (the size cap) reads as a
+  dropped pipe -- the `[COORDPICK-*]` fix applies.
+- ⬜ `[DISCOVER-SHADOWED-POOL]` `PivotDiscoveryEngine.Rank` groups by (class, prop, type), so the two copies of a
+  shadowed name of one type become ONE discovery candidate with pooled counts.
+- ⬜ `[DBGCAM-OFF-OVER-QUEUED-ON]` (inferred from `UE5_SetDebugCamera`, not measured) Force OFF / an untick while an ON
+  is still queued reads the camera OFF ("already OFF -- no-op"), reports a clean OFF, and the queued ON then turns it on.
+- ⬜ `[ASSETPTR-BAKED-TOKEN]` `BakedScriptGenerator.MapToHelperType` falls to int32 for AssetObject / AssetClass (a
+  hand-edited baked value would write over the weak index; the dialog keeps it 0), and the return readouts decode an
+  Asset* return as int32 / a hex dump rather than the {index, serial} pair. Needs a refusing token in
+  `ue5_invoke_helper.lua`, so users re-embed the helper.
+- ⬜ `[L83-PLAN-QUEUED-STRINGS]` `docs/fixpass-low-live-plan.md` § L83 quotes the old queued-ON / queued-OFF strings;
+  update them before L83 steps 6 / 9 are re-run.
+- The live checks this batch owes, all on the AOT build: the toolbar at 800 DIP (status slot, Connect / Disconnect
+  width), the Class Pivot shadowed-name labels and handoff, Live Walker's interface functions and their sort.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
