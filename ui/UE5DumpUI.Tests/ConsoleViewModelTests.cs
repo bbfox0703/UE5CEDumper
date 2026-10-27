@@ -1086,13 +1086,15 @@ public class ConsoleViewModelTests
         // [DEBUGCAM-QUEUED-OFF-NOESCALATE] (c): a queued OFF drains as a toggle on the original controller's
         // CheatManager, which on stock UE 4.18-5.7 can only enable -- only a COMPLETED OFF's swap back turns it off.
         // So the text must not say it will run, and must ask for Force OFF again once the game responds.
+        // (review) Nor may the badge: "Queued" read as an OFF on its way. The DLL queues an OFF only after reading the
+        // camera ON, the toggle has not run, and on stock UE 4.18-5.7 it leaves the camera on -- so the badge reads ON.
         var fake = new FakeDumpService { SetDebugCameraResult = Constants.DebugCameraToggleQueuedResult };
         var vm = CreateVm(fake);
         vm.SeedForTests(DebugCamEntries());
 
         await vm.ForceDebugCameraOffCommand.ExecuteAsync(null);
 
-        Assert.Equal("Queued", vm.DebugCameraState);
+        Assert.Equal("ON", vm.DebugCameraState);
         Assert.DoesNotContain("will run", vm.StatusText);
         Assert.DoesNotContain("Do not press Force OFF again", vm.StatusText);
         Assert.Contains("press Force OFF again once the game responds", vm.StatusText);

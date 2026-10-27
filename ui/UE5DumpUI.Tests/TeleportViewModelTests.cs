@@ -1430,14 +1430,15 @@ public class TeleportViewModelTests
     [Fact]
     public async Task ForceDebugCamera_OFF_queued_does_not_promise_that_it_will_turn_the_camera_off()
     {
-        // [DEBUGCAM-QUEUED-OFF-NOESCALATE] (c): the Teleport card's twin of the Console's queued-OFF text.
+        // [DEBUGCAM-QUEUED-OFF-NOESCALATE] (c): the Teleport card's twin of the Console's queued-OFF text -- and badge:
+        // (review) "Queued" read as an OFF on its way over a camera that stays on, so it reads ON.
         var fake = new FakeDumpService { NextDebugCameraState = Constants.DebugCameraToggleQueuedResult };
         var vm = CreateVm(fake, out _);
         vm.SetConnected(true);
 
         await vm.ForceDebugCameraOffCommand.ExecuteAsync(null);
 
-        Assert.Equal("Queued", vm.DebugCameraState);
+        Assert.Equal("ON", vm.DebugCameraState);
         Assert.DoesNotContain("will run", vm.StatusText);
         Assert.DoesNotContain("Do not press Force OFF again", vm.StatusText);
         Assert.Contains("press Force OFF again once the game responds", vm.StatusText);
