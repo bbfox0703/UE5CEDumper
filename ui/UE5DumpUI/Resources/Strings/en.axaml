@@ -1486,7 +1486,7 @@
     <sys:String x:Key="str.Tip.Con.DbgCam.ForceOff">Ensure Debug Camera is OFF: read current state, and fire ToggleDebugCamera only if it is currently ON. This is the reliable "turn it off" — plain Run just flips whatever state it's in.</sys:String>
     <!-- [DEBUGCAM-QUEUED-OFF-NOESCALATE] Force ON / OFF that timed out and stays queued (Console and Teleport cards).
          A queued OFF does not turn the camera off on stock UE 4.18-5.7, so it must not promise to run. -->
-    <sys:String x:Key="str.DbgCam.QueuedOn">⏳ Force ON: the toggle is QUEUED — the game thread is busy (stalled or unfocused). It will run when the game thread is free. Do not press Force ON again: a second toggle would undo the first.</sys:String>
+    <sys:String x:Key="str.DbgCam.QueuedOn">⏳ Force ON: the toggle is QUEUED — the game thread is busy (stalled or unfocused). It will run when the game thread is free. Do not press Force ON again: the toggle is already queued.</sys:String>
     <sys:String x:Key="str.DbgCam.QueuedOff">⏳ Force OFF did not complete — the game thread is busy (stalled or unfocused), and a queued OFF does not turn the camera off on most engines: press Force OFF again once the game responds.</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.CopyCe">Generate a stateful CE memory-record AA Script (tick = camera ON, untick = camera OFF) — the same robust DLL path as Force On/Off. Self-contained: talks to the DLL mailbox directly, so NO ue5_invoke_helper.lua embed is needed (just UE5Dumper.dll injected). Ships to AOBMaker if connected, else the clipboard.</sys:String>
 

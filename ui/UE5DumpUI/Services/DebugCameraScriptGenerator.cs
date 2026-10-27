@@ -104,8 +104,10 @@ public static class DebugCameraScriptGenerator
         Line(sb, $"if state == {Constants.DebugCameraToggleQueuedResult} then");
         if (enable)
         {
+            // [DBGCAM-QUEUEDON-UNDO-TEXT] The reason not to tick again is only that the toggle is already queued: what a
+            // second one does when it drains depends on the engine (DebugCameraText says why).
             Line(sb, $"  showMessage('[DebugCamera] {label} queued -- the game thread is busy; the toggle will run " +
-                      "when it is free. Do not tick again: a second toggle would undo it.')");
+                      "when it is free. Do not tick again: the toggle is already queued.')");
         }
         else
         {

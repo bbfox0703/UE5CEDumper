@@ -44,7 +44,8 @@
     local ok, state = pcall(setDebugCamera, 1)
     if ok and state == -5 then
       -- QUEUED: the game thread did not answer in time, and the toggle WILL still run. Leave the record ticked and
-      -- do not tick again -- a second toggle would undo the first. [W3-DEBUGCAM-QUEUED]
+      -- do not tick again -- the toggle is already queued. [W3-DEBUGCAM-QUEUED] (What a second toggle would do when it
+      -- drains depends on the engine, so that is not the reason. [DBGCAM-QUEUEDON-UNDO-TEXT])
       showMessage('[Debug Camera] queued -- it will turn on when the game thread is free')
       return
     end
