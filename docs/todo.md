@@ -1702,7 +1702,11 @@ suppresses, so the rig lends the actor's bindings to the class default object fo
 3655 found only the control (`Arr_Delegates`) of 25,264 objects scanned, missing `Del_Unicast` and `Multicast_Inline`
 (2/4); build 3656 (dist, AOT) found all three, 4/4, the CDO's bytes restored. On the same host with 3656:
 `ct_delegate_param_live.py` delegate and multicast 10/10 each, `d4b_delegate_pad.py` PASS, `get_offsets`
-`fname_size` 8. Notes draft (`## Fixed`): "On a Development or Debug build of a UE 5.3+ game, Find References lists
+`fname_size` 8. **DumperTest 5.4 DebugGame, 3656** (the other checked config, ElementSize 24 / `delegate_pad` 8):
+`ct_delegate_param_live.py` delegate and multicast 10/10 each, `findrefs_delegate_pad_live.py` 4/4. The 32-byte
+case-preserving shape exists only in an editor build, where Call Trace cannot run yet (`DetectProcessEvent
+(fallback): pattern scan missed` on the 5.4 editor, then the version table's slot, which an editor build does not
+share). Notes draft (`## Fixed`): "On a Development or Debug build of a UE 5.3+ game, Find References lists
 objects bound to a delegate field, which it used to miss."
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
