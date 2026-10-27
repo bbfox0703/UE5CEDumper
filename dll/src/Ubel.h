@@ -137,6 +137,9 @@ struct FunctionInfo {
     uint16_t    returnValueOffset = 0xFFFF; // UFunction::ReturnValueOffset (0xFFFF = void)
     std::vector<FunctionParam> params;
     std::string returnType;  // empty if void
+    // [VND584-04] Set only in a list that includes interface functions: the interface class that declares this one,
+    // which the object's class chain does not. 0 for a function of the class itself.
+    uintptr_t   viaInterface = 0;
 };
 
 namespace Ubel {
@@ -430,6 +433,13 @@ inline bool ResolveFunctionInChainOrInterfaces(uintptr_t classAddr, const char* 
         cls = super;
     }
     return false;
+}
+
+// [VND584-04] The functions a class gets only through the interfaces its chain implements (red: not written yet).
+template <class ListFuncs, class ReadSuper, class ListInterfaces, class IsInterfaceBase>
+inline std::vector<FunctionInfo> InterfaceFunctionsOf(uintptr_t, ListFuncs, ReadSuper, ListInterfaces,
+                                                     IsInterfaceBase) {
+    return {};
 }
 
 // [VND584-06] Is `owner` -- a UFunction's Outer, the class that declares it -- `classAddr` or one of its SuperStructs?

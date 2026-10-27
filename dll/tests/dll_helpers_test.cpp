@@ -9347,6 +9347,25 @@ static void Test_Ubel_Interfaces() {
     EXPECT("IFACE control: a name nowhere is not found",
            !Ubel::ResolveFunctionInChainOrInterfaces(Pawn, "Nope", listFuncs, readSuper, listIfaces, hit));
 
+    // [VND584-04] The function LIST's half: what the class gets only through an interface -- the names an invoke by name
+    // reaches through ResolveFunctionInChainOrInterfaces' second pass -- each tagged with the interface level that
+    // declares it. UInterface and above are not the interface's own functions.
+    auto listFuncsU = [&](uintptr_t c) {
+        auto v = listFuncs(c);
+        if (c == UInterfaceC) v.push_back(fn("Uber", 0xB1));   // UObject's kind of function, reached by every interface
+        return v;
+    };
+    auto isInterfaceBase = [&](uintptr_t c) { return c == UInterfaceC; };
+    const auto viaPawn = Ubel::InterfaceFunctionsOf(Pawn, listFuncsU, readSuper, listIfaces, isInterfaceBase);
+    EXPECT("IFACE-LIST ⭐: Pawn lists DoFoo, which only its base's IBar -> IFoo declares, tagged with IFoo",
+           viaPawn.size() == 1 && viaPawn[0].name == "DoFoo" && viaPawn[0].viaInterface == IFoo);
+    EXPECT("IFACE-LIST control: a name the class chain declares (Shared, on Actor) is not listed as an interface's",
+           std::none_of(viaPawn.begin(), viaPawn.end(), [](const FunctionInfo& f) { return f.name == "Shared"; }));
+    EXPECT("IFACE-LIST control: UInterface's functions are not an interface's own",
+           std::none_of(viaPawn.begin(), viaPawn.end(), [](const FunctionInfo& f) { return f.name == "Uber"; }));
+    EXPECT("IFACE-LIST control: a class implementing nothing lists nothing",
+           Ubel::InterfaceFunctionsOf(Widget, listFuncsU, readSuper, listIfaces, isInterfaceBase).empty());
+
     Ubel::ImplementedInterface ii;
     EXPECT("IFACE ⭐: Pawn implements IFoo (through its base's IBar, which derives from IFoo)",
            Ubel::FindImplementedInterface(Pawn, IFoo, false, readSuper, listIfaces, ii) && ii.cls == IBar);
