@@ -703,7 +703,7 @@ source and editor are installed for when they are needed.
   `/Game/Maps/PreGame/PreGameMap.PreGameMap`, an empty one `(none)`; no envelope line from them. Was owed on NEKOPALIVE (4.11), Extinction (4.15) or Fantasynth (4.13): asset
   paths on AssetObjectProperty rows, a TArray<TAssetPtr>'s element paths, obj_class / meta_class in walk_class, and no
   "TSoftObjectPtr payload envelope measured" line from them.
-- ✅ `[UE4-ASSETPTR-EXPORTS]` **FIXED 2026-10-27** (six red/green pairs, e3a318e7 .. 0d55ecff; no DLL change): USMAP writes AssetObjectProperty = 16; the SDK declares TAssetPtr<T> / TAssetSubclassOf<T>; CE XML and CSX lay them out as Soft* (an 8-byte hex leaf; a TArray<TAssetPtr> gets each element's path as a CE String at +0x10); Property Search suggests them and the scorer penalises them; Live Walker's drill keeps the walk's paths; an invoke parameter is empty-only, as Lazy. The final review (`[BATCH3-FINAL-REVIEW-2026-10-27]` below) widened it: a single TAssetPtr, and one in a DataTable row, is a CE XML group of the weak pair and its path string, as an array element is; CSX labels a loaded element with its object; the dissect Lua (`ue5_dissect.lua`) shows the 8-byte hex pair. Left: `[ASSETPTR-BAKED-TOKEN]` below. Live check owed on NEKOPALIVE / Extinction / Fantasynth: Copy CE XML and Push to CE Structure Dissect on a class with a TAssetPtr field and a TArray of them, and the CT's Structure Dissect on the same class. Was: (LOW, left by `[UE4-ASSETPTR-PROPS]`): the UI consumers are still keyed on Soft* names --
+- ✅ `[UE4-ASSETPTR-EXPORTS]` **FIXED 2026-10-27** (six red/green pairs, e3a318e7 .. 0d55ecff; no DLL change): USMAP writes AssetObjectProperty = 16; the SDK declares TAssetPtr<T> / TAssetSubclassOf<T>; CE XML and CSX lay them out as Soft* (an 8-byte hex leaf; a TArray<TAssetPtr> gets each element's path as a CE String at +0x10); Property Search suggests them and the scorer penalises them; Live Walker's drill keeps the walk's paths; an invoke parameter is empty-only, as Lazy. The final review (`[BATCH3-FINAL-REVIEW-2026-10-27]` below) widened it: a single TAssetPtr, and one in a DataTable row, is a CE XML group of the weak pair and its path string, as an array element is; CSX labels a loaded element with its object; the dissect Lua (`ue5_dissect.lua`) shows the 8-byte hex pair. Left: `[ASSETPTR-BAKED-TOKEN]` below. **Live PASS 2026-10-27 on Extinction, build 3657** (`[BATCH3-LIVE-3657]` below): CE XML, the CT's Structure Dissect and Push to CE Structure Dissect on a single TAssetPtr. Still owed: a TArray<TAssetPtr> with loaded elements (Extinction's `BlinkMapGenerator.ZonesToUse`, in a level). Was: (LOW, left by `[UE4-ASSETPTR-PROPS]`): the UI consumers are still keyed on Soft* names --
   the SDK export (`MapCppDeclCore` has no Asset arm, so the field is raw bytes), CE XML and CSX (unknown type), USMAP
   (maps by name, so Asset* is Unknown although `EPropertyType.AssetObjectProperty` = 16 exists), Property Search's
   type filter, Live Walker's array drill (read_array_elements returns raw bytes for an asset inner), and the invoke
@@ -1784,7 +1784,16 @@ when the clipboard took it; the rest make no claim, by design), `[UE4-ASSETPTR-E
   - ✅ **Class Pivot's shadowed names**: on a fresh snapshot (2,934 objects, 111,915 fields, Game objects only
     unticked, then restored) MovieSceneCinematicShotSection lists `PrerollTime@+0xC4` and `PrerollTime@+0x128`; Live
     Walker's "Pivot this property..." on the +0x128 row ticks that copy and leaves +0xC4 unticked.
-  - ⬜ the asset-pointer exports (`[UE4-ASSETPTR-EXPORTS]`'s row says where).
+  - ✅ **The asset-pointer exports, on Extinction (UE 4.15, 200,569 objects, version.dll proxy refreshed to 3657),
+    CE 7.7**, BC_BlinkGameInstance_C's `PreGameWorld` (+0x100, unloaded): **CE XML** pasted into CE is a group of
+    `WeakPtr` (8 Bytes hex, `00000000FFFFFFFF`: index -1, serial 0) and `AssetPath`, which CE resolves through the
+    FString's data pointer to `/Game/Maps/PreGame/PreGameMap.PreGameMap`; the **CT's Structure Dissect**
+    (`dist\ue5_dissect.lua` through `ce_lua_eval.py`) builds it as one 8-byte `vtQword` in `dtHexadecimal` reading
+    `FFFFFFFF` (it used to be a 0x20-byte decimal dword block); **Push to CE Structure Dissect** (CSX, 581 structures)
+    gives the same 8-byte hex element. Controls kept their types (LocalPlayers a pointer, GameType a decimal byte).
+    ⬜ **Not tested live:** CSX's label for a LOADED TArray<TAssetPtr> element -- `ZonesToUse` is on
+    `BlinkMapGenerator` (+0x3A0), which has no instance at the main menu; it needs a run into a level. Unit-tested
+    (`GenerateCsx_ArrayProperty_LoadedAssetPointerElement_IsLabelledWithItsObject`).
 
 🔍 **Final review of batches 1-3** `[BATCH3-FINAL-REVIEW-2026-10-27]` (workflow `wf_69ca757d-f90`, lenses then an
 adversarial verify per finding): 13 findings, 1 refuted (`ASSETPTR-USMAP-SLOT`: the USMAP slot is documented in code and
