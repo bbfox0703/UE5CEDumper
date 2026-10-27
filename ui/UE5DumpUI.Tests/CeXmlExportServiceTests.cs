@@ -5703,12 +5703,28 @@ public class CeXmlExportServiceTests
         Assert.DoesNotContain("Health", xml);
     }
 
-    // [UE4-ASSETPTR-EXPORTS] The inner-type arm (MapInnerTypeToCeField) serves a TMap side and a TSet element; the
-    // scalar and TArray tests above reach neither, so a revert of that arm kept every test green (final review).
+    // [UE4-ASSETPTR-EXPORTS] A map side, a set element and a struct-array member each have their own emit path, apart
+    // from EmitFields; they get the same group as a single field, since an unloaded asset's weak pair names nothing
+    // (review of the final review's fixes, ASSETPTR-CEXML-CONTAINER-NOPATH).
+    private static void AssertAssetPtrGroup(System.Xml.Linq.XElement group)
+    {
+        Assert.Equal("1", (string?)group.Element("GroupHeader"));
+        Assert.Null(group.Element("Offsets"));                                        // the slot holds the struct
+        var leaves = group.Element("CheatEntries")!.Elements("CheatEntry").ToList();
+        var weak = leaves.Single(l => (string?)l.Element("Description") == "\"WeakPtr\"");
+        Assert.Equal("8 Bytes", (string?)weak.Element("VariableType"));
+        Assert.Equal("1", (string?)weak.Element("ShowAsHex"));
+        Assert.Equal("+0", (string?)weak.Element("Address"));
+        var path = leaves.Single(l => (string?)l.Element("Description") == "\"AssetPath\"");
+        Assert.Equal("String", (string?)path.Element("VariableType"));
+        Assert.Equal("+10", (string?)path.Element("Address"));
+        Assert.Equal("0", (string?)path.Element("Offsets")?.Element("Offset"));
+    }
+
     [Theory]
     [InlineData("AssetObjectProperty")]
     [InlineData("AssetClassProperty")]
-    public void UE4AssetPointer_AsAMapValueOrASetElement_IsAnEightByteHexLeaf(string innerType)
+    public void UE4AssetPointer_InAMapASetOrAStructArrayMember_IsItsWeakPairAndItsPathString(string innerType)
     {
         var fields = new[]
         {
@@ -5720,21 +5736,50 @@ public class CeXmlExportServiceTests
             },
             new LiveFieldValue
             {
+                Name = "IndexByZone", TypeName = "MapProperty", Offset = 0x200, Size = 0x50,
+                MapCount = 1, MapKeyType = innerType, MapValueType = "IntProperty", MapKeySize = 0x20, MapValueSize = 4,
+                MapElements = new List<ContainerElementValue> { new() { Index = 0, Key = "/Game/Maps/A.A" } },
+            },
+            new LiveFieldValue
+            {
                 Name = "Zones", TypeName = "SetProperty", Offset = 0x150, Size = 0x50,
                 SetCount = 1, SetElemType = innerType, SetElemSize = 0x20,
                 SetElements = new List<ContainerElementValue> { new() { Index = 0, Key = "/Game/Maps/A.A" } },
+            },
+            new LiveFieldValue
+            {
+                Name = "Items", TypeName = "ArrayProperty", Offset = 0x60, Size = 16,
+                ArrayCount = 1, ArrayInnerType = "StructProperty", ArrayStructType = "ItemDef", ArrayElemSize = 0x28,
+                ArrayElements = new List<ArrayElementValue>
+                {
+                    new()
+                    {
+                        Index = 0, Value = "{...}",
+                        StructFields = new List<StructSubFieldValue>
+                        {
+                            new() { Name = "Count", TypeName = "IntProperty", Offset = 0, Size = 4, Value = "3" },
+                            new() { Name = "Icon", TypeName = innerType, Offset = 8, Size = 0x20,
+                                    Value = "/Game/UI/T_Potion.T_Potion" },
+                        }
+                    },
+                }
             },
         };
 
         var xml = CeXmlExportService.GenerateInstanceXml("\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
         var doc = System.Xml.Linq.XDocument.Parse(xml);
-        bool HexQword(System.Xml.Linq.XElement e) =>
-            (string?)e.Element("VariableType") == "8 Bytes" && (string?)e.Element("ShowAsHex") == "1";
-        var map = doc.Descendants("CheatEntry").Single(e => (string?)e.Element("Description") == "\"ZoneByIndex\"");
-        var set = doc.Descendants("CheatEntry").Single(e => (string?)e.Element("Description") == "\"Zones\"");
+        System.Xml.Linq.XElement Named(System.Xml.Linq.XElement root, string d) =>
+            root.Descendants("CheatEntry").Single(e => (string?)e.Element("Description") == $"\"{d}\"");
+        var top = doc.Root!;
 
-        Assert.Contains(map.Descendants("CheatEntry"), e => (string?)e.Element("Description") == "\"Value\"" && HexQword(e));
-        Assert.Contains(set.Descendants("CheatEntry"), HexQword);
+        AssertAssetPtrGroup(Named(Named(top, "ZoneByIndex"), "Value"));
+        AssertAssetPtrGroup(Named(Named(top, "IndexByZone"), "Key"));
+        var set = Named(top, "Zones").Element("CheatEntries")!.Elements("CheatEntry").Single();
+        AssertAssetPtrGroup(set);
+        Assert.Equal("+0", (string?)set.Element("Address"));                          // element [0] of the set
+        var icon = Named(Named(top, "Items"), "Icon");
+        AssertAssetPtrGroup(icon);
+        Assert.Equal("+8", (string?)icon.Element("Address"));                         // its offset in the element
     }
 
     [Theory]
