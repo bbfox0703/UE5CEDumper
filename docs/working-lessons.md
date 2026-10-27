@@ -3833,16 +3833,19 @@ build.
 
 *How.* Take the items from the dev-log entries and the product commits since the last tag
 (`git log v<prev>..HEAD -- dll/src ui/UE5DumpUI scripts`), and any `[RELNOTES-*]` row in `todo.md`: a section the
-maintainer asked the next notes to carry, with its draft. The notes are all English. **One item is
-one line** (2026-10-02): what changed, with no sub-bullets, no how-it-works and no measurements; a
-reader who wants the detail has the compare link. A thing the user must do or must not do goes in a
+maintainer asked the next notes to carry, with its draft. The notes are for users, concise, and all
+English. **One item is one sentence, two at most, and one wherever it can be** (2026-10-02, restated
+2026-10-27): what changed, with no sub-bullets, no how-it-works and no measurements; a reader who
+wants the detail has the compare link. A thing the user must do or must not do goes in a
 one-line `> ⚠` or `> ℹ️` note under the list. The v3615 draft was first written with sub-bullets and
 ran to 8,300 characters; the maintainer had it cut to 3,700. Aim for 20–30
 user-facing items and leave small fixes out, but do not pad: a release with twelve has twelve. Two
 kinds of work get one line each, never an item per change: Wiki work ("Updated the Wiki.") and bulk
 hint or tooltip corrections. Copy the `## Setup` block from the last PUBLISHED release, which the
 maintainer may have edited after publishing, not from a local draft. An `@` before a word becomes a user mention in
-release notes -- v3649's "Hold @0" linked to someone's account -- so such text goes in a code span. Check each claim against its row
+release notes -- v3649's "Hold @0" linked to someone's account -- so such text goes in a code span. The CI body
+counts too: it folds in commit messages, and v3654's draft listed an account named 0 among its Contributors, from
+the very commit that recorded this rule, until the prepared notes replaced it. Check each claim against its row
 before writing it, name a game only where the fix was measured on it, and say so when the previous
 release shipped a regression. Neither the merge nor the release run wakes the session; the maintainer
 says when CI is done.
