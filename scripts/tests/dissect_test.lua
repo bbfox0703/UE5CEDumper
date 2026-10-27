@@ -1861,8 +1861,10 @@ end
 -- showed the detector, not the object. The CE-XML and CSX exports emit one 8-byte hex leaf at
 -- offset + DelegatePad; the DLL derives that pad from the ENGINE'S ElementSize
 -- (DynOff::DelegatePadFromElementSize, base 8 + sizeof(FName)). The script cannot ask which FName
--- width this build has, but the two answers cannot collide: 16 / 20 are pad 0, 24 / 28 are pad 8.
--- Any other size is refused by the DLL; here the row stays where it was and SAYS so.
+-- width this build has -- 4, 8 or 12 bytes -- but the answers cannot collide: 12 / 16 / 20 are pad 0,
+-- and the padded sizes are 24 / 24 / 32, because the detector's 8-byte alignment rounds the struct up
+-- ([DELEGATE-PAD-ALIGN]; never 28). Any other size is refused by the DLL; here the row stays where it
+-- was and SAYS so.
 case('VND584-02: a DelegateProperty row is the weak pair in hex, behind the detector on a checked build')
 do
   resetWorld(); dissect.clearAll(); injectDll()
@@ -1870,10 +1872,12 @@ do
     { name = 'Del_Ship',      typeName = 'DelegateProperty', offset = 0x30, size = 16 },
     { name = 'Del_Checked',   typeName = 'DelegateProperty', offset = 0x40, size = 24 },
     { name = 'Del_CaseName',  typeName = 'DelegateProperty', offset = 0x58, size = 20 },
-    { name = 'Del_CaseCheck', typeName = 'DelegateProperty', offset = 0x70, size = 28 },
-    { name = 'Del_Odd',       typeName = 'DelegateProperty', offset = 0x90, size = 12 },
+    { name = 'Del_CaseCheck', typeName = 'DelegateProperty', offset = 0x70, size = 32 },
+    { name = 'Del_Odd',       typeName = 'DelegateProperty', offset = 0x90, size = 28 },
     -- CONTROL: a Shipping multicast is a pointer row at its own offset, as before.
     { name = 'Multi',         typeName = 'MulticastInlineDelegateProperty', offset = 0xA0, size = 16 },
+    -- A 4-byte FName (UE_FNAME_OUTLINE_NUMBER) Shipping delegate: 8 + 4, a size a build has.
+    { name = 'Del_Outline',   typeName = 'DelegateProperty', offset = 0xB0, size = 12 },
   })
   local s = dissect.createFromClass(0xC1A55, 'DelegateHex')
   local want = { { 'Del_Ship', 0x30 }, { 'Del_Checked', 0x48 }, { 'Del_CaseName', 0x58 }, { 'Del_CaseCheck', 0x78 } }
@@ -1886,13 +1890,16 @@ do
   end
   local odd = s.Element[4]
   eq(odd.Offset, 0x90, 'VND584-02: a size no build has leaves the row at the field offset')
-  contains(odd.Name, 'ElementSize 12', 'VND584-02: ... and the row says it could not place the payload')
+  contains(odd.Name, 'ElementSize 28', 'VND584-02: ... and the row says it could not place the payload')
   eq(odd.DisplayMethod, 'dtHexadecimal', 'VND584-02: ... still as 8 hex bytes')
   local m = s.Element[5]
   eq(m.Name, 'Multi', 'VND584-02 control: the multicast row follows')
   eq(m.Offset, 0xA0, 'VND584-02 control: a Shipping multicast stays at its offset')
   eq(m.Vartype, vtPointer, 'VND584-02 control: a multicast stays a pointer row')
   eq(m.DisplayMethod, nil, 'VND584-02 control: a multicast keeps CE\'s default display')
+  local o = s.Element[6]
+  eq(o.Name, 'Del_Outline', 'DELEGATE-PAD-ALIGN: a 4-byte-FName delegate (12) is placed, not labelled unknown')
+  eq(o.Offset, 0xB0, 'DELEGATE-PAD-ALIGN: ... at its own offset')
 end
 
 -- ============================================================
