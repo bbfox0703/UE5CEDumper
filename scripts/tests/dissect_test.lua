@@ -1818,6 +1818,25 @@ do
 end
 
 -- ============================================================
+-- UE4-ASSETPTR-EXPORTS -- UE 4.17's asset pointer is the soft pointer under its old name
+-- ============================================================
+-- AssetObjectProperty / AssetClassProperty (TAssetPtr / TAssetSubclassOf, UE <= 4.17) are
+-- TPersistentObjectPtr<FStringAssetReference>: the same leading FWeakObjectPtr as the soft pointer
+-- that replaced them. Missing from TYPE_MAP they fell to the unknown-type fallback, a decimal dword
+-- block the field's width, so the pair read as two unrelated numbers and the string path as more.
+-- The CE-XML and CSX exports give them the soft row.
+case('UE4-ASSETPTR-EXPORTS: an asset pointer row is the weak pair in hex, like a soft pointer')
+do
+  local gti = dissect._getTypeInfo
+  for _, t in ipairs({ 'AssetObjectProperty', 'AssetClassProperty' }) do
+    local vt, n, dm = gti(t, 0x28)
+    eq(vt, vtQword, 'UE4-ASSETPTR-EXPORTS: ' .. t .. ' shows its weak pair as one 8-byte row')
+    eq(n, 8, 'UE4-ASSETPTR-EXPORTS: ' .. t .. ' row is 8 bytes, not the field size')
+    eq(dm, 'dtHexadecimal', 'UE4-ASSETPTR-EXPORTS: ' .. t .. ' is shown in hex')
+  end
+end
+
+-- ============================================================
 -- VND584-02 follow-up -- "8 hex bytes" needs the DisplayMethod, not just vtQword
 -- ============================================================
 -- vtQword alone is an UNSIGNED DECIMAL row: TStructelement.create leaves fdisplayMethod at
