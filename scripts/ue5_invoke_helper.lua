@@ -62,11 +62,18 @@
     [DISABLE]
     {$lua}
     if syntaxcheck then return end
-    -- On disable the record is going inactive regardless; still guard the call so a
-    -- mailbox failure does not raise out of the [DISABLE] block. An untick never puts a
-    -- modal over the game: the reason goes to a DEBUG session only. [R7-C-04]
-    local ok, err = pcall(setDebugCamera, 0)
-    if not ok and (UE5_DEBUG or 0) ~= 0 then print('[Debug Camera] disable error: ' .. tostring(err)) end
+    -- Guard the call so a mailbox failure does not raise out of the [DISABLE] block. An
+    -- untick never puts a modal over the game: that reason goes to a DEBUG session only. [R7-C-04]
+    local ok, state = pcall(setDebugCamera, 0)
+    if ok and state == -5 then
+      -- QUEUED OFF: unlike a queued ON it does not turn the camera off on stock UE 4.18-5.7, so the
+      -- camera stays on. Say so ungated (print: still no modal on an untick) and RAISE -- CE keeps a
+      -- record ticked when its [DISABLE] fails, so the box keeps matching the camera, and unticking
+      -- again once the game responds runs this block again. [DEBUGCAM-QUEUED-OFF-NOESCALATE]
+      print('[Debug Camera] OFF did not complete -- the game thread is busy, and a queued OFF does not turn the camera off on most engines. The record stays ticked: untick it again once the game responds.')
+      error('[Debug Camera] OFF queued; the camera is still on')
+    end
+    if not ok and (UE5_DEBUG or 0) ~= 0 then print('[Debug Camera] disable error: ' .. tostring(state)) end
     {$asm}
 
   Constants exposed:
@@ -891,7 +898,10 @@ end
 -- (CMD_SET_DEBUG_CAMERA=7) owns the whole toggle + controller-swap
 -- fallback, so the UI (pipe) and CE Lua (here) share one implementation.
 -- Returns the resulting state: 1 = ON, 0 = OFF, -1 = error/unknown, -5 = the toggle
--- is QUEUED (it will run when the game thread is free -- never re-send it). [W3-DEBUGCAM-QUEUED]
+-- is QUEUED: the game thread did not answer in time. A queued ON will run when the game
+-- thread is free, so do not re-send it [W3-DEBUGCAM-QUEUED]. A queued OFF does NOT turn
+-- the camera off on stock UE 4.18-5.7, so the camera stays on: untick / Force OFF again
+-- once the game responds. [DEBUGCAM-QUEUED-OFF-NOESCALATE]
 if not setDebugCamera or _invokeOutdated then
 
   local CMD_SET_DEBUG_CAMERA = 7
@@ -909,7 +919,8 @@ if not setDebugCamera or _invokeOutdated then
 
   --- Force Debug Camera ON (enable ~= 0) or OFF. Idempotent.
   --- @param enable number|boolean
-  --- @return number state  1=ON, 0=OFF, -1=error, -5=toggle queued (do not re-send)
+  --- @return number state  1=ON, 0=OFF, -1=error, -5=toggle queued (an ON will run: do not re-send;
+  ---                       an OFF leaves the camera on, stock UE 4.18-5.7: send it again once the game responds)
   function setDebugCamera(enable)
     return dbgCamMailbox((enable and enable ~= 0) and 1 or 0)
   end

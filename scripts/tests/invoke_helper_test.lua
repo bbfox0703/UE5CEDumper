@@ -639,6 +639,34 @@ do
   eq(st.fActive, true, 'AA31: a real success keeps the record ticked')
 end
 
+-- [DEBUGCAM-QUEUED-OFF-NOESCALATE] A queued OFF (-5) does not turn the camera off on stock UE 4.18-5.7, so the
+-- [DISABLE] sample must not untick silently over a camera that stays on: it says so UNGATED (print -- an untick puts
+-- no modal over the game) and RAISES, because CE's TMemoryRecord.setActive sets fActive only when the script succeeds.
+-- The generator's [DISABLE] already does; the copy-me sample still reported only a failed pcall.
+case('DEBUGCAM-QUEUED-OFF-NOESCALATE: the [DISABLE] sample raises and says so on a queued OFF (-5)')
+do
+  resetWorld()
+  UE5_DEBUG = nil                            -- a default session: a gated line would be no report at all
+  DLL = function() I32[MB + OFF_RESULT] = -5; I32[MB + OFF_STATUS] = 1 end   -- the toggle timed out, stays queued
+  local blocks = extractSampleBlocks(HELPER)
+  local ok = runAsCeChunk(blocks[2], makeCeRecord())
+  eq(ok, false, 'the [DISABLE] sample raises, so CE keeps the record ticked over a camera still on')
+  local said = table.concat(PRINTS, '\n')
+  contains(said, 'did not complete', 'and the reason is printed ungated')
+  check(not said:find('showMessage', 1, true), 'no modal on an untick', said)
+end
+
+case('DEBUGCAM-QUEUED-OFF-NOESCALATE: a completed OFF (state 0) unticks cleanly and quietly -- the control')
+do
+  resetWorld()
+  UE5_DEBUG = nil
+  DLL = function() I32[MB + OFF_RESULT] = 0; I32[MB + OFF_STATUS] = 1 end    -- camera OFF
+  local blocks = extractSampleBlocks(HELPER)
+  local ok, err = runAsCeChunk(blocks[2], makeCeRecord())
+  check(ok, 'a completed OFF does not raise', err)
+  eq(#PRINTS, 0, 'and prints nothing')
+end
+
 -- ============================================================
 -- AA32: FString buffers are reclaimed on the next invoke (bounded, not unbounded).
 -- ============================================================

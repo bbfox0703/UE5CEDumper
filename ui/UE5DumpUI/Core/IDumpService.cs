@@ -541,7 +541,9 @@ public interface IDumpService
     /// stripped ToggleDebugCamera can't honour, switches the local player's
     /// controller back to the original PlayerController. Returns the resulting
     /// state (1 = ON, 0 = OFF, -1 = error), or <see cref="Constants.DebugCameraToggleQueuedResult"/>
-    /// when the toggle is QUEUED: it will still run, so never re-send it. [W3-DEBUGCAM-QUEUED]
+    /// when the toggle is QUEUED. A queued ON will still run, so never re-send it [W3-DEBUGCAM-QUEUED];
+    /// a queued OFF does not turn the camera off on stock UE 4.18-5.7, so the camera stays on until a
+    /// Force OFF (or a CE untick) sent again once the game responds. [DEBUGCAM-QUEUED-OFF-NOESCALATE]
     /// </summary>
     Task<int> SetDebugCameraAsync(bool enable, CancellationToken ct = default);
 
