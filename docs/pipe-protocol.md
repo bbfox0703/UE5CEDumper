@@ -1765,6 +1765,11 @@ Walk all UFunctions of a UClass. Returns each function with its property chain (
 its parameters and, on a Blueprint function, its locals after them; `parm` tells them apart.
 StructProperty entries include the sub-field layouts discovered by walking the UScriptStruct.
 
+`"include_interfaces": true` ([VND584-04], added 2026-10-27) appends the functions the class gets
+only through an interface its chain implements -- the names an invoke by name reaches through the
+interfaces -- each with `"interface": "<InterfaceClassName>"`, the interface that declares it.
+Without the flag the reply is the class's own functions, as before.
+
 ```jsonc
 // Request
 { "id": 20, "cmd": "walk_functions", "addr": "7FF123456789" }

@@ -2647,6 +2647,15 @@ std::vector<ImplementedInterface> ClassInterfaces(uintptr_t cls) {
     return out;
 }
 
+std::vector<FunctionInfo> WalkInterfaceFunctions(uintptr_t cls) {
+    if (!cls || !ClassInterfacesMeasured()) return {};
+    auto readSuper = [](uintptr_t c, uintptr_t& s) { return Macht::ReadSafe(c + DynOff::USTRUCT_SUPER, s); };
+    // UInterface -- CoreUObject's "Interface" class -- is where every interface's chain meets UObject's own functions.
+    auto isInterfaceBase = [](uintptr_t c) { return GetName(c) == "Interface"; };
+    return InterfaceFunctionsOf(cls, [](uintptr_t c) { return WalkFunctions(c); }, readSuper,
+                                [](uintptr_t c) { return ClassInterfaces(c); }, isInterfaceBase);
+}
+
 bool IsNativeClass(uintptr_t cls) {
     const uintptr_t pkg = cls ? GetOuter(cls) : 0;
     return pkg && GetName(pkg).rfind("/Script/", 0) == 0;

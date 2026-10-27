@@ -2797,11 +2797,21 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             uintptr_t addr = Renge::StrToAddr(addrStr);
             auto funcs = Ubel::WalkFunctions(addr);
+            // [VND584-04] Opt-in, so a dump or an export that reads the class's own functions is unchanged: the functions
+            // the class gets only through an implemented interface, which an invoke by name reaches, each with the
+            // "interface" that declares it.
+            if (request.value("include_interfaces", false)) {
+                auto viaIface = Ubel::WalkInterfaceFunctions(addr);
+                funcs.insert(funcs.end(), std::make_move_iterator(viaIface.begin()),
+                             std::make_move_iterator(viaIface.end()));
+            }
 
             json funcArr = json::array();
             for (const auto& f : funcs) {
                 json fj;
                 fj["name"]    = f.name;
+                if (f.viaInterface)
+                    fj["interface"] = Ubel::GetName(f.viaInterface);
                 fj["full"]    = f.fullName;
                 fj["addr"]    = Renge::AddrToStr(f.address);
                 fj["flags"]   = f.functionFlags;
