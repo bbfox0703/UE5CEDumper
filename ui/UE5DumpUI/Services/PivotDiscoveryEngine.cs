@@ -98,13 +98,17 @@ public static class PivotDiscoveryEngine
         }
 
         // A name the class shows at more than one offset is labelled with the offset, as Class Pivot's picker labels it
-        // (PivotFieldInfo.LabelOf); a name used once keeps its bare label.
+        // (PivotFieldInfo.LabelOf); a name used once keeps its bare label. The inputs alone cannot always tell: the Strict
+        // path feeds only CHANGED rows, so a copy that stayed put is absent -- the caller's shadowedNames come from the
+        // snapshot's whole field list.
         var copies = groups.Values.GroupBy(g => (g.ClassName, g.PropName))
                                   .ToDictionary(x => x.Key, x => x.Select(g => g.PropOffset).Distinct().Count());
         foreach (var g in groups.Values)
-            g.Label = copies[(g.ClassName, g.PropName)] > 1 && g.PropOffset >= 0
-                ? PivotFieldInfo.LabelOf(g.PropName, g.PropOffset)
-                : g.PropName;
+        {
+            bool shadowed = copies[(g.ClassName, g.PropName)] > 1
+                            || shadowedNames?.Contains((g.ClassName, g.PropName)) == true;
+            g.Label = shadowed && g.PropOffset >= 0 ? PivotFieldInfo.LabelOf(g.PropName, g.PropOffset) : g.PropName;
+        }
 
         var rows = new List<DiscoveryCandidate>();
         foreach (var g in groups.Values)

@@ -2053,9 +2053,37 @@ public sealed class SnapshotStore : ISnapshotStore
         // class_counts (zero extra scan; built just above). The engine reads these
         // instead of counting fed inputs, since we feed only the CHANGED instances.
         var totals = await LoadClassTotalsAsync(conn, newestId, ct);
+        var shadowed = await LoadShadowedNamesAsync(conn, newestId, inputs.Select(d => d.ClassName), ct);
 
         int max = query.MaxResults > 0 ? query.MaxResults : 200;
-        return PivotDiscoveryEngine.Rank(inputs, n, max, totals);
+        return PivotDiscoveryEngine.Rank(inputs, n, max, totals, shadowed);
+    }
+
+    /// <summary>[DISCOVER-SHADOWED-POOL] The (class, prop) names the snapshot shows at more than one offset, among
+    /// <paramref name="classes"/>: the changed rows alone cannot say so when one copy stayed put, and Class Pivot's
+    /// picker labels from this same whole field list. Chunked so a wide changed set stays under SQLite's
+    /// parameter limit.</summary>
+    private static async Task<HashSet<(string, string)>> LoadShadowedNamesAsync(
+        SqliteConnection conn, long snapshotId, IEnumerable<string> classes, CancellationToken ct)
+    {
+        var set = new HashSet<(string, string)>();
+        var distinct = classes.Where(c => !string.IsNullOrEmpty(c)).Distinct(StringComparer.Ordinal).ToList();
+        const int chunk = 500;
+        for (int at = 0; at < distinct.Count; at += chunk)
+        {
+            var part = distinct.Skip(at).Take(chunk).ToList();
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText =
+                "SELECT class_fqn, prop_name FROM fields WHERE snapshot_id=$s AND array_field IS NULL AND class_fqn IN (" +
+                string.Join(",", part.Select((_, i) => $"$c{i}")) +
+                ") GROUP BY class_fqn, prop_name HAVING COUNT(DISTINCT prop_offset) > 1;";
+            cmd.Parameters.AddWithValue("$s", snapshotId);
+            for (int i = 0; i < part.Count; i++) cmd.Parameters.AddWithValue($"$c{i}", part[i]);
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct))
+                set.Add((r.IsDBNull(0) ? "" : r.GetString(0), r.IsDBNull(1) ? "" : r.GetString(1)));
+        }
+        return set;
     }
 
     // Build the N-snapshot change-discovery SQL. GROUP BY the Strict identity key
