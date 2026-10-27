@@ -86,6 +86,11 @@ public partial class ClassPivotViewModel : ViewModelBase
     // and leave Fields holding a mix of two classes.
     private int _classLoadId;
     private int _fieldLoadId;
+    // [PIVOT-ARRAY-LOADID] The array-field list's own counter. It used to take _classLoadId, so a class click in Array
+    // source superseded the class-list load in flight and the previous snapshot's classes stayed in the picker. A new
+    // snapshot's class list still supersedes a stale array-field load: applying it detaches SelectedClass, which
+    // re-runs this load.
+    private int _arrayFieldLoadId;
     private CancellationTokenSource? _pivotCts;   // heavy pivot run
     // [W1-PIVOT-LOADCTS] One CTS per list, not one shared: a field load used to cancel an in-flight CLASS load, which
     // nothing restarts, leaving the previous snapshot's classes in the picker.
@@ -978,7 +983,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     private async Task LoadArrayFieldsAsync()
     {
         // Bump at entry so a null selection also supersedes in-flight loads.
-        int id = ++_classLoadId;
+        int id = ++_arrayFieldLoadId;   // [PIVOT-ARRAY-LOADID] never the class list's counter
         SelectedArrayField = null;   // detach selections before clearing bound lists
         SelectedKeyField = null;
         SelectedResult = null;
@@ -993,7 +998,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         try
         {
             var list = await Task.Run(() => _store.ListPivotArrayFieldsAsync(snapId, cls));
-            if (id != _classLoadId) return;   // a newer class/snapshot superseded us
+            if (id != _arrayFieldLoadId) return;   // a newer class/snapshot superseded us
             foreach (var af in list) ArrayFields.Add(af);
             // Auto-select the first array field (triggers prop load).
             SelectedArrayField = ArrayFields.FirstOrDefault();
