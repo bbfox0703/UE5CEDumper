@@ -6948,9 +6948,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // types across a bogus multi-hundred-MB PropertiesSize, which wedges the
         // single-threaded pipe (the "switch back to Live Walker froze the pipe"
         // bug). The DLL caps this too, but bail here so we don't even send it.
-        if (result.IsStale || result.IsUnreadable || result.IsNoHeader)   // nothing to guess on any of them
+        if (GoneVerdict(result) is { } verdict)   // nothing to guess on any of them
         {
-            _log.Warn($"Skipping fill_gaps auto-retry for {addr}: object is stale or unreadable");
+            _log.Warn($"Skipping fill_gaps auto-retry for {addr}: {verdict}");   // [WALK-NULLCLASS-SILENT] review F4
             return result;
         }
 
