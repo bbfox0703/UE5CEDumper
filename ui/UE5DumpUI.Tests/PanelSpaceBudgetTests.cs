@@ -335,6 +335,9 @@ public class PanelSpaceBudgetTests
         {
             var name = EnText(Attr(b, "Content"));
             Assert.Equal(width, Attr(b, "Width"));
+            // Fluent's Button stretches its content (HorizontalContentAlignment defaults to Stretch, measured headless on
+            // Avalonia 12.1.3), so in a Width wider than the label the text sits at the left edge unless it is centred.
+            Assert.Equal("Center", Attr(b, "HorizontalContentAlignment"));
             // Either one would override the shared Width in Avalonia's layout.
             Assert.Null(Attr(b, "MinWidth"));
             Assert.Null(Attr(b, "MaxWidth"));
