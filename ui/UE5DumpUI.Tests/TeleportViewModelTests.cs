@@ -812,6 +812,48 @@ public class TeleportViewModelTests
         Assert.Contains("Detect", vm.StatusText);   // what the user can do about it
     }
 
+    // [STEALTH-RESET-STALE-HELD] batch 2's review: the "Detect first" advice showed in every meter-less state, the Off one
+    // too, where the prime read every hold the DLL has and there was none. Following it (Detect, then Reset) sent
+    // reset_field for a job that never existed, which Solide answers OK, and the card said "Released".
+    private static FakeDumpService NothingForcedFake() => new()
+    {
+        NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "BP_Player_C", FieldName = "Visibility" } },
+        NextForcedFields = new List<ForcedFieldInfo>(),   // the prime reads no forced field at all: a definite Off
+    };
+
+    [Fact]
+    public async Task Reset_when_the_card_knows_nothing_is_held_says_so_and_does_not_send_the_user_to_Detect()
+    {
+        var fake = NothingForcedFake();
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+        Assert.Equal("Off", vm.StealthState);
+
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, fake.ResetFieldCalls);
+        Assert.Equal("Off", vm.StealthState);
+        Assert.DoesNotContain("Detect", vm.StatusText);
+        Assert.Contains("Nothing is held", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Reset_after_Detect_with_no_Hold_releases_nothing_and_claims_no_release()
+    {
+        var fake = NothingForcedFake();
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);   // a candidate now, and still nothing held
+
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, fake.ResetFieldCalls);
+        Assert.DoesNotContain("Released", vm.StatusText);
+        Assert.Contains("Nothing is held", vm.StatusText);
+    }
+
     [Fact]
     public async Task Connect_never_takes_a_Property_Search_force_for_the_Stealth_hold()
     {
