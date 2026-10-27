@@ -5,8 +5,8 @@ Open work only. **Read this when deciding what to do next.**
 > 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
 >
 > ▶ **Current programme:** `[FIXPASS-2026-10-27]` (the maintainer: fix every open LOW / INFO). Batches 1-3 shipped in
-> build 3657 and passed live on its AOT build (`[BATCH3-LIVE-3657]`). Open: batch 2's own review
-> (`[BATCH2-REVIEW-2026-10-27]`), the five LOW leads batch 3 left (`[TRAINER-PUSH-TIMEDOUT-TEXT]`,
+> build 3657 and passed live on its AOT build (`[BATCH3-LIVE-3657]`); batch 2's own review and the review of batch 3's
+> fixes are fixed for build 3658 (`[BATCH2-REVIEW-2026-10-27]`, `[FIXREVIEW-2026-10-27]`). Open: the five LOW leads batch 3 left (`[TRAINER-PUSH-TIMEDOUT-TEXT]`,
 > `[DISCOVER-SHADOWED-POOL]`, `[DBGCAM-OFF-OVER-QUEUED-ON]`, `[ASSETPTR-BAKED-TOKEN]`, `[L83-PLAN-QUEUED-STRINGS]`),
 > and the asset-pointer container shapes still owed live (`[UE4-ASSETPTR-EXPORTS]`'s row). · Before it, the
 > known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
@@ -1836,10 +1836,28 @@ the findings): 17 findings, 1 refuted (`DEVLOG-EVERY-EXPORT-OVERCLAIM`), 16 conf
 - Comments: `CEXML-ASSETPTR-NULL-PAIR` (`07136861`), `ASSETPTR-DISSECT-TEST-STALE-COMMENT` (`b0f7b942`),
   `COORDPICK-AXAML-COMMENT-STALE` (`c69b1b47`), `VND584-FILTER-COMMENT-STALE` (`ee13e0ce`),
   `TEST-COMMENT-UNRESOLVABLE-ID` (the ids above are now recorded here).
-- Docs: `PROGRAMME-LINE-MISSES-1027-PASS`, `ASSETPTR-TARRAY-LIVE-UNDERSTATED`, `VND584-04-ROW-STALE` (this file), and
+- Docs: `PROGRAMME-LINE-MISSES-1027-PASS` (`605cea6d`), `ASSETPTR-TARRAY-LIVE-UNDERSTATED` (`a3ab75ac`),
+  `VND584-04-ROW-STALE` (`c37ca724`), and
   five in the 3657 dev-log entry -- `DEVLOG3657-OMITS-FABRICATE`, `DEVLOG-NOHEADER-WAS-SILENT`, `DEVLOG-F4-NOT-FIXED`,
   `DEVLOG-EACH-BATCH-REVIEWED`, `DEVLOG-CSX-WAS-HEX` -- corrected in the next build's entry, since the dev-log is
   append-only.
+
+🔍 **Batch 2's own review** `[BATCH2-REVIEW-2026-10-27]` (workflow `wf_0458321c-629`, range `b1b5c782..19a16423`, which
+shipped in 3657 unreviewed; three lenses, then one adversarial verifier per lens): 7 findings, 1 refuted
+(`PIVOT-ARRAY-LOADID-REFRESH-SWITCH`: the Refresh path skips the bump, but its probe showed the same state with and
+without the race), 6 confirmed, all fixed on 2026-10-27:
+- `LW-EMPTIED-STRUCT-ARRAY-REFRESH-ERRORS` (MED) and `LW-ARRAY-REFILLED-ZERO-SILENT` (LOW), one cause: the wire sends no
+  elements for an empty array, so Refresh sent read_array_elements, which refuses a struct inner over 256 bytes (the
+  old rows stayed under "elem_size too large") and answers for a count the walk did not see. Red `14d6066f` / green
+  `1476d8d3`.
+- `PIVOT-SCALAR-FIELDLOAD-SOURCE-SWITCH` (LOW) a source switch did not supersede the scalar field load: red `d54f8da8`
+  / green `77b5fcac`.
+- `SHADOWED-LABEL-UI-UNPINNED` (INFO) the Field column, the suggested key and the pre-tick skip were unpinned:
+  `73460391` (three mutants, each red).
+- `STEALTH-NOTHING-ADVICE-UNCONDITIONAL` (LOW) "Detect first" showed on a card that knew nothing is held, and
+  Detect-then-Reset said "Released" for a job that never existed: red `dbaad9ed` / green `30a37f87`.
+- `DBGCAM-DLL-QUEUED-TEXT-STALE` (LOW) the DLL's -5 texts, and the mailbox errorMsg a CE script shows, told a queued
+  OFF not to be re-sent: red `f30f8121` / green `224ae02b`.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
