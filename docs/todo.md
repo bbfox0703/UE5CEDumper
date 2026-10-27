@@ -9,7 +9,7 @@ Open work only. **Read this when deciding what to do next.**
 > the rows and working-lessons §6. Still owed live, each row says how: a crash mid-capture on a large title
 > (`[SNAPSHOT-CRASH-PARTIAL]`), the Call Trace window-size steps (`[CT-FLOOR-208]`), Auto clearing a contradicted
 > override at once (`[OVERRIDE-REVIEW2-LOWS]`), `[INT8-PREVIEW]`, `[UE4-USTRUCT-GIVEUP]`, `[AOB-SKIP-OWN-DLL]`; open LOW
-> rows it left: `[UE4-ASSETPTR-EXPORTS]`, `[UE4-USTRUCT-GIVEUP-STATS]`, `[DUMPER-SECOND-COPY-AUTOSTART]`,
+> rows it left: `[UE4-USTRUCT-GIVEUP-STATS]`, `[DUMPER-SECOND-COPY-AUTOSTART]`,
 > `[UBEL-ASCII-FIRSTCHAR]` ·
 > `[LIVEFUNCS-TIMELINE-2026-10-04]` (Live Funcs) · the
 > `[VENDOR-UE584-2026-10-26]` fix pass is DONE -- every row fixed in builds 3650-3652 and checked live where a
@@ -703,7 +703,7 @@ source and editor are installed for when they are needed.
   `/Game/Maps/PreGame/PreGameMap.PreGameMap`, an empty one `(none)`; no envelope line from them. Was owed on NEKOPALIVE (4.11), Extinction (4.15) or Fantasynth (4.13): asset
   paths on AssetObjectProperty rows, a TArray<TAssetPtr>'s element paths, obj_class / meta_class in walk_class, and no
   "TSoftObjectPtr payload envelope measured" line from them.
-- ✅ `[UE4-ASSETPTR-EXPORTS]` **FIXED 2026-10-27** (six red/green pairs, e3a318e7 .. 0d55ecff; no DLL change): USMAP writes AssetObjectProperty = 16; the SDK declares TAssetPtr<T> / TAssetSubclassOf<T>; CE XML and CSX lay them out as Soft* (an 8-byte hex leaf; a TArray<TAssetPtr> gets each element's path as a CE String at +0x10); Property Search suggests them and the scorer penalises them; Live Walker's drill keeps the walk's paths; an invoke parameter is empty-only, as Lazy. Left: `[ASSETPTR-BAKED-TOKEN]` below. Live check owed on NEKOPALIVE / Extinction / Fantasynth. Was: (LOW, left by `[UE4-ASSETPTR-PROPS]`): the UI consumers are still keyed on Soft* names --
+- ✅ `[UE4-ASSETPTR-EXPORTS]` **FIXED 2026-10-27** (six red/green pairs, e3a318e7 .. 0d55ecff; no DLL change): USMAP writes AssetObjectProperty = 16; the SDK declares TAssetPtr<T> / TAssetSubclassOf<T>; CE XML and CSX lay them out as Soft* (an 8-byte hex leaf; a TArray<TAssetPtr> gets each element's path as a CE String at +0x10); Property Search suggests them and the scorer penalises them; Live Walker's drill keeps the walk's paths; an invoke parameter is empty-only, as Lazy. The final review (`[BATCH3-FINAL-REVIEW-2026-10-27]` below) widened it: a single TAssetPtr, and one in a DataTable row, is a CE XML group of the weak pair and its path string, as an array element is; CSX labels a loaded element with its object; the dissect Lua (`ue5_dissect.lua`) shows the 8-byte hex pair. Left: `[ASSETPTR-BAKED-TOKEN]` below. Live check owed on NEKOPALIVE / Extinction / Fantasynth: Copy CE XML and Push to CE Structure Dissect on a class with a TAssetPtr field and a TArray of them, and the CT's Structure Dissect on the same class. Was: (LOW, left by `[UE4-ASSETPTR-PROPS]`): the UI consumers are still keyed on Soft* names --
   the SDK export (`MapCppDeclCore` has no Asset arm, so the field is raw bytes), CE XML and CSX (unknown type), USMAP
   (maps by name, so Asset* is Unknown although `EPropertyType.AssetObjectProperty` = 16 exists), Property Search's
   type filter, Live Walker's array drill (read_array_elements returns raw bytes for an asset inner), and the invoke
@@ -1773,7 +1773,26 @@ when the clipboard took it; the rest make no claim, by design), `[UE4-ASSETPTR-E
 - ⬜ `[L83-PLAN-QUEUED-STRINGS]` `docs/fixpass-low-live-plan.md` § L83 quotes the old queued-ON / queued-OFF strings;
   update them before L83 steps 6 / 9 are re-run.
 - The live checks this batch owes, all on the AOT build: the toolbar at 800 DIP (status slot, Connect / Disconnect
-  width), the Class Pivot shadowed-name labels and handoff, Live Walker's interface functions and their sort.
+  width), the Class Pivot shadowed-name labels and handoff, Live Walker's interface functions and their sort, and the
+  asset-pointer exports (`[UE4-ASSETPTR-EXPORTS]`'s row says where).
+
+🔍 **Final review of batches 1-3** `[BATCH3-FINAL-REVIEW-2026-10-27]` (workflow `wf_69ca757d-f90`, lenses then an
+adversarial verify per finding): 13 findings, 1 refuted (`ASSETPTR-USMAP-SLOT`: the USMAP slot is documented in code and
+the vendored writers have no branch that returns another), 12 confirmed: 11 fixed on 2026-10-27, and F4 is a check
+owed rather than a defect:
+- `[VND584-04]` F1 (LOW) walk_functions read `UClass::Interfaces` past the end of a struct view's UScriptStruct: red
+  `bc838022` / green `a8d4b4db`. F2 + F3 (LOW) the Functions filter could not find the "(via X)" the Name column shows,
+  and neither wiring hunk of the list half was pinned: red `232d69a0` / green `10398bab`. F4 (INFO) the DisplayName
+  sort is binding-rooted; its AOT check is the one owed above.
+- `[UE4-ASSETPTR-EXPORTS]` the CE XML inner-type arm had no test (`26dbe9fd`, a mutant without it fails); the dissect
+  Lua had no Asset* row (red `71bbb4d3` / green `ea36a6af`); CSX labelled a loaded asset element "[i]" alone (red
+  `dc5b7cd9` / green `e19404c6`); a single TAssetPtr exported no path (red `76603431` / green `bf70f623`, and the
+  DataTable row loop red `59787f70` / green `3f3efc07`); `ReferenceMatch.FieldType`'s doc cited the wrong row
+  (`c45e8415`); the "current programme" line still listed the row as open (this commit).
+- `[COORDPICK-TIMEDOUT-TEXT]` (INFO) the no-reply line said "in time" although the bridge folds a broken pipe into
+  TimedOut (red `96b1e947` / green `e7f76e6e`), and the "nothing was added" line said "mid-push" for a pipe that never
+  opened (red `932eb6fc` / green `48886407`).
+- `[TOOLBAR-CONNECT-WIDTH]` F5 (INFO) the fit note measured Segoe UI; the app renders Inter (`6d071f23`).
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
