@@ -552,7 +552,8 @@ source and editor are installed for when they are needed.
   each tree's copy is the first one the DLL finds; every judge clause, positive and must-not, is pinned by a canned log
   (selftest 62 / 62). ✅ **Live PASS 2026-10-14 (3648):** `build`, each exe started, injected and scanned over the pipe -- A 405 scanned,
   B UE3 refused, C 410 refused, D 410 scanned, **E 410 refused, F 410 scanned** -- then `check`: 6 / 6 PASS.
-- ⬜ `[UE410-SUPPORT]` (**decided 2026-10-08: not now** -- the maintainer; the gate above refuses 4.10 cleanly). The
+- ⛔ `[UE410-SUPPORT]` **WON'T DO -- the maintainer, 2026-10-27: UE 4.10 and earlier are not supported** (was: decided
+  2026-10-08, not now; the gate above refuses 4.10 cleanly, and stays). The
   feasibility study (UE 4.10 source, IS Defense's PDB, the DLL) found it doable but L (~700-900 lines, 4-6 sessions
   plus 2-3 live): a third object-array shape (`FUObjectArray`+0x10 is an INLINE 512-slot chunk table, 16,384 objects
   a chunk, bare stride-8 `UObjectBase*`, Num at +0x1010, NumChunks at +0x1014, no Max, no `FUObjectItem`), version
@@ -620,7 +621,8 @@ source and editor are installed for when they are needed.
   the chain's end in its invokeUFunction; on a 4.11-4.17 title under a 4.18 override (or the reverse) walk_functions
   shows the real ParmsSize and the vote's WARN says the tail is read at the measured base. Mimic.cpp and Fern.cpp
   are compiled by no test target -- their glue is checked by build, the new gate and reading.
-- ⬜ `[DUMPERTEST410-FIXTURE]` (the maintainer chose it 2026-10-08): package a Blueprint-only DumperTest410 from the
+- ⛔ `[DUMPERTEST410-FIXTURE]` **WON'T DO -- UE 4.10 and earlier are not supported (the maintainer, 2026-10-27).** Was
+  (the maintainer chose it 2026-10-08): package a Blueprint-only DumperTest410 from the
   installed UE 4.10.4 (the TP_ThirdPersonBP template, the prebuilt UE4Game-Win64-Shipping) while the editor is still
   installed: `tools/ue-sample/repackage.py` needs a content-only mode (no `Build.bat <Project>Editor`, `-nocompile
   -nocompileeditor` instead of `-build`). It serves the gate's refusal now and a 4.10 port if one is ever made (the
