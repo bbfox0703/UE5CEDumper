@@ -1617,13 +1617,24 @@ fixed DLL (`9476150f`, built by `build_dll.py`, so it still reports 3654) decode
 (`## Fixed`): "On a Development or Debug build of a UE 5.3+ game, Call Trace names the object a delegate parameter is
 bound to, instead of showing it as stale."
 
-⬜ `[CT-MULTICAST-PARAM-PAD]` (found 2026-10-27 while fixing `[CT-DELEGATE-PARAM-PAD]`; read from source, not
-measured): the same decoder reads a `MulticastInlineDelegateProperty`'s invocation-list header at +0 / +8 whatever
-its ElementSize. On a UE 5.3+ checked build (ElementSize 24) it then shows the detector as Data and Data's low half as
-Num, the fingerprint `Grimoire.h`'s `kDelegateDetectorPad` block describes. Reached through a struct parameter with a
-multicast member; whether UHT accepts a multicast parameter itself is not checked. Fix:
-`DelegatePadFromElementSize(f.size, 16)`, the header at the pad, a refused size not read; red test first. The live
-check needs a fixture UFunction that takes such a struct. Effort **S**. Where: `Ubel.cpp` `DecodeSnapElement`.
+✅ `[CT-MULTICAST-PARAM-PAD]` **FIXED, unit-tested; the live check is owed** (red `4e074d71` / green `26c26f4b`, 2026-10-27;
+in no build yet). Found while fixing `[CT-DELEGATE-PARAM-PAD]`. The same decoder read a
+`MulticastInlineDelegateProperty`'s invocation-list header at +0 / +8 whatever its ElementSize, so on a UE 5.3+
+checked build (ElementSize 24) it showed the detector as Data and Data's low half as Num: the fingerprint `Grimoire.h`'s
+`kDelegateDetectorPad` block describes. It now reads the header at `DelegatePadFromElementSize(ElementSize, 16)`. A size
+that is neither shape is not read: `(multicast — unexpected ElementSize N, not read)` and the copy's bytes, marked hex,
+the walk's own wording. Reached by a native UFunction taking a multicast by value (UHT 5.4 only drops Blueprint
+support for it: `UhtMulticastDelegateProperty` clears `IsParameterSupportedByBlueprint` and emits the thunk argument)
+and by a struct parameter's multicast member. dll_core_test CT-MULTICAST-PARAM-PAD (red: 3, `Num=30576 (Data 0x0)` for
+ElementSize 24, the same in a struct member, and 20 read as a header; the 16 control held). dll_core_test 1340 checks,
+dll_helpers_test 3626, 36 gates, 0 failed; the `UE5Dumper` target builds. **The live check needs a fixture change:**
+DumperTest has a bound `Multicast_Inline` but no UFunction that takes a multicast. Add a native
+`UFUNCTION() int32 InvokeGate_TakeMulticast(FDumperTestPingSignature Handlers)` (recording `Handlers.IsBound()`, as
+`InvokeGate_TakeDelegate` does) to `tools/ue-sample/DumperTest`, sync it into the project and repackage Development and
+Shipping (`py tools/ue-sample/repackage.py --engine 5.4 --project DumperTest --configs Development,Shipping`; its
+`--sync-mirror` copies repo to project, and on 2026-10-27 the two `DumperTestActor.h` copies differed by one comment
+line). Then extend `ct_delegate_param_live.py` to pass the actor's own `Multicast_Inline` the same way: Development must
+decode its walked header (Num and Data at +8), Shipping the same at +0.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
