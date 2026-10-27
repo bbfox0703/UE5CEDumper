@@ -395,6 +395,9 @@ public class ContainerTruncationTests
             string innerType, int elemSize, int offset = 0, int limit = 64, CancellationToken ct = default)
         {
             ElementReads++;
+            // Fern's read_array_elements refuses a non-string inner over 256 bytes, as the DLL does.
+            if (elemSize > 256 && innerType != "StrProperty")
+                throw new InvalidOperationException("DLL error: elem_size too large (max 256)");
             int live = ReadSees ?? Count;
             int n = Math.Max(0, Math.Min(Math.Min(limit, DllCap), live - offset));
             return Task.FromResult(new ArrayElementsResult
@@ -624,6 +627,63 @@ public class ContainerTruncationTests
         Assert.DoesNotContain("showing", vm.Breadcrumbs[^1].Label);
         Assert.DoesNotContain("showing", vm.CurrentObjectName);
         Assert.Equal("", vm.StatusText);                                     // empty is complete, not unreadable
+    }
+
+    // The wire's own shape for an empty array: Fern writes `elements` only when there are some, so the row arrives with
+    // ArrayElements null, not an empty list (review of batch 2). The rows above hand the view an empty list.
+    private static LiveFieldValue WireScalarRow(int count, int inline) => count == 0
+        ? new LiveFieldValue
+        {
+            Name = "Arr_Churn", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+            ArrayCount = 0, ArrayInnerType = "IntProperty", ArrayElemSize = 4,
+            ArrayInnerAddr = "0x7FF600001000", ArrayDataAddr = "0x20000000",
+        }
+        : ScalarRow(count, inline);
+
+    private static LiveFieldValue WireBigStructRow(int count, int inline) => new()
+    {
+        Name = "ActiveEffects", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+        ArrayCount = count, ArrayInnerType = "StructProperty", ArrayStructType = "ActiveEffect", ArrayElemSize = 0x2A8,
+        ArrayInnerAddr = "0x7FF600002000", ArrayDataAddr = "0x20000000",
+        ArrayElements = count == 0 ? null : Enumerable.Range(0, inline).Select(i => new ArrayElementValue
+        {
+            Index = i, Value = "{...}",
+            StructFields = new List<StructSubFieldValue> { new() { Name = "Level", TypeName = "IntProperty", Size = 4, Value = $"{i}" } },
+        }).ToList(),
+    };
+
+    [Fact]
+    public async Task Refresh_OfAnEmptiedArrayOfLargeStructs_ShowsItEmpty_WithoutAnElementRead()
+    {
+        // [LW-EMPTIED-CONTAINER-REFRESH] An emptied struct array fell through to read_array_elements, which is scalar-only
+        // and refuses an element over 256 bytes: Refresh showed "DLL error: elem_size too large" over the OLD rows.
+        var (vm, dump) = await DrillLiveAsync(WireBigStructRow, count: 3, arrayLimit: 64);
+        Assert.NotEmpty(vm.Fields);                                          // the precondition: the drill's rows
+        int reads = dump.ElementReads;
+        dump.Count = 0;
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.Fields);
+        Assert.Contains("[0 x ActiveEffect]", vm.Breadcrumbs[^1].Label);
+        Assert.Equal("", vm.StatusText);
+        Assert.Equal(reads, dump.ElementReads);                              // an empty array has nothing to read
+    }
+
+    [Fact]
+    public async Task Refresh_OfAnArrayTheWalkSawEmpty_ShowsTheWalksCount_NotOneTheReadSawLater()
+    {
+        // A read sent for a count of 0 asked for nothing, and answered with the count it found a moment later: the view
+        // read "[12 x IntProperty]" over an empty grid, with no badge or status. The walk's 0 is what the view shows.
+        var (vm, dump) = await DrillLiveAsync(WireScalarRow, count: 200, arrayLimit: 64);
+        dump.Count = 0;
+        dump.ReadSees = 12;
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.Fields);
+        Assert.Contains("[0 x IntProperty]", vm.Breadcrumbs[^1].Label);
+        Assert.Equal(0, vm.Breadcrumbs[^1].ContainerField!.ArrayCount);       // what Back and the exporters read
     }
 
     // [WALK-NULLCLASS-SILENT] review F1: the container branch acted only when the parent walk found the field again. A
