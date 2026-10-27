@@ -132,6 +132,11 @@ end
 -- CE Lua constants (defined by CE):
 --   vtByte=0, vtWord=1, vtDword=3, vtSingle=4, vtDouble=5,
 --   vtQword=8, vtPointer=12
+--
+-- dm, when present, is the element's DisplayMethod. Without it CE shows an integer
+-- row as UNSIGNED DECIMAL (TStructelement.create's default). The value is CE's enum
+-- NAME, verbatim: CE sets it through RTTI inside a bare try/except, so any other
+-- spelling is dropped silently and the row stays decimal.
 -- ----------------------------------------------------------------
 local TYPE_MAP = {
     -- Integer types
@@ -164,12 +169,13 @@ local TYPE_MAP = {
 
     -- Soft / Lazy lead with an FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber }, not an
     -- address: as a pointer, CE expanded that pair into garbage. 8 hex bytes, like Weak below and
-    -- like the CE-XML / CSX exports. An interface's first 8 bytes ARE its UObject*.
-    SoftObjectProperty    = { vt = vtQword,   size = 8 },
-    SoftClassProperty     = { vt = vtQword,   size = 8 },
-    LazyObjectProperty    = { vt = vtQword,   size = 8 },
+    -- like the CE-XML / CSX exports -- hex so the two int32 halves can be read apart; in decimal
+    -- they are one meaningless number. An interface's first 8 bytes ARE its UObject*.
+    SoftObjectProperty    = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
+    SoftClassProperty     = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
+    LazyObjectProperty    = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
     InterfaceProperty     = { vt = vtPointer, size = 8 },
-    WeakObjectProperty    = { vt = vtQword,   size = 8 },
+    WeakObjectProperty    = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
 
     -- Delegates
     -- ⚠ These sizes are FALLBACKS ONLY -- getTypeInfo prefers the engine's own ElementSize
@@ -210,7 +216,7 @@ local function getTypeInfo(typeName, fieldSize)
             elseif fieldSize == 8 then return vtQword,  8
             else                       return vtDword,  4 end
         end
-        return entry.vt, entry.size
+        return entry.vt, entry.size, entry.dm
     end
     -- Unknown type: show as raw dword block
     return vtDword, (fieldSize > 0 and fieldSize or 4)
@@ -388,11 +394,13 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
 
         -- Standard scalar / pointer types
         else
-            local vt, vtSize = getTypeInfo(f.typeName, f.size)
+            local vt, vtSize, dm = getTypeInfo(f.typeName, f.size)
             local e = ceStruct.addElement()
             e.Offset  = absOffset
             e.Name    = displayName
             e.Vartype = vt
+            -- After Vartype: CE's setVartype resets the display method of a float row.
+            if dm then e.DisplayMethod = dm end
             if vtSize ~= nil and vtSize > 8 then
                 e.Bytesize = vtSize
             end
@@ -1149,7 +1157,7 @@ function dissect.clearAll()
 end
 
 -- ----------------------------------------------------------------
--- Exposed for tests only. getTypeInfo decides a row's CE type AND WIDTH, and its delegate
+-- Exposed for tests only. getTypeInfo decides a row's CE type, WIDTH and display method, and its delegate
 -- branch is the one thing in this file that depends on the BUILD rather than on the property
 -- -- sizeof(FMulticastScriptDelegate) is 16 in Shipping/Test and 24 in a checked build
 -- (UE 5.3+ adds an 8-byte access detector). Nothing reachable through the public API returns
