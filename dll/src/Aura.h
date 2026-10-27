@@ -437,10 +437,11 @@ struct ReferenceMatch {
 //   - OptionalProperty<T> for pointer-shaped T (Object/Class/Interface/
 //     Weak/Soft/Lazy) — same comparison as the bare T at field+0
 //   - DelegateProperty (single FScriptDelegate — FWeakObjectPtr target at
-//     field+0 — surfaces "X is bound to a delegate on Y" relationships)
+//     field+0, or past the access detector on a UE 5.3+ checked build —
+//     surfaces "X is bound to a delegate on Y" relationships)
 //   - MulticastInlineDelegateProperty / MulticastDelegateProperty
-//     (FMulticastScriptDelegate := TArray<FScriptDelegate>; walks each
-//     binding's FWeakObjectPtr target).
+//     (FMulticastScriptDelegate := TArray<FScriptDelegate>, behind the same
+//     detector on a checked build; walks each binding's FWeakObjectPtr target).
 //   - MulticastSparseDelegateProperty (UE 5.0+ only) — global pass after
 //     the per-object loop walks FSparseDelegateStorage::SparseDelegates
 //     once and checks every binding's FWeakObjectPtr against `target`.
