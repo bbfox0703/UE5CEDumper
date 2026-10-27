@@ -105,6 +105,29 @@ public class AuditL11HonestyTests
         Assert.DoesNotContain("implausible", vm.StatusText);
     }
 
+    // [WALK-NULLCLASS-SILENT] review F4: the fill_gaps auto-retry skips all three verdicts, and its log line said
+    // "object is stale or unreadable" for each -- for a no_header walk, neither. The log names the verdict it saw.
+    [Theory]
+    [InlineData("unreadable", "unreadable")]
+    [InlineData("no_header", "no UObject header")]
+    [InlineData("stale", "stale/recycled")]
+    public async Task FillGapsRetrySkip_LogsTheVerdictItSaw(string verdict, string named)
+    {
+        var dump = new StubDumpService();
+        dump.RegisterStruct("0x4000", new InstanceWalkResult
+        {
+            Address = "0x4000",
+            IsUnreadable = verdict == "unreadable", IsNoHeader = verdict == "no_header", IsStale = verdict == "stale",
+        });
+        var log = new MockLoggingService();
+        var vm = new LiveWalkerViewModel(dump, log, new MockPlatformService(Path.GetTempPath()));
+
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x4000");
+
+        Assert.Contains(log.Messages, m => m.Contains($"Skipping fill_gaps auto-retry for 0x4000: {named}", StringComparison.Ordinal));
+        Assert.DoesNotContain(log.Messages, m => m.Contains("stale or unreadable", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("", "", "")]
     [InlineData("W", "", "W")]
