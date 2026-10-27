@@ -2648,7 +2648,8 @@ std::vector<ImplementedInterface> ClassInterfaces(uintptr_t cls) {
 }
 
 std::vector<FunctionInfo> WalkInterfaceFunctions(uintptr_t cls) {
-    if (!cls || !ClassInterfacesMeasured()) return {};
+    // A struct view hands its UScriptStruct here: it has no Interfaces array to read.
+    if (!cls || !IsClassMetaName(GetName(GetClass(cls))) || !ClassInterfacesMeasured()) return {};
     auto readSuper = [](uintptr_t c, uintptr_t& s) { return Macht::ReadSafe(c + DynOff::USTRUCT_SUPER, s); };
     // UInterface -- CoreUObject's "Interface" class -- is where every interface's chain meets UObject's own functions.
     auto isInterfaceBase = [](uintptr_t c) { return GetName(c) == "Interface"; };
