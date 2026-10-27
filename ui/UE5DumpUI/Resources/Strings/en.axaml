@@ -1602,6 +1602,9 @@
     <sys:String x:Key="str.Tip.TP.StHold">Force the detected meter to 0 on every live instance of its class and hold it there (re-asserted on a timer). "N held" shows how many instances are held. With no live instance yet, the hold is armed and applies as soon as one spawns.</sys:String>
     <sys:String x:Key="str.Tip.TP.StReset">Release the hold — restore the captured base value and stop holding the meter.</sys:String>
     <sys:String x:Key="str.TP.StDetectWhileHolding">Still holding {0} at 0 (Detect found {1} candidate(s)). Reset first to hold a different meter.</sys:String>
+    <!-- [STEALTH-RESET-STALE-HELD] Reset with a meter (the hold was released) and with none (nothing was sent). -->
+    <sys:String x:Key="str.TP.StReleased">Released the stealth-meter hold.</sys:String>
+    <sys:String x:Key="str.TP.StNothingToRelease">No stealth meter was detected, so there was no hold to release.</sys:String>
     <sys:String x:Key="str.TP.StArmed">⏳ Hold @0 on {0} is ARMED but holding nothing yet — no live instance of {1} or any subclass exists right now. It applies as soon as one spawns; Reset releases it.</sys:String>
     <sys:String x:Key="str.TP.StRearmRefused">Hold @0 refused (DLL error {0}). The earlier hold on {1} stays armed; Reset releases it.</sys:String>
     <sys:String x:Key="str.TP.FgHeader">Keep Foreground</sys:String>
