@@ -183,9 +183,11 @@ local TYPE_MAP = {
     -- of a delegate payload in a CHECKED build (Debug/Development/DebugGame) and none in
     -- Shipping/Test. A baked 16 reads the detector plus half the TArray header there.
     -- A DelegateProperty row is its bound object's FWeakObjectPtr, so 8 hex bytes like Weak;
-    -- addFieldsToStruct moves it past that detector (delegatePayloadPad).
+    -- a multicast row is its InvocationList.Data pointer. addFieldsToStruct moves both past
+    -- that detector (delegatePayloadPad). UE4 <= 4.22 spells the multicast type without "Inline".
     DelegateProperty                  = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
     MulticastInlineDelegateProperty   = { vt = vtPointer, size = 16 },
+    MulticastDelegateProperty         = { vt = vtPointer, size = 16 },
     -- ⛔ KNOWN WRONG, and NOT what this 2026-09-09 change is about: an FSparseDelegate is
     -- ONE byte (bIsBound), not 16, so this row has always overrun into the next fields.
     -- Left as-is deliberately -- correcting it changes the rendered width of every sparse
@@ -225,16 +227,23 @@ local function getTypeInfo(typeName, fieldSize)
 end
 
 -- ----------------------------------------------------------------
--- Where a standalone FScriptDelegate's payload starts: 0, 8 (behind the access detector a
--- UE 5.3+ CHECKED build puts in front of it), or nil when the ElementSize fits no build.
--- It is the DLL's rule (DynOff::DelegatePadFromElementSize, base 8 + sizeof(FName)), the pad
--- the CE-XML / CSX exports add as DelegatePad. This script cannot ask which FName width the
--- build has, so both bases are tried; their answers cannot collide (16 / 20 are pad 0,
--- 24 / 28 pad 8). The DLL refuses any other size, and so the caller must not guess one.
+-- Where a delegate field's payload starts: 0, 8 (behind the access detector a UE 5.3+
+-- CHECKED build puts in front of it), or nil when the ElementSize fits no build. It is the
+-- DLL's rule (DynOff::DelegatePadFromElementSize against the payload's own size), the pad the
+-- CE-XML / CSX exports add as DelegatePad. A standalone FScriptDelegate's payload holds an
+-- FName, and this script cannot ask which width the build has, so both are tried; their
+-- answers cannot collide (16 / 20 are pad 0, 24 / 28 pad 8). A multicast's payload is a bare
+-- TArray header, the same 16 bytes whatever the FName. The DLL refuses any other size, and so
+-- the caller must not guess one.
 -- ----------------------------------------------------------------
 local DELEGATE_DETECTOR_PAD = 8
-local function delegatePayloadPad(elementSize)
-    for _, base in ipairs({ 16, 20 }) do   -- the weak pair + an 8- or 12-byte FName
+local DELEGATE_PAYLOAD_SIZES = {
+    DelegateProperty                = { 16, 20 },   -- the weak pair + an 8- or 12-byte FName
+    MulticastInlineDelegateProperty = { 16 },
+    MulticastDelegateProperty       = { 16 },
+}
+local function delegatePayloadPad(typeName, elementSize)
+    for _, base in ipairs(DELEGATE_PAYLOAD_SIZES[typeName]) do
         if elementSize == base then return 0 end
         if elementSize == base + DELEGATE_DETECTOR_PAD then return DELEGATE_DETECTOR_PAD end
     end
@@ -411,11 +420,12 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
                 e3.Vartype = vtDword
             end
 
-        -- DelegateProperty: one row on the bound object's weak pair. A size no build has keeps
-        -- the field offset and says so, since the first 8 bytes may then be the detector.
-        elseif f.typeName == "DelegateProperty" then
+        -- Delegates: one row on the payload -- a unicast's bound object, a multicast's
+        -- InvocationList.Data. A size no build has keeps the field offset and says so, since
+        -- the first 8 bytes may then be the detector.
+        elseif DELEGATE_PAYLOAD_SIZES[f.typeName] then
             local vt, _, dm = getTypeInfo(f.typeName, f.size)
-            local pad = delegatePayloadPad(f.size)
+            local pad = delegatePayloadPad(f.typeName, f.size)
             local e = ceStruct.addElement()
             e.Offset  = absOffset + (pad or 0)
             e.Name    = pad and displayName
