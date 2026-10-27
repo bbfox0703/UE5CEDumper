@@ -1824,7 +1824,8 @@ end
 -- TPersistentObjectPtr<FStringAssetReference>: the same leading FWeakObjectPtr as the soft pointer
 -- that replaced them. Missing from TYPE_MAP they fell to the unknown-type fallback, a decimal dword
 -- block the field's width, so the pair read as two unrelated numbers and the string path as more.
--- The CE-XML and CSX exports give them the soft row.
+-- CSX gives them the soft row too. CE XML adds the path as a string beside the pair, which a dissect
+-- row cannot: an element is one value at one offset.
 case('UE4-ASSETPTR-EXPORTS: an asset pointer row is the weak pair in hex, like a soft pointer')
 do
   local gti = dissect._getTypeInfo
