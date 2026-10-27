@@ -276,6 +276,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         => AobMakerStatus.Say(KeyCoordNoDllNotAdded, "⚠ The no-DLL picker was not added to Cheat Engine: {0}.",
                               why.TrimEnd('.'));
 
+    internal const string KeyCoordNoDllTimedOut = "str.TP.LibNoDllTimedOut";
+    /// <summary>[COORDPICK-TIMEDOUT-TEXT] No reply in time is not "nothing was added": the plugin may have made the
+    /// record after the wait gave up (AOBMaker reply section 3 rule 8), and a second press would add a second picker.</summary>
+    internal static string CoordNoDllTimedOutText => AobMakerStatus.Say(KeyCoordNoDllTimedOut,
+        "⚠ No reply from Cheat Engine in time for the no-DLL picker: it may still have been added. " +
+        "Check Cheat Engine's address list before pressing again.");
+
     /// <summary>[AOBM-TRAINER-SETUP-MODAL] The trainer arrives unticked, so the success line has to say what to tick.</summary>
     internal static string TrainerPushedText(int entries)
         => AobMakerStatus.Say(KeyTrainerPushed,
@@ -4803,6 +4810,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                   "Enable 'UE5 Trainer: Setup' first — this flavour uses its baked offsets, " +
                   "has no map guard, and goes stale when the game is patched."
                   + FoldedGroupsNote(folded)
+                : pushed.TimedOut
+                    ? CoordNoDllTimedOutText
                 : pushed.Message is { } why
                     ? CoordNoDllNotAddedText(why)
                     : "⚠ AOBMaker pipe dropped mid-push (CE closed?) — nothing was added.";
