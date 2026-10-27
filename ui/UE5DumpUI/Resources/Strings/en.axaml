@@ -1206,7 +1206,7 @@
     <sys:String x:Key="str.Tip.CT.Param.Hex">The raw copies, as the DLL took them: select and copy.</sys:String>
     <sys:String x:Key="str.CT.Tab.Bytes">Bytes</sys:String>
     <sys:String x:Key="str.CT.Bytes.Segments">8-byte segments</sys:String>
-    <sys:String x:Key="str.Tip.CT.Bytes.Segments">The parameter copies cut into 8-byte segments. Each segment is read as two 32-bit halves (lo = its first 4 bytes, hi = the next 4), unsigned, signed and float; as one double; and as a 64-bit address with the byte order already swapped, ready to paste into Cheat Engine. Every reading is little-endian, as the game wrote the bytes; a short last segment gets only the readings its bytes cover.</sys:String>
+    <sys:String x:Key="str.Tip.CT.Bytes.Segments">The parameter copies cut into 8-byte segments. Each segment is read as two 32-bit halves (lo = its first 4 bytes, hi = the next 4), unsigned, signed and float; as one double; and as a 64-bit address with the byte order already swapped, ready to paste into Cheat Engine. Every reading is little-endian, as the game wrote the bytes; a short last segment gets only the readings its bytes cover. When the function's layout was read, the last column names the parameters each segment holds (lo= / hi= for a half, b2= for the byte one starts at, … for one the copy cuts off).</sys:String>
     <sys:String x:Key="str.CT.Bytes.Raw">Raw</sys:String>
     <sys:String x:Key="str.Tip.CT.Bytes.Raw">The copies as the DLL took them: one line per copy, at the call and after it.</sys:String>
     <sys:String x:Key="str.CT.Bytes.CopyRaw">Copy raw</sys:String>

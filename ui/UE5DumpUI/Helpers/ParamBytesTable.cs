@@ -23,13 +23,18 @@ internal static class ParamBytesTable
     /// <summary>The first cell's values, naming the copy a row's bytes come from.</summary>
     internal const string AtCall = "at_call", After = "after";
 
-    /// <summary>The CSV's header, in the cells' order. A data format, not UI text: a spreadsheet keys on these.</summary>
+    /// <summary>The CSV's header, in the cells' order. A data format, not UI text: a spreadsheet keys on these. The
+    /// params cell is last because it is the game's own text: a wide (CJK) name takes two screen cells per character,
+    /// and any reading after it would slide out of its column.</summary>
     internal static readonly string[] Columns =
     {
-        "copy", "offset", "raw", "params", "u32_lo", "u32_hi", "i32_lo", "i32_hi", "f32_lo", "f32_hi", "f64", "address",
+        "copy", "offset", "raw", "u32_lo", "u32_hi", "i32_lo", "i32_hi", "f32_lo", "f32_hi", "f64", "address", "params",
     };
 
-    private const int ParamsCol = 3, U32Lo = 4, F64 = 10, Address = 11;
+    private const int U32Lo = 3, F64 = 9, Address = 10, ParamsCol = 11;
+
+    // The one reading that is not a number to a spreadsheet and starts with a formula leader.
+    private static readonly string NegativeInfinity = double.NegativeInfinity.ToString(CultureInfo.InvariantCulture);
 
     /// <summary>The copy's segments, one row of <see cref="Columns"/> cells each; <paramref name="copy"/> is the first
     /// cell, naming which copy the bytes are. <paramref name="fields"/> is the function's layout, or null without one.</summary>
@@ -48,7 +53,7 @@ internal static class ParamBytesTable
             // "0x", never "+0x": a spreadsheet takes a leading '+' for a formula.
             row[1] = "0x" + off.ToString("X" + digits, CultureInfo.InvariantCulture);
             row[2] = Spaced(Convert.ToHexString(seg));
-            if (fields != null) row[ParamsCol] = Holders(fields, off);
+            if (fields != null) row[ParamsCol] = Holders(fields, off, seg.Length, data.Length);
             if (seg.Length >= Half) Read32(row, U32Lo, seg[..Half]);
             if (seg.Length >= SegmentSize)
             {
@@ -71,22 +76,25 @@ internal static class ParamBytesTable
         row[col + 4] = BinaryPrimitives.ReadSingleLittleEndian(b).ToString(CultureInfo.InvariantCulture);
     }
 
-    /// <summary>The parameters whose bytes fall in the segment at <paramref name="segStart"/>, by where they sit in it:
-    /// the bare name when a parameter fills the segment (a struct spanning several fills each), lo= / hi= when it fills
-    /// a half, and b&lt;n&gt;= with the byte it starts at otherwise. Bytes no parameter holds (padding) are not named.</summary>
-    private static string Holders(IReadOnlyList<SnapParam> fields, int segStart)
+    /// <summary>The parameters whose bytes fall in the <paramref name="segLen"/> bytes at <paramref name="segStart"/>,
+    /// by where they sit: the bare name when a parameter fills the segment (a struct spanning several fills each), lo= /
+    /// hi= when it fills a half, and b&lt;n&gt;= with the byte it starts at otherwise. Bytes no parameter holds
+    /// (padding) are not named, and neither is a parameter the copy does not reach: a layout can run past the copy
+    /// (a doubtful arm's does). One the copy's end cuts off is marked with a trailing "…".</summary>
+    private static string Holders(IReadOnlyList<SnapParam> fields, int segStart, int segLen, int dataLen)
     {
         var sb = new StringBuilder();
         foreach (var p in fields)
         {
             int start = p.Offset, end = p.Offset + p.Size * Math.Max(1, p.ArrayDim);
-            int s = Math.Max(start, segStart) - segStart, e = Math.Min(end, segStart + SegmentSize) - segStart;
+            int s = Math.Max(start, segStart) - segStart, e = Math.Min(end, segStart + segLen) - segStart;
             if (e <= s) continue;
             if (sb.Length > 0) sb.Append(' ');
             if (s == 0 && e == SegmentSize) sb.Append(p.Name);
             else if (s == 0 && e == Half) sb.Append("lo=").Append(p.Name);
             else if (s == Half && e == SegmentSize) sb.Append("hi=").Append(p.Name);
             else sb.Append('b').Append(s.ToString(CultureInfo.InvariantCulture)).Append('=').Append(p.Name);
+            if (end > dataLen) sb.Append('…');
         }
         return sb.ToString();
     }
@@ -102,9 +110,11 @@ internal static class ParamBytesTable
         return sb.ToString();
     }
 
-    /// <summary>The rows as CSV for the clipboard: the header, then a line per row, nothing padded. Only the params
-    /// cell carries the game's own text (its parameter names), so only it is quoted and formula-armoured, by the
-    /// rules the Call Trace export uses; every other cell is hex, digits or the invariant culture's NaN / Infinity.</summary>
+    /// <summary>The rows as CSV for the clipboard: the header, then a line per row, nothing padded. The params cell
+    /// carries the game's own text (its parameter names), so it is quoted and formula-armoured by the rules the Call
+    /// Trace export uses. Every other cell is hex, digits or the invariant culture's NaN / Infinity / -Infinity, and
+    /// only -Infinity needs the armour: a spreadsheet takes a cell that starts with '-' and is not a number for a
+    /// formula. A negative number is left as it is, since the armour would turn it into text.</summary>
     internal static string Csv(IReadOnlyList<string[]> rows)
     {
         var sb = new StringBuilder();
@@ -114,7 +124,9 @@ internal static class ParamBytesTable
             for (int c = 0; c < r.Length; c++)
             {
                 if (c > 0) sb.Append(',');
-                sb.Append(c == ParamsCol ? CoordCsvCodec.Field(CoordCsvCodec.Armour(r[c])) : r[c]);
+                sb.Append(c == ParamsCol ? CoordCsvCodec.Field(CoordCsvCodec.Armour(r[c]))
+                        : r[c] == NegativeInfinity ? CoordCsvCodec.Armour(r[c])
+                        : r[c]);
             }
             sb.AppendLine();
         }

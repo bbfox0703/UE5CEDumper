@@ -821,9 +821,12 @@ public partial class CallTraceViewModel : ViewModelBase
     [RelayCommand]
     private async Task CopyParamsCsvAsync()
     {
-        if (_paramsCsv.Length == 0) return;
-        bool copied = await ClipboardDelivery.TryAsync(_platform, _paramsCsv);
-        StatusText = copied ? Say("str.CT.Bytes.CopiedCsv", _paramsSegmentCount) : StringLookup("str.CT.Bytes.CopyFailed");
+        // Taken together before the await: a selection made while the clipboard is busy replaces both.
+        string csv = _paramsCsv;
+        int segments = _paramsSegmentCount;
+        if (csv.Length == 0) return;
+        bool copied = await ClipboardDelivery.TryAsync(_platform, csv);
+        StatusText = copied ? Say("str.CT.Bytes.CopiedCsv", segments) : StringLookup("str.CT.Bytes.CopyFailed");
     }
 
     private static void AddParamRows(List<ParamRow> rows, SnapParam p, string prefix, SnapSlot? entry, SnapSlot? after,
