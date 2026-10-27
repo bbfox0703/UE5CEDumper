@@ -27,6 +27,27 @@ builds ≤696 in
 
 -----
 
+## 2026-10-27 (build 3654) — Call Trace reads a call's parameter bytes for you `[PARAM-BYTES-SEGMENTS]`
+
+- **A new Bytes tab in Call Trace.** A call's parameter copies (the block ProcessEvent passes, at the call and after
+  it) used to be one hex string each. The Bytes tab cuts them into 8-byte segments and reads each one: unsigned,
+  signed and float for each 4-byte half, the whole segment as a double, and the whole segment as a 64-bit address
+  with the byte order already swapped, ready to paste into Cheat Engine. When the function's layout was read, the
+  last column names the parameters each segment holds. A Raw choice shows the hex as before.
+- **Copy CSV** puts the segments on the clipboard for a spreadsheet; **Copy raw** copies the hex lines. The status
+  line says whether the copy arrived.
+- Checked live on DumperTest 5.8 Shipping with the published (Native-AOT) build: the 15 parameters of its snapshot
+  probe decode to their round's values (round 175: F = 175.5, D = 43.75, V = (175, -175, 0.5); after the call
+  OutTwice 350, InOut 275, ReturnValue 525), the object parameter's address reads as typed, and both copies reached
+  the clipboard.
+- An independent review found four small faults before release, all fixed: a -Infinity reading reached the CSV
+  bare (a spreadsheet takes it for a formula), parameter names were given for bytes past a short copy, a wide (CJK)
+  name pushed the readings out of line, and the copied-segments count was read after the clipboard wait.
+- Docs: the handover runbook dropped six passages that were no longer true, and five finished documents moved to
+  `docs/archive/` with every link to them updated; the archive keeps both word for word.
+- Tests: dll_core_test 1,328 checks and dll_helpers_test 3,626, 0 failures; C# 6,704 passed, 1 skipped; headless 68;
+  36 gates.
+
 ## 2026-10-27 (build 3653) — Ghostwire: Tokyo is read as UE 4.27 `[GWT-BRANCH]` `[VND584-04]` `[VND584-05]`
 
 - **A game built from a licensee's own engine branch is now recognised.** Ghostwire: Tokyo carries no Epic release

@@ -8,7 +8,7 @@
 > `Macht`'s `AOBScan` — and CE is the reference implementation they are measured against. §14 in
 > particular is the direct precedent: CE's speed comes from **alignment stride plus thread
 > fan-out, not from a clever inner loop.** Cross-reference
-> [simd-scanning-notes.md](simd-scanning-notes.md) and
+> [simd-scanning-notes.md](archive/simd-scanning-notes.md) (archived: the scanner it studied has shipped) and
 > [aob-block-library-eval.md](aob-block-library-eval.md). **This is a mirror, not the master.**
 >
 > **Master copy:** `<private-ce-repo>/docs/Memory-Scanning-Internals.md` — edit there

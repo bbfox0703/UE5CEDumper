@@ -1210,7 +1210,7 @@ private:
 public:
 	// ========================================================
 	// Review 7 live hosts (2026-09-25) -- APPENDED, so no existing field moves.
-	// docs/review7-live-plan.md: R7-B-02 / R7-B-04 / R7-S1 (the TOptional weak / soft / lazy
+	// docs/archive/review7-live-plan.md: R7-B-02 / R7-B-04 / R7-S1 (the TOptional weak / soft / lazy
 	// arms) and R7-S11 (a container nested in a struct).
 	// ========================================================
 

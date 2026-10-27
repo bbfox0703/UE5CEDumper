@@ -16,7 +16,7 @@ function of the round, so a decoded snapshot is checked from its Round alone.
 --fixture-check only asks whether the package under test carries the probes: a plain recording of a few seconds,
 then every probe must be in pe_profile_get with calls. It is how a stale package is told from a broken DLL.
 
-The full run (docs/live-funcs-step2-items.md, P2), each check named after its item:
+The full run (docs/archive/live-funcs-step2-items.md, P2), each check named after its item:
   F1  every row carries a 4-int fname_key, the same on a second fetch; per_frame on SnapProbe_PerFrame only
   F2  a tick by name scopes the trace; a name never called this recording is accepted; a key whose class string was
       altered is refused, alone refuses the Start, and leaves nothing allocated

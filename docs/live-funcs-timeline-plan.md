@@ -2,7 +2,7 @@
 
 **Status: STEP 1 (the timeline) BUILT, build 3633, 2026-10-07; STEP 2 (parameter snapshots, following functions by
 name) BUILT, builds 3639-3640, 2026-10-08 -- checked live on DumperTest58 and Avowed, see "Step 2 built" at the end
-(the ledger [live-funcs-step2-items.md](live-funcs-step2-items.md)); STEP 3 (native stack) BUILT in build 3641 (2026-10-08),
+(the ledger [live-funcs-step2-items.md](archive/live-funcs-step2-items.md), archived); STEP 3 (native stack) BUILT in build 3641 (2026-10-08),
 proven live on DumperTest58 -- see "Step 3 design" and "Step 3 built" at the end ([live-funcs-step3-design.md](live-funcs-step3-design.md), the ledger
 [live-funcs-step3-items.md](live-funcs-step3-items.md)).** Step 1 was reviewed and checked live on DumperTest 5.4 and DumperTest58 (UE 5.8) — see "Step 1
 built" at the end. **Decided 2026-10-06 and 2026-10-07:** T1 (a ring buffer, 32–512 MB), T3, T4, T5, T6, T7 and T8
@@ -490,7 +490,7 @@ in total; the next trace load reports both.
 - the Call Trace list and detail-pane fixes ("Also built with step 2").
 
 The maintainer's decisions are T10 to T14 in "Decisions". This section is what they settle. A "Step 2 built" section will follow it, as step 1's did. The build, item by item with each red test and
-mutation, is the ledger [live-funcs-step2-items.md](live-funcs-step2-items.md).
+mutation, is the ledger [live-funcs-step2-items.md](archive/live-funcs-step2-items.md) (archived).
 
 ### What is decided, and why
 
@@ -695,7 +695,7 @@ Each item is red first, one per commit, with its test mutation-checked. Fern and
 
 ## Step 2 built (build 3640, 2026-10-08)
 
-Every item of the ledger [live-funcs-step2-items.md](live-funcs-step2-items.md) is closed, each with its red, its
+Every item of the ledger [live-funcs-step2-items.md](archive/live-funcs-step2-items.md) is closed, each with its red, its
 green and the mutations its tests had to kill. Built in one unattended run, 2026-10-07 22:40 to 2026-10-08; U10 / U11
 and U14 were built in separate worktrees and merged.
 

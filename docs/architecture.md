@@ -85,14 +85,13 @@ UE5CEDumper/
 │   ├── test-games.md               ← 30+ test games with UE version + status
 │   ├── naming-convention.md        ← Frieren-themed file / namespace mapping
 │   ├── aobmaker-integration.md     ← AOBMaker CE Plugin pipe bridge spec
-│   ├── simd-scanning-notes.md      ← AOBMaker SIMD scanning research (reference)
 │   ├── CE-Bugs-Minesweeper.md      ← CE-specific bug notes (evergreen)
 │   ├── archive/                    ← Outdated design docs preserved for history
 │   └── private/                    ← Private/scratch notes (gitignored if listed in .gitignore)
 │
 ├── ui/                             ← C# Avalonia UI App
 │   ├── UE5DumpUI.sln
-│   ├── UE5DumpUI.Tests/            ← xUnit test project (246 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
+│   ├── UE5DumpUI.Tests/            ← xUnit test project (247 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
 │   ├── UE5DumpUI.HeadlessTests/    ← real Avalonia controls on the headless platform (Avalonia.Headless, same version as the app); its OWN process because a headless session replaces the global UI Dispatcher the view-model tests must not share
 │   └── UE5DumpUI/
 │       ├── UE5DumpUI.csproj        ← .NET 10 windows, Avalonia 12.1.0, Native AOT

@@ -678,7 +678,7 @@ forward as reasons a row needed a commercial game.
 
 ⛔⛔ **AND THE SEARCH ITSELF HAS A FAILURE MODE I COMMITTED THE SAME HOUR.** Auditing that
 checklist I wrote two rows up as *"no closure found"* — because I had grepped only
-`verification-register.md`. Both were closed: one in `auto-verification-classification-2026-08-23.md`,
+`verification-register.md`. Both were closed: one in `auto-verification-classification-2026-08-23.md` (archived since),
 one in `docs/archive/`. **A closure is recorded where the WORK happened, not where the row lives.**
 So rule 1 above is not "grep the whole file", it is:
 
@@ -3682,6 +3682,11 @@ architecture or UX changes in these areas.
     CE record started while the features are off is left alone (`[EXPOFF-ROUND3-PAUSED]`).
   - `IsCleanFName` accepts a short CJK mojibake as a name, a known issue kept on purpose: refusing it would refuse
     genuine short CJK names (`[UE4-WIDE-FNAME-CLEANCHECK]`).
+- **Call Trace's Bytes tab cuts a parameter copy into fixed 8-byte segments, not by parameter size** (maintainer,
+  2026-10-27, `[PARAM-BYTES-SEGMENTS]`). The raw bytes matter most when the function's layout could not be read, and
+  a cut by size needs that layout; a params column names what each segment holds when the layout is there. ⛔ Do not
+  re-propose a by-parameter view as a replacement. The params column is the last one because it is the game's own text:
+  a wide (CJK) name before the readings pushes them out of line on screen.
 
 Evaluations that concluded "do not build" live in the repo rather than here — see [README.md](README.md)'s
 index for `text-translation-eval.md` and `multipipe-eval.md`; `Nibble-Mask-Evaluation.md` is in the

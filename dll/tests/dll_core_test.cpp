@@ -8584,7 +8584,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: the arm rules -- a name's key, what one arm copies, when it copies after the call");
-        // docs/live-funcs-step2-items.md, N0. Pure rules: the ring a choice gets, what each arming of it copies.
+        // docs/archive/live-funcs-step2-items.md, N0. Pure rules: the ring a choice gets, what each arming of it copies.
         auto u = [](uint64_t n) { return std::to_string(n); };
         check("a ring's slot: the parameter block rounded to 8", Linie::RingCapFor(41) == 48 && Linie::RingCapFor(40) == 40,
               u(Linie::RingCapFor(41)).c_str());
@@ -8620,7 +8620,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: arming by name -- the table's first read of an address arms it for a name it matches");
-        // docs/live-funcs-step2-items.md, N1 (T10): a tick or a choice is a name, and the table reads every function
+        // docs/archive/live-funcs-step2-items.md, N1 (T10): a tick or a choice is a name, and the table reads every function
         // at its first call anyway. A stub reader stands in for Ubel's: the function's FName is its address's low 16
         // bits, its class's FName 7 -- except 0xC1, whose FName carries a Number, and 0xC2, whose class is 8.
         static int s_armReads = 0;
@@ -8715,7 +8715,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: arm upkeep -- a key that changes disarms, a reload is a new arm, an armed class is checked");
-        // docs/live-funcs-step2-items.md, N2. 0xF0 holds whatever the statics say; any other address is a function
+        // docs/archive/live-funcs-step2-items.md, N2. 0xF0 holds whatever the statics say; any other address is a function
         // nobody follows. The class reader counts its reads: only armed addresses pay for it.
         static int32_t  s_fn = 0x50, s_cls = 0x90;
         static uint64_t s_outer = 0x9000;
@@ -8825,7 +8825,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: the arm log's capacity and what became of each followed name");
-        // docs/live-funcs-step2-items.md, N3. Every address 0xBx is the same function by name (a class reloaded at
+        // docs/archive/live-funcs-step2-items.md, N3. Every address 0xBx is the same function by name (a class reloaded at
         // each new address); 0xC is nobody's. A log with room for one arm. s_reload moves 0xB1's class: a reload at
         // the same address, which is the same address for the count.
         static uint64_t s_reload = 0;
@@ -8900,7 +8900,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: arms handed to the background read, sealed at Stop, freed with the trace");
-        // docs/live-funcs-step2-items.md, N4. Every 0xBx address is the followed function (a reload per address).
+        // docs/archive/live-funcs-step2-items.md, N4. Every 0xBx address is the followed function (a reload per address).
         auto reader = [](uintptr_t f, Linie::FuncIdentity& out) -> bool {
             out.nameIndex = ((f & 0xF0) == 0xB0) ? 0x77 : static_cast<int32_t>(f & 0xFFFF);
             out.classIndex = 7;
@@ -9018,7 +9018,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: the trace's scope by name -- a ticked name opens it, a waiting tick records nothing");
-        // docs/live-funcs-step2-items.md, T1 (T10). The scope is the Start's: fixed from what was ASKED.
+        // docs/archive/live-funcs-step2-items.md, T1 (T10). The scope is the Start's: fixed from what was ASKED.
         auto u = [](uint64_t n) { return std::to_string(n); };
         Linie::Reset();
         Linie::FreeTrace();
@@ -9077,7 +9077,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: the snapshot rings -- one per choice in one allocation, the same K, freed with the trace");
-        // docs/live-funcs-step2-items.md, S1 (T12). Two rings of 16 and 40 bytes: slots of 24 + 16 and 24 + 40, each
+        // docs/archive/live-funcs-step2-items.md, S1 (T12). Two rings of 16 and 40 bytes: slots of 24 + 16 and 24 + 40, each
         // ring 64-aligned. K = (bytes - 64 * rings) / (40 + 64).
         auto u = [](uint64_t n) { return std::to_string(n); };
         auto cfg = [](uint64_t snapBytes) {
@@ -9163,7 +9163,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: the entry copy -- a chosen call's parameters into its ring, the entry record flagged");
-        // docs/live-funcs-step2-items.md, S2. A copier that is plain memcpy stands in for Macht's.
+        // docs/archive/live-funcs-step2-items.md, S2. A copier that is plain memcpy stands in for Macht's.
         auto u = [](uint64_t n) { return std::to_string(n); };
         Linie::Reset();
         Linie::FreeTrace();
@@ -9223,7 +9223,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: the copy after the call -- its own slot, the same entry, only when owed, only this recording");
-        // docs/live-funcs-step2-items.md, S3 (TR3: never a write-back).
+        // docs/archive/live-funcs-step2-items.md, S3 (TR3: never a write-back).
         auto u = [](uint64_t n) { return std::to_string(n); };
         auto memcpyCopier = [](uintptr_t src, void* dst, size_t n) -> bool {
             memcpy(dst, reinterpret_cast<const void*>(src), n); return true;
@@ -9285,7 +9285,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: a chosen call the scope would not record is recorded alone; snapshots-only; excluded kept");
-        // docs/live-funcs-step2-items.md, S4 (T11). A1 is ticked by name, A7 chosen (ring 0).
+        // docs/archive/live-funcs-step2-items.md, S4 (T11). A1 is ticked by name, A7 chosen (ring 0).
         auto u = [](uint64_t n) { return std::to_string(n); };
         uint8_t buf[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
         const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
@@ -9364,7 +9364,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: the budget -- per ring and in all, per second, the first calls of each second kept");
-        // docs/live-funcs-step2-items.md, S5 (T9 item 3: the budget is the guarantee). A clock that is set, in
+        // docs/archive/live-funcs-step2-items.md, S5 (T9 item 3: the budget is the guarantee). A clock that is set, in
         // QueryPerformanceCounter ticks: the budget's second is ticks / the frequency the trace reports.
         static uint64_t s_now = 0;
         Linie::SetTraceClockForTest([]() -> uint64_t { return s_now; });
@@ -9487,7 +9487,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: a copy that cannot be made -- no block, a fault, a cut -- and TR2 with the copier inside");
-        // docs/live-funcs-step2-items.md, S6. The copier is the step-2 work that runs inside the hook's in-flight
+        // docs/archive/live-funcs-step2-items.md, S6. The copier is the step-2 work that runs inside the hook's in-flight
         // section; a copier that blocks or throws stands in for a fault in the game's memory.
         static int      s_mode = 0;   // 0 memcpy, 1 fails, 2 blocks once, 3 throws once
         static HANDLE   s_in   = CreateEventW(nullptr, TRUE, FALSE, nullptr);
@@ -9627,7 +9627,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: the rings' windows -- a busy ring laps only itself; orphans left out; paging");
-        // docs/live-funcs-step2-items.md, S7. K = 8 for both rings: 64 * 2 + 8 * (24 + 8) * 2 bytes.
+        // docs/archive/live-funcs-step2-items.md, S7. K = 8 for both rings: 64 * 2 + 8 * (24 + 8) * 2 bytes.
         auto u = [](uint64_t n) { return std::to_string(n); };
         uint8_t buf[8] = {};
         const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
@@ -10395,7 +10395,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: a parameter's way -- in, const reference, out, in-out, return -- from its flags");
-        // docs/live-funcs-step2-items.md, B1. CPF_Parm 0x80, CPF_OutParm 0x100, CPF_ReturnParm 0x400, CPF_ConstParm
+        // docs/archive/live-funcs-step2-items.md, B1. CPF_Parm 0x80, CPF_OutParm 0x100, CPF_ReturnParm 0x400, CPF_ConstParm
         // 0x2, CPF_ReferenceParm 0x08000000. The const-ref value is UHT's own for a `const FString&` parameter.
         using PK = Ubel::ParamKind;
         check("a plain parameter is in", Ubel::ParamKindOf(0x80) == PK::In);
@@ -10408,7 +10408,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: the arms' layouts read in the background -- checked live before and after, reused by key");
-        // docs/live-funcs-step2-items.md, B5. Stub checks: no game memory. Every arm's function is 0xBx (or 0xC1 for
+        // docs/archive/live-funcs-step2-items.md, B5. Stub checks: no game memory. Every arm's function is 0xBx (or 0xC1 for
         // reuse); its live key, slot state and layout come from the statics below.
         using LS = Linie::ArmLayoutState;
         static int32_t s_liveName = 0x50;   // 0xC1's live FName, moved between passes
@@ -10496,7 +10496,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: a parameter copy decoded -- numbers, bools, enums, names, structs, arrays, what is missing");
-        // docs/live-funcs-step2-items.md, B6. A layout by hand, a copy of plain bytes, a stub for FName text: nothing
+        // docs/archive/live-funcs-step2-items.md, B6. A layout by hand, a copy of plain bytes, a stub for FName text: nothing
         // here reads the game.
         using PK = Ubel::ParamKind;
         using SM = Ubel::SnapMark;
@@ -10575,7 +10575,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: a parameter copy decoded -- objects, weak and soft pointers, strings and containers");
-        // docs/live-funcs-step2-items.md, B7. Pointers name what is there NOW (marked so); string and container data
+        // docs/archive/live-funcs-step2-items.md, B7. Pointers name what is there NOW (marked so); string and container data
         // was not copied, only their headers. 0x1000 is a live Pawn_0; weak {5, 7} resolves to it.
         using SM = Ubel::SnapMark;
         auto field = [](const char* name, const char* type, int32_t off, int32_t size) {
@@ -10697,7 +10697,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: a slot decoded with its own arm's layout -- two loads of one name, arms without one");
-        // docs/live-funcs-step2-items.md, F5. The pipe's pe_snap_get decodes through this; nothing here reads the game.
+        // docs/archive/live-funcs-step2-items.md, F5. The pipe's pe_snap_get decodes through this; nothing here reads the game.
         using LS = Linie::ArmLayoutState;
         auto lay = [](int32_t off) {
             auto L = std::make_shared<Ubel::ParamLayout>();
@@ -10736,7 +10736,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: a function's name key -- read with loads only, checked against the names the UI shows");
-        // docs/live-funcs-step2-items.md, B2 (T10). ⛔ POOL-FAKING: its own UE4-style pool, first (the TMAPGEOM header).
+        // docs/archive/live-funcs-step2-items.md, B2 (T10). ⛔ POOL-FAKING: its own UE4-style pool, first (the TMAPGEOM header).
         static uint8_t nkEntry[24][0x40] = {};
         static uintptr_t nkChunk[25] = {};
         const char* nkNames[24] = {};
@@ -10819,7 +10819,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: a chosen function's parameter layout -- its own chain, CPF_Parm only, both property models");
-        // docs/live-funcs-step2-items.md, B3. ⛔ POOL-FAKING: own pool, first. The layouts the project supports (the
+        // docs/archive/live-funcs-step2-items.md, B3. ⛔ POOL-FAKING: own pool, first. The layouts the project supports (the
         // maintainer, 2026-10-07: UE4 in the tests): FField on UE5 / 4.25+, standard and case-preserving headers;
         // UProperty on 4.15 (4.11-4.17: the first subclass field at +0x28) and 4.22 (4.18-4.24: +0x2C).
         static uint8_t plEntry[22][0x40] = {};
@@ -10975,7 +10975,7 @@ int main() {
 
     {
         blk("LIVEFUNCS-STEP2: the layout by value -- struct members (supers, nesting, a cap), enum tables read fresh");
-        // docs/live-funcs-step2-items.md, B4. ⛔ POOL-FAKING: own pool, first. FField and UProperty 4.22 (UE4 in the
+        // docs/archive/live-funcs-step2-items.md, B4. ⛔ POOL-FAKING: own pool, first. FField and UProperty 4.22 (UE4 in the
         // tests). The second design critic: WalkClassEx's memo and s_enumCache are address-keyed and never erased, so
         // under widget reload churn a freed struct's or enum's address can hold another -- the capture uses neither.
         enum : int { nFunction = 1, nInt, nStructP, nBoolP, nEnumP, nByteP, nFloatP, nHit, nKind, nLevel, nLooped,

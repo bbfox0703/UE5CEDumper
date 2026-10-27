@@ -1,7 +1,7 @@
 --[==[
   r7_mailbox_latch.lua -- drive the CE-side shared mailbox latch from CE's Lua Engine.
 
-  For Review 7 rows R7-C-01, R7-C-03 and R7-S3 (docs/review7-live-plan.md sessions 19 / 23): the freeze helper and
+  For Review 7 rows R7-C-01, R7-C-03 and R7-S3 (docs/archive/review7-live-plan.md sessions 19 / 23): the freeze helper and
   the invoke helper share one mailbox and one latch (_ue5_invoke_busy / _ue5_invoke_stale_mb). This rig loads a
   given pair of helpers, reads the latch and the mailbox, and issues ONE freeze rescan or ONE invoke on demand, so a
   timeout can be provoked (suspend the game with tools/verify/suspend.py) and what happens next observed.

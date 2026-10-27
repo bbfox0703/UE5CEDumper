@@ -107,6 +107,13 @@ expected result.
 that is the point of this file. An unswept build is invisible to `preflight.py`, which walks
 `sweep.sh` outward to files and so cannot see a binary no row mentions.
 
+⚠ **None of the three 5.3 rows can be launched**: their `Content` folders are empty (found 2026-09-25,
+re-checked 2026-10-27), so they serve as AOB oracles only. The launchable stock 5.3 host is the staged DebugGame
+build `D:\Unreal Projects\ThirdPerson53\Saved\StagedBuilds\Windows\ThirdPerson53\Binaries\Win64\ThirdPerson53-Win64-DebugGame.exe`, whose paks are present.
+Start it with `-windowed`, wait about 60 s, then `inject.py --name ThirdPerson53-Win64-DebugGame`. Review 7's
+session 4 ran on it (copied 2026-10-27 from the [archived live plan](archive/review7-live-plan.md)); what it
+showed is on `todo.md`'s `[R7-B-01]` and `[R7-X4]` rows.
+
 ### Deliberately not swept
 
 * **4.27.2 FirstPerson ×3 and 3rdPerson ×3 (6 binaries).** Built to test whether the *template*

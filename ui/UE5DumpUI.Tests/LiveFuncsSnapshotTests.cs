@@ -8,7 +8,7 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// [LIVEFUNCS-STEP2] Live Funcs' parameter snapshots: choosing by name (U5), the estimate (U6), the bulk choice (U7)
-/// and the view's wiring (U8). docs/live-funcs-step2-items.md. [LIVEFUNCS-STEP3] The native-stack choice beside them,
+/// and the view's wiring (U8). docs/archive/live-funcs-step2-items.md. [LIVEFUNCS-STEP3] The native-stack choice beside them,
 /// with its view, budget, per-frame question and estimate: the S3-U items of docs/live-funcs-step3-items.md.
 /// Clear choices: the one clear that drops the trace's ticks with them. [LF-COMPACT-TOP] The controls above the table,
 /// made smaller: what each still says and when.

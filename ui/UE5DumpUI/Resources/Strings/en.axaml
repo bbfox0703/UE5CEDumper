@@ -1204,6 +1204,18 @@
     <sys:String x:Key="str.CT.Param.Changed">≠</sys:String>
     <sys:String x:Key="str.Tip.CT.Param.Changed">Its bytes differ between the copy at the call and the copy after it.</sys:String>
     <sys:String x:Key="str.Tip.CT.Param.Hex">The raw copies, as the DLL took them: select and copy.</sys:String>
+    <sys:String x:Key="str.CT.Tab.Bytes">Bytes</sys:String>
+    <sys:String x:Key="str.CT.Bytes.Segments">8-byte segments</sys:String>
+    <sys:String x:Key="str.Tip.CT.Bytes.Segments">The parameter copies cut into 8-byte segments. Each segment is read as two 32-bit halves (lo = its first 4 bytes, hi = the next 4), unsigned, signed and float; as one double; and as a 64-bit address with the byte order already swapped, ready to paste into Cheat Engine. Every reading is little-endian, as the game wrote the bytes; a short last segment gets only the readings its bytes cover. When the function's layout was read, the last column names the parameters each segment holds (lo= / hi= for a half, b2= for the byte one starts at, … for one the copy cuts off).</sys:String>
+    <sys:String x:Key="str.CT.Bytes.Raw">Raw</sys:String>
+    <sys:String x:Key="str.Tip.CT.Bytes.Raw">The copies as the DLL took them: one line per copy, at the call and after it.</sys:String>
+    <sys:String x:Key="str.CT.Bytes.CopyRaw">Copy raw</sys:String>
+    <sys:String x:Key="str.Tip.CT.Bytes.CopyRaw">Copy the raw view as it is shown: one line per copy.</sys:String>
+    <sys:String x:Key="str.CT.Bytes.CopyCsv">Copy CSV</sys:String>
+    <sys:String x:Key="str.Tip.CT.Bytes.CopyCsv">Copy the segments as CSV: a header line, then one line per segment, nothing padded, ready for a spreadsheet. The copy column says which copy a segment is from (at_call or after).</sys:String>
+    <sys:String x:Key="str.CT.Bytes.CopiedRaw">Copied the raw bytes.</sys:String>
+    <sys:String x:Key="str.CT.Bytes.CopiedCsv">Copied {0} segment(s) as CSV.</sys:String>
+    <sys:String x:Key="str.CT.Bytes.CopyFailed">Not copied, so do not paste: the clipboard still holds what was there before. Try again.</sys:String>
     <sys:String x:Key="str.CT.Param.Marker">(p)</sys:String>
     <sys:String x:Key="str.Tip.CT.Param.Marker">This call carries a copy of its parameters: see the Parameters tab.</sys:String>
     <sys:String x:Key="str.CT.Stack.Marker">(s)</sys:String>

@@ -357,6 +357,92 @@ public class CallTraceViewModelTests
         Assert.Equal(new[] { "str.CT.Param.NotChosen" }, vm.Params(t.FindBySeq(0)).Notes);
     }
 
+    private static int Cell(string column) => Array.IndexOf(UE5DumpUI.Helpers.ParamBytesTable.Columns, column);
+
+    [Fact]
+    public async Task The_Bytes_tab_cuts_both_copies_into_segments_named_by_the_layout()
+    {
+        var (vm, _) = MakeVm(DumpForParams());
+        await vm.LoadCommand.ExecuteAsync(null);
+        var t = vm.Trace!;
+
+        var b = vm.Params(t.FindBySeq(1));
+        Assert.Equal(new[] { "at_call 0x00 lo=X hi=Out", "at_call 0x08 lo=ReturnValue",
+                             "after 0x00 lo=X hi=Out", "after 0x08 lo=ReturnValue" },
+                     b.Segments.Select(r => $"{r[Cell("copy")]} {r[Cell("offset")]} {r[Cell("params")]}"));
+        Assert.Equal("9", b.Segments[3][Cell("u32_lo")]);          // the return value, after the call
+        // A load with no layout still gets its segments, with no names.
+        var raw = Assert.Single(vm.Params(t.FindBySeq(5)).Segments);
+        Assert.Equal("01 02", raw[Cell("raw")]);
+        Assert.Equal("", raw[Cell("params")]);
+        Assert.Empty(vm.Params(t.FindBySeq(2)).Segments);       // over budget: no bytes at all
+        Assert.Empty(vm.Params(t.FindBySeq(0)).Segments);       // not chosen
+    }
+
+    [Fact]
+    public async Task Copy_CSV_and_Copy_raw_give_what_the_Bytes_tab_shows_and_say_whether_it_arrived()
+    {
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var (vm, _) = MakeVm(DumpForParams(), platform);
+        vm.StringLookup = En;
+        await vm.LoadCommand.ExecuteAsync(null);
+        vm.ExpandAllCommand.Execute(null);
+        var calls = Enumerable.Range(0, vm.Rows.Count).Select(k => ((CallTraceRowList)vm.Rows).CallAt(k)).ToArray();
+        vm.SelectedIndex = Array.IndexOf(calls, vm.Trace!.FindBySeq(1));
+        Assert.True(vm.SelectedIndex >= 0);
+
+        var segs = vm.Params(vm.Trace.FindBySeq(1)).Segments;
+        Assert.Equal(UE5DumpUI.Helpers.ParamBytesTable.Csv(segs), vm.ParamsCsv);
+        Assert.Equal(UE5DumpUI.Helpers.ParamBytesTable.Aligned(segs), vm.ParamsSegments);
+        Assert.NotEqual("", vm.ParamsSegments);
+        await vm.CopyParamsCsvCommand.ExecuteAsync(null);
+        Assert.Equal(vm.ParamsCsv, platform.LastClipboard);
+        Assert.Equal(Line("str.CT.Bytes.CopiedCsv", 4), vm.StatusText);
+        await vm.CopyParamsRawCommand.ExecuteAsync(null);
+        Assert.Equal(vm.ParamsHex, platform.LastClipboard);
+        Assert.Equal(Line("str.CT.Bytes.CopiedRaw"), vm.StatusText);
+
+        // No call selected: nothing to copy, and the clipboard keeps what it had.
+        string? held = platform.LastClipboard;
+        vm.SelectedIndex = -1;
+        Assert.Equal("", vm.ParamsSegments);
+        Assert.Equal("", vm.ParamsCsv);
+        await vm.CopyParamsCsvCommand.ExecuteAsync(null);
+        await vm.CopyParamsRawCommand.ExecuteAsync(null);
+        Assert.Equal(held, platform.LastClipboard);
+        Assert.Equal(Line("str.CT.Bytes.CopiedRaw"), vm.StatusText);
+
+        // Nothing reached the clipboard: the status says so, not that it was copied.
+        var (none, _) = MakeVm(DumpForParams());
+        none.StringLookup = En;
+        await none.LoadCommand.ExecuteAsync(null);
+        none.ExpandAllCommand.Execute(null);
+        var noneCalls = Enumerable.Range(0, none.Rows.Count).Select(k => ((CallTraceRowList)none.Rows).CallAt(k)).ToArray();
+        none.SelectedIndex = Array.IndexOf(noneCalls, none.Trace!.FindBySeq(1));
+        await none.CopyParamsCsvCommand.ExecuteAsync(null);
+        Assert.Equal(Line("str.CT.Bytes.CopyFailed"), none.StatusText);
+        await none.CopyParamsRawCommand.ExecuteAsync(null);
+        Assert.Equal(Line("str.CT.Bytes.CopyFailed"), none.StatusText);
+    }
+
+    [Fact]
+    public void The_Bytes_tabs_two_radios_are_one_choice_and_an_uncheck_does_not_flip_it()
+    {
+        var (vm, _) = MakeVm(DumpForParams());
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        Assert.True(vm.BytesAsSegments);
+        Assert.False(vm.BytesAsRaw);
+
+        vm.BytesAsRaw = true;
+        Assert.False(vm.BytesAsSegments);
+        Assert.Contains(nameof(CallTraceViewModel.BytesAsRaw), raised);
+        vm.BytesAsRaw = false;                                   // the Raw radio unchecking as Segments is checked
+        Assert.False(vm.BytesAsSegments);
+        vm.BytesAsSegments = true;
+        Assert.False(vm.BytesAsRaw);
+    }
+
     [Fact]
     public async Task Only_calls_with_parameters_works_with_the_filter_box_empty()
     {
@@ -1806,11 +1892,27 @@ public class CallTraceViewModelTests
     }
 
     [Fact]
+    public void The_Bytes_tab_binds_both_views_and_both_copies_and_the_segments_do_not_wrap()
+    {
+        var tab = PanelAxaml().Descendants(Av + "TabItem")
+                              .Single(t => (string?)t.Attribute("Header") == "{StaticResource str.CT.Tab.Bytes}");
+        var boxes = tab.Descendants(Av + "TextBox").ToDictionary(b => (string?)b.Attribute("Text") ?? "");
+        var segments = boxes["{Binding ParamsSegments, Mode=OneWay}"];
+        Assert.Equal("NoWrap", (string?)segments.Attribute("TextWrapping"));   // a wrapped segment leaves its columns
+        Assert.Equal("{Binding BytesAsSegments}", (string?)segments.Attribute("IsVisible"));
+        Assert.Equal("{Binding BytesAsRaw}", (string?)boxes["{Binding ParamsHex, Mode=OneWay}"].Attribute("IsVisible"));
+        Assert.Equal(new[] { "{Binding BytesAsSegments, Mode=TwoWay}", "{Binding BytesAsRaw, Mode=TwoWay}" },
+                     tab.Descendants(Av + "RadioButton").Select(b => (string?)b.Attribute("IsChecked")));
+        Assert.Equal(new[] { "{Binding CopyParamsCsvCommand}", "{Binding CopyParamsRawCommand}" },
+                     tab.Descendants(Av + "Button").Select(b => (string?)b.Attribute("Command")));
+    }
+
+    [Fact]
     public void The_Call_stack_tab_sits_between_Call_and_Parameters_with_a_compiled_unsorted_grid()
     {
         var doc = PanelAxaml();
         Assert.Equal(new[] { "{StaticResource str.CT.Tab.Call}", "{StaticResource str.CT.Tab.Stack}",
-                             "{StaticResource str.CT.Tab.Params}" },
+                             "{StaticResource str.CT.Tab.Params}", "{StaticResource str.CT.Tab.Bytes}" },
                      doc.Descendants(Av + "TabItem").Select(t => (string?)t.Attribute("Header")));
         var tab = doc.Descendants(Av + "TabItem")
                      .Single(t => (string?)t.Attribute("Header") == "{StaticResource str.CT.Tab.Stack}");

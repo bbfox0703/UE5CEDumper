@@ -86,7 +86,7 @@ without one; it does not guess the slot from the page position, because the hand
   `…FasterThanTheInterval_ReportsEverySecondClass`.
 - `6897e913` fixes `DumpAllService` comments that no longer matched the code: a plan-phase "will", "obj.FullPath is
   always empty" (it is not with `include_path`), and the header's `walk_class` (the walk uses `walk_class_batch`).
-- `76556244`: `scripts/analysis/README.md` no longer says the file is 50–500 MB. `docs/review7-live-recipes.json`
+- `76556244`: `scripts/analysis/README.md` no longer says the file is 50–500 MB. `docs/archive/review7-live-recipes.json`
   still tells a rig operator a run takes "about 30-60 s"; left as an internal note.
 - The 3616 dev-log entry says the status line "updates every half second". It updates **at most** twice a second,
   and only after a class is written, so one slow class walk still leaves it quiet.

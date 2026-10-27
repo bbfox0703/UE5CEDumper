@@ -121,7 +121,7 @@ measured".
 >
 > ⚠⚠ **AND HERE IS THE TRAP, COMMITTED WHILE WRITING THIS VERY TABLE:** D and F were first written
 > up as *"no closure found"* because only `verification-register.md` had been grepped. Both are
-> closed — D in `auto-verification-classification-2026-08-23.md`, F in `docs/archive/`. **A closure
+> closed — D in `auto-verification-classification-2026-08-23.md` (archived since), F in `docs/archive/`. **A closure
 > is recorded where the work happened, not where the row lives.** Always `grep -rn` the whole of
 > `docs/`, archive included, before concluding anything here is open.
 
