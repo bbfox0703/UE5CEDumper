@@ -1445,6 +1445,9 @@ public class TeleportViewModelTests
 
         Assert.Equal("Queued", vm.DebugCameraState);
         Assert.Contains("QUEUED", vm.StatusText);
+        // [DBGCAM-QUEUEDON-UNDO-TEXT] The reason not to press again must hold on every engine.
+        Assert.Contains("Do not press Force ON again: the toggle is already queued.", vm.StatusText);
+        Assert.DoesNotContain("undo", vm.StatusText);
         Assert.DoesNotContain("no live CheatManager", vm.StatusText);
     }
 

@@ -1067,7 +1067,10 @@ public class ConsoleViewModelTests
     public async Task Force_reports_a_queued_toggle_as_queued_not_as_a_failure()
     {
         // [W3-DEBUGCAM-QUEUED] -5: the toggle timed out on the game thread and STAYS QUEUED -- it will run. Read as "no
-        // live CheatManager", it invited a second Force ON, and the two drained ON then OFF.
+        // live CheatManager", it invited a second Force ON, which queued a second toggle behind the first.
+        // [DBGCAM-QUEUEDON-UNDO-TEXT] The advice not to press again stays, but its reason must hold on every engine: what
+        // the second toggle does when it drains depends on the engine (on stock UE 4.18-5.7 nothing, by
+        // [DEBUGCAM-QUEUED-OFF-NOESCALATE]'s reading), so "a second toggle would undo the first" was not the reason.
         var fake = new FakeDumpService { SetDebugCameraResult = Constants.DebugCameraToggleQueuedResult };
         var vm = CreateVm(fake);
         vm.SeedForTests(DebugCamEntries());
@@ -1076,8 +1079,31 @@ public class ConsoleViewModelTests
 
         Assert.Equal("Queued", vm.DebugCameraState);
         Assert.Contains("QUEUED", vm.StatusText);
-        Assert.Contains("Do not press Force ON again", vm.StatusText);
+        Assert.Contains("Do not press Force ON again: the toggle is already queued.", vm.StatusText);
+        Assert.DoesNotContain("undo", vm.StatusText);
         Assert.DoesNotContain("no live CheatManager", vm.StatusText);
+    }
+
+    [Fact]
+    public void Queued_texts_in_en_axaml_are_the_fallbacks_and_promise_no_undo()
+    {
+        // [DBGCAM-QUEUEDON-UNDO-TEXT] The UI shows en.axaml's copy and a headless test sees only the literal fallback, so
+        // both copies are pinned here: the same sentence, and neither queued-ON copy claims the second toggle undoes.
+        var axaml = System.IO.File.ReadAllText(
+            NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        string En(string key)
+        {
+            var open = $"x:Key=\"{key}\">";
+            int start = axaml.IndexOf(open, System.StringComparison.Ordinal);
+            Assert.True(start >= 0, $"{key} is missing from en.axaml");
+            start += open.Length;
+            int end = axaml.IndexOf("</sys:String>", start, System.StringComparison.Ordinal);
+            return System.Net.WebUtility.HtmlDecode(axaml[start..end]);
+        }
+
+        Assert.Equal(UE5DumpUI.Helpers.DebugCameraText.Queued(wantOn: true), En(UE5DumpUI.Helpers.DebugCameraText.KeyQueuedOn));
+        Assert.Equal(UE5DumpUI.Helpers.DebugCameraText.Queued(wantOn: false), En(UE5DumpUI.Helpers.DebugCameraText.KeyQueuedOff));
+        Assert.DoesNotContain("undo", En(UE5DumpUI.Helpers.DebugCameraText.KeyQueuedOn));
     }
 
     [Fact]

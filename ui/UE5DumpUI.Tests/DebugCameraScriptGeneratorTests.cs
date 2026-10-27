@@ -87,8 +87,10 @@ public class DebugCameraScriptGeneratorTests
     }
 
     // [W3-DEBUGCAM-QUEUED] -5: the toggle STAYS QUEUED and will run. Read as "state ~= 1", [ENABLE] said the game refused
-    // and UNTICKED -- and a second tick queued a second toggle, the two draining ON then OFF. EveryEnableBailout's 8-line
-    // window cannot tell: the failure branch's untick sits right below the queued message. This pins the branch itself.
+    // and UNTICKED -- and a second tick queued a second toggle behind the first. EveryEnableBailout's 8-line window cannot
+    // tell: the failure branch's untick sits right below the queued message. This pins the branch itself.
+    // [DBGCAM-QUEUEDON-UNDO-TEXT] Its reason not to tick again must hold on every engine: what a second toggle does when it
+    // drains depends on the engine, so "a second toggle would undo it" was not the reason.
     [Fact]
     public void A_queued_toggle_is_reported_and_never_unticks()
     {
@@ -101,6 +103,8 @@ public class DebugCameraScriptGeneratorTests
         Assert.True(f > q, "the queued test must come BEFORE the failure test, or -5 reads as a failure");
         var queued = enable[q..f];
         Assert.Contains("showMessage('[DebugCamera] ON queued", queued);
+        Assert.Contains("Do not tick again: the toggle is already queued.", queued);
+        Assert.DoesNotContain("undo", queued);
         Assert.DoesNotContain("memrec.Active = false", queued);    // nothing to untick: the toggle WILL run
         Assert.DoesNotContain(CeLuaHygiene.CloseCall, queued);     // not a clean success either
 
@@ -151,5 +155,24 @@ public class DebugCameraScriptGeneratorTests
         Assert.DoesNotContain("UE5_DEBUG", queued);                            // ungated: a real problem
         Assert.Contains("error('[Debug Camera]", queued);                      // keeps the record ticked
         Assert.DoesNotContain("showMessage(", queued);                         // no modal on an untick
+    }
+
+    // [DBGCAM-QUEUEDON-UNDO-TEXT] The copy-me example's [ENABLE] told the script author not to tick again because "a second
+    // toggle would undo the first" -- not what a second toggle does on stock UE 4.18-5.7. The advice stays, with a reason
+    // that holds on every engine.
+    [Fact]
+    public void Invoke_helper_example_enable_gives_a_reason_not_to_tick_again_that_holds_everywhere()
+    {
+        var src = System.IO.File.ReadAllText(NumericInputCoercionTests.RepoFile("scripts/ue5_invoke_helper.lua"))
+                                .Replace("\r\n", "\n");
+        int at = src.IndexOf("pcall(setDebugCamera, 1)", System.StringComparison.Ordinal);
+        Assert.True(at >= 0, "the Debug Camera example's [ENABLE] call is gone");
+        int q = src.IndexOf("state == -5", at, System.StringComparison.Ordinal);
+        Assert.True(q >= 0, "no queued branch in the example's [ENABLE]");
+        int end = src.IndexOf("\n    end", q, System.StringComparison.Ordinal);
+        Assert.True(end > q, "the queued branch has no end");
+        var queued = src[q..end];
+        Assert.Contains("do not tick again -- the toggle is already queued.", queued);
+        Assert.DoesNotContain("undo", queued);
     }
 }
