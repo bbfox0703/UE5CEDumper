@@ -555,7 +555,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
     {
         row ??= SelectedResult;
         if (row == null || string.IsNullOrEmpty(row.ClassName)) return;
-        NavigateToPivot?.Invoke(row.ClassName, row.PropName, -1);
+        NavigateToPivot?.Invoke(row.ClassName, row.PropName, row.PropOffset);
     }
 
     /// <summary>Per-row action: copy bare property name to clipboard.</summary>

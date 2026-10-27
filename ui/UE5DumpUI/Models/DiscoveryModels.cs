@@ -54,6 +54,9 @@ public sealed class DiscoveryInput
     /// rendered "Array[N].Inner", which the scalar field list can never contain.</summary>
     public string ArrayField   { get; set; } = "";
     public string InnerProp    { get; set; } = "";
+    /// <summary>[PIVOT-HANDOFF-SHADOWED] The property's offset in the instance, -1 when not known: the copy of a
+    /// shadowed name this row reads.</summary>
+    public int    PropOffset   { get; set; } = -1;
     /// <summary>Newest-snapshot live address — the Pivot / CE-export handoff target.</summary>
     public string ObjAddr      { get; set; } = "";
     /// <summary>Raw hex per snapshot, oldest → newest (exact change detection).</summary>
@@ -75,7 +78,9 @@ public sealed class DiscoveryCandidate
     /// scalar), so "Use →" can pivot it through the Snapshot Array source.</summary>
     public string ArrayField   { get; set; } = "";
     public string InnerProp    { get; set; } = "";
-    /// <summary>The representative's property offset in the instance; -1 when not known.</summary>
+    /// <summary>[PIVOT-HANDOFF-SHADOWED] The representative's property offset in the instance; -1 when not known.
+    /// "Use →" ticks the copy at this offset: a class can carry two properties of one name, and the sample sequence
+    /// shown is the representative's copy.</summary>
     public int    PropOffset   { get; set; } = -1;
 
     /// <summary>Instances of this (class, prop) present in ALL selected snapshots.</summary>

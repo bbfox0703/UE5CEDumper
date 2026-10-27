@@ -324,14 +324,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public static bool LocksExperimental(string? tag) => tag != null && s_experimentalLockingTabs.Contains(tag);
 
     /// <summary>C5: switch to the Class Pivot tab and hand off the chosen
-    /// class/property. Guarded so it's inert when the pivot tab isn't available.</summary>
-    private async void HandlePivotHandoff(string className, string? propName)
+    /// class/property, with the property's offset (-1 when the source has none) so a shadowed name reaches the copy
+    /// that was chosen. Guarded so it's inert when the pivot tab isn't available.</summary>
+    private async void HandlePivotHandoff(string className, string? propName, int propOffset)
     {
         if (Pivot == null) return;
         try
         {
             SelectedTabIndex = (int)MainTabIndex.ClassPivot;
-            await Pivot.PivotForAsync(className, propName);
+            await Pivot.PivotForAsync(className, propName, propOffset);
         }
         catch (Exception ex)
         {
@@ -742,11 +743,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             // C5: right-click "Pivot this property" from the three source panels ->
             // switch to the Class Pivot tab and pre-select the class/property.
-            PropertySearch.NavigateToPivot        += (cls, prop, _) => HandlePivotHandoff(cls, prop);
-            InterestingProperties.NavigateToPivot += (cls, prop, _) => HandlePivotHandoff(cls, prop);
-            LiveWalker.NavigateToPivot            += (cls, prop, _) => HandlePivotHandoff(cls, prop);
+            // [PIVOT-HANDOFF-SHADOWED] The offset travels too: Class Pivot lists each copy of a shadowed name apart.
+            PropertySearch.NavigateToPivot        += (cls, prop, off) => HandlePivotHandoff(cls, prop, off);
+            InterestingProperties.NavigateToPivot += (cls, prop, off) => HandlePivotHandoff(cls, prop, off);
+            LiveWalker.NavigateToPivot            += (cls, prop, off) => HandlePivotHandoff(cls, prop, off);
             // Value-locator -> pivot: a value-scan hit already carries class + field.
-            ValueSearch.NavigateToPivot           += (cls, prop, _) => HandlePivotHandoff(cls, prop);
+            ValueSearch.NavigateToPivot           += (cls, prop, off) => HandlePivotHandoff(cls, prop, off);
 
             // "Remove all snapshot data" (System tab) deletes every snapshot DB file —
             // the experimental tabs' cached lists are now stale, so refresh them to the

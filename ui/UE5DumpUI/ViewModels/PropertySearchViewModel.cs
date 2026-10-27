@@ -748,7 +748,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     {
         match ??= SelectedResult;
         if (match == null || string.IsNullOrEmpty(match.ClassName)) return;
-        NavigateToPivot?.Invoke(match.ClassName, match.PropName, -1);
+        NavigateToPivot?.Invoke(match.ClassName, match.PropName, match.PropOffset);
     }
 
     /// <summary>

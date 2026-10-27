@@ -2003,8 +2003,8 @@ public sealed class SnapshotStore : ISnapshotStore
 
             await using var r = await cmd.ExecuteReaderAsync(ct);
             // cols: 0 class_fqn, 1 declared_type, 2 prop_name, 3 array_field,
-            // 4 elem_index, 5 norm_path, 6 addrNewest, then 7..7+n-1 = h, 7+n..7+2n-1 = v
-            int baseH = 7, baseV = 7 + n, rowCount = 0;
+            // 4 elem_index, 5 norm_path, 6 addrNewest, then 7..7+n-1 = h, 7+n..7+2n-1 = v, 7+2n = off
+            int baseH = 7, baseV = 7 + n, colOff = 7 + 2 * n, rowCount = 0;
             while (await r.ReadAsync(ct))
             {
                 if ((++rowCount & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
@@ -2028,6 +2028,7 @@ public sealed class SnapshotStore : ISnapshotStore
                     ClassName = cls, PropName = DiscoverDisplayProp(prop, arr, elem),
                     ArrayField = arr, InnerProp = arr.Length > 0 ? prop : "",   // [W1-DISCOVER-ARRAY]
                     DeclaredType = type, NormPath = norm, ObjAddr = addr, Hex = hex, Num = num,
+                    PropOffset = r.IsDBNull(colOff) ? -1 : r.GetInt32(colOff),
                 });
             }
         }
@@ -2094,6 +2095,8 @@ public sealed class SnapshotStore : ISnapshotStore
             sb.Append($", MIN(CASE WHEN snapshot_id=$s{i} THEN hex END) AS h{i}");
         for (int i = 0; i < n; i++)
             sb.Append($", MIN(CASE WHEN snapshot_id=$s{i} THEN numeric_value END) AS v{i}");
+        // [PIVOT-HANDOFF-SHADOWED] The offset is part of KEY, so one value per group: "Use →" ticks that copy.
+        sb.Append(", COALESCE(prop_offset,0) AS off");
         sb.Append(" FROM dedup WHERE rn=1 GROUP BY ").Append(KEY).Append(' ');
         // present in ALL snapshots (intersection)
         sb.Append("HAVING ");
@@ -2150,6 +2153,7 @@ public sealed class SnapshotStore : ISnapshotStore
             {
                 ClassName = c.ClassName, PropName = c.PropName, DeclaredType = c.DeclaredType,
                 NormPath = c.NormPath, ObjAddr = c.ObjAddr, Hex = c.Hex, Num = c.Num,
+                PropOffset = c.PropOffset,   // [PIVOT-HANDOFF-SHADOWED]
             });
 
         int max = query.MaxResults > 0 ? query.MaxResults : 200;

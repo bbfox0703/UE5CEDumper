@@ -1256,7 +1256,7 @@ public partial class ValueSearchViewModel : ViewModelBase
     {
         candidate ??= SelectedCandidate;
         if (candidate == null || string.IsNullOrEmpty(candidate.ClassName)) return;
-        NavigateToPivot?.Invoke(candidate.ClassName, candidate.FieldName, -1);
+        NavigateToPivot?.Invoke(candidate.ClassName, candidate.FieldName, candidate.FieldOffset);
     }
 
     private async Task EndSessionIfAnyAsync()
@@ -1804,7 +1804,7 @@ public partial class ValueSearchViewModel : ViewModelBase
         // class for a cross-object leaf (P4 inc 2), else the candidate actor — so the
         // Pivot lands on the class that actually declares the field.
         if (slot == null || string.IsNullOrEmpty(slot.PivotClassName) || string.IsNullOrEmpty(slot.FieldName)) return;
-        NavigateToPivot?.Invoke(slot.PivotClassName, slot.FieldName, -1);
+        NavigateToPivot?.Invoke(slot.PivotClassName, slot.FieldName, slot.FieldOffset);
     }
 
     /// <summary>Fill a slot's <see cref="GroupSlotMatch.Leaves"/> with EVERY field it

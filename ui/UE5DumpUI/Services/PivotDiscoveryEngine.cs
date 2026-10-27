@@ -191,6 +191,7 @@ public static class PivotDiscoveryEngine
             NormPath         = rep.NormPath,
             ArrayField       = rep.ArrayField,     // [W1-DISCOVER-ARRAY] one array element per group
             InnerProp        = rep.InnerProp,
+            PropOffset       = rep.PropOffset,     // [PIVOT-HANDOFF-SHADOWED] the copy whose sample is shown
             InterestScore    = score.FinalScore,
             CategoryName     = PropertyScoringTable.DisplayName(score.Category),
             CategoryColor    = PropertyScoringTable.CategoryColor(score.Category),

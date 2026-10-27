@@ -723,7 +723,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         field ??= SelectedField;
         if (field == null || string.IsNullOrEmpty(CurrentClassName) || string.IsNullOrEmpty(field.Name))
             return;
-        NavigateToPivot?.Invoke(CurrentClassName, field.Name, -1);
+        NavigateToPivot?.Invoke(CurrentClassName, field.Name, field.Offset);
     }
 
     public LiveWalkerViewModel(IDumpService dump, ILoggingService log, IPlatformService platform,

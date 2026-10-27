@@ -34,7 +34,8 @@ public partial class PivotFieldPick : ObservableObject
 
     public string Name          => Info.Name;
     /// <summary>[SNAPDIFF-SHADOWED-PROP] What the picker shows and the pivot names this field by -- the name, with the
-    /// offset for one copy of a shadowed name. <see cref="Name"/> stays the property's own name, which the handoffs match.</summary>
+    /// offset for one copy of a shadowed name. <see cref="Name"/> stays the property's own name, which the handoffs match
+    /// with the offset that picks the copy ([PIVOT-HANDOFF-SHADOWED]).</summary>
     public string Label         => Info.Label;
     public string DeclaredType  => Info.DeclaredType;
     public int    DistinctCount => Info.DistinctCount;
@@ -463,7 +464,7 @@ public partial class ClassPivotViewModel : ViewModelBase
                 return;
             }
 
-            if (!await SelectClassAndTickPropAsync(className, propName))
+            if (!await SelectClassAndTickPropAsync(className, propName, propOffset))
             {
                 // Review 3 of c294e314: a class whose captured objects hold ONLY struct arrays has no scalar row,
                 // so it is missing from the class list -- and the helper's "not in the selected snapshot" was
@@ -478,8 +479,8 @@ public partial class ClassPivotViewModel : ViewModelBase
                 // [W1-DISCOVER-ARRAY] review follow-up: the helper ticks nothing for a prop that is not a
                 // captured numeric field -- right-click hands off any field -- and "Ready" then read like the
                 // handoff had worked. (A prop that IS the key field exists but is not ticked: still Ready.)
-                if (Fields.Any(f => f.Name == propName))
-                    StatusText = $"Ready: {className} · {propName} — press Run Pivot.";
+                if (HandedOffField(propName, propOffset) is { } handed)
+                    StatusText = $"Ready: {className} · {handed.Label} — press Run Pivot.";
                 else
                 {
                     // Second review of 4880a779: a captured STRUCT ARRAY is pivotable too, under the Snapshot
@@ -538,7 +539,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// Returns false (with a status hint) when the class isn't in the snapshot.
     /// Shared by the C5 right-click handoff (<see cref="PivotForAsync"/>) and the
     /// change-driven discovery "Use →" (<see cref="UseDiscoverCandidateAsync"/>).</summary>
-    private async Task<bool> SelectClassAndTickPropAsync(string className, string? propName)
+    private async Task<bool> SelectClassAndTickPropAsync(string className, string? propName, int propOffset)
     {
         // Clear any active class filter so the target class is visible in the picker, then
         // match against the FULL list (_allClasses) — Classes itself is now the filtered
@@ -568,12 +569,25 @@ public partial class ClassPivotViewModel : ViewModelBase
         // [W1-DISCOVER-ARRAY] second review of 4880a779: only in FIELD mode is the key pick the grouping key.
         // In Identity mode it groups nothing, so skipping it there left the handed-off prop out of the pivot
         // under a "Ready" status.
-        // [SNAPDIFF-SHADOWED-PROP] Matched by the property's own name (the first copy of a shadowed one); the key
-        // pick holds a label.
-        var pick = string.IsNullOrEmpty(propName) ? null : Fields.FirstOrDefault(f => f.Name == propName);
+        // The key pick holds a label, so a shadowed copy is compared as one.
+        var pick = HandedOffField(propName, propOffset);
         if (pick != null && !(IsFieldKeyMode && SelectedKeyField == pick.Label))
             pick.IsValue = true;
         return true;
+    }
+
+    /// <summary>
+    /// [PIVOT-HANDOFF-SHADOWED] The field a handoff names: the copy of <paramref name="propName"/> at
+    /// <paramref name="propOffset"/> when the class carries one there, else the first field of that name. A class can
+    /// shadow a property name ([SNAPDIFF-SHADOWED-PROP]) and the picker lists each copy apart, so the name alone ticked
+    /// the first copy whichever one the user picked. The name still decides: an offset that matches no copy (a source
+    /// with none, -1, or one measured from another base) falls back to it.
+    /// </summary>
+    private PivotFieldPick? HandedOffField(string? propName, int propOffset)
+    {
+        if (string.IsNullOrEmpty(propName)) return null;
+        return (propOffset >= 0 ? Fields.FirstOrDefault(f => f.Name == propName && f.Info.Offset == propOffset) : null)
+               ?? Fields.FirstOrDefault(f => f.Name == propName);
     }
 
     // Re-entrancy guard for the Snapshots rebuild: coalesces overlapping refreshes and
@@ -1279,7 +1293,7 @@ public partial class ClassPivotViewModel : ViewModelBase
                 StatusText = "No snapshot selected — capture one first.";
                 return;
             }
-            if (await SelectClassAndTickPropAsync(cand.ClassName, cand.PropName))
+            if (await SelectClassAndTickPropAsync(cand.ClassName, cand.PropName, cand.PropOffset))
             {
                 // The discovered property IS the thing the user wants to watch, so
                 // always project it — and group by Identity so its value shows per
@@ -1287,7 +1301,7 @@ public partial class ClassPivotViewModel : ViewModelBase
                 // property as the group key, which would hide its value in Identity
                 // mode / collapse it in Field mode.)
                 SelectedKeyMode = "Identity (object path)";
-                var pick = Fields.FirstOrDefault(f => f.Name == cand.PropName);
+                var pick = HandedOffField(cand.PropName, cand.PropOffset);
                 if (pick == null)
                 {
                     // [W1-DISCOVER-ARRAY] Say so, and run nothing: a pivot of the pre-ticked fields
