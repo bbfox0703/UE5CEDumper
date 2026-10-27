@@ -123,18 +123,59 @@ public class ParamBytesTableTests
         Assert.Equal(string.Join(",", ParamBytesTable.Columns), lines[0]);
         Assert.Equal(6, lines.Length);   // the header, four segments, and the empty string after the last line break
         Assert.Equal("", lines[^1]);
-        Assert.Equal("at_call,0x00,00 00 80 3F 00 00 00 C0,\"lo=A,B\",1065353216,3221225472,1065353216,-1073741824,1,-2,"
-                     + "-2.000000473111868,0xC00000003F800000", lines[1]);
-        Assert.StartsWith("at_call,0x08,70 3C 12 45 F6 7F 00 00,'=Cmd,", lines[2], StringComparison.Ordinal);
+        Assert.Equal("at_call,0x00,00 00 80 3F 00 00 00 C0,1065353216,3221225472,1065353216,-1073741824,1,-2,"
+                     + "-2.000000473111868,0xC00000003F800000,\"lo=A,B\"", lines[1]);
+        Assert.StartsWith("at_call,0x08,70 3C 12 45 F6 7F 00 00,", lines[2], StringComparison.Ordinal);
+        Assert.EndsWith(",0x00007FF645123C70,'=Cmd", lines[2], StringComparison.Ordinal);
         // A negative reading is a number, not a formula: it is not armoured.
         Assert.DoesNotContain("'-", lines[1], StringComparison.Ordinal);
     }
 
     [Fact]
+    public void Negative_infinity_is_armoured_in_the_CSV_because_a_spreadsheet_takes_it_for_a_formula()
+    {
+        // f32 -inf, f32 NaN; then f64 -inf. "-Infinity" starts with '-' and is not a number to a spreadsheet.
+        var bytes = new byte[] { 0x00, 0x00, 0x80, 0xFF, 0x00, 0x00, 0xC0, 0x7F,
+                                 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xF0, 0xFF };
+        var rows = ParamBytesTable.Rows("at_call", bytes);
+        Assert.Equal("-Infinity", Cell(rows[0], "f32_lo"));       // the view shows the reading as it is
+        Assert.Equal("NaN", Cell(rows[0], "f32_hi"));
+        Assert.Equal("-Infinity", Cell(rows[1], "f64"));
+        var lines = ParamBytesTable.Csv(rows).Split(Environment.NewLine);
+        var cells = lines.Skip(1).Take(2).Select(l => l.Split(',')).ToArray();
+        Assert.Equal("'-Infinity", cells[0][Col("f32_lo")]);
+        Assert.Equal("NaN", cells[0][Col("f32_hi")]);
+        Assert.Equal("'-Infinity", cells[1][Col("f64")]);
+        Assert.Equal("-1048576", cells[1][Col("i32_hi")]);         // a negative number stays a number
+    }
+
+    [Fact]
+    public void The_params_cell_names_only_bytes_the_copy_holds_and_marks_a_parameter_the_copy_cuts_off()
+    {
+        // A 9-byte copy (a layout that runs past the copy is what a doubtful arm carries): X has one byte in it, Y none.
+        var fields = new[]
+        {
+            new SnapParam { Name = "Obj", Offset = 0, Size = 8 },
+            new SnapParam { Name = "X", Offset = 8, Size = 4 },
+            new SnapParam { Name = "Y", Offset = 12, Size = 4 },
+        };
+        var rows = ParamBytesTable.Rows("at_call", new byte[9], fields);
+        Assert.Equal(new[] { "Obj", "b0=X…" }, rows.Select(r => Cell(r, "params")));
+
+        // A whole segment that a longer parameter carries on past the copy's end.
+        var big = ParamBytesTable.Rows("at_call", new byte[16], new[] { new SnapParam { Name = "Big", Offset = 8, Size = 16 } });
+        Assert.Equal(new[] { "", "Big…" }, big.Select(r => Cell(r, "params")));
+        // A half that ends the copy exactly is whole: nothing is cut.
+        var half = ParamBytesTable.Rows("at_call", new byte[12], new[] { new SnapParam { Name = "Z", Offset = 8, Size = 4 } });
+        Assert.Equal("lo=Z", Cell(half[1], "params"));
+    }
+
+    [Fact]
     public void The_aligned_view_lines_every_column_up()
     {
+        // The names are the game's own text: a wide (CJK) name must not push the readings out of line.
         var text = ParamBytesTable.Aligned(ParamBytesTable.Rows("at_call", Bytes,
-            new[] { new SnapParam { Name = "Count", Offset = 0, Size = 4 } }));
+            new[] { new SnapParam { Name = "Count", Offset = 0, Size = 4 }, new SnapParam { Name = "速度", Offset = 8, Size = 8 } }));
         var lines = text.Split(Environment.NewLine).Where(l => l.Length > 0).ToArray();
         Assert.Equal(5, lines.Length);
         Assert.StartsWith("copy", lines[0], StringComparison.Ordinal);
@@ -143,5 +184,8 @@ public class ParamBytesTableTests
                         .ToArray();
         Assert.All(seps, s => Assert.Equal(seps[0], s));
         Assert.Equal(ParamBytesTable.Columns.Length - 1, seps[0].Length);
+        // Equal string offsets are not equal screen columns once a wide character comes first: a CJK glyph takes two
+        // cells of a monospace font. So no game text may stand before a reading: the names come last.
+        Assert.All(lines, l => Assert.True(l[..l.LastIndexOf(", ", StringComparison.Ordinal)].All(ch => ch < 0x80), l));
     }
 }

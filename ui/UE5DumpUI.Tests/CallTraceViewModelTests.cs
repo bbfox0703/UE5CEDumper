@@ -357,6 +357,8 @@ public class CallTraceViewModelTests
         Assert.Equal(new[] { "str.CT.Param.NotChosen" }, vm.Params(t.FindBySeq(0)).Notes);
     }
 
+    private static int Cell(string column) => Array.IndexOf(UE5DumpUI.Helpers.ParamBytesTable.Columns, column);
+
     [Fact]
     public async Task The_Bytes_tab_cuts_both_copies_into_segments_named_by_the_layout()
     {
@@ -367,12 +369,12 @@ public class CallTraceViewModelTests
         var b = vm.Params(t.FindBySeq(1));
         Assert.Equal(new[] { "at_call 0x00 lo=X hi=Out", "at_call 0x08 lo=ReturnValue",
                              "after 0x00 lo=X hi=Out", "after 0x08 lo=ReturnValue" },
-                     b.Segments.Select(r => $"{r[0]} {r[1]} {r[3]}"));
-        Assert.Equal("9", b.Segments[3][4]);                      // the return value, after the call
+                     b.Segments.Select(r => $"{r[Cell("copy")]} {r[Cell("offset")]} {r[Cell("params")]}"));
+        Assert.Equal("9", b.Segments[3][Cell("u32_lo")]);          // the return value, after the call
         // A load with no layout still gets its segments, with no names.
         var raw = Assert.Single(vm.Params(t.FindBySeq(5)).Segments);
-        Assert.Equal("01 02", raw[2]);
-        Assert.Equal("", raw[3]);
+        Assert.Equal("01 02", raw[Cell("raw")]);
+        Assert.Equal("", raw[Cell("params")]);
         Assert.Empty(vm.Params(t.FindBySeq(2)).Segments);       // over budget: no bytes at all
         Assert.Empty(vm.Params(t.FindBySeq(0)).Segments);       // not chosen
     }
