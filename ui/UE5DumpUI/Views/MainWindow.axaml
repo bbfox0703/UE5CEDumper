@@ -34,14 +34,17 @@
                   ToolTip.Tip="{StaticResource str.Tip.StartScan}"
                   Classes="accent" Padding="12,4"
                   FontWeight="Bold"/>
-          <!-- Status: capped width + ellipsis + tooltip so long messages
+          <!-- Status: a FIXED width + ellipsis + tooltip, so long messages
                (e.g. "Navigated to FooComponent::GetBar (live instance 0x…)")
-               don't push the rest of the toolbar off-screen and wrap. -->
+               don't push the rest of the toolbar off-screen and wrap. Fixed, not just capped
+               ([W1-PIPEBUSY-LOG], the L64 run): a capped line takes its text's width, so each new
+               status moved every control after it, and the AOBMaker ⟳ jumped out from under the
+               cursor when its own probe wrote the result here. -->
           <TextBlock Text="{Binding StatusText}"
                      Foreground="#4EC9B0"
                      VerticalAlignment="Center"
                      Margin="4,0"
-                     MaxWidth="360"
+                     Width="360"
                      TextTrimming="CharacterEllipsis"
                      ToolTip.Tip="{Binding StatusText}"/>
           <TextBlock Text="{Binding ErrorMessage}"

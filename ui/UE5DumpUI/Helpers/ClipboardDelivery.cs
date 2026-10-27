@@ -74,8 +74,8 @@ internal static class ClipboardDelivery
     /// ⛔ THE IMPERATIVE COMES FIRST, AND THAT IS NOT A STYLE CHOICE. This message is
     /// rendered on two kinds of surface. The panels wrap it (LiveWalkerPanel.axaml,
     /// InstanceFinderPanel.axaml — <c>TextWrapping="Wrap"</c>, no MaxWidth) and show
-    /// all of it. The MainWindow toolbar does not: <c>StatusText</c> and
-    /// <c>ErrorMessage</c> are capped at <c>MaxWidth="360"</c> with
+    /// all of it. The MainWindow toolbar does not: <c>StatusText</c> is a fixed 360-wide slot and
+    /// <c>ErrorMessage</c> is capped at <c>MaxWidth="360"</c>, both with
     /// <c>TextTrimming="CharacterEllipsis"</c> (MainWindow.axaml's status bar), deliberately —
     /// the comment there records that an uncapped status line pushes the rest of the
     /// toolbar off-screen.
