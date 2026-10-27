@@ -545,6 +545,35 @@ public class ContainerTruncationTests
         Assert.Contains("re-open", vm.StatusText);
     }
 
+    // [LW-EMPTIED-CONTAINER-REFRESH] RepopulateContainerView, and Refresh's re-derivation of the crumb, keyed the
+    // container kind on a count above zero: a container emptied since the drill matched no kind, so a Refresh left the
+    // old rows on screen (editable, at addresses the container no longer owns) under the old label.
+
+    [Theory]
+    [InlineData("array", "[0 x IntProperty]")]
+    [InlineData("set", "{Set: 0, IntProperty}")]
+    [InlineData("map", "{Map: 0, IntProperty")]
+    public async Task Refresh_OfAContainerEmptiedSinceTheDrill_ShowsItEmpty(string kind, string label)
+    {
+        Func<int, int, LiveFieldValue> row = kind switch
+        {
+            "array" => ScalarRow,
+            "set" => SetField,
+            _ => MapField,
+        };
+        var (vm, dump) = await DrillLiveAsync(row, count: 200, arrayLimit: 64);
+        Assert.NotEmpty(vm.Fields);                                          // the precondition: the drill's rows
+        dump.Count = 0;
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.Fields);
+        Assert.Contains(label, vm.Breadcrumbs[^1].Label);
+        Assert.DoesNotContain("showing", vm.Breadcrumbs[^1].Label);
+        Assert.DoesNotContain("showing", vm.CurrentObjectName);
+        Assert.Equal("", vm.StatusText);                                     // empty is complete, not unreadable
+    }
+
     // [WALK-NULLCLASS-SILENT] review F1: the container branch acted only when the parent walk found the field again. A
     // parent that is gone (unreadable, no UObject header, stale) has no fields, so Refresh returned SILENTLY: a blank
     // status over the old element rows, still editable, each FieldAddress pointing into memory the game had freed.
