@@ -27,6 +27,50 @@ builds ≤696 in
 
 -----
 
+## 2026-10-27 (build 3657) — UE 4.11-4.17 asset pointers in every export; Live Walker lists interface functions; the toolbar holds still `[UE4-ASSETPTR-EXPORTS]` `[VND584-04]` `[L64-TOOLBAR-FIXED-SLOT]` `[TOOLBAR-CONNECT-WIDTH]` `[SNAPDIFF-SHADOWED-PROP]` `[PIVOT-HANDOFF-SHADOWED]` `[DEBUGCAM-QUEUED-OFF-NOESCALATE]` `[WALK-NULLCLASS-SILENT]` `[BATCH3-FINAL-REVIEW-2026-10-27]`
+
+- **Older UE4 games' asset pointers (TAssetPtr / TAssetSubclassOf, UE 4.11-4.17) come out right in every export.**
+  The .usmap names them instead of writing Unknown, the SDK header declares them, and CE XML shows a single one, one
+  in a DataTable row and each element of an array as a group: the weak pair in hex and the asset's path as a
+  readable string, the only name an unloaded asset has. CSX and the cheat table's Structure Dissect show them as one
+  8-byte hex value instead of a block of decimal numbers, and CSX labels a loaded array element with its object.
+  Property Search suggests them, the scorer ranks them like their 4.18 successors, Live Walker's array drill keeps
+  their paths, and an invoke parameter of this type is left empty.
+- **Live Walker's Functions list shows what a class gets only through an interface**, as
+  "DoFoo  (via FooInterface)", and the filter finds it by the interface's name too.
+- **Live Walker says when an address has no object header** instead of calling it stale, and does not retry the
+  gap fill on it. A Refresh inside an array, set or map view shows the live count, an emptied container shows empty
+  (also on Back), and a view whose parent is gone says so. A disconnect clears the status and error lines, and an
+  export it cancels is not reported as cancelled by you.
+- **The toolbar no longer jumps.** The status line is a fixed-width slot that Start Scan and the error line share
+  (it fits at 800 DIP), Connect and Disconnect have one width, and the Cheat Engine attach warning sits after the
+  AOBMaker chip, so the AOBMaker refresh button stays where it is at connect, at disconnect and on a new status.
+- **A class with two properties of the same name** (a shadowed name): Snapshot Diff and SPC's in-session query no
+  longer report phantom changes or a negative "removed" count, Class Pivot lists the two as `Name@+offset`, and a
+  handoff from Live Walker, Property Search, Interesting Properties or Value Search ticks the copy you picked.
+- **Debug Camera**: a toggle the game queued is reported as queued -- an OFF that did not complete says so and its
+  cheat-table record stays ticked, and neither card claims a state it has not reached.
+- **Teleport**: Stealth Reset with no meter detected sends nothing and says to Detect first; "Clear all markers"
+  stops after a failed wait instead of raising three dialogs; the no-DLL coordinate picker says why a push failed --
+  too large (with its size), no reply (it may still have been added, check before pressing again), or AOBMaker not
+  reached.
+- **AOBMaker**: a request over the 10 MiB message limit is refused before anything is sent, with its size as the
+  reason. Convenience copies say "Copied" only when the clipboard took the text.
+- Smaller: the injection dialogs name the per-process init log and both Cheat Engine folders; the INV button's
+  tooltip opens while it is disabled and says it needs AOBMaker; Class/Struct's spinner and error line clear on a
+  disconnect; the Snapshot quota labels show exact sizes.
+- Checked live on the published AOT build: on DumperTest 5.4 Shipping, the toolbar at 800 DIP (connect and
+  disconnect move nothing before the menus), `Vnd584_IfaceMagic  (via DumperTestIface)` with its filter and the
+  Name sort, and Class Pivot's `PrerollTime@+0xC4` / `PrerollTime@+0x128` with a Live Walker handoff ticking the
+  +0x128 copy. On Extinction (UE 4.15), `PreGameWorld` in CE: the CE XML path leaf reads
+  `/Game/Maps/PreGame/PreGameMap.PreGameMap` while the weak pair is unloaded, and the cheat table's Structure
+  Dissect and Push to CE Structure Dissect give one 8-byte hex element. Not checked live: the label of a loaded
+  array element (Extinction's only such array exists in a level).
+- Reviews: each fix batch had its own review, and a final review of all three put 13 findings to a refuter (one
+  refuted, none HIGH or MED); every LOW and INFO is fixed.
+- Tests: dll_core_test 1,357 checks and dll_helpers_test 3,648, 0 failures; dissect_test.lua 425; C# 6,848 total,
+  0 failed, 1 skipped; headless UI 68; 36 gates.
+
 ## 2026-10-27 (build 3656) — Delegates read right on Development builds; CE Structure Dissect shows weak pairs in hex `[VND584-02]` `[CT-DELEGATE-PARAM-PAD]` `[CT-MULTICAST-PARAM-PAD]` `[CT-UE4-MULTICAST-SPELLING]` `[DELEGATE-PAD-ALIGN]`
 
 Build 3655 was published on the way with the first three items; 3656 carries everything below.
