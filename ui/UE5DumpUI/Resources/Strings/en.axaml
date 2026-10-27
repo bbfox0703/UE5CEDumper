@@ -1828,6 +1828,9 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
 
     <sys:String x:Key="str.TP.LibExportLuaNoDll">Push to CE (no DLL)</sys:String>
     <sys:String x:Key="str.Tip.TP.LibExportLuaNoDll">Same picker, but the generated script teleports by raw memory write, so UE5Dumper.dll does NOT have to be injected. "No DLL" refers to that only. REQUIRES the AOBMaker CE plugin and is disabled without it — unlike the button on its left there is deliberately no clipboard fallback, because the script calls helpers defined by the Standalone Trainer's Setup record, which only an AOBMaker push can deliver. Lands in the "UE5CEDumper (no-DLL trainer)" group; enable "UE5 Trainer: Setup" before using it. Weaker than the DLL path: no map guard (the map name is only readable through the DLL), and the offsets go stale when the game is patched.</sys:String>
+    <!-- [COORDPICK-OVERSIZE-REASON] A no-DLL push the bridge or Cheat Engine refused, with the reason it gave: a library
+         over AOBMaker's message limit is refused before a byte is sent, and is no dropped pipe. -->
+    <sys:String x:Key="str.TP.LibNoDllNotAdded">⚠ The no-DLL picker was not added to Cheat Engine: {0}.</sys:String>
 
     <sys:String x:Key="str.TP.LibZTol">Z tolerance:</sys:String>
     <sys:String x:Key="str.Tip.TP.LibZTol">Extra height (uu) added to Z on arrival, so landing exactly on the floor the position was captured on does not drop you through it. 0 = off. Applied at teleport time only — the saved entry keeps its exact captured Z — and baked into the Lua export so the generated picker behaves the same. Not part of the CSV.</sys:String>

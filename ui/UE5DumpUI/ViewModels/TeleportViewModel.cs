@@ -261,6 +261,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private static string StealthNothingText => AobMakerStatus.Say(KeyStealthNothing,
         "No stealth meter is known to this card, so Reset sent nothing. Detect the meter first, then Reset.");
 
+    internal const string KeyCoordNoDllNotAdded = "str.TP.LibNoDllNotAdded";
+    /// <summary>[COORDPICK-OVERSIZE-REASON] A no-DLL picker push refused with a reason says it; the reason's own closing
+    /// period is dropped, as the sentence adds one.</summary>
+    private static string CoordNoDllNotAddedText(string why)
+        => AobMakerStatus.Say(KeyCoordNoDllNotAdded, "⚠ The no-DLL picker was not added to Cheat Engine: {0}.",
+                              why.TrimEnd('.'));
+
     /// <summary>[AOBM-TRAINER-SETUP-MODAL] The trainer arrives unticked, so the success line has to say what to tick.</summary>
     internal static string TrainerPushedText(int entries)
         => AobMakerStatus.Say(KeyTrainerPushed,
@@ -4775,9 +4782,12 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             var script = CoordLibraryScriptGenerator.Generate(
                 _coordAll, CoordLibraryScriptGenerator.Flavour.NoDll, CoordZTolerance, out var folded);
 
-            bool sent = await _aobMaker.CreateAAScriptAsync(
+            // [COORDPICK-OVERSIZE-REASON] The detailed call, for the reason a refused push carries: a library over
+            // AOBMaker's message limit is refused before a byte is sent, which the bool call reported as a dropped pipe.
+            var pushed = await _aobMaker.CreateAAScriptDetailedAsync(
                 CoordLibraryScriptGenerator.NoDllRecordDescription, script,
                 autoActivate: false, group: CeGroupTrainer);
+            bool sent = pushed.Created;
             IsAobMakerAvailable = _aobMaker.IsAvailable;
 
             CoordStatus = sent
@@ -4785,7 +4795,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                   "Enable 'UE5 Trainer: Setup' first — this flavour uses its baked offsets, " +
                   "has no map guard, and goes stale when the game is patched."
                   + FoldedGroupsNote(folded)
-                : "⚠ AOBMaker pipe dropped mid-push (CE closed?) — nothing was added.";
+                : pushed.Message is { } why
+                    ? CoordNoDllNotAddedText(why)
+                    : "⚠ AOBMaker pipe dropped mid-push (CE closed?) — nothing was added.";
             if (sent)
                 _log.Info($"Coordinate library (no-DLL) -> CE via AOBMaker ({_coordAll.Count} entries)");
         }
