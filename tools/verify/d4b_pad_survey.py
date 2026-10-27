@@ -79,10 +79,11 @@ def main() -> int:
                     help="fail unless the surveyed classes imply this pad")
     a = ap.parse_args()
 
-    # sizeof(FName) drives the unicast base; ask the DLL rather than assuming 8.
+    # sizeof(FName) drives the unicast base; ask the DLL rather than assuming 8 -- `fname_size` is its own
+    # SizeofFName (a measured 4 / 8 / 12); a DLL before it says only case_preserving.
     off = call("get_offsets", {})
     cpn = bool(off.get("case_preserving", False))
-    fname = 12 if cpn else 8
+    fname = int(off.get("fname_size") or (12 if cpn else 8))
     uni_base = 8 + fname
     print("FName      : %d bytes (case-preserving=%s) -> unicast base %d"
           % (fname, cpn, uni_base))

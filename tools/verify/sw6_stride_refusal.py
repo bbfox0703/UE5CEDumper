@@ -12,9 +12,11 @@ of the two legal sizes across 600 classes each, and the register recorded the ar
 ⭐ BUT THE HOUSE TECHNIQUE REACHES IT. The size the array readers validate is the engine's own
 `FProperty::ElementSize` on the ArrayProperty's **Inner** property, read LIVE on every walk
 (`Ubel.cpp:4370-4372`), and the wire already hands us that Inner's address as `array_inner_addr`
-(`Fern.cpp:1538`, non-lean). One 4-byte write makes 32 — neither 16 nor 24 — and both array
-readers must refuse. `DelegatePadFromElementSize(32, 16) < 0` is already unit-pinned
-(`dll_helpers_test.cpp:6590`); what has never happened is a CALL SITE reaching it.
+(`Fern.cpp:1538`, non-lean). One 4-byte write makes 28 — a size no build has for either reader,
+whatever the FName width (the multicast is 16 / 24; the unicast 12 / 16 / 20, or 24 / 32 behind the
+detector) — and both array readers must refuse. (The runs recorded before 2026-10-27 poked 32, which a
+12-byte-FName checked build has since [DELEGATE-PAD-ALIGN].) The refusal itself is unit-pinned
+(`Test_Delegate_AccessDetectorPad` in dll_helpers_test); what had never happened is a CALL SITE reaching it.
 
 ⛔ THE SCALAR ARMS ARE NOT REACHABLE, and `--scalar` exists to MEASURE that rather than to assume
 it. `Ubel.cpp:5499` / `:5996` validate `fi.Size`, which `EnumerateFields` reads ONCE
@@ -84,8 +86,12 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 CLIENT = HERE / "pipe_client.py"
 
-POKE = 32          # legal for neither reader with an 8-byte FName -- see legal_sizes(); with a
-                   # 12-byte FName it IS the unicast's padded size, and the baseline guard refuses it
+POKE = 28          # legal for neither reader at any FName width -- see legal_sizes()
+
+
+def fname_of(off: dict) -> int:
+    """The DLL's own SizeofFName (`fname_size`, a measured 4 / 8 / 12); a DLL before it says only case_preserving."""
+    return int(off.get("fname_size") or (12 if off.get("case_preserving") else 8))
 
 # Each reader validates against its OWN FIXED base, not against whatever the field currently
 # reports. ⛔ Deriving the legal set from the LIVE value is wrong and this rig did it that way
@@ -197,7 +203,7 @@ def evict_class_cache(skip_addr: str, want: int = 0) -> int:
 def scalar_arm(inst: dict, off: dict, poke: int, fails: list) -> list:
     """The arm the row's UI-side acceptance actually needs -- the scalar sites are the only two
     that write the refusal into `typedValue`, which the UI renders verbatim."""
-    fname = 12 if off.get("case_preserving") else 8
+    fname = fname_of(off)
     esz = off["fproperty_elemsize"]
     done = []
     for name, tmpl, base_of in SCALARS:
@@ -290,7 +296,7 @@ def main() -> int:
     fails: list[str] = []
     results = []
 
-    fname = 12 if off.get("case_preserving") else 8
+    fname = fname_of(off)
     print("FName      : %d bytes" % fname)
 
     for name, reader, base_of in SUBJECTS:

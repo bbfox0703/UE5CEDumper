@@ -1650,6 +1650,8 @@ written from the old text parsed nothing at all. Keys below are the emitted set,
   "use_fproperty":      true,          // false = UE4 <4.25 UProperty mode; selects the branch below
   "case_preserving":    false,         // WITH_CASE_PRESERVING_NAME. ⚠ the Name->Outer SLOT becomes
                                        // 0x10; sizeof(FName) is 0xC. See DynOff::bCasePreservingName.
+  "fname_size":         8,             // DynOff::SizeofFName(): a measured 4 / 8 / 12, else 8 or 12
+                                       // from case_preserving. Added 2026-10-27 ([DELEGATE-PAD-ALIGN]).
   "uobject_outer":      32,            // 0x20 standard, 0x28 case-preserving
   "ffieldclass_name":   0,             // FFieldClass::Name — 0x00 up to UE 5.7, 0x08 from 5.8
                                        // (5.8 made ~FFieldClass() virtual). ⚠ 0x00 is FOUR-WAY

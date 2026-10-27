@@ -6360,6 +6360,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["fallback_reason"]    = DynOff::g_offsetsFallbackReason;
             data["ffieldclass_name"]   = DynOff::FFIELDCLASS_NAME;
             data["case_preserving"]    = DynOff::bCasePreservingName;
+            // The width every FName-sized stride uses (a measured 4 / 8 / 12, else 8 or 12 from case_preserving):
+            // a rig that re-derives a delegate size from case_preserving alone misses the measured 4.
+            data["fname_size"]         = DynOff::SizeofFName();
             data["use_fproperty"]      = DynOff::bUseFProperty;
             data["uobject_outer"]      = DynOff::UOBJECT_OUTER;
             data["ustruct_super"]      = DynOff::USTRUCT_SUPER;
