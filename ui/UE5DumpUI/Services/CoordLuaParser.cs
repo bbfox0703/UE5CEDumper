@@ -109,7 +109,8 @@ public static class CoordLuaParser
         // field (B21, hole 3); values are then read from the source at the same offsets.
         // A string that never closes stops the import: the maintainer's rule (2026-10-28)
         // is an error, not a guess at where the stray quote's field ends.
-        var block = MaskLiterals(source, out int openAt, out string what);
+        var strings = new List<(int Start, int End)>();
+        var block = MaskLiterals(source, out int openAt, out string what, strings);
         if (block == null)
         {
             int eol = source.IndexOf('\n', openAt);
@@ -141,6 +142,23 @@ public static class CoordLuaParser
         {
             result.Issues.Add(new CoordCsvIssue(LineOf(text, blockOffset + table.Index), "", "",
                 "the COORDS table's braces are unbalanced"));
+            return result;
+        }
+
+        // An EVEN number of stray quotes on one line pair with each other, so every string
+        // "closes" and the first one silently ends the value early. What follows a string's
+        // closing quote tells them apart: in an entry only a separator, the closing brace or
+        // the next `key =` may (the format tolerates a missing comma). Anything else is a
+        // stray quote -- and Lua would refuse the line too.
+        int innerEnd = open + 1 + inner.Length;
+        foreach (var (s0, s1) in strings)
+        {
+            if (s0 <= open || s1 >= innerEnd || MayFollowAString(block, s1 + 1)) continue;
+            int sol = source.LastIndexOf('\n', s0) + 1, eol = source.IndexOf('\n', s1);
+            result.Issues.Add(new CoordCsvIssue(LineOf(text, blockOffset + s1), "",
+                Trim(source[sol..(eol < 0 ? source.Length : eol)]),
+                "unpaired quote: text follows a string's closing quote, so a quote inside it was " +
+                "not escaped (\\' or \\\") -- nothing was imported; fix it and import again"));
             return result;
         }
 
@@ -346,7 +364,8 @@ public static class CoordLuaParser
     /// matches the source. Null when a string or a long bracket never closes:
     /// <paramref name="openAt"/> is where it opened and <paramref name="what"/> says which.
     /// </summary>
-    internal static string? MaskLiterals(string s, out int openAt, out string what)
+    internal static string? MaskLiterals(string s, out int openAt, out string what,
+                                         List<(int Start, int End)>? shortStrings = null)
     {
         var m = s.ToCharArray();
         (openAt, what) = (-1, "");
@@ -362,6 +381,7 @@ public static class CoordLuaParser
                     (openAt, what) = (i, $"unpaired quote: a string opened with {c} never closes on its line");
                     return null;
                 }
+                shortStrings?.Add((i, end));
             }
             else if (c == '-' && i + 1 < s.Length && s[i + 1] == '-')
             {
@@ -396,6 +416,20 @@ public static class CoordLuaParser
             i = end;
         }
         return new string(m);
+    }
+
+    /// <summary>Whether what follows a string value at <paramref name="from"/> in the masked
+    /// text (comments are blanks there) is something an entry allows after one: a
+    /// separator, a closing brace or bracket, or the next <c>key =</c>.</summary>
+    private static bool MayFollowAString(string masked, int from)
+    {
+        int i = from;
+        while (i < masked.Length && char.IsWhiteSpace(masked[i])) i++;
+        if (i >= masked.Length || ",;}]".IndexOf(masked[i]) >= 0) return true;
+        if (!(char.IsLetter(masked[i]) || masked[i] == '_')) return false;
+        while (i < masked.Length && (char.IsLetterOrDigit(masked[i]) || masked[i] == '_')) i++;
+        while (i < masked.Length && (masked[i] == ' ' || masked[i] == '\t')) i++;
+        return i < masked.Length && masked[i] == '=' && (i + 1 >= masked.Length || masked[i + 1] != '=');
     }
 
     /// <summary>Index of the quote closing the short string that opens at
