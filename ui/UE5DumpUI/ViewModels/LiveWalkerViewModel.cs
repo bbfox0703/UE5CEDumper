@@ -7536,11 +7536,14 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         _pendingFunctionsLoad = LoadFunctionsAsync(result.ClassAddr);
 
         // DataTable detection: if this is a DataTable, fetch rows and inject synthetic RowMap field.
-        // Capture the breadcrumb depth so the fire-and-forget load can detect a
+        // Record what the view is now, so the fire-and-forget load can detect a
         // navigation that happened during its round-trip (audit #7).
         _cachedDataTableRows = null;
         if (result.ClassName == "DataTable" && !string.IsNullOrEmpty(result.Address))
-            _ = TryLoadDataTableRowsAsync(result.Address, Breadcrumbs.Count, CurrentCrumb);
+        {
+            LastRowMapLoad = new RowMapLoadStart(result.Address, Breadcrumbs.Count, CurrentCrumb);
+            _ = TryLoadDataTableRowsAsync(LastRowMapLoad);
+        }
     }
 
     /// <summary>
@@ -7627,11 +7630,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// Detect DataTable and inject a synthetic RowMap field for container navigation.
     /// Fire-and-forget, so the row fetch never blocks the UI.
     /// </summary>
-    private async Task TryLoadDataTableRowsAsync(string dataTableAddr, int bcAtStart, BreadcrumbItem? crumbAtStart)
+    private async Task TryLoadDataTableRowsAsync(RowMapLoadStart start)
     {
         try
         {
-            var dtResult = await _dump.WalkDataTableRowsAsync(dataTableAddr);
+            var dtResult = await _dump.WalkDataTableRowsAsync(start.DataTableAddr);
 
             // Inject a synthetic "RowMap" field at the end of the field list
             var syntheticField = SyntheticRowMapField(dtResult);
@@ -7646,10 +7649,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // and _cachedDataTableRows is written race-free.
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                if (!RowMapLoadStillCurrent(dataTableAddr, bcAtStart, crumbAtStart))
+                if (!RowMapLoadStillCurrent(start))
                 {
-                    _log.Info($"DataTable RowMap load superseded for {dataTableAddr} " +
-                              $"(now {CurrentAddress}, bc {Breadcrumbs.Count}/{bcAtStart}) — dropped");
+                    _log.Info($"DataTable RowMap load superseded for {start.DataTableAddr} " +
+                              $"(now {CurrentAddress}, bc {Breadcrumbs.Count}/{start.Depth}) — dropped");
                     return;
                 }
                 _cachedDataTableRows = dtResult;
@@ -7658,19 +7661,25 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
-            _log.Error($"Failed to load DataTable rows for {dataTableAddr}", ex);
+            _log.Error($"Failed to load DataTable rows for {start.DataTableAddr}", ex);
         }
     }
 
+    /// <summary>What a RowMap row load was started on: the table, the spine's depth and the crumb on top.</summary>
+    internal sealed record RowMapLoadStart(string DataTableAddr, int Depth, BreadcrumbItem? Crumb);
+
+    /// <summary>The RowMap row load started last. Internal for tests: the load lands through a dispatcher hop no
+    /// unit test runs, so a test asks <see cref="RowMapLoadStillCurrent"/> about this instead.</summary>
+    internal RowMapLoadStart? LastRowMapLoad { get; private set; }
+
     /// <summary>Whether a RowMap row load may still land: the DataTable it was started on is still the view on
-    /// screen. Internal so a test can ask it directly -- the load lands through a dispatcher hop no unit test
-    /// runs.</summary>
+    /// screen.</summary>
     /// <remarks>[LW-BACK-CONTAINER-HEADER-ADDR] The crumb, by reference: the table's own RowMap row view carries the
     /// table's address too, and a spine restored by the Back out of a re-root can put it at the very depth the load
     /// started at. The address and the depth alone then let the load append a RowMap row to the rows grid.</remarks>
-    internal bool RowMapLoadStillCurrent(string dataTableAddr, int bcAtStart, BreadcrumbItem? crumbAtStart)
-        => CurrentAddress == dataTableAddr && Breadcrumbs.Count == bcAtStart
-           && ReferenceEquals(CurrentCrumb, crumbAtStart);
+    internal bool RowMapLoadStillCurrent(RowMapLoadStart start)
+        => CurrentAddress == start.DataTableAddr && Breadcrumbs.Count == start.Depth
+           && ReferenceEquals(CurrentCrumb, start.Crumb);
 
     /// <summary>
     /// [LW-BACK-CONTAINER-HEADER-ADDR] List <paramref name="classAddr"/>'s functions -- none when it is empty -- for a

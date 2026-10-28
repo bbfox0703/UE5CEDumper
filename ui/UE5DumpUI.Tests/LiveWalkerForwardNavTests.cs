@@ -927,8 +927,10 @@ public class LiveWalkerForwardNavTests
                                         OwnerStub.TableRows());
         await vm.NavigateToAddressCommand.ExecuteAsync(Other);   // re-roots, keeping [Table, RowMap] for Back
         await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "ToTable"));
-        var tableCrumb = vm.Breadcrumbs[^1];                     // [Other, Table]: the table's row load starts here
-        Assert.True(vm.RowMapLoadStillCurrent(Table, 2, tableCrumb));   // control: nothing has moved yet
+        var load = vm.LastRowMapLoad!;                           // [Other, Table]: the table's row load starts here
+        Assert.Equal((Table, 2), (load.DataTableAddr, load.Depth));
+        Assert.Same(vm.Breadcrumbs[^1], load.Crumb);
+        Assert.True(vm.RowMapLoadStillCurrent(load));            // control: nothing has moved yet
 
         await vm.GoBackCommand.ExecuteAsync(null);               // [Other]
         await vm.GoBackCommand.ExecuteAsync(null);               // out of the re-root: [Table, RowMap]
@@ -936,7 +938,7 @@ public class LiveWalkerForwardNavTests
         Assert.StartsWith("DataTable<", vm.CurrentClassName);
         Assert.Equal(Table, vm.CurrentAddress);                  // the address and the depth match again...
         Assert.Equal(2, vm.Breadcrumbs.Count);
-        Assert.False(vm.RowMapLoadStillCurrent(Table, 2, tableCrumb));   // ...and the load still must not land
+        Assert.False(vm.RowMapLoadStillCurrent(load));           // ...and the load still must not land
     }
 
     // Review of d206a4ad: the header moves to the new object at once, the Functions list only when its walk returns.
