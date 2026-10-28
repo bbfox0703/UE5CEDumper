@@ -313,8 +313,9 @@ public static class CoordLuaParser
 
             if (char.IsAsciiDigit(c) || (c == '.' && i + 1 < s.Length && char.IsAsciiDigit(s[i + 1])))
             {
-                // Lua's read_numeral: digits, dots and exponent signs, then a letter or digit
-                // still touching the numeral makes it malformed (`5px`, `1.2.3`).
+                // Lua 5.3's read_numeral -- CE's, which differs from 5.4 here: hex digits, dots
+                // and exponent signs, and nothing more, so `5px` is the numeral 5 then the name
+                // px (the reader names it a malformed number); `1.2.3` fails to convert.
                 bool hex = c == '0' && i + 1 < s.Length && (s[i + 1] == 'x' || s[i + 1] == 'X');
                 string expo = hex ? "Pp" : "Ee";
                 int j = hex ? i + 2 : i;
@@ -328,7 +329,6 @@ public static class CoordLuaParser
                     else if (char.IsAsciiHexDigit(s[j]) || s[j] == '.') j++;
                     else break;
                 }
-                if (j < s.Length && (IsIdentChar(s[j]))) j++;
                 var numeral = s[i..j];
                 if (!IsWellFormedNumeral(numeral, hex))
                 {
@@ -517,9 +517,22 @@ public static class CoordLuaParser
         private bool CommentBetween(int from, int to) =>
             to > from && _source.IndexOf("--", from, Math.Min(to, _source.Length) - from, StringComparison.Ordinal) >= 0;
 
-        /// <summary>Lua's own limit on nested syntax (LUAI_MAXCCALLS); every level is a
-        /// recursion here, and a stack overflow cannot be caught.</summary>
+        /// <summary>About Lua 5.3's own limit (LUAI_MAXCCALLS, 200 C levels, which a nested
+        /// table shares with the statements around it -- so CE refuses a few levels sooner).
+        /// Every level is a recursion here, and a stack overflow cannot be caught.</summary>
         private const int MaxDepth = 200;
+
+        /// <summary>A fault after a value. A numeral with a name or numeral touching it
+        /// (<c>5px</c>) is Lua 5.3's numeral then a name; it is named as the malformed number
+        /// it is, not as a stray quote.</summary>
+        private void FailAfterValue(string reason)
+        {
+            var prev = _t[_i - 1];
+            if (prev.Kind == TokKind.Number && Cur.Start == prev.End &&
+                (Cur.Kind == TokKind.Name || Cur.Kind == TokKind.Number))
+                Error = (prev.Start, $"a malformed number '{_source[prev.Start..Cur.End]}'");
+            else Fail(reason);
+        }
         private int _depth;
 
         // The fields this format reads. One of them holding a table is a stray quote's
@@ -641,7 +654,7 @@ public static class CoordLuaParser
                 else if (Cur.Kind == TokKind.End) { Unbalanced = true; break; }
                 else if (!Cur.IsSymbol("}") && !IsKeyAssign)
                 {
-                    Fail(Cur.IsSymbol("{")
+                    FailAfterValue(Cur.IsSymbol("{")
                         ? MissingBrace
                         : "unpaired quote: text follows a value where a comma or the closing brace belongs, so a " +
                           "quote in a string was not escaped (\\' or \\\")");
@@ -719,7 +732,7 @@ public static class CoordLuaParser
                 else if (Cur.Kind == TokKind.End) { Unbalanced = true; return; }
                 else if (!Cur.IsSymbol("}"))
                 {
-                    Fail("unpaired quote: text follows a value where a comma or the closing brace belongs, so a " +
+                    FailAfterValue("unpaired quote: text follows a value where a comma or the closing brace belongs, so a " +
                          "quote in a string was not escaped (\\' or \\\")");
                     return;
                 }
