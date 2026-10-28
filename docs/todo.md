@@ -1899,6 +1899,17 @@ are not repeated here; each line says what ran and what it showed.
   the stealth-meter hold." (badge Off); Reset again -> "Nothing is held, so Reset sent nothing.". pipe-0.log holds one
   `force_field` and exactly ONE `reset_field` for the whole run. On 3657 the first Reset gave the "Detect the meter
   first" advice, and the Resets after Detect and after the release each sent a `reset_field` and said "Released".
+- ✅ `LW-ARRAY-REFILLED-ZERO-SILENT`, DumperTest 5.4 Shipping, the fixture's own mutators: Live Walker on
+  DumperTestActor_0, `Arr_Churn` drilled ([4 x IntProperty], 7001-7004); `V1a_ShrinkContainers` fired from the
+  container view's Functions list ("[#1] ProcessEvent OK (result=0)"), then one Refresh: the crumb reads "[0 x
+  IntProperty]" over an empty grid with no status or red line, and ui-pipe-0.log shows that Refresh's `walk_instance`
+  TX and NO `read_array_elements` after it (3657 sent one with `"limit":0`). `V1a_GrowContainers` Count 4, Refresh: "[4
+  x IntProperty]" 7100-7103 at the new buffer, again from the walk alone. The on-screen race (a refill landing between
+  the two requests) is not reproduced; the claim is only that the zero-count request is gone.
+- 🆕 `[LW-CRUMB-UNDERSCORE]` (LOW, cosmetic, seen during the check above): Live Walker's breadcrumb drops the first
+  underscore of a name -- `DumperTestActor_0` reads "DumperTestActor0", `Arr_Churn` reads "ArrChurn". The crumb is a
+  `Button` whose `Content` is the bound label, and a Button's presenter takes the first `_` as an access-key marker.
+  Any other Button bound to a game name has the same face. Not fixed.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
