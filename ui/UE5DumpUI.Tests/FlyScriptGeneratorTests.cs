@@ -128,4 +128,29 @@ public class FlyScriptGeneratorTests
         Assert.Contains("showMessage", enable);
         Assert.Contains("memrec.Active = false", enable);
     }
+
+    // FLY-SEETHRU-FAILED-ENABLE-KILLS-PENDING-RESTORE (review of [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]):
+    // Dunste::SetEnabled joins the deferred collision restore BEFORE it knows the enable will work. A refused enable --
+    // no pawn yet (a respawn, a load), or the MovementMode write failed -- never took the pawn over, so the restore it
+    // stopped was still owed and nothing polled for it: the pawn stayed non-colliding. No C++ test target compiles
+    // Dunste.cpp, so this pins the source: every refusal in the enable branch goes through RefusedEnable, which re-arms
+    // the restore while collisionOff. Negative control: return the code directly again, or drop the StartPendingLocked.
+    [Fact]
+    public void A_refused_enable_re_arms_the_collision_restore_it_superseded()
+    {
+        var src = System.IO.File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Dunste.cpp")).Replace("\r\n", "\n");
+        int set = src.IndexOf("int32_t SetEnabled(bool enable) {", System.StringComparison.Ordinal);
+        Assert.True(set >= 0, "Dunste::SetEnabled not found");
+        int en = src.IndexOf("    if (enable) {", set, System.StringComparison.Ordinal);
+        int armed = src.IndexOf("StartWorkerLocked();", en, System.StringComparison.Ordinal);
+        var code = System.Text.RegularExpressions.Regex.Replace(src[en..armed], @"//[^\n]*", "");
+        var returns = System.Text.RegularExpressions.Regex.Matches(code, @"\breturn\b[^;]*;").Select(m => m.Value).ToList();
+        Assert.NotEmpty(returns);
+        Assert.All(returns, r => Assert.StartsWith("return RefusedEnable(", r));
+
+        int helper = src.IndexOf("int32_t RefusedEnable(int32_t rc) {", System.StringComparison.Ordinal);
+        Assert.True(helper >= 0 && helper < set, "RefusedEnable must exist above SetEnabled");
+        var body = src[helper..src.IndexOf("\n}\n", helper, System.StringComparison.Ordinal)];
+        Assert.Matches(@"if \(s_state\.collisionOff\)\s*StartPendingLocked\(\);", body);
+    }
 }
