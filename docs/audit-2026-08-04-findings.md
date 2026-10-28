@@ -231,10 +231,12 @@ existing behaviour / perf.
 > in a copy with string literals and comments blanked (`CoordLuaParser.MaskLiterals`). A string that
 > never closes stops that import the same way. The Label/Group editor also refuses a typed double quote,
 > while labels that already hold one still export escaped and read back. Each of the three has a red
-> commit, then a green one. Two adversarial review rounds followed, and each of their verified findings
-> got its own red/green pair. Among them: a stray quote named on its own line; an even number of stray
-> Lua quotes, which paired up silently; a label starting with an apostrophe before `= + - @`, which lost
-> it on the round trip. The census row lists every commit.
+> commit, then a green one. Nine adversarial review rounds followed (rounds 7 to 9 fuzzed against CE's
+> own Lua 5.3), and each round's verified findings got a red/green pair. Among them: a stray quote named on
+> its own line; an even number of stray Lua quotes, which paired up silently; a label starting with an
+> apostrophe before `= + - @`, which lost it on the round trip. Round 5 also replaced the Lua import's
+> checks on the characters beside each string with a Lua 5.3 lexer and a table-constructor reader. The
+> census row lists every commit.
 
 ## Summary table — refactor & hygiene
 
