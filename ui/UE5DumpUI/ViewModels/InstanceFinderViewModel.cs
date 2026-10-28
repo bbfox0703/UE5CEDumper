@@ -994,20 +994,13 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task CopyFieldAddressAsync(LiveFieldValue? field)
     {
-        if (field == null || SelectedInstance == null) return;
-        if (string.IsNullOrEmpty(SelectedInstance.Address)) return;
-        if (_fieldsAreDefinition && ReferenceEquals(_fieldsInstance, SelectedInstance))
-        {
-            StatusText = LiveWalkerViewModel.DefinitionNoDataText(LiveWalkerViewModel.AddrLabel);
-            return;
-        }
+        // The rows shown decide, not the selection: a newer selection's walk may still be in flight ([R7-S14]).
+        if (field == null || RefuseOnDefinitionRows(AddrLabel)) return;
+        var hexAddr = FieldAddressOf(field);
+        if (hexAddr.Length == 0) return;
 
         try
         {
-            var instanceAddr = Convert.ToUInt64(SelectedInstance.Address.Replace("0x", "").Replace("0X", ""), 16);
-            var absAddr = instanceAddr + (ulong)field.Offset;
-            var hexAddr = $"0x{absAddr:X}";
-
             var formatted = AddressHelper.FormatAddress(
                 hexAddr, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
@@ -1183,6 +1176,9 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
 
     /// <summary>[CEXML-DEFINITION-VIEW-AS-DATA] For a command on a row: refuse when the rows shown are a type's
     /// definition, whose owner + offset would land on a field of the type object itself.</summary>
+    internal const string KeyAddrLabel = "str.InstanceFinder.Addr";   // the row's Addr button
+    internal static string AddrLabel => Helpers.AobMakerStatus.Say(KeyAddrLabel, "Addr");
+
     private bool RefuseOnDefinitionRows(string action)
     {
         if (!_fieldsAreDefinition) return false;
@@ -1197,8 +1193,12 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// on the one selected now.
     /// </summary>
     private string FieldCeAddress(LiveFieldValue field)
+        => string.IsNullOrEmpty(field.FieldAddress) ? FieldAddressOf(field) : field.PayloadAddress;
+
+    /// <summary>A walked field's own address: its stamped one, else the offset on the instance it was walked from.</summary>
+    private string FieldAddressOf(LiveFieldValue field)
     {
-        if (!string.IsNullOrEmpty(field.FieldAddress)) return field.PayloadAddress;
+        if (!string.IsNullOrEmpty(field.FieldAddress)) return field.FieldAddress;
         var owner = _fieldsInstance?.Address;
         if (string.IsNullOrEmpty(owner)) return "";
         return ulong.TryParse(AobMakerActions.StripHexPrefix(owner), System.Globalization.NumberStyles.HexNumber,
