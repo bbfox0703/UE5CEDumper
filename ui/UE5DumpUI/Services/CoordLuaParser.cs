@@ -71,6 +71,17 @@ public static class CoordLuaParser
         // legitimately contains the text "&lt;" in a raw script is left alone.
         if (LooksLikeCheatTableXml(text)) text = DecodeXmlEntities(text);
 
+        // Every line number is a binary search over the line breaks, counted once: counting from
+        // the start for each entry made a 20,000-entry import take seconds on the UI thread.
+        var newlines = new List<int>();
+        for (int k = 0; k < text.Length; k++)
+            if (text[k] == '\n') newlines.Add(k);
+        int LineOf(int index)
+        {
+            int b = newlines.BinarySearch(index);
+            return (b < 0 ? ~b : b) + 1;
+        }
+
         var start = s_startFence.Match(text);
         if (!start.Success)
         {
@@ -82,14 +93,14 @@ public static class CoordLuaParser
 
         if (!int.TryParse(start.Groups[1].Value, out int version))
         {
-            result.Issues.Add(new CoordCsvIssue(LineOf(text, start.Index), "", start.Value,
+            result.Issues.Add(new CoordCsvIssue(LineOf(start.Index), "", start.Value,
                 "the block's version is not a number"));
             return result;
         }
         if (version > SupportedVersion)
         {
             // Distinguishable from "no block" — the AOBMaker bug this avoids.
-            result.Issues.Add(new CoordCsvIssue(LineOf(text, start.Index), "", start.Value,
+            result.Issues.Add(new CoordCsvIssue(LineOf(start.Index), "", start.Value,
                 $"this block was written by a newer UE5CEDumper (format v{version}); " +
                 $"this build understands v{SupportedVersion}"));
             return result;
@@ -98,7 +109,7 @@ public static class CoordLuaParser
         var end = s_endFence.Match(text, start.Index + start.Length);
         if (!end.Success)
         {
-            result.Issues.Add(new CoordCsvIssue(LineOf(text, start.Index), "", "",
+            result.Issues.Add(new CoordCsvIssue(LineOf(start.Index), "", "",
                 "the block is not closed — '-- @UE5CD:END' is missing. Was the paste truncated?"));
             return result;
         }
@@ -112,7 +123,7 @@ public static class CoordLuaParser
         {
             int sol = source.LastIndexOf('\n', Math.Min(at, source.Length - 1)) + 1;
             int eol = source.IndexOf('\n', at);
-            result.Issues.Add(new CoordCsvIssue(LineOf(text, blockOffset + at), "",
+            result.Issues.Add(new CoordCsvIssue(LineOf(blockOffset + at), "",
                 Trim(source[sol..(eol < 0 ? source.Length : eol)]),
                 reason + " -- nothing was imported; fix it and import again"));
             result.Entries.Clear();
@@ -143,16 +154,20 @@ public static class CoordLuaParser
                 open = i + 3;
         if (open < 0)
         {
-            result.Issues.Add(new CoordCsvIssue(LineOf(text, blockOffset), "", "",
+            result.Issues.Add(new CoordCsvIssue(LineOf(blockOffset), "", "",
                 "the block has no 'local COORDS = {' table"));
             return result;
         }
 
         var reader = new TableReader(tokens, source);
+        // Above the table too: a stray quote pair there -- one stray ' before the generator's own
+        // "-- build's extra field" line is enough -- made the script one CE refuses, unread.
+        reader.ReadHead(open - 3);
+        if (reader.Error is { } he) return Stop(he.At, he.Reason);
         var entries = reader.ReadCoords(open);
         if (reader.Unbalanced)
         {
-            result.Issues.Add(new CoordCsvIssue(LineOf(text, blockOffset + tokens[open - 3].Start), "", "",
+            result.Issues.Add(new CoordCsvIssue(LineOf(blockOffset + tokens[open - 3].Start), "", "",
                 "the COORDS table's braces are unbalanced"));
             return result;
         }
@@ -160,7 +175,7 @@ public static class CoordLuaParser
 
         foreach (var entry in entries)
         {
-            var parsed = ParseEntry(entry, LineOf(text, blockOffset + entry.Start), source, result.Issues);
+            var parsed = ParseEntry(entry, LineOf(blockOffset + entry.Start), source, result.Issues);
             if (parsed != null) result.Entries.Add(parsed);
         }
 
@@ -520,7 +535,7 @@ public static class CoordLuaParser
             Error = (at, reason);
         }
 
-        // After the table the comments are the generator's own lines: none of them swallowed anything.
+        // Around the table the comments are the generator's own lines: none of them swallowed anything.
         private bool _inTail;
 
         private bool LineBreakBetween(int from, int to)
@@ -608,7 +623,8 @@ public static class CoordLuaParser
             int closeAt = Cur.Start;
             int tailStart = ++_i;
             _inTail = true;
-            ReadTail(tailStart);
+            ReadStatements(tailStart, int.MaxValue,
+                "a statement after the COORDS table does not read as Lua (a stray quote can do this)");
             _inTail = false;
             if (!Failed) return entries;
             bool sameLine = _t[tailStart].Kind != TokKind.End && !LineBreakBetween(closeAt, _t[tailStart].Start);
@@ -653,12 +669,27 @@ public static class CoordLuaParser
         /// <summary><c>stat ::= ';' | 'local' namelist ['=' explist] | namelist '=' explist</c>,
         /// Lua 5.3's grammar for the statements a data block holds; anything else stops the
         /// import on its own line.</summary>
-        private void ReadTail(int from)
+        /// <summary>The statements above the table, up to token <paramref name="until"/> (its
+        /// <c>local</c>). A value that runs past it swallowed the table's own opening.</summary>
+        public void ReadHead(int until)
         {
-            const string unreadable =
-                "a statement after the COORDS table does not read as Lua (a stray quote can do this)";
+            _i = 0;
+            _inTail = true;
+            ReadStatements(0, until,
+                "a statement above the COORDS table does not read as Lua (a stray quote can do this)");
+            _inTail = false;
+            if (Error == null && (Unbalanced || _i > until))
+            {
+                Unbalanced = false;
+                Error = (_t[_statementIndex].Start,
+                         "a statement above the COORDS table runs into it (a stray quote or brace can do this)");
+            }
+        }
+
+        private void ReadStatements(int from, int until, string unreadable)
+        {
             _statementIndex = from;
-            while (!Failed && Cur.Kind != TokKind.End)
+            while (!Failed && Cur.Kind != TokKind.End && _i < until)
             {
                 _statementIndex = _i;
                 if (Cur.IsSymbol(";")) { _i++; continue; }
@@ -938,14 +969,6 @@ public static class CoordLuaParser
     }
 
     // ── Misc ────────────────────────────────────────────────────────────
-
-    private static int LineOf(string text, int index)
-    {
-        int line = 1;
-        for (int i = 0; i < index && i < text.Length; i++)
-            if (text[i] == '\n') line++;
-        return line;
-    }
 
     private static string Trim(string s) => s.Length <= 60 ? s.Trim() : s[..60].Trim() + "…";
 
