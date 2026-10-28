@@ -282,7 +282,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     internal const string KeyCoordEditNoQuote = "str.TP.LibEditNoQuote";
     /// <summary>[B21-CSV-QUOTE-HOLES] The Label/Group editor's refusal of a typed double quote.</summary>
     internal static string CoordEditNoQuoteText => AobMakerStatus.Say(KeyCoordEditNoQuote,
-        "Labels and groups cannot contain a double quote (\"). Nothing was changed.");
+        "A double quote (\") cannot be typed into a label or group. Nothing was changed.");
 
     internal const string KeyCoordNoDllTimedOut = "str.TP.LibNoDllTimedOut";
     /// <summary>[COORDPICK-TIMEDOUT-TEXT] No reply is not "nothing was added": the plugin may have made the record
@@ -4277,10 +4277,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             CoordStatus = "Label cannot be empty.";
             return;
         }
-        // [B21-CSV-QUOTE-HOLES] Refused, not stored: the export escapes a quote correctly, but
-        // a hand-edited CSV mis-splits on one and the import then stops (the maintainer's call,
-        // 2026-10-28). Labels already holding one still export and read back.
-        if ((EditCoordLabel ?? "").Contains('"') || (EditCoordGroup ?? "").Contains('"'))
+        // [B21-CSV-QUOTE-HOLES] A TYPED double quote is refused, not stored: the export escapes one
+        // correctly, but a hand-edited CSV mis-splits on it and the import then stops (the
+        // maintainer's call, 2026-10-28). Counted against the stored text, so an entry that already
+        // holds one (imported, or typed before this) stays editable and keeps it.
+        static int Quotes(string s) => s.Count(c => c == '"');
+        var group = CoordText.Normalize(EditCoordGroup, CoordText.MaxGroupLength);
+        if (Quotes(label) > Quotes(row.Entry.Label) || Quotes(group) > Quotes(row.Entry.Group))
         {
             CoordStatus = CoordEditNoQuoteText;
             return;
@@ -4289,7 +4292,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                        CoordText.HasBlockedChars(EditCoordGroup);
 
         row.Entry.Label = label;
-        row.Entry.Group = CoordText.Normalize(EditCoordGroup, CoordText.MaxGroupLength);
+        row.Entry.Group = group;
         PersistCoordLibrary();
         RebuildCoordGroups();
         ApplyCoordFilter();
