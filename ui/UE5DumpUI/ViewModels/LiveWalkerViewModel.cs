@@ -1832,8 +1832,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// [LW-BACK-CONTAINER-HEADER-ADDR] A container view stands for the object that owns the container: the header's
     /// address and the Functions list are that owner's, as on the drill that opened the view. Every other render of the
     /// view skips the walk that would set them, and left them on whatever object was walked last -- the header's Addr
-    /// chip copied the element just left, and PIPE could fire one object's function at another's address. So each
-    /// container render puts the owner back from its crumb.
+    /// chip copied the element just left, and the Functions list offered that object's functions under the owner's
+    /// view. So each container render puts the owner back from its crumb.
     /// </summary>
     private void ShowContainerOwner()
     {
@@ -7731,8 +7731,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // [VND584-04] With the functions the class gets only through an interface: FIRE reaches them by name, so
             // they belong on the list it is fired from.
             var funcs = await _dump.WalkFunctionsWithInterfacesAsync(classAddr);
-            // [LW-BACK-CONTAINER-HEADER-ADDR] Another class went on screen while this list loaded. Landing it would put
-            // one object's functions under another's address, and PIPE fires the selected one at that address.
+            // [LW-BACK-CONTAINER-HEADER-ADDR] Another class went on screen while this list loaded. Landing it would list
+            // one class's functions under another class's object, which PIPE fires a row at (see ClearFunctionRows).
             if (!string.Equals(_currentClassAddr, classAddr, StringComparison.Ordinal)) return;
             // Every walk -- each Refresh and Auto Refresh tick included -- re-reads the class's
             // functions. The same UFunctions keep their rows, so the Functions grid keeps its

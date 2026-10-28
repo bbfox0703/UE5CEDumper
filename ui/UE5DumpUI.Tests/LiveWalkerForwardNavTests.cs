@@ -982,8 +982,8 @@ public class LiveWalkerForwardNavTests
     }
 
     // Review of d206a4ad: the header moves to the new object at once, the Functions list only when its walk returns.
-    // In between, PIPE fires a row of the OLD list at the NEW address -- the DLL looks the function up by name on that
-    // object's class, so a name both classes have runs on the wrong object.
+    // In between, PIPE fires a row of the OLD list at the NEW address, and the DLL finds the function by name on that
+    // object's class: a name both classes have runs the new class's function with arguments laid out for the old one.
 
     [Fact]
     public async Task Back_IntoAContainerView_ListsNoFunctionsUntilItsOwnersListArrives()
