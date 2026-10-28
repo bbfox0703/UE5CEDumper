@@ -7642,9 +7642,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // WalkDataTableRows round-trip, landing the synthetic RowMap (and
             // caching its rows) would attach the previous DataTable's data to the
             // CURRENT object's field grid — a stale-data glitch. Drop the result
-            // when the displayed object changed under us. Both the check and the
-            // mutation run on the UI thread so CurrentAddress / Breadcrumbs read
-            // consistently and _cachedDataTableRows is written race-free.
+            // when the displayed view changed under us. Both the check and the
+            // mutation run on the UI thread so the view's state reads consistently
+            // and _cachedDataTableRows is written race-free.
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
                 if (!RowMapLoadStillCurrent(dataTableAddr, bcAtStart, crumbAtStart))
@@ -7666,8 +7666,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// <summary>Whether a RowMap row load may still land: the DataTable it was started on is still the view on
     /// screen. Internal so a test can ask it directly -- the load lands through a dispatcher hop no unit test
     /// runs.</summary>
+    /// <remarks>[LW-BACK-CONTAINER-HEADER-ADDR] The crumb, by reference: the table's own RowMap row view carries the
+    /// table's address too, and a spine restored by the Back out of a re-root can put it at the very depth the load
+    /// started at. The address and the depth alone then let the load append a RowMap row to the rows grid.</remarks>
     internal bool RowMapLoadStillCurrent(string dataTableAddr, int bcAtStart, BreadcrumbItem? crumbAtStart)
-        => CurrentAddress == dataTableAddr && Breadcrumbs.Count == bcAtStart;
+        => CurrentAddress == dataTableAddr && Breadcrumbs.Count == bcAtStart
+           && ReferenceEquals(CurrentCrumb, crumbAtStart);
 
     /// <summary>
     /// [LW-BACK-CONTAINER-HEADER-ADDR] List <paramref name="classAddr"/>'s functions -- none when it is empty -- for a
