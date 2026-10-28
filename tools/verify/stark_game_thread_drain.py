@@ -15,7 +15,8 @@ logged as "SEH exception during queued PE call". With --pairs (a Development bui
 that same workload: Debug Camera ON/OFF through set_debug_camera. With --gc (any build) it is UKismetSystemLibrary::
 CollectGarbage, a parameterless static, as many times. Then it reads the DLL's log lines written since it started and
 reports: the game thread picked and how ("named GameThread by the engine" or "the main thread"), whether the install
-validator kept it, how many worker-thread entries left queued work, and every "SEH exception during queued PE call".
+validator kept it or gave the gate up (a WARN naming "the main-thread guess"), how many worker-thread entries left
+queued work, and every "SEH exception during queued PE call".
 --game-log adds the engine's own `IsInGameThread` assertions from that file. Ends with the camera OFF.
 """
 import argparse
@@ -81,7 +82,8 @@ def main() -> int:
     time.sleep(2.0)   # let the DLL flush
 
     lines = log_lines_since(folder, since)
-    pick = [l for l in lines if "GameThreadDispatch: game thread" in l]
+    pick = [l for l in lines if "GameThreadDispatch: game thread" in l
+            or "GameThreadDispatch: the main-thread guess" in l]
     skips = [l for l in lines if "left" in l and "queued request(s) for the game thread" in l]
     seh = [l for l in lines if "SEH exception during queued PE call" in l]
     print("\n-- DLL log since the run started --")
