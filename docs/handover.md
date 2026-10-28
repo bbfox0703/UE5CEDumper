@@ -587,6 +587,11 @@ so any `grep '^### '` misses it; the second command above counts its rows.
 
 Run the commands above for the counts; numbers written into this file go stale.
 
+⭐ **Every open item, ranked, is one section: `todo.md`'s `[OPEN-CENSUS-2026-10-28]`** (open defects and UX, live
+checks owed, ideas, recorded deferrals), each row naming where the item is recorded. Read it before scanning
+`todo.md`'s `⬜` markers: most of those are history, and re-deriving them took six agents. Keep it current -- a
+commit that opens, fixes or re-scopes an item edits its census row.
+
 **Current work** is not written here: the current-programme line at the top of [`todo.md`](todo.md)
 names it by tag. Each programme's live-check order and per-row status is in its live plan or build
 ledger (indexed in [`README.md`](README.md)); what is shipped but not yet proven live is in
