@@ -6556,10 +6556,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // And the FULL function list the Functions filter rebuilds from. Clearing only the visible list let the next
         // filter edit bring the previous game's UFunctions back. (The filter box is not blanked, so there is nothing
         // for the keyword memory to Flush.)
-        _allFunctions.Clear();
-        SelectedFunction = null;   // detach before clearing the selection-bound grid
-        Functions.Clear();
-        HasFunctions = false;
+        ClearFunctionList();
         // [LW-BACK-CONTAINER-HEADER-ADDR] No list, so no class on screen: a view with this class again must load it.
         _currentClassAddr = "";
         ClearForwardStack();
@@ -7534,6 +7531,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // Funcs -> Live) can await it before calling
         // TrySelectFunctionByName -- otherwise the call races with the
         // function-list population and the row never gets selected.
+        // [LW-BACK-CONTAINER-HEADER-ADDR] Another class: its rows go now (see ClearFunctionList).
+        if (!string.Equals(prevClassAddr, result.ClassAddr, StringComparison.Ordinal)) ClearFunctionList();
         _pendingFunctionsLoad = LoadFunctionsAsync(result.ClassAddr);
 
         // DataTable detection: if this is a DataTable, fetch rows and inject synthetic RowMap field.
@@ -7681,17 +7680,30 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private void ShowFunctionsOf(string classAddr)
     {
         if (string.Equals(_currentClassAddr, classAddr, StringComparison.Ordinal)) return;
+        ClearFunctionList();
         _currentClassAddr = classAddr;
         _pendingFunctionsLoad = LoadFunctionsAsync(classAddr);
+    }
+
+    /// <summary>
+    /// [LW-BACK-CONTAINER-HEADER-ADDR] Empty the Functions list. Called the moment the class on screen changes, not
+    /// when the new list lands: the header's address has already moved, PIPE fires a row at that address, and the DLL
+    /// looks the function up by name on that object's class -- so an old row whose name the new class also has runs
+    /// on the wrong object. The selection is detached first, because it is bound to the grid being cleared.
+    /// </summary>
+    private void ClearFunctionList()
+    {
+        _allFunctions.Clear();
+        SelectedFunction = null;
+        Functions.Clear();
+        HasFunctions = false;
     }
 
     private async Task LoadFunctionsAsync(string classAddr)
     {
         if (string.IsNullOrEmpty(classAddr) || classAddr == "0x0")
         {
-            _allFunctions.Clear();
-            Functions.Clear();
-            HasFunctions = false;
+            ClearFunctionList();
             return;
         }
 
@@ -7719,9 +7731,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         catch
         {
             if (!string.Equals(_currentClassAddr, classAddr, StringComparison.Ordinal)) return;   // the newer class's list stays
-            _allFunctions.Clear();
-            Functions.Clear();
-            HasFunctions = false;
+            ClearFunctionList();
         }
     }
 
