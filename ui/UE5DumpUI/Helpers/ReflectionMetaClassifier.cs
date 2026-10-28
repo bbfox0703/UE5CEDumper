@@ -83,4 +83,8 @@ public static class ReflectionMetaClassifier
     /// Tree's "Instances only" filter applies to every row of the fully-loaded pool.
     /// </summary>
     public static bool IsLiveInstanceRow(string? className) => !IsReflectionMeta(className);
+
+    internal static IReadOnlyCollection<string> DefinitionViewMetas { get; } = Array.Empty<string>();
+
+    public static bool WalksAsDefinition(string? className) => false;
 }
