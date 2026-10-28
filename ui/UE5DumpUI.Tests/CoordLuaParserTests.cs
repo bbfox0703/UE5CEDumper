@@ -357,4 +357,70 @@ public class CoordLuaParserTests
         var groups = CoordLuaParser.TopLevelBraceGroups("{a},{b{c}},{d}").Select(g => g.Text).ToList();
         Assert.Equal(new[] { "a", "b{c}", "d" }, groups);
     }
+
+    // ── [B21-CSV-QUOTE-HOLES] hole 3: keys are code, not text inside a literal or a comment ──
+    //
+    // Every key lookup ran its regex over the whole entry, literals included, so a label reading
+    // `Arena z=0 plane` set Z to 0 -- shown in the preview as a Changed row with a wrong coordinate.
+    // And an unterminated string was quietly cut at the line end. The maintainer's rule
+    // (2026-10-28): an unpaired quote stops the import with an error; nothing is repaired.
+
+    [Fact]
+    public void AKeyInsideALabel_IsNotReadAsThatField()
+    {
+        var r = CoordLuaParser.Parse(Wrap(
+            "  { uid='a', label='Arena z=0 plane', group='x=9', map='M', x=1, y=2, z=35 },"));
+        var e = Assert.Single(r.Entries);
+        Assert.Equal("Arena z=0 plane", e.Label);
+        Assert.Equal(1, e.X);
+        Assert.Equal(35, e.Z);
+        Assert.Empty(r.Issues);
+    }
+
+    [Fact]
+    public void AKeyInsideAnotherString_IsNotReadAsTheLabel()
+    {
+        var r = CoordLuaParser.Parse(Wrap(
+            "  { uid='a', group=\"label='Wrong'\", label='Right', map='M', x=1, y=2, z=3 },"));
+        Assert.Equal("Right", Assert.Single(r.Entries).Label);
+    }
+
+    [Fact]
+    public void AKeyInsideAComment_IsNotReadAsThatField()
+    {
+        var r = CoordLuaParser.Parse(Wrap(
+            "  { uid='a', label='A', map='M', x=1, y=2, -- z=5 was the old floor\n    z=35 },"));
+        Assert.Equal(35, Assert.Single(r.Entries).Z);
+        Assert.Empty(r.Issues);
+    }
+
+    [Fact]
+    public void AnApostropheInAComment_IsNotAnUnpairedQuote()
+    {
+        // The generator's own block carries "-- build's extra field"; a strict quote check that did
+        // not know comments would refuse every generated script.
+        var r = CoordLuaParser.Parse(Wrap("  -- don't edit uids\n" + OneEntry));
+        Assert.Single(r.Entries);
+        Assert.Empty(r.Issues);
+    }
+
+    [Fact]
+    public void AStringThatNeverCloses_StopsTheImport()
+    {
+        var r = CoordLuaParser.Parse(Wrap(
+            "  { uid='a', label='Arena, map='M', x=1, y=2, z=3 },\n" + OneEntry));
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(3, issue.Line);
+        Assert.Contains("unpaired quote", issue.Reason, StringComparison.Ordinal);
+        Assert.Contains("nothing was imported", issue.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnUnpairedQuoteInTheLastEntry_StillImportsNothing()
+    {
+        var r = CoordLuaParser.Parse(Wrap(OneEntry + "\n  { uid='b', label=\"B, map='M', x=1, y=2, z=3 },"));
+        Assert.Empty(r.Entries);
+        Assert.Contains("unpaired quote", Assert.Single(r.Issues).Reason, StringComparison.Ordinal);
+    }
 }
