@@ -600,10 +600,10 @@ public class LiveWalkerForwardNavTests
                          Other = "0x30000", OtherCls = "0xC300", Table = "0x40000", TableCls = "0xC400",
                          RowData = "0x48000", RowStruct = "0xC480";
 
-    /// <summary>Walks an owner (an object array and an object-valued map, both holding <see cref="Elem"/>), a
-    /// DataTable, one of its rows and an unrelated object, and lists one function per class. A gated class's list
-    /// waits until the test releases it; its continuation runs inline, so the late landing has happened when
-    /// SetResult returns.</summary>
+    /// <summary>Walks an owner (an object array, an object-valued map and an object set, each holding
+    /// <see cref="Elem"/>), a DataTable, one of its rows and an unrelated object, and lists one function for each
+    /// UClass (the row struct has none). A gated class's list waits until the test releases it; its continuation runs
+    /// inline, so the late landing has happened when SetResult or SetException returns.</summary>
     private sealed class OwnerStub : StubDumpService
     {
         private readonly Dictionary<string, TaskCompletionSource<List<FunctionInfoModel>>> _functionGates = new();
@@ -613,7 +613,7 @@ public class LiveWalkerForwardNavTests
             RegisterStruct(Owner, new InstanceWalkResult
             {
                 Address = Owner, Name = "Owner_0", ClassName = "BP_Owner_C", ClassAddr = OwnerCls,
-                Fields = new List<LiveFieldValue> { GearField(), LootField() },
+                Fields = new List<LiveFieldValue> { GearField(), LootField(), PalsField() },
             });
             RegisterStruct(Elem, Obj(Elem, "Elem_0", "BP_Elem_C", ElemCls));
             RegisterStruct(Other, Obj(Other, "Other_0", "BP_Other_C", OtherCls));
@@ -637,6 +637,13 @@ public class LiveWalkerForwardNavTests
             {
                 new() { Index = 0, Key = "7", ValuePtrAddress = Elem, ValuePtrName = "Elem_0", ValuePtrClassName = "BP_Elem_C" },
             },
+        };
+
+        private static LiveFieldValue PalsField() => new()
+        {
+            Name = "Pals", TypeName = "SetProperty", Offset = 0xA0, Size = 0x50,
+            SetCount = 1, SetElemType = "ObjectProperty", SetElemSize = 8, SetStride = 16, SetDataAddr = "0x70000",
+            SetElements = new() { new() { Index = 0, KeyPtrAddress = Elem, KeyPtrName = "Elem_0", KeyPtrClassName = "BP_Elem_C" } },
         };
 
         public static DataTableWalkResult TableRows() => new()
@@ -758,17 +765,13 @@ public class LiveWalkerForwardNavTests
     [Fact]
     public async Task Refresh_OfAContainerViewThatKnowsOnlyItsOwnersAddress_LearnsTheRestFromTheOwnersWalk()
     {
-        // The shape a bookmark file or a Locate spine rebuilds: the crumb holds the owner's address and the container
-        // field, and nothing about the owner's class.
+        // The shape a bookmark file or a Locate spine rebuilds: the container crumb holds the owner's address and the
+        // field's name and offset -- no container field, nothing about the owner's class.
         var (_, vm, _) = OwnerWalker();
         await vm.NavigateToAddressCommand.ExecuteAsync(Elem);   // whatever was walked before
         vm.Breadcrumbs.Clear();
         vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Owner, Label = "Owner_0", FieldName = "Owner_0" });
-        vm.Breadcrumbs.Add(new BreadcrumbItem
-        {
-            Address = Owner, Label = "Gear [1 x ObjectProperty]", FieldName = "Gear", FieldOffset = 0x40,
-            IsContainerView = true, ContainerField = OwnerStub.GearField(),
-        });
+        vm.Breadcrumbs.Add(SyntheticGearCrumb());
 
         await vm.RefreshCommand.ExecuteAsync(null);
 
@@ -824,6 +827,103 @@ public class LiveWalkerForwardNavTests
 
         Assert.Equal(Elem, vm.CurrentAddress);
         Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+    }
+
+    [Fact]
+    public async Task AFunctionListThatFailsLate_DoesNotEmptyTheListOfTheObjectOnScreenNow()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        var ownersList = dump.GateFunctions(OwnerCls);
+        await vm.NavigateToAddressCommand.ExecuteAsync(Owner);
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "Gear"));
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
+
+        ownersList.SetException(new InvalidOperationException("pipe timeout"));   // the owner's walk fails now
+
+        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+    }
+
+    [Fact]
+    public async Task Back_FromAnElement_PutsTheSetViewBackOnItsOwner()
+    {
+        var (_, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Pals");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
+        Assert.Equal(Elem, vm.CurrentAddress);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.StartsWith("Set<", vm.CurrentClassName);
+        AssertShowsTheOwner(vm);
+    }
+
+    /// <summary>A container crumb as a Locate spine or a bookmark file builds it: no container field, so a render
+    /// re-hydrates the view from a walk of the owner.</summary>
+    private static BreadcrumbItem SyntheticGearCrumb() => new()
+    {
+        Address = Owner, Label = "Gear", FieldName = "Gear", FieldOffset = 0x40, IsContainerView = true,
+    };
+
+    [Fact]
+    public async Task Back_IntoARehydratedContainerView_ShowsItsOwner()
+    {
+        var (_, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Elem);
+        vm.Breadcrumbs.Clear();
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Owner, Label = "Owner_0", FieldName = "Owner_0" });
+        vm.Breadcrumbs.Add(SyntheticGearCrumb());
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Elem, Label = "Elem_0", FieldName = "[0]", IsPointerDeref = true });
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.StartsWith("Array<", vm.CurrentClassName);
+        AssertShowsTheOwner(vm);
+    }
+
+    [Fact]
+    public async Task ABookmarkedContainerView_ReResolvedFromGWorld_ShowsItsOwner()
+    {
+        // Saved in an earlier game session: every address is dead, and the spine is walked again from the live GWorld.
+        var (dump, vm, _) = OwnerWalker();
+        dump.RegisterStruct("0xA8B0", new InstanceWalkResult   // the stub's live GWorld
+        {
+            Name = "World", ClassName = "World", Address = "0xA8B0",
+            Fields = new() { new() { Name = "OwnerRef", Offset = 0x30, TypeName = "ObjectProperty", PtrAddress = Owner } },
+        });
+        var slot = vm.BookmarkSlots[0];
+        slot.SavedClassName = "Array<ObjectProperty>";
+        slot.SavedObjectName = "Gear";
+        slot.SavedAddress = "0xDEAD0";
+        slot.SavedBreadcrumbs = new List<BreadcrumbItem>
+        {
+            new() { Address = "0xDEADW", Label = "GWorld", FieldName = "GWorld", IsPointerDeref = true },
+            new() { Address = "0xDEAD0", Label = "Owner_0", FieldName = "OwnerRef", FieldOffset = 0x30, IsPointerDeref = true,
+                    TargetClassName = "BP_Owner_C" },
+            new() { Address = "0xDEAD0", Label = "Gear", FieldName = "Gear", FieldOffset = 0x40, IsContainerView = true },
+        };
+        slot.IsOccupied = true;
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.StartsWith("Array<", vm.CurrentClassName);
+        AssertShowsTheOwner(vm);
+    }
+
+    [Fact]
+    public async Task AContainerViewBookmarked_ThenReloadedAfterADisconnect_ListsItsOwnersFunctions()
+    {
+        // A disconnect empties the Functions list; the class it was for must not still count as listed.
+        var (_, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        var slot = vm.BookmarkSlots[0];
+        vm.SaveBookmarkToSlotCommand.Execute(slot);
+        vm.ClearOnDisconnect();
+        Assert.Empty(vm.Functions);
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.StartsWith("Array<", vm.CurrentClassName);
+        AssertShowsTheOwner(vm);
     }
 }
 
