@@ -2306,6 +2306,19 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   command -- try again in a moment"; OK clicked after the -5, with the mailbox idle again. After OK: `Active` false,
   ZERO `received cmd=9` (God Mode sent neither ON nor OFF) and ZERO `GodMode: set OFF`; the card's ↻ still ON.
   Cleaned up: Keep Foreground ON (the queued ON drained), God Mode Force OFF, "✓ Debug Camera forced OFF.".
+- ✅ `FLY-SEETHRU-FAILED-ENABLE-KILLS-PENDING-RESTORE`, **emulated** refusal, same dev `--idle` session. Keep Foreground
+  ON, Fly card with Noclip ticked, Fly ON: `Fly: ENABLED (baseMode=1, speed=1200, preset=0)`, `Fly:
+  SetActorEnableCollision(0) applied (rc=0)`. Keep Foreground OFF, Fly OFF: `Fly: DISABLED but the pawn's collision
+  is still OFF (game thread unresponsive) - keeping the record and polling to restore it` + `Fly: waiting for the game
+  thread to resume …` (count 1). The pawn's CharacterMovement (pawn 0x202860DA0C0 +0x330) nulled through CE (saved
+  0x202A2E4F010), Fly ON from the card -> badge "Unavailable" (`fly_set: enable=1 … noclip=1` at 14:05:14.801),
+  the pointer restored and read back at once. The walk log gained a SECOND `Fly: waiting for the game thread to resume`
+  at 14:05:14.802 -- RefusedEnable re-armed what SetEnabled's StopPendingLocked had joined. Keep Foreground ON:
+  `Fly: SetActorEnableCollision(1) applied (rc=0)` + `Fly: game thread resumed after 22500 ms — pawn collision
+  restored`; CE reads the pawn's `bActorEnableCollision` byte as CB, bit 7 set. Only the refusal's CAUSE is synthetic: a
+  natural one with a restore pending cannot be produced on DumperTest (no pawn needs the game thread to run, which
+  lands the restore first; a MovementMode write failure cannot be forced). Before 86cd11c6 the second `waiting` line
+  and the restore would not follow.
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
