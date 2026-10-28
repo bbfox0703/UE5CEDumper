@@ -55,7 +55,7 @@ public static class DebugCameraScriptGenerator
         {
             Line(sb, "  showMessage('[DebugCamera] g_invokeMailbox not found -- is " +
                       "UE5Dumper.dll injected?')");
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         else
         {

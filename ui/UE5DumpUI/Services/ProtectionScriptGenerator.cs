@@ -58,7 +58,7 @@ public static class ProtectionScriptGenerator
         {
             Line(sb, "  showMessage('[GodMode] g_invokeMailbox not found -- is " +
                       "UE5Dumper.dll injected?')");
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         else
         {
@@ -97,7 +97,7 @@ public static class ProtectionScriptGenerator
         {
             Line(sb, $"  showMessage('[GodMode] {label} -- no pawn? (enter gameplay first)')");
             // Nothing was applied on this branch, so the record must not stay ticked.
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         else
         {

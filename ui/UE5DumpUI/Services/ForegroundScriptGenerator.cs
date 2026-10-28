@@ -60,7 +60,7 @@ public static class ForegroundScriptGenerator
         {
             Line(sb, "  showMessage('[KeepForeground] g_invokeMailbox not found -- is " +
                       "UE5Dumper.dll injected?')");
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         else
         {
@@ -98,7 +98,7 @@ public static class ForegroundScriptGenerator
         {
             Line(sb, $"  showMessage('[KeepForeground] {label} failed (hook error ' .. tostring(state) .. ')')");
             // Nothing was applied on this branch, so the record must not stay ticked.
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         else
         {

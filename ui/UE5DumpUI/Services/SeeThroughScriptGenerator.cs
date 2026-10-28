@@ -57,7 +57,7 @@ public static class SeeThroughScriptGenerator
         {
             Line(sb, "  showMessage('[SeeThrough] g_invokeMailbox not found -- is " +
                       "UE5Dumper.dll injected?')");
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         else
         {
@@ -118,7 +118,7 @@ public static class SeeThroughScriptGenerator
         {
             Line(sb, $"  showMessage('[SeeThrough] {label} failed (error ' .. tostring(state) .. ')')");
             // Nothing was applied on this branch, so the record must not stay ticked.
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         else
         {

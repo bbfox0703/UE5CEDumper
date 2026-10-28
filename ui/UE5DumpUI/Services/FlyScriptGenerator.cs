@@ -91,7 +91,7 @@ public static class FlyScriptGenerator
         {
             Line(sb, $"  showMessage('[{name}] g_invokeMailbox not found -- is " +
                       "UE5Dumper.dll injected?')");
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         else
         {
@@ -149,7 +149,7 @@ public static class FlyScriptGenerator
             {
                 Line(sb, $"  showMessage('[{name}] -- no pawn / no CharacterMovement? (enter gameplay first)')");
                 // Applied nothing -> the record must not stay ticked.
-                Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+                Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
             }
             else
             {
