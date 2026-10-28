@@ -40,11 +40,12 @@ public class WalkInstanceLeanTests
     /// default, which is what these blanks represent).</summary>
     private static InstanceWalkResult Lean(InstanceWalkResult r) => new()
     {
-        // Instance header: lean keeps only `addr` (+ `stale`, not modelled here).
+        // Instance header: lean keeps `addr` and `is_definition` (+ `stale`, not modelled here). is_definition decides
+        // whether an exporter lays the target out as data, so it is not export-dead. [CEXML-DEFINITION-VIEW-AS-DATA]
         Address = r.Address,
         Name = "", ClassName = "", ClassAddr = "",
         OuterAddr = "", OuterName = "", OuterClassName = "",
-        IsDefinition = false, PropertiesSize = 0,
+        IsDefinition = r.IsDefinition, PropertiesSize = 0,
         Fields = r.Fields.Select(LeanField).ToList(),
     };
 
