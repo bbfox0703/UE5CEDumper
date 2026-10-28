@@ -2346,6 +2346,17 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   fronted ~10 s: the HUD is gone, the pawn view back; ↻ -> "Debug Camera is OFF." (`get_debug_camera_state` 14:17:47);
   Force Off again -> "✓ Debug Camera forced OFF." with `UE5_SetDebugCamera: already OFF — no-op`. On 5.4 the same
   drained OFF left the camera ON ([LIVE-3659-2026-10-28]).
+- ✅ **Debug Camera on UE 5.8, the CE record: a queued OFF leaves the record ticked over a camera that IS off, and the
+  second untick recovers.** DumperTest58 Development relaunched (pid 10892, DLL 3660), idle mode from the game console
+  again. UI in front: Force On -> badge Queued (14:22:14); the game fronted: the Debug Camera HUD appears. CE in front:
+  tick `Debug Camera (force on/off): setDebugCamera` -> `Mailbox: SET_DEBUG_CAMERA req=1 -> state=1` at 14:22:51 with no
+  invoke (already ON), `Active` true. Untick with CE in front -> `enqueued invoke …` → `invoke timeout (5000ms)` →
+  `SET_DEBUG_CAMERA req=0 -> state=-5` (14:23:20.943); the Lua Engine prints "[DebugCamera] OFF did not complete -- the
+  game thread is busy, and a queued OFF does not turn the camera off on most engines. The record stays ticked: untick it
+  again once the game responds."; the record stays ticked. The game fronted ~12 s: the HUD is gone (the queued OFF
+  drained, 5.8's behaviour) while the record is STILL ticked -- the state the message's "most engines" hedge covers.
+  Untick again -> `req=0 -> state=0` at 14:24:38.715 with no invoke (already OFF), the record unticks, and the Lua Engine
+  window closes itself (the clean-success close). `t.IdleWhenNotForeground 0` set back from the console.
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
