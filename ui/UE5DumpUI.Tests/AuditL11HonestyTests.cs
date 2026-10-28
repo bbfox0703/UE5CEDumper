@@ -1329,6 +1329,18 @@ public class AuditL11HonestyTests
         Assert.False(ParamBufferBuilder.TryValidateScalar("TextProperty", 24, "hello", out _));
     }
 
+    [Fact]
+    public void Y11_FText_RefusalClaimsOnlyWhatARunCannotFalsify()
+    {
+        // [FTEXT-REFUSAL-OVERCLAIM] A zeroed FText sent to a body that ignores it returned
+        // "ProcessEvent OK" on UE 5.4: copying, passing and destroying it all skip the null. The
+        // refusal stays -- a callee that READS it does crash, and the dumper cannot tell which
+        // kind it is calling -- but its reason must say "can", never that it always crashes.
+        Assert.False(ParamBufferBuilder.TryValidateScalar("TextProperty", 24, "0", out var err));
+        Assert.DoesNotContain("crashes the game", err);
+        Assert.Contains("a function that reads it can crash the game", err);
+    }
+
     // ── Y11 step 3: the SUB-FIELD path had no gate at all ──────────────────────
     //
     // The dialog validated top-level params and then called WriteStructParam, which

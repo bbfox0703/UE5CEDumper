@@ -1804,6 +1804,17 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void CeForm_TheFTextRefusal_ClaimsOnlyWhatARunCannotFalsify()
+    {
+        // [FTEXT-REFUSAL-OVERCLAIM] The form's twin of FIRE's reason, held to the same wording:
+        // a zeroed FText crashes only a callee that reads it.
+        var pre = BeforeTheMailbox(FireHandler(InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc("TextProperty", 24))));
+
+        Assert.DoesNotContain("crashes the game", pre, StringComparison.Ordinal);
+        Assert.Contains("a function that reads it can crash the game", pre, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void ZeroFill_ARightParmsSize_IsUnchanged()
     {
         // The control, green before and after: params inside ParmsSize change nothing, and the
