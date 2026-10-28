@@ -175,19 +175,33 @@ public static class CoordCsvCodec
         return "\"" + s.Replace("\"", "\"\"") + "\"";
     }
 
-    /// <summary>Prefix a formula-leading value with an apostrophe. Stripped again by
+    /// <summary>
+    /// True when <paramref name="s"/> starts with a formula leader once any leading
+    /// apostrophes are skipped. Armouring every such value, not only a bare leader, is what
+    /// makes the round trip exact: an armoured value has this shape itself, so a label that
+    /// really began <c>'=</c> must be armoured too, or <see cref="Unarmour"/> takes its own
+    /// apostrophe for the armour and drops it.
+    /// </summary>
+    private static bool NeedsArmour(string s)
+    {
+        int i = 0;
+        while (i < s.Length && s[i] == '\'') i++;
+        return i < s.Length && FormulaLeaders.IndexOf(s[i]) >= 0;
+    }
+
+    /// <summary>Prefix a formula-shaped value with an apostrophe. Stripped again by
     /// <see cref="Unarmour"/>, so the round trip is transparent.</summary>
     internal static string Armour(string? raw)
     {
         var s = raw ?? "";
-        return s.Length > 0 && FormulaLeaders.IndexOf(s[0]) >= 0 ? "'" + s : s;
+        return NeedsArmour(s) ? "'" + s : s;
     }
 
     /// <summary>Remove exactly one armouring apostrophe.</summary>
     internal static string Unarmour(string? raw)
     {
         var s = raw ?? "";
-        return s.Length >= 2 && s[0] == '\'' && FormulaLeaders.IndexOf(s[1]) >= 0 ? s[1..] : s;
+        return s.Length >= 2 && s[0] == '\'' && NeedsArmour(s[1..]) ? s[1..] : s;
     }
 
     // ── Read ────────────────────────────────────────────────────────────
