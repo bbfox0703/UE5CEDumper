@@ -2449,6 +2449,14 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   item) -- that tests the label path against a pair we wrote, not one the engine resolved. The control half ran
   naturally: 60 unloaded elements labelled `[i]` alone in the CSX push above. The 3657 → 3658 fix stays covered by its
   red/green test (`dc5b7cd9` / `e19404c6`).
+- ⛔ `UE4-ASSETPTR-EXPORTS`, **a TMap / TSet of TAssetPtr**: **no fixture on this PC**, now measured on both UE ≤ 4.17
+  titles. Extinction (4.15): zero, the 3659 census. **NEKOPALIVE (4.11)**: launched (appid 469990), DLL 3660
+  injected into the inner `Package\Nekopara\Binaries\Win64\Nekopara.exe` (its `Logs\Nekopara\init-0.log` reads
+  build 1.0.0.3660), `Connected — UE411 (25750 objects)`, Export → SDK Header → `out/nekopalive-3660_SDK.h` (2,176
+  structs): 5 TAssetPtr fields, all on engine types (LevelStreaming, SoundNodeWavePlayer, PaperTileMap,
+  PreviewAttachedObjectPair, PaperSpriteAtlasSlot); 6 TMaps, none with an asset key or value; 0 TSets (4.11 has no
+  USetProperty). Coverage limit: the census ran at the game's own launcher menu -- its UMG buttons took no synthetic
+  click or Enter, so no scene loaded; native types are all present there, a scene's Blueprint types are not.
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
