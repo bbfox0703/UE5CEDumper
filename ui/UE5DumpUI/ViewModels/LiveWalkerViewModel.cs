@@ -7531,8 +7531,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // Funcs -> Live) can await it before calling
         // TrySelectFunctionByName -- otherwise the call races with the
         // function-list population and the row never gets selected.
-        // [LW-BACK-CONTAINER-HEADER-ADDR] Another class: its rows go now (see ClearFunctionList).
-        if (!string.Equals(prevClassAddr, result.ClassAddr, StringComparison.Ordinal)) ClearFunctionList();
+        // [LW-BACK-CONTAINER-HEADER-ADDR] Another class: its rows go now (see ClearFunctionRows).
+        if (!string.Equals(prevClassAddr, result.ClassAddr, StringComparison.Ordinal)) ClearFunctionRows();
         _pendingFunctionsLoad = LoadFunctionsAsync(result.ClassAddr);
 
         // DataTable detection: if this is a DataTable, fetch rows and inject synthetic RowMap field.
@@ -7691,22 +7691,30 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private void ShowFunctionsOf(string classAddr)
     {
         if (string.Equals(_currentClassAddr, classAddr, StringComparison.Ordinal)) return;
-        ClearFunctionList();
+        ClearFunctionRows();
         _currentClassAddr = classAddr;
         _pendingFunctionsLoad = LoadFunctionsAsync(classAddr);
     }
 
     /// <summary>
-    /// [LW-BACK-CONTAINER-HEADER-ADDR] Empty the Functions list. Called the moment the class on screen changes, not
-    /// when the new list lands: the header's address has already moved, PIPE fires a row at that address, and the DLL
-    /// looks the function up by name on that object's class -- so an old row whose name the new class also has runs
-    /// on the wrong object. The selection is detached first, because it is bound to the grid being cleared.
+    /// [LW-BACK-CONTAINER-HEADER-ADDR] Empty the Functions rows but keep the section, for a class change whose list
+    /// is still loading. The header's address has already moved: PIPE would fire an old row there, and the DLL finds
+    /// the function by NAME on that object's class -- so a name the new class also has runs the new class's function
+    /// with arguments laid out for the old one. The section stays because hiding it resizes the field grid under a
+    /// scroll restore, which the list's landing would then undo. The selection is detached first: it is bound to the
+    /// grid being cleared.
     /// </summary>
-    private void ClearFunctionList()
+    private void ClearFunctionRows()
     {
         _allFunctions.Clear();
         SelectedFunction = null;
         Functions.Clear();
+    }
+
+    /// <summary>Empty the Functions list and hide its section: there is no class, or its list could not be read.</summary>
+    private void ClearFunctionList()
+    {
+        ClearFunctionRows();
         HasFunctions = false;
     }
 
