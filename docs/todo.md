@@ -11,7 +11,8 @@ Open work only. **Read this when deciding what to do next.**
 > `[ASSETPTR-BAKED-TOKEN]`, `[L83-PLAN-QUEUED-STRINGS]`); both builds' fixes passed live on 3659's AOT build on 2026-10-28
 > (`[LIVE-3659-2026-10-28]`), which raised four leads -- `[CEXML-DEFINITION-VIEW-AS-DATA]` (MED, pre-existing),
 > `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]`, `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]` and `[LW-CRUMB-UNDERSCORE]`
-> (LOW) -- all fixed on 2026-10-28 (red/green in each row), not yet built or checked live. Still owed live: a TMap / TSet of
+> (LOW) -- all fixed on 2026-10-28 (red/green in each row), as is every confirmed finding of the review of those fixes
+> (`[LEADFIX-REVIEW-2026-10-28]`); shipped in build 3660 (AOT), not yet checked live. Still owed live: a TMap / TSet of
 > TAssetPtr (Extinction has none), a game-filled TArray<TAssetPtr> and a loaded element's label
 > (`[UE4-ASSETPTR-EXPORTS]`'s row), and Debug Camera on UE 5.8. · Before it, the
 > known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
@@ -2115,7 +2116,7 @@ are not repeated here; each line says what ran and what it showed.
 🔍 **Review of the four leads' fixes** `[LEADFIX-REVIEW-2026-10-28]` (workflow `wf_d4c344e9-f03`, the fixes of
 `[CEXML-DEFINITION-VIEW-AS-DATA]`, `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]`, `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]`
 and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`); the other 14 -- 2 MED, 11 LOW,
-1 INFO -- all fixed on 2026-10-28, one red/green pair each unless noted. Not yet checked live.
+1 INFO -- all fixed on 2026-10-28, one red/green pair each unless noted. Shipped in build 3660; not yet checked live.
 - **MED** `DEFVIEW-FLAG-STALE` (red `1599ff8f` / green `d1d2e7c2`): Live Walker's container and DataTable-row views
   render without a walk, so Back from a definition into one kept the definition flag and refused every action on rows
   that DO have addresses. Each such view now clears it.
@@ -2126,13 +2127,16 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   (`MR_ERR_WRITE` / `TR_ERR_WRITE`: the override is latched, the raw write failed, the worker retries);
   `Constants.OverrideHeldWriteFailedResult`, pinned against both headers.
 - `SHARED-IDLE-BUSY-BAIL-STILL-REENTERS-DISABLE` (red `0d6c497f` / green `01df0178`): the contract check and the
-  idle-mailbox wait bail before anything is sent, yet unticked the plain way, so `[DISABLE]` sent a real OFF once the
-  mailbox went idle. New mode `MailboxTimeout.UntickWithoutDisableAndReturn` for the seven stateful toggles; the timeout
+  idle-mailbox wait bail before anything is sent, yet unticked the plain way. After a busy-mailbox bail `[DISABLE]`
+  sent a real OFF once the mailbox went idle; after a contract-check bail its own check stopped it, so that half
+  changes nothing visible. New mode `MailboxTimeout.UntickWithoutDisableAndReturn` for the seven stateful toggles; the timeout
   after the command store keeps the plain untick (the DLL may still apply the command).
 - `FLY-SEETHRU-FAILED-ENABLE-KILLS-PENDING-RESTORE` (red `35b7c6ee` / green `86cd11c6`, Fly only): `Dunste::SetEnabled`
   stopped the deferred collision restore before the enable could fail; a refused enable now re-arms it
   (`RefusedEnable`). A source pin -- no C++ test target compiles Dunste.cpp; the UE5Dumper target builds. SeeThrough's
-  two refusals cannot follow an enable that hid anything on the same build.
+  two refusals cannot follow an enable that hid anything on the same build. The shipped path was the Teleport tab's
+  Fly card and hotkey (pre-existing since B8); a CE tick only lost the wait once its untick stopped running
+  `[DISABLE]`, whose OFF had re-armed it (the dev-log 3660 fact-check).
 - Instance Finder: `IF-DEFVIEW-FIELDNAME-AS-ACTION` (red `85ac5817` / green `94b65ecf`) -- HEX / +CE refused as
   "⚠ World: nothing done", the row's name where the action belongs; `DEFVIEW-IF-COPYADDR-GUARD-BYPASS` (red `a194f69a` /
   green `890fc2a5`) -- with a definition's rows still shown during the next selection's walk, Addr copied `0x9020`, the

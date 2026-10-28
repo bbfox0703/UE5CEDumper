@@ -27,6 +27,42 @@ builds ≤696 in
 
 -----
 
+## 2026-10-28 (build 3660) — A pointer to a type exports as a pointer; a Cheat Engine tick that applied nothing leaves the feature alone `[CEXML-DEFINITION-VIEW-AS-DATA]` `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]` `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]` `[LW-CRUMB-UNDERSCORE]` `[LEADFIX-REVIEW-2026-10-28]`
+
+- **A pointer to a type exports as a plain pointer.** When the target is a struct type (ScriptStruct) or a native,
+  Blueprint or Widget Blueprint class -- a DataTable's RowStruct when it is a native struct, a TSubclassOf / class
+  reference such as a GameMode's DefaultPawnClass, an array of ability classes -- Copy CE XML and the CSX export laid
+  the type's member layout out under the pointer as if it were data, so Cheat Engine read the type object's own memory
+  at those offsets: records that looked plausible, could be written, and were wrong. Measured on Extinction's
+  DT_LevelSelectData. Such a pointer is now an 8-byte pointer leaf. Other type objects (an Anim Blueprint class, a
+  Blueprint-defined row struct) are still walked as the objects they are, as before.
+- **Live Walker and Instance Finder say when they show a type definition** and give its rows no address. On one,
+  Live Walker refuses Copy CE XML, Copy CE Field, +CE Field (flat), Addr, HEX and +CE, and Instance Finder refuses
+  Copy CE XML, Addr, HEX and +CE, each naming the button. AA Script, Export CSX and Push to CE Structure Dissect still
+  work on one: they register the type object's own address, or emit the type's layout as a structure.
+- **Instance Finder's Addr copies the address of the rows shown.** While a newly picked instance was still loading,
+  it added the row's offset to the NEW instance's address.
+- **A Cheat Engine tick that applied nothing unticks without running its disable section.** That section sends a real
+  OFF on the stateful toggles (Debug Camera, Fly, GodMode, Keep Foreground, See-through, Movement, Time), so a tick the
+  DLL refused, or one that gave up waiting for a busy mailbox, turned off the same feature a UI card was holding --
+  or, on Debug Camera, raised an error and left the record ticked.
+- **A tick the DLL keeps as armed now stays ticked**, and says that unticking cancels it: GodMode ticked before a pawn
+  exists (it engages when one does), and a Movement or Time hold whose write failed but is retried every tick. Both
+  used to untick, which also cancelled the hold.
+- **The invoke helper's Debug Camera sample and the trainer's teleport save / recall untick after their message**, not
+  while it is open, when the untick did nothing and the record stayed ticked.
+- **Names keep their first underscore** in Live Walker's breadcrumb (`DumperTestActor_0` read "DumperTestActor0"), the
+  noise-denylist chips, Class Pivot's Discover snapshot picks and Proxy Deploy's drives.
+- **Fly:** when Fly ON (the Teleport tab's Fly card or its hotkey) is refused -- no pawn yet, or the MovementMode write
+  failed -- it no longer cancels the wait to restore the pawn's collision after a disable that could not restore it,
+  which left the pawn without collision.
+- Not checked live: these are unit-tested, red then green, except the Fly fix, which a pin on the DLL source covers (no
+  test target compiles that file; the DLL builds). Build 3659's own fixes passed live on 2026-10-28.
+- Review: the four leads' fixes had their own review (15 findings, 1 refuted, 2 MED), and every confirmed one is fixed;
+  these notes were fact-checked against the code by three independent readers.
+- Tests: dll_core_test 1,360 checks and dll_helpers_test 3,660, 0 failures; dissect_test.lua 425 and
+  invoke_helper_test.lua 146; C# 6,942 total, 0 failed, 1 skipped; headless UI 69; 36 gates. AOT UI 61,345,280 bytes.
+
 ## 2026-10-27 (build 3659) — Debug Camera never acts on a stale state; the trainer push says why it stopped `[DBGCAM-OFF-OVER-QUEUED-ON]` `[TRAINER-PUSH-TIMEDOUT-TEXT]` `[DISCOVER-SHADOWED-POOL]` `[ASSETPTR-BAKED-TOKEN]` `[L83-PLAN-QUEUED-STRINGS]` `[LEADS-REVIEW-2026-10-27]`
 
 - **Debug Camera: a Force or an untick while an earlier toggle is still waiting for the game no longer acts on a
