@@ -657,6 +657,34 @@ public class CoordLuaParserTests
         Assert.DoesNotContain("not escaped", reason, StringComparison.Ordinal);
     }
 
+    // ── The reference is CE's own Lua 5.3, not a system Lua 5.4 ──
+    //
+    // Rounds 4-6 fuzzed against Lua 5.4.6. Re-run through CE's lua53-64.dll (out/ce_lua53/lua53ce.exe), the decided
+    // shapes agree except where 5.3 and 5.4 differ -- and the lexer had taken 5.4's "a numeral touching a letter is
+    // malformed" rule. 5.3 reads `5px` as the numeral 5, then the name px.
+
+    [Fact]
+    public void ANumeralTouchingAName_IsLexedAsCeLua53Does()
+    {
+        // 5.3: `x=5y=6` is 5, then y=6 -- the documented missing-comma shape. 5.4 calls `5y` malformed.
+        var r = CoordLuaParser.Parse(Wrap("  { uid='a', label='A', map='M', x=5y=6, z=3 },"));
+        Assert.Empty(r.Issues);
+        var e = Assert.Single(r.Entries);
+        Assert.Equal(5, e.X);
+        Assert.Equal(6, e.Y);
+    }
+
+    [Fact]
+    public void ANumeralWithAUnitSuffix_IsStillRefused_AsAMalformedNumber()
+    {
+        // 5.3 refuses `x=5px` too ("'}' expected near 'px'"); the reason names the numeral, not a quote.
+        var r = CoordLuaParser.Parse(Wrap("  { uid='a', label='A', map='M', x=5px, y=2, z=3 },"));
+        Assert.Empty(r.Entries);
+        var reason = Assert.Single(r.Issues).Reason;
+        Assert.Contains("'5px'", reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("quote", reason, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void NestedTablesAndBracketKeys_AreNotMistakenForStrayQuotes()
     {
