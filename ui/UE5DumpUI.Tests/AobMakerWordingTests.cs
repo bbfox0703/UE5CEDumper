@@ -197,6 +197,10 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordNoDllRefusedNoReason,
              UE5DumpUI.ViewModels.TeleportViewModel.CoordNoDllRefusedNoReasonText);
 
+        // [B21-CSV-QUOTE-HOLES] the coordinate editor's refusal of a typed double quote
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordEditNoQuote,
+             UE5DumpUI.ViewModels.TeleportViewModel.CoordEditNoQuoteText);
+
         // [STEALTH-RESET-STALE-HELD] Reset on a card that knows nothing is held
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyStealthNothingHeld,
              UE5DumpUI.ViewModels.TeleportViewModel.StealthNothingHeldText);
@@ -212,7 +216,7 @@ public class AobMakerWordingTests
              UE5DumpUI.ViewModels.TeleportViewModel.TrainerRefusedNoReasonText(1, 9, "E"), "1", "9", "E");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(77, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(78, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

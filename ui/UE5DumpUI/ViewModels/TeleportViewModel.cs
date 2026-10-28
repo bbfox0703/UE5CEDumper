@@ -279,6 +279,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         => AobMakerStatus.Say(KeyCoordNoDllNotAdded, "⚠ The no-DLL picker was not added to Cheat Engine: {0}.",
                               why.TrimEnd('.'));
 
+    internal const string KeyCoordEditNoQuote = "str.TP.LibEditNoQuote";
+    /// <summary>[B21-CSV-QUOTE-HOLES] The Label/Group editor's refusal of a typed double quote.</summary>
+    internal static string CoordEditNoQuoteText => AobMakerStatus.Say(KeyCoordEditNoQuote,
+        "Labels and groups cannot contain a double quote (\"). Nothing was changed.");
+
     internal const string KeyCoordNoDllTimedOut = "str.TP.LibNoDllTimedOut";
     /// <summary>[COORDPICK-TIMEDOUT-TEXT] No reply is not "nothing was added": the plugin may have made the record
     /// after the wait gave up (AOBMaker reply section 3 rule 8), and a second press would add a second picker. The
@@ -4270,6 +4275,14 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         if (label.Length == 0)
         {
             CoordStatus = "Label cannot be empty.";
+            return;
+        }
+        // [B21-CSV-QUOTE-HOLES] Refused, not stored: the export escapes a quote correctly, but
+        // a hand-edited CSV mis-splits on one and the import then stops (the maintainer's call,
+        // 2026-10-28). Labels already holding one still export and read back.
+        if ((EditCoordLabel ?? "").Contains('"') || (EditCoordGroup ?? "").Contains('"'))
+        {
+            CoordStatus = CoordEditNoQuoteText;
             return;
         }
         bool mutated = CoordText.HasBlockedChars(EditCoordLabel) ||

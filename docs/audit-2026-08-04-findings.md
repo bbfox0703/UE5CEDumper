@@ -177,7 +177,7 @@ existing behaviour / perf.
 | B18 ✅ | 🟡 | S/low | Genau | ~~Extra Scan ignores `Tot::Requested()` ⇒ CE UI freezes on the unbounded join~~ **FIXED build 2603** |
 | B19 ✅ | 🟡 | S/low | Sein | ~~One shared `error_code` ⇒ the first undeletable entry aborts the whole retention sweep, forever~~ **FIXED build 2603** |
 | B20 ✅ | 🟡 | S/low | TeleportVM | ~~Filter keystroke reverts an uncommitted edit; `_coordFilterMemory` never disposed~~ **FIXED build 2610** |
-| B21 🟡 | 🟡 | S–M/low | Coord parsers | **1 of 3 shipped.** ~~AllowThousands~~ **FIXED build 2621**; the **quote-state** and **regex-in-literal** holes are UNTOUCHED at HEAD — see the correction below the table |
+| B21 ✅ | ✅ | S–M/low | Coord parsers | **3 of 3 shipped.** ~~AllowThousands~~ **FIXED build 2621**; ~~quote-state~~ and ~~regex-in-literal~~ **FIXED 2026-10-28** as `[B21-CSV-QUOTE-HOLES]` — see the correction below the table |
 | B22 ✅ | 🟡 | S/low | Laufen | ~~Base captured as 0 ⇒ the knob pins the CMC value at 0 against the game~~ **FIXED build 2603** |
 | B23 ✅ | 🟡 | S/low | CE Lua | ~~Autorun binds DEBUG at CE start (its own instruction can't work); non-finite double emitted as bare `Infinity`~~ **FIXED build 2610** |
 | B24 ✅ | 🟡 | S/low | Frieren | ~~Forced hook installs burn the automatic retry budget~~ **FIXED build 2603** |
@@ -223,6 +223,15 @@ existing behaviour / perf.
 >
 > 📋 **Holes 2 and 3 are open work, tracked since 2026-10-28 as `[B21-CSV-QUOTE-HOLES]`** in `todo.md`'s
 > `[OPEN-CENSUS-2026-10-28]`: until then no todo row carried them.
+>
+> ✅ **Holes 2 and 3 FIXED 2026-10-28, by the maintainer's rule: an unpaired quote is an error that stops
+> the import, never repaired.** Hole 2: one strict RFC 4180 reader (`CoordCsvCodec.ReadRecords`)
+> replaces both splitters. A quote mid-field, text after a closing quote, or a quoted field that never
+> closes returns one issue naming the line, and nothing is imported. Hole 3: the Lua import finds keys
+> in a copy with string literals and comments blanked (`CoordLuaParser.MaskLiterals`). A string that
+> never closes stops that import the same way. The Label/Group editor also refuses a typed double quote,
+> while labels that already hold one still export escaped and read back. Each of the three has a red
+> commit, then a green one; the census row lists the commits.
 
 ## Summary table — refactor & hygiene
 
