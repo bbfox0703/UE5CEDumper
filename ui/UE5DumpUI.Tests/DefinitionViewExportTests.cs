@@ -297,6 +297,45 @@ public class DefinitionViewExportTests
         Assert.Null(platform.LastClipboard);
     }
 
+    // DEFVIEW-FLAG-STALE-IN-CONTAINER-VIEW (review): the container / DataTable views render without a walk, so nothing
+    // reset the definition flag there. Drill a TArray<TSubclassOf<>>, open an element (a definition), press Back: the
+    // container's rows have real addresses, and every action on them was refused as "a type definition".
+    [Fact]
+    public async Task LiveWalker_BackFromADefinition_IntoAContainer_ActsOnTheContainersRows()
+    {
+        var dump = new StubDumpService();
+        var array = new LiveFieldValue
+        {
+            Name = "AbilityClasses", TypeName = "ArrayProperty", Offset = 0x40, Size = 0x10,
+            ArrayInnerType = "ClassProperty", ArrayCount = 1, ArrayElemSize = 8, ArrayDataAddr = "0x50000",
+            ArrayElements = new List<ArrayElementValue>
+            {
+                new() { Index = 0, PtrAddress = TypeAddr, PtrName = "GA_Dash_C", PtrClassName = "BlueprintGeneratedClass" },
+            },
+        };
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Name = "Pawn_0", ClassName = "Pawn", Fields = new List<LiveFieldValue> { array },
+        });
+        dump.RegisterStruct(TypeAddr, DefinitionWalk());
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), platform);
+
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x10000000");
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single());
+        var element = vm.Fields.Single();
+        Assert.Equal("0x50000", element.FieldAddress);
+        await vm.NavigateToFieldCommand.ExecuteAsync(element);
+        Assert.Contains("type definition", vm.StatusText);   // the element really walked as a definition
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single());
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("50000", platform.LastClipboard);
+        Assert.DoesNotContain("type definition", vm.StatusText);
+    }
+
     [Fact]
     public async Task InstanceFinder_ADefinitionWalk_StampsNoAddress_AndRefusesItsExports()
     {
