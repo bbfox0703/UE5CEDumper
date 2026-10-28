@@ -3478,6 +3478,27 @@ public class TeleportViewModelTests
         Assert.Equal("Bosses", vm.CoordResults.First(r => r.Label == "Boss \"big\"").Entry.Group);
     }
 
+    /// <summary>Review round 2: counting quotes let a typed one through whenever the same edit deleted a stored
+    /// one. A field the edit CHANGES may not hold a quote at all; only an untouched one keeps its old quotes.</summary>
+    [Fact]
+    public async Task A_quote_typed_while_deleting_a_stored_one_is_still_refused()
+    {
+        var vm = await CoordLibraryVmAsync();
+        vm.BuildImportPreview(CoordCsvCodec.Parse("label,group,map,x,y,z\n\"Boss \"\"big\"\"\",\"a\"\"b\",M,1,2,3\n"), "t.csv");
+        vm.ApplyCoordImportCommand.Execute(null);
+
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Boss \"big\"");
+        vm.EditCoordLabel = "\"Arena\"";
+        vm.ApplyCoordEditCommand.Execute(null);
+        Assert.DoesNotContain(vm.CoordResults, r => r.Label == "\"Arena\"");
+        Assert.Contains("double quote", vm.CoordStatus, StringComparison.Ordinal);
+
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Boss \"big\"");
+        vm.EditCoordGroup = "\"x";
+        vm.ApplyCoordEditCommand.Execute(null);
+        Assert.Equal("a\"b", vm.CoordResults.First(r => r.Label == "Boss \"big\"").Entry.Group);
+    }
+
     /// <summary>...while an edit that renames a row in place still repaints it: the same
     /// entries, but the row shows new text.</summary>
     [Fact]
