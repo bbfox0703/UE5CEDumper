@@ -2375,6 +2375,13 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   0x20 World / 0x40 Description / 0x58 PreviewImage with empty Address cells; World's `Addr` -> "⚠ Addr: nothing done —
   this is a type definition (its member layout), not a live object, so there is no data at these offsets." with the
   clipboard sentinel unchanged; `Back` -> DT_LevelSelectData with an empty status line and its Address cells filled.
+- ✅ `CEXML-DEFINITION-VIEW-AS-DATA`, **the fourth metaclass, WidgetBlueprintGeneratedClass** (Extinction, same session,
+  main menu): Instances `WidgetBlueprintGeneratedClass` / Exact → **78** hits. WB_TextBlock_C (0x24BF738FC10, index
+  183668): the "ℹ This is a type definition …" notice, its field rows (0x28 bIsVariable … 0x98 VisibilityDelegate)
+  with empty Address cells. On bIsVariable `Addr` / `HEX` / `+CE` each answered "⚠ <button>: nothing done — this is a
+  type definition (its member layout), not a live object, so there is no data at these offsets."; the clipboard
+  sentinel unchanged, and CE's address list gained no `bIsVariable` record (L1-style count 0). On 3659 Instance Finder
+  stamped class + offset here. Not run: the optional ClassProperty-valued-as-a-WBGC export (no holder looked up).
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
