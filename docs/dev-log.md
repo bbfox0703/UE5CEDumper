@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-10-28 (no build change) — Every open item in one place, and todo.md archived by the usual convention `[OPEN-CENSUS-2026-10-28]`
+
+- **The open work is one section now.** `todo.md`'s `[OPEN-CENSUS-2026-10-28]`, right after its preamble, lists
+  every open defect and UX item (37: none HIGH or MED), the live checks owed on shipped fixes, the feature ideas and
+  what stays open by a recorded decision -- so a session asks it instead of sending agents to re-scan a 1.6 MB file.
+  Each row says where the item is recorded; 25 untagged leads got a tag there (the census commit's message says 18:
+  it was 20 then, and five more came from the archiving pass). B21's two remaining coordinate-CSV holes have a todo row
+  for the first time. A commit that opens or closes an item edits its census row.
+- **`todo.md` 1.62 MB -> 1.33 MB**: 136 closed units (11 sections, 125 table rows; 296,538 bytes) moved
+  byte-identical to `archive/todo-closed-2026-10-28-build-3661.md`, selected by the 2026-09-26 rule plus one clause
+  (an open item the census lists no longer keeps the unit that mentions it), with adversarial verifiers sending four
+  units back. `verification-register.md` moved nothing: its closed-looking sections all still carry an unrun leg, an
+  unfiled lead or a check key.
+
 ## 2026-10-28 (build 3661) — A Live Walker container view stands for its owner again, address and functions alike `[LW-BACK-CONTAINER-HEADER-ADDR]`
 
 - **Back into an Array, Map, Set or DataTable rows view shows its owner again.** Back, a breadcrumb jump, the Back out

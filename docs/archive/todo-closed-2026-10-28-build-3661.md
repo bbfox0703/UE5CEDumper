@@ -57,7 +57,7 @@ lead or a check key (the proposer's per-unit reasons are in the workflow's journ
 **Nothing was edited, only moved.** This file adds two things: this header, and above the first moved row of each
 table, one blank line plus that table's header line and separator line. `todo.md` adds one `> 📦` pointer block per
 group (9 for sections, 11 for tables, each placed before its table's header so no table is split), each followed by a
-blank line. The assertions ran before anything was written (`out/slim/move_units.py`): `todo.md` minus its pointer
+blank line. The assertions ran before anything was written, and were re-run afterwards from git's original: `todo.md` minus its pointer
 blocks equals the original minus the moved lines; this file minus its added lines equals the moved lines; the two
 interleave back into the original exactly.
 
