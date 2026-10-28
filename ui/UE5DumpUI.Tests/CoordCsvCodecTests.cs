@@ -549,3 +549,72 @@ public class CoordCsvFieldSplitTests
         Assert.Equal(expected, v, 9);
     }
 }
+
+/// <summary>
+/// [B21-CSV-QUOTE-HOLES] hole 2. The line splitter flipped its quote state on ANY quote while the field
+/// splitter honoured one only at field start, so one unpaired mid-field quote swallowed every later record to
+/// EOF. The maintainer's rule (2026-10-28): no repair -- an unpaired quote stops the whole import with an error
+/// naming its line, and nothing is imported.
+/// </summary>
+public class CoordCsvUnpairedQuoteTests
+{
+    private const string Header = "uid,label,group,map,x,y,z,pitch,yaw,roll\n";
+    private const string Good = "b,Fine,G,M,1,2,3,0,0,0\n";
+
+    private static void AssertStopped(CoordCsvParseResult r, int line)
+    {
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(line, issue.Line);
+        Assert.Contains("unpaired quote", issue.Reason, StringComparison.Ordinal);
+        Assert.Contains("nothing was imported", issue.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AQuoteInsideAnUnquotedField_StopsTheImport()
+        => AssertStopped(CoordCsvCodec.Parse(Header + "a,Boss \"big room,G,M,1,2,3,0,0,0\n" + Good + Good), 2);
+
+    [Fact]
+    public void AQuotedFieldThatNeverCloses_StopsTheImport()
+        => AssertStopped(CoordCsvCodec.Parse(Header + Good + "a,\"Chest 3,G,M,1,2,3,0,0,0\n" + Good), 3);
+
+    [Fact]
+    public void TextAfterAClosingQuote_StopsTheImport()
+        => AssertStopped(CoordCsvCodec.Parse(Header + "a,\"5\" tall,G,M,1,2,3,0,0,0\n" + Good), 2);
+
+    [Fact]
+    public void AnUnpairedQuoteInTheLastRow_StillImportsNothing()
+        => AssertStopped(CoordCsvCodec.Parse(Header + Good + Good + "a,Ruin\",G,M,1,2,3,0,0,0\n"), 4);
+
+    [Fact]
+    public void AQuoteAfterLeadingSpace_IsNotAFieldOpener()
+        => AssertStopped(CoordCsvCodec.Parse(Header + "a, \"Chest, big\",G,M,1,2,3,0,0,0\n"), 2);
+
+    [Fact]
+    public void ProperlyQuotedFields_StillImport()
+    {
+        // The controls: RFC 4180's two legitimate uses of a quote, and a quoted line break.
+        var r = CoordCsvCodec.Parse(Header +
+            "a,\"Chest, big one\",G,M,1,2,3,0,0,0\n" +
+            "b,\"He said \"\"hi\"\"\",\"G \"\"x\"\"\",M,1,2,3,0,0,0\n" +
+            "c,\"\",G,M,1,2,3,0,0,0\n" +
+            "d,\"Two\r\nlines\",G,M,1,2,3,0,0,0\n");
+        Assert.Equal(new[] { "a", "b", "d" }, r.Entries.Select(e => e.Uid));
+        Assert.DoesNotContain(r.Issues, i => i.Reason.Contains("quote", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void AQuoteInAnyTextField_SurvivesWriteThenParse()
+    {
+        // The export side: a label, group or map that already holds a quote (typed before quotes were refused,
+        // or imported) is written RFC 4180-escaped and reads back unchanged.
+        var original = new CoordEntry { Uid = "q1", Label = "Boss \"big\" room", Group = "a\"b",
+                                        Map = "\"M\"", X = 1, Y = 2, Z = 3 };
+        var r = CoordCsvCodec.Parse(CoordCsvCodec.Write(new[] { original }));
+        Assert.Empty(r.Issues);
+        var e = Assert.Single(r.Entries);
+        Assert.Equal(original.Label, e.Label);
+        Assert.Equal(original.Group, e.Group);
+        Assert.Equal(original.Map, e.Map);
+    }
+}
