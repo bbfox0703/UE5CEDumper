@@ -455,4 +455,44 @@ public class DefinitionViewExportTests
         vm.SelectedInstance = null;
         Assert.Equal("Found 2 instances", vm.StatusText);
     }
+
+    // DEFVIEW-REFUSAL-LABELS (review): Live Walker's refusals named most actions with literals that repeated the buttons'
+    // labels by hand, so a relabelled button would refuse under its old name. Every refusal passes a label the button
+    // itself shows (an en.axaml key, or the bound label property). Negative control: pass a literal again.
+    [Fact]
+    public void LiveWalker_DefinitionRefusals_NameTheButtonsByTheirOwnLabels()
+    {
+        var src = File.ReadAllText(RepoFile("ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs"));
+        Assert.Contains("RefuseOnDefinitionView(", src);
+        Assert.DoesNotMatch(@"RefuseOnDefinitionView\(\s*""", src);
+    }
+
+    // DEFVIEW-REFUSAL-AA (review): AA Script was refused on a definition view, but it reads no row: it registers a symbol
+    // at the object's own address -- here the type object, which Instance Finder's AA Script registers as well.
+    [Fact]
+    public async Task LiveWalker_ADefinitionView_StillBuildsTheAaScript()
+    {
+        var (vm, platform) = WalkerOn(DefinitionWalk());
+        await vm.NavigateToAddressCommand.ExecuteAsync(TypeAddr);
+
+        await vm.GenerateCeAAScriptCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("registersymbol", platform.LastClipboard, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("type definition", vm.StatusText);
+    }
+
+    // DEFVIEW-COPYCEFIELD-IF-HEX-UNTESTED (review), Live Walker's half: Copy CE Field had a refusal and no test.
+    [Fact]
+    public async Task LiveWalker_ADefinitionView_RefusesCopyCeField()
+    {
+        var (vm, platform) = WalkerOn(DefinitionWalk());
+        await vm.NavigateToAddressCommand.ExecuteAsync(TypeAddr);
+        vm.SelectedField = vm.Fields[0];
+
+        await vm.ExportCeFieldXmlCommand.ExecuteAsync(null);
+
+        Assert.Null(platform.LastClipboard);
+        Assert.Equal(LiveWalkerViewModel.DefinitionNoDataText(vm.ExportCeFieldButtonLabel), vm.StatusText);
+    }
 }
