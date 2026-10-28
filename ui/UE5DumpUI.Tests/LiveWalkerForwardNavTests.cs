@@ -607,6 +607,21 @@ public class LiveWalkerForwardNavTests
     private sealed class OwnerStub : StubDumpService
     {
         private readonly Dictionary<string, TaskCompletionSource<List<FunctionInfoModel>>> _functionGates = new();
+        private readonly Dictionary<string, TaskCompletionSource<InstanceWalkResult>> _walkGates = new();
+
+        /// <summary>Hold the next walks of <paramref name="addr"/> until the test answers. Continuations run
+        /// asynchronously, so the navigation that awaits the walk really is suspended meanwhile.</summary>
+        public TaskCompletionSource<InstanceWalkResult> GateWalk(string addr)
+            => _walkGates[addr] = new TaskCompletionSource<InstanceWalkResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void UngateWalk(string addr) => _walkGates.Remove(addr);
+
+        public override Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
+            int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
+            CancellationToken ct = default)
+            => _walkGates.TryGetValue(addr, out var gate)
+                ? gate.Task
+                : base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
 
         public OwnerStub()
         {
@@ -653,7 +668,7 @@ public class LiveWalkerForwardNavTests
             Rows = new() { new() { SparseIndex = 0, RowName = "Sword", DataAddr = RowData } },
         };
 
-        private static InstanceWalkResult Obj(string addr, string name, string cls, string clsAddr) => new()
+        public static InstanceWalkResult Obj(string addr, string name, string cls, string clsAddr) => new()
         {
             Address = addr, Name = name, ClassName = cls, ClassAddr = clsAddr,
             Fields = new List<LiveFieldValue> { new() { Name = "X", TypeName = "IntProperty", Offset = 8, Size = 4 } },
@@ -939,6 +954,31 @@ public class LiveWalkerForwardNavTests
         Assert.Equal(Table, vm.CurrentAddress);                  // the address and the depth match again...
         Assert.Equal(2, vm.Breadcrumbs.Count);
         Assert.False(vm.RowMapLoadStillCurrent(load));           // ...and the load still must not land
+    }
+
+    [Fact]
+    public async Task ARowMapLoad_DoesNotLandWhileTheTablesRowViewIsStillOnScreen()
+    {
+        // Review round 2: the trail can run ahead of the grid. Back pops the row view's crumb before the table's walk
+        // returns, so the trail already says "the table" -- same address, depth and crumb as a load started on it --
+        // while the grid still holds the row view's rows, which the load would append a RowMap row to.
+        var (dump, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        OwnerStub.TableRows());
+        await vm.GoBackCommand.ExecuteAsync(null);               // [Table], walked: its row load starts
+        var load = vm.LastRowMapLoad!;
+        await vm.GoForwardCommand.ExecuteAsync(null);            // [Table, RowMap]: the rows, rendered without a walk
+        var tableWalk = dump.GateWalk(Table);
+
+        var back = vm.GoBackCommand.ExecuteAsync(null);          // pops RowMap; the table's walk waits
+
+        Assert.StartsWith("DataTable<", vm.CurrentClassName);   // the grid still shows the rows
+        Assert.False(vm.RowMapLoadStillCurrent(load));
+        dump.UngateWalk(Table);
+        tableWalk.SetResult(OwnerStub.Obj(Table, "DT_Loot", "DataTable", TableCls));
+        await back;
+        Assert.True(vm.RowMapLoadStillCurrent(vm.LastRowMapLoad!));   // control: the table's own walk loads it again
     }
 
     // Review of d206a4ad: the header moves to the new object at once, the Functions list only when its walk returns.
