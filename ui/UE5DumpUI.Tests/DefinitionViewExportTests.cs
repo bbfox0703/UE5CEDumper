@@ -355,4 +355,31 @@ public class DefinitionViewExportTests
         await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields[0]);
         Assert.Null(platform.LastClipboard);
     }
+
+    private static InstanceFinderViewModel FinderOn(UE5DumpUI.Core.IDumpService dump, ScriptedAobMakerBridge? bridge = null,
+                                                    MockPlatformService? platform = null)
+        => new(dump, new MockLoggingService(), platform ?? new MockPlatformService(Path.GetTempPath()),
+               new AobMakerStatus(bridge ?? new ScriptedAobMakerBridge { Available = true }));
+
+    // IF-DEFVIEW-FIELDNAME-AS-ACTION (review): HEX and +CE on a definition row said "⚠ World: nothing done" -- the ROW's
+    // name where the refused action belongs -- because the refusal sat in FieldCeAddress, which knows no action. Each
+    // command now refuses itself, under its button's label; nothing reaches CE.
+    [Fact]
+    public async Task InstanceFinder_ADefinitionRow_RefusesHexAndAddToCe_UnderTheirButtonLabels()
+    {
+        var dump = new StubDumpService();
+        dump.RegisterStruct(TypeAddr, DefinitionWalk());
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = FinderOn(dump, bridge);
+        vm.SelectedInstance = new InstanceResult { Address = TypeAddr, Name = "BlinkDataLevel", ClassName = "ScriptStruct" };
+        var row = vm.Fields[0];
+
+        await vm.HexFieldAddressCommand.ExecuteAsync(row);
+        Assert.Null(bridge.LastHex);
+        Assert.Equal(LiveWalkerViewModel.DefinitionNoDataText("HEX"), vm.StatusText);
+
+        await vm.AddFieldToCeCommand.ExecuteAsync(row);
+        Assert.Empty(bridge.Records);
+        Assert.Equal(LiveWalkerViewModel.DefinitionNoDataText("+CE"), vm.StatusText);
+    }
 }
