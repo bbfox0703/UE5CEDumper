@@ -2297,6 +2297,15 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   after OK **3660's ends unticked, 3659's stays TICKED** -- the live red on the same DLL; three `cmd=7` in all, each
   `req=1 -> state=-6`, never a `req=0`. The 3659 record cleaned up with `disableWithoutExecute()`. Drained (Keep
   Foreground ON): "Debug Camera is ON." (stock 5.4: a queued OFF leaves it on), then "✓ Debug Camera forced OFF.".
+- ✅ `SHARED-IDLE-BUSY-BAIL-STILL-REENTERS-DISABLE` with a REAL command holding the mailbox, same dev `--idle`
+  session: the card's God Mode Force ON (badge ON), Keep Foreground OFF, then one CE Lua chunk
+  (`out/live3660b/busy_dbgcam.lua`) wrote a raw CMD_SET_DEBUG_CAMERA (ON) and ticked `God Mode (toggle)`.
+  `UE5_BUSY_PRE` = `7,255`: the DLL had taken the command (PROCESSING) before God Mode's idle wait began; the DLL held
+  it 5.0 s (`received cmd=7` 14:00:26.318 → `invoke timeout (5000ms)` → `SET_DEBUG_CAMERA req=1 -> state=-5` at
+  14:00:31.326), longer than the 1.5 s idle wait, so the tick showed "[GodMode] the DLL mailbox is busy with another
+  command -- try again in a moment"; OK clicked after the -5, with the mailbox idle again. After OK: `Active` false,
+  ZERO `received cmd=9` (God Mode sent neither ON nor OFF) and ZERO `GodMode: set OFF`; the card's ↻ still ON.
+  Cleaned up: Keep Foreground ON (the queued ON drained), God Mode Force OFF, "✓ Debug Camera forced OFF.".
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
