@@ -220,6 +220,9 @@ existing behaviour / perf.
 >
 > ⛔ **Do not let a hole-1 green close this row.** Either re-scope it to hole 1 explicitly,
 > or reopen 2 and 3 as work — but the two remaining holes are real and are not "verified".
+>
+> 📋 **Holes 2 and 3 are open work, tracked since 2026-10-28 as `[B21-CSV-QUOTE-HOLES]`** in `todo.md`'s
+> `[OPEN-CENSUS-2026-10-28]`: until then no todo row carried them.
 
 ## Summary table — refactor & hygiene
 

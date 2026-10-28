@@ -16,7 +16,7 @@ Open work only. **Read this when deciding what to do next.**
 > Debug Camera on UE 5.8 and a game-filled TArray<TAssetPtr> included; a TMap / TSet of TAssetPtr has no fixture on this
 > PC and a loaded element's label none on Extinction), which raised two pre-existing leads: `[DBGCAM-58-REENABLE]` (open)
 > and `[LW-BACK-CONTAINER-HEADER-ADDR]` (fixed in build 3661 after four review rounds, checked live; its review left the LOW
-> `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`). · Before it, the
+> `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`). Every open item, ranked: `[OPEN-CENSUS-2026-10-28]`. · Before it, the
 > known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
 > 3649): every row it took is built and checked live, `[MH-PRERESERVE-PROXY]` included; the maintainer's calls are in
 > the rows and working-lessons §6. Still owed live, each row says how: a crash mid-capture on a large title
@@ -153,6 +153,8 @@ Open work only. **Read this when deciding what to do next.**
 > `py tools/check_audit_register.py --list` — never hand-tally.
 >
 > ### ▶ OPEN FIXES INDEX — 5 items, and they are NOT in the count above
+> ⭐ **Since 2026-10-28 the complete list of open work is `[OPEN-CENSUS-2026-10-28]`**, the first section below
+> this preamble. This index is kept as history; its two live rows are in the census too.
 > **Read the split before quoting a number.** Of the **twelve** field-found defects this index
 > carried on 2026-08-18, **eleven are fixed** and exactly one survives: `[STALEDLL]`(a), which is a
 > maintainer-only file deletion. The one other row, `[SCANIDENTITY]`, was surfaced by the audit
@@ -263,6 +265,105 @@ Open work only. **Read this when deciding what to do next.**
 > strike-through — the archive holds the history).
 
 -----
+
+## 📋 Open-work census 2026-10-28 (build 3661) `[OPEN-CENSUS-2026-10-28]` — every open item in one place, so nobody re-scans
+
+> **Why this section exists.** The maintainer asked (2026-10-28) what is still unfixed besides the four AOBMaker rows,
+> and asked that the answer be **written down so the next session does not send agents to re-scan** this file.
+> Workflow `wf_3b10a1b0-a46`: five readers classified all 122 `⬜` markers in this file (175 items), the audit #5
+> register, the OPEN FIXES INDEX and the verification register's pending rows; a consolidator re-checked every open
+> item against the code at HEAD and grepped each tag across `docs/` and `git log` for a closure. The four rows it
+> was asked to leave out are `[AOBM-CEXML-PUSH]`, `[AOBM-CT-PUSH]`, `[AOBM-GWORLD-GENAOB]` and FIXPASS L64(b) (UX).
+>
+> **Result: 0 HIGH, 0 MED open defects.** Table A is every open defect and UX item (32), B the live checks owed on
+> shipped fixes, C the feature ideas, D what stays open by a recorded decision.
+>
+> ⛔ **Keep it current — that is the whole point.** A commit that opens, fixes or re-scopes any item edits its row
+> here in the same commit (✅ + the commit, or a new row). A `⬜` elsewhere in this file whose tag is not below was
+> classified closed; grep the tag before trusting either. Rows the census found with no tag of their own got one
+> here (marked 🆕), and their source names the section the original note sits in plus a phrase to grep for — those
+> notes may since have moved to `docs/archive/`, where tags still resolve.
+
+### A. Open defects and UX — 32 items, LOW or unrated
+
+| tag | sev | what goes wrong | recorded at (grep) |
+|---|---|---|---|
+| `[DBGCAM-58-REENABLE]` | unrated, live-reproduced | UE 5.8: after one Debug Camera ON→OFF, no toggle turns it on again in that game session (the UI reports the OFF honestly). Read the 5.8.4 DebugCameraManager.cpp / CheatManager.cpp before fixing. | its own row, `[LIVE-3660-2026-10-28]` |
+| `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]` | LOW | On a container view, INV / AA(Baked) / the PIPE dialog's Copy AA Script bake `Array<…>` as the class to find an instance of; Find Refs mislabels; a GWorld-walked AA symbol lands on the element buffer; an open PIPE dialog keeps its address. | its own row, `[LIVE-3660-2026-10-28]` |
+| `[FINDINSTANCE-SUBSTRING-USERFACING]` | LOW | "An instance of class X" lookups (a Console exec, a CE script) match a SUBSTRING of the class name, so `CheatManager` can land on another class that contains the word. The fix changes the mailbox contract: undecided. | its own row |
+| `[UBEL-ASCII-FIRSTCHAR]` | LOW | Six DLL name checks skip a property / parameter / struct whose name starts with a non-ASCII (CJK) character, UE4 and UE5 alike. | its own row |
+| 🆕 `[B21-CSV-QUOTE-HOLES]` | LOW | Coordinate CSV import: one unpaired quote inside a field silently drops every later entry (the splitter flips `inQuotes` on any quote); a pattern-like literal can import a wrong coordinate (a "Changed" row in the preview). | `docs/audit-2026-08-04-findings.md` B21, "STILL PRESENT" (holes 2 and 3) |
+| `[CEFORM-LUAENGINE-VANISH]` | LOW | After a FIRE from the CE parameter form the Lua Engine window was not where expected and the next keys reached CE's address list (Ctrl+A, Delete offered to delete everything). Seen twice, cause unknown. | its own row |
+| `[UE4-USTRUCT-GIVEUP-STATS]` | LOW | Development / DebugGame UE 4.11–4.24, when offset detection gives up: struct walks read fields 8 bytes short. Shipping is unaffected. | its own row |
+| `[DUMPER-SECOND-COPY-AUTOSTART]` | LOW, unreproduced | A second copy of the DLL injected into a game that already loaded it through a proxy may run its own full scan and mailbox thread. | its own row |
+| 🆕 `[TELEPORT-BUGITGO-PARENTREL]` | LOW | BugItGo moves the pawn to a parent-relative (vehicle / mount) pose as if it were world coordinates; only BugItSave warns. | residual of `[A2-CABI-TELEPORT-PARENTREL]`, under `[BLANK-W2-2026-09-10]`: "BugItGo still reads only" |
+| 🆕 `[LOG-RESUME-LIVE-ROLLED]` | LOW | After a session rolls its log past 8 MB, the compression sweep can try the still-written rolled file once it has been quiet an hour and report a failure. Diagnostics only. | residual of `[A1-LOG-RESUME]`: "Residual, unchanged: inside ONE session" |
+| `[CADENCEBAND-2026-08-22]` | low, maybe not worth fixing | Below 25 FPS, Live Funcs labels per-frame functions "periodic timer" (a hard 40 ms band). Only ever seen on our 15 FPS fixture. | OPEN FIXES INDEX row |
+| `[FTEXT-REFUSAL-OVERCLAIM]` | LOW (wording) | The FText refusal says a zeroed FText "crashes the game"; UE 5.4 measured otherwise. The refusal stays; the claim needs softening. | its own row |
+| `[METHODE-MANUALMAP-EXCEPTION-CLAIM]` | LOW (wording) | The manual-mapping warning overstates why the DLL cannot work that way; its advice (untick the option) stands. | its own row |
+| 🆕 `[LEAD-LW-INPLACE-SEARCHCOUNT]` | LOW, unmeasured | Live Walker, Guess? on, a search term with `?`: after an Auto refresh the match count can disagree with the highlighted rows. | under `[P4-GUESS-SHIFT]`: "Lead, LOW, not filed" |
+| 🆕 `[LEAD-LW-BACK-CACHED-ELEMENTS]` | LOW, unmeasured | Back / Forward / a crumb into a container view shows the element addresses from the last visit; after a reallocation they are stale until Refresh. | after `[P8-BOOKMARK-TIP]`: "Back / Forward / a breadcrumb jump into a container view" |
+| 🆕 `[LEAD-DT-EXPORT-64ROWS]` | LOW | Copy CE XML / CSX of a DataTable holds only its first 64 rows and says nothing. | under `[PATTERN-P3-2026-09-10]`: "DataTable exports stop at 64 rows" |
+| 🆕 `[FLY-REPORTS-WISH]` | LOW | The Fly card can say "noclip" when collision never went off: the DLL publishes the request, not the result. | "FILED, not forgotten — the Fly report publishes the WISH" |
+| 🆕 `[SOLIDE-RELATED-STOPS]` | LOW | Detect Stealth Meter looks at only the player's first 128 owned objects; one beyond that is never found, and nothing says so. | follow-up of `[W4-RELATED-STOPS]`: "Solide's `FindStealthMeter` still ignores" |
+| 🆕 `[CEXPORT-STRIDE-NOTE]` | LOW (UX) | When the object-array layout was guessed, the badge and dumps say so but an exported CE table / CSX does not. | follow-up of `[W4-STRIDE-TENTATIVE]`: "CE XML / CSX exports do not yet carry a stride note" |
+| 🆕 `[CEXPORT-NESTED-TRUNC-NOTE]` | LOW (UX) | A CE XML / CSX export that cuts a nested container short at the Array Limit does not say so (only top-level fields are checked). | "Nested-container truncation note — Effort: S" |
+| 🆕 `[CEXPORT-ENUMNAMES-NOTE]` | LOW (UX) | When enum names could not be read, an exported CE table has empty enum dropdowns and does not explain why. | follow-up of `[P1-ENUMNAMES]`: "the CE exports' per-field enum dropdowns" |
+| `[TRACE-UI-READ-SPEED]` | LOW (UX) | Opening a large Live Funcs call trace is slow: about 19 MB/s, ~40 s for 512 MB. | `[LIVEFUNCS-TIMELINE-2026-10-04]`, `live-funcs-timeline-plan.md` |
+| `[W4-DEEPWALK-750MS]` | UNDECIDED | Snapshots of very large containers may be cut short on a busy PC, so two snapshots of one state could differ. The cheap A/B (idle vs loaded) was never run. | its own row |
+| 🆕 `[LEAD-PROPSEARCH-TOPTIONAL-LEAVES]` | LOW, unverified | Property Search deep mode lists fields inside optional (TOptional) structs as ordinary fields; whether a later action can touch an unset optional is untraced. | under `[A2-TOPTIONAL-STRUCT-DESCENT]`: "CollectSchemaLeaves" |
+| 🆕 `[LEAD-BOOKMARK-SAMECLASS-RECYCLE]` | LOW, unmeasured | After a restart, a bookmark can open another object of the same class that now sits at the saved address, under the bookmark's name. | under `[PATTERN-P6-2026-09-10]`: "recycled in a new launch by another instance" |
+| 🆕 `[LEAD-WALKCLASS-SINGULAR-ZERO]` | unchased | On one UE 4.23 fixture `walk_class` returned 0 fields for a class `walk_class_batch` walks fine (76). | under `[D4B-UE4-2026-09-09]`: "walk_class (singular) returned 0 fields" |
+| 🆕 `[DISSECT-SPARSE-DELEGATE-WIDTH]` | LOW | `ue5_dissect.lua` draws every sparse delegate 16 bytes wide instead of 1, covering the fields after it ("KNOWN WRONG … Filed, not fixed"). | under `[D4B-TAIL-2026-09-09]`: "MulticastSparseDelegateProperty" |
+| 🆕 `[CLASSPIVOT-DT-STARTUP-LOG]` | cosmetic | Class Pivot left on the DataTable source writes an error to the log and status line at start-up, before Connect. | seen in FIXPASS L61's run; `ClassPivotViewModel` guards only a null dump |
+| 🆕 `[USMAP-ENUM-SIGNEDNESS]` | LOW, harmless so far | The .usmap gets enum widths right but can flip a signed enum to unsigned or back; a real fix needs a DLL-side key. | residual of `[A4-USMAP-ENUM-UNDERLYING]`: "the signedness still needs the DLL-side key" |
+| 🆕 `[VALUESCAN-NONFINITE-TARGET]` | LOW | Value Search: Infinity or 1e400 as a float target gives different results live and in the snapshot search (nonsense input only). | under `[A4-AB4-UINT64]`: "Older and separate, recorded here only" |
+| 🆕 `[CSX-LONG-ELEMENT-LABEL]` | LOW (UX) | A CSX export names a long string element only `[2]` (a label is kept only up to 20 characters); the text is readable in the child row. | beside `[CSX-STRCHILD-BYTESIZE]`: "Related but separate" |
+| `[D4B-DELEGATEPAD-2026-09-09]` (element bytes) | LOW (UX) | On Development builds the hex view of a delegate array hides the 8 detector bytes before each element. | its section, "Still open, deliberately" |
+
+### B. Live checks owed on shipped, unit-tested fixes
+
+- `[FIXPASS-2026-10-27]` batch 1: FABRICATE-DEFAULT-UNSEEDED (MED), INV-TOOLTIP-CLIPBOARD, WALK-NULLCLASS-SILENT,
+  SNAPDIFF-SHADOWED-PROP (Diff/SPC half), STEALTH-RESET-STALE-HELD (restart case), WALK-REFRESH-SCALAR-SHRINK (Array
+  Limit case), LW-DISCONNECT-STALE-STATUS, QUERYPTR-LOG-ABSENT-LABEL, METHODE-STALE-LOGPATH, QUOTA-NONPRESET-LOWER,
+  PIVOT-ARRAY-LOADID (a race, possibly only unit-provable).
+- Hover / text checks on the AOT build: OBJTREE-SEARCH-TIP, LW-SEARCH-TIP, WIKI-TIPS-B2, WIKI-TIPS-B3;
+  FLY-EXPORT-EXPERIMENTAL (Experimental off: the .CT holds no Fly records).
+- The 2026-10-13/14 pass: SNAPSHOT-CRASH-PARTIAL, CT-FLOOR-208, OVERRIDE-REVIEW2-LOWS, INT8-PREVIEW, UE4-USTRUCT-GIVEUP,
+  AOB-SKIP-OWN-DLL.
+- `[BOOL-NATIVE-SEARCH]` (MED): a Freeze from Property Search / Interesting Properties must not write a whole byte
+  around a bool. Shipped in 3561, never checked over the pipe on a game.
+- Live Funcs: LIVEFUNCS-TIMELINE (the load log line; a load with little memory free), LIVEFUNCS-STEP2 (UI memory with
+  a full buffer; budgets on a busier game), LIVEFUNCS-STEP3 (a frame-time hitch trace; the rig's mutations on a real DLL).
+- Teleport: W2-TPREL-MAP step 3 (main menu, no pawn; needs ES2); TPREL-ZEROPOSE / FP2 (a relative teleport whose
+  landing cannot be re-read says "landing unknown"; hard to stage).
+- `verification-register.md` batches: audit L11 V10 and the Y11 FText half; L1 A9 (deep group-scan budget); L2 AB12
+  (more than 1,024 modules) and AB13 (a non-ASCII CE plugin path); L8 Z8 (probably exercised by L60, never recorded);
+  the b719 freeze on respawning NPCs; FreezeOutcome step 4; Locate in GWorld's drill to HP through level-list
+  recovery; the dinput8 proxy in a game.
+- Never registered at all: audit #3's 10 UI fixes and about 25 audit #4 fixes rest on unit tests alone.
+- No fixture on this PC: UE4-ASSETPTR-EXPORTS (a TMap/TSet of TAssetPtr; a loaded element's label),
+  LW-CRUMB-UNDERSCORE (Proxy Deploy drive boxes), W3-XREF-CAP (a 200+ cell), W4-STRIDE-TENTATIVE L33 step 3.
+
+### C. Feature ideas, not defects
+
+- `[DENKEN-WRITE-SITES]`: keep the addresses of the native instructions that write a field, for a "what writes this"
+  AOB without a debugger (near AOBMaker R13, not one of the four).
+- 🆕 `[CEXML-SCALAR-DELEGATE]`: a CE table export drops single-cast delegate fields; only multicast ones appear.
+- `[W4-BOOKMARK-DT]` follow-up: after a restart a DataTable-row bookmark reports the table gone instead of finding it.
+- `[CLASSCACHE-FRONTED-2026-09-09]`: no way to force a class layout to be re-read (normal use unaffected).
+- CE export drilldown: CSX array-of-struct elements are not re-walked; a "UE FName to String" CE custom type (M–L).
+- Snapshot capture of one chosen class's instances.
+
+### D. Open by a recorded decision — do not re-raise without a new reason
+
+`[SCANIDENTITY-2026-08-19]` (needs a maintainer decision and a churning game) · audit #5 A10 / AA39 / AB23
+(`[A10-SCOPE-2026-08-24]`) · the `RescoreAsync` check-then-act lead (never reproduced; the dispatcher serialises it) ·
+`AppendRawHoleLeaves` keeps `Find` as its noise filter · the CPN +8 dispute on UE 4.11–4.17 (4.11 passed live) ·
+`[GRIMOIRE-507-GUARD]` (maintainer call) · `[CEFORM-LABEL-CLIP]` (lowest priority) · `[FILTER-RESTORE-LOADED-PRIORITY]`
+(leave it) · `[P1-SEETHRU-NOPRODUCER]`'s one-shot warning · `[A2-UFUNC-TAIL-4X]`'s optional margin · D2's "DEADLINE
+HIT" wording for a crashed worker · Detect Player Stats has no cancel (July L18) · `peHash` with `TimeDateStamp` 0 ·
+the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVEFUNCS-STEP3 B1/E1/P1/O1.
 
 ## 🐞 Maintainer report 2026-10-09 — FINAL FANTASY RESONANCE DEMO's logs `[FFRS-2026-10-09]`
 
