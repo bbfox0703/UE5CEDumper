@@ -88,7 +88,7 @@ def main() -> int:
     seh = [l for l in lines if "SEH exception during queued PE call" in l]
     print("\n-- DLL log since the run started --")
     for l in pick + skips[:1]:
-        print("  ", l[:220])
+        print("  ", l)   # whole: the "kept" line ends with the worker-skip count
     print(f"SEH during a queued call: {len(seh)}")
     for l in seh:
         print("  ", l[:160])
