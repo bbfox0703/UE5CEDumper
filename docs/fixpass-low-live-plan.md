@@ -2070,7 +2070,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 
 ### L83 — `[W3-DEBUGCAM-QUEUED]`
 
-**Status:** ✅ PASSED red→green 2026-09-23 for the ON direction (Console + CE record); steps 6 and 9 (queued OFF) failed then and were raised as `[DEBUGCAM-QUEUED-OFF-NOESCALATE]` (MED), now FIXED (build 3658), and steps 6 / 6b / 9 below expect the fixed behaviour: ⬜ a re-run is owed (`git log --grep 'verify(L83)'`) · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 50 min
+**Status:** ✅ PASSED red→green 2026-09-23 for the ON direction (Console + CE record); steps 6 and 9 (queued OFF) failed then and were raised as `[DEBUGCAM-QUEUED-OFF-NOESCALATE]` (MED), now FIXED (build 3658), and steps 6 / 6b / 9 below expect the fixed behaviour: ✅ RE-RUN PASSED 2026-10-28 on build 3659 (AOT), every step including 4b and the -6 answers in both directions, in two stalls the UI and CE shared on purpose (from 3659 the second sender of a stall sends nothing, so sharing is safe and saves a stall); the record is `[LIVE-3659-2026-10-28]` in todo.md, and it raised `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]` and `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]`. The dev exe now hashes 6AE020BA10F2F000 (still no invoke-timeout override), not the 6AAB48B710F29000 the preconditions name (`git log --grep 'verify(L83)'`) · **reachability:** `live` · **needs CE:** yes · **needs UI:** yes · **estimate:** 50 min
 
 **Fix commit(s):** `8a2b37e8`
 

@@ -1777,8 +1777,8 @@ when the clipboard took it; the rest make no claim, by design), `[UE4-ASSETPTR-E
   shadowed name of one type become ONE discovery candidate with pooled counts.
 - ✅ `[DBGCAM-OFF-OVER-QUEUED-ON]` **FIXED 2026-10-27** (red `a7e3ae0f` / green `30f95baf`; DLL): `EnqueueInvoke` hands back
   the completion of a request it leaves queued, `Stark::QueuedInvoke` says whether it has run, and while a queued ON
-  has not run every `UE5_SetDebugCamera` answers -5 and sends nothing. ⬜ Not checked live (the stall needs DumperTest
-  dev `--idle`, L83's rig; step 4b checks it). Its review changed it -- see `[LEADS-REVIEW-2026-10-27]` below.
+  has not run every `UE5_SetDebugCamera` answers -5 and sends nothing. Its review changed it -- see
+  `[LEADS-REVIEW-2026-10-27]` below. ✅ Live 2026-10-28 on DumperTest dev `--idle`, build 3659 (`[LIVE-3659-2026-10-28]`).
 
 🔍 **Review of the five leads' fixes** `[LEADS-REVIEW-2026-10-27]` (workflow `wf_7ef3848e-f32`, range `92ed8aa8..9c7a17e8`,
 two lenses then one adversarial verifier per lens): 13 findings, none refuted, none above LOW; all fixed on 2026-10-27:
@@ -1886,9 +1886,10 @@ without the race), 6 confirmed, all fixed on 2026-10-27:
   Detect-then-Reset said "Released" for a job that never existed: red `dbaad9ed` / green `30a37f87`.
 - `DBGCAM-DLL-QUEUED-TEXT-STALE` (LOW) the DLL's -5 texts, and the mailbox errorMsg a CE script shows, told a queued
   OFF not to be re-sent: red `f30f8121` / green `224ae02b`.
-- Shipped in **build 3658** (AOT, 61,253,632 bytes) with `[FIXREVIEW-2026-10-27]`'s fixes. ⬜ **Not checked live**, any
-  of them: unit-tested only. The cheapest live check is the Stealth card on DumperTest 5.4 Shipping (connect, Reset:
-  "Nothing is held, so Reset sent nothing."); the queued-OFF errorMsg needs a busy game thread.
+- Shipped in **build 3658** (AOT, 61,253,632 bytes) with `[FIXREVIEW-2026-10-27]`'s fixes. ✅ Checked live on build
+  3659 on 2026-10-28 (`[LIVE-3659-2026-10-28]` below): the Stealth card, both Live Walker array cases, the DLL's queued
+  texts and errorMsg. Not live-checkable: `PIVOT-SCALAR-FIELDLOAD-SOURCE-SWITCH` (a race), `SHADOWED-LABEL-UI-UNPINNED`
+  (tests only).
 
 🎮 **Live checks of builds 3658 and 3659** `[LIVE-3659-2026-10-28]`, all on **build 3659 (Native AOT, 61,331,968 bytes; DLL
 `1.0.0.3659`)**. The recipes were derived by workflow `wf_f9fa919f-e87` (four areas, then a completeness critic) and
@@ -1962,6 +1963,56 @@ are not repeated here; each line says what ran and what it showed.
   refused."; the picker -> "⚠ The no-DLL picker was not added to Cheat Engine: …SW5 harness: record deliberately
   refused."; sw5-ce.log `records=0` at both refusals (nothing added). Harness uninstalled after. Not reached: a refusal
   with NO reason and the 10 MiB size cap (both need a fixture change, per the recipes).
+- ✅ **Debug Camera, -5 and -6 in both directions** (`[DBGCAM-OFF-OVER-QUEUED-ON]` and its review's
+  `DBGCAM-OFF-OVER-QUEUED-ON-TEXTS-DESCRIBE-A-QUEUED-OFF`, `DBGCAM-SETLOCK-PUSHES-CE-UNTICK-PAST-DEADLINE`,
+  `DBGCAM-DLL-QUEUED-TEXT-STALE`, `[DEBUGCAM-QUEUED-OFF-NOESCALATE]`), L83's re-run: DumperTest 5.4 **Development
+  `--idle`** (PE 6AE020BA10F2F000, invoke timeout 5000 ms, no override), CE 7.7 + AOBMaker attached, the UI's record
+  from this build's "Copy CE Script", `UE5_DEBUG` nil. Control under Keep Foreground: "✓ Debug Camera forced ON." /
+  "✓ Debug Camera forced OFF." (`DbgCam_SwapControllerBack`). **Stall A** (camera OFF): Console Force On -> after 5 s
+  "⏳ Force ON: the toggle is QUEUED — … Do not press Force ON again: the toggle is already queued.", badge Queued (the
+  one `enqueued invoke` + `invoke timeout (5000ms)` + `r=-5` of the stall); Force Off -> at once "⏳ Force OFF was not
+  sent — an earlier Force ON is still queued (the game thread is busy) and will turn the camera on. Press Force OFF
+  again once the game responds.", badge Queued, init-0.log `UE5_SetDebugCamera(0): an earlier ON is still queued --
+  nothing sent`; Force On -> the QUEUED line again, `(1): an earlier ON is still queued`; the Teleport card's Force OFF
+  / Force ON give the same two lines with its badge Queued; CE tick -> "[DebugCamera] ON queued -- the game thread is
+  busy; … Do not tick again: the toggle is already queued." (mailbox result -5, request 1, errorMsg "Debug Camera: ON
+  queued -- it will run when the game thread is free; do not re-send"), record stays ticked, no Lua Engine; CE untick
+  -> the ungated print "[DebugCamera] OFF not sent -- an earlier ON is still queued and will turn the camera on. The
+  record stays ticked: …", Active still true, result -6, errorMsg "Debug Camera: OFF not sent -- an earlier ON is
+  still queued; send OFF again once the game responds". Drain (game in front): `get_debug_camera_state` 1, the free
+  camera on screen. **Stall B** (camera ON): CE untick dispatched the real OFF (08:41:57) and the UI's Force On, 1.2 s
+  later, answered at once "⏳ Force ON was not sent — an earlier Force OFF is still queued …" with
+  `(1): a toggle is being dispatched -- nothing sent` logged BEFORE the stall's `invoke timeout` (08:42:02) -- no lock
+  across the wait; CE then printed "[DebugCamera] OFF did not complete -- the game thread is busy, and a queued OFF does
+  not turn the camera off on most engines. The record stays ticked: …" (result -5, errorMsg "Debug Camera: OFF did not
+  complete -- …"), with no "earlier ON is still queued" for that call (the drained ON's record had cleared). Force Off ->
+  "⏳ Force OFF did not complete — … press Force OFF again once the game responds.", badge stays **ON**; Force On -> the
+  "was not sent" line, badge ON; the Teleport card the same. Record unticked without its [DISABLE]
+  (`disableWithoutExecute`), CE tick -> "[DebugCamera] ON not sent -- an earlier OFF is still queued (the game thread
+  is busy). Tick again once the game responds." (result -6, request 1, errorMsg "Debug Camera: ON not sent -- an
+  earlier OFF is still queued; send ON again once the game responds"). Exactly one real dispatch per stall (4 enqueued
+  in all: 2 control, 1 per stall). Drain: the queued OFF left the camera ON (`state` 1, stock 5.4). **The helper's
+  copy-me sample** (helper 1.5 resident, the sample added as a record): ticked under Keep Foreground it turns the camera
+  on; in a stall over a queued ON its untick prints "[Debug Camera] OFF not sent -- an earlier ON is still queued and
+  will turn the camera on. …" and stays ticked (result -6); over a queued OFF its tick shows "[Debug Camera] could not
+  enable -- not sent -- an earlier OFF is still queued; tick again once the game responds". Two defects found here,
+  below. Not run: UE 5.8, where a queued OFF does turn the camera off (needs DumperTest58 Development with idle mode).
+- 🆕 `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]` (LOW, measured above): the generated Debug Camera record's
+  [ENABLE] -6 branch shows its message and then defers an untick, and CE runs [DISABLE] for that untick. [DISABLE] sends
+  OFF, the DLL answers -5 (the OFF already queued in that stall), and the ungated "[DebugCamera] OFF did not complete
+  -- …" prints and raises: the record ends TICKED after a dialog that said "Tick again", the Lua Engine reports an OFF
+  the user never sent, and errorMsg is overwritten (`req=1 -> state=-6` at 08:43:42, then `req=0 -> state=-5` at
+  08:44:05, when OK was pressed). If the game drains before OK, that [DISABLE] is a real OFF. Fix shape: a bail-out
+  that applied nothing should not run [DISABLE] at all; CE's `memrec.disableWithoutExecute()` (celua.txt, used for
+  this check) does exactly that, but `DeferredUntickLua` is shared by every generator, so the change needs its own
+  review. Same shape in the helper's sample, masked there by the next row.
+- 🆕 `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]` (LOW, measured above): `ue5_invoke_helper.lua`'s copy-me Debug Camera
+  sample arms its 50 ms deferred untick BEFORE `showMessage`. The modal pumps the timer while [ENABLE] is still running,
+  so the untick is the no-op `[FREEZEUNTICK-2026-08-20]` describes and the record ends ticked after any failed tick
+  (here -6: no second mailbox command, Active true). Since `b344d63d` (2026-09-08), which deferred it;
+  `invoke_helper_test.lua` models timers pumping only after the chunk returns, and `check_ce_untick_placement` checks
+  only that an untick is deferred, so neither can see the order. The generated scripts, `ue5_freeze_helper.lua` and the
+  .CT put the modal first.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
