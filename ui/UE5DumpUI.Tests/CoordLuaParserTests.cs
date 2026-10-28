@@ -685,6 +685,74 @@ public class CoordLuaParserTests
         Assert.DoesNotContain("quote", reason, StringComparison.Ordinal);
     }
 
+    // ── Review round 7 (a differential fuzz against CE's own Lua 5.3) ──
+
+    private static string WithTail(string zLine, string groupsLine = "local GROUPS = { 'Chest', }") =>
+        "-- @UE5CD:COORDS v1\nlocal COORDS = {\n" + OneEntry + "\n}\n" + zLine + "\n" + groupsLine + "\n-- @UE5CD:END\n";
+
+    [Theory]
+    [InlineData("local Z _TOLERANCE = 2.5")]
+    [InlineData("local Z_TOLERANCE = 2, 5")]
+    [InlineData("local a, b = 1, 2")]
+    public void AStatementAfterTheTableThatCeLuaAccepts_IsNotRefused(string zLine)
+    {
+        var r = CoordLuaParser.Parse(WithTail(zLine));
+        Assert.Empty(r.Issues);
+        Assert.Single(r.Entries);
+    }
+
+    [Theory]
+    [InlineData("local Z_''TOLERANCE = 2.5", "local GROUPS = { 'Chest', }", 5)]
+    [InlineData("local Z_TOLERANCE ; 2.5", "local GROUPS = { 'Chest', }", 5)]
+    [InlineData("local Z_TOLERANCE = 2.5", "local GROUPS = { 'Chest',", 6)]
+    public void AFaultAfterTheTable_IsNamedOnItsOwnLine_NotAsTheTableClosingEarly(string zLine, string groups, int line)
+    {
+        // Every fault after the table was sent to the table's closing brace as "closes before its last entry".
+        var r = CoordLuaParser.Parse(WithTail(zLine, groups));
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(line, issue.Line);
+        Assert.DoesNotContain("closes before its last entry", issue.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AUnicodeEscapeWithLeadingZeros_IsReadAsCeLua53Does()
+    {
+        var r = CoordLuaParser.Parse(Wrap("  { uid='a', label='x\\u{00000000000000041}', map='M', x=1, y=2, z=3 },"));
+        Assert.Empty(r.Issues);
+        Assert.Equal("xA", Assert.Single(r.Entries).Label);
+    }
+
+    [Fact]
+    public void ZEscape_SkipsOnlyTheWhitespaceCeLua53Skips()
+    {
+        // 5.3's \z skips C isspace only; a no-break space after it stays in the string.
+        var r = CoordLuaParser.Parse(Wrap("  { uid='a', label='a\\z b', map='M', x=1, y=2, z=3 },"));
+        Assert.Equal("a b", Assert.Single(r.Entries).Label);
+    }
+
+    [Theory]
+    [InlineData("  { uid='b', label='B', map='M', x=1, y=2, z=3 -- },\n}\n-- a note\nlocal Z_TOLERANCE = 0", 7)]
+    [InlineData("  { uid='b', label='B', map='M', x=1, y=2, z=3 },\n-- a note\nlocal Z_TOLERANCE = 0", 6)]
+    public void ATableLeftUnclosedBeforeTheNextStatement_IsNamedOnThatStatement(string rest, int line)
+    {
+        // CE names the statement the table runs into; the parser named a line nearby with a stray-quote reason.
+        var r = CoordLuaParser.Parse("-- @UE5CD:COORDS v1\nlocal COORDS = {\n" + OneEntry + "\n" + rest + "\n-- @UE5CD:END\n");
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(line, issue.Line);
+        Assert.Contains("not closed", issue.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AStrayOpeningBrace_IsNotBlamedOnTheEntryBefore()
+    {
+        // The reason blamed "the entry before it", which is complete or does not exist; the '{' itself may be stray.
+        var r = CoordLuaParser.Parse(Wrap("  {{ uid='a', label='A', map='M', x=1, y=2, z=3 },"));
+        Assert.Empty(r.Entries);
+        Assert.Contains("that '{' is stray", Assert.Single(r.Issues).Reason, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void NestedTablesAndBracketKeys_AreNotMistakenForStrayQuotes()
     {
