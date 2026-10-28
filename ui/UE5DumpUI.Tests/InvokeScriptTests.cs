@@ -2118,8 +2118,8 @@ public class InvokeScriptTests
     [Fact]
     public void CePluginInject_ManualMapWarning_ClaimsOnlyWhatARunCannotFalsify()
     {
-        // [METHODE-MANUALMAP-EXCEPTION-CLAIM] L53 (2026-09-23): both manually mapped runs logged a C++ exception contained
-        // by a catch(...) inside the image, and neither game crashed -- so "cannot handle exceptions, so the game is likely
+        // [METHODE-MANUALMAP-EXCEPTION-CLAIM] L53 (2026-09-23): both manually mapped runs logged an exception (C++ or SEH:
+        // /EHa) contained by a catch(...) inside the image, and neither game crashed -- so "cannot handle exceptions, so the game is likely
         // to crash" is falsified by a run. The advice stands (a manual map is unsupported and MAY not register the tables
         // exception handling needs); its reason must say "may". Methode.cpp reaches no test target.
         var src = DllSource("Methode.cpp");

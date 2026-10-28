@@ -409,8 +409,9 @@ static void __stdcall OnInjectAndConnect()
     //        applies only the export, import and relocation directories -- not TLS, not
     //        the .pdata exception table -- so exception dispatch inside the image is not
     //        something ReadSafe's everyday __except can count on. Not a certainty either
-    //        way: L53's manually mapped runs on the installed CE contained a C++ exception
-    //        inside the image and neither game crashed. Hence "not supported", never
+    //        way: in L53's manually mapped runs on the installed CE an exception reached a
+    //        catch(...) inside the image and neither game crashed. (Whether C++ or SEH is
+    //        unknown: /EHa lets catch(...) take both.) Hence "not supported", never
     //        "will crash".
     //      * The APC path and a GetExitCodeThread failure ALSO return TRUE with nothing
     //        mapped.
