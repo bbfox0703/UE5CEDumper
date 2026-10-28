@@ -417,6 +417,22 @@ public class CoordLuaParserTests
     }
 
     [Fact]
+    public void TheStopReason_NamesWhatIsUnclosed_Once()
+    {
+        // Review finding: the reason read "unpaired quote: unpaired quote: ...", and an unclosed --[[ was blamed on
+        // a quote ("fix the quote").
+        var quote = Assert.Single(CoordLuaParser.Parse(Wrap(
+            "  { uid='a', label='A, map='M', x=1, y=2, z=3 },")).Issues).Reason;
+        Assert.DoesNotContain("unpaired quote: unpaired quote", quote, StringComparison.Ordinal);
+
+        var bracket = CoordLuaParser.Parse(Wrap("  --[[ old rows\n" + OneEntry));
+        Assert.Empty(bracket.Entries);
+        var reason = Assert.Single(bracket.Issues).Reason;
+        Assert.Contains("unclosed bracket", reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("quote", reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AnUnpairedQuoteInTheLastEntry_StillImportsNothing()
     {
         var r = CoordLuaParser.Parse(Wrap(OneEntry + "\n  { uid='b', label=\"B, map='M', x=1, y=2, z=3 },"));
