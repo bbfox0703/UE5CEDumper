@@ -516,8 +516,18 @@ public static class CoordLuaParser
         private void Fail(string reason)
         {
             int at = Cur.Start;
-            if (_i > 0 && CommentBetween(_t[_i - 1].End, Cur.Start)) at = _t[_i - 1].Start;
+            if (!_inTail && _i > 0 && CommentBetween(_t[_i - 1].End, Cur.Start)) at = _t[_i - 1].Start;
             Error = (at, reason);
+        }
+
+        // After the table the comments are the generator's own lines: none of them swallowed anything.
+        private bool _inTail;
+
+        private bool LineBreakBetween(int from, int to)
+        {
+            for (int k = from; k < to && k < _source.Length; k++)
+                if (_source[k] == '\n') return true;
+            return false;
         }
 
         private bool CommentBetween(int from, int to) =>
@@ -589,15 +599,22 @@ public static class CoordLuaParser
             if (Failed) return entries;
 
             // The rest of the block holds assignments -- the generator writes `local Z_TOLERANCE = …`
-            // and `local GROUPS = { … }` -- and is read as Lua 5.3's assignment statements. A fault
-            // there is named on its own line. Only when the text after the table carries an entry,
-            // or a brace with nothing to close, did a stray quote or brace close the table early:
-            // sending every fault there named the wrong line, and refused statements CE accepts.
+            // and `local GROUPS = { … }` -- and is read as Lua 5.3's assignment statements; a fault
+            // there is named on its own line. A stray quote or brace that closed the table early
+            // leaves the rest of its entry on the closing brace's own line (the generator writes
+            // that brace alone), or -- when it ended a line -- the next entry, as the very first
+            // thing that fails to read. Anything else is a fault of the tail itself: scanning the
+            // whole tail for braces or entry shapes blamed the table for faults lines below it.
             int closeAt = Cur.Start;
             int tailStart = ++_i;
-            ReadTail();
+            _inTail = true;
+            ReadTail(tailStart);
+            _inTail = false;
             if (!Failed) return entries;
-            if (ClosedEarlyEvidence(tailStart))
+            bool sameLine = _t[tailStart].Kind != TokKind.End && !LineBreakBetween(closeAt, _t[tailStart].Start);
+            bool leftover = _statementIndex == tailStart &&
+                            (Cur.IsSymbol(",") || Cur.IsSymbol(";") || Cur.IsSymbol("}") || IsEntryShaped(_i));
+            if (sameLine || leftover)
             {
                 Unbalanced = false;
                 Error = (closeAt, ClosedEarly);
@@ -605,23 +622,45 @@ public static class CoordLuaParser
             else if (Unbalanced)
             {
                 Unbalanced = false;
-                Error = (_statementStart, "a table after the COORDS table is not closed");
+                Error = OpenTableAfter(_statementIndex) is int unclosed
+                    ? (_t[unclosed].Start, "a table after the COORDS table is not closed")
+                    : (_t[Math.Max(tailStart, _t.Count - 2)].Start,
+                       "a statement after the COORDS table ends without its value");
             }
             return entries;
         }
 
-        private int _statementStart;
+        private int _statementIndex;
+
+        private bool IsEntryShaped(int k) =>
+            k + 2 < _t.Count && _t[k].IsSymbol("{") && _t[k + 1].Kind == TokKind.Name &&
+            s_knownKeys.Contains(_t[k + 1].Text) && _t[k + 2].IsSymbol("=");
+
+        /// <summary>The outermost '{' from token <paramref name="from"/> on that never closes.</summary>
+        private int? OpenTableAfter(int from)
+        {
+            var open = new Stack<int>();
+            for (int k = from; k < _t.Count; k++)
+            {
+                if (_t[k].IsSymbol("{")) open.Push(k);
+                else if (_t[k].IsSymbol("}") && open.Count > 0) open.Pop();
+            }
+            int? outer = null;
+            foreach (int k in open) outer = k;   // the stack enumerates innermost first
+            return outer;
+        }
 
         /// <summary><c>stat ::= ';' | 'local' namelist ['=' explist] | namelist '=' explist</c>,
         /// Lua 5.3's grammar for the statements a data block holds; anything else stops the
         /// import on its own line.</summary>
-        private void ReadTail()
+        private void ReadTail(int from)
         {
             const string unreadable =
                 "a statement after the COORDS table does not read as Lua (a stray quote can do this)";
+            _statementIndex = from;
             while (!Failed && Cur.Kind != TokKind.End)
             {
-                _statementStart = Cur.Start;
+                _statementIndex = _i;
                 if (Cur.IsSymbol(";")) { _i++; continue; }
                 bool local = Cur.Is(TokKind.Name, "local");
                 if (local) _i++;
@@ -638,23 +677,6 @@ public static class CoordLuaParser
                 ReadValue();
                 while (!Failed && Cur.IsSymbol(",")) { _i++; ReadValue(); }
             }
-        }
-
-        /// <summary>Whether the text after the table carries what a table closed early leaves:
-        /// a brace with nothing to close, or an entry-shaped table (<c>{ uid = …</c>).</summary>
-        private bool ClosedEarlyEvidence(int from)
-        {
-            int depth = 0;
-            for (int k = from; k < _t.Count; k++)
-            {
-                if (_t[k].IsSymbol("}") && --depth < 0) return true;
-                if (!_t[k].IsSymbol("{")) continue;
-                depth++;
-                if (k + 2 < _t.Count && _t[k + 1].Kind == TokKind.Name && s_knownKeys.Contains(_t[k + 1].Text) &&
-                    _t[k + 2].IsSymbol("="))
-                    return true;
-            }
-            return false;
         }
 
         private LuaEntry ReadEntry()
