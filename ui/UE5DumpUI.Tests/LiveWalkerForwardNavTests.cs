@@ -998,6 +998,7 @@ public class LiveWalkerForwardNavTests
 
         Assert.Equal(Owner, vm.CurrentAddress);
         Assert.Empty(vm.Functions);
+        Assert.True(vm.HasFunctions);   // the section stays: hiding it would resize the field grid under a scroll restore
         ownersList.SetResult(OwnerStub.FunctionsOf(OwnerCls));
         AssertShowsTheOwner(vm);
     }
@@ -1013,6 +1014,7 @@ public class LiveWalkerForwardNavTests
 
         Assert.Equal(Elem, vm.CurrentAddress);
         Assert.Empty(vm.Functions);
+        Assert.True(vm.HasFunctions);   // the section stays: hiding it would resize the field grid under a scroll restore
         elementsList.SetResult(OwnerStub.FunctionsOf(ElemCls));
         Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
     }
