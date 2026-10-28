@@ -4279,11 +4279,14 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
         // [B21-CSV-QUOTE-HOLES] A TYPED double quote is refused, not stored: the export escapes one
         // correctly, but a hand-edited CSV mis-splits on it and the import then stops (the
-        // maintainer's call, 2026-10-28). Counted against the stored text, so an entry that already
-        // holds one (imported, or typed before this) stays editable and keeps it.
-        static int Quotes(string s) => s.Count(c => c == '"');
+        // maintainer's call, 2026-10-28). A field the edit leaves unchanged keeps the quote it
+        // already holds (imported, or typed before this), so such an entry stays editable; any
+        // field the edit changes is new input. Counting quotes instead let a typed one through
+        // whenever the same edit deleted a stored one.
+        static bool TypedQuote(string next, string stored) =>
+            next.Contains('"') && !string.Equals(next, stored, StringComparison.Ordinal);
         var group = CoordText.Normalize(EditCoordGroup, CoordText.MaxGroupLength);
-        if (Quotes(label) > Quotes(row.Entry.Label) || Quotes(group) > Quotes(row.Entry.Group))
+        if (TypedQuote(label, row.Entry.Label) || TypedQuote(group, row.Entry.Group))
         {
             CoordStatus = CoordEditNoQuoteText;
             return;
