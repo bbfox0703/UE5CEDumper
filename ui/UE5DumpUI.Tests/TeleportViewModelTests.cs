@@ -3461,6 +3461,23 @@ public class TeleportViewModelTests
         Assert.Contains("double quote", vm.CoordStatus, StringComparison.Ordinal);
     }
 
+    /// <summary>Review finding: the refusal tested the whole pre-filled label, so an entry that already held a
+    /// quote (imported, or typed before quotes were refused) could not even have its group changed. Only a quote
+    /// the edit ADDS is refused.</summary>
+    [Fact]
+    public async Task An_entry_that_already_holds_a_quote_can_still_be_edited()
+    {
+        var vm = await CoordLibraryVmAsync();
+        vm.BuildImportPreview(CoordCsvCodec.Parse("label,group,map,x,y,z\n\"Boss \"\"big\"\"\",G,M,1,2,3\n"), "t.csv");
+        vm.ApplyCoordImportCommand.Execute(null);
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Boss \"big\"");
+
+        vm.EditCoordGroup = "Bosses";
+        vm.ApplyCoordEditCommand.Execute(null);
+
+        Assert.Equal("Bosses", vm.CoordResults.First(r => r.Label == "Boss \"big\"").Entry.Group);
+    }
+
     /// <summary>...while an edit that renames a row in place still repaints it: the same
     /// entries, but the row shows new text.</summary>
     [Fact]
