@@ -2022,6 +2022,11 @@ uintptr_t FindLiveOrDefaultOf(const std::string& className) {
     return cdo;
 }
 
+uintptr_t FindLiveOrDefaultOf(const std::string& className, const std::string& skipOuterOf) {
+    (void)skipOuterOf;
+    return FindLiveOrDefaultOf(className);
+}
+
 uintptr_t FindClassByPath(const std::string& classPath) {
     // [SEETHRU-PROBE-SUBSTRING] FindByFullName, not FindByNameOrPath: that one falls back to a bare-FName match,
     // and a class the caller named by package must not be answered by whatever else shares its leaf name.

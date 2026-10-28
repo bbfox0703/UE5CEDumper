@@ -4677,6 +4677,103 @@ int main() {
         g_cachedUEVersion           = svVerP;
     }
 
+    // [DBGCAM-58-REENABLE] The Debug Camera's own CheatManager is never the one to toggle. ADebugCameraController::
+    // AddCheats forces a CheatManager onto the DCC in non-Shipping builds, so after the first ON two are live, and
+    // GObjects slot reuse can put the DCC's BELOW the player's -- measured on DumperTest58 Development after three GCs:
+    // 34955 against 35796. The lowest-index pick then lands on the DCC's, and on UE 5.8 a ToggleDebugCamera there never
+    // enables the camera again: FDebugCameraManager::EnableDebugCamera returns at once, the DCC having no Player.
+    {
+        blk("DBGCAM58 - the Debug Camera's own CheatManager is skipped when one is chosen to toggle");
+        ResetCancel();
+
+        enum : int32_t { nClass = 1, nEngine, nPackage, nObject, nActor, nController, nPlayerController, nDcc, nBPDcc,
+                         nCheatMgr, nCdoCheatMgr, nBPPc, nBPPc0, nBPDcc0, nCheatMgr0, nCheatMgr1, nNames };
+        const char* dcNames[nNames] = { "", "Class", "/Script/Engine", "Package", "Object", "Actor", "Controller",
+                                        "PlayerController", "DebugCameraController", "BP_DebugCamera_C", "CheatManager",
+                                        "Default__CheatManager", "BP_ThirdPersonPlayerController_C",
+                                        "BP_ThirdPersonPlayerController_C_0", "BP_DebugCamera_C_0", "CheatManager_0",
+                                        "CheatManager_1" };
+        static uint8_t dcEntry[nNames][0x40] = {};
+        static uintptr_t dcChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(dcEntry[i] + 0x10, dcNames[i], strlen(dcNames[i]) + 1);
+            dcChunk[i] = reinterpret_cast<uintptr_t>(dcEntry[i]);
+        }
+        static uintptr_t dcChunks[2] = { reinterpret_cast<uintptr_t>(dcChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(dcChunks), 0x10);
+
+        const bool     svCpnD   = DynOff::bCasePreservingName;
+        const bool     svFPropD = DynOff::bUseFProperty;
+        const uint32_t svVerD   = g_cachedUEVersion;
+        DynOff::bCasePreservingName = false;
+        DynOff::bUseFProperty       = true;
+        g_cachedUEVersion           = 508;
+
+        enum { bMeta, bPkgCls, bPkg, bObject, bActor, bController, bPlayerController, bDcc, bBPDcc, bCheatMgr,
+               bCdoCheatMgr, bBPPc, bPc0, bDcc0, bCmOfDcc, bCmOfPc, kBlobs };
+        alignas(16) static uint8_t dcB[kBlobs][0x200] = {};
+        auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(dcB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto obj = [&](int b, int cls, int32_t name, int outer) {
+            memset(dcB[b], 0, sizeof(dcB[b]));
+            putP(dcB[b], Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            put32(dcB[b], Grimoire::OFF_UOBJECT_NAME, name);
+            putP(dcB[b], DynOff::UOBJECT_OUTER, A(outer));
+        };
+        auto klass = [&](int b, int32_t name, int super) {
+            obj(b, bMeta, name, bPkg);
+            putP(dcB[b], DynOff::USTRUCT_SUPER, A(super));
+        };
+        obj(bMeta, bMeta, nClass, -1);
+        obj(bPkgCls, bMeta, nPackage, -1);
+        obj(bPkg, bPkgCls, nEngine, -1);
+        klass(bObject, nObject, -1);
+        klass(bActor, nActor, bObject);
+        klass(bController, nController, bActor);
+        klass(bPlayerController, nPlayerController, bController);
+        klass(bDcc, nDcc, bPlayerController);                        // ADebugCameraController : APlayerController
+        klass(bBPDcc, nBPDcc, bDcc);                                 // a game's subclass: derivation, not the name
+        klass(bCheatMgr, nCheatMgr, bObject);
+        obj(bCdoCheatMgr, bCheatMgr, nCdoCheatMgr, bPkg);
+        klass(bBPPc, nBPPc, bPlayerController);
+        obj(bPc0, bBPPc, nBPPc0, -1);
+        obj(bDcc0, bBPDcc, nBPDcc0, -1);
+        obj(bCmOfDcc, bCheatMgr, nCheatMgr0, bDcc0);                 // the DCC's own, at the LOWER index
+        obj(bCmOfPc, bCheatMgr, nCheatMgr1, bPc0);                   // the player's
+
+        FakePool dcPool;
+        dcPool.Build(kBlobs);
+        auto slot = [&](int i, int b) {
+            const uintptr_t o = A(b);
+            memcpy(dcPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        };
+        const int order[kBlobs] = { bMeta, bPkgCls, bPkg, bObject, bActor, bController, bPlayerController, bDcc,
+                                    bBPDcc, bCheatMgr, bCdoCheatMgr, bBPPc, bPc0, bDcc0, bCmOfDcc, bCmOfPc };
+        for (int i = 0; i < kBlobs; ++i) slot(i, order[i]);
+        Aura::InitWithExtendedLayout(dcPool.Addr(), FakePool::kItemSize);
+
+        auto nm = [](uintptr_t o) { return o ? Ubel::GetName(o) : std::string("(0)"); };
+        const uintptr_t plain = Aura::FindLiveOrDefaultOf("CheatManager");
+        check("DBGCAM58 control: the plain pick takes the DCC's CheatManager, the lowest live one -- the bug's pick",
+              plain == A(bCmOfDcc), nm(plain).c_str());
+        const uintptr_t pick = Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController");
+        check("DBGCAM58 ⭐: skipping CheatManagers owned by a DebugCameraController (a subclass included) picks the "
+              "player controller's", pick == A(bCmOfPc), nm(pick).c_str());
+
+        // With only the DCC's own live, the skip must not hand it back: the CDO stands in, as when none is live.
+        slot(15, bCdoCheatMgr);
+        Aura::InitWithExtendedLayout(dcPool.Addr(), FakePool::kItemSize);
+        const uintptr_t onlyDcc = Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController");
+        check("DBGCAM58 ⭐: with only the DCC's CheatManager live, it is still skipped -- the CDO stands in",
+              onlyDcc == A(bCdoCheatMgr), nm(onlyDcc).c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpnD;
+        DynOff::bUseFProperty       = svFPropD;
+        g_cachedUEVersion           = svVerD;
+    }
+
     // -- WALKIFACEGUARD-2026-10-27 -- WalkInterfaceFunctions asks only a class for its interfaces ------------------------
     //
     // [VND584-04] Live Walker asks walk_functions for interface functions on every view, and a struct view's address is

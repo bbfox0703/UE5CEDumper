@@ -129,6 +129,13 @@ uintptr_t FindClassByPath(const std::string& classPath);
 // returns 0, not a CDO it met on the way: a live instance may sit past where it stopped.
 uintptr_t FindLiveOrDefaultOf(const std::string& className);
 
+// The same pick, skipping a live instance whose OUTER derives from `skipOuterOf`. [DBGCAM-58-REENABLE] A Debug
+// Camera controller gets a CheatManager of its own (ADebugCameraController::AddCheats forces one in non-Shipping
+// builds), and once GObjects slot reuse puts it below the player's, the plain pick lands on it -- where, on UE 5.8,
+// ToggleDebugCamera can never enable the camera again (FDebugCameraManager::EnableDebugCamera needs the controller's
+// Player, which the DCC has only while active).
+uintptr_t FindLiveOrDefaultOf(const std::string& className, const std::string& skipOuterOf);
+
 // Get the detected FUObjectItem stride in bytes (16 or 24)
 int GetItemSize();
 
