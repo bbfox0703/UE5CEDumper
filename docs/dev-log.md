@@ -27,6 +27,35 @@ builds ≤696 in
 
 -----
 
+## 2026-10-29 (build 3662) — A coordinate import stops at a stray quote instead of reading on; two warnings say no more than is known `[B21-CSV-QUOTE-HOLES]` `[FTEXT-REFUSAL-OVERCLAIM]` `[METHODE-MANUALMAP-EXCEPTION-CLAIM]`
+
+- **A stray quote in an imported coordinate CSV stops the import, naming its line; nothing is imported.** One
+  unpaired quote in a field used to merge every later row into one, silently. A row whose cell count differs from
+  the header now stops it too: a stray quote PAIR can be valid CSV and still shift every later column. The message
+  names what is wrong, including a space beside a quote or a quoted field that runs on to a later line. There is no
+  repair, by the maintainer's rule.
+- **The Lua import (paste or file) reads the coordinate block the way Cheat Engine's own Lua 5.3 does.** A key
+  written inside a label or a comment, such as `label='Arena z=0 plane'`, no longer sets a coordinate. A stray quote,
+  brace or escape that CE would refuse stops the import, naming its line, wherever it sits in the block, including
+  the lines above and below the table. An entry without x, y or z is reported instead of landing at the origin. A
+  20,000-entry library imports in about 0.1 s; it used to take 10 to 15 s with the app frozen. The documented
+  tolerance of a missing comma is unchanged. Its one known blind spot, `label='Door 'code=' 12'`, is recorded in the
+  census row.
+- **The Label and Group boxes refuse a double quote in a field you change**, and say so. An entry that already holds
+  one, imported or typed before this build, stays editable, and its quotes still export and read back. A label that
+  begins with an apostrophe before `= + - @` now survives a CSV round trip too.
+- **The FText refusal no longer says a zeroed FText "crashes the game".** UE 5.4 measured otherwise. App FIRE, the CE
+  parameter form and `ue5_invoke_helper.lua` now say that a function that reads it can. The refusal itself is
+  unchanged.
+- **The CE plugin's force-load warning no longer says a manually mapped DLL "cannot handle exceptions".** A run
+  showed one being contained. It now says manual mapping is not supported and could crash the game, with the same
+  advice: untick "Always force load modules".
+- Not checked live yet: unit-tested, red then green. Review: nine rounds, each finding judged by independent refuters,
+  every confirmed one fixed. Rounds 7 to 9 fuzzed against CE's own Lua 5.3, about 2M cases. Earlier rounds had used a
+  system Lua 5.4, which the maintainer caught; working-lessons 4.11 records it.
+- Tests: dll_core_test 1,360 checks and dll_helpers_test 3,660, 0 failures; C# 7,071 total, 0 failed, 1 skipped;
+  headless UI 69; 36 gates. AOT UI 61,442,048 bytes.
+
 ## 2026-10-28 (no build change) — Every open item in one place, and todo.md archived by the usual convention `[OPEN-CENSUS-2026-10-28]`
 
 - **The open work is one section now.** `todo.md`'s `[OPEN-CENSUS-2026-10-28]`, right after its preamble, lists
