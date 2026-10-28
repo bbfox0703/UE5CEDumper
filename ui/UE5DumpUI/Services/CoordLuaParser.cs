@@ -104,7 +104,7 @@ public static class CoordLuaParser
         var source = text[(start.Index + start.Length)..end.Index];
         int blockOffset = start.Index + start.Length;
 
-        // Every lookup below runs on a copy with string literals and comments blanked,
+        // Every lookup below runs on a copy with string literals and comments masked,
         // so `label='Arena z=0 plane'` or `-- z=5 was the old floor` cannot be read as a
         // field (B21, hole 3); values are then read from the source at the same offsets.
         // A string that never closes stops the import: the maintainer's rule (2026-10-28)
@@ -146,19 +146,26 @@ public static class CoordLuaParser
         }
 
         // An EVEN number of stray quotes on one line pair with each other, so every string
-        // "closes" and the first one silently ends the value early. What follows a string's
-        // closing quote tells them apart: in an entry only a separator, the closing brace or
-        // the next `key =` may (the format tolerates a missing comma). Anything else is a
-        // stray quote -- and Lua would refuse the line too.
+        // "closes" and the first one silently ends the value early. What sits on either side
+        // of a string tells them apart: in an entry a string may only come after `=`, a
+        // separator or an opening brace or bracket, and be followed by a separator, a closing
+        // brace or bracket, or the next `key =` (the format tolerates a missing comma).
+        // Anything else is a stray quote -- and Lua would refuse the line too.
         int innerEnd = open + 1 + inner.Length;
         foreach (var (s0, s1) in strings)
         {
-            if (s0 <= open || s1 >= innerEnd || MayFollowAString(block, s1 + 1)) continue;
-            int sol = source.LastIndexOf('\n', s0) + 1, eol = source.IndexOf('\n', s1);
-            result.Issues.Add(new CoordCsvIssue(LineOf(text, blockOffset + s1), "",
+            if (s0 <= open || s1 >= innerEnd) continue;
+            bool before = MayPrecedeAString(block, s0 - 1);
+            if (before && MayFollowAString(block, s1 + 1)) continue;
+            int at = before ? s1 : s0;
+            int sol = source.LastIndexOf('\n', at) + 1, eol = source.IndexOf('\n', at);
+            result.Issues.Add(new CoordCsvIssue(LineOf(text, blockOffset + at), "",
                 Trim(source[sol..(eol < 0 ? source.Length : eol)]),
-                "unpaired quote: text follows a string's closing quote, so a quote inside it was " +
-                "not escaped (\\' or \\\") -- nothing was imported; fix it and import again"));
+                (before
+                    ? "unpaired quote: text follows a string's closing quote"
+                    : "unpaired quote: a string starts right after other text") +
+                ", so a quote inside a string was not escaped (\\' or \\\") -- nothing was imported; " +
+                "fix it and import again"));
             return result;
         }
 
@@ -178,7 +185,7 @@ public static class CoordLuaParser
     }
 
     /// <summary>One entry's text twice, the same length: as written, and with its
-    /// literals and comments blanked (<see cref="MaskLiterals"/>). Keys are found in
+    /// literals and comments masked (<see cref="MaskLiterals"/>). Keys are found in
     /// <see cref="Masked"/>; values are read from <see cref="Source"/> at the same offset.</summary>
     private readonly record struct Entry(string Source, string Masked);
 
@@ -358,14 +365,19 @@ public static class CoordLuaParser
         }
     }
 
+    /// <summary>Fills a masked string literal. Not a blank: a string right after another
+    /// (<c>'It''s'</c>) must not read as whitespace to <see cref="MayFollowAString"/>.</summary>
+    private const char StringMark = '\u0001';
+
     /// <summary>
-    /// <paramref name="s"/> with every string literal and comment blanked to spaces, line
-    /// breaks kept, so a lookup on the result sees code only and every offset still
-    /// matches the source. Null when a string or a long bracket never closes:
+    /// <paramref name="s"/> with every string literal filled with <see cref="StringMark"/> and
+    /// every comment blanked to spaces, line breaks kept, so a lookup on the result sees code
+    /// only and every offset still matches the source. Each string's span goes to
+    /// <paramref name="strings"/>. Null when a string or a long bracket never closes:
     /// <paramref name="openAt"/> is where it opened and <paramref name="what"/> says which.
     /// </summary>
     internal static string? MaskLiterals(string s, out int openAt, out string what,
-                                         List<(int Start, int End)>? shortStrings = null)
+                                         List<(int Start, int End)>? strings = null)
     {
         var m = s.ToCharArray();
         (openAt, what) = (-1, "");
@@ -373,6 +385,7 @@ public static class CoordLuaParser
         {
             char c = s[i];
             int end, level;
+            char fill = StringMark;
             if (c == '\'' || c == '"')
             {
                 end = CloseQuote(s, i);
@@ -381,10 +394,11 @@ public static class CoordLuaParser
                     (openAt, what) = (i, $"unpaired quote: a string opened with {c} never closes on its line");
                     return null;
                 }
-                shortStrings?.Add((i, end));
+                strings?.Add((i, end));
             }
             else if (c == '-' && i + 1 < s.Length && s[i + 1] == '-')
             {
+                fill = ' ';
                 if ((level = LongBracketLevel(s, i + 2)) >= 0)
                 {
                     end = LongBracketClose(s, i + 2 + level + 2, level);
@@ -408,14 +422,25 @@ public static class CoordLuaParser
                     (openAt, what) = (i, "unclosed bracket: a [[ string never closes");
                     return null;
                 }
+                strings?.Add((i, end));
             }
             else continue;
 
             for (int k = i; k <= end; k++)
-                if (m[k] != '\n' && m[k] != '\r') m[k] = ' ';
+                if (m[k] != '\n' && m[k] != '\r') m[k] = fill;
             i = end;
         }
         return new string(m);
+    }
+
+    /// <summary>Whether the code before a string, ending at <paramref name="before"/> in the
+    /// masked text, is something an entry allows before one: <c>=</c>, a separator, or an
+    /// opening brace or bracket.</summary>
+    private static bool MayPrecedeAString(string masked, int before)
+    {
+        int i = before;
+        while (i >= 0 && char.IsWhiteSpace(masked[i])) i--;
+        return i >= 0 && "=,;{[".IndexOf(masked[i]) >= 0;
     }
 
     /// <summary>Whether what follows a string value at <paramref name="from"/> in the masked
