@@ -27,6 +27,31 @@ builds ≤696 in
 
 -----
 
+## 2026-10-28 (build 3661) — A Live Walker container view stands for its owner again, address and functions alike `[LW-BACK-CONTAINER-HEADER-ADDR]`
+
+- **Back into an Array, Map, Set or DataTable rows view shows its owner again.** Back, a breadcrumb jump, the Back out
+  of a re-rooted view, a bookmark and Refresh redraw such a view without walking its owner, and left the header on
+  whichever object had been opened last -- usually the element just left. Its address and Addr copy, HEX, AA, Find
+  Refs, Related and a bookmark saved there acted on that object, and the Functions list was that object's. Measured on
+  Extinction (UE 4.15) with build 3660. The header and the Functions list now belong to the owner, as on the drill
+  that opened the view.
+- **The GWorld actor list no longer lists the last object's functions.**
+- **A Functions row cannot fire at the wrong object while the list catches up.** When the object on screen changes
+  class, its function list takes one pipe round trip to arrive. Until it does, the rows shown are the previous
+  class's, and PIPE, INV, AA(Baked) and ASM now refuse them, saying so under their own label, instead of running the
+  new object's same-named function with the old one's arguments. The rows stay on screen meanwhile, so the field grid
+  does not shift under a Back's scroll restore, and the message goes once the list arrives. A list that arrives for a
+  class no longer on screen is dropped.
+- **A DataTable's rows view no longer gains a stray RowMap row** when the table's row load arrives late: after the Back
+  out of a re-rooted view (a case this fix opened and closed), or after a Back from the rows view whose walk of the
+  table had not returned yet (older).
+- Not checked live yet: unit-tested, red then green, the tests checked against single-part mutations of the fix. Review:
+  four rounds, each finding judged by independent refuters; every confirmed one is fixed. Its pre-existing neighbours
+  -- INV and AA(Baked) on a container view name the view's own label as the class -- are a new LOW row,
+  `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`.
+- Tests: dll_core_test 1,360 checks and dll_helpers_test 3,660, 0 failures; C# 6,963 total, 0 failed, 1 skipped;
+  headless UI 69; 36 gates. AOT UI 61,352,448 bytes.
+
 ## 2026-10-28 (build 3660) — A pointer to a type exports as a pointer; a Cheat Engine tick that applied nothing leaves the feature alone `[CEXML-DEFINITION-VIEW-AS-DATA]` `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]` `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]` `[LW-CRUMB-UNDERSCORE]` `[LEADFIX-REVIEW-2026-10-28]`
 
 - **A pointer to a type exports as a plain pointer.** When the target is a struct type (ScriptStruct) or a native,
