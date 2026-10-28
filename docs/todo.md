@@ -2172,9 +2172,24 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   `BP_ThirdPersonCharacter` (4 hits: the pawn, its CDO, the class, the package), the class picked -> the notice; the
   pawn picked -> "Found 4 instances (scanned 24,530, non-null 24,523, named 24,523 (100.0%))" again, rows with
   addresses; the pawn's Addr copies `16BA41F29D8` (0x16BA41F29B0 + 0x28), the positive control.
-- ✅ `[LW-CRUMB-UNDERSCORE]`, the breadcrumb, same session: `DumperTestGameMode_2147482507 > BP_ThirdPersonCharacter_C`.
-  ⬜ Proxy Deploy's drive boxes cannot be exercised here: no volume on this PC has an underscore in its label (C:
-  Windows, D: Data, G: Google Drive, Y: DataExchange, Z: SteamBackup), and renaming one is not on.
+- ✅ `[LW-CRUMB-UNDERSCORE]`, same session, every place but one. **Breadcrumb**: `DumperTestGameMode_2147482507 >
+  BP_ThirdPersonCharacter_C`; DumperTestActor_0 via Instances → Open in Live Walker, then Arr_Churn's `[]`:
+  `DumperTestActor_0 > Arr_Churn [4 x IntProperty] >` (3659 measured "DumperTestActor0" / "ArrChurn"), the crumb equal
+  to the header's name and to the DLL's walk-0.log `WalkInstance 'DumperTestActor_0' (DumperTestActor)`. **Class
+  Pivot's hidden-class chip** (Snapshot source, filter `ThirdPerson`, right-click → Hide selected class from picker):
+  `BP_ThirdPersonCharacter_C`, the per-game `snapshots.C361A341081CE000.denylist.json` holding `"pivot":
+  ["BP_ThirdPersonCharacter_C"]` (view log `saved Pivot denylist (1 classes)`); a click on the chip's text removed it
+  (`(0 classes)`). **Snapshot Diff's chip** (S1-before → S2-after, "18 changed · +0 added · −0 removed", noise row
+  `ABP_Quinn_C` ticked, Apply & re-run): the chip `ABP_Quinn_C`, `"diff": ["ABP_Quinn_C"]`, and the re-run "17 changed"
+  -- the entry denied exactly that class's one row; the chip click restored it. **SPC Query's chips** (class
+  `ThirdPerson`, S1-before + S2-after, "340 match across 2 snapshots (In-session).", noise rows
+  BP_ThirdPersonCharacter_C 248 / ThirdPersonMap_C 92): the chips `BP_ThirdPersonCharacter_C` and `ThirdPersonMap_C`,
+  `"spc"` holding both, the re-run "No fields match the chain across 2 snapshots."; Clear all emptied it. **Class
+  Pivot's Discover pick**: a snapshot captured with Label `S4_after` ("Captured 719 objects, 17,040 fields") reads
+  `S4_after · 2026-10-28 12:57:33` in the picks and in the Diff's Old / New lists; a click on the pick's text ticks
+  and unticks it ("3 snapshots selected." / "2 snapshots selected."). The snapshot is kept. ⬜ Proxy Deploy's drive
+  boxes cannot be exercised here: no volume on this PC has an underscore in its label (C: Windows, D: Data, G: Google
+  Drive, Y: DataExchange, Z: SteamBackup), and renaming one is not on.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
