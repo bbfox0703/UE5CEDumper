@@ -270,7 +270,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         _functionFilterMemory.Flush();
         FunctionFilter = "";
     }
-    private string _currentClassAddr = "";
+    private string _currentClassAddr = "";  // The class whose functions are listed; a container view's owner's
     private bool _isDefinitionView;  // True when displaying a class/struct definition (no live data)
     private DataTableWalkResult? _cachedDataTableRows;  // Cached DataTable row data
 
@@ -1005,6 +1005,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         CurrentOuterAddr = "";
         CurrentOuterName = "";
         CurrentOuterClassName = "";
+        // [LW-BACK-CONTAINER-HEADER-ADDR] Rendered without a walk, and nothing here names the world's class: list no
+        // functions rather than the last object's, which PIPE would fire at the world.
+        ShowFunctionsOf("");
 
         Fields.Clear();
         _renderedCrumb = CurrentCrumb;   // [A4-NAV-BACKFIRST-GRAFT]
@@ -1498,6 +1501,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsPointerDeref = false,
             IsContainerView = true,
             ContainerField = field,
+            OwnerClassAddr = _currentClassAddr,
         });
         _log.Info($"NAV→Container {field.Name} addr={parentAddr} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
@@ -1526,6 +1530,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsPointerDeref = false,
             IsContainerView = true,
             ContainerField = field,
+            OwnerClassAddr = _currentClassAddr,
         });
         _log.Info($"NAV→MapContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
@@ -1548,6 +1553,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsPointerDeref = false,
             IsContainerView = true,
             ContainerField = field,
+            OwnerClassAddr = _currentClassAddr,
         });
         _log.Info($"NAV→SetContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
@@ -1589,6 +1595,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsDataTableView = true,
             ContainerField = field,
             DataTableData = dtResult,
+            OwnerClassAddr = _currentClassAddr,
         });
         _log.Info($"NAV\u2192DataTable {field.Name} addr={CurrentAddress} rows={received}/{dtResult.RowCount} struct={dtResult.RowStructName} | BC={FormatBreadcrumbTrace()}");
 
@@ -1615,6 +1622,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         CurrentOuterAddr = "";
         CurrentOuterName = "";
         CurrentOuterClassName = "";
+        ShowContainerOwner();
 
         Fields.Clear();
         _renderedCrumb = CurrentCrumb;   // [A4-NAV-BACKFIRST-GRAFT]
@@ -1679,6 +1687,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         CurrentOuterAddr = "";
         CurrentOuterName = "";
         CurrentOuterClassName = "";
+        ShowContainerOwner();
 
         // Parse TArray::Data base address for computing element addresses
         ulong dataBase = 0;
@@ -1743,6 +1752,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         CurrentOuterAddr = "";
         CurrentOuterName = "";
         CurrentOuterClassName = "";
+        ShowContainerOwner();
 
         // Parse TSparseArray::Data base address for computing element addresses
         ulong dataBase = 0;
@@ -1819,6 +1829,20 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
+    /// [LW-BACK-CONTAINER-HEADER-ADDR] A container view stands for the object that owns the container: the header's
+    /// address and the Functions list are that owner's, as on the drill that opened the view. Every other render of the
+    /// view skips the walk that would set them, and left them on whatever object was walked last -- the header's Addr
+    /// chip copied the element just left, and PIPE could fire one object's function at another's address. So each
+    /// container render puts the owner back from its crumb.
+    /// </summary>
+    private void ShowContainerOwner()
+    {
+        if (CurrentCrumb is not { IsContainerView: true } crumb) return;
+        if (!string.IsNullOrEmpty(crumb.Address)) CurrentAddress = crumb.Address;
+        ShowFunctionsOf(crumb.OwnerClassAddr);
+    }
+
+    /// <summary>
     /// Re-populate the container view from a (potentially refreshed) container field.
     /// Dispatches to the appropriate populate helper based on container type.
     /// </summary>
@@ -1887,6 +1911,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             (field.SetCount >= 0 && !string.IsNullOrEmpty(field.SetElemType));
         if (!willRepopulate) return false;
 
+        // [LW-BACK-CONTAINER-HEADER-ADDR] The owner was just walked, and the path that built this crumb never knew its class.
+        if (!string.IsNullOrEmpty(result.ClassAddr)) item.OwnerClassAddr = result.ClassAddr;
         RepopulateContainerView(field, item);
         _log.Info($"NAV⇒SyntheticContainer rehydrated {item.FieldName} @ {item.Address} off={FormatCrumbOffset(item.FieldOffset)}");
         return true;
@@ -1904,6 +1930,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         CurrentOuterAddr = "";
         CurrentOuterName = "";
         CurrentOuterClassName = "";
+        ShowContainerOwner();
 
         // Parse TSparseArray::Data base address for computing element addresses
         ulong dataBase = 0;
@@ -4226,7 +4253,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     var parent = await WalkForReresolveAsync(curAddr, curClassAddr);
                     var field = MatchSpineField(parent, c);
                     if (field == null || !field.IsContainerNavigable) return null;
-                    rebuilt.Add(CloneCrumbWithAddress(c, curAddr, c.ClassAddr, field));
+                    var crumb = CloneCrumbWithAddress(c, curAddr, c.ClassAddr, field);
+                    crumb.OwnerClassAddr = parent.ClassAddr;   // [LW-BACK-CONTAINER-HEADER-ADDR] the file never holds it
+                    rebuilt.Add(crumb);
                     pendingContainer = field;
                     // curAddr / curClassAddr unchanged — the element crumb does the deref.
                 }
@@ -4406,6 +4435,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ContainerField = containerField ?? src.ContainerField,
             IsDataTableView = src.IsDataTableView,
             DataTableData = src.DataTableData,
+            OwnerClassAddr = src.OwnerClassAddr,
         };
 
     /// <summary>[W4-BOOKMARK-DT] The row view's crumb with re-walked rows, in the in-session shape
@@ -4425,6 +4455,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         ContainerField = SyntheticRowMapField(dt),
         IsDataTableView = true,
         DataTableData = dt,
+        OwnerClassAddr = src.OwnerClassAddr,
     };
 
     /// <summary>[W4-BOOKMARK-DT] Re-walk a bookmarked DataTable's rows at the saved address, accepted only
@@ -5538,9 +5569,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // enum's value name, a pointer's runtime class. So the class is walked -- a struct view's
             // crumb carries its struct, an object view's class is _currentClassAddr -- and its
             // declared rows are exported, super and own-property boundary included (audit #5 W2).
-            // The walk must be the class on screen: container, DataTable and GWorld views change
-            // CurrentClassName without touching _currentClassAddr, which can still be the object
-            // before. Anything else falls back to the live rows, which no longer lend a value to a type.
+            // The walk must be the class on screen: a container or DataTable view keeps its OWNER's
+            // class in _currentClassAddr under a class name of its own, and the GWorld view has none,
+            // so the name check below fails for both. Anything else falls back to the live rows, which
+            // no longer lend a value to a type.
             var classAddr = Breadcrumbs.Count > 0 && !string.IsNullOrEmpty(Breadcrumbs[^1].ClassAddr)
                 ? Breadcrumbs[^1].ClassAddr
                 : _currentClassAddr;
@@ -5751,6 +5783,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     }
                     if (status.Length > 0) StatusText = status;
 
+                    // [LW-BACK-CONTAINER-HEADER-ADDR] The owner was just walked, so its class is known even on a crumb
+                    // that never had it.
+                    if (!string.IsNullOrEmpty(parentResult.ClassAddr)) containerBc.OwnerClassAddr = parentResult.ClassAddr;
                     RepopulateContainerView(updatedField);
                     RestoreSelectedField(keepFieldName, keepFieldOffset);
                 }
@@ -6525,6 +6560,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         SelectedFunction = null;   // detach before clearing the selection-bound grid
         Functions.Clear();
         HasFunctions = false;
+        // [LW-BACK-CONTAINER-HEADER-ADDR] No list, so no class on screen: a view with this class again must load it.
+        _currentClassAddr = "";
         ClearForwardStack();
         _replacedSpine = null;
         _cachedWorld = null;
@@ -7271,7 +7308,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         // [P4-OTHER-INSTANCE] WHICH object is on screen now, captured before the header below is
         // overwritten: the in-place branch further down may reuse the rows only for this same
-        // object. CurrentClassName is set by every populate site; _currentClassAddr only here.
+        // object. CurrentClassName is set by every populate site; _currentClassAddr by a walk, or
+        // to the owner's on a container view.
         var prevAddr      = ParseHexAddr(CurrentAddress);
         var prevClassName = CurrentClassName;
         var prevClassAddr = _currentClassAddr;
@@ -7282,6 +7320,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         CurrentObjectName = result.Name;
         CurrentClassName = result.ClassName;
         CurrentAddress = result.Address;
+        // [LW-BACK-CONTAINER-HEADER-ADDR] With the address, not at the end: the pending scroll hint below can open a
+        // container of this object inside this call, and the drill records the class on screen as the view's owner.
+        _currentClassAddr = result.ClassAddr;
         HasData = true;   // OnHasDataChanged retires any failure banner once data shows
         ShowCeXml = false;
 
@@ -7488,12 +7529,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ScrollToFieldByOffset(wantOffset);
         }
 
-        // Store class address and load functions asynchronously. Track
+        // Load the class's functions asynchronously. Track
         // the in-flight task so cross-tab navigators (e.g. Interesting
         // Funcs -> Live) can await it before calling
         // TrySelectFunctionByName -- otherwise the call races with the
         // function-list population and the row never gets selected.
-        _currentClassAddr = result.ClassAddr;
         _pendingFunctionsLoad = LoadFunctionsAsync(result.ClassAddr);
 
         // DataTable detection: if this is a DataTable, fetch rows and inject synthetic RowMap field.
@@ -7511,8 +7551,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// <remarks>
     /// Compared numerically, so two spellings of one address agree. An unparseable or empty address
     /// on either side is "not the same" -- the safe answer, which costs a rebuild. The class address
-    /// is compared only when both sides have one; the class NAME always is, because the container,
-    /// DataTable and GWorld views set <c>CurrentClassName</c> but not <c>_currentClassAddr</c>.
+    /// is compared only when both sides have one; the class NAME always is, because a container or
+    /// DataTable view shares its owner's address AND class address under a class name of its own, and
+    /// the GWorld view has no class address at all.
     /// </remarks>
     private static bool IsSameObject(ulong prevAddr, string prevClassName, string prevClassAddr,
                                      ulong newAddr, InstanceWalkResult result)
@@ -7622,6 +7663,18 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>
+    /// [LW-BACK-CONTAINER-HEADER-ADDR] List <paramref name="classAddr"/>'s functions -- none when it is empty -- for a
+    /// view rendered without a walk. Recording it as the class on screen is also what tells a list still loading for
+    /// another class that it lost the race. Already the class on screen: its list is shown, or on its way.
+    /// </summary>
+    private void ShowFunctionsOf(string classAddr)
+    {
+        if (string.Equals(_currentClassAddr, classAddr, StringComparison.Ordinal)) return;
+        _currentClassAddr = classAddr;
+        _pendingFunctionsLoad = LoadFunctionsAsync(classAddr);
+    }
+
     private async Task LoadFunctionsAsync(string classAddr)
     {
         if (string.IsNullOrEmpty(classAddr) || classAddr == "0x0")
@@ -7637,6 +7690,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // [VND584-04] With the functions the class gets only through an interface: FIRE reaches them by name, so
             // they belong on the list it is fired from.
             var funcs = await _dump.WalkFunctionsWithInterfacesAsync(classAddr);
+            // [LW-BACK-CONTAINER-HEADER-ADDR] Another class went on screen while this list loaded. Landing it would put
+            // one object's functions under another's address, and PIPE fires the selected one at that address.
+            if (!string.Equals(_currentClassAddr, classAddr, StringComparison.Ordinal)) return;
             // Every walk -- each Refresh and Auto Refresh tick included -- re-reads the class's
             // functions. The same UFunctions keep their rows, so the Functions grid keeps its
             // place instead of jumping to the top on every tick [KEYWORD-BOX-VIEW-KEEP].
@@ -7652,6 +7708,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
         catch
         {
+            if (!string.Equals(_currentClassAddr, classAddr, StringComparison.Ordinal)) return;   // the newer class's list stays
             _allFunctions.Clear();
             Functions.Clear();
             HasFunctions = false;
@@ -7802,6 +7859,13 @@ public sealed class BreadcrumbItem : ObservableObject
     /// <see cref="Label"/>: what is read from the crumb later must be the latest reading of the container, not the
     /// drill's, so a re-read inside the view replaces it. [WALK-REFRESH-SCALAR-SHRINK]</summary>
     public LiveFieldValue? ContainerField { get; set; }
+
+    /// <summary>[LW-BACK-CONTAINER-HEADER-ADDR] A container view's OWNER class: the class whose functions the view
+    /// lists, while <see cref="Address"/> is the object they fire at. Taken at the drill, which comes from the owner's
+    /// walk. Settable, because a later walk of the owner can supply it to a crumb that never had one -- one rebuilt
+    /// from a bookmark file. Empty means unknown, and an unknown owner lists no functions. Never persisted: a class
+    /// address dies with the game process.</summary>
+    public string OwnerClassAddr { get; set; } = "";
 
     /// <summary>True if this breadcrumb represents a DataTable row container view.</summary>
     public bool IsDataTableView { get; init; }
