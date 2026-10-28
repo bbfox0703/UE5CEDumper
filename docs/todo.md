@@ -2336,6 +2336,16 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   PC's CheatManager -- unread, to be checked against the 5.8.4 source (DebugCameraManager.cpp / CheatManager.cpp) before
   any fix. The UI states the outcome honestly ("state is now OFF"), so this is a feature gap on 5.8, not a false
   report.
+- ✅ **Debug Camera on UE 5.8: a queued OFF DOES turn the camera off** (the 5.8 difference behind the "on most
+  engines" hedge). DumperTest58 Development relaunched (pid 4820) for one fresh ON→OFF cycle (see the lead above);
+  idle mode set from the game's own console (`t.IdleWhenNotForeground 1`, echoed `t.IdleWhenNotForeground = "1"` in the
+  package's Saved\Logs\DumperTest58.log -- no repackage needed). UI in front (the game idles): Force On -> "⏳ Force ON:
+  the toggle is QUEUED — …", badge Queued (`ToggleDebugCamera ProcessEvent r=-5`, `invoke timeout (5000ms)`); the game
+  fronted (Alt+Tab; `SetForegroundWindow` did not take): the Debug Camera HUD appears; ↻ -> "Debug Camera is ON.". UI
+  in front again: Force Off -> "⏳ Force OFF did not complete — the game thread is busy …", badge ON (r=-5); the game
+  fronted ~10 s: the HUD is gone, the pawn view back; ↻ -> "Debug Camera is OFF." (`get_debug_camera_state` 14:17:47);
+  Force Off again -> "✓ Debug Camera forced OFF." with `UE5_SetDebugCamera: already OFF — no-op`. On 5.4 the same
+  drained OFF left the camera ON ([LIVE-3659-2026-10-28]).
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
