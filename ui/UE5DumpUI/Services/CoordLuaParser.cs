@@ -416,19 +416,34 @@ public static class CoordLuaParser
                     return "";
                 case 'u':
                 {
+                    // Read wide: as an int, 80000000..FFFFFFFF turned negative, passed the range
+                    // check and threw out of ConvertFromUtf32.
                     int close = i < s.Length && s[i] == '{' ? s.IndexOf('}', i) : -1;
-                    if (close > i + 1 &&
-                        int.TryParse(s.AsSpan(i + 1, close - i - 1), NumberStyles.AllowHexSpecifier,
-                                     CultureInfo.InvariantCulture, out int cp) &&
-                        cp <= 0x10FFFF && (cp < 0xD800 || cp > 0xDFFF))
+                    if (close <= i + 1 || close - i - 1 > 16 ||
+                        !ulong.TryParse(s.AsSpan(i + 1, close - i - 1), NumberStyles.AllowHexSpecifier,
+                                        CultureInfo.InvariantCulture, out ulong cp))
                     {
-                        sb.Append(char.ConvertFromUtf32(cp));
-                        i = close + 1;
-                        break;
+                        error = (at, "unpaired quote: '\\u' needs {hex}, so a backslash or quote in this string is stray");
+                        next = i;
+                        return "";
                     }
-                    error = (at, "unpaired quote: '\\u' needs {hex}, so a backslash or quote in this string is stray");
-                    next = i;
-                    return "";
+                    if (cp > 0x10FFFF)
+                    {
+                        // Lua 5.3 -- CE's -- refuses this too ("UTF-8 value too large").
+                        error = (at, "unpaired quote: a '\\u' escape above U+10FFFF, so a backslash or quote in this string is stray");
+                        next = i;
+                        return "";
+                    }
+                    if (cp is >= 0xD800 and <= 0xDFFF)
+                    {
+                        // Lua stores the raw bytes; a label is UTF-16 text and cannot hold one alone.
+                        error = (at, $"'\\u{{{cp:X}}}' is a surrogate code point, which a label cannot hold");
+                        next = i;
+                        return "";
+                    }
+                    sb.Append(char.ConvertFromUtf32((int)cp));
+                    i = close + 1;
+                    break;
                 }
                 default:
                     if (char.IsAsciiDigit(n))
@@ -488,21 +503,33 @@ public static class CoordLuaParser
         private Tok Cur => _t[_i];
         private Tok Peek(int k = 1) => _t[Math.Min(_i + k, _t.Count - 1)];
 
-        /// <summary>A fault at the current token. When it starts a new line, the fault is
-        /// named on the line before -- where a comment swallowed a separator or a brace.</summary>
+        /// <summary>A fault at the current token -- or, when a comment lies between it and
+        /// the token before, on that token's line: the comment swallowed a separator or a
+        /// brace there. Only whitespace and comments separate two tokens, so `--` between
+        /// them is a comment.</summary>
         private void Fail(string reason)
         {
             int at = Cur.Start;
-            if (_i > 0 && LineBreakBetween(_t[_i - 1].End, Cur.Start)) at = _t[_i - 1].Start;
+            if (_i > 0 && CommentBetween(_t[_i - 1].End, Cur.Start)) at = _t[_i - 1].Start;
             Error = (at, reason);
         }
 
-        private bool LineBreakBetween(int from, int to)
-        {
-            for (int k = from; k < to && k < _source.Length; k++)
-                if (_source[k] == '\n') return true;
-            return false;
-        }
+        private bool CommentBetween(int from, int to) =>
+            to > from && _source.IndexOf("--", from, Math.Min(to, _source.Length) - from, StringComparison.Ordinal) >= 0;
+
+        /// <summary>Lua's own limit on nested syntax (LUAI_MAXCCALLS); every level is a
+        /// recursion here, and a stack overflow cannot be caught.</summary>
+        private const int MaxDepth = 200;
+        private int _depth;
+
+        // The fields this format reads. One of them holding a table is a stray quote's
+        // leftover: a deleted opening quote whose comment ate the line made the NEXT entry its value.
+        private static readonly HashSet<string> s_knownKeys = new(StringComparer.Ordinal)
+            { "uid", "label", "group", "map", "x", "y", "z", "pitch", "yaw", "roll" };
+
+        private const string MissingBrace =
+            "a '{' opens inside an entry, so the entry before it is missing its closing '}' " +
+            "(or a stray quote or a comment swallowed it)";
 
         private bool IsKeyAssign => Cur.Kind == TokKind.Name && Peek().IsSymbol("=") && !Peek().IsSymbol("==");
 
@@ -533,27 +560,24 @@ public static class CoordLuaParser
             }
             if (Failed) return entries;
 
-            // What may follow the table: the end, `;`, or the next statement. A stray brace
-            // that closed it early leaves the real closing brace with nothing to close.
+            // The rest of the block is data statements only -- the generator writes
+            // `local Z_TOLERANCE = …` and `local GROUPS = { … }` there -- so it is read as such.
+            // Whatever a stray brace leaves behind after closing the table early is never one:
+            // counting braces missed `}}N{{`, which reads as the start of a statement.
+            const string closedEarly =
+                "unpaired quote or brace: the COORDS table closes before its last entry, so a stray quote or " +
+                "brace ended an entry, and the table with it, early";
             int closeAt = Cur.Start;
             _i++;
-            if (Cur.Kind != TokKind.End && !Cur.IsSymbol(";") && Cur.Kind != TokKind.Name)
+            while (!Failed && Cur.Kind != TokKind.End)
             {
-                Error = (closeAt, "unpaired quote or brace: the COORDS table closes before its last entry, so a stray " +
-                                  "quote or brace ended an entry, and the table with it, early");
-                return entries;
+                if (Cur.IsSymbol(";")) { _i++; continue; }
+                if (Cur.Is(TokKind.Name, "local")) _i++;
+                if (!IsKeyAssign) { Error = (closeAt, closedEarly); return entries; }
+                _i += 2;
+                ReadValue();
             }
-            int depth = 0;
-            for (int k = _i; k < _t.Count; k++)
-            {
-                if (_t[k].IsSymbol("{")) depth++;
-                else if (_t[k].IsSymbol("}") && --depth < 0)
-                {
-                    Error = (closeAt, "unpaired quote or brace: the COORDS table closes before its last entry, so a stray " +
-                                      "quote or brace ended an entry, and the table with it, early");
-                    return entries;
-                }
-            }
+            if (Unbalanced) { Unbalanced = false; Error = (closeAt, closedEarly); }
             return entries;
         }
 
@@ -573,6 +597,12 @@ public static class CoordLuaParser
                     _i += 2;
                     var value = ReadValue();
                     if (Failed) break;
+                    if (value.Kind == TokKind.Symbol && s_knownKeys.Contains(key.Text))
+                    {
+                        Error = (key.Start, $"unpaired quote: '{key.Text}' has a table for its value, so a quote " +
+                                            "before it was deleted, or a comment swallowed the rest of its line");
+                        break;
+                    }
                     // A stray pair whose middle reads as `map=` makes a second key; Lua keeps the
                     // last and a reader might keep the first, so a repeated key is refused.
                     if (!fields.TryAdd(key.Text, value))
@@ -600,16 +630,21 @@ public static class CoordLuaParser
                 }
                 else
                 {
-                    Fail("unpaired quote: a value stands without a key, so a quote in a string before it was " +
-                         "not escaped (\\' or \\\")");
+                    Fail(Cur.IsSymbol("{")
+                        ? MissingBrace
+                        : "unpaired quote: a value stands without a key, so a quote in a string before it was " +
+                          "not escaped (\\' or \\\")");
                     break;
                 }
 
                 if (Cur.IsSymbol(",") || Cur.IsSymbol(";")) _i++;
+                else if (Cur.Kind == TokKind.End) { Unbalanced = true; break; }
                 else if (!Cur.IsSymbol("}") && !IsKeyAssign)
                 {
-                    Fail("unpaired quote: text follows a value where a comma or the closing brace belongs, so a " +
-                         "quote in a string was not escaped (\\' or \\\")");
+                    Fail(Cur.IsSymbol("{")
+                        ? MissingBrace
+                        : "unpaired quote: text follows a value where a comma or the closing brace belongs, so a " +
+                          "quote in a string was not escaped (\\' or \\\")");
                     break;
                 }
             }
@@ -647,6 +682,18 @@ public static class CoordLuaParser
 
         private void ReadAnyTable()
         {
+            if (_depth >= MaxDepth)
+            {
+                Fail($"a table nests deeper than Lua allows ({MaxDepth} levels)");
+                return;
+            }
+            _depth++;
+            ReadAnyTableBody();
+            _depth--;
+        }
+
+        private void ReadAnyTableBody()
+        {
             _i++;
             while (!Failed)
             {
@@ -669,6 +716,7 @@ public static class CoordLuaParser
                 ReadValue();
                 if (Failed) return;
                 if (Cur.IsSymbol(",") || Cur.IsSymbol(";")) _i++;
+                else if (Cur.Kind == TokKind.End) { Unbalanced = true; return; }
                 else if (!Cur.IsSymbol("}"))
                 {
                     Fail("unpaired quote: text follows a value where a comma or the closing brace belongs, so a " +
