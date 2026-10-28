@@ -776,6 +776,58 @@ static void Test_Stark_ShouldDrainQueue() {
            !Stark::ShouldDrainQueue(64, true));
 }
 
+// [STARK-DRAIN-OFF-GAME-THREAD] An engine WORKER thread calls ProcessEvent too, and the hook drained the queue there:
+// measured on DumperTest58 Development (UE 5.8), a queued ToggleDebugCamera hit BodyInstance.cpp's IsInGameThread
+// check (1 in ~50 toggles). The drain must run on the game thread only -- and the thread must be identified without a
+// guess that, wrong, would never drain at all.
+static void Test_Stark_DrainOnGameThreadOnly() {
+    using Stark::GameThreadIdSource;
+    using Stark::ThreadInfo;
+
+    // The three-argument gate: the two-argument cases are unchanged on the game thread...
+    EXPECT("game-thread entry with work drains",          Stark::ShouldDrainQueue(1, false, true));
+    EXPECT("empty queue never drains on the game thread", !Stark::ShouldDrainQueue(0, false, true));
+    EXPECT("our own re-entry never drains, game thread or not", !Stark::ShouldDrainQueue(1, true, true));
+    // ...and THE BUG: a worker thread's ProcessEvent with work pending must leave it for the game thread.
+    EXPECT("a worker-thread entry does NOT drain",        !Stark::ShouldDrainQueue(1, false, false));
+    EXPECT("a worker-thread entry does NOT drain, whatever the depth", !Stark::ShouldDrainQueue(64, false, false));
+
+    // Which entry is the game thread's. Unknown (0) keeps the old behaviour: every entry counts.
+    EXPECT("the identified thread is the game thread",    Stark::IsGameThreadEntry(42, 42));
+    EXPECT("another thread is not",                        !Stark::IsGameThreadEntry(43, 42));
+    EXPECT("nothing identified: every entry counts, as before", Stark::IsGameThreadEntry(43, 0));
+
+    // The pick. UE names its game thread "GameThread" (FPlatformProcess::SetupGameThread, right after PreInit sets
+    // GGameThreadId); that wins even over an earlier-created thread.
+    const ThreadInfo named[] = { { 10, false, 100 }, { 20, true, 300 }, { 30, false, 200 } };
+    const auto p1 = Stark::PickGameThread(named, 3);
+    EXPECT("the thread named GameThread is picked",       p1.tid == 20);
+    EXPECT("...by its description",                       p1.source == GameThreadIdSource::Description);
+    // No name (older engines, older Windows): the earliest-created thread, the main thread GGameThreadId is.
+    const ThreadInfo unnamed[] = { { 10, false, 300 }, { 20, false, 100 }, { 30, false, 200 } };
+    const auto p2 = Stark::PickGameThread(unnamed, 3);
+    EXPECT("no name: the earliest-created thread is picked", p2.tid == 20);
+    EXPECT("...as the main thread",                       p2.source == GameThreadIdSource::MainThread);
+    // Two named (should not happen): the earlier-created of them.
+    const ThreadInfo twoNamed[] = { { 10, true, 300 }, { 20, false, 50 }, { 30, true, 200 } };
+    EXPECT("two named: the earlier-created named one",    Stark::PickGameThread(twoNamed, 3).tid == 30);
+    const auto p0 = Stark::PickGameThread(nullptr, 0);
+    EXPECT("no threads: nothing picked",                  p0.tid == 0 && p0.source == GameThreadIdSource::Unknown);
+
+    // The validator's verdict. A NAMED game thread is the engine's own and is kept even when it did not fire (a
+    // paused game thread: invokes then wait, as on any paused game). The main-thread GUESS is given up when it did
+    // not fire while other threads did -- a gate on the wrong thread never drains and times out every invoke, which
+    // is worse than the defect it fixes.
+    EXPECT("named, fired: kept",                           Stark::KeepGameThreadGate(GameThreadIdSource::Description, 5, 100));
+    EXPECT("named, silent while others fire: still kept",  Stark::KeepGameThreadGate(GameThreadIdSource::Description, 0, 100));
+    EXPECT("main-thread guess, fired: kept",               Stark::KeepGameThreadGate(GameThreadIdSource::MainThread, 5, 100));
+    EXPECT("main-thread guess, nothing fired at all: kept (an idle game, not a wrong guess)",
+           Stark::KeepGameThreadGate(GameThreadIdSource::MainThread, 0, 0));
+    EXPECT("main-thread guess, silent while others fire: GIVEN UP",
+           !Stark::KeepGameThreadGate(GameThreadIdSource::MainThread, 0, 100));
+    EXPECT("unknown: no gate to keep",                     !Stark::KeepGameThreadGate(GameThreadIdSource::Unknown, 5, 100));
+}
+
 // [VND584-05] The ProcessEvent fingerprint's byte-narrowed (clang) form, with Avowed's own bytes.
 static void Test_Stark_NarrowedFlagTests() {
     std::vector<uint8_t> body(0x400, 0x90);
@@ -11199,6 +11251,7 @@ int main() {
     RUN(Test_Ubel_EstimateClassInfoBytes);
     RUN(Test_Stark_ShouldUseTrampoline);
     RUN(Test_Stark_ShouldDrainQueue);
+    RUN(Test_Stark_DrainOnGameThreadOnly);
     RUN(Test_Stark_ClaimRequest);
     RUN(Test_Stark_NarrowedFlagTests);
     RUN(Test_Stark_PeOffsetSentinels);

@@ -241,6 +241,48 @@ inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs) {
     return queueDepth != 0 && !entryIsOurs;
 }
 
+// ---- [STARK-DRAIN-OFF-GAME-THREAD] Which thread is the game thread ----
+
+/// How the game thread was identified.
+enum class GameThreadIdSource : uint8_t { Unknown, Description, MainThread };
+
+/// One of the process's threads, as the identification sees it.
+struct ThreadInfo {
+    uint32_t tid;
+    bool     namedGameThread;   // its OS thread description is "GameThread"
+    uint64_t creationTime;      // FILETIME as a 64-bit count; earlier is smaller
+};
+
+struct GameThreadPick {
+    uint32_t           tid;
+    GameThreadIdSource source;
+};
+
+/// The game thread among `threads`.
+inline GameThreadPick PickGameThread(const ThreadInfo* threads, size_t n) {
+    (void)threads; (void)n;
+    return { 0, GameThreadIdSource::Unknown };
+}
+
+/// Is a hook entry on thread `tid` a game-thread entry, given the identified `gameThreadId` (0 = not known)?
+inline bool IsGameThreadEntry(uint32_t tid, uint32_t gameThreadId) {
+    (void)tid; (void)gameThreadId;
+    return true;
+}
+
+/// Should HookedProcessEvent drain the queue on this entry, now that it also knows whether the entry is on the game
+/// thread?
+inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs, bool onGameThread) {
+    (void)onGameThread;
+    return ShouldDrainQueue(queueDepth, entryIsOurs);
+}
+
+/// After the install validation window: keep the game-thread gate, or give it up?
+inline bool KeepGameThreadGate(GameThreadIdSource source, uint64_t gameThreadFires, uint64_t allFires) {
+    (void)source; (void)gameThreadFires; (void)allFires;
+    return true;
+}
+
 /// [VND584-01] A queued request its waiter may abandon. A timed-out request normally stays queued and runs later from
 /// its own copy of the parameters; for a helper call made from a value that may not outlive the wait -- the object an
 /// invoke's caller picked, which the engine call dereferences -- a late run could touch a freed object. Such a request
