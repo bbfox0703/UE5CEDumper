@@ -981,67 +981,97 @@ public class LiveWalkerForwardNavTests
         Assert.True(vm.RowMapLoadStillCurrent(vm.LastRowMapLoad!));   // control: the table's own walk loads it again
     }
 
-    // Review of d206a4ad: the header moves to the new object at once, the Functions list only when its walk returns.
-    // In between, PIPE fires a row of the OLD list at the NEW address, and the DLL finds the function by name on that
-    // object's class: a name both classes have runs the new class's function with arguments laid out for the old one.
+    // Review rounds of d206a4ad: the header moves to the new object at once, the Functions list only when its walk
+    // returns. In between, PIPE would fire a row of the OLD list at the NEW address, and the DLL finds the function by
+    // name on that object's class: a name both classes have runs the new class's function with arguments laid out for
+    // the old one. Emptying the list for that time resized the Functions section -- and the field grid with it, under a
+    // scroll restore. So the rows stay, and every row action refuses until the new class's list lands.
+
+    /// <summary>On a list still loading for another class, every row action is refused under its button's label, and
+    /// nothing is copied.</summary>
+    private static async Task AssertRowActionsRefuse(LiveWalkerViewModel vm, MockPlatformService platform)
+    {
+        var row = vm.Functions.First();
+        foreach (var (label, run) in new (string, Func<Task>)[]
+        {
+            ("INV", () => vm.GenerateInvokeScriptCommand.ExecuteAsync(row)),
+            ("PIPE", () => vm.InvokeViaPipeCommand.ExecuteAsync(row)),
+            ("AA(Baked)", () => vm.CopyBakedScriptCommand.ExecuteAsync(row)),
+            ("ASM", () => vm.AsmFunctionCommand.ExecuteAsync(row)),
+        })
+        {
+            await run();
+            Assert.StartsWith($"⚠ {label}:", vm.StatusText);
+            Assert.Contains("still loading", vm.StatusText);
+        }
+        Assert.Null(platform.LastClipboard);
+    }
+
+    /// <summary>The control: INV on a row of the class on screen copies its script.</summary>
+    private static async Task AssertRowActionWorks(LiveWalkerViewModel vm, MockPlatformService platform, string function)
+    {
+        await vm.GenerateInvokeScriptCommand.ExecuteAsync(vm.Functions.Single(f => f.Name == function));
+        Assert.Contains(function, platform.LastClipboard);
+    }
 
     [Fact]
-    public async Task Back_IntoAContainerView_ListsNoFunctionsUntilItsOwnersListArrives()
+    public async Task Back_IntoAContainerView_RefusesTheOldRowsUntilItsOwnersListArrives()
     {
-        var (dump, vm, _) = OwnerWalker();
+        var (dump, vm, platform) = OwnerWalker();
         await OnOwnersContainer(vm, "Gear");
         await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
-        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
         var ownersList = dump.GateFunctions(OwnerCls);
 
         await vm.GoBackCommand.ExecuteAsync(null);
 
         Assert.Equal(Owner, vm.CurrentAddress);
-        Assert.Empty(vm.Functions);
-        Assert.True(vm.HasFunctions);   // the section stays: hiding it would resize the field grid under a scroll restore
+        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));   // kept: neither the section nor the field grid moves
+        await AssertRowActionsRefuse(vm, platform);
         ownersList.SetResult(OwnerStub.FunctionsOf(OwnerCls));
         AssertShowsTheOwner(vm);
+        await AssertRowActionWorks(vm, platform, "OwnerFn");
     }
 
     [Fact]
-    public async Task AWalkToAnotherClass_ListsNoFunctionsUntilItsListArrives()
+    public async Task AWalkToAnotherClass_RefusesTheOldRowsUntilItsListArrives()
     {
-        var (dump, vm, _) = OwnerWalker();
+        var (dump, vm, platform) = OwnerWalker();
         await OnOwnersContainer(vm, "Gear");
         var elementsList = dump.GateFunctions(ElemCls);
 
         await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
 
         Assert.Equal(Elem, vm.CurrentAddress);
-        Assert.Empty(vm.Functions);
-        Assert.True(vm.HasFunctions);   // the section stays: hiding it would resize the field grid under a scroll restore
+        Assert.Equal(new[] { "OwnerFn" }, FunctionNames(vm));
+        await AssertRowActionsRefuse(vm, platform);
         elementsList.SetResult(OwnerStub.FunctionsOf(ElemCls));
         Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+        await AssertRowActionWorks(vm, platform, "ElemFn");
     }
 
-    // The clear is keyed on the CLASS: an address says nothing about which functions an object has.
+    // Keyed on the CLASS: an address says nothing about which functions an object has.
 
     [Fact]
-    public async Task ARefreshThatFindsAnotherClassAtTheSameAddress_ListsNoFunctionsUntilItsListArrives()
+    public async Task ARefreshThatFindsAnotherClassAtTheSameAddress_RefusesTheOldRowsUntilItsListArrives()
     {
-        // A freed slot reused by another class, or an inline struct at offset 0 of its owner.
-        var (dump, vm, _) = OwnerWalker();
+        // A freed slot reused by another class.
+        var (dump, vm, platform) = OwnerWalker();
         await vm.NavigateToAddressCommand.ExecuteAsync(Other);
-        Assert.Equal(new[] { "OtherFn" }, FunctionNames(vm));
         dump.RegisterStruct(Other, OwnerStub.Obj(Other, "Elem_9", "BP_Elem_C", ElemCls));
         var elementsList = dump.GateFunctions(ElemCls);
 
         await vm.RefreshCommand.ExecuteAsync(null);
 
-        Assert.Empty(vm.Functions);
+        Assert.Equal(new[] { "OtherFn" }, FunctionNames(vm));
+        await AssertRowActionsRefuse(vm, platform);
         elementsList.SetResult(OwnerStub.FunctionsOf(ElemCls));
         Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
     }
 
     [Fact]
-    public async Task AWalkToAnotherObjectOfTheSameClass_KeepsTheListWhileItReloads()
+    public async Task AWalkToAnotherObjectOfTheSameClass_KeepsTheRowsUsableWhileItsListReloads()
     {
-        var (dump, vm, _) = OwnerWalker();
+        var (dump, vm, platform) = OwnerWalker();
         dump.RegisterStruct("0x21000", OwnerStub.Obj("0x21000", "Elem_1", "BP_Elem_C", ElemCls));
         await vm.NavigateToAddressCommand.ExecuteAsync(Elem);
         dump.GateFunctions(ElemCls);
@@ -1049,20 +1079,20 @@ public class LiveWalkerForwardNavTests
         await vm.NavigateToAddressCommand.ExecuteAsync("0x21000");
 
         Assert.Equal("0x21000", vm.CurrentAddress);
-        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+        await AssertRowActionWorks(vm, platform, "ElemFn");
     }
 
     [Fact]
-    public async Task ARefreshOfTheSameObject_KeepsItsListWhileItReloads()
+    public async Task ARefreshOfTheSameObject_KeepsTheRowsUsableWhileItsListReloads()
     {
-        // The control: the same class keeps its rows, so the Functions grid keeps its place on every Auto tick.
-        var (dump, vm, _) = OwnerWalker();
+        // The same class's rows are the right ones, and keeping them keeps the Functions grid's place on every Auto tick.
+        var (dump, vm, platform) = OwnerWalker();
         await vm.NavigateToAddressCommand.ExecuteAsync(Owner);
         dump.GateFunctions(OwnerCls);
 
         await vm.RefreshCommand.ExecuteAsync(null);
 
-        Assert.Equal(new[] { "OwnerFn" }, FunctionNames(vm));
+        await AssertRowActionWorks(vm, platform, "OwnerFn");
     }
 
     [Fact]
