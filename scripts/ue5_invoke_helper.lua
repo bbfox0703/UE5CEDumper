@@ -424,9 +424,10 @@ local function writeParams(base, regionSize, params)
       end
     elseif t == 'ftext' then
       -- NOT grouped with the containers above. An all-zero FText is not an empty
-      -- FText: its text-data pointer is null and every accessor dereferences it, so a
-      -- callee that reads it can crash. Passing it survives (copy and destroy skip a
-      -- null), but nothing here can tell whether the callee reads it, so refuse.
+      -- FText: its text-data pointer is null and every accessor dereferences it, so
+      -- whatever reads it can crash -- the callee, or later code reading what the callee
+      -- stored. Passing it survives (copy and destroy skip a null), but nothing here can
+      -- tell whether anything will read it, so refuse.
       error(string.format(
         "[ue5_invoke] param '%s' is an ftext -- an FText cannot be built from CE Lua " ..
         "(it holds a shared reference the engine allocates), and a zeroed one is not an " ..

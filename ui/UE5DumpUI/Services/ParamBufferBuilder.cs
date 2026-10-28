@@ -367,8 +367,8 @@ public static class ParamBufferBuilder
     /// Y11). An <see cref="IsRefusedParam"/> type (<c>FText</c>) is refused whatever the
     /// box holds, because zeros are not an empty FText: its text data is a null pointer that
     /// every FText accessor dereferences. Passing one survives (copying and destroying both
-    /// skip a null), so the crash is a callee's that READS it, and the dialog cannot know
-    /// whether the function it calls does. An
+    /// skip a null), so the crash comes from whatever READS it -- the callee, or later code
+    /// reading what a callee stored -- and the dialog cannot know whether either happens. An
     /// <see cref="IsEmptyOnlyParam"/> type is refused only when the user actually typed
     /// something: the slot is always left zeroed, so a typed value would be silently
     /// dropped — the same class of lie as silently truncating it — while an untouched box

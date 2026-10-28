@@ -627,7 +627,8 @@ public static class InvokeScriptGenerator
     /// <para>The classification is <see cref="ParamBufferBuilder.IsRefusedParam"/> /
     /// <see cref="ParamBufferBuilder.IsEmptyOnlyParam"/> -- the predicates FIRE calls -- never
     /// a copied type list. An FText is refused whatever the box holds (a zeroed FText is not
-    /// an empty one, and a callee that reads it can crash); an empty-only type only when the
+    /// an empty one, and whatever reads it can crash -- the callee, or later code reading what
+    /// the callee stored); an empty-only type only when the
     /// user typed something, because
     /// the slot is always sent zeroed and a typed value would be dropped.</para>
     ///
