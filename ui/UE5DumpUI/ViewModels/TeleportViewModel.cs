@@ -280,9 +280,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                               why.TrimEnd('.'));
 
     internal const string KeyCoordEditNoQuote = "str.TP.LibEditNoQuote";
-    /// <summary>[B21-CSV-QUOTE-HOLES] The Label/Group editor's refusal of a typed double quote.</summary>
+    /// <summary>[B21-CSV-QUOTE-HOLES] The Label/Group editor's refusal: a field the edit changes may not hold a
+    /// double quote, even one it already held -- so the text states that rule, not that a quote was typed.</summary>
     internal static string CoordEditNoQuoteText => AobMakerStatus.Say(KeyCoordEditNoQuote,
-        "A double quote (\") cannot be typed into a label or group. Nothing was changed.");
+        "A label or group you change cannot contain a double quote (\"). Nothing was changed.");
 
     internal const string KeyCoordNoDllTimedOut = "str.TP.LibNoDllTimedOut";
     /// <summary>[COORDPICK-TIMEDOUT-TEXT] No reply is not "nothing was added": the plugin may have made the record

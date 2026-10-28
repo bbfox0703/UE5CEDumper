@@ -1812,7 +1812,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.TP.LibEditLabel">Label:</sys:String>
     <sys:String x:Key="str.TP.LibEditGroup">Group:</sys:String>
     <sys:String x:Key="str.TP.LibApplyEdit">Apply</sys:String>
-    <sys:String x:Key="str.TP.LibEditNoQuote">A double quote (") cannot be typed into a label or group. Nothing was changed.</sys:String>
+    <sys:String x:Key="str.TP.LibEditNoQuote">A label or group you change cannot contain a double quote ("). Nothing was changed.</sys:String>
     <sys:String x:Key="str.TP.LibUpdateCoords">Update coords from current</sys:String>
     <sys:String x:Key="str.Tip.TP.LibSaveCurrent">Read the live pose and add it to the library, labelled after the current map.</sys:String>
     <sys:String x:Key="str.Tip.TP.LibAddFields">Add whatever is currently typed in the "Teleport to Coordinates" boxes above as a new library entry.</sys:String>
