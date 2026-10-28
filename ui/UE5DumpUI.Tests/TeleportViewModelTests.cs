@@ -3437,6 +3437,30 @@ public class TeleportViewModelTests
         Assert.Equal("Castle (edit in progress)", vm.EditCoordLabel);
     }
 
+    /// <summary>[B21-CSV-QUOTE-HOLES] The maintainer's call (2026-10-28): a double quote typed into the label or
+    /// the group is refused, not stored -- it is the one character a hand-edited CSV mis-splits on. Nothing
+    /// changes, and the status says why.</summary>
+    [Fact]
+    public async Task A_double_quote_typed_into_a_label_or_group_is_refused()
+    {
+        var vm = await CoordLibraryVmAsync();
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Cave");
+
+        vm.EditCoordLabel = "Cave \"north\"";
+        vm.ApplyCoordEditCommand.Execute(null);
+        Assert.Contains(vm.CoordResults, r => r.Label == "Cave");
+        Assert.DoesNotContain(vm.CoordResults, r => r.Label.Contains('"'));
+        Assert.Contains("double quote", vm.CoordStatus, StringComparison.Ordinal);
+        Assert.Contains("Nothing was changed", vm.CoordStatus, StringComparison.Ordinal);
+
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Cave");
+        vm.EditCoordLabel = "Cave";
+        vm.EditCoordGroup = "a\"b";
+        vm.ApplyCoordEditCommand.Execute(null);
+        Assert.DoesNotContain(vm.CoordResults, r => r.Entry.Group.Contains('"'));
+        Assert.Contains("double quote", vm.CoordStatus, StringComparison.Ordinal);
+    }
+
     /// <summary>...while an edit that renames a row in place still repaints it: the same
     /// entries, but the row shows new text.</summary>
     [Fact]
