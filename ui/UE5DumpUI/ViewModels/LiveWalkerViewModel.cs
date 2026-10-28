@@ -5569,10 +5569,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // enum's value name, a pointer's runtime class. So the class is walked -- a struct view's
             // crumb carries its struct, an object view's class is _currentClassAddr -- and its
             // declared rows are exported, super and own-property boundary included (audit #5 W2).
-            // The walk must be the class on screen: a container or DataTable view keeps its OWNER's
-            // class in _currentClassAddr under a class name of its own, and the GWorld view has none,
-            // so the name check below fails for both. Anything else falls back to the live rows, which
-            // no longer lend a value to a type.
+            // The walk must be the class on screen, and on a view rendered without a walk
+            // _currentClassAddr is not: a container or DataTable view keeps its OWNER's class there
+            // under a class name of its own. The name check below catches that. Anything else falls
+            // back to the live rows, which no longer lend a value to a type.
             var classAddr = Breadcrumbs.Count > 0 && !string.IsNullOrEmpty(Breadcrumbs[^1].ClassAddr)
                 ? Breadcrumbs[^1].ClassAddr
                 : _currentClassAddr;
@@ -7308,8 +7308,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         // [P4-OTHER-INSTANCE] WHICH object is on screen now, captured before the header below is
         // overwritten: the in-place branch further down may reuse the rows only for this same
-        // object. CurrentClassName is set by every populate site; _currentClassAddr by a walk, or
-        // to the owner's on a container view.
+        // object. Both class halves are kept: _currentClassAddr is the class whose functions are
+        // listed, which on a view rendered without a walk is not the class named on screen.
         var prevAddr      = ParseHexAddr(CurrentAddress);
         var prevClassName = CurrentClassName;
         var prevClassAddr = _currentClassAddr;
@@ -7862,9 +7862,10 @@ public sealed class BreadcrumbItem : ObservableObject
 
     /// <summary>[LW-BACK-CONTAINER-HEADER-ADDR] A container view's OWNER class: the class whose functions the view
     /// lists, while <see cref="Address"/> is the object they fire at. Taken at the drill, which comes from the owner's
-    /// walk. Settable, because a later walk of the owner can supply it to a crumb that never had one -- one rebuilt
-    /// from a bookmark file. Empty means unknown, and an unknown owner lists no functions. Never persisted: a class
-    /// address dies with the game process.</summary>
+    /// walk. Settable, because a crumb that never had one -- rebuilt from a bookmark file or a Locate path -- learns it
+    /// from the next walk of its owner. Empty means unknown, and an unknown owner lists no functions: a DataTable row
+    /// view restored from a bookmark file stays so, since only its rows are ever walked again. Never persisted: a
+    /// class address dies with the game process.</summary>
     public string OwnerClassAddr { get; set; } = "";
 
     /// <summary>True if this breadcrumb represents a DataTable row container view.</summary>
