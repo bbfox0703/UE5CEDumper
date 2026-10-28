@@ -826,6 +826,17 @@ static void Test_Stark_DrainOnGameThreadOnly() {
     EXPECT("main-thread guess, silent while others fire: GIVEN UP",
            !Stark::KeepGameThreadGate(GameThreadIdSource::MainThread, 0, 100));
     EXPECT("unknown: no gate to keep",                     !Stark::KeepGameThreadGate(GameThreadIdSource::Unknown, 5, 100));
+
+    // What counts as "other threads fired". The validator's window opens inside the invoke that installed the hook,
+    // and a direct call (UE5_CallProcessEventDirect, the mailbox's off-thread-safe path) re-enters the detour on OUR
+    // thread under InOwnPeCall. At an idle menu the game thread makes no ProcessEvent call at all, so counting those
+    // re-entries gave a correct main-thread guess up on nothing but our own call.
+    EXPECT("an engine worker's entry counts against the guess",
+           Stark::CountsAgainstGameThreadGuess(false, false));
+    EXPECT("our own nested call off the game thread does NOT",
+           !Stark::CountsAgainstGameThreadGuess(false, true));
+    EXPECT("a game-thread entry does not",                  !Stark::CountsAgainstGameThreadGuess(true, false));
+    EXPECT("a game-thread entry under our own call does not", !Stark::CountsAgainstGameThreadGuess(true, true));
 }
 
 // [VND584-05] The ProcessEvent fingerprint's byte-narrowed (clang) form, with Avowed's own bytes.

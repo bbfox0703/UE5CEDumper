@@ -297,6 +297,12 @@ inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs, bool onGameThr
     return onGameThread && ShouldDrainQueue(queueDepth, entryIsOurs);
 }
 
+/// Does a hook entry count as another thread firing, the install validator's evidence against a main-thread guess?
+inline bool CountsAgainstGameThreadGuess(bool onGameThread, bool entryIsOurs) {
+    (void)entryIsOurs;
+    return !onGameThread;
+}
+
 /// After the install validation window: keep the game-thread gate, or give it up? A NAMED game thread is the engine's
 /// own GGameThreadId and is kept even when silent -- a paused game thread, where invokes wait as on any paused game.
 /// The main-thread GUESS is given up when it stayed silent while other threads fired: a gate on the wrong thread
