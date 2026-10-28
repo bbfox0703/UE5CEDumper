@@ -15,7 +15,7 @@ Open work only. **Read this when deciding what to do next.**
 > (`[LEADFIX-REVIEW-2026-10-28]`); shipped in build 3660 (AOT) and checked live on 2026-10-28 (`[LIVE-3660-2026-10-28]`:
 > Debug Camera on UE 5.8 and a game-filled TArray<TAssetPtr> included; a TMap / TSet of TAssetPtr has no fixture on this
 > PC and a loaded element's label none on Extinction), which raised two pre-existing leads: `[DBGCAM-58-REENABLE]` (open)
-> and `[LW-BACK-CONTAINER-HEADER-ADDR]` (fixed after four review rounds, not yet checked live; its review left the LOW
+> and `[LW-BACK-CONTAINER-HEADER-ADDR]` (fixed in build 3661 after four review rounds, checked live; its review left the LOW
 > `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`). · Before it, the
 > known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
 > 3649): every row it took is built and checked live, `[MH-PRERESERVE-PROXY]` included; the maintainer's calls are in
@@ -2405,7 +2405,7 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   `Back` -> the map view, no notice, Address filled; `[0]`'s `Addr` copied `24D06D8DE68` (no refusal); CE:
   `readQword(0x24D06D8DE68)` = 24C0363E400. Both views showed the `[LW-BACK-CONTAINER-HEADER-ADDR]` header too (the
   RowMap view's header on 0x24B8DC45600 after the crumb jump, the map view's on 0x24C0363E400 after Back).
-- ✅ **FIXED, not yet checked live** `[LW-BACK-CONTAINER-HEADER-ADDR]` (MED -- PIPE could fire a function at the
+- ✅ **FIXED, checked live on build 3661** `[LW-BACK-CONTAINER-HEADER-ADDR]` (MED -- PIPE could fire a function at the
   wrong object; pre-existing, not from 3660). Was: **Back or a crumb jump INTO a container view leaves the header on
   the address of the object just left.** A container drill pushes its crumb without changing `CurrentAddress` (the owner's), `→` on an element sets it
   to the element, and the container branches of Back / the crumb jump re-render the rows through
@@ -2437,9 +2437,13 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   re-resolve learning, the late-failure guard, the disconnect reset, the class-keyed clear and the load's hand-off
   (`4a80d419`, `108dbdfc`, `e6638c7d`, each verified red under its own mutation in a scratch copy); comments
   (`8fe24d92`, `682cf9c2`). Tests: 6,963, 1 skipped, 0 failed. Refuted and left: ASM refused with the rest (deliberate),
-  the test comment's inline-struct case. **Live check owed** on the next AOT build: a container drill → `→` an element →
-  Back, and the same via the crumb: the header reads and copies the owner's address, and the Functions panel lists the
-  owner's class.
+  the test comment's inline-struct case. **Live, build 3661 (AOT 61,352,448 bytes; DLL 1.0.0.3661)**, DumperTest 5.4
+  Shipping (24,530 objects): DumperTestActor_0 (0x14389128D40, 40 functions listed) → `Arr_Struct [2 x
+  DumperTestStat]` → header 0x14389128D40, the 40 functions; `{}` on `[0]` → header 0x1438FCCB800, Functions hidden
+  (a struct lists none); **Back** → header 0x14389128D40 and the same 40 functions, and the header's Addr chip copied
+  `14389128D40` (a clipboard sentinel replaced); `{}` on `[1]` (0x1438FCCB820) then the `Arr_Struct` crumb → header
+  0x14389128D40, the 40 functions; Start from GWorld → UWorld ThirdPersonMap with no Functions section (3660 kept the
+  actor's 40). The stale-rows window lasts one pipe round trip and was not caught live; the unit tests cover it.
 - ⬜ **NEW LEAD `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`** (LOW, pre-existing; found reviewing the fix above): on a
   container view the actions that need a CLASS NAME take the view's own label. INV, AA(Baked) and the PIPE dialog's Copy
   AA Script bake `Array<ObjectProperty>` (or `Map<…>` / `Set<…>` / `DataTable<…>`) as the class to find an instance of,
