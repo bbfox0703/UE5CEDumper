@@ -1965,14 +1965,21 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
 }
 
 uintptr_t FindLiveOrDefaultOf(const std::string& className) {
+    return FindLiveOrDefaultOf(className, std::string());
+}
+
+uintptr_t FindLiveOrDefaultOf(const std::string& className, const std::string& skipOuterOf) {
     // [SEETHRU-PROBE-SUBSTRING] One walk, derivation-gated -- the contract is in Aura.h. The CDO fallback is picked up
     // DURING the walk rather than by a second scan: a function library has no live instance, so the walk always runs
     // to the end for one, and a second pass would double what the substring scan it replaces cost.
     if (className.empty()) return 0;
     std::string lowerQuery = className;
     for (auto& c : lowerQuery) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::string lowerSkip = skipOuterOf;
+    for (auto& c : lowerSkip) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
     std::unordered_map<uintptr_t, bool> derivedCache;   // per UClass, as in FindInstancesDerivedFrom
+    std::unordered_map<uintptr_t, bool> skipCache;      // per outer UClass
     uintptr_t cdo = 0;
     const int32_t count = GetCount();
     for (int32_t i = 0; i < count; ++i) {
@@ -2010,6 +2017,21 @@ uintptr_t FindLiveOrDefaultOf(const std::string& className) {
             }
             continue;
         }
+        if (!lowerSkip.empty()) {
+            uintptr_t outer = 0, outerCls = 0;
+            if (Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, outer) && outer &&
+                Macht::ReadSafe(outer + Grimoire::OFF_UOBJECT_CLASS, outerCls) && outerCls) {
+                auto sk = skipCache.find(outerCls);
+                const bool skip = sk != skipCache.end()
+                    ? sk->second : skipCache.emplace(outerCls, ClassChainMatchesLower(outerCls, lowerSkip)).first->second;
+                if (skip) {
+                    Sein::Info("PIPE:find", "FindLiveOrDefaultOf '%s': skipped 0x%llX (%s) -- its outer is a %s",
+                               className.c_str(), static_cast<unsigned long long>(obj), objName.c_str(),
+                               skipOuterOf.c_str());
+                    continue;
+                }
+            }
+        }
         Sein::Info("PIPE:find", "FindLiveOrDefaultOf '%s' -> 0x%llX (%s, class %s)", className.c_str(),
                    static_cast<unsigned long long>(obj), objName.c_str(), Ubel::GetName(cls).c_str());
         return obj;
@@ -2020,11 +2042,6 @@ uintptr_t FindLiveOrDefaultOf(const std::string& className) {
     else
         Sein::Warn("PIPE:find", "FindLiveOrDefaultOf '%s' -> not found (scanned=%d)", className.c_str(), count);
     return cdo;
-}
-
-uintptr_t FindLiveOrDefaultOf(const std::string& className, const std::string& skipOuterOf) {
-    (void)skipOuterOf;
-    return FindLiveOrDefaultOf(className);
 }
 
 uintptr_t FindClassByPath(const std::string& classPath) {

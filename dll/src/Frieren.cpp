@@ -1304,7 +1304,11 @@ static int DbgCam_ReadState(uintptr_t& outCm, uintptr_t& outDcc) {
     // is live, was taken over the real one. Same for UDebugCameraControllerSettings (4.23+) in the DCC fallback
     // below: when its CDO sat first, it has no OriginalControllerRef, so the state read -1 and a Force ON refused
     // (read from the code; L83's 5.4 fixture met the DCC's own CDO first). [SEETHRU-PROBE-SUBSTRING]
-    uintptr_t cm = Aura::FindLiveOrDefaultOf("CheatManager");
+    // [DBGCAM-58-REENABLE] Never the Debug Camera's own: its DCC carries a CheatManager too (AddCheats forces one in
+    // non-Shipping builds), and on UE 5.8 a toggle there never enables the camera -- measured, the second Force ON a
+    // no-op once slot reuse put that CheatManager below the player's. The player's toggles in both directions on 5.8,
+    // and on older engines its OFF is the no-op the swap-back below already finishes.
+    uintptr_t cm = Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController");
     outCm = cm;   // may be 0 (some titles spawn it lazily)
 
     // Hop 1: CheatManager.DebugCameraControllerRef.
