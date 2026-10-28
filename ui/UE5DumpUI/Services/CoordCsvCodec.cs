@@ -96,6 +96,10 @@ public sealed class CoordCsvParseResult
 ///  * <b>Header is authoritative and matched by NAME</b>, so reordered/extra columns
 ///    and a future v2 column are all handled — the same forward-compatibility that
 ///    made the named-field Lua format win over a positional one.
+///  * <b>Quotes are read strictly, and an unpaired one stops the import.</b> No repair:
+///    the maintainer's call (2026-10-28, B21). A lenient reader has to guess where the
+///    stray quote's field ends, and the two lenient splitters this replaced guessed
+///    differently — one stray quote merged every later record into one.
 /// </summary>
 public static class CoordCsvCodec
 {
@@ -195,7 +199,9 @@ public static class CoordCsvCodec
     /// <summary>
     /// Parse CSV text into entries plus per-line diagnostics. Never throws and never
     /// silently drops a row: everything rejected lands in
-    /// <see cref="CoordCsvParseResult.Issues"/> with a 1-based file line number.
+    /// <see cref="CoordCsvParseResult.Issues"/> with a 1-based file line number. An
+    /// unpaired quote is the one fault that is not per-row: every record after it is in
+    /// doubt, so it is the only issue returned and nothing is imported.
     /// </summary>
     public static CoordCsvParseResult Parse(string? text)
     {
@@ -208,19 +214,28 @@ public static class CoordCsvCodec
 
         // Strip a BOM defensively (a caller may hand us bytes decoded without one).
         var body = text!.TrimStart('﻿');
-        var lines = SplitLines(body);
+        // The delimiter must be known before any record is read: a quote opens a field
+        // only at field start, and field start means "after a delimiter". The header's
+        // first physical line is enough to sniff it.
+        int eol = body.IndexOfAny(new[] { '\r', '\n' });
+        char delimiter = SniffDelimiter(eol < 0 ? body : body[..eol]);
+        result.Delimiter = delimiter;
+
+        var lines = ReadRecords(body, delimiter, out var quoteError);
+        if (quoteError != null)
+        {
+            result.Issues.Add(quoteError);
+            return result;
+        }
         if (lines.Count == 0)
         {
             result.Issues.Add(new CoordCsvIssue(0, "", "", "the file is empty"));
             return result;
         }
 
-        // Header: sniff the delimiter, then map column name -> index.
+        // Header: map column name -> index.
         var headerLine = lines[0].Text;
-        char delimiter = SniffDelimiter(headerLine);
-        result.Delimiter = delimiter;
-
-        var headerCells = SplitCsvLine(headerLine, delimiter);
+        var headerCells = lines[0].Cells;
         var index = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         for (int i = 0; i < headerCells.Count; i++)
         {
@@ -245,10 +260,9 @@ public static class CoordCsvCodec
 
         for (int li = 1; li < lines.Count; li++)
         {
-            var (lineNo, raw) = (lines[li].Number, lines[li].Text);
+            var (lineNo, raw, cells) = (lines[li].Number, lines[li].Text, lines[li].Cells);
             if (raw.Trim().Length == 0) continue;
 
-            var cells = SplitCsvLine(raw, delimiter);
             var entry = new CoordEntry();
             bool bad = false;
 
@@ -331,51 +345,111 @@ public static class CoordCsvCodec
         return best;
     }
 
-    private readonly record struct SourceLine(int Number, string Text);
+    /// <param name="Number">The physical 1-based line the record STARTS on — what the
+    /// user sees in their editor.</param>
+    private sealed record SourceRecord(int Number, string Text, List<string> Cells);
 
     /// <summary>
-    /// Split into logical lines, honouring quoted fields (RFC 4180 permits a CRLF
-    /// inside quotes — Excel's Alt+Enter writes exactly that) and accepting CRLF, LF
-    /// or CR. The reported line number is the physical 1-based line the record STARTS
-    /// on, which is what the user sees in their editor.
+    /// Read every record, quoting strictly to RFC 4180: a quote may open a field (at
+    /// field start only), close it, or appear doubled inside it. Anything else is an
+    /// unpaired quote, returned in <paramref name="error"/> to stop the import; no
+    /// repair is attempted. Line breaks may be CRLF, LF or CR, and a quoted field may
+    /// hold one (Excel's Alt+Enter writes exactly that). Fields are positional with no
+    /// empty-entry removal: an empty Group must keep its column, or every later column
+    /// shifts left.
     /// </summary>
-    private static List<SourceLine> SplitLines(string text)
+    private static List<SourceRecord> ReadRecords(string text, char delimiter, out CoordCsvIssue? error)
     {
-        var lines = new List<SourceLine>();
-        var sb = new StringBuilder();
-        bool inQuotes = false;
-        int physical = 1, startLine = 1;
+        var records = new List<SourceRecord>();
+        var cells = new List<string>();
+        var field = new StringBuilder();
+        bool inQuotes = false, closedQuote = false;
+        int physical = 1, lineStart = 0, recordLine = 1, recordStart = 0, quoteLine = 1, quoteLineStart = 0;
+        error = null;
+
+        CoordCsvIssue Unpaired(int line, int startOfLine, string what)
+        {
+            int end = text.IndexOfAny(new[] { '\r', '\n' }, startOfLine);
+            return new CoordCsvIssue(line, "", end < 0 ? text[startOfLine..] : text[startOfLine..end],
+                $"unpaired quote: {what} -- nothing was imported; fix the quote and import again");
+        }
 
         for (int i = 0; i < text.Length; i++)
         {
             char c = text[i];
+            if (inQuotes)
+            {
+                if (c == '"')
+                {
+                    if (i + 1 < text.Length && text[i + 1] == '"') { field.Append('"'); i++; }
+                    else { inQuotes = false; closedQuote = true; }
+                    continue;
+                }
+                field.Append(c);
+                if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n') { field.Append('\n'); i++; }
+                if (c == '\r' || c == '\n') { physical++; lineStart = i + 1; }
+                continue;
+            }
             if (c == '"')
             {
-                // A doubled quote inside quotes is an escaped quote, not a terminator.
-                if (inQuotes && i + 1 < text.Length && text[i + 1] == '"') { sb.Append("\"\""); i++; continue; }
-                inQuotes = !inQuotes;
-                sb.Append(c);
-                continue;
+                if (field.Length == 0 && !closedQuote)
+                {
+                    inQuotes = true;
+                    (quoteLine, quoteLineStart) = (physical, lineStart);
+                    continue;
+                }
+                error = Unpaired(physical, lineStart, closedQuote
+                    ? "a quote inside a quoted field must be doubled (\"\"), and this one ends the field early"
+                    : "a quote in the middle of a field, which a quote may only open (or appear doubled inside a quoted one)");
+                return records;
             }
-            if (!inQuotes && (c == '\n' || c == '\r'))
+            if (closedQuote && c != delimiter && c != '\r' && c != '\n')
             {
-                if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
-                lines.Add(new SourceLine(startLine, sb.ToString()));
-                sb.Clear();
-                physical++;
-                startLine = physical;
+                error = Unpaired(physical, lineStart,
+                    "text follows a field's closing quote, so a quote inside it was not doubled (\"\")");
+                return records;
+            }
+            if (c == delimiter)
+            {
+                cells.Add(field.ToString());
+                field.Clear();
+                closedQuote = false;
                 continue;
             }
-            if (c == '\n' || c == '\r') physical++;   // newline inside a quoted field
-            sb.Append(c);
+            if (c == '\r' || c == '\n')
+            {
+                int end = i;
+                if (c == '\r' && i + 1 < text.Length && text[i + 1] == '\n') i++;
+                cells.Add(field.ToString());
+                records.Add(new SourceRecord(recordLine, text[recordStart..end], cells));
+                cells = new List<string>();
+                field.Clear();
+                closedQuote = false;
+                physical++;
+                recordLine = physical;
+                recordStart = lineStart = i + 1;
+                continue;
+            }
+            field.Append(c);
         }
-        if (sb.Length > 0) lines.Add(new SourceLine(startLine, sb.ToString()));
-        return lines;
+        if (inQuotes)
+        {
+            error = Unpaired(quoteLine, quoteLineStart, "a quoted field opened on this line never closes");
+            return records;
+        }
+        if (recordStart < text.Length)   // the last record, with no line break after it
+        {
+            cells.Add(field.ToString());
+            records.Add(new SourceRecord(recordLine, text[recordStart..], cells));
+        }
+        return records;
     }
 
     /// <summary>
-    /// RFC 4180 field split. Deliberately positional with NO RemoveEmptyEntries: an
-    /// empty Group must keep its column, or every later column shifts left.
+    /// A lenient RFC 4180 field split, kept only to count the header's cells for
+    /// <see cref="SniffDelimiter"/> — records are read by <see cref="ReadRecords"/>,
+    /// which is strict, so a quote this tolerates still stops the import there.
+    /// Positional with NO RemoveEmptyEntries, like the reader.
     /// </summary>
     internal static List<string> SplitCsvLine(string line, char delimiter)
     {
