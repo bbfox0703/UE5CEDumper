@@ -2319,6 +2319,23 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   natural one with a restore pending cannot be produced on DumperTest (no pawn needs the game thread to run, which
   lands the restore first; a MovementMode write failure cannot be forced). Before 86cd11c6 the second `waiting` line
   and the restore would not follow.
+- ✅ **Debug Camera on UE 5.8, the unstalled control** (the first Debug Camera run on any 5.8 build): DumperTest58
+  **Development** (pid 19632, 35,859 objects, UE508, DLL 3660), UI connected, CE attached. Console → Load → Force On
+  -> "✓ Debug Camera forced ON." (`UE5_SetDebugCamera(1) -> state=1`), Force Off -> "✓ Debug Camera forced OFF."
+  (`UE5_SetDebugCamera(0) -> state=0`) with NO `DbgCam_SwapControllerBack` line between them -- on 5.4 every completed
+  OFF needed that swap-back; on 5.8 the toggle disables by itself. Reads go `DbgCam_ReadState: DCC … via instance scan
+  (CheatManager ref empty)`, as the 5.8 source predicts (the ref is deprecated and unwritten).
+- ⬜ **NEW LEAD `[DBGCAM-58-REENABLE]`** (pre-existing, not from 3660; severity to be set from source): on that same
+  5.8 session, after the one ON→OFF cycle, **no ToggleDebugCamera turns the camera on again**. The CE record's tick
+  (14:10:52: ReadState DCC 0x7FF0256AF640 → toggle dispatched, `invoke completed result=0` → ReadState → `state=0`,
+  "[DebugCamera] ON failed (state=0) -- …", the record unticked with no OFF -- this round's fix behaving), then the
+  Console's Force On twice (14:11:45, 14:12:04: "⚠ Force ON: state is now OFF — …", `state=0` each). Instances finds
+  ONE live DebugCameraController (0x7FF0256AF640, the one the first ON spawned) plus its CDO, so the state read is not
+  picking a stale instance among several, and the game view stays on the pawn camera. Probably the 5.8
+  FDebugCameraManager keeps the deactivated DCC and its toggle no longer reaches EnableDebugCamera from the original
+  PC's CheatManager -- unread, to be checked against the 5.8.4 source (DebugCameraManager.cpp / CheatManager.cpp) before
+  any fix. The UI states the outcome honestly ("state is now OFF"), so this is a feature gap on 5.8, not a false
+  report.
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
