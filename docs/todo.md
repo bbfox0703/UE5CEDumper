@@ -2388,10 +2388,21 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   E0 = 0x24BF82CBCC0, [Ptr] 0x24BE71BC480. `→` -> `BlueprintGeneratedClass TalkingHeadsEventMap_Campaign_01_C`
   (0x24BE71BC480), the definition notice, HUD row `Addr` -> the "⚠ Addr: nothing done — …" refusal (sentinel kept).
   `Back` -> the array view with an empty status line and its Address cell filled; `[0]`'s `Addr` copied `24BF82CBCC0`
-  (= E0, no refusal). CE: `readQword(E0)` = 24BE71BC480 = the definition's header address. **Not reproducible at the
-  menu**: the DataTable-row site (the menu's 8 DataTables have RowStructs LevelSelect / PlayerAttackHit /
-  ParamOverride / MomentumReward / PlayerAttack / PlayerSkillsPreset / Reaction, none OgreAttackData) and the map
-  site (BC_BlinkPlayer_C exists only in a level).
+  (= E0, no refusal). CE: `readQword(E0)` = 24BE71BC480 = the definition's header address. (The menu has neither of
+  the other two sites: its 8 DataTables' RowStructs are LevelSelect / PlayerAttackHit / ParamOverride /
+  MomentumReward / PlayerAttack / PlayerSkillsPreset / Reaction, and BC_BlinkPlayer_C lives only in a level.)
+- ✅ `DEFVIEW-FLAG-STALE`, **the DataTable-row site and the map site**, in the Skirmish level (23 DataTables there).
+  **DataTable row**: DT_OgreAttacks_RedOgre (RowStruct OgreAttackData, `RowMap [34 x OgreAttackData]`) → `{}` on `[0]
+  JumpStomp` (0x24BF7F10D00) → `→` on `AttackClass` -> `Class BlinkAbility_OgreJumpAttack` (0x24B8DC45600) with the
+  definition notice (this native class declares no fields of its own, so it has no row to press `Addr` on); then the
+  `RowMap [34 x OgreAttackData]` crumb -- the two-level jump that renders the cached DataTableData without a walk -> no
+  notice, Address cells filled; `[1] Stomp`'s `Addr` copied `24BF7F10E20` (its row address, no refusal, empty
+  status). CE: `readQword(0x24BF7F10D00+0x10)` = 24B8DC45600 = the definition. **Map**: the live BC_BlinkPlayer_C
+  (0x24BE7225580) `DismemberCameraClasses {Map: 1, EnumProperty → ClassProperty}` → `[0]` → DismemberCam_Head_C,
+  Address 0x24D06D8DE68; `→` -> `BlueprintGeneratedClass DismemberCam_Head_C` (0x24C0363E400) with the notice;
+  `Back` -> the map view, no notice, Address filled; `[0]`'s `Addr` copied `24D06D8DE68` (no refusal); CE:
+  `readQword(0x24D06D8DE68)` = 24C0363E400. Both views showed the `[LW-BACK-CONTAINER-HEADER-ADDR]` header too (the
+  RowMap view's header on 0x24B8DC45600 after the crumb jump, the map view's on 0x24C0363E400 after Back).
 - ⬜ **NEW LEAD `[LW-BACK-CONTAINER-HEADER-ADDR]`** (pre-existing, not from 3660; severity to be set on re-derivation,
   MED candidate): **Back or a crumb jump INTO a container view leaves the header on the address of the object just
   left.** A container drill pushes its crumb without changing `CurrentAddress` (the owner's), `→` on an element sets it
