@@ -7673,13 +7673,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     internal RowMapLoadStart? LastRowMapLoad { get; private set; }
 
     /// <summary>Whether a RowMap row load may still land: the DataTable it was started on is still the view on
-    /// screen.</summary>
+    /// screen -- on the trail AND in the grid.</summary>
     /// <remarks>[LW-BACK-CONTAINER-HEADER-ADDR] The crumb, by reference: the table's own RowMap row view carries the
     /// table's address too, and a spine restored by the Back out of a re-root can put it at the very depth the load
-    /// started at. The address and the depth alone then let the load append a RowMap row to the rows grid.</remarks>
+    /// started at. And the grid's stamp as well as the trail's top: Back pops the row view's crumb before the table's
+    /// walk returns, so for that long the trail names the table while the grid still holds the row view's rows. Either
+    /// way the load would append a RowMap row to the rows grid.</remarks>
     internal bool RowMapLoadStillCurrent(RowMapLoadStart start)
         => CurrentAddress == start.DataTableAddr && Breadcrumbs.Count == start.Depth
-           && ReferenceEquals(CurrentCrumb, start.Crumb);
+           && ReferenceEquals(CurrentCrumb, start.Crumb) && ReferenceEquals(_renderedCrumb, start.Crumb);
 
     /// <summary>
     /// [LW-BACK-CONTAINER-HEADER-ADDR] List <paramref name="classAddr"/>'s functions -- none when it is empty -- for a
