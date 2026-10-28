@@ -115,7 +115,7 @@ public static class CoordLuaParser
             int eol = source.IndexOf('\n', openAt);
             result.Issues.Add(new CoordCsvIssue(LineOf(text, blockOffset + openAt), "",
                 Trim(eol < 0 ? source[openAt..] : source[openAt..eol]),
-                $"unpaired quote: {what} -- nothing was imported; fix the quote and paste again"));
+                $"{what} -- nothing was imported; fix it and import again"));
             return result;
         }
 
