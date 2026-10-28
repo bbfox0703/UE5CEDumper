@@ -2190,6 +2190,24 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   and unticks it ("3 snapshots selected." / "2 snapshots selected."). The snapshot is kept. ⬜ Proxy Deploy's drive
   boxes cannot be exercised here: no volume on this PC has an underscore in its label (C: Windows, D: Data, G: Google
   Drive, Y: DataExchange, Z: SteamBackup), and renaming one is not on.
+- ✅ `[CEXML-DEFINITION-VIEW-AS-DATA]` with Cheat Engine, after the reboot below: DumperTest 5.4 **Shipping** relaunched
+  (pid 2408, 24,530 objects, DLL 3660), UI connected, CE 7.7 + AOBMaker attached (`openProcess` through the bridge,
+  title `00000968-DumperTest-Win64-Shipping.exe`), the AOBMaker dot green after ⟳. **A ScriptStruct target**:
+  DumperTestActor_0 → `Table_Small` → DataTable `DumperTestTable_Small_1` (T = 0x1D8952B2EC0), RowStruct S =
+  0x1D890B36580 (`DumperTestTableRow (ScriptStruct)`). Copy CE XML: view log `0 structs / 0 pointers resolved,
+  depth=4`, and the UI pipe log has no command at all for the export (3659 resolved the same shape with a walk of S on
+  Extinction); `RowStruct (28)` is an 8-byte hex leaf with 0 children while `RowMap (30)` keeps its 8 rows. Pasted into
+  CE and read back with Lua: `RowStruct (28)` type 3, hex, 0 offsets, 0 children, at T + 0x28, its value read by CE =
+  S. CSX (CE 7.7+) file: `<Element … Vartype="Pointer" … Description="RowStruct" …/>` self-closing, 0 `ScriptStruct`
+  structures; Push to CE Structure Dissect ("11 structures, 55 elements"): CE's structure has `RowStruct off=28 vt=12
+  child=nil`. **Inside the definition** (RowStruct → →): the notice, five rows with no address; Copy CE Fields (2) on
+  two selected rows -> "⚠ Copy CE Fields (2): nothing done — …" (the button's own multi-select label), then "⚠ +CE
+  Field (flat): nothing done — …", HEX -> "⚠ HEX: …", +CE -> "⚠ +CE: …"; CE's `--state` before and after is
+  byte-identical and the clipboard sentinel intact, with the four `refused` lines in the view log. **Still allowed**:
+  AA pushed the record `"ScriptStruct"` to CE, which ticked registers `ScriptStruct` = S; Push to CE Structure Dissect
+  -> "Structure 'ScriptStruct_DumperTestTableRow' added to CE's Structure Dissect (1 structures, 5 elements)", offsets
+  8 / C / 14 / 18 / 28, and that layout read on two real rows gives Index 0 / Value 100.0 and Index 1 / Value 101.0
+  (the fixture's BuildTable). Back to the DataTable: no notice, addresses again.
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
