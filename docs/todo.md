@@ -275,7 +275,7 @@ Open work only. **Read this when deciding what to do next.**
 > item against the code at HEAD and grepped each tag across `docs/` and `git log` for a closure. The four rows it
 > was asked to leave out are `[AOBM-CEXML-PUSH]`, `[AOBM-CT-PUSH]`, `[AOBM-GWORLD-GENAOB]` and FIXPASS L64(b) (UX).
 >
-> **Result: 0 HIGH, 0 MED open defects.** Table A is every open defect and UX item (32), B the live checks owed on
+> **Result: 0 HIGH, 0 MED open defects.** Table A is every open defect and UX item (37), B the live checks owed on
 > shipped fixes, C the feature ideas, D what stays open by a recorded decision.
 >
 > ⛔ **Keep it current — that is the whole point.** A commit that opens, fixes or re-scopes any item edits its row
@@ -284,7 +284,7 @@ Open work only. **Read this when deciding what to do next.**
 > here (marked 🆕), and their source names the section the original note sits in plus a phrase to grep for — those
 > notes may since have moved to `docs/archive/`, where tags still resolve.
 
-### A. Open defects and UX — 32 items, LOW or unrated
+### A. Open defects and UX — 37 items, LOW or unrated (the last five were found by the same-day archiving pass)
 
 | tag | sev | what goes wrong | recorded at (grep) |
 |---|---|---|---|
@@ -320,6 +320,11 @@ Open work only. **Read this when deciding what to do next.**
 | 🆕 `[VALUESCAN-NONFINITE-TARGET]` | LOW | Value Search: Infinity or 1e400 as a float target gives different results live and in the snapshot search (nonsense input only). | under `[A4-AB4-UINT64]`: "Older and separate, recorded here only" |
 | 🆕 `[CSX-LONG-ELEMENT-LABEL]` | LOW (UX) | A CSX export names a long string element only `[2]` (a label is kept only up to 20 characters); the text is readable in the child row. | beside `[CSX-STRCHILD-BYTESIZE]`: "Related but separate" |
 | `[D4B-DELEGATEPAD-2026-09-09]` (element bytes) | LOW (UX) | On Development builds the hex view of a delegate array hides the 8 detector bytes before each element. | its section, "Still open, deliberately" |
+| 🆕 `[LEAD-SECOND-UI-CRASHLOG]` | LOW, unfiled until now | Launching a second UI instance writes `InvalidOperationException: … the Dispatcher shut down` (at `ClassicDesktopStyleApplicationLifetime.StartCore`) into `crash.log` instead of exiting quietly; the first instance is unaffected. It pollutes the AOT start-up diagnostic. | `verification-register.md`, the AE4–AE7 Proxy Deploy section: "Incidental lead, not filed" |
+| 🆕 `[LEAD-G12G3-LOG-CONTRADICTION]` | unchased | One occurrence in the G12 / G3 logs contradicts what the code can produce; leading hypothesis a cross-process log interleave (folders keyed by process name), never tested. | `verification-register.md`, `[G12G3-CLOSE-2026-09-06]`: "A CONTRADICTION I CANNOT EXPLAIN" |
+| 🆕 `[LEAD-KEYWORD-DROPDOWN-FIRST-CLICK]` | LOW (UX) | In a keyword box, a click on ▼ right after typing only closes the keyword-memory dropdown; the second click steps to the next match. | the `[LW-SEARCH-CLEAR-KEEP]` row: "Rig note: a click on ▼" |
+| 🆕 `[LEAD-USMAP-UDS-SHADOW]` | unanswered | Whether a Blueprint struct (UDS) named like a native struct shadows it in a name-keyed .usmap consumer (CUE4Parse) was never checked. | the `[USMAP-UDS-MISSING]` row: "Check first whether CUE4Parse" |
+| 🆕 `[LEAD-PUBLISH-FAILED-BUT-BUILT]` | LOW (process) | One `build.ps1` publish run reported `FAILED` while still producing binaries (the re-run said SUCCESS; checked by hash). Most likely a file lock; never reproduced. | under `[A4-ASSESS-2026-09-09]`: "One publish run reported `FAILED`" |
 
 ### B. Live checks owed on shipped, unit-tested fixes
 
