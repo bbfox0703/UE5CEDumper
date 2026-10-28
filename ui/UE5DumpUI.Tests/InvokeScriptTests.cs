@@ -2693,7 +2693,9 @@ public class InvokeScriptTests
         Assert.Equal(0, Count(CodeOnly(DllSource("Wirbel.cpp")), "UE5_FindInstanceOfClass("));
         var frieren = CodeOnly(DllSource("Frieren.cpp"));
         Assert.Equal(1, Count(frieren, "UE5_FindInstanceOfClass("));
-        Assert.Contains("uintptr_t cm = Aura::FindLiveOrDefaultOf(\"CheatManager\");", frieren, StringComparison.Ordinal);
+        // [DBGCAM-58-REENABLE] ...and skipping the Debug Camera controller's own CheatManager.
+        Assert.Contains("uintptr_t cm = Aura::FindLiveOrDefaultOf(\"CheatManager\", \"DebugCameraController\");", frieren,
+                        StringComparison.Ordinal);
         Assert.Contains("dcc = Aura::FindLiveOrDefaultOf(\"DebugCameraController\");", frieren, StringComparison.Ordinal);
     }
 
