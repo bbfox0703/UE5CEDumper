@@ -2438,6 +2438,17 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   `ZonesToUse: off=3A0 vt=12 child=ZonesToUse n=51`, element offsets stepping 0x20, `[0]` / `[1]` / `[50]` at 0 / 20 /
   640, 8 bytes, dtHexadecimal, no child; LightingSubLevels (4) and VistaSubLevels (5) the same; ZonesNotToUseOnEmptySpaces
   `child=nil`. Every element here is unloaded (weak pair {INDEX_NONE, 0} on all 60), so each label is `[i]` alone.
+- ⛔ `UE4-ASSETPTR-EXPORTS`, **the label of a LOADED TArray<TAssetPtr> element** -- **not reproducible on Extinction**,
+  by the recipe's own stop rule (no loaded source to alias). Every TAssetPtr census came back unresolved: there is no
+  SoundNodeWavePlayer instance at the menu or in the Skirmish level (its CDO only -- the game's sound does not go
+  through SoundCue nodes); in the level, all 32 LevelStreaming `WorldAsset` (+0x30), both BlinkMapSegment-derived
+  `FixedOverride` (+0x3A8), BC_BlinkGameInstance's `PreGameWorld` (+0x100, `{-1,0}`) and the 60 map-generator
+  elements above; at the menu, the 19 DT_LevelSelectData rows' `World` and `PreviewImage`. This game reaches its soft
+  references by path and never through `Get()`, so nothing stores a weak pair (`out/live3660b/census_weak.lua`). Not
+  tried: a FULLY synthetic source (a CE-allocated FAssetPtr whose weak pair is copied from a live object's GUObjectArray
+  item) -- that tests the label path against a pair we wrote, not one the engine resolved. The control half ran
+  naturally: 60 unloaded elements labelled `[i]` alone in the CSX push above. The 3657 → 3658 fix stays covered by its
+  red/green test (`dc5b7cd9` / `e19404c6`).
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
