@@ -103,9 +103,8 @@ from collections import defaultdict
 # tag, why (with the consuming site, so a reviewer can re-derive the tag)
 
 INSTANCE_KEYS = {
-    # The export reads `result.Fields` and NOTHING else from a walked instance:
-    # CeXmlExportService.cs's ResolvePointerInstancesRecursiveAsync / WalkAndRecurseAsync / PrefetchStructTreeAsync /
-# ResolveStructRecursiveAsync all touch `.Fields` only.
+    # The export reads `result.Fields` -- plus `result.IsDefinition`, to refuse laying a type's layout out as data --
+    # and NOTHING else from a walked instance.
     # The requester already knows the address it asked for, so even `addr` is
     # redundant on the wire (the batch reply is positional).
     "addr":          ("unused", "batch reply is positional; caller already has the addr"),
@@ -115,7 +114,9 @@ INSTANCE_KEYS = {
     "outer":         ("unused", "export never reads .OuterAddr"),
     "outer_name":    ("unused", "export never reads .OuterName"),
     "outer_class":   ("unused", "export never reads .OuterClassName"),
-    "is_definition": ("unused", "export never reads .IsDefinition"),
+    # [CEXML-DEFINITION-VIEW-AS-DATA] a type's walk is its member layout: the CE XML and CSX resolvers refuse to lay it
+    # out as data, and Fern keeps the key in a lean walk for exactly that.
+    "is_definition": ("used",   "resolvers skip a definition view's layout"),
     "stale":         ("unused", "export tests Fields.Count == 0 instead (:440)"),
     "props_size":    ("unused", "LiveWalker-only (fill_gaps auto-enable)"),
 }
