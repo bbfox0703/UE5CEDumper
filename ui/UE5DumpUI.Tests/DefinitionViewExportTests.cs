@@ -382,4 +382,50 @@ public class DefinitionViewExportTests
         Assert.Empty(bridge.Records);
         Assert.Equal(LiveWalkerViewModel.DefinitionNoDataText("+CE"), vm.StatusText);
     }
+
+    /// <summary>A dump whose walk of <see cref="PendingAddr"/> never lands: the grid keeps the previous rows.</summary>
+    private sealed class PendingDump : StubDumpService
+    {
+        public const string PendingAddr = "0x9000";
+        public override Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
+            int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
+            CancellationToken ct = default)
+            => addr == PendingAddr
+                ? new TaskCompletionSource<InstanceWalkResult>().Task
+                : base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
+    }
+
+    // DEFVIEW-IF-COPYADDR-GUARD-BYPASS (review): Copy Addr refused a definition row only while that definition was still
+    // the selection, and added the offset to the SELECTED instance's address. Pick another instance and, while its walk
+    // is in flight, the grid still shows the definition's rows -- Addr then copied the new instance plus a type-layout
+    // offset. A live instance's rows are the same case the other way round ([R7-S14]): they belong to the instance they
+    // were walked from, so the address is that one's.
+    [Fact]
+    public async Task InstanceFinder_CopyAddr_ActsOnTheRowsShown_NotOnTheNewSelection()
+    {
+        var dump = new PendingDump();
+        dump.RegisterStruct(TypeAddr, DefinitionWalk());
+        dump.RegisterStruct("0x2000", new InstanceWalkResult
+        {
+            Address = "0x2000", Name = "Pawn_0", ClassName = "Actor",
+            Fields = new List<LiveFieldValue> { new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x100, Size = 4 } },
+        });
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = FinderOn(dump, platform: platform);
+        InstanceResult Pending() => new() { Address = PendingDump.PendingAddr, Name = "Pawn_9", ClassName = "Actor" };
+
+        vm.SelectedInstance = new InstanceResult { Address = TypeAddr, Name = "BlinkDataLevel", ClassName = "ScriptStruct" };
+        var definitionRow = vm.Fields[0];
+        vm.SelectedInstance = Pending();
+        await vm.CopyFieldAddressCommand.ExecuteAsync(definitionRow);
+        Assert.Null(platform.LastClipboard);
+        Assert.Equal(LiveWalkerViewModel.DefinitionNoDataText("Addr"), vm.StatusText);
+
+        vm.SelectedInstance = new InstanceResult { Address = "0x2000", Name = "Pawn_0", ClassName = "Actor" };
+        var liveRow = vm.Fields.Single();
+        vm.SelectedInstance = Pending();
+        await vm.CopyFieldAddressCommand.ExecuteAsync(liveRow);
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("2100", platform.LastClipboard);
+    }
 }
