@@ -432,6 +432,32 @@ public class CoordLuaParserTests
         Assert.DoesNotContain("quote", reason, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("label='Rock 'n' Roll', map='M'")]
+    [InlineData("label=\"Say \"hi\" now\", map='M'")]
+    [InlineData("label='Joe's', group='Bob's', map='M'")]
+    public void AnEvenNumberOfStrayQuotes_StillStopsTheImport(string fields)
+    {
+        // Review round 2: two stray quotes on one line pair with each other, so every string "closed" and the label
+        // was cut at the first one with no issue at all. Lua rejects these lines; so must the import.
+        var r = CoordLuaParser.Parse(Wrap("  { uid='a', " + fields + ", x=1, y=2, z=3 },\n" + OneEntry));
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(3, issue.Line);
+        Assert.Contains("unpaired quote", issue.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WhatMayFollowAString_StillCoversTheToleratedShapes()
+    {
+        // The controls: a missing comma (the next key follows), a semicolon separator, the last field before the
+        // brace, and a line break before the next key.
+        var r = CoordLuaParser.Parse(Wrap(
+            "  { uid='a' label='A'; map='M'\n    group='G' x=1, y=2, z=3 },\n  { label='B', x=1, y=2, z=3, map='M' },"));
+        Assert.Equal(2, r.Entries.Count);
+        Assert.Empty(r.Issues);
+    }
+
     [Fact]
     public void AnUnpairedQuoteInTheLastEntry_StillImportsNothing()
     {
