@@ -9,8 +9,9 @@ Open work only. **Read this when deciding what to do next.**
 > fixes shipped in build 3658 (`[BATCH2-REVIEW-2026-10-27]`, `[FIXREVIEW-2026-10-27]`), and the five LOW leads batch 3 left
 > in build 3659 (`[TRAINER-PUSH-TIMEDOUT-TEXT]`, `[DISCOVER-SHADOWED-POOL]`, `[DBGCAM-OFF-OVER-QUEUED-ON]`,
 > `[ASSETPTR-BAKED-TOKEN]`, `[L83-PLAN-QUEUED-STRINGS]`); both builds' fixes passed live on 3659's AOT build on 2026-10-28
-> (`[LIVE-3659-2026-10-28]`), which raised four leads (`[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]`,
-> `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]`, `[CEXML-DEFINITION-VIEW-AS-DATA]`, `[LW-CRUMB-UNDERSCORE]`). Still owed live: a TMap / TSet of
+> (`[LIVE-3659-2026-10-28]`), which raised four leads: `[CEXML-DEFINITION-VIEW-AS-DATA]` (MED, pre-existing),
+> `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]` and `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]` (LOW), each confirmed by an
+> agent told to refute it from source, and `[LW-CRUMB-UNDERSCORE]` (LOW, cosmetic). Still owed live: a TMap / TSet of
 > TAssetPtr (Extinction has none), a game-filled TArray<TAssetPtr> and a loaded element's label
 > (`[UE4-ASSETPTR-EXPORTS]`'s row), and Debug Camera on UE 5.8. · Before it, the
 > known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
@@ -2006,17 +2007,30 @@ are not repeated here; each line says what ran and what it showed.
   OFF, the DLL answers -5 (the OFF already queued in that stall), and the ungated "[DebugCamera] OFF did not complete
   -- …" prints and raises: the record ends TICKED after a dialog that said "Tick again", the Lua Engine reports an OFF
   the user never sent, and errorMsg is overwritten (`req=1 -> state=-6` at 08:43:42, then `req=0 -> state=-5` at
-  08:44:05, when OK was pressed). If the game drains before OK, that [DISABLE] is a real OFF. Fix shape: a bail-out
-  that applied nothing should not run [DISABLE] at all; CE's `memrec.disableWithoutExecute()` (celua.txt, used for
-  this check) does exactly that, but `DeferredUntickLua` is shared by every generator, so the change needs its own
-  review. Same shape in the helper's sample, masked there by the next row.
+  08:44:05, when OK was pressed). If the game drains before OK, that [DISABLE] is a real OFF. **Verified from source**
+  (workflow `wf_804d1b9d-6f0`, an agent told to refute it): confirmed, LOW. Narrower than first written: a -6 on a tick
+  needs an OFF queued by a SECOND sender in the same stall (the UI, another record, the helper's sample), and the
+  overwritten errorMsg has no reader on this path. Wider: the same generator's busy and timeout bails re-enter
+  [DISABLE] too, and every other stateful mailbox toggle (Fly, Protection, Foreground, SeeThrough, Movement,
+  TimeDilation) re-enters a SilentReturn [DISABLE] after a failed tick, sending one unrequested OFF / RESET to DLL
+  state the UI may be holding. Fix shape: in this generator only, a deferred untick whose timer calls
+  `memrec.disableWithoutExecute()` (celua.txt; it still has to be armed AFTER the modal), or a per-record flag
+  [DISABLE] consumes, as `CeInjectScriptGenerator` does with `UE5_StartedByThisRecord`. Not in the shared
+  `DeferredUntickLua`: Dissect's failed-enable bail relies on its [DISABLE] to unwind. Same shape in the helper's
+  sample, masked there by the next row.
 - 🆕 `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]` (LOW, measured above): `ue5_invoke_helper.lua`'s copy-me Debug Camera
   sample arms its 50 ms deferred untick BEFORE `showMessage`. The modal pumps the timer while [ENABLE] is still running,
   so the untick is the no-op `[FREEZEUNTICK-2026-08-20]` describes and the record ends ticked after any failed tick
   (here -6: no second mailbox command, Active true). Since `b344d63d` (2026-09-08), which deferred it;
   `invoke_helper_test.lua` models timers pumping only after the chunk returns, and `check_ce_untick_placement` checks
-  only that an untick is deferred, so neither can see the order. The generated scripts, `ue5_freeze_helper.lua` and the
-  .CT put the modal first.
+  only that an untick is deferred, so neither can see the order. **Verified from source** (`wf_804d1b9d-6f0`):
+  confirmed, LOW, and wider than first written -- `StandaloneTrainerScriptGenerator`'s TP Save and TP Recall rows arm
+  their untick before their "Enable Setup first" / "No saved position" / "Could not resolve pawn" messages too (by
+  source, not measured). The other generators, `ue5_freeze_helper.lua` and the .CT put the modal first.
+  `invoke_helper_test.lua`'s `showMessage` stub never pumps timers and its `runEnableLikeCe` fires them only after
+  `fActive = true`, so its cases pass in either order. Fix: message first, then the untick (the order
+  `CeLuaHygiene.AppendFailedEnable` uses), plus a test whose modal pumps the timers; fixing the sample exposes the row
+  above in it, so fix both together.
 - ✅ **Asset pointers on Extinction** (UE 4.15, version.dll proxy refreshed 3657 -> 3659, 200,585 objects at the main
   menu, CE 7.7 + AOBMaker attached). `[ASSETPTR-BAKED-TOKEN]`: Live Walker on Default__KismetSystemLibrary,
   `Conv_AssetToObject` (2 params, 40 B) -> PIPE, FIRE with the box at 0 -> "[#1] ProcessEvent OK (result=0)", "Asset
@@ -2060,14 +2074,25 @@ are not repeated here; each line says what ran and what it showed.
   `Mailbox: received cmd=4` -- the value is refused, never written. Tools → Inject Helper into Current CE Table
   replaced the file (50,128 -> 51,640 bytes); the same record ticked again ran (`cmd=4`, `INVOKE_BY_NAME complete,
   result=0`, no dialog) and the resident version became 1.5 (the version gate replaced 1.4).
-- 🆕 `[CEXML-DEFINITION-VIEW-AS-DATA]` (pre-existing, not from 3658/3659; measured above): Live Walker's Copy CE XML on
-  a DataTable follows `RowStruct` (an ObjectProperty to the row's UScriptStruct) with `walk_instance {class_addr:
-  ScriptStruct, lean: true}`. `Ubel::WalkInstance` answers a ScriptStruct / Class / BlueprintGeneratedClass target
-  with a DEFINITION view -- the struct's own member layout, which its comment says must not be read as values -- but
-  `EncodeInstanceWalkToJson` sends `is_definition` only when not lean, so the exporter lays the layout out as data under
-  the pointer and CE reads the UScriptStruct object's own memory at the row offsets: on DT_LevelSelectData,
-  `RowStruct (28) > World (20) > WeakPtr (0)` = `0000019F684E02C0` and `AssetPath (10)` = garbage. Every DataTable
-  export at Drill Depth ≥ 1 carries such a subtree.
+- 🆕 `[CEXML-DEFINITION-VIEW-AS-DATA]` (**MED** after verification; pre-existing, not from 3658/3659; measured above):
+  Live Walker's Copy CE XML on a DataTable follows `RowStruct` (an ObjectProperty to the row's UScriptStruct) with
+  `walk_instance {class_addr: ScriptStruct}`. `Ubel::WalkInstance` answers a ScriptStruct / Class /
+  BlueprintGeneratedClass / WidgetBlueprintGeneratedClass target with a DEFINITION view -- the struct's own member
+  layout, which its comment says must not be read as values -- and the exporter lays that layout out as data under the
+  pointer, so CE reads the UScriptStruct object's own memory at the row offsets: on DT_LevelSelectData,
+  `RowStruct (28) > World (20) > WeakPtr (0)` = `0000019F684E02C0` and `AssetPath (10)` = garbage. **Verified from
+  source** (`wf_804d1b9d-6f0`): confirmed, and the cause is NOT that lean walks drop `is_definition` (they do, but no
+  resolver reads `IsDefinition` at all: CE XML's `WalkAndRecurseAsync` and batch resolver, CSX's
+  `ResolvePointerInstancesAsync`, which gets the flag and ignores it). Scope: every pointer that reaches a definition
+  object -- DataTable.RowStruct, and far more often every ClassProperty / TSubclassOf / UClass* field (a GameMode's
+  DefaultPawnClass, ability-class arrays), including TArray / TMap value / TSet of them -- in CE XML (since `a37de27f`,
+  2026-05-09) and CSX (since `3238fd79`, 2026-03-05); and at depth 0, Live Walker navigated INTO a definition still
+  stamps FieldAddress on its rows, so inline edit, Hex, +CE, freeze and Copy CE XML target the UScriptStruct / UClass
+  object's own memory (`_isDefinitionView` is written and never read). MED because the records are silent, writable
+  and look plausible. Fix shape: resolvers treat a definition result as unresolved (a plain 8-byte pointer leaf);
+  the DLL sends `is_definition` in lean too; Live Walker's definition view stamps no FieldAddress and refuses the
+  exports. docs/Features.md and Features_zh-TW.md claim the definition view shows live hex values and works with CE
+  XML export; fix them with it.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
