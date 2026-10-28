@@ -757,6 +757,46 @@ public class CoordLuaParserTests
         Assert.Contains("closes before its last entry", issue.Reason, StringComparison.Ordinal);
     }
 
+    // ── Review round 9 (CE's Lua 5.3; slips, false refusals and hangs only) ──
+
+    [Theory]
+    [InlineData("''local COORDS = {")]
+    [InlineData("'--' Edit the rows below\nlocal COORDS = {")]
+    [InlineData("'-- build's extra field will not break an older one\nlocal COORDS = {")]
+    [InlineData("'x'\nlocal COORDS = {")]
+    [InlineData("{local COORDS = {")]
+    public void AStrayQuoteOrBraceAboveTheTable_StopsTheImport(string head)
+    {
+        // Nothing between the start fence and `local COORDS = {` was read, so a stray quote pair there -- one
+        // stray ' before the generator's own "-- build's extra field" line is enough -- imported silently.
+        var r = CoordLuaParser.Parse("-- @UE5CD:COORDS v1\n" + head + "\n" + OneEntry + "\n}\n-- @UE5CD:END\n");
+        Assert.Empty(r.Entries);
+        Assert.Contains("nothing was imported", Assert.Single(r.Issues).Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnAssignmentAboveTheTable_IsStillRead()
+    {
+        var r = CoordLuaParser.Parse("-- @UE5CD:COORDS v1\n-- a note\nlocal VERSION = 1\nlocal COORDS = {\n" + OneEntry + "\n}\n-- @UE5CD:END\n");
+        Assert.Empty(r.Issues);
+        Assert.Single(r.Entries);
+    }
+
+    [Fact]
+    public void ALargeLibrary_ParsesInLinearTime()
+    {
+        // A line number was counted from the start of the text for every entry: 10,000 entries took ~4 s on the UI
+        // thread and 20,000 ~15 s. Generous bound, so a slow CI machine does not flake.
+        var entries = Enumerable.Range(0, 10_000).Select(i => new CoordEntry
+            { Uid = "u" + i, Label = "Label " + i, Group = "G", Map = "M", X = i, Y = -i, Z = 1 }).ToList();
+        var script = CoordLibraryScriptGenerator.Generate(entries, out _);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var r = CoordLuaParser.Parse(script);
+        sw.Stop();
+        Assert.Equal(10_000, r.Entries.Count);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), $"parse took {sw.Elapsed.TotalSeconds:F1} s");
+    }
+
     [Fact]
     public void AUnicodeEscapeWithLeadingZeros_IsReadAsCeLua53Does()
     {
