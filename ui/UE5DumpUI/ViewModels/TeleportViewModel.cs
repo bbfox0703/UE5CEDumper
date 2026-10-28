@@ -4282,11 +4282,15 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         // maintainer's call, 2026-10-28). A field the edit leaves unchanged keeps the quote it
         // already holds (imported, or typed before this), so such an entry stays editable; any
         // field the edit changes is new input. Counting quotes instead let a typed one through
-        // whenever the same edit deleted a stored one.
-        static bool TypedQuote(string next, string stored) =>
-            next.Contains('"') && !string.Equals(next, stored, StringComparison.Ordinal);
+        // whenever the same edit deleted a stored one. "Unchanged" is judged on the text as the
+        // editor showed it as well as normalized: a stored value the import cut at a space no
+        // longer equals itself once Normalize trims it.
+        static bool TypedQuote(string? edited, string next, string stored) =>
+            next.Contains('"')
+            && !string.Equals(edited ?? "", stored, StringComparison.Ordinal)
+            && !string.Equals(next, stored, StringComparison.Ordinal);
         var group = CoordText.Normalize(EditCoordGroup, CoordText.MaxGroupLength);
-        if (TypedQuote(label, row.Entry.Label) || TypedQuote(group, row.Entry.Group))
+        if (TypedQuote(EditCoordLabel, label, row.Entry.Label) || TypedQuote(EditCoordGroup, group, row.Entry.Group))
         {
             CoordStatus = CoordEditNoQuoteText;
             return;
