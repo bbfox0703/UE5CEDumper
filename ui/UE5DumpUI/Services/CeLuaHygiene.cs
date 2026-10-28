@@ -25,6 +25,13 @@ public enum MailboxTimeout
 {
     /// <summary>Stateful toggle: untick the record, then return.</summary>
     UntickAndReturn,
+    /// <summary>A stateful toggle whose <c>[DISABLE]</c> sends a real OFF / RESET: as <see cref="UntickAndReturn"/>,
+    /// except that a bail BEFORE the command is stored (the contract check, the wait for an idle mailbox) unticks with
+    /// <see cref="CeLuaHygiene.DeferredUntickWithoutDisableLua"/>. Nothing was sent, and a mailbox that was only busy
+    /// is idle again by the time the plain untick runs <c>[DISABLE]</c>, whose OFF then turns off a hold a UI card owns.
+    /// The timeout AFTER the store keeps the plain untick: the DLL may still apply the command, and <c>[DISABLE]</c>
+    /// undoing it is then right. [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]</summary>
+    UntickWithoutDisableAndReturn,
     /// <summary>Momentary action: set <c>hadError</c> and break, leaving the caller's
     /// deferred untick + close-suppression to run.</summary>
     FlagAndBreak,
@@ -538,7 +545,10 @@ public static class CeLuaHygiene
     /// </summary>
     private static void AppendBail(StringBuilder sb, MailboxTimeout mode, string indent)
     {
-        if (mode != MailboxTimeout.SilentReturn)
+        // Every caller bails before the command store, so nothing was applied.
+        if (mode == MailboxTimeout.UntickWithoutDisableAndReturn)
+            sb.Append(DeferredUntickWithoutDisableLua(indent)).Append('\n');
+        else if (mode != MailboxTimeout.SilentReturn)
             AppendDeferredUntick(sb, indent);
         sb.Append(indent).Append("return\n");
     }
@@ -695,6 +705,7 @@ public static class CeLuaHygiene
         switch (onTimeout)
         {
             case MailboxTimeout.UntickAndReturn:
+            case MailboxTimeout.UntickWithoutDisableAndReturn:   // sent: the DLL may still apply it, so [DISABLE] runs
                 sb.Append(indent).Append("    showMessage('[").Append(tag).Append("] ' .. _msg)\n");
                 AppendDeferredUntick(sb, indent + "    ");
                 sb.Append(indent).Append("    return\n");

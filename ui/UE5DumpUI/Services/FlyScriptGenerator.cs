@@ -102,7 +102,7 @@ public static class FlyScriptGenerator
         Line(sb, "  return");
         Line(sb, "end");
         // [R7-C-04] Every shared bail below takes the block's mode: [ENABLE] announces and unticks, [DISABLE] dbg()s.
-        var bail = enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn;
+        var bail = enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn;
         // Contract check BEFORE the first write (see AppendContractCheck).
         CeLuaHygiene.AppendContractCheck(sb, name, bail);
         Line(sb);
@@ -123,7 +123,7 @@ public static class FlyScriptGenerator
     private static void EmitCall(StringBuilder sb, string name, int op, int value, bool readState, string comment,
                                  bool enable)
     {
-        var bail = enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn;   // [R7-C-04]
+        var bail = enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn;   // [R7-C-04]
         // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
         // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
         // a toggle fired while another command was still in flight wrote straight

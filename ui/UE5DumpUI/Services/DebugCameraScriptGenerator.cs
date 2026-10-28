@@ -66,7 +66,7 @@ public static class DebugCameraScriptGenerator
         Line(sb, "end");
         // [W2-CEGEN-MODAL] Every shared bail below takes the block's mode: [ENABLE] announces and unticks, [DISABLE]
         // dbg()s and returns -- one EmitBlock used to give the untick the tick's modal, as MovementScriptGenerator never did.
-        var bail = enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn;
+        var bail = enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn;
         // Contract check BEFORE the first write: if the layout moved we would
         // otherwise scribble on whatever now lives at those offsets.
         CeLuaHygiene.AppendContractCheck(sb, "DebugCamera", bail);

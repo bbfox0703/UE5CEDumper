@@ -70,7 +70,7 @@ public static class ForegroundScriptGenerator
         Line(sb, "  return");
         Line(sb, "end");
         // [R7-C-04] Every shared bail below takes the block's mode: [ENABLE] announces and unticks, [DISABLE] dbg()s.
-        var bail = enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn;
+        var bail = enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn;
         // Contract check BEFORE the first write: if the layout moved we would
         // otherwise scribble on whatever now lives at those offsets.
         CeLuaHygiene.AppendContractCheck(sb, "KeepForeground", bail);

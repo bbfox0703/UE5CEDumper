@@ -273,7 +273,7 @@ public class CeMailboxBailoutTests
     /// [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] (its review's wider scope) Every stateful mailbox toggle's own
     /// bail-outs -- no mailbox, or a DLL answer that applied nothing -- untick WITHOUT running [DISABLE]. The plain
     /// untick runs it, and each of these [DISABLE] blocks sends a real OFF / RESET: a failed CE tick turned off the
-    /// same feature a UI card was holding. The shared busy / timeout bails keep the plain untick: after a timeout the
+    /// same feature a UI card was holding. The shared timeout after the command store keeps the plain untick: the
     /// DLL may still apply the command, and [DISABLE] undoing it is then right. Negative control: emit
     /// <c>CeLuaHygiene.DeferredUntickLua</c> at any of these sites again and its row fails.
     /// </summary>
