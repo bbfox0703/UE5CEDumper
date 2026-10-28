@@ -1049,6 +1049,30 @@ public class LiveWalkerForwardNavTests
         await AssertRowActionWorks(vm, platform, "ElemFn");
     }
 
+    [Fact]
+    public async Task TheRefusalLine_GoesWhenTheListLands_AndNoOtherLineDoes()
+    {
+        // Review round 4: "still loading" outlived the load, over rows that were usable by then.
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        var elementsList = dump.GateFunctions(ElemCls);
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
+        await vm.InvokeViaPipeCommand.ExecuteAsync(vm.Functions.First());
+        Assert.Contains("still loading", vm.StatusText);
+
+        elementsList.SetResult(OwnerStub.FunctionsOf(ElemCls));
+
+        Assert.DoesNotContain("still loading", vm.StatusText);
+
+        // The control: a line put up after the refusal is not the refusal's to take down.
+        var nextList = dump.GateFunctions(OwnerCls);
+        await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.InvokeViaPipeCommand.ExecuteAsync(vm.Functions.First());
+        vm.StatusText = "Something else happened";
+        nextList.SetResult(OwnerStub.FunctionsOf(OwnerCls));
+        Assert.Equal("Something else happened", vm.StatusText);
+    }
+
     // Keyed on the CLASS: an address says nothing about which functions an object has.
 
     [Fact]
