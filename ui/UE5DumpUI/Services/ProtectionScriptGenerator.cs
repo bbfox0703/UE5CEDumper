@@ -95,9 +95,12 @@ public static class ProtectionScriptGenerator
         Line(sb, "if state < 0 then");
         if (enable)
         {
-            Line(sb, $"  showMessage('[GodMode] {label} -- no pawn? (enter gameplay first)')");
-            // Nothing was applied on this branch, so the record must not stay ticked.
-            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
+            // GODMODE-FAILED-TICK-LATCHES-WANT: not "applied nothing". Solitar::SetGodMode stores the want before it
+            // applies and keeps re-asserting whatever it answered, so the hold is ARMED and engages on the next pawn --
+            // the UI card's "ON (pending)". The row stays ticked, so unticking it is what cancels the hold.
+            Line(sb, $"  showMessage('[GodMode] {label} is armed -- no pawn yet (or this pawn has no bCanBeDamaged). " +
+                      "It applies as soon as one exists; untick the record to cancel.')" +
+                      "  -- not a failure: the hold is armed, so the row stays ticked");
         }
         else
         {

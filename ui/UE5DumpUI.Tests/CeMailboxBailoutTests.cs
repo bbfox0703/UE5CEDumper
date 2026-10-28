@@ -75,8 +75,11 @@ public class CeMailboxBailoutTests
         for (int i = 0; i < lines.Length; i++)
         {
             // (a) Every error message must reach an untick before control leaves its
-            // branch. The window covers an if/elseif/else trio plus its `end`.
-            if (lines[i].Contains("showMessage(", StringComparison.Ordinal))
+            // branch. The window covers an if/elseif/else trio plus its `end`. A message the
+            // generator marks "-- not a failure:" reports a held state (GodMode armed with no pawn
+            // yet, GODMODE-FAILED-TICK-LATCHES-WANT): that row stays ticked on purpose.
+            if (lines[i].Contains("showMessage(", StringComparison.Ordinal)
+                && !lines[i].Contains("-- not a failure:", StringComparison.Ordinal))
             {
                 sawBailout = true;
                 Assert.True(Within(lines, i + 1, 8, "memrec.Active = false"),
