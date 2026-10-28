@@ -6,10 +6,13 @@ Open work only. **Read this when deciding what to do next.**
 >
 > ▶ **Current programme:** `[FIXPASS-2026-10-27]` (the maintainer: fix every open LOW / INFO). Batches 1-3 shipped in
 > build 3657 and passed live on its AOT build (`[BATCH3-LIVE-3657]`); batch 2's own review and the review of batch 3's
-> fixes shipped in build 3658, not yet checked live (`[BATCH2-REVIEW-2026-10-27]`, `[FIXREVIEW-2026-10-27]`). The five LOW leads batch 3 left are fixed
-> (`[TRAINER-PUSH-TIMEDOUT-TEXT]`, `[DISCOVER-SHADOWED-POOL]`, `[DBGCAM-OFF-OVER-QUEUED-ON]`, `[ASSETPTR-BAKED-TOKEN]`,
-> `[L83-PLAN-QUEUED-STRINGS]`). Open: the asset-pointer container shapes still owed live (`[UE4-ASSETPTR-EXPORTS]`'s
-> row), and live checks of 3658 and later. · Before it, the
+> fixes shipped in build 3658 (`[BATCH2-REVIEW-2026-10-27]`, `[FIXREVIEW-2026-10-27]`), and the five LOW leads batch 3 left
+> in build 3659 (`[TRAINER-PUSH-TIMEDOUT-TEXT]`, `[DISCOVER-SHADOWED-POOL]`, `[DBGCAM-OFF-OVER-QUEUED-ON]`,
+> `[ASSETPTR-BAKED-TOKEN]`, `[L83-PLAN-QUEUED-STRINGS]`); both builds' fixes passed live on 3659's AOT build on 2026-10-28
+> (`[LIVE-3659-2026-10-28]`), which raised four leads (`[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]`,
+> `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]`, `[CEXML-DEFINITION-VIEW-AS-DATA]`, `[LW-CRUMB-UNDERSCORE]`). Still owed live: a TMap / TSet of
+> TAssetPtr (Extinction has none), a game-filled TArray<TAssetPtr> and a loaded element's label
+> (`[UE4-ASSETPTR-EXPORTS]`'s row), and Debug Camera on UE 5.8. · Before it, the
 > known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
 > 3649): every row it took is built and checked live, `[MH-PRERESERVE-PROXY]` included; the maintainer's calls are in
 > the rows and working-lessons §6. Still owed live, each row says how: a crash mid-capture on a large title
