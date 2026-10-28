@@ -491,6 +491,18 @@ public class CoordLuaParserTests
     }
 
     [Fact]
+    public void AStrayQuoteThatCommentsOutABrace_IsNamedOnItsLine()
+    {
+        // Review round 4: the -- after the stray quote comments out the entry's }, and the error named the COORDS
+        // line ("braces are unbalanced") instead of the edited one.
+        var r = CoordLuaParser.Parse(Wrap(OneEntry + "\n  { uid='a', label='Joe's -- best spot', map='M', x=1, y=2, z=3 },"));
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(4, issue.Line);
+        Assert.Contains("unpaired quote", issue.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void NestedTablesAndBracketKeys_AreNotMistakenForStrayQuotes()
     {
         // The controls: an unknown key from a newer build may hold a nested table (its own keys may repeat), and a
