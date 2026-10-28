@@ -101,8 +101,23 @@ public static class CoordLuaParser
             return result;
         }
 
-        var block = text[(start.Index + start.Length)..end.Index];
+        var source = text[(start.Index + start.Length)..end.Index];
         int blockOffset = start.Index + start.Length;
+
+        // Every lookup below runs on a copy with string literals and comments blanked,
+        // so `label='Arena z=0 plane'` or `-- z=5 was the old floor` cannot be read as a
+        // field (B21, hole 3); values are then read from the source at the same offsets.
+        // A string that never closes stops the import: the maintainer's rule (2026-10-28)
+        // is an error, not a guess at where the stray quote's field ends.
+        var block = MaskLiterals(source, out int openAt, out string what);
+        if (block == null)
+        {
+            int eol = source.IndexOf('\n', openAt);
+            result.Issues.Add(new CoordCsvIssue(LineOf(text, blockOffset + openAt), "",
+                Trim(eol < 0 ? source[openAt..] : source[openAt..eol]),
+                $"unpaired quote: {what} -- nothing was imported; fix the quote and paste again"));
+            return result;
+        }
 
         // Optional: absent in blocks written before the field existed, which is why a
         // missing value leaves the user's current setting alone rather than zeroing it.
@@ -130,10 +145,11 @@ public static class CoordLuaParser
         }
 
         int innerOffset = blockOffset + open + 1;
-        foreach (var (entryText, entryOffset) in TopLevelBraceGroups(inner))
+        foreach (var (masked, entryOffset) in TopLevelBraceGroups(inner))
         {
             int line = LineOf(text, innerOffset + entryOffset);
-            var entry = ParseEntry(entryText, line, result.Issues);
+            int at = open + 1 + entryOffset + 1;   // the entry's first character, inside its brace
+            var entry = ParseEntry(new Entry(source.Substring(at, masked.Length), masked), line, result.Issues);
             if (entry != null) result.Entries.Add(entry);
         }
 
@@ -143,7 +159,12 @@ public static class CoordLuaParser
         return result;
     }
 
-    private static CoordEntry? ParseEntry(string entry, int line, List<CoordCsvIssue> issues)
+    /// <summary>One entry's text twice, the same length: as written, and with its
+    /// literals and comments blanked (<see cref="MaskLiterals"/>). Keys are found in
+    /// <see cref="Masked"/>; values are read from <see cref="Source"/> at the same offset.</summary>
+    private readonly record struct Entry(string Source, string Masked);
+
+    private static CoordEntry? ParseEntry(Entry entry, int line, List<CoordCsvIssue> issues)
     {
         var e = new CoordEntry
         {
@@ -153,7 +174,7 @@ public static class CoordLuaParser
         var rawLabel = Str(entry, "label");
         if (rawLabel == null)
         {
-            issues.Add(new CoordCsvIssue(line, "label", Trim(entry), "no label field"));
+            issues.Add(new CoordCsvIssue(line, "label", Trim(entry.Source), "no label field"));
             return null;
         }
         if (CoordText.HasBlockedChars(rawLabel))
@@ -194,45 +215,54 @@ public static class CoordLuaParser
 
     // ── Field extraction ────────────────────────────────────────────────
 
+    /// <summary>Where the first code-level <c>key =</c> puts its value, or -1. The
+    /// identifier lookbehind stops <c>xlabel=</c> shadowing <c>label=</c>.</summary>
+    private static int ValueAt(Entry entry, string key)
+    {
+        var m = Regex.Match(entry.Masked, $@"(?<![A-Za-z0-9_]){Regex.Escape(key)}[ \t]*=",
+                            RegexOptions.CultureInvariant);
+        if (!m.Success) return -1;
+        // Skip the blanks in the SOURCE: in the mask a string's own quotes are blanks too.
+        int at = m.Index + m.Length;
+        while (at < entry.Source.Length && (entry.Source[at] == ' ' || entry.Source[at] == '\t')) at++;
+        return at;
+    }
+
     /// <summary>
     /// Read a string field. Accepts BOTH quote styles — AOBMaker's parser silently
     /// ignores single-quoted values and falls back to a default, which is exactly the
-    /// kind of quiet wrong answer this format is meant to avoid. The identifier
-    /// lookbehind stops <c>xlabel=</c> shadowing <c>label=</c>.
+    /// kind of quiet wrong answer this format is meant to avoid.
     /// </summary>
-    private static string? Str(string block, string key)
+    private static string? Str(Entry entry, string key)
     {
-        var dq = Regex.Match(block,
-            $@"(?<![A-Za-z0-9_]){Regex.Escape(key)}[ \t]*=[ \t]*""((?:[^""\\]|\\.)*)""",
-            RegexOptions.CultureInvariant);
-        if (dq.Success) return Unescape(dq.Groups[1].Value);
-
-        var sq = Regex.Match(block,
-            $@"(?<![A-Za-z0-9_]){Regex.Escape(key)}[ \t]*=[ \t]*'((?:[^'\\]|\\.)*)'",
-            RegexOptions.CultureInvariant);
-        return sq.Success ? Unescape(sq.Groups[1].Value) : null;
+        int at = ValueAt(entry, key);
+        if (at < 0 || at >= entry.Source.Length) return null;
+        char q = entry.Source[at];
+        if (q != '\'' && q != '"') return null;
+        // MaskLiterals already proved every string here closes on its own line.
+        return Unescape(entry.Source[(at + 1)..CloseQuote(entry.Source, at)]);
     }
 
     /// <summary>True when the key appears at all, whatever follows it.</summary>
-    private static bool HasKey(string block, string key) =>
-        Regex.IsMatch(block, $@"(?<![A-Za-z0-9_]){Regex.Escape(key)}[ \t]*=",
-                      RegexOptions.CultureInvariant);
+    private static bool HasKey(Entry entry, string key) => ValueAt(entry, key) >= 0;
 
-    /// <summary>The raw text a key was assigned, up to the next comma or brace — used
-    /// only to quote the offending value back to the user in a diagnostic.</summary>
-    private static string ValueTextAfter(string block, string key)
+    /// <summary>The raw text a key was assigned, up to the next code-level comma or
+    /// brace — used only to quote the offending value back to the user in a diagnostic.</summary>
+    private static string ValueTextAfter(Entry entry, string key)
     {
-        var m = Regex.Match(block, $@"(?<![A-Za-z0-9_]){Regex.Escape(key)}[ \t]*=[ \t]*([^,}}]*)",
-                            RegexOptions.CultureInvariant);
-        return m.Success ? m.Groups[1].Value.Trim() : "";
+        int at = ValueAt(entry, key);
+        if (at < 0) return "";
+        int end = entry.Masked.IndexOfAny(new[] { ',', '}' }, at);
+        return entry.Source[at..(end < 0 ? entry.Source.Length : end)].Trim();
     }
 
-    private static string? RawNum(string block, string key)
+    private static string? RawNum(Entry entry, string key)
     {
-        var m = Regex.Match(block,
-            $@"(?<![A-Za-z0-9_]){Regex.Escape(key)}[ \t]*=[ \t]*(-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)",
-            RegexOptions.CultureInvariant);
-        return m.Success ? m.Groups[1].Value : null;
+        int at = ValueAt(entry, key);
+        if (at < 0) return null;
+        var m = Regex.Match(entry.Masked[at..], @"^-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?",
+                            RegexOptions.CultureInvariant);
+        return m.Success ? m.Value : null;
     }
 
     /// <summary>Reverse <see cref="CeLuaHygiene.EscapeLuaString"/>, including the
@@ -308,6 +338,99 @@ public static class CoordLuaParser
             yield return (body, i);
             i += body.Length + 1;
         }
+    }
+
+    /// <summary>
+    /// <paramref name="s"/> with every string literal and comment blanked to spaces, line
+    /// breaks kept, so a lookup on the result sees code only and every offset still
+    /// matches the source. Null when a string or a long bracket never closes:
+    /// <paramref name="openAt"/> is where it opened and <paramref name="what"/> says which.
+    /// </summary>
+    internal static string? MaskLiterals(string s, out int openAt, out string what)
+    {
+        var m = s.ToCharArray();
+        (openAt, what) = (-1, "");
+        for (int i = 0; i < s.Length; i++)
+        {
+            char c = s[i];
+            int end, level;
+            if (c == '\'' || c == '"')
+            {
+                end = CloseQuote(s, i);
+                if (end < 0)
+                {
+                    (openAt, what) = (i, $"unpaired quote: a string opened with {c} never closes on its line");
+                    return null;
+                }
+            }
+            else if (c == '-' && i + 1 < s.Length && s[i + 1] == '-')
+            {
+                if ((level = LongBracketLevel(s, i + 2)) >= 0)
+                {
+                    end = LongBracketClose(s, i + 2 + level + 2, level);
+                    if (end < 0)
+                    {
+                        (openAt, what) = (i, "unclosed bracket: a --[[ comment never closes");
+                        return null;
+                    }
+                }
+                else
+                {
+                    int eol = s.IndexOfAny(new[] { '\r', '\n' }, i);
+                    end = (eol < 0 ? s.Length : eol) - 1;
+                }
+            }
+            else if (c == '[' && (level = LongBracketLevel(s, i)) >= 0)
+            {
+                end = LongBracketClose(s, i + level + 2, level);
+                if (end < 0)
+                {
+                    (openAt, what) = (i, "unclosed bracket: a [[ string never closes");
+                    return null;
+                }
+            }
+            else continue;
+
+            for (int k = i; k <= end; k++)
+                if (m[k] != '\n' && m[k] != '\r') m[k] = ' ';
+            i = end;
+        }
+        return new string(m);
+    }
+
+    /// <summary>Index of the quote closing the short string that opens at
+    /// <paramref name="start"/>, or -1 when it does not close on its line (Lua refuses
+    /// a raw line break inside one). A backslash escapes the next character.</summary>
+    private static int CloseQuote(string s, int start)
+    {
+        char quote = s[start];
+        for (int i = start + 1; i < s.Length; i++)
+        {
+            char c = s[i];
+            if (c == '\\') { i++; continue; }
+            if (c == quote) return i;
+            if (c == '\n' || c == '\r') return -1;
+        }
+        return -1;
+    }
+
+    /// <summary>The level of a long bracket opening at <paramref name="at"/>
+    /// (<c>[[</c> is 0, <c>[==[</c> is 2), or -1 when there is none.</summary>
+    private static int LongBracketLevel(string s, int at)
+    {
+        if (at >= s.Length || s[at] != '[') return -1;
+        int i = at + 1;
+        while (i < s.Length && s[i] == '=') i++;
+        return i < s.Length && s[i] == '[' ? i - at - 1 : -1;
+    }
+
+    /// <summary>Index of the last character of the closing long bracket of
+    /// <paramref name="level"/>, searching from <paramref name="from"/>, or -1.</summary>
+    private static int LongBracketClose(string s, int from, int level)
+    {
+        var close = "]" + new string('=', level) + "]";
+        int at = from <= s.Length ? s.IndexOf(close, from, StringComparison.Ordinal) : -1;
+        return at < 0 ? -1 : at + close.Length - 1;
     }
 
     /// <summary>Index of the closing quote of the string starting at
