@@ -3478,6 +3478,25 @@ public class TeleportViewModelTests
         Assert.Equal("Bosses", vm.CoordResults.First(r => r.Label == "Boss \"big\"").Entry.Group);
     }
 
+    /// <summary>Review round 3: "unchanged" was judged after Normalize, which trims -- so a stored field cut at a
+    /// space by the import's length cap no longer matched itself, and its quote read as typed. The untouched field
+    /// is compared as the editor shows it.</summary>
+    [Fact]
+    public async Task An_untouched_field_that_was_cut_at_a_space_is_still_unchanged()
+    {
+        var vm = await CoordLibraryVmAsync();
+        var group = "Grp \"\"q\"\" " + new string('z', 23) + " rest";   // CSV-escaped; char 31 of the value is a space
+        vm.BuildImportPreview(CoordCsvCodec.Parse($"label,group,map,x,y,z\nPlain,\"{group}\",M,7,8,9\n"), "t.csv");
+        vm.ApplyCoordImportCommand.Execute(null);
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Plain");
+        Assert.EndsWith(" ", vm.SelectedCoord!.Entry.Group);   // the shape the finding needs
+
+        vm.EditCoordLabel = "Plain renamed";
+        vm.ApplyCoordEditCommand.Execute(null);
+
+        Assert.Contains(vm.CoordResults, r => r.Label == "Plain renamed");
+    }
+
     /// <summary>Review round 2: counting quotes let a typed one through whenever the same edit deleted a stored
     /// one. A field the edit CHANGES may not hold a quote at all; only an untouched one keeps its old quotes.</summary>
     [Fact]
