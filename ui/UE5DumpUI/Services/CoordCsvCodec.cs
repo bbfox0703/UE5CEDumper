@@ -267,6 +267,19 @@ public static class CoordCsvCodec
             }
         }
 
+        // A stray quote PAIR is valid grammar but merges or splits cells, shifting every
+        // later column. RFC 4180 gives every record the header's cell count, so a record
+        // that differs stops the import before any row is read.
+        for (int li = 1; li < lines.Count; li++)
+        {
+            var rec = lines[li];
+            if (rec.Text.Trim().Length == 0 || rec.Cells.Count == headerCells.Count) continue;
+            result.Issues.Add(new CoordCsvIssue(rec.Number, "", rec.Text,
+                $"this record has {rec.Cells.Count} cells and the header has {headerCells.Count}, so a stray " +
+                "quote pair or delimiter merged or split them -- nothing was imported; fix it and import again"));
+            return result;
+        }
+
         // A ';' delimiter means a European Excel re-save, which also writes commas as
         // decimal separators. Accept that, but only in that case -- guessing per-value
         // would misread a thousands separator.
