@@ -2234,6 +2234,12 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   Rig trap: while a walk loads, a 2-px progress bar appears above the field grid and moves its rows down, so a click
   aimed from a screenshot taken before the selection can miss the button. Two attempts missed that way, and a control
   under the same suspension with no selection change copied at once. Zoom again after the selection, then click.
+- ✅ **Scope control** (the input that must NOT change): the pawn's Mesh (`CharacterMesh0`), `AnimClass` → `ABP_Quinn_C`
+  (an AnimBlueprintGeneratedClass, not one of the four definition metaclasses), P1 = 0x1D896177A50. Copy CE XML ("228
+  structs / 21 pointers resolved, depth=4"): `AnimClass (8C8)` is a drilled group with 21 children, and the UI pipe
+  log walks P1; `ClothingSimulationFactory (AA0)` an 8-byte leaf. Followed in Live Walker: header
+  AnimBlueprintGeneratedClass, NO definition notice, real values and addresses (0x1D896177C58 = P1 + 0x208). And a
+  double underscore: `Default__DumperTestActor` via Open in Live Walker, crumb equal to the header.
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
@@ -2241,7 +2247,8 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   without elevation: the same signature hit this laptop on 2026-08-16 and 2026-10-09, plus a 0x10E with
   STATUS_DEVICE_REMOVED on 2026-08-20, across two NVIDIA drivers; CE's kernel driver was not loaded (every `Use dbk32 …`
   and `Use Kernel Debugger` 0); the DLL does no graphics work and DumperTest is injected without a proxy; no local-LLM
-  model was resident (Ollama idle since 11:39). Three of the four fell in live game sessions, so GPU use is the common
+  model was resident (Ollama idle since 11:39). The GPU clients alive then were the game (15 FPS), the UI (Avalonia
+  renders through ANGLE on D3D11) and CE; none of them can legitimately bug-check dxgkrnl from user mode. Three of the four fell in live game sessions, so GPU use is the common
   factor, not a feature of ours. The dump (`C:\Windows\Minidump\102826-13234-01.dmp`) needs an elevated read to name
   the faulting module and the current process -- working-lessons §3.6c. Every result above was committed before it;
   `dist\` hashes were unchanged after the reboot.
