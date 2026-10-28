@@ -51,9 +51,11 @@
           </ItemsControl.ItemsPanel>
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="m:DriveDescriptor">
+              <!-- [LW-CRUMB-UNDERSCORE] A TextBlock keeps a volume label's underscores. -->
               <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay}"
-                        Content="{Binding Display}"
-                        Foreground="#D4D4D4" Margin="0,0,16,0"/>
+                        Foreground="#D4D4D4" Margin="0,0,16,0">
+                <TextBlock Text="{Binding Display}"/>
+              </CheckBox>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>

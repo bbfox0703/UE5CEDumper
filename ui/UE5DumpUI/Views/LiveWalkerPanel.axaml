@@ -302,12 +302,15 @@
       <ItemsControl.ItemTemplate>
         <DataTemplate x:DataType="vm:BreadcrumbItem">
           <StackPanel Orientation="Horizontal">
-            <Button Content="{Binding Label}"
-                    Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).NavigateToBreadcrumbCommand}"
+            <!-- [LW-CRUMB-UNDERSCORE] A TextBlock, not Content="{Binding Label}": a string Content is drawn through an
+                 access-key presenter, which drops the first underscore of a name like DumperTestActor_0. -->
+            <Button Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).NavigateToBreadcrumbCommand}"
                     CommandParameter="{Binding}"
                     Padding="4,2" Margin="0,0,2,0"
                     Foreground="#4EC9B0" Background="Transparent" BorderThickness="0"
-                    Cursor="Hand"/>
+                    Cursor="Hand">
+              <TextBlock Text="{Binding Label}"/>
+            </Button>
             <TextBlock Text=">" Foreground="#666" VerticalAlignment="Center" Margin="2,0"/>
           </StackPanel>
         </DataTemplate>
