@@ -2406,6 +2406,27 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   TalkingHeadsEventsMapClasses(C,0xD8,E1A0)` in the stale state, base 24C05E5E1A0 in the XML). Fix direction, to be
   re-derived first: restore `CurrentAddress` (and the header identity it keys) from the container crumb on every path
   that re-renders one -- Back, Forward, the crumb jump, the re-rooted-spine Back.
+- ✅ `UE4-ASSETPTR-EXPORTS`, **a GAME-FILLED TArray<TAssetPtr> with more than one element** -- the fixture exists, in
+  a level. Census in CE over the flat GUObjectArray (24-byte items; class chain followed through
+  `UStruct::SuperStruct` at +0x30, checked against UObject's class; `out/live3660b/census_maps.lua`): at the **main
+  menu** every holder is empty (BlinkMapSettings and subclasses: 54 instances, `Maps` all 0; BlinkMapGenerator and
+  subclasses: 1, the native CDO, all four arrays 0). In **Game Modes → Skirmish → Play** (a random battleground,
+  paused; 312,312 objects): 4 BlinkMapGenerator-derived instances, 3 non-empty -- **CentralCity_01_MapGen_C**
+  (live actor 0x24BF4381B90 in PersistentLevel; its name does not contain MapGenerator, so only the class chain finds
+  it): ZonesToUse **51**, ZonesNotToUseOnEmptySpaces 0, LightingSubLevels 4, VistaSubLevels 5. Live Walker:
+  `ZonesToUse [51 x AssetObjectProperty]`, rows 0x0, 0x20, … with `/Game/Maps/Zones/…` paths. **Copy CE XML** -> "Copied:
+  115 objects, 11041 XML lines."; in the XML (checked by script) `ZonesToUse (3A0)` holds 51 element groups `[i] <path>
+  (i*20)`, offsets stepping 0x20, each `WeakPtr (0)` (8 Bytes, hex, +0) + `AssetPath (10)` (String, +10, one offset);
+  LightingSubLevels 4 and VistaSubLevels 5 likewise; **the empty ZonesNotToUseOnEmptySpaces holds no element group**
+  (the negative). Pasted into CE: the group resolves to Data 0x24BF3ED40C0, [1] to +0x20, [50] to +0x640, and each
+  AssetPath reads its path (`/Game/Maps/Zones/Forest/Z_Forest_00.Z_Forest_00` … `/Game/Maps/Zones/Village/
+  Z_Village_06.Z_Village_06`). Independent of the DLL, `read_mem.py Extinction 0x24BF3ED40C0 64`: element 0 =
+  `FF FF FF FF 00 00 00 00` + TagAtLastTest, then FString {0x24BE8675620, 0x30, 0x30} (the pointer CE's AssetPath
+  follows; 47 chars + NUL), element 1 the same shape at +0x20. **Push**: "Structure
+  'CentralCity_01_MapGen_C_CentralCity_01_MapGen' added to CE's Structure Dissect (71 structures, 1117 elements)"; CE:
+  `ZonesToUse: off=3A0 vt=12 child=ZonesToUse n=51`, element offsets stepping 0x20, `[0]` / `[1]` / `[50]` at 0 / 20 /
+  640, 8 bytes, dtHexadecimal, no child; LightingSubLevels (4) and VistaSubLevels (5) the same; ZonesNotToUseOnEmptySpaces
+  `child=nil`. Every element here is unloaded (weak pair {INDEX_NONE, 0} on all 60), so each label is `[i]` alone.
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
