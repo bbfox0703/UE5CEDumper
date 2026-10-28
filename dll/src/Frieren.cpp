@@ -2197,13 +2197,15 @@ static void TryInstallGameThreadHook(bool force = false) {
     const bool fromTable       = s_peOffsetFromVersionTable.load(std::memory_order_relaxed);
     std::thread([peAddr, validatedOffset, fromTable]() {
         uint64_t before = Stark::GetHookFireCount();
-        const uint64_t gameBefore = Stark::GetGameThreadFireCount();
+        const uint64_t gameBefore  = Stark::GetGameThreadFireCount();
+        const uint64_t otherBefore = Stark::GetOtherThreadFireCount();
         std::this_thread::sleep_for(std::chrono::milliseconds(1500));
         uint64_t after  = Stark::GetHookFireCount();
         uint64_t delta  = after - before;
         // [STARK-DRAIN-OFF-GAME-THREAD] The same window checks the game-thread pick: a main-thread guess that stayed
         // silent while other threads fired is given up before its gate times out a single invoke more.
-        Stark::ApplyGameThreadValidation(Stark::GetGameThreadFireCount() - gameBefore, delta);
+        Stark::ApplyGameThreadValidation(Stark::GetGameThreadFireCount() - gameBefore,
+                                         Stark::GetOtherThreadFireCount() - otherBefore);
         if (delta != 0) {
             // A pass CLEARS both pieces of failure state. Without this the idle-game
             // false positive recovers its detection and its hook but never its

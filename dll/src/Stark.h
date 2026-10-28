@@ -174,7 +174,7 @@ GameThreadLiveness GetGameThreadLiveness(int32_t thresholdMs = kStallThresholdMs
 // that resolves the address out of the vtable and calls it lands in
 // HookedProcessEvent -- on whatever thread it happened to be running. That is
 // how a pipe lane or the Mimic polling thread ends up executing the drain, whose
-// only gate is "is the queue non-empty". The requests it then runs are precisely
+// only gate was "is the queue non-empty". The requests it then runs are precisely
 // the ones a caller judged UNSAFE off the game thread; that is why they were
 // queued instead of called directly.
 //
@@ -195,8 +195,8 @@ GameThreadLiveness GetGameThreadLiveness(int32_t thresholdMs = kStallThresholdMs
 // a gate on the wrong thread never drains, which times out every invoke and is
 // worse than the defect -- so the identity is not a guess where UE states it (the
 // thread it names "GameThread"), and where it is a guess (the main thread) the
-// install validator gives the gate up unless that thread is seen firing
-// (PickGameThread / KeepGameThreadGate below).
+// install validator gives the gate up when that thread stays silent while other
+// threads fire (PickGameThread / KeepGameThreadGate below).
 
 /// Address MinHook actually patched, or 0 if no hook is installed.
 uintptr_t HookedAddress();
@@ -298,20 +298,22 @@ inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs, bool onGameThr
 }
 
 /// Does a hook entry count as another thread firing, the install validator's evidence against a main-thread guess?
+/// Not an entry under our own call: the window opens inside the invoke that installed the hook, a direct call
+/// re-enters the detour on our own thread, and at an idle menu the game thread makes no ProcessEvent call at all --
+/// counted, our own call alone would give a correct guess up.
 inline bool CountsAgainstGameThreadGuess(bool onGameThread, bool entryIsOurs) {
-    (void)entryIsOurs;
-    return !onGameThread;
+    return !onGameThread && !entryIsOurs;
 }
 
 /// After the install validation window: keep the game-thread gate, or give it up? A NAMED game thread is the engine's
 /// own GGameThreadId and is kept even when silent -- a paused game thread, where invokes wait as on any paused game.
-/// The main-thread GUESS is given up when it stayed silent while other threads fired: a gate on the wrong thread
-/// never drains and times out every invoke, which is worse than the defect it fixes. Nothing fired at all is an idle
-/// game, not evidence against the guess.
-inline bool KeepGameThreadGate(GameThreadIdSource source, uint64_t gameThreadFires, uint64_t allFires) {
+/// The main-thread GUESS is given up when it stayed silent while other threads fired (CountsAgainstGameThreadGuess):
+/// a gate on the wrong thread never drains and times out every invoke, which is worse than the defect it fixes.
+/// Nothing fired elsewhere is an idle game, not evidence against the guess.
+inline bool KeepGameThreadGate(GameThreadIdSource source, uint64_t gameThreadFires, uint64_t otherThreadFires) {
     switch (source) {
         case GameThreadIdSource::Description: return true;
-        case GameThreadIdSource::MainThread:  return gameThreadFires > 0 || allFires == 0;
+        case GameThreadIdSource::MainThread:  return gameThreadFires > 0 || otherThreadFires == 0;
         default:                              return false;
     }
 }
@@ -325,8 +327,11 @@ GameThreadIdSource GameThreadSource();
 /// Hook fires on the identified game thread only (GetHookFireCount counts every thread). Thread-safe.
 uint64_t GetGameThreadFireCount();
 
+/// Hook fires that count against the game-thread pick, as CountsAgainstGameThreadGuess says. Thread-safe.
+uint64_t GetOtherThreadFireCount();
+
 /// The install validator's verdict for the window it just measured: gives the gate up as KeepGameThreadGate says.
-void ApplyGameThreadValidation(uint64_t gameThreadFires, uint64_t allFires);
+void ApplyGameThreadValidation(uint64_t gameThreadFires, uint64_t otherThreadFires);
 
 /// [VND584-01] A queued request its waiter may abandon. A timed-out request normally stays queued and runs later from
 /// its own copy of the parameters; for a helper call made from a value that may not outlive the wait -- the object an

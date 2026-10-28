@@ -133,10 +133,11 @@ static std::atomic<uint64_t> s_hookInstalledMs{0};
 
 // [STARK-DRAIN-OFF-GAME-THREAD] The game thread, identified at install (PickGameThread). 0 = none: every hook entry
 // counts as the game thread's, the behaviour before the gate. The engine's worker threads call ProcessEvent too, so
-// the drain and the liveness stamp key on this, and the fire counter below lets the validator check the pick.
+// the drain and the liveness stamp key on this, and the two fire counters below let the validator check the pick.
 static std::atomic<uint32_t> s_gameThreadId{0};
 static std::atomic<uint8_t>  s_gameThreadSource{static_cast<uint8_t>(GameThreadIdSource::Unknown)};
 static std::atomic<uint64_t> s_gameThreadFireCount{0};
+static std::atomic<uint64_t> s_otherThreadFireCount{0};   // CountsAgainstGameThreadGuess: off it, and not ours
 static std::atomic<uint64_t> s_workerSkipCount{0};   // worker-thread entries that left queued work alone
 
 // Monotonic milliseconds since process start. steady_clock (not system_clock)
@@ -295,7 +296,11 @@ static void __fastcall HookedProcessEvent(void* thisObj, void* ufunc, void* para
     // stalled game thread looking "responsive" -- that would make every invoke wait out its timeout.
     const uint32_t gameThread = s_gameThreadId.load(std::memory_order_relaxed);
     const bool onGameThread = IsGameThreadEntry(GetCurrentThreadId(), gameThread);
-    if (gameThread != 0 && onGameThread) s_gameThreadFireCount.fetch_add(1, std::memory_order_relaxed);
+    if (gameThread != 0) {
+        if (onGameThread) s_gameThreadFireCount.fetch_add(1, std::memory_order_relaxed);
+        else if (CountsAgainstGameThreadGuess(onGameThread, InOwnPeCall()))
+            s_otherThreadFireCount.fetch_add(1, std::memory_order_relaxed);
+    }
     // Stamp the fire time so IsGameThreadResponsive / MsSinceLastHookFire can
     // tell "ticking now" from "went quiet". One clock read on the hot path —
     // cheap next to ProcessEvent's own work, and the atomic store is relaxed.
@@ -661,23 +666,30 @@ uint64_t GetGameThreadFireCount() {
     return s_gameThreadFireCount.load(std::memory_order_relaxed);
 }
 
-void ApplyGameThreadValidation(uint64_t gameThreadFires, uint64_t allFires) {
+uint64_t GetOtherThreadFireCount() {
+    return s_otherThreadFireCount.load(std::memory_order_relaxed);
+}
+
+void ApplyGameThreadValidation(uint64_t gameThreadFires, uint64_t otherThreadFires) {
     const uint32_t tid = GameThreadId();
     if (tid == 0) return;
     const GameThreadIdSource source = GameThreadSource();
-    if (KeepGameThreadGate(source, gameThreadFires, allFires)) {
-        LOG_INFO("GameThreadDispatch: game thread %lu (%s) kept: %llu of %llu hook fires in the window were its; "
-                 "worker-thread entries that left queued work so far: %llu",
+    if (KeepGameThreadGate(source, gameThreadFires, otherThreadFires)) {
+        LOG_INFO("GameThreadDispatch: game thread %lu (%s) kept: %llu hook fires on it in the window, %llu on other "
+                 "threads (our own calls not counted); worker-thread entries that left queued work so far: %llu",
                  (unsigned long)tid, GameThreadSourceText(source), (unsigned long long)gameThreadFires,
-                 (unsigned long long)allFires,
+                 (unsigned long long)otherThreadFires,
                  (unsigned long long)s_workerSkipCount.load(std::memory_order_relaxed));
         return;
     }
     s_gameThreadId.store(0, std::memory_order_release);
     s_gameThreadSource.store(static_cast<uint8_t>(GameThreadIdSource::Unknown), std::memory_order_relaxed);
-    LOG_WARN("GameThreadDispatch: the main-thread guess %lu had 0 of %llu hook fires -- not this game's game thread. "
-             "The drain gate is given up: queued invokes run on whichever thread enters ProcessEvent, as before "
-             "[STARK-DRAIN-OFF-GAME-THREAD]", (unsigned long)tid, (unsigned long long)allFires);
+    // What a silent main thread proves is only that it made no ProcessEvent call for the whole window: a thread that
+    // is not the game thread, or a game thread held up that long (a blocking load) -- the log must not pick one.
+    LOG_WARN("GameThreadDispatch: the main-thread guess %lu made no ProcessEvent call in the window while other "
+             "threads made %llu: it is not this game's game thread, or it was held up for the whole window. The drain "
+             "gate is given up for this session: queued invokes run on whichever thread enters ProcessEvent, as "
+             "before [STARK-DRAIN-OFF-GAME-THREAD]", (unsigned long)tid, (unsigned long long)otherThreadFires);
 }
 
 bool InstallHook(uintptr_t processEventAddr) {
