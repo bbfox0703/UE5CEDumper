@@ -14,8 +14,9 @@ Open work only. **Read this when deciding what to do next.**
 > (LOW) -- all fixed on 2026-10-28 (red/green in each row), as is every confirmed finding of the review of those fixes
 > (`[LEADFIX-REVIEW-2026-10-28]`); shipped in build 3660 (AOT) and checked live on 2026-10-28 (`[LIVE-3660-2026-10-28]`:
 > Debug Camera on UE 5.8 and a game-filled TArray<TAssetPtr> included; a TMap / TSet of TAssetPtr has no fixture on this
-> PC and a loaded element's label none on Extinction), which raised two pre-existing leads, `[DBGCAM-58-REENABLE]` and
-> `[LW-BACK-CONTAINER-HEADER-ADDR]`. · Before it, the
+> PC and a loaded element's label none on Extinction), which raised two pre-existing leads: `[DBGCAM-58-REENABLE]` (open)
+> and `[LW-BACK-CONTAINER-HEADER-ADDR]` (fixed after four review rounds, not yet checked live; its review left the LOW
+> `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`). · Before it, the
 > known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
 > 3649): every row it took is built and checked live, `[MH-PRERESERVE-PROXY]` included; the maintainer's calls are in
 > the rows and working-lessons §6. Still owed live, each row says how: a crash mid-capture on a large title
@@ -2404,9 +2405,9 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   `Back` -> the map view, no notice, Address filled; `[0]`'s `Addr` copied `24D06D8DE68` (no refusal); CE:
   `readQword(0x24D06D8DE68)` = 24C0363E400. Both views showed the `[LW-BACK-CONTAINER-HEADER-ADDR]` header too (the
   RowMap view's header on 0x24B8DC45600 after the crumb jump, the map view's on 0x24C0363E400 after Back).
-- ⬜ **NEW LEAD `[LW-BACK-CONTAINER-HEADER-ADDR]`** (pre-existing, not from 3660; severity to be set on re-derivation,
-  MED candidate): **Back or a crumb jump INTO a container view leaves the header on the address of the object just
-  left.** A container drill pushes its crumb without changing `CurrentAddress` (the owner's), `→` on an element sets it
+- ✅ **FIXED, not yet checked live** `[LW-BACK-CONTAINER-HEADER-ADDR]` (MED -- PIPE could fire a function at the
+  wrong object; pre-existing, not from 3660). Was: **Back or a crumb jump INTO a container view leaves the header on
+  the address of the object just left.** A container drill pushes its crumb without changing `CurrentAddress` (the owner's), `→` on an element sets it
   to the element, and the container branches of Back / the crumb jump re-render the rows through
   RepopulateContainerView without putting it back. Measured on 3660, Extinction CH01_Campaign01: a fresh
   `TalkingHeadsEventsMapClasses` view's header reads 0x24C05E5E1A0 (the owner); after `→` [0] and `Back` it reads
@@ -2418,6 +2419,35 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   TalkingHeadsEventsMapClasses(C,0xD8,E1A0)` in the stale state, base 24C05E5E1A0 in the XML). Fix direction, to be
   re-derived first: restore `CurrentAddress` (and the header identity it keys) from the container crumb on every path
   that re-renders one -- Back, Forward, the crumb jump, the re-rooted-spine Back.
+  **Re-derived** (workflow `wf_18f81fd1-6dc`: four readers and a completeness critic over LiveWalkerViewModel): wider
+  than filed. The stale header is three things -- `CurrentAddress`, the class the Functions list is for, and that list
+  -- and PIPE fires the selected function at `CurrentAddress`; every render of a container view that skips the owner's
+  walk left all three on the last object walked (after the Back out of a re-root, an unrelated one), and the GWorld
+  root kept the last object's list. **Fix** (red `d209585a`/`17a67241`, green `d206a4ad`): the container crumb records
+  its owner's class at the drill (`OwnerClassAddr`) or learns it from a later walk of the owner; every container render
+  puts the owner's address and functions back; the GWorld root lists none; a list that lands for a class no longer on
+  screen is dropped. **Review, four rounds** (`wf_dc659227-db0`, `wf_c50d74e6-322`, `wf_2d3b7a74-183`,
+  `wf_918ee269-60d`; independent refuters on every finding), each confirmed item red then green: a regression of the
+  fix -- a late DataTable RowMap row load matched a row view restored at its depth (`f8c4e4b8`/`35cec239`), and its
+  pre-existing twin, the trail running ahead of the grid on Back (`f1b9a380`/`802239b4`); the old Functions rows stayed
+  actionable under the new address until the new list landed -- they now stay on screen (emptying them resized the
+  field grid under a scroll restore, `65c1bc91`/`c3629038` then `6d6fd6b1`/`ebae2bef`) and INV / PIPE / AA(Baked) / ASM
+  refuse under their own labels ("⚠ PIPE: nothing done — this object's functions are still loading, …") until it
+  lands, the line going with the staleness (`8381aaa4`/`0e0a77f8`); coverage for the Set view, the re-hydrate /
+  re-resolve learning, the late-failure guard, the disconnect reset, the class-keyed clear and the load's hand-off
+  (`4a80d419`, `108dbdfc`, `e6638c7d`, each verified red under its own mutation in a scratch copy); comments
+  (`8fe24d92`, `682cf9c2`). Tests: 6,963, 1 skipped, 0 failed. Refuted and left: ASM refused with the rest (deliberate),
+  the test comment's inline-struct case. **Live check owed** on the next AOT build: a container drill → `→` an element →
+  Back, and the same via the crumb: the header reads and copies the owner's address, and the Functions panel lists the
+  owner's class.
+- ⬜ **NEW LEAD `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`** (LOW, pre-existing; found reviewing the fix above): on a
+  container view the actions that need a CLASS NAME take the view's own label. INV, AA(Baked) and the PIPE dialog's Copy
+  AA Script bake `Array<ObjectProperty>` (or `Map<…>` / `Set<…>` / `DataTable<…>`) as the class to find an instance of,
+  so the script finds none in CE; Find Refs started there labels the owner's referrers "References to <container>"; on a
+  GWorld-rooted container leaf the AA chip's walked symbol lands on the element buffer, not the owner; a row Copy Addr
+  with no FieldAddress falls back to owner + index × size. Separately (any view): an open PIPE dialog keeps the address
+  and function it opened with, so a slot freed and reused meanwhile gets the new class's same-named function. PIPE FIRE
+  on a container view is otherwise right -- it sends only the address, the owner's since the fix above.
 - ✅ `UE4-ASSETPTR-EXPORTS`, **a GAME-FILLED TArray<TAssetPtr> with more than one element** -- the fixture exists, in
   a level. Census in CE over the flat GUObjectArray (24-byte items; class chain followed through
   `UStruct::SuperStruct` at +0x30, checked against UObject's class; `out/live3660b/census_maps.lua`): at the **main
