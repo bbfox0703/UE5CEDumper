@@ -587,84 +587,6 @@ public class LiveWalkerForwardNavTests
                 ? throw new System.InvalidOperationException("walk failed")
                 : base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
     }
-}
-
-/// <summary>
-/// The browser-style shortcut policy. Split out from the window plumbing precisely
-/// so it can be tested: a physical 4th mouse button and a real Alt+Arrow press can't
-/// be produced headlessly, but the decision they feed into can.
-/// </summary>
-public class LiveWalkerNavShortcutTests
-{
-    private const bool OnTab = true, Active = true;
-
-    [Theory]
-    [InlineData(Key.Left, NavShortcut.Back)]
-    [InlineData(Key.Right, NavShortcut.Forward)]
-    public void AltArrow_Navigates(Key key, NavShortcut expected)
-        => Assert.Equal(expected,
-            LiveWalkerNavShortcuts.Resolve(key, KeyModifiers.Alt, OnTab, Active));
-
-    [Theory]
-    [InlineData(Key.Left)]
-    [InlineData(Key.Right)]
-    public void BareArrow_IsLeftToTheGrid(Key key)
-        => Assert.Equal(NavShortcut.None,
-            LiveWalkerNavShortcuts.Resolve(key, KeyModifiers.None, OnTab, Active));
-
-    [Fact]
-    public void CtrlAltArrow_IsNotOurs()
-    {
-        // Display drivers bind Ctrl+Alt+Arrow to screen rotation; an exact-modifier
-        // match keeps us out of combos other software owns.
-        Assert.Equal(NavShortcut.None, LiveWalkerNavShortcuts.Resolve(
-            Key.Left, KeyModifiers.Control | KeyModifiers.Alt, OnTab, Active));
-    }
-
-    [Theory]
-    [InlineData(Key.BrowserBack, NavShortcut.Back)]
-    [InlineData(Key.BrowserForward, NavShortcut.Forward)]
-    public void DedicatedBrowserKeys_WorkWithOrWithoutModifiers(Key key, NavShortcut expected)
-    {
-        Assert.Equal(expected, LiveWalkerNavShortcuts.Resolve(key, KeyModifiers.None, OnTab, Active));
-        Assert.Equal(expected, LiveWalkerNavShortcuts.Resolve(key, KeyModifiers.Shift, OnTab, Active));
-    }
-
-    [Theory]
-    [InlineData(PointerUpdateKind.XButton1Pressed, NavShortcut.Back)]
-    [InlineData(PointerUpdateKind.XButton2Pressed, NavShortcut.Forward)]
-    public void SideButtons_Navigate(PointerUpdateKind kind, NavShortcut expected)
-        => Assert.Equal(expected, LiveWalkerNavShortcuts.Resolve(kind, OnTab, Active));
-
-    [Theory]
-    [InlineData(PointerUpdateKind.LeftButtonPressed)]
-    [InlineData(PointerUpdateKind.RightButtonPressed)]
-    [InlineData(PointerUpdateKind.MiddleButtonPressed)]
-    [InlineData(PointerUpdateKind.Other)]
-    public void OrdinaryClicks_PassStraightThrough(PointerUpdateKind kind)
-        => Assert.Equal(NavShortcut.None, LiveWalkerNavShortcuts.Resolve(kind, OnTab, Active));
-
-    [Fact]
-    public void OffTheLiveWalkerTab_NothingFires()
-    {
-        Assert.Equal(NavShortcut.None,
-            LiveWalkerNavShortcuts.Resolve(Key.Left, KeyModifiers.Alt, isLiveWalkerTab: false, Active));
-        Assert.Equal(NavShortcut.None,
-            LiveWalkerNavShortcuts.Resolve(Key.BrowserBack, KeyModifiers.None, isLiveWalkerTab: false, Active));
-        Assert.Equal(NavShortcut.None,
-            LiveWalkerNavShortcuts.Resolve(PointerUpdateKind.XButton1Pressed, isLiveWalkerTab: false, Active));
-    }
-
-    [Fact]
-    public void WithTheWindowInTheBackground_NothingFires()
-    {
-        // Matters for the mouse route: clicking a side button on a background window
-        // activates it first, so the press really does arrive.
-        Assert.Equal(NavShortcut.None,
-            LiveWalkerNavShortcuts.Resolve(Key.Left, KeyModifiers.Alt, OnTab, windowActive: false));
-        Assert.Equal(NavShortcut.None,
-            LiveWalkerNavShortcuts.Resolve(PointerUpdateKind.XButton1Pressed, OnTab, windowActive: false));
-    }
 
     // ── A container view stands for its owner ── [LW-BACK-CONTAINER-HEADER-ADDR]
     //
@@ -902,5 +824,83 @@ public class LiveWalkerNavShortcutTests
 
         Assert.Equal(Elem, vm.CurrentAddress);
         Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+    }
+}
+
+/// <summary>
+/// The browser-style shortcut policy. Split out from the window plumbing precisely
+/// so it can be tested: a physical 4th mouse button and a real Alt+Arrow press can't
+/// be produced headlessly, but the decision they feed into can.
+/// </summary>
+public class LiveWalkerNavShortcutTests
+{
+    private const bool OnTab = true, Active = true;
+
+    [Theory]
+    [InlineData(Key.Left, NavShortcut.Back)]
+    [InlineData(Key.Right, NavShortcut.Forward)]
+    public void AltArrow_Navigates(Key key, NavShortcut expected)
+        => Assert.Equal(expected,
+            LiveWalkerNavShortcuts.Resolve(key, KeyModifiers.Alt, OnTab, Active));
+
+    [Theory]
+    [InlineData(Key.Left)]
+    [InlineData(Key.Right)]
+    public void BareArrow_IsLeftToTheGrid(Key key)
+        => Assert.Equal(NavShortcut.None,
+            LiveWalkerNavShortcuts.Resolve(key, KeyModifiers.None, OnTab, Active));
+
+    [Fact]
+    public void CtrlAltArrow_IsNotOurs()
+    {
+        // Display drivers bind Ctrl+Alt+Arrow to screen rotation; an exact-modifier
+        // match keeps us out of combos other software owns.
+        Assert.Equal(NavShortcut.None, LiveWalkerNavShortcuts.Resolve(
+            Key.Left, KeyModifiers.Control | KeyModifiers.Alt, OnTab, Active));
+    }
+
+    [Theory]
+    [InlineData(Key.BrowserBack, NavShortcut.Back)]
+    [InlineData(Key.BrowserForward, NavShortcut.Forward)]
+    public void DedicatedBrowserKeys_WorkWithOrWithoutModifiers(Key key, NavShortcut expected)
+    {
+        Assert.Equal(expected, LiveWalkerNavShortcuts.Resolve(key, KeyModifiers.None, OnTab, Active));
+        Assert.Equal(expected, LiveWalkerNavShortcuts.Resolve(key, KeyModifiers.Shift, OnTab, Active));
+    }
+
+    [Theory]
+    [InlineData(PointerUpdateKind.XButton1Pressed, NavShortcut.Back)]
+    [InlineData(PointerUpdateKind.XButton2Pressed, NavShortcut.Forward)]
+    public void SideButtons_Navigate(PointerUpdateKind kind, NavShortcut expected)
+        => Assert.Equal(expected, LiveWalkerNavShortcuts.Resolve(kind, OnTab, Active));
+
+    [Theory]
+    [InlineData(PointerUpdateKind.LeftButtonPressed)]
+    [InlineData(PointerUpdateKind.RightButtonPressed)]
+    [InlineData(PointerUpdateKind.MiddleButtonPressed)]
+    [InlineData(PointerUpdateKind.Other)]
+    public void OrdinaryClicks_PassStraightThrough(PointerUpdateKind kind)
+        => Assert.Equal(NavShortcut.None, LiveWalkerNavShortcuts.Resolve(kind, OnTab, Active));
+
+    [Fact]
+    public void OffTheLiveWalkerTab_NothingFires()
+    {
+        Assert.Equal(NavShortcut.None,
+            LiveWalkerNavShortcuts.Resolve(Key.Left, KeyModifiers.Alt, isLiveWalkerTab: false, Active));
+        Assert.Equal(NavShortcut.None,
+            LiveWalkerNavShortcuts.Resolve(Key.BrowserBack, KeyModifiers.None, isLiveWalkerTab: false, Active));
+        Assert.Equal(NavShortcut.None,
+            LiveWalkerNavShortcuts.Resolve(PointerUpdateKind.XButton1Pressed, isLiveWalkerTab: false, Active));
+    }
+
+    [Fact]
+    public void WithTheWindowInTheBackground_NothingFires()
+    {
+        // Matters for the mouse route: clicking a side button on a background window
+        // activates it first, so the press really does arrive.
+        Assert.Equal(NavShortcut.None,
+            LiveWalkerNavShortcuts.Resolve(Key.Left, KeyModifiers.Alt, OnTab, windowActive: false));
+        Assert.Equal(NavShortcut.None,
+            LiveWalkerNavShortcuts.Resolve(PointerUpdateKind.XButton1Pressed, OnTab, windowActive: false));
     }
 }
