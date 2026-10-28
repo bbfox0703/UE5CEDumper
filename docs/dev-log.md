@@ -27,6 +27,31 @@ builds ≤696 in
 
 -----
 
+## 2026-10-29 (build 3665) — A game-thread guess is no longer dropped over the DLL's own calls `[STARK-DRAIN-OFF-GAME-THREAD]`
+
+- **Follow-up from build 3664's review.** When no thread carries the name "GameThread", the DLL guesses the main thread,
+  and the install check drops that guess if it stayed silent while other threads made ProcessEvent calls. Those "other"
+  calls included the DLL's own. The check starts inside the call that installed the hook, and a direct call (the CE
+  mailbox's path for functions safe off the game thread) goes back through the hook on our own thread. A game thread
+  can be silent for the check's whole 1.5 s (Avowed, 2026-10-27: 0 calls), so our own call alone could drop a
+  correct guess. Now only other threads' calls count. Red `7d66426f`, green `2f8516ef`.
+- **The WARN when the guess is dropped says no more than it knows.** It used to say the main thread "is not this
+  game's game thread". A silent thread proves only that it made no call in those 1.5 s. The WARN now says that, gives
+  "not the game thread" and "held up the whole time" as the two possible reasons, and says the gate is off for the
+  session. The check's "kept" line now gives two counts: calls on the game thread, and calls on other threads with
+  our own left out.
+- The live rig prints the give-up WARN and the whole "kept" line (`ee275f4a`, `8dd4b74a`). A comment that said an
+  idle menu makes no ProcessEvent call at all now cites the Avowed measurement instead (`18540073`).
+- Checked live on 3665 (a smoke run). Both fixtures picked the thread named GameThread, which is also the main thread.
+  DumperTest Shipping (UE 5.4): "kept: 138 … on it, 46 on other threads", and 20/20 `CollectGarbage`. DumperTest58
+  Development (UE 5.8): "kept: 145 … on it, 44 on other threads", 50 Debug Camera toggles all as asked, 0 SEH, and 0
+  `IsInGameThread` assertions. The changed path, a main-thread guess, still needs a game whose game thread has no
+  name, as listed for 3664.
+- Review: one adversarial round on the follow-up. Four claims, two confirmed, both LOW and in text only (the idle-menu
+  sentence and the rig's 220-character cut), both fixed above.
+- Tests: dll_core_test 1,363 checks and dll_helpers_test 3,684, 0 failures; C# 7,071 total, 0 failed, 1 skipped;
+  headless UI 69; 36 gates. AOT UI 61,442,048 bytes.
+
 ## 2026-10-29 (build 3664) — Queued calls run on the game thread only `[STARK-DRAIN-OFF-GAME-THREAD]`
 
 - **A queued call (FIRE, Teleport, Fly, Debug Camera, Invoke…) now runs only on the game thread.** UE 5.8 and 5.4
