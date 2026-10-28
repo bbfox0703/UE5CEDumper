@@ -414,7 +414,9 @@ public static class CoordCsvCodec
                 }
                 error = Unpaired(physical, lineStart, closedQuote
                     ? "a quote inside a quoted field must be doubled (\"\"), and this one ends the field early"
-                    : "a quote in the middle of a field, which a quote may only open (or appear doubled inside a quoted one)");
+                    : field.ToString().Trim().Length == 0
+                        ? "a space before a field's opening quote -- nothing may come between the delimiter and the quote"
+                        : "a quote in the middle of a field, which a quote may only open (or appear doubled inside a quoted one)");
                 return records;
             }
             if (closedQuote && c != delimiter && c != '\r' && c != '\n')
@@ -426,8 +428,11 @@ public static class CoordCsvCodec
                     ? Unpaired(quoteLine, quoteLineStart,
                         $"a quoted field opened on this line runs on to line {physical}, where a quote ends it " +
                         "and text follows -- a quote on one of the two lines is unpaired")
-                    : Unpaired(physical, lineStart,
-                        "text follows a field's closing quote, so a quote inside it was not doubled (\"\")");
+                    : c == ' ' || c == '\t'
+                        ? Unpaired(physical, lineStart,
+                            "a space after a field's closing quote -- only the delimiter or a line break may follow it")
+                        : Unpaired(physical, lineStart,
+                            "text follows a field's closing quote, so a quote inside it was not doubled (\"\")");
                 return records;
             }
             if (c == delimiter)
