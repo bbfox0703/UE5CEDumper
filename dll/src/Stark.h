@@ -299,8 +299,9 @@ inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs, bool onGameThr
 
 /// Does a hook entry count as another thread firing, the install validator's evidence against a main-thread guess?
 /// Not an entry under our own call: the window opens inside the invoke that installed the hook, a direct call
-/// re-enters the detour on our own thread, and at an idle menu the game thread makes no ProcessEvent call at all --
-/// counted, our own call alone would give a correct guess up.
+/// re-enters the detour on our own thread, and a game thread can make no ProcessEvent call for the whole window
+/// (Avowed, 2026-10-27: the PE validator counted 0 fires in its 1500 ms). Counted, our own call alone would then
+/// give a correct guess up.
 inline bool CountsAgainstGameThreadGuess(bool onGameThread, bool entryIsOurs) {
     return !onGameThread && !entryIsOurs;
 }

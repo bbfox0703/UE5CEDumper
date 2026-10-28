@@ -829,8 +829,8 @@ static void Test_Stark_DrainOnGameThreadOnly() {
 
     // What counts as "other threads fired". The validator's window opens inside the invoke that installed the hook,
     // and a direct call (UE5_CallProcessEventDirect, the mailbox's off-thread-safe path) re-enters the detour on OUR
-    // thread under InOwnPeCall. At an idle menu the game thread makes no ProcessEvent call at all, so counting those
-    // re-entries gave a correct main-thread guess up on nothing but our own call.
+    // thread under InOwnPeCall. A game thread can make no ProcessEvent call for the whole window (Avowed, 2026-10-27:
+    // 0 fires in 1500 ms), so counting those re-entries could give a correct main-thread guess up on our own call alone.
     EXPECT("an engine worker's entry counts against the guess",
            Stark::CountsAgainstGameThreadGuess(false, false));
     EXPECT("our own nested call off the game thread does NOT",
