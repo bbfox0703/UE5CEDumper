@@ -594,6 +594,19 @@ public class CoordCsvUnpairedQuoteTests
     }
 
     [Fact]
+    public void ASpaceBesideAQuote_IsNamedAsTheSpace_NotAsAnUndoubledQuote()
+    {
+        // Review round 2: a space after a closing quote was diagnosed as "a quote inside it was not doubled" --
+        // advice that cannot fix the file. Still refused (no repair), but the reason must name what is wrong.
+        var after = Assert.Single(CoordCsvCodec.Parse(Header + "a,\"Boss\" ,G,M,1,2,3,0,0,0\n").Issues).Reason;
+        Assert.Contains("space", after, StringComparison.Ordinal);
+        Assert.DoesNotContain("doubled", after, StringComparison.Ordinal);
+
+        var before = Assert.Single(CoordCsvCodec.Parse(Header + "a, \"Boss\",G,M,1,2,3,0,0,0\n").Issues).Reason;
+        Assert.Contains("space", before, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AnUnpairedQuoteInTheLastRow_StillImportsNothing()
         => AssertStopped(CoordCsvCodec.Parse(Header + Good + Good + "a,Ruin\",G,M,1,2,3,0,0,0\n"), 4);
 
