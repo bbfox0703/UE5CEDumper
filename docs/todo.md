@@ -1906,6 +1906,13 @@ are not repeated here; each line says what ran and what it showed.
   TX and NO `read_array_elements` after it (3657 sent one with `"limit":0`). `V1a_GrowContainers` Count 4, Refresh: "[4
   x IntProperty]" 7100-7103 at the new buffer, again from the walk alone. The on-screen race (a refill landing between
   the two requests) is not reproduced; the claim is only that the zero-count request is gone.
+- ✅ `LW-EMPTIED-STRUCT-ARRAY-REFRESH-ERRORS` (MED), DumperTest 5.4 Shipping: PA_Mannequin's
+  PhysicsConstraintTemplate_9, `ProfileHandles` (+0x298, header 0x1E1942107A8) drilled: "[3 x
+  PhysicsConstraintProfileHandle]", elements 0x160 apart (over the DLL's 256-byte cap). CE wrote ArrayNum (+8) 3 -> 0
+  (Data and Max untouched), one Refresh: "[0 x PhysicsConstraintProfileHandle]" over an empty grid, no status line, no
+  red line; ui-pipe-0.log has that Refresh's `walk_instance` TX and nothing after it, and the DLL's pipe-0.log has no
+  "elem_size too large" (3657: `read_array_elements` refused, "DLL error: elem_size too large (max 256)", and the
+  three old rows stayed). ArrayNum written back to 3, Refresh: three rows again.
 - 🆕 `[LW-CRUMB-UNDERSCORE]` (LOW, cosmetic, seen during the check above): Live Walker's breadcrumb drops the first
   underscore of a name -- `DumperTestActor_0` reads "DumperTestActor0", `Arr_Churn` reads "ArrChurn". The crumb is a
   `Button` whose `Content` is the bound label, and a Button's presenter takes the first `_` as an access-key marker.
