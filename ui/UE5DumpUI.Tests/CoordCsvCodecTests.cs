@@ -622,6 +622,22 @@ public class CoordCsvUnpairedQuoteTests
         Assert.Equal(3, multi.Line);
     }
 
+    [Theory]
+    [InlineData("k3f9,\"Mountain,Fields\",Map01,67162.398,-20380.643,35.791,347.71,31.98,0\n")]
+    [InlineData("k1,\"Gate\",\" east\",,,100,200,300,0,90,0\n")]
+    public void ARecordWithADifferentCellCount_StopsTheImport(string row)
+    {
+        // Review round 5: a stray quote PAIR is valid RFC 4180 grammar but merges or splits cells, and the reader
+        // never compared a record with the header (RFC 4180 2.4) -- every later column shifted, every coordinate
+        // wrong, no issue.
+        var r = CoordCsvCodec.Parse(Header + row);
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(2, issue.Line);
+        Assert.Contains("cells", issue.Reason, StringComparison.Ordinal);
+        Assert.Contains("nothing was imported", issue.Reason, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void AnUnpairedQuoteInTheLastRow_StillImportsNothing()
         => AssertStopped(CoordCsvCodec.Parse(Header + Good + Good + "a,Ruin\",G,M,1,2,3,0,0,0\n"), 4);
