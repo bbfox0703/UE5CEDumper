@@ -502,6 +502,86 @@ public class CoordLuaParserTests
         Assert.Contains("unpaired quote", issue.Reason, StringComparison.Ordinal);
     }
 
+    // ── Review round 5: the import reads Lua's grammar, not the characters beside each string ──
+    //
+    // Four rounds of adjacency checks each closed one shape and opened another. Round 5 found three valid shapes
+    // round 4 had begun to refuse and seven stray-quote shapes that still imported silently -- all decided by Lua
+    // 5.4.6 itself, which these tests follow.
+
+    [Theory]
+    [InlineData("tags={'chest','rare'}")]
+    [InlineData("data={ 1, 'two', true }")]
+    [InlineData("deep={ list={'a', {'b'}} }")]
+    [InlineData("m={ a='x'; 'y' }")]
+    [InlineData("m={ ['a']\n = 1 }")]
+    public void AnUnknownKeysNestedTable_MayHoldAnythingLuaAllows(string unknown)
+    {
+        var r = CoordLuaParser.Parse(Wrap("  { uid='a', label='Door', map='M', x=1, y=2, z=3, " + unknown + " },\n" + OneEntry));
+        Assert.Empty(r.Issues);
+        Assert.Equal(new[] { "a", "k3f9" }, r.Entries.Select(e => e.Uid));
+    }
+
+    [Fact]
+    public void AnUnknownKey_MayComeBeforeTheKnownOnes()
+    {
+        var r = CoordLuaParser.Parse(Wrap("  { tags={'a'}, uid='a', label='Door', map='M', x=1, y=2, z=3 },"));
+        Assert.Empty(r.Issues);
+        Assert.Equal("Door", Assert.Single(r.Entries).Label);
+    }
+
+    [Theory]
+    [InlineData("};")]
+    [InlineData("} ; -- done")]
+    [InlineData("}\n;")]
+    public void ASemicolonMayEndTheCoordsStatement(string close)
+    {
+        var r = CoordLuaParser.Parse("-- @UE5CD:COORDS v1\nlocal COORDS = {\n" + OneEntry + "\n" + close + "\n-- @UE5CD:END\n");
+        Assert.Empty(r.Issues);
+        Assert.Single(r.Entries);
+    }
+
+    [Fact]
+    public void AnEmptyTableWithASemicolon_IsStillTheEmptyList()
+    {
+        var r = CoordLuaParser.Parse("-- @UE5CD:COORDS v1\nlocal COORDS = {};\n-- @UE5CD:END\n");
+        Assert.Equal("the coordinate list is empty", Assert.Single(r.Issues).Reason);
+    }
+
+    [Theory]
+    [InlineData("label='Gate B'}}''")]
+    [InlineData("label='C:\\'\\Games'")]
+    [InlineData("label='Gate B']=''")]
+    [InlineData("label='Bridge', east side = 'safe'")]
+    [InlineData("label='Bridge',=' safe'")]
+    [InlineData("label='Bridge',['safe'")]
+    public void AStrayQuoteLuaRefuses_StopsTheImport(string fields)
+    {
+        var r = CoordLuaParser.Parse(Wrap("  { uid='a', " + fields + ", map='M', x=1, y=2, z=3 },\n" + OneEntry));
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(3, issue.Line);
+        Assert.Contains("nothing was imported", issue.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AStrayQuoteWhoseCommentSwallowsTheRestOfTheLine_IsNamedOnThatLine()
+    {
+        var r = CoordLuaParser.Parse(Wrap("  { uid='a', label='Bobs', -- spot', map='M', x=1, y=2, z=3 },\n" + OneEntry));
+        Assert.Empty(r.Entries);
+        Assert.Equal(3, Assert.Single(r.Issues).Line);
+    }
+
+    [Fact]
+    public void AnEntryCutShortByACommentedOutBrace_IsReported_NotImportedAtTheOrigin()
+    {
+        // `'Gate B'}--'` ends the entry and comments out the rest of the line. With the documented missing-comma
+        // tolerance between entries this is valid grammar here (Lua refuses it), so it cannot stop the import as a
+        // quote fault -- but an entry with no coordinates is reported, never imported at (0,0,0).
+        var r = CoordLuaParser.Parse(Wrap("  { uid='a', label='Gate B'}--', map='M', x=1, y=2, z=3 },\n" + OneEntry));
+        Assert.Equal("k3f9", Assert.Single(r.Entries).Uid);
+        Assert.Contains(r.Issues, i => i.Line == 3 && i.Column == "x");
+    }
+
     [Fact]
     public void NestedTablesAndBracketKeys_AreNotMistakenForStrayQuotes()
     {
