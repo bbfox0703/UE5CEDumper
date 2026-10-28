@@ -2013,6 +2013,25 @@ are not repeated here; each line says what ran and what it showed.
   `invoke_helper_test.lua` models timers pumping only after the chunk returns, and `check_ce_untick_placement` checks
   only that an untick is deferred, so neither can see the order. The generated scripts, `ue5_freeze_helper.lua` and the
   .CT put the modal first.
+- ✅ **Asset pointers on Extinction** (UE 4.15, version.dll proxy refreshed 3657 -> 3659, 200,585 objects at the main
+  menu, CE 7.7 + AOBMaker attached). `[ASSETPTR-BAKED-TOKEN]`: Live Walker on Default__KismetSystemLibrary,
+  `Conv_AssetToObject` (2 params, 40 B) -> PIPE, FIRE with the box at 0 -> "[#1] ProcessEvent OK (result=0)", "Asset
+  (out) = {index 0, serial 0}", "ReturnValue (return) = 0x0" (3658 printed the slot as a 32-byte hex dump); a typed 1
+  is refused by the dialog ("ERROR: Asset: AssetObject parameters cannot be built from a textbox …"). Tools → Inject
+  Helper into Current CE Table, then AA(Baked) with Verify ticked: the record's PARAMS row reads `{ name='Asset',
+  type='asset', offset=0, value=0 },  -- AssetObject 32B` (3658: `int32`), and ticking it prints "[Invoke] OK:
+  KismetSystemLibrary::Conv_AssetToObject -> ReturnValue (pointer@32) = 0x0" (pipe-0.log `INVOKE_BY_NAME complete,
+  result=0`, the CDO as target). The script edited to `value=1` and ticked: "[Invoke] FAILED: … [ue5_invoke] param
+  'Asset' is an asset pointer -- its path is a string inside the game this cannot build, so only value=0 (null) can be
+  sent" plus the "Invoke failed:" dialog, and NO new `INVOKE_BY_NAME` line (3658 wrote the 1 over the weak index and
+  ran it). **A TAssetPtr member of a struct-array element** (`ASSETPTR-CEXML-CONTAINER-NOPATH`, the struct-array
+  preview): Instances → BlinkMapSettings / MapSettings_Chapter01 → Copy CE XML gives `MapsToUse > [0] > Map` as a group
+  of `WeakPtr` (+0, 8 Bytes, hex) and `AssetPath` (+10, String 256, Unicode, Offsets 0) (3657: one bare 8-byte
+  "Map"); loaded into CE, WeakPtr reads `00000000FFFFFFFF` and AssetPath
+  `/Game/Maps/Campaign/Campaign_01/Campaign_01_BG.Campaign_01_BG`. **CSX** (Push to CE Structure Dissect on
+  MapSettings_Extinction, "2 structures, 31 elements"): the `MapsToUse` child holds `[0] / Map` … `[13] / Map` at 0x0,
+  0x30, … 0x270 (stride 48), each 8 bytes (vtQword) in hexadecimal, `[i] / TerritoryTypes` a pointer at +0x20;
+  `[0]/Map` reads `FFFFFFFF` live (before 3657: Array of byte, 32).
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
