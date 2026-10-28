@@ -4608,6 +4608,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (string.IsNullOrEmpty(CurrentAddress) || Breadcrumbs.Count == 0) return;
         if (IsExporting) return;   // an export is already running — its Cancel button is showing
         if (RefuseWhileGridBehindSpine("Copy CE XML")) return;   // [A4-NAV-BACKFIRST-GRAFT]
+        if (RefuseOnDefinitionView(ExportCeLabel)) return;
 
         // Record what this heavy operation costs the DLL dispatcher. Automatic
         // rather than a measurement session: the evidence then accumulates from
@@ -5010,6 +5011,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         if (selectedSnapshot.Count == 0 || string.IsNullOrEmpty(CurrentAddress) || Breadcrumbs.Count == 0) return;
         if (RefuseWhileGridBehindSpine("Copy CE Field")) return;   // [A4-NAV-BACKFIRST-GRAFT]
+        if (RefuseOnDefinitionView("Copy CE Field")) return;
 
         // Record what this heavy operation costs the DLL dispatcher. Automatic
         // rather than a measurement session: the evidence then accumulates from
@@ -5280,6 +5282,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task PushCeFieldToCeAsync()
     {
         if (_aobMaker == null) return;
+        if (RefuseOnDefinitionView("+CE Field (flat)")) return;
 
         // Same selection source as ExportCeFieldXmlAsync (snapshot, falling back to the
         // single selected row if SelectionChanged hasn't synced yet).
@@ -5358,6 +5361,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task GenerateCeAAScriptAsync()
     {
         if (string.IsNullOrEmpty(CurrentAddress)) return;
+        if (RefuseOnDefinitionView("AA Script")) return;
 
         try
         {
@@ -5848,6 +5852,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task CopyFieldAddressAsync(LiveFieldValue? field)
     {
         if (field == null) return;
+        if (RefuseOnDefinitionView(AddrLabel)) return;
 
         try
         {
@@ -6068,6 +6073,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task HexFieldAddressAsync(LiveFieldValue? field)
     {
+        if (field != null && RefuseOnDefinitionView("HEX")) return;
         if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.FieldAddress)) return;
         // PayloadAddress, not FieldAddress: on a checked build a delegate's bytes start
         // 8 bytes after the field, and parking CE's hex view on the access detector shows
@@ -6094,6 +6100,22 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     internal const string KeyStale = "str.LiveWalker.Stale";
     private static string StaleText => AobMakerStatus.Say(KeyStale,
         "⚠ This object appears to have been freed/recycled — re-open it from \U0001F30D GWorld or the finder.");
+    internal const string KeyDefinitionView = "str.LiveWalker.DefinitionView";
+    internal static string DefinitionViewText => AobMakerStatus.Say(KeyDefinitionView,
+        "ℹ This is a type definition (its member layout), not a live object: its rows have no address and no value, "
+        + "so they cannot be edited, frozen or exported as data.");
+    internal const string KeyDefinitionNoData = "str.Walk.DefinitionNoData";
+    /// <summary>[CEXML-DEFINITION-VIEW-AS-DATA] An action that reads or writes a row's memory, refused on a definition
+    /// view: the offsets describe instances of the type, and at the type object's address they land on its own fields.
+    /// Instance Finder says the same.</summary>
+    internal static string DefinitionNoDataText(string action) => AobMakerStatus.Say(KeyDefinitionNoData,
+        "⚠ {0}: nothing done — this is a type definition (its member layout), not a live object, so there is no data "
+        + "at these offsets.", action);
+    // The refused actions are named by their buttons' own labels.
+    internal const string KeyExportCeLabel = "str.LiveWalker.ExportCE";
+    internal static string ExportCeLabel => AobMakerStatus.Say(KeyExportCeLabel, "Copy CE XML");
+    internal const string KeyAddrLabel = "str.LiveWalker.Addr";
+    internal static string AddrLabel => AobMakerStatus.Say(KeyAddrLabel, "Addr");
 
     /// <summary>The status line for a walk that found no object to read, or null when it read one. One copy, because a
     /// Refresh inside a container view walks the PARENT, and must say what a walk of that object says.
@@ -6150,6 +6172,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task AddFieldToCeAsync(LiveFieldValue? field)
     {
+        if (field != null && RefuseOnDefinitionView("+CE")) return;
         if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.FieldAddress)) return;
         var t = CeXmlExportService.MapFieldToCeRecordType(field);
         // PayloadAddress for the same reason the CE XML exporter adds the pad: a record left
@@ -6873,6 +6896,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         return true;
     }
 
+    /// <summary>[CEXML-DEFINITION-VIEW-AS-DATA] For the commands that read a row's memory or export the rows as data:
+    /// refuse on a definition view, whose rows are a type's layout and whose address is the type object's own.</summary>
+    private bool RefuseOnDefinitionView(string what)
+    {
+        if (!_isDefinitionView) return false;
+        StatusText = DefinitionNoDataText(what);
+        _log.Info($"{what} refused: {CurrentAddress} is a type definition, not an instance");
+        return true;
+    }
+
     /// <summary>
     /// A spine-first navigation's walk has landed, but the spine moved on meanwhile (another
     /// navigation was pressed while it loaded). Rendering now would install this walk's rows and
@@ -7298,6 +7331,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             _log.Info($"UpdateDisplay: gap-fill skipped at {result.Address} "
                     + $"(PropertiesSize={result.PropertiesSize}) — reflected fields are complete");
         }
+        else if (result.IsDefinition)
+        {
+            StatusText = DefinitionViewText;
+        }
 
         // Compute absolute field addresses
         ulong baseAddr = 0;
@@ -7314,7 +7351,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         var newFields = result.Fields;
         foreach (var f in newFields)
         {
-            if (baseAddr != 0)
+            // [CEXML-DEFINITION-VIEW-AS-DATA] A definition's offsets are a type's layout: at the type object's address
+            // they land on its own fields, and every action keyed on FieldAddress (edit, freeze, Hex, +CE) would hit them.
+            if (baseAddr != 0 && !result.IsDefinition)
                 f.FieldAddress = $"0x{baseAddr + (ulong)f.Offset:X}";
         }
 

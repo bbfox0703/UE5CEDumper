@@ -1197,7 +1197,7 @@ Dropped when `lean` is set:
 
 | level | keys |
 |---|---|
-| instance | `name`, `class`, `class_addr`, `outer`, `outer_name`, `outer_class`, `is_definition`, `props_size` (kept: `addr`, `stale`) |
+| instance | `name`, `class`, `class_addr`, `outer`, `outer_name`, `outer_class`, `props_size` (kept: `addr`, `stale`, and `is_definition`, without which an exporter lays a type's member layout out as the pointee's data -- `[CEXML-DEFINITION-VIEW-AS-DATA]`) |
 | field | `hex`, `value`, `str_value`, `enum_name`, `enum_value`, `ptr_name`, `bool_mask`, `bool_byte_offset`, `array_inner_addr` |
 | `elements[]` | `h`, `pn` |
 | `elements[].sf[]` | `v`, `pn` |

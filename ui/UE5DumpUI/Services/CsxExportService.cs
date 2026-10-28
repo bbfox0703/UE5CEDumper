@@ -519,12 +519,15 @@ public static class CsxExportService
             if (!IsObjectPropertyType(field.TypeName)) continue;
             if (string.IsNullOrEmpty(field.PtrAddress) || field.PtrAddress == "0x0") continue;
             if (resolved.ContainsKey(field.PtrAddress)) continue;
+            // [CEXML-DEFINITION-VIEW-AS-DATA] A pointer to a type walks as the type's member layout, which is not the
+            // pointee's data: a child structure built from it reads the UScriptStruct / UClass object at instance offsets.
+            if (Helpers.ReflectionMetaClassifier.WalksAsDefinition(field.PtrClassName)) continue;
             if (!visited.Add(field.PtrAddress)) continue; // cycle detection
 
             try
             {
                 var result = await dump.WalkInstanceAsync(field.PtrAddress, field.PtrClassAddr, arrayLimit, ct: ct);
-                if (result.Fields.Count > 0)
+                if (result.Fields.Count > 0 && !result.IsDefinition)
                 {
                     resolved[field.PtrAddress] = result.Fields;
                     // Recurse deeper for nested pointers

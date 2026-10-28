@@ -2565,9 +2565,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // the UI parser needs no new branch (a missing key already falls back to
         // its default) and an older DLL that ignores the flag simply returns the
         // full shape. The header below is 99% dead weight for an export: the
-        // exporter reads `fields` and nothing else, and a batch reply is
+        // exporter reads `fields` and little else, and a batch reply is
         // positional, so even `addr` is redundant. `addr` and `stale` are kept
-        // anyway — identity for logs/debugging, and the freed-slot signal.
+        // anyway — identity for logs/debugging, and the freed-slot signal --
+        // and so is `is_definition`, which an exporter does read.
         auto EncodeInstanceWalkToJson = [&](const Ubel::InstanceWalkResult& result,
                                             bool lean = false) -> json {
             json data;
@@ -2582,7 +2583,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             }
             // Optional keys stay OPTIONAL — emitting them unconditionally would
             // change the single-call wire shape and break byte-equivalence.
-            if (!lean && result.isDefinition)
+            // [CEXML-DEFINITION-VIEW-AS-DATA] In BOTH lean and full: a definition's fields are a type's layout, and an
+            // exporter that cannot tell lays them out as the pointee's data.
+            if (result.isDefinition)
                 data["is_definition"] = true;
             if (result.isStale)
                 data["stale"] = true;

@@ -432,6 +432,7 @@ public static class CeXmlExportService
             if (!IsObjectPropertyType(field.TypeName)) continue;
             if (string.IsNullOrEmpty(field.PtrAddress) || field.PtrAddress == "0x0") continue;
             if (resolved.ContainsKey(field.PtrAddress)) continue;
+            if (ReflectionMetaClassifier.WalksAsDefinition(field.PtrClassName)) continue;   // a type, not data
             if (!visited.Add(field.PtrAddress)) continue; // cycle protection
             pending.Add((field.PtrAddress, field.PtrClassAddr));
         }
@@ -454,6 +455,7 @@ public static class CeXmlExportService
         {
             var result = walked[i];
             if (result.Fields.Count == 0) continue;   // reclaimed / bad target
+            if (result.IsDefinition) continue;         // see WalkAndRecurseAsync
 
             try
             {
@@ -602,6 +604,7 @@ public static class CeXmlExportService
             if (!IsObjectPropertyType(f.TypeName)) continue;
             if (string.IsNullOrEmpty(f.PtrAddress) || f.PtrAddress == "0x0") continue;
             if (resolvedInstances.ContainsKey(f.PtrAddress)) continue;
+            if (ReflectionMetaClassifier.WalksAsDefinition(f.PtrClassName)) continue;   // a type, not data
             if (!visited.Add("P:" + f.PtrAddress)) continue;
             await WalkAndRecurseAsync(dump, f.PtrAddress, f.PtrClassAddr, resolvedStructs,
                 resolvedInstances, depth - 1, arrayLimit, visited, onWalk, lean, ct);
@@ -636,6 +639,7 @@ public static class CeXmlExportService
                 if (!IsObjectPropertyType(ov.TypeName)) continue;
                 if (string.IsNullOrEmpty(ov.PtrAddress) || ov.PtrAddress == "0x0") continue;
                 if (resolvedInstances.ContainsKey(ov.PtrAddress)) continue;
+                if (ReflectionMetaClassifier.WalksAsDefinition(ov.PtrClassName)) continue;   // a type, not data
                 if (!visited.Add("P:" + ov.PtrAddress)) continue;
                 await WalkAndRecurseAsync(dump, ov.PtrAddress, ov.PtrClassAddr, resolvedStructs,
                     resolvedInstances, depth - 1, arrayLimit, visited, onWalk, lean, ct);
@@ -653,7 +657,9 @@ public static class CeXmlExportService
         try
         {
             var r = await dump.WalkInstanceAsync(ptrAddr, ptrClassAddr, arrayLimit, lean: lean, ct: ct);
-            if (r.Fields.Count > 0)
+            // [CEXML-DEFINITION-VIEW-AS-DATA] A definition walk is the TYPE's member layout: laid out under the pointer,
+            // CE would read the UScriptStruct / UClass object's own memory at instance offsets. The pointer stays a leaf.
+            if (r.Fields.Count > 0 && !r.IsDefinition)
             {
                 resolvedInstances[ptrAddr] = r.Fields;
                 onWalk?.Invoke();

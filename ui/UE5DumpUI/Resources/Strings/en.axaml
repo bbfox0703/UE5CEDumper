@@ -274,6 +274,8 @@
     <sys:String x:Key="str.LiveWalker.Unreadable">⚠ This object is no longer readable (freed?) — re-open it from 🌍 GWorld or the finder.</sys:String>
     <!-- The DLL judged the class pointer recycled: the instance was freed and its slot reused. -->
     <sys:String x:Key="str.LiveWalker.Stale">⚠ This object appears to have been freed/recycled — re-open it from 🌍 GWorld or the finder.</sys:String>
+    <sys:String x:Key="str.LiveWalker.DefinitionView">ℹ This is a type definition (its member layout), not a live object: its rows have no address and no value, so they cannot be edited, frozen or exported as data.</sys:String>
+    <sys:String x:Key="str.Walk.DefinitionNoData">⚠ {0}: nothing done — this is a type definition (its member layout), not a live object, so there is no data at these offsets.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.MatchPrev">Jump to the previous matching field (wraps to the last match)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.MatchNext">Jump to the next matching field (wraps to the first match)</sys:String>
     <sys:String x:Key="str.LiveWalker.GenerateCeAA">Copy CE AA Script</sys:String>

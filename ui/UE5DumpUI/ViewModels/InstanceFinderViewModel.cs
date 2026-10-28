@@ -782,6 +782,9 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// the rows, never before: while a newer walk is in flight Fields still holds the previous one, and the export
     /// must know that instead of pairing those rows with the new selection or limit.</summary>
     private InstanceResult? _fieldsInstance;
+    /// <summary>[CEXML-DEFINITION-VIEW-AS-DATA] The fields shown are a type's definition (its member layout), not an
+    /// instance's data: nothing may be read, written or exported at their offsets.</summary>
+    private bool _fieldsAreDefinition;
     private int _fieldsArrayLimit;
 
     private async Task LoadInstanceFieldsAsync(InstanceResult instance)
@@ -807,14 +810,18 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             catch { /* ignore parse failures */ }
 
             Fields.Clear();
+            _fieldsAreDefinition = result.IsDefinition;
             foreach (var f in result.Fields)
             {
-                if (baseAddr != 0)
+                // [CEXML-DEFINITION-VIEW-AS-DATA] A definition's offsets are a type's layout, not addresses in the type
+                // object (a "ScriptStruct" / "Class" search lists types).
+                if (baseAddr != 0 && !result.IsDefinition)
                     f.FieldAddress = $"0x{baseAddr + (ulong)f.Offset:X}";
                 Fields.Add(f);
             }
 
             HasFields = Fields.Count > 0;
+            if (result.IsDefinition) StatusText = LiveWalkerViewModel.DefinitionViewText;
             _fieldsInstance = instance;       // [R7-S14]
             _fieldsArrayLimit = limit;
         }
@@ -835,6 +842,11 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     private async Task ExportCeXmlAsync()
     {
         if (SelectedInstance == null) return;
+        if (_fieldsAreDefinition && ReferenceEquals(_fieldsInstance, SelectedInstance))
+        {
+            StatusText = LiveWalkerViewModel.DefinitionNoDataText(LiveWalkerViewModel.ExportCeLabel);
+            return;
+        }
         // [R7-S14] Fields holds the LAST walk that landed. While a newer one is in flight -- another instance picked, or
         // the Array Limit changed -- those rows belong to the previous selection or limit, and exporting them would
         // put A's layout under B's root, or resolve the structs at one limit and the top level at another.
@@ -984,6 +996,11 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     {
         if (field == null || SelectedInstance == null) return;
         if (string.IsNullOrEmpty(SelectedInstance.Address)) return;
+        if (_fieldsAreDefinition && ReferenceEquals(_fieldsInstance, SelectedInstance))
+        {
+            StatusText = LiveWalkerViewModel.DefinitionNoDataText(LiveWalkerViewModel.AddrLabel);
+            return;
+        }
 
         try
         {
@@ -1173,6 +1190,12 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     private string FieldCeAddress(LiveFieldValue field)
     {
         if (!string.IsNullOrEmpty(field.FieldAddress)) return field.PayloadAddress;
+        if (_fieldsAreDefinition)
+        {
+            // [CEXML-DEFINITION-VIEW-AS-DATA] owner + offset would be a field of the type object itself.
+            StatusText = LiveWalkerViewModel.DefinitionNoDataText(field.Name);
+            return "";
+        }
         var owner = _fieldsInstance?.Address;
         if (string.IsNullOrEmpty(owner)) return "";
         return ulong.TryParse(AobMakerActions.StripHexPrefix(owner), System.Globalization.NumberStyles.HexNumber,
