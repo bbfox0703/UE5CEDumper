@@ -222,6 +222,29 @@ public class CeMailboxBailoutTests
         Assert.Contains("if memrec then memrec.Active = false end", text, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] (its review's wider scope) Every stateful mailbox toggle's own
+    /// bail-outs -- no mailbox, or a DLL answer that applied nothing -- untick WITHOUT running [DISABLE]. The plain
+    /// untick runs it, and each of these [DISABLE] blocks sends a real OFF / RESET: a failed CE tick turned off the
+    /// same feature a UI card was holding. The shared busy / timeout bails keep the plain untick: after a timeout the
+    /// DLL may still apply the command, and [DISABLE] undoing it is then right. Negative control: emit
+    /// <c>CeLuaHygiene.DeferredUntickLua</c> at any of these sites again and its row fails.
+    /// </summary>
+    [Theory]
+    [InlineData("DebugCameraScriptGenerator")]
+    [InlineData("FlyScriptGenerator")]
+    [InlineData("ProtectionScriptGenerator")]
+    [InlineData("ForegroundScriptGenerator")]
+    [InlineData("SeeThroughScriptGenerator")]
+    [InlineData("MovementScriptGenerator")]
+    [InlineData("TimeDilationScriptGenerator")]
+    public void A_stateful_toggles_own_bailouts_untick_without_running_DISABLE(string generator)
+    {
+        var src = File.ReadAllText(FindRepoFile($"ui/UE5DumpUI/Services/{generator}.cs"));
+        Assert.DoesNotContain("CeLuaHygiene.DeferredUntickLua(", src, StringComparison.Ordinal);
+        Assert.Contains("CeLuaHygiene.DeferredUntickWithoutDisableLua(", src, StringComparison.Ordinal);
+    }
+
     private static string FindRepoFile(string relative)
     {
         var dir = AppContext.BaseDirectory;
