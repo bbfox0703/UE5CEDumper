@@ -614,6 +614,20 @@ public class CoordCsvUnpairedQuoteTests
         Assert.DoesNotContain(r.Issues, i => i.Reason.Contains("quote", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("'=x")]
+    [InlineData("''+1 Chest")]
+    [InlineData("'@home")]
+    [InlineData("'-- boss room")]
+    public void ALeadingApostropheBeforeAFormulaLeader_SurvivesWriteThenParse(string label)
+    {
+        // A single quote is a quote too. The formula armour is one apostrophe, and Unarmour strips one when a
+        // leader follows -- so a label that itself began with an apostrophe before a leader came back without it.
+        Assert.Equal(label, CoordCsvCodec.Unarmour(CoordCsvCodec.Armour(label)));
+        var r = CoordCsvCodec.Parse(CoordCsvCodec.Write(new[] { new CoordEntry { Uid = "u", Label = label, Map = "M" } }));
+        Assert.Equal(label, Assert.Single(r.Entries).Label);
+    }
+
     [Fact]
     public void AQuoteInAnyTextField_SurvivesWriteThenParse()
     {
