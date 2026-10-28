@@ -783,21 +783,6 @@ public class CoordLuaParserTests
     }
 
     [Fact]
-    public void ALargeLibrary_ParsesInLinearTime()
-    {
-        // A line number was counted from the start of the text for every entry: 10,000 entries took ~4 s on the UI
-        // thread and 20,000 ~15 s. Generous bound, so a slow CI machine does not flake.
-        var entries = Enumerable.Range(0, 10_000).Select(i => new CoordEntry
-            { Uid = "u" + i, Label = "Label " + i, Group = "G", Map = "M", X = i, Y = -i, Z = 1 }).ToList();
-        var script = CoordLibraryScriptGenerator.Generate(entries, out _);
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        var r = CoordLuaParser.Parse(script);
-        sw.Stop();
-        Assert.Equal(10_000, r.Entries.Count);
-        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(2), $"parse took {sw.Elapsed.TotalSeconds:F1} s");
-    }
-
-    [Fact]
     public void AUnicodeEscapeWithLeadingZeros_IsReadAsCeLua53Does()
     {
         var r = CoordLuaParser.Parse(Wrap("  { uid='a', label='x\\u{00000000000000041}', map='M', x=1, y=2, z=3 },"));
@@ -864,5 +849,30 @@ public class CoordLuaParserTests
         var r = CoordLuaParser.Parse(Wrap(OneEntry + "\n  { uid='b', label=\"B, map='M', x=1, y=2, z=3 },"));
         Assert.Empty(r.Entries);
         Assert.Contains("unpaired quote", Assert.Single(r.Issues).Reason, StringComparison.Ordinal);
+    }
+}
+
+/// <summary>Runs alone, after the parallel batch: in it, 7,000 other tests stretched a 0.1 s parse to 7 s, so a
+/// wall-clock bound there measures the machine, not the parser.</summary>
+[CollectionDefinition(nameof(CoordLuaParserScaleCollection), DisableParallelization = true)]
+public class CoordLuaParserScaleCollection { }
+
+[Collection(nameof(CoordLuaParserScaleCollection))]
+public class CoordLuaParserScaleTests
+{
+    [Fact]
+    public void ALargeLibrary_ParsesInLinearTime()
+    {
+        // Review round 9: a line number was counted from the start of the text for every entry, so 20,000 entries
+        // took 10-15 s on the UI thread. Linear, they take ~0.1 s (measured: 16,000 in 75 ms), so a 3 s bound fails
+        // the quadratic count and leaves a slow machine 30x headroom.
+        var script = CoordLibraryScriptGenerator.Generate(Enumerable.Range(0, 20_000).Select(i =>
+            new CoordEntry { Uid = "u" + i, Label = "Label " + i, Group = "G", Map = "M", X = i, Y = -i, Z = 1 }).ToList(),
+            out _);
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        var r = CoordLuaParser.Parse(script);
+        sw.Stop();
+        Assert.Equal(20_000, r.Entries.Count);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(3), $"20,000 entries took {sw.Elapsed.TotalSeconds:F1} s");
     }
 }
