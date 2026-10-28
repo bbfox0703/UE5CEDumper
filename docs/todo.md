@@ -2257,6 +2257,12 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   with another command -- try again in a moment"; disarmed with the modal still up ("cmd = 0x0 (IDLE, restored)"), so
   the mailbox was idle when OK was clicked -- the moment 3659's [DISABLE] got its OFF through. After OK: `Active`
   false, ZERO `Mailbox: received cmd=9` and ZERO `GodMode: set OFF`, and the card's ↻ still reads ON.
+  **Control, the timeout AFTER the command store keeps the plain untick**: God Mode OFF from the card, the game
+  suspended whole (`suspend.py`, so status stays 0), the record ticked: its idle wait passed, it stored the ON, and
+  after 10 s "[GodMode] timed out and the DLL never saw this command. …"; resumed before OK, so the stored ON landed
+  late (`PROTECT op=0 -> rc=1`, `GodMode: set ON -> rc=1 (want=1)` at 13:42:27); OK -> `Active` false and [DISABLE]'s
+  OFF (`PROTECT op=0 -> rc=0`, `GodMode: set OFF -> rc=0 (want=0)` at 13:42:31) -- two `cmd=9` in all. An untick that
+  skipped [DISABLE] here would have left God Mode ON under an unticked row.
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
