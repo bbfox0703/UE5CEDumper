@@ -6120,6 +6120,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     internal static string ExportCeLabel => AobMakerStatus.Say(KeyExportCeLabel, "Copy CE XML");
     internal const string KeyAddrLabel = "str.LiveWalker.Addr";
     internal static string AddrLabel => AobMakerStatus.Say(KeyAddrLabel, "Addr");
+    internal const string KeyHexLabel = "str.Pointers.AobMakerHex";
+    internal static string HexLabel => AobMakerStatus.Say(KeyHexLabel, "HEX");
+    internal const string KeyAddToCeLabel = "str.LiveWalker.AddToCe";
+    internal static string AddToCeLabel => AobMakerStatus.Say(KeyAddToCeLabel, "+CE");
 
     /// <summary>The status line for a walk that found no object to read, or null when it read one. One copy, because a
     /// Refresh inside a container view walks the PARENT, and must say what a walk of that object says.

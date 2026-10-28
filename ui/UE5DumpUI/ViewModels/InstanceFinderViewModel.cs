@@ -1181,6 +1181,15 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
 
     // --- [AOBM-INSTFINDER-CE] AOBMaker row actions ---
 
+    /// <summary>[CEXML-DEFINITION-VIEW-AS-DATA] For a command on a row: refuse when the rows shown are a type's
+    /// definition, whose owner + offset would land on a field of the type object itself.</summary>
+    private bool RefuseOnDefinitionRows(string action)
+    {
+        if (!_fieldsAreDefinition) return false;
+        StatusText = LiveWalkerViewModel.DefinitionNoDataText(action);
+        return true;
+    }
+
     /// <summary>
     /// The address a CE-facing action should use for a walked field: its payload, which on a checked build sits past
     /// a delegate's access detector (<see cref="LiveFieldValue.PayloadAddress"/>). The fields can outlive a newer
@@ -1190,12 +1199,6 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     private string FieldCeAddress(LiveFieldValue field)
     {
         if (!string.IsNullOrEmpty(field.FieldAddress)) return field.PayloadAddress;
-        if (_fieldsAreDefinition)
-        {
-            // [CEXML-DEFINITION-VIEW-AS-DATA] owner + offset would be a field of the type object itself.
-            StatusText = LiveWalkerViewModel.DefinitionNoDataText(field.Name);
-            return "";
-        }
         var owner = _fieldsInstance?.Address;
         if (string.IsNullOrEmpty(owner)) return "";
         return ulong.TryParse(AobMakerActions.StripHexPrefix(owner), System.Globalization.NumberStyles.HexNumber,
@@ -1207,7 +1210,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task HexFieldAddressAsync(LiveFieldValue? field)
     {
-        if (field == null) return;
+        if (field == null || RefuseOnDefinitionRows(LiveWalkerViewModel.HexLabel)) return;
         var addr = FieldCeAddress(field);
         if (addr.Length == 0) return;
         StatusText = await AobMakerActions.HexAsync(AobMaker, addr, field.Name, _log);
@@ -1216,7 +1219,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task AddFieldToCeAsync(LiveFieldValue? field)
     {
-        if (field == null) return;
+        if (field == null || RefuseOnDefinitionRows(LiveWalkerViewModel.AddToCeLabel)) return;
         var addr = FieldCeAddress(field);
         if (addr.Length == 0) return;
         StatusText = await AobMakerActions.AddRecordAsync(AobMaker, field.Name, addr,
