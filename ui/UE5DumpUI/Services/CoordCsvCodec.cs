@@ -405,8 +405,15 @@ public static class CoordCsvCodec
             }
             if (closedQuote && c != delimiter && c != '\r' && c != '\n')
             {
-                error = Unpaired(physical, lineStart,
-                    "text follows a field's closing quote, so a quote inside it was not doubled (\"\")");
+                // A field that closed on a LATER line than it opened usually means the opening quote
+                // was the stray one, and this "closing" quote opens a correct field: name both, the
+                // opening line first, or the user is sent to fix a row that has nothing wrong with it.
+                error = quoteLine < physical
+                    ? Unpaired(quoteLine, quoteLineStart,
+                        $"a quoted field opened on this line runs on to line {physical}, where a quote ends it " +
+                        "and text follows -- a quote on one of the two lines is unpaired")
+                    : Unpaired(physical, lineStart,
+                        "text follows a field's closing quote, so a quote inside it was not doubled (\"\")");
                 return records;
             }
             if (c == delimiter)
