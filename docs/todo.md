@@ -1899,6 +1899,10 @@ are not repeated here; each line says what ran and what it showed.
   the stealth-meter hold." (badge Off); Reset again -> "Nothing is held, so Reset sent nothing.". pipe-0.log holds one
   `force_field` and exactly ONE `reset_field` for the whole run. On 3657 the first Reset gave the "Detect the meter
   first" advice, and the Resets after Detect and after the release each sent a `reset_field` and said "Released".
+  Control (the card cannot tell): with the UI disconnected, `force_field DumperTestActor.F32 = 0` over the pipe, then
+  Connect: the badge reads Unknown (the prime saw a forced field and sent `find_stealth_meter`, which matched none),
+  and Reset -> "No stealth meter is known to this card, so Reset sent nothing. Detect the meter first, then Reset.",
+  with no `reset_field` -- the fix narrowed the advice to the case it is true for, not away.
 - ✅ `LW-ARRAY-REFILLED-ZERO-SILENT`, DumperTest 5.4 Shipping, the fixture's own mutators: Live Walker on
   DumperTestActor_0, `Arr_Churn` drilled ([4 x IntProperty], 7001-7004); `V1a_ShrinkContainers` fired from the
   container view's Functions list ("[#1] ProcessEvent OK (result=0)"), then one Refresh: the crumb reads "[0 x
