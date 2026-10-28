@@ -27,6 +27,39 @@ builds ≤696 in
 
 -----
 
+## 2026-10-29 (build 3664) — Queued calls run on the game thread only `[STARK-DRAIN-OFF-GAME-THREAD]`
+
+- **A queued call (FIRE, Teleport, Fly, Debug Camera, Invoke…) now runs only on the game thread.** UE 5.8 and 5.4
+  also call ProcessEvent from engine worker threads (about a quarter of the hook's fires, measured on both). Our hook
+  used to run waiting work on whichever thread came first, and once in about 50 toggles a Debug Camera ON failed the
+  engine's own `IsInGameThread` check. When the hook is installed, the DLL now finds the game thread: the thread UE
+  itself names "GameThread", or, when no thread carries that name, the main thread. A worker thread's ProcessEvent
+  leaves queued work for it. The "game thread responsive" check also counts the game thread's fires only, so a frozen
+  game thread no longer looks alive because workers keep firing.
+- **A wrong guess cannot block every call.** A thread the engine named is always kept. A main-thread guess that
+  stays silent for the install check's 1.5 s while other threads fire is dropped with a WARN in the log, and
+  queued work then drains on any thread, as before this build. Red `dc15bc5b`, green `3848ea08`; the live rig is
+  `tools/verify/stark_game_thread_drain.py` (`ccc815e1`).
+- Checked live on build 3664:
+  - DumperTest58 Development (UE 5.8): the DLL picked the thread named GameThread, the same thread `suspend.py`
+    lists as the main thread; it took 151 of 197 hook fires in the install window. 400 Debug Camera toggles through
+    the pipe and 20 through the CE mailbox all came out as asked, with no SEH and no `IsInGameThread` assertion in
+    the game's log.
+  - With only the game thread suspended, a queued ON waited and timed out (-5) rather than running on a worker, then
+    ran on the game thread once it resumed.
+  - DumperTest Shipping (UE 5.4): the named GameThread again, and the main thread; 132 of 176 fires; 20
+    CollectGarbage invokes all returned 0.
+- **Not yet seen live:**
+  - a worker thread actually entering ProcessEvent while work waited (zero skips were logged in these runs; the
+    unit tests cover that path);
+  - the main-thread fallback, which needs a game whose game thread has no OS thread name (a UE4 game is the likely
+    case, and no UE4 fixture exists).
+- Review: one adversarial round. Three claims, none a defect: each case falls back to the behaviour before this
+  build. Two of them are followed up in build 3665. The install check counted our own nested calls as other threads
+  firing, and its WARN said more than it knows.
+- Tests: dll_core_test 1,363 checks and dll_helpers_test 3,680, 0 failures; C# 7,071 total, 0 failed, 1 skipped;
+  headless UI 69; 36 gates. AOT UI 61,442,048 bytes.
+
 ## 2026-10-29 (build 3663) — Debug Camera turns on again after an OFF on UE 5.8 `[DBGCAM-58-REENABLE]` `[STARK-DRAIN-OFF-GAME-THREAD]`
 
 - **A second Force ON now works on UE 5.8.** This applies to the UI's Debug Camera buttons and to the CE record. After one
