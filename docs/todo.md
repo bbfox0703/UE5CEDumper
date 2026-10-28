@@ -1932,6 +1932,22 @@ are not repeated here; each line says what ran and what it showed.
   (text order: "1" < "C"), descending reverses it; no "Pivot: discovery failed" in ui-view-0.log. Seen in passing: the
   app's Inter font draws the "x" of `+0x128` as "×" between two digits (its contextual alternates), so the label reads
   "+0×128" on screen; `+0xC4` is unaffected. Cosmetic; the text itself is right.
+- ✅ `TRAINER-PUSH-TIMEDOUT-TEXT` and `COORDPICK-NOTREACHED-BUSY-HINT`, DumperTest 5.4 Shipping, CE 7.7 (SSE4-AVX2) with
+  AOBMaker, attached to the game. **Controls**: Standalone Trainer → "Export to CE (this game/version)" -> "Standalone
+  trainer pushed to CE (10 entries): tick Setup first, …" (10 `UE5 Trainer` records in CE); Coordinate Library (5) →
+  "Push to CE (no DLL)" -> "Pushed the no-DLL picker (5 entries) to Cheat Engine. …". **No reply, then busy**: CE's main
+  thread put to sleep for 60 s (`createTimer(3000, function() sleep(60000) end)`, both in celua.txt), then the trainer
+  push -> "⚠ Pushed 0/10 entries — no reply from Cheat Engine for 'UE5 Trainer: Setup (tick this first)' (it timed out,
+  or the pipe closed): it may still have been added. Check Cheat Engine's address list …" (ui-init-0.log "AOBMaker
+  CreateAAScript: no reply within 5000 ms"); pushed again at once -> "⚠ Pushed 0/10 entries — AOBMaker pipe busy — it
+  exists, but another program holds its only connection. Close that program, then press ⟳ (starting another Cheat
+  Engine will not help); 'UE5 Trainer: Setup (tick this first)' and the rest were not added." (log: "EXISTS but no
+  instance was free within 2000 ms"), the card note says the same and the button greys out. When CE woke, the timed-out
+  Setup record WAS created (CEPlugin.log: request 08:23:59, "success" 08:24:50) -- the "may still have been added" is
+  real. The same block for the no-DLL picker: "⚠ No reply from Cheat Engine for the no-DLL picker (it timed out, or the
+  pipe closed): it may still have been added. …", then "⚠ AOBMaker pipe busy — … ; nothing was added."; the timed-out
+  picker record appeared at 08:26:18. 3658 said "AOBMaker pipe dropped (CE closed?)" for both trainer clicks, and 3657
+  "could not be reached, or refused … without a reason (CE closed?)" for the busy picker.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
