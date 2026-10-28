@@ -59,6 +59,38 @@ public class CeMailboxBailoutTests
         return b < 0 ? script[a..] : script[a..b];
     }
 
+    // ── A write that failed but is held ─────────────────────────────────────
+
+    /// <summary>MOVE-TIME-WRITEFAIL-LEAVES-ACTIVE (review of [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]):
+    /// Laufen::SetMultiplier / SetGravityDirection and Hemmung::SetDilation latch the override active, THEN try the
+    /// raw write, and answer -10 when it fails while the worker keeps re-asserting it every tick. A tick answered -10
+    /// is therefore held, not "applied nothing": unticking it without [DISABLE] left a speed or time hack running under
+    /// an OFF row. The row stays ticked and says unticking releases it. Negative control: drop the -10 branch, or untick
+    /// in it, and its row fails.</summary>
+    public static IEnumerable<object[]> WriteRetryingScripts() => new List<object[]>
+    {
+        new object[] { "Movement.WalkSpeed",  MovementScriptGenerator.Generate(MovementScriptGenerator.Knob.WalkSpeed, 150) },
+        new object[] { "Movement.GravityDir", MovementScriptGenerator.GenerateGravityDirection(0, 0, -1) },
+        new object[] { "TimeDilation.Global", TimeDilationScriptGenerator.Generate(TimeDilationScriptGenerator.Target.Global, 0.5) },
+        new object[] { "TimeDilation.Pawn",   TimeDilationScriptGenerator.Generate(TimeDilationScriptGenerator.Target.Pawn, 2.0) },
+    };
+
+    [Theory]
+    [MemberData(nameof(WriteRetryingScripts))]
+    public void A_tick_whose_write_failed_but_is_held_stays_ticked(string name, string script)
+    {
+        var enable = EnableBlock(script);
+        int b = enable.IndexOf("if state == -10 then", StringComparison.Ordinal);
+        Assert.True(b >= 0, name + ": no -10 branch");
+        Assert.True(b < enable.IndexOf("state < 0", StringComparison.Ordinal),
+            name + ": -10 must be tested before the generic failure");
+        var branch = enable[b..enable.IndexOf("\nelseif", b, StringComparison.Ordinal)];
+        Assert.DoesNotContain("Active = false", branch);
+        Assert.DoesNotContain("disableWithoutExecute", branch);
+        Assert.Contains("untick", branch);
+        Assert.Contains("-- not a failure:", branch);
+    }
+
     // ── The rule ────────────────────────────────────────────────────────────
 
     [Theory]
