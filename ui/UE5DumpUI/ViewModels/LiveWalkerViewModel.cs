@@ -1618,6 +1618,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         Fields.Clear();
         _renderedCrumb = CurrentCrumb;   // [A4-NAV-BACKFIRST-GRAFT]
+        _isDefinitionView = false;   // a container / row view, rendered without a walk [CEXML-DEFINITION-VIEW-AS-DATA]
         foreach (var row in dtResult.Rows)
         {
             // Build preview from first 2 scalar fields
@@ -1691,6 +1692,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         Fields.Clear();
         _renderedCrumb = CurrentCrumb;   // [A4-NAV-BACKFIRST-GRAFT]
+        _isDefinitionView = false;   // a container / row view, rendered without a walk [CEXML-DEFINITION-VIEW-AS-DATA]
         foreach (var elem in elements)
         {
             // Compute element address for struct navigation
@@ -1758,6 +1760,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         Fields.Clear();
         _renderedCrumb = CurrentCrumb;   // [A4-NAV-BACKFIRST-GRAFT]
+        _isDefinitionView = false;   // a container / row view, rendered without a walk [CEXML-DEFINITION-VIEW-AS-DATA]
         if (elements.Count == 0 && sourceField.MapCount > 0)   // an emptied map is complete, not unreadable
         {
             // Show metadata summary when element data couldn't be read
@@ -1915,6 +1918,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         Fields.Clear();
         _renderedCrumb = CurrentCrumb;   // [A4-NAV-BACKFIRST-GRAFT]
+        _isDefinitionView = false;   // a container / row view, rendered without a walk [CEXML-DEFINITION-VIEW-AS-DATA]
         foreach (var elem in elements)
         {
             var display = !string.IsNullOrEmpty(elem.KeyPtrName) ? elem.KeyPtrName : elem.Key;
@@ -7233,6 +7237,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         Fields.Clear();   // fires OnFieldsRebuilt -> clears any stranded IsEditing latch
         _renderedCrumb = null;   // [A4-NAV-BACKFIRST-GRAFT]
+        _isDefinitionView = false;
         Breadcrumbs.Clear();
         SelectedField = null;
         HasData = false;
