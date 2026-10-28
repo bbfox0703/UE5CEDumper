@@ -5015,7 +5015,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         if (selectedSnapshot.Count == 0 || string.IsNullOrEmpty(CurrentAddress) || Breadcrumbs.Count == 0) return;
         if (RefuseWhileGridBehindSpine("Copy CE Field")) return;   // [A4-NAV-BACKFIRST-GRAFT]
-        if (RefuseOnDefinitionView("Copy CE Field")) return;
+        if (RefuseOnDefinitionView(ExportCeFieldButtonLabel)) return;
 
         // Record what this heavy operation costs the DLL dispatcher. Automatic
         // rather than a measurement session: the evidence then accumulates from
@@ -5286,7 +5286,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task PushCeFieldToCeAsync()
     {
         if (_aobMaker == null) return;
-        if (RefuseOnDefinitionView("+CE Field (flat)")) return;
+        if (RefuseOnDefinitionView(PushCeFieldLabel)) return;
 
         // Same selection source as ExportCeFieldXmlAsync (snapshot, falling back to the
         // single selected row if SelectionChanged hasn't synced yet).
@@ -5364,8 +5364,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task GenerateCeAAScriptAsync()
     {
+        // Not refused on a definition view: it reads no row, it registers a symbol at the object's own address.
         if (string.IsNullOrEmpty(CurrentAddress)) return;
-        if (RefuseOnDefinitionView("AA Script")) return;
 
         try
         {
@@ -6077,7 +6077,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task HexFieldAddressAsync(LiveFieldValue? field)
     {
-        if (field != null && RefuseOnDefinitionView("HEX")) return;
+        if (field != null && RefuseOnDefinitionView(HexLabel)) return;
         if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.FieldAddress)) return;
         // PayloadAddress, not FieldAddress: on a checked build a delegate's bytes start
         // 8 bytes after the field, and parking CE's hex view on the access detector shows
@@ -6124,6 +6124,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     internal static string HexLabel => AobMakerStatus.Say(KeyHexLabel, "HEX");
     internal const string KeyAddToCeLabel = "str.LiveWalker.AddToCe";
     internal static string AddToCeLabel => AobMakerStatus.Say(KeyAddToCeLabel, "+CE");
+    internal const string KeyPushCeFieldLabel = "str.LiveWalker.PushCeField";
+    internal static string PushCeFieldLabel => AobMakerStatus.Say(KeyPushCeFieldLabel, "+CE Field (flat)");
 
     /// <summary>The status line for a walk that found no object to read, or null when it read one. One copy, because a
     /// Refresh inside a container view walks the PARENT, and must say what a walk of that object says.
@@ -6180,7 +6182,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task AddFieldToCeAsync(LiveFieldValue? field)
     {
-        if (field != null && RefuseOnDefinitionView("+CE")) return;
+        if (field != null && RefuseOnDefinitionView(AddToCeLabel)) return;
         if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.FieldAddress)) return;
         var t = CeXmlExportService.MapFieldToCeRecordType(field);
         // PayloadAddress for the same reason the CE XML exporter adds the pad: a record left

@@ -173,6 +173,8 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyAddrLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.AddrLabel);
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyHexLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.HexLabel);
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyAddToCeLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.AddToCeLabel);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyPushCeFieldLabel,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.PushCeFieldLabel);
         Same(UE5DumpUI.ViewModels.InstanceFinderViewModel.KeyAddrLabel, UE5DumpUI.ViewModels.InstanceFinderViewModel.AddrLabel);
 
         // A convenience copy the clipboard refused: the line that replaces "Copied ..."
@@ -203,7 +205,7 @@ public class AobMakerWordingTests
              UE5DumpUI.ViewModels.TeleportViewModel.TrainerRefusedNoReasonText(1, 9, "E"), "1", "9", "E");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(71, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(72, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]
