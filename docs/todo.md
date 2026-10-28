@@ -2208,6 +2208,32 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   -> "Structure 'ScriptStruct_DumperTestTableRow' added to CE's Structure Dissect (1 structures, 5 elements)", offsets
   8 / C / 14 / 18 / 28, and that layout read on two real rows gives Index 0 / Value 100.0 and Index 1 / Value 101.0
   (the fixture's BuildTable). Back to the DataTable: no notice, addresses again.
+- ✅ `DEFVIEW-FLAG-STALE`, same session: DumperTestActor_0.`Arr_SoftClass` (header H = 0x1D890ADA460) → `[]` → `[0]`
+  E0 = 0x1D836996000 → C0 = 0x1D832647600 `DumperTestHolder (Class)`, `[1]` E1 = 0x1D836996028. `[0]` → → the
+  definition, whose Addr is refused (the detector fires: `Addr refused: 0x1D832647600 is a type definition`); **Back**:
+  no notice, and Addr on `[0]` copies `1D836996000`, which CE confirms is element 0 pointing at the class (`readQword(H)`
+  = E0; the element's weak ObjectIndex 2203 = the class's InternalIndex 2203); HEX -> "CE hex view: [0] @
+  0x1D836996000" (CE's hex.top = E0); +CE -> "Added to CE: [0]" (a record at E0); Copy CE XML -> "Copied: 0 objects,
+  132 XML lines." -- none refused, no `refused` line after `NAV←Back`. **Crumb jump**: `[1]` → the definition
+  `DumperTestDerivedHolder`, then the `Arr_SoftClass [3 x SoftClassProperty]` crumb: Addr on `[1]` copies
+  `1D836996028` (E0 + the 0x28 stride). The map, set and DataTable-row render sites stay unit-only on DumperTest (no
+  class pointer at or below them).
+- ✅ `IF-DEFVIEW-FIELDNAME-AS-ACTION` with CE: Instances, object name `BP_ThirdPersonCharacter`, the
+  BlueprintGeneratedClass picked: HEX -> "⚠ HEX: nothing done — …", +CE -> "⚠ +CE: nothing done — …" (the button
+  labels, not the row's name), CE's `--state` identical before and after. Positive control, the pawn picked: HEX ->
+  "CE hex view: AIControllerClass @ 0x1D8963B2C58" (hex.top moved there), +CE -> "Added to CE: AIControllerClass" (a new
+  record) -- the witness can change.
+- ✅ `DEFVIEW-IF-COPYADDR-GUARD-BYPASS`, the walk held in flight by suspending the game (`suspend.py`, whole process),
+  same list: A = the class (definition rows, AIControllerClass o = 0x2A8), B = the pawn 0x1D8963B29B0. Suspended
+  (13:26:16) and B picked: the grid keeps A's rows; Copy CE XML -> "The fields shown are not this selection's — copy
+  again once they have loaded (if loading failed, re-select the instance)."; Addr -> "⚠ Addr: nothing done — this is a
+  type definition …", the clipboard sentinel intact (3659 copied B + o, the finding's `0x9020` shape). The UI pipe log
+  has B's `walk_instance` TX at 13:26:18.228, inside the hold, and its RX at 13:26:36.549, after the resume at
+  13:26:35.304. After it landed, Addr copies `1D8963B2C58` = B + o. **Live-rows variant**: B's rows shown, suspended, A
+  picked, Addr -> `1D8963B2C58`, the rows shown (the old code copied A + o, 0x1D893C9F828, a word of the class object).
+  Rig trap: while a walk loads, a 2-px progress bar appears above the field grid and moves its rows down, so a click
+  aimed from a screenshot taken before the selection can miss the button. Two attempts missed that way, and a control
+  under the same suspension with no selection change copied at once. Zoom again after the selection, then click.
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
