@@ -131,6 +131,14 @@ public class WalkInstanceLeanTests
                 Fields = fields.ToList(),
             };
 
+        /// <summary>A TYPE's walk: the DLL answers with its member layout and no values.</summary>
+        public void RegisterDefinition(string addr, params LiveFieldValue[] fields)
+            => _byAddr[addr] = new InstanceWalkResult
+            {
+                Address = addr, Name = "Def_" + addr, ClassName = "ScriptStruct", IsDefinition = true,
+                Fields = fields.ToList(),
+            };
+
         public override Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
             int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
             CancellationToken ct = default)
@@ -251,7 +259,16 @@ public class WalkInstanceLeanTests
     /// Walker grid load, which is NOT lean (the grid shows values) — so the root is
     /// deliberately full-fat in both runs, and only walked content differs.</summary>
     private static List<LiveFieldValue> RootFields()
-        => RichFields("", "0x2000", "0x3000", "0x4000", "0x5000");
+        => [.. RichFields("", "0x2000", "0x3000", "0x4000", "0x5000"), DefinitionPointer()];
+
+    /// <summary>[CEXML-DEFINITION-VIEW-AS-DATA] A pointer to a TYPE (a DataTable's RowStruct), with no class name on the
+    /// pointer, so only the walk's own is_definition says not to lay the target out as data. That key is in the lean
+    /// payload (Fern's EncodeInstanceWalkToJson), and the mirror above must keep it.</summary>
+    private static LiveFieldValue DefinitionPointer() => new()
+    {
+        Name = "RowStruct", TypeName = "ObjectProperty", Offset = 0xB0, Size = 8,
+        HexValue = "00D0000000000000", PtrAddress = "0xD000", PtrName = "BlinkDataLevel",
+    };
 
     private static LiveFieldValue[] XyzFields() =>
     [
@@ -284,6 +301,9 @@ public class WalkInstanceLeanTests
             new LiveFieldValue { Name = "Rank", TypeName = "IntProperty", Offset = 4, Size = 4, HexValue = "02000000", TypedValue = "2" });
         stub.Register("0xA008",
             new LiveFieldValue { Name = "DeepRank", TypeName = "IntProperty", Offset = 4, Size = 4, HexValue = "03000000", TypedValue = "3" });
+
+        stub.RegisterDefinition("0xD000",
+            new LiveFieldValue { Name = "DefMember", TypeName = "IntProperty", Offset = 0x10, Size = 4 });
         return stub;
     }
 
@@ -332,6 +352,8 @@ public class WalkInstanceLeanTests
         Assert.Contains("DeepRank", fullXml);     // map value struct under the walk
         Assert.Contains("Level", fullXml);        // struct-array sub-field
         Assert.Contains("ETeam::Blue", fullXml);  // enum DropDownList
+        Assert.Contains("RowStruct", fullXml);    // the pointer to a type is still exported...
+        Assert.DoesNotContain("DefMember", fullXml);   // ...but not the type's layout as data
     }
 
     [Fact]
