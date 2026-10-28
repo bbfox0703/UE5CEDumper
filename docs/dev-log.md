@@ -27,6 +27,27 @@ builds ≤696 in
 
 -----
 
+## 2026-10-29 (build 3663) — Debug Camera turns on again after an OFF on UE 5.8 `[DBGCAM-58-REENABLE]` `[STARK-DRAIN-OFF-GAME-THREAD]`
+
+- **A second Force ON now works on UE 5.8.** This applies to the UI's Debug Camera buttons and to the CE record. After one
+  ON→OFF, every later ON used to answer "state is now OFF". The cause, read in the 5.8.4 source and measured on
+  DumperTest58 Development: the first ON spawns a DebugCameraController, which gets a CheatManager of its own in
+  non-Shipping builds. Once a garbage collection put that CheatManager below the player's in the object list (34955
+  against 35796), the toggle went to it, and on 5.8 a toggle there can never turn the camera on. The toggle now always
+  goes to the player's CheatManager. That is right on older engines too, where an OFF still finishes through the
+  existing controller swap-back, as on 5.4. Red `729277c6`, green `8aba4dec`.
+- **Found while checking it, not fixed (the maintainer asked for one bug that night): `[STARK-DRAIN-OFF-GAME-THREAD]`.**
+  A queued call (FIRE, Teleport, Fly, Debug Camera…) can run on an engine worker thread instead of the game thread.
+  The hook drains its queue in whatever thread calls ProcessEvent. Measured once in about 50 toggles: the game's
+  own log shows an `IsInGameThread` check failing under `CheatManager.ToggleDebugCamera`. Our SEH caught it, and that
+  call returned -1 with the camera half on. It is a new MED row in the census.
+- Checked live on build 3663 (DumperTest58 Development, `tools/verify/dbgcam_reenable.py`). Under the condition that
+  broke it, ON/OFF/ON/OFF reads 1, 0, **1**, 0 through the pipe (build 3662 gave 1, 0, 0), 20 more toggles all came
+  out as asked, and the CE mailbox path re-enabled too. Review: one round, no findings. The first publish of 3663
+  failed on a stale C# source pin (updated in `67d61d00`); that unreleased output was replaced.
+- Tests: dll_core_test 1,363 checks and dll_helpers_test 3,660, 0 failures; C# 7,071 total, 0 failed, 1 skipped;
+  headless UI 69; 36 gates. AOT UI 61,442,048 bytes.
+
 ## 2026-10-29 (build 3662) — A coordinate import stops at a stray quote instead of reading on; two warnings say no more than is known `[B21-CSV-QUOTE-HOLES]` `[FTEXT-REFUSAL-OVERCLAIM]` `[METHODE-MANUALMAP-EXCEPTION-CLAIM]`
 
 - **A stray quote in an imported coordinate CSV stops the import, naming its line; nothing is imported.** One
