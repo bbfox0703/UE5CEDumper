@@ -1007,7 +1007,9 @@ public class LiveWalkerForwardNavTests
         Assert.Null(platform.LastClipboard);
     }
 
-    /// <summary>The control: INV on a row of the class on screen copies its script.</summary>
+    /// <summary>The control: INV on a row of the class on screen runs instead of refusing, and copies its script. Only
+    /// that: what the script names as the class to find an instance of is [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]'s
+    /// business.</summary>
     private static async Task AssertRowActionWorks(LiveWalkerViewModel vm, MockPlatformService platform, string function)
     {
         await vm.GenerateInvokeScriptCommand.ExecuteAsync(vm.Functions.Single(f => f.Name == function));

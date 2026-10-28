@@ -171,6 +171,11 @@ public class AobMakerWordingTests
              UE5DumpUI.ViewModels.LiveWalkerViewModel.DefinitionNoDataText("A"), "A");
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFunctionsLoading,
              UE5DumpUI.ViewModels.LiveWalkerViewModel.FunctionsLoadingText("A"), "A");
+        // ...and the Functions row buttons that refusal names.
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFuncGenScriptLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.FuncGenScriptLabel);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFuncPipeInvokeLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.FuncPipeInvokeLabel);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFuncCopyBakedLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.FuncCopyBakedLabel);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFuncAsmLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.FuncAsmLabel);
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyExportCeLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.ExportCeLabel);
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyAddrLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.AddrLabel);
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyHexLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.HexLabel);
@@ -207,7 +212,7 @@ public class AobMakerWordingTests
              UE5DumpUI.ViewModels.TeleportViewModel.TrainerRefusedNoReasonText(1, 9, "E"), "1", "9", "E");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(73, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(77, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]
