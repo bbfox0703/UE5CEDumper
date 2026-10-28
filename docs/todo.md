@@ -12,9 +12,10 @@ Open work only. **Read this when deciding what to do next.**
 > (`[LIVE-3659-2026-10-28]`), which raised four leads -- `[CEXML-DEFINITION-VIEW-AS-DATA]` (MED, pre-existing),
 > `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]`, `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]` and `[LW-CRUMB-UNDERSCORE]`
 > (LOW) -- all fixed on 2026-10-28 (red/green in each row), as is every confirmed finding of the review of those fixes
-> (`[LEADFIX-REVIEW-2026-10-28]`); shipped in build 3660 (AOT), not yet checked live. Still owed live: a TMap / TSet of
-> TAssetPtr (Extinction has none), a game-filled TArray<TAssetPtr> and a loaded element's label
-> (`[UE4-ASSETPTR-EXPORTS]`'s row), and Debug Camera on UE 5.8. · Before it, the
+> (`[LEADFIX-REVIEW-2026-10-28]`); shipped in build 3660 (AOT) and checked live on 2026-10-28 (`[LIVE-3660-2026-10-28]`:
+> Debug Camera on UE 5.8 and a game-filled TArray<TAssetPtr> included; a TMap / TSet of TAssetPtr has no fixture on this
+> PC and a loaded element's label none on Extinction), which raised two pre-existing leads, `[DBGCAM-58-REENABLE]` and
+> `[LW-BACK-CONTAINER-HEADER-ADDR]`. · Before it, the
 > known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
 > 3649): every row it took is built and checked live, `[MH-PRERESERVE-PROXY]` included; the maintainer's calls are in
 > the rows and working-lessons §6. Still owed live, each row says how: a crash mid-capture on a large title
@@ -2457,6 +2458,15 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   PreviewAttachedObjectPair, PaperSpriteAtlasSlot); 6 TMaps, none with an asset key or value; 0 TSets (4.11 has no
   USetProperty). Coverage limit: the census ran at the game's own launcher menu -- its UMG buttons took no synthetic
   click or Enter, so no scene loaded; native types are all present there, a scene's Blueprint types are not.
+- ⛔ **Not checked live on 3660, and why** (each stays covered by its red/green test in `[LEADFIX-REVIEW-2026-10-28]`):
+  `MOVE-TIME-WRITEFAIL-LEAVES-ACTIVE` -- the -10 branch needs a held-override WRITE to fail, which no fixture can be
+  made to do (the no-pawn Movement / Time failed ticks above ran instead); SeeThrough's and Keep Foreground's OWN
+  failed ticks -- unreachable on DumperTest (SeeThrough's enable refuses only a missing hook or reflection and succeeds
+  with no pawn; Keep Foreground's script fails only on a hook error), covered by `CeMailboxBailoutTests`; the
+  contract-check half of `SHARED-IDLE-BUSY-BAIL-STILL-REENTERS-DISABLE` -- not discriminating live, since its
+  [DISABLE] fails the same contract check and returns silently on 3659 and 3660 alike;
+  `[LW-CRUMB-UNDERSCORE]`'s drive boxes -- no volume label on this PC has an underscore; `DEFVIEW-LEAN-MIRROR-STALE`,
+  `DEFVIEW-PAYLOAD-AUDIT-STALE` and `LW-PIN-NARROW` -- test / tool changes with nothing to observe in a running game.
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
