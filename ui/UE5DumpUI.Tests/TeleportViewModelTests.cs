@@ -3497,6 +3497,24 @@ public class TeleportViewModelTests
         Assert.Contains(vm.CoordResults, r => r.Label == "Plain renamed");
     }
 
+    /// <summary>Review round 3: a changed field may not hold a quote even when the quote was already there (a
+    /// case-only fix of an imported label) -- by design, but then the status must not say a quote was typed.</summary>
+    [Fact]
+    public async Task Changing_a_field_that_holds_a_quote_is_refused_without_claiming_one_was_typed()
+    {
+        var vm = await CoordLibraryVmAsync();
+        vm.BuildImportPreview(CoordCsvCodec.Parse("label,group,map,x,y,z\n\"Boss \"\"big\"\"\",G,M,1,2,3\n"), "t.csv");
+        vm.ApplyCoordImportCommand.Execute(null);
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Boss \"big\"");
+
+        vm.EditCoordLabel = "Boss \"Big\"";
+        vm.ApplyCoordEditCommand.Execute(null);
+
+        Assert.Contains(vm.CoordResults, r => r.Label == "Boss \"big\"");
+        Assert.Contains("double quote", vm.CoordStatus, StringComparison.Ordinal);
+        Assert.DoesNotContain("typed", vm.CoordStatus, StringComparison.Ordinal);
+    }
+
     /// <summary>Review round 2: counting quotes let a typed one through whenever the same edit deleted a stored
     /// one. A field the edit CHANGES may not hold a quote at all; only an untouched one keeps its old quotes.</summary>
     [Fact]
