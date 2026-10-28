@@ -939,6 +939,55 @@ public class LiveWalkerForwardNavTests
         Assert.False(vm.RowMapLoadStillCurrent(Table, 2, tableCrumb));   // ...and the load still must not land
     }
 
+    // Review of d206a4ad: the header moves to the new object at once, the Functions list only when its walk returns.
+    // In between, PIPE fires a row of the OLD list at the NEW address -- the DLL looks the function up by name on that
+    // object's class, so a name both classes have runs on the wrong object.
+
+    [Fact]
+    public async Task Back_IntoAContainerView_ListsNoFunctionsUntilItsOwnersListArrives()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
+        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+        var ownersList = dump.GateFunctions(OwnerCls);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.Equal(Owner, vm.CurrentAddress);
+        Assert.Empty(vm.Functions);
+        ownersList.SetResult(OwnerStub.FunctionsOf(OwnerCls));
+        AssertShowsTheOwner(vm);
+    }
+
+    [Fact]
+    public async Task AWalkToAnotherClass_ListsNoFunctionsUntilItsListArrives()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        var elementsList = dump.GateFunctions(ElemCls);
+
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
+
+        Assert.Equal(Elem, vm.CurrentAddress);
+        Assert.Empty(vm.Functions);
+        elementsList.SetResult(OwnerStub.FunctionsOf(ElemCls));
+        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+    }
+
+    [Fact]
+    public async Task ARefreshOfTheSameObject_KeepsItsListWhileItReloads()
+    {
+        // The control: the same class keeps its rows, so the Functions grid keeps its place on every Auto tick.
+        var (dump, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Owner);
+        dump.GateFunctions(OwnerCls);
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(new[] { "OwnerFn" }, FunctionNames(vm));
+    }
+
     [Fact]
     public async Task AContainerViewBookmarked_ThenReloadedAfterADisconnect_ListsItsOwnersFunctions()
     {
