@@ -2150,6 +2150,32 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   `DEFVIEW-PAYLOAD-AUDIT-STALE` (`c0eaa2f5`, `walk_payload_audit.py`); `LW-PIN-NARROW` (`c958e029`: the access-key pin
   covers every control, slot and binding spelling; it finds no new offender).
 
+🎮 **Live checks of build 3660** `[LIVE-3660-2026-10-28]`, all on **build 3660 (Native AOT, 61,345,280 bytes; DLL
+`1.0.0.3660`)**. Recipes: workflow `wf_511f7284-1a9` (four areas, then a completeness critic).
+- ✅ `[CEXML-DEFINITION-VIEW-AS-DATA]`, DumperTest 5.4 **Shipping** (24,530 objects), UI only. The live
+  DumperTestGameMode (0x16BA422F580) holds nine ClassProperty pointers -- DefaultPawnClass to `BP_ThirdPersonCharacter_C`
+  (a BlueprintGeneratedClass), the other eight to native `Class` objects. DLL side: `walk_instance` of the
+  DefaultPawnClass target answers `is_definition: true` (145 fields), and a **lean** walk of it and of GameStateBase's
+  class says the same (3659 dropped the key in lean). **Copy CE XML** on the GameMode ("Copied: 66 objects, 33157 XML
+  lines.", `out/live3660/gamemode_cexml.xml`): all nine class pointers are `8 Bytes` hex leaves with 0 children; the
+  two instance pointers beside them, GameSession and GameState, are still drilled (94 / 97 children). **Live Walker**
+  navigated into DefaultPawnClass: "ℹ This is a type definition (its member layout), not a live object: its rows have
+  no address and no value, so they cannot be edited, frozen or exported as data.", Value / Hex / Address empty; Addr
+  -> "⚠ Addr: nothing done — this is a type definition (its member layout), not a live object, so there is no data at
+  these offsets.", Copy CE XML and Copy CE Field the same under their own labels; a clipboard sentinel survived all
+  three, and ui view-0.log has `Addr refused` / `Copy CE XML refused` / `Copy CE Field refused: 0x16B931DF580 is a
+  type definition, not an instance`. **AA Script is not refused** (`DEFVIEW-REFUSAL-AA`): "CE AA script copied —
+  hardcoded address (not a GWorld-rooted path)", the clipboard holding `define(BlueprintGeneratedClass,16B931DF580)` /
+  `registersymbol`. Back to the GameMode: no notice, addresses again. **Instance Finder**, class
+  `BlueprintGeneratedClass` (4 instances), `BP_ThirdPersonCharacter_C` picked: the same notice, no addresses; Copy CE
+  XML and the row's Addr refused under those labels, the sentinel intact. `DEFVIEW-IF-STATUS-STICKY`: object name
+  `BP_ThirdPersonCharacter` (4 hits: the pawn, its CDO, the class, the package), the class picked -> the notice; the
+  pawn picked -> "Found 4 instances (scanned 24,530, non-null 24,523, named 24,523 (100.0%))" again, rows with
+  addresses; the pawn's Addr copies `16BA41F29D8` (0x16BA41F29B0 + 0x28), the positive control.
+- ✅ `[LW-CRUMB-UNDERSCORE]`, the breadcrumb, same session: `DumperTestGameMode_2147482507 > BP_ThirdPersonCharacter_C`.
+  ⬜ Proxy Deploy's drive boxes cannot be exercised here: no volume on this PC has an underscore in its label (C:
+  Windows, D: Data, G: Google Drive, Y: DataExchange, Z: SteamBackup), and renaming one is not on.
+
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
 Full detail, both-side citations and fix shapes: [audit-2026-09-24-vendor-ue583.md](audit-2026-09-24-vendor-ue583.md).
