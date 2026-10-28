@@ -2240,6 +2240,23 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   log walks P1; `ClothingSimulationFactory (AA0)` an 8-byte leaf. Followed in Live Walker: header
   AnimBlueprintGeneratedClass, NO definition notice, real values and addresses (0x1D896177C58 = P1 + 0x208). And a
   double underscore: `Default__DumperTestActor` via Open in Live Walker, crumb equal to the header.
+- ✅ `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]`, the trainer's half, same session: Teleport → Standalone Trainer → Export
+  to CE, pushed once (10 `UE5 Trainer:` records, none before). Ticked from CE's address list with Setup unticked:
+  TP Save -> "[UE5 Trainer] Enable Setup first.", OK -> `Active` false; TP Recall the same. Setup ticked
+  (`UE5T_ready` true), TP Recall before any save -> "[UE5 Trainer] No saved position -- run TP Save first.", OK ->
+  `Active` false. Control: TP Save then TP Recall with no modal, each unticked. 3659 armed the untick before the
+  message, so the modal ran it while CE still had the row unticked, and the row stayed ticked.
+- ✅ `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]`, the failed-tick branch on Shipping (a CDO-only CheatManager):
+  Console → Load → Debug Camera → Copy CE Script (record created through AOBMaker), ticked in CE -> "[DebugCamera] ON
+  failed (state=0) -- no live CheatManager, or the game refused the toggle.", OK -> `Active` false; pipe-0.log has
+  exactly one `Mailbox: received cmd=7` + `SET_DEBUG_CAMERA req=1 -> state=0` and NO `req=0` after it (3659's untick
+  ran [DISABLE], which sent the OFF).
+- ✅ `SHARED-IDLE-BUSY-BAIL-STILL-REENTERS-DISABLE`, manufactured busy (`sw3_mailbox_busy.py arm`, every thread
+  suspended, cmd = 0x7FFFFFFF): God Mode → Add to CE, then the UI card's Force ON (badge ON, walk-0.log `GodMode: set
+  ON -> rc=1 (want=1)`) -- a hold the card owns. Ticked `God Mode (toggle)` in CE -> "[GodMode] the DLL mailbox is busy
+  with another command -- try again in a moment"; disarmed with the modal still up ("cmd = 0x0 (IDLE, restored)"), so
+  the mailbox was idle when OK was clicked -- the moment 3659's [DISABLE] got its OFF through. After OK: `Active`
+  false, ZERO `Mailbox: received cmd=9` and ZERO `GodMode: set OFF`, and the card's ↻ still reads ON.
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
