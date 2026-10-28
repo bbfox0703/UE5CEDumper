@@ -2190,6 +2190,17 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   and unticks it ("3 snapshots selected." / "2 snapshots selected."). The snapshot is kept. ⬜ Proxy Deploy's drive
   boxes cannot be exercised here: no volume on this PC has an underscore in its label (C: Windows, D: Data, G: Google
   Drive, Y: DataExchange, Z: SteamBackup), and renaming one is not on.
+- ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
+  13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
+  VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
+  5090 Laptop GPU (VEN_10DE DEV_2C18, driver 32.0.16.2101 of 2026-10-19). Not ours by the evidence that can be read
+  without elevation: the same signature hit this laptop on 2026-08-16 and 2026-10-09, plus a 0x10E with
+  STATUS_DEVICE_REMOVED on 2026-08-20, across two NVIDIA drivers; CE's kernel driver was not loaded (every `Use dbk32 …`
+  and `Use Kernel Debugger` 0); the DLL does no graphics work and DumperTest is injected without a proxy; no local-LLM
+  model was resident (Ollama idle since 11:39). Three of the four fell in live game sessions, so GPU use is the common
+  factor, not a feature of ours. The dump (`C:\Windows\Minidump\102826-13234-01.dmp`) needs an elevated read to name
+  the faulting module and the current process -- working-lessons §3.6c. Every result above was committed before it;
+  `dist\` hashes were unchanged after the reboot.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 

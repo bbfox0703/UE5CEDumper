@@ -2412,6 +2412,30 @@ on the BOM. PowerShell is not an option here (§3.8).
 `partially initialized module 'capstone' has no attribute 'Cs'` — a circular-import error that reads
 like a broken capstone install. Same class as `code.py`, `types.py`, `select.py`.
 
+### 3.6c A whole-machine crash on THIS laptop: read the bug check before suspecting us
+
+Measured 2026-10-28 (`[LIVE-3660-2026-10-28]`): the PC went down mid-session and came back by itself. A kernel bug
+check is not a user-mode crash: the DLL, the UI and CE run in user mode and cannot legitimately stop the machine, so
+the question is which kernel component did, and whether anything of ours was in its path.
+
+- **Where the code is.** System log, Kernel-Power **41** (`BugcheckCode` in DECIMAL: 275 = 0x113) and
+  WER-SystemErrorReporting **1001** (the dump path), plus the Application log's WER 1001 `EventName=BlueScreen`. Query
+  with `wevtutil qe … /f:xml` from a Python file and parse the XML: the text format comes back as CP950 mojibake here,
+  and an XPath on `EventID=41` lists the whole history in one call. Events in the last minutes before the crash may be
+  missing -- they were not flushed.
+- **This laptop's signature.** 0x113 VIDEO_DXGKRNL_FATAL_ERROR with parameters (0x19, n, **0x10DE**, **0x2C18**):
+  the DirectX graphics kernel, on the NVIDIA RTX 5090 Laptop GPU (vendor / device id). Seen 2026-08-16, 2026-10-09 and
+  2026-10-28, and a 0x10E VIDEO_MEMORY_MANAGEMENT_INTERNAL with 0xC00002B6 (STATUS_DEVICE_REMOVED) on 2026-08-20.
+- **The checks that clear us, all without elevation:** CE's kernel driver -- `HKCU\Software\Cheat Engine` `Use dbk32 …`
+  and `Use Kernel Debugger` all 0 means DBK was never loaded; which proxy, if any, sat in a game (`proxy_refresh.py
+  report`); whether the local LLM had a model in VRAM (`%LOCALAPPDATA%\Ollama\server-*.log`).
+- ⚠ **The minidump in `C:\Windows\Minidump\` is readable only elevated.** The debugger is installed (the WinDbg
+  store app's `cdbX64.exe` alias); what is missing is the right to read the file. An elevated
+  `cdbX64.exe -z <dump> -c "!analyze -v; q"` names the faulting module and `PROCESS_NAME`, the one fact that would show
+  whether a process of ours was current. Ask the maintainer for that; do not guess it.
+- ⭐ **Commit after every closed item** is what made this crash cost nothing: everything measured before it was
+  already in git, and `dist\`'s hashes were unchanged after the reboot.
+
 ### 3.7b A DETACHED thread must not capture a stack local by reference — and ASAN will not tell you
 
 `dll_helpers_test` died on CI with **`0xC0000409` (STATUS_STACK_BUFFER_OVERRUN), no output at all**,
