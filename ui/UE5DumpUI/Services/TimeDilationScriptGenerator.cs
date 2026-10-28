@@ -111,7 +111,11 @@ public static class TimeDilationScriptGenerator
         {
             Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=active, 0=off, <0=error");
             Line(sb, $"dbg('[Time] {label} {Mult(value)} -> state=' .. tostring(state))");
-            Line(sb, "if state < 0 then");
+            // The write failed but the hold is latched and retried, so the row stays ticked.
+            Line(sb, $"if state == {Constants.OverrideHeldWriteFailedResult} then");
+            Line(sb, $"  showMessage('[Time] {label} -- the write failed, but the hold is kept and retried every tick; " +
+                      "untick the record to release it.')  -- not a failure: the override is held, so the row stays ticked");
+            Line(sb, "elseif state < 0 then");
             Line(sb, $"  showMessage('[Time] {label} -- {(target == Target.Global ? "no WorldSettings (enter a level first)" : "no player pawn (enter gameplay first)")}.')");
             // Applied nothing -> the row must not stay ticked.
             Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));

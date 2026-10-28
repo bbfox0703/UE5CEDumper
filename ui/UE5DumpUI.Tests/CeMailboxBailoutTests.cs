@@ -91,6 +91,18 @@ public class CeMailboxBailoutTests
         Assert.Contains("-- not a failure:", branch);
     }
 
+    // The scripts test the C# mirror; this keeps it the number the DLL answers when a latched override's write fails.
+    [Fact]
+    public void The_held_write_failure_mirror_matches_the_dll()
+    {
+        string Src(string p) => System.IO.File.ReadAllText(NumericInputCoercionTests.RepoFile(p)).Replace("\r\n", "\n");
+        var n = Constants.OverrideHeldWriteFailedResult.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Matches(@"MR_ERR_WRITE\s*=\s*" + n + ",", Src("dll/src/Laufen.h"));
+        Assert.Matches(@"TR_ERR_WRITE\s*=\s*" + n + ",", Src("dll/src/Hemmung.h"));
+        Assert.Contains("rc = MR_ERR_WRITE;   // leave active; the worker will retry next tick", Src("dll/src/Laufen.cpp"));
+        Assert.Contains("rc = TR_ERR_WRITE;   // leave active; the worker will retry next tick", Src("dll/src/Hemmung.cpp"));
+    }
+
     // ── The rule ────────────────────────────────────────────────────────────
 
     [Theory]

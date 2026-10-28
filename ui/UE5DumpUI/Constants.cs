@@ -117,6 +117,12 @@ public static class Constants
     // transient: a menu, a loading screen, a vehicle pawn. [W2-GRAVDIR-VERDICT]
     public const int LaufenErrReflect = -4;
 
+    // A movement knob's or a time lever's `state` -10 (Laufen::MR_ERR_WRITE, Hemmung::TR_ERR_WRITE): the raw write
+    // failed AFTER the override was latched active, and the worker re-writes it every tick. The override is held, not
+    // refused, so a CE row ticked into it stays ticked and unticking is what releases it.
+    // [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]
+    public const int OverrideHeldWriteFailedResult = -10;
+
     public const int LogCompressMaxArgChars = 24000;
 
     // Leftover-proxy cleanup reports (Reports/leftover-proxies-<stamp>.txt).

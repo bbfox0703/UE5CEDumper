@@ -100,7 +100,11 @@ public static class MovementScriptGenerator
         {
             Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=active, 0=off, <0=error");
             Line(sb, $"dbg('[Movement] {label} {Pct(percent)} -> state=' .. tostring(state))");
-            Line(sb, "if state < 0 then");
+            // The write failed but the override is latched and retried, so the row stays ticked.
+            Line(sb, $"if state == {Constants.OverrideHeldWriteFailedResult} then");
+            Line(sb, $"  showMessage('[Movement] {label} -- the write failed, but the override is held and retried every tick; " +
+                      "untick the record to release it.')  -- not a failure: the override is held, so the row stays ticked");
+            Line(sb, "elseif state < 0 then");
             // Nothing was applied, so the row must not stay ticked (same rule as the
             // timeout path above; this one was missed for the same reason).
             Line(sb, $"  showMessage('[Movement] {label} -- no pawn / no CharacterMovement (enter gameplay first)')");
@@ -186,7 +190,11 @@ public static class MovementScriptGenerator
         {
             Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=active, 0=off, <0=error/unavailable");
             Line(sb, "dbg('[Movement] Gravity Direction -> state=' .. tostring(state))");
-            Line(sb, "if state < 0 then");
+            // The write failed but the direction is latched and retried, so the row stays ticked.
+            Line(sb, $"if state == {Constants.OverrideHeldWriteFailedResult} then");
+            Line(sb, "  showMessage('[Movement] Gravity Direction -- the write failed, but the direction is held and retried " +
+                      "every tick; untick the record to release it.')  -- not a failure: the override is held, so the row stays ticked");
+            Line(sb, "elseif state < 0 then");
             // Applied nothing -> the row must not stay ticked.
             Line(sb, "  showMessage('[Movement] Gravity Direction -- unavailable (needs UE5.3+) or no pawn.')");
             Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
