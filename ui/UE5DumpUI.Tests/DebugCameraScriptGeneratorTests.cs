@@ -160,6 +160,33 @@ public class DebugCameraScriptGeneratorTests
         Assert.DoesNotContain("showMessage(", off);
     }
 
+    // [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] A tick that applied nothing unticked with `memrec.Active = false`,
+    // and CE runs [DISABLE] for that: it sent an OFF nobody asked for. Over a queued OFF (the -6 tick) that OFF answered
+    // -5, so [DISABLE] printed "OFF did not complete" and raised -- the record stayed ticked under a dialog that had said
+    // "Tick again" (measured live on build 3659). Both branches that applied nothing untick WITHOUT running [DISABLE].
+    // Negative control: emit CeLuaHygiene.DeferredUntickLua in either branch and this fails.
+    [Fact]
+    public void A_tick_that_applied_nothing_unticks_without_running_DISABLE()
+    {
+        var s = DebugCameraScriptGenerator.Generate();
+        var enable = s[..s.IndexOf("[DISABLE]", System.StringComparison.Ordinal)];
+        string BranchAt(string head)
+        {
+            int b = enable.IndexOf(head, System.StringComparison.Ordinal);
+            Assert.True(b >= 0, "no branch " + head);
+            return enable[b..enable.IndexOf("\nelse", b + 1, System.StringComparison.Ordinal)];
+        }
+
+        foreach (var branch in new[] { BranchAt("elseif state == -6 then"), BranchAt("elseif state ~= 1 then") })
+        {
+            Assert.Contains(CeLuaHygiene.DeferredUntickWithoutDisableLua("  "), branch);
+            Assert.Contains("disableWithoutExecute", branch);
+            // The timer is armed after the dialog: a timer armed before it fires inside it, while CE has not ticked yet.
+            Assert.True(branch.IndexOf("showMessage(", System.StringComparison.Ordinal)
+                        < branch.IndexOf("createTimer(", System.StringComparison.Ordinal), branch);
+        }
+    }
+
     // [DEBUGCAM-QUEUED-OFF-NOESCALATE] (review): ue5_invoke_helper.lua's copy-me Debug Camera example kept the old
     // [DISABLE] -- pcall(setDebugCamera, 0), reporting only a failed pcall -- so a queued OFF unticked silently over a
     // camera that stays on. scripts/tests/invoke_helper_test.lua RUNS the block; this pins its shape where no CE Lua

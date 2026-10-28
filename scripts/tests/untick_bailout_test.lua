@@ -46,12 +46,15 @@ end
 
 local TIMERS   -- every createTimer() handed out, in creation order
 
--- A memory record whose Active property behaves the way CE's setActive does.
+-- A memory record whose Active property behaves the way CE's setActive does. Unticking an active
+-- record runs its [DISABLE] section (counted in `disableRuns`); disableWithoutExecute() unticks
+-- without running it (memoryrecordunit.pas TMemoryRecord.disablewithoutexecute: factive := false).
 local function newRecord()
-  local state = { fActive = false, processing = false, setAttempts = 0, effective = 0 }
+  local state = { fActive = false, processing = false, setAttempts = 0, effective = 0, disableRuns = 0 }
   return setmetatable({}, {
     __index = function(_, k)
       if k == 'Active' then return state.fActive end
+      if k == 'disableWithoutExecute' then return function() state.fActive = false end end
       return nil
     end,
     __newindex = function(_, k, v)
@@ -59,6 +62,7 @@ local function newRecord()
       state.setAttempts = state.setAttempts + 1
       if v == state.fActive then return end        -- (1) CE's early exit
       if state.processing then return end          -- (2) CE's early exit
+      if not v then state.disableRuns = state.disableRuns + 1 end   -- (3) [DISABLE] runs
       state.fActive = v
       state.effective = state.effective + 1
     end,
@@ -108,6 +112,14 @@ if memrec then local _u=createTimer(nil,false) _u.Interval=50 _u.OnTimer=functio
 return
 ]]
 
+-- ⚠ MUST stay byte-identical to CeLuaHygiene.DeferredUntickWithoutDisableLua(): the untick for a bail-out that
+-- applied NOTHING, which must not run [DISABLE] -- a stateful toggle's [DISABLE] sends a real OFF.
+-- [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]
+local WITHOUT_DISABLE = [[
+if memrec then local _u=createTimer(nil,false) _u.Interval=50 _u.OnTimer=function(x) x.destroy() if memrec.disableWithoutExecute then memrec.disableWithoutExecute() else memrec.Active = false end end _u.Enabled=true end  -- deferred (CE sets Active AFTER this block), and [DISABLE] is not run: nothing was applied to undo
+return
+]]
+
 -- ============================================================
 -- Cases
 -- ============================================================
@@ -131,6 +143,26 @@ do
   check('deferred: the untick actually took effect', state.effective == 1)
   check('deferred: the timer destroyed itself', TIMERS[1] and TIMERS[1].destroyed == true)
   check('deferred: fired on a real delay, not inline', TIMERS[1] and TIMERS[1].Interval == 50)
+  check('deferred: ...and the untick ran [DISABLE]', state.disableRuns == 1)
+end
+
+-- 2b. The bail-out that applied nothing: unticked, and its [DISABLE] never ran.
+do
+  local rec, state = newRecord()
+  activate(rec, state, WITHOUT_DISABLE)
+  check('without-disable: record ends UNTICKED', rec.Active == false)
+  check('without-disable: [DISABLE] did NOT run', state.disableRuns == 0)
+  check('without-disable: the timer destroyed itself', TIMERS[1] and TIMERS[1].destroyed == true)
+end
+
+-- 2c. ...and on a CE whose record has no disableWithoutExecute, it falls back to the plain untick.
+do
+  local rec, state = newRecord()
+  local mt = getmetatable(rec)
+  local idx = mt.__index
+  mt.__index = function(t, k) if k == 'disableWithoutExecute' then return nil end return idx(t, k) end
+  activate(rec, state, WITHOUT_DISABLE)
+  check('without-disable fallback: record ends UNTICKED', rec.Active == false)
 end
 
 -- 3. Guard the model: if the model let ANY assignment through, case 1 would pass for the

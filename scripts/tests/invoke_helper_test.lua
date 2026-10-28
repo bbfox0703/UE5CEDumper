@@ -596,43 +596,67 @@ function createTimer(_, enabled)
 end
 
 --- A memrec whose Active obeys CE's early-exit, so an immediate untick is a NO-OP here
---- exactly as it is in CE.
-local function makeCeRecord()
-  local st = { fActive = false }
-  return setmetatable({}, {
-    __index = function(_, k) return k == 'Active' and st.fActive or nil end,
+--- exactly as it is in CE. Unticking a ticked record runs its [DISABLE] block (`disableBody`) and,
+--- as CE's setActive does, keeps it ticked when that raises; disableWithoutExecute() unticks
+--- without running it. [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]
+local function makeCeRecord(disableBody)
+  local st = { fActive = false, disables = 0 }
+  local rec
+  rec = setmetatable({}, {
+    __index = function(_, k)
+      if k == 'Active' then return st.fActive end
+      if k == 'disableWithoutExecute' then return function() st.fActive = false end end
+      return nil
+    end,
     __newindex = function(_, k, v)
       if k ~= 'Active' then return end
       if v == st.fActive then return end          -- (1) setActive's early exit
+      if not v and disableBody then
+        st.disables = st.disables + 1
+        if not runAsCeChunk(disableBody, rec) then return end   -- a raising [DISABLE] keeps it ticked
+      end
       st.fActive = v
     end,
-  }), st
+  })
+  return rec, st
+end
+
+--- Fire every armed timer that has not destroyed itself: what CE's message loop does, after a chunk
+--- returns AND inside any modal the chunk opens.
+local function pumpTimers()
+  for _, t in ipairs(TIMERS) do
+    if t.Enabled and t.OnTimer and not t.destroyed then t.OnTimer(t) end
+  end
 end
 
 --- Run [ENABLE] the way CE really does: chunk first, THEN fActive := true, then let any
 --- deferred timer fire.
-local function runEnableLikeCe(body)
+local function runEnableLikeCe(body, disableBody)
   TIMERS = {}
-  local rec, st = makeCeRecord()
+  local rec, st = makeCeRecord(disableBody)
   local ok, err = runAsCeChunk(body, rec)
   st.fActive = true                                -- (4) CE ticks the record afterwards
-  for _, t in ipairs(TIMERS) do
-    if t.Enabled and t.OnTimer then t.OnTimer(t) end
-  end
+  pumpTimers()
+  TIMERS = {}                                      -- a later case's modal must not fire this case's timers
   return ok, err, st
 end
 
-function showMessage(s) PRINTS[#PRINTS + 1] = 'showMessage: ' .. tostring(s) end
+-- [INVOKE-SAMPLE-UNTICK-BEFORE-MODAL] showMessage is MODAL: its message loop fires the timers, while the chunk is
+-- still running and CE has not ticked the record. A timer armed before it lands as a no-op.
+function showMessage(s) PRINTS[#PRINTS + 1] = 'showMessage: ' .. tostring(s); pumpTimers() end
 
 case('AA31: the Debug Camera [ENABLE] sample unticks the record when the call returns -1')
 do
   resetWorld()
-  DLL = function() I32[MB + OFF_RESULT] = -1; I32[MB + OFF_STATUS] = 1 end   -- DLL reports error
+  local sent = 0
+  DLL = function() sent = sent + 1; I32[MB + OFF_RESULT] = -1; I32[MB + OFF_STATUS] = 1 end   -- DLL reports error
   local blocks = extractSampleBlocks(HELPER)
   check(#blocks >= 2, 'the header carries the [ENABLE]/[DISABLE] sample', '#blocks=' .. #blocks)
-  local ok, err, st = runEnableLikeCe(blocks[1])
+  local ok, err, st = runEnableLikeCe(blocks[1], blocks[2])
   check(ok, 'AA31: the [ENABLE] sample runs without raising', err)
   eq(st.fActive, false, 'AA31: a -1 result unticked the record -- AFTER CE ticked it')
+  eq(sent, 1, 'and the untick sent no OFF: the tick applied nothing to undo')
+  eq(st.disables, 0, 'the untick did not run [DISABLE]')
 end
 
 case('AA31: the sample unticks when the call RAISES (mailbox gone)')
@@ -640,7 +664,7 @@ do
   resetWorld()
   SYMBOLS['g_invokeMailbox'] = nil          -- findMailbox raises -> setDebugCamera raises
   local blocks = extractSampleBlocks(HELPER)
-  local ok, _, st = runEnableLikeCe(blocks[1])
+  local ok, _, st = runEnableLikeCe(blocks[1], blocks[2])
   check(ok, 'AA31: the sample catches the raise rather than propagating it')
   eq(st.fActive, false, 'AA31: a raised error also unticked the record')
   SYMBOLS['g_invokeMailbox'] = MB           -- restore for later cases
@@ -651,7 +675,7 @@ do
   resetWorld()
   DLL = function() I32[MB + OFF_RESULT] = 1; I32[MB + OFF_STATUS] = 1 end     -- camera ON
   local blocks = extractSampleBlocks(HELPER)
-  local ok, _, st = runEnableLikeCe(blocks[1])
+  local ok, _, st = runEnableLikeCe(blocks[1], blocks[2])
   check(ok, 'the sample runs')
   eq(st.fActive, true, 'AA31: a real success keeps the record ticked')
 end
@@ -691,11 +715,16 @@ end
 case('DBGCAM-OFF-OVER-QUEUED-ON: the [ENABLE] sample unticks and says why when the ON was not sent (-6)')
 do
   resetWorld()
-  DLL = function() I32[MB + OFF_RESULT] = -6; I32[MB + OFF_STATUS] = 1 end   -- an earlier OFF is still queued
+  local sent = 0
+  DLL = function() sent = sent + 1; I32[MB + OFF_RESULT] = -6; I32[MB + OFF_STATUS] = 1 end   -- an OFF is queued
   local blocks = extractSampleBlocks(HELPER)
-  local ok, err, st = runEnableLikeCe(blocks[1])
+  local ok, err, st = runEnableLikeCe(blocks[1], blocks[2])
   check(ok, 'the sample runs', err)
   eq(st.fActive, false, 'nothing was sent, so the record is unticked')
+  -- [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] An untick that ran [DISABLE] sent an OFF over the queued one; the DLL
+  -- answered -5 and [DISABLE] raised, so the record stayed ticked after "tick again".
+  eq(sent, 1, 'the untick sent no OFF')
+  eq(st.disables, 0, 'the untick did not run [DISABLE]')
   contains(table.concat(PRINTS, '\n'), 'not sent', 'and the message says the ON was not sent')
 end
 

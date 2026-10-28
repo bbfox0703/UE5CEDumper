@@ -811,6 +811,8 @@ public static class CeLuaHygiene
                + "_u.OnTimer=function(x) x.destroy() memrec.Active = false end _u.Enabled=true end"
                + "  -- deferred: CE sets Active AFTER this block, so an immediate untick is a no-op";
 
+    public static string DeferredUntickWithoutDisableLua(string indent = "") => DeferredUntickLua(indent);
+
     /// <summary><see cref="DeferredUntickLua"/>, appended with its newline.</summary>
     public static void AppendDeferredUntick(StringBuilder sb, string indent = "")
         => sb.Append(DeferredUntickLua(indent)).Append('\n');
