@@ -2280,6 +2280,23 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   `Fly: no-gravity 3D flight (WASD)` -> "[Fly] -- no pawn / no CharacterMovement? (enter gameplay first)", `FLY
   preset=0` + `FLY enable=1 -> rc=-3` and NO `FLY enable=0` / `Fly: DISABLED`. Each ends unticked after OK. 3659's
   plain untick sent each OFF / RESET.
+- ✅ `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]`, the measured case itself, on DumperTest 5.4 **Development
+  `--idle`** (pid 37348, 25,264 objects, DLL 3660; experimental features on), CE 7.7 + AOBMaker attached. Control: Keep
+  Foreground ON, Console Force On -> "✓ Debug Camera forced ON."; Keep Foreground OFF (the game thread stalls), Console
+  Force Off -> "⏳ Force OFF did not complete — the game thread is busy (stalled or unfocused), and a queued OFF does not
+  turn the camera off on most engines: press Force OFF again once the game responds." (invoke timeout 5000 ms), badge
+  ON. The Console's Copy CE Script record ticked in that stall -> "[DebugCamera] ON not sent -- an earlier OFF is still
+  queued (the game thread is busy). Tick again once the game responds."; OK -> `Active` false, the mailbox result
+  still -6 and errorMsg "Debug Camera: ON not sent -- an earlier OFF is still queued; send ON again once the game
+  responds", and pipe-0.log exactly one `received cmd=7` + `SET_DEBUG_CAMERA req=1 -> state=-6` with NO `req=0` (3659:
+  OK sent `req=0 -> state=-5`, raised, stayed ticked and overwrote errorMsg).
+- ✅ `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]`, the helper's copy-me sample, same stall: Tools → Inject Helper into Current
+  CE Table, made resident (`UE5_INVOKE_HELPER_VERSION` 1.5); the Debug Camera sample of 3660's helper (lines 38-88) and
+  of 3659's (`git show c233a848`, lines 38-86) added as two AA records (`out/live3660b/extract_samples.py`). Both ticked
+  -> "[Debug Camera] could not enable -- not sent -- an earlier OFF is still queued; tick again once the game responds";
+  after OK **3660's ends unticked, 3659's stays TICKED** -- the live red on the same DLL; three `cmd=7` in all, each
+  `req=1 -> state=-6`, never a `req=0`. The 3659 record cleaned up with `disableWithoutExecute()`. Drained (Keep
+  Foreground ON): "Debug Camera is ON." (stock 5.4: a queued OFF leaves it on), then "✓ Debug Camera forced OFF.".
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
