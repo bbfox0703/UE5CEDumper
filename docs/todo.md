@@ -2357,6 +2357,24 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   drained, 5.8's behaviour) while the record is STILL ticked -- the state the message's "most engines" hedge covers.
   Untick again -> `req=0 -> state=0` at 14:24:38.715 with no invoke (already OFF), the record unticks, and the Lua Engine
   window closes itself (the clean-success close). `t.IdleWhenNotForeground 0` set back from the console.
+- ✅ `CEXML-DEFINITION-VIEW-AS-DATA`, the **Extinction re-check of the original measurement** (UE 4.15, UProperty mode,
+  version.dll proxy CURRENT at 3660, `init-0.log` build 1.0.0.3660, main menu, `Connected — UE415 (200585 objects)`,
+  the 3659 run's count). Instances `DataTable` / Exact / `Level` → one hit, DT_LevelSelectData T = 0x24C05A0F800,
+  RowStruct S = 0x24B951F6140 `BlinkDataLevel (ScriptStruct)`. **Copy CE XML** -> "Copied: 0 objects, 1805 XML lines."
+  and `CE XML copied … for DataTable (AOB=False, descOffset=True, descType=False, 0 structs / 0 pointers resolved,
+  depth=4)` -- the 3659 log said `1 pointers resolved` with 1891 lines; this run's ui-pipe log has ZERO `walk_instance`
+  TX after the export (3659: one, addr 0x19F68566140, kept in `out/live3660b/extinction-3659-ui-pipe-0.log`). In the
+  XML `RowStruct (28)` is an 8 Bytes hex leaf with 0 children; the 19 rows' `World (20)` and `PreviewImage (58)` are
+  still `WeakPtr (0)` + `AssetPath (10)` groups (38 of each). Pasted into CE, L1: `RowStruct (28) | type=3 hex=true
+  offs=0 kids=0 … val=0000024B951F6140` (= S); row 1's World reads `FFFFFFFF` and its AssetPath
+  `/Game/Maps/Battlegrounds/2Cities_01/2Cities_01_BG.2Cities_01_BG` (the positive control, as on 3659). **CSX** (CE 7.7+
+  Binary): the RowStruct element is self-closing (`Vartype="Pointer" Bytesize="8"`). **Push**: "Structure
+  'DataTable_DT_LevelSelectData' added to CE's Structure Dissect (21 structures, 97 elements)"; L2
+  `DataTable_DT_LevelSelectData: off=28 vt=12 child=nil`. **The first definition view on a UE4 / UProperty title**:
+  RowStruct `→` -> header `ScriptStruct BlinkDataLevel`, the "ℹ This is a type definition …" notice, rows 0x8 Name /
+  0x20 World / 0x40 Description / 0x58 PreviewImage with empty Address cells; World's `Addr` -> "⚠ Addr: nothing done —
+  this is a type definition (its member layout), not a live object, so there is no data at these offsets." with the
+  clipboard sentinel unchanged; `Back` -> DT_LevelSelectData with an empty status line and its Address cells filled.
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
