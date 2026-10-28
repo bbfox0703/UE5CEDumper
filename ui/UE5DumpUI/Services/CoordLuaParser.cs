@@ -402,7 +402,8 @@ public static class CoordLuaParser
                     sb.Append('\n');
                     break;
                 case 'z':
-                    while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
+                    // C isspace only, as Lua 5.3: a no-break space after \z stays in the string.
+                    while (i < s.Length && s[i] is ' ' or '\t' or '\n' or '\v' or '\f' or '\r') i++;
                     break;
                 case 'x':
                     if (i + 1 < s.Length && char.IsAsciiHexDigit(s[i]) && char.IsAsciiHexDigit(s[i + 1]))
@@ -419,14 +420,19 @@ public static class CoordLuaParser
                     // Read wide: as an int, 80000000..FFFFFFFF turned negative, passed the range
                     // check and threw out of ConvertFromUtf32.
                     int close = i < s.Length && s[i] == '{' ? s.IndexOf('}', i) : -1;
-                    if (close <= i + 1 || close - i - 1 > 16 ||
-                        !ulong.TryParse(s.AsSpan(i + 1, close - i - 1), NumberStyles.AllowHexSpecifier,
-                                        CultureInfo.InvariantCulture, out ulong cp))
+                    var digits = close > i + 1 ? s.AsSpan(i + 1, close - i - 1) : default;
+                    bool allHex = close > i + 1;
+                    foreach (char h in digits) allHex &= char.IsAsciiHexDigit(h);
+                    if (!allHex)
                     {
                         error = (at, "unpaired quote: '\\u' needs {hex}, so a backslash or quote in this string is stray");
                         next = i;
                         return "";
                     }
+                    // Leading zeros are free, as in Lua; a value past 64 bits is simply too large.
+                    if (!ulong.TryParse(digits, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture,
+                                        out ulong cp))
+                        cp = ulong.MaxValue;
                     if (cp > 0x10FFFF)
                     {
                         // Lua 5.3 -- CE's -- refuses this too ("UTF-8 value too large").
@@ -541,8 +547,15 @@ public static class CoordLuaParser
             { "uid", "label", "group", "map", "x", "y", "z", "pitch", "yaw", "roll" };
 
         private const string MissingBrace =
-            "a '{' opens inside an entry, so the entry before it is missing its closing '}' " +
-            "(or a stray quote or a comment swallowed it)";
+            "a '{' stands inside an entry: either that '{' is stray, or the entry before it is missing its " +
+            "closing '}' (a stray quote or a comment can swallow one)";
+
+        private const string NotClosed =
+            "the COORDS table is not closed: its '}' is missing before this statement (a comment can swallow one)";
+
+        private const string ClosedEarly =
+            "unpaired quote or brace: the COORDS table closes before its last entry, so a stray quote or " +
+            "brace ended an entry, and the table with it, early";
 
         private bool IsKeyAssign => Cur.Kind == TokKind.Name && Peek().IsSymbol("=") && !Peek().IsSymbol("==");
 
@@ -554,6 +567,7 @@ public static class CoordLuaParser
             {
                 if (Cur.IsSymbol("}")) break;
                 if (Cur.Kind == TokKind.End) { Unbalanced = true; return entries; }
+                if (Cur.Is(TokKind.Name, "local")) { Error = (Cur.Start, NotClosed); return entries; }
                 if (!Cur.IsSymbol("{"))
                 {
                     Fail("unpaired quote or brace: text stands between the entries of the COORDS table, so a " +
@@ -564,6 +578,7 @@ public static class CoordLuaParser
                 if (Failed) return entries;
                 entries.Add(entry);
                 if (Cur.IsSymbol(",") || Cur.IsSymbol(";")) _i++;
+                else if (Cur.Is(TokKind.Name, "local")) { Error = (Cur.Start, NotClosed); return entries; }
                 else if (!Cur.IsSymbol("}") && !Cur.IsSymbol("{") && Cur.Kind != TokKind.End)
                 {
                     Fail("unpaired quote or brace: text follows an entry where a comma belongs, so a stray " +
@@ -573,25 +588,73 @@ public static class CoordLuaParser
             }
             if (Failed) return entries;
 
-            // The rest of the block is data statements only -- the generator writes
-            // `local Z_TOLERANCE = …` and `local GROUPS = { … }` there -- so it is read as such.
-            // Whatever a stray brace leaves behind after closing the table early is never one:
-            // counting braces missed `}}N{{`, which reads as the start of a statement.
-            const string closedEarly =
-                "unpaired quote or brace: the COORDS table closes before its last entry, so a stray quote or " +
-                "brace ended an entry, and the table with it, early";
+            // The rest of the block holds assignments -- the generator writes `local Z_TOLERANCE = …`
+            // and `local GROUPS = { … }` -- and is read as Lua 5.3's assignment statements. A fault
+            // there is named on its own line. Only when the text after the table carries an entry,
+            // or a brace with nothing to close, did a stray quote or brace close the table early:
+            // sending every fault there named the wrong line, and refused statements CE accepts.
             int closeAt = Cur.Start;
-            _i++;
+            int tailStart = ++_i;
+            ReadTail();
+            if (!Failed) return entries;
+            if (ClosedEarlyEvidence(tailStart))
+            {
+                Unbalanced = false;
+                Error = (closeAt, ClosedEarly);
+            }
+            else if (Unbalanced)
+            {
+                Unbalanced = false;
+                Error = (_statementStart, "a table after the COORDS table is not closed");
+            }
+            return entries;
+        }
+
+        private int _statementStart;
+
+        /// <summary><c>stat ::= ';' | 'local' namelist ['=' explist] | namelist '=' explist</c>,
+        /// Lua 5.3's grammar for the statements a data block holds; anything else stops the
+        /// import on its own line.</summary>
+        private void ReadTail()
+        {
+            const string unreadable =
+                "a statement after the COORDS table does not read as Lua (a stray quote can do this)";
             while (!Failed && Cur.Kind != TokKind.End)
             {
+                _statementStart = Cur.Start;
                 if (Cur.IsSymbol(";")) { _i++; continue; }
-                if (Cur.Is(TokKind.Name, "local")) _i++;
-                if (!IsKeyAssign) { Error = (closeAt, closedEarly); return entries; }
-                _i += 2;
+                bool local = Cur.Is(TokKind.Name, "local");
+                if (local) _i++;
+                if (Cur.Kind != TokKind.Name) { Fail(unreadable); return; }
+                _i++;
+                while (Cur.IsSymbol(",") && Peek().Kind == TokKind.Name) _i += 2;
+                if (!Cur.IsSymbol("="))
+                {
+                    if (local) continue;   // `local a` declares with no value
+                    Fail(unreadable);
+                    return;
+                }
+                _i++;
                 ReadValue();
+                while (!Failed && Cur.IsSymbol(",")) { _i++; ReadValue(); }
             }
-            if (Unbalanced) { Unbalanced = false; Error = (closeAt, closedEarly); }
-            return entries;
+        }
+
+        /// <summary>Whether the text after the table carries what a table closed early leaves:
+        /// a brace with nothing to close, or an entry-shaped table (<c>{ uid = …</c>).</summary>
+        private bool ClosedEarlyEvidence(int from)
+        {
+            int depth = 0;
+            for (int k = from; k < _t.Count; k++)
+            {
+                if (_t[k].IsSymbol("}") && --depth < 0) return true;
+                if (!_t[k].IsSymbol("{")) continue;
+                depth++;
+                if (k + 2 < _t.Count && _t[k + 1].Kind == TokKind.Name && s_knownKeys.Contains(_t[k + 1].Text) &&
+                    _t[k + 2].IsSymbol("="))
+                    return true;
+            }
+            return false;
         }
 
         private LuaEntry ReadEntry()
