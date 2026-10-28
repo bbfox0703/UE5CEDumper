@@ -428,4 +428,31 @@ public class DefinitionViewExportTests
         Assert.NotNull(platform.LastClipboard);
         Assert.Contains("2100", platform.LastClipboard);
     }
+
+    // DEFVIEW-IF-STATUS-STICKY (review): the definition notice stayed on the status line after a live instance's rows
+    // replaced the definition's -- telling the user that rows WITH addresses had none -- and after the selection was
+    // cleared. It leaves with the definition's rows and gives back the line it covered.
+    [Fact]
+    public void InstanceFinder_TheDefinitionNotice_LeavesWithTheDefinitionsRows()
+    {
+        var dump = new StubDumpService();
+        dump.RegisterStruct(TypeAddr, DefinitionWalk());
+        dump.RegisterStruct("0x2000", new InstanceWalkResult
+        {
+            Address = "0x2000", Name = "Pawn_0", ClassName = "Actor",
+            Fields = new List<LiveFieldValue> { new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x100, Size = 4 } },
+        });
+        var vm = FinderOn(dump);
+        InstanceResult Definition() => new() { Address = TypeAddr, Name = "BlinkDataLevel", ClassName = "ScriptStruct" };
+        vm.StatusText = "Found 2 instances";
+
+        vm.SelectedInstance = Definition();
+        Assert.Equal(LiveWalkerViewModel.DefinitionViewText, vm.StatusText);
+        vm.SelectedInstance = new InstanceResult { Address = "0x2000", Name = "Pawn_0", ClassName = "Actor" };
+        Assert.Equal("Found 2 instances", vm.StatusText);
+
+        vm.SelectedInstance = Definition();
+        vm.SelectedInstance = null;
+        Assert.Equal("Found 2 instances", vm.StatusText);
+    }
 }
