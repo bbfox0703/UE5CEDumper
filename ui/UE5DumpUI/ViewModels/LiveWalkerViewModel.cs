@@ -6161,6 +6161,21 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     internal static string AddToCeLabel => AobMakerStatus.Say(KeyAddToCeLabel, "+CE");
     internal const string KeyPushCeFieldLabel = "str.LiveWalker.PushCeField";
     internal static string PushCeFieldLabel => AobMakerStatus.Say(KeyPushCeFieldLabel, "+CE Field (flat)");
+    internal const string KeyFuncGenScriptLabel = "str.LiveWalker.FuncGenScript";
+    internal static string FuncGenScriptLabel => AobMakerStatus.Say(KeyFuncGenScriptLabel, "INV");
+    internal const string KeyFuncPipeInvokeLabel = "str.LiveWalker.FuncPipeInvoke";
+    internal static string FuncPipeInvokeLabel => AobMakerStatus.Say(KeyFuncPipeInvokeLabel, "PIPE");
+    internal const string KeyFuncCopyBakedLabel = "str.LiveWalker.FuncCopyBaked";
+    internal static string FuncCopyBakedLabel => AobMakerStatus.Say(KeyFuncCopyBakedLabel, "AA(Baked)");
+    internal const string KeyFuncAsmLabel = "str.Pointers.AobMakerAsm";
+    internal static string FuncAsmLabel => AobMakerStatus.Say(KeyFuncAsmLabel, "ASM");
+
+    internal const string KeyFunctionsLoading = "str.LiveWalker.FunctionsLoading";
+    /// <summary>[LW-BACK-CONTAINER-HEADER-ADDR] A Functions row action refused while the rows are the previous
+    /// class's.</summary>
+    internal static string FunctionsLoadingText(string action) => AobMakerStatus.Say(KeyFunctionsLoading,
+        "⚠ {0}: nothing done — this object's functions are still loading, and the rows shown are the previous "
+        + "object's.", action);
 
     /// <summary>The status line for a walk that found no object to read, or null when it read one. One copy, because a
     /// Refresh inside a container view walks the PARENT, and must say what a walk of that object says.
@@ -6199,7 +6214,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task AsmFunctionAsync(FunctionInfoModel? func)
     {
-        if (_aobMaker == null || func == null || string.IsNullOrEmpty(func.Address)) return;
+        if (func == null || RefusedWhileFunctionsLoad(FuncAsmLabel)) return;
+        if (_aobMaker == null || string.IsNullOrEmpty(func.Address)) return;
         StatusText = await AobMakerActions.DisassembleFunctionAsync(_aobMaker, _dump, func.Address, func.Name, _log);
         ApplyAobMakerProbe(_aobMaker.IsAvailable);
     }
@@ -7078,6 +7094,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task GenerateInvokeScriptAsync(FunctionInfoModel? func)
     {
         if (func == null || string.IsNullOrEmpty(CurrentClassName)) return;
+        if (RefusedWhileFunctionsLoad(FuncGenScriptLabel)) return;
 
         try
         {
@@ -7135,6 +7152,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task InvokeViaPipeAsync(FunctionInfoModel? func)
     {
         if (func == null || string.IsNullOrEmpty(CurrentAddress)) return;
+        if (RefusedWhileFunctionsLoad(FuncPipeInvokeLabel)) return;
 
         try
         {
@@ -7187,6 +7205,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task CopyBakedScriptAsync(FunctionInfoModel? func)
     {
         if (func == null || string.IsNullOrEmpty(CurrentClassName)) return;
+        if (RefusedWhileFunctionsLoad(FuncCopyBakedLabel)) return;
 
         try
         {
@@ -7531,8 +7550,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // Funcs -> Live) can await it before calling
         // TrySelectFunctionByName -- otherwise the call races with the
         // function-list population and the row never gets selected.
-        // [LW-BACK-CONTAINER-HEADER-ADDR] Another class: its rows go now (see ClearFunctionRows).
-        if (!string.Equals(prevClassAddr, result.ClassAddr, StringComparison.Ordinal)) ClearFunctionRows();
+        // [LW-BACK-CONTAINER-HEADER-ADDR] Another class: the rows shown are stale from now (see MarkFunctionsStale).
+        if (!string.Equals(prevClassAddr, result.ClassAddr, StringComparison.Ordinal)) MarkFunctionsStale();
         _pendingFunctionsLoad = LoadFunctionsAsync(result.ClassAddr);
 
         // DataTable detection: if this is a DataTable, fetch rows and inject synthetic RowMap field.
@@ -7691,31 +7710,41 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private void ShowFunctionsOf(string classAddr)
     {
         if (string.Equals(_currentClassAddr, classAddr, StringComparison.Ordinal)) return;
-        ClearFunctionRows();
+        MarkFunctionsStale();
         _currentClassAddr = classAddr;
         _pendingFunctionsLoad = LoadFunctionsAsync(classAddr);
     }
 
+    /// <summary>True while the Functions rows are the previous class's (see <see cref="MarkFunctionsStale"/>).</summary>
+    private bool _functionsStale;
+
     /// <summary>
-    /// [LW-BACK-CONTAINER-HEADER-ADDR] Empty the Functions rows but keep the section, for a class change whose list
-    /// is still loading. The header's address has already moved: PIPE would fire an old row there, and the DLL finds
-    /// the function by NAME on that object's class -- so a name the new class also has runs the new class's function
-    /// with arguments laid out for the old one. The section stays because hiding it resizes the field grid under a
-    /// scroll restore, which the list's landing would then undo. The selection is detached first: it is bound to the
-    /// grid being cleared.
+    /// [LW-BACK-CONTAINER-HEADER-ADDR] The class on screen changed and its list is still loading. The rows stay:
+    /// emptying them resizes the Functions section, and the field grid with it, under a scroll restore. But they are
+    /// the previous class's while the header's address has already moved: PIPE would fire one there, and the DLL finds
+    /// the function by NAME on that object's class, so a name the new class also has runs the new class's function with
+    /// arguments laid out for the old one. So every row action refuses until the new list lands.
     /// </summary>
-    private void ClearFunctionRows()
+    private void MarkFunctionsStale() => _functionsStale = true;
+
+    /// <summary>Refuse a Functions row action, and say so under its button's label, while the rows are stale.</summary>
+    private bool RefusedWhileFunctionsLoad(string action)
+    {
+        if (!_functionsStale) return false;
+        StatusText = FunctionsLoadingText(action);
+        _log.Info($"{action} refused: the Functions rows are the previous class's; {_currentClassAddr}'s list is still loading");
+        return true;
+    }
+
+    /// <summary>Empty the Functions list and hide its section: there is no class, or its list could not be read. The
+    /// selection is detached first: it is bound to the grid being cleared.</summary>
+    private void ClearFunctionList()
     {
         _allFunctions.Clear();
         SelectedFunction = null;
         Functions.Clear();
-    }
-
-    /// <summary>Empty the Functions list and hide its section: there is no class, or its list could not be read.</summary>
-    private void ClearFunctionList()
-    {
-        ClearFunctionRows();
         HasFunctions = false;
+        _functionsStale = false;
     }
 
     private async Task LoadFunctionsAsync(string classAddr)
@@ -7732,8 +7761,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // they belong on the list it is fired from.
             var funcs = await _dump.WalkFunctionsWithInterfacesAsync(classAddr);
             // [LW-BACK-CONTAINER-HEADER-ADDR] Another class went on screen while this list loaded. Landing it would list
-            // one class's functions under another class's object, which PIPE fires a row at (see ClearFunctionRows).
+            // one class's functions under another class's object, which PIPE fires a row at (see MarkFunctionsStale).
             if (!string.Equals(_currentClassAddr, classAddr, StringComparison.Ordinal)) return;
+            _functionsStale = false;   // both branches below leave this class's rows on screen
             // Every walk -- each Refresh and Auto Refresh tick included -- re-reads the class's
             // functions. The same UFunctions keep their rows, so the Functions grid keeps its
             // place instead of jumping to the top on every tick [KEYWORD-BOX-VIEW-KEEP].
