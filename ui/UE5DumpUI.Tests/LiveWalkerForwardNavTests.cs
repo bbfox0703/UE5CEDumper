@@ -910,6 +910,36 @@ public class LiveWalkerForwardNavTests
     }
 
     [Fact]
+    public async Task ARowMapLoadStartedOnATable_DoesNotLandInThatTablesRowViewRestoredAtTheSameDepth()
+    {
+        // Review of d206a4ad: a container render now puts the header back on its owner, so a RowMap row view restored
+        // by the Back out of a re-root matches a row load started on the same table at the same depth by address AND
+        // depth. The load would append a drillable RowMap row to the rows grid.
+        var (dump, vm, _) = OwnerWalker();
+        dump.RegisterStruct(Other, new InstanceWalkResult
+        {
+            Address = Other, Name = "Other_0", ClassName = "BP_Other_C", ClassAddr = OtherCls,
+            Fields = new() { new() { Name = "ToTable", TypeName = "ObjectProperty", Offset = 0x18, Size = 8,
+                                     PtrAddress = Table, PtrName = "DT_Loot", PtrClassName = "DataTable" } },
+        });
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        OwnerStub.TableRows());
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);   // re-roots, keeping [Table, RowMap] for Back
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "ToTable"));
+        var tableCrumb = vm.Breadcrumbs[^1];                     // [Other, Table]: the table's row load starts here
+        Assert.True(vm.RowMapLoadStillCurrent(Table, 2, tableCrumb));   // control: nothing has moved yet
+
+        await vm.GoBackCommand.ExecuteAsync(null);               // [Other]
+        await vm.GoBackCommand.ExecuteAsync(null);               // out of the re-root: [Table, RowMap]
+
+        Assert.StartsWith("DataTable<", vm.CurrentClassName);
+        Assert.Equal(Table, vm.CurrentAddress);                  // the address and the depth match again...
+        Assert.Equal(2, vm.Breadcrumbs.Count);
+        Assert.False(vm.RowMapLoadStillCurrent(Table, 2, tableCrumb));   // ...and the load still must not land
+    }
+
+    [Fact]
     public async Task AContainerViewBookmarked_ThenReloadedAfterADisconnect_ListsItsOwnersFunctions()
     {
         // A disconnect empties the Functions list; the class it was for must not still count as listed.
