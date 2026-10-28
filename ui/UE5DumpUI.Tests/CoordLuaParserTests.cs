@@ -469,6 +469,39 @@ public class CoordLuaParserTests
         Assert.Contains("unpaired quote", issue.Reason, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("label='Gate B'}, ''")]
+    [InlineData("label='Gate B'}}")]
+    [InlineData("label='Gate B'], ''")]
+    [InlineData("label='Rock'], 'Roll'")]
+    [InlineData("label='a';,'b'")]
+    [InlineData("label='Spot 'map=' left'")]
+    [InlineData("label='東京'タワー='x'")]
+    public void AStrayPairThatEndsAnEntryOrMakesAKey_StillStopsTheImport(string fields)
+    {
+        // Review round 4 (Lua 5.4.6 refuses every line; each imported silently). A stray } closed the entry early and
+        // the table with it, so 'Chest 1' was dropped without a word; a ] or a separator let a positional string
+        // through; a stray pair whose middle read as `map=` gave a second map key (Lua keeps the last, we read the
+        // first); and a non-ASCII word passed as a key.
+        var r = CoordLuaParser.Parse(Wrap("  { uid='a', " + fields + ", map='M', x=1, y=2, z=3 },\n" + OneEntry));
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(3, issue.Line);
+        Assert.Contains("nothing was imported", issue.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NestedTablesAndBracketKeys_AreNotMistakenForStrayQuotes()
+    {
+        // The controls: an unknown key from a newer build may hold a nested table (its own keys may repeat), and a
+        // bracket key is not this format's but is not a stray quote either.
+        var r = CoordLuaParser.Parse(Wrap(
+            "  { uid='a', label='A', map='M', x=1, y=2, z=3, extra={ k=1, k=2, name='n' } },\n" +
+            "  { uid='b', ['label']='B', map='M', x=1, y=2, z=3 },"));
+        Assert.Equal("A", Assert.Single(r.Entries).Label);
+        Assert.Equal("no label field", Assert.Single(r.Issues).Reason);
+    }
+
     [Fact]
     public void WhatMayFollowAString_StillCoversTheToleratedShapes()
     {
