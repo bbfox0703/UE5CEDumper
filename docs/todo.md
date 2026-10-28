@@ -1926,7 +1926,8 @@ are not repeated here; each line says what ran and what it showed.
 - ✅ `[LW-CRUMB-UNDERSCORE]` **FIXED 2026-10-28** (red `e53ec72c` / green `7531e206`): the crumb, the three
   noise-denylist chips, Class Pivot's Discover snapshot picks and Proxy Deploy's drive boxes hold a TextBlock
   bound to the text, so no access-key presenter sees it (`CrumbUnderscoreTests` headless, `AccessKeyNameButtonsTests`
-  pins every such binding in Views). Was (LOW, cosmetic, seen during the check above): Live Walker's breadcrumb drops the first
+  pins every such binding in Views -- every access-key control, slot and binding spelling since
+  `[LEADFIX-REVIEW-2026-10-28]` widened it). Was (LOW, cosmetic, seen during the check above): Live Walker's breadcrumb drops the first
   underscore of a name -- `DumperTestActor_0` reads "DumperTestActor0", `Arr_Churn` reads "ArrChurn". The crumb is a
   `Button` whose `Content` is the bound label, and a Button's presenter takes the first `_` as an access-key marker.
   Any other Button bound to a game name has the same face. Not fixed.
@@ -2110,6 +2111,40 @@ are not repeated here; each line says what ran and what it showed.
   the DLL sends `is_definition` in lean too; Live Walker's definition view stamps no FieldAddress and refuses the
   exports. docs/Features.md and Features_zh-TW.md claim the definition view shows live hex values and works with CE
   XML export; fix them with it.
+
+🔍 **Review of the four leads' fixes** `[LEADFIX-REVIEW-2026-10-28]` (workflow `wf_d4c344e9-f03`, the fixes of
+`[CEXML-DEFINITION-VIEW-AS-DATA]`, `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]`, `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]`
+and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`); the other 14 -- 2 MED, 11 LOW,
+1 INFO -- all fixed on 2026-10-28, one red/green pair each unless noted. Not yet checked live.
+- **MED** `DEFVIEW-FLAG-STALE` (red `1599ff8f` / green `d1d2e7c2`): Live Walker's container and DataTable-row views
+  render without a walk, so Back from a definition into one kept the definition flag and refused every action on rows
+  that DO have addresses. Each such view now clears it.
+- **MED** `GODMODE-FAILED-TICK-LATCHES-WANT` (red `c7f04776` / green `ca2b53f0`): `Solitar::SetGodMode` stores the want
+  before it applies and keeps re-asserting, so a tick answered negative is ARMED; unticking it without `[DISABLE]` left a
+  live hold under an OFF row. The row stays ticked and says the hold is armed and that unticking cancels it.
+- `MOVE-TIME-WRITEFAIL-LEAVES-ACTIVE` (red `0f1936ff` / green `67e5fbdd`): the same for Movement / Time's -10
+  (`MR_ERR_WRITE` / `TR_ERR_WRITE`: the override is latched, the raw write failed, the worker retries);
+  `Constants.OverrideHeldWriteFailedResult`, pinned against both headers.
+- `SHARED-IDLE-BUSY-BAIL-STILL-REENTERS-DISABLE` (red `0d6c497f` / green `01df0178`): the contract check and the
+  idle-mailbox wait bail before anything is sent, yet unticked the plain way, so `[DISABLE]` sent a real OFF once the
+  mailbox went idle. New mode `MailboxTimeout.UntickWithoutDisableAndReturn` for the seven stateful toggles; the timeout
+  after the command store keeps the plain untick (the DLL may still apply the command).
+- `FLY-SEETHRU-FAILED-ENABLE-KILLS-PENDING-RESTORE` (red `35b7c6ee` / green `86cd11c6`, Fly only): `Dunste::SetEnabled`
+  stopped the deferred collision restore before the enable could fail; a refused enable now re-arms it
+  (`RefusedEnable`). A source pin -- no C++ test target compiles Dunste.cpp; the UE5Dumper target builds. SeeThrough's
+  two refusals cannot follow an enable that hid anything on the same build.
+- Instance Finder: `IF-DEFVIEW-FIELDNAME-AS-ACTION` (red `85ac5817` / green `94b65ecf`) -- HEX / +CE refused as
+  "⚠ World: nothing done", the row's name where the action belongs; `DEFVIEW-IF-COPYADDR-GUARD-BYPASS` (red `a194f69a` /
+  green `890fc2a5`) -- with a definition's rows still shown during the next selection's walk, Addr copied `0x9020`, the
+  new instance plus a type-layout offset; it now acts on the rows shown ([R7-S14]); `DEFVIEW-IF-STATUS-STICKY` (red
+  `72ff5ab3` / green `6f3d59b2`) -- the definition notice outlived the definition's rows.
+- Live Walker: `DEFVIEW-REFUSAL-LABELS` and **INFO** `DEFVIEW-REFUSAL-AA` (red `93cb3727` / green `def0d7dc`) -- the
+  refusals name each button by the label it shows, pinned in `AobMakerWordingTests` (72); AA Script is no longer refused
+  (it registers a symbol at the object's own address, as Instance Finder's does).
+- Tests: `DEFVIEW-COPYCEFIELD-IF-HEX-UNTESTED` (with the two pairs above); `DEFVIEW-LEAN-MIRROR-STALE` (red `bcef4b36` /
+  green `34edc365`: the lean mirror kept dropping `IsDefinition`, and the fixture now points at a definition);
+  `DEFVIEW-PAYLOAD-AUDIT-STALE` (`c0eaa2f5`, `walk_payload_audit.py`); `LW-PIN-NARROW` (`c958e029`: the access-key pin
+  covers every control, slot and binding spelling; it finds no new offender).
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
