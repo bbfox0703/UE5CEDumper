@@ -2382,6 +2382,30 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   type definition (its member layout), not a live object, so there is no data at these offsets."; the clipboard
   sentinel unchanged, and CE's address list gained no `bIsVariable` record (L1-style count 0). On 3659 Instance Finder
   stamped class + offset here. Not run: the optional ClassProperty-valued-as-a-WBGC export (no holder looked up).
+- ✅ `DEFVIEW-FLAG-STALE`, **the hard TArray<TSubclassOf> site** (Extinction, main menu). Holder census by CE read of
+  `+0xD8/+0xE0` on five of the 66 BlinkCampaignChapterSettings: only CH01_Campaign01 (0x24C05E5E1A0) is non-empty,
+  `TalkingHeadsEventsMapClasses` num=1, Data 0x24BF82CBCC0. Live Walker on it → `[]` → `[0]` ClassProperty, Address
+  E0 = 0x24BF82CBCC0, [Ptr] 0x24BE71BC480. `→` -> `BlueprintGeneratedClass TalkingHeadsEventMap_Campaign_01_C`
+  (0x24BE71BC480), the definition notice, HUD row `Addr` -> the "⚠ Addr: nothing done — …" refusal (sentinel kept).
+  `Back` -> the array view with an empty status line and its Address cell filled; `[0]`'s `Addr` copied `24BF82CBCC0`
+  (= E0, no refusal). CE: `readQword(E0)` = 24BE71BC480 = the definition's header address. **Not reproducible at the
+  menu**: the DataTable-row site (the menu's 8 DataTables have RowStructs LevelSelect / PlayerAttackHit /
+  ParamOverride / MomentumReward / PlayerAttack / PlayerSkillsPreset / Reaction, none OgreAttackData) and the map
+  site (BC_BlinkPlayer_C exists only in a level).
+- ⬜ **NEW LEAD `[LW-BACK-CONTAINER-HEADER-ADDR]`** (pre-existing, not from 3660; severity to be set on re-derivation,
+  MED candidate): **Back or a crumb jump INTO a container view leaves the header on the address of the object just
+  left.** A container drill pushes its crumb without changing `CurrentAddress` (the owner's), `→` on an element sets it
+  to the element, and the container branches of Back / the crumb jump re-render the rows through
+  RepopulateContainerView without putting it back. Measured on 3660, Extinction CH01_Campaign01: a fresh
+  `TalkingHeadsEventsMapClasses` view's header reads 0x24C05E5E1A0 (the owner); after `→` [0] and `Back` it reads
+  0x24BE71BC480 and its `Addr` chip copied `24BE71BC480`; the same with an ordinary object element
+  (`PrimaryObjectives` [0] → BlinkObjectiveDefinitionSaveCivilians_0 0x24BF68BF700, then `Back`, and again via the
+  `PrimaryObjectives [1 x ObjectProperty]` crumb). Everything reading `CurrentAddress` on that view acts on the wrong
+  object: the header HEX / Addr / AA chips, Find Refs, Related, a bookmark saved there. Refresh and Copy CE XML are
+  unaffected (they read the crumb: `CEXML export: containerView=True … BC=Custom(P,0x0,E1A0) >
+  TalkingHeadsEventsMapClasses(C,0xD8,E1A0)` in the stale state, base 24C05E5E1A0 in the XML). Fix direction, to be
+  re-derived first: restore `CurrentAddress` (and the header identity it keys) from the container crumb on every path
+  that re-renders one -- Back, Forward, the crumb jump, the re-rooted-spine Back.
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
