@@ -1890,6 +1890,16 @@ without the race), 6 confirmed, all fixed on 2026-10-27:
   of them: unit-tested only. The cheapest live check is the Stealth card on DumperTest 5.4 Shipping (connect, Reset:
   "Nothing is held, so Reset sent nothing."); the queued-OFF errorMsg needs a busy game thread.
 
+🎮 **Live checks of builds 3658 and 3659** `[LIVE-3659-2026-10-28]`, all on **build 3659 (Native AOT, 61,331,968 bytes; DLL
+`1.0.0.3659`)**. The recipes were derived by workflow `wf_f9fa919f-e87` (four areas, then a completeness critic) and
+are not repeated here; each line says what ran and what it showed.
+- ✅ `STEALTH-NOTHING-ADVICE-UNCONDITIONAL`, DumperTest 5.4 Shipping: Reset right after Connect (badge Off) -> "Nothing
+  is held, so Reset sent nothing."; Detect meter (`DumperTestStealthComponent::StealthDetection = 0.3`, badge Ready)
+  then Reset -> the same line; Hold @0 ("✓ Holding StealthDetection = 0 on 1 instance(s) …") then Reset -> "Released
+  the stealth-meter hold." (badge Off); Reset again -> "Nothing is held, so Reset sent nothing.". pipe-0.log holds one
+  `force_field` and exactly ONE `reset_field` for the whole run. On 3657 the first Reset gave the "Detect the meter
+  first" advice, and the Resets after Detect and after the release each sent a `reset_field` and said "Released".
+
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
 Full detail, both-side citations and fix shapes: [audit-2026-09-24-vendor-ue583.md](audit-2026-09-24-vendor-ue583.md).
