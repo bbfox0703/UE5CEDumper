@@ -292,6 +292,29 @@ public class CeMailboxBailoutTests
         Assert.Contains("CeLuaHygiene.DeferredUntickWithoutDisableLua(", src, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// SHARED-IDLE-BUSY-BAIL-STILL-REENTERS-DISABLE (review of [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]): the
+    /// shared bails a toggle passes BEFORE it stores its command -- the contract check and the wait for an idle mailbox --
+    /// applied nothing either, yet unticked the plain way. Its [DISABLE] then sent a real OFF / RESET, and a mailbox that
+    /// was only busy for a moment is idle 50 ms later, so the OFF went through and turned off a hold a UI card owned.
+    /// After the command store the timeout keeps the plain untick: the DLL may still apply the command. Negative
+    /// control: pass <c>MailboxTimeout.UntickAndReturn</c> to either pre-send bail again and its row fails.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(MailboxScripts))]
+    public void A_toggles_bails_before_its_command_untick_without_running_DISABLE(string name, string script)
+    {
+        var enable = EnableBlock(script);
+        int send = enable.IndexOf($"writeInteger(mb + {CeMailboxLayout.OffCmd},", StringComparison.Ordinal);
+        Assert.True(send > 0, name + ": no command store");
+        var plain = CeLuaHygiene.DeferredUntickLua().Trim();
+        Assert.False(enable[..send].Contains(plain, StringComparison.Ordinal),
+            name + ": a bail before the command store runs [DISABLE]");
+        Assert.Contains(CeLuaHygiene.DeferredUntickWithoutDisableLua().Trim(), enable[..send], StringComparison.Ordinal);
+        Assert.True(enable[send..].Contains(plain, StringComparison.Ordinal),
+            name + ": the timeout after the command store must keep the plain untick");
+    }
+
     private static string FindRepoFile(string relative)
     {
         var dir = AppContext.BaseDirectory;
