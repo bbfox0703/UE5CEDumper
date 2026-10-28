@@ -7727,13 +7727,25 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void MarkFunctionsStale() => _functionsStale = true;
 
+    /// <summary>The refusal line a row action put up while the rows were stale, until the rows stop being stale.</summary>
+    private string? _functionsRefusal;
+
     /// <summary>Refuse a Functions row action, and say so under its button's label, while the rows are stale.</summary>
     private bool RefusedWhileFunctionsLoad(string action)
     {
         if (!_functionsStale) return false;
-        StatusText = FunctionsLoadingText(action);
+        StatusText = _functionsRefusal = FunctionsLoadingText(action);
         _log.Info($"{action} refused: the Functions rows are the previous class's; {_currentClassAddr}'s list is still loading");
         return true;
+    }
+
+    /// <summary>The rows are the class on screen's again, or gone. A refusal line still showing says "still loading",
+    /// which is no longer true, so it goes; any line put up since stays.</summary>
+    private void EndFunctionsStale()
+    {
+        _functionsStale = false;
+        if (_functionsRefusal is { } refusal && StatusText == refusal) StatusText = "";
+        _functionsRefusal = null;
     }
 
     /// <summary>Empty the Functions list and hide its section: there is no class, or its list could not be read. The
@@ -7744,7 +7756,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         SelectedFunction = null;
         Functions.Clear();
         HasFunctions = false;
-        _functionsStale = false;
+        EndFunctionsStale();
     }
 
     private async Task LoadFunctionsAsync(string classAddr)
@@ -7763,7 +7775,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // [LW-BACK-CONTAINER-HEADER-ADDR] Another class went on screen while this list loaded. Landing it would list
             // one class's functions under another class's object, which PIPE fires a row at (see MarkFunctionsStale).
             if (!string.Equals(_currentClassAddr, classAddr, StringComparison.Ordinal)) return;
-            _functionsStale = false;   // both branches below leave this class's rows on screen
+            EndFunctionsStale();   // both branches below leave this class's rows on screen
             // Every walk -- each Refresh and Auto Refresh tick included -- re-reads the class's
             // functions. The same UFunctions keep their rows, so the Functions grid keeps its
             // place instead of jumping to the top on every tick [KEYWORD-BOX-VIEW-KEEP].
