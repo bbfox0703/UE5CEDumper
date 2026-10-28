@@ -582,6 +582,81 @@ public class CoordLuaParserTests
         Assert.Contains(r.Issues, i => i.Line == 3 && i.Column == "x");
     }
 
+    // ── Review round 6 (a 760k-case differential fuzz against Lua 5.4.6, and a line-by-line read) ──
+
+    [Theory]
+    [InlineData("  '{ uid='b', label='B', group='Gr\\'p', map='M', x=1, y=2, z=3 },")]
+    [InlineData("  ''{ uid='b', label='B', map='M', x=1, y=2, z=3 },")]
+    public void AStrayQuoteStartingALine_IsNamedOnThatLine(string line)
+    {
+        // The fault was moved to the previous line whenever its token began a new one -- a rule meant only for a
+        // comment that swallowed a separator.
+        var r = CoordLuaParser.Parse(Wrap(OneEntry + "\n" + line));
+        Assert.Empty(r.Entries);
+        Assert.Equal(4, Assert.Single(r.Issues).Line);
+    }
+
+    [Theory]
+    [InlineData("\\u{FFFFFFFF}")]
+    [InlineData("\\u{80000000}")]
+    [InlineData("\\u{D800}")]
+    public void AUnicodeEscapeNoLabelCanHold_StopsTheImport_WithoutThrowing(string escape)
+    {
+        // \u{80000000}..\u{FFFFFFFF} read as a negative int and threw out of Parse; a surrogate was refused as
+        // "needs {hex}", which it has.
+        var r = CoordLuaParser.Parse(Wrap("  { uid='a', label='Code " + escape + "', map='M', x=1, y=2, z=3 },"));
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(3, issue.Line);
+        Assert.DoesNotContain("needs {hex}", issue.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ATableClosedEarly_ThenANameAndBalancedBraces_StillStopsTheImport()
+    {
+        // '}}' closed the entry and the table; `N{{` then read as the start of a statement and kept every brace
+        // count non-negative, so the later entries vanished.
+        var r = CoordLuaParser.Parse(Wrap(
+            "  { uid='b', label=''}}N{{', group='Gr\\'p', map='M', x=1, y=2, z=3 },\n" + OneEntry));
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(3, issue.Line);
+        Assert.Contains("nothing was imported", issue.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AKnownKeyWhoseValueIsATable_IsNamedOnItsOwnLine()
+    {
+        // The opening quote of label='-- c' deleted: the comment eats the line and the NEXT entry becomes the
+        // label's value, so the fault surfaced lines later.
+        var r = CoordLuaParser.Parse(Wrap(
+            "  { uid='a', label=-- c', map='M', x=1, y=2, z=3 },\n" + OneEntry + "\n" + OneEntry.Replace("k3f9", "k3fa")));
+        Assert.Empty(r.Entries);
+        Assert.Equal(3, Assert.Single(r.Issues).Line);
+    }
+
+    [Fact]
+    public void NestingDeeperThanLuaAllows_IsRefused_NotAStackOverflow()
+    {
+        // ReadValue / ReadAnyTable recursed once per level with no limit; ~3000 levels killed the process.
+        var deep = new string('{', 300) + new string('}', 300);
+        var r = CoordLuaParser.Parse(Wrap("  { uid='a', label='A', map='M', x=1, y=2, z=3, extra=" + deep + " },"));
+        Assert.Empty(r.Entries);
+        Assert.Contains("deeper", Assert.Single(r.Issues).Reason, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("  { uid='a', label='A', map='M', x=1, y=2, z=3 ,\n")]
+    [InlineData("  { uid='a', label='A', map='M', x=1, y=2, z=3\n")]
+    public void AMissingClosingBrace_IsNamedAsABrace_NotAsAnUnescapedQuote(string open)
+    {
+        var r = CoordLuaParser.Parse(Wrap(open + OneEntry));
+        Assert.Empty(r.Entries);
+        var reason = Assert.Single(r.Issues).Reason;
+        Assert.Contains("'}'", reason, StringComparison.Ordinal);
+        Assert.DoesNotContain("not escaped", reason, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void NestedTablesAndBracketKeys_AreNotMistakenForStrayQuotes()
     {
