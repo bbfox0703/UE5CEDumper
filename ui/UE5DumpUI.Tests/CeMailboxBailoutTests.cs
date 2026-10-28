@@ -169,6 +169,8 @@ public class CeMailboxBailoutTests
     public void EveryDeferredUntick_IsTheSharedEmittersText(string name, string script)
     {
         var canonical = CeLuaHygiene.DeferredUntickLua().Trim();
+        // [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] The sibling that runs no [DISABLE] is the other shared line.
+        var withoutDisable = CeLuaHygiene.DeferredUntickWithoutDisableLua().Trim();
         foreach (var line in EnableBlock(script).Split('\n').Select(l => l.Trim()))
         {
             // Only the ONE-LINER shape is required to match. A line carrying both the untick
@@ -179,8 +181,8 @@ public class CeMailboxBailoutTests
             // ImmediateUnticksIn instead.
             if (!IsUntick(line)) continue;
             if (!line.Contains("createTimer", StringComparison.Ordinal)) continue;
-            Assert.True(line == canonical,
-                name + ": an untick line differs from CeLuaHygiene.DeferredUntickLua()."
+            Assert.True(line == canonical || line == withoutDisable,
+                name + ": an untick line differs from CeLuaHygiene.DeferredUntickLua() and its WithoutDisable sibling."
                 + Environment.NewLine + "  emitted:   " + line
                 + Environment.NewLine + "  canonical: " + canonical);
         }
@@ -209,6 +211,11 @@ public class CeMailboxBailoutTests
             "scripts/tests/untick_bailout_test.lua no longer contains the line "
             + "CeLuaHygiene.DeferredUntickLua() emits, so what it proves is about a stale copy."
             + Environment.NewLine + "  expected: " + canonical);
+        var withoutDisable = CeLuaHygiene.DeferredUntickWithoutDisableLua().Trim();
+        Assert.True(text.Contains(withoutDisable, StringComparison.Ordinal),
+            "scripts/tests/untick_bailout_test.lua no longer contains the line "
+            + "CeLuaHygiene.DeferredUntickWithoutDisableLua() emits."
+            + Environment.NewLine + "  expected: " + withoutDisable);
 
         // Guard the guard: the rig must also still carry the IMMEDIATE shape, or its
         // defect-reproduction case has quietly become a second copy of the fix.
@@ -390,7 +397,8 @@ public class CeMailboxBailoutTests
     /// The trainer keeps BOTH untick shapes, and they are not interchangeable.
     /// [TRAINERUNTICK-2026-08-21]
     ///
-    /// <para>The momentary TP rows arm a timer <b>before</b> their bail-outs, via the generator's
+    /// <para>The momentary TP rows arm a timer that every path reaches, after the row's one message
+    /// ([INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]), via the generator's
     /// own <c>AppendUntick</c>, which finds the record by DESCRIPTION rather than capturing
     /// <c>memrec</c>. The stateful toggles must stay ticked while the cheat is on, so they untick
     /// only on the paths that applied nothing, via the shared
@@ -408,7 +416,8 @@ public class CeMailboxBailoutTests
         var src = File.ReadAllText(
             FindRepoFile("ui/UE5DumpUI/Services/StandaloneTrainerScriptGenerator.cs"));
 
-        // The momentary shape: armed ahead of the bail-outs for the two TP rows.
+        // The momentary shape for the two TP rows: armed once, after the row's one message
+        // ([INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]: armed above a modal, it fired inside it and did nothing).
         Assert.Equal(2, Regex.Matches(src, @"AppendUntick\(sb,").Count);
 
         // The stateful shape: one per bail-out that applies nothing. Ten of them —

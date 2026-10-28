@@ -416,20 +416,27 @@ public static class StandaloneTrainerScriptGenerator
         var sb = new StringBuilder(1024);
         BeginEnable(sb);
         AppendTpWeakNote(sb);
-        AppendUntick(sb, SaveDescription);
-        Line(sb, "if not UE5T_ready then showMessage('[UE5 Trainer] Enable Setup first.'); return end");
-        Line(sb, "local p = UE5T_pawn()");
-        Line(sb, "local rc = p and UE5T_deref(p, UE5T.rootOff)");
-        Line(sb, "if rc then");
-        Line(sb, "  local a = rc + UE5T.relLocOff");
-        Line(sb, "  UE5T.savedX = UE5T_rdv(a)");
-        Line(sb, "  UE5T.savedY = UE5T_rdv(a + UE5T.vecWidth)");
-        Line(sb, "  UE5T.savedZ = UE5T_rdv(a + 2 * UE5T.vecWidth)");
-        Line(sb, "  dbg('[UE5 Trainer] saved position')");
+        // [INVOKE-SAMPLE-UNTICK-BEFORE-MODAL] Every path falls through to ONE message and then the untick: armed above a
+        // showMessage, the timer fires inside the modal, before CE has ticked the row, and the untick does nothing.
+        Line(sb, "local msg");
+        Line(sb, "if not UE5T_ready then");
+        Line(sb, "  msg = '[UE5 Trainer] Enable Setup first.'");
         Line(sb, "else");
-        Line(sb, "  showMessage('[UE5 Trainer] Could not resolve pawn/RootComponent to save.')");
+        Line(sb, "  local p = UE5T_pawn()");
+        Line(sb, "  local rc = p and UE5T_deref(p, UE5T.rootOff)");
+        Line(sb, "  if rc then");
+        Line(sb, "    local a = rc + UE5T.relLocOff");
+        Line(sb, "    UE5T.savedX = UE5T_rdv(a)");
+        Line(sb, "    UE5T.savedY = UE5T_rdv(a + UE5T.vecWidth)");
+        Line(sb, "    UE5T.savedZ = UE5T_rdv(a + 2 * UE5T.vecWidth)");
+        Line(sb, "    dbg('[UE5 Trainer] saved position')");
+        Line(sb, "  else");
+        Line(sb, "    msg = '[UE5 Trainer] Could not resolve pawn/RootComponent to save.'");
+        Line(sb, "  end");
         Line(sb, "end");
-        Line(sb, $"if DEBUG == 0 and rc then {Close} end");
+        Line(sb, "if msg then showMessage(msg) end");
+        AppendUntick(sb, SaveDescription);
+        Line(sb, $"if DEBUG == 0 and not msg then {Close} end");
         EndEnable(sb);
         BeginDisable(sb);
         Line(sb, $"if DEBUG == 0 then {Close} end");
@@ -443,21 +450,28 @@ public static class StandaloneTrainerScriptGenerator
         var sb = new StringBuilder(1024);
         BeginEnable(sb);
         AppendTpWeakNote(sb);
-        AppendUntick(sb, RecallDescription);
-        Line(sb, "if not UE5T_ready then showMessage('[UE5 Trainer] Enable Setup first.'); return end");
-        Line(sb, "if not UE5T.savedX then showMessage('[UE5 Trainer] No saved position -- run TP Save first.'); return end");
-        Line(sb, "local p = UE5T_pawn()");
-        Line(sb, "local rc = p and UE5T_deref(p, UE5T.rootOff)");
-        Line(sb, "if rc then");
-        Line(sb, "  local a = rc + UE5T.relLocOff");
-        Line(sb, "  UE5T_wrv(a, UE5T.savedX)");
-        Line(sb, "  UE5T_wrv(a + UE5T.vecWidth, UE5T.savedY)");
-        Line(sb, "  UE5T_wrv(a + 2 * UE5T.vecWidth, UE5T.savedZ)");
-        Line(sb, "  dbg('[UE5 Trainer] recalled')");
+        // [INVOKE-SAMPLE-UNTICK-BEFORE-MODAL] One message, then the untick -- see BuildTpSave.
+        Line(sb, "local msg");
+        Line(sb, "if not UE5T_ready then");
+        Line(sb, "  msg = '[UE5 Trainer] Enable Setup first.'");
+        Line(sb, "elseif not UE5T.savedX then");
+        Line(sb, "  msg = '[UE5 Trainer] No saved position -- run TP Save first.'");
         Line(sb, "else");
-        Line(sb, "  showMessage('[UE5 Trainer] Could not resolve pawn/RootComponent to recall.')");
+        Line(sb, "  local p = UE5T_pawn()");
+        Line(sb, "  local rc = p and UE5T_deref(p, UE5T.rootOff)");
+        Line(sb, "  if rc then");
+        Line(sb, "    local a = rc + UE5T.relLocOff");
+        Line(sb, "    UE5T_wrv(a, UE5T.savedX)");
+        Line(sb, "    UE5T_wrv(a + UE5T.vecWidth, UE5T.savedY)");
+        Line(sb, "    UE5T_wrv(a + 2 * UE5T.vecWidth, UE5T.savedZ)");
+        Line(sb, "    dbg('[UE5 Trainer] recalled')");
+        Line(sb, "  else");
+        Line(sb, "    msg = '[UE5 Trainer] Could not resolve pawn/RootComponent to recall.'");
+        Line(sb, "  end");
         Line(sb, "end");
-        Line(sb, $"if DEBUG == 0 and rc then {Close} end");
+        Line(sb, "if msg then showMessage(msg) end");
+        AppendUntick(sb, RecallDescription);
+        Line(sb, $"if DEBUG == 0 and not msg then {Close} end");
         EndEnable(sb);
         BeginDisable(sb);
         Line(sb, $"if DEBUG == 0 then {Close} end");
@@ -508,9 +522,12 @@ public static class StandaloneTrainerScriptGenerator
     // ⚠ TWO untick shapes live in this file and they are not interchangeable.
     // [TRAINERUNTICK-2026-08-21]
     //
-    // THIS one is for the momentary TP rows. It is emitted BEFORE their bail-outs on purpose, so
-    // the timer exists whichever path returns — success or "Enable Setup first" alike — and it
-    // looks the record up by DESCRIPTION at fire time rather than capturing `memrec`.
+    // THIS one is for the momentary TP rows. Every path of a TP row falls through to it, after the
+    // row's one message, so the timer exists whichever way the row went — success or "Enable Setup
+    // first" alike. Not above the messages: showMessage is modal and pumps the timer while the block
+    // still runs, before CE has ticked the row, and the untick then does nothing
+    // [INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]. It looks the record up by DESCRIPTION at fire time rather
+    // than capturing `memrec`.
     //
     // The stateful toggles (Setup / Move Speed / Gravity / Jump / GodMode / Fly) use
     // CeLuaHygiene.DeferredUntickLua() at each bail-out instead: they must STAY ticked while the

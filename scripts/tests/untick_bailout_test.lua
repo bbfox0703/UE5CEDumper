@@ -116,7 +116,7 @@ return
 -- applied NOTHING, which must not run [DISABLE] -- a stateful toggle's [DISABLE] sends a real OFF.
 -- [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]
 local WITHOUT_DISABLE = [[
-if memrec then local _u=createTimer(nil,false) _u.Interval=50 _u.OnTimer=function(x) x.destroy() if memrec.disableWithoutExecute then memrec.disableWithoutExecute() else memrec.Active = false end end _u.Enabled=true end  -- deferred (CE sets Active AFTER this block), and [DISABLE] is not run: nothing was applied to undo
+if memrec then local _u=createTimer(nil,false) _u.Interval=50 _u.OnTimer=function(x) x.destroy() if memrec.disableWithoutExecute then memrec.disableWithoutExecute() else memrec.Active = false end end _u.Enabled=true end  -- deferred (CE sets Active AFTER this block), and the disable section is not run: nothing was applied to undo
 return
 ]]
 

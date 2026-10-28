@@ -811,7 +811,27 @@ public static class CeLuaHygiene
                + "_u.OnTimer=function(x) x.destroy() memrec.Active = false end _u.Enabled=true end"
                + "  -- deferred: CE sets Active AFTER this block, so an immediate untick is a no-op";
 
-    public static string DeferredUntickWithoutDisableLua(string indent = "") => DeferredUntickLua(indent);
+    /// <summary>
+    /// <see cref="DeferredUntickLua"/> for a bail-out that applied NOTHING to a record whose <c>[DISABLE]</c> acts:
+    /// the timer unticks with <c>memrec.disableWithoutExecute()</c> (celua.txt; it clears the tick and runs no
+    /// script), falling back to <c>memrec.Active = false</c> on a CE without it.
+    /// [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]
+    ///
+    /// <para>The plain untick sets <c>Active = false</c>, and CE runs <c>[DISABLE]</c> for that. On a stateful toggle
+    /// that is a real "off" the user never asked for. Measured on build 3659: the Debug Camera record refused a tick
+    /// over a queued OFF (-6), and its untick then sent an OFF, which the DLL answered -5, and <c>[DISABLE]</c> raised
+    /// on it. The record stayed ticked under a dialog that had said "Tick again".</para>
+    ///
+    /// <para>Not for a bail-out whose <c>[DISABLE]</c> unwinds something the <c>[ENABLE]</c> half-did (Dissect's
+    /// failed registration): there the plain untick is the right one. Like it, the line must be armed AFTER any
+    /// modal in the branch: <c>showMessage</c> pumps timers while the block still runs, and an untick that fires
+    /// before CE has ticked the row is a no-op either way. <c>untick_bailout_test.lua</c> runs this exact line.</para>
+    /// </summary>
+    public static string DeferredUntickWithoutDisableLua(string indent = "") =>
+        indent + "if memrec then local _u=createTimer(nil,false) _u.Interval=50 "
+               + "_u.OnTimer=function(x) x.destroy() if memrec.disableWithoutExecute then memrec.disableWithoutExecute() "
+               + "else memrec.Active = false end end _u.Enabled=true end"
+               + "  -- deferred (CE sets Active AFTER this block), and the disable section is not run: nothing was applied to undo";
 
     /// <summary><see cref="DeferredUntickLua"/>, appended with its newline.</summary>
     public static void AppendDeferredUntick(StringBuilder sb, string indent = "")

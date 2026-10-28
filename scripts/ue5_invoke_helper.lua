@@ -50,14 +50,16 @@
       return
     end
     if not ok or state ~= 1 then
-      -- DEFERRED: an immediate memrec.Active = false inside [ENABLE] is a no-op, so the
-      -- row would stay ticked over a camera that never turned on. Byte-identical to
-      -- CeLuaHygiene.DeferredUntickLua. [FREEZEUNTICK-2026-08-20]
-      if memrec then local _u=createTimer(nil,false) _u.Interval=50 _u.OnTimer=function(x) x.destroy() memrec.Active = false end _u.Enabled=true end  -- deferred: CE sets Active AFTER this block, so an immediate untick is a no-op
       -- -6: NOT SENT, an earlier OFF is still queued -- tick again once the game responds. [DBGCAM-OFF-OVER-QUEUED-ON]
       local why = (ok and state == -6) and 'not sent -- an earlier OFF is still queued; tick again once the game responds'
                   or ok and ('returned state ' .. tostring(state)) or ('error: ' .. tostring(state))
       showMessage('[Debug Camera] could not enable -- ' .. why)
+      -- DEFERRED, and armed only AFTER the message: an immediate memrec.Active = false inside
+      -- [ENABLE] is a no-op [FREEZEUNTICK-2026-08-20], and so is a timer armed before the modal,
+      -- which fires inside it [INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]. And without running [DISABLE]:
+      -- nothing was applied, and [DISABLE] would send an OFF [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE].
+      -- Byte-identical to CeLuaHygiene.DeferredUntickWithoutDisableLua.
+      if memrec then local _u=createTimer(nil,false) _u.Interval=50 _u.OnTimer=function(x) x.destroy() if memrec.disableWithoutExecute then memrec.disableWithoutExecute() else memrec.Active = false end end _u.Enabled=true end  -- deferred (CE sets Active AFTER this block), and the disable section is not run: nothing was applied to undo
       return
     end
     {$asm}

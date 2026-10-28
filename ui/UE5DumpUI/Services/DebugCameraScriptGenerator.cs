@@ -124,7 +124,9 @@ public static class DebugCameraScriptGenerator
         {
             Line(sb, $"  showMessage('[DebugCamera] {label} not sent -- an earlier OFF is still queued (the game thread " +
                       "is busy). Tick again once the game responds.')");
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            // [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] Not the plain untick: CE runs [DISABLE] for it, which sends
+            // an OFF over the queued one, answered -5 -- [DISABLE] then raises and the record stays ticked.
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         else
         {
@@ -137,8 +139,8 @@ public static class DebugCameraScriptGenerator
         {
             Line(sb, $"  showMessage('[DebugCamera] {label} failed (state=' .. tostring(state) .. ') " +
                       "-- no live CheatManager, or the game refused the toggle.')");
-            // Nothing was applied on this branch, so the record must not stay ticked.
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            // Nothing was applied on this branch, so the record must not stay ticked -- nor send the OFF [DISABLE] would.
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         else
         {
