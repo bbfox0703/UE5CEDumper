@@ -447,6 +447,28 @@ public class CoordLuaParserTests
         Assert.Contains("unpaired quote", issue.Reason, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("label='It''s', group='Joe''s'")]
+    [InlineData("label=\"Say \"\"hi\"\"\"")]
+    [InlineData("label='The Smiths'''")]
+    [InlineData("label='Joe' 's Bar'")]
+    [InlineData("label='Joe'--[[c]]'s Bar'")]
+    [InlineData("label='Fly 'speed=2' here'")]
+    [InlineData("label='Spot 'x=5' left'")]
+    [InlineData("label='Gate B'}''")]
+    [InlineData("label='Gate B']''")]
+    public void AStringBesideAnotherOrAfterAValue_StillStopsTheImport(string fields)
+    {
+        // Review round 3 (each line refused by Lua 5.4.6, imported cut short and silently here): a second string
+        // right after the first was masked to blanks and skipped, and nothing checked what came BEFORE a string, so
+        // a stray pair whose middle read as `key=value`, or began with } or ], passed.
+        var r = CoordLuaParser.Parse(Wrap("  { uid='a', " + fields + ", map='M', x=1, y=2, z=3 },\n" + OneEntry));
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(3, issue.Line);
+        Assert.Contains("unpaired quote", issue.Reason, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void WhatMayFollowAString_StillCoversTheToleratedShapes()
     {
