@@ -709,7 +709,7 @@ source and editor are installed for when they are needed.
   `/Game/Maps/PreGame/PreGameMap.PreGameMap`, an empty one `(none)`; no envelope line from them. Was owed on NEKOPALIVE (4.11), Extinction (4.15) or Fantasynth (4.13): asset
   paths on AssetObjectProperty rows, a TArray<TAssetPtr>'s element paths, obj_class / meta_class in walk_class, and no
   "TSoftObjectPtr payload envelope measured" line from them.
-- ✅ `[UE4-ASSETPTR-EXPORTS]` **FIXED 2026-10-27** (six red/green pairs, e3a318e7 .. 0d55ecff; no DLL change): USMAP writes AssetObjectProperty = 16; the SDK declares TAssetPtr<T> / TAssetSubclassOf<T>; CE XML and CSX lay them out as Soft* (an 8-byte hex leaf; a TArray<TAssetPtr> gets each element's path as a CE String at +0x10); Property Search suggests them and the scorer penalises them; Live Walker's drill keeps the walk's paths; an invoke parameter is empty-only, as Lazy. Batch 3's review (`[BATCH3-FINAL-REVIEW-2026-10-27]` below) widened it: a single TAssetPtr, and one in a DataTable row, is a CE XML group of the weak pair and its path string, as an array element is; CSX labels a loaded element with its object; the dissect Lua (`ue5_dissect.lua`) shows the 8-byte hex pair; and the review of those fixes (`[FIXREVIEW-2026-10-27]`) gave a map key or value, a set element and a struct-array member the same group. Left: `[ASSETPTR-BAKED-TOKEN]` below. **Live PASS 2026-10-27 on Extinction, build 3657** (`[BATCH3-LIVE-3657]` below): CE XML, the CT's Structure Dissect and Push to CE Structure Dissect on a single TAssetPtr. ⬜ **Still owed: every container shape.** No TArray<TAssetPtr> export ran live at all -- not CE XML's per-element path leaves, not CSX's elements -- and no TMap / TSet / struct member of one; the one array on Extinction (`BlinkMapGenerator.ZonesToUse`) exists only in a level. Was: (LOW, left by `[UE4-ASSETPTR-PROPS]`): the UI consumers are still keyed on Soft* names --
+- ✅ `[UE4-ASSETPTR-EXPORTS]` **FIXED 2026-10-27** (six red/green pairs, e3a318e7 .. 0d55ecff; no DLL change): USMAP writes AssetObjectProperty = 16; the SDK declares TAssetPtr<T> / TAssetSubclassOf<T>; CE XML and CSX lay them out as Soft* (an 8-byte hex leaf; a TArray<TAssetPtr> gets each element's path as a CE String at +0x10); Property Search suggests them and the scorer penalises them; Live Walker's drill keeps the walk's paths; an invoke parameter is empty-only, as Lazy. Batch 3's review (`[BATCH3-FINAL-REVIEW-2026-10-27]` below) widened it: a single TAssetPtr, and one in a DataTable row, is a CE XML group of the weak pair and its path string, as an array element is; CSX labels a loaded element with its object; the dissect Lua (`ue5_dissect.lua`) shows the 8-byte hex pair; and the review of those fixes (`[FIXREVIEW-2026-10-27]`) gave a map key or value, a set element and a struct-array member the same group. Left: `[ASSETPTR-BAKED-TOKEN]` below. **Live PASS 2026-10-27 on Extinction, build 3657** (`[BATCH3-LIVE-3657]` below): CE XML, the CT's Structure Dissect and Push to CE Structure Dissect on a single TAssetPtr. **Live 2026-10-28, build 3659** (`[LIVE-3659-2026-10-28]`): a struct-array member (`BlinkMapSettings.MapsToUse[i].Map`) in CE XML and CSX, and a TArray<TAssetPtr> element in both (a hand-aliased one-element `Maps`, restored after). ⬜ **Still owed:** a TMap / TSet of one, a game-filled TArray<TAssetPtr> and the label of a LOADED element (`BlinkMapGenerator` had no instance in the Extinction-mode level either). Was: (LOW, left by `[UE4-ASSETPTR-PROPS]`): the UI consumers are still keyed on Soft* names --
   the SDK export (`MapCppDeclCore` has no Asset arm, so the field is raw bytes), CE XML and CSX (unknown type), USMAP
   (maps by name, so Asset* is Unknown although `EPropertyType.AssetObjectProperty` = 16 exists), Property Search's
   type filter, Live Walker's array drill (read_array_elements returns raw bytes for an asset inner), and the invoke
@@ -1827,7 +1827,8 @@ two lenses then one adversarial verifier per lens): 13 findings, none refuted, n
     ⬜ **Not tested live:** any TArray<TAssetPtr> export (CE XML's element path leaves, CSX's elements and the label
     of a LOADED one), nor a map, set or struct member of one -- `ZonesToUse` is on
     `BlinkMapGenerator` (+0x3A0), which has no instance at the main menu; it needs a run into a level. Unit-tested
-    (`GenerateCsx_ArrayProperty_LoadedAssetPointerElement_IsLabelledWithItsObject`).
+    (`GenerateCsx_ArrayProperty_LoadedAssetPointerElement_IsLabelledWithItsObject`). Since 2026-10-28
+    (`[LIVE-3659-2026-10-28]`): the struct member and an array element are live; a map, a set and a loaded label are not.
 
 🔍 **Batch 3's review** `[BATCH3-FINAL-REVIEW-2026-10-27]` (workflow `wf_69ca757d-f90`, range `19a16423..dev`: batch 3
 and `[VND584-04]`'s list half; lenses, then an adversarial verify per finding). ⚠ This block first called it a final
@@ -2031,7 +2032,16 @@ are not repeated here; each line says what ran and what it showed.
   `/Game/Maps/Campaign/Campaign_01/Campaign_01_BG.Campaign_01_BG`. **CSX** (Push to CE Structure Dissect on
   MapSettings_Extinction, "2 structures, 31 elements"): the `MapsToUse` child holds `[0] / Map` … `[13] / Map` at 0x0,
   0x30, … 0x270 (stride 48), each 8 bytes (vtQword) in hexadecimal, `[i] / TerritoryTypes` a pointer at +0x20;
-  `[0]/Map` reads `FFFFFFFF` live (before 3657: Array of byte, 32).
+  `[0]/Map` reads `FFFFFFFF` live (before 3657: Array of byte, 32). **A TArray<TAssetPtr> with an element**, made by
+  hand because no populated one exists at the main menu: on MapSettings_Chapter01 (0x2121211A6F0) the empty `Maps`
+  header (+0x28, `{0,0,0}` read first) was pointed at `MapsToUse.Data` with Num = Max = 1 -- `MapsToUse[0]` begins with
+  a real FAssetPtr -- for 37 s (09:09:07-09:09:44) and then written back to zero (Live Walker: "[0 x
+  AssetObjectProperty]" again). While it stood, Live Walker read "[1 x AssetObjectProperty]"; Copy CE XML gave `Maps (28)`
+  > `[0] /Game/Maps/Campaign/Campaign_01/Campaign_01_BG.Campaign_01_BG (0)` > `WeakPtr (0)` + `AssetPath (10)`, the
+  per-element path leaves; the CSX push gave the `Maps` child one element `[0]`, 8 bytes, hexadecimal (an unloaded
+  element, so no object name in the label). This proves the array-element export, not a game-filled array, and not
+  stride (one element). **In a level**: Game Modes → Extinction → Play loaded a map (301,050 objects), but the only
+  BlinkMapGenerator was its CDO, so its four TArray<TAssetPtr> and the label of a LOADED element stay unexercised.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
