@@ -3489,6 +3489,20 @@ their debug directory holds VC_FEATURE / POGO entries, which lld never writes. l
 - **Why it matters:** compiler-shape fixes (the ProcessEvent byte-test pass, AOB shapes) need clang samples, and a
   Rich-header count over-reports them by a factor of eight here.
 
+### 4.11 The Lua reference is CE's own Lua 5.3, never a system Lua 5.4
+
+Raised by the maintainer, 2026-10-28 ([B21-CSV-QUOTE-HOLES]). Three review rounds fuzzed the coordinate Lua
+import against a system Lua 5.4.6, so any verdict where 5.3 and 5.4 disagree was checked against the wrong language.
+Re-run through CE's `lua53-64.dll`, 38 decided shapes agreed on accept/refuse except three: `\u{110000}` and above
+(5.3 refuses, 5.4 accepts), `<const>`, and a numeral touching a letter. 5.3 lexes `5px` as `5` then `px`; 5.4 calls
+it malformed. The parser had copied the 5.4 lexing rule.
+
+- **Use the host that loads CE's DLL:** `out/ce_lua53/lua53ce.exe script.lua args…`. `check_lua_suites` and
+  `tools/verify/ce_lua53_host.py` build it from the installed CE. A `load()` wrapper turns it into an accept/refuse
+  oracle for a block of text.
+- **A differential check names its reference.** Where 5.3 and 5.4 differ, say which one the verdict follows. A
+  generated `.CT` runs on 5.3, so 5.3's verdict is the one that counts.
+
 -----
 
 ## 5. Triage recipes
