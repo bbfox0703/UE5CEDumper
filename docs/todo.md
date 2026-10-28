@@ -1947,7 +1947,17 @@ are not repeated here; each line says what ran and what it showed.
   real. The same block for the no-DLL picker: "⚠ No reply from Cheat Engine for the no-DLL picker (it timed out, or the
   pipe closed): it may still have been added. …", then "⚠ AOBMaker pipe busy — … ; nothing was added."; the timed-out
   picker record appeared at 08:26:18. 3658 said "AOBMaker pipe dropped (CE closed?)" for both trainer clicks, and 3657
-  "could not be reached, or refused … without a reason (CE closed?)" for the busy picker.
+  "could not be reached, or refused … without a reason (CE closed?)" for the busy picker. **CE closed** (⟳ while CE
+  ran, CE closed with WM_CLOSE and "No" to saving, process gone, no probe after): the picker -> "⚠ AOBMaker not
+  connected — open Cheat Engine with the AOBMaker plugin loaded; nothing was added."; the same cycle for the trainer ->
+  "⚠ Pushed 0/10 entries — AOBMaker not connected — open Cheat Engine with the AOBMaker plugin loaded; 'UE5 Trainer:
+  Setup (tick this first)' and the rest were not added.", card note the same, button greyed. **A refusal with a
+  reason** (`tools/verify/sw5_push_branches.py install --mode refuse-record`, CE restarted, so the real plugin replies
+  `success:false` with the Lua error): the trainer -> "⚠ Pushed 0/10 entries — 'UE5 Trainer: Setup (tick this first)'
+  was not added: …heat Engine\autorun\custom\ue5-sw5-synchronize-split.lua:109: SW5 harness: record deliberately
+  refused."; the picker -> "⚠ The no-DLL picker was not added to Cheat Engine: …SW5 harness: record deliberately
+  refused."; sw5-ce.log `records=0` at both refusals (nothing added). Harness uninstalled after. Not reached: a refusal
+  with NO reason and the 10 MiB size cap (both need a fixture change, per the recipes).
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
