@@ -1321,8 +1321,8 @@ public class AuditL11HonestyTests
     [Fact]
     public void Y11_FText_IsRefusedEvenAtItsDefault()
     {
-        // Unlike the containers, an all-zero FText is NOT an empty FText — it holds a
-        // TSharedRef the engine dereferences, so zeros crash. The exported script's helper
+        // Unlike the containers, an all-zero FText is NOT an empty FText — its text-data
+        // pointer is null, and a callee that reads it can crash. The exported script's helper
         // refuses it unconditionally; FIRE must give the same answer.
         Assert.False(ParamBufferBuilder.TryValidateScalar("TextProperty", 24, "0", out var err));
         Assert.Contains("FText", err);

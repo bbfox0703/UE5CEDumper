@@ -311,13 +311,17 @@ end
 case('AA16: ftext is REFUSED, and says why')
 do
   -- Deliberately not treated like the containers. An all-zero FText is not an
-  -- empty FText -- it holds a TSharedRef the engine dereferences -- so passing one
-  -- is a crash, and silently zeroing it would be worse than refusing.
+  -- empty FText -- its text-data pointer is null, and a callee that reads it can
+  -- crash -- so silently zeroing it would be worse than refusing.
   resetWorld()
   local ok, e = invokeUFunction('C', 'F', 24,
                                 { { name = 't', type = 'ftext', offset = 0, size = 24, value = 0 } })
   eq(ok, false, 'refused')
   contains(e, 'ftext', 'the message names the type')
+  -- [FTEXT-REFUSAL-OVERCLAIM] the reason says what a run cannot falsify
+  check(type(e) == 'string' and not e:find('crashes the game', 1, true),
+        'the message does not claim a certain crash', e)
+  contains(e, 'a function that reads it can crash the game', 'the message names the case that does crash')
 end
 
 case('AA16: a genuinely unknown token is still refused')

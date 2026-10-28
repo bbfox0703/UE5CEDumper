@@ -365,7 +365,10 @@ public static class ParamBufferBuilder
     ///
     /// <para>Two exceptions, both about types with no textbox encoding at all (audit #5
     /// Y11). An <see cref="IsRefusedParam"/> type (<c>FText</c>) is refused whatever the
-    /// box holds, because zeros are a crash rather than a default. An
+    /// box holds, because zeros are not an empty FText: its text data is a null pointer that
+    /// every FText accessor dereferences. Passing one survives (copying and destroying both
+    /// skip a null), so the crash is a callee's that READS it, and the dialog cannot know
+    /// whether the function it calls does. An
     /// <see cref="IsEmptyOnlyParam"/> type is refused only when the user actually typed
     /// something: the slot is always left zeroed, so a typed value would be silently
     /// dropped — the same class of lie as silently truncating it — while an untouched box
@@ -378,9 +381,10 @@ public static class ParamBufferBuilder
         if (IsRefusedParam(typeName))
         {
             error = $"{ShortTypeName(typeName)} parameters cannot be invoked from this " +
-                    "dialog — an FText holds a shared reference the engine allocates, and " +
-                    "sending a zeroed one crashes the game. Invoke a wrapper that takes an " +
-                    "FString instead.";
+                    "dialog — an FText holds a shared reference the engine allocates, which " +
+                    "this dialog cannot build, and a zeroed one is not an empty FText: a " +
+                    "function that reads it can crash the game. Invoke a wrapper that takes " +
+                    "an FString instead.";
             return false;
         }
 

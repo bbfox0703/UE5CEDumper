@@ -424,12 +424,14 @@ local function writeParams(base, regionSize, params)
       end
     elseif t == 'ftext' then
       -- NOT grouped with the containers above. An all-zero FText is not an empty
-      -- FText: it holds a TSharedRef the engine dereferences on use, so a zeroed one
-      -- is a crash rather than a default. Refusing is the honest answer.
+      -- FText: its text-data pointer is null and every accessor dereferences it, so a
+      -- callee that reads it can crash. Passing it survives (copy and destroy skip a
+      -- null), but nothing here can tell whether the callee reads it, so refuse.
       error(string.format(
         "[ue5_invoke] param '%s' is an ftext -- an FText cannot be built from CE Lua " ..
-        "(it holds a shared reference the engine allocates), and passing a zeroed one " ..
-        "crashes the game. Invoke a wrapper that takes an FString instead.",
+        "(it holds a shared reference the engine allocates), and a zeroed one is not an " ..
+        "empty FText: a function that reads it can crash the game. Invoke a wrapper that " ..
+        "takes an FString instead.",
         tostring(p.name or '?')))
     elseif t == 'fstruct' then
       -- By-value UE struct param. Size resolution: explicit p.size wins

@@ -1555,7 +1555,8 @@ public class InvokeScriptTests
     // Three invoke paths build the same ProcessEvent params from the same FunctionInfoModel.
     // FIRE refuses an FText outright and a TYPED value for a multi-word structure
     // (ParamBufferBuilder.IsRefusedParam / IsEmptyOnlyParam, audit #5 Y11); the interactive CE
-    // form had no gate. An FText went out zeroed -- a crash, not a default -- and a typed TArray
+    // form had no gate. An FText went out zeroed -- not an empty FText, and a crash in any
+    // callee that reads it -- and a typed TArray
     // or delegate value was written as a raw int32 over the structure's first pointer. The
     // type classification must come from the SHARED predicates, never a hand-copied list.
 
@@ -1634,8 +1635,8 @@ public class InvokeScriptTests
     [Fact]
     public void CeForm_FText_IsRefusedWhateverTheBoxHolds()
     {
-        // An all-zero FText is not an empty FText (it holds a TSharedRef), so FIRE refuses it
-        // unconditionally -- not only when typed.
+        // An all-zero FText is not an empty FText (its text-data pointer is null), so FIRE
+        // refuses it unconditionally -- not only when typed.
         var pre = BeforeTheMailbox(FireHandler(InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc("TextProperty", 24))));
 
         Assert.Contains("FText", pre, StringComparison.Ordinal);
