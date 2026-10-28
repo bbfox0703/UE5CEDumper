@@ -183,14 +183,20 @@ GameThreadLiveness GetGameThreadLiveness(int32_t thresholdMs = kStallThresholdMs
 // after one timeout the window is open indefinitely, and the next self-issued
 // direct call executes that abandoned stateful UFunction on the wrong thread.
 //
-// The fix is NOT a thread-identity check. There is no IsInGameThread in this
-// tree and nothing resolves GIsGameThreadId, so any gate would be guessing --
-// and a gate that guesses wrong never drains, which times out every game-thread
-// invoke and is strictly worse than the defect. Instead we do what Grausam
-// already does for its own hooks: call the TRAMPOLINE we are holding, so a call
-// through it never enters the detour. A fail-open call to an OVERRIDE does (its
-// Super::ProcessEvent is the patched address), so it runs under the own-PE-call
-// mark instead: CallAddressAsOwnSEH ([A3-ST1-SUPER-DRAIN]).
+// For OUR calls the fix is the TRAMPOLINE we are holding, as Grausam does for its
+// own hooks: a call through it never enters the detour. A fail-open call to an
+// OVERRIDE does (its Super::ProcessEvent is the patched address), so it runs under
+// the own-PE-call mark instead: CallAddressAsOwnSEH ([A3-ST1-SUPER-DRAIN]).
+//
+// The ENGINE's worker threads call ProcessEvent too, and no trampoline covers
+// them: on UE 5.8 a drain there ran a queued ToggleDebugCamera into an
+// IsInGameThread check [STARK-DRAIN-OFF-GAME-THREAD]. That needs the game thread's
+// identity after all. A guessed identity is the risk this note used to warn of --
+// a gate on the wrong thread never drains, which times out every invoke and is
+// worse than the defect -- so the identity is not a guess where UE states it (the
+// thread it names "GameThread"), and where it is a guess (the main thread) the
+// install validator gives the gate up unless that thread is seen firing
+// (PickGameThread / KeepGameThreadGate below).
 
 /// Address MinHook actually patched, or 0 if no hook is installed.
 uintptr_t HookedAddress();
@@ -258,30 +264,63 @@ struct GameThreadPick {
     GameThreadIdSource source;
 };
 
-/// The game thread among `threads`.
+/// The game thread among `threads`: the one UE named "GameThread" -- FPlatformProcess::SetupGameThread names the
+/// thread FEngineLoop::PreInit has just stored as GGameThreadId -- and failing a name (an engine or a Windows that
+/// does not set thread descriptions), the earliest-created thread: GuardedMain's, the main thread PreInit records.
+/// Among several named ones (not expected), the earliest-created of them.
 inline GameThreadPick PickGameThread(const ThreadInfo* threads, size_t n) {
-    (void)threads; (void)n;
-    return { 0, GameThreadIdSource::Unknown };
+    GameThreadPick named{ 0, GameThreadIdSource::Unknown }, first{ 0, GameThreadIdSource::Unknown };
+    uint64_t namedTime = 0, firstTime = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const ThreadInfo& t = threads[i];
+        if (t.namedGameThread && (named.tid == 0 || t.creationTime < namedTime)) {
+            named = { t.tid, GameThreadIdSource::Description };
+            namedTime = t.creationTime;
+        }
+        if (first.tid == 0 || t.creationTime < firstTime) {
+            first = { t.tid, GameThreadIdSource::MainThread };
+            firstTime = t.creationTime;
+        }
+    }
+    return named.tid != 0 ? named : first;
 }
 
-/// Is a hook entry on thread `tid` a game-thread entry, given the identified `gameThreadId` (0 = not known)?
+/// Is a hook entry on thread `tid` a game-thread entry, given the identified `gameThreadId`? 0 -- nothing identified,
+/// or the gate given up -- counts every entry, as before the gate existed.
 inline bool IsGameThreadEntry(uint32_t tid, uint32_t gameThreadId) {
-    (void)tid; (void)gameThreadId;
-    return true;
+    return gameThreadId == 0 || tid == gameThreadId;
 }
 
-/// Should HookedProcessEvent drain the queue on this entry, now that it also knows whether the entry is on the game
-/// thread?
+/// Should HookedProcessEvent drain the queue on this entry? An engine worker thread calls ProcessEvent too, and a
+/// request queued for the game thread must not run there: it leaves the work for the next game-thread entry.
 inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs, bool onGameThread) {
-    (void)onGameThread;
-    return ShouldDrainQueue(queueDepth, entryIsOurs);
+    return onGameThread && ShouldDrainQueue(queueDepth, entryIsOurs);
 }
 
-/// After the install validation window: keep the game-thread gate, or give it up?
+/// After the install validation window: keep the game-thread gate, or give it up? A NAMED game thread is the engine's
+/// own GGameThreadId and is kept even when silent -- a paused game thread, where invokes wait as on any paused game.
+/// The main-thread GUESS is given up when it stayed silent while other threads fired: a gate on the wrong thread
+/// never drains and times out every invoke, which is worse than the defect it fixes. Nothing fired at all is an idle
+/// game, not evidence against the guess.
 inline bool KeepGameThreadGate(GameThreadIdSource source, uint64_t gameThreadFires, uint64_t allFires) {
-    (void)source; (void)gameThreadFires; (void)allFires;
-    return true;
+    switch (source) {
+        case GameThreadIdSource::Description: return true;
+        case GameThreadIdSource::MainThread:  return gameThreadFires > 0 || allFires == 0;
+        default:                              return false;
+    }
 }
+
+/// The identified game thread's id; 0 when none is, or the gate was given up. Thread-safe.
+uint32_t GameThreadId();
+
+/// How the game thread was identified (Unknown when it is not). Thread-safe.
+GameThreadIdSource GameThreadSource();
+
+/// Hook fires on the identified game thread only (GetHookFireCount counts every thread). Thread-safe.
+uint64_t GetGameThreadFireCount();
+
+/// The install validator's verdict for the window it just measured: gives the gate up as KeepGameThreadGate says.
+void ApplyGameThreadValidation(uint64_t gameThreadFires, uint64_t allFires);
 
 /// [VND584-01] A queued request its waiter may abandon. A timed-out request normally stays queued and runs later from
 /// its own copy of the parameters; for a helper call made from a value that may not outlive the wait -- the object an
