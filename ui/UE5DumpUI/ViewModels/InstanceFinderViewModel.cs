@@ -775,6 +775,25 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             IsLoadingFields = false;
             Fields.Clear();
             HasFields = false;
+            ShowDefinitionNotice(false);
+        }
+    }
+
+    private string _statusBeforeDefinitionNotice = "";
+
+    /// <summary>[CEXML-DEFINITION-VIEW-AS-DATA] The definition notice describes the rows shown, so it comes and goes
+    /// with them, giving back the line it covered -- unless something has replaced it since.</summary>
+    private void ShowDefinitionNotice(bool definitionRows)
+    {
+        bool shown = StatusText == LiveWalkerViewModel.DefinitionViewText;
+        if (definitionRows && !shown)
+        {
+            _statusBeforeDefinitionNotice = StatusText;
+            StatusText = LiveWalkerViewModel.DefinitionViewText;
+        }
+        else if (!definitionRows && shown)
+        {
+            StatusText = _statusBeforeDefinitionNotice;
         }
     }
 
@@ -821,7 +840,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             }
 
             HasFields = Fields.Count > 0;
-            if (result.IsDefinition) StatusText = LiveWalkerViewModel.DefinitionViewText;
+            ShowDefinitionNotice(result.IsDefinition);
             _fieldsInstance = instance;       // [R7-S14]
             _fieldsArrayLimit = limit;
         }
