@@ -715,6 +715,48 @@ public class CoordLuaParserTests
         Assert.DoesNotContain("closes before its last entry", issue.Reason, StringComparison.Ordinal);
     }
 
+    // ── Review round 8 (CE's Lua 5.3; a 64k-case tail fuzz) ──
+
+    [Theory]
+    [InlineData("-- note\n-- more\n''local Z_TOLERANCE = 2.5", "local GROUPS = { 'Chest', }", 7)]
+    [InlineData("local Z_TOLERANCE = 2.5}", "local GROUPS = { 'Chest', }", 5)]
+    [InlineData("local Z_TOLERANCE = 2.5", "--local GROUPS = {\n  'Chest',\n}", 7)]
+    [InlineData("local Z_TOLERANCE = 2.5 2", "local HOME = { x = 0, y = 0, z = 100 }", 5)]
+    public void ATailFault_IsNamedOnItsOwnLine_WhateverElseTheTailHolds(string zLines, string groups, int line)
+    {
+        // A comment the generator writes after the table moved a tail fault onto the table's '}' line, and a '}' or
+        // an entry-shaped table anywhere in the tail turned any tail fault into "closes before its last entry".
+        var r = CoordLuaParser.Parse(WithTail(zLines, groups));
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(line, issue.Line);
+        Assert.DoesNotContain("closes before its last entry", issue.Reason, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("local Z_TOLERANCE =", "", 5)]
+    [InlineData("local Z_TOLERANCE = 2.5", "local GROUPS = {\n  'Chest',\n},", 8)]
+    public void ATailStatementThatEndsWithoutItsValue_IsNotCalledAnUnclosedTable(string zLine, string groups, int line)
+    {
+        var r = CoordLuaParser.Parse(WithTail(zLine, groups));
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(line, issue.Line);
+        Assert.Contains("without", issue.Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void AnExtraBraceAtTheEndOfAnEntryLine_IsStillATableClosedEarly()
+    {
+        // The table closes at the end of line 3; the next entry, on its own line, is what it left behind.
+        var r = CoordLuaParser.Parse("-- @UE5CD:COORDS v1\nlocal COORDS = {\n  { uid='a', label='A', map='M', x=1, y=2, z=3 }}\n" +
+                                     OneEntry + "\n}\n-- @UE5CD:END\n");
+        Assert.Empty(r.Entries);
+        var issue = Assert.Single(r.Issues);
+        Assert.Equal(3, issue.Line);
+        Assert.Contains("closes before its last entry", issue.Reason, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void AUnicodeEscapeWithLeadingZeros_IsReadAsCeLua53Does()
     {
