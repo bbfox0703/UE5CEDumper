@@ -2263,6 +2263,23 @@ and `[LW-CRUMB-UNDERSCORE]`): 15 findings, 1 refuted (`TODO-RECORD-UNCOMMITTED`)
   late (`PROTECT op=0 -> rc=1`, `GodMode: set ON -> rc=1 (want=1)` at 13:42:27); OK -> `Active` false and [DISABLE]'s
   OFF (`PROTECT op=0 -> rc=0`, `GodMode: set OFF -> rc=0 (want=0)` at 13:42:31) -- two `cmd=9` in all. An untick that
   skipped [DISABLE] here would have left God Mode ON under an unticked row.
+- ✅ `GODMODE-FAILED-TICK-LATCHES-WANT`, last on this instance (it destroys the pawn). Positive control with the pawn
+  alive: `God Mode (toggle)` ticked -> no dialog, `PROTECT op=0 -> rc=1`; unticked -> `rc=0`, `set OFF -> rc=0
+  (want=0)`. The pawn then sent to 0/0/0 (Teleport to Coordinates (force)); it took about a minute to fall past KillZ,
+  when the card's ↻ turned Unknown. Ticked: "[GodMode] ON is armed -- no pawn yet (or this pawn has no
+  bCanBeDamaged). It applies as soon as one exists; untick the record to cancel."; OK -> the record STAYS ticked
+  (`Active` true), `PROTECT op=0 -> rc=-3`, walk-0.log `GodMode: set ON -> rc=-3 (want=1)`, `mailbox_poke --cmd 9
+  --op 2` (GET_STATE) `out0=0xff01` (want 1, live -1), and the card's ↻ reads "ON (pending)". Unticked: no dialog,
+  `PROTECT op=0 -> rc=-3`, `GodMode: set OFF -> rc=-3 (want=0)`, GET_STATE `out0=0xff00` -- unticking cancelled the
+  hold. (3659's tick unticked itself through [DISABLE], which also cancelled it.) Not reproducible here: the hold
+  ENGAGING when a pawn appears -- DumperTest never respawns one.
+- ✅ The wider scope of `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]`, no pawn, records from "Add action records to
+  CE" (27/27): `Movement: Move Speed (132%)` -> "[Movement] Move Speed -- no pawn / no CharacterMovement (enter gameplay
+  first)", one `cmd=10` (`pct=132.4 -> rc=-3`) and NO `pct=100.0` reset; `Time: Player (0.5x)` -> "[Time] Player -- no
+  player pawn (enter gameplay first).", one `cmd=15` (`TIME set target=1 value=0.5000 -> rc=-6`) and NO `TIME reset`;
+  `Fly: no-gravity 3D flight (WASD)` -> "[Fly] -- no pawn / no CharacterMovement? (enter gameplay first)", `FLY
+  preset=0` + `FLY enable=1 -> rc=-3` and NO `FLY enable=0` / `Fly: DISABLED`. Each ends unticked after OK. 3659's
+  plain untick sent each OFF / RESET.
 - ⚠ **The PC bug-checked at about 13:02:40**, 10-20 s after Cheat Engine started (CEPlugin.log `listening` at
   13:02:27) with DumperTest 5.4 Shipping (15 FPS) and the UI running; it was back at 13:03:02. **BugCheck 0x113
   VIDEO_DXGKRNL_FATAL_ERROR, (0x19, 0x1, 0x10DE, 0x2C18)**: the DirectX graphics kernel, on the NVIDIA GeForce RTX
