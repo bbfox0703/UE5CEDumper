@@ -9,9 +9,9 @@ Open work only. **Read this when deciding what to do next.**
 > fixes shipped in build 3658 (`[BATCH2-REVIEW-2026-10-27]`, `[FIXREVIEW-2026-10-27]`), and the five LOW leads batch 3 left
 > in build 3659 (`[TRAINER-PUSH-TIMEDOUT-TEXT]`, `[DISCOVER-SHADOWED-POOL]`, `[DBGCAM-OFF-OVER-QUEUED-ON]`,
 > `[ASSETPTR-BAKED-TOKEN]`, `[L83-PLAN-QUEUED-STRINGS]`); both builds' fixes passed live on 3659's AOT build on 2026-10-28
-> (`[LIVE-3659-2026-10-28]`), which raised four leads: `[CEXML-DEFINITION-VIEW-AS-DATA]` (MED, pre-existing),
-> `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]` and `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]` (LOW), each confirmed by an
-> agent told to refute it from source, and `[LW-CRUMB-UNDERSCORE]` (LOW, cosmetic). Still owed live: a TMap / TSet of
+> (`[LIVE-3659-2026-10-28]`), which raised four leads -- `[CEXML-DEFINITION-VIEW-AS-DATA]` (MED, pre-existing),
+> `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]`, `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]` and `[LW-CRUMB-UNDERSCORE]`
+> (LOW) -- all fixed on 2026-10-28 (red/green in each row), not yet built or checked live. Still owed live: a TMap / TSet of
 > TAssetPtr (Extinction has none), a game-filled TArray<TAssetPtr> and a loaded element's label
 > (`[UE4-ASSETPTR-EXPORTS]`'s row), and Debug Camera on UE 5.8. · Before it, the
 > known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
@@ -1923,7 +1923,10 @@ are not repeated here; each line says what ran and what it showed.
   red line; ui-pipe-0.log has that Refresh's `walk_instance` TX and nothing after it, and the DLL's pipe-0.log has no
   "elem_size too large" (3657: `read_array_elements` refused, "DLL error: elem_size too large (max 256)", and the
   three old rows stayed). ArrayNum written back to 3, Refresh: three rows again.
-- 🆕 `[LW-CRUMB-UNDERSCORE]` (LOW, cosmetic, seen during the check above): Live Walker's breadcrumb drops the first
+- ✅ `[LW-CRUMB-UNDERSCORE]` **FIXED 2026-10-28** (red `e53ec72c` / green `7531e206`): the crumb, the three
+  noise-denylist chips, Class Pivot's Discover snapshot picks and Proxy Deploy's drive boxes hold a TextBlock
+  bound to the text, so no access-key presenter sees it (`CrumbUnderscoreTests` headless, `AccessKeyNameButtonsTests`
+  pins every such binding in Views). Was (LOW, cosmetic, seen during the check above): Live Walker's breadcrumb drops the first
   underscore of a name -- `DumperTestActor_0` reads "DumperTestActor0", `Arr_Churn` reads "ArrChurn". The crumb is a
   `Button` whose `Content` is the bound label, and a Button's presenter takes the first `_` as an access-key marker.
   Any other Button bound to a game name has the same face. Not fixed.
@@ -2002,7 +2005,13 @@ are not repeated here; each line says what ran and what it showed.
   will turn the camera on. …" and stays ticked (result -6); over a queued OFF its tick shows "[Debug Camera] could not
   enable -- not sent -- an earlier OFF is still queued; tick again once the game responds". Two defects found here,
   below. Not run: UE 5.8, where a queued OFF does turn the camera off (needs DumperTest58 Development with idle mode).
-- 🆕 `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]` (LOW, measured above): the generated Debug Camera record's
+- ✅ `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]` **FIXED 2026-10-28** (red `49101cff` / green `f49dd008`, the
+  wider scope red `0f16c2d1` / green `55815e3d`): `CeLuaHygiene.DeferredUntickWithoutDisableLua` unticks from the
+  same 50 ms timer with `memrec.disableWithoutExecute()` (falling back to `Active = false`); Debug Camera's -6 and
+  failed-tick branches, the helper's sample, and every own bail-out of Fly, Protection, Foreground, SeeThrough,
+  Movement and TimeDilation use it, so a tick that applied nothing sends no OFF / RESET. The shared busy / timeout
+  bails keep the plain untick on purpose. The Lua models now run [DISABLE] on an untick. Was (LOW, measured above):
+  the generated Debug Camera record's
   [ENABLE] -6 branch shows its message and then defers an untick, and CE runs [DISABLE] for that untick. [DISABLE] sends
   OFF, the DLL answers -5 (the OFF already queued in that stall), and the ungated "[DebugCamera] OFF did not complete
   -- …" prints and raises: the record ends TICKED after a dialog that said "Tick again", the Lua Engine reports an OFF
@@ -2018,7 +2027,10 @@ are not repeated here; each line says what ran and what it showed.
   [DISABLE] consumes, as `CeInjectScriptGenerator` does with `UE5_StartedByThisRecord`. Not in the shared
   `DeferredUntickLua`: Dissect's failed-enable bail relies on its [DISABLE] to unwind. Same shape in the helper's
   sample, masked there by the next row.
-- 🆕 `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]` (LOW, measured above): `ue5_invoke_helper.lua`'s copy-me Debug Camera
+- ✅ `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]` **FIXED 2026-10-28** (red `49101cff` / green `f49dd008`): the sample shows
+  its message and then arms the untick; the trainer's TP Save / TP Recall fall through to one message and then the
+  untick, with no return before it. `invoke_helper_test.lua`'s showMessage now pumps timers as CE's modal does.
+  Was (LOW, measured above): `ue5_invoke_helper.lua`'s copy-me Debug Camera
   sample arms its 50 ms deferred untick BEFORE `showMessage`. The modal pumps the timer while [ENABLE] is still running,
   so the untick is the no-op `[FREEZEUNTICK-2026-08-20]` describes and the record ends ticked after any failed tick
   (here -6: no second mailbox command, Active true). Since `b344d63d` (2026-09-08), which deferred it;
@@ -2074,7 +2086,12 @@ are not repeated here; each line says what ran and what it showed.
   `Mailbox: received cmd=4` -- the value is refused, never written. Tools → Inject Helper into Current CE Table
   replaced the file (50,128 -> 51,640 bytes); the same record ticked again ran (`cmd=4`, `INVOKE_BY_NAME complete,
   result=0`, no dialog) and the resident version became 1.5 (the version gate replaced 1.4).
-- 🆕 `[CEXML-DEFINITION-VIEW-AS-DATA]` (**MED** after verification; pre-existing, not from 3658/3659; measured above):
+- ✅ `[CEXML-DEFINITION-VIEW-AS-DATA]` **FIXED 2026-10-28** (red `2ba15e93` / green `bfb97890`): the CE XML and CSX
+  resolvers skip a definition walk and do not walk a pointer whose target class is ScriptStruct / Class /
+  BlueprintGeneratedClass / WidgetBlueprintGeneratedClass (`ReflectionMetaClassifier.WalksAsDefinition`, pinned to
+  Ubel.cpp), so such a pointer exports as a plain pointer; Fern.cpp sends `is_definition` on lean walks too; Live
+  Walker and Instance Finder stamp no address on a definition view, say what it is, and refuse the exports and
+  copies with a reason. Was (**MED** after verification; pre-existing, not from 3658/3659; measured above):
   Live Walker's Copy CE XML on a DataTable follows `RowStruct` (an ObjectProperty to the row's UScriptStruct) with
   `walk_instance {class_addr: ScriptStruct}`. `Ubel::WalkInstance` answers a ScriptStruct / Class /
   BlueprintGeneratedClass / WidgetBlueprintGeneratedClass target with a DEFINITION view -- the struct's own member
