@@ -1019,6 +1019,39 @@ public class LiveWalkerForwardNavTests
         Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
     }
 
+    // The clear is keyed on the CLASS: an address says nothing about which functions an object has.
+
+    [Fact]
+    public async Task ARefreshThatFindsAnotherClassAtTheSameAddress_ListsNoFunctionsUntilItsListArrives()
+    {
+        // A freed slot reused by another class, or an inline struct at offset 0 of its owner.
+        var (dump, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);
+        Assert.Equal(new[] { "OtherFn" }, FunctionNames(vm));
+        dump.RegisterStruct(Other, OwnerStub.Obj(Other, "Elem_9", "BP_Elem_C", ElemCls));
+        var elementsList = dump.GateFunctions(ElemCls);
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.Functions);
+        elementsList.SetResult(OwnerStub.FunctionsOf(ElemCls));
+        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+    }
+
+    [Fact]
+    public async Task AWalkToAnotherObjectOfTheSameClass_KeepsTheListWhileItReloads()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        dump.RegisterStruct("0x21000", OwnerStub.Obj("0x21000", "Elem_1", "BP_Elem_C", ElemCls));
+        await vm.NavigateToAddressCommand.ExecuteAsync(Elem);
+        dump.GateFunctions(ElemCls);
+
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x21000");
+
+        Assert.Equal("0x21000", vm.CurrentAddress);
+        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+    }
+
     [Fact]
     public async Task ARefreshOfTheSameObject_KeepsItsListWhileItReloads()
     {
