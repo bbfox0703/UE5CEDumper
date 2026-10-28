@@ -1910,6 +1910,21 @@ are not repeated here; each line says what ran and what it showed.
   underscore of a name -- `DumperTestActor_0` reads "DumperTestActor0", `Arr_Churn` reads "ArrChurn". The crumb is a
   `Button` whose `Content` is the bound label, and a Button's presenter takes the first `_` as an access-key marker.
   Any other Button bound to a game name has the same face. Not fixed.
+- ✅ `DISCOVER-SHADOWED-POOL` + `DISCOVER-LABEL-ONLY-WHEN-BOTH-COPIES-MOVED`, DumperTest 5.4 Shipping, CDO
+  Default__MovieSceneCinematicShotSection (`PrerollTime` at +0xC4 = 0 and +0x128 = float.MinValue, `FFFF7FFF`), three
+  snapshots with Game objects only unticked (2,934 objects, 111,911 fields each). Live Walker wrote +0xC4 = 2.5
+  (`EDIT PrerollTime (FloatProperty) @ 0x1E197C4C1C4 = 2.5`), then S2: Discover over S1 + S2 lists ONE row for the class,
+  **`PrerollTime@+0xC4`**, Changed 1/1, ↑, `0 → 2.5` -- the Strict path labelled a single moved copy. Then +0x128 =
+  1.5, S3: Discover over S1 + S3 lists **two** rows, `PrerollTime@+0xC4` (0 → 2.5) and `PrerollTime@+0x128`
+  (-3402823… → …), each 1/1, +0xC4 first at an equal score (3658 gave one bare `PrerollTime` row, 2/2). Restored both
+  (+0x128 reads `FFFF7FFF` again) and re-ticked Game objects only. Trap for a rerun: after the double-click, click
+  INTO the cell editor before typing; twice the editor opened without the keyboard focus, the typed text went nowhere
+  and Enter only walked the editor down a row (nothing was written, the log has no `EDIT` line for them).
+- ✅ Discover's Property column sorts on the label in the trimmed build (the critic's check): ascending puts
+  `LastPoseTickFrame`, `PrerollTime@+0x128`, `PrerollTime@+0xC4`, `ReplicatedWorldTimeSecondsDouble` in that order
+  (text order: "1" < "C"), descending reverses it; no "Pivot: discovery failed" in ui-view-0.log. Seen in passing: the
+  app's Inter font draws the "x" of `+0x128` as "×" between two digits (its contextual alternates), so the label reads
+  "+0×128" on screen; `+0xC4` is unaffected. Cosmetic; the text itself is right.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
