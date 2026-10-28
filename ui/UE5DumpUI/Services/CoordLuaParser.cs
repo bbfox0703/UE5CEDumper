@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Text.RegularExpressions;
 using UE5DumpUI.Models;
 
@@ -138,6 +139,37 @@ public static class CoordLuaParser
 
         int open = block.IndexOf('{', table.Index);
         var inner = ExtractBalanced(block, open);
+
+        // One issue, on the line of block offset `at`, and nothing imported.
+        CoordCsvParseResult Stop(int at, string reason)
+        {
+            int sol = source.LastIndexOf('\n', at) + 1, eol = source.IndexOf('\n', at);
+            result.Issues.Add(new CoordCsvIssue(LineOf(text, blockOffset + at), "",
+                Trim(source[sol..(eol < 0 ? source.Length : eol)]),
+                reason + " -- nothing was imported; fix it and import again"));
+            return result;
+        }
+
+        // An EVEN number of stray quotes on one line pair with each other, so every string
+        // "closes" and the first one silently ends the value early. What sits on either side
+        // of a string tells them apart: in an entry a string is always a value, so it comes
+        // after `=` (or `[` of a bracket key) and is followed by a separator, the closing
+        // brace, the `]` of a bracket key, or the next `key =` (the format tolerates a
+        // missing comma). Anything else is a stray quote -- and Lua would refuse the line too.
+        // This runs before the brace check, so a stray quote whose `--` comments out an
+        // entry's closing brace is named on its own line; with the braces unbalanced the
+        // table's end is unknown, so only what FOLLOWS each string is judged then.
+        int innerEnd = inner == null ? block.Length : open + 1 + inner.Length;
+        foreach (var (s0, s1) in strings)
+        {
+            if (s0 <= open || s1 >= innerEnd) continue;
+            bool before = inner == null || MayPrecedeAString(block, s0 - 1);
+            if (before && MayFollowAString(block, s1 + 1)) continue;
+            return Stop(before ? s1 : s0, (before
+                    ? "unpaired quote: text follows a string's closing quote"
+                    : "unpaired quote: a string stands where no value belongs") +
+                ", so a quote inside a string was not escaped (\\' or \\\")");
+        }
         if (inner == null)
         {
             result.Issues.Add(new CoordCsvIssue(LineOf(text, blockOffset + table.Index), "", "",
@@ -145,32 +177,38 @@ public static class CoordLuaParser
             return result;
         }
 
-        // An EVEN number of stray quotes on one line pair with each other, so every string
-        // "closes" and the first one silently ends the value early. What sits on either side
-        // of a string tells them apart: in an entry a string may only come after `=`, a
-        // separator or an opening brace or bracket, and be followed by a separator, a closing
-        // brace or bracket, or the next `key =` (the format tolerates a missing comma).
-        // Anything else is a stray quote -- and Lua would refuse the line too.
-        int innerEnd = open + 1 + inner.Length;
-        foreach (var (s0, s1) in strings)
+        // A stray quote or brace can also close an entry early -- and the table with it,
+        // which silently drops every later entry. Between entries only separators may
+        // stand, and nothing may continue the table after its closing brace.
+        var groups = TopLevelBraceGroups(inner).ToList();
+        int prev = 0;
+        foreach (var (body, offset) in groups.Append(("", inner.Length)))
         {
-            if (s0 <= open || s1 >= innerEnd) continue;
-            bool before = MayPrecedeAString(block, s0 - 1);
-            if (before && MayFollowAString(block, s1 + 1)) continue;
-            int at = before ? s1 : s0;
-            int sol = source.LastIndexOf('\n', at) + 1, eol = source.IndexOf('\n', at);
-            result.Issues.Add(new CoordCsvIssue(LineOf(text, blockOffset + at), "",
-                Trim(source[sol..(eol < 0 ? source.Length : eol)]),
-                (before
-                    ? "unpaired quote: text follows a string's closing quote"
-                    : "unpaired quote: a string starts right after other text") +
-                ", so a quote inside a string was not escaped (\\' or \\\") -- nothing was imported; " +
-                "fix it and import again"));
-            return result;
+            for (int k = prev; k < offset; k++)
+                if (!char.IsWhiteSpace(inner[k]) && inner[k] != ',' && inner[k] != ';')
+                    return Stop(open + 1 + k, "text stands between the entries of the COORDS table, so a " +
+                                              "stray quote or brace ended an entry early");
+            prev = offset + body.Length + 2;
+        }
+        int after = innerEnd + 1;
+        while (after < block.Length && char.IsWhiteSpace(block[after])) after++;
+        if (after < block.Length && ",;{}".IndexOf(block[after]) >= 0)
+            return Stop(after, "the COORDS table closes before its last entry, so a stray quote or " +
+                               "brace ended an entry, and the table with it, early");
+
+        // A stray pair whose middle reads as `map=` makes a second key; Lua keeps the last
+        // one and the lookups read the first, so a repeated key is refused, not resolved.
+        foreach (var (body, offset) in groups)
+        {
+            var seen = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var (key, at) in TopLevelKeys(body))
+                if (!seen.Add(key))
+                    return Stop(open + 1 + offset + 1 + at, $"the key '{key}' appears twice in one entry " +
+                                                            "(a stray quote can turn text into a second key)");
         }
 
         int innerOffset = blockOffset + open + 1;
-        foreach (var (masked, entryOffset) in TopLevelBraceGroups(inner))
+        foreach (var (masked, entryOffset) in groups)
         {
             int line = LineOf(text, innerOffset + entryOffset);
             int at = open + 1 + entryOffset + 1;   // the entry's first character, inside its brace
@@ -434,27 +472,58 @@ public static class CoordLuaParser
     }
 
     /// <summary>Whether the code before a string, ending at <paramref name="before"/> in the
-    /// masked text, is something an entry allows before one: <c>=</c>, a separator, or an
-    /// opening brace or bracket.</summary>
+    /// masked text, is something an entry allows before one. Every string in this format is
+    /// a value, so only <c>=</c> qualifies, or the <c>[</c> of a bracket key.</summary>
     private static bool MayPrecedeAString(string masked, int before)
     {
         int i = before;
         while (i >= 0 && char.IsWhiteSpace(masked[i])) i--;
-        return i >= 0 && "=,;{[".IndexOf(masked[i]) >= 0;
+        return i >= 0 && (masked[i] == '=' || masked[i] == '[');
     }
 
     /// <summary>Whether what follows a string value at <paramref name="from"/> in the masked
     /// text (comments are blanks there) is something an entry allows after one: a
-    /// separator, a closing brace or bracket, or the next <c>key =</c>.</summary>
+    /// separator, the closing brace, the <c>]</c> of a bracket key (then its <c>=</c>), or
+    /// the next <c>key =</c>.</summary>
     private static bool MayFollowAString(string masked, int from)
     {
         int i = from;
         while (i < masked.Length && char.IsWhiteSpace(masked[i])) i++;
-        if (i >= masked.Length || ",;}]".IndexOf(masked[i]) >= 0) return true;
-        if (!(char.IsLetter(masked[i]) || masked[i] == '_')) return false;
-        while (i < masked.Length && (char.IsLetterOrDigit(masked[i]) || masked[i] == '_')) i++;
-        while (i < masked.Length && (masked[i] == ' ' || masked[i] == '\t')) i++;
-        return i < masked.Length && masked[i] == '=' && (i + 1 >= masked.Length || masked[i + 1] != '=');
+        if (i >= masked.Length || ",;}".IndexOf(masked[i]) >= 0) return true;
+        if (masked[i] == ']') return IsAssignAt(masked, i + 1);
+        if (!IsIdentStart(masked[i])) return false;
+        while (i < masked.Length && IsIdentChar(masked[i])) i++;
+        return IsAssignAt(masked, i);
+    }
+
+    /// <summary>Whether the next non-blank character from <paramref name="i"/> is an
+    /// <c>=</c> that is not <c>==</c>.</summary>
+    private static bool IsAssignAt(string s, int i)
+    {
+        while (i < s.Length && (s[i] == ' ' || s[i] == '\t')) i++;
+        return i < s.Length && s[i] == '=' && (i + 1 >= s.Length || s[i + 1] != '=');
+    }
+
+    // Lua names are ASCII; char.IsLetter would let `タワー=` pass as a key.
+    private static bool IsIdentStart(char c) => c is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or '_';
+    private static bool IsIdentChar(char c) => IsIdentStart(c) || c is >= '0' and <= '9';
+
+    /// <summary>Each <c>key =</c> at the entry's own level (not inside a nested table under
+    /// an unknown key), with its offset in <paramref name="masked"/>.</summary>
+    private static IEnumerable<(string Key, int At)> TopLevelKeys(string masked)
+    {
+        int depth = 0;
+        for (int i = 0; i < masked.Length; i++)
+        {
+            char c = masked[i];
+            if (c == '{') { depth++; continue; }
+            if (c == '}') { depth--; continue; }
+            if (depth != 0 || !IsIdentStart(c) || (i > 0 && IsIdentChar(masked[i - 1]))) continue;
+            int j = i;
+            while (j < masked.Length && IsIdentChar(masked[j])) j++;
+            if (IsAssignAt(masked, j)) yield return (masked[i..j], i);
+            i = j - 1;
+        }
     }
 
     /// <summary>Index of the quote closing the short string that opens at
