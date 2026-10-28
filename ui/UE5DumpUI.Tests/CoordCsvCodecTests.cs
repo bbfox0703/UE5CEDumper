@@ -583,6 +583,17 @@ public class CoordCsvUnpairedQuoteTests
         => AssertStopped(CoordCsvCodec.Parse(Header + "a,\"5\" tall,G,M,1,2,3,0,0,0\n" + Good), 2);
 
     [Fact]
+    public void AStrayOpeningQuote_IsNamedOnItsOwnLine_NotWhereALaterQuoteClosesIt()
+    {
+        // Review finding: the quoted field opened on line 3 swallows rows until the legitimate opening quote of
+        // line 6 "closes" it, and the error named line 6 -- a correct row -- and never line 3.
+        var r = CoordCsvCodec.Parse(Header + Good + "a,\"Chest 3,G,M,1,2,3,0,0,0\n" + Good + Good +
+                                    "c,\"Boss, big\",G,M,1,2,3,0,0,0\n");
+        AssertStopped(r, 3);
+        Assert.Contains("line 6", Assert.Single(r.Issues).Reason, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void AnUnpairedQuoteInTheLastRow_StillImportsNothing()
         => AssertStopped(CoordCsvCodec.Parse(Header + Good + Good + "a,Ruin\",G,M,1,2,3,0,0,0\n"), 4);
 
