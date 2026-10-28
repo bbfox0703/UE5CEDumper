@@ -2042,6 +2042,29 @@ are not repeated here; each line says what ran and what it showed.
   element, so no object name in the label). This proves the array-element export, not a game-filled array, and not
   stride (one element). **In a level**: Game Modes → Extinction → Play loaded a map (301,050 objects), but the only
   BlinkMapGenerator was its CDO, so its four TArray<TAssetPtr> and the label of a LOADED element stay unexercised.
+  **Census** (a second launch, Export → SDK Header, `out\extinction-3659_SDK.h`, 34,005 lines): 20 asset-pointer
+  declarations -- scalars, TArrays (BlinkMapGenerator's four, `BlinkMapSettings.Maps`,
+  `BlinkMapZoneGenerationInfo.Zones`) and struct members -- and **no TMap or TSet of TAssetPtr / TAssetSubclassOf**,
+  so the map and set shapes cannot be checked on this title; they need a UE ≤4.17 fixture that declares one.
+  **A TAssetPtr in a DataTable row** (batch 3's row loop, `3f3efc07`): DT_LevelSelectData (RowStruct BlinkDataLevel,
+  19 rows), Live Walker → Copy CE XML ("1891 XML lines"): every row's `World (20)` and `PreviewImage (58)` is a
+  `WeakPtr (0)` + `AssetPath (10)` group; loaded into CE, row 1's World reads `00000000FFFFFFFF` and
+  `/Game/Maps/Battlegrounds/2Cities_01/2Cities_01_BG.2Cities_01_BG`. The same export turned up
+  `[CEXML-DEFINITION-VIEW-AS-DATA]` below (`RowStruct`'s subtree). **An older resident helper** (the critic's check): in a FRESH CE, helper 1.4 (`git show
+  9713066e:scripts/ue5_invoke_helper.lua`) added as the table file `ue5_invoke_helper.lua`, then a 3659 AA(Baked) of
+  `Conv_AssetToObject` (`type='asset'`, value 0) ticked -> "[Invoke] FAILED: … [ue5_invoke] Unknown param type 'asset'
+  for 'Asset' -- supported: bool/byte/…/delegate" plus the "Invoke failed:" dialog, resident version 1.4, and NO
+  `Mailbox: received cmd=4` -- the value is refused, never written. Tools → Inject Helper into Current CE Table
+  replaced the file (50,128 -> 51,640 bytes); the same record ticked again ran (`cmd=4`, `INVOKE_BY_NAME complete,
+  result=0`, no dialog) and the resident version became 1.5 (the version gate replaced 1.4).
+- 🆕 `[CEXML-DEFINITION-VIEW-AS-DATA]` (pre-existing, not from 3658/3659; measured above): Live Walker's Copy CE XML on
+  a DataTable follows `RowStruct` (an ObjectProperty to the row's UScriptStruct) with `walk_instance {class_addr:
+  ScriptStruct, lean: true}`. `Ubel::WalkInstance` answers a ScriptStruct / Class / BlueprintGeneratedClass target
+  with a DEFINITION view -- the struct's own member layout, which its comment says must not be read as values -- but
+  `EncodeInstanceWalkToJson` sends `is_definition` only when not lean, so the exporter lays the layout out as data under
+  the pointer and CE reads the UScriptStruct object's own memory at the row offsets: on DT_LevelSelectData,
+  `RowStruct (28) > World (20) > WeakPtr (0)` = `0000019F684E02C0` and `AssetPath (10)` = garbage. Every DataTable
+  export at Drill Depth ≥ 1 carries such a subtree.
 
 ## 🔎 Vendor audit #7 — UE 5.8.3 + UEPseudo / patternsleuth read for the first time `[VENDOR-UE583-2026-09-24]`
 
