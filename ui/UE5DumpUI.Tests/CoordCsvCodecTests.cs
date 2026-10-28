@@ -607,6 +607,22 @@ public class CoordCsvUnpairedQuoteTests
     }
 
     [Fact]
+    public void TheSpaceReason_IsGivenOnlyWhenTheSpaceIsAllThatIsWrong()
+    {
+        // Review round 3: the space reason looked at one character. An undoubled inner quote followed by a space was
+        // blamed on the space; an NBSP or ideographic space after the quote was blamed on an inner quote; and a space
+        // after a correctly quoted multi-line field was blamed on a quote on one of its lines.
+        string R(string row) => Assert.Single(CoordCsvCodec.Parse(Header + row).Issues).Reason;
+        Assert.Contains("doubled", R("a,\"Pipe 12\" wide\",G,M,1,2,3,0,0,0\n"), StringComparison.Ordinal);
+        Assert.Contains("space", R("a,\"Home\" ,G,M,1,2,3,0,0,0\n"), StringComparison.Ordinal);
+        Assert.Contains("space", R("a,\"Home\"　,G,M,1,2,3,0,0,0\n"), StringComparison.Ordinal);
+        Assert.Contains("space", R("a,\"Home\" \n"), StringComparison.Ordinal);
+        var multi = Assert.Single(CoordCsvCodec.Parse(Header + "a,\"Line1\nLine2\" ,G,M,1,2,3,0,0,0\n").Issues);
+        Assert.Contains("space", multi.Reason, StringComparison.Ordinal);
+        Assert.Equal(3, multi.Line);
+    }
+
+    [Fact]
     public void AnUnpairedQuoteInTheLastRow_StillImportsNothing()
         => AssertStopped(CoordCsvCodec.Parse(Header + Good + Good + "a,Ruin\",G,M,1,2,3,0,0,0\n"), 4);
 
