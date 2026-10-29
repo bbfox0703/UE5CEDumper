@@ -6004,7 +6004,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 hexAddr, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
             // A copy writes no line of its own, so a refusal an earlier Addr put up would say this one did nothing.
-            // Only that line goes; any line put up since stays.
+            // Only that line goes, matched by its text: a line put up since stays unless it has the same words (a drill
+            // refused for the same row puts up the same left-level line).
             if (_addrRefusal is { } refusal && StatusText == refusal) StatusText = "";
             _addrRefusal = null;
         }
