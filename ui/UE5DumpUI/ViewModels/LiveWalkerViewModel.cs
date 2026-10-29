@@ -5961,9 +5961,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         try
         {
-            // The row's own resolved address: the value the Address column shows and Hex / +CE / Edit use. A row
-            // without one is refused, never worked out as the object shown + the row's Offset. A walk at a readable
-            // address stamps every instance row with it (UpdateDisplay), so that sum was reached where it is wrong:
+            // The row's own resolved address: the value the Address column shows and Edit uses (Hex / +CE take the
+            // payload address derived from it). A row without one is refused, never worked out as the object shown +
+            // the row's Offset. A walk at a readable address stamps every instance row it renders (UpdateDisplay), and
+            // a table's RowMap row carries its own (SyntheticRowMapField), so that sum was reached where it is wrong:
             // a container row's offset counts from the container's buffer (a DataTable row whose pointer reads null
             // has no other), an actor row on the GWorld view has no slot in the world, and rows a re-root or Back
             // has left belong to another object than the one now shown. [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]
