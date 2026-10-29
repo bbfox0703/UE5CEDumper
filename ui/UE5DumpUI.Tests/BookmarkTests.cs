@@ -828,6 +828,9 @@ public class BookmarkTests
         // The restored crumb has the in-session shape, so Refresh and Back treat it the same.
         Assert.NotNull(vm.Breadcrumbs[^1].DataTableData);
         Assert.NotNull(vm.Breadcrumbs[^1].ContainerField);
+        // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] review round 6: ...its RowMap field included, which a drill's carries
+        // the RowMap's address (the table 0xDA7A + RowMapOffset 0x30).
+        Assert.Equal("0xDAAA", vm.Breadcrumbs[^1].ContainerField!.FieldAddress);
     }
 
     [Theory]
