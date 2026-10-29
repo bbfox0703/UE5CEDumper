@@ -5949,6 +5949,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 hexAddr = field.FieldAddress;
             }
+            else if (CurrentCrumb is { IsContainerView: true } || field.HasNoParentOffset)
+            {
+                // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Neither offset counts from the object shown: a container row's
+                // counts from the container's buffer (a DataTable row whose pointer reads null has nothing else), and
+                // an actor row on the GWorld view has no slot in the world at all.
+                StatusText = NoRowAddressText(AddrLabel);
+                _log.Info($"{AddrLabel} refused: {field.Name} has no address of its own (offset 0x{field.Offset:X} " +
+                          $"does not count from {CurrentAddress})");
+                return;
+            }
             else if (!string.IsNullOrEmpty(CurrentAddress))
             {
                 var instanceAddr = Convert.ToUInt64(CurrentAddress.Replace("0x", "").Replace("0X", ""), 16);
@@ -6211,6 +6221,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     internal static string FuncCopyBakedLabel => AobMakerStatus.Say(KeyFuncCopyBakedLabel, "AA(Baked)");
     internal const string KeyFuncAsmLabel = "str.Pointers.AobMakerAsm";
     internal static string FuncAsmLabel => AobMakerStatus.Say(KeyFuncAsmLabel, "ASM");
+
+    internal const string KeyNoRowAddress = "str.LiveWalker.NoRowAddress";
+    /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] A row action refused: the row has no address, and its offset does
+    /// not count from the object shown.</summary>
+    internal static string NoRowAddressText(string action) => AobMakerStatus.Say(KeyNoRowAddress,
+        "⚠ {0}: nothing done — no address was read for this row, and its offset does not count from the object shown.",
+        action);
 
     internal const string KeyFunctionsLoading = "str.LiveWalker.FunctionsLoading";
     /// <summary>[LW-BACK-CONTAINER-HEADER-ADDR] A Functions row action refused while the rows are the previous
