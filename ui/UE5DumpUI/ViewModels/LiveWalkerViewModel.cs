@@ -7702,11 +7702,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// into its rows, and the row view's <see cref="BreadcrumbItem.ContainerField"/>. A row view's crumb holds
     /// this shape however the view was reached ([W4-BOOKMARK-DT], [WALK-REFRESH-SCALAR-SHRINK]), so whatever
     /// reads the crumb's field sees one shape.</summary>
+    /// <remarks>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] With <paramref name="tableAddr"/>, the row carries the RowMap's
+    /// own address -- the table + RowMapOffset, its TSparseArray, where the DLL reads the rows -- as every row a walk
+    /// renders carries its own: Copy Addr refuses a row without one, and Hex / +CE need it.</remarks>
     internal static LiveFieldValue SyntheticRowMapField(DataTableWalkResult dtResult, string? tableAddr = null) => new()
     {
         Name = "RowMap",
         TypeName = "DataTableRows",
         Offset = dtResult.RowMapOffset,
+        FieldAddress = ParseHexAddr(tableAddr ?? "") is var table and not 0
+            ? $"0x{table + (ulong)dtResult.RowMapOffset:X}" : "",
         Size = 0,
         // Badge here too: this row is what the user clicks to drill in, so the
         // "only 64 of these are actually fetched" fact belongs BEFORE the click,
@@ -7731,7 +7736,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var dtResult = await _dump.WalkDataTableRowsAsync(start.DataTableAddr);
 
             // Inject a synthetic "RowMap" field at the end of the field list
-            var syntheticField = SyntheticRowMapField(dtResult);
+            var syntheticField = SyntheticRowMapField(dtResult, start.DataTableAddr);
 
             // Apply on the UI thread, GUARDED (audit #7): UpdateDisplay fires this
             // and forgets it. If the user navigated to another object during the
