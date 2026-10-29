@@ -5502,6 +5502,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         var spine = CeXmlExportService.CleanBreadcrumbs(
             CeXmlExportService.DedupeConsecutiveBreadcrumbs(Breadcrumbs));
+        // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] A container view stands for its owner, as the header and the legacy
+        // branch below do. Its crumb's Address IS the owner, but walking the crumb dereferences the container's data
+        // pointer, so a walk ending on it registered the element buffer. Cut after cleaning: the dedupe can merge a
+        // path-synthetic container crumb with a re-entered copy of it, and a cut before that would leave one at the end.
+        if (spine.Count > 1 && spine[^1].IsContainerView)
+            spine = spine.Take(spine.Count - 1).ToList();
 
         // Gate: rooted at the synthetic GWorld crumb, every later crumb is a real
         // forward offset (a WorldLevel back-reference recovery hop carries
