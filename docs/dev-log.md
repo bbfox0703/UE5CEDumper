@@ -27,6 +27,110 @@ builds ≤696 in
 
 -----
 
+## 2026-10-29 (build 3670) — Review round 5 of the container-view fix `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`
+
+- **A DataTable rows view keeps one crumb field however you reached it.** Since 3669 the RowMap field a drill hands
+  the rows view's crumb carries the RowMap's address. The field that Refresh or a bookmark file rebuilds for the same
+  crumb now carries it too. Nothing reads that field's address yet, but the code states the one-shape rule. Red
+  `ba979b6e`, green `57638430`. That commit also narrows one remark to what is true: every *instance* row a walk
+  renders carries its address; a definition view's rows carry none.
+- Review round 6 (one finding): the bookmark half of that change had no test that could fail. It has one now, checked
+  red against the mutation (`ea943f18`, test only). Round 6 also raised an older bug, now a lead:
+  `[LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST]`. A bookmark file saved below a DataTable row view restores that view as the
+  table's own grid.
+- No user-visible change; the build carries round 5's fixes. Not checked live: the changed field is read by nothing.
+- Tests: dll_core_test 1,363 checks and dll_helpers_test 3,692, 0 failures; C# 7,101 total, 0 failed, 1 skipped;
+  headless UI 69; 36 gates. AOT UI 61,447,168 bytes.
+
+## 2026-10-29 (build 3669) — Addr on a table's RowMap row works again; Addr never computes a row's address `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`
+
+- **Addr never computes an address from a row's offset.** A row with no address of its own is refused with one line:
+  "no address was read for this row, and none is worked out from its offset". Every row a walk shows carries its own
+  address. The object + offset sum was reached only where it was wrong:
+  - a container element, whose offset counts from the container's buffer;
+  - an actor row on the GWorld view, which has no slot in the world;
+  - rows a failed re-root or a Back has left behind, which belong to another object.
+
+  Review round 3 found that last case (the rows a failed Go-box re-root leaves on screen still copied owner + offset).
+  Red `36edaf8c`, green `f4d19e45`.
+- **A table's RowMap row carries its address.** Review round 4 caught the one row that sum had got right: the RowMap
+  row a DataTable's own view adds after its walk. It now carries the table + RowMapOffset (the TSparseArray the rows
+  are read from), so its Address column, Addr, HEX and +CE all have it. Red `4afa2299`, green `72ee74fd`.
+- Comment fixes, the last two review rounds: `75b675ed`, `175e4093`.
+- **Checked live on 3669** (DumperTest Shipping, UE 5.4), on DumperTestTable_Small_1:
+  - the RowMap row shows and copies `0x1F9A04D3130`, which is the table + 0x30;
+  - in the rows view, Row_000 copies its own data address;
+  - Find Refs there reads "References to DumperTestTable_Small_1 (1)"; it used to name "RowMap".
+- Tests: dll_core_test 1,363 checks and dll_helpers_test 3,692, 0 failures; C# 7,100 total, 0 failed, 1 skipped;
+  headless UI 69; 36 gates. AOT UI 61,447,168 bytes.
+
+## 2026-10-29 (build 3668) — Review round 2 of the container-view fix `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`
+
+- **Find Refs keeps an inline struct's name.** Find Refs from a container inside an inline struct now keeps the name
+  the struct's view shows, such as "Stats (FPlayerStats)", after a Refresh or a bookmark reload. Before, it switched to
+  the struct's type name. Red `1333684a`, green `c177c226`.
+- **A refused Addr gives the reason that applies.** A row with no address says so even while Back is still loading:
+  "wait and try again" would end in the same refusal (`7db12db8` / `bcf115ad`). An Addr that copies also clears the
+  definition view's refusal line (`cf12e9b1` / `503797ce`).
+- Text: the PIPE check's protocol doc says what it catches. It catches an object freed and its memory reused; a freed
+  slot that still holds the old class pointer passes (`efe19565`).
+- Checked live on 3668 (DumperTest Shipping 5.4): an actor row's Addr was refused, and a PersistentLevel Addr then
+  copied its slot and cleared that refusal line.
+
+## 2026-10-29 (build 3667) — Review round 1 of the container-view fix `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`
+
+- **Find Refs names the owner after a Locate.** On a container reached through a Locate path, Find Refs names the owner
+  object. Before, it took the "[0]" label of the path's array step. Red `825eb0bc`, green `ca5bcb32`.
+- **Copy Addr refuses rows the trail has already left.** Back removes the container view's crumb before the owner's
+  walk returns, so for that moment the grid still shows the container's rows. A Copy Addr on one of them now copies
+  nothing (`dfbf8436` / `4e4d102d`). A later Addr that copies clears the refusal line (`a1686dd3` / `939c4150`).
+- **The PIPE refusal says only what is known.** It no longer names a class the slot "is now"; the slot may hold no
+  object at all. It also says to look the object up again, in the Live Walker with Refresh: re-opening the dialog
+  without a re-walk sends the same address (`169cb3b7` / `6c7896be`).
+- Checked live on 3667 (DumperTest Shipping 5.4):
+  - `tools/verify/invoke_expect_class.py`: 3/3 with the new wording;
+  - Find Refs on DumperTestActor_0's Arr_Int view read "References to DumperTestActor_0 (4)";
+  - an actor row's refused Addr line was cleared by the next successful Addr.
+
+## 2026-10-29 (build 3666) — On an Array / Map / Set / DataTable view, the actions name and use the owner `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`
+
+A container view lists its owner's functions and fires them at the owner (since build 3661), but its header names the
+container. Five things went wrong there:
+
+- **INV, AA(Baked) and the PIPE dialog name the owner's class.** All three name the class to find an instance of. They
+  used to bake `Array<…>`, which no class is called, so the script found nothing in CE. Red `60fff318`, green
+  `4159e0e7`.
+- **Find Refs names the owner it scans.** It used to say "References to Gear" over the owner's referrers.
+  `861a0dcf` / `a96d1d63`.
+- **The AA chip's GWorld walk ends on the owner.** It used to register the container's element buffer.
+  `98018a28` / `d4f13f42`.
+- **Addr on an element with no address copies nothing.** It used to copy the owner + the element's offset, which is a
+  slot inside the owner. An actor row on the GWorld view is refused the same way; it used to copy the world's own
+  address. `a45626c0` / `3832628c`.
+- **A PIPE dialog left open does not fire at a reused slot.** The dialog keeps its address across FIREs. It now sends
+  the class its function list was read from, and the DLL refuses if the object there has another class by then. Before,
+  the DLL found the function by name on whatever object was there. This uses the new optional pipe key
+  `expect_class_addr` (`4254466a` / `75a8ee27`; UI `a5bad19f` / `f092ec12`). The Console's parameter dialog sends it
+  too. Rig: `tools/verify/invoke_expect_class.py` (`cc75feda`).
+- **Checked live on 3666** (DumperTest Shipping, UE 5.4):
+  - The rig went 3/3: the instance's own class is invoked, its outer's class is refused with nothing run, and no key
+    is invoked as before.
+  - On DumperTestActor_0's `Arr_Int` view:
+    - Find Refs read "References to DumperTestActor_0 (4)".
+    - Addr on `[0]` copied the element's own address.
+    - The AA(Baked) dialog was titled "DumperTestActor::Vnd584_EchoWeakRef", and its script calls
+      `invokeUFunction('DumperTestActor', …)`.
+    - PIPE FIRE answered "ProcessEvent OK". The UI's pipe log shows `expect_class_addr` = DumperTestActor's class.
+  - On the GWorld view, an actor row's Addr was refused, and PersistentLevel copied its slot.
+  - GWorld → … → GameStateBase → `PlayerArray`: the AA chip's AOB walk ends at `readQword(addr + 0x160)`, the
+    GameState, with no 0x2A8 hop into the array.
+- **Not checked live:**
+  - INV: it needs CE with the AOBMaker plugin, and its button is disabled without them.
+  - Find Refs after a Locate that ends in "[0]": no fixture object reached through an array has a non-empty container.
+  - A slot actually freed and reused: the rig sends the mismatch directly.
+- Leads it left, each a new LOW row: `[LEAD-CONSOLE-PIN-EXPECT-CLASS]`, `[LEAD-LW-NULLROW-HEX]`,
+  `[LEAD-LW-SYNTH-CONTAINER-STRUCT-OWNER]` (older).
+
 ## 2026-10-29 (build 3665) — A game-thread guess is no longer dropped over the DLL's own calls `[STARK-DRAIN-OFF-GAME-THREAD]`
 
 - **Follow-up from build 3664's review.** When no thread carries the name "GameThread", the DLL guesses the main thread,
