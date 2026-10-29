@@ -272,8 +272,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
     private string _currentClassAddr = "";  // The class whose functions are listed; a container view's owner's
 
-    /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The name of the class whose functions are listed.</summary>
-    internal string FunctionsClassName => CurrentClassName;
+    /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The name of the class whose functions are listed, kept beside
+    /// <see cref="_currentClassAddr"/>: what INV, AA(Baked) and PIPE name as the class to find an instance of. Not
+    /// <see cref="CurrentClassName"/>, which on a container view names the container -- a name no class has.</summary>
+    internal string FunctionsClassName { get; private set; } = "";
     private bool _isDefinitionView;  // True when displaying a class/struct definition (no live data)
     private DataTableWalkResult? _cachedDataTableRows;  // Cached DataTable row data
 
@@ -1010,7 +1012,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         CurrentOuterClassName = "";
         // [LW-BACK-CONTAINER-HEADER-ADDR] Rendered without a walk, and nothing here names the world's class: list no
         // functions rather than the last object's, which PIPE would fire at the world.
-        ShowFunctionsOf("");
+        ShowFunctionsOf("", "");
 
         Fields.Clear();
         _renderedCrumb = CurrentCrumb;   // [A4-NAV-BACKFIRST-GRAFT]
@@ -1505,6 +1507,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsContainerView = true,
             ContainerField = field,
             OwnerClassAddr = _currentClassAddr,
+            OwnerClassName = FunctionsClassName,
         });
         _log.Info($"NAV→Container {field.Name} addr={parentAddr} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
@@ -1534,6 +1537,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsContainerView = true,
             ContainerField = field,
             OwnerClassAddr = _currentClassAddr,
+            OwnerClassName = FunctionsClassName,
         });
         _log.Info($"NAV→MapContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
@@ -1557,6 +1561,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsContainerView = true,
             ContainerField = field,
             OwnerClassAddr = _currentClassAddr,
+            OwnerClassName = FunctionsClassName,
         });
         _log.Info($"NAV→SetContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
@@ -1599,6 +1604,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ContainerField = field,
             DataTableData = dtResult,
             OwnerClassAddr = _currentClassAddr,
+            OwnerClassName = FunctionsClassName,
         });
         _log.Info($"NAV\u2192DataTable {field.Name} addr={CurrentAddress} rows={received}/{dtResult.RowCount} struct={dtResult.RowStructName} | BC={FormatBreadcrumbTrace()}");
 
@@ -1842,7 +1848,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         if (CurrentCrumb is not { IsContainerView: true } crumb) return;
         if (!string.IsNullOrEmpty(crumb.Address)) CurrentAddress = crumb.Address;
-        ShowFunctionsOf(crumb.OwnerClassAddr);
+        ShowFunctionsOf(crumb.OwnerClassAddr, crumb.OwnerClassName);
     }
 
     /// <summary>
@@ -1915,7 +1921,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (!willRepopulate) return false;
 
         // [LW-BACK-CONTAINER-HEADER-ADDR] The owner was just walked, and the path that built this crumb never knew its class.
-        if (!string.IsNullOrEmpty(result.ClassAddr)) item.OwnerClassAddr = result.ClassAddr;
+        if (!string.IsNullOrEmpty(result.ClassAddr))
+        {
+            item.OwnerClassAddr = result.ClassAddr;
+            item.OwnerClassName = result.ClassName;
+        }
         RepopulateContainerView(field, item);
         _log.Info($"NAV⇒SyntheticContainer rehydrated {item.FieldName} @ {item.Address} off={FormatCrumbOffset(item.FieldOffset)}");
         return true;
@@ -4258,6 +4268,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     if (field == null || !field.IsContainerNavigable) return null;
                     var crumb = CloneCrumbWithAddress(c, curAddr, c.ClassAddr, field);
                     crumb.OwnerClassAddr = parent.ClassAddr;   // [LW-BACK-CONTAINER-HEADER-ADDR] the file never holds it
+                    crumb.OwnerClassName = parent.ClassName;
                     rebuilt.Add(crumb);
                     pendingContainer = field;
                     // curAddr / curClassAddr unchanged — the element crumb does the deref.
@@ -4439,6 +4450,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsDataTableView = src.IsDataTableView,
             DataTableData = src.DataTableData,
             OwnerClassAddr = src.OwnerClassAddr,
+            OwnerClassName = src.OwnerClassName,
         };
 
     /// <summary>[W4-BOOKMARK-DT] The row view's crumb with re-walked rows, in the in-session shape
@@ -4459,6 +4471,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         IsDataTableView = true,
         DataTableData = dt,
         OwnerClassAddr = src.OwnerClassAddr,
+        OwnerClassName = src.OwnerClassName,
     };
 
     /// <summary>[W4-BOOKMARK-DT] Re-walk a bookmarked DataTable's rows at the saved address, accepted only
@@ -5788,7 +5801,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
                     // [LW-BACK-CONTAINER-HEADER-ADDR] The owner was just walked, so its class is known even on a crumb
                     // that never had it.
-                    if (!string.IsNullOrEmpty(parentResult.ClassAddr)) containerBc.OwnerClassAddr = parentResult.ClassAddr;
+                    if (!string.IsNullOrEmpty(parentResult.ClassAddr))
+                    {
+                        containerBc.OwnerClassAddr = parentResult.ClassAddr;
+                        containerBc.OwnerClassName = parentResult.ClassName;
+                    }
                     RepopulateContainerView(updatedField);
                     RestoreSelectedField(keepFieldName, keepFieldOffset);
                 }
@@ -6578,6 +6595,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         ClearFunctionList();
         // [LW-BACK-CONTAINER-HEADER-ADDR] No list, so no class on screen: a view with this class again must load it.
         _currentClassAddr = "";
+        FunctionsClassName = "";
         ClearForwardStack();
         _replacedSpine = null;
         _cachedWorld = null;
@@ -7096,14 +7114,14 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task GenerateInvokeScriptAsync(FunctionInfoModel? func)
     {
-        if (func == null || string.IsNullOrEmpty(CurrentClassName)) return;
+        if (func == null || string.IsNullOrEmpty(FunctionsClassName)) return;
         if (RefusedWhileFunctionsLoad(FuncGenScriptLabel)) return;
 
         try
         {
             ClearStatus();
-            var script = InvokeScriptGenerator.Generate(CurrentClassName, func.Name, func);
-            var description = $"Invoke: {CurrentClassName}::{func.Name}";
+            var script = InvokeScriptGenerator.Generate(FunctionsClassName, func.Name, func);
+            var description = $"Invoke: {FunctionsClassName}::{func.Name}";
 
             // Sample availability before send so we can distinguish 'pipe
             // broke mid-send' (was available, now isn't) from 'never
@@ -7176,7 +7194,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // - Decoded results shown inline (return values, out params)
             // - Returns "ok" on Close, null on Cancel
             var dialog = new Views.InvokeParamDialog(
-                CurrentClassName, func.Name, inputParams, func.Parameters.ToList(), func.ParmsSize,
+                FunctionsClassName, func.Name, inputParams, func.Parameters.ToList(), func.ParmsSize,
                 CurrentAddress, _dump, _engineState?.UEVersion ?? 0,
                 aobMaker: _aobMaker, platform: _platform,
                 mode: Views.InvokeDialogMode.PipeInvoke);
@@ -7184,11 +7202,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var dialogResult = await dialog.ShowDialog<string?>(owner);
 
             StatusText = dialogResult == "ok"
-                ? $"Invoke dialog closed: {CurrentClassName}::{func.Name}"
+                ? $"Invoke dialog closed: {FunctionsClassName}::{func.Name}"
                 : $"Invoke cancelled: {func.Name}";
 
             _log.Info($"Pipe invoke dialog {(dialogResult == "ok" ? "completed" : "cancelled")}: " +
-                      $"{CurrentClassName}::{func.Name} inst={CurrentAddress}");
+                      $"{FunctionsClassName}::{func.Name} inst={CurrentAddress}");
         }
         catch (Exception ex)
         {
@@ -7207,7 +7225,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task CopyBakedScriptAsync(FunctionInfoModel? func)
     {
-        if (func == null || string.IsNullOrEmpty(CurrentClassName)) return;
+        if (func == null || string.IsNullOrEmpty(FunctionsClassName)) return;
         if (RefusedWhileFunctionsLoad(FuncCopyBakedLabel)) return;
 
         try
@@ -7226,9 +7244,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (inputParams.Count == 0 && !hasReturn)
             {
                 var script = Services.BakedScriptGenerator.Generate(
-                    CurrentClassName, func.Name, Services.BakedScriptGenerator.BakedParmsSize(func),
+                    FunctionsClassName, func.Name, Services.BakedScriptGenerator.BakedParmsSize(func),
                     Array.Empty<Models.BakedParamValue>());
-                var description = $"Invoke (baked, no args): {CurrentClassName}::{func.Name}";
+                var description = $"Invoke (baked, no args): {FunctionsClassName}::{func.Name}";
                 // Sample availability BEFORE the send so we can distinguish
                 // 'pipe broke mid-send' (was available, now isn't) from
                 // 'not configured' (was already false).
@@ -7243,7 +7261,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 if (!sentToCe && !copied)
                 {
                     SetError(Helpers.ClipboardDelivery.FailureText("the AA script"));
-                    _log.Warn($"Baked AA Script (no args) for {CurrentClassName}::{func.Name} " +
+                    _log.Warn($"Baked AA Script (no args) for {FunctionsClassName}::{func.Name} " +
                               "reached neither CE nor the clipboard");
                     return;
                 }
@@ -7258,7 +7276,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                         ? $"⚠ AOBMaker pipe broke (CE closed?) — script copied as CE XML (paste into CE's address list)"
                         : $"AOBMaker not connected — script copied as CE XML, paste into CE's address list ({func.Name})";
                 _log.Info($"Baked AA Script (no args) {(sentToCe ? "sent to CE" : "to clipboard")}: " +
-                          $"{CurrentClassName}::{func.Name} (wasAvailable={wasAvailable})");
+                          $"{FunctionsClassName}::{func.Name} (wasAvailable={wasAvailable})");
                 return;
             }
 
@@ -7268,7 +7286,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 return;
 
             var dialog = new Views.InvokeParamDialog(
-                CurrentClassName, func.Name, inputParams, func.Parameters.ToList(), func.ParmsSize,
+                FunctionsClassName, func.Name, inputParams, func.Parameters.ToList(), func.ParmsSize,
                 CurrentAddress, _dump, _engineState?.UEVersion ?? 0,
                 aobMaker: _aobMaker, platform: _platform,
                 mode: Views.InvokeDialogMode.CopyBakedScript);
@@ -7276,11 +7294,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var dialogResult = await dialog.ShowDialog<string?>(owner);
 
             StatusText = dialogResult == "ok"
-                ? $"AA Script ready: {CurrentClassName}::{func.Name}"
+                ? $"AA Script ready: {FunctionsClassName}::{func.Name}"
                 : $"AA Script export cancelled: {func.Name}";
 
             _log.Info($"CopyBakedScript dialog {(dialogResult == "ok" ? "completed" : "cancelled")}: " +
-                      $"{CurrentClassName}::{func.Name}");
+                      $"{FunctionsClassName}::{func.Name}");
         }
         catch (Exception ex)
         {
@@ -7342,6 +7360,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // [LW-BACK-CONTAINER-HEADER-ADDR] With the address, not at the end: the pending scroll hint below can open a
         // container of this object inside this call, and the drill records the class on screen as the view's owner.
         _currentClassAddr = result.ClassAddr;
+        FunctionsClassName = result.ClassName;
         HasData = true;   // OnHasDataChanged retires any failure banner once data shows
         ShowCeXml = false;
 
@@ -7710,11 +7729,18 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// view rendered without a walk. Recording it as the class on screen is also what tells a list still loading for
     /// another class that it lost the race. Already the class on screen: its list is shown, or on its way.
     /// </summary>
-    private void ShowFunctionsOf(string classAddr)
+    private void ShowFunctionsOf(string classAddr, string className)
     {
-        if (string.Equals(_currentClassAddr, classAddr, StringComparison.Ordinal)) return;
+        if (string.Equals(_currentClassAddr, classAddr, StringComparison.Ordinal))
+        {
+            // The same class: its name only fills in -- a crumb that has its address but not its name keeps the one
+            // the walk on screen gave.
+            if (className.Length > 0) FunctionsClassName = className;
+            return;
+        }
         MarkFunctionsStale();
         _currentClassAddr = classAddr;
+        FunctionsClassName = className;
         _pendingFunctionsLoad = LoadFunctionsAsync(classAddr);
     }
 
@@ -7951,6 +7977,10 @@ public sealed class BreadcrumbItem : ObservableObject
     /// view restored from a bookmark file stays so, since only its rows are ever walked again. Never persisted: a
     /// class address dies with the game process.</summary>
     public string OwnerClassAddr { get; set; } = "";
+
+    /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] That class's NAME, learned with <see cref="OwnerClassAddr"/>: what
+    /// INV and AA(Baked) bake as the class to find an instance of, where the header names the container instead.</summary>
+    public string OwnerClassName { get; set; } = "";
 
     /// <summary>True if this breadcrumb represents a DataTable row container view.</summary>
     public bool IsDataTableView { get; init; }

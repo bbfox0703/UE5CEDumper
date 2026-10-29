@@ -1008,8 +1008,7 @@ public class LiveWalkerForwardNavTests
     }
 
     /// <summary>The control: INV on a row of the class on screen runs instead of refusing, and copies its script. Only
-    /// that: what the script names as the class to find an instance of is [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]'s
-    /// business.</summary>
+    /// that: the class the script names is <see cref="AssertScriptsName"/>'s business.</summary>
     private static async Task AssertRowActionWorks(LiveWalkerViewModel vm, MockPlatformService platform, string function)
     {
         await vm.GenerateInvokeScriptCommand.ExecuteAsync(vm.Functions.Single(f => f.Name == function));
