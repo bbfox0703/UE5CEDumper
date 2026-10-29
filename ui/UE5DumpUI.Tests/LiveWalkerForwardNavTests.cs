@@ -680,6 +680,16 @@ public class LiveWalkerForwardNavTests
         public override Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
             => _functionGates.TryGetValue(addr, out var gate) ? gate.Task : Task.FromResult(FunctionsOf(addr));
 
+        /// <summary>The address the last reference scan was asked about.</summary>
+        public string? RefsScannedAt;
+
+        public override Task<FindReferencesResult> FindReferencesToUObjectAsync(string addr, int maxResults = 32,
+            CancellationToken ct = default)
+        {
+            RefsScannedAt = addr;
+            return Task.FromResult(new FindReferencesResult());
+        }
+
         public static List<FunctionInfoModel> FunctionsOf(string classAddr) => classAddr switch
         {
             OwnerCls => new() { new() { Name = "OwnerFn", Address = "0xF100" } },
@@ -1263,6 +1273,50 @@ public class LiveWalkerForwardNavTests
 
         AssertShowsTheOwner(vm);
         await AssertScriptsName(vm, platform, "BP_Owner_C", "OwnerFn");
+    }
+
+    // Find Refs from a container view scans its owner -- a container is not a UObject, and only its owner points at it
+    // -- but its header named the container: "References to Gear" over Owner_0's referrers.
+
+    [Theory]
+    [InlineData("Gear")]
+    [InlineData("Loot")]
+    [InlineData("Pals")]
+    public async Task FindRefs_OnAContainerView_ScansTheOwner_AndSaysSo(string container)
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, container);
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.Equal(Owner, dump.RefsScannedAt);
+        Assert.Equal("References to Owner_0 (none found)", vm.ReferencesHeader);
+    }
+
+    [Fact]
+    public async Task FindRefs_OnADataTableRowsView_ScansTheTable_AndSaysSo()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        OwnerStub.TableRows());
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.Equal(Table, dump.RefsScannedAt);
+        Assert.Equal("References to DT_Loot (none found)", vm.ReferencesHeader);
+    }
+
+    [Fact]
+    public async Task FindRefs_OnAnObject_StillNamesTheObject()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Owner);
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.Equal(Owner, dump.RefsScannedAt);
+        Assert.Equal("References to Owner_0 (none found)", vm.ReferencesHeader);
     }
 
     [Fact]
