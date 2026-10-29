@@ -5961,51 +5961,25 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         try
         {
-            // Prefer the field's already-resolved absolute address (the same value
-            // shown in the Address column and used by the Hex / +CE / Edit buttons).
-            // Only fall back to CurrentAddress + Offset when it's missing:
-            // CurrentAddress is the OWNING struct, which is WRONG for a container-
-            // element view — the element lives in a separate heap buffer
-            // (TArray::Data / TSparseArray::Data), not at owner+Offset. Recomputing
-            // there landed on the owning struct's field at the same offset instead.
-            string hexAddr;
-            if (!string.IsNullOrEmpty(field.FieldAddress) && field.FieldAddress != "0x0")
+            // The row's own resolved address: the value the Address column shows and Hex / +CE / Edit use. A row
+            // without one is refused, never worked out as the object shown + the row's Offset. A walk at a readable
+            // address stamps every instance row with it (UpdateDisplay), so that sum was reached where it is wrong:
+            // a container row's offset counts from the container's buffer (a DataTable row whose pointer reads null
+            // has no other), an actor row on the GWorld view has no slot in the world, and rows a re-root or Back
+            // has left belong to another object than the one now shown. [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]
+            if (string.IsNullOrEmpty(field.FieldAddress) || field.FieldAddress == "0x0")
             {
-                hexAddr = field.FieldAddress;
-            }
-            else if ((IsRowOfALevelAlreadyLeft(field) ? _renderedCrumb : CurrentCrumb) is { IsContainerView: true }
-                     || field.HasNoParentOffset)
-            {
-                // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Neither offset counts from the object shown: a container row's
-                // counts from the container's buffer (a DataTable row whose pointer reads null has nothing else), and
-                // an actor row on the GWorld view has no slot in the world at all. Judged by the view the row was drawn
-                // for -- the spine may have left it -- and before the refusal below: this holds at every level.
                 StatusText = _addrRefusal = NoRowAddressText(AddrLabel);
-                _log.Info($"{AddrLabel} refused: {field.Name} has no address of its own (offset 0x{field.Offset:X} " +
-                          $"does not count from {CurrentAddress})");
+                _log.Info($"{AddrLabel} refused: {field.Name} has no address of its own (offset 0x{field.Offset:X})");
                 return;
             }
-            else if (IsRowOfALevelAlreadyLeft(field))
-            {
-                // The fallback below pairs the view's address with the row's offset: on a row of a level the spine has
-                // left (Back, a jump whose walk has not landed or failed), that address is another object's.
-                RefuseRowOfALevelAlreadyLeft(field, AddrLabel);
-                _addrRefusal = StatusText;
-                return;
-            }
-            else if (!string.IsNullOrEmpty(CurrentAddress))
-            {
-                var instanceAddr = Convert.ToUInt64(CurrentAddress.Replace("0x", "").Replace("0X", ""), 16);
-                hexAddr = $"0x{instanceAddr + (ulong)field.Offset:X}";
-            }
-            else return;
+            var hexAddr = field.FieldAddress;
 
             var formatted = AddressHelper.FormatAddress(
                 hexAddr, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
             // A copy writes no line of its own, so a refusal an earlier Addr put up would say this one did nothing.
-            // Only that line goes, matched by its text: a line put up since stays unless it has the same words (a drill
-            // refused for the same row puts up the same left-level line).
+            // Only that line goes, matched by its text: a line put up since stays unless it has the same words.
             if (_addrRefusal is { } refusal && StatusText == refusal) StatusText = "";
             _addrRefusal = null;
         }
@@ -6262,11 +6236,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     internal static string FuncAsmLabel => AobMakerStatus.Say(KeyFuncAsmLabel, "ASM");
 
     internal const string KeyNoRowAddress = "str.LiveWalker.NoRowAddress";
-    /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] A row action refused: the row has no address, and its offset does
-    /// not count from the object shown.</summary>
+    /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] A row action refused: the row has no address of its own, and none
+    /// is worked out from its offset.</summary>
     internal static string NoRowAddressText(string action) => AobMakerStatus.Say(KeyNoRowAddress,
-        "⚠ {0}: nothing done — no address was read for this row, and its offset does not count from the object shown.",
-        action);
+        "⚠ {0}: nothing done — no address was read for this row, and none is worked out from its offset.", action);
 
     internal const string KeyFunctionsLoading = "str.LiveWalker.FunctionsLoading";
     /// <summary>[LW-BACK-CONTAINER-HEADER-ADDR] A Functions row action refused while the rows are the previous
