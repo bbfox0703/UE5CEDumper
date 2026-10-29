@@ -1508,6 +1508,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ContainerField = field,
             OwnerClassAddr = _currentClassAddr,
             OwnerClassName = FunctionsClassName,
+            OwnerName = CurrentObjectName,   // still the owner's: the view is populated after this
         });
         _log.Info($"NAV→Container {field.Name} addr={parentAddr} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
@@ -1538,6 +1539,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ContainerField = field,
             OwnerClassAddr = _currentClassAddr,
             OwnerClassName = FunctionsClassName,
+            OwnerName = CurrentObjectName,   // still the owner's: the view is populated after this
         });
         _log.Info($"NAV→MapContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
@@ -1562,6 +1564,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ContainerField = field,
             OwnerClassAddr = _currentClassAddr,
             OwnerClassName = FunctionsClassName,
+            OwnerName = CurrentObjectName,   // still the owner's: the view is populated after this
         });
         _log.Info($"NAV→SetContainer {field.Name} addr={CurrentAddress} off=0x{field.Offset:X} | BC={FormatBreadcrumbTrace()}");
 
@@ -1605,6 +1608,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             DataTableData = dtResult,
             OwnerClassAddr = _currentClassAddr,
             OwnerClassName = FunctionsClassName,
+            OwnerName = CurrentObjectName,   // still the owner's: the view is populated after this
         });
         _log.Info($"NAV\u2192DataTable {field.Name} addr={CurrentAddress} rows={received}/{dtResult.RowCount} struct={dtResult.RowStructName} | BC={FormatBreadcrumbTrace()}");
 
@@ -1925,6 +1929,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         {
             item.OwnerClassAddr = result.ClassAddr;
             item.OwnerClassName = result.ClassName;
+            item.OwnerName = result.Name;
         }
         RepopulateContainerView(field, item);
         _log.Info($"NAV⇒SyntheticContainer rehydrated {item.FieldName} @ {item.Address} off={FormatCrumbOffset(item.FieldOffset)}");
@@ -2959,18 +2964,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// <summary>
     /// [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The name of what a reference scan from this view is about. A container view
     /// scans its owner -- a container is not a UObject, and only its owner points at its buffer -- while its header
-    /// names the container, so the scan is named by the crumb the drill pushed the view on: the owner's, at the same
-    /// address. Without one, the address scanned.
+    /// names the container, so the scan is named by the owner's name the crumb learned; without one, the address.
     /// </summary>
     private string ScannedObjectName(BreadcrumbItem? crumb)
-    {
-        if (crumb is not { IsContainerView: true }) return CurrentObjectName;
-        int i = Breadcrumbs.IndexOf(crumb);
-        return i > 0 && !string.IsNullOrEmpty(Breadcrumbs[i - 1].Label)
-                     && AddressesEqual(Breadcrumbs[i - 1].Address, crumb.Address)
-            ? Breadcrumbs[i - 1].Label
-            : crumb.Address;
-    }
+        => crumb is not { IsContainerView: true } ? CurrentObjectName
+         : crumb.OwnerName.Length > 0 ? crumb.OwnerName
+         : crumb.Address;
 
     [RelayCommand]
     private async Task FindReferencesAsync()
@@ -4285,6 +4284,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     var crumb = CloneCrumbWithAddress(c, curAddr, c.ClassAddr, field);
                     crumb.OwnerClassAddr = parent.ClassAddr;   // [LW-BACK-CONTAINER-HEADER-ADDR] the file never holds it
                     crumb.OwnerClassName = parent.ClassName;
+                    crumb.OwnerName = parent.Name;
                     rebuilt.Add(crumb);
                     pendingContainer = field;
                     // curAddr / curClassAddr unchanged — the element crumb does the deref.
@@ -4467,6 +4467,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             DataTableData = src.DataTableData,
             OwnerClassAddr = src.OwnerClassAddr,
             OwnerClassName = src.OwnerClassName,
+            OwnerName = src.OwnerName,
         };
 
     /// <summary>[W4-BOOKMARK-DT] The row view's crumb with re-walked rows, in the in-session shape
@@ -4488,6 +4489,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         DataTableData = dt,
         OwnerClassAddr = src.OwnerClassAddr,
         OwnerClassName = src.OwnerClassName,
+        OwnerName = src.OwnerName,
     };
 
     /// <summary>[W4-BOOKMARK-DT] Re-walk a bookmarked DataTable's rows at the saved address, accepted only
@@ -5827,6 +5829,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     {
                         containerBc.OwnerClassAddr = parentResult.ClassAddr;
                         containerBc.OwnerClassName = parentResult.ClassName;
+                        containerBc.OwnerName = parentResult.Name;
                     }
                     RepopulateContainerView(updatedField);
                     RestoreSelectedField(keepFieldName, keepFieldOffset);
@@ -8023,6 +8026,11 @@ public sealed class BreadcrumbItem : ObservableObject
     /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] That class's NAME, learned with <see cref="OwnerClassAddr"/>: what
     /// INV and AA(Baked) bake as the class to find an instance of, where the header names the container instead.</summary>
     public string OwnerClassName { get; set; } = "";
+
+    /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The owner's own name, as its view's header shows it, learned with
+    /// <see cref="OwnerClassAddr"/>: what a reference scan from the container view (which scans the owner) is named.
+    /// Not the crumb before this one's label, which a Locate spine sets to an element index ("[0]").</summary>
+    public string OwnerName { get; set; } = "";
 
     /// <summary>True if this breadcrumb represents a DataTable row container view.</summary>
     public bool IsDataTableView { get; init; }
