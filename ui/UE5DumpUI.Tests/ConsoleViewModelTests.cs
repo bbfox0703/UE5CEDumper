@@ -81,7 +81,7 @@ public class ConsoleViewModelTests
         public override Task<InvokeFunctionResult> InvokeFunctionAsync(
             string funcName, string? instanceAddr = null, string? className = null,
             int parmsSize = 0, string? paramsHex = null, bool directCall = false,
-            IReadOnlyList<InvokeStringParam>? stringParams = null,
+            IReadOnlyList<InvokeStringParam>? stringParams = null, string? expectClassAddr = null,
             CancellationToken ct = default)
         {
             InvokeCallCount++;

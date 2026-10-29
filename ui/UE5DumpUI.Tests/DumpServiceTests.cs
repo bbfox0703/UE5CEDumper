@@ -216,6 +216,44 @@ public class DumpServiceTests
         Assert.False(lastReq!.ContainsKey("str_params"));
     }
 
+    // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] A PIPE dialog stays open across FIREs with the address it opened with; the
+    // class its function list was read from goes with each FIRE, and the DLL refuses an object of another class there.
+    [Fact]
+    public async Task InvokeFunctionAsync_ExpectClassAddr_IsSent()
+    {
+        JsonObject? lastReq = null;
+        _pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() == "invoke_function")
+                lastReq = req;
+            return new JsonObject { ["ok"] = true, ["result"] = 0 };
+        });
+
+        await CreateService().InvokeFunctionAsync("DoThing", instanceAddr: "0x1000", expectClassAddr: "0xC100",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.NotNull(lastReq);
+        Assert.Equal("0xC100", lastReq!["expect_class_addr"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task InvokeFunctionAsync_NoExpectClassAddr_OmitsTheKey()
+    {
+        JsonObject? lastReq = null;
+        _pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() == "invoke_function")
+                lastReq = req;
+            return new JsonObject { ["ok"] = true, ["result"] = 0 };
+        });
+
+        await CreateService().InvokeFunctionAsync("DoThing", instanceAddr: "0x1000",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.NotNull(lastReq);
+        Assert.False(lastReq!.ContainsKey("expect_class_addr"));
+    }
+
     [Fact]
     public void ParamBufferBuilder_ClassifiesStringTypes()
     {

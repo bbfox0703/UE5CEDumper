@@ -524,6 +524,10 @@ public interface IDumpService
     /// <param name="stringParams">String INPUT params the DLL must build as by-value FStrings
     ///     (their 16-byte slots stay zeroed in <paramref name="paramsHex"/>). See
     ///     <see cref="InvokeStringParam"/>. Null / empty when the function takes no string args.</param>
+    /// <param name="expectClassAddr">[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The class the caller's function list was
+    ///     read from. The DLL invokes nothing when the object at <paramref name="instanceAddr"/> is now of another
+    ///     class: a dialog that stays open keeps its address while the game frees the object and reuses the slot.
+    ///     Null = no check.</param>
     Task<InvokeFunctionResult> InvokeFunctionAsync(
         string funcName,
         string? instanceAddr = null,
@@ -532,6 +536,7 @@ public interface IDumpService
         string? paramsHex = null,
         bool directCall = false,
         IReadOnlyList<InvokeStringParam>? stringParams = null,
+        string? expectClassAddr = null,
         CancellationToken ct = default);
 
     /// <summary>

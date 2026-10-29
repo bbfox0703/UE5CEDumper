@@ -3605,6 +3605,7 @@ public sealed class DumpService : IDumpService
         string? paramsHex = null,
         bool directCall = false,
         IReadOnlyList<InvokeStringParam>? stringParams = null,
+        string? expectClassAddr = null,
         CancellationToken ct = default)
     {
         var req = new JsonObject
