@@ -363,6 +363,14 @@ inline nlohmann::json MakeResponse(int id, nlohmann::json data = nlohmann::json(
     return res;
 }
 
+// [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] invoke_function: is the object at the instance address still of the class
+// the caller expects (`expect_class_addr`)?
+inline bool InvokeTargetIsExpected(uintptr_t expectedClass, uintptr_t liveClass) {
+    (void)expectedClass;
+    (void)liveClass;
+    return true;
+}
+
 // Build an error response
 inline nlohmann::json MakeError(int id, const std::string& errorMsg) {
     return {

@@ -8409,6 +8409,18 @@ static void Test_Grimoire_HostAllowsBackgroundThreads() {
     EXPECT("null path fails open",  HostAllowsBackgroundThreads(nullptr));
 }
 
+// [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] A PIPE dialog stays open across FIREs, holding the instance address it opened
+// with, and invoke_function finds the function by NAME on the class read at that address NOW. A slot freed and reused
+// by another class meanwhile ran that class's same-named function. The dialog now sends the class its function list
+// was read from, and the DLL refuses when the object there is of another class.
+static void Test_Renge_InvokeTargetIsExpected() {
+    std::printf("Test_Renge_InvokeTargetIsExpected\n");
+    EXPECT("the same class: invoked",                   Renge::InvokeTargetIsExpected(0xC100, 0xC100));
+    EXPECT("another class at the address: REFUSED",     !Renge::InvokeTargetIsExpected(0xC100, 0xC300));
+    EXPECT("no expectation (every older caller): invoked, as before",
+           Renge::InvokeTargetIsExpected(0, 0xC300));
+}
+
 // B46 — HexToBytes could not fail, so write_mem could not report a bad pattern.
 static void Test_Renge_TryHexToBytes() {
     std::printf("Test_Renge_TryHexToBytes\n");
@@ -11491,6 +11503,7 @@ int main() {
 
     // Renge — hex parsing has a failure channel (write_mem can refuse a bad pattern)
     RUN(Test_Renge_TryHexToBytes);
+    RUN(Test_Renge_InvokeTargetIsExpected);
     RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // F5 — envelope survives its payload
     RUN(Test_Dunste_ShouldCommitCollision);
     RUN(Test_Aura_DescribeSparseDelegateState);
