@@ -1929,7 +1929,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         {
             item.OwnerClassAddr = result.ClassAddr;
             item.OwnerClassName = result.ClassName;
-            item.OwnerName = result.Name;
+            var at = Breadcrumbs.IndexOf(item);
+            item.OwnerName = OwnerViewName(at > 0 ? Breadcrumbs[at - 1] : null, result.Name);
         }
         RepopulateContainerView(field, item);
         _log.Info($"NAV⇒SyntheticContainer rehydrated {item.FieldName} @ {item.Address} off={FormatCrumbOffset(item.FieldOffset)}");
@@ -2970,6 +2971,17 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         => crumb is not { IsContainerView: true } ? CurrentObjectName
          : crumb.OwnerName.Length > 0 ? crumb.OwnerName
          : crumb.Address;
+
+    /// <summary>A crumb of an inline struct, walked at an address with its UScriptStruct: not a UObject, so its walk's
+    /// name is the struct's type or whatever FName its bytes decode to, and its view is named by the crumb's label (set
+    /// from the field at the drill).</summary>
+    private static bool IsInlineStructCrumb(BreadcrumbItem crumb)
+        => !crumb.IsPointerDeref && !string.IsNullOrEmpty(crumb.ClassAddr);
+
+    /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The name the view of <paramref name="ownerCrumb"/>'s object shows,
+    /// given a fresh walk of it: what a container crumb's <see cref="BreadcrumbItem.OwnerName"/> is re-learned as.</summary>
+    private static string OwnerViewName(BreadcrumbItem? ownerCrumb, string walkedName)
+        => ownerCrumb != null && IsInlineStructCrumb(ownerCrumb) ? ownerCrumb.Label : walkedName;
 
     [RelayCommand]
     private async Task FindReferencesAsync()
@@ -4284,7 +4296,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     var crumb = CloneCrumbWithAddress(c, curAddr, c.ClassAddr, field);
                     crumb.OwnerClassAddr = parent.ClassAddr;   // [LW-BACK-CONTAINER-HEADER-ADDR] the file never holds it
                     crumb.OwnerClassName = parent.ClassName;
-                    crumb.OwnerName = parent.Name;
+                    crumb.OwnerName = OwnerViewName(rebuilt[^1], parent.Name);
                     rebuilt.Add(crumb);
                     pendingContainer = field;
                     // curAddr / curClassAddr unchanged — the element crumb does the deref.
@@ -5829,7 +5841,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     {
                         containerBc.OwnerClassAddr = parentResult.ClassAddr;
                         containerBc.OwnerClassName = parentResult.ClassName;
-                        containerBc.OwnerName = parentResult.Name;
+                        containerBc.OwnerName = OwnerViewName(Breadcrumbs.Count >= 2 ? Breadcrumbs[^2] : null,
+                                                              parentResult.Name);
                     }
                     RepopulateContainerView(updatedField);
                     RestoreSelectedField(keepFieldName, keepFieldOffset);
@@ -7436,8 +7449,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // as if it were a UObject, producing corrupted name strings.
         // Override CurrentObjectName with the breadcrumb label (set from field metadata
         // during navigation) and disable the Parent button / clear Outer info.
-        if (Breadcrumbs.Count > 0 && !Breadcrumbs[^1].IsPointerDeref
-            && !string.IsNullOrEmpty(Breadcrumbs[^1].ClassAddr))
+        if (Breadcrumbs.Count > 0 && IsInlineStructCrumb(Breadcrumbs[^1]))
         {
             CurrentObjectName = Breadcrumbs[^1].Label;
             HasParent = false;
