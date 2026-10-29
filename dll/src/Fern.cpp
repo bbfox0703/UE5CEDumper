@@ -6783,14 +6783,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeError(id, "Invalid expect_class_addr").dump();
             }
             if (!Renge::InvokeTargetIsExpected(expectClass, classAddr)) {
-                LOG_WARN("invoke_function: refused %s at %s -- its class is now %s (0x%llX), not %s (0x%llX)",
-                         funcName.c_str(), Renge::AddrToStr(instanceAddr).c_str(), Ubel::GetName(classAddr).c_str(),
-                         (unsigned long long)classAddr, Ubel::GetName(expectClass).c_str(),
+                const std::string expectName = Ubel::GetName(expectClass);
+                LOG_WARN("invoke_function: refused %s at %s -- its class pointer reads 0x%llX (name read: '%s'), "
+                         "not %s (0x%llX)", funcName.c_str(), Renge::AddrToStr(instanceAddr).c_str(),
+                         (unsigned long long)classAddr, Ubel::GetName(classAddr).c_str(), expectName.c_str(),
                          (unsigned long long)expectClass);
                 return Renge::MakeError(id,
-                    "Not invoked: the object at " + Renge::AddrToStr(instanceAddr) + " is now a "
-                    + Ubel::GetName(classAddr) + ", not the " + Ubel::GetName(expectClass)
-                    + " this was opened on. Open it again.").dump();
+                    Renge::InvokeTargetRefusalText(Renge::AddrToStr(instanceAddr), expectName)).dump();
             }
 
             // Resolve UFunction

@@ -371,10 +371,15 @@ inline bool InvokeTargetIsExpected(uintptr_t expectedClass, uintptr_t liveClass)
     return expectedClass == 0 || expectedClass == liveClass;
 }
 
-// [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The error InvokeTargetIsExpected's refusal answers with.
+// [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The error InvokeTargetIsExpected's refusal answers with. All that is known is
+// that the class pointer at the address changed, and the slot may hold another object or none, so no class is named
+// for it. Re-opening a dialog from a view not walked again sends the same address and class, so the remedy is a fresh
+// look-up.
 inline std::string InvokeTargetRefusalText(const std::string& instanceAddr, const std::string& expectedClassName) {
-    return "Not invoked: the object at " + instanceAddr + " is now another class's, not the " + expectedClassName
-         + " this was opened on. Open it again.";
+    const std::string was = expectedClassName.empty() ? "object" : expectedClassName;
+    return "Not invoked: the object at " + instanceAddr + " is no longer the " + was
+         + " this was opened on (its class pointer has changed). Look it up again before firing; in the Live Walker,"
+           " Refresh.";
 }
 
 // Build an error response
