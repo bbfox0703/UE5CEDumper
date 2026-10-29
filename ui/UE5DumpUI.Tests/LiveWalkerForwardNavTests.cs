@@ -1330,6 +1330,40 @@ public class LiveWalkerForwardNavTests
     }
 
     [Fact]
+    public async Task FindRefs_OnAContainerInAnInlineStruct_KeepsTheStructViewsName_AfterARefresh()
+    {
+        // Review round 2: a walk of an inline struct names the struct's TYPE (or whatever FName its bytes decode to),
+        // which the struct view's header replaces with its crumb's label. The owner name a Refresh re-learned from that
+        // walk did not, so the scan's name changed on a Refresh.
+        const string Holder = "0x80000", StatsAddr = "0x80020", StatsCls = "0xC800";
+        var (dump, vm, _) = OwnerWalker();
+        dump.RegisterStruct(Holder, new InstanceWalkResult
+        {
+            Address = Holder, Name = "Holder_0", ClassName = "BP_Holder_C", ClassAddr = "0xC700",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Stats", TypeName = "StructProperty", Offset = 0x20, Size = 0x10,
+                        StructTypeName = "FPlayerStats", StructClassAddr = StatsCls, StructDataAddr = StatsAddr },
+            },
+        });
+        dump.RegisterStruct(StatsAddr, new InstanceWalkResult   // a raw struct's walk names its type
+        {
+            Address = StatsAddr, Name = "FPlayerStats", ClassName = "FPlayerStats", ClassAddr = StatsCls,
+            Fields = new List<LiveFieldValue> { OwnerStub.GearField() },
+        });
+        await vm.NavigateToAddressCommand.ExecuteAsync(Holder);
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // {} Stats
+        var structViewName = vm.CurrentObjectName;
+        Assert.NotEqual("FPlayerStats", structViewName);                      // the header shows the crumb's label
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "Gear"));
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.Equal($"References to {structViewName} (none found)", vm.ReferencesHeader);
+    }
+
+    [Fact]
     public async Task FindRefs_OnAnObject_StillNamesTheObject()
     {
         var (dump, vm, _) = OwnerWalker();
