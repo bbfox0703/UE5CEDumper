@@ -2956,6 +2956,22 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     // directly on the matched element instead of stopping at the container.
     private int _pendingDrillElementIndex = -1;
 
+    /// <summary>
+    /// [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The name of what a reference scan from this view is about. A container view
+    /// scans its owner -- a container is not a UObject, and only its owner points at its buffer -- while its header
+    /// names the container, so the scan is named by the crumb the drill pushed the view on: the owner's, at the same
+    /// address. Without one, the address scanned.
+    /// </summary>
+    private string ScannedObjectName(BreadcrumbItem? crumb)
+    {
+        if (crumb is not { IsContainerView: true }) return CurrentObjectName;
+        int i = Breadcrumbs.IndexOf(crumb);
+        return i > 0 && !string.IsNullOrEmpty(Breadcrumbs[i - 1].Label)
+                     && AddressesEqual(Breadcrumbs[i - 1].Address, crumb.Address)
+            ? Breadcrumbs[i - 1].Label
+            : crumb.Address;
+    }
+
     [RelayCommand]
     private async Task FindReferencesAsync()
     {
@@ -2974,8 +2990,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // the referring field and re-roots the walker, so the user gets a real navigation
         // into an object that references something else entirely.
         var scanAddr   = CurrentAddress;
-        var scanName   = CurrentObjectName;
         var scanCrumb  = CurrentCrumb;
+        var scanName   = ScannedObjectName(scanCrumb);
 
         try
         {
