@@ -310,6 +310,8 @@ public static class SdkExportService
                 => $"class {resolve(propertyClass)}*",
             "ClassProperty" => knownMeta ? $"TSubclassOf<class {resolve(metaClass)}>" : "UClass*",
             "SoftClassProperty" => knownMeta ? $"TSoftClassPtr<class {resolve(metaClass)}>" : "TSoftClassPtr<UObject>",
+            // [UE4-ASSETPTR-EXPORTS] TSoftClassPtr's name before 4.18 (UE_4.10's AssetPtr.h).
+            "AssetClassProperty" => knownMeta ? $"TAssetSubclassOf<class {resolve(metaClass)}>" : "TAssetSubclassOf<UObject>",
             _ => null,
         };
     }
@@ -380,6 +382,12 @@ public static class SdkExportService
                 ? $"TSoftObjectPtr<class {objClassName}>"
                 : "TSoftObjectPtr<UObject>",
             "SoftClassProperty" => classCpp ?? "TSoftClassPtr<UObject>",
+            // [UE4-ASSETPTR-EXPORTS] 4.11-4.17's soft pointers, by their own names: 4.18 renamed them (and kept these
+            // as deprecated aliases), so a header for such a title reads as its engine headers do.
+            "AssetObjectProperty" => !string.IsNullOrEmpty(objClassName)
+                ? $"TAssetPtr<class {objClassName}>"
+                : "TAssetPtr<UObject>",
+            "AssetClassProperty" => classCpp ?? "TAssetSubclassOf<UObject>",
             "InterfaceProperty" => !string.IsNullOrEmpty(objClassName)
                 ? $"TScriptInterface<class {objClassName}>"
                 : "TScriptInterface<IInterface>",
@@ -435,6 +443,8 @@ public static class SdkExportService
             // [P3-SDK-INNERS] The scalar path's spellings, copied: a container of these was declared uint8_t.
             "SoftClassProperty" => classCpp ?? "TSoftClassPtr<UObject>",
             "LazyObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TLazyObjectPtr<class {objClass}>" : "TLazyObjectPtr<UObject>",
+            "AssetObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TAssetPtr<class {objClass}>" : "TAssetPtr<UObject>",   // [UE4-ASSETPTR-EXPORTS]
+            "AssetClassProperty" => classCpp ?? "TAssetSubclassOf<UObject>",
             "InterfaceProperty" => !string.IsNullOrEmpty(objClass) ? $"TScriptInterface<class {objClass}>" : "TScriptInterface<IInterface>",
             _ => MapScalarInnerType(innerType),
         };

@@ -587,6 +587,959 @@ public class LiveWalkerForwardNavTests
                 ? throw new System.InvalidOperationException("walk failed")
                 : base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
     }
+
+    // ── A container view stands for its owner ── [LW-BACK-CONTAINER-HEADER-ADDR]
+    //
+    // A container drill renders without a walk, so the header's address and the Functions list stay the OWNER's,
+    // inherited from the owner's walk. Back, a crumb jump, the Back out of a re-root and Refresh render the same view
+    // without a walk too, and left both on whatever was walked last: measured live on build 3660, the header's Addr
+    // chip copied the element's address after Back. The Functions list matters most -- PIPE fires the selected
+    // function at the header's address, so the two must describe one object.
+
+    private const string Owner = "0x10000", OwnerCls = "0xC100", Elem = "0x20000", ElemCls = "0xC200",
+                         Other = "0x30000", OtherCls = "0xC300", Table = "0x40000", TableCls = "0xC400",
+                         RowData = "0x48000", RowStruct = "0xC480";
+
+    /// <summary>Walks an owner (an object array, an object-valued map and an object set, each holding
+    /// <see cref="Elem"/>), a DataTable, one of its rows and an unrelated object, and lists one function for each
+    /// UClass (the row struct has none). A gated class's list waits until the test releases it; its continuation runs
+    /// inline, so the late landing has happened when SetResult or SetException returns.</summary>
+    private sealed class OwnerStub : StubDumpService
+    {
+        private readonly Dictionary<string, TaskCompletionSource<List<FunctionInfoModel>>> _functionGates = new();
+        private readonly Dictionary<string, TaskCompletionSource<InstanceWalkResult>> _walkGates = new();
+
+        /// <summary>Hold the next walks of <paramref name="addr"/> until the test answers. Continuations run
+        /// asynchronously, so the navigation that awaits the walk really is suspended meanwhile.</summary>
+        public TaskCompletionSource<InstanceWalkResult> GateWalk(string addr)
+            => _walkGates[addr] = new TaskCompletionSource<InstanceWalkResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public void UngateWalk(string addr) => _walkGates.Remove(addr);
+
+        public override Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
+            int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
+            CancellationToken ct = default)
+            => _walkGates.TryGetValue(addr, out var gate)
+                ? gate.Task
+                : base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
+
+        public OwnerStub()
+        {
+            RegisterStruct(Owner, new InstanceWalkResult
+            {
+                Address = Owner, Name = "Owner_0", ClassName = "BP_Owner_C", ClassAddr = OwnerCls,
+                Fields = new List<LiveFieldValue> { GearField(), LootField(), PalsField() },
+            });
+            RegisterStruct(Elem, Obj(Elem, "Elem_0", "BP_Elem_C", ElemCls));
+            RegisterStruct(Other, Obj(Other, "Other_0", "BP_Other_C", OtherCls));
+            RegisterStruct(Table, Obj(Table, "DT_Loot", "DataTable", TableCls));
+            RegisterStruct(RowData, Obj(RowData, "Sword", "FLootRow", RowStruct));
+        }
+
+        public static LiveFieldValue GearField() => new()
+        {
+            Name = "Gear", TypeName = "ArrayProperty", Offset = 0x40, Size = 0x10,
+            ArrayInnerType = "ObjectProperty", ArrayCount = 1, ArrayElemSize = 8, ArrayDataAddr = "0x50000",
+            ArrayElements = new() { new() { Index = 0, PtrAddress = Elem, PtrName = "Elem_0", PtrClassName = "BP_Elem_C" } },
+        };
+
+        private static LiveFieldValue LootField() => new()
+        {
+            Name = "Loot", TypeName = "MapProperty", Offset = 0x50, Size = 0x50,
+            MapCount = 1, MapKeyType = "IntProperty", MapValueType = "ObjectProperty", MapKeySize = 4, MapValueSize = 8,
+            MapDataAddr = "0x60000", MapStride = 24, MapValueOffset = 8,
+            MapElements = new()
+            {
+                new() { Index = 0, Key = "7", ValuePtrAddress = Elem, ValuePtrName = "Elem_0", ValuePtrClassName = "BP_Elem_C" },
+            },
+        };
+
+        private static LiveFieldValue PalsField() => new()
+        {
+            Name = "Pals", TypeName = "SetProperty", Offset = 0xA0, Size = 0x50,
+            SetCount = 1, SetElemType = "ObjectProperty", SetElemSize = 8, SetStride = 16, SetDataAddr = "0x70000",
+            SetElements = new() { new() { Index = 0, KeyPtrAddress = Elem, KeyPtrName = "Elem_0", KeyPtrClassName = "BP_Elem_C" } },
+        };
+
+        public static DataTableWalkResult TableRows() => new()
+        {
+            RowCount = 1, RowMapOffset = 0x30, RowStructAddr = RowStruct, RowStructName = "FLootRow",
+            FNameSize = 8, Stride = 24,
+            Rows = new() { new() { SparseIndex = 0, RowName = "Sword", DataAddr = RowData } },
+        };
+
+        public static InstanceWalkResult Obj(string addr, string name, string cls, string clsAddr) => new()
+        {
+            Address = addr, Name = name, ClassName = cls, ClassAddr = clsAddr,
+            Fields = new List<LiveFieldValue> { new() { Name = "X", TypeName = "IntProperty", Offset = 8, Size = 4 } },
+        };
+
+        public TaskCompletionSource<List<FunctionInfoModel>> GateFunctions(string classAddr)
+            => _functionGates[classAddr] = new TaskCompletionSource<List<FunctionInfoModel>>();
+
+        public override Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
+            => _functionGates.TryGetValue(addr, out var gate) ? gate.Task : Task.FromResult(FunctionsOf(addr));
+
+        /// <summary>The address the last reference scan was asked about.</summary>
+        public string? RefsScannedAt;
+
+        public override Task<FindReferencesResult> FindReferencesToUObjectAsync(string addr, int maxResults = 32,
+            CancellationToken ct = default)
+        {
+            RefsScannedAt = addr;
+            return Task.FromResult(new FindReferencesResult());
+        }
+
+        public static List<FunctionInfoModel> FunctionsOf(string classAddr) => classAddr switch
+        {
+            OwnerCls => new() { new() { Name = "OwnerFn", Address = "0xF100" } },
+            ElemCls => new() { new() { Name = "ElemFn", Address = "0xF200" } },
+            OtherCls => new() { new() { Name = "OtherFn", Address = "0xF300" } },
+            TableCls => new() { new() { Name = "TableFn", Address = "0xF400" } },
+            _ => new(),
+        };
+    }
+
+    private static (OwnerStub dump, LiveWalkerViewModel vm, MockPlatformService platform) OwnerWalker()
+    {
+        var dump = new OwnerStub();
+        var platform = new MockPlatformService(Path.GetTempPath());
+        return (dump, new LiveWalkerViewModel(dump, new MockLoggingService(), platform), platform);
+    }
+
+    private static string[] FunctionNames(LiveWalkerViewModel vm) => vm.Functions.Select(f => f.Name).ToArray();
+
+    /// <summary>What the drill shows, and so what every other render of that container view must show.</summary>
+    private static void AssertShowsTheOwner(LiveWalkerViewModel vm, string owner = Owner, string function = "OwnerFn")
+    {
+        Assert.Equal(owner, vm.CurrentAddress);
+        Assert.Equal(new[] { function }, FunctionNames(vm));
+    }
+
+    private static async Task<LiveWalkerViewModel> OnOwnersContainer(LiveWalkerViewModel vm, string container)
+    {
+        await vm.NavigateToAddressCommand.ExecuteAsync(Owner);
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == container));
+        AssertShowsTheOwner(vm);   // the drill: the baseline every other render is held to
+        return vm;
+    }
+
+    [Fact]
+    public async Task Back_FromAnElement_PutsTheArrayViewBackOnItsOwner()
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        Assert.Equal(Elem, vm.CurrentAddress);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.StartsWith("Array<", vm.CurrentClassName);
+        AssertShowsTheOwner(vm);
+        await vm.CopyCurrentAddressCommand.ExecuteAsync(null);   // the header's Addr chip
+        Assert.Contains("10000", platform.LastClipboard);
+        Assert.DoesNotContain("20000", platform.LastClipboard);
+    }
+
+    [Fact]
+    public async Task CrumbJump_FromAnElement_PutsTheMapViewBackOnItsOwner()
+    {
+        var (_, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Loot");
+        var mapCrumb = vm.Breadcrumbs[^1];
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → the value of [0]
+        Assert.Equal(Elem, vm.CurrentAddress);
+
+        await vm.NavigateToBreadcrumbCommand.ExecuteAsync(mapCrumb);
+
+        Assert.StartsWith("Map<", vm.CurrentClassName);
+        AssertShowsTheOwner(vm);
+    }
+
+    [Fact]
+    public async Task BackOutOfAReRoot_IntoAContainerView_ShowsItsOwner_NotTheReRootTarget()
+    {
+        var (_, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);   // the Go box re-roots, keeping the spine for Back
+        Assert.Equal(Other, vm.CurrentAddress);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.StartsWith("Array<", vm.CurrentClassName);
+        AssertShowsTheOwner(vm);
+    }
+
+    [Fact]
+    public async Task Back_FromARow_PutsTheDataTableViewBackOnTheTable()
+    {
+        var (_, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        OwnerStub.TableRows());
+        AssertShowsTheOwner(vm, Table, "TableFn");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // {} on the row
+        Assert.Equal(RowData, vm.CurrentAddress);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.StartsWith("DataTable<", vm.CurrentClassName);
+        AssertShowsTheOwner(vm, Table, "TableFn");
+    }
+
+    [Fact]
+    public async Task Refresh_OfAContainerViewThatKnowsOnlyItsOwnersAddress_LearnsTheRestFromTheOwnersWalk()
+    {
+        // The shape a bookmark file or a Locate spine rebuilds: the container crumb holds the owner's address and the
+        // field's name and offset -- no container field, nothing about the owner's class.
+        var (_, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Elem);   // whatever was walked before
+        vm.Breadcrumbs.Clear();
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Owner, Label = "Owner_0", FieldName = "Owner_0" });
+        vm.Breadcrumbs.Add(SyntheticGearCrumb());
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.StartsWith("Array<", vm.CurrentClassName);
+        AssertShowsTheOwner(vm);
+    }
+
+    [Fact]
+    public async Task AContainerViewOpenedInsideAWalk_RemembersItsOwner_NotTheObjectBefore()
+    {
+        // Opening a reference's owner drills the matched container while that walk is still being applied. The drill
+        // must take the owner's class, not the one the walk is replacing.
+        var (_, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);
+        await vm.OpenReferenceOwnerCommand.ExecuteAsync(
+            new ReferenceMatch { OwnerAddress = Owner, FieldName = "Gear", ElementIndex = 0 });
+        Assert.StartsWith("Array<", vm.CurrentClassName);   // the drill happened
+        AssertShowsTheOwner(vm);
+
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        AssertShowsTheOwner(vm);
+    }
+
+    [Fact]
+    public async Task TheGWorldRoot_DoesNotListTheLastObjectsFunctions()
+    {
+        // The actor list is rendered without a walk too, and nothing names UWorld's class: an empty list is the
+        // honest one. The last object's list would let PIPE fire that object's function at the world.
+        var (_, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Elem);
+        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+
+        await vm.StartFromWorldCommand.ExecuteAsync(null);
+
+        Assert.Equal("UWorld", vm.CurrentClassName);
+        Assert.Empty(vm.Functions);
+        Assert.False(vm.HasFunctions);
+    }
+
+    [Fact]
+    public async Task AFunctionListThatLandsLate_IsNotShownForTheObjectOnScreenNow()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        var ownersList = dump.GateFunctions(OwnerCls);
+        await vm.NavigateToAddressCommand.ExecuteAsync(Owner);   // its list is still loading
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "Gear"));
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
+        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+
+        ownersList.SetResult(OwnerStub.FunctionsOf(OwnerCls));   // the owner's list lands now
+
+        Assert.Equal(Elem, vm.CurrentAddress);
+        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+    }
+
+    [Fact]
+    public async Task AFunctionListThatFailsLate_DoesNotEmptyTheListOfTheObjectOnScreenNow()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        var ownersList = dump.GateFunctions(OwnerCls);
+        await vm.NavigateToAddressCommand.ExecuteAsync(Owner);
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "Gear"));
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
+
+        ownersList.SetException(new InvalidOperationException("pipe timeout"));   // the owner's walk fails now
+
+        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+    }
+
+    [Fact]
+    public async Task Back_FromAnElement_PutsTheSetViewBackOnItsOwner()
+    {
+        var (_, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Pals");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
+        Assert.Equal(Elem, vm.CurrentAddress);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.StartsWith("Set<", vm.CurrentClassName);
+        AssertShowsTheOwner(vm);
+    }
+
+    /// <summary>A container crumb as a Locate spine or a bookmark file builds it: no container field, so a render
+    /// re-hydrates the view from a walk of the owner.</summary>
+    private static BreadcrumbItem SyntheticGearCrumb() => new()
+    {
+        Address = Owner, Label = "Gear", FieldName = "Gear", FieldOffset = 0x40, IsContainerView = true,
+    };
+
+    [Fact]
+    public async Task Back_IntoARehydratedContainerView_ShowsItsOwner()
+    {
+        var (_, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Elem);
+        vm.Breadcrumbs.Clear();
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Owner, Label = "Owner_0", FieldName = "Owner_0" });
+        vm.Breadcrumbs.Add(SyntheticGearCrumb());
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Elem, Label = "Elem_0", FieldName = "[0]", IsPointerDeref = true });
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.StartsWith("Array<", vm.CurrentClassName);
+        AssertShowsTheOwner(vm);
+    }
+
+    [Fact]
+    public async Task ABookmarkedContainerView_ReResolvedFromGWorld_ShowsItsOwner()
+    {
+        // Saved in an earlier game session: every address is dead, and the spine is walked again from the live GWorld.
+        var (dump, vm, _) = OwnerWalker();
+        dump.RegisterStruct("0xA8B0", new InstanceWalkResult   // the stub's live GWorld
+        {
+            Name = "World", ClassName = "World", Address = "0xA8B0",
+            Fields = new() { new() { Name = "OwnerRef", Offset = 0x30, TypeName = "ObjectProperty", PtrAddress = Owner } },
+        });
+        var slot = vm.BookmarkSlots[0];
+        slot.SavedClassName = "Array<ObjectProperty>";
+        slot.SavedObjectName = "Gear";
+        slot.SavedAddress = "0xDEAD0";
+        slot.SavedBreadcrumbs = new List<BreadcrumbItem>
+        {
+            new() { Address = "0xDEADW", Label = "GWorld", FieldName = "GWorld", IsPointerDeref = true },
+            new() { Address = "0xDEAD0", Label = "Owner_0", FieldName = "OwnerRef", FieldOffset = 0x30, IsPointerDeref = true,
+                    TargetClassName = "BP_Owner_C" },
+            new() { Address = "0xDEAD0", Label = "Gear", FieldName = "Gear", FieldOffset = 0x40, IsContainerView = true },
+        };
+        slot.IsOccupied = true;
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.StartsWith("Array<", vm.CurrentClassName);
+        AssertShowsTheOwner(vm);
+    }
+
+    [Fact]
+    public async Task ARowMapLoadStartedOnATable_DoesNotLandInThatTablesRowViewRestoredAtTheSameDepth()
+    {
+        // Review of d206a4ad: a container render now puts the header back on its owner, so a RowMap row view restored
+        // by the Back out of a re-root matches a row load started on the same table at the same depth by address AND
+        // depth. The load would append a drillable RowMap row to the rows grid.
+        var (dump, vm, _) = OwnerWalker();
+        dump.RegisterStruct(Other, new InstanceWalkResult
+        {
+            Address = Other, Name = "Other_0", ClassName = "BP_Other_C", ClassAddr = OtherCls,
+            Fields = new() { new() { Name = "ToTable", TypeName = "ObjectProperty", Offset = 0x18, Size = 8,
+                                     PtrAddress = Table, PtrName = "DT_Loot", PtrClassName = "DataTable" } },
+        });
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        OwnerStub.TableRows());
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);   // re-roots, keeping [Table, RowMap] for Back
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "ToTable"));
+        var load = vm.LastRowMapLoad!;                           // [Other, Table]: the table's row load starts here
+        Assert.Equal((Table, 2), (load.DataTableAddr, load.Depth));
+        Assert.Same(vm.Breadcrumbs[^1], load.Crumb);
+        Assert.True(vm.RowMapLoadStillCurrent(load));            // control: nothing has moved yet
+
+        await vm.GoBackCommand.ExecuteAsync(null);               // [Other]
+        await vm.GoBackCommand.ExecuteAsync(null);               // out of the re-root: [Table, RowMap]
+
+        Assert.StartsWith("DataTable<", vm.CurrentClassName);
+        Assert.Equal(Table, vm.CurrentAddress);                  // the address and the depth match again...
+        Assert.Equal(2, vm.Breadcrumbs.Count);
+        Assert.False(vm.RowMapLoadStillCurrent(load));           // ...and the load still must not land
+    }
+
+    [Fact]
+    public async Task ARowMapLoad_DoesNotLandWhileTheTablesRowViewIsStillOnScreen()
+    {
+        // Review round 2: the trail can run ahead of the grid. Back pops the row view's crumb before the table's walk
+        // returns, so the trail already says "the table" -- same address, depth and crumb as a load started on it --
+        // while the grid still holds the row view's rows, which the load would append a RowMap row to.
+        var (dump, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        OwnerStub.TableRows());
+        await vm.GoBackCommand.ExecuteAsync(null);               // [Table], walked: its row load starts
+        var load = vm.LastRowMapLoad!;
+        await vm.GoForwardCommand.ExecuteAsync(null);            // [Table, RowMap]: the rows, rendered without a walk
+        var tableWalk = dump.GateWalk(Table);
+
+        var back = vm.GoBackCommand.ExecuteAsync(null);          // pops RowMap; the table's walk waits
+
+        Assert.StartsWith("DataTable<", vm.CurrentClassName);   // the grid still shows the rows
+        Assert.False(vm.RowMapLoadStillCurrent(load));
+        dump.UngateWalk(Table);
+        tableWalk.SetResult(OwnerStub.Obj(Table, "DT_Loot", "DataTable", TableCls));
+        await back;
+        Assert.True(vm.RowMapLoadStillCurrent(vm.LastRowMapLoad!));   // control: the table's own walk loads it again
+    }
+
+    // Review rounds of d206a4ad: the header moves to the new object at once, the Functions list only when its walk
+    // returns. In between, PIPE would fire a row of the OLD list at the NEW address, and the DLL finds the function by
+    // name on that object's class: a name both classes have runs the new class's function with arguments laid out for
+    // the old one. Emptying the list for that time resized the Functions section -- and the field grid with it, under a
+    // scroll restore. So the rows stay, and every row action refuses until the new class's list lands.
+
+    /// <summary>On a list still loading for another class, every row action is refused under its button's label, and
+    /// nothing is copied.</summary>
+    private static async Task AssertRowActionsRefuse(LiveWalkerViewModel vm, MockPlatformService platform)
+    {
+        var row = vm.Functions.First();
+        foreach (var (label, run) in new (string, Func<Task>)[]
+        {
+            ("INV", () => vm.GenerateInvokeScriptCommand.ExecuteAsync(row)),
+            ("PIPE", () => vm.InvokeViaPipeCommand.ExecuteAsync(row)),
+            ("AA(Baked)", () => vm.CopyBakedScriptCommand.ExecuteAsync(row)),
+            ("ASM", () => vm.AsmFunctionCommand.ExecuteAsync(row)),
+        })
+        {
+            await run();
+            Assert.StartsWith($"⚠ {label}:", vm.StatusText);
+            Assert.Contains("still loading", vm.StatusText);
+        }
+        Assert.Null(platform.LastClipboard);
+    }
+
+    /// <summary>The control: INV on a row of the class on screen runs instead of refusing, and copies its script. Only
+    /// that: the class the script names is <see cref="AssertScriptsName"/>'s business.</summary>
+    private static async Task AssertRowActionWorks(LiveWalkerViewModel vm, MockPlatformService platform, string function)
+    {
+        await vm.GenerateInvokeScriptCommand.ExecuteAsync(vm.Functions.Single(f => f.Name == function));
+        Assert.Contains(function, platform.LastClipboard);
+    }
+
+    [Fact]
+    public async Task Back_IntoAContainerView_RefusesTheOldRowsUntilItsOwnersListArrives()
+    {
+        var (dump, vm, platform) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
+        var ownersList = dump.GateFunctions(OwnerCls);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.Equal(Owner, vm.CurrentAddress);
+        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));   // kept: neither the section nor the field grid moves
+        await AssertRowActionsRefuse(vm, platform);
+        ownersList.SetResult(OwnerStub.FunctionsOf(OwnerCls));
+        AssertShowsTheOwner(vm);
+        await AssertRowActionWorks(vm, platform, "OwnerFn");
+    }
+
+    [Fact]
+    public async Task AWalkToAnotherClass_RefusesTheOldRowsUntilItsListArrives()
+    {
+        var (dump, vm, platform) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        var elementsList = dump.GateFunctions(ElemCls);
+
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
+
+        Assert.Equal(Elem, vm.CurrentAddress);
+        Assert.Equal(new[] { "OwnerFn" }, FunctionNames(vm));
+        await AssertRowActionsRefuse(vm, platform);
+        elementsList.SetResult(OwnerStub.FunctionsOf(ElemCls));
+        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+        await AssertRowActionWorks(vm, platform, "ElemFn");
+    }
+
+    [Fact]
+    public async Task TheRefusalLine_GoesWhenTheListLands_AndNoOtherLineDoes()
+    {
+        // Review round 4: "still loading" outlived the load, over rows that were usable by then.
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        var elementsList = dump.GateFunctions(ElemCls);
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
+        await vm.InvokeViaPipeCommand.ExecuteAsync(vm.Functions.First());
+        Assert.Contains("still loading", vm.StatusText);
+
+        elementsList.SetResult(OwnerStub.FunctionsOf(ElemCls));
+
+        Assert.DoesNotContain("still loading", vm.StatusText);
+
+        // The control: a line put up after the refusal is not the refusal's to take down.
+        var nextList = dump.GateFunctions(OwnerCls);
+        await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.InvokeViaPipeCommand.ExecuteAsync(vm.Functions.First());
+        vm.StatusText = "Something else happened";
+        nextList.SetResult(OwnerStub.FunctionsOf(OwnerCls));
+        Assert.Equal("Something else happened", vm.StatusText);
+    }
+
+    // Keyed on the CLASS: an address says nothing about which functions an object has.
+
+    [Fact]
+    public async Task ARefreshThatFindsAnotherClassAtTheSameAddress_RefusesTheOldRowsUntilItsListArrives()
+    {
+        // A freed slot reused by another class.
+        var (dump, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);
+        dump.RegisterStruct(Other, OwnerStub.Obj(Other, "Elem_9", "BP_Elem_C", ElemCls));
+        var elementsList = dump.GateFunctions(ElemCls);
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(new[] { "OtherFn" }, FunctionNames(vm));
+        await AssertRowActionsRefuse(vm, platform);
+        elementsList.SetResult(OwnerStub.FunctionsOf(ElemCls));
+        Assert.Equal(new[] { "ElemFn" }, FunctionNames(vm));
+    }
+
+    [Fact]
+    public async Task AWalkToAnotherObjectOfTheSameClass_KeepsTheRowsUsableWhileItsListReloads()
+    {
+        var (dump, vm, platform) = OwnerWalker();
+        dump.RegisterStruct("0x21000", OwnerStub.Obj("0x21000", "Elem_1", "BP_Elem_C", ElemCls));
+        await vm.NavigateToAddressCommand.ExecuteAsync(Elem);
+        dump.GateFunctions(ElemCls);
+
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x21000");
+
+        Assert.Equal("0x21000", vm.CurrentAddress);
+        await AssertRowActionWorks(vm, platform, "ElemFn");
+    }
+
+    [Fact]
+    public async Task ARefreshOfTheSameObject_KeepsTheRowsUsableWhileItsListReloads()
+    {
+        // The same class's rows are the right ones, and keeping them keeps the Functions grid's place on every Auto tick.
+        var (dump, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Owner);
+        dump.GateFunctions(OwnerCls);
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        await AssertRowActionWorks(vm, platform, "OwnerFn");
+    }
+
+    [Fact]
+    public async Task AContainerViewBookmarked_ThenReloadedAfterADisconnect_ListsItsOwnersFunctions()
+    {
+        // A disconnect empties the Functions list; the class it was for must not still count as listed.
+        var (_, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        var slot = vm.BookmarkSlots[0];
+        vm.SaveBookmarkToSlotCommand.Execute(slot);
+        vm.ClearOnDisconnect();
+        Assert.Empty(vm.Functions);
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.StartsWith("Array<", vm.CurrentClassName);
+        AssertShowsTheOwner(vm);
+    }
+
+    // ── The actions that need a class NAME name the owner's ── [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]
+    //
+    // A container view lists its owner's functions and fires them at the owner's address, while its header names the
+    // container: Array<ObjectProperty>, Map<…>, Set<…>, DataTable<FLootRow>. INV and AA(Baked) bake a class to find an
+    // instance of, and so does the PIPE dialog's Copy AA Script; they took the header's name, which no class has, so the
+    // script found no instance in CE.
+
+    /// <summary>The CE record a script action copied when no AOBMaker is connected: its description and its script.</summary>
+    private static (string Description, string Script) CopiedAaRecord(MockPlatformService platform)
+    {
+        var entry = System.Xml.Linq.XDocument.Parse(platform.LastClipboard!).Descendants("CheatEntry").Single();
+        return ((string)entry.Element("Description")!, (string)entry.Element("AssemblerScript")!);
+    }
+
+    /// <summary>INV and AA(Baked) on <paramref name="function"/> bake <paramref name="cls"/> as the class to find an
+    /// instance of, and PIPE would hand its dialog the same name.</summary>
+    private static async Task AssertScriptsName(LiveWalkerViewModel vm, MockPlatformService platform, string cls,
+                                                string function)
+    {
+        var row = vm.Functions.Single(f => f.Name == function);
+        await vm.GenerateInvokeScriptCommand.ExecuteAsync(row);
+        var (description, script) = CopiedAaRecord(platform);
+        Assert.Contains($"local OWNER_CLASS  = '{cls}'", script);
+        Assert.Equal($"\"Invoke: {cls}::{function}\"", description);
+        await vm.CopyBakedScriptCommand.ExecuteAsync(row);   // no inputs and no return: baked at once, no dialog
+        Assert.Contains($"invokeUFunction('{cls}', ", CopiedAaRecord(platform).Script);
+        Assert.Equal(cls, vm.FunctionsClassName);   // PIPE's dialog title and its Copy AA Script (no window headless)
+    }
+
+    [Theory]
+    [InlineData("Gear", "Array<")]
+    [InlineData("Loot", "Map<")]
+    [InlineData("Pals", "Set<")]
+    public async Task OnAContainerView_TheScriptsNameTheOwnersClass_NotTheViewsLabel(string container, string label)
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await OnOwnersContainer(vm, container);
+
+        Assert.StartsWith(label, vm.CurrentClassName);   // the header still names the container
+        await AssertScriptsName(vm, platform, "BP_Owner_C", "OwnerFn");
+    }
+
+    [Fact]
+    public async Task Back_IntoAContainerView_TheScriptsNameTheOwnersClass_NotTheElementJustLeft()
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
+        await AssertScriptsName(vm, platform, "BP_Elem_C", "ElemFn");   // the element's own view names its own class
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        AssertShowsTheOwner(vm);
+        await AssertScriptsName(vm, platform, "BP_Owner_C", "OwnerFn");
+    }
+
+    [Fact]
+    public async Task OnADataTableRowsView_TheScriptsNameTheTablesClass()
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        OwnerStub.TableRows());
+
+        Assert.StartsWith("DataTable<", vm.CurrentClassName);
+        await AssertScriptsName(vm, platform, "DataTable", "TableFn");
+    }
+
+    [Fact]
+    public async Task AContainerViewThatLearnsItsOwnerFromAWalk_LearnsItsOwnersClassName_Too()
+    {
+        // A Locate spine or a bookmark file: the container crumb knows only the owner's address.
+        var (_, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Elem);
+        vm.Breadcrumbs.Clear();
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Owner, Label = "Owner_0", FieldName = "Owner_0" });
+        vm.Breadcrumbs.Add(SyntheticGearCrumb());
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        AssertShowsTheOwner(vm);
+        await AssertScriptsName(vm, platform, "BP_Owner_C", "OwnerFn");
+    }
+
+    [Fact]
+    public async Task AContainerViewRehydratedOnBack_LearnsItsOwnersClassName_Too()
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Elem);
+        vm.Breadcrumbs.Clear();
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Owner, Label = "Owner_0", FieldName = "Owner_0" });
+        vm.Breadcrumbs.Add(SyntheticGearCrumb());
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Elem, Label = "Elem_0", FieldName = "[0]", IsPointerDeref = true });
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        AssertShowsTheOwner(vm);
+        await AssertScriptsName(vm, platform, "BP_Owner_C", "OwnerFn");
+    }
+
+    [Fact]
+    public async Task ABookmarkedContainerView_ReResolvedFromGWorld_TheScriptsNameTheOwnersClass()
+    {
+        var (dump, vm, platform) = OwnerWalker();
+        dump.RegisterStruct("0xA8B0", new InstanceWalkResult
+        {
+            Name = "World", ClassName = "World", Address = "0xA8B0",
+            Fields = new() { new() { Name = "OwnerRef", Offset = 0x30, TypeName = "ObjectProperty", PtrAddress = Owner } },
+        });
+        var slot = vm.BookmarkSlots[0];
+        slot.SavedClassName = "Array<ObjectProperty>";
+        slot.SavedObjectName = "Gear";
+        slot.SavedAddress = "0xDEAD0";
+        slot.SavedBreadcrumbs = new List<BreadcrumbItem>
+        {
+            new() { Address = "0xDEADW", Label = "GWorld", FieldName = "GWorld", IsPointerDeref = true },
+            new() { Address = "0xDEAD0", Label = "Owner_0", FieldName = "OwnerRef", FieldOffset = 0x30, IsPointerDeref = true,
+                    TargetClassName = "BP_Owner_C" },
+            new() { Address = "0xDEAD0", Label = "Gear", FieldName = "Gear", FieldOffset = 0x40, IsContainerView = true },
+        };
+        slot.IsOccupied = true;
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        AssertShowsTheOwner(vm);
+        await AssertScriptsName(vm, platform, "BP_Owner_C", "OwnerFn");
+    }
+
+    // Find Refs from a container view scans its owner -- a container is not a UObject, and only its owner points at it
+    // -- but its header named the container: "References to Gear" over Owner_0's referrers.
+
+    [Theory]
+    [InlineData("Gear")]
+    [InlineData("Loot")]
+    [InlineData("Pals")]
+    public async Task FindRefs_OnAContainerView_ScansTheOwner_AndSaysSo(string container)
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, container);
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.Equal(Owner, dump.RefsScannedAt);
+        Assert.Equal("References to Owner_0 (none found)", vm.ReferencesHeader);
+    }
+
+    [Fact]
+    public async Task FindRefs_OnADataTableRowsView_ScansTheTable_AndSaysSo()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        OwnerStub.TableRows());
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.Equal(Table, dump.RefsScannedAt);
+        Assert.Equal("References to DT_Loot (none found)", vm.ReferencesHeader);
+    }
+
+    [Fact]
+    public async Task FindRefs_OnAContainerView_UnderALocateSpinesElementCrumb_NamesTheOwner_NotTheIndex()
+    {
+        // Review of 4159e0e7..f092ec12: a Locate spine labels the crumb of an object-array hop "[0]" (its address is
+        // the object reached), so the crumb before a container drilled there names an index, not the owner.
+        var (dump, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);
+        vm.Breadcrumbs.Clear();
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Other, Label = "Other_0", FieldName = "Other_0" });
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Owner, Label = "[0]", FieldName = "[0]", IsPointerDeref = true });
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Elem, Label = "Elem_0", FieldName = "Elem_0", IsPointerDeref = true });
+        await vm.GoBackCommand.ExecuteAsync(null);       // walks the "[0]" crumb's object: the owner
+        Assert.Equal(Owner, vm.CurrentAddress);
+        Assert.Equal("Owner_0", vm.CurrentObjectName);   // the owner's own view names it
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "Gear"));
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.Equal(Owner, dump.RefsScannedAt);
+        Assert.Equal("References to Owner_0 (none found)", vm.ReferencesHeader);
+    }
+
+    [Fact]
+    public async Task FindRefs_OnAContainerInAnInlineStruct_KeepsTheStructViewsName_AfterARefresh()
+    {
+        // Review round 2: a walk of an inline struct names the struct's TYPE (or whatever FName its bytes decode to),
+        // which the struct view's header replaces with its crumb's label. The owner name a Refresh re-learned from that
+        // walk did not, so the scan's name changed on a Refresh.
+        const string Holder = "0x80000", StatsAddr = "0x80020", StatsCls = "0xC800";
+        var (dump, vm, _) = OwnerWalker();
+        dump.RegisterStruct(Holder, new InstanceWalkResult
+        {
+            Address = Holder, Name = "Holder_0", ClassName = "BP_Holder_C", ClassAddr = "0xC700",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Stats", TypeName = "StructProperty", Offset = 0x20, Size = 0x10,
+                        StructTypeName = "FPlayerStats", StructClassAddr = StatsCls, StructDataAddr = StatsAddr },
+            },
+        });
+        dump.RegisterStruct(StatsAddr, new InstanceWalkResult   // a raw struct's walk names its type
+        {
+            Address = StatsAddr, Name = "FPlayerStats", ClassName = "FPlayerStats", ClassAddr = StatsCls,
+            Fields = new List<LiveFieldValue> { OwnerStub.GearField() },
+        });
+        await vm.NavigateToAddressCommand.ExecuteAsync(Holder);
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // {} Stats
+        var structViewName = vm.CurrentObjectName;
+        Assert.NotEqual("FPlayerStats", structViewName);                      // the header shows the crumb's label
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "Gear"));
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.Equal($"References to {structViewName} (none found)", vm.ReferencesHeader);
+    }
+
+    [Fact]
+    public async Task FindRefs_OnAnObject_StillNamesTheObject()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Owner);
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.Equal(Owner, dump.RefsScannedAt);
+        Assert.Equal("References to Owner_0 (none found)", vm.ReferencesHeader);
+    }
+
+    // Copy Addr on a row with no address of its own fell back to the object shown + the row's Offset. A container row's
+    // offset counts from the container's buffer, so that copied a slot inside the owner instead -- index 0 of an array
+    // is the owner's vtable pointer -- and a DataTable row whose pointer reads null copied an address in the table's
+    // own header.
+
+    [Fact]
+    public async Task CopyAddr_OnADataTableRowWhosePointerIsNull_CopiesNothing_AndSaysWhy()
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        var rows = OwnerStub.TableRows();
+        rows.Rows[0] = new() { SparseIndex = 0, RowName = "Sword (null)", DataAddr = "0x0" };   // the DLL's null row
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        rows);
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single());
+
+        Assert.Null(platform.LastClipboard);   // was 0x40008: the table + FNameSize
+        Assert.StartsWith("⚠ Addr:", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task CopyAddr_OnARowsViewTheSpineHasLeft_CopiesNothing_AndSaysTheRowHasNoAddress()
+    {
+        // Review of 60fff318..f092ec12: Back pops the rows view's crumb before the table's walk returns, so the trail
+        // says "the table" while the grid still shows its rows -- and the trail is not a container view, so the old
+        // fallback copied the table + the row's offset again. Round 2: the row has no address at ANY level, so it is
+        // told so; "wait and try again" would end in the same refusal.
+        var (dump, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        var rows = OwnerStub.TableRows();
+        rows.Rows[0] = new() { SparseIndex = 0, RowName = "Sword (null)", DataAddr = "0x0" };
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        rows);
+        var nullRow = vm.Fields.Single();
+        var tableWalk = dump.GateWalk(Table);
+        var back = vm.GoBackCommand.ExecuteAsync(null);   // pops RowMap; the table's walk waits
+        Assert.Same(nullRow, vm.Fields.Single());          // the grid still shows the rows
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(nullRow);
+
+        Assert.Null(platform.LastClipboard);               // was 0x40008 again
+        Assert.StartsWith("⚠ Addr: nothing done — no address was read for this row", vm.StatusText);
+        dump.UngateWalk(Table);
+        tableWalk.SetResult(OwnerStub.Obj(Table, "DT_Loot", "DataTable", TableCls));
+        await back;
+    }
+
+    [Fact]
+    public async Task TheTablesRowMapRow_CarriesTheRowMapsAddress_SoCopyAddrCopiesIt()
+    {
+        // Review round 4: f4d19e45 refused every row without an address, and the RowMap row a table's own view appends
+        // after its walk had none -- the removed fallback's table + RowMapOffset was its right address (the RowMap's
+        // TSparseArray, where the DLL reads the rows). The row lands through the UI dispatcher, so its builder is
+        // what is held here.
+        var rowMap = LiveWalkerViewModel.SyntheticRowMapField(OwnerStub.TableRows(), Table);
+        Assert.Equal("0x40030", rowMap.FieldAddress);   // the table + RowMapOffset 0x30: the Address column, Hex, +CE
+
+        var (_, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        await vm.CopyFieldAddressCommand.ExecuteAsync(rowMap);
+        Assert.Contains("40030", platform.LastClipboard);
+    }
+
+    [Fact]
+    public async Task CopyAddr_OnARowsGridLeftOverByAFailedReRoot_CopiesNothing()
+    {
+        // Review round 3: a re-root that fails after clearing the spine leaves the rows with no crumb at all, so neither
+        // "the view is a container" nor "the spine has left it" could be told, and the fallback copied the table + the
+        // row's offset. Every row a walk renders carries its address, so that fallback never had a right answer.
+        var (_, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        var rows = OwnerStub.TableRows();
+        rows.Rows[0] = new() { SparseIndex = 0, RowName = "Sword (null)", DataAddr = "0x0" };
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        rows);
+        var nullRow = vm.Fields.Single();
+        await vm.NavigateToAddressCommand.ExecuteAsync("not-an-address");   // fails after clearing the spine
+        Assert.Empty(vm.Breadcrumbs);
+        Assert.Same(nullRow, vm.Fields.Single());                           // the rows stay, rootless
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(nullRow);
+
+        Assert.Null(platform.LastClipboard);                                 // was 0x40008
+        Assert.StartsWith("⚠ Addr: nothing done — no address was read for this row", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task CopyAddr_ThatCopies_TakesDownTheDefinitionViewsRefusal_Too()
+    {
+        // Review round 2: the definition-view refusal returned before _addrRefusal was set, so an Addr that copied once
+        // the instance's walk landed left "this is a type definition" up over it.
+        const string Definition = "0xDEF00";
+        var (dump, vm, platform) = OwnerWalker();
+        dump.RegisterStruct(Definition, new InstanceWalkResult
+        {
+            Address = Definition, Name = "FLootRow", ClassName = "ScriptStruct", IsDefinition = true,
+            Fields = new List<LiveFieldValue> { new() { Name = "Damage", TypeName = "IntProperty", Offset = 0x10, Size = 4 } },
+        });
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);
+        await vm.NavigateToAddressCommand.ExecuteAsync(Definition);   // re-roots, keeping the spine for Back
+        var definitionRow = vm.Fields.Single();
+        var otherWalk = dump.GateWalk(Other);
+        var back = vm.GoBackCommand.ExecuteAsync(null);                // the definition's rows stay until it lands
+        await vm.CopyFieldAddressCommand.ExecuteAsync(definitionRow);
+        Assert.Equal(LiveWalkerViewModel.DefinitionNoDataText("Addr"), vm.StatusText);
+        dump.UngateWalk(Other);
+        otherWalk.SetResult(OwnerStub.Obj(Other, "Other_0", "BP_Other_C", OtherCls));
+        await back;
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single());
+
+        Assert.Contains("30008", platform.LastClipboard);
+        Assert.DoesNotContain("type definition", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task CopyAddr_OnAnArrayRowWithoutAnAddress_CopiesNothing_AndSaysWhy()
+    {
+        // A guard: no live reply has been seen to send an array's elements without its data pointer.
+        var (dump, vm, platform) = OwnerWalker();
+        var gear = new LiveFieldValue   // GearField without its data pointer
+        {
+            Name = "Gear", TypeName = "ArrayProperty", Offset = 0x40, Size = 0x10,
+            ArrayInnerType = "ObjectProperty", ArrayCount = 1, ArrayElemSize = 8, ArrayDataAddr = "",
+            ArrayElements = new() { new() { Index = 0, PtrAddress = Elem, PtrName = "Elem_0", PtrClassName = "BP_Elem_C" } },
+        };
+        dump.RegisterStruct(Owner, new InstanceWalkResult
+        {
+            Address = Owner, Name = "Owner_0", ClassName = "BP_Owner_C", ClassAddr = OwnerCls,
+            Fields = new List<LiveFieldValue> { gear },
+        });
+        await OnOwnersContainer(vm, "Gear");
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single());
+
+        Assert.Null(platform.LastClipboard);   // was 0x10000: the owner's own first qword
+        Assert.StartsWith("⚠ Addr:", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task CopyAddr_OnAnArrayRow_CopiesTheElementsAddress()
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single());
+
+        Assert.Contains("50000", platform.LastClipboard);   // TArray::Data + 0
+    }
+
+    [Fact]
+    public async Task AContainerViewBookmarkedInSession_TheScriptsNameTheOwnersClass()
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        var slot = vm.BookmarkSlots[0];
+        vm.SaveBookmarkToSlotCommand.Execute(slot);
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        AssertShowsTheOwner(vm);
+        await AssertScriptsName(vm, platform, "BP_Owner_C", "OwnerFn");
+    }
 }
 
 /// <summary>

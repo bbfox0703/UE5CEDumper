@@ -177,7 +177,7 @@ existing behaviour / perf.
 | B18 ✅ | 🟡 | S/low | Genau | ~~Extra Scan ignores `Tot::Requested()` ⇒ CE UI freezes on the unbounded join~~ **FIXED build 2603** |
 | B19 ✅ | 🟡 | S/low | Sein | ~~One shared `error_code` ⇒ the first undeletable entry aborts the whole retention sweep, forever~~ **FIXED build 2603** |
 | B20 ✅ | 🟡 | S/low | TeleportVM | ~~Filter keystroke reverts an uncommitted edit; `_coordFilterMemory` never disposed~~ **FIXED build 2610** |
-| B21 🟡 | 🟡 | S–M/low | Coord parsers | **1 of 3 shipped.** ~~AllowThousands~~ **FIXED build 2621**; the **quote-state** and **regex-in-literal** holes are UNTOUCHED at HEAD — see the correction below the table |
+| B21 ✅ | ✅ | S–M/low | Coord parsers | **3 of 3 shipped.** ~~AllowThousands~~ **FIXED build 2621**; ~~quote-state~~ and ~~regex-in-literal~~ **FIXED 2026-10-28** as `[B21-CSV-QUOTE-HOLES]` — see the correction below the table |
 | B22 ✅ | 🟡 | S/low | Laufen | ~~Base captured as 0 ⇒ the knob pins the CMC value at 0 against the game~~ **FIXED build 2603** |
 | B23 ✅ | 🟡 | S/low | CE Lua | ~~Autorun binds DEBUG at CE start (its own instruction can't work); non-finite double emitted as bare `Infinity`~~ **FIXED build 2610** |
 | B24 ✅ | 🟡 | S/low | Frieren | ~~Forced hook installs burn the automatic retry budget~~ **FIXED build 2603** |
@@ -220,6 +220,23 @@ existing behaviour / perf.
 >
 > ⛔ **Do not let a hole-1 green close this row.** Either re-scope it to hole 1 explicitly,
 > or reopen 2 and 3 as work — but the two remaining holes are real and are not "verified".
+>
+> 📋 **Holes 2 and 3 are open work, tracked since 2026-10-28 as `[B21-CSV-QUOTE-HOLES]`** in `todo.md`'s
+> `[OPEN-CENSUS-2026-10-28]`: until then no todo row carried them.
+>
+> ✅ **Holes 2 and 3 FIXED 2026-10-28, by the maintainer's rule: an unpaired quote is an error that stops
+> the import, never repaired.** Hole 2: one strict RFC 4180 reader (`CoordCsvCodec.ReadRecords`)
+> replaces both splitters. A quote mid-field, text after a closing quote, or a quoted field that never
+> closes returns one issue naming the line, and nothing is imported. Hole 3: the Lua import finds keys
+> in a copy with string literals and comments blanked (`CoordLuaParser.MaskLiterals`). A string that
+> never closes stops that import the same way. The Label/Group editor also refuses a typed double quote,
+> while labels that already hold one still export escaped and read back. Each of the three has a red
+> commit, then a green one. Nine adversarial review rounds followed (rounds 7 to 9 fuzzed against CE's
+> own Lua 5.3), and each round's verified findings got a red/green pair. Among them: a stray quote named on
+> its own line; an even number of stray Lua quotes, which paired up silently; a label starting with an
+> apostrophe before `= + - @`, which lost it on the round trip. Round 5 also replaced the Lua import's
+> checks on the characters beside each string with a Lua 5.3 lexer and a table-constructor reader. The
+> census row lists every commit.
 
 ## Summary table — refactor & hygiene
 

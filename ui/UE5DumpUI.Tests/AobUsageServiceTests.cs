@@ -37,7 +37,10 @@ public sealed class MockPlatformService : IPlatformService
 
     /// <summary>Last text passed to <see cref="CopyToClipboardAsync"/> (null until first call).</summary>
     public string? LastClipboard { get; private set; }
-    public Task<bool> CopyToClipboardAsync(string text) { LastClipboard = text; return Task.FromResult(true); }
+    /// <summary>Answer every copy with "did nothing", as a clipboard held open by another application does: the copy
+    /// still records what it was asked to write, so a test can see the claim made over a write that never landed.</summary>
+    public bool RefuseClipboard { get; set; }
+    public Task<bool> CopyToClipboardAsync(string text) { LastClipboard = text; return Task.FromResult(!RefuseClipboard); }
     public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
     public string GetMachineName() => "TEST-MACHINE";
     public void CloseImeForWindow(IntPtr windowHandle) { }

@@ -71,10 +71,9 @@ public static class ParamBufferBuilder
     /// empty-only. Not every type the DLL's WalkFunctions names an
     /// <c>objClassName</c> for: 4.11-4.17's
     /// <c>AssetObjectProperty</c> / <c>AssetClassProperty</c> get one too, but an
-    /// <c>FAssetPtr</c> is a weak-pointer envelope plus a path string, and
-    /// WriteParam has no arm that could put a picked instance into it (its size
-    /// fallback would write the address's low 4 bytes). They stay out, and the
-    /// tests say so. Excludes scalars / struct / containers / bool — those have
+    /// <c>FAssetPtr</c> is a weak-pointer envelope plus a path string that nothing
+    /// here can build, so they are empty-only (<see cref="IsEmptyOnlyParam"/>). They
+    /// stay out, and the tests say so. Excludes scalars / struct / containers / bool — those have
     /// their own editing paths (typed textbox, struct sub-field expansion, etc.)
     /// and shouldn't get a picker button.
     /// </summary>
@@ -295,6 +294,12 @@ public static class ParamBufferBuilder
     /// its null. The helper's own <c>lazy</c> arm refuses any other value, so the
     /// parity above holds for it as well; its refusal text is
     /// <see cref="LazyRefusalText"/>, not the containers'.</para>
+    ///
+    /// <para>UE 4.11-4.17's <c>AssetObjectProperty</c> / <c>AssetClassProperty</c> too
+    /// (<c>[UE4-ASSETPTR-EXPORTS]</c>): an <c>FAssetPtr</c> keeps its path as an <c>FString</c>
+    /// that needs the engine's storage, and the DLL converts no picked object into one; all-zero
+    /// is its null. The containers' refusal text fits it. A baked script refuses it too: helper 1.5's
+    /// <c>asset</c> token takes nothing but 0 (<c>[ASSETPTR-BAKED-TOKEN]</c>).</para>
     /// </summary>
     public static bool IsEmptyOnlyParam(string typeName) =>
         typeName is "ArrayProperty"
@@ -307,7 +312,9 @@ public static class ParamBufferBuilder
                  or "MulticastDelegateProperty"
                  or "MulticastInlineDelegateProperty"
                  or "MulticastSparseDelegateProperty"
-                 or "LazyObjectProperty";
+                 or "LazyObjectProperty"
+                 or "AssetObjectProperty"
+                 or "AssetClassProperty";
 
     /// <summary>
     /// Params FIRE must refuse OUTRIGHT — not even a zeroed slot is a safe answer.
@@ -358,7 +365,10 @@ public static class ParamBufferBuilder
     ///
     /// <para>Two exceptions, both about types with no textbox encoding at all (audit #5
     /// Y11). An <see cref="IsRefusedParam"/> type (<c>FText</c>) is refused whatever the
-    /// box holds, because zeros are a crash rather than a default. An
+    /// box holds, because zeros are not an empty FText: its text data is a null pointer that
+    /// every FText accessor dereferences. Passing one survives (copying and destroying both
+    /// skip a null), so the crash comes from whatever READS it -- the callee, or later code
+    /// reading what a callee stored -- and the dialog cannot know whether either happens. An
     /// <see cref="IsEmptyOnlyParam"/> type is refused only when the user actually typed
     /// something: the slot is always left zeroed, so a typed value would be silently
     /// dropped — the same class of lie as silently truncating it — while an untouched box
@@ -371,9 +381,10 @@ public static class ParamBufferBuilder
         if (IsRefusedParam(typeName))
         {
             error = $"{ShortTypeName(typeName)} parameters cannot be invoked from this " +
-                    "dialog — an FText holds a shared reference the engine allocates, and " +
-                    "sending a zeroed one crashes the game. Invoke a wrapper that takes an " +
-                    "FString instead.";
+                    "dialog — an FText holds a shared reference the engine allocates, which " +
+                    "this dialog cannot build, and a zeroed one is not an empty FText: a " +
+                    "function that reads it can crash the game. Invoke a wrapper that takes " +
+                    "an FString instead.";
             return false;
         }
 

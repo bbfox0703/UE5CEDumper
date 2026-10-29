@@ -90,6 +90,44 @@ public class AuditL11HonestyTests
         Assert.Contains("no longer readable", vm.StatusText);
     }
 
+    // [WALK-NULLCLASS-SILENT] L47: a header with a null (or unmapped) ClassPrivate came back classless and field-less with
+    // no flag, and the grid went blank with no status. The status must say so -- and claim neither "freed/recycled" nor
+    // an implausible PropertiesSize: the Go box takes any address, which may never have been an object.
+    [Fact]
+    public async Task Walk_OfAnAddressWithNoUObjectHeader_SaysSo_WithoutClaimingFreed()
+    {
+        var vm = WalkerWith(("0x4000", new InstanceWalkResult { Address = "0x4000", IsNoHeader = true }));
+
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x4000");
+
+        Assert.Contains("No UObject header", vm.StatusText);
+        Assert.DoesNotContain("freed/recycled", vm.StatusText);
+        Assert.DoesNotContain("implausible", vm.StatusText);
+    }
+
+    // [WALK-NULLCLASS-SILENT] review F4: the fill_gaps auto-retry skips all three verdicts, and its log line said
+    // "object is stale or unreadable" for each -- for a no_header walk, neither. The log names the verdict it saw.
+    [Theory]
+    [InlineData("unreadable", "unreadable")]
+    [InlineData("no_header", "no UObject header")]
+    [InlineData("stale", "stale/recycled")]
+    public async Task FillGapsRetrySkip_LogsTheVerdictItSaw(string verdict, string named)
+    {
+        var dump = new StubDumpService();
+        dump.RegisterStruct("0x4000", new InstanceWalkResult
+        {
+            Address = "0x4000",
+            IsUnreadable = verdict == "unreadable", IsNoHeader = verdict == "no_header", IsStale = verdict == "stale",
+        });
+        var log = new MockLoggingService();
+        var vm = new LiveWalkerViewModel(dump, log, new MockPlatformService(Path.GetTempPath()));
+
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x4000");
+
+        Assert.Contains(log.Messages, m => m.Contains($"Skipping fill_gaps auto-retry for 0x4000: {named}", StringComparison.Ordinal));
+        Assert.DoesNotContain(log.Messages, m => m.Contains("stale or unreadable", StringComparison.Ordinal));
+    }
+
     [Theory]
     [InlineData("", "", "")]
     [InlineData("W", "", "W")]
@@ -222,6 +260,41 @@ public class AuditL11HonestyTests
         Assert.Equal("", vm.ReferencesHeader);
         Assert.False(vm.HasFunctions);
         Assert.Empty(vm.Functions);
+    }
+
+    [Fact]
+    public void LiveWalker_ClearOnDisconnect_LeavesNoStatusLine_AndNoErrorLine()
+    {
+        // [LW-DISCONNECT-STALE-STATUS] Measured on DumperTest 5.4: a Find Refs line ("Found 4 reference(s) [scanned ...]")
+        // outlived the kill of its game and the connect of the next one, quoting a scan of a process that no longer
+        // exists above an empty landing view. The panel shows each of these on its own line whenever it is non-empty.
+        var vm = new LiveWalkerViewModel(new StubDumpService(), new MockLoggingService(),
+                                         new MockPlatformService(Path.GetTempPath()));
+        vm.StatusText = "Found 4 reference(s)  [scanned 24516/24516 in 202ms]";
+        vm.ErrorMessage = "Refresh timed out after 10s";
+        vm.LocateFailureMessage = "Locate in GWorld failed: gone";
+
+        vm.ClearOnDisconnect();
+
+        Assert.Equal("", vm.StatusText);
+        Assert.True(string.IsNullOrEmpty(vm.ErrorMessage), $"ErrorMessage survived: '{vm.ErrorMessage}'");
+        Assert.Equal("", vm.LocateFailureMessage);
+    }
+
+    [Fact]
+    public void ClassStruct_ClearOnDisconnect_LeavesNoErrorLine()
+    {
+        // [CLASSSTRUCT-DISCONNECT-ERROR] The sibling of [LW-DISCONNECT-STALE-STATUS]: ClassStruct's ClearOnDisconnect
+        // empties the class view but never its error, and the panel shows that line whenever it is non-empty -- a
+        // failed walk of a process that no longer exists, above the next game's empty panel.
+        var vm = new ClassStructViewModel(new StubDumpService(), new MockLoggingService(),
+                                          new MockPlatformService(Path.GetTempPath()));
+        vm.ErrorMessage = "WalkClass timed out after 10s";
+
+        vm.ClearOnDisconnect();
+
+        Assert.False(vm.HasClass);   // the view itself was already cleared
+        Assert.True(string.IsNullOrEmpty(vm.ErrorMessage), $"ErrorMessage survived: '{vm.ErrorMessage}'");
     }
 
     private sealed class GatedBatchStub : StubDumpService
@@ -709,6 +782,53 @@ public class AuditL11HonestyTests
         Assert.DoesNotContain("showing", vm.Breadcrumbs[^1].Label);
         Assert.DoesNotContain("showing", vm.CurrentObjectName);
         Assert.Equal("", vm.StatusText);
+    }
+
+    private sealed class DataTableRewalkStub : StubDumpService
+    {
+        public int Total { get; set; }
+        public override Task<DataTableWalkResult> WalkDataTableRowsAsync(string addr, int offset = 0, int limit = 64,
+            CancellationToken ct = default)
+            => Task.FromResult(DataTable(Total, fetched: 64));
+    }
+
+    [Fact]
+    public async Task V8_DataTableRefresh_KeepsItsStatusLine_AndTheCrumbTakesTheNewTotal()
+    {
+        // [WALK-REFRESH-SCALAR-SHRINK] Refresh re-fetched the rows and re-rendered the header, but cleared the status
+        // line and left the crumb (its label, and the ContainerField the exporters read) on the drill's reading.
+        var dump = new DataTableRewalkStub { Total = 5000 };
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        vm.CurrentAddress = "0x10000000";
+        var dt = DataTable(total: 5000, fetched: 64);
+        vm.NavigateToDataTableContainer(RowMapField(dt), dt);
+        dump.Total = 5100;
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Contains("showing 64 of 5,100", vm.CurrentObjectName);
+        Assert.Contains("showing 64 of 5,100", vm.Breadcrumbs[^1].Label);
+        Assert.Contains("5,100", vm.StatusText);
+        Assert.DoesNotContain("Array Limit", vm.StatusText);
+        Assert.Equal(5100, vm.Breadcrumbs[^1].ContainerField!.DataTableRowCount);
+    }
+
+    [Fact]
+    public async Task DataTableRefresh_TheCrumbsRowMapField_KeepsTheShapeADrillGivesIt()
+    {
+        // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] review round 5: since 72ee74fd the RowMap row a drill hands the crumb
+        // carries the RowMap's address (the table + RowMapOffset); the field Refresh rebuilt for the same crumb did not,
+        // so one crumb's field changed shape on a Refresh.
+        var dump = new DataTableRewalkStub { Total = 5000 };
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        vm.CurrentAddress = "0x10000000";
+        var dt = DataTable(total: 5000, fetched: 64);
+        vm.NavigateToDataTableContainer(LiveWalkerViewModel.SyntheticRowMapField(dt, "0x10000000"), dt);
+        Assert.Equal("0x10000040", vm.Breadcrumbs[^1].ContainerField!.FieldAddress);   // the drill's shape
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal("0x10000040", vm.Breadcrumbs[^1].ContainerField!.FieldAddress);
     }
 
     [Fact]
@@ -1219,12 +1339,24 @@ public class AuditL11HonestyTests
     [Fact]
     public void Y11_FText_IsRefusedEvenAtItsDefault()
     {
-        // Unlike the containers, an all-zero FText is NOT an empty FText — it holds a
-        // TSharedRef the engine dereferences, so zeros crash. The exported script's helper
+        // Unlike the containers, an all-zero FText is NOT an empty FText — its text-data
+        // pointer is null, and a callee that reads it can crash. The exported script's helper
         // refuses it unconditionally; FIRE must give the same answer.
         Assert.False(ParamBufferBuilder.TryValidateScalar("TextProperty", 24, "0", out var err));
         Assert.Contains("FText", err);
         Assert.False(ParamBufferBuilder.TryValidateScalar("TextProperty", 24, "hello", out _));
+    }
+
+    [Fact]
+    public void Y11_FText_RefusalClaimsOnlyWhatARunCannotFalsify()
+    {
+        // [FTEXT-REFUSAL-OVERCLAIM] A zeroed FText sent to a body that ignores it returned
+        // "ProcessEvent OK" on UE 5.4: copying, passing and destroying it all skip the null. The
+        // refusal stays -- a callee that READS it does crash, and the dumper cannot tell which
+        // kind it is calling -- but its reason must say "can", never that it always crashes.
+        Assert.False(ParamBufferBuilder.TryValidateScalar("TextProperty", 24, "0", out var err));
+        Assert.DoesNotContain("crashes the game", err);
+        Assert.Contains("a function that reads it can crash the game", err);
     }
 
     // ── Y11 step 3: the SUB-FIELD path had no gate at all ──────────────────────

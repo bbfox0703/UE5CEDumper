@@ -7,7 +7,7 @@
 | **AOB 掃描** | 151 組 AOB 特徵碼 + 1 組 CallFollow + 6 組符號匯出（共 158 筆），來自 31 個來源標籤。支援 `FChunkedFixed` 與 `FFixed` 物件陣列，並可偵測加密 GObjects 與預設佈局。**掃描提示快取 (Scan Hint Cache)** 記憶每款遊戲的中選特徵碼，重複掃描速度提升 3 倍，並提供 UI 按鈕清除/重設快取。 |
 | **DynOff (動態偏移量)** | 執行時自動探測 `FField`、`FProperty` 與 `UStruct`。遊戲改版後不再需要手動更新偏移量。 |
 | **Live Walker (即時檢視)** | 即時檢查實例的記憶體數據，數值變動一目瞭然。支援指標導航 (→)、內嵌結構展開 ({})、容器深入 ([])。瀏覽軌跡 (Breadcrumb) 完整記錄導航歷程。可設定自動重新整理間隔。 |
-| **定義檢視 (Definition View)** | 深入 UScriptStruct/UClass 定義以查看欄位佈局、類型及即時 Hex 數值。與 CE XML 匯出無縫整合，支援指標鏈導航。 |
+| **定義檢視 (Definition View)** | 深入 UScriptStruct/UClass 定義以查看型別的欄位佈局與類型。定義是型別而不是物件，所以各列沒有位址也沒有數值；CE XML 與 CSX 匯出時，指向型別的指標保持為一般指標。 |
 | **容器深入 (Container Drill-Down)** | 支援深入 **Array**、**Map**、**Set**、**Optional** 及委派容器。可解析 Object/Class/Weak/Soft/Lazy/Interface/Delegate/MulticastDelegate 內部型別，並支援點擊跳轉至目標物件。 |
 | **位址查找 (Address Finder)** | 將 CE 抓到的位址貼入 Instance Finder → 採用 exact / contains / backward / nearest 分層匹配（並回傳 `match_kind` 信心標籤），同時可進行容器掃描，遍歷所有反射出來的 `TArray` / `TMap` / `TSet`（包含巢狀 `StructProperty`、深度 3）以找出擁有此位址的 UObject。 |
 | **反向參照 (Find Refs)** | 「誰持有指向這個物件的指標？」掃描每個 UObject 的指標型欄位與容器，涵蓋直接 `Object/Class/Interface`、`Weak/Soft/Lazy`、`OptionalProperty<pointer/Struct>`、`Delegate` / `MulticastInline/MulticastDelegate`（每個綁定的 `FWeakObjectPtr`）、`TArray` 內部以上型別，以及 UObject 一側的 `TMap` / `TSet`。每個類別的 metadata 快取讓暖掃描在 1.18 M 物件遊戲上也只要 ~70 ms。**Open** 在 array/map/set element 命中時會自動 drill 進 `[N]` 元素，直接落在實際持有指標的那一格（無需再點一次）。 |

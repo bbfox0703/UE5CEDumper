@@ -83,4 +83,24 @@ public static class ReflectionMetaClassifier
     /// Tree's "Instances only" filter applies to every row of the fully-loaded pool.
     /// </summary>
     public static bool IsLiveInstanceRow(string? className) => !IsReflectionMeta(className);
+
+    /// <summary>[CEXML-DEFINITION-VIEW-AS-DATA] The metaclasses <c>Ubel::WalkInstance</c> answers with a DEFINITION view:
+    /// a walk of a UScriptStruct / UClass object returns the TYPE's member layout, whose offsets describe instances of
+    /// the type, not the type object, so nothing may read or write them as data at that address. A copy of the DLL's
+    /// own list, because an older DLL's lean walk drops <c>is_definition</c> and the pointing field's class name is then
+    /// all a resolver has; <c>DefinitionViewExportTests</c> pins it to Ubel.cpp.</summary>
+    private static readonly HashSet<string> DefinitionMetas = new(StringComparer.Ordinal)
+    {
+        "ScriptStruct",
+        "Class",
+        "BlueprintGeneratedClass",
+        "WidgetBlueprintGeneratedClass",
+    };
+
+    internal static IReadOnlyCollection<string> DefinitionViewMetas => DefinitionMetas;
+
+    /// <summary>True when an object of class <paramref name="className"/> walks as a definition view -- a pointer to it
+    /// points at a type, and drilling it would lay the type's layout out as the pointee's data.</summary>
+    public static bool WalksAsDefinition(string? className)
+        => !string.IsNullOrEmpty(className) && DefinitionMetas.Contains(className);
 }

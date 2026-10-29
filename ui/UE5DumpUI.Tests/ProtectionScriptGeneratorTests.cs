@@ -81,6 +81,25 @@ public class ProtectionScriptGeneratorTests
         Assert.Contains("dbg('[GodMode]", disable);   // a DEBUG session still sees why it gave up
     }
 
+    // GODMODE-FAILED-TICK-LATCHES-WANT (review of [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]): Solitar::SetGodMode
+    // stores the want BEFORE it applies anything and keeps the re-assert worker running whatever it answered, so a
+    // negative answer to a tick is armed, not nothing -- the hold engages as soon as a pawn resolves, which the UI card
+    // calls "ON (pending)". Unticking that row without running [DISABLE] left a live hold under an OFF row. The row
+    // stays ticked and says how to cancel. Negative control: put any untick back in this branch and this fails.
+    [Fact]
+    public void A_tick_answered_negative_stays_ticked_because_the_hold_is_armed()
+    {
+        var s = ProtectionScriptGenerator.Generate();
+        var enable = s[..s.IndexOf("[DISABLE]", System.StringComparison.Ordinal)];
+        int b = enable.IndexOf("if state < 0 then", System.StringComparison.Ordinal);
+        Assert.True(b >= 0, "no state < 0 branch");
+        var branch = enable[b..enable.IndexOf("\nelseif", b, System.StringComparison.Ordinal)];
+        Assert.DoesNotContain("Active = false", branch);
+        Assert.DoesNotContain("disableWithoutExecute", branch);
+        Assert.Contains("armed", branch);
+        Assert.Contains("untick", branch);
+    }
+
     // The control: ticking keeps every announced, unticking bail -- the fix is [DISABLE]-only.
     [Fact]
     public void Enable_block_still_announces_and_unticks_its_bails()

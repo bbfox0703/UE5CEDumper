@@ -38,7 +38,10 @@ enum Cmd : int32_t {
     CMD_SET_DEBUG_CAMERA = 7, // Robust Debug Camera force on/off / query.
                               //   Input:  instanceAddr = 0 (OFF) / 1 (ON) / 2 (query, no change)
                               //   Output: result = resulting state (1=ON, 0=OFF, -1=error,
-                              //           -5 = the toggle is QUEUED: it will still run -- do not re-send.
+                              //           -5 = the toggle is QUEUED: an ON will still run -- do not re-send;
+                              //           an OFF did not complete -- send it again once the game responds.
+                              //           -6 = not sent: an earlier toggle of the other direction is still
+                              //           queued -- send again once the game responds.
                               //           [W3-DEBUGCAM-QUEUED]; MB3 in Mimic.cpp: no contract bump)
     CMD_TELEPORT        = 8,  // Teleport (Wirbel): marker save/recall + cursor teleport.
                               //   Input:  instanceAddr = op (TeleportOp below)

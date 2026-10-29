@@ -294,6 +294,51 @@ public class CeAaScriptGWorldWalkTests
         Assert.Contains("define(BP_Mismatch,", platform.LastClipboard);
     }
 
+    // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] A container view stands for its owner: its header shows the owner's address,
+    // and the legacy branch registers that address. Its crumb's Address IS the owner, but walking the crumb dereferences
+    // the container's data pointer, so a GWorld walk ending on it registered the ELEMENT BUFFER under the view's name.
+
+    [Fact]
+    public async Task Dispatch_container_view_leaf_walks_to_its_owner_not_the_element_buffer()
+    {
+        var vm = MakeVm(out var platform);
+        LoadGWorldSpine(vm);                                                      // ... -> PlayerController @0x4000
+        vm.Breadcrumbs.Add(Bc("0x4000", "Inventory", offset: 0x2A0, container: true));
+        vm.CurrentAddress = "0x4000";                                             // the container view shows its owner
+        vm.CurrentClassName = "Array<ObjectProperty>";
+        vm.SetEngineState(EngineWith(gworldAob: "48 8B 1D ?? ?? ?? ??", gworldAddr: "0x150000000"));
+        vm.UseAobSymbol = false;
+
+        await vm.GenerateCeAAScriptCommand.ExecuteAsync(null);
+
+        var xml = platform.LastClipboard;
+        Assert.True(xml != null, $"status='{vm.StatusText}' error='{vm.ErrorMessage}'");
+        Assert.Contains("hardcoded-base walk", vm.StatusText);   // still the restart-stable walk...
+        Assert.Contains("readQword(addr + 0x1A0)", xml);          // ...to the owner...
+        Assert.DoesNotContain("readQword(addr + 0x2A0)", xml);    // ...and no further: not into TArray::Data
+    }
+
+    [Fact]
+    public async Task Dispatch_container_view_directly_under_GWorld_registers_the_world()
+    {
+        var vm = MakeVm(out var platform);
+        vm.Breadcrumbs.Clear();
+        vm.Breadcrumbs.Add(Bc("0x1000", "GWorld"));
+        vm.Breadcrumbs.Add(Bc("0x1000", "Levels", offset: 0x150, container: true));
+        vm.CurrentAddress = "0x1000";
+        vm.CurrentClassName = "Array<ObjectProperty>";
+        vm.SetEngineState(EngineWith(gworldAob: "48 8B 1D ?? ?? ?? ??", gworldAddr: "0x150000000"));
+        vm.UseAobSymbol = false;
+
+        await vm.GenerateCeAAScriptCommand.ExecuteAsync(null);
+
+        var xml = platform.LastClipboard;
+        Assert.True(xml != null, $"status='{vm.StatusText}' error='{vm.ErrorMessage}'");
+        Assert.Contains("hardcoded-base walk", vm.StatusText);
+        Assert.DoesNotContain("readQword(addr + 0x150)", xml);    // no hop into the Levels buffer
+        Assert.Contains("registerSymbol('Array_ObjectProperty', addr)", xml);
+    }
+
     [Fact]
     public async Task Dispatch_container_leaf_class_name_is_sanitized_to_valid_symbol()
     {

@@ -775,6 +775,25 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             IsLoadingFields = false;
             Fields.Clear();
             HasFields = false;
+            ShowDefinitionNotice(false);
+        }
+    }
+
+    private string _statusBeforeDefinitionNotice = "";
+
+    /// <summary>[CEXML-DEFINITION-VIEW-AS-DATA] The definition notice describes the rows shown, so it comes and goes
+    /// with them, giving back the line it covered -- unless something has replaced it since.</summary>
+    private void ShowDefinitionNotice(bool definitionRows)
+    {
+        bool shown = StatusText == LiveWalkerViewModel.DefinitionViewText;
+        if (definitionRows && !shown)
+        {
+            _statusBeforeDefinitionNotice = StatusText;
+            StatusText = LiveWalkerViewModel.DefinitionViewText;
+        }
+        else if (!definitionRows && shown)
+        {
+            StatusText = _statusBeforeDefinitionNotice;
         }
     }
 
@@ -782,6 +801,9 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// the rows, never before: while a newer walk is in flight Fields still holds the previous one, and the export
     /// must know that instead of pairing those rows with the new selection or limit.</summary>
     private InstanceResult? _fieldsInstance;
+    /// <summary>[CEXML-DEFINITION-VIEW-AS-DATA] The fields shown are a type's definition (its member layout), not an
+    /// instance's data: nothing may be read, written or exported at their offsets.</summary>
+    private bool _fieldsAreDefinition;
     private int _fieldsArrayLimit;
 
     private async Task LoadInstanceFieldsAsync(InstanceResult instance)
@@ -807,14 +829,18 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             catch { /* ignore parse failures */ }
 
             Fields.Clear();
+            _fieldsAreDefinition = result.IsDefinition;
             foreach (var f in result.Fields)
             {
-                if (baseAddr != 0)
+                // [CEXML-DEFINITION-VIEW-AS-DATA] A definition's offsets are a type's layout, not addresses in the type
+                // object (a "ScriptStruct" / "Class" search lists types).
+                if (baseAddr != 0 && !result.IsDefinition)
                     f.FieldAddress = $"0x{baseAddr + (ulong)f.Offset:X}";
                 Fields.Add(f);
             }
 
             HasFields = Fields.Count > 0;
+            ShowDefinitionNotice(result.IsDefinition);
             _fieldsInstance = instance;       // [R7-S14]
             _fieldsArrayLimit = limit;
         }
@@ -835,6 +861,11 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     private async Task ExportCeXmlAsync()
     {
         if (SelectedInstance == null) return;
+        if (_fieldsAreDefinition && ReferenceEquals(_fieldsInstance, SelectedInstance))
+        {
+            StatusText = LiveWalkerViewModel.DefinitionNoDataText(LiveWalkerViewModel.ExportCeLabel);
+            return;
+        }
         // [R7-S14] Fields holds the LAST walk that landed. While a newer one is in flight -- another instance picked, or
         // the Array Limit changed -- those rows belong to the previous selection or limit, and exporting them would
         // put A's layout under B's root, or resolve the structs at one limit and the top level at another.
@@ -982,15 +1013,13 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task CopyFieldAddressAsync(LiveFieldValue? field)
     {
-        if (field == null || SelectedInstance == null) return;
-        if (string.IsNullOrEmpty(SelectedInstance.Address)) return;
+        // The rows shown decide, not the selection: a newer selection's walk may still be in flight ([R7-S14]).
+        if (field == null || RefuseOnDefinitionRows(AddrLabel)) return;
+        var hexAddr = FieldAddressOf(field);
+        if (hexAddr.Length == 0) return;
 
         try
         {
-            var instanceAddr = Convert.ToUInt64(SelectedInstance.Address.Replace("0x", "").Replace("0X", ""), 16);
-            var absAddr = instanceAddr + (ulong)field.Offset;
-            var hexAddr = $"0x{absAddr:X}";
-
             var formatted = AddressHelper.FormatAddress(
                 hexAddr, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
@@ -1152,8 +1181,9 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         {
             var formatted = AddressHelper.FormatAddress(
                 match.OwnerAddress, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
-            await _platform.CopyToClipboardAsync(formatted);
-            LookupStatusText = $"Copied {formatted}  ({match.OwnerClassName})";
+            bool copied = await _platform.CopyToClipboardAsync(formatted);
+            LookupStatusText = copied ? $"Copied {formatted}  ({match.OwnerClassName})"
+                                      : Helpers.ClipboardConvenience.NotCopiedText(formatted);
         }
         catch (Exception ex)
         {
@@ -1163,6 +1193,18 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
 
     // --- [AOBM-INSTFINDER-CE] AOBMaker row actions ---
 
+    /// <summary>[CEXML-DEFINITION-VIEW-AS-DATA] For a command on a row: refuse when the rows shown are a type's
+    /// definition, whose owner + offset would land on a field of the type object itself.</summary>
+    internal const string KeyAddrLabel = "str.InstanceFinder.Addr";   // the row's Addr button
+    internal static string AddrLabel => Helpers.AobMakerStatus.Say(KeyAddrLabel, "Addr");
+
+    private bool RefuseOnDefinitionRows(string action)
+    {
+        if (!_fieldsAreDefinition) return false;
+        StatusText = LiveWalkerViewModel.DefinitionNoDataText(action);
+        return true;
+    }
+
     /// <summary>
     /// The address a CE-facing action should use for a walked field: its payload, which on a checked build sits past
     /// a delegate's access detector (<see cref="LiveFieldValue.PayloadAddress"/>). The fields can outlive a newer
@@ -1170,8 +1212,12 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     /// on the one selected now.
     /// </summary>
     private string FieldCeAddress(LiveFieldValue field)
+        => string.IsNullOrEmpty(field.FieldAddress) ? FieldAddressOf(field) : field.PayloadAddress;
+
+    /// <summary>A walked field's own address: its stamped one, else the offset on the instance it was walked from.</summary>
+    private string FieldAddressOf(LiveFieldValue field)
     {
-        if (!string.IsNullOrEmpty(field.FieldAddress)) return field.PayloadAddress;
+        if (!string.IsNullOrEmpty(field.FieldAddress)) return field.FieldAddress;
         var owner = _fieldsInstance?.Address;
         if (string.IsNullOrEmpty(owner)) return "";
         return ulong.TryParse(AobMakerActions.StripHexPrefix(owner), System.Globalization.NumberStyles.HexNumber,
@@ -1183,7 +1229,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task HexFieldAddressAsync(LiveFieldValue? field)
     {
-        if (field == null) return;
+        if (field == null || RefuseOnDefinitionRows(LiveWalkerViewModel.HexLabel)) return;
         var addr = FieldCeAddress(field);
         if (addr.Length == 0) return;
         StatusText = await AobMakerActions.HexAsync(AobMaker, addr, field.Name, _log);
@@ -1192,7 +1238,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task AddFieldToCeAsync(LiveFieldValue? field)
     {
-        if (field == null) return;
+        if (field == null || RefuseOnDefinitionRows(LiveWalkerViewModel.AddToCeLabel)) return;
         var addr = FieldCeAddress(field);
         if (addr.Length == 0) return;
         StatusText = await AobMakerActions.AddRecordAsync(AobMaker, field.Name, addr,

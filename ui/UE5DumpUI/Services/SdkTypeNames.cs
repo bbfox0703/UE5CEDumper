@@ -48,6 +48,7 @@ internal sealed class SdkTypeNames
         "FScriptDelegate", "FMulticastScriptDelegate", "FMulticastInlineDelegate", "FMulticastSparseDelegate",
         "TArray", "TMap", "TSet", "TSubclassOf", "TWeakObjectPtr", "TSoftObjectPtr", "TSoftClassPtr",
         "TLazyObjectPtr", "TScriptInterface", "UObject", "UClass", "IInterface",
+        "TAssetPtr", "TAssetSubclassOf",   // [UE4-ASSETPTR-EXPORTS] pre-4.18 soft pointers
     };
 
     /// <summary>No pool: every reference is only sanitised.</summary>

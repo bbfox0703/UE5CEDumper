@@ -579,12 +579,14 @@
           </ItemsControl.ItemsPanel>
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="x:String">
-              <Button Content="{Binding}"
-                      Command="{Binding $parent[UserControl].((vm:SnapshotViewModel)DataContext).RemoveFromDenylistCommand}"
+              <!-- [LW-CRUMB-UNDERSCORE] A TextBlock keeps a class name's underscores (a string Content loses the first). -->
+              <Button Command="{Binding $parent[UserControl].((vm:SnapshotViewModel)DataContext).RemoveFromDenylistCommand}"
                       CommandParameter="{Binding}"
                       ToolTip.Tip="{StaticResource str.Noise.RemoveTip}"
                       Margin="0,0,4,4" Padding="6,2"
-                      Background="#3C3C3C" Foreground="#CCCCCC"/>
+                      Background="#3C3C3C" Foreground="#CCCCCC">
+                <TextBlock Text="{Binding}"/>
+              </Button>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>

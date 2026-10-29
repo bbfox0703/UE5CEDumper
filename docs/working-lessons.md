@@ -2412,6 +2412,30 @@ on the BOM. PowerShell is not an option here (§3.8).
 `partially initialized module 'capstone' has no attribute 'Cs'` — a circular-import error that reads
 like a broken capstone install. Same class as `code.py`, `types.py`, `select.py`.
 
+### 3.6c A whole-machine crash on THIS laptop: read the bug check before suspecting us
+
+Measured 2026-10-28 (`[LIVE-3660-2026-10-28]`): the PC went down mid-session and came back by itself. A kernel bug
+check is not a user-mode crash: the DLL, the UI and CE run in user mode and cannot legitimately stop the machine, so
+the question is which kernel component did, and whether anything of ours was in its path.
+
+- **Where the code is.** System log, Kernel-Power **41** (`BugcheckCode` in DECIMAL: 275 = 0x113) and
+  WER-SystemErrorReporting **1001** (the dump path), plus the Application log's WER 1001 `EventName=BlueScreen`. Query
+  with `wevtutil qe … /f:xml` from a Python file and parse the XML: the text format comes back as CP950 mojibake here,
+  and an XPath on `EventID=41` lists the whole history in one call. Events in the last minutes before the crash may be
+  missing -- they were not flushed.
+- **This laptop's signature.** 0x113 VIDEO_DXGKRNL_FATAL_ERROR with parameters (0x19, n, **0x10DE**, **0x2C18**):
+  the DirectX graphics kernel, on the NVIDIA RTX 5090 Laptop GPU (vendor / device id). Seen 2026-08-16, 2026-10-09 and
+  2026-10-28, and a 0x10E VIDEO_MEMORY_MANAGEMENT_INTERNAL with 0xC00002B6 (STATUS_DEVICE_REMOVED) on 2026-08-20.
+- **The checks that clear us, all without elevation:** CE's kernel driver -- `HKCU\Software\Cheat Engine` `Use dbk32 …`
+  and `Use Kernel Debugger` all 0 means DBK was never loaded; which proxy, if any, sat in a game (`proxy_refresh.py
+  report`); whether the local LLM had a model in VRAM (`%LOCALAPPDATA%\Ollama\server-*.log`).
+- ⚠ **The minidump in `C:\Windows\Minidump\` is readable only elevated.** The debugger is installed (the WinDbg
+  store app's `cdbX64.exe` alias); what is missing is the right to read the file. An elevated
+  `cdbX64.exe -z <dump> -c "!analyze -v; q"` names the faulting module and `PROCESS_NAME`, the one fact that would show
+  whether a process of ours was current. Ask the maintainer for that; do not guess it.
+- ⭐ **Commit after every closed item** is what made this crash cost nothing: everything measured before it was
+  already in git, and `dist\`'s hashes were unchanged after the reboot.
+
 ### 3.7b A DETACHED thread must not capture a stack local by reference — and ASAN will not tell you
 
 `dll_helpers_test` died on CI with **`0xC0000409` (STATUS_STACK_BUFFER_OVERRUN), no output at all**,
@@ -3465,6 +3489,20 @@ their debug directory holds VC_FEATURE / POGO entries, which lld never writes. l
 - **Why it matters:** compiler-shape fixes (the ProcessEvent byte-test pass, AOB shapes) need clang samples, and a
   Rich-header count over-reports them by a factor of eight here.
 
+### 4.11 The Lua reference is CE's own Lua 5.3, never a system Lua 5.4
+
+Raised by the maintainer, 2026-10-28 ([B21-CSV-QUOTE-HOLES]). Three review rounds fuzzed the coordinate Lua
+import against a system Lua 5.4.6, so any verdict where 5.3 and 5.4 disagree was checked against the wrong language.
+Re-run through CE's `lua53-64.dll`, 38 decided shapes agreed on accept/refuse except three: `\u{110000}` and above
+(5.3 refuses, 5.4 accepts), `<const>`, and a numeral touching a letter. 5.3 lexes `5px` as `5` then `px`; 5.4 calls
+it malformed. The parser had copied the 5.4 lexing rule.
+
+- **Use the host that loads CE's DLL:** `out/ce_lua53/lua53ce.exe script.lua args…`. `check_lua_suites` and
+  `tools/verify/ce_lua53_host.py` build it from the installed CE. A `load()` wrapper turns it into an accept/refuse
+  oracle for a block of text.
+- **A differential check names its reference.** Where 5.3 and 5.4 differ, say which one the verdict follows. A
+  generated `.CT` runs on 5.3, so 5.3's verdict is the one that counts.
+
 -----
 
 ## 5. Triage recipes
@@ -3833,16 +3871,19 @@ build.
 
 *How.* Take the items from the dev-log entries and the product commits since the last tag
 (`git log v<prev>..HEAD -- dll/src ui/UE5DumpUI scripts`), and any `[RELNOTES-*]` row in `todo.md`: a section the
-maintainer asked the next notes to carry, with its draft. The notes are all English. **One item is
-one line** (2026-10-02): what changed, with no sub-bullets, no how-it-works and no measurements; a
-reader who wants the detail has the compare link. A thing the user must do or must not do goes in a
+maintainer asked the next notes to carry, with its draft. The notes are for users, concise, and all
+English. **One item is one sentence, two at most, and one wherever it can be** (2026-10-02, restated
+2026-10-27): what changed, with no sub-bullets, no how-it-works and no measurements; a reader who
+wants the detail has the compare link. A thing the user must do or must not do goes in a
 one-line `> ⚠` or `> ℹ️` note under the list. The v3615 draft was first written with sub-bullets and
 ran to 8,300 characters; the maintainer had it cut to 3,700. Aim for 20–30
 user-facing items and leave small fixes out, but do not pad: a release with twelve has twelve. Two
 kinds of work get one line each, never an item per change: Wiki work ("Updated the Wiki.") and bulk
 hint or tooltip corrections. Copy the `## Setup` block from the last PUBLISHED release, which the
 maintainer may have edited after publishing, not from a local draft. An `@` before a word becomes a user mention in
-release notes -- v3649's "Hold @0" linked to someone's account -- so such text goes in a code span. Check each claim against its row
+release notes -- v3649's "Hold @0" linked to someone's account -- so such text goes in a code span. The CI body
+counts too: it folds in commit messages, and v3654's draft listed an account named 0 among its Contributors, from
+the very commit that recorded this rule, until the prepared notes replaced it. Check each claim against its row
 before writing it, name a game only where the fix was measured on it, and say so when the previous
 release shipped a regression. Neither the merge nor the release run wakes the session; the maintainer
 says when CI is done.

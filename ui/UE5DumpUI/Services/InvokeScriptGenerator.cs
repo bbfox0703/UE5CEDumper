@@ -626,8 +626,10 @@ public static class InvokeScriptGenerator
     ///
     /// <para>The classification is <see cref="ParamBufferBuilder.IsRefusedParam"/> /
     /// <see cref="ParamBufferBuilder.IsEmptyOnlyParam"/> -- the predicates FIRE calls -- never
-    /// a copied type list. An FText is refused whatever the box holds (a zeroed FText is a
-    /// crash, not a default); an empty-only type only when the user typed something, because
+    /// a copied type list. An FText is refused whatever the box holds (a zeroed FText is not
+    /// an empty one, and whatever reads it can crash -- the callee, or later code reading what
+    /// the callee stored); an empty-only type only when the
+    /// user typed something, because
     /// the slot is always sent zeroed and a typed value would be dropped.</para>
     ///
     /// <para>It runs BEFORE the idle wait and the zero-fill, so a refusal touches nothing, and
@@ -645,7 +647,8 @@ public static class InvokeScriptGenerator
             if (ParamBufferBuilder.IsRefusedParam(p.TypeName))
             {
                 Line(sb, $"    do showMessage('[Invoke] {what} parameters cannot be sent -- an FText " +
-                         "holds a shared reference the engine allocates, and a zeroed one crashes the " +
+                         "holds a shared reference the engine allocates, which this form cannot build, " +
+                         "and a zeroed one is not an empty FText: a function that reads it can crash the " +
                          $"game. Invoke a wrapper that takes an FString instead.{nothingSent}'); return end");
                 continue;
             }

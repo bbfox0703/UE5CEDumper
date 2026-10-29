@@ -830,6 +830,9 @@ public:
 	UPROPERTY() int32 InvokeGate_DelegateCalls = 0;
 	UPROPERTY() int32 InvokeGate_LastDelegateBound = -1;
 
+	UPROPERTY() int32 InvokeGate_MulticastCalls = 0;
+	UPROPERTY() int32 InvokeGate_LastMulticastBound = -1;
+
 	UPROPERTY() int32 InvokeGate_TextCalls = 0;
 
 	UPROPERTY() int32 InvokeGate_StructCalls = 0;
@@ -977,6 +980,13 @@ public:
 	/// weak object pointer has serial 0 and resolves to null without a dereference.
 	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")
 	int32 InvokeGate_TakeDelegate(FDumperTestUnicastSignature Callback);
+
+	/// The multicast host ([CT-MULTICAST-PARAM-PAD]): Call Trace's decode of a multicast parameter had no
+	/// subject. Records IsBound() as 0/1. ⚠ NOT BlueprintCallable, and it cannot be: UHT drops Blueprint
+	/// support for a multicast parameter (UhtMulticastDelegateProperty clears IsParameterSupportedByBlueprint),
+	/// so a native UFUNCTION is the only shape that takes one.
+	UFUNCTION()
+	int32 InvokeGate_TakeMulticast(FDumperTestPingSignature Handlers);
 
 	/// The FText host. Counts, and never touches InText -- see the banner above.
 	UFUNCTION(BlueprintCallable, Category = "DumperTest|InvokeGate")

@@ -132,7 +132,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         "ClassProperty",
         "InterfaceProperty",
         "ObjectProperty",
-        // Weak / soft / lazy
+        // Weak / soft / lazy -- and UE 4.11-4.17's soft pointers, before 4.18 renamed them [UE4-ASSETPTR-EXPORTS]
+        "AssetClassProperty",
+        "AssetObjectProperty",
         "LazyObjectProperty",
         "SoftClassProperty",
         "SoftObjectProperty",
@@ -180,8 +182,8 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     public event Action<string>? NavigateToLiveWalker;
 
     /// <summary>Raised to pivot the selected property in the experimental Class
-    /// Pivot tab (className, propName). C5 right-click handoff.</summary>
-    public event Action<string, string>? NavigateToPivot;
+    /// Pivot tab (className, propName, propOffset). C5 right-click handoff.</summary>
+    public event Action<string, string, int>? NavigateToPivot;
 
     /// <summary>Gates the "Pivot this property" context-menu item — set true only
     /// when the experimental Class Pivot tab is available. Mirrors the gate so the
@@ -748,7 +750,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     {
         match ??= SelectedResult;
         if (match == null || string.IsNullOrEmpty(match.ClassName)) return;
-        NavigateToPivot?.Invoke(match.ClassName, match.PropName);
+        NavigateToPivot?.Invoke(match.ClassName, match.PropName, match.PropOffset);
     }
 
     /// <summary>

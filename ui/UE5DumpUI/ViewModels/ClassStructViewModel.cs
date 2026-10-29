@@ -170,6 +170,9 @@ public partial class ClassStructViewModel : ViewModelBase
     public void ClearOnDisconnect()
     {
         _loadId++;                 // supersede any in-flight WalkClass repaint
+        // [CLASSSTRUCT-DISCONNECT-LOADING] The walk's finally clears the spinner only for the newest ticket, and the
+        // bump above just took that from it, so no load is left to retire a spinner raised before the disconnect.
+        IsLoading = false;
         _shownNodeAddress = null;
         SelectedField = null;
         _allFields.Clear();
@@ -180,6 +183,9 @@ public partial class ClassStructViewModel : ViewModelBase
         PropertiesSize = 0;
         LoadedClassAddr = "";
         HasClass = false;
+        // [CLASSSTRUCT-DISCONNECT-ERROR] The panel shows the error on its own line whenever it is set, so a failed walk
+        // of the process that just went away would stay above the next game's empty panel.
+        ClearError();
     }
 
     /// <summary>

@@ -429,6 +429,17 @@ public class PropertyScoringTableTests
         Assert.Equal(PropertyScoringTable.NonValueTypePenalty, r.StructuralBonus);
     }
 
+    // [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's soft pointers are references, as the 4.18+ Soft* spellings the set holds
+    // are; a stat-named one ("HealthBarWidget" as a TAssetSubclassOf) escaped the penalty.
+    [Theory]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
+    public void Score_ValueKeywordOnAUE4AssetPointer_GetsTheNonValuePenalty(string typeName)
+    {
+        var r = PropertyScoringTable.Score(Make("Health", "BP_Player_C", propType: typeName));
+        Assert.Equal(PropertyScoringTable.NonValueTypePenalty, r.StructuralBonus);
+    }
+
     [Fact]
     public void Score_NumericValueType_StaysNeutral_RegressionGuard()
     {

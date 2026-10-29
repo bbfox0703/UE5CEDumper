@@ -299,6 +299,59 @@ public class SdkExportServiceTests
         Assert.Equal("TSet<TSoftClassPtr<UObject>>", SdkExportService.MapCppDecl(set).Type);
     }
 
+    // --- [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's soft pointers: TAssetPtr / TAssetSubclassOf ---
+    //
+    // UE_4.10's AssetPtr.h declares them; 4.18 renamed them TSoftObjectPtr / TSoftClassPtr and kept the old names as
+    // deprecated aliases. MapCppDeclCore had no arm, so a field was declared as 0x20 raw bytes and an inner as uint8_t.
+
+    [Theory]
+    [InlineData("AssetObjectProperty", "World", "", "TAssetPtr<class World>")]
+    [InlineData("AssetObjectProperty", "", "", "TAssetPtr<UObject>")]
+    [InlineData("AssetClassProperty", "Class", "Pawn", "TAssetSubclassOf<class Pawn>")]
+    [InlineData("AssetClassProperty", "Class", "Object", "TAssetSubclassOf<UObject>")]
+    [InlineData("AssetClassProperty", "Class", "", "TAssetSubclassOf<UObject>")]
+    public void MapCppDecl_UE4AssetPointer_SpellsItsTemplate(string type, string objClass, string meta, string expected)
+    {
+        var decl = SdkExportService.MapCppDecl(new FieldInfoModel
+        {
+            TypeName = type, ObjClassName = objClass, MetaClassName = meta, Size = 0x20,
+        });
+        Assert.Equal(expected, decl.Type);
+        Assert.Equal("", decl.ArraySuffix);                                   // not the raw-byte fallback
+    }
+
+    [Fact]
+    public void MapCppDecl_UE4AssetPointerInners_SpellTheirTemplates()
+    {
+        Assert.Equal("TArray<TAssetPtr<class World>>", SdkExportService.MapCppDecl(new FieldInfoModel
+        {
+            TypeName = "ArrayProperty", InnerType = "AssetObjectProperty", InnerObjClass = "World", Size = 16,
+        }).Type);
+        Assert.Equal("TMap<FName, TAssetSubclassOf<class Actor>>", SdkExportService.MapCppDecl(new FieldInfoModel
+        {
+            TypeName = "MapProperty", KeyType = "NameProperty",
+            ValueType = "AssetClassProperty", ValueObjClass = "Class", ValueMetaClass = "Actor", Size = 80,
+        }).Type);
+        Assert.Equal("TSet<TAssetPtr<UObject>>", SdkExportService.MapCppDecl(new FieldInfoModel
+        {
+            TypeName = "SetProperty", ElemType = "AssetObjectProperty", Size = 80,
+        }).Type);
+    }
+
+    [Fact]
+    public void MapCppDeclLive_UE4AssetPointer_SpellsItsTemplateWithoutAClass()
+    {
+        // A live row carries no declared class ([SDK-LIVE-VALUE-TYPES]), so the template takes UObject.
+        Assert.Equal("TAssetPtr<UObject>", SdkExportService.MapCppDecl(new LiveFieldValue
+        {
+            TypeName = "AssetObjectProperty", PtrClassName = "World", Size = 0x20,
+        }).Type);
+        Assert.Equal("TAssetSubclassOf<UObject>", SdkExportService.MapCppDecl(new LiveFieldValue
+        {
+            TypeName = "AssetClassProperty", Size = 0x20,
+        }).Type);
+    }
+
     // --- MapCppDecl (LiveFieldValue) ---
 
     [Fact]

@@ -467,8 +467,8 @@ public partial class DumpExplorerViewModel : ViewModelBase
     {
         SelectEntry(row);
         if (row is null || string.IsNullOrEmpty(row.Path)) return;
-        await _platform.CopyToClipboardAsync(row.Path);
-        StatusText = $"Copied path: {row.Path}";
+        bool copied = await _platform.CopyToClipboardAsync(row.Path);
+        StatusText = copied ? $"Copied path: {row.Path}" : Helpers.ClipboardConvenience.NotCopiedText(row.Path);
     }
 
     /// <summary>Make <paramref name="row"/> the current selection in whichever grid

@@ -13,8 +13,8 @@ public static class AutoSnapshotPlanner
 {
     private const long BytesPerMb = 1024L * 1024;
 
-    /// <summary>Byte sizes of the quota presets the UI offers (mirrors
-    /// <c>SnapshotViewModel.QuotaOptions</c> minus "Unlimited"), ascending.</summary>
+    /// <summary>Byte sizes of the quota presets, ascending. <c>SnapshotViewModel.QuotaOptions</c> is built from this
+    /// list ([W1-QUOTA-UNLIMITED]: a raise to a preset the combo could not show would be written back lowered).</summary>
     public static readonly long[] QuotaPresetBytes =
     {
         512L * BytesPerMb,

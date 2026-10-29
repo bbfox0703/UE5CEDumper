@@ -2647,6 +2647,16 @@ std::vector<ImplementedInterface> ClassInterfaces(uintptr_t cls) {
     return out;
 }
 
+std::vector<FunctionInfo> WalkInterfaceFunctions(uintptr_t cls) {
+    // A struct view hands its UScriptStruct here: it has no Interfaces array to read.
+    if (!cls || !IsClassMetaName(GetName(GetClass(cls))) || !ClassInterfacesMeasured()) return {};
+    auto readSuper = [](uintptr_t c, uintptr_t& s) { return Macht::ReadSafe(c + DynOff::USTRUCT_SUPER, s); };
+    // UInterface -- CoreUObject's "Interface" class -- is where every interface's chain meets UObject's own functions.
+    auto isInterfaceBase = [](uintptr_t c) { return GetName(c) == "Interface"; };
+    return InterfaceFunctionsOf(cls, [](uintptr_t c) { return WalkFunctions(c); }, readSuper,
+                                [](uintptr_t c) { return ClassInterfaces(c); }, isInterfaceBase);
+}
+
 bool IsNativeClass(uintptr_t cls) {
     const uintptr_t pkg = cls ? GetOuter(cls) : 0;
     return pkg && GetName(pkg).rfind("/Script/", 0) == 0;
@@ -2781,9 +2791,23 @@ static SnapValue DecodeSnapElement(const ParamField& f, const uint8_t* p, uint32
         v.text = buf;
         return v;
     }
-    if (t == "StrProperty" || t == "Utf8StrProperty" || t == "AnsiStrProperty" || t == "ArrayProperty" ||
-        t == "MulticastInlineDelegateProperty") {   // a TArray header {Data, Num, Max}; the data was not copied
-        header(load32(8), load64(0));
+    if (t == "StrProperty" || t == "Utf8StrProperty" || t == "AnsiStrProperty" || t == "ArrayProperty") {
+        header(load32(8), load64(0));   // a TArray header {Data, Num, Max}; the data was not copied
+        return v;
+    }
+    if (t == "MulticastInlineDelegateProperty" || t == "MulticastDelegateProperty") {   // UE4 < 4.23 has no "Inline"
+        // Its invocation list's TArray header, after any pad: the same detector as a DelegateProperty's sits in front
+        // of the header (16 bytes, FName-independent) on a UE 5.3+ checked build. Read
+        // at +0, Data is the detector and Num Data's low half. A size that is neither shape is not read, as the walk
+        // refuses it.
+        const int32_t pad = DynOff::DelegatePadFromElementSize(f.size, 16);
+        if (pad < 0) {
+            v.text = "(multicast \xE2\x80\x94 unexpected ElementSize " + std::to_string(f.size) + ", not read) " +
+                     SnapHex(p, static_cast<size_t>(f.size));
+            v.mark = SnapMark::Raw;
+            return v;
+        }
+        header(load32(pad + 8), load64(pad));
         return v;
     }
     if (t == "SetProperty" || t == "MapProperty") {
@@ -2800,10 +2824,18 @@ static SnapValue DecodeSnapElement(const ParamField& f, const uint8_t* p, uint32
         v.mark = SnapMark::Header;
         return v;
     }
-    if (t == "DelegateProperty") {   // FScriptDelegate: a weak object, then the function's FName (after any pad)
-        const int32_t idx = load32(0), serial = load32(4);
+    if (t == "DelegateProperty") {   // FScriptDelegate: a weak object, then the function's FName, both after any pad
+        // A UE 5.3+ checked build's access detector sits in front of the WHOLE payload (DynOff::kDelegateDetectorPad):
+        // read at +0, the pair is the detector's. A size that is neither shape is not read, as the walk refuses it.
         const int32_t pad = DynOff::DelegatePadFromElementSize(f.size, 8 + fsz);
-        const std::string fn = fnameAt(8 + (pad > 0 ? pad : 0), fsz);
+        if (pad < 0) {
+            v.text = "(delegate \xE2\x80\x94 unexpected ElementSize " + std::to_string(f.size) + ", not read) " +
+                     SnapHex(p, static_cast<size_t>(f.size));
+            v.mark = SnapMark::Raw;
+            return v;
+        }
+        const int32_t idx = load32(pad), serial = load32(pad + 4);
+        const std::string fn = fnameAt(pad + 8, fsz);
         const uintptr_t target = ctx.weak ? ctx.weak(idx, serial) : 0;
         std::string name, cls;
         const bool live = target && ctx.object && ctx.object(target, name, cls);
@@ -3289,10 +3321,9 @@ static int32_t InferScalarSize(const std::string& typeName) {
     if (typeName == "LazyObjectProperty")  return LazyGuidOffset(0) + 0x10;
     // FScriptInterface = { UObject* + void* } — fixed 16
     if (typeName == "InterfaceProperty")   return 16;
-    // NOTE: FScriptDelegate ({ FWeakObjectPtr(8) + FName }) is 16 or 24 depending on
-    // CasePreservingName. TSoftObjectPtr / TSoftClassPtr also vary by UE version.
-    // Do NOT override these here — let readSize prevail; the array readers force
-    // their own correct stride.
+    // NOTE: FScriptDelegate ({ FWeakObjectPtr(8) + FName }) is 12, 16 or 20 with the FName's width, and 24 or 32
+    // behind a checked build's access detector (DynOff::DelegatePaddedSize). TSoftObjectPtr / TSoftClassPtr also
+    // vary by UE version. Do NOT override these here — let readSize prevail; the array readers step by it.
     return 0;
 }
 
@@ -5161,9 +5192,10 @@ bool IsDelegateArrayType(const std::string& innerTypeName) {
 
 int32_t DelegateArrayElemPad(int32_t elemSize) {
     // The element is the STANDALONE unicast type, TScriptDelegate<FNotThreadSafeDelegateMode> -- padded on a checked
-    // build, unlike a multicast's invocation-list elements (Grimoire.h: two types, one spelling). The same derivation
-    // as ReadDelegateArrayElements' stride, so the published pad and the reader's stride cannot disagree. A size that
-    // matches neither (-1) publishes 0: the reader refused those elements, and the field's value says so.
+    // build, unlike a multicast's invocation-list elements (Grimoire.h: two types, one spelling). The same rule
+    // ReadDelegateArrayElements accepts a size by, so the published pad and the elements the reader read cannot
+    // disagree. A size that matches neither (-1) publishes 0: the reader refused those elements, and the field's value
+    // says so.
     const int32_t pad = DynOff::DelegatePadFromElementSize(elemSize, 8 + DynOff::SizeofFName());
     return pad < 0 ? 0 : pad;
 }
@@ -5201,10 +5233,12 @@ ReadArrayResult ReadDelegateArrayElements(
         result.error = "unexpected FScriptDelegate element size " + std::to_string(elemSize);
         Sein::Warn("WALK", "ReadDelegateArrayElements: ElementSize=%d is neither %d nor %d "
                            "(+detector) -- refusing to guess a stride", elemSize, kSdBase,
-                   kSdBase + DynOff::kDelegateDetectorPad);
+                   DynOff::DelegatePaddedSize(kSdBase));
         return result;
     }
-    const int32_t stride = kSdBase + pad;
+    // The engine's own size, now that the rule recognised it: kSdBase + pad is 28 with a 12-byte FName, where the
+    // element is 32 (the detector's alignment), and every index >= 1 would drift.
+    const int32_t stride = elemSize;
 
     Macht::TArrayView arr;
     if (!Macht::ReadTArray(instanceAddr + fieldOffset, arr)) {
@@ -5334,10 +5368,10 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
         result.error = "unexpected multicast element size " + std::to_string(elemSize);
         Sein::Warn("WALK", "ReadMulticastDelegateArrayElements: ElementSize=%d is neither %d "
                            "nor %d (+detector) -- refusing to guess a stride",
-                   elemSize, kMcdBaseSize, kMcdBaseSize + DynOff::kDelegateDetectorPad);
+                   elemSize, kMcdBaseSize, DynOff::DelegatePaddedSize(kMcdBaseSize));
         return result;
     }
-    const int32_t stride = kMcdBaseSize + pad;
+    const int32_t stride = elemSize;   // the engine's own size, as ReadDelegateArrayElements steps
     int fnameSize = DynOff::SizeofFName();
     // The invocation list's ELEMENTS are the never-padded unicast type -- see the ⚠ in
     // Grimoire.h. This one must NOT gain `pad`.
@@ -5925,8 +5959,18 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         return result;
     }
 
+    const bool classPassed = classAddr != 0;
     if (!classAddr)
         classAddr = GetClass(instanceAddr);
+
+    // [WALK-NULLCLASS-SILENT] A live UObject never has a null ClassPrivate. Said apart from isStale, whose wording claims
+    // an implausible PropertiesSize, and from a "freed" claim: the Go box takes any address.
+    if (!classPassed && !classAddr) {
+        Sein::Warn("WALK:safe", "WalkInstance: 0x%llx has no UObject header (ClassPrivate is null) -- freed, or not an "
+                                "object; nothing walked", (unsigned long long)instanceAddr);
+        result.noHeader = true;
+        return result;
+    }
 
     result.classAddr = classAddr;
     result.className = classAddr ? GetName(classAddr) : "";
@@ -6004,8 +6048,21 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
     // Walk the class to get field layout (cached after first call)
     auto walkClassStart = std::chrono::steady_clock::now();
-    ClassInfo ci = WalkClass(classAddr);
+    bool classReadOk = true;
+    ClassInfo ci = WalkClassImpl(classAddr, classReadOk);   // WalkClass, keeping the read-fault verdict
     auto walkClassEnd = std::chrono::steady_clock::now();
+
+    // [WALK-NULLCLASS-SILENT] The sibling shape: a non-null but unmapped ClassPrivate. WalkClass's fault exit returns
+    // PropertiesSize 0, which the gate below accepts, so it read as an empty class. Only a walk that resolved its own
+    // class is judged: a raw-struct walk passes one, and its bytes were never a UObject header.
+    if (!classPassed && !classReadOk) {
+        Sein::Warn("WALK:safe", "WalkInstance: 0x%llx has no UObject header (ClassPrivate 0x%llx is unreadable) -- "
+                                "freed, or not an object; nothing walked",
+                   (unsigned long long)instanceAddr, (unsigned long long)classAddr);
+        result.noHeader  = true;
+        result.propsSize = 0;
+        return result;
+    }
     auto walkClassMs = std::chrono::duration_cast<std::chrono::milliseconds>(walkClassEnd - walkClassStart).count();
 
     result.propsSize = ci.PropertiesSize;
@@ -7704,7 +7761,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             continue;
         }
 
-        // Handle DelegateProperty: single FScriptDelegate = { FWeakObjectPtr(8B), FName(8/16B) }
+        // Handle DelegateProperty: single FScriptDelegate = { FWeakObjectPtr(8B), FName(4/8/12B) }
         if (fi.TypeName == "DelegateProperty") {
             int fnameSize = DynOff::SizeofFName();
             uintptr_t fieldAddr = instanceAddr + fi.Offset;
@@ -7723,7 +7780,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 Sein::Warn("WALK", "DelegateProperty '%s': ElementSize=%d is neither %d nor %d "
                                    "(+detector) -- refusing to read the delegate",
                            fi.Name.c_str(), fi.Size, 8 + fnameSize,
-                           8 + fnameSize + DynOff::kDelegateDetectorPad);
+                           DynOff::DelegatePaddedSize(8 + fnameSize));
                 fv.typedValue = "(delegate — unexpected ElementSize "
                               + std::to_string(fi.Size) + ", not read)";
                 result.fields.push_back(std::move(fv));
@@ -8227,7 +8284,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
         // Handle MulticastInlineDelegateProperty / MulticastDelegateProperty:
         // FMulticastScriptDelegate = { TArray<FScriptDelegate> InvocationList (16B) }
-        // FScriptDelegate = { FWeakObjectPtr(8B), FName(8/16B) }
+        // FScriptDelegate = { FWeakObjectPtr(8B), FName(4/8/12B) }
         //
         // Exposes the multicast as an implicit DelegateProperty array so the UI
         // can drill in and CE XML / CSX can emit the bindings. Layout matches
@@ -8250,7 +8307,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // every arm rather than on the two array ones only.
                 Sein::Warn("WALK", "MulticastDelegateProperty '%s': ElementSize=%d is neither "
                                    "16 nor %d (+detector) -- refusing to read the delegate",
-                           fi.Name.c_str(), fi.Size, 16 + DynOff::kDelegateDetectorPad);
+                           fi.Name.c_str(), fi.Size, DynOff::DelegatePaddedSize(16));
                 fv.typedValue = "(multicast — unexpected ElementSize "
                               + std::to_string(fi.Size) + ", not read)";
                 result.fields.push_back(std::move(fv));

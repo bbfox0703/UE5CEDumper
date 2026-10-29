@@ -312,6 +312,50 @@ public class ClassStructViewModelConcurrencyTests
         Assert.False(vm.IsLoading);
     }
 
+    // [CLASSSTRUCT-DISCONNECT-LOADING] ClearOnDisconnect supersedes the in-flight walk by bumping the ticket, and the
+    // walk's finally clears the spinner only for the newest ticket -- so after a disconnect mid-walk no load owned the
+    // flag and nobody retired it: the spinner stayed up over the emptied panel until the next game's first class load.
+    [Fact]
+    public async Task ADisconnectMidWalk_TakesTheSpinnerDown()
+    {
+        var dump = new GatedDumpService();
+        var gate = dump.GateWalk("0xS1");
+        var vm = NewVm(dump);
+        var load = vm.OnObjectSelected(ClassLike("0xS1"));
+        await WaitForGate(dump.WalkGates, "0xS1");
+        Assert.True(vm.IsLoading);   // precondition: the walk is parked with the spinner up
+
+        vm.ClearOnDisconnect();
+        bool spinnerAfterDisconnect = vm.IsLoading;
+        gate.SetResult(Class("ClassS1"));   // the superseded walk lands late, into the new session
+        await load;
+
+        Assert.False(spinnerAfterDisconnect, "the spinner is still up over the panel the disconnect emptied");
+        Assert.False(vm.IsLoading, "the superseded walk's landing left the spinner up");
+        Assert.Equal("", vm.ClassName);     // and it painted nothing
+    }
+
+    [Fact]
+    public async Task AWalkThatFailsAfterTheDisconnect_LeavesNoSpinnerAndNoError()
+    {
+        // The realistic ending: the disconnect tears the pipe down and the parked walk fails. It is superseded, so it
+        // must paint nothing -- and the spinner must not come back up or stay up either.
+        var dump = new GatedDumpService();
+        var gate = dump.GateWalk("0xS1");
+        var vm = NewVm(dump);
+        var load = vm.OnObjectSelected(ClassLike("0xS1"));
+        await WaitForGate(dump.WalkGates, "0xS1");
+
+        vm.ClearOnDisconnect();
+        gate.SetException(new IOException("pipe broken"));
+        await load;
+
+        Assert.False(vm.IsLoading, "the superseded walk's failure left the spinner up");
+        Assert.False(vm.HasClass);
+        Assert.False(vm.HasNoFields);   // no "this class has no fields" banner over a panel with no class
+        Assert.True(string.IsNullOrEmpty(vm.ErrorMessage), $"a superseded walk painted: '{vm.ErrorMessage}'");
+    }
+
     // ── AE3 ─────────────────────────────────────────────────────────────────
 
     private sealed class ThrowingWalkDumpService : GatedDumpService

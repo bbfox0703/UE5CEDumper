@@ -44,17 +44,22 @@
     local ok, state = pcall(setDebugCamera, 1)
     if ok and state == -5 then
       -- QUEUED: the game thread did not answer in time, and the toggle WILL still run. Leave the record ticked and
-      -- do not tick again -- a second toggle would undo the first. [W3-DEBUGCAM-QUEUED]
+      -- do not tick again -- the toggle is already queued. [W3-DEBUGCAM-QUEUED] (What a second toggle would do when it
+      -- drains depends on the engine, so that is not the reason. [DBGCAM-QUEUEDON-UNDO-TEXT])
       showMessage('[Debug Camera] queued -- it will turn on when the game thread is free')
       return
     end
     if not ok or state ~= 1 then
-      -- DEFERRED: an immediate memrec.Active = false inside [ENABLE] is a no-op, so the
-      -- row would stay ticked over a camera that never turned on. Byte-identical to
-      -- CeLuaHygiene.DeferredUntickLua. [FREEZEUNTICK-2026-08-20]
-      if memrec then local _u=createTimer(nil,false) _u.Interval=50 _u.OnTimer=function(x) x.destroy() memrec.Active = false end _u.Enabled=true end  -- deferred: CE sets Active AFTER this block, so an immediate untick is a no-op
-      local why = ok and ('returned state ' .. tostring(state)) or ('error: ' .. tostring(state))
+      -- -6: NOT SENT, an earlier OFF is still queued -- tick again once the game responds. [DBGCAM-OFF-OVER-QUEUED-ON]
+      local why = (ok and state == -6) and 'not sent -- an earlier OFF is still queued; tick again once the game responds'
+                  or ok and ('returned state ' .. tostring(state)) or ('error: ' .. tostring(state))
       showMessage('[Debug Camera] could not enable -- ' .. why)
+      -- DEFERRED, and armed only AFTER the message: an immediate memrec.Active = false inside
+      -- [ENABLE] is a no-op [FREEZEUNTICK-2026-08-20], and so is a timer armed before the modal,
+      -- which fires inside it [INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]. And without running [DISABLE]:
+      -- nothing was applied, and [DISABLE] would send an OFF [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE].
+      -- Byte-identical to CeLuaHygiene.DeferredUntickWithoutDisableLua.
+      if memrec then local _u=createTimer(nil,false) _u.Interval=50 _u.OnTimer=function(x) x.destroy() if memrec.disableWithoutExecute then memrec.disableWithoutExecute() else memrec.Active = false end end _u.Enabled=true end  -- deferred (CE sets Active AFTER this block), and the disable section is not run: nothing was applied to undo
       return
     end
     {$asm}
@@ -62,15 +67,28 @@
     [DISABLE]
     {$lua}
     if syntaxcheck then return end
-    -- On disable the record is going inactive regardless; still guard the call so a
-    -- mailbox failure does not raise out of the [DISABLE] block. An untick never puts a
-    -- modal over the game: the reason goes to a DEBUG session only. [R7-C-04]
-    local ok, err = pcall(setDebugCamera, 0)
-    if not ok and (UE5_DEBUG or 0) ~= 0 then print('[Debug Camera] disable error: ' .. tostring(err)) end
+    -- Guard the call so a mailbox failure does not raise out of the [DISABLE] block. An
+    -- untick never puts a modal over the game: that reason goes to a DEBUG session only. [R7-C-04]
+    local ok, state = pcall(setDebugCamera, 0)
+    if ok and state == -5 then
+      -- QUEUED OFF: unlike a queued ON it does not turn the camera off on stock UE 4.18-5.7, so the
+      -- camera stays on. Say so ungated (print: still no modal on an untick) and RAISE -- CE keeps a
+      -- record ticked when its [DISABLE] fails, so the box keeps matching the camera, and unticking
+      -- again once the game responds runs this block again. [DEBUGCAM-QUEUED-OFF-NOESCALATE]
+      print('[Debug Camera] OFF did not complete -- the game thread is busy, and a queued OFF does not turn the camera off on most engines. The record stays ticked: untick it again once the game responds.')
+      error('[Debug Camera] OFF queued; the camera is still on')
+    end
+    if ok and state == -6 then
+      -- NOT SENT: an earlier ON is still queued and will turn the camera on. Same answer as a queued OFF: say so ungated
+      -- and RAISE, so the record stays ticked. [DBGCAM-OFF-OVER-QUEUED-ON]
+      print('[Debug Camera] OFF not sent -- an earlier ON is still queued and will turn the camera on. The record stays ticked: untick it again once the game responds.')
+      error('[Debug Camera] OFF not sent; an earlier ON is still queued')
+    end
+    if not ok and (UE5_DEBUG or 0) ~= 0 then print('[Debug Camera] disable error: ' .. tostring(state)) end
     {$asm}
 
   Constants exposed:
-    UE5_INVOKE_HELPER_VERSION  = '1.4'  (a newer copy re-loaded into a session replaces the resident one)
+    UE5_INVOKE_HELPER_VERSION  = '1.5'  (a newer copy re-loaded into a session replaces the resident one)
     UE5_INVOKE_PARAMS_OFFSET   = 0x328  (params_data offset within mailbox)
 ]]
 
@@ -84,7 +102,7 @@
 -- of it: R7-S3's latch release never reached a table opened before the update. The public functions below are
 -- therefore gated on VERSION: redefined only when this chunk is NEWER than the resident one, so an update takes
 -- effect while a same/older re-load stays a no-op that preserves state (the shared flags keep their own nil-init).
-local THIS_HELPER_VERSION = '1.4'   -- 1.4: this gate [R7-X5], and R7-S3's latch release on a reset mailbox
+local THIS_HELPER_VERSION = '1.5'   -- 1.4: this gate [R7-X5], and R7-S3's latch release on a reset mailbox; 1.5: 'asset'
 -- Compare dotted versions: true iff a < b. nil (nothing resident) is the oldest.
 local function versionLess(a, b)
   if not a then return true end
@@ -312,7 +330,7 @@ local function writeParams(base, regionSize, params)
   local WIDTHS = {
     bool = 1, byte = 1, int16 = 2, uint16 = 2, int32 = 4, uint32 = 4, enum = 4,
     int64 = 8, uint64 = 8, qword = 8, float = 4, double = 8,
-    pointer = 8, object = 8, class = 8, name = 8, soft = 8, weak = 8, lazy = 8, interface = 8,
+    pointer = 8, object = 8, class = 8, name = 8, soft = 8, weak = 8, lazy = 8, asset = 8, interface = 8,
   }
 
   for i, p in ipairs(params) do
@@ -361,6 +379,14 @@ local function writeParams(base, regionSize, params)
         error(string.format("[ue5_invoke] param '%s' is a lazy pointer -- it is found by a GUID this cannot make, " ..
                             "so only value=0 (null) can be sent", tostring(p.name or '?')))
       end
+    elseif t == 'asset' then
+      -- [ASSETPTR-BAKED-TOKEN] UE 4.11-4.17's TAssetPtr: the weak pair, then the path as an FString that would have to
+      -- be allocated inside the game. Only 0 (null) can be sent, and the slot is already zeroed; FIRE and the CE form
+      -- refuse the same input.
+      if v ~= 0 and v ~= nil and v ~= false then
+        error(string.format("[ue5_invoke] param '%s' is an asset pointer -- its path is a string inside the game this " ..
+                            "cannot build, so only value=0 (null) can be sent", tostring(p.name or '?')))
+      end
     elseif t == 'fstring' then
       -- Wide UE FString INPUT param (value = Lua string). Pass p.value, NOT v:
       -- `v = p.value or 0` turns a MISSING string into 0 -> the literal "0" written
@@ -398,12 +424,15 @@ local function writeParams(base, regionSize, params)
       end
     elseif t == 'ftext' then
       -- NOT grouped with the containers above. An all-zero FText is not an empty
-      -- FText: it holds a TSharedRef the engine dereferences on use, so a zeroed one
-      -- is a crash rather than a default. Refusing is the honest answer.
+      -- FText: its text-data pointer is null and every accessor dereferences it, so
+      -- whatever reads it can crash -- the callee, or later code reading what the callee
+      -- stored. Passing it survives (copy and destroy skip a null), but nothing here can
+      -- tell whether anything will read it, so refuse.
       error(string.format(
         "[ue5_invoke] param '%s' is an ftext -- an FText cannot be built from CE Lua " ..
-        "(it holds a shared reference the engine allocates), and passing a zeroed one " ..
-        "crashes the game. Invoke a wrapper that takes an FString instead.",
+        "(it holds a shared reference the engine allocates), and a zeroed one is not an " ..
+        "empty FText: a function that reads it can crash the game. Invoke a wrapper that " ..
+        "takes an FString instead.",
         tostring(p.name or '?')))
     elseif t == 'fstruct' then
       -- By-value UE struct param. Size resolution: explicit p.size wins
@@ -435,7 +464,7 @@ local function writeParams(base, regionSize, params)
       error(string.format(
         "[ue5_invoke] Unknown param type '%s' for '%s' -- " ..
         "supported: bool/byte/int16/uint16/int32/uint32/enum/int64/uint64/qword/" ..
-        "float/double/pointer/object/class/name/soft/weak/lazy/interface/" ..
+        "float/double/pointer/object/class/name/soft/weak/lazy/asset/interface/" ..
         "fstring/fstringn/fstruct/tarray/tmap/tset/delegate",
         tostring(t), tostring(p.name or '?')))
     end
@@ -891,7 +920,10 @@ end
 -- (CMD_SET_DEBUG_CAMERA=7) owns the whole toggle + controller-swap
 -- fallback, so the UI (pipe) and CE Lua (here) share one implementation.
 -- Returns the resulting state: 1 = ON, 0 = OFF, -1 = error/unknown, -5 = the toggle
--- is QUEUED (it will run when the game thread is free -- never re-send it). [W3-DEBUGCAM-QUEUED]
+-- is QUEUED: the game thread did not answer in time. A queued ON will run when the game
+-- thread is free, so do not re-send it [W3-DEBUGCAM-QUEUED]. A queued OFF does NOT turn
+-- the camera off on stock UE 4.18-5.7, so the camera stays on: untick / Force OFF again
+-- once the game responds. [DEBUGCAM-QUEUED-OFF-NOESCALATE]
 if not setDebugCamera or _invokeOutdated then
 
   local CMD_SET_DEBUG_CAMERA = 7
@@ -909,7 +941,10 @@ if not setDebugCamera or _invokeOutdated then
 
   --- Force Debug Camera ON (enable ~= 0) or OFF. Idempotent.
   --- @param enable number|boolean
-  --- @return number state  1=ON, 0=OFF, -1=error, -5=toggle queued (do not re-send)
+  --- @return number state  1=ON, 0=OFF, -1=error, -5=toggle queued (an ON will run: do not re-send;
+  ---                       an OFF leaves the camera on, stock UE 4.18-5.7: send it again once the game responds),
+  ---                       -6=not sent (an earlier toggle of the other direction is still queued: send it again once
+  ---                       the game responds)
   function setDebugCamera(enable)
     return dbgCamMailbox((enable and enable ~= 0) and 1 or 0)
   end

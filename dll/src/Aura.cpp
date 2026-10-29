@@ -1965,14 +1965,21 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
 }
 
 uintptr_t FindLiveOrDefaultOf(const std::string& className) {
+    return FindLiveOrDefaultOf(className, std::string());
+}
+
+uintptr_t FindLiveOrDefaultOf(const std::string& className, const std::string& skipOuterOf) {
     // [SEETHRU-PROBE-SUBSTRING] One walk, derivation-gated -- the contract is in Aura.h. The CDO fallback is picked up
     // DURING the walk rather than by a second scan: a function library has no live instance, so the walk always runs
     // to the end for one, and a second pass would double what the substring scan it replaces cost.
     if (className.empty()) return 0;
     std::string lowerQuery = className;
     for (auto& c : lowerQuery) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    std::string lowerSkip = skipOuterOf;
+    for (auto& c : lowerSkip) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
     std::unordered_map<uintptr_t, bool> derivedCache;   // per UClass, as in FindInstancesDerivedFrom
+    std::unordered_map<uintptr_t, bool> skipCache;      // per outer UClass
     uintptr_t cdo = 0;
     const int32_t count = GetCount();
     for (int32_t i = 0; i < count; ++i) {
@@ -2009,6 +2016,21 @@ uintptr_t FindLiveOrDefaultOf(const std::string& className) {
                 if (clsName == lowerQuery) cdo = obj;
             }
             continue;
+        }
+        if (!lowerSkip.empty()) {
+            uintptr_t outer = 0, outerCls = 0;
+            if (Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, outer) && outer &&
+                Macht::ReadSafe(outer + Grimoire::OFF_UOBJECT_CLASS, outerCls) && outerCls) {
+                auto sk = skipCache.find(outerCls);
+                const bool skip = sk != skipCache.end()
+                    ? sk->second : skipCache.emplace(outerCls, ClassChainMatchesLower(outerCls, lowerSkip)).first->second;
+                if (skip) {
+                    Sein::Info("PIPE:find", "FindLiveOrDefaultOf '%s': skipped 0x%llX (%s) -- its outer is a %s",
+                               className.c_str(), static_cast<unsigned long long>(obj), objName.c_str(),
+                               skipOuterOf.c_str());
+                    continue;
+                }
+            }
         }
         Sein::Info("PIPE:find", "FindLiveOrDefaultOf '%s' -> 0x%llX (%s, class %s)", className.c_str(),
                    static_cast<unsigned long long>(obj), objName.c_str(), Ubel::GetName(cls).c_str());
@@ -3289,6 +3311,9 @@ struct WeakLikePointerEntry {
     std::string typeName;     // the holder's type: one IsWeakLikeProp accepts, a DelegateProperty, or the
                               // OptionalProperty that wraps a weak-like value
     int32_t     setFlagOffset = -1;   // TOptional bIsSet byte, relative to offset; -1 = none
+    // Where the FWeakObjectPtr sits inside the field: the access-detector pad for a DelegateProperty on a UE 5.3+
+    // checked build, 0 otherwise. `offset` stays the field's own, which is what a reference reports.
+    int32_t     payloadOffset = 0;
 };
 
 // [A2-TOPTIONAL-INTRUSIVE] A trailing-flag TOptional keeps its old value bytes after Reset(): only
@@ -3326,6 +3351,9 @@ struct WeakLikeArrayEntry {
     // inner type whose payload does not start at the element's own address.
     int32_t     elemWeakOffset = 0;
     int32_t     setFlagOffset = -1;   // [A2-TOPTIONAL-STRUCT-DESCENT] an enclosing struct optional's bIsSet, relative to offset; -1 = none
+    // Where the TArray header sits inside the field: the access-detector pad for a multicast delegate on a UE 5.3+
+    // checked build, 0 otherwise. `offset` stays the field's own, which is what a reference reports.
+    int32_t     headerOffset = 0;
 };
 
 // TMap with at least one Object/Class side. Both flags can be true for a
@@ -3445,13 +3473,21 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
             }
         }
         // --- DelegateProperty (single FScriptDelegate) ---
-        // Layout: { FWeakObjectPtr Target(8B), FName FunctionName(8/12B) }.
-        // The FWeakObjectPtr at field+0 is the binding's target — same
-        // resolution path as WeakObjectProperty, so reuse weakLikePointers.
+        // Layout: { FWeakObjectPtr Target(8B), FName FunctionName(4/8/12B) }, behind the 8-byte access detector
+        // on a UE 5.3+ checked build (the field's own ElementSize says which). The FWeakObjectPtr is the
+        // binding's target — same resolution path as WeakObjectProperty, so reuse weakLikePointers.
         // typeName is preserved so the user sees this was reached via a
         // delegate (a "register on click" bind, not a property reference).
         else if (f.TypeName == "DelegateProperty") {
-            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName, underGate });
+            const int32_t base = 8 + DynOff::SizeofFName();
+            const int32_t pad  = DynOff::DelegatePadFromElementSize(f.Size, base);
+            // Read at the unpadded place rather than skip, as the delegate-array arm below does: a wrong
+            // place cannot manufacture a reference (ResolveWeakAt validates every hit), only miss one.
+            if (pad < 0)
+                LOG_WARN("ClassReferenceMeta: %s — DelegateProperty ElementSize %d is neither %d nor %d; "
+                         "reading at +0, so its binding may be MISSING from Find Refs",
+                         fullName.c_str(), f.Size, base, DynOff::DelegatePaddedSize(base));
+            out.weakLikePointers.push_back({ absOffset, fullName, f.TypeName, underGate, pad < 0 ? 0 : pad });
         }
         // --- MulticastInline / MulticastDelegate (single field) ---
         // FMulticastScriptDelegate := TArray<FScriptDelegate> at field+0.
@@ -3461,12 +3497,19 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
         // FSparseDelegateStorage, not at the field.)
         else if (f.TypeName == "MulticastInlineDelegateProperty"
               || f.TypeName == "MulticastDelegateProperty") {
-// FScriptDelegate { FWeakObjectPtr(8), FName } is alignof 4 -- NO padding, so this
-            // wants sizeof(FName) (0xC under CPN), never the 0x10 pair slot.
+            // FScriptDelegate { FWeakObjectPtr(8), FName } is alignof 4 -- NO padding, so this
+            // wants sizeof(FName) (0xC under CPN), never the 0x10 pair slot. Those list elements are
+            // never padded; the CONTAINER is, so the TArray header sits past the detector on a checked
+            // build (its 16-byte base, FName-independent, against the field's ElementSize).
             int32_t fnameSize = DynOff::SizeofFName();
             int32_t stride    = 8 + fnameSize;
+            const int32_t pad = DynOff::DelegatePadFromElementSize(f.Size, 16);
+            if (pad < 0)
+                LOG_WARN("ClassReferenceMeta: %s — multicast ElementSize %d is neither 16 nor %d; "
+                         "reading its list at +0, so bindings may be MISSING from Find Refs",
+                         fullName.c_str(), f.Size, DynOff::DelegatePaddedSize(16));
             out.weakLikeArrays.push_back({ absOffset, fullName,
-                                            f.TypeName, stride, 0, underGate });
+                                            f.TypeName, stride, 0, underGate, pad < 0 ? 0 : pad });
         }
         // --- Array of pointer-shaped types ---
         else if (f.TypeName == "ArrayProperty") {
@@ -3491,9 +3534,9 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                 // TScriptDelegate<FNotThreadSafeDelegateMode>, which carries the 8-byte access
                 // detector in a checked build; a multicast's invocation list holds the
                 // ...NotChecked... variant, which never does.
-                const int32_t base = 8 + DynOff::SizeofFName();
-                const int32_t pad  = DynOff::DelegatePadFromElementSize(
-                                         Ubel::GetArrayInnerElemSize(f.Address), base);
+                const int32_t base     = 8 + DynOff::SizeofFName();
+                const int32_t elemSize = Ubel::GetArrayInnerElemSize(f.Address);
+                const int32_t pad      = DynOff::DelegatePadFromElementSize(elemSize, base);
                 // Falling back to the historical layout rather than skipping: a wrong stride
                 // here cannot manufacture a reference (ResolveWeakAt validates every hit
                 // against GObjects), so both a wrong stride and a skip fail the same way —
@@ -3504,11 +3547,13 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
                              "ElementSize is neither %d nor %d; scanning at the unpadded "
                              "stride, so bindings may be MISSING from Find Refs",
                              fullName.c_str(), base,
-                             base + DynOff::kDelegateDetectorPad);
+                             DynOff::DelegatePaddedSize(base));
                 }
                 const int32_t elemPad = (pad < 0) ? 0 : pad;
+                // A recognised size IS the stride; base + pad is 28 with a 12-byte FName, where the
+                // element is 32 (Grimoire.h, DelegatePaddedSize).
                 out.weakLikeArrays.push_back({ absOffset, fullName, f.innerType,
-                                               base + elemPad, elemPad, underGate });
+                                               (pad < 0) ? base : elemSize, elemPad, underGate });
             }
         }
         // --- Map with pointer-shaped key and/or value ---
@@ -3907,7 +3952,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         // --- Weak/Soft/Lazy single fields (FWeakObjectPtr at field+0) ---
         for (const auto& wpe : meta.weakLikePointers) {
             uintptr_t resolved = OptionalGateOpen(obj + wpe.offset, wpe.setFlagOffset)
-                ? ResolveWeakAt(obj + wpe.offset) : 0;
+                ? ResolveWeakAt(obj + wpe.offset + wpe.payloadOffset) : 0;
             if (resolved != target) continue;
 
             ReferenceMatch m;
@@ -3995,7 +4040,7 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         // --- TArray<FWeak/Soft/Lazy ObjectPtr> (FWeakObjectPtr at elem+0) ---
         for (const auto& wae : meta.weakLikeArrays) {
             Macht::TArrayView arr;
-            if (!OptionalGateOpen(obj + wae.offset, wae.setFlagOffset) || !Macht::ReadTArray(obj + wae.offset, arr)) continue;
+            if (!OptionalGateOpen(obj + wae.offset, wae.setFlagOffset) || !Macht::ReadTArray(obj + wae.offset + wae.headerOffset, arr)) continue;
             if (arr.Count <= 0 || !arr.Data || wae.elemStride <= 0) continue;
 
             for (int32_t e = 0; e < arr.Count; ++e) {
@@ -4349,7 +4394,7 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     // --- Weak/Soft/Lazy single fields (FWeakObjectPtr at field+0) ---
     for (const auto& wpe : meta.weakLikePointers) {
         uintptr_t r = OptionalGateOpen(obj + wpe.offset, wpe.setFlagOffset)
-            ? ResolveWeakAt(obj + wpe.offset) : 0;
+            ? ResolveWeakAt(obj + wpe.offset + wpe.payloadOffset) : 0;
         if (!r) continue;
         if (emit(r, wpe.offset, wpe.name, wpe.typeName, kEmpty, -1, 0, 0)) return;
     }
@@ -4381,7 +4426,7 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
     // --- TArray<FWeak/Soft/Lazy ObjectPtr> (FWeakObjectPtr at elem+0) ---
     for (const auto& wae : meta.weakLikeArrays) {
         Macht::TArrayView arr;
-        if (!OptionalGateOpen(obj + wae.offset, wae.setFlagOffset) || !Macht::ReadTArray(obj + wae.offset, arr) || arr.Count <= 0 || !arr.Data || wae.elemStride <= 0) continue;
+        if (!OptionalGateOpen(obj + wae.offset, wae.setFlagOffset) || !Macht::ReadTArray(obj + wae.offset + wae.headerOffset, arr) || arr.Count <= 0 || !arr.Data || wae.elemStride <= 0) continue;
         for (int32_t e = 0; e < arr.Count; ++e) {
             uintptr_t r = ResolveWeakAt(arr.Data + static_cast<int64_t>(e) * wae.elemStride
                                         + wae.elemWeakOffset);
@@ -4488,7 +4533,7 @@ static void EnumerateOutgoingObjectPtrs(uintptr_t obj, EmitFn&& emit, bool deep 
                 // Weak/soft/lazy single pointers in the element struct.
                 for (const auto& wpe : emeta.weakLikePointers) {
                     uintptr_t r = OptionalGateOpen(structBase + wpe.offset, wpe.setFlagOffset)
-                        ? ResolveWeakAt(structBase + wpe.offset) : 0;
+                        ? ResolveWeakAt(structBase + wpe.offset + wpe.payloadOffset) : 0;
                     if (!r) continue;
                     if (emit(r, cfe.offset, cfe.name + sides[s].suffix,
                              fieldType, kStructProp, e, cfe.stride, sides[s].within + wpe.offset))

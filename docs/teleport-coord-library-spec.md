@@ -673,12 +673,17 @@ in, and the import-report machinery it forces is reused by P4.
    the diff was computed against the previous game's library.
 5. **CE Lua `readString`** — the DLL-flavour picker reads the map name from
    `mailbox + 0x358`. Confirm against CE's API reference before use.
-6. **Client-side pre-flight size check** — `AobMakerBridgeService.WriteMessageAsync`
-   (`:495-506`) has **no** send-side cap, and both AOBMaker pipes drop an oversize
-   request *without writing a response* (CE bridge `pipe_server.cpp:140-141`;
-   AOBMaker.UI `WindowsPipeServer.cs:784-788`, both at AOBMaker `9431370`), so an
-   oversized push surfaces as a confusing *timeout*. Worth adding regardless of this
-   feature; AOBMaker's reply (§2.8) asks us to keep this check.
+6. ~~**Client-side pre-flight size check**~~ — **SHIPPED 2026-10-27**
+   (`[AOBM-SEND-PREFLIGHT]`, red `22c00202` / green `55704aea`).
+   `AobMakerBridgeService.WriteMessageAsync` refuses a request over the 10 MiB message
+   cap before it writes the length prefix, so not one byte reaches the wire; the
+   reason-carrying calls hand the size to their caller as the reason, and the bridge
+   stays available. Why it is there: both AOBMaker pipes drop an oversize request
+   *without writing a response* (CE bridge `pipe_server.cpp:140-141`; AOBMaker.UI
+   `WindowsPipeServer.cs:784-788`, both at AOBMaker `9431370`), so an oversized push
+   surfaced as a confusing *timeout* or broken pipe, read as "AOBMaker not connected".
+   It was worth having regardless of this feature, and AOBMaker's reply (§2.8) asks us
+   to keep this check.
 
 -----
 

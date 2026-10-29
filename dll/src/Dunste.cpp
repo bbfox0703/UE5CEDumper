@@ -704,6 +704,15 @@ void StopPendingLocked() {    // s_workerMutex held; never called FROM the worke
     s_pendingWorker.join();
 }
 
+// SetEnabled(true) stops the deferred collision restore before it knows the enable will work. A refused enable never
+// took the pawn over, so the restore is still owed: re-arm it, or a pawn a stalled disable left non-colliding stays
+// that way with nothing polling for it. Spawning under s_mutex is safe: the loop sleeps a tick before it locks.
+// [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]
+int32_t RefusedEnable(int32_t rc) {   // s_workerMutex and s_mutex held
+    if (s_state.collisionOff) StartPendingLocked();
+    return rc;
+}
+
 } // namespace
 
 namespace Dunste {
@@ -722,7 +731,7 @@ int32_t SetEnabled(bool enable) {
             std::lock_guard<std::mutex> lk(s_mutex);
             Ctx c;
             rc = ResolveCtx(c, true);   // one-shot: allow the scan fallback
-            if (rc != FR_OK) return rc;
+            if (rc != FR_OK) return RefusedEnable(rc);
             uint8_t liveMode = 0;
             if (c.modeOff >= 0 &&
                 Macht::ReadSafe(c.cmc + static_cast<uintptr_t>(c.modeOff), liveMode)) {
@@ -753,7 +762,7 @@ int32_t SetEnabled(bool enable) {
                 s_state.capturedPawn = 0;
                 LOG_WARN("Fly: NOT enabled -- the MovementMode write failed at 0x%llX",
                          (unsigned long long)(c.cmc + static_cast<uintptr_t>(c.modeOff)));
-                return FR_ERR_WRITE;   // returns before StartWorkerLocked(): nothing is armed
+                return RefusedEnable(FR_ERR_WRITE);   // before StartWorkerLocked(): no fly worker is armed
             }
             LOG_INFO("Fly: ENABLED (baseMode=%u, speed=%.0f, preset=%d)",
                      s_state.baseMode, s_state.speed, s_state.preset);

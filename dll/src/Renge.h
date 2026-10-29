@@ -363,6 +363,25 @@ inline nlohmann::json MakeResponse(int id, nlohmann::json data = nlohmann::json(
     return res;
 }
 
+// [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] invoke_function: is the object at the instance address still of the class
+// the caller expects (`expect_class_addr`)? A dialog stays open across FIREs with the address it opened with, and the
+// function is found by NAME on the class read at that address now, so a slot freed and reused by another class would
+// run that class's same-named function. 0 = no expectation, the rule for every caller that sends none.
+inline bool InvokeTargetIsExpected(uintptr_t expectedClass, uintptr_t liveClass) {
+    return expectedClass == 0 || expectedClass == liveClass;
+}
+
+// [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The error InvokeTargetIsExpected's refusal answers with. All that is known is
+// that the class pointer at the address changed, and the slot may hold another object or none, so no class is named
+// for it. Re-opening a dialog from a view not walked again sends the same address and class, so the remedy is a fresh
+// look-up.
+inline std::string InvokeTargetRefusalText(const std::string& instanceAddr, const std::string& expectedClassName) {
+    const std::string was = expectedClassName.empty() ? "object" : expectedClassName;
+    return "Not invoked: the object at " + instanceAddr + " is no longer the " + was
+         + " this was opened on (its class pointer has changed). Look it up again before firing; in the Live Walker,"
+           " Refresh.";
+}
+
 // Build an error response
 inline nlohmann::json MakeError(int id, const std::string& errorMsg) {
     return {

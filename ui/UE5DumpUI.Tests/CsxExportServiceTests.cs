@@ -113,6 +113,7 @@ public class StubDumpService : IDumpService
     // the CLASS collector (audit #5 W8) has to be able to answer this without throwing.
     public virtual Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<List<FunctionInfoModel>> WalkFunctionsWithInterfacesAsync(string addr, CancellationToken ct = default) => WalkFunctionsAsync(addr, ct);
     public virtual Task<PropertySearchResult> SearchPropertiesAsync(string query, string[]? types = null, bool gameOnly = true, bool deep = false, int limit = 200, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<PropertySearchBatchResult> SearchPropertiesBatchAsync(string[] queries, string[]? types = null, bool gameOnly = true, int limitPerQuery = 200, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<ClassListResult> ListClassesAsync(bool gameOnly = true, int limit = 5000, CancellationToken ct = default) => throw new NotImplementedException();
@@ -134,7 +135,7 @@ public class StubDumpService : IDumpService
     public Task<EngineState> ApplyRescanAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task TriggerScanAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public Task<ScanStatusResult> GetScanStatusAsync(CancellationToken ct = default) => throw new NotImplementedException();
-    public virtual Task<InvokeFunctionResult> InvokeFunctionAsync(string funcName, string? instanceAddr = null, string? className = null, int parmsSize = 0, string? paramsHex = null, bool directCall = false, IReadOnlyList<InvokeStringParam>? stringParams = null, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<InvokeFunctionResult> InvokeFunctionAsync(string funcName, string? instanceAddr = null, string? className = null, int parmsSize = 0, string? paramsHex = null, bool directCall = false, IReadOnlyList<InvokeStringParam>? stringParams = null, string? expectClassAddr = null, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<int> GetDebugCameraStateAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<int> SetDebugCameraAsync(bool enable, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<int> GetGodModeAsync(CancellationToken ct = default) => throw new NotImplementedException();
@@ -1384,6 +1385,82 @@ public class CsxExportServiceTests
         Assert.Contains("Vartype=\"8 Bytes\"", csx);    // the LazyObjectProperty leaves
     }
 
+    // [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's FAssetPtr (0x20: FWeakObjectPtr +0, the FString path +0x10) had no arm in
+    // MapCsxType, so it fell to the raw-byte fallback: a 32-byte "Array of byte" blob, not the weak pair's 8-byte hex
+    // leaf the Soft* pointers get.
+
+    [Theory]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
+    public async Task GenerateCsx_UE4AssetPointer_IsTheWeakPairsEightByteHexLeaf(string typeName)
+    {
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "PreGameWorld", TypeName = typeName, Offset = 0x30, Size = 0x20,
+                    StrValue = "/Game/Maps/PreGame/PreGameMap.PreGameMap" },
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("Offset=\"48\" Vartype=\"8 Bytes\" Bytesize=\"8\"", csx);
+        Assert.Contains("DisplayMethod=\"hexadecimal\"", csx);
+        Assert.DoesNotContain("Array of byte", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_ArrayProperty_UE4AssetPointerInner_DrilldownOne_EachElementIsAnEightByteHexLeaf()
+    {
+        // TArray<TAssetPtr<UWorld>>: 0x20 stride, the DLL's path per element.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "ZonesToUse", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = "AssetObjectProperty", ArrayElemSize = 0x20,
+                     ArrayDataAddr = "0x9000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, Value = "/Game/Maps/Zones/Zone_A.Zone_A" },
+                         new() { Index = 1, Value = "/Game/Maps/Zones/Zone_B.Zone_B" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("Offset=\"0\" Vartype=\"8 Bytes\" Bytesize=\"8\"", csx);   // [0]
+        Assert.Contains("Offset=\"32\" Vartype=\"8 Bytes\" Bytesize=\"8\"", csx);  // [1]: 1 x 0x20
+        Assert.DoesNotContain("Array of byte", csx);
+    }
+
+    // A loaded element carries its object's name (the DLL stamps ptrName for a loaded soft or asset element), and
+    // the pointer-family converter puts it in the label. The asset pair, missing from that family, went through the
+    // scalar converter, which labels by a short Value only -- an asset path never is one -- so it read "[0]".
+    [Theory]
+    [InlineData("SoftObjectProperty", 0x28)]   // CONTROL: the 4.18+ name
+    [InlineData("AssetObjectProperty", 0x20)]
+    [InlineData("AssetClassProperty", 0x20)]
+    public async Task GenerateCsx_ArrayProperty_LoadedAssetPointerElement_IsLabelledWithItsObject(string innerType, int stride)
+    {
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "ZonesToUse", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+                     ArrayCount = 2, ArrayInnerType = innerType, ArrayElemSize = stride,
+                     ArrayDataAddr = "0x9000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, Value = "/Game/Maps/Zones/Zone_A.Zone_A",
+                                 PtrAddress = "0xE01", PtrName = "Zone_A", PtrClassName = "World" },
+                         new() { Index = 1, Value = "/Game/Maps/Zones/Zone_B.Zone_B" },   // not loaded
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1, ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("Description=\"[0] Zone_A\"", csx);
+        Assert.Contains("Description=\"[1]\"", csx);
+        Assert.Contains($"Offset=\"{stride}\" Vartype=\"8 Bytes\" Bytesize=\"8\"", csx);
+    }
+
     [Fact]
     public async Task GenerateCsx_ArrayProperty_DelegateInner_DrilldownOne_ShowsTargets()
     {
@@ -1887,6 +1964,8 @@ public class CsxExportServiceTests
     [InlineData("SoftObjectProperty")]   // FSoftObjectPath
     [InlineData("SoftClassProperty")]    // FSoftObjectPath
     [InlineData("LazyObjectProperty")]   // FWeakObjectPtr at +0, FGuid after it
+    [InlineData("AssetObjectProperty")]  // [UE4-ASSETPTR-EXPORTS] FWeakObjectPtr at +0, the FString path at +0x10
+    [InlineData("AssetClassProperty")]
     public async Task Csx_DrillDown_NonPointerSlot_IsNotDereferenced(string typeName)
     {
         var csx = await DrillCsxFor(typeName);

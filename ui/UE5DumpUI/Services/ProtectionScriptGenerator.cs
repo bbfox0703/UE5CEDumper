@@ -58,7 +58,7 @@ public static class ProtectionScriptGenerator
         {
             Line(sb, "  showMessage('[GodMode] g_invokeMailbox not found -- is " +
                       "UE5Dumper.dll injected?')");
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         else
         {
@@ -69,7 +69,7 @@ public static class ProtectionScriptGenerator
         Line(sb, "end");
         // [W2-CEGEN-MODAL] Every shared bail below takes the block's mode: [ENABLE] announces and unticks, [DISABLE]
         // dbg()s and returns -- one EmitBlock used to give the untick the tick's modal, as MovementScriptGenerator never did.
-        var bail = enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn;
+        var bail = enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn;
         // Contract check BEFORE the first write: if the layout moved we would
         // otherwise scribble on whatever now lives at those offsets.
         CeLuaHygiene.AppendContractCheck(sb, "GodMode", bail);
@@ -95,9 +95,12 @@ public static class ProtectionScriptGenerator
         Line(sb, "if state < 0 then");
         if (enable)
         {
-            Line(sb, $"  showMessage('[GodMode] {label} -- no pawn? (enter gameplay first)')");
-            // Nothing was applied on this branch, so the record must not stay ticked.
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            // GODMODE-FAILED-TICK-LATCHES-WANT: not "applied nothing". Solitar::SetGodMode stores the want before it
+            // applies and keeps re-asserting whatever it answered, so the hold is ARMED and engages on the next pawn --
+            // the UI card's "ON (pending)". The row stays ticked, so unticking it is what cancels the hold.
+            Line(sb, $"  showMessage('[GodMode] {label} is armed -- no pawn yet (or this pawn has no bCanBeDamaged). " +
+                      "It applies as soon as one exists; untick the record to cancel.')" +
+                      "  -- not a failure: the hold is armed, so the row stays ticked");
         }
         else
         {

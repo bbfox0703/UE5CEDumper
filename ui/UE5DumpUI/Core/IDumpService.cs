@@ -224,6 +224,12 @@ public interface IDumpService
     // --- Function Walking (for SDK export) ---
     Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default);
 
+    /// <summary>[VND584-04] <see cref="WalkFunctionsAsync"/> plus the functions the class gets only through an interface
+    /// its chain implements -- the names an invoke by name reaches -- each with <see cref="FunctionInfoModel.ViaInterface"/>.
+    /// For a function LIST; a dump or an export reads the class's own functions. The default serves fakes without it.</summary>
+    Task<List<FunctionInfoModel>> WalkFunctionsWithInterfacesAsync(string addr, CancellationToken ct = default)
+        => WalkFunctionsAsync(addr, ct);
+
     // --- Property Keyword Search ---
     // deep: opt-in descent into nested struct + struct-typed container element
     // schemas so a field like SaveSlotList[].MsTuneData.GP is findable by name.
@@ -518,6 +524,10 @@ public interface IDumpService
     /// <param name="stringParams">String INPUT params the DLL must build as by-value FStrings
     ///     (their 16-byte slots stay zeroed in <paramref name="paramsHex"/>). See
     ///     <see cref="InvokeStringParam"/>. Null / empty when the function takes no string args.</param>
+    /// <param name="expectClassAddr">[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The class the caller's function list was
+    ///     read from. The DLL invokes nothing when the object at <paramref name="instanceAddr"/> is now of another
+    ///     class: a dialog that stays open keeps its address while the game frees the object and reuses the slot.
+    ///     Null = no check.</param>
     Task<InvokeFunctionResult> InvokeFunctionAsync(
         string funcName,
         string? instanceAddr = null,
@@ -526,6 +536,7 @@ public interface IDumpService
         string? paramsHex = null,
         bool directCall = false,
         IReadOnlyList<InvokeStringParam>? stringParams = null,
+        string? expectClassAddr = null,
         CancellationToken ct = default);
 
     /// <summary>
@@ -541,7 +552,9 @@ public interface IDumpService
     /// stripped ToggleDebugCamera can't honour, switches the local player's
     /// controller back to the original PlayerController. Returns the resulting
     /// state (1 = ON, 0 = OFF, -1 = error), or <see cref="Constants.DebugCameraToggleQueuedResult"/>
-    /// when the toggle is QUEUED: it will still run, so never re-send it. [W3-DEBUGCAM-QUEUED]
+    /// when the toggle is QUEUED. A queued ON will still run, so never re-send it [W3-DEBUGCAM-QUEUED];
+    /// a queued OFF does not turn the camera off on stock UE 4.18-5.7, so the camera stays on until a
+    /// Force OFF (or a CE untick) sent again once the game responds. [DEBUGCAM-QUEUED-OFF-NOESCALATE]
     /// </summary>
     Task<int> SetDebugCameraAsync(bool enable, CancellationToken ct = default);
 

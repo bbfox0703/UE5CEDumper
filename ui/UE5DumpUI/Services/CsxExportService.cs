@@ -387,6 +387,8 @@ public static class CsxExportService
             "SoftObjectProperty"   => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
             "SoftClassProperty"    => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
             "LazyObjectProperty"   => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
+            // [UE4-ASSETPTR-EXPORTS] 4.11-4.17's soft pointers: the same weak pair at +0, an FString path after it.
+            "AssetObjectProperty" or "AssetClassProperty" => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
             "DelegateProperty"     => new CsxTypeInfo("8 Bytes", 8, "hexadecimal"),
             "MulticastInlineDelegateProperty" =>
                 new CsxTypeInfo("Array of byte", fieldSize > 0 ? fieldSize : 16, "hexadecimal"),
@@ -517,12 +519,15 @@ public static class CsxExportService
             if (!IsObjectPropertyType(field.TypeName)) continue;
             if (string.IsNullOrEmpty(field.PtrAddress) || field.PtrAddress == "0x0") continue;
             if (resolved.ContainsKey(field.PtrAddress)) continue;
+            // [CEXML-DEFINITION-VIEW-AS-DATA] A pointer to a type walks as the type's member layout, which is not the
+            // pointee's data: a child structure built from it reads the UScriptStruct / UClass object at instance offsets.
+            if (Helpers.ReflectionMetaClassifier.WalksAsDefinition(field.PtrClassName)) continue;
             if (!visited.Add(field.PtrAddress)) continue; // cycle detection
 
             try
             {
                 var result = await dump.WalkInstanceAsync(field.PtrAddress, field.PtrClassAddr, arrayLimit, ct: ct);
-                if (result.Fields.Count > 0)
+                if (result.Fields.Count > 0 && !result.IsDefinition)
                 {
                     resolved[field.PtrAddress] = result.Fields;
                     // Recurse deeper for nested pointers
@@ -543,12 +548,14 @@ public static class CsxExportService
     /// <summary>
     /// Check if a type name is an object/pointer property that can have a PropertyClass.
     /// DelegateProperty also exposes a single bound UObject* (the FWeakObjectPtr target),
-    /// so it gets the same pointer-style treatment in array element conversion.
+    /// so it gets the same pointer-style treatment in array element conversion. UE 4.17's
+    /// asset pointer is the soft pointer under its old name, and the DLL names a loaded
+    /// element's object for it the same way.
     /// </summary>
     private static bool IsObjectPropertyType(string typeName) => typeName is
         "ObjectProperty" or "ClassProperty" or "SoftObjectProperty" or
-        "SoftClassProperty" or "LazyObjectProperty" or "InterfaceProperty" or
-        "DelegateProperty";
+        "SoftClassProperty" or "AssetObjectProperty" or "AssetClassProperty" or
+        "LazyObjectProperty" or "InterfaceProperty" or "DelegateProperty";
 
     /// <summary>
     /// Resolve pointer targets within container elements (MapProperty, ArrayProperty, SetProperty).

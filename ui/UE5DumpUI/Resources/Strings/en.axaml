@@ -15,6 +15,10 @@
     <sys:String x:Key="str.Toolbar.PreviewLimit">Preview:</sys:String>
     <sys:String x:Key="str.Toolbar.CsxDepth">Drill Depth:</sys:String>
 
+    <!-- Clipboard: a convenience copy (an address, a path, a name) the clipboard refused. The status line names what
+         was copied only when the copy arrived; this replaces it on the same line when it did not. -->
+    <sys:String x:Key="str.Clipboard.NotCopied">Not copied, so do not paste: the clipboard still holds what was there before ({0} did not arrive). Try again.</sys:String>
+
     <!-- Banners -->
     <sys:String x:Key="str.Banner.GameThreadPaused">⏸ Game thread paused — the game isn't ticking (pause menu / alt-tab / breakpoint). Live camera &amp; function-invoke features will time out; memory scans still work. Un-pause / click back into the game for full speed.</sys:String>
 
@@ -264,6 +268,14 @@
     <sys:String x:Key="str.LiveWalker.MatchNext">▼</sys:String>
     <!-- [AOBM-LIVEWALKER-HEX-SILENT] What the HEX status line calls a pointer field's target ({0} = the field). -->
     <sys:String x:Key="str.LiveWalker.PtrTargetLabel">{0} target</sys:String>
+    <!-- [WALK-NULLCLASS-SILENT] The header names no readable class: freed, or never an object (Go takes any address). -->
+    <sys:String x:Key="str.LiveWalker.NoHeader">⚠ No UObject header at this address — freed, or not an object. Re-open it from 🌍 GWorld or the finder.</sys:String>
+    <!-- [P1-WALK-UNREADABLE] The DLL could not read the object's header at all. -->
+    <sys:String x:Key="str.LiveWalker.Unreadable">⚠ This object is no longer readable (freed?) — re-open it from 🌍 GWorld or the finder.</sys:String>
+    <!-- The DLL judged the class pointer recycled: the instance was freed and its slot reused. -->
+    <sys:String x:Key="str.LiveWalker.Stale">⚠ This object appears to have been freed/recycled — re-open it from 🌍 GWorld or the finder.</sys:String>
+    <sys:String x:Key="str.LiveWalker.DefinitionView">ℹ This is a type definition (its member layout), not a live object: its rows have no address and no value, so they cannot be edited, frozen or exported as data.</sys:String>
+    <sys:String x:Key="str.Walk.DefinitionNoData">⚠ {0}: nothing done — this is a type definition (its member layout), not a live object, so there is no data at these offsets.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.MatchPrev">Jump to the previous matching field (wraps to the last match)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.MatchNext">Jump to the next matching field (wraps to the first match)</sys:String>
     <sys:String x:Key="str.LiveWalker.GenerateCeAA">Copy CE AA Script</sys:String>
@@ -1474,6 +1486,13 @@
     <sys:String x:Key="str.Tip.Con.DbgCam.Refresh">Re-read the live Debug Camera state from the CheatManager instance.</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.ForceOn">Ensure Debug Camera is ON: read current state, and fire ToggleDebugCamera only if it is currently OFF. Idempotent — does nothing if already ON.</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.ForceOff">Ensure Debug Camera is OFF: read current state, and fire ToggleDebugCamera only if it is currently ON. This is the reliable "turn it off" — plain Run just flips whatever state it's in.</sys:String>
+    <!-- [DEBUGCAM-QUEUED-OFF-NOESCALATE] Force ON / OFF that timed out and stays queued (Console and Teleport cards).
+         A queued OFF does not turn the camera off on stock UE 4.18-5.7, so it must not promise to run. -->
+    <sys:String x:Key="str.DbgCam.QueuedOn">⏳ Force ON: the toggle is QUEUED — the game thread is busy (stalled or unfocused). It will run when the game thread is free. Do not press Force ON again: the toggle is already queued.</sys:String>
+    <sys:String x:Key="str.DbgCam.QueuedOff">⏳ Force OFF did not complete — the game thread is busy (stalled or unfocused), and a queued OFF does not turn the camera off on most engines: press Force OFF again once the game responds.</sys:String>
+    <!-- [DBGCAM-OFF-OVER-QUEUED-ON] The DLL's -6: this Force was NOT sent, because an earlier one of the other direction is still queued. -->
+    <sys:String x:Key="str.DbgCam.BlockedOn">⏳ Force ON was not sent — an earlier Force OFF is still queued (the game thread is busy). Press Force ON again once the game responds.</sys:String>
+    <sys:String x:Key="str.DbgCam.BlockedOff">⏳ Force OFF was not sent — an earlier Force ON is still queued (the game thread is busy) and will turn the camera on. Press Force OFF again once the game responds.</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.CopyCe">Generate a stateful CE memory-record AA Script (tick = camera ON, untick = camera OFF) — the same robust DLL path as Force On/Off. Self-contained: talks to the DLL mailbox directly, so NO ue5_invoke_helper.lua embed is needed (just UE5Dumper.dll injected). Ships to AOBMaker if connected, else the clipboard.</sys:String>
 
     <!-- Teleport panel (BugIt-style: marker save/recall + cursor teleport) -->
@@ -1513,6 +1532,8 @@
     <sys:String x:Key="str.TP.CopyBugItGo">Copy as BugItGo</sys:String>
     <sys:String x:Key="str.TP.RunBugItGo">Run</sys:String>
     <sys:String x:Key="str.TP.BugHint">Paste 'BugItGo X Y Z', 'X Y Z', or a ?BugLoc=(...)?BugRot=(...) string</sys:String>
+    <!-- Copy as BugItGo fills the Run field whatever the clipboard does: a refused copy keeps that half and drops the claim. -->
+    <sys:String x:Key="str.TP.BugItNotCopied">BugIt: {0} (filled the Run field; not copied, so do not paste: the clipboard still holds what was there before).</sys:String>
     <sys:String x:Key="str.TP.LastHeader">Last Position (auto-saved)</sys:String>
     <sys:String x:Key="str.TP.LastHint">The dumper records where you were just before every Recall / Force / BugItGo / cursor teleport, so you can undo a jump that went wrong. This slot is managed by the system — you can't save into it, only recall it.</sys:String>
     <sys:String x:Key="str.TP.RecallLast">Recall last</sys:String>
@@ -1598,6 +1619,11 @@
     <sys:String x:Key="str.Tip.TP.StHold">Force the detected meter to 0 on every live instance of its class and hold it there (re-asserted on a timer). "N held" shows how many instances are held. With no live instance yet, the hold is armed and applies as soon as one spawns.</sys:String>
     <sys:String x:Key="str.Tip.TP.StReset">Release the hold — restore the captured base value and stop holding the meter.</sys:String>
     <sys:String x:Key="str.TP.StDetectWhileHolding">Still holding {0} at 0 (Detect found {1} candidate(s)). Reset first to hold a different meter.</sys:String>
+    <!-- [STEALTH-RESET-STALE-HELD] Reset with a meter (the hold was released) and with none (nothing was sent, and
+         nothing is known about a hold: one set before a reconnect may still run). -->
+    <sys:String x:Key="str.TP.StReleased">Released the stealth-meter hold.</sys:String>
+    <sys:String x:Key="str.TP.StNothingToRelease">No stealth meter is known to this card, so Reset sent nothing. Detect the meter first, then Reset.</sys:String>
+    <sys:String x:Key="str.TP.StNothingHeld">Nothing is held, so Reset sent nothing.</sys:String>
     <sys:String x:Key="str.TP.StArmed">⏳ Hold @0 on {0} is ARMED but holding nothing yet — no live instance of {1} or any subclass exists right now. It applies as soon as one spawns; Reset releases it.</sys:String>
     <sys:String x:Key="str.TP.StRearmRefused">Hold @0 refused (DLL error {0}). The earlier hold on {1} stays armed; Reset releases it.</sys:String>
     <sys:String x:Key="str.TP.FgHeader">Keep Foreground</sys:String>
@@ -1618,6 +1644,13 @@
     <sys:String x:Key="str.Tip.TP.TrainerExport">Bake this game's GWorld chain + offsets into a self-contained CE Lua trainer (Move Speed / Gravity / Super Jump / GodMode / coordinate TP) and push it straight into Cheat Engine via the AOBMaker plugin. Runs WITHOUT the DLL afterwards. Valid only for this exact game build — regenerate after a patch. Requires the AOBMaker plugin.</sys:String>
     <!-- [AOBM-TRAINER-SETUP-MODAL] Every entry lands unticked, Setup included. {0} = entries pushed. -->
     <sys:String x:Key="str.TP.Trainer.Pushed">Standalone trainer pushed to CE ({0} entries): tick Setup first, then the features you want. No DLL needed henceforth.</sys:String>
+    <!-- [TRAINER-PUSH-TIMEDOUT-TEXT] Why the push stopped: {0} pushed of {1}, {2} the entry it stopped at. A lost reply may
+         have made that entry (AOBMaker reply section 3 rule 8); the other three made nothing. NotReached's {3} is the
+         bridge's own unavailable sentence (busy, refused, absent). -->
+    <sys:String x:Key="str.TP.Trainer.TimedOut">⚠ Pushed {0}/{1} entries — no reply from Cheat Engine for '{2}' (it timed out, or the pipe closed): it may still have been added. Check Cheat Engine's address list before pushing again.</sys:String>
+    <sys:String x:Key="str.TP.Trainer.NotAdded">⚠ Pushed {0}/{1} entries — '{2}' was not added: {3}.</sys:String>
+    <sys:String x:Key="str.TP.Trainer.NotReached">⚠ Pushed {0}/{1} entries — {3}; '{2}' and the rest were not added.</sys:String>
+    <sys:String x:Key="str.TP.Trainer.RefusedNoReason">⚠ Pushed {0}/{1} entries — Cheat Engine refused '{2}' without a reason; it and the rest were not added.</sys:String>
 
     <!-- Move Speed multiplier (Laufen — force UCharacterMovementComponent.MaxWalkSpeed) -->
     <sys:String x:Key="str.TP.MsHeader">Move Speed</sys:String>
@@ -1779,6 +1812,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.TP.LibEditLabel">Label:</sys:String>
     <sys:String x:Key="str.TP.LibEditGroup">Group:</sys:String>
     <sys:String x:Key="str.TP.LibApplyEdit">Apply</sys:String>
+    <sys:String x:Key="str.TP.LibEditNoQuote">A label or group you change cannot contain a double quote ("). Nothing was changed.</sys:String>
     <sys:String x:Key="str.TP.LibUpdateCoords">Update coords from current</sys:String>
     <sys:String x:Key="str.Tip.TP.LibSaveCurrent">Read the live pose and add it to the library, labelled after the current map.</sys:String>
     <sys:String x:Key="str.Tip.TP.LibAddFields">Add whatever is currently typed in the "Teleport to Coordinates" boxes above as a new library entry.</sys:String>
@@ -1814,6 +1848,16 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
 
     <sys:String x:Key="str.TP.LibExportLuaNoDll">Push to CE (no DLL)</sys:String>
     <sys:String x:Key="str.Tip.TP.LibExportLuaNoDll">Same picker, but the generated script teleports by raw memory write, so UE5Dumper.dll does NOT have to be injected. "No DLL" refers to that only. REQUIRES the AOBMaker CE plugin and is disabled without it — unlike the button on its left there is deliberately no clipboard fallback, because the script calls helpers defined by the Standalone Trainer's Setup record, which only an AOBMaker push can deliver. Lands in the "UE5CEDumper (no-DLL trainer)" group; enable "UE5 Trainer: Setup" before using it. Weaker than the DLL path: no map guard (the map name is only readable through the DLL), and the offsets go stale when the game is patched.</sys:String>
+    <!-- [COORDPICK-OVERSIZE-REASON] A no-DLL push the bridge or Cheat Engine refused, with the reason it gave: a library
+         over AOBMaker's message limit is refused before a byte is sent, and is no dropped pipe. -->
+    <sys:String x:Key="str.TP.LibNoDllNotAdded">⚠ The no-DLL picker was not added to Cheat Engine: {0}.</sys:String>
+    <!-- [COORDPICK-TIMEDOUT-TEXT] No reply after the request was sent (the wait ran out, or the pipe broke or hit
+         end of file, which the bridge reports the same way): the plugin may have made the record (AOBMaker reply
+         section 3 rule 8), so the line warns against a second press rather than saying nothing was added. -->
+    <sys:String x:Key="str.TP.LibNoDllTimedOut">⚠ No reply from Cheat Engine for the no-DLL picker (it timed out, or the pipe closed): it may still have been added. Check Cheat Engine's address list before pressing again.</sys:String>
+    <!-- [COORDPICK-TIMEDOUT-TEXT] {0} is the bridge's own unavailable sentence (str.AobMaker.Unavailable.*): busy, refused, absent. -->
+    <sys:String x:Key="str.TP.LibNoDllNotReached">⚠ {0}; nothing was added.</sys:String>
+    <sys:String x:Key="str.TP.LibNoDllRefusedNoReason">⚠ Cheat Engine refused the no-DLL picker without a reason; nothing was added.</sys:String>
 
     <sys:String x:Key="str.TP.LibZTol">Z tolerance:</sys:String>
     <sys:String x:Key="str.Tip.TP.LibZTol">Extra height (uu) added to Z on arrival, so landing exactly on the floor the position was captured on does not drop you through it. 0 = off. Applied at teleport time only — the saved entry keeps its exact captured Z — and baked into the Lua export so the generated picker behaves the same. Not part of the CSV.</sys:String>
@@ -1954,10 +1998,12 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <!-- Live Walker: Functions -->
     <sys:String x:Key="str.LiveWalker.Functions">Functions</sys:String>
     <sys:String x:Key="str.LiveWalker.FuncGenScript">INV</sys:String>
-    <sys:String x:Key="str.Tip.LiveWalker.FuncGenScript">INV = generate a self-contained CE AA (Auto-Assembler) Lua script for this UFunction and push it to CE (or clipboard if AOBMaker is off). It resolves a live instance + the UFunction through the DLL mailbox and calls ProcessEvent — no helper file needed. Functions with input params pop a CE form so you type values at runtime. The return value is written into the mailbox params buffer; it is NOT shown by default. Set UE5_DEBUG=1 in CE's Lua console (or edit the script's DEBUG line) to make it print the decoded return value and keep the Lua Engine window open.</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.FuncGenScript">INV = generate a self-contained CE AA (Auto-Assembler) Lua script for this UFunction and push it straight into Cheat Engine via the AOBMaker plugin. Needs the AOBMaker plugin connected: the button is greyed out while it is not. It resolves a live instance + the UFunction through the DLL mailbox and calls ProcessEvent — no helper file needed. Functions with input params pop a CE form so you type values at runtime. The return value is written into the mailbox params buffer; it is NOT shown by default. Set UE5_DEBUG=1 in CE's Lua console (or edit the script's DEBUG line) to make it print the decoded return value and keep the Lua Engine window open.</sys:String>
     <sys:String x:Key="str.LiveWalker.FuncPipeInvoke">PIPE</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.FuncPipeInvoke">PIPE = invoke this function right now, in-app, over the pipe (the DLL runs ProcessEvent in-process, bypassing CE). Opens a dialog to fill params, FIRE, and read the DECODED return value inline (this is where you SEE the result). Use this to test a call; use INV / AA(Baked) to ship a reusable CE script.</sys:String>
     <sys:String x:Key="str.LiveWalker.FuncCopyBaked">AA(Baked)</sys:String>
+    <sys:String x:Key="str.LiveWalker.FunctionsLoading">⚠ {0}: nothing done — this object's functions are still loading, and the rows shown are the previous object's.</sys:String>
+    <sys:String x:Key="str.LiveWalker.NoRowAddress">⚠ {0}: nothing done — no address was read for this row, and none is worked out from its offset.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.FuncCopyBaked">AA(Baked) = &quot;baked&quot; CE AA (Auto-Assembler) script: the param values you enter are inlined at generation time, so enabling the memory-record fires the call once with those fixed values — no runtime form. ~5x smaller than INV and redistributable. Requires ue5_invoke_helper.lua embedded in your .CT via Table -&gt; Add File... (Tools -&gt; Export CE Helper Lua File... to obtain it). Tick &quot;Verify return value&quot; in the dialog for a full before/after dump, or set UE5_DEBUG=1 to print the decoded return value.</sys:String>
 
     <sys:String x:Key="str.LiveWalker.GuessWhat">Guess?</sys:String>
@@ -1974,6 +2020,8 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.LiveWalker.FuncFilterHint">Filter by name...</sys:String>
     <sys:String x:Key="str.LiveWalker.Clear">Clear</sys:String>
     <sys:String x:Key="str.LiveWalker.Col.Name">Name</sys:String>
+    <!-- [VND584-04] A function the class gets only through an interface: {0} = function, {1} = the interface. -->
+    <sys:String x:Key="str.LiveWalker.ViaInterface">{0}  (via {1})</sys:String>
     <sys:String x:Key="str.LiveWalker.Col.Return">Return</sys:String>
     <sys:String x:Key="str.LiveWalker.Col.Params">Params</sys:String>
     <sys:String x:Key="str.LiveWalker.Col.Address">Address</sys:String>

@@ -426,8 +426,8 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
     private async void OnCopyClicked(object? sender, RoutedEventArgs e)
     {
         if (_grid.SelectedItem is not FunctionPropRef x || string.IsNullOrEmpty(x.Name)) return;
-        await _platform.CopyToClipboardAsync(x.Name);
-        _statusLabel.Text = $"Copied: {x.Name}";
-        _statusLabel.Foreground = new SolidColorBrush(Color.Parse("#4EC9B0"));
+        bool copied = await _platform.CopyToClipboardAsync(x.Name);
+        _statusLabel.Text = copied ? $"Copied: {x.Name}" : UE5DumpUI.Helpers.ClipboardConvenience.NotCopiedText(x.Name);
+        _statusLabel.Foreground = new SolidColorBrush(Color.Parse(copied ? "#4EC9B0" : "#F44747"));
     }
 }

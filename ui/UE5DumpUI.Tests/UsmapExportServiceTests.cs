@@ -243,6 +243,43 @@ public class UsmapExportServiceTests
             UsmapExportService.MapPropertyType("AnsiStrProperty"));
     }
 
+    // [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's soft pointers -- AssetObjectProperty / AssetClassProperty, renamed Soft* in
+    // 4.18 -- take the canonical slot the enum already reserves for them, AssetObjectProperty = 16 (the class flavour too,
+    // as SoftClass shares SoftObject's). Mapped by name, they were Unknown: a 0xFF no reader can skip.
+
+    [Theory]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
+    public void MapPropertyType_UE4AssetPointers_TakeTheAssetObjectSlot(string typeName)
+    {
+        Assert.Equal(UsmapExportService.EPropertyType.AssetObjectProperty,
+            UsmapExportService.MapPropertyType(typeName));
+        Assert.Equal(16, (byte)UsmapExportService.MapPropertyType(typeName));
+    }
+
+    [Theory]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
+    public void WritePropertyType_UE4AssetPointer_AloneAndAsAnArrayInner_WritesTheSlotAndNothingAfter(string typeName)
+    {
+        // Like the soft pointers, no extra type data: [16] alone, [ArrayProperty=8][16] as an inner.
+        var nameTable = new UsmapExportService.NameTable();
+        byte[] Write(FieldInfoModel f)
+        {
+            using var ms = new MemoryStream();
+            var w = new BinaryWriter(ms);
+            UsmapExportService.WritePropertyType(w, f, nameTable);
+            w.Flush();
+            return ms.ToArray();
+        }
+
+        Assert.Equal(new byte[] { 16 }, Write(new FieldInfoModel { TypeName = typeName, ObjClassName = "World" }));
+        Assert.Equal(new byte[] { 8, 16 }, Write(new FieldInfoModel
+        {
+            TypeName = "ArrayProperty", InnerType = typeName, InnerObjClass = "World",
+        }));
+    }
+
     [Fact]
     public void MapPropertyType_OptionalProperty_ReturnsOptional()
     {

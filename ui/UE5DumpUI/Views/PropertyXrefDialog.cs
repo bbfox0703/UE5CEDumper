@@ -445,9 +445,11 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
     {
         if (_grid.SelectedItem is not PropertyXrefMatch x || string.IsNullOrEmpty(x.FunctionFullName))
             return;
-        await _platform.CopyToClipboardAsync(x.FunctionFullName);
-        _statusLabel.Text = $"Copied: {x.FunctionFullName}";
-        _statusLabel.Foreground = new SolidColorBrush(Color.Parse("#4EC9B0"));
+        bool copied = await _platform.CopyToClipboardAsync(x.FunctionFullName);
+        _statusLabel.Text = copied
+            ? $"Copied: {x.FunctionFullName}"
+            : UE5DumpUI.Helpers.ClipboardConvenience.NotCopiedText(x.FunctionFullName);
+        _statusLabel.Foreground = new SolidColorBrush(Color.Parse(copied ? "#4EC9B0" : "#F44747"));
     }
 
     // "Disassemble in CE": resolve the UFunction's native code entry point

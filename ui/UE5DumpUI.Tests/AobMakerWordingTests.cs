@@ -156,8 +156,97 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyPtrTargetLabel,
              UE5DumpUI.ViewModels.LiveWalkerViewModel.PtrTargetLabel("P"), "P");
 
+        // [WALK-NULLCLASS-SILENT] Live Walker's warnings for a walk that found no object to read
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyUnreadable, UE5DumpUI.ViewModels.LiveWalkerViewModel
+             .GoneObjectStatus(new UE5DumpUI.Models.InstanceWalkResult { IsUnreadable = true })!);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyNoHeader, UE5DumpUI.ViewModels.LiveWalkerViewModel
+             .GoneObjectStatus(new UE5DumpUI.Models.InstanceWalkResult { IsNoHeader = true })!);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyStale, UE5DumpUI.ViewModels.LiveWalkerViewModel
+             .GoneObjectStatus(new UE5DumpUI.Models.InstanceWalkResult { IsStale = true })!);
+
+        // [CEXML-DEFINITION-VIEW-AS-DATA] the definition notice, the refusal, and the button labels it names
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyDefinitionView,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.DefinitionViewText);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyDefinitionNoData,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.DefinitionNoDataText("A"), "A");
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFunctionsLoading,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.FunctionsLoadingText("A"), "A");
+        // ...and the Functions row buttons that refusal names.
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFuncGenScriptLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.FuncGenScriptLabel);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFuncPipeInvokeLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.FuncPipeInvokeLabel);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFuncCopyBakedLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.FuncCopyBakedLabel);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFuncAsmLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.FuncAsmLabel);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyExportCeLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.ExportCeLabel);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyAddrLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.AddrLabel);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyHexLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.HexLabel);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyAddToCeLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.AddToCeLabel);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyPushCeFieldLabel,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.PushCeFieldLabel);
+        Same(UE5DumpUI.ViewModels.InstanceFinderViewModel.KeyAddrLabel, UE5DumpUI.ViewModels.InstanceFinderViewModel.AddrLabel);
+
+        // A convenience copy the clipboard refused: the line that replaces "Copied ..."
+        Same(ClipboardConvenience.KeyNotCopied, ClipboardConvenience.NotCopiedText("7FF6"), "7FF6");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyBugItNotCopied,
+             UE5DumpUI.ViewModels.TeleportViewModel.BugItNotCopiedText("BugItGo 1 2 3"), "BugItGo 1 2 3");
+
+        // [COORDPICK-TIMEDOUT-TEXT] The no-DLL coordinate picker's push with no reply in time
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordNoDllTimedOut,
+             UE5DumpUI.ViewModels.TeleportViewModel.CoordNoDllTimedOutText);
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordNoDllNotReached,
+             UE5DumpUI.ViewModels.TeleportViewModel.CoordNoDllNotReachedText("U"), "U");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordNoDllRefusedNoReason,
+             UE5DumpUI.ViewModels.TeleportViewModel.CoordNoDllRefusedNoReasonText);
+
+        // [B21-CSV-QUOTE-HOLES] the coordinate editor's refusal of a typed double quote
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordEditNoQuote,
+             UE5DumpUI.ViewModels.TeleportViewModel.CoordEditNoQuoteText);
+
+        // [STEALTH-RESET-STALE-HELD] Reset on a card that knows nothing is held
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyStealthNothingHeld,
+             UE5DumpUI.ViewModels.TeleportViewModel.StealthNothingHeldText);
+
+        // [TRAINER-PUSH-TIMEDOUT-TEXT] the Standalone Trainer push stopped at an entry
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyTrainerTimedOut,
+             UE5DumpUI.ViewModels.TeleportViewModel.TrainerTimedOutText(1, 9, "E"), "1", "9", "E");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyTrainerNotAdded,
+             UE5DumpUI.ViewModels.TeleportViewModel.TrainerNotAddedText(1, 9, "E", "W"), "1", "9", "E", "W");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyTrainerNotReached,
+             UE5DumpUI.ViewModels.TeleportViewModel.TrainerNotReachedText(1, 9, "E", "U"), "1", "9", "E", "U");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyTrainerRefusedNoReason,
+             UE5DumpUI.ViewModels.TeleportViewModel.TrainerRefusedNoReasonText(1, 9, "E"), "1", "9", "E");
+
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(51, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(78, checkedCount);   // guard the guard: a skipped block must not pass silently
+    }
+
+    [Fact]
+    public void Inv_tooltip_promises_no_clipboard_route_the_greyed_button_cannot_reach()
+    {
+        // [INV-TOOLTIP-CLIPBOARD] Decided 2026-10-27 (the maintainer): (b), the tooltip is corrected and the button stays
+        // AOBMaker-only. The tip promised "push it to CE (or clipboard if AOBMaker is off)", but the button is IsEnabled
+        // only while AOBMaker is available, so with AOBMaker off it is greyed out (observed for the first half of L10)
+        // and that clipboard route cannot be reached from it. The two halves are pinned together: if the button ever
+        // gains a reachable clipboard route, this is the test to change along with the tip.
+        var axaml = ReadEnAxaml();
+        const string open = "x:Key=\"str.Tip.LiveWalker.FuncGenScript\">";
+        int start = axaml.IndexOf(open, StringComparison.Ordinal);
+        Assert.True(start >= 0, "str.Tip.LiveWalker.FuncGenScript is missing from en.axaml");
+        start += open.Length;
+        var tip = WebUtility.HtmlDecode(axaml[start..axaml.IndexOf("</sys:String>", start, StringComparison.Ordinal)]);
+
+        Assert.DoesNotContain("clipboard", tip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("AOBMaker", tip, StringComparison.Ordinal);
+        Assert.Contains("greyed out", tip, StringComparison.Ordinal);
+
+        var panel = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/LiveWalkerPanel.axaml"));
+        int btn = panel.IndexOf("Content=\"{StaticResource str.LiveWalker.FuncGenScript}\"", StringComparison.Ordinal);
+        Assert.True(btn >= 0, "the INV button is missing from LiveWalkerPanel.axaml");
+        var element = panel[btn..panel.IndexOf("/>", btn, StringComparison.Ordinal)];
+        Assert.Contains("IsEnabled=\"{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).IsAobMakerAvailable}\"",
+                        element, StringComparison.Ordinal);
+        // [INV-TOOLTIP-DISABLED] Avalonia opens no tooltip on a disabled control unless told to, so the tip that
+        // explains the grey button was never seen while AOBMaker is off -- the only time it says anything.
+        Assert.Contains("ToolTip.ShowOnDisabled=\"True\"", element, StringComparison.Ordinal);
     }
 
     private const string RecordXml =

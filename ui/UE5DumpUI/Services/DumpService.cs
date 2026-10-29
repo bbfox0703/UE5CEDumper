@@ -608,6 +608,7 @@ public sealed class DumpService : IDumpService
             IsDefinition = o["is_definition"]?.GetValue<bool>() ?? false,
             IsStale = o["stale"]?.GetValue<bool>() ?? false,
             IsUnreadable = o["unreadable"]?.GetValue<bool>() ?? false,   // [P1-WALK-UNREADABLE] additive
+            IsNoHeader = o["no_header"]?.GetValue<bool>() ?? false,       // [WALK-NULLCLASS-SILENT] additive
             GapFillSkipped = o["gap_fill_skipped"]?.GetValue<bool>() ?? false,
             PropertiesSize = o["props_size"]?.GetValue<int>() ?? 0,
         };
@@ -1703,13 +1704,22 @@ public sealed class DumpService : IDumpService
     }
 
 
-    public async Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
+    public Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
+        => WalkFunctionsCoreAsync(addr, includeInterfaces: false, ct);
+
+    public Task<List<FunctionInfoModel>> WalkFunctionsWithInterfacesAsync(string addr, CancellationToken ct = default)
+        => WalkFunctionsCoreAsync(addr, includeInterfaces: true, ct);
+
+    private async Task<List<FunctionInfoModel>> WalkFunctionsCoreAsync(string addr, bool includeInterfaces,
+                                                                  CancellationToken ct)
     {
         var req = new JsonObject
         {
             ["cmd"] = "walk_functions",
             ["addr"] = addr,
         };
+        // [VND584-04] Sent only when asked: without it the DLL's reply is the class's own functions, as before.
+        if (includeInterfaces) req["include_interfaces"] = true;
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
 
@@ -1773,6 +1783,7 @@ public sealed class DumpService : IDumpService
                     ReturnValueOffset = fo["ret_offset"]?.GetValue<ushort>() ?? 0xFFFF,
                     ReturnType = fo["ret"]?.GetValue<string>() ?? "",
                     Params = parms,
+                    ViaInterface = fo["interface"]?.GetValue<string>() ?? "",   // [VND584-04] additive
                 });
             }
         }
@@ -3594,6 +3605,7 @@ public sealed class DumpService : IDumpService
         string? paramsHex = null,
         bool directCall = false,
         IReadOnlyList<InvokeStringParam>? stringParams = null,
+        string? expectClassAddr = null,
         CancellationToken ct = default)
     {
         var req = new JsonObject
@@ -3619,6 +3631,10 @@ public sealed class DumpService : IDumpService
         // false preserves the existing behavior for LiveWalker's Pipe Invoke.
         if (directCall)
             req["direct_call"] = true;
+
+        // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Absent = no check, as for every caller that sends none.
+        if (!string.IsNullOrEmpty(expectClassAddr))
+            req["expect_class_addr"] = expectClassAddr;
 
         // String INPUT params: sent as descriptors so the DLL builds each
         // by-value FString in the game process (its Data pointer must be a

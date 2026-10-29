@@ -255,12 +255,83 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     }
 
     internal const string KeyTrainerPushed = "str.TP.Trainer.Pushed";
+    internal const string KeyStealthReleased = "str.TP.StReleased";
+    internal const string KeyStealthNothing = "str.TP.StNothingToRelease";
+    private static string StealthReleasedText => AobMakerStatus.Say(KeyStealthReleased, "Released the stealth-meter hold.");
+    private static string StealthNothingText => AobMakerStatus.Say(KeyStealthNothing,
+        "No stealth meter is known to this card, so Reset sent nothing. Detect the meter first, then Reset.");
+    internal const string KeyStealthNothingHeld = "str.TP.StNothingHeld";
+    internal static string StealthNothingHeldText => AobMakerStatus.Say(KeyStealthNothingHeld,
+        "Nothing is held, so Reset sent nothing.");
+
+    internal const string KeyBugItNotCopied = "str.TP.BugItNotCopied";
+    /// <summary>Copy as BugItGo fills the Run field whatever the clipboard does, so a refused copy keeps that half of
+    /// the line and drops the claim: the clipboard still holds what was there before.</summary>
+    internal static string BugItNotCopiedText(string bugItGo)
+        => AobMakerStatus.Say(KeyBugItNotCopied,
+            "BugIt: {0} (filled the Run field; not copied, so do not paste: the clipboard still holds what was there before).",
+            bugItGo);
+
+    internal const string KeyCoordNoDllNotAdded = "str.TP.LibNoDllNotAdded";
+    /// <summary>[COORDPICK-OVERSIZE-REASON] A no-DLL picker push refused with a reason says it; the reason's own closing
+    /// period is dropped, as the sentence adds one.</summary>
+    private static string CoordNoDllNotAddedText(string why)
+        => AobMakerStatus.Say(KeyCoordNoDllNotAdded, "⚠ The no-DLL picker was not added to Cheat Engine: {0}.",
+                              why.TrimEnd('.'));
+
+    internal const string KeyCoordEditNoQuote = "str.TP.LibEditNoQuote";
+    /// <summary>[B21-CSV-QUOTE-HOLES] The Label/Group editor's refusal: a field the edit changes may not hold a
+    /// double quote, even one it already held -- so the text states that rule, not that a quote was typed.</summary>
+    internal static string CoordEditNoQuoteText => AobMakerStatus.Say(KeyCoordEditNoQuote,
+        "A label or group you change cannot contain a double quote (\"). Nothing was changed.");
+
+    internal const string KeyCoordNoDllTimedOut = "str.TP.LibNoDllTimedOut";
+    /// <summary>[COORDPICK-TIMEDOUT-TEXT] No reply is not "nothing was added": the plugin may have made the record
+    /// after the wait gave up (AOBMaker reply section 3 rule 8), and a second press would add a second picker. The
+    /// bridge reports a pipe that broke after the request the same way, so the line names both causes.</summary>
+    internal static string CoordNoDllTimedOutText => AobMakerStatus.Say(KeyCoordNoDllTimedOut,
+        "⚠ No reply from Cheat Engine for the no-DLL picker (it timed out, or the pipe closed): it may still have been added. " +
+        "Check Cheat Engine's address list before pressing again.");
+
+    internal const string KeyCoordNoDllNotReached = "str.TP.LibNoDllNotReached";
+    /// <summary>[COORDPICK-TIMEDOUT-TEXT] The pipe never opened, so nothing was sent. <paramref name="unavailable"/> is
+    /// the bridge's own reason: a pipe another client holds is not a closed Cheat Engine ([W1-PIPEBUSY-STATUS]).</summary>
+    internal static string CoordNoDllNotReachedText(string unavailable) => AobMakerStatus.Say(KeyCoordNoDllNotReached,
+        "⚠ {0}; nothing was added.", unavailable);
+
+    internal const string KeyCoordNoDllRefusedNoReason = "str.TP.LibNoDllRefusedNoReason";
+    /// <summary>[COORDPICK-TIMEDOUT-TEXT] A reply came back, not created and with no reason: the plugin was reached, so
+    /// the line says it refused.</summary>
+    internal static string CoordNoDllRefusedNoReasonText => AobMakerStatus.Say(KeyCoordNoDllRefusedNoReason,
+        "⚠ Cheat Engine refused the no-DLL picker without a reason; nothing was added.");
 
     /// <summary>[AOBM-TRAINER-SETUP-MODAL] The trainer arrives unticked, so the success line has to say what to tick.</summary>
     internal static string TrainerPushedText(int entries)
         => AobMakerStatus.Say(KeyTrainerPushed,
             "Standalone trainer pushed to CE ({0} entries): tick Setup first, then the features you want. No DLL needed henceforth.",
             entries);
+
+    // [TRAINER-PUSH-TIMEDOUT-TEXT] Why the push stopped at an entry, split as the no-DLL picker's is
+    // ([COORDPICK-TIMEDOUT-TEXT]): a lost reply may have made the entry, the others made nothing. {0} entries were
+    // pushed of {1}; {2} names the entry the push stopped at.
+    internal const string KeyTrainerTimedOut = "str.TP.Trainer.TimedOut";
+    internal const string KeyTrainerNotAdded = "str.TP.Trainer.NotAdded";
+    internal const string KeyTrainerNotReached = "str.TP.Trainer.NotReached";
+    internal const string KeyTrainerRefusedNoReason = "str.TP.Trainer.RefusedNoReason";
+    internal static string TrainerTimedOutText(int ok, int total, string entry)
+        => AobMakerStatus.Say(KeyTrainerTimedOut,
+            "⚠ Pushed {0}/{1} entries — no reply from Cheat Engine for '{2}' (it timed out, or the pipe closed): it may " +
+            "still have been added. Check Cheat Engine's address list before pushing again.", ok, total, entry);
+    internal static string TrainerNotAddedText(int ok, int total, string entry, string why)
+        => AobMakerStatus.Say(KeyTrainerNotAdded, "⚠ Pushed {0}/{1} entries — '{2}' was not added: {3}.",
+            ok, total, entry, why.TrimEnd('.'));
+    internal static string TrainerNotReachedText(int ok, int total, string entry, string unavailable)
+        => AobMakerStatus.Say(KeyTrainerNotReached, "⚠ Pushed {0}/{1} entries — {3}; '{2}' and the rest were not added.",
+            ok, total, entry, unavailable);
+    internal static string TrainerRefusedNoReasonText(int ok, int total, string entry)
+        => AobMakerStatus.Say(KeyTrainerRefusedNoReason,
+            "⚠ Pushed {0}/{1} entries — Cheat Engine refused '{2}' without a reason; it and the rest were not added.",
+            ok, total, entry);
 
     /// <summary>
     /// Fetch baked offsets from the DLL, emit a no-DLL standalone CE-Lua trainer
@@ -302,6 +373,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
             var entries = StandaloneTrainerScriptGenerator.Generate(offs);
             int ok = 0;
+            string? stopped = null;   // why the push stopped short, null when every entry went in
             foreach (var e in entries)
             {
                 // [AOBM-TRAINER-SETUP-MODAL] Unticked, Setup included. A Setup that fails calls showMessage, the house
@@ -312,15 +384,20 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 // activation, and the bridge keeps serving other clients while that modal is open (measured live
                 // 2026-09-29, build 3603: a GetAttachedProcess and a CreateAAScript whose Lua runs on CE's main
                 // thread both answered at once) -- only the worker that is itself waiting on the activation stalls.
-                var sent = await _aobMaker.CreateAAScriptAsync(e.Description, e.Script, autoActivate: false,
-                                                               group: CeGroupTrainer);
-                if (sent) { ok++; }
-                else { break; }   // pipe dropped mid-push (CE closed?)
+                var pushed = await _aobMaker.CreateAAScriptDetailedAsync(e.Description, e.Script, autoActivate: false,
+                                                                         group: CeGroupTrainer);
+                if (pushed.Created) { ok++; continue; }
+                stopped = pushed.TimedOut
+                    ? TrainerTimedOutText(ok, entries.Count, e.Description)
+                    : pushed.Message is { } why
+                        ? TrainerNotAddedText(ok, entries.Count, e.Description, why)
+                    : _aobMaker.IsAvailable   // a reply arrived; only a connect that failed leaves the bridge unavailable
+                        ? TrainerRefusedNoReasonText(ok, entries.Count, e.Description)
+                        : TrainerNotReachedText(ok, entries.Count, e.Description, AobMakerUnavailable.Text(_aobMaker));
+                break;
             }
             IsAobMakerAvailable = _aobMaker.IsAvailable;
-            StatusText = ok == entries.Count
-                ? TrainerPushedText(ok)
-                : $"⚠ Pushed {ok}/{entries.Count} entries — AOBMaker pipe dropped (CE closed?).";
+            StatusText = stopped ?? TrainerPushedText(ok);
             _log.Info($"Standalone trainer export: {ok}/{entries.Count} entries pushed to CE");
         }
         catch (Exception ex)
@@ -966,6 +1043,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             _stealthCandidate = null;
             _stealthArmed = false;   // the hold outlives the pipe; the connect prime claims it again if it can
             _stealthKnown = false;
+            _stealthNoneHeld = false;
             StealthFieldText = "—";
             ApplyStealthState(-1);   // [A4-STEALTH-PRIME] Unknown until the connect prime reads the DLL's holds
         }
@@ -1550,8 +1628,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // Paste straight into the Run field so the user can fire BugItGo
             // immediately, and keep the clipboard copy for pasting elsewhere.
             BugItGoInput = s;
-            await _platform.CopyToClipboardAsync(s);
-            StatusText = $"BugIt: {s} (copied + filled the Run field).";
+            bool copied = await _platform.CopyToClipboardAsync(s);
+            StatusText = copied ? $"BugIt: {s} (copied + filled the Run field)." : BugItNotCopiedText(s);
         }
         catch (Exception ex)
         {
@@ -1602,14 +1680,22 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     // ── Debug Camera (deterministic force on/off, shared with Console) ──
 
-    /// <summary>Map the DLL result (1=on, 0=off, -1=unknown, -5=toggle queued) onto the badge.</summary>
-    private void ApplyDebugCameraState(int state)
+    /// <summary>Map the DLL result (1=on, 0=off, -1=unknown, -5=toggle queued) onto the badge. A queued toggle's badge
+    /// depends on its direction, so a Force OFF says <paramref name="forcingOff"/>.</summary>
+    private void ApplyDebugCameraState(int state, bool forcingOff = false)
         => (DebugCameraState, DebugCameraBadgeColor) = state switch
         {
             1  => ("ON",      "#4EC9B0"),   // green — active
             0  => ("OFF",     "#999999"),   // grey — inactive
-            // [W3-DEBUGCAM-QUEUED] Neither ON nor OFF yet, and not "unknown": the toggle WILL run.
+            // [DEBUGCAM-QUEUED-OFF-NOESCALATE] A queued OFF is no OFF on its way: the DLL queues it only after reading
+            // the camera ON, the toggle has not run, and on stock UE 4.18-5.7 it leaves the camera on.
+            Constants.DebugCameraToggleQueuedResult when forcingOff => ("ON", "#4EC9B0"),
+            // [W3-DEBUGCAM-QUEUED] A queued ON is neither ON nor OFF yet, and not "unknown": the toggle will run.
             Constants.DebugCameraToggleQueuedResult => ("Queued", "#D7BA7D"),   // amber — pending
+            // [DBGCAM-OFF-OVER-QUEUED-ON] Nothing was sent; the earlier toggle of the other direction is still queued. An
+            // OFF over a queued ON shows what the ON showed; an ON over a queued OFF shows the camera that is still on.
+            Constants.DebugCameraToggleBlockedResult when forcingOff => ("Queued", "#D7BA7D"),
+            Constants.DebugCameraToggleBlockedResult => ("ON", "#4EC9B0"),
             _  => ("Unknown", "#888888"),
         };
 
@@ -1660,18 +1746,17 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var state = await _dump.SetDebugCameraAsync(wantOn);
-            ApplyDebugCameraState(state);
+            ApplyDebugCameraState(state, forcingOff: !wantOn);
             StatusText = state switch
             {
                 1 when wantOn  => "✓ Debug Camera forced ON.",
                 0 when !wantOn => "✓ Debug Camera forced OFF.",
                 -1 => $"Force {want}: no live CheatManager / unreadable state " +
                       "(enter gameplay first).",
-                // [W3-DEBUGCAM-QUEUED] Not a failure: the toggle WILL run. A second press would undo it.
-                Constants.DebugCameraToggleQueuedResult =>
-                      $"⏳ Force {want}: the toggle is QUEUED — the game thread is busy (stalled or unfocused). " +
-                      $"It will run when the game thread is free. Do not press Force {want} again: " +
-                      "a second toggle would undo the first.",
+                // [W3-DEBUGCAM-QUEUED] Not a failure. [DEBUGCAM-QUEUED-OFF-NOESCALATE] But only a queued ON will still
+                // take; a queued OFF does not turn the camera off -- DebugCameraText says why.
+                Constants.DebugCameraToggleQueuedResult => DebugCameraText.Queued(wantOn),
+                Constants.DebugCameraToggleBlockedResult => DebugCameraText.Blocked(wantOn),
                 _  => $"⚠ Force {want}: state is now {(state == 1 ? "ON" : "OFF")} " +
                       "— the game may re-drive the camera.",
             };
@@ -1852,6 +1937,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// story, so a teardown may pay its debt. A later Hold does not restore it -- Detect may have moved the candidate
     /// off a lost one's field -- the next connect's prime does.</summary>
     private bool _stealthKnown;
+    /// <summary>[STEALTH-RESET-STALE-HELD] The DLL said no stealth hold exists: the prime read no forced field at all,
+    /// or a release was answered. Narrower than <see cref="_stealthKnown"/>, which a prime that saw a forced field it
+    /// could not match also sets, over a hold Solide may still run. Detect does not change it: it only reads.</summary>
+    private bool _stealthNoneHeld;
 
     /// <summary>[A4-STEALTH-PRIME] The Stealth card's hold badge, in the shape every other card's badge has
     /// (<c>Apply&lt;X&gt;State</c>, which gate 17d reads): -1 Unknown, 0 Off, 1 Holding. The disconnect branch set "Off"
@@ -1924,6 +2013,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             IsBusy = true;
             ClearError();
+            _stealthNoneHeld = false;   // from here a hold may exist, whatever the answer
             var r = await _dump.ForceFieldAsync(c.ClassName, c.FieldName, "numeric", 0);
             if (r.Code < 0)
             {
@@ -1974,11 +2064,30 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             IsBusy = true;
             ClearError();
-            if (_stealthCandidate != null)
-                await _dump.ResetFieldAsync(_stealthCandidate.ClassName, _stealthCandidate.FieldName);
+            var c = _stealthCandidate;
+            if (_stealthNoneHeld)
+            {
+                // There is nothing to release. A reset_field sent now would be answered OK for a job that never
+                // existed, and read as "Released".
+                StatusText = StealthNothingHeldText;
+                return true;   // nothing was sent, so nothing failed to land
+            }
+            if (c == null)
+            {
+                // [STEALTH-RESET-STALE-HELD] No meter is known to the card: none detected yet, or a reconnect whose
+                // prime could not match a forced field to one (a loading screen has no candidates). Nothing is sent,
+                // so the badge keeps what the card knew -- "Off" was a claim over a hold Solide may still run.
+                StatusText = StealthNothingText;
+                return true;   // nothing was sent, so nothing failed to land
+            }
+            await _dump.ResetFieldAsync(c.ClassName, c.FieldName);
             _stealthArmed = false;
+            _stealthNoneHeld = true;
             (StealthState, StealthBadgeColor) = ("Off", "#999999");
-            StatusText = "Released the stealth-meter hold.";
+            // [STEALTH-RESET-STALE-HELD] The readout named the hold ("= 0 (held)"); after a release it keeps the meter's
+            // name and drops a value it no longer knows.
+            StealthFieldText = $"{c.ClassName}::{c.FieldName}";
+            StatusText = StealthReleasedText;
             return true;
         }
         catch (Exception ex)
@@ -2168,7 +2277,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 ? $"AOBMaker refused '{desc}' — copied it as CE memory-record XML instead. "
                 : $"AOBMaker not connected — copied '{desc}' as CE memory-record XML to the clipboard. ")
                 + $"Paste into Cheat Engine's address list (right-click → Paste), then enable it to register '{sym}'.";
-            _log.Info($"Teleport query-ptr -> clipboard XML (AOBMaker {(available ? "refused" : "absent")}): {desc}");
+            // [QUERYPTR-LOG-ABSENT-LABEL] Name the branch, the same three the status line tells apart. The
+            // already-pushed branch never asks AOBMaker, so `available` is false there too, and reading it alone
+            // logged "absent" with AOBMaker connected -- sending a log reader after a disconnect that did not happen.
+            string branch = alreadyPushed ? "already pushed this session"
+                          : available ? "AOBMaker refused"
+                          : "AOBMaker absent";
+            _log.Info($"Teleport query-ptr -> clipboard XML ({branch}): {desc}");
         }
         catch (Exception ex)
         {
@@ -2569,6 +2684,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         if (!IsConnected) return;
         var forced = await _dump.GetForcedFieldsAsync();
+        _stealthNoneHeld = forced.Count == 0;
         if (forced.Count == 0)
         {
             _stealthArmed = false;
@@ -4162,11 +4278,29 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             CoordStatus = "Label cannot be empty.";
             return;
         }
+        // [B21-CSV-QUOTE-HOLES] A TYPED double quote is refused, not stored: the export escapes one
+        // correctly, but a hand-edited CSV mis-splits on it and the import then stops (the
+        // maintainer's call, 2026-10-28). A field the edit leaves unchanged keeps the quote it
+        // already holds (imported, or typed before this), so such an entry stays editable; any
+        // field the edit changes is new input. Counting quotes instead let a typed one through
+        // whenever the same edit deleted a stored one. "Unchanged" is judged on the text as the
+        // editor showed it as well as normalized: a stored value the import cut at a space no
+        // longer equals itself once Normalize trims it.
+        static bool TypedQuote(string? edited, string next, string stored) =>
+            next.Contains('"')
+            && !string.Equals(edited ?? "", stored, StringComparison.Ordinal)
+            && !string.Equals(next, stored, StringComparison.Ordinal);
+        var group = CoordText.Normalize(EditCoordGroup, CoordText.MaxGroupLength);
+        if (TypedQuote(EditCoordLabel, label, row.Entry.Label) || TypedQuote(EditCoordGroup, group, row.Entry.Group))
+        {
+            CoordStatus = CoordEditNoQuoteText;
+            return;
+        }
         bool mutated = CoordText.HasBlockedChars(EditCoordLabel) ||
                        CoordText.HasBlockedChars(EditCoordGroup);
 
         row.Entry.Label = label;
-        row.Entry.Group = CoordText.Normalize(EditCoordGroup, CoordText.MaxGroupLength);
+        row.Entry.Group = group;
         PersistCoordLibrary();
         RebuildCoordGroups();
         ApplyCoordFilter();
@@ -4751,9 +4885,12 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             var script = CoordLibraryScriptGenerator.Generate(
                 _coordAll, CoordLibraryScriptGenerator.Flavour.NoDll, CoordZTolerance, out var folded);
 
-            bool sent = await _aobMaker.CreateAAScriptAsync(
+            // [COORDPICK-OVERSIZE-REASON] The detailed call, for the reason a refused push carries: a library over
+            // AOBMaker's message limit is refused before a byte is sent, which the bool call reported as a dropped pipe.
+            var pushed = await _aobMaker.CreateAAScriptDetailedAsync(
                 CoordLibraryScriptGenerator.NoDllRecordDescription, script,
                 autoActivate: false, group: CeGroupTrainer);
+            bool sent = pushed.Created;
             IsAobMakerAvailable = _aobMaker.IsAvailable;
 
             CoordStatus = sent
@@ -4761,7 +4898,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                   "Enable 'UE5 Trainer: Setup' first — this flavour uses its baked offsets, " +
                   "has no map guard, and goes stale when the game is patched."
                   + FoldedGroupsNote(folded)
-                : "⚠ AOBMaker pipe dropped mid-push (CE closed?) — nothing was added.";
+                : pushed.TimedOut
+                    ? CoordNoDllTimedOutText
+                : pushed.Message is { } why
+                    ? CoordNoDllNotAddedText(why)
+                : _aobMaker.IsAvailable   // a reply arrived; only a connect that failed leaves the bridge unavailable
+                    ? CoordNoDllRefusedNoReasonText
+                    : CoordNoDllNotReachedText(AobMakerUnavailable.Text(_aobMaker));
             if (sent)
                 _log.Info($"Coordinate library (no-DLL) -> CE via AOBMaker ({_coordAll.Count} entries)");
         }

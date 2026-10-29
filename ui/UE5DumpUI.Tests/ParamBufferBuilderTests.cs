@@ -242,6 +242,35 @@ public class ParamBufferBuilderTests
         Assert.False(ParamBufferBuilder.IsPickablePointerType(typeName));
     }
 
+    // --- [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's asset pointers are empty-only ---
+    //
+    // An FAssetPtr is FWeakObjectPtr +0, TagAtLastTest +8 and the path as one FString at +0x10 (0x20). Nothing a
+    // textbox holds can become one: the path needs engine-allocated storage, and the DLL converts only weak / soft /
+    // lazy slots ([VND584-01]). A typed value went through WriteParam's size fallback as 4 bytes over the weak index.
+    // All-zero is its null (an empty FString and an unset weak pair), so an untouched box still sends that.
+
+    [Theory]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
+    public void UE4AssetPointer_IsEmptyOnly_ItsZeroDefaultPasses_ATypedValueIsRefused(string typeName)
+    {
+        Assert.True(ParamBufferBuilder.IsEmptyOnlyParam(typeName));
+        Assert.True(ParamBufferBuilder.TryValidateScalar(typeName, 0x20, ParamBufferBuilder.GetDefaultValue(typeName), out _));
+        Assert.True(ParamBufferBuilder.TryValidateScalar(typeName, 0x20, "0x0", out _));
+        Assert.False(ParamBufferBuilder.TryValidateScalar(typeName, 0x20, "0x1F2A3B4C5D0", out var err));
+        Assert.Contains("cannot be built", err);
+    }
+
+    [Theory]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
+    public void UE4AssetPointer_IsNeverWritten_ItsSlotStaysZeroed(string typeName)
+    {
+        var p = new FunctionParamModel { Name = "Level", TypeName = typeName, Size = 0x20, Offset = 0 };
+        var hex = ParamBufferBuilder.BuildParamsHex(new[] { p }, new[] { "5" }, 0x20);
+        Assert.Equal(new string('0', 0x40), hex);
+    }
+
     // --- WriteStructParam ---
 
     [Fact]

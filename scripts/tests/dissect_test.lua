@@ -41,7 +41,7 @@ local HELPER = (arg and arg[0] or ''):gsub('[^/\\]*$', '') .. '../ue5_dissect.lu
 -- ============================================================
 -- CE constants -- MUST exist before the chunk loads (trap 1 above)
 -- ============================================================
-vtByte, vtWord, vtDword, vtSingle, vtDouble, vtQword, vtPointer = 0, 1, 3, 4, 5, 8, 12
+vtByte, vtWord, vtDword, vtSingle, vtDouble, vtQword, vtPointer = 0, 1, 2, 4, 5, 3, 12   -- CE's defines.lua
 vtBinary = 9   -- CE's real value (defines.lua); a single bit uses vtBinary + BitStart/BitSize
 
 -- ============================================================
@@ -1762,40 +1762,32 @@ do
 end
 
 -- ============================================================
--- D4b -- a delegate row's WIDTH depends on the BUILD, not on the property
+-- D4b -- a delegate row's PLACE depends on the BUILD; its type does not
 -- ============================================================
 -- UE 5.3 gave TScriptDelegate / TMulticastScriptDelegate a TDelegateAccessHandlerBase base
--- whose DO_CHECK specialization holds one std::atomic<uint64>, so sizeof is 8 bytes larger in
--- Debug/Development/DebugGame than in Shipping/Test. This file baked
---   MulticastInlineDelegateProperty = { size = 16 }
--- and getTypeInfo returned it unconditionally, so on a checked build the row read the detector
--- plus half the TArray header. The engine's own ElementSize is already on the wire as f.size;
--- prefer it, exactly as the EnumProperty branch beside it already does.
+-- whose DO_CHECK specialization holds one std::atomic<uint64>, so in Debug/Development/DebugGame
+-- the payload starts 8 bytes in and the 8-aligned struct rounds up (24, or 32 with a 12-byte
+-- FName; [DELEGATE-PAD-ALIGN]). getTypeInfo once answered that by widening
+-- the row to the engine's ElementSize, which still left it on the detector. Since VND584-02 a
+-- delegate is ONE 8-byte row that delegatePayloadPad places past the detector -- the VND584-02
+-- delegate and multicast cases below pin the placement -- and CE draws a vtQword / vtPointer
+-- row 8 bytes wide whatever its Bytesize (StructuresFrm2.pas TStructelement.getBytesize). What
+-- is left for getTypeInfo: the row's type and display, which must not move with the ElementSize.
 do
   local gti = dissect._getTypeInfo
   check(gti ~= nil, 'D4b: getTypeInfo is reachable from the test')
 
-  local _, n16 = gti('MulticastInlineDelegateProperty', 16)
-  eq(n16, 16, 'D4b: Shipping multicast keeps 16')
-  local _, n24 = gti('MulticastInlineDelegateProperty', 24)
-  eq(n24, 24, 'D4b: checked-build multicast takes the reported 24')
+  for _, n in ipairs({ 16, 24, 1073742336, 0, 20 }) do
+    eq(gti('MulticastInlineDelegateProperty', n), vtPointer,
+       'D4b: a multicast row is a pointer at ElementSize ' .. n)
+  end
+  for _, n in ipairs({ 16, 24 }) do
+    local vt, _, dm = gti('DelegateProperty', n)
+    eq(vt, vtQword, 'D4b: a delegate row is 8 bytes at ElementSize ' .. n)
+    eq(dm, 'dtHexadecimal', 'D4b: ... in hex at ElementSize ' .. n)
+  end
 
-  local _, u8 = gti('DelegateProperty', 8)
-  eq(u8, 8, 'D4b: Shipping unicast keeps 8')
-  local _, u16 = gti('DelegateProperty', 16)
-  eq(u16, 16, 'D4b: checked-build unicast takes the reported 16')
-
-  -- ⭐ THE CONTROLS. The wire value is preferred only when it is one of the TWO widths the
-  -- layout can actually have; anything else falls back to the baked size rather than widening
-  -- a CE row by whatever number came off a garbage ElementSize.
-  local _, bad = gti('MulticastInlineDelegateProperty', 1073742336)
-  eq(bad, 16, 'D4b control: a garbage ElementSize falls back, it does not widen the row')
-  local _, zero = gti('MulticastInlineDelegateProperty', 0)
-  eq(zero, 16, 'D4b control: a missing size falls back')
-  local _, odd = gti('MulticastInlineDelegateProperty', 20)
-  eq(odd, 16, 'D4b control: a width the layout cannot have falls back')
-
-  -- Untouched neighbours: the branch must not leak into other types.
+  -- Untouched neighbours.
   local _, f = gti('FloatProperty', 24)
   eq(f, 4, 'D4b control: a non-delegate ignores the reported size as before')
   local _, sp = gti('MulticastSparseDelegateProperty', 1)
@@ -1823,6 +1815,151 @@ do
   eq(iv, vtPointer, 'VND584-02 control: an interface leads with a real UObject*, so it stays a pointer')
   local ov = gti('ObjectProperty', 8)
   eq(ov, vtPointer, 'VND584-02 control: ObjectProperty stays a pointer')
+end
+
+-- ============================================================
+-- UE4-ASSETPTR-EXPORTS -- UE 4.17's asset pointer is the soft pointer under its old name
+-- ============================================================
+-- AssetObjectProperty / AssetClassProperty (TAssetPtr / TAssetSubclassOf, UE <= 4.17) are
+-- TPersistentObjectPtr<FStringAssetReference>: the same leading FWeakObjectPtr as the soft pointer
+-- that replaced them. Missing from TYPE_MAP they fell to the unknown-type fallback, a decimal dword
+-- block the field's width, so the pair read as two unrelated numbers and the string path as more.
+-- CSX gives them the soft row too. CE XML adds the path as a string beside the pair, which a dissect
+-- row cannot: an element is one value at one offset.
+case('UE4-ASSETPTR-EXPORTS: an asset pointer row is the weak pair in hex, like a soft pointer')
+do
+  local gti = dissect._getTypeInfo
+  for _, t in ipairs({ 'AssetObjectProperty', 'AssetClassProperty' }) do
+    local vt, n, dm = gti(t, 0x28)
+    eq(vt, vtQword, 'UE4-ASSETPTR-EXPORTS: ' .. t .. ' shows its weak pair as one 8-byte row')
+    eq(n, 8, 'UE4-ASSETPTR-EXPORTS: ' .. t .. ' row is 8 bytes, not the field size')
+    eq(dm, 'dtHexadecimal', 'UE4-ASSETPTR-EXPORTS: ' .. t .. ' is shown in hex')
+  end
+end
+
+-- ============================================================
+-- VND584-02 follow-up -- "8 hex bytes" needs the DisplayMethod, not just vtQword
+-- ============================================================
+-- vtQword alone is an UNSIGNED DECIMAL row: TStructelement.create leaves fdisplayMethod at
+-- dtUnsignedInteger (CE StructuresFrm2.pas), so a weak pair { ObjectIndex 0x1234, Serial 0x56 } read
+-- as 369367192116 instead of 5600001234 -- the two int32 halves are unreadable. The CE-XML
+-- (ShowAsHex) and CSX (DisplayMethod="hexadecimal") exports show these four as hex. The value is
+-- pinned to the enum member's name: CE sets a published enum through RTTI inside a bare try/except
+-- (LuaObject.pas lua_setProperty), so a name the enum does not have -- the CSX file's "hexadecimal"
+-- included -- is swallowed without a word and the row stays decimal.
+case('VND584-02: soft / soft-class / lazy / weak rows are hexadecimal, like the CE-XML and CSX exports')
+do
+  resetWorld(); dissect.clearAll(); injectDll()
+  serveWalk({
+    { name = 'SoftMesh',  typeName = 'SoftObjectProperty', offset = 0x30, size = 0x28 },
+    { name = 'SoftClass', typeName = 'SoftClassProperty',  offset = 0x58, size = 0x28 },
+    { name = 'LazyRef',   typeName = 'LazyObjectProperty', offset = 0x80, size = 0x18 },
+    { name = 'WeakRef',   typeName = 'WeakObjectProperty', offset = 0x98, size = 8 },
+    -- CONTROLS: a real 64-bit integer stays CE's unsigned default, and the pointer rows -- which CE
+    -- renders as "P->" addresses whatever the DisplayMethod -- are left alone.
+    { name = 'Big',       typeName = 'Int64Property',      offset = 0xA0, size = 8 },
+    { name = 'Target',    typeName = 'ObjectProperty',     offset = 0xA8, size = 8 },
+    { name = 'Iface',     typeName = 'InterfaceProperty',  offset = 0xB0, size = 16 },
+  })
+  local s = dissect.createFromClass(0xC1A55, 'SoftHex')
+  for i = 0, 3 do
+    local e = s.Element[i]
+    eq(e.Vartype, vtQword, 'VND584-02: ' .. e.Name .. ' is an 8-byte row')
+    eq(e.DisplayMethod, 'dtHexadecimal', 'VND584-02: ' .. e.Name .. ' is shown in hex, not unsigned decimal')
+  end
+  for i = 4, 6 do
+    local e = s.Element[i]
+    eq(e.DisplayMethod, nil, 'VND584-02 control: ' .. e.Name .. ' keeps CE\'s default display')
+  end
+end
+
+-- ============================================================
+-- VND584-02 follow-up -- a DelegateProperty row is its bound object's weak pair, in hex,
+-- and on a CHECKED build that pair sits behind the access detector
+-- ============================================================
+-- FScriptDelegate is { FWeakObjectPtr Object; FName FunctionName }. UE 5.3+ with DO_CHECK on puts an
+-- 8-byte FMRSWRecursiveAccessDetector in front of a STANDALONE one, so the row at the field offset
+-- showed the detector, not the object. The CE-XML and CSX exports emit one 8-byte hex leaf at
+-- offset + DelegatePad; the DLL derives that pad from the ENGINE'S ElementSize
+-- (DynOff::DelegatePadFromElementSize, base 8 + sizeof(FName)). The script cannot ask which FName
+-- width this build has -- 4, 8 or 12 bytes -- but the answers cannot collide: 12 / 16 / 20 are pad 0,
+-- and the padded sizes are 24 / 24 / 32, because the detector's 8-byte alignment rounds the struct up
+-- ([DELEGATE-PAD-ALIGN]; never 28). Any other size is refused by the DLL; here the row stays where it
+-- was and SAYS so.
+case('VND584-02: a DelegateProperty row is the weak pair in hex, behind the detector on a checked build')
+do
+  resetWorld(); dissect.clearAll(); injectDll()
+  serveWalk({
+    { name = 'Del_Ship',      typeName = 'DelegateProperty', offset = 0x30, size = 16 },
+    { name = 'Del_Checked',   typeName = 'DelegateProperty', offset = 0x40, size = 24 },
+    { name = 'Del_CaseName',  typeName = 'DelegateProperty', offset = 0x58, size = 20 },
+    { name = 'Del_CaseCheck', typeName = 'DelegateProperty', offset = 0x70, size = 32 },
+    { name = 'Del_Odd',       typeName = 'DelegateProperty', offset = 0x90, size = 28 },
+    -- CONTROL: a Shipping multicast is a pointer row at its own offset, as before.
+    { name = 'Multi',         typeName = 'MulticastInlineDelegateProperty', offset = 0xA0, size = 16 },
+    -- A 4-byte FName (UE_FNAME_OUTLINE_NUMBER) Shipping delegate: 8 + 4, a size a build has.
+    { name = 'Del_Outline',   typeName = 'DelegateProperty', offset = 0xB0, size = 12 },
+  })
+  local s = dissect.createFromClass(0xC1A55, 'DelegateHex')
+  local want = { { 'Del_Ship', 0x30 }, { 'Del_Checked', 0x48 }, { 'Del_CaseName', 0x58 }, { 'Del_CaseCheck', 0x78 } }
+  for i, w in ipairs(want) do
+    local e = s.Element[i - 1]
+    eq(e.Name, w[1], 'VND584-02: ' .. w[1] .. ' keeps its name')
+    eq(e.Offset, w[2], 'VND584-02: ' .. w[1] .. ' row sits on the weak pair')
+    eq(e.Vartype, vtQword, 'VND584-02: ' .. w[1] .. ' is an 8-byte row')
+    eq(e.DisplayMethod, 'dtHexadecimal', 'VND584-02: ' .. w[1] .. ' is shown in hex')
+  end
+  local odd = s.Element[4]
+  eq(odd.Offset, 0x90, 'VND584-02: a size no build has leaves the row at the field offset')
+  contains(odd.Name, 'ElementSize 28', 'VND584-02: ... and the row says it could not place the payload')
+  eq(odd.DisplayMethod, 'dtHexadecimal', 'VND584-02: ... still as 8 hex bytes')
+  local m = s.Element[5]
+  eq(m.Name, 'Multi', 'VND584-02 control: the multicast row follows')
+  eq(m.Offset, 0xA0, 'VND584-02 control: a Shipping multicast stays at its offset')
+  eq(m.Vartype, vtPointer, 'VND584-02 control: a multicast stays a pointer row')
+  eq(m.DisplayMethod, nil, 'VND584-02 control: a multicast keeps CE\'s default display')
+  local o = s.Element[6]
+  eq(o.Name, 'Del_Outline', 'DELEGATE-PAD-ALIGN: a 4-byte-FName delegate (12) is placed, not labelled unknown')
+  eq(o.Offset, 0xB0, 'DELEGATE-PAD-ALIGN: ... at its own offset')
+end
+
+-- ============================================================
+-- VND584-02 follow-up -- a multicast row is InvocationList.Data, behind the detector on a checked build
+-- ============================================================
+-- FMulticastScriptDelegate is a bare TArray<FScriptDelegate> header: 16 bytes whatever the FName width,
+-- 24 on a UE 5.3+ checked build, where the access detector comes first (Grimoire.h measured it on
+-- DumperTest Development: +0x00 the detector, +0x08 Data). The dissect's pointer row sat on the
+-- detector. The DLL takes the pad from ElementSize against base 16 for BOTH spellings -- UE4 <= 4.22
+-- names the type MulticastDelegateProperty -- and the CSX export hangs its InvocationList pointer at
+-- offset + DelegatePad. 20 is a UNICAST size (case-preserving FName) and no multicast has it.
+case('VND584-02: a multicast row is its InvocationList pointer, behind the detector on a checked build')
+do
+  resetWorld(); dissect.clearAll(); injectDll()
+  serveWalk({
+    { name = 'Mc_Ship',       typeName = 'MulticastInlineDelegateProperty', offset = 0x30, size = 16 },
+    { name = 'Mc_Checked',    typeName = 'MulticastInlineDelegateProperty', offset = 0x40, size = 24 },
+    { name = 'Mc_UE4',        typeName = 'MulticastDelegateProperty',       offset = 0x58, size = 16 },
+    { name = 'Mc_UE4Checked', typeName = 'MulticastDelegateProperty',       offset = 0x68, size = 24 },
+    { name = 'Mc_Odd',        typeName = 'MulticastInlineDelegateProperty', offset = 0x80, size = 20 },
+    -- CONTROL: the sparse row is the ⛔ KNOWN WRONG one in TYPE_MAP and is not moved here.
+    { name = 'Mc_Sparse',     typeName = 'MulticastSparseDelegateProperty', offset = 0x98, size = 1 },
+  })
+  local s = dissect.createFromClass(0xC1A55, 'MulticastPad')
+  local want = { { 'Mc_Ship', 0x30 }, { 'Mc_Checked', 0x48 }, { 'Mc_UE4', 0x58 }, { 'Mc_UE4Checked', 0x70 } }
+  for i, w in ipairs(want) do
+    local e = s.Element[i - 1]
+    eq(e.Name, w[1], 'VND584-02: ' .. w[1] .. ' keeps its name')
+    eq(e.Offset, w[2], 'VND584-02: ' .. w[1] .. ' row sits on InvocationList.Data')
+    eq(e.Vartype, vtPointer, 'VND584-02: ' .. w[1] .. ' is a pointer row CE can follow')
+    eq(e.DisplayMethod, nil, 'VND584-02: ' .. w[1] .. ' keeps CE\'s default display')
+  end
+  local odd = s.Element[4]
+  eq(odd.Offset, 0x80, 'VND584-02: a size no multicast has leaves the row at the field offset')
+  contains(odd.Name, 'ElementSize 20', 'VND584-02: ... and the row says it could not place the payload')
+  local sp = s.Element[5]
+  eq(sp.Name, 'Mc_Sparse', 'VND584-02 control: the sparse row follows')
+  eq(sp.Offset, 0x98, 'VND584-02 control: a sparse delegate is not moved')
+  eq(sp.Vartype, vtPointer, 'VND584-02 control: ... and keeps its TYPE_MAP type')
 end
 
 -- ============================================================

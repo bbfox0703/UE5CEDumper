@@ -271,7 +271,7 @@ public sealed partial class LiveFieldValue : ObservableObject
     public int SoftArrayPathOffset { get; init; }
 
     /// <summary>For ArrayProperty Phase B: inline scalar element values (up to 64).
-    /// Settable so NavigateToArrayContainerAsync can persist on-demand-fetched elements
+    /// Settable so an array container view can persist the elements it fetched on demand
     /// (struct arrays whose inner struct reflects 0 fields get no inline walk preview)
     /// onto the cached container field, so Back-navigation re-renders the same rows.</summary>
     public List<ArrayElementValue>? ArrayElements { get; set; }

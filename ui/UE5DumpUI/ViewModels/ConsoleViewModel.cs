@@ -715,13 +715,25 @@ public partial class ConsoleViewModel : ViewModelBase
     }
 
     /// <summary>Map the DLL's Debug Camera result (1=on, 0=off, -1=unknown,
-    /// -5=toggle queued) onto the badge.</summary>
-    private void ApplyDebugCameraState(int state)
+    /// -5=toggle queued) onto the badge. A queued toggle's badge depends on its
+    /// direction, so a Force OFF says <paramref name="forcingOff"/>.</summary>
+    private void ApplyDebugCameraState(int state, bool forcingOff = false)
     {
-        // [W3-DEBUGCAM-QUEUED] A queued toggle is neither ON nor OFF yet -- and not "unknown": it WILL run.
         if (state == Constants.DebugCameraToggleQueuedResult)
         {
+            // [DEBUGCAM-QUEUED-OFF-NOESCALATE] A queued OFF is no OFF on its way: the DLL queues it only after reading
+            // the camera ON, the toggle has not run, and on stock UE 4.18-5.7 it leaves the camera on.
+            if (forcingOff) { SetDebugCameraState(true); return; }
+            // [W3-DEBUGCAM-QUEUED] A queued ON is neither ON nor OFF yet -- and not "unknown": it will run.
             (DebugCameraState, DebugCameraBadgeColor) = ("Queued", "#D7BA7D");   // amber — pending
+            return;
+        }
+        if (state == Constants.DebugCameraToggleBlockedResult)
+        {
+            // [DBGCAM-OFF-OVER-QUEUED-ON] Nothing was sent; the earlier toggle of the other direction is still queued. An
+            // OFF over a queued ON shows what the ON showed; an ON over a queued OFF shows the camera that is still on.
+            if (forcingOff) (DebugCameraState, DebugCameraBadgeColor) = ("Queued", "#D7BA7D");
+            else SetDebugCameraState(true);
             return;
         }
         SetDebugCameraState(state switch { 1 => true, 0 => false, _ => (bool?)null });
@@ -789,18 +801,17 @@ public partial class ConsoleViewModel : ViewModelBase
             ClearError();
             IsDebugCameraBusy = true;
             var state = await _dump.SetDebugCameraAsync(wantOn);
-            ApplyDebugCameraState(state);
+            ApplyDebugCameraState(state, forcingOff: !wantOn);
             StatusText = state switch
             {
                 1 when wantOn  => "✓ Debug Camera forced ON.",
                 0 when !wantOn => "✓ Debug Camera forced OFF.",
                 -1 => $"Force {want}: no live CheatManager / unreadable state " +
                       "(enter gameplay first).",
-                // [W3-DEBUGCAM-QUEUED] Not a failure: the toggle WILL run. A second press would undo it.
-                Constants.DebugCameraToggleQueuedResult =>
-                      $"⏳ Force {want}: the toggle is QUEUED — the game thread is busy (stalled or unfocused). " +
-                      $"It will run when the game thread is free. Do not press Force {want} again: " +
-                      "a second toggle would undo the first.",
+                // [W3-DEBUGCAM-QUEUED] Not a failure. [DEBUGCAM-QUEUED-OFF-NOESCALATE] But only a queued ON will still
+                // take; a queued OFF does not turn the camera off -- DebugCameraText says why.
+                Constants.DebugCameraToggleQueuedResult => DebugCameraText.Queued(wantOn),
+                Constants.DebugCameraToggleBlockedResult => DebugCameraText.Blocked(wantOn),
                 _  => $"⚠ Force {want}: state is now {(state == 1 ? "ON" : "OFF")} " +
                       "— the game may re-drive the camera.",
             };

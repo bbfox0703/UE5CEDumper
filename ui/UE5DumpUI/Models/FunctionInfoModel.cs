@@ -21,6 +21,19 @@ public sealed class FunctionInfoModel
     public ushort ReturnValueOffset { get; init; } = 0xFFFF;
     public List<FunctionParamModel> Params { get; init; } = new();
     public string ReturnType { get; init; } = "";
+    /// <summary>[VND584-04] The interface that declares this function, when the class gets it only through one; "" for
+    /// the class's own. Read from walk_functions' <c>interface</c> key.</summary>
+    public string ViaInterface { get; init; } = "";
+    /// <summary>What a function list shows: the name, and where an interface's function comes from.</summary>
+    public string DisplayName
+    {
+        get
+        {
+            if (ViaInterface.Length == 0) return Name;
+            var s = UE5DumpUI.Core.Res.Format("str.LiveWalker.ViaInterface", Name, ViaInterface);
+            return string.IsNullOrEmpty(s) ? $"{Name}  (via {ViaInterface})" : s;
+        }
+    }
 
     /// <summary>[FUNCPARM-CONSUMERS] The function's parameters, the return included, in the DLL's order: the
     /// entries flagged CPF_Parm. A Blueprint function's locals are not parameters: ProcessEvent copies only the

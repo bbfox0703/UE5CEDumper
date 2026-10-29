@@ -129,9 +129,15 @@ end
 -- ----------------------------------------------------------------
 -- UE type → CE Vartype mapping
 --
--- CE Lua constants (defined by CE):
---   vtByte=0, vtWord=1, vtDword=3, vtSingle=4, vtDouble=5,
---   vtQword=8, vtPointer=12
+-- CE Lua constants (CE's defines.lua; this file reads CE's globals, never these numbers):
+--   vtByte=0, vtWord=1, vtDword=2, vtQword=3, vtSingle=4, vtDouble=5,
+--   vtBinary=9, vtPointer=12
+--
+-- dm, when present, is the element's DisplayMethod. Without it CE shows an integer
+-- row as UNSIGNED DECIMAL (TStructelement.create's default). The value names a
+-- TdisplayMethod member: CE sets it through RTTI inside a bare try/except, so a name
+-- the enum does not have (the CSX file's "hexadecimal", say) is dropped without a word
+-- and the row stays decimal.
 -- ----------------------------------------------------------------
 local TYPE_MAP = {
     -- Integer types
@@ -164,20 +170,27 @@ local TYPE_MAP = {
 
     -- Soft / Lazy lead with an FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber }, not an
     -- address: as a pointer, CE expanded that pair into garbage. 8 hex bytes, like Weak below and
-    -- like the CE-XML / CSX exports. An interface's first 8 bytes ARE its UObject*.
-    SoftObjectProperty    = { vt = vtQword,   size = 8 },
-    SoftClassProperty     = { vt = vtQword,   size = 8 },
-    LazyObjectProperty    = { vt = vtQword,   size = 8 },
+    -- like the CE-XML / CSX exports -- hex so the two int32 halves can be read apart; in decimal
+    -- they are one meaningless number. An interface's first 8 bytes ARE its UObject*.
+    SoftObjectProperty    = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
+    SoftClassProperty     = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
+    -- UE <= 4.17 names the soft pointer TAssetPtr; same leading weak pair, same row.
+    AssetObjectProperty   = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
+    AssetClassProperty    = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
+    LazyObjectProperty    = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
     InterfaceProperty     = { vt = vtPointer, size = 8 },
-    WeakObjectProperty    = { vt = vtQword,   size = 8 },
+    WeakObjectProperty    = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
 
-    -- Delegates
-    -- ⚠ These sizes are FALLBACKS ONLY -- getTypeInfo prefers the engine's own ElementSize
-    -- off the wire for this family, because UE 5.3+ adds an 8-byte access detector in front
-    -- of a delegate payload in a CHECKED build (Debug/Development/DebugGame) and none in
-    -- Shipping/Test. A baked 16 reads the detector plus half the TArray header there.
-    DelegateProperty                  = { vt = vtQword,   size = 8 },
+    -- Delegates: ONE 8-byte row each, whatever `size` says (addFieldsToStruct gives them no
+    -- Bytesize). A DelegateProperty row is its bound object's FWeakObjectPtr, so 8 hex bytes
+    -- like Weak; a multicast row is its InvocationList.Data pointer. UE 5.3+ puts an 8-byte
+    -- access detector in front of a delegate payload in a CHECKED build (Debug/Development/
+    -- DebugGame) and none in Shipping/Test, so the row's PLACE comes from the engine's
+    -- ElementSize (delegatePayloadPad), never from this table. UE4 <= 4.22 spells the
+    -- multicast type without "Inline".
+    DelegateProperty                  = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
     MulticastInlineDelegateProperty   = { vt = vtPointer, size = 16 },
+    MulticastDelegateProperty         = { vt = vtPointer, size = 16 },
     -- ⛔ KNOWN WRONG, and NOT what this 2026-09-09 change is about: an FSparseDelegate is
     -- ONE byte (bIsBound), not 16, so this row has always overrun into the next fields.
     -- Left as-is deliberately -- correcting it changes the rendered width of every sparse
@@ -190,19 +203,6 @@ local TYPE_MAP = {
 local function getTypeInfo(typeName, fieldSize)
     local entry = TYPE_MAP[typeName]
     if entry then
-        -- ⭐ Delegates: prefer the engine's own ElementSize, exactly as EnumProperty does
-        -- below and for the same reason -- the baked number is right for only one build.
-        -- sizeof(FMulticastScriptDelegate) is 16 in Shipping/Test and 24 in a checked build
-        -- (UE 5.3+ TDelegateAccessHandlerBase contributes an 8-byte access detector); the
-        -- standalone FScriptDelegate behind a DelegateProperty moves the same way. Guarded to
-        -- the two plausible widths so a garbage ElementSize cannot widen a row arbitrarily.
-        if (typeName == "DelegateProperty"
-            or typeName == "MulticastInlineDelegateProperty"
-            or typeName == "MulticastDelegateProperty")
-           and (fieldSize == entry.size or fieldSize == entry.size + 8) then
-            return entry.vt, fieldSize
-        end
-
         -- For EnumProperty, prefer the actual field size
         if typeName == "EnumProperty" and fieldSize > 0 then
             if     fieldSize == 1 then return vtByte,   1
@@ -210,10 +210,39 @@ local function getTypeInfo(typeName, fieldSize)
             elseif fieldSize == 8 then return vtQword,  8
             else                       return vtDword,  4 end
         end
-        return entry.vt, entry.size
+        return entry.vt, entry.size, entry.dm
     end
     -- Unknown type: show as raw dword block
     return vtDword, (fieldSize > 0 and fieldSize or 4)
+end
+
+-- ----------------------------------------------------------------
+-- Where a delegate field's payload starts: 0, 8 (behind the access detector a UE 5.3+
+-- CHECKED build puts in front of it), or nil when the ElementSize fits no build. It is the
+-- DLL's rule (DynOff::DelegatePadFromElementSize against the payload's own size), the pad the
+-- CE-XML / CSX exports add as DelegatePad. A standalone FScriptDelegate's payload holds an
+-- FName, and this script cannot ask which width the build has, so all three are tried. The
+-- detector is an 8-aligned std::atomic<uint64>, so a padded struct's size rounds UP to 8
+-- (DynOff::DelegatePaddedSize): 12 / 16 / 20 are pad 0, 24 / 24 / 32 pad 8, and the two sets
+-- cannot collide. A multicast's payload is a bare TArray header, the same 16 bytes whatever the
+-- FName. The DLL refuses any other size, and so the caller must not guess one.
+-- ----------------------------------------------------------------
+local DELEGATE_DETECTOR_PAD = 8
+local DELEGATE_PAYLOAD_SIZES = {
+    DelegateProperty                = { 12, 16, 20 },   -- the weak pair + a 4-, 8- or 12-byte FName
+    MulticastInlineDelegateProperty = { 16 },
+    MulticastDelegateProperty       = { 16 },
+}
+local function delegatePaddedSize(base)
+    local n = base + DELEGATE_DETECTOR_PAD
+    return n + (8 - n % 8) % 8
+end
+local function delegatePayloadPad(typeName, elementSize)
+    for _, base in ipairs(DELEGATE_PAYLOAD_SIZES[typeName]) do
+        if elementSize == base then return 0 end
+        if elementSize == delegatePaddedSize(base) then return DELEGATE_DETECTOR_PAD end
+    end
+    return nil
 end
 
 -- ----------------------------------------------------------------
@@ -386,13 +415,28 @@ local function addFieldsToStruct(ceStruct, classAddr, offsetBase, namePrefix, de
                 e3.Vartype = vtDword
             end
 
+        -- Delegates: one row on the payload -- a unicast's bound object, a multicast's
+        -- InvocationList.Data. A size no build has keeps the field offset and says so, since
+        -- the first 8 bytes may then be the detector.
+        elseif DELEGATE_PAYLOAD_SIZES[f.typeName] then
+            local vt, _, dm = getTypeInfo(f.typeName, f.size)
+            local pad = delegatePayloadPad(f.typeName, f.size)
+            local e = ceStruct.addElement()
+            e.Offset  = absOffset + (pad or 0)
+            e.Name    = pad and displayName
+                or string.format("%s (ElementSize %d: payload start unknown)", displayName, f.size)
+            e.Vartype = vt
+            if dm then e.DisplayMethod = dm end
+
         -- Standard scalar / pointer types
         else
-            local vt, vtSize = getTypeInfo(f.typeName, f.size)
+            local vt, vtSize, dm = getTypeInfo(f.typeName, f.size)
             local e = ceStruct.addElement()
             e.Offset  = absOffset
             e.Name    = displayName
             e.Vartype = vt
+            -- After Vartype: CE's setVartype resets the display method of a float row.
+            if dm then e.DisplayMethod = dm end
             if vtSize ~= nil and vtSize > 8 then
                 e.Bytesize = vtSize
             end
@@ -1149,12 +1193,10 @@ function dissect.clearAll()
 end
 
 -- ----------------------------------------------------------------
--- Exposed for tests only. getTypeInfo decides a row's CE type AND WIDTH, and its delegate
--- branch is the one thing in this file that depends on the BUILD rather than on the property
--- -- sizeof(FMulticastScriptDelegate) is 16 in Shipping/Test and 24 in a checked build
--- (UE 5.3+ adds an 8-byte access detector). Nothing reachable through the public API returns
--- that width on its own, so pinning it means reaching the function. Same reason
--- DescribeSparseDelegateState is header-inline on the C++ side.
+-- Exposed for tests only. getTypeInfo maps a property type to a row's CE type, width and display
+-- method; reaching it pins that mapping without building a structure through the stubbed CE. Where
+-- a delegate row sits is delegatePayloadPad's answer, and that one IS reachable through the public
+-- API: it is the row's offset.
 -- ----------------------------------------------------------------
 dissect._getTypeInfo = getTypeInfo
 

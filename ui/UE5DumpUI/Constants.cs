@@ -95,11 +95,18 @@ public static class Constants
     // [W3-CONSOLE-REINVOKE]
     public const int InvokeDispatchTimeoutResult = -5;
 
-    // set_debug_camera's `state` -5: the ToggleDebugCamera call TIMED OUT on the game thread and STAYS QUEUED -- the
-    // toggle WILL run. Neither ON nor OFF yet, and not a failure: say "queued, do not press again", because a second
-    // Force queues a second toggle and the two drain ON then OFF. Same number as the dispatch timeout it passes through
-    // (Stark::StatefulToggleFailure). [W3-DEBUGCAM-QUEUED]
+    // set_debug_camera's `state` -5: the ToggleDebugCamera call TIMED OUT on the game thread and STAYS QUEUED. The two
+    // directions differ. A queued ON will run: not a failure, so say "queued, do not press again", because a second
+    // Force ON queues a second toggle [W3-DEBUGCAM-QUEUED]. A queued OFF does not turn the camera off on stock UE
+    // 4.18-5.7 (DebugCameraText says why), so the camera stays on: say it did not complete, and Force OFF /
+    // untick again once the game responds [DEBUGCAM-QUEUED-OFF-NOESCALATE]. Same number as the dispatch timeout it
+    // passes through (Stark::StatefulToggleFailure).
     public const int DebugCameraToggleQueuedResult = InvokeDispatchTimeoutResult;
+
+    // [DBGCAM-OFF-OVER-QUEUED-ON] set_debug_camera's `state` -6 (Stark::kToggleBlockedByQueued): NOT SENT, because an earlier
+    // toggle of the other direction is still queued and the state the DLL would read predates it. Not a queued toggle of
+    // the caller's own direction, so it is never read as -5: send it again once the game responds.
+    public const int DebugCameraToggleBlockedResult = -6;
 
     // ── Movement result codes (Laufen) ──────────────────────────────────────
     // set_gravity_direction's `state` carries Laufen::MoveResult (dll/src/Laufen.h). -4, MR_ERR_REFLECT,
@@ -109,6 +116,12 @@ public static class Constants
     // live CMC without the field. -3 (no pawn), -5 (no CharacterMovement) and -1 (not initialised) are
     // transient: a menu, a loading screen, a vehicle pawn. [W2-GRAVDIR-VERDICT]
     public const int LaufenErrReflect = -4;
+
+    // A movement knob's or a time lever's `state` -10 (Laufen::MR_ERR_WRITE, Hemmung::TR_ERR_WRITE): the raw write
+    // failed AFTER the override was latched active, and the worker re-writes it every tick. The override is held, not
+    // refused, so a CE row ticked into it stays ticked and unticking is what releases it.
+    // [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]
+    public const int OverrideHeldWriteFailedResult = -10;
 
     public const int LogCompressMaxArgChars = 24000;
 

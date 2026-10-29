@@ -1237,6 +1237,15 @@ int32 ADumperTestActor::InvokeGate_TakeDelegate(FDumperTestUnicastSignature Call
 	return InvokeGate_DelegateCalls;
 }
 
+int32 ADumperTestActor::InvokeGate_TakeMulticast(FDumperTestPingSignature Handlers)
+{
+	++InvokeGate_MulticastCalls;
+	InvokeGate_LastMulticastBound = Handlers.IsBound() ? 1 : 0;
+	InvokeGateLog(FString::Printf(TEXT("TakeMulticast calls=%d bound=%d"),
+		InvokeGate_MulticastCalls, InvokeGate_LastMulticastBound));
+	return InvokeGate_MulticastCalls;
+}
+
 int32 ADumperTestActor::InvokeGate_TakeText(FText InText)
 {
 	// ⛔ Do not read InText. See the header banner.

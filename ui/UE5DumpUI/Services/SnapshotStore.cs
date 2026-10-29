@@ -996,7 +996,8 @@ public sealed class SnapshotStore : ISnapshotStore
         // This is independent of index/schema shape — far faster than a SQL
         // self-join over ~1.8M rows, which only stays quick with a perfect
         // single-table composite covering index. Key = (class_fqn, gobjects_index,
-        // prop_name); unique within one snapshot.
+        // prop_name, prop_offset): the offset because a class can shadow a property name
+        // ([SNAPDIFF-SHADOWED-PROP]: PrerollTime at +196 and +296 on DumperTest).
 
         // Intern the high-repetition class/prop strings to cut allocations.
         var intern = new Dictionary<string, string>(StringComparer.Ordinal);
@@ -1007,11 +1008,11 @@ public sealed class SnapshotStore : ISnapshotStore
         // The key includes array_field + elem_index so struct-array-element rows
         // (e.g. SaveSlotList[0].GP vs SaveSlotList[1].GP, same class/owner/inner
         // prop name) don't collide. Direct fields use "" / -1. (build 1203)
-        var aMap = new Dictionary<(string cls, long idx, string prop, string arr, int elem), (string hex, double? num)>();
+        var aMap = new Dictionary<(string cls, long idx, string prop, int off, string arr, int elem), (string hex, double? num)>();
         await using (var cmd = conn.CreateCommand())
         {
             cmd.CommandText = "SELECT class_fqn, gobjects_index, prop_name, hex, numeric_value, " +
-                              "array_field, elem_index FROM fields WHERE snapshot_id=$id;";
+                              "array_field, elem_index, prop_offset FROM fields WHERE snapshot_id=$id;";
             cmd.Parameters.AddWithValue("$id", idA);
             await using var r = await cmd.ExecuteReaderAsync(ct);
             int rowCount = 0;
@@ -1024,6 +1025,7 @@ public sealed class SnapshotStore : ISnapshotStore
                 var key = (Intern(aCls),
                            r.IsDBNull(1) ? -1L : r.GetInt64(1),
                            Intern(r.IsDBNull(2) ? "" : r.GetString(2)),
+                           r.IsDBNull(7) ? -1 : r.GetInt32(7),
                            Intern(r.IsDBNull(5) ? "" : r.GetString(5)),
                            r.IsDBNull(6) ? -1 : r.GetInt32(6));
                 aMap[key] = (r.IsDBNull(3) ? "" : r.GetString(3),
@@ -1055,7 +1057,8 @@ public sealed class SnapshotStore : ISnapshotStore
                 string prop = r.IsDBNull(2) ? "" : r.GetString(2);
                 string arr  = r.IsDBNull(9) ? "" : r.GetString(9);
                 int    elem = r.IsDBNull(10) ? -1 : r.GetInt32(10);
-                if (!aMap.TryGetValue((Intern(cls), idx, Intern(prop), Intern(arr), elem), out var a)) continue;  // B-only (added)
+                int    off  = r.IsDBNull(7) ? -1 : r.GetInt32(7);
+                if (!aMap.TryGetValue((Intern(cls), idx, Intern(prop), off, Intern(arr), elem), out var a)) continue;  // B-only (added)
                 matched++;
 
                 string bHex = r.IsDBNull(3) ? "" : r.GetString(3);
@@ -1774,7 +1777,10 @@ public sealed class SnapshotStore : ISnapshotStore
     private static string SpcKeyBase(SpcJoinMode mode, SqliteDataReader r, string cls, string prop) => mode switch
     {
         SpcJoinMode.Loose     => cls + "\u0001" + (r.IsDBNull(2) ? "" : r.GetString(2)) + "\u0001" + prop,
-        SpcJoinMode.InSession => cls + "\u0001" + (r.IsDBNull(9) ? -1L : r.GetInt64(9)) + "\u0001" + prop,
+        // [SNAPDIFF-SHADOWED-PROP] The offset, as Strict's: a class can shadow a property name. Loose stays
+        // name-only on purpose -- it matches across sessions and game patches, where an offset may move.
+        SpcJoinMode.InSession => cls + "\u0001" + (r.IsDBNull(9) ? -1L : r.GetInt64(9)) + "\u0001" + prop +
+                                 "\u0001" + (r.IsDBNull(5) ? 0 : r.GetInt32(5)),
         _ /* Strict */        => cls + "\u0001" + (r.IsDBNull(1) ? "" : r.GetString(1)) + "\u0001" + prop +
                                  "\u0001" + (r.IsDBNull(5) ? 0 : r.GetInt32(5)),
     };
@@ -1997,8 +2003,8 @@ public sealed class SnapshotStore : ISnapshotStore
 
             await using var r = await cmd.ExecuteReaderAsync(ct);
             // cols: 0 class_fqn, 1 declared_type, 2 prop_name, 3 array_field,
-            // 4 elem_index, 5 norm_path, 6 addrNewest, then 7..7+n-1 = h, 7+n..7+2n-1 = v
-            int baseH = 7, baseV = 7 + n, rowCount = 0;
+            // 4 elem_index, 5 norm_path, 6 addrNewest, then 7..7+n-1 = h, 7+n..7+2n-1 = v, 7+2n = off
+            int baseH = 7, baseV = 7 + n, colOff = 7 + 2 * n, rowCount = 0;
             while (await r.ReadAsync(ct))
             {
                 if ((++rowCount & 0xFFFF) == 0) ct.ThrowIfCancellationRequested();
@@ -2022,6 +2028,7 @@ public sealed class SnapshotStore : ISnapshotStore
                     ClassName = cls, PropName = DiscoverDisplayProp(prop, arr, elem),
                     ArrayField = arr, InnerProp = arr.Length > 0 ? prop : "",   // [W1-DISCOVER-ARRAY]
                     DeclaredType = type, NormPath = norm, ObjAddr = addr, Hex = hex, Num = num,
+                    PropOffset = r.IsDBNull(colOff) ? -1 : r.GetInt32(colOff),
                 });
             }
         }
@@ -2046,9 +2053,37 @@ public sealed class SnapshotStore : ISnapshotStore
         // class_counts (zero extra scan; built just above). The engine reads these
         // instead of counting fed inputs, since we feed only the CHANGED instances.
         var totals = await LoadClassTotalsAsync(conn, newestId, ct);
+        var shadowed = await LoadShadowedNamesAsync(conn, newestId, inputs.Select(d => d.ClassName), ct);
 
         int max = query.MaxResults > 0 ? query.MaxResults : 200;
-        return PivotDiscoveryEngine.Rank(inputs, n, max, totals);
+        return PivotDiscoveryEngine.Rank(inputs, n, max, totals, shadowed);
+    }
+
+    /// <summary>[DISCOVER-SHADOWED-POOL] The (class, prop) names the snapshot shows at more than one offset, among
+    /// <paramref name="classes"/>: the changed rows alone cannot say so when one copy stayed put, and Class Pivot's
+    /// picker labels from this same whole field list. Chunked so a wide changed set stays under SQLite's
+    /// parameter limit.</summary>
+    private static async Task<HashSet<(string, string)>> LoadShadowedNamesAsync(
+        SqliteConnection conn, long snapshotId, IEnumerable<string> classes, CancellationToken ct)
+    {
+        var set = new HashSet<(string, string)>();
+        var distinct = classes.Where(c => !string.IsNullOrEmpty(c)).Distinct(StringComparer.Ordinal).ToList();
+        const int chunk = 500;
+        for (int at = 0; at < distinct.Count; at += chunk)
+        {
+            var part = distinct.Skip(at).Take(chunk).ToList();
+            await using var cmd = conn.CreateCommand();
+            cmd.CommandText =
+                "SELECT class_fqn, prop_name FROM fields WHERE snapshot_id=$s AND array_field IS NULL AND class_fqn IN (" +
+                string.Join(",", part.Select((_, i) => $"$c{i}")) +
+                ") GROUP BY class_fqn, prop_name HAVING COUNT(DISTINCT prop_offset) > 1;";
+            cmd.Parameters.AddWithValue("$s", snapshotId);
+            for (int i = 0; i < part.Count; i++) cmd.Parameters.AddWithValue($"$c{i}", part[i]);
+            await using var r = await cmd.ExecuteReaderAsync(ct);
+            while (await r.ReadAsync(ct))
+                set.Add((r.IsDBNull(0) ? "" : r.GetString(0), r.IsDBNull(1) ? "" : r.GetString(1)));
+        }
+        return set;
     }
 
     // Build the N-snapshot change-discovery SQL. GROUP BY the Strict identity key
@@ -2088,6 +2123,8 @@ public sealed class SnapshotStore : ISnapshotStore
             sb.Append($", MIN(CASE WHEN snapshot_id=$s{i} THEN hex END) AS h{i}");
         for (int i = 0; i < n; i++)
             sb.Append($", MIN(CASE WHEN snapshot_id=$s{i} THEN numeric_value END) AS v{i}");
+        // [PIVOT-HANDOFF-SHADOWED] The offset is part of KEY, so one value per group: "Use →" ticks that copy.
+        sb.Append(", COALESCE(prop_offset,0) AS off");
         sb.Append(" FROM dedup WHERE rn=1 GROUP BY ").Append(KEY).Append(' ');
         // present in ALL snapshots (intersection)
         sb.Append("HAVING ");
@@ -2144,6 +2181,7 @@ public sealed class SnapshotStore : ISnapshotStore
             {
                 ClassName = c.ClassName, PropName = c.PropName, DeclaredType = c.DeclaredType,
                 NormPath = c.NormPath, ObjAddr = c.ObjAddr, Hex = c.Hex, Num = c.Num,
+                PropOffset = c.PropOffset,   // [PIVOT-HANDOFF-SHADOWED]
             });
 
         int max = query.MaxResults > 0 ? query.MaxResults : 200;
@@ -2243,11 +2281,14 @@ public sealed class SnapshotStore : ISnapshotStore
         var list = new List<PivotFieldInfo>();
         await using var conn = await OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
+        // [SNAPDIFF-SHADOWED-PROP] Grouped by offset too: a class can carry two properties of one name (PrerollTime at
+        // +196 and +296 on DumperTest), and grouping by name pooled them into one entry with a doubled instance count
+        // and a distinct count over both copies, which the key scorer then ranked.
         cmd.CommandText = """
             SELECT prop_name, declared_type,
-                   COUNT(DISTINCT hex) AS distinctVals, COUNT(*) AS instances
+                   COUNT(DISTINCT hex) AS distinctVals, COUNT(*) AS instances, prop_offset
             FROM fields WHERE snapshot_id=$s AND class_fqn=$c AND array_field IS NULL
-            GROUP BY prop_name, declared_type ORDER BY prop_name;
+            GROUP BY prop_name, prop_offset, declared_type ORDER BY prop_name, prop_offset;
             """;
         cmd.Parameters.AddWithValue("$s", snapshotId);
         cmd.Parameters.AddWithValue("$c", className);
@@ -2259,7 +2300,12 @@ public sealed class SnapshotStore : ISnapshotStore
                 DeclaredType  = r.IsDBNull(1) ? "" : r.GetString(1),
                 DistinctCount = r.IsDBNull(2) ? 0  : r.GetInt32(2),
                 InstanceCount = r.IsDBNull(3) ? 0  : r.GetInt32(3),
+                Offset        = r.IsDBNull(4) ? -1 : r.GetInt32(4),
             });
+        // A name listed twice is shadowed: each copy's label then carries its offset. A name listed once keeps its bare
+        // label, so every class without a shadowed name reads exactly as before.
+        foreach (var dup in list.GroupBy(f => f.Name, StringComparer.Ordinal).Where(g => g.Count() > 1))
+            foreach (var f in dup) f.Shadowed = true;
         return list;
     }
 
@@ -2269,12 +2315,14 @@ public sealed class SnapshotStore : ISnapshotStore
         // Fetch only the rows the engine needs: the key field (Field mode) + the
         // value fields, for this class. Prop names come from our own field list
         // (DB-sourced identifiers) but are still parameterised defensively.
+        // [SNAPDIFF-SHADOWED-PROP] A field is named by its label; one copy of a shadowed name reads its prop name, and
+        // PivotEngine tells the copies apart by offset.
         var props = new List<string>();
         if (query.KeyMode == PivotKeyMode.Field)
             foreach (var kf in query.EffectiveKeyFields)
-                if (!string.IsNullOrEmpty(kf) && !props.Contains(kf)) props.Add(kf);
+                if (!string.IsNullOrEmpty(kf) && !props.Contains(query.PropNameOf(kf))) props.Add(query.PropNameOf(kf));
         foreach (var v in query.ValueFields)
-            if (!props.Contains(v)) props.Add(v);
+            if (!props.Contains(query.PropNameOf(v))) props.Add(query.PropNameOf(v));
 
         var rows = new List<PivotInputRow>();
         await using var conn = await OpenAsync(ct);

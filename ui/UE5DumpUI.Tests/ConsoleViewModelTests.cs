@@ -81,7 +81,7 @@ public class ConsoleViewModelTests
         public override Task<InvokeFunctionResult> InvokeFunctionAsync(
             string funcName, string? instanceAddr = null, string? className = null,
             int parmsSize = 0, string? paramsHex = null, bool directCall = false,
-            IReadOnlyList<InvokeStringParam>? stringParams = null,
+            IReadOnlyList<InvokeStringParam>? stringParams = null, string? expectClassAddr = null,
             CancellationToken ct = default)
         {
             InvokeCallCount++;
@@ -1067,7 +1067,10 @@ public class ConsoleViewModelTests
     public async Task Force_reports_a_queued_toggle_as_queued_not_as_a_failure()
     {
         // [W3-DEBUGCAM-QUEUED] -5: the toggle timed out on the game thread and STAYS QUEUED -- it will run. Read as "no
-        // live CheatManager", it invited a second Force ON, and the two drained ON then OFF.
+        // live CheatManager", it invited a second Force ON, which queued a second toggle behind the first.
+        // [DBGCAM-QUEUEDON-UNDO-TEXT] The advice not to press again stays, but its reason must hold on every engine: what
+        // the second toggle does when it drains depends on the engine (on stock UE 4.18-5.7 nothing, by
+        // [DEBUGCAM-QUEUED-OFF-NOESCALATE]'s reading), so "a second toggle would undo the first" was not the reason.
         var fake = new FakeDumpService { SetDebugCameraResult = Constants.DebugCameraToggleQueuedResult };
         var vm = CreateVm(fake);
         vm.SeedForTests(DebugCamEntries());
@@ -1076,8 +1079,76 @@ public class ConsoleViewModelTests
 
         Assert.Equal("Queued", vm.DebugCameraState);
         Assert.Contains("QUEUED", vm.StatusText);
-        Assert.Contains("Do not press Force ON again", vm.StatusText);
+        Assert.Contains("Do not press Force ON again: the toggle is already queued.", vm.StatusText);
+        Assert.DoesNotContain("undo", vm.StatusText);
         Assert.DoesNotContain("no live CheatManager", vm.StatusText);
+    }
+
+    [Fact]
+    public void Queued_texts_in_en_axaml_are_the_fallbacks_and_promise_no_undo()
+    {
+        // [DBGCAM-QUEUEDON-UNDO-TEXT] The UI shows en.axaml's copy and a headless test sees only the literal fallback, so
+        // both copies are pinned here: the same sentence, and neither queued-ON copy claims the second toggle undoes.
+        var axaml = System.IO.File.ReadAllText(
+            NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        string En(string key)
+        {
+            var open = $"x:Key=\"{key}\">";
+            int start = axaml.IndexOf(open, System.StringComparison.Ordinal);
+            Assert.True(start >= 0, $"{key} is missing from en.axaml");
+            start += open.Length;
+            int end = axaml.IndexOf("</sys:String>", start, System.StringComparison.Ordinal);
+            return System.Net.WebUtility.HtmlDecode(axaml[start..end]);
+        }
+
+        Assert.Equal(UE5DumpUI.Helpers.DebugCameraText.Queued(wantOn: true), En(UE5DumpUI.Helpers.DebugCameraText.KeyQueuedOn));
+        Assert.Equal(UE5DumpUI.Helpers.DebugCameraText.Queued(wantOn: false), En(UE5DumpUI.Helpers.DebugCameraText.KeyQueuedOff));
+        Assert.DoesNotContain("undo", En(UE5DumpUI.Helpers.DebugCameraText.KeyQueuedOn));
+        // [DBGCAM-OFF-OVER-QUEUED-ON] the not-sent texts
+        Assert.Equal(UE5DumpUI.Helpers.DebugCameraText.Blocked(wantOn: true), En(UE5DumpUI.Helpers.DebugCameraText.KeyBlockedOn));
+        Assert.Equal(UE5DumpUI.Helpers.DebugCameraText.Blocked(wantOn: false), En(UE5DumpUI.Helpers.DebugCameraText.KeyBlockedOff));
+    }
+
+    [Fact]
+    public async Task Force_OFF_queued_does_not_promise_that_it_will_turn_the_camera_off()
+    {
+        // [DEBUGCAM-QUEUED-OFF-NOESCALATE] (c): a queued OFF drains as a toggle on the original controller's
+        // CheatManager, which on stock UE 4.18-5.7 can only enable -- only a COMPLETED OFF's swap back turns it off.
+        // So the text must not say it will run, and must ask for Force OFF again once the game responds.
+        // (review) Nor may the badge: "Queued" read as an OFF on its way. The DLL queues an OFF only after reading the
+        // camera ON, the toggle has not run, and on stock UE 4.18-5.7 it leaves the camera on -- so the badge reads ON.
+        var fake = new FakeDumpService { SetDebugCameraResult = Constants.DebugCameraToggleQueuedResult };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+
+        await vm.ForceDebugCameraOffCommand.ExecuteAsync(null);
+
+        Assert.Equal("ON", vm.DebugCameraState);
+        Assert.DoesNotContain("will run", vm.StatusText);
+        Assert.DoesNotContain("Do not press Force OFF again", vm.StatusText);
+        Assert.Contains("press Force OFF again once the game responds", vm.StatusText);
+    }
+
+    // [DBGCAM-OFF-OVER-QUEUED-ON] review: -6 is a Force the DLL did NOT send, because an earlier one of the other direction
+    // is still queued. Read as -5 it described a toggle of its own direction as queued; as an unknown code, a refusal.
+    // An OFF over a queued ON: the camera is not on yet, the ON will turn it on -- the badge reads Queued, as the ON's did.
+    // An ON over a queued OFF: the camera is still on -- the badge reads ON.
+    [Theory]
+    [InlineData(false, "Queued", "Force OFF was not sent — an earlier Force ON is still queued")]
+    [InlineData(true, "ON", "Force ON was not sent — an earlier Force OFF is still queued")]
+    public async Task Force_over_an_opposite_queued_toggle_says_it_was_not_sent(bool wantOn, string badge, string says)
+    {
+        var fake = new FakeDumpService { SetDebugCameraResult = -6 };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+
+        if (wantOn) await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+        else await vm.ForceDebugCameraOffCommand.ExecuteAsync(null);
+
+        Assert.Equal(badge, vm.DebugCameraState);
+        Assert.Contains(says, vm.StatusText);
+        Assert.Contains("again once the game responds", vm.StatusText);
+        Assert.DoesNotContain("state is now", vm.StatusText);
     }
 
     [Fact]

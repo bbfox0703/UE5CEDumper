@@ -25,6 +25,15 @@
 #define LOG_CAT "CEP"
 #include "Sein.h"
 
+// [METHODE-STALE-LOGPATH] Logs are per process and per category (Sein): this plugin's CEPlugin: lines land in Cheat
+// Engine's own folder, the DLL's scan in the game's. A dialog that sends the reader to a log names both. Sein names a
+// folder after its exe, and CE's launcher picks the AVX2 build on any CPU that has it, so both CE names are given. A
+// macro so the dialogs can stay single string literals.
+#define METHODE_LOG_DETAILS                                                                       \
+    "Details: init-0.log under %LOCALAPPDATA%\\UE5CEDumper\\Logs\\, in Cheat Engine's own\n"     \
+    "folder (cheatengine-x86_64-SSE4-AVX2 on most CPUs, else cheatengine-x86_64)\n"               \
+    "and in the game's (named after its exe)."
+
 // ── Externals from dllmain.cpp ────────────────────────────────────────────
 extern HMODULE g_hDllModule;           // DLL module handle
 extern std::atomic<bool> g_isCEPlugin; // Set true here to suppress game-process auto-start
@@ -396,9 +405,14 @@ static void __stdcall OnInjectAndConnect()
     //        CE's manual PE mapper, which never links the image into the PEB, so the
     //        module walk below cannot see it. CE's Settings -> "Always force load
     //        modules" (HKCU value `Always Force Load`) takes that path for EVERY
-    //        injection. The mapper processes neither TLS nor .pdata (measured on
-    //        dist\UE5Dumper.dll), so no SEH or C++ exception can be dispatched inside
-    //        the image, and ReadSafe's everyday __except makes a game crash the likely end.
+    //        injection. CE's published mapper (ManualModuleLoader.pas, read 2026-10-28)
+    //        applies only the export, import and relocation directories -- not TLS, not
+    //        the .pdata exception table -- so exception dispatch inside the image is not
+    //        something ReadSafe's everyday __except can count on. Not a certainty either
+    //        way: in L53's manually mapped runs on the installed CE an exception reached a
+    //        catch(...) inside the image and neither game crashed. (Whether C++ or SEH is
+    //        unknown: /EHa lets catch(...) take both.) Hence "not supported", never
+    //        "will crash".
     //      * The APC path and a GetExitCodeThread failure ALSO return TRUE with nothing
     //        mapped.
     //    Nothing here tells those apart, so the message names both; a manually mapped
@@ -419,7 +433,7 @@ static void __stdcall OnInjectAndConnect()
     if (!present && ok) {
         // [A2-METHODE-MANUALMAP] TRUE, and the module list does not show it: AMBIGUOUS (see
         // above). Either nothing was mapped, or CE's force-load manual-mapped it -- invisible
-        // to the walk, unable to dispatch an exception. Say both; name the setting.
+        // to the walk, its exception handling not guaranteed. Say both; name the setting.
         LOG_WARN("CEPlugin: InjectDLL TRUE but the module is absent — ambiguous: nothing was "
                  "mapped, or CE's 'Always force load modules' manual-mapped it");
         g_CE.ShowMessage(const_cast<char*>(
@@ -429,9 +443,11 @@ static void __stdcall OnInjectAndConnect()
             "    as administrator), or\n"
             "  - CE force-loaded it by manual mapping, which it does for every injection\n"
             "    when Settings -> \"Always force load modules\" is ticked. A manually mapped\n"
-            "    UE5Dumper.dll cannot handle exceptions, so the game is likely to crash:\n"
+            "    UE5Dumper.dll is not supported: CE's mapper may skip the tables its\n"
+            "    exception handling relies on, so a fault it would normally contain\n"
+            "    could crash the game. To be safe:\n"
             "    untick that setting, restart the game, and inject again.\n\n"
-            "Details: Logs\\UE5Dumper-*.log"));
+            METHODE_LOG_DETAILS));
         return;
     }
     if (!present) {
@@ -440,7 +456,7 @@ static void __stdcall OnInjectAndConnect()
             "(Cheat Engine also reported failure.)\n\n"
             "Usual causes: the target is 32-bit, anti-cheat blocked the load, or CE\n"
             "needs to run as administrator.\n"
-            "Details: Logs\\UE5Dumper-*.log"));
+            METHODE_LOG_DETAILS));
         return;
     }
 

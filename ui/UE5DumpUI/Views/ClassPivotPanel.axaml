@@ -55,8 +55,10 @@
           </ItemsControl.ItemsPanel>
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="vm:DiscoverSnapshotPick">
-              <CheckBox IsChecked="{Binding IsSelected}" Content="{Binding Display}"
-                        Margin="0,0,14,0" FontSize="11"/>
+              <!-- [LW-CRUMB-UNDERSCORE] A TextBlock keeps a snapshot label's underscores. -->
+              <CheckBox IsChecked="{Binding IsSelected}" Margin="0,0,14,0" FontSize="11">
+                <TextBlock Text="{Binding Display}"/>
+              </CheckBox>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>
@@ -85,7 +87,8 @@
                   HorizontalScrollBarVisibility="Auto">
           <DataGrid.Columns>
             <DataGridTextColumn Header="{StaticResource str.Pivot.Discover.Col.Class}"   Binding="{Binding ClassName}"      SortMemberPath="ClassName"        Width="280" MinWidth="180"/>
-            <DataGridTextColumn Header="{StaticResource str.Pivot.Discover.Col.Prop}"    Binding="{Binding PropName}"       SortMemberPath="PropName"         Width="260" MinWidth="160"/>
+            <!-- PropLabel, not PropName ([DISCOVER-SHADOWED-POOL]): the two copies of a shadowed name are two rows. -->
+            <DataGridTextColumn Header="{StaticResource str.Pivot.Discover.Col.Prop}"    Binding="{Binding PropLabel}"      SortMemberPath="PropLabel"        Width="260" MinWidth="160"/>
             <DataGridTextColumn Header="{StaticResource str.Pivot.Discover.Col.Changed}" Binding="{Binding ChangedDisplay}" SortMemberPath="InstancesChanged" Width="80"/>
             <DataGridTextColumn Header="{StaticResource str.Pivot.Discover.Col.Dir}"     Binding="{Binding Direction}"      SortMemberPath="Direction"        Width="44"/>
             <DataGridTextColumn Header="{StaticResource str.Pivot.Discover.Col.Cat}"     Binding="{Binding CategoryName}"   SortMemberPath="InterestScore"    Width="90"/>
@@ -272,7 +275,8 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTextColumn Header="{StaticResource str.Pivot.Col.Field}"    Binding="{Binding Name}"            SortMemberPath="Name"          IsReadOnly="True" Width="260" MinWidth="160"/>
+        <!-- Label, not Name ([SNAPDIFF-SHADOWED-PROP]): one copy of a shadowed name shows its offset. -->
+        <DataGridTextColumn Header="{StaticResource str.Pivot.Col.Field}"    Binding="{Binding Label}"           SortMemberPath="Label"         IsReadOnly="True" Width="260" MinWidth="160"/>
         <DataGridTextColumn Header="{StaticResource str.Pivot.Col.Type}"     Binding="{Binding DeclaredType}"    SortMemberPath="DeclaredType"  IsReadOnly="True" Width="130"/>
         <DataGridTextColumn Header="{StaticResource str.Pivot.Col.Distinct}" Binding="{Binding DistinctCount}"   SortMemberPath="DistinctCount" IsReadOnly="True" Width="80"/>
         <DataGridTextColumn Header="{StaticResource str.Pivot.Col.Insts}"    Binding="{Binding InstanceCount}"   SortMemberPath="InstanceCount" IsReadOnly="True" Width="90"/>
@@ -332,12 +336,14 @@
           </ItemsControl.ItemsPanel>
           <ItemsControl.ItemTemplate>
             <DataTemplate x:DataType="x:String">
-              <Button Content="{Binding}"
-                      Command="{Binding $parent[UserControl].((vm:ClassPivotViewModel)DataContext).RemoveFromDenylistCommand}"
+              <!-- [LW-CRUMB-UNDERSCORE] A TextBlock keeps a class name's underscores (a string Content loses the first). -->
+              <Button Command="{Binding $parent[UserControl].((vm:ClassPivotViewModel)DataContext).RemoveFromDenylistCommand}"
                       CommandParameter="{Binding}"
                       ToolTip.Tip="{StaticResource str.Noise.RemoveTip}"
                       Margin="0,0,4,4" Padding="6,2"
-                      Background="#3C3C3C" Foreground="#CCCCCC"/>
+                      Background="#3C3C3C" Foreground="#CCCCCC">
+                <TextBlock Text="{Binding}"/>
+              </Button>
             </DataTemplate>
           </ItemsControl.ItemTemplate>
         </ItemsControl>

@@ -815,8 +815,10 @@ public partial class SpcQueryViewModel : ViewModelBase
             if (ulong.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var baseAddr))
             {
                 ulong addr = baseAddr + (ulong)row.PropOffset;
-                await _platform.CopyToClipboardAsync($"{addr:X}");
-                StatusText = $"Copied {addr:X}  ({row.ClassName}::{row.PropName})";
+                var leaf = $"{addr:X}";
+                bool copied = await _platform.CopyToClipboardAsync(leaf);
+                StatusText = copied ? $"Copied {leaf}  ({row.ClassName}::{row.PropName})"
+                                    : ClipboardConvenience.NotCopiedText(leaf);
             }
         }
         catch (Exception ex)

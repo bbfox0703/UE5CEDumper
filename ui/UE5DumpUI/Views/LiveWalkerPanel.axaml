@@ -302,12 +302,15 @@
       <ItemsControl.ItemTemplate>
         <DataTemplate x:DataType="vm:BreadcrumbItem">
           <StackPanel Orientation="Horizontal">
-            <Button Content="{Binding Label}"
-                    Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).NavigateToBreadcrumbCommand}"
+            <!-- [LW-CRUMB-UNDERSCORE] A TextBlock, not Content="{Binding Label}": a string Content is drawn through an
+                 access-key presenter, which drops the first underscore of a name like DumperTestActor_0. -->
+            <Button Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).NavigateToBreadcrumbCommand}"
                     CommandParameter="{Binding}"
                     Padding="4,2" Margin="0,0,2,0"
                     Foreground="#4EC9B0" Background="Transparent" BorderThickness="0"
-                    Cursor="Hand"/>
+                    Cursor="Hand">
+              <TextBlock Text="{Binding Label}"/>
+            </Button>
             <TextBlock Text=">" Foreground="#666" VerticalAlignment="Center" Margin="2,0"/>
           </StackPanel>
         </DataTemplate>
@@ -923,7 +926,7 @@
                 FontFamily="Consolas" FontSize="12"
                 Focusable="False">
         <DataGrid.Columns>
-          <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.Name}" Binding="{Binding Name}" SortMemberPath="Name" Width="200" MinWidth="120"/>
+          <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.Name}" Binding="{Binding DisplayName}" SortMemberPath="DisplayName" Width="200" MinWidth="120"/>
           <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.Return}" Binding="{Binding ReturnType}" SortMemberPath="ReturnType" Width="100"/>
           <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.Params}" Width="90" SortMemberPath="NumParms">
             <DataGridTextColumn.Binding>
@@ -960,6 +963,7 @@
                           BorderThickness="1" BorderBrush="#DCDCAA"
                           Cursor="Hand" FontWeight="Bold" FontSize="11"
                           ToolTip.Tip="{StaticResource str.Tip.LiveWalker.FuncGenScript}"
+                          ToolTip.ShowOnDisabled="True"
                           ClickMode="Press"/>
                   <Button Content="{StaticResource str.LiveWalker.FuncPipeInvoke}"
                           Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).InvokeViaPipeCommand}"

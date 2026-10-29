@@ -253,7 +253,8 @@ GATES = [
      "cmd store below is emitted for both. The unguarded block then writes operands, "
      "clears status and stores cmd while another command may still be in flight "
      "(the AA10 hazard). Emit the call unconditionally and pass "
-     "'enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn'. "
+     "the [ENABLE] block's untick mode and MailboxTimeout.SilentReturn for [DISABLE] "
+     "('enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn' in a stateful toggle). "
      "It deliberately does NOT flag a guard that is not the enable discriminator "
      "(if (dll), if (verifyReturn)) -- that split is what keeps the check baseline-free. "
      "Run 'py tools/check_ce_idlewait_scope.py --list' or '--selftest'", False),

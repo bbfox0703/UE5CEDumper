@@ -307,4 +307,406 @@ public class ContainerTruncationTests
         Assert.DoesNotContain("showing", vm.CurrentObjectName);
         Assert.Equal("", vm.StatusText);
     }
+
+    // ---- [UE4-ASSETPTR-EXPORTS] a TArray<TAssetPtr> keeps the walk's paths ----
+    //
+    // The DLL fills a UE 4.11-4.17 asset-pointer array's inline elements with each path ([UE4-ASSETPTR-PROPS]);
+    // read_array_elements is scalar-only and answers raw bytes for that inner. The drill took the scalar re-read for
+    // any inner IsPointerOrStructArrayType did not name, so a capped preview was replaced by rows of hex.
+
+    /// <summary>Answers an element read as read_array_elements does for an inner it cannot decode: raw bytes only.</summary>
+    private sealed class RawElementReadStub : StubDumpService
+    {
+        public int Reads { get; private set; }
+        public override Task<ArrayElementsResult> ReadArrayElementsAsync(string addr, int fieldOffset, string innerAddr,
+            string innerType, int elemSize, int offset = 0, int limit = 64, CancellationToken ct = default)
+        {
+            Reads++;
+            return Task.FromResult(new ArrayElementsResult
+            {
+                TotalCount = limit, ReadCount = limit, InnerType = innerType, ElemSize = elemSize,
+                Elements = Enumerable.Range(0, limit)
+                    .Select(i => new ArrayElementValue { Index = i, Hex = new string('0', elemSize * 2) }).ToList(),
+            });
+        }
+    }
+
+    [Theory]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
+    public async Task Drill_UE4AssetPointerArray_ShowsTheWalksPaths_NotARawReRead(string innerType)
+    {
+        var field = new LiveFieldValue
+        {
+            Name = "ZonesToUse", TypeName = "ArrayProperty", ArrayCount = 200,
+            ArrayInnerType = innerType, ArrayElemSize = 0x20, ArrayInnerAddr = "0x7FF600001000",
+            ArrayElements = Enumerable.Range(0, 64)
+                .Select(i => new ArrayElementValue { Index = i, Value = $"/Game/Maps/Zones/Zone_{i}.Zone_{i}" })
+                .ToList(),
+        };
+        var dump = new RawElementReadStub();
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Fields = new List<LiveFieldValue> { field },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        vm.CurrentAddress = "0x10000000";
+
+        await vm.NavigateToContainerCommand.ExecuteAsync(field);
+
+        Assert.Equal(0, dump.Reads);                                              // the walk's elements, as a pointer array's
+        Assert.Equal(64, vm.Fields.Count);
+        Assert.Equal("/Game/Maps/Zones/Zone_0.Zone_0", vm.Fields[0].TypedValue);
+        Assert.Contains("showing 64 of 200", vm.Breadcrumbs[^1].Label);
+    }
+
+    // ---- [WALK-REFRESH-SCALAR-SHRINK] a Refresh inside a container view agrees with the drill ----
+    //
+    // Refresh's container branch re-walked the PARENT at the Array Limit and re-rendered the walk's inline preview: it
+    // never re-fetched a scalar array the way the drill does, and it re-derived neither the status line nor the crumb.
+    // Measured on DumperTest Shipping 5.4: Arr_Churn at 5,004 elements, drilled at Array Limit 16384, showed the first
+    // 4,096 ("capped at 4,096 per fetch"); moving the slider to 64 re-rendered 64 rows and cleared the status line, and
+    // the crumb still read "showing 4,096 of 5,004".
+
+    /// <summary>Answers every walk with a FRESH row whose inline preview is cut where the DLL cuts it -- min(Array Limit,
+    /// 4,096) -- and every element read at the same 4,096 per request. <see cref="Count"/> is the live element count.</summary>
+    private sealed class RewalkStub : StubDumpService
+    {
+        public const string Parent = "0x10000000";
+        public const int DllCap = 4096;
+        public int Count { get; set; }
+        public required Func<int, int, LiveFieldValue> Row { get; init; }   // (count, inline) -> a fresh row
+        public int ElementReads { get; private set; }
+        /// <summary>When set, every walk answers this instead: the parent object is gone.</summary>
+        public InstanceWalkResult? Gone { get; set; }
+        /// <summary>When set, the count the element READ sees: the array changed between the walk and the read.</summary>
+        public int? ReadSees { get; set; }
+
+        public override Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
+            int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
+            CancellationToken ct = default)
+            => Task.FromResult(Gone ?? new InstanceWalkResult
+            {
+                Address = Parent,
+                Fields = new List<LiveFieldValue> { Row(Count, Math.Min(Count, Math.Min(arrayLimit, DllCap))) },
+            });
+
+        public override Task<ArrayElementsResult> ReadArrayElementsAsync(string addr, int fieldOffset, string innerAddr,
+            string innerType, int elemSize, int offset = 0, int limit = 64, CancellationToken ct = default)
+        {
+            ElementReads++;
+            // Fern's read_array_elements refuses a non-string inner over 256 bytes, as the DLL does.
+            if (elemSize > 256 && innerType != "StrProperty")
+                throw new InvalidOperationException("DLL error: elem_size too large (max 256)");
+            int live = ReadSees ?? Count;
+            int n = Math.Max(0, Math.Min(Math.Min(limit, DllCap), live - offset));
+            return Task.FromResult(new ArrayElementsResult
+            {
+                TotalCount = live, ReadCount = n, InnerType = innerType, ElemSize = elemSize,
+                Elements = Enumerable.Range(offset, n).Select(i => new ArrayElementValue { Index = i, Value = $"{i}" }).ToList(),
+            });
+        }
+    }
+
+    private static LiveFieldValue ScalarRow(int count, int inline) => new()
+    {
+        Name = "Arr_Churn", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+        ArrayCount = count, ArrayInnerType = "IntProperty", ArrayElemSize = 4,
+        ArrayInnerAddr = "0x7FF600001000", ArrayDataAddr = "0x20000000",
+        ArrayElements = Enumerable.Range(0, inline).Select(i => new ArrayElementValue { Index = i, Value = $"{i}" }).ToList(),
+    };
+
+    private static async Task<(LiveWalkerViewModel Vm, RewalkStub Dump)> DrillLiveAsync(
+        Func<int, int, LiveFieldValue> row, int count, int arrayLimit)
+    {
+        var dump = new RewalkStub { Row = row, Count = count };
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()))
+        {
+            ArrayLimit = arrayLimit,          // set before CurrentAddress, so it triggers no refresh
+        };
+        vm.CurrentAddress = RewalkStub.Parent;
+        var parentRow = (await dump.WalkInstanceAsync(RewalkStub.Parent, arrayLimit: arrayLimit)).Fields[0];
+        await vm.NavigateToContainerCommand.ExecuteAsync(parentRow);
+        return (vm, dump);
+    }
+
+    /// <summary>The toolbar slider: its setter runs Refresh itself.</summary>
+    private static async Task MoveArrayLimitAsync(LiveWalkerViewModel vm, int value)
+    {
+        vm.ArrayLimit = value;
+        if (vm.RefreshCommand.ExecutionTask is { } running) await running;
+    }
+
+    [Fact]
+    public async Task Refresh_ScalarArrayOverTheArrayLimit_KeepsTheDrillsRows_StatusAndCrumb()
+    {
+        var (vm, _) = await DrillLiveAsync(ScalarRow, count: 5_004, arrayLimit: 16384);
+        Assert.Equal(4_096, vm.Fields.Count);                                // the precondition: the drill's view
+        Assert.Contains("capped at 4,096 per fetch", vm.StatusText);
+
+        await MoveArrayLimitAsync(vm, 64);                                   // the measured path
+
+        Assert.Equal(4_096, vm.Fields.Count);
+        Assert.Contains("showing 4,096 of 5,004", vm.CurrentObjectName);
+        Assert.Contains("showing 4,096 of 5,004", vm.Breadcrumbs[^1].Label);
+        Assert.Contains("capped at 4,096 per fetch", vm.StatusText);
+        Assert.DoesNotContain("Array Limit", vm.StatusText);
+
+        await vm.RefreshCommand.ExecuteAsync(null);                          // ...and a Refresh at an unchanged limit
+
+        Assert.Equal(4_096, vm.Fields.Count);
+        Assert.Contains("capped at 4,096 per fetch", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Refresh_ScalarArrayBelowTheDllCap_ShowsEveryElement_AsTheDrillDid()
+    {
+        // 200 elements at Array Limit 64: the drill re-fetches all 200, and an element edit at [N >= 64] refreshes.
+        // Rendering the 64-element preview made the edited row vanish right after "Written: ...".
+        var (vm, dump) = await DrillLiveAsync(ScalarRow, count: 200, arrayLimit: 64);
+        Assert.Equal(200, vm.Fields.Count);
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(200, vm.Fields.Count);
+        Assert.DoesNotContain("showing", vm.CurrentObjectName);
+        Assert.Equal("", vm.StatusText);
+        Assert.Equal(2, dump.ElementReads);                                  // the drill's read, and the refresh's
+    }
+
+    [Fact]
+    public async Task Refresh_ScalarArrayGrew_TheCrumbTakesTheNewCount_AndTheNewReading()
+    {
+        var (vm, dump) = await DrillLiveAsync(ScalarRow, count: 5_004, arrayLimit: 16384);
+        dump.Count = 5_010;
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        var crumb = vm.Breadcrumbs[^1];
+        Assert.Contains("showing 4,096 of 5,010", vm.CurrentObjectName);
+        Assert.Contains("showing 4,096 of 5,010", crumb.Label);
+        Assert.Contains("[5010 x IntProperty]", crumb.Label);
+        // The crumb's ContainerField is what Back re-renders and what the exporters read: it must be THIS reading.
+        Assert.Equal(5_010, crumb.ContainerField!.ArrayCount);
+        Assert.Equal(4_096, crumb.ContainerField.ArrayElements!.Count);
+    }
+
+    [Fact]
+    public async Task Refresh_TruncatedPointerArray_KeepsItsStatusLine_AndTheCrumbFollowsTheSlider()
+    {
+        var (vm, _) = await DrillLiveAsync(PtrArrayField, count: 200, arrayLimit: 128);
+        Assert.Contains("showing 128 of 200", vm.Breadcrumbs[^1].Label);
+        Assert.Contains("Array Limit", vm.StatusText);
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(128, vm.Fields.Count);
+        Assert.Contains("Array Limit", vm.StatusText);
+
+        // The slider DOES govern a pointer array (no per-element re-fetch can resolve names), so the rows follow it --
+        // and the crumb must say what the header says.
+        await MoveArrayLimitAsync(vm, 64);
+
+        Assert.Equal(64, vm.Fields.Count);
+        Assert.Contains("showing 64 of 200", vm.CurrentObjectName);
+        Assert.Contains("showing 64 of 200", vm.Breadcrumbs[^1].Label);
+        Assert.Contains("Array Limit", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Refresh_TruncatedSet_KeepsItsStatusLine_AndItsBadge()
+    {
+        var (vm, dump) = await DrillLiveAsync(SetField, count: 199, arrayLimit: 128);
+        Assert.Contains("Array Limit", vm.StatusText);
+        dump.Count = 205;
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Contains("showing 128 of 205", vm.CurrentObjectName);
+        Assert.Contains("showing 128 of 205", vm.Breadcrumbs[^1].Label);
+        Assert.Contains("Array Limit", vm.StatusText);
+    }
+
+    // [WALK-REFRESH-SCALAR-SHRINK] review F2: the element read reports the array's count AT READ TIME (TotalCount), and
+    // the view took its total and its "asked for" from the WALK's count instead. An array that shrank between the two
+    // reads came back complete but short of the walk's count, and the view said "capped at N per fetch" over it.
+
+    [Fact]
+    public async Task Drill_ScalarArrayThatShrankBeforeTheRead_IsShownWhole_NotCalledCapped()
+    {
+        var dump = new RewalkStub { Row = ScalarRow, Count = 5_004, ReadSees = 300 };
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()))
+        {
+            ArrayLimit = 64,
+        };
+        vm.CurrentAddress = RewalkStub.Parent;
+        var parentRow = (await dump.WalkInstanceAsync(RewalkStub.Parent, arrayLimit: 64,
+                                                      ct: TestContext.Current.CancellationToken)).Fields[0];
+
+        await vm.NavigateToContainerCommand.ExecuteAsync(parentRow);
+
+        Assert.Equal(300, vm.Fields.Count);
+        Assert.DoesNotContain("per fetch", vm.StatusText);
+        Assert.Contains("[300 x IntProperty]", vm.Breadcrumbs[^1].Label);
+        Assert.DoesNotContain("showing", vm.Breadcrumbs[^1].Label);
+        Assert.DoesNotContain("showing", vm.CurrentObjectName);
+    }
+
+    [Fact]
+    public async Task Refresh_ScalarArrayThatShrankBeforeTheRead_IsShownWhole_NotCalledCapped()
+    {
+        var (vm, dump) = await DrillLiveAsync(ScalarRow, count: 5_004, arrayLimit: 64);
+        dump.ReadSees = 300;                                                 // the walk still says 5,004
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(300, vm.Fields.Count);
+        Assert.DoesNotContain("per fetch", vm.StatusText);
+        Assert.DoesNotContain("showing", vm.CurrentObjectName);
+        Assert.Contains("[300 x IntProperty]", vm.Breadcrumbs[^1].Label);
+        Assert.DoesNotContain("showing", vm.Breadcrumbs[^1].Label);
+        Assert.Equal(300, vm.Breadcrumbs[^1].ContainerField!.ArrayCount);   // what Back and the exporters read
+    }
+
+    [Fact]
+    public async Task Refresh_ScalarArrayThatShrankButIsStillOverTheDllCap_IsCappedAtTheLiveCount()
+    {
+        // Fewer back than both the request and the live count: that IS the DLL's per-fetch cap, of the LIVE total.
+        var (vm, dump) = await DrillLiveAsync(ScalarRow, count: 10_000, arrayLimit: 64);
+        dump.ReadSees = 5_000;
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(4_096, vm.Fields.Count);
+        Assert.Contains("showing 4,096 of 5,000", vm.CurrentObjectName);
+        Assert.Contains("showing 4,096 of 5,000", vm.Breadcrumbs[^1].Label);
+        Assert.Contains("capped at 4,096 per fetch", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Refresh_ScalarArrayThatGrewBeforeTheRead_SaysSo_WithoutBlamingACapOrTheSlider()
+    {
+        // The read asked for the walk's 200 and the array now holds 210: neither the DLL's cap nor the Array Limit
+        // (which does not govern a scalar view) bounded it, the walk's count did -- a re-read asks for the new one.
+        var (vm, dump) = await DrillLiveAsync(ScalarRow, count: 200, arrayLimit: 64);
+        dump.ReadSees = 210;
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(200, vm.Fields.Count);
+        Assert.Contains("showing 200 of 210", vm.Breadcrumbs[^1].Label);
+        Assert.DoesNotContain("per fetch", vm.StatusText);
+        Assert.DoesNotContain("Array Limit", vm.StatusText);
+        Assert.Contains("re-open", vm.StatusText);
+    }
+
+    // [LW-EMPTIED-CONTAINER-REFRESH] RepopulateContainerView, and Refresh's re-derivation of the crumb, keyed the
+    // container kind on a count above zero: a container emptied since the drill matched no kind, so a Refresh left the
+    // old rows on screen (editable, at addresses the container no longer owns) under the old label.
+
+    [Theory]
+    [InlineData("array", "[0 x IntProperty]")]
+    [InlineData("set", "{Set: 0, IntProperty}")]
+    [InlineData("map", "{Map: 0, IntProperty")]
+    public async Task Refresh_OfAContainerEmptiedSinceTheDrill_ShowsItEmpty(string kind, string label)
+    {
+        Func<int, int, LiveFieldValue> row = kind switch
+        {
+            "array" => ScalarRow,
+            "set" => SetField,
+            _ => MapField,
+        };
+        var (vm, dump) = await DrillLiveAsync(row, count: 200, arrayLimit: 64);
+        Assert.NotEmpty(vm.Fields);                                          // the precondition: the drill's rows
+        dump.Count = 0;
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.Fields);
+        Assert.Contains(label, vm.Breadcrumbs[^1].Label);
+        Assert.DoesNotContain("showing", vm.Breadcrumbs[^1].Label);
+        Assert.DoesNotContain("showing", vm.CurrentObjectName);
+        Assert.Equal("", vm.StatusText);                                     // empty is complete, not unreadable
+    }
+
+    // The wire's own shape for an empty array: Fern writes `elements` only when there are some, so the row arrives with
+    // ArrayElements null, not an empty list (review of batch 2). The rows above hand the view an empty list.
+    private static LiveFieldValue WireScalarRow(int count, int inline) => count == 0
+        ? new LiveFieldValue
+        {
+            Name = "Arr_Churn", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+            ArrayCount = 0, ArrayInnerType = "IntProperty", ArrayElemSize = 4,
+            ArrayInnerAddr = "0x7FF600001000", ArrayDataAddr = "0x20000000",
+        }
+        : ScalarRow(count, inline);
+
+    private static LiveFieldValue WireBigStructRow(int count, int inline) => new()
+    {
+        Name = "ActiveEffects", TypeName = "ArrayProperty", Offset = 0x40, Size = 16,
+        ArrayCount = count, ArrayInnerType = "StructProperty", ArrayStructType = "ActiveEffect", ArrayElemSize = 0x2A8,
+        ArrayInnerAddr = "0x7FF600002000", ArrayDataAddr = "0x20000000",
+        ArrayElements = count == 0 ? null : Enumerable.Range(0, inline).Select(i => new ArrayElementValue
+        {
+            Index = i, Value = "{...}",
+            StructFields = new List<StructSubFieldValue> { new() { Name = "Level", TypeName = "IntProperty", Size = 4, Value = $"{i}" } },
+        }).ToList(),
+    };
+
+    [Fact]
+    public async Task Refresh_OfAnEmptiedArrayOfLargeStructs_ShowsItEmpty_WithoutAnElementRead()
+    {
+        // [LW-EMPTIED-CONTAINER-REFRESH] An emptied struct array fell through to read_array_elements, which is scalar-only
+        // and refuses an element over 256 bytes: Refresh showed "DLL error: elem_size too large" over the OLD rows.
+        var (vm, dump) = await DrillLiveAsync(WireBigStructRow, count: 3, arrayLimit: 64);
+        Assert.NotEmpty(vm.Fields);                                          // the precondition: the drill's rows
+        int reads = dump.ElementReads;
+        dump.Count = 0;
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.Fields);
+        Assert.Contains("[0 x ActiveEffect]", vm.Breadcrumbs[^1].Label);
+        Assert.Equal("", vm.StatusText);
+        Assert.Equal(reads, dump.ElementReads);                              // an empty array has nothing to read
+    }
+
+    [Fact]
+    public async Task Refresh_OfAnArrayTheWalkSawEmpty_ShowsTheWalksCount_NotOneTheReadSawLater()
+    {
+        // A read sent for a count of 0 asked for nothing, and answered with the count it found a moment later: the view
+        // read "[12 x IntProperty]" over an empty grid, with no badge or status. The walk's 0 is what the view shows.
+        var (vm, dump) = await DrillLiveAsync(WireScalarRow, count: 200, arrayLimit: 64);
+        dump.Count = 0;
+        dump.ReadSees = 12;
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.Fields);
+        Assert.Contains("[0 x IntProperty]", vm.Breadcrumbs[^1].Label);
+        Assert.Equal(0, vm.Breadcrumbs[^1].ContainerField!.ArrayCount);       // what Back and the exporters read
+    }
+
+    // [WALK-NULLCLASS-SILENT] review F1: the container branch acted only when the parent walk found the field again. A
+    // parent that is gone (unreadable, no UObject header, stale) has no fields, so Refresh returned SILENTLY: a blank
+    // status over the old element rows, still editable, each FieldAddress pointing into memory the game had freed.
+
+    [Theory]
+    [InlineData("unreadable", "no longer readable")]
+    [InlineData("no_header", "No UObject header")]
+    [InlineData("stale", "freed/recycled")]
+    public async Task Refresh_WhenTheParentIsGone_SaysSo_AndLeavesNoRowsIntoItsMemory(string verdict, string says)
+    {
+        var (vm, dump) = await DrillLiveAsync(ScalarRow, count: 200, arrayLimit: 64);
+        Assert.Equal(200, vm.Fields.Count);                                  // the precondition: the drill's view
+        dump.Gone = new InstanceWalkResult
+        {
+            Address = RewalkStub.Parent,
+            IsUnreadable = verdict == "unreadable", IsNoHeader = verdict == "no_header", IsStale = verdict == "stale",
+        };
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Contains(says, vm.StatusText);                                // what UpdateDisplay says for the verdict
+        Assert.Empty(vm.Fields);
+    }
 }

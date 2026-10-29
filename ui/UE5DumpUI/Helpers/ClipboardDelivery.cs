@@ -48,7 +48,9 @@ namespace UE5DumpUI.Helpers;
 /// payload is a generated script is always wrong. Diluting that with 26 legitimate
 /// address copies is what turns a 0-baseline check into a 26-line waiver list, which is
 /// the design this repo already refuted twice (see <c>check_property_family.py</c>'s
-/// header, and working-lessons §2.18).</para>
+/// header, and working-lessons §2.18). A convenience copy whose status line names what it
+/// copied tests the bool itself and says <see cref="ClipboardConvenience.NotCopiedText"/>
+/// on a refusal.</para>
 /// </summary>
 internal static class ClipboardDelivery
 {
@@ -74,8 +76,8 @@ internal static class ClipboardDelivery
     /// ⛔ THE IMPERATIVE COMES FIRST, AND THAT IS NOT A STYLE CHOICE. This message is
     /// rendered on two kinds of surface. The panels wrap it (LiveWalkerPanel.axaml,
     /// InstanceFinderPanel.axaml — <c>TextWrapping="Wrap"</c>, no MaxWidth) and show
-    /// all of it. The MainWindow toolbar does not: <c>StatusText</c> and
-    /// <c>ErrorMessage</c> are capped at <c>MaxWidth="360"</c> with
+    /// all of it. The MainWindow toolbar does not: <c>StatusText</c> is a fixed 360-wide slot and
+    /// <c>ErrorMessage</c> is capped at <c>MaxWidth="360"</c>, both with
     /// <c>TextTrimming="CharacterEllipsis"</c> (MainWindow.axaml's status bar), deliberately —
     /// the comment there records that an uncapped status line pushes the rest of the
     /// toolbar off-screen.

@@ -156,10 +156,15 @@ def main() -> int:
     sd_elem = sd.get("array_elem_size")
     sd_vals = [e.get("v", "") for e in sd.get("elements", [])]
     print("Arr_Deleg  : elem_size=%s  %r" % (sd_elem, sd_vals))
-    if not isinstance(sd_elem, int) or sd_elem - (16 if pad == 0 else 24) != 0:
+    # The DLL's own FName width (`fname_size`; a DLL before it says only case_preserving), and the
+    # padded size rounded up to 8 as DynOff::DelegatePaddedSize does -- 32, not 28, with a 12-byte FName.
+    off = call("get_offsets", {})
+    fname = int(off.get("fname_size") or (12 if off.get("case_preserving") else 8))
+    sd_want = (8 + fname) if pad == 0 else (8 + fname + 8 + 7) & ~7
+    if not isinstance(sd_elem, int) or sd_elem != sd_want:
         fails.append("TArray<FScriptDelegate> ElementSize %r does not match the %d implied by "
-                     "the multicast side -- the two must agree, both are `8 + sizeof(FName)` "
-                     "plus the same detector" % (sd_elem, 16 if pad == 0 else 24))
+                     "the multicast side -- `8 + sizeof(FName)` (FName %d), behind the same detector "
+                     "rounded up to 8 when there is one" % (sd_elem, sd_want, fname))
     if len(sd_vals) != 2:
         fails.append("expected 2 Arr_Delegates elements, got %d" % len(sd_vals))
     else:

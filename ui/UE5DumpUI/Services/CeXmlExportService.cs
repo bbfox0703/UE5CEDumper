@@ -432,6 +432,7 @@ public static class CeXmlExportService
             if (!IsObjectPropertyType(field.TypeName)) continue;
             if (string.IsNullOrEmpty(field.PtrAddress) || field.PtrAddress == "0x0") continue;
             if (resolved.ContainsKey(field.PtrAddress)) continue;
+            if (ReflectionMetaClassifier.WalksAsDefinition(field.PtrClassName)) continue;   // a type, not data
             if (!visited.Add(field.PtrAddress)) continue; // cycle protection
             pending.Add((field.PtrAddress, field.PtrClassAddr));
         }
@@ -454,6 +455,7 @@ public static class CeXmlExportService
         {
             var result = walked[i];
             if (result.Fields.Count == 0) continue;   // reclaimed / bad target
+            if (result.IsDefinition) continue;         // see WalkAndRecurseAsync
 
             try
             {
@@ -482,7 +484,8 @@ public static class CeXmlExportService
     }
 
     /// <summary>
-    /// Object/Class pointer family — same set CsxExportService treats as drilldown-eligible.
+    /// Object/Class pointer family whose loaded target the drilldown resolver walks.
+    /// CsxExportService keeps its own list for the same purpose; the two are not kept equal.
     /// </summary>
     private static bool IsObjectPropertyType(string typeName) => typeName is
         "ObjectProperty" or "ClassProperty" or "WeakObjectProperty" or
@@ -601,6 +604,7 @@ public static class CeXmlExportService
             if (!IsObjectPropertyType(f.TypeName)) continue;
             if (string.IsNullOrEmpty(f.PtrAddress) || f.PtrAddress == "0x0") continue;
             if (resolvedInstances.ContainsKey(f.PtrAddress)) continue;
+            if (ReflectionMetaClassifier.WalksAsDefinition(f.PtrClassName)) continue;   // a type, not data
             if (!visited.Add("P:" + f.PtrAddress)) continue;
             await WalkAndRecurseAsync(dump, f.PtrAddress, f.PtrClassAddr, resolvedStructs,
                 resolvedInstances, depth - 1, arrayLimit, visited, onWalk, lean, ct);
@@ -635,6 +639,7 @@ public static class CeXmlExportService
                 if (!IsObjectPropertyType(ov.TypeName)) continue;
                 if (string.IsNullOrEmpty(ov.PtrAddress) || ov.PtrAddress == "0x0") continue;
                 if (resolvedInstances.ContainsKey(ov.PtrAddress)) continue;
+                if (ReflectionMetaClassifier.WalksAsDefinition(ov.PtrClassName)) continue;   // a type, not data
                 if (!visited.Add("P:" + ov.PtrAddress)) continue;
                 await WalkAndRecurseAsync(dump, ov.PtrAddress, ov.PtrClassAddr, resolvedStructs,
                     resolvedInstances, depth - 1, arrayLimit, visited, onWalk, lean, ct);
@@ -652,7 +657,9 @@ public static class CeXmlExportService
         try
         {
             var r = await dump.WalkInstanceAsync(ptrAddr, ptrClassAddr, arrayLimit, lean: lean, ct: ct);
-            if (r.Fields.Count > 0)
+            // [CEXML-DEFINITION-VIEW-AS-DATA] A definition walk is the TYPE's member layout: laid out under the pointer,
+            // CE would read the UScriptStruct / UClass object's own memory at instance offsets. The pointer stays a leaf.
+            if (r.Fields.Count > 0 && !r.IsDefinition)
             {
                 resolvedInstances[ptrAddr] = r.Fields;
                 onWalk?.Invoke();
@@ -2391,6 +2398,15 @@ public static class CeXmlExportService
                 continue;
             }
 
+            // [UE4-ASSETPTR-EXPORTS] A TAssetPtr gets an array element's group: its weak pair is UE4's reset value
+            // {INDEX_NONE, 0} or stale while the asset is unloaded, TAssetPtr's usual state, so the FString path is the
+            // one name it can show.
+            if (IsAssetPtrType(field.TypeName))
+            {
+                EmitAssetPtrGroup(sb, indent, ScalarDesc(), $"+{CeOffset(field):X}");
+                continue;
+            }
+
             var ceField = MapCeField(field);
             if (ceField != null)
             {
@@ -2802,6 +2818,16 @@ public static class CeXmlExportService
             && field.ArrayCount > 0 && field.ArrayElemSize > 0)
         {
             EmitSoftObjectArrayProperty(sb, indent, field, desc);
+            return;
+        }
+
+        // [UE4-ASSETPTR-EXPORTS] 4.11-4.17's TArray<TAssetPtr>: the same per-element group, with the path where that
+        // engine keeps it -- one FString. The DLL stamps no soft-array metadata for it (that describes an FName path).
+        if (IsAssetPtrType(field.ArrayInnerType)
+            && field.ArrayCount > 0 && field.ArrayElemSize > 0
+            && field.ArrayElements is { Count: > 0 })
+        {
+            EmitAssetPtrArrayProperty(sb, indent, field, desc);
             return;
         }
 
@@ -3244,6 +3270,52 @@ public static class CeXmlExportService
         EmitGroupClose(sb, indent);
     }
 
+    /// <summary>[UE4-ASSETPTR-EXPORTS] UE 4.11-4.17's soft pointer properties, before 4.18 renamed them Soft*.</summary>
+    private static bool IsAssetPtrType(string? typeName) =>
+        typeName is "AssetObjectProperty" or "AssetClassProperty";
+
+    /// <summary>[UE4-ASSETPTR-EXPORTS] Where FAssetPtr keeps its path: one FString after the FWeakObjectPtr and
+    /// TagAtLastTest, the DLL's ASSETPTR_PATH. Fixed for the whole era, so not sent on the wire.</summary>
+    private const int AssetPtrPathOffset = 0x10;
+
+    /// <summary>
+    /// [UE4-ASSETPTR-EXPORTS] A TArray&lt;TAssetPtr&gt; (UE 4.11-4.17) laid out as the Phase G soft array is: one group
+    /// per element at its stride, holding the WeakPtr leaf at +0 and the asset path. That path is an FString, not an
+    /// FName, so it is a CE String one Data-pointer hop away -- readable as text, where the soft array needs a
+    /// DropDownList to name an FName index. The stride is the DLL's: it publishes FAssetPtr's one size for these.
+    /// </summary>
+    private static void EmitAssetPtrArrayProperty(StringBuilder sb, string indent, LiveFieldValue field, string desc)
+    {
+        EmitGroupOpen(sb, indent, desc, $"+{CeOffset(field):X}", new[] { 0 });
+        var elemIndent = indent + "  ";
+
+        foreach (var elem in field.ArrayElements!)
+        {
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6], as the soft loop
+
+            int elemByteOffset = elem.Index * field.ArrayElemSize;
+            string elemKey = !string.IsNullOrEmpty(elem.Value) ? $"[{elem.Index}] {elem.Value}" : $"[{elem.Index}]";
+            EmitAssetPtrGroup(sb, elemIndent, DecorateDesc(elemKey, elemByteOffset, null), $"+{elemByteOffset:X}");
+        }
+
+        EmitGroupClose(sb, indent);
+    }
+
+    /// <summary>
+    /// [UE4-ASSETPTR-EXPORTS] One FAssetPtr as a group at <paramref name="address"/>: the WeakPtr 8-byte hex leaf at +0
+    /// and the path a CE String one Data-pointer hop away. The group itself is not dereferenced -- the slot holds the
+    /// struct, not an address -- so a loaded target is never drilled from here.
+    /// </summary>
+    private static void EmitAssetPtrGroup(StringBuilder sb, string indent, string desc, string address)
+    {
+        var childIndent = indent + "  ";
+        EmitGroupOpen(sb, indent, desc, address, null);
+        EmitLeaf(sb, childIndent, DecorateDesc("WeakPtr", 0, null), new CeFieldInfo("8 Bytes", ShowAsHex: true), "+0", null);
+        EmitContainerStringLeaf(sb, childIndent, DecorateDesc("AssetPath", AssetPtrPathOffset, null),
+            $"+{AssetPtrPathOffset:X}", "StrProperty");
+        EmitGroupClose(sb, indent);
+    }
+
     /// <summary>
     /// Phase F: Emit struct array with per-element groups containing field children.
     /// Array group: Offsets=[0] (deref TArray.Data)
@@ -3305,6 +3377,12 @@ public static class CeXmlExportService
                     {
                         EmitContainerStringLeaf(sb, fieldIndent, DecorateDesc(sf.Name, sf.Offset, null),
                             $"+{sf.Offset:X}", sf.TypeName);
+                        continue;
+                    }
+                    // [UE4-ASSETPTR-EXPORTS] As a field of its own: the path is the name an unloaded asset shows.
+                    if (IsAssetPtrType(sf.TypeName))
+                    {
+                        EmitAssetPtrGroup(sb, fieldIndent, DecorateDesc(sf.Name, sf.Offset, null), $"+{sf.Offset:X}");
                         continue;
                     }
                     var ceField = MapInnerTypeToCeField(sf.TypeName, sf.Size);
@@ -3416,6 +3494,7 @@ public static class CeXmlExportService
 
         var ceKey = MapInnerTypeToCeField(field.MapKeyType, field.MapKeySize);
         bool keyString = IsStringProperty(field.MapKeyType);   // ceKey is null for these [W5-CEXML-FSTRING]
+        bool keyAsset = IsAssetPtrType(field.MapKeyType);      // checked before ceKey: its weak pair names nothing
 
         // Shared value DropDownList (rawInt → name) for Name/Enum values.
         string? valueDropDown = null;
@@ -3470,7 +3549,11 @@ public static class CeXmlExportService
                 // BOTH the Key leaf and the flattened value fields so the whole record reads as one.
                 _curRowColor = AltRowColor(elem.Index);
                 // Key as a flat sibling leaf at the element base ("[i] key ▸ Key").
-                if (ceKey != null)
+                if (keyAsset)
+                    EmitAssetPtrGroup(sb, elemIndent,
+                        $"{DecorateDesc(rawElemLabel, elemByteOffset, null, allowType: false)} ▸ Key",
+                        $"+{elemByteOffset:X}");
+                else if (ceKey != null)
                     EmitLeaf(sb, elemIndent,
                         $"{DecorateDesc(rawElemLabel, elemByteOffset, null, allowType: false)} ▸ Key",
                         ceKey, $"+{elemByteOffset:X}", null);
@@ -3504,7 +3587,9 @@ public static class CeXmlExportService
             var fieldIndent = elemIndent + "  ";
 
             // Key leaf at +0 — label only, no baked-in dynamic value.
-            if (ceKey != null)
+            if (keyAsset)
+                EmitAssetPtrGroup(sb, fieldIndent, DecorateDesc("Key", 0, null), "+0");
+            else if (ceKey != null)
                 EmitLeaf(sb, fieldIndent, DecorateDesc("Key", 0, null), ceKey, "+0", null);
             else if (keyString)
                 EmitContainerStringLeaf(sb, fieldIndent, DecorateDesc("Key", 0, null), "+0", field.MapKeyType);
@@ -3521,7 +3606,9 @@ public static class CeXmlExportService
             else
             {
                 var ceVal = MapInnerTypeToCeField(field.MapValueType, field.MapValueSize);
-                if (IsStringProperty(field.MapValueType))   // ceVal is null for these [W5-CEXML-FSTRING]
+                if (IsAssetPtrType(field.MapValueType))   // before ceVal: the asset's weak pair names nothing
+                    EmitAssetPtrGroup(sb, fieldIndent, DecorateDesc("Value", valOffset, null), $"+{valOffset:X}");
+                else if (IsStringProperty(field.MapValueType))   // ceVal is null for these [W5-CEXML-FSTRING]
                     EmitContainerStringLeaf(sb, fieldIndent, DecorateDesc("Value", valOffset, null),
                         $"+{valOffset:X}", field.MapValueType);
                 else if (ceVal != null)
@@ -3613,7 +3700,12 @@ public static class CeXmlExportService
                     ? $"[{elem.Index}] {elem.Key}"
                     : $"[{elem.Index}]";
 
-            if (ceElem != null)
+            if (IsAssetPtrType(field.SetElemType))
+            {
+                // [UE4-ASSETPTR-EXPORTS] Before the scalar leaf: the weak pair names nothing while unloaded.
+                EmitAssetPtrGroup(sb, childIndent, DecorateDesc(bareName, elemByteOffset, null), $"+{elemByteOffset:X}");
+            }
+            else if (ceElem != null)
             {
                 // Scalar element → flat leaf (decorated with +Offset; no class type).
                 EmitLeaf(sb, childIndent, DecorateDesc(bareName, elemByteOffset, null),
@@ -3698,6 +3790,14 @@ public static class CeXmlExportService
                         $"+{rowField.Offset:X}", offsets: [0],
                         unicode: rowField.TypeName == "StrProperty",
                         codepage: rowField.TypeName == "Utf8StrProperty");
+                    continue;
+                }
+
+                // [UE4-ASSETPTR-EXPORTS] As a scalar field: the path is the one name an unloaded asset shows.
+                if (IsAssetPtrType(rowField.TypeName))
+                {
+                    EmitAssetPtrGroup(sb, fieldIndent,
+                        DecorateDesc(rowField.Name, rowField.Offset, LeafTypeLabel(rowField)), $"+{rowField.Offset:X}");
                     continue;
                 }
 
@@ -4108,6 +4208,8 @@ public static class CeXmlExportService
             "SoftObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
             "SoftClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
             "LazyObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+            // [UE4-ASSETPTR-EXPORTS] 4.11-4.17's soft pointers: the same weak pair at +0, the path an FString after it.
+            "AssetObjectProperty" or "AssetClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
             // Interface: first 8 bytes is UObject*, show as pointer
             "InterfaceProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
@@ -4297,6 +4399,9 @@ public static class CeXmlExportService
 
             // Phase H: TLazyObjectPtr — first 8 bytes is FWeakObjectPtr
             "LazyObjectProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
+
+            // [UE4-ASSETPTR-EXPORTS] 4.11-4.17's TAssetPtr / TAssetSubclassOf — first 8 bytes is FWeakObjectPtr too
+            "AssetObjectProperty" or "AssetClassProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),
 
             // Phase I: TScriptInterface — first 8 bytes is UObject*, show as pointer
             "InterfaceProperty" => new CeFieldInfo("8 Bytes", ShowAsHex: true),

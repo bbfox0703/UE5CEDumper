@@ -53,8 +53,8 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
     // clicks a button that calls CreateAAScriptAsync / InjectTableFileAsync).
     // Without this gate, one method's CleanupPipe() would dispose the _pipe
     // another is mid-read/write on → ObjectDisposedException → spurious
-    // "not connected". The public methods never call each other (only the
-    // private Reconnect/Write/Read/Cleanup helpers), so a non-reentrant
+    // "not connected". The public methods never call each other (only
+    // private helpers, none of which takes the lock), so a non-reentrant
     // semaphore serializes them deadlock-free.
     private readonly SemaphoreSlim _opLock = new(1, 1);
     private bool _disposed;
@@ -284,6 +284,13 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
                 IsAvailable = true;
                 _log?.Info(Constants.LogCatInit, $"AOBMaker: created AA script '{description}'");
                 return true;
+            }
+            catch (RequestTooLargeException ex)
+            {
+                // No reason channel on this call: false sends its callers down their clipboard fallback, which has
+                // no such cap; the WARN carries the size.
+                NoteTooLarge(TypeCreateAAScript, ex);
+                return false;
             }
             catch (OperationCanceledException)
             {
@@ -583,7 +590,8 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
     };
 
     /// <summary>One request on its own connection. <c>Reached</c> is false only when the pipe could not be opened; a
-    /// reply that never came is (null, true).</summary>
+    /// reply that never came is (null, true). A request refused for its size answers as a failed reply carrying the
+    /// size reason -- never as (null, true), which every caller reads as "no reply, the record may exist".</summary>
     private async Task<(AobMakerMessage? Reply, bool Reached)> RoundTripAsync(AobMakerMessage request, int timeoutMs,
         CancellationToken ct)
     {
@@ -600,6 +608,11 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
             var reply = await ReadMessageAsync(_pipe!, timeoutCts.Token);
             IsAvailable = true;
             return (reply, true);
+        }
+        catch (RequestTooLargeException ex)
+        {
+            NoteTooLarge(request.Type, ex);
+            return (new AobMakerMessage { Type = request.Type, Success = false, Message = ex.Message }, true);
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
@@ -662,6 +675,11 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
                 _log?.Info(Constants.LogCatInit,
                     $"AOBMaker: injected table file '{fileName}' ({content.Length:N0} chars)");
                 return (true, null);
+            }
+            catch (RequestTooLargeException ex)
+            {
+                NoteTooLarge(TypeInjectTableFile, ex);
+                return (false, ex.Message);
             }
             catch (OperationCanceledException)
             {
@@ -838,11 +856,35 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
         // since AOBMaker 3ac12c2 (2026-03-05), so this is no longer required; it keeps plugins older than that working.
         var json = JsonSerializer.Serialize(message, AobMakerJsonContext.Relaxed.AobMakerMessage);
         var payload = Encoding.UTF8.GetBytes(json);
+        // The pre-flight size check (teleport-coord-library-spec.md §10, item 6). AOBMaker rejects a length prefix over
+        // this cap, and a plugin from before AOBMaker's oversize reply hangs up WITHOUT replying -- so an
+        // oversized request came back as a broken pipe or a timeout, read as "AOBMaker not connected". Refused here,
+        // BEFORE the length prefix, so not one byte reaches the wire and the caller gets the real reason.
+        if (payload.Length > MaxMessageSize)
+            throw new RequestTooLargeException(payload.Length);
         var lengthBuf = BitConverter.GetBytes((uint)payload.Length);
 
         await stream.WriteAsync(lengthBuf, ct);
         await stream.WriteAsync(payload, ct);
         await stream.FlushAsync(ct);
+    }
+
+    /// <summary>A request <see cref="WriteMessageAsync"/> refused for its size before sending anything. Its message is
+    /// the user-readable reason, because the reason-carrying calls hand it straight to their caller.</summary>
+    private sealed class RequestTooLargeException(int bytes) : Exception(Reason(bytes))
+    {
+        private static string Reason(int bytes) => string.Create(System.Globalization.CultureInfo.InvariantCulture,
+            $"the request is {bytes:N0} bytes, too large for AOBMaker's {MaxMessageSize / (1024 * 1024)} MiB message limit ({MaxMessageSize:N0} bytes); nothing was sent");
+    }
+
+    /// <summary>The one handling of <see cref="RequestTooLargeException"/>. The connect itself succeeded, so the bridge
+    /// stays AVAILABLE -- marking it offline would send the user to restart a Cheat Engine that is fine. The unused
+    /// connection is released the way <see cref="CheckAvailabilityAsync"/> releases its own.</summary>
+    private void NoteTooLarge(string requestType, RequestTooLargeException ex)
+    {
+        _log?.Warn(Constants.LogCatInit, $"AOBMaker {requestType}: {ex.Message}");
+        IsAvailable = true;
+        CleanupPipe();
     }
 
     private static async Task<int> ReadExactAsync(Stream stream, byte[] buffer, int count, CancellationToken ct)

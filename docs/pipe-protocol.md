@@ -1197,7 +1197,7 @@ Dropped when `lean` is set:
 
 | level | keys |
 |---|---|
-| instance | `name`, `class`, `class_addr`, `outer`, `outer_name`, `outer_class`, `is_definition`, `props_size` (kept: `addr`, `stale`) |
+| instance | `name`, `class`, `class_addr`, `outer`, `outer_name`, `outer_class`, `props_size` (kept: `addr`, `stale`, and `is_definition`, without which an exporter lays a type's member layout out as the pointee's data -- `[CEXML-DEFINITION-VIEW-AS-DATA]`) |
 | field | `hex`, `value`, `str_value`, `enum_name`, `enum_value`, `ptr_name`, `bool_mask`, `bool_byte_offset`, `array_inner_addr` |
 | `elements[]` | `h`, `pn` |
 | `elements[].sf[]` | `v`, `pn` |
@@ -1650,6 +1650,8 @@ written from the old text parsed nothing at all. Keys below are the emitted set,
   "use_fproperty":      true,          // false = UE4 <4.25 UProperty mode; selects the branch below
   "case_preserving":    false,         // WITH_CASE_PRESERVING_NAME. ⚠ the Name->Outer SLOT becomes
                                        // 0x10; sizeof(FName) is 0xC. See DynOff::bCasePreservingName.
+  "fname_size":         8,             // DynOff::SizeofFName(): a measured 4 / 8 / 12, else 8 or 12
+                                       // from case_preserving. Added 2026-10-27 ([DELEGATE-PAD-ALIGN]).
   "uobject_outer":      32,            // 0x20 standard, 0x28 case-preserving
   "ffieldclass_name":   0,             // FFieldClass::Name — 0x00 up to UE 5.7, 0x08 from 5.8
                                        // (5.8 made ~FFieldClass() virtual). ⚠ 0x00 is FOUR-WAY
@@ -1763,6 +1765,11 @@ Walk all UFunctions of a UClass. Returns each function with its property chain (
 its parameters and, on a Blueprint function, its locals after them; `parm` tells them apart.
 StructProperty entries include the sub-field layouts discovered by walking the UScriptStruct.
 
+`"include_interfaces": true` ([VND584-04], added 2026-10-27) appends the functions the class gets
+only through an interface its chain implements -- the names an invoke by name reaches through the
+interfaces -- each with `"interface": "<InterfaceClassName>"`, the interface that declares it.
+Without the flag the reply is the class's own functions, as before.
+
 ```jsonc
 // Request
 { "id": 20, "cmd": "walk_functions", "addr": "7FF123456789" }
@@ -1850,6 +1857,14 @@ state-changing operations but works for simple getters).
                                    // ProcessEvent overflowed the game's heap and came
                                    // back only as "-4 (exception during call)".
   "params_hex": "3F800000",        // optional (hex param bytes; scalars only)
+  "expect_class_addr": "0x7FF6CC00", // optional: the class the caller's function list was read
+                                   // from. When the class pointer at instance_addr reads another
+                                   // non-zero value (the object was freed and its memory reused
+                                   // while a dialog stayed open), nothing is invoked: ok:false,
+                                   // "Not invoked: the object at … is no longer the <class> this
+                                   // was opened on …". A freed slot still holding the old class
+                                   // pointer passes; one reading 0 or unreadable answers "Failed
+                                   // to read class …" first. Absent = no check.
   // optional: string INPUT params. An FString is passed by value as
   // { Data*, Num, Max } (16 bytes) inline in the params buffer, and its Data
   // pointer must be a valid GAME-process address — which the UI can't allocate.

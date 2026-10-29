@@ -533,7 +533,8 @@ Ten fixtures added in one packaging cycle, each closing a register row that had 
 Added for FIX PASS live check **L10** (`[P3-INVOKE-Y11-CEFORM]`, `[P3-INVOKE-STRUCT-FSTRING]`). No
 UFUNCTION on this fixture took a `TArray`, a delegate, an `FText`, or a struct with an `FString`
 member, so the gate had no host short of borrowing an engine library function whose effect cannot be
-read back. Six `InvokeGate_Take*` UFUNCTIONs now take exactly those, and **record what they
+read back. Six `InvokeGate_Take*` UFUNCTIONs now take exactly those (a seventh, `InvokeGate_TakeMulticast`,
+was added on 2026-10-27 for a multicast delegate), and **record what they
 received two independent ways**: the reflected fields below (read them over the pipe), and one line
 per call appended to the file named by `InvokeGate_LogPath`.
 
@@ -543,6 +544,7 @@ per call appended to the file named by `InvokeGate_LogPath`.
 | `InvokeGate_ArrayCalls` · `InvokeGate_DelegateCalls` · `InvokeGate_TextCalls` · `InvokeGate_StructCalls` | 0 | Bumped **first**, before the argument is read, by `InvokeGate_TakeIntArray` / `…Ref`, `InvokeGate_TakeDelegate`, `InvokeGate_TakeText`, `InvokeGate_TakeStruct` / `…Ref`. Each function also **returns** its counter. ⭐ An absence claim ("the refused FIRE sent nothing") is only valid beside an accepted FIRE in the same session that DID move the same counter |
 | `InvokeGate_LastArrayNum` · `InvokeGate_LastArrayData` | -1 until called | `Num()` and the raw `Data` pointer as numbers, never dereferenced. The empty array reads `0` / `0` |
 | `InvokeGate_LastDelegateBound` | -1 until called | `IsBound()` as 0/1. Safe on a zeroed `FScriptDelegate`: serial 0 resolves to null without a dereference |
+| `InvokeGate_MulticastCalls` · `InvokeGate_LastMulticastBound` | 0 · -1 until called | Added 2026-10-27 for `[CT-MULTICAST-PARAM-PAD]`. `InvokeGate_TakeMulticast` bumps the counter first and returns it, then records `IsBound()` as 0/1. It is a plain `UFUNCTION()`, not BlueprintCallable: UHT drops Blueprint support for a multicast parameter, so a native function is the only host. `tools/verify/ct_delegate_param_live.py --case multicast` passes it the actor's own bound `Multicast_Inline` |
 | `InvokeGate_LastHead` · `InvokeGate_LastTail` · `InvokeGate_LastLabelNum` · `InvokeGate_LastLabelData` | -1 until called | The struct host's receipt. `Head` and `Tail` (on `FDumperTestInvokeProbe`) are the **control**: they must arrive exactly as typed while `Label` between them arrives as the all-zero empty FString — `Num` 0, `Data` 0. A zeroed buffer would pass the string half by accident; a Head/Tail that also read 0 would mean nothing was written at all |
 
 ⚠ **By-value and const-ref both exist for the array and the struct, deliberately.** Through

@@ -620,6 +620,70 @@ public class SnapshotStoreTests : IDisposable
         Assert.Equal(1, diff.RemovedCount);   // XP (obj 3) is A-only
     }
 
+    // [SNAPDIFF-SHADOWED-PROP] A class can carry two properties of one name at different offsets (a subclass shadowing
+    // a parent's, measured on DumperTest: PrerollTime at +196 and +296). The join keyed on the name alone, so the two
+    // collided in A's map: phantom "changed" rows, and a removed count of -1 ("−-1 removed").
+    private static SnapshotCapturedObject Shadowed(int index, string hex196, string hex296)
+    {
+        var o = MakeObject(index);
+        o.Fields.Add(new SnapshotCapturedField { Name = "PrerollTime", Type = "FloatProperty", Hex = hex196, Offset = 196 });
+        o.Fields.Add(new SnapshotCapturedField { Name = "PrerollTime", Type = "FloatProperty", Hex = hex296, Offset = 296 });
+        return o;
+    }
+
+    [Fact]
+    public async Task Diff_keeps_two_same_named_properties_at_different_offsets_apart()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        _store.SetActiveGame("SHADOW");
+
+        long a = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "a" }, ct);
+        await _store.WriteChunkAsync(a, new[] { Shadowed(1, "0000803F", "00000040"), Shadowed(2, "0000803F", "00000040") }, ct);
+        await _store.FinalizeSnapshotAsync(a, 2, 2, ct);
+
+        long b = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "b" }, ct);
+        // Object 1 unchanged; object 2's +296 copy changes 2.0 -> 3.0, its +196 copy does not.
+        await _store.WriteChunkAsync(b, new[] { Shadowed(1, "0000803F", "00000040"), Shadowed(2, "0000803F", "00004040") }, ct);
+        await _store.FinalizeSnapshotAsync(b, 2, 2, ct);
+
+        var diff = await _store.DiffSnapshotsAsync(a, b, new SnapshotDiffFilter(), ct);
+
+        var changed = Assert.Single(diff.Changed);
+        Assert.Equal("2", changed.OldValue);
+        Assert.Equal("3", changed.NewValue);
+        Assert.Equal(0, diff.AddedCount);
+        Assert.Equal(0, diff.RemovedCount);
+    }
+
+    [Fact]
+    public async Task SpcQuery_InSession_keeps_two_same_named_properties_at_different_offsets_apart()
+    {
+        // [SNAPDIFF-SHADOWED-PROP] The SPC InSession key (class, GObjects index, name) had the same collision; Strict
+        // already carried the offset. Loose stays name-only on purpose: it matches across sessions and game patches,
+        // where a property's offset may move.
+        var ct = TestContext.Current.CancellationToken;
+        _store.SetActiveGame("SHADOWSPC");
+
+        long a = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "a" }, ct);
+        await _store.WriteChunkAsync(a, new[] { Shadowed(1, "0000803F", "00000040") }, ct);
+        await _store.FinalizeSnapshotAsync(a, 1, 1, ct);
+        long b = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "b" }, ct);
+        await _store.WriteChunkAsync(b, new[] { Shadowed(1, "0000803F", "00004040") }, ct);
+        await _store.FinalizeSnapshotAsync(b, 1, 1, ct);
+
+        var res = await _store.SpcQueryAsync(new SpcQuery
+        {
+            SnapshotIds = { a, b },
+            Predicates  = { SpcPredicateKind.Any, SpcPredicateKind.Changed },
+            AbsolutePredicates = { new SpcAbsolutePredicate(), new SpcAbsolutePredicate() },
+            JoinMode = SpcJoinMode.InSession,
+        }, ct);
+
+        var row = Assert.Single(res.Rows);   // only the +296 copy changed
+        Assert.Equal("PrerollTime", row.PropName);
+        Assert.Equal(296, row.PropOffset);
+    }
+
     private async Task<long> SeedSnapshotAsync(string label, int idx, CancellationToken ct)
     {
         long id = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = label }, ct);

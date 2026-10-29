@@ -3818,8 +3818,30 @@ int main() {
         check("DELEGATEARRAYPAD control: ...and 0, never negative, off a size that matches neither",
               Ubel::DelegateArrayElemPad(20) == 0, std::to_string(Ubel::DelegateArrayElemPad(20)).c_str());
         DynOff::bCasePreservingName = true;
-        check("DELEGATEARRAYPAD ⭐: with CasePreservingName (12-byte FName) a 28-byte element is padded 8",
-              Ubel::DelegateArrayElemPad(28) == 8, std::to_string(Ubel::DelegateArrayElemPad(28)).c_str());
+        // [DELEGATE-PAD-ALIGN] 8 + 12 + the detector rounds to 32 (the detector is 8-aligned), not 28.
+        check("DELEGATEARRAYPAD ⭐: with CasePreservingName (12-byte FName) a 32-byte element is padded 8",
+              Ubel::DelegateArrayElemPad(32) == 8, std::to_string(Ubel::DelegateArrayElemPad(32)).c_str());
+        check("DELEGATEARRAYPAD control: ...and 28, no build's element size, publishes 0",
+              Ubel::DelegateArrayElemPad(28) == 0, std::to_string(Ubel::DelegateArrayElemPad(28)).c_str());
+        {
+            // The reader's stride is the engine's own element size: base + pad is 28 here, where the element is 32,
+            // so element [1] would be read 4 bytes early. Its FName's last 4 bytes (the payload's bytes 16..20) carry
+            // a marker its hex must end with.
+            alignas(8) static uint8_t cpData[2 * 32] = {};
+            const uint32_t marker = 0x5A5A5A5A;
+            memcpy(cpData + 32 + 8 + 16, &marker, 4);
+            alignas(8) static uint8_t cpInst[0x20] = {};
+            *reinterpret_cast<uintptr_t*>(cpInst + 0x10) = reinterpret_cast<uintptr_t>(cpData);   // Data
+            *reinterpret_cast<int32_t*>(cpInst + 0x18) = 2;                                       // Num
+            *reinterpret_cast<int32_t*>(cpInst + 0x1C) = 2;                                       // Max
+            const auto rr = Ubel::ReadDelegateArrayElements(reinterpret_cast<uintptr_t>(cpInst), 0x10, 32, 0, 2);
+            check("DELEGATEARRAYPAD ⭐: a case-preserving checked array's 32-byte elements are read, not refused",
+                  rr.ok && rr.elements.size() == 2, rr.error.c_str());
+            check("DELEGATEARRAYPAD ⭐: ...at the engine's stride, so element [1]'s hex ends in its own FName's bytes",
+                  rr.elements.size() == 2 && rr.elements[1].hex.size() == 40 &&
+                  rr.elements[1].hex.compare(32, 8, "5A5A5A5A") == 0,
+                  rr.elements.size() == 2 ? rr.elements[1].hex.c_str() : "-");
+        }
         DynOff::bCasePreservingName = false;
 
         static uint8_t daEntry[4][0x40] = {};
@@ -3885,6 +3907,91 @@ int main() {
 
         DynOff::bUseFProperty       = savedFPropD;
         DynOff::bCasePreservingName = savedCpnD;
+    }
+
+    // -- FINDREFSPAD-2026-10-27 -- Find Refs reads a delegate field's payload past a checked build's detector ---------
+    //
+    // ⛔ POOL-FAKING (own pool). [DELEGATE-PAD-ALIGN]'s second review: CollectRefMetaRecursive took a standalone
+    // DelegateProperty's weak pair and an inline multicast's TArray header at the FIELD offset, so on a UE 5.3+ checked
+    // build Find Refs read the access detector there and silently found nothing; and its TArray<FScriptDelegate> stride
+    // is the engine's element size, which only a 12- or 4-byte FName tells apart from base + pad.
+    {
+        blk("FINDREFSPAD - Find Refs reads a delegate's payload past the detector, and steps a delegate array by its size");
+        ResetCancel();
+
+        static uint8_t frEntry[7][0x40] = {};
+        const char* frNames[7] = { "", "DelegateProperty", "MulticastInlineDelegateProperty", "ArrayProperty",
+                                   "Del", "Multi", "Arr" };
+        static uintptr_t frChunk[8] = {};
+        for (int i = 1; i <= 6; ++i) {
+            memcpy(frEntry[i] + 0x10, frNames[i], strlen(frNames[i]) + 1);
+            frChunk[i] = reinterpret_cast<uintptr_t>(frEntry[i]);
+        }
+        static uintptr_t frChunks[2] = { reinterpret_cast<uintptr_t>(frChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(frChunks), 0x10);
+        check("FINDREFSPAD setup: the pool resolves MulticastInlineDelegateProperty",
+              Serie::GetString(2) == "MulticastInlineDelegateProperty", Serie::GetString(2).c_str());
+
+        const bool savedFPropR = DynOff::bUseFProperty;
+        const bool savedCpnR   = DynOff::bCasePreservingName;
+        DynOff::bUseFProperty = true;
+
+        static uint8_t frDelFC[0x20] = {}, frMcFC[0x20] = {}, frArrFC[0x20] = {};
+        *reinterpret_cast<int32_t*>(frDelFC + DynOff::FFIELDCLASS_NAME) = 1;   // "DelegateProperty"
+        *reinterpret_cast<int32_t*>(frMcFC + DynOff::FFIELDCLASS_NAME)  = 2;   // "MulticastInlineDelegateProperty"
+        *reinterpret_cast<int32_t*>(frArrFC + DynOff::FFIELDCLASS_NAME) = 3;   // "ArrayProperty"
+        auto prop = [](uint8_t* p, uint8_t* fc, int32_t name, int32_t off, int32_t size) {
+            *reinterpret_cast<uintptr_t*>(p + DynOff::FFIELD_CLASS)       = reinterpret_cast<uintptr_t>(fc);
+            *reinterpret_cast<int32_t*>(p + DynOff::FFIELD_NAME)          = name;
+            *reinterpret_cast<int32_t*>(p + DynOff::FPROPERTY_OFFSET)     = off;
+            *reinterpret_cast<int32_t*>(p + DynOff::FPROPERTY_ELEMSIZE)   = size;
+            *reinterpret_cast<int32_t*>(p + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;   // ArrayDim
+        };
+
+        // Class A, an 8-byte FName on a checked build: a 24-byte DelegateProperty and a 24-byte inline multicast.
+        static uint8_t frDel[0x100] = {}, frMc[0x100] = {}, frClsA[0x100] = {};
+        prop(frDel, frDelFC, 4, 0x30, 24);
+        prop(frMc, frMcFC, 5, 0x50, 24);
+        *reinterpret_cast<uintptr_t*>(frDel + DynOff::FFIELD_NEXT)         = reinterpret_cast<uintptr_t>(frMc);
+        *reinterpret_cast<int32_t*>(frClsA + DynOff::USTRUCT_PROPSSIZE)    = 0x100;
+        *reinterpret_cast<uintptr_t*>(frClsA + DynOff::USTRUCT_CHILDPROPS) = reinterpret_cast<uintptr_t>(frDel);
+        DynOff::bCasePreservingName = false;
+        const auto& ma = Aura::GetClassRefMeta(reinterpret_cast<uintptr_t>(frClsA));
+        const auto wd = std::find_if(ma.weakLikePointers.begin(), ma.weakLikePointers.end(),
+                                     [](const auto& e) { return e.name == "Del"; });
+        const auto wm = std::find_if(ma.weakLikeArrays.begin(), ma.weakLikeArrays.end(),
+                                     [](const auto& e) { return e.name == "Multi"; });
+        check("FINDREFSPAD ⭐: a checked DelegateProperty's weak pair is read 8 past the field, which keeps its offset",
+              wd != ma.weakLikePointers.end() && wd->offset == 0x30 && wd->payloadOffset == 8,
+              wd == ma.weakLikePointers.end() ? "no entry"
+                  : (std::to_string(wd->offset) + " +" + std::to_string(wd->payloadOffset)).c_str());
+        check("FINDREFSPAD ⭐: a checked inline multicast's TArray header is read 8 past the field",
+              wm != ma.weakLikeArrays.end() && wm->offset == 0x50 && wm->headerOffset == 8,
+              wm == ma.weakLikeArrays.end() ? "no entry"
+                  : (std::to_string(wm->offset) + " +" + std::to_string(wm->headerOffset)).c_str());
+        check("FINDREFSPAD control: ...while its invocation-list elements stay unpadded (8 + 8, the pair at +0)",
+              wm != ma.weakLikeArrays.end() && wm->elemStride == 16 && wm->elemWeakOffset == 0,
+              wm == ma.weakLikeArrays.end() ? "no entry" : std::to_string(wm->elemStride).c_str());
+
+        // Class B, a 12-byte FName on a checked build: a TArray<FScriptDelegate> whose elements are 32 bytes.
+        static uint8_t frArr[0x100] = {}, frInner[0x100] = {}, frClsB[0x100] = {};
+        prop(frArr, frArrFC, 6, 0x40, 16);
+        *reinterpret_cast<uintptr_t*>(frInner + DynOff::FFIELD_CLASS)        = reinterpret_cast<uintptr_t>(frDelFC);
+        *reinterpret_cast<int32_t*>(frInner + DynOff::FPROPERTY_ELEMSIZE)    = 32;
+        *reinterpret_cast<uintptr_t*>(frArr + DynOff::FARRAYPROP_INNER)      = reinterpret_cast<uintptr_t>(frInner);
+        *reinterpret_cast<int32_t*>(frClsB + DynOff::USTRUCT_PROPSSIZE)      = 0x100;
+        *reinterpret_cast<uintptr_t*>(frClsB + DynOff::USTRUCT_CHILDPROPS)   = reinterpret_cast<uintptr_t>(frArr);
+        DynOff::bCasePreservingName = true;
+        const auto& mb = Aura::GetClassRefMeta(reinterpret_cast<uintptr_t>(frClsB));
+        const auto wa = std::find_if(mb.weakLikeArrays.begin(), mb.weakLikeArrays.end(),
+                                     [](const auto& e) { return e.name == "Arr"; });
+        check("FINDREFSPAD ⭐: a case-preserving checked delegate array steps by its 32-byte elements, not base + pad (28)",
+              wa != mb.weakLikeArrays.end() && wa->elemStride == 32 && wa->elemWeakOffset == 8,
+              wa == mb.weakLikeArrays.end() ? "no entry"
+                  : (std::to_string(wa->elemStride) + " +" + std::to_string(wa->elemWeakOffset)).c_str());
+
+        DynOff::bUseFProperty       = savedFPropR;
+        DynOff::bCasePreservingName = savedCpnR;
     }
 
     // -- UPROPDELEGATE-2026-09-12 -- the UProperty-mode delegate-array arms name the readers' refusal ---------------
@@ -3983,6 +4090,38 @@ int main() {
         static uint8_t wuLive[0x100] = {};
         const auto wl = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(wuLive), 0, 64, 2, false);
         check("WALKUNREADABLE control: a readable instance is not marked", !wl.unreadable);
+    }
+
+    // -- WALKNOHEADER-2026-10-27 -- a walk that resolves its own class says when the header names none ----------------
+    //
+    // [WALK-NULLCLASS-SILENT] L47: a released page re-committed as zeros walked to a classless, field-less reply with no
+    // stale and no unreadable key, so Live Walker showed a blank 'None' grid with no status. WalkClass(0) gives
+    // PropertiesSize 0, which the plausibility gate accepts; an unmapped ClassPrivate takes WalkClass's fault exit to the
+    // same 0. A live UObject never has either.
+    {
+        blk("WALKNOHEADER - a no-class walk of a header with no class says so, distinct from stale");
+        alignas(8) static uint8_t nhZero[0x100] = {};
+        const auto wz = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(nhZero), 0, 64, 2, false);
+        check("WALKNOHEADER ⭐: a readable header whose ClassPrivate is 0 is marked no-header", wz.noHeader);
+        check("WALKNOHEADER control: ...and not stale, whose text claims an implausible PropertiesSize", !wz.isStale);
+
+        uint8_t* gone = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x1000, MEM_RESERVE, PAGE_NOACCESS));
+        check("WALKNOHEADER setup: reserved a page to release", gone != nullptr);
+        if (gone) {
+            VirtualFree(gone, 0, MEM_RELEASE);   // its address is now unmapped
+            alignas(8) static uint8_t nhUnmapped[0x100] = {};
+            const uintptr_t goneAddr = reinterpret_cast<uintptr_t>(gone);
+            memcpy(nhUnmapped + Grimoire::OFF_UOBJECT_CLASS, &goneAddr, sizeof goneAddr);
+            const auto wu = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(nhUnmapped), 0, 64, 2, false);
+            check("WALKNOHEADER ⭐: a header whose ClassPrivate is unmapped is marked no-header",
+                  wu.noHeader && !wu.isStale);
+        }
+
+        // A raw-struct walk passes its class: the bytes are not a UObject header, and that is not this verdict.
+        alignas(8) static uint8_t nhClass[0x100] = {};
+        const auto wr = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(nhZero), reinterpret_cast<uintptr_t>(nhClass),
+                                           64, 2, false);
+        check("WALKNOHEADER control: a walk given its class is never marked no-header", !wr.noHeader);
     }
 
     // -- SPARSEVALIDATE-2026-09-25 -- the sparse-storage validator accepts a vtable in ANY mapped module ---------------
@@ -4536,6 +4675,182 @@ int main() {
         DynOff::bCasePreservingName = svCpnP;
         DynOff::bUseFProperty       = svFPropP;
         g_cachedUEVersion           = svVerP;
+    }
+
+    // [DBGCAM-58-REENABLE] The Debug Camera's own CheatManager is never the one to toggle. ADebugCameraController::
+    // AddCheats forces a CheatManager onto the DCC in non-Shipping builds, so after the first ON two are live, and
+    // GObjects slot reuse can put the DCC's BELOW the player's -- measured on DumperTest58 Development after three GCs:
+    // 34955 against 35796. The lowest-index pick then lands on the DCC's, and on UE 5.8 a ToggleDebugCamera there never
+    // enables the camera again: FDebugCameraManager::EnableDebugCamera returns at once, the DCC having no Player.
+    {
+        blk("DBGCAM58 - the Debug Camera's own CheatManager is skipped when one is chosen to toggle");
+        ResetCancel();
+
+        enum : int32_t { nClass = 1, nEngine, nPackage, nObject, nActor, nController, nPlayerController, nDcc, nBPDcc,
+                         nCheatMgr, nCdoCheatMgr, nBPPc, nBPPc0, nBPDcc0, nCheatMgr0, nCheatMgr1, nNames };
+        const char* dcNames[nNames] = { "", "Class", "/Script/Engine", "Package", "Object", "Actor", "Controller",
+                                        "PlayerController", "DebugCameraController", "BP_DebugCamera_C", "CheatManager",
+                                        "Default__CheatManager", "BP_ThirdPersonPlayerController_C",
+                                        "BP_ThirdPersonPlayerController_C_0", "BP_DebugCamera_C_0", "CheatManager_0",
+                                        "CheatManager_1" };
+        static uint8_t dcEntry[nNames][0x40] = {};
+        static uintptr_t dcChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(dcEntry[i] + 0x10, dcNames[i], strlen(dcNames[i]) + 1);
+            dcChunk[i] = reinterpret_cast<uintptr_t>(dcEntry[i]);
+        }
+        static uintptr_t dcChunks[2] = { reinterpret_cast<uintptr_t>(dcChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(dcChunks), 0x10);
+
+        const bool     svCpnD   = DynOff::bCasePreservingName;
+        const bool     svFPropD = DynOff::bUseFProperty;
+        const uint32_t svVerD   = g_cachedUEVersion;
+        DynOff::bCasePreservingName = false;
+        DynOff::bUseFProperty       = true;
+        g_cachedUEVersion           = 508;
+
+        enum { bMeta, bPkgCls, bPkg, bObject, bActor, bController, bPlayerController, bDcc, bBPDcc, bCheatMgr,
+               bCdoCheatMgr, bBPPc, bPc0, bDcc0, bCmOfDcc, bCmOfPc, kBlobs };
+        alignas(16) static uint8_t dcB[kBlobs][0x200] = {};
+        auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(dcB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto obj = [&](int b, int cls, int32_t name, int outer) {
+            memset(dcB[b], 0, sizeof(dcB[b]));
+            putP(dcB[b], Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            put32(dcB[b], Grimoire::OFF_UOBJECT_NAME, name);
+            putP(dcB[b], DynOff::UOBJECT_OUTER, A(outer));
+        };
+        auto klass = [&](int b, int32_t name, int super) {
+            obj(b, bMeta, name, bPkg);
+            putP(dcB[b], DynOff::USTRUCT_SUPER, A(super));
+        };
+        obj(bMeta, bMeta, nClass, -1);
+        obj(bPkgCls, bMeta, nPackage, -1);
+        obj(bPkg, bPkgCls, nEngine, -1);
+        klass(bObject, nObject, -1);
+        klass(bActor, nActor, bObject);
+        klass(bController, nController, bActor);
+        klass(bPlayerController, nPlayerController, bController);
+        klass(bDcc, nDcc, bPlayerController);                        // ADebugCameraController : APlayerController
+        klass(bBPDcc, nBPDcc, bDcc);                                 // a game's subclass: derivation, not the name
+        klass(bCheatMgr, nCheatMgr, bObject);
+        obj(bCdoCheatMgr, bCheatMgr, nCdoCheatMgr, bPkg);
+        klass(bBPPc, nBPPc, bPlayerController);
+        obj(bPc0, bBPPc, nBPPc0, -1);
+        obj(bDcc0, bBPDcc, nBPDcc0, -1);
+        obj(bCmOfDcc, bCheatMgr, nCheatMgr0, bDcc0);                 // the DCC's own, at the LOWER index
+        obj(bCmOfPc, bCheatMgr, nCheatMgr1, bPc0);                   // the player's
+
+        FakePool dcPool;
+        dcPool.Build(kBlobs);
+        auto slot = [&](int i, int b) {
+            const uintptr_t o = A(b);
+            memcpy(dcPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        };
+        const int order[kBlobs] = { bMeta, bPkgCls, bPkg, bObject, bActor, bController, bPlayerController, bDcc,
+                                    bBPDcc, bCheatMgr, bCdoCheatMgr, bBPPc, bPc0, bDcc0, bCmOfDcc, bCmOfPc };
+        for (int i = 0; i < kBlobs; ++i) slot(i, order[i]);
+        Aura::InitWithExtendedLayout(dcPool.Addr(), FakePool::kItemSize);
+
+        auto nm = [](uintptr_t o) { return o ? Ubel::GetName(o) : std::string("(0)"); };
+        const uintptr_t plain = Aura::FindLiveOrDefaultOf("CheatManager");
+        check("DBGCAM58 control: the plain pick takes the DCC's CheatManager, the lowest live one -- the bug's pick",
+              plain == A(bCmOfDcc), nm(plain).c_str());
+        const uintptr_t pick = Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController");
+        check("DBGCAM58 ⭐: skipping CheatManagers owned by a DebugCameraController (a subclass included) picks the "
+              "player controller's", pick == A(bCmOfPc), nm(pick).c_str());
+
+        // With only the DCC's own live, the skip must not hand it back: the CDO stands in, as when none is live.
+        slot(15, bCdoCheatMgr);
+        Aura::InitWithExtendedLayout(dcPool.Addr(), FakePool::kItemSize);
+        const uintptr_t onlyDcc = Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController");
+        check("DBGCAM58 ⭐: with only the DCC's CheatManager live, it is still skipped -- the CDO stands in",
+              onlyDcc == A(bCdoCheatMgr), nm(onlyDcc).c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpnD;
+        DynOff::bUseFProperty       = svFPropD;
+        g_cachedUEVersion           = svVerD;
+    }
+
+    // -- WALKIFACEGUARD-2026-10-27 -- WalkInterfaceFunctions asks only a class for its interfaces ------------------------
+    //
+    // [VND584-04] Live Walker asks walk_functions for interface functions on every view, and a struct view's address is
+    // its UScriptStruct, which has no Interfaces array: read at UClass's offset, the bytes past the struct can pass as
+    // one and list phantom functions. Here the struct view and the class view hold the SAME well-formed array, so only
+    // the meta-class check can tell them apart. Installs its own name pool, like PROBECLASS above.
+    {
+        blk("WALKIFACEGUARD - WalkInterfaceFunctions reads interfaces for a class and refuses a struct view");
+        ResetCancel();
+
+        enum : int32_t { gClass = 1, gScriptStruct, gFunction, gInterface, gFooIface, gDoFoo, gMyStruct, gMyClass, gNames };
+        const char* gNamesTxt[gNames] = { "", "Class", "ScriptStruct", "Function", "Interface", "FooInterface", "DoFoo",
+                                          "MyStruct", "MyClass" };
+        static uint8_t gEntry[gNames][0x40] = {};
+        static uintptr_t gChunk[gNames + 1] = {};
+        for (int i = 1; i < gNames; ++i) {
+            memcpy(gEntry[i] + 0x10, gNamesTxt[i], strlen(gNamesTxt[i]) + 1);
+            gChunk[i] = reinterpret_cast<uintptr_t>(gEntry[i]);
+        }
+        static uintptr_t gChunks[2] = { reinterpret_cast<uintptr_t>(gChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(gChunks), 0x10);
+
+        const bool     svCpnG   = DynOff::bCasePreservingName;
+        const bool     svFPropG = DynOff::bUseFProperty;
+        const uint32_t svVerG   = g_cachedUEVersion;
+        const int      svIfaceG = DynOff::UCLASS_INTERFACES.load();
+        DynOff::bCasePreservingName = false;
+        DynOff::bUseFProperty       = true;
+        g_cachedUEVersion           = 504;
+        constexpr int kIfaceOff = 0x1A0;                 // inside the blob, past every UStruct / UFunction key
+        DynOff::UCLASS_INTERFACES.store(kIfaceOff);      // measured, so nothing probes
+
+        enum { gbMeta, gbStructMeta, gbFunctionCls, gbInterface, gbFoo, gbDoFoo, gbStructView, gbClassView, kGBlobs };
+        alignas(16) static uint8_t gB[kGBlobs][0x200] = {};
+        auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(gB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto obj = [&](int b, int cls, int32_t name) {
+            memset(gB[b], 0, sizeof(gB[b]));
+            putP(gB[b], Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            put32(gB[b], Grimoire::OFF_UOBJECT_NAME, name);
+        };
+        obj(gbMeta, gbMeta, gClass);
+        obj(gbStructMeta, gbMeta, gScriptStruct);
+        obj(gbFunctionCls, gbMeta, gFunction);
+        obj(gbInterface, gbMeta, gInterface);                          // UInterface: where the walk stops
+        obj(gbFoo, gbMeta, gFooIface);
+        putP(gB[gbFoo], DynOff::USTRUCT_SUPER, A(gbInterface));
+        obj(gbDoFoo, gbFunctionCls, gDoFoo);
+        putP(gB[gbFoo], DynOff::USTRUCT_CHILDREN, A(gbDoFoo));          // FooInterface declares DoFoo
+
+        alignas(16) static uint8_t gIfaces[0x10] = {};                 // one FImplementedInterface: FooInterface
+        putP(gIfaces, 0, A(gbFoo));
+        auto withIfaces = [&](int b) {
+            putP(gB[b], kIfaceOff, reinterpret_cast<uintptr_t>(gIfaces));
+            put32(gB[b], kIfaceOff + 8, 1);
+            put32(gB[b], kIfaceOff + 12, 1);
+        };
+        obj(gbStructView, gbStructMeta, gMyStruct);
+        withIfaces(gbStructView);
+        obj(gbClassView, gbMeta, gMyClass);
+        withIfaces(gbClassView);
+
+        check("WALKIFACEGUARD setup: the struct view's array reads as one interface, so only the guard refuses it",
+              Ubel::ClassInterfaces(A(gbStructView)).size() == 1);
+        const auto viaClass = Ubel::WalkInterfaceFunctions(A(gbClassView));
+        check("WALKIFACEGUARD control: a class gets DoFoo through FooInterface",
+              viaClass.size() == 1 && viaClass[0].name == "DoFoo" && viaClass[0].viaInterface == A(gbFoo),
+              viaClass.empty() ? "(none)" : viaClass[0].name.c_str());
+        const auto viaStruct = Ubel::WalkInterfaceFunctions(A(gbStructView));
+        check("WALKIFACEGUARD ⭐: a struct view gets no interface functions, whatever its bytes hold",
+              viaStruct.empty(), viaStruct.empty() ? "" : viaStruct[0].name.c_str());
+
+        DynOff::UCLASS_INTERFACES.store(svIfaceG);
+        DynOff::bCasePreservingName = svCpnG;
+        DynOff::bUseFProperty       = svFPropG;
+        g_cachedUEVersion           = svVerG;
     }
 
     // -- [VND583-02] UField::Next is MEASURED in FProperty mode -------------------------------
@@ -10693,6 +11008,148 @@ int main() {
               va.empty() ? "" : va[0].text.c_str());
         check("...and an empty one is null", va.size() == 2 && va[1].text == "null" && va[1].mark == SM::Exact,
               va.size() < 2 ? "" : va[1].text.c_str());
+    }
+
+    {
+        blk("CT-DELEGATE-PARAM-PAD: a delegate parameter's bound object is read past a checked build's access detector");
+        // A standalone FScriptDelegate on a UE 5.3+ Debug / Development / DebugGame build carries an 8-byte detector in
+        // front (DynOff::kDelegateDetectorPad); its ElementSize says so (DelegatePadFromElementSize). Measured on
+        // DumperTest 5.4 Development, 2026-10-27: Del_Unicast is 24 bytes, +0 reads 0 and the weak pair is at +8.
+        using SM = Ubel::SnapMark;
+        auto field = [](const char* name, int32_t off, int32_t size) {
+            Ubel::ParamField f; f.name = name; f.typeName = "DelegateProperty"; f.offset = off; f.size = size; return f;
+        };
+        alignas(8) uint8_t b[0x80] = {};
+        auto put32 = [&](int off, int32_t v) { memcpy(b + off, &v, 4); };
+        put32(0x00, 5); put32(0x04, 7); put32(0x08, 33);                          // 16: the pair at +0, OnHit at +8
+        put32(0x20, 5); put32(0x24, 7); put32(0x28, 33);                          // 24: detector 0, pair at +8, OnHit at +16
+        put32(0x30, 5); put32(0x34, 7); put32(0x38, 6); put32(0x3C, 9); put32(0x40, 33);   // 24: a detector that looks live
+        put32(0x50, 5); put32(0x54, 7); put32(0x58, 33);                          // 32 (12-byte FName): pair at +8
+        put32(0x68, 5); put32(0x6C, 7); put32(0x70, 33);                          // 20 with an 8-byte FName: no such size
+        Ubel::ParamLayout L;
+        L.params = { field("Pad0", 0x00, 16), field("Pad8", 0x18, 24), field("Decoy", 0x30, 24) };
+        Ubel::ParamLayout cpn;
+        cpn.params = { field("Cpn8", 0x48, 32) };
+        Ubel::ParamLayout cpn28;
+        cpn28.params = { field("Cpn28", 0x48, 28) };
+        Ubel::ParamLayout outline;   // a 4-byte FName: 12 bytes, or 24 behind the detector
+        outline.params = { field("Out0", 0x00, 12), field("Out8", 0x18, 24) };
+        Ubel::ParamLayout odd;
+        odd.params = { field("Odd", 0x68, 20) };
+
+        static int weakCalls = 0;
+        Ubel::SnapDecodeCtx ctx;
+        ctx.fname = [](int32_t i, int32_t) -> std::string { return i == 33 ? "OnHit" : "None"; };
+        ctx.object = [](uintptr_t p, std::string& name, std::string& cls) -> bool {
+            if (p != 0x1000) return false;
+            name = "Pawn_0"; cls = "Pawn_C"; return true;
+        };
+        ctx.weak = [](int32_t idx, int32_t serial) -> uintptr_t { ++weakCalls; return (idx == 5 && serial == 7) ? 0x1000 : 0; };
+        ctx.fnameSize = 8;
+
+        const auto v = Ubel::DecodeParamSnapshot(L, b, sizeof b, false, ctx);
+        const bool shaped = v.size() == L.params.size();
+        check("one value per parameter", shaped, std::to_string(v.size()).c_str());
+        if (shaped) {
+            check("control: ElementSize 16 (no detector) reads the pair at +0", v[0].text == "Pawn_0::OnHit" && v[0].mark == SM::Now,
+                  v[0].text.c_str());
+            check("ElementSize 24 reads the pair at +8, past the detector", v[1].text == "Pawn_0::OnHit" && v[1].mark == SM::Now,
+                  v[1].text.c_str());
+            check("...and a detector that looks like a live pair does not name the bound object",
+                  v[2].text == "(stale)::OnHit" && v[2].mark == SM::Gone, v[2].text.c_str());
+        }
+        Ubel::SnapDecodeCtx ctx12 = ctx;
+        ctx12.fnameSize = 12;
+        const auto vc = Ubel::DecodeParamSnapshot(cpn, b, sizeof b, false, ctx12);
+        // [DELEGATE-PAD-ALIGN] 8 + 12 + the detector is 28, but the detector's alignment rounds the struct to 32: the
+        // UE 5.4 editor's PDB gives TScriptDelegate<FNotThreadSafeDelegateMode> 0x20.
+        check("a case-preserving build: ElementSize 32 is 8 + 12 + the detector rounded to 8, the pair at +8",
+              vc.size() == 1 && vc[0].text == "Pawn_0::OnHit" && vc[0].mark == SM::Now, vc.empty() ? "" : vc[0].text.c_str());
+        const auto vc28 = Ubel::DecodeParamSnapshot(cpn28, b, sizeof b, false, ctx12);
+        check("...and 28, no build's size, is not read",
+              vc28.size() == 1 && vc28[0].mark == SM::Raw &&
+              vc28[0].text.rfind("(delegate \xE2\x80\x94 unexpected ElementSize 28, not read)", 0) == 0,
+              vc28.empty() ? "" : vc28[0].text.c_str());
+        Ubel::SnapDecodeCtx ctx4 = ctx;
+        ctx4.fnameSize = 4;
+        const auto vn = Ubel::DecodeParamSnapshot(outline, b, sizeof b, false, ctx4);
+        check("a 4-byte FName: control, ElementSize 12 reads the pair at +0",
+              vn.size() == 2 && vn[0].text == "Pawn_0::OnHit" && vn[0].mark == SM::Now, vn.empty() ? "" : vn[0].text.c_str());
+        check("a 4-byte FName: ElementSize 24 is 8 + 4 + the detector rounded to 8, the pair at +8",
+              vn.size() == 2 && vn[1].text == "Pawn_0::OnHit" && vn[1].mark == SM::Now,
+              vn.size() < 2 ? "" : vn[1].text.c_str());
+        weakCalls = 0;
+        const auto vo = Ubel::DecodeParamSnapshot(odd, b, sizeof b, false, ctx);
+        check("an ElementSize that is neither 16 nor 24 is not read, and says why",
+              vo.size() == 1 && vo[0].mark == SM::Raw &&
+              vo[0].text.rfind("(delegate \xE2\x80\x94 unexpected ElementSize 20, not read)", 0) == 0,
+              vo.empty() ? "" : vo[0].text.c_str());
+        check("...and resolves no pair", weakCalls == 0, std::to_string(weakCalls).c_str());
+    }
+
+    {
+        blk("CT-MULTICAST-PARAM-PAD: a multicast delegate parameter's invocation list is read past the access detector");
+        // A FMulticastScriptDelegate is a bare TArray header (16 bytes, whatever the FName width); a UE 5.3+ checked build
+        // puts the same 8-byte detector in front (DynOff::kDelegateDetectorPad). Read at +0 there, Data is the detector
+        // and Num the low half of Data. UHT lets a native UFunction take one by value (it only drops Blueprint support),
+        // and a struct parameter can carry one.
+        using PK = Ubel::ParamKind;
+        using SM = Ubel::SnapMark;
+        auto field = [](const char* name, const char* type, int32_t off, int32_t size) {
+            Ubel::ParamField f; f.name = name; f.typeName = type; f.offset = off; f.size = size; f.kind = PK::In; return f;
+        };
+        alignas(8) uint8_t b[0x80] = {};
+        auto put64 = [&](int off, uint64_t v) { memcpy(b + off, &v, 8); };
+        auto put32 = [&](int off, int32_t v) { memcpy(b + off, &v, 4); };
+        put64(0x00, 0x7770); put32(0x08, 2); put32(0x0C, 4);                    // 16: {Data, Num 2, Max 4} at +0
+        put64(0x18, 0x7770); put32(0x20, 2); put32(0x24, 4);                    // 24: detector 0, the header at +8
+        put64(0x30 + 0x08 + 0x08, 0x7770); put32(0x30 + 0x08 + 0x10, 2);         // a struct, its 24-byte member at +8
+        put64(0x58, 0x7770); put32(0x60, 2); put32(0x64, 4);                    // 20: no such size
+        Ubel::ParamLayout L;
+        auto st = field("Bag", "StructProperty", 0x30, 0x20);
+        st.sub = { field("Id", "IntProperty", 0, 4), field("OnPing", "MulticastInlineDelegateProperty", 8, 24) };
+        L.params = { field("Pad0", "MulticastInlineDelegateProperty", 0x00, 16),
+                     field("Pad8", "MulticastInlineDelegateProperty", 0x10, 24), st,
+                     field("Odd", "MulticastInlineDelegateProperty", 0x58, 20) };
+        Ubel::SnapDecodeCtx ctx;
+        ctx.fnameSize = 8;
+
+        const auto v = Ubel::DecodeParamSnapshot(L, b, sizeof b, false, ctx);
+        const bool shaped = v.size() == L.params.size();
+        check("one value per parameter", shaped, std::to_string(v.size()).c_str());
+        if (shaped) {
+            check("control: ElementSize 16 (no detector) reads the header at +0",
+                  v[0].text == "Num=2 (Data 0x7770)" && v[0].mark == SM::Header, v[0].text.c_str());
+            check("ElementSize 24 reads the header at +8, past the detector",
+                  v[1].text == "Num=2 (Data 0x7770)" && v[1].mark == SM::Header, v[1].text.c_str());
+            check("...and so does a struct parameter's 24-byte member", v[2].sub.size() == 2 &&
+                  v[2].sub[1].text == "Num=2 (Data 0x7770)" && v[2].sub[1].mark == SM::Header, v[2].text.c_str());
+            check("an ElementSize that is neither 16 nor 24 is not read, and says why", v[3].mark == SM::Raw &&
+                  v[3].text.rfind("(multicast \xE2\x80\x94 unexpected ElementSize 20, not read)", 0) == 0,
+                  v[3].text.c_str());
+        }
+    }
+
+    {
+        blk("CT-UE4-MULTICAST-SPELLING: UE 4.18-4.22's MulticastDelegateProperty decodes as its invocation list's header");
+        // Before 4.23 a multicast property's class is UMulticastDelegateProperty, with no "Inline", and the walk reads
+        // that spelling too. No build before UE 5.3 has the access detector, so its ElementSize is the bare header.
+        using PK = Ubel::ParamKind;
+        using SM = Ubel::SnapMark;
+        Ubel::ParamField f;
+        f.name = "OnPing"; f.typeName = "MulticastDelegateProperty"; f.offset = 0; f.size = 16; f.kind = PK::In;
+        alignas(8) uint8_t b[0x10] = {};
+        const uint64_t data = 0x7770;
+        const int32_t num = 2, max = 4;
+        memcpy(b, &data, 8); memcpy(b + 8, &num, 4); memcpy(b + 12, &max, 4);
+        Ubel::ParamLayout L;
+        L.params = { f };
+        Ubel::SnapDecodeCtx ctx;
+        ctx.fnameSize = 8;
+        const auto v = Ubel::DecodeParamSnapshot(L, b, sizeof b, false, ctx);
+        check("UE4's spelling reads Num and Data as the Inline spelling does",
+              v.size() == 1 && v[0].text == "Num=2 (Data 0x7770)" && v[0].mark == SM::Header,
+              v.empty() ? "" : v[0].text.c_str());
     }
 
     {

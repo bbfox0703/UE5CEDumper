@@ -404,7 +404,22 @@ public class CeLuaHygieneTests
 
         Assert.Contains("local DEBUG = UE5_DEBUG or 0", s);
         Assert.Contains("dbg('[DebugCamera]", s);
-        Assert.DoesNotContain("print('[DebugCamera]", s);
+        // [DEBUGCAM-QUEUED-OFF-NOESCALATE] Ungated prints are allowed only for warnings that flag a genuine problem
+        // (CLAUDE.md's rule), both in [DISABLE]: a queued OFF leaves the camera on, and [DBGCAM-OFF-OVER-QUEUED-ON] an OFF
+        // not sent over a queued ON leaves it to turn on. No other ungated [DebugCamera] print.
+        string[] allowed = { "print('[DebugCamera] OFF did not complete", "print('[DebugCamera] OFF not sent" };
+        int disableAt = s.IndexOf("[DISABLE]", System.StringComparison.Ordinal);
+        var prints = new List<int>();
+        for (int p = s.IndexOf("print('[DebugCamera]", System.StringComparison.Ordinal); p >= 0;
+             p = s.IndexOf("print('[DebugCamera]", p + 1, System.StringComparison.Ordinal))
+            prints.Add(p);
+        Assert.Equal(allowed.Length, prints.Count);
+        foreach (var p in prints)
+        {
+            Assert.True(allowed.Any(a => string.CompareOrdinal(s, p, a, 0, a.Length) == 0),
+                        "an ungated [DebugCamera] print that is not one of the allowed warnings: " + s.Substring(p, 60));
+            Assert.True(p > disableAt, "the warnings belong to [DISABLE]");
+        }
         Assert.Contains(CeLuaHygiene.CloseCall, s);
         Assert.Contains("elseif DEBUG == 0 then", s);
         Assert.Contains("showMessage('[DebugCamera]", s);

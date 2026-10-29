@@ -761,7 +761,8 @@ public class InvokeScriptTests
         Assert.Contains("t == 'fstring'", content);
         Assert.Contains("t == 'fstringn'", content);
         Assert.Contains("t == 'fstruct'", content);               // by-value struct param support
-        Assert.Contains("THIS_HELPER_VERSION = '1.4'", content);   // [R7-X5] the version gate; 1.4 replaces a resident 1.3
+        Assert.Contains("THIS_HELPER_VERSION = '1.5'", content);   // [R7-X5] the version gate; 1.5 ([ASSETPTR-BAKED-TOKEN]) replaces a resident 1.4
+        Assert.Contains("t == 'asset'", content);
     }
 
     // --- InputParams property ---
@@ -1554,7 +1555,8 @@ public class InvokeScriptTests
     // Three invoke paths build the same ProcessEvent params from the same FunctionInfoModel.
     // FIRE refuses an FText outright and a TYPED value for a multi-word structure
     // (ParamBufferBuilder.IsRefusedParam / IsEmptyOnlyParam, audit #5 Y11); the interactive CE
-    // form had no gate. An FText went out zeroed -- a crash, not a default -- and a typed TArray
+    // form had no gate. An FText went out zeroed -- not an empty FText, and a crash in any
+    // callee that reads it -- and a typed TArray
     // or delegate value was written as a raw int32 over the structure's first pointer. The
     // type classification must come from the SHARED predicates, never a hand-copied list.
 
@@ -1593,6 +1595,7 @@ public class InvokeScriptTests
         "StructProperty", "TextProperty", "ArrayProperty", "MapProperty", "SetProperty",
         "FieldPathProperty", "OptionalProperty", "DelegateProperty", "MulticastDelegateProperty",
         "MulticastInlineDelegateProperty", "MulticastSparseDelegateProperty",
+        "AssetObjectProperty", "AssetClassProperty",   // [UE4-ASSETPTR-EXPORTS] UE 4.11-4.17
     };
 
     [Theory]
@@ -1632,8 +1635,8 @@ public class InvokeScriptTests
     [Fact]
     public void CeForm_FText_IsRefusedWhateverTheBoxHolds()
     {
-        // An all-zero FText is not an empty FText (it holds a TSharedRef), so FIRE refuses it
-        // unconditionally -- not only when typed.
+        // An all-zero FText is not an empty FText (its text-data pointer is null), so FIRE
+        // refuses it unconditionally -- not only when typed.
         var pre = BeforeTheMailbox(FireHandler(InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc("TextProperty", 24))));
 
         Assert.Contains("FText", pre, StringComparison.Ordinal);
@@ -1777,6 +1780,8 @@ public class InvokeScriptTests
     [InlineData("ArrayProperty", 16)]
     [InlineData("StructProperty", 24)]
     [InlineData("LazyObjectProperty", 32)]   // [VND584-01] its own message, the same shape
+    [InlineData("AssetObjectProperty", 32)]  // [UE4-ASSETPTR-EXPORTS] an FAssetPtr's FString path needs the engine's storage
+    [InlineData("AssetClassProperty", 32)]
     public void CeForm_TheEmptyOnlyGate_IsWellFormedLua(string typeName, int size)
     {
         var pre = BeforeTheMailbox(FireHandler(InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc(typeName, size))));
@@ -1797,6 +1802,17 @@ public class InvokeScriptTests
 
         Assert.Matches(new System.Text.RegularExpressions.Regex(
             @"(?m)^\s*do showMessage\('[^'\n]*'\); return end\s*$"), pre);
+    }
+
+    [Fact]
+    public void CeForm_TheFTextRefusal_ClaimsOnlyWhatARunCannotFalsify()
+    {
+        // [FTEXT-REFUSAL-OVERCLAIM] The form's twin of FIRE's reason, held to the same wording:
+        // a zeroed FText crashes only a callee that reads it.
+        var pre = BeforeTheMailbox(FireHandler(InvokeScriptGenerator.Generate("C_C", "Take", OneParamFunc("TextProperty", 24))));
+
+        Assert.DoesNotContain("crashes the game", pre, StringComparison.Ordinal);
+        Assert.Contains("a function that reads it can crash the game", pre, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2097,6 +2113,36 @@ public class InvokeScriptTests
         Assert.Contains("\\\"Always force load modules\\\"", src, StringComparison.Ordinal);
         Assert.Contains("That means one of two things", src, StringComparison.Ordinal);
         Assert.DoesNotContain("its result cannot be trusted on its own", src, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CePluginInject_ManualMapWarning_ClaimsOnlyWhatARunCannotFalsify()
+    {
+        // [METHODE-MANUALMAP-EXCEPTION-CLAIM] L53 (2026-09-23): both manually mapped runs logged an exception (C++ or SEH:
+        // /EHa) contained by a catch(...) inside the image, and neither game crashed -- so "cannot handle exceptions, so the game is likely
+        // to crash" is falsified by a run. The advice stands (a manual map is unsupported and MAY not register the tables
+        // exception handling needs); its reason must say "may". Methode.cpp reaches no test target.
+        var src = DllSource("Methode.cpp");
+        Assert.DoesNotContain("cannot handle exceptions", src, StringComparison.Ordinal);
+        Assert.DoesNotContain("is likely to crash", src, StringComparison.Ordinal);
+        Assert.Contains("UE5Dumper.dll is not supported", src, StringComparison.Ordinal);
+        Assert.Contains("untick that setting, restart the game, and inject again", src, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void CePluginInject_Dialogs_PointAtTheLogsThatExist()
+    {
+        // [METHODE-STALE-LOGPATH] L53: both failure dialogs ended "Details: Logs\UE5Dumper-*.log", a flat layout gone since
+        // logs became per process and per category -- the CEPlugin: lines are in Cheat Engine's own folder, the scan in
+        // the game's, init-0.log in each. Methode.cpp reaches no test target, so this pins its source.
+        var src = DllSource("Methode.cpp");
+        Assert.DoesNotContain("UE5Dumper-*.log", src, StringComparison.Ordinal);
+        Assert.Contains("%LOCALAPPDATA%\\\\UE5CEDumper\\\\Logs", src, StringComparison.Ordinal);
+        Assert.Contains("init-0.log", src, StringComparison.Ordinal);
+        // Sein names the folder after the host exe, and CE's launcher starts cheatengine-x86_64-SSE4-AVX2.exe on any
+        // AVX2 CPU (cheatengine.lpr reads cpuid leaf 7), so naming only "cheatengine-x86_64" sends the reader to a folder
+        // that is absent, or stale (this machine kept a build-3315 log there).
+        Assert.Contains("cheatengine-x86_64-SSE4-AVX2", src, StringComparison.Ordinal);
     }
 
     private static string DllSrcDir()
@@ -2647,7 +2693,9 @@ public class InvokeScriptTests
         Assert.Equal(0, Count(CodeOnly(DllSource("Wirbel.cpp")), "UE5_FindInstanceOfClass("));
         var frieren = CodeOnly(DllSource("Frieren.cpp"));
         Assert.Equal(1, Count(frieren, "UE5_FindInstanceOfClass("));
-        Assert.Contains("uintptr_t cm = Aura::FindLiveOrDefaultOf(\"CheatManager\");", frieren, StringComparison.Ordinal);
+        // [DBGCAM-58-REENABLE] ...and skipping the Debug Camera controller's own CheatManager.
+        Assert.Contains("uintptr_t cm = Aura::FindLiveOrDefaultOf(\"CheatManager\", \"DebugCameraController\");", frieren,
+                        StringComparison.Ordinal);
         Assert.Contains("dcc = Aura::FindLiveOrDefaultOf(\"DebugCameraController\");", frieren, StringComparison.Ordinal);
     }
 

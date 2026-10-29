@@ -175,8 +175,8 @@ public class PanelSpaceBudgetTests
             return en.Descendants().Single(e => Attr(e, X + "Key") == key).Value;
         }
 
-        // Always shown: every TextBlock without a visibility binding of its own. The ⚠ has one -- it shows only with an
-        // attach warning -- and it was conditional before this change too.
+        // Always shown: every TextBlock without a visibility binding of its own. The ⚠ is no longer in the chip at all
+        // ([TOOLBAR-OTHER-MOVERS]), and it shows only with an attach warning.
         var shown = chip.Descendants().Where(e => e.Name.LocalName == "TextBlock" && Attr(e, "IsVisible") is null)
                         .Select(e => Text(Attr(e, "Text"))).ToList();
         Assert.Equal(new[] { "AOBMaker", "DLL", "/", "UI" }, shown);
@@ -194,6 +194,181 @@ public class PanelSpaceBudgetTests
         var groups = dots.Select(d => d.Parent!).Distinct().ToList();
         Assert.Equal(2, groups.Count);
         Assert.All(groups, g => Assert.StartsWith("{Binding ", Attr(g, "ToolTip.Tip") ?? ""));
+    }
+
+    private static double Num(string? value) =>
+        double.Parse(value ?? throw new InvalidOperationException("no value"), System.Globalization.CultureInfo.InvariantCulture);
+
+    /// <summary>Left + right of an Avalonia Thickness written as "u", "h,v" or "l,t,r,b"; 0 when absent.</summary>
+    private static double Horizontal(string? thickness)
+    {
+        if (thickness is null) return 0;
+        var p = thickness.Split(',').Select(Num).ToArray();
+        return p.Length switch { 1 => 2 * p[0], 2 => 2 * p[0], 4 => p[0] + p[2], _ => throw new FormatException(thickness) };
+    }
+
+    /// <summary>The column definition an element sits in ("Auto", "*", ...).</summary>
+    private static string ColumnOf(XElement grid, XElement child) =>
+        (Attr(grid, "ColumnDefinitions") ?? "*").Split(',')[(int)Num(Attr(child, "Grid.Column") ?? "0")].Trim();
+
+    /// <summary>A Text / Content value as the user reads it: a StaticResource resolved from en.axaml, else the literal.</summary>
+    private static string EnText(string? value)
+    {
+        if (value is null) return "";
+        if (!value.StartsWith("{StaticResource ", StringComparison.Ordinal)) return value;
+        var key = value["{StaticResource ".Length..^1];
+        var en = XDocument.Load(RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        return en.Descendants().Single(e => Attr(e, X + "Key") == key).Value;
+    }
+
+    private static XElement ToolbarStatusLine(XDocument doc) => Assert.Single(doc.Descendants(),
+        e => e.Name.LocalName == "TextBlock" && Attr(e, "Text") == "{Binding StatusText}");
+
+    private static XElement AobMakerRefresh(XDocument doc) => Assert.Single(doc.Descendants(),
+        e => e.Name.LocalName == "Button" && Attr(e, "Command") == "{Binding RefreshAobMakerCommand}");
+
+    /// <summary>The fixed-width Grid the toolbar status line sits in.</summary>
+    private static XElement StatusSlot(XDocument doc)
+    {
+        var slot = ToolbarStatusLine(doc).Parent!;
+        Assert.True(slot.Name.LocalName == "Grid",
+            $"the status line sits in a {slot.Name.LocalName}, not in a fixed-width slot Grid");
+        return slot;
+    }
+
+    [Fact]
+    public void Toolbar_StatusLine_IsAFixedWidthSlot()
+    {
+        // The L64 run of [W1-PIPEBUSY-LOG], observation (b), 2026-09-22: the toolbar status line was only CAPPED, so it took
+        // the width of its text. The ⟳ probe writes its "not connected" sentence there, the line widened, and every
+        // control after it in the WrapPanel moved: ⟳ went from about x 444 to x 658, out from under the cursor, and the
+        // next click opened the Address dropdown. A fixed Width keeps the controls after it still whatever the status says.
+        // [L64-TOOLBAR-FIXED-SLOT] review: the fixed width is the slot's, a Grid the status fills; Start Scan and the
+        // error line share it (Toolbar_ErrorLine_AndStartScan_ShareTheStatusSlot).
+        var doc = Axaml("MainWindow.axaml");
+        var status = ToolbarStatusLine(doc);
+        var slot = StatusSlot(doc);
+        Assert.True(slot.IsBefore(AobMakerRefresh(doc)), "⟳ no longer follows the status slot: re-check what this pin protects");
+
+        Assert.True(Attr(slot, "Width") is not null, "the status slot has no fixed Width: its text moves every control after it");
+        // 360 is the budget the status sentences are written for (about 50 characters before the ellipsis); a status with
+        // nothing beside it gets exactly that.
+        Assert.Equal(360d, Num(Attr(slot, "Width")) - Horizontal(Attr(status, "Margin")));
+        Assert.Null(Attr(status, "Width"));
+        Assert.Equal("*", ColumnOf(slot, status));   // it takes what the rest of the slot leaves
+        Assert.Equal("CharacterEllipsis", Attr(status, "TextTrimming"));
+        Assert.Equal("{Binding StatusText}", Attr(status, "ToolTip.Tip"));   // the whole sentence stays one hover away
+    }
+
+    [Fact]
+    public void Toolbar_ErrorLine_AndStartScan_ShareTheStatusSlot()
+    {
+        // [L64-TOOLBAR-FIXED-SLOT] review + [TOOLBAR-OTHER-MOVERS]: the error line (capped at 360) and Start Scan sat beside
+        // the fixed status line in a horizontal StackPanel. Either one appearing moved every control after it, ⟳ included,
+        // and the StackPanel does not wrap: at the 800-DIP minimum window width a visible error ran past the window edge
+        // and lost its ellipsis. In the slot's Auto columns they take their width from the status line instead.
+        var doc = Axaml("MainWindow.axaml");
+        var slot = StatusSlot(doc);
+        var error = Assert.Single(doc.Descendants(),
+            e => e.Name.LocalName == "TextBlock" && Attr(e, "Text") == "{Binding ErrorMessage}");
+        var scan = Assert.Single(doc.Descendants(),
+            e => e.Name.LocalName == "Button" && Attr(e, "Command") == "{Binding TriggerScanCommand}");
+
+        Assert.Same(slot, error.Parent);
+        Assert.Same(slot, scan.Parent);
+        Assert.Equal("Auto", ColumnOf(slot, error));
+        Assert.Equal("Auto", ColumnOf(slot, scan));
+        Assert.Equal("CharacterEllipsis", Attr(error, "TextTrimming"));
+        Assert.Equal("{Binding ErrorMessage}", Attr(error, "ToolTip.Tip"));
+        // At most half the slot, so the status beside it stays readable; the whole error is one hover away.
+        Assert.InRange(Num(Attr(error, "MaxWidth")), 120, Num(Attr(slot, "Width")) / 2);
+    }
+
+    [Fact]
+    public void Toolbar_ConnectionGroup_FitsTheMinimumWindowWidth()
+    {
+        // [L64-TOOLBAR-FIXED-SLOT] review: the connection group is a horizontal StackPanel, which never wraps, so its widest
+        // state must fit the window at its minimum width or the group runs past the edge -- where a visible error line
+        // lost its ellipsis. Every child must have a bounded width for this to be checkable at all.
+        var doc = Axaml("MainWindow.axaml");
+        var group = ToolbarStatusLine(doc).Ancestors()
+            .First(a => a.Name.LocalName == "StackPanel" && a.Parent?.Name.LocalName == "WrapPanel");
+        Assert.Equal("Horizontal", Attr(group, "Orientation"));
+
+        // A generous bound for a button: 10 DIP a character at the default 14 px font, its padding, a 1-DIP border.
+        // A fixed Width is the element's real width, so it wins over the estimate ([TOOLBAR-CONNECT-WIDTH]).
+        double ButtonBound(XElement b) => 10 * EnText(Attr(b, "Content")).Length + Horizontal(Attr(b, "Padding")) + 2;
+        double Bound(XElement e) => (Attr(e, "Width") is { } width ? Num(width)
+              : e.Name.LocalName == "Button" ? ButtonBound(e)
+              : Num(Attr(e, "MaxWidth")
+                    ?? throw new InvalidOperationException($"{e.Name.LocalName} in the connection group has no bounded width")))
+            + Horizontal(Attr(e, "Margin"));
+
+        // Connect and Disconnect show one at a time: the pair counts once, at the wider of the two.
+        var pair = group.Elements().Where(e => Attr(e, "IsVisible") is "{Binding !IsConnected}" or "{Binding IsConnected}").ToList();
+        Assert.Equal(2, pair.Count);
+        var rest = group.Elements().Except(pair).ToList();
+        double widest = pair.Max(Bound) + rest.Sum(Bound) + Num(Attr(group, "Spacing")) * rest.Count;
+
+        var border = group.Parent!.Parent!;   // the toolbar's WrapPanel, then its Border
+        double available = Num(Attr(doc.Root!, "MinWidth")) - Horizontal(Attr(border, "Padding"));
+        Assert.True(widest <= available,
+            $"the connection group can be {widest} DIP wide, but the toolbar has {available} at the minimum window width");
+    }
+
+    [Fact]
+    public void Toolbar_ConnectAndDisconnect_OccupyOneWidth()
+    {
+        // [TOOLBAR-CONNECT-WIDTH] Connect and Disconnect show one at a time in the slot before the status line, and each
+        // took its own label's width: about 20 DIP apart, so every control after them -- the AOBMaker ⟳ included --
+        // moved once at connect and back at disconnect. One shared fixed Width keeps them still.
+        var doc = Axaml("MainWindow.axaml");
+        XElement ButtonFor(string command) => Assert.Single(doc.Descendants(),
+            e => e.Name.LocalName == "Button" && Attr(e, "Command") == $"{{Binding {command}}}");
+        var pair = new[] { ButtonFor("ConnectCommand"), ButtonFor("DisconnectCommand") };
+        Assert.Same(pair[0].Parent, pair[1].Parent);
+        Assert.True(pair[1].IsBefore(AobMakerRefresh(doc)), "⟳ no longer follows the pair: re-check what this pin protects");
+
+        var width = Attr(pair[0], "Width");
+        Assert.True(width is not null, "Connect has no fixed Width: its label's width moves every control after it");
+        foreach (var b in pair)
+        {
+            var name = EnText(Attr(b, "Content"));
+            Assert.Equal(width, Attr(b, "Width"));
+            // Fluent's Button stretches its content (HorizontalContentAlignment defaults to Stretch, measured headless on
+            // Avalonia 12.1.3), so in a Width wider than the label the text sits at the left edge unless it is centred.
+            Assert.Equal("Center", Attr(b, "HorizontalContentAlignment"));
+            // Either one would override the shared Width in Avalonia's layout.
+            Assert.Null(Attr(b, "MinWidth"));
+            Assert.Null(Attr(b, "MaxWidth"));
+            // A margin sits outside the Width, so a different one would still move what follows.
+            Assert.Equal(Horizontal(Attr(pair[0], "Margin")), Horizontal(Attr(b, "Margin")));
+            // The label must fit, or a fixed Width cuts it. The app renders Inter (Program.cs WithInterFont), where
+            // "Disconnect" at the default 14 px is about 74 DIP of advance width; 8 DIP a character keeps a margin over
+            // that. The estimate holds only at the default font size and font.
+            Assert.Null(Attr(b, "FontSize"));
+            double needed = 8 * name.Length + Horizontal(Attr(b, "Padding")) + 2;
+            Assert.True(Num(width) >= needed, $"'{name}' needs about {needed} DIP, but the shared Width is {width}");
+        }
+    }
+
+    [Fact]
+    public void Toolbar_AttachWarning_SitsAfterTheRefreshButton_OutsideItsChip()
+    {
+        // [TOOLBAR-OTHER-MOVERS]: the [AOBM-ATTACH-CHECK] warning sat inside the AOBMaker chip, BEFORE ⟳, so it appearing
+        // pushed ⟳ right -- and widened the chip, which can wrap the whole chip to the next toolbar row. As its own toolbar
+        // item after the chip it moves nothing before it.
+        var doc = Axaml("MainWindow.axaml");
+        var warn = TextBlockOf(doc, "str.Toolbar.AobMakerWrongProcess");
+        var refresh = AobMakerRefresh(doc);
+        var chip = refresh.Parent!;
+        Assert.Equal("{Binding IsAobMakerConfigured}", Attr(chip, "IsVisible"));
+
+        Assert.False(warn.Ancestors().Contains(chip), "the warning is inside the AOBMaker chip, which holds ⟳");
+        Assert.True(refresh.IsBefore(warn), "the warning comes before ⟳, so it pushes ⟳ when it appears");
+        Assert.Same(chip.Parent, warn.Parent);   // a toolbar item of its own
+        Assert.Equal("{Binding AobMakerShared.HasAttachWarning}", Attr(warn, "IsVisible"));
+        Assert.Equal("{Binding AobMakerShared.AttachWarning}", Attr(warn, "ToolTip.Tip"));
     }
 
     /// <summary>Drop // and /* */ comments, so a pin cannot be satisfied by a commented-out line.</summary>

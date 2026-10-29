@@ -227,11 +227,13 @@ public class TeleportViewModelTests
         private readonly string _dir = Path.Combine(Path.GetTempPath(),
             "ue5cd-vmtest-" + Guid.NewGuid().ToString("N"));
         public string? LastClipboard { get; private set; }
+        /// <summary>Answer every copy with "did nothing" (a clipboard another application holds), the copy still recorded.</summary>
+        public bool RefuseClipboard { get; set; }
         public bool TryAcquireSingleInstance() => true;
         public void ReleaseSingleInstance() { }
         public string GetAppDataPath() => _dir;
         public string GetLogDirectoryPath() => _dir;
-        public Task<bool> CopyToClipboardAsync(string text) { LastClipboard = text; return Task.FromResult(true); }
+        public Task<bool> CopyToClipboardAsync(string text) { LastClipboard = text; return Task.FromResult(!RefuseClipboard); }
         public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
         public string GetMachineName() => "TEST";
         public void CloseImeForWindow(IntPtr windowHandle) { }
@@ -744,6 +746,114 @@ public class TeleportViewModelTests
         Assert.Equal("Holding @0", vm.StealthState);
     }
 
+    // [STEALTH-RESET-STALE-HELD] L58: after a primed hold, Reset released it and set the badge Off, but left the readout
+    // claiming "= 0 (held)" -- ResetStealthAsync never touched StealthFieldText.
+    [Fact]
+    public async Task Reset_after_a_primed_hold_drops_the_held_readout()
+    {
+        var fake = new FakeDumpService
+        {
+            NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "BP_Player_C", FieldName = "Visibility" } },
+            NextForcedFields = new List<ForcedFieldInfo>
+            {
+                new() { ClassName = "BP_Player_C", FieldName = "Visibility", Kind = "numeric", Value = 0, Held = 1 },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+        Assert.Contains("(held)", vm.StealthFieldText);   // the prime's readout
+
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+
+        Assert.Equal("Off", vm.StealthState);
+        Assert.DoesNotContain("(held)", vm.StealthFieldText);
+        Assert.Contains("Visibility", vm.StealthFieldText);   // which meter it was stays readable
+    }
+
+    // [STEALTH-RESET-STALE-HELD] With no meter detected Reset sent nothing, yet said it released the hold.
+    [Fact]
+    public async Task Reset_with_no_meter_does_not_claim_a_release()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("Released", vm.StatusText);
+        Assert.Contains("no stealth meter", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // [STEALTH-RESET-STALE-HELD] (review): a reconnect during a loading screen -- find_stealth_meter answers nothing, so
+    // the prime cannot match the forced field and the card shows Unknown with no meter. Reset then sent nothing, yet set
+    // the badge Off and said there was no hold to release, over a hold Solide may still run.
+    [Fact]
+    public async Task Reset_with_no_known_meter_claims_neither_Off_nor_an_absent_hold()
+    {
+        var fake = new FakeDumpService
+        {
+            NextStealthCandidates = new List<StealthCandidate>(),   // no meter on any pawn while the level loads
+            NextForcedFields = new List<ForcedFieldInfo>
+            {
+                new() { ClassName = "BP_Player_C", FieldName = "Visibility", Kind = "numeric", Value = 0, Held = 0 },
+            },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+        Assert.Equal("Unknown", vm.StealthState);   // something is held, and the prime cannot say what
+
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, fake.ResetFieldCalls);      // no meter to name, so nothing was sent
+        Assert.Equal("Unknown", vm.StealthState);   // not "Off": nothing was released, and the hold may still run
+        Assert.DoesNotContain("no hold", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Detect", vm.StatusText);   // what the user can do about it
+    }
+
+    // [STEALTH-RESET-STALE-HELD] batch 2's review: the "Detect first" advice showed in every meter-less state, the Off one
+    // too, where the prime read every hold the DLL has and there was none. Following it (Detect, then Reset) sent
+    // reset_field for a job that never existed, which Solide answers OK, and the card said "Released".
+    private static FakeDumpService NothingForcedFake() => new()
+    {
+        NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "BP_Player_C", FieldName = "Visibility" } },
+        NextForcedFields = new List<ForcedFieldInfo>(),   // the prime reads no forced field at all: a definite Off
+    };
+
+    [Fact]
+    public async Task Reset_when_the_card_knows_nothing_is_held_says_so_and_does_not_send_the_user_to_Detect()
+    {
+        var fake = NothingForcedFake();
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+        Assert.Equal("Off", vm.StealthState);
+
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, fake.ResetFieldCalls);
+        Assert.Equal("Off", vm.StealthState);
+        Assert.DoesNotContain("Detect", vm.StatusText);
+        Assert.Contains("Nothing is held", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Reset_after_Detect_with_no_Hold_releases_nothing_and_claims_no_release()
+    {
+        var fake = NothingForcedFake();
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+        await vm.ConnectPrime;
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);   // a candidate now, and still nothing held
+
+        await vm.ResetStealthCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, fake.ResetFieldCalls);
+        Assert.DoesNotContain("Released", vm.StatusText);
+        Assert.Contains("Nothing is held", vm.StatusText);
+    }
+
     [Fact]
     public async Task Connect_never_takes_a_Property_Search_force_for_the_Stealth_hold()
     {
@@ -1057,6 +1167,25 @@ public class TeleportViewModelTests
     }
 
     [Fact]
+    public async Task CopyAsBugItGo_a_refused_clipboard_is_not_claimed_and_the_run_field_is_still_filled()
+    {
+        // The blind-spot sweep's round-3 tail: the line said "copied + filled the Run field" whatever the clipboard answered, so a
+        // refused write sent the user to paste the previous clipboard into the console.
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, X = 100, Y = 200, Z = 300 } };
+        var vm = CreateVm(fake, out var platform);
+        vm.IsConnected = true;
+        platform.RefuseClipboard = true;
+
+        await vm.CopyAsBugItGoCommand.ExecuteAsync(null);
+
+        Assert.StartsWith("BugItGo 100.000 200.000 300.000", platform.LastClipboard);   // it tried
+        Assert.StartsWith("BugItGo 100.000 200.000 300.000", vm.BugItGoInput);         // the field does not depend on it
+        Assert.DoesNotContain("copied +", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("do not paste", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("filled the Run field", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task RunBugItGo_empty_field_shows_message_without_parsing()
     {
         var fake = new FakeDumpService();
@@ -1282,6 +1411,40 @@ public class TeleportViewModelTests
             "clipboard must be wrapped CE XML, not a bare AA body");
     }
 
+    /// <summary>
+    /// [QUERYPTR-LOG-ABSENT-LABEL] The global-pointer record reaches the clipboard on three different branches, and
+    /// the log has to say which. Measured in L80's run (2026-09-23): a second Get GWorld click takes the
+    /// already-pushed branch, where the push is never attempted -- and the log read only "was a push attempted", so
+    /// it wrote "(AOBMaker absent)" with the toolbar showing AOBMaker Connected. A reader chasing a failed push was
+    /// sent after a disconnect that never happened.
+    /// </summary>
+    [Theory]
+    [InlineData("already pushed", "(already pushed this session)")]
+    [InlineData("refused", "(AOBMaker refused)")]
+    [InlineData("absent", "(AOBMaker absent)")]
+    public async Task QueryPtr_clipboard_log_names_the_branch_that_was_taken(string branch, string expected)
+    {
+        var log = new MockLoggingService();
+        var bridge = new ScriptedAobMakerBridge
+        {
+            Available = branch != "absent",
+            AaResult = branch != "refused",
+        };
+        var platform = new FakePlatform();
+        var vm = new TeleportViewModel(new FakeDumpService(), log, platform, aobMaker: bridge);
+
+        if (branch == "already pushed")
+            await vm.GetGWorldAddressCommand.ExecuteAsync(null);   // the first click lands in CE
+        await vm.GetGWorldAddressCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        var line = Assert.Single(log.Messages,
+            m => m.Contains("Teleport query-ptr -> clipboard XML", StringComparison.Ordinal));
+        Assert.Contains(expected, line, StringComparison.Ordinal);
+        if (branch != "absent")
+            Assert.DoesNotContain("absent", line, StringComparison.Ordinal);
+    }
+
     // ── Debug Camera force on/off ──────────────────────────────────────
 
     [Fact]
@@ -1324,7 +1487,46 @@ public class TeleportViewModelTests
 
         Assert.Equal("Queued", vm.DebugCameraState);
         Assert.Contains("QUEUED", vm.StatusText);
+        // [DBGCAM-QUEUEDON-UNDO-TEXT] The reason not to press again must hold on every engine.
+        Assert.Contains("Do not press Force ON again: the toggle is already queued.", vm.StatusText);
+        Assert.DoesNotContain("undo", vm.StatusText);
         Assert.DoesNotContain("no live CheatManager", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ForceDebugCamera_OFF_queued_does_not_promise_that_it_will_turn_the_camera_off()
+    {
+        // [DEBUGCAM-QUEUED-OFF-NOESCALATE] (c): the Teleport card's twin of the Console's queued-OFF text -- and badge:
+        // (review) "Queued" read as an OFF on its way over a camera that stays on, so it reads ON.
+        var fake = new FakeDumpService { NextDebugCameraState = Constants.DebugCameraToggleQueuedResult };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ForceDebugCameraOffCommand.ExecuteAsync(null);
+
+        Assert.Equal("ON", vm.DebugCameraState);
+        Assert.DoesNotContain("will run", vm.StatusText);
+        Assert.DoesNotContain("Do not press Force OFF again", vm.StatusText);
+        Assert.Contains("press Force OFF again once the game responds", vm.StatusText);
+    }
+
+    [Theory]
+    [InlineData(false, "Queued", "Force OFF was not sent — an earlier Force ON is still queued")]
+    [InlineData(true, "ON", "Force ON was not sent — an earlier Force OFF is still queued")]
+    public async Task ForceDebugCamera_over_an_opposite_queued_toggle_says_it_was_not_sent(bool wantOn, string badge,
+                                                                                           string says)
+    {
+        // [DBGCAM-OFF-OVER-QUEUED-ON] review: the Teleport card's twin of the Console's -6 handling.
+        var fake = new FakeDumpService { NextDebugCameraState = -6 };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        if (wantOn) await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+        else await vm.ForceDebugCameraOffCommand.ExecuteAsync(null);
+
+        Assert.Equal(badge, vm.DebugCameraState);
+        Assert.Contains(says, vm.StatusText);
+        Assert.Contains("again once the game responds", vm.StatusText);
     }
 
     [Fact]
@@ -3235,6 +3437,105 @@ public class TeleportViewModelTests
         Assert.Equal("Castle (edit in progress)", vm.EditCoordLabel);
     }
 
+    /// <summary>[B21-CSV-QUOTE-HOLES] The maintainer's call (2026-10-28): a double quote typed into the label or
+    /// the group is refused, not stored -- it is the one character a hand-edited CSV mis-splits on. Nothing
+    /// changes, and the status says why.</summary>
+    [Fact]
+    public async Task A_double_quote_typed_into_a_label_or_group_is_refused()
+    {
+        var vm = await CoordLibraryVmAsync();
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Cave");
+
+        vm.EditCoordLabel = "Cave \"north\"";
+        vm.ApplyCoordEditCommand.Execute(null);
+        Assert.Contains(vm.CoordResults, r => r.Label == "Cave");
+        Assert.DoesNotContain(vm.CoordResults, r => r.Label.Contains('"'));
+        Assert.Contains("double quote", vm.CoordStatus, StringComparison.Ordinal);
+        Assert.Contains("Nothing was changed", vm.CoordStatus, StringComparison.Ordinal);
+
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Cave");
+        vm.EditCoordLabel = "Cave";
+        vm.EditCoordGroup = "a\"b";
+        vm.ApplyCoordEditCommand.Execute(null);
+        Assert.DoesNotContain(vm.CoordResults, r => r.Entry.Group.Contains('"'));
+        Assert.Contains("double quote", vm.CoordStatus, StringComparison.Ordinal);
+    }
+
+    /// <summary>Review finding: the refusal tested the whole pre-filled label, so an entry that already held a
+    /// quote (imported, or typed before quotes were refused) could not even have its group changed. Only a quote
+    /// the edit ADDS is refused.</summary>
+    [Fact]
+    public async Task An_entry_that_already_holds_a_quote_can_still_be_edited()
+    {
+        var vm = await CoordLibraryVmAsync();
+        vm.BuildImportPreview(CoordCsvCodec.Parse("label,group,map,x,y,z\n\"Boss \"\"big\"\"\",G,M,1,2,3\n"), "t.csv");
+        vm.ApplyCoordImportCommand.Execute(null);
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Boss \"big\"");
+
+        vm.EditCoordGroup = "Bosses";
+        vm.ApplyCoordEditCommand.Execute(null);
+
+        Assert.Equal("Bosses", vm.CoordResults.First(r => r.Label == "Boss \"big\"").Entry.Group);
+    }
+
+    /// <summary>Review round 3: "unchanged" was judged after Normalize, which trims -- so a stored field cut at a
+    /// space by the import's length cap no longer matched itself, and its quote read as typed. The untouched field
+    /// is compared as the editor shows it.</summary>
+    [Fact]
+    public async Task An_untouched_field_that_was_cut_at_a_space_is_still_unchanged()
+    {
+        var vm = await CoordLibraryVmAsync();
+        var group = "Grp \"\"q\"\" " + new string('z', 23) + " rest";   // CSV-escaped; char 31 of the value is a space
+        vm.BuildImportPreview(CoordCsvCodec.Parse($"label,group,map,x,y,z\nPlain,\"{group}\",M,7,8,9\n"), "t.csv");
+        vm.ApplyCoordImportCommand.Execute(null);
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Plain");
+        Assert.EndsWith(" ", vm.SelectedCoord!.Entry.Group);   // the shape the finding needs
+
+        vm.EditCoordLabel = "Plain renamed";
+        vm.ApplyCoordEditCommand.Execute(null);
+
+        Assert.Contains(vm.CoordResults, r => r.Label == "Plain renamed");
+    }
+
+    /// <summary>Review round 3: a changed field may not hold a quote even when the quote was already there (a
+    /// case-only fix of an imported label) -- by design, but then the status must not say a quote was typed.</summary>
+    [Fact]
+    public async Task Changing_a_field_that_holds_a_quote_is_refused_without_claiming_one_was_typed()
+    {
+        var vm = await CoordLibraryVmAsync();
+        vm.BuildImportPreview(CoordCsvCodec.Parse("label,group,map,x,y,z\n\"Boss \"\"big\"\"\",G,M,1,2,3\n"), "t.csv");
+        vm.ApplyCoordImportCommand.Execute(null);
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Boss \"big\"");
+
+        vm.EditCoordLabel = "Boss \"Big\"";
+        vm.ApplyCoordEditCommand.Execute(null);
+
+        Assert.Contains(vm.CoordResults, r => r.Label == "Boss \"big\"");
+        Assert.Contains("double quote", vm.CoordStatus, StringComparison.Ordinal);
+        Assert.DoesNotContain("typed", vm.CoordStatus, StringComparison.Ordinal);
+    }
+
+    /// <summary>Review round 2: counting quotes let a typed one through whenever the same edit deleted a stored
+    /// one. A field the edit CHANGES may not hold a quote at all; only an untouched one keeps its old quotes.</summary>
+    [Fact]
+    public async Task A_quote_typed_while_deleting_a_stored_one_is_still_refused()
+    {
+        var vm = await CoordLibraryVmAsync();
+        vm.BuildImportPreview(CoordCsvCodec.Parse("label,group,map,x,y,z\n\"Boss \"\"big\"\"\",\"a\"\"b\",M,1,2,3\n"), "t.csv");
+        vm.ApplyCoordImportCommand.Execute(null);
+
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Boss \"big\"");
+        vm.EditCoordLabel = "\"Arena\"";
+        vm.ApplyCoordEditCommand.Execute(null);
+        Assert.DoesNotContain(vm.CoordResults, r => r.Label == "\"Arena\"");
+        Assert.Contains("double quote", vm.CoordStatus, StringComparison.Ordinal);
+
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Boss \"big\"");
+        vm.EditCoordGroup = "\"x";
+        vm.ApplyCoordEditCommand.Execute(null);
+        Assert.Equal("a\"b", vm.CoordResults.First(r => r.Label == "Boss \"big\"").Entry.Group);
+    }
+
     /// <summary>...while an edit that renames a row in place still repaints it: the same
     /// entries, but the row shows new text.</summary>
     [Fact]
@@ -3363,6 +3664,109 @@ public class TeleportViewModelTests
     }
 
     [Fact]
+    public async Task CoordLibrary_noDll_push_refused_for_its_size_says_the_size()
+    {
+        // [COORDPICK-OVERSIZE-REASON] The bridge refuses a request over AOBMaker's message cap before sending a byte
+        // and carries the size as the reason -- but only through the detailed call. The no-DLL push used the bool
+        // one, so a library too large to push read "AOBMaker pipe dropped mid-push (CE closed?)" over a CE that is fine.
+        const string reason = "the request is 11,000,000 bytes, too large for AOBMaker's 10 MiB message limit " +
+                              "(10,485,760 bytes); nothing was sent";
+        var bridge = new ScriptedAobMakerBridge
+        {
+            Available = true,
+            AaResult = false,
+            AaDetail = new SymbolScriptResult(false, null, null, reason),
+        };
+        var vm = new TeleportViewModel(new FakeDumpService(), new NoopLogger(), new FakePlatform(), aobMaker: bridge,
+                                       experimentalGate: new FakeExperimentalGate(enabled: true));
+        vm.LoadCoordLibraryForGame("Game.exe");
+        vm.CoordX = 1; vm.CoordY = 2; vm.CoordZ = 3;
+        vm.AddCoordFromFieldsCommand.Execute(null);
+
+        await vm.ExportCoordLuaNoDllCommand.ExecuteAsync(null);
+
+        Assert.Single(bridge.AaScripts);
+        Assert.False(bridge.AaScripts[0].AutoActivate);   // still pushed unticked, into the trainer's group
+        Assert.Contains(reason, vm.CoordStatus);
+        Assert.DoesNotContain("pipe dropped", vm.CoordStatus);
+    }
+
+    private static async Task<string> NoDllPushStatusAsync(SymbolScriptResult detail, bool? availableAfter = null,
+                                                           AobMakerFailure? failure = null)
+    {
+        var bridge = new ScriptedAobMakerBridge
+        {
+            Available = true, AaResult = false, AaDetail = detail, AvailableAfterCall = availableAfter, Failure = failure,
+        };
+        var vm = new TeleportViewModel(new FakeDumpService(), new NoopLogger(), new FakePlatform(), aobMaker: bridge,
+                                       experimentalGate: new FakeExperimentalGate(enabled: true));
+        vm.LoadCoordLibraryForGame("Game.exe");
+        vm.CoordX = 1; vm.CoordY = 2; vm.CoordZ = 3;
+        vm.AddCoordFromFieldsCommand.Execute(null);
+        await vm.ExportCoordLuaNoDllCommand.ExecuteAsync(null);
+        Assert.Single(bridge.AaScripts);
+        return vm.CoordStatus;
+    }
+
+    [Fact]
+    public async Task CoordLibrary_noDll_push_with_no_reply_says_it_may_have_been_added()
+    {
+        // [COORDPICK-TIMEDOUT-TEXT] No reply in time is not "nothing was added": the plugin may have made the record
+        // after the wait gave up, so a second press can add a second picker (AOBMaker reply section 3 rule 8). The
+        // other AOBMaker pushes say so already.
+        var status = await NoDllPushStatusAsync(new SymbolScriptResult(false, null, null, null, TimedOut: true));
+
+        Assert.DoesNotContain("nothing was added", status, StringComparison.Ordinal);
+        Assert.Contains("may still have been added", status, StringComparison.Ordinal);
+        // The bridge sets TimedOut for a pipe that broke or hit EOF after the request too (RoundTripAsync's IOException
+        // and ReadMessageAsync's short read both return no reply), so the line names neither cause alone -- the way
+        // str.AobMaker.Struct.TimedOut, fed by the same call, already reads.
+        Assert.DoesNotContain("in time", status, StringComparison.Ordinal);
+        Assert.Contains("the pipe closed", status, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CoordLibrary_noDll_push_that_never_reached_the_plugin_still_says_nothing_was_added()
+    {
+        // [COORDPICK-TIMEDOUT-TEXT] The control: a request that never reached the plugin made nothing, and says so. The
+        // pipe never opened, so the bridge reads unavailable afterwards, with the reason it recorded.
+        var status = await NoDllPushStatusAsync(new SymbolScriptResult(false, null, null, null), availableAfter: false);
+
+        Assert.Contains("nothing was added", status, StringComparison.Ordinal);
+        Assert.DoesNotContain("may still have been added", status, StringComparison.Ordinal);
+        // A pipe that broke after the request is TimedOut above; "dropped mid-push" names the one case that never
+        // lands here.
+        Assert.DoesNotContain("mid-push", status, StringComparison.Ordinal);
+        Assert.Contains("open Cheat Engine", status, StringComparison.Ordinal);   // absent: the bridge's own remedy
+    }
+
+    [Fact]
+    public async Task CoordLibrary_noDll_push_to_a_busy_pipe_names_the_busy_pipe_not_a_closed_CE()
+    {
+        // [COORDPICK-TIMEDOUT-TEXT] A pipe another client holds fails the connect too, and the bridge records Busy.
+        // Starting or checking Cheat Engine cannot help there ([W1-PIPEBUSY-STATUS]), so the line takes the bridge's
+        // own sentence, as the guard above this push already does (review of the final review's fixes).
+        var status = await NoDllPushStatusAsync(new SymbolScriptResult(false, null, null, null),
+                                                availableAfter: false, failure: AobMakerFailure.Busy);
+
+        Assert.Contains("busy", status, StringComparison.Ordinal);
+        Assert.Contains("nothing was added", status, StringComparison.Ordinal);
+        Assert.DoesNotContain("CE closed", status, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task CoordLibrary_noDll_push_refused_without_a_reason_says_it_was_refused()
+    {
+        // [COORDPICK-TIMEDOUT-TEXT] A reply came back (the bridge stays available) saying not created, with no reason:
+        // the plugin was reached, so "could not be reached" would be false.
+        var status = await NoDllPushStatusAsync(new SymbolScriptResult(false, null, null, null));
+
+        Assert.Contains("refused", status, StringComparison.Ordinal);
+        Assert.Contains("nothing was added", status, StringComparison.Ordinal);
+        Assert.DoesNotContain("could not be reached", status, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void CoordLibrary_load_without_a_store_is_a_no_op()
     {
         // Headless tests construct the VM with no store; it must not throw.
@@ -3394,6 +3798,71 @@ public class TeleportViewModelTests
         Assert.Equal(StandaloneTrainerScriptGenerator.SetupDescription, bridge.AaScripts[0].Description);
         Assert.All(bridge.AaScripts, s => Assert.False(s.AutoActivate, $"'{s.Description}' was pushed ticked"));
         Assert.Contains("tick Setup first", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    // [TRAINER-PUSH-TIMEDOUT-TEXT] The trainer pushed each entry through the bool call, so any failure on entry k read
+    // "AOBMaker pipe dropped (CE closed?)": a lost reply although that entry may exist (AOBMaker reply section 3 rule 8),
+    // a refusal that carried its reason (the send-side size cap), a busy pipe. The [COORDPICK-TIMEDOUT-TEXT] split applies.
+    private static async Task<(TeleportViewModel Vm, ScriptedAobMakerBridge Bridge)> TrainerPushFailingAsync(
+        int failAt, SymbolScriptResult failure, bool? availableAfter = null, AobMakerFailure? lastFailure = null)
+    {
+        var bridge = new ScriptedAobMakerBridge
+        {
+            Available = true, Failure = lastFailure,
+            AaDetailByCall = i => i == failAt ? failure : null,
+        };
+        var vm = new TeleportViewModel(new TrainerDump(), new NoopLogger(), new FakePlatform(), aobMaker: bridge);
+        vm.SetEngineState(new EngineState
+        {
+            ModuleName = "Game.exe", GWorldAob = "48 8B 1D ?? ?? ?? ??", GWorldAobPos = 3, GWorldAobLen = 7,
+        });
+        if (availableAfter is bool a)
+            bridge.AaDetailByCall = i => { if (i == failAt) bridge.Available = a; return i == failAt ? failure : null; };
+        await vm.ExportTrainerCommand.ExecuteAsync(null);
+        return (vm, bridge);
+    }
+
+    [Fact]
+    public async Task Trainer_push_with_no_reply_on_an_entry_says_it_may_have_been_added()
+    {
+        var (vm, bridge) = await TrainerPushFailingAsync(1, new SymbolScriptResult(false, null, null, null, TimedOut: true));
+
+        Assert.Equal(2, bridge.AaScripts.Count);                                    // stops at the lost reply
+        Assert.Contains("Pushed 1/", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("may still have been added", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains(bridge.AaScripts[1].Description, vm.StatusText, StringComparison.Ordinal);   // names the entry
+        Assert.DoesNotContain("pipe dropped", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Trainer_push_refused_with_a_reason_says_the_reason()
+    {
+        const string why = "the request is 11.0 MiB, over AOBMaker's 10 MiB message limit";
+        var (vm, _) = await TrainerPushFailingAsync(0, new SymbolScriptResult(false, null, null, why));
+
+        Assert.Contains("Pushed 0/", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains(why, vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("pipe dropped", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Trainer_push_to_a_busy_pipe_names_the_busy_pipe()
+    {
+        var (vm, _) = await TrainerPushFailingAsync(0, new SymbolScriptResult(false, null, null, null),
+                                                   availableAfter: false, lastFailure: AobMakerFailure.Busy);
+
+        Assert.Contains("busy", vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("CE closed", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Trainer_push_refused_without_a_reason_says_it_was_refused()
+    {
+        var (vm, _) = await TrainerPushFailingAsync(2, new SymbolScriptResult(false, null, null, null));
+
+        Assert.Contains("Pushed 2/", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("refused", vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("pipe dropped", vm.StatusText, StringComparison.Ordinal);
     }
 
     /// <summary>Offsets <see cref="TrainerOffsets.IsUsable"/> accepts, with every optional feature resolved.</summary>

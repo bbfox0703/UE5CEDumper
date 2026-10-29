@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using UE5DumpUI.ViewModels;
@@ -34,10 +35,11 @@ public class LiveWalkerExportCancelTests
         }
     }
 
-    private static LiveWalkerViewModel MakeVm(WalkThrowStub dump)
+    private static LiveWalkerViewModel MakeVm(WalkThrowStub dump, MockLoggingService? log = null,
+                                              IPlatformService? platform = null, IAobMakerBridge? aobMaker = null)
     {
-        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(),
-            new MockPlatformService(Path.GetTempPath()))
+        var vm = new LiveWalkerViewModel(dump, log ?? new MockLoggingService(),
+            platform ?? new MockPlatformService(Path.GetTempPath()), aobMaker)
         {
             CurrentAddress = "0x1000",
             Breadcrumbs = new ObservableCollection<BreadcrumbItem>
@@ -99,6 +101,128 @@ public class LiveWalkerExportCancelTests
 
         Assert.NotEqual("Export cancelled.", vm.StatusText);
         Assert.Equal("Pipe disconnected during send", vm.ErrorMessage);
+        Assert.False(vm.IsExporting);
+    }
+
+    // ── [LW-DISCONNECT-STALE-STATUS] review F3: a disconnect cancels the export through the SAME token ──
+    //
+    // ClearOnDisconnect cancels _exportCts and clears the status line; the export's guarded handler then saw its own
+    // token cancelled and wrote "Export cancelled." over the cleared line, logging "cancelled by user" -- the very
+    // mislabel that guard's comment says a mid-export disconnect must not get. Nobody pressed Cancel.
+
+    /// <summary>A save dialog that answers a path, so Export CSX gets past it to the resolve.</summary>
+    private sealed class SavePathPlatform : IPlatformService
+    {
+        public bool TryAcquireSingleInstance() => true;
+        public void ReleaseSingleInstance() { }
+        public string GetAppDataPath() => Path.GetTempPath();
+        public string GetLogDirectoryPath() => Path.GetTempPath();
+        public Task<bool> CopyToClipboardAsync(string text) => Task.FromResult(true);
+        public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
+        public string GetMachineName() => "TEST";
+        public void CloseImeForWindow(IntPtr windowHandle) { }
+        public Task<string?> ShowSaveFileDialogAsync(string a, string b, string c)
+            => Task.FromResult<string?>(Path.Combine(Path.GetTempPath(), $"lw_disconnect_{Guid.NewGuid():N}.CSX"));
+    }
+
+    private static void AssertSaysNothingOfAUserCancel(LiveWalkerViewModel vm, MockLoggingService log)
+    {
+        Assert.Equal("", vm.StatusText);
+        Assert.True(string.IsNullOrEmpty(vm.ErrorMessage), $"ErrorMessage: '{vm.ErrorMessage}'");
+        Assert.DoesNotContain(log.Messages, m => m.Contains("cancelled by user", StringComparison.Ordinal));
+        Assert.False(vm.IsExporting);
+    }
+
+    [Fact]
+    public async Task ExportCeXml_CancelledByADisconnect_IsNotReportedAsAUserCancel()
+    {
+        var log = new MockLoggingService();
+        var dump = new WalkThrowStub();
+        var vm = MakeVm(dump, log);
+        dump.BeforeThrow = vm.ClearOnDisconnect;   // the pipe drops mid-walk; the walk's OCE surfaces on our token
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        AssertSaysNothingOfAUserCancel(vm, log);
+    }
+
+    [Fact]
+    public async Task ExportCeField_CancelledByADisconnect_IsNotReportedAsAUserCancel()
+    {
+        var log = new MockLoggingService();
+        var dump = new WalkThrowStub();
+        var vm = MakeVm(dump, log);
+        vm.UpdateSelectedFields(new List<LiveFieldValue>(vm.Fields));
+        dump.BeforeThrow = vm.ClearOnDisconnect;
+
+        await vm.ExportCeFieldXmlCommand.ExecuteAsync(null);
+
+        AssertSaysNothingOfAUserCancel(vm, log);
+    }
+
+    [Fact]
+    public async Task ExportCsx_CancelledByADisconnect_IsNotReportedAsAUserCancel()
+    {
+        var log = new MockLoggingService();
+        var dump = new WalkThrowStub();
+        var vm = MakeVm(dump, log, new SavePathPlatform());
+        vm.HasData = true;
+        dump.BeforeThrow = vm.ClearOnDisconnect;
+
+        await vm.ExportCsx77Command.ExecuteAsync(null);
+
+        AssertSaysNothingOfAUserCancel(vm, log);
+    }
+
+    [Fact]
+    public async Task ExportCsx_UserCancel_StillReportsCancelled()
+    {
+        // The other half: the fix must not swallow a cancel the user did press.
+        var dump = new WalkThrowStub();
+        var vm = MakeVm(dump, platform: new SavePathPlatform());
+        vm.HasData = true;
+        dump.BeforeThrow = () => vm.CancelExportCommand.Execute(null);
+
+        await vm.ExportCsx77Command.ExecuteAsync(null);
+
+        Assert.Equal("Export cancelled.", vm.StatusText);
+    }
+
+    // [CSX-PUSH-DISCONNECT-LOG] Push to CE Structure Dissect resolves the same CSX on the same export token, so a
+    // disconnect cancels it the same way -- and its handler logged "cancelled by user" for it, unconditionally.
+
+    [Fact]
+    public async Task PushCsxToCe_CancelledByADisconnect_IsNotReportedAsAUserCancel()
+    {
+        var log = new MockLoggingService();
+        var dump = new WalkThrowStub();
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = MakeVm(dump, log, aobMaker: bridge);
+        vm.HasData = true;
+        dump.BeforeThrow = vm.ClearOnDisconnect;
+
+        await vm.PushCsxToCeCommand.ExecuteAsync(null);
+
+        AssertSaysNothingOfAUserCancel(vm, log);
+        Assert.Contains(log.Messages, m => m.Contains("cancelled: the game disconnected", StringComparison.Ordinal));
+        Assert.Empty(bridge.AaScripts);                                      // nothing reached CE
+    }
+
+    [Fact]
+    public async Task PushCsxToCe_UserCancel_StillLogsTheUserCancel()
+    {
+        var log = new MockLoggingService();
+        var dump = new WalkThrowStub();
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = MakeVm(dump, log, aobMaker: bridge);
+        vm.HasData = true;
+        dump.BeforeThrow = () => vm.CancelExportCommand.Execute(null);
+
+        await vm.PushCsxToCeCommand.ExecuteAsync(null);
+
+        Assert.Contains(log.Messages, m => m.Contains("cancelled by user", StringComparison.Ordinal));
+        Assert.True(string.IsNullOrEmpty(vm.ErrorMessage), $"ErrorMessage: '{vm.ErrorMessage}'");
+        Assert.Empty(bridge.AaScripts);
         Assert.False(vm.IsExporting);
     }
 }

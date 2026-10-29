@@ -13,7 +13,7 @@ namespace UE5DumpUI.Helpers;
 /// and never serves. Shared so the toolbar, the Tools-menu injects, Live Walker and Teleport cannot disagree about
 /// the same failure.</para>
 ///
-/// <para>⚠ The toolbar status is capped at <c>MaxWidth="360"</c> with an ellipsis (about 50 characters visible, see
+/// <para>⚠ The toolbar status is a fixed 360-wide slot with an ellipsis (about 50 characters visible, see
 /// <see cref="ClipboardDelivery.FailureText"/>), so each sentence puts its discriminating word ("not connected" /
 /// "busy" / "refused") in the first ~25 characters. No trailing period: callers append a clause.</para>
 /// </summary>

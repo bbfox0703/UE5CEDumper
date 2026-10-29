@@ -14,7 +14,9 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <future>
 #include <string>
 
 namespace Stark {
@@ -60,16 +62,19 @@ bool IsHookActive();
 ///                    nothing rewrites it meanwhile: Mimic's mailbox does not
 ///                    qualify, because CE rewrites it with its next command.
 /// @param dropIfAbandoned  [VND584-01] see ClaimRequest: on a timeout the request never runs later.
+/// @param queuedOut  [DBGCAM-OFF-OVER-QUEUED-ON] on a timeout that leaves the request queued, receives its completion,
+///                   for a caller that must know when it has run (QueuedInvoke). Untouched otherwise.
 /// @return 0 on success, -4 if SEH exception, -5 if timeout, -7 if hook not active
 int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize,
-                      bool dropIfAbandoned = false);
+                      bool dropIfAbandoned = false, std::shared_future<int32_t>* queuedOut = nullptr);
 
 /// [W3-DEBUGCAM-QUEUED] EnqueueInvoke's -5: the game-thread dispatch TIMED OUT and the request STAYS QUEUED -- it still
 /// runs when the game thread next drains. Mirrored UI-side as Constants.InvokeDispatchTimeoutResult.
 constexpr int32_t kInvokeTimedOutStillQueued = -5;
 /// [W3-DEBUGCAM-QUEUED] What a STATEFUL toggle export returns when its queued call did not return 0. A timed-out call
-/// passes through as kInvokeTimedOutStillQueued: the toggle WILL run, so the caller must say "queued, do not re-send" --
-/// a re-send queues a second toggle that drains after the first and undoes it. Every other failure ran nothing: -1.
+/// passes through as kInvokeTimedOutStillQueued: the toggle stays queued and runs when the game thread next drains, so
+/// the caller reports it as queued, never as a failure that ran nothing. What that means for the user is the toggle's
+/// own (UE5_SetDebugCamera's doc in Frieren.h). Every other failure ran nothing: -1.
 constexpr int32_t StatefulToggleFailure(int32_t callResult) {
     return callResult == kInvokeTimedOutStillQueued ? kInvokeTimedOutStillQueued : -1;
 }
@@ -169,7 +174,7 @@ GameThreadLiveness GetGameThreadLiveness(int32_t thresholdMs = kStallThresholdMs
 // that resolves the address out of the vtable and calls it lands in
 // HookedProcessEvent -- on whatever thread it happened to be running. That is
 // how a pipe lane or the Mimic polling thread ends up executing the drain, whose
-// only gate is "is the queue non-empty". The requests it then runs are precisely
+// only gate was "is the queue non-empty". The requests it then runs are precisely
 // the ones a caller judged UNSAFE off the game thread; that is why they were
 // queued instead of called directly.
 //
@@ -178,14 +183,20 @@ GameThreadLiveness GetGameThreadLiveness(int32_t thresholdMs = kStallThresholdMs
 // after one timeout the window is open indefinitely, and the next self-issued
 // direct call executes that abandoned stateful UFunction on the wrong thread.
 //
-// The fix is NOT a thread-identity check. There is no IsInGameThread in this
-// tree and nothing resolves GIsGameThreadId, so any gate would be guessing --
-// and a gate that guesses wrong never drains, which times out every game-thread
-// invoke and is strictly worse than the defect. Instead we do what Grausam
-// already does for its own hooks: call the TRAMPOLINE we are holding, so a call
-// through it never enters the detour. A fail-open call to an OVERRIDE does (its
-// Super::ProcessEvent is the patched address), so it runs under the own-PE-call
-// mark instead: CallAddressAsOwnSEH ([A3-ST1-SUPER-DRAIN]).
+// For OUR calls the fix is the TRAMPOLINE we are holding, as Grausam does for its
+// own hooks: a call through it never enters the detour. A fail-open call to an
+// OVERRIDE does (its Super::ProcessEvent is the patched address), so it runs under
+// the own-PE-call mark instead: CallAddressAsOwnSEH ([A3-ST1-SUPER-DRAIN]).
+//
+// The ENGINE's worker threads call ProcessEvent too, and no trampoline covers
+// them: on UE 5.8 a drain there ran a queued ToggleDebugCamera into an
+// IsInGameThread check [STARK-DRAIN-OFF-GAME-THREAD]. That needs the game thread's
+// identity after all. A guessed identity is the risk this note used to warn of --
+// a gate on the wrong thread never drains, which times out every invoke and is
+// worse than the defect -- so the identity is not a guess where UE states it (the
+// thread it names "GameThread"), and where it is a guess (the main thread) the
+// install validator gives the gate up when that thread stays silent while other
+// threads fire (PickGameThread / KeepGameThreadGate below).
 
 /// Address MinHook actually patched, or 0 if no hook is installed.
 uintptr_t HookedAddress();
@@ -236,6 +247,93 @@ inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs) {
     return queueDepth != 0 && !entryIsOurs;
 }
 
+// ---- [STARK-DRAIN-OFF-GAME-THREAD] Which thread is the game thread ----
+
+/// How the game thread was identified.
+enum class GameThreadIdSource : uint8_t { Unknown, Description, MainThread };
+
+/// One of the process's threads, as the identification sees it.
+struct ThreadInfo {
+    uint32_t tid;
+    bool     namedGameThread;   // its OS thread description is "GameThread"
+    uint64_t creationTime;      // FILETIME as a 64-bit count; earlier is smaller
+};
+
+struct GameThreadPick {
+    uint32_t           tid;
+    GameThreadIdSource source;
+};
+
+/// The game thread among `threads`: the one UE named "GameThread" -- FPlatformProcess::SetupGameThread names the
+/// thread FEngineLoop::PreInit has just stored as GGameThreadId -- and failing a name (an engine or a Windows that
+/// does not set thread descriptions), the earliest-created thread: GuardedMain's, the main thread PreInit records.
+/// Among several named ones (not expected), the earliest-created of them.
+inline GameThreadPick PickGameThread(const ThreadInfo* threads, size_t n) {
+    GameThreadPick named{ 0, GameThreadIdSource::Unknown }, first{ 0, GameThreadIdSource::Unknown };
+    uint64_t namedTime = 0, firstTime = 0;
+    for (size_t i = 0; i < n; ++i) {
+        const ThreadInfo& t = threads[i];
+        if (t.namedGameThread && (named.tid == 0 || t.creationTime < namedTime)) {
+            named = { t.tid, GameThreadIdSource::Description };
+            namedTime = t.creationTime;
+        }
+        if (first.tid == 0 || t.creationTime < firstTime) {
+            first = { t.tid, GameThreadIdSource::MainThread };
+            firstTime = t.creationTime;
+        }
+    }
+    return named.tid != 0 ? named : first;
+}
+
+/// Is a hook entry on thread `tid` a game-thread entry, given the identified `gameThreadId`? 0 -- nothing identified,
+/// or the gate given up -- counts every entry, as before the gate existed.
+inline bool IsGameThreadEntry(uint32_t tid, uint32_t gameThreadId) {
+    return gameThreadId == 0 || tid == gameThreadId;
+}
+
+/// Should HookedProcessEvent drain the queue on this entry? An engine worker thread calls ProcessEvent too, and a
+/// request queued for the game thread must not run there: it leaves the work for the next game-thread entry.
+inline bool ShouldDrainQueue(size_t queueDepth, bool entryIsOurs, bool onGameThread) {
+    return onGameThread && ShouldDrainQueue(queueDepth, entryIsOurs);
+}
+
+/// Does a hook entry count as another thread firing, the install validator's evidence against a main-thread guess?
+/// Not an entry under our own call: the window opens inside the invoke that installed the hook, a direct call
+/// re-enters the detour on our own thread, and a game thread can make no ProcessEvent call for the whole window
+/// (Avowed, 2026-10-27: the PE validator counted 0 fires in its 1500 ms). Counted, our own call alone would then
+/// give a correct guess up.
+inline bool CountsAgainstGameThreadGuess(bool onGameThread, bool entryIsOurs) {
+    return !onGameThread && !entryIsOurs;
+}
+
+/// After the install validation window: keep the game-thread gate, or give it up? A NAMED game thread is the engine's
+/// own GGameThreadId and is kept even when silent -- a paused game thread, where invokes wait as on any paused game.
+/// The main-thread GUESS is given up when it stayed silent while other threads fired (CountsAgainstGameThreadGuess):
+/// a gate on the wrong thread never drains and times out every invoke, which is worse than the defect it fixes.
+/// Nothing fired elsewhere is an idle game, not evidence against the guess.
+inline bool KeepGameThreadGate(GameThreadIdSource source, uint64_t gameThreadFires, uint64_t otherThreadFires) {
+    switch (source) {
+        case GameThreadIdSource::Description: return true;
+        case GameThreadIdSource::MainThread:  return gameThreadFires > 0 || otherThreadFires == 0;
+        default:                              return false;
+    }
+}
+
+/// The identified game thread's id; 0 when none is, or the gate was given up. Thread-safe.
+uint32_t GameThreadId();
+
+/// How the game thread was identified (Unknown when it is not). Thread-safe.
+GameThreadIdSource GameThreadSource();
+
+/// Hook fires on the identified game thread only (GetHookFireCount counts every thread). Thread-safe.
+uint64_t GetGameThreadFireCount();
+
+/// Hook fires that count against the game-thread pick, as CountsAgainstGameThreadGuess says. Thread-safe.
+uint64_t GetOtherThreadFireCount();
+
+/// The install validator's verdict for the window it just measured: gives the gate up as KeepGameThreadGate says.
+void ApplyGameThreadValidation(uint64_t gameThreadFires, uint64_t otherThreadFires);
+
 /// [VND584-01] A queued request its waiter may abandon. A timed-out request normally stays queued and runs later from
 /// its own copy of the parameters; for a helper call made from a value that may not outlive the wait -- the object an
 /// invoke's caller picked, which the engine call dereferences -- a late run could touch a freed object. Such a request
@@ -274,6 +372,37 @@ inline int NarrowedFlagTestsFunctionFlags(const uint8_t* body, size_t size, size
         if (d1 >= 1 && highTest[d1 - 1]) return d1 - 1;
     }
     return -1;
+}
+
+/// [DBGCAM-OFF-OVER-QUEUED-ON] A request EnqueueInvoke stopped waiting on and left queued, kept by a caller that must
+/// know whether it has run since: a STATEFUL toggle reads its state before it fires, and a toggle still queued will
+/// flip whatever that read said. Answered from the request's own promise: the drain fulfils it when it runs the
+/// request, and Shutdown answers it -7 without running it -- either way nothing is left to flip the state.
+/// Not thread-safe: the caller holds its own lock.
+class QueuedInvoke {
+public:
+    void Record(std::shared_future<int32_t> done) { m_done = std::move(done); }
+    /// True while a recorded request has not completed. Once it has -- run with any result, or answered without
+    /// running -- the record clears itself.
+    bool StillQueued() {
+        if (!m_done.valid()) return false;
+        if (m_done.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return true;
+        m_done = {};
+        return false;
+    }
+    /// Whether a request is recorded at all (a completed one is cleared by the next StillQueued).
+    bool HasRecord() const { return m_done.valid(); }
+private:
+    std::shared_future<int32_t> m_done;
+};
+
+/// [DBGCAM-OFF-OVER-QUEUED-ON] What a stateful toggle Set answers, sending nothing, while an earlier toggle is still
+/// queued or being dispatched. The same direction IS the caller's toggle, already queued: -5, do not re-send. The
+/// opposite direction was not sent, and the state it would read predates the queued toggle: -6, send it again once the
+/// game responds. A code of its own, so no caller describes it as a queued toggle of its own direction.
+constexpr int32_t kToggleBlockedByQueued = -6;
+inline int32_t QueuedToggleAnswer(bool queuedWant, bool want) {
+    return queuedWant == want ? kInvokeTimedOutStillQueued : kToggleBlockedByQueued;
 }
 
 constexpr int32_t kRequestQueued = 0, kRequestRunning = 1, kRequestAbandoned = 2;

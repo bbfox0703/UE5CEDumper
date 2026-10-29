@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Text;
 using System.Text.RegularExpressions;
 using UE5DumpUI.Models;
 
@@ -9,13 +11,17 @@ namespace UE5DumpUI.Services;
 /// Reads a coordinate block back out of a previously generated AA script (R7 — the
 /// user pastes the WHOLE script and we parse only our own fenced region).
 ///
-/// Mechanism copied from AOBMaker's <c>TryParseConfig</c> — brace-balanced scan plus
-/// per-key anchored regex — because that is what makes the format tolerant of the
-/// edits a human actually makes: reordered fields, a missing or extra comma, an
-/// entry split over several lines, an inserted comment, and unknown keys from a
-/// newer build. A line-oriented regex would break on every one of those.
+/// The block is read as Lua tokens and the COORDS table by Lua's own grammar for a
+/// table constructor (B21). That is what makes the format tolerant of the edits a human
+/// actually makes — reordered fields, a missing or extra comma, an entry split over
+/// several lines, an inserted comment, unknown keys from a newer build — while a key
+/// inside a label or a comment can never be read as a field, and a stray quote is
+/// whatever Lua itself would refuse. Matching the text near each key (the AOBMaker
+/// <c>TryParseConfig</c> mechanism this started from) let <c>label='Arena z=0 plane'</c>
+/// set Z, and four rounds of checks on the characters beside each string each closed
+/// one stray-quote shape and opened another.
 ///
-/// Four defects of that parser are deliberately NOT inherited (each confirmed by
+/// Four defects of AOBMaker's parser are deliberately NOT inherited (each confirmed by
 /// running AOBMaker's own shipped assembly):
 ///  1. Version baked into the marker literal, so a v2 block is indistinguishable
 ///     from "no block at all" and the UI reports "no markers found". Here the
@@ -43,10 +49,6 @@ public static class CoordLuaParser
         @"^[ \t]*--[ \t]*@UE5CD:END[ \t]*$",
         RegexOptions.Multiline | RegexOptions.CultureInvariant);
 
-    private static readonly Regex s_coordsTable = new(
-        @"local[ \t]+COORDS[ \t]*=[ \t]*\{",
-        RegexOptions.CultureInvariant);
-
     /// <summary>
     /// Parse a pasted script. Returns the same shape the CSV importer produces, so
     /// both feed one preview/commit path.
@@ -69,6 +71,17 @@ public static class CoordLuaParser
         // legitimately contains the text "&lt;" in a raw script is left alone.
         if (LooksLikeCheatTableXml(text)) text = DecodeXmlEntities(text);
 
+        // Every line number is a binary search over the line breaks, counted once: counting from
+        // the start for each entry made a 20,000-entry import take seconds on the UI thread.
+        var newlines = new List<int>();
+        for (int k = 0; k < text.Length; k++)
+            if (text[k] == '\n') newlines.Add(k);
+        int LineOf(int index)
+        {
+            int b = newlines.BinarySearch(index);
+            return (b < 0 ? ~b : b) + 1;
+        }
+
         var start = s_startFence.Match(text);
         if (!start.Success)
         {
@@ -80,14 +93,14 @@ public static class CoordLuaParser
 
         if (!int.TryParse(start.Groups[1].Value, out int version))
         {
-            result.Issues.Add(new CoordCsvIssue(LineOf(text, start.Index), "", start.Value,
+            result.Issues.Add(new CoordCsvIssue(LineOf(start.Index), "", start.Value,
                 "the block's version is not a number"));
             return result;
         }
         if (version > SupportedVersion)
         {
             // Distinguishable from "no block" — the AOBMaker bug this avoids.
-            result.Issues.Add(new CoordCsvIssue(LineOf(text, start.Index), "", start.Value,
+            result.Issues.Add(new CoordCsvIssue(LineOf(start.Index), "", start.Value,
                 $"this block was written by a newer UE5CEDumper (format v{version}); " +
                 $"this build understands v{SupportedVersion}"));
             return result;
@@ -96,45 +109,74 @@ public static class CoordLuaParser
         var end = s_endFence.Match(text, start.Index + start.Length);
         if (!end.Success)
         {
-            result.Issues.Add(new CoordCsvIssue(LineOf(text, start.Index), "", "",
+            result.Issues.Add(new CoordCsvIssue(LineOf(start.Index), "", "",
                 "the block is not closed — '-- @UE5CD:END' is missing. Was the paste truncated?"));
             return result;
         }
 
-        var block = text[(start.Index + start.Length)..end.Index];
+        var source = text[(start.Index + start.Length)..end.Index];
         int blockOffset = start.Index + start.Length;
+
+        // One issue, on the line of block offset `at`, and nothing imported: a stray quote is
+        // an error, never a guess at where its field ends (the maintainer's rule, 2026-10-28).
+        CoordCsvParseResult Stop(int at, string reason)
+        {
+            int sol = source.LastIndexOf('\n', Math.Min(at, source.Length - 1)) + 1;
+            int eol = source.IndexOf('\n', at);
+            result.Issues.Add(new CoordCsvIssue(LineOf(blockOffset + at), "",
+                Trim(source[sol..(eol < 0 ? source.Length : eol)]),
+                reason + " -- nothing was imported; fix it and import again"));
+            result.Entries.Clear();
+            return result;
+        }
+
+        var tokens = Tokenize(source, out var lexError);
+        if (lexError is { } le) return Stop(le.At, le.Reason);
 
         // Optional: absent in blocks written before the field existed, which is why a
         // missing value leaves the user's current setting alone rather than zeroing it.
-        var zt = Regex.Match(block,
-            @"(?<![A-Za-z0-9_])Z_TOLERANCE[ 	]*=[ 	]*(-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)",
-            RegexOptions.CultureInvariant);
-        if (zt.Success && CoordPrecision.TryParse(zt.Groups[1].Value, out var ztv))
-            result.ZTolerance = CoordPrecision.Round(ztv);
-
-        var table = s_coordsTable.Match(block);
-        if (!table.Success)
+        for (int i = 0; i + 2 < tokens.Count; i++)
         {
-            result.Issues.Add(new CoordCsvIssue(LineOf(text, blockOffset), "", "",
+            if (!tokens[i].Is(TokKind.Name, "Z_TOLERANCE") || !tokens[i + 1].IsSymbol("=")) continue;
+            int n = i + 2;
+            bool negative = tokens[n].IsSymbol("-");
+            if (negative) n++;
+            if (tokens[n].Kind == TokKind.Number &&
+                CoordPrecision.TryParse((negative ? "-" : "") + tokens[n].Text, out var ztv))
+                result.ZTolerance = CoordPrecision.Round(ztv);
+            break;
+        }
+
+        int open = -1;
+        for (int i = 0; i + 3 < tokens.Count && open < 0; i++)
+            if (tokens[i].Is(TokKind.Name, "local") && tokens[i + 1].Is(TokKind.Name, "COORDS") &&
+                tokens[i + 2].IsSymbol("=") && tokens[i + 3].IsSymbol("{"))
+                open = i + 3;
+        if (open < 0)
+        {
+            result.Issues.Add(new CoordCsvIssue(LineOf(blockOffset), "", "",
                 "the block has no 'local COORDS = {' table"));
             return result;
         }
 
-        int open = block.IndexOf('{', table.Index);
-        var inner = ExtractBalanced(block, open);
-        if (inner == null)
+        var reader = new TableReader(tokens, source);
+        // Above the table too: a stray quote pair there -- one stray ' before the generator's own
+        // "-- build's extra field" line is enough -- made the script one CE refuses, unread.
+        reader.ReadHead(open - 3);
+        if (reader.Error is { } he) return Stop(he.At, he.Reason);
+        var entries = reader.ReadCoords(open);
+        if (reader.Unbalanced)
         {
-            result.Issues.Add(new CoordCsvIssue(LineOf(text, blockOffset + table.Index), "", "",
+            result.Issues.Add(new CoordCsvIssue(LineOf(blockOffset + tokens[open - 3].Start), "", "",
                 "the COORDS table's braces are unbalanced"));
             return result;
         }
+        if (reader.Error is { } re) return Stop(re.At, re.Reason);
 
-        int innerOffset = blockOffset + open + 1;
-        foreach (var (entryText, entryOffset) in TopLevelBraceGroups(inner))
+        foreach (var entry in entries)
         {
-            int line = LineOf(text, innerOffset + entryOffset);
-            var entry = ParseEntry(entryText, line, result.Issues);
-            if (entry != null) result.Entries.Add(entry);
+            var parsed = ParseEntry(entry, LineOf(blockOffset + entry.Start), source, result.Issues);
+            if (parsed != null) result.Entries.Add(parsed);
         }
 
         if (result.Entries.Count == 0 && result.Issues.Count == 0)
@@ -143,17 +185,20 @@ public static class CoordLuaParser
         return result;
     }
 
-    private static CoordEntry? ParseEntry(string entry, int line, List<CoordCsvIssue> issues)
+    private static CoordEntry? ParseEntry(LuaEntry entry, int line, string source, List<CoordCsvIssue> issues)
     {
+        string? Str(string key) =>
+            entry.Fields.TryGetValue(key, out var v) && v.Kind == TokKind.String ? v.Text : null;
+
         var e = new CoordEntry
         {
-            Uid = CoordText.Normalize(Str(entry, "uid"), CoordText.MaxUidLength),   // (B7)
+            Uid = CoordText.Normalize(Str("uid"), CoordText.MaxUidLength),   // (B7)
         };
 
-        var rawLabel = Str(entry, "label");
+        var rawLabel = Str("label");
         if (rawLabel == null)
         {
-            issues.Add(new CoordCsvIssue(line, "label", Trim(entry), "no label field"));
+            issues.Add(new CoordCsvIssue(line, "label", Trim(source[entry.Start..entry.End]), "no label field"));
             return null;
         }
         if (CoordText.HasBlockedChars(rawLabel))
@@ -165,81 +210,680 @@ public static class CoordLuaParser
             return null;
         }
 
-        e.Group = CoordText.Normalize(Str(entry, "group") ?? "", CoordText.MaxGroupLength);
-        e.Map = CoordText.Normalize(Str(entry, "map") ?? "", 256);
+        e.Group = CoordText.Normalize(Str("group") ?? "", CoordText.MaxGroupLength);
+        e.Map = CoordText.Normalize(Str("map") ?? "", 256);
 
         bool bad = false;
-        double N(string key)
+        double N(string key, bool required)
         {
-            var raw = RawNum(entry, key);
-            if (raw != null && CoordPrecision.TryParse(raw, out var v))
-                return CoordPrecision.Round(v);
+            if (!entry.Fields.TryGetValue(key, out var v))
+            {
+                // A rotation field is optional and defaults to 0. A missing coordinate is
+                // reported instead: an entry cut short (a stray brace, a comment eating the
+                // rest of its line) must not land at the origin.
+                if (!required) return 0;
+                issues.Add(new CoordCsvIssue(line, key, "", $"no {key} field (x, y and z are required)"));
+                bad = true;
+                return 0;
+            }
+            if (v.Kind == TokKind.Number && CoordPrecision.TryParse(v.Text, out var d))
+                return CoordPrecision.Round(d);
 
-            // Absent is fine (rotation fields are optional and default to 0). But a
-            // key that IS present with a value the number regex could not match --
-            // `x=oops`, a stray unit suffix, a comma decimal separator -- must be
-            // reported, not silently imported as 0. That distinction is the whole
-            // difference between a diagnostic and a quietly wrong coordinate.
-            if (!HasKey(entry, key)) return 0;
-
-            issues.Add(new CoordCsvIssue(line, key, ValueTextAfter(entry, key), "not a number"));
+            // A key that IS present with something other than a number -- `x=oops`, a
+            // quoted value, a hex literal -- is reported, not silently imported as 0.
+            issues.Add(new CoordCsvIssue(line, key, source[v.Start..v.End].Trim(), "not a number"));
             bad = true;
             return 0;
         }
 
-        e.X = N("x"); e.Y = N("y"); e.Z = N("z");
-        e.Pitch = N("pitch"); e.Yaw = N("yaw"); e.Roll = N("roll");
+        e.X = N("x", true); e.Y = N("y", true); e.Z = N("z", true);
+        e.Pitch = N("pitch", false); e.Yaw = N("yaw", false); e.Roll = N("roll", false);
         return bad ? null : e;
     }
 
-    // ── Field extraction ────────────────────────────────────────────────
+    // ── Tokens ──────────────────────────────────────────────────────────
+
+    private enum TokKind { Name, Number, String, Symbol, End }
+
+    /// <param name="Text">A name, a numeral, a symbol, or a string's DECODED value.</param>
+    /// <param name="Start">Source offset of the token's first character.</param>
+    /// <param name="End">Source offset just past its last character.</param>
+    private readonly record struct Tok(TokKind Kind, string Text, int Start, int End)
+    {
+        public bool Is(TokKind kind, string text) => Kind == kind && Text == text;
+        public bool IsSymbol(string text) => Is(TokKind.Symbol, text);
+    }
+
+    // Longest first, so `...` is not read as `..` then `.`.
+    private static readonly string[] s_symbols =
+        { "...", "..", "==", "~=", "<=", ">=", "//", "::", "<<", ">>" };
 
     /// <summary>
-    /// Read a string field. Accepts BOTH quote styles — AOBMaker's parser silently
-    /// ignores single-quoted values and falls back to a default, which is exactly the
-    /// kind of quiet wrong answer this format is meant to avoid. The identifier
-    /// lookbehind stops <c>xlabel=</c> shadowing <c>label=</c>.
+    /// Lua 5.3's lexer, for the parts a coordinate block can hold: comments and long
+    /// brackets skipped or read whole, strings decoded with Lua's escape rules, names,
+    /// numerals, symbols. Any character Lua would refuse is a symbol the reader then
+    /// refuses. <paramref name="error"/> is set for what the LEXER refuses: a short string
+    /// that does not close on its line, an unclosed long bracket, an escape Lua does not
+    /// know, a malformed number.
     /// </summary>
-    private static string? Str(string block, string key)
+    private static List<Tok> Tokenize(string s, out (int At, string Reason)? error)
     {
-        var dq = Regex.Match(block,
-            $@"(?<![A-Za-z0-9_]){Regex.Escape(key)}[ \t]*=[ \t]*""((?:[^""\\]|\\.)*)""",
-            RegexOptions.CultureInvariant);
-        if (dq.Success) return Unescape(dq.Groups[1].Value);
+        var tokens = new List<Tok>();
+        error = null;
+        int i = 0;
+        while (true)
+        {
+            while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
+            if (i >= s.Length) break;
+            char c = s[i];
+            int level;
 
-        var sq = Regex.Match(block,
-            $@"(?<![A-Za-z0-9_]){Regex.Escape(key)}[ \t]*=[ \t]*'((?:[^'\\]|\\.)*)'",
-            RegexOptions.CultureInvariant);
-        return sq.Success ? Unescape(sq.Groups[1].Value) : null;
+            if (c == '-' && i + 1 < s.Length && s[i + 1] == '-')
+            {
+                if ((level = LongBracketLevel(s, i + 2)) >= 0)
+                {
+                    int close = LongBracketClose(s, i + 2 + level + 2, level);
+                    if (close < 0) { error = (i, "unclosed bracket: a --[[ comment never closes"); return tokens; }
+                    i = close + 1;
+                }
+                else
+                {
+                    int eol = s.IndexOfAny(new[] { '\r', '\n' }, i);
+                    i = eol < 0 ? s.Length : eol;
+                }
+                continue;
+            }
+
+            if (c == '[' && (level = LongBracketLevel(s, i)) >= 0)
+            {
+                int bodyStart = i + level + 2;
+                int close = LongBracketClose(s, bodyStart, level);
+                if (close < 0) { error = (i, "unclosed bracket: a [[ string never closes"); return tokens; }
+                int bodyEnd = close - level - 1;
+                // Lua drops a line break right after the opening bracket.
+                if (bodyStart < bodyEnd && s[bodyStart] == '\r') bodyStart++;
+                if (bodyStart < bodyEnd && s[bodyStart] == '\n') bodyStart++;
+                tokens.Add(new Tok(TokKind.String, s[bodyStart..bodyEnd], i, close + 1));
+                i = close + 1;
+                continue;
+            }
+
+            if (c == '\'' || c == '"')
+            {
+                var value = ReadShortString(s, i, out int next, out var strError);
+                if (strError is { } se) { error = se; return tokens; }
+                tokens.Add(new Tok(TokKind.String, value, i, next));
+                i = next;
+                continue;
+            }
+
+            if (IsIdentStart(c))
+            {
+                int j = i;
+                while (j < s.Length && IsIdentChar(s[j])) j++;
+                tokens.Add(new Tok(TokKind.Name, s[i..j], i, j));
+                i = j;
+                continue;
+            }
+
+            if (char.IsAsciiDigit(c) || (c == '.' && i + 1 < s.Length && char.IsAsciiDigit(s[i + 1])))
+            {
+                // Lua 5.3's read_numeral -- CE's, which differs from 5.4 here: hex digits, dots
+                // and exponent signs, and nothing more, so `5px` is the numeral 5 then the name
+                // px (the reader names it a malformed number); `1.2.3` fails to convert.
+                bool hex = c == '0' && i + 1 < s.Length && (s[i + 1] == 'x' || s[i + 1] == 'X');
+                string expo = hex ? "Pp" : "Ee";
+                int j = hex ? i + 2 : i;
+                while (j < s.Length)
+                {
+                    if (expo.IndexOf(s[j]) >= 0)
+                    {
+                        j++;
+                        if (j < s.Length && (s[j] == '+' || s[j] == '-')) j++;
+                    }
+                    else if (char.IsAsciiHexDigit(s[j]) || s[j] == '.') j++;
+                    else break;
+                }
+                var numeral = s[i..j];
+                if (!IsWellFormedNumeral(numeral, hex))
+                {
+                    error = (i, $"a malformed number '{numeral}'");
+                    return tokens;
+                }
+                tokens.Add(new Tok(TokKind.Number, numeral, i, j));
+                i = j;
+                continue;
+            }
+
+            var sym = Array.Find(s_symbols, t => string.CompareOrdinal(s, i, t, 0, t.Length) == 0) ?? c.ToString();
+            tokens.Add(new Tok(TokKind.Symbol, sym, i, i + sym.Length));
+            i += sym.Length;
+        }
+        tokens.Add(new Tok(TokKind.End, "", s.Length, s.Length));
+        return tokens;
     }
 
-    /// <summary>True when the key appears at all, whatever follows it.</summary>
-    private static bool HasKey(string block, string key) =>
-        Regex.IsMatch(block, $@"(?<![A-Za-z0-9_]){Regex.Escape(key)}[ \t]*=",
-                      RegexOptions.CultureInvariant);
+    /// <summary>Whether a numeral Lua's lexer read would also convert, as Lua checks before
+    /// calling it malformed. A well-formed hex numeral is still "not a number" to the entry:
+    /// this format writes decimals only. (<c>1e400</c> parses, to infinity, and the entry
+    /// reports that too.)</summary>
+    private static bool IsWellFormedNumeral(string numeral, bool hex) => hex
+        ? Regex.IsMatch(numeral, @"^0[xX](?:[0-9a-fA-F]+\.?[0-9a-fA-F]*|\.[0-9a-fA-F]+)(?:[pP][+-]?\d+)?$",
+                        RegexOptions.CultureInvariant)
+        : double.TryParse(numeral, NumberStyles.Float, CultureInfo.InvariantCulture, out _);
 
-    /// <summary>The raw text a key was assigned, up to the next comma or brace — used
-    /// only to quote the offending value back to the user in a diagnostic.</summary>
-    private static string ValueTextAfter(string block, string key)
+    /// <summary>
+    /// One quoted string opening at <paramref name="start"/>, decoded with Lua 5.3's escape
+    /// rules. Lua refuses a raw line break inside one and an escape it does not know, and so
+    /// does this: either is how a stray quote or backslash shows.
+    /// </summary>
+    private static string ReadShortString(string s, int start, out int next, out (int At, string Reason)? error)
     {
-        var m = Regex.Match(block, $@"(?<![A-Za-z0-9_]){Regex.Escape(key)}[ \t]*=[ \t]*([^,}}]*)",
-                            RegexOptions.CultureInvariant);
-        return m.Success ? m.Groups[1].Value.Trim() : "";
+        char quote = s[start];
+        var sb = new StringBuilder();
+        error = null;
+        int i = start + 1;
+        while (true)
+        {
+            if (i >= s.Length || s[i] == '\n' || s[i] == '\r')
+            {
+                error = (start, $"unpaired quote: a string opened with {quote} never closes on its line");
+                next = i;
+                return "";
+            }
+            char c = s[i];
+            if (c == quote) { next = i + 1; return sb.ToString(); }
+            if (c != '\\') { sb.Append(c); i++; continue; }
+
+            if (i + 1 >= s.Length) { i++; continue; }   // the loop reports the unclosed string
+            char n = s[i + 1];
+            int at = i;
+            i += 2;
+            switch (n)
+            {
+                case 'a': sb.Append('\a'); break;
+                case 'b': sb.Append('\b'); break;
+                case 'f': sb.Append('\f'); break;
+                case 'n': sb.Append('\n'); break;
+                case 'r': sb.Append('\r'); break;
+                case 't': sb.Append('\t'); break;
+                case 'v': sb.Append('\v'); break;
+                case '\\': sb.Append('\\'); break;
+                case '"': sb.Append('"'); break;
+                case '\'': sb.Append('\''); break;
+                case '\n' or '\r':
+                    // An escaped line break; \r\n or \n\r counts once.
+                    if (i < s.Length && (s[i] == '\n' || s[i] == '\r') && s[i] != n) i++;
+                    sb.Append('\n');
+                    break;
+                case 'z':
+                    // C isspace only, as Lua 5.3: a no-break space after \z stays in the string.
+                    while (i < s.Length && s[i] is ' ' or '\t' or '\n' or '\v' or '\f' or '\r') i++;
+                    break;
+                case 'x':
+                    if (i + 1 < s.Length && char.IsAsciiHexDigit(s[i]) && char.IsAsciiHexDigit(s[i + 1]))
+                    {
+                        sb.Append((char)Convert.ToInt32(s.Substring(i, 2), 16));
+                        i += 2;
+                        break;
+                    }
+                    error = (at, "unpaired quote: '\\x' needs two hex digits, so a backslash or quote in this string is stray");
+                    next = i;
+                    return "";
+                case 'u':
+                {
+                    // Read wide: as an int, 80000000..FFFFFFFF turned negative, passed the range
+                    // check and threw out of ConvertFromUtf32.
+                    int close = i < s.Length && s[i] == '{' ? s.IndexOf('}', i) : -1;
+                    var digits = close > i + 1 ? s.AsSpan(i + 1, close - i - 1) : default;
+                    bool allHex = close > i + 1;
+                    foreach (char h in digits) allHex &= char.IsAsciiHexDigit(h);
+                    if (!allHex)
+                    {
+                        error = (at, "unpaired quote: '\\u' needs {hex}, so a backslash or quote in this string is stray");
+                        next = i;
+                        return "";
+                    }
+                    // Leading zeros are free, as in Lua; a value past 64 bits is simply too large.
+                    if (!ulong.TryParse(digits, NumberStyles.AllowHexSpecifier, CultureInfo.InvariantCulture,
+                                        out ulong cp))
+                        cp = ulong.MaxValue;
+                    if (cp > 0x10FFFF)
+                    {
+                        // Lua 5.3 -- CE's -- refuses this too ("UTF-8 value too large").
+                        error = (at, "unpaired quote: a '\\u' escape above U+10FFFF, so a backslash or quote in this string is stray");
+                        next = i;
+                        return "";
+                    }
+                    if (cp is >= 0xD800 and <= 0xDFFF)
+                    {
+                        // Lua stores the raw bytes; a label is UTF-16 text and cannot hold one alone.
+                        error = (at, $"'\\u{{{cp:X}}}' is a surrogate code point, which a label cannot hold");
+                        next = i;
+                        return "";
+                    }
+                    sb.Append(char.ConvertFromUtf32((int)cp));
+                    i = close + 1;
+                    break;
+                }
+                default:
+                    if (char.IsAsciiDigit(n))
+                    {
+                        int v = n - '0', digits = 1;
+                        while (digits < 3 && i < s.Length && char.IsAsciiDigit(s[i]))
+                        {
+                            v = v * 10 + (s[i++] - '0');
+                            digits++;
+                        }
+                        if (v > 0xFF)
+                        {
+                            error = (at, "unpaired quote: a decimal escape above \\255, so a backslash or quote in this string is stray");
+                            next = i;
+                            return "";
+                        }
+                        sb.Append((char)v);
+                        break;
+                    }
+                    error = (at, $"unpaired quote: '\\{n}' is not an escape Lua knows, so a backslash or quote in this string is stray");
+                    next = i;
+                    return "";
+            }
+        }
     }
 
-    private static string? RawNum(string block, string key)
+    // ── The COORDS table, by Lua's grammar ──────────────────────────────
+
+    /// <summary>A field's value: a decoded string, a numeral (a leading minus folded in), or
+    /// anything else (a name, true/false/nil, a nested table) kept only to be reported.</summary>
+    private readonly record struct LuaValue(TokKind Kind, string Text, int Start, int End);
+
+    /// <summary>One entry: its <c>key = value</c> fields, and its source span for diagnostics.</summary>
+    private sealed record LuaEntry(Dictionary<string, LuaValue> Fields, int Start, int End);
+
+    /// <summary>
+    /// Reads <c>local COORDS = { … }</c> as a Lua table constructor. Three levels, three
+    /// rules: the table itself holds only entry tables; an entry holds only <c>key = value</c>
+    /// fields (a value without a key is a stray quote's leftover, never this format); a
+    /// table nested under an unknown key holds anything Lua allows. A comma may be missing
+    /// before an entry or before an entry's next <c>key =</c> (documented tolerance, which
+    /// Lua itself does not grant). The first fault sets <see cref="Error"/>; an unclosed
+    /// table sets <see cref="Unbalanced"/>.
+    /// </summary>
+    private sealed class TableReader
     {
-        var m = Regex.Match(block,
-            $@"(?<![A-Za-z0-9_]){Regex.Escape(key)}[ \t]*=[ \t]*(-?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)",
-            RegexOptions.CultureInvariant);
-        return m.Success ? m.Groups[1].Value : null;
+        private readonly List<Tok> _t;
+        private readonly string _source;
+        private int _i;
+
+        public TableReader(List<Tok> tokens, string source) { _t = tokens; _source = source; }
+
+        public (int At, string Reason)? Error { get; private set; }
+        public bool Unbalanced { get; private set; }
+
+        private bool Failed => Error != null || Unbalanced;
+        private Tok Cur => _t[_i];
+        private Tok Peek(int k = 1) => _t[Math.Min(_i + k, _t.Count - 1)];
+
+        /// <summary>A fault at the current token -- or, when a comment lies between it and
+        /// the token before, on that token's line: the comment swallowed a separator or a
+        /// brace there. Only whitespace and comments separate two tokens, so `--` between
+        /// them is a comment.</summary>
+        private void Fail(string reason)
+        {
+            int at = Cur.Start;
+            if (!_inTail && _i > 0 && CommentBetween(_t[_i - 1].End, Cur.Start)) at = _t[_i - 1].Start;
+            Error = (at, reason);
+        }
+
+        // Around the table the comments are the generator's own lines: none of them swallowed anything.
+        private bool _inTail;
+
+        private bool LineBreakBetween(int from, int to)
+        {
+            for (int k = from; k < to && k < _source.Length; k++)
+                if (_source[k] == '\n') return true;
+            return false;
+        }
+
+        private bool CommentBetween(int from, int to) =>
+            to > from && _source.IndexOf("--", from, Math.Min(to, _source.Length) - from, StringComparison.Ordinal) >= 0;
+
+        /// <summary>About Lua 5.3's own limit (LUAI_MAXCCALLS, 200 C levels, which a nested
+        /// table shares with the statements around it -- so CE refuses a few levels sooner).
+        /// Every level is a recursion here, and a stack overflow cannot be caught.</summary>
+        private const int MaxDepth = 200;
+
+        /// <summary>A fault after a value. A numeral with a name or numeral touching it
+        /// (<c>5px</c>) is Lua 5.3's numeral then a name; it is named as the malformed number
+        /// it is, not as a stray quote.</summary>
+        private void FailAfterValue(string reason)
+        {
+            var prev = _t[_i - 1];
+            if (prev.Kind == TokKind.Number && Cur.Start == prev.End &&
+                (Cur.Kind == TokKind.Name || Cur.Kind == TokKind.Number))
+                Error = (prev.Start, $"a malformed number '{_source[prev.Start..Cur.End]}'");
+            else Fail(reason);
+        }
+        private int _depth;
+
+        // The fields this format reads. One of them holding a table is a stray quote's
+        // leftover: a deleted opening quote whose comment ate the line made the NEXT entry its value.
+        private static readonly HashSet<string> s_knownKeys = new(StringComparer.Ordinal)
+            { "uid", "label", "group", "map", "x", "y", "z", "pitch", "yaw", "roll" };
+
+        private const string MissingBrace =
+            "a '{' stands inside an entry: either that '{' is stray, or the entry before it is missing its " +
+            "closing '}' (a stray quote or a comment can swallow one)";
+
+        private const string NotClosed =
+            "the COORDS table is not closed: its '}' is missing before this statement (a comment can swallow one)";
+
+        private const string ClosedEarly =
+            "unpaired quote or brace: the COORDS table closes before its last entry, so a stray quote or " +
+            "brace ended an entry, and the table with it, early";
+
+        private bool IsKeyAssign => Cur.Kind == TokKind.Name && Peek().IsSymbol("=") && !Peek().IsSymbol("==");
+
+        public List<LuaEntry> ReadCoords(int open)
+        {
+            var entries = new List<LuaEntry>();
+            _i = open + 1;
+            while (!Failed)
+            {
+                if (Cur.IsSymbol("}")) break;
+                if (Cur.Kind == TokKind.End) { Unbalanced = true; return entries; }
+                if (Cur.Is(TokKind.Name, "local")) { Error = (Cur.Start, NotClosed); return entries; }
+                if (!Cur.IsSymbol("{"))
+                {
+                    Fail("unpaired quote or brace: text stands between the entries of the COORDS table, so a " +
+                         "stray quote or brace ended an entry early");
+                    return entries;
+                }
+                var entry = ReadEntry();
+                if (Failed) return entries;
+                entries.Add(entry);
+                if (Cur.IsSymbol(",") || Cur.IsSymbol(";")) _i++;
+                else if (Cur.Is(TokKind.Name, "local")) { Error = (Cur.Start, NotClosed); return entries; }
+                else if (!Cur.IsSymbol("}") && !Cur.IsSymbol("{") && Cur.Kind != TokKind.End)
+                {
+                    Fail("unpaired quote or brace: text follows an entry where a comma belongs, so a stray " +
+                         "quote or brace ended it early");
+                    return entries;
+                }
+            }
+            if (Failed) return entries;
+
+            // The rest of the block holds assignments -- the generator writes `local Z_TOLERANCE = …`
+            // and `local GROUPS = { … }` -- and is read as Lua 5.3's assignment statements; a fault
+            // there is named on its own line. A stray quote or brace that closed the table early
+            // leaves the rest of its entry on the closing brace's own line (the generator writes
+            // that brace alone), or -- when it ended a line -- the next entry, as the very first
+            // thing that fails to read. Anything else is a fault of the tail itself: scanning the
+            // whole tail for braces or entry shapes blamed the table for faults lines below it.
+            int closeAt = Cur.Start;
+            int tailStart = ++_i;
+            _inTail = true;
+            ReadStatements(tailStart, int.MaxValue,
+                "a statement after the COORDS table does not read as Lua (a stray quote can do this)");
+            _inTail = false;
+            if (!Failed) return entries;
+            bool sameLine = _t[tailStart].Kind != TokKind.End && !LineBreakBetween(closeAt, _t[tailStart].Start);
+            bool leftover = _statementIndex == tailStart &&
+                            (Cur.IsSymbol(",") || Cur.IsSymbol(";") || Cur.IsSymbol("}") || IsEntryShaped(_i));
+            if (sameLine || leftover)
+            {
+                Unbalanced = false;
+                Error = (closeAt, ClosedEarly);
+            }
+            else if (Unbalanced)
+            {
+                Unbalanced = false;
+                Error = OpenTableAfter(_statementIndex) is int unclosed
+                    ? (_t[unclosed].Start, "a table after the COORDS table is not closed")
+                    : (_t[Math.Max(tailStart, _t.Count - 2)].Start,
+                       "a statement after the COORDS table ends without its value");
+            }
+            return entries;
+        }
+
+        private int _statementIndex;
+
+        private bool IsEntryShaped(int k) =>
+            k + 2 < _t.Count && _t[k].IsSymbol("{") && _t[k + 1].Kind == TokKind.Name &&
+            s_knownKeys.Contains(_t[k + 1].Text) && _t[k + 2].IsSymbol("=");
+
+        /// <summary>The outermost '{' from token <paramref name="from"/> on that never closes.</summary>
+        private int? OpenTableAfter(int from)
+        {
+            var open = new Stack<int>();
+            for (int k = from; k < _t.Count; k++)
+            {
+                if (_t[k].IsSymbol("{")) open.Push(k);
+                else if (_t[k].IsSymbol("}") && open.Count > 0) open.Pop();
+            }
+            int? outer = null;
+            foreach (int k in open) outer = k;   // the stack enumerates innermost first
+            return outer;
+        }
+
+        /// <summary><c>stat ::= ';' | 'local' namelist ['=' explist] | namelist '=' explist</c>,
+        /// Lua 5.3's grammar for the statements a data block holds; anything else stops the
+        /// import on its own line.</summary>
+        /// <summary>The statements above the table, up to token <paramref name="until"/> (its
+        /// <c>local</c>). A value that runs past it swallowed the table's own opening.</summary>
+        public void ReadHead(int until)
+        {
+            _i = 0;
+            _inTail = true;
+            ReadStatements(0, until,
+                "a statement above the COORDS table does not read as Lua (a stray quote can do this)");
+            _inTail = false;
+            if (Error == null && (Unbalanced || _i > until))
+            {
+                Unbalanced = false;
+                Error = (_t[_statementIndex].Start,
+                         "a statement above the COORDS table runs into it (a stray quote or brace can do this)");
+            }
+        }
+
+        private void ReadStatements(int from, int until, string unreadable)
+        {
+            _statementIndex = from;
+            while (!Failed && Cur.Kind != TokKind.End && _i < until)
+            {
+                _statementIndex = _i;
+                if (Cur.IsSymbol(";")) { _i++; continue; }
+                bool local = Cur.Is(TokKind.Name, "local");
+                if (local) _i++;
+                if (Cur.Kind != TokKind.Name) { Fail(unreadable); return; }
+                _i++;
+                while (Cur.IsSymbol(",") && Peek().Kind == TokKind.Name) _i += 2;
+                if (!Cur.IsSymbol("="))
+                {
+                    if (local) continue;   // `local a` declares with no value
+                    Fail(unreadable);
+                    return;
+                }
+                _i++;
+                ReadValue();
+                while (!Failed && Cur.IsSymbol(",")) { _i++; ReadValue(); }
+            }
+        }
+
+        private LuaEntry ReadEntry()
+        {
+            var fields = new Dictionary<string, LuaValue>(StringComparer.Ordinal);
+            int start = Cur.Start;
+            _i++;
+            while (!Failed)
+            {
+                if (Cur.IsSymbol("}")) { int end = Cur.End; _i++; return new LuaEntry(fields, start, end); }
+                if (Cur.Kind == TokKind.End) { Unbalanced = true; break; }
+
+                if (IsKeyAssign)
+                {
+                    var key = Cur;
+                    _i += 2;
+                    var value = ReadValue();
+                    if (Failed) break;
+                    if (value.Kind == TokKind.Symbol && s_knownKeys.Contains(key.Text))
+                    {
+                        Error = (key.Start, $"unpaired quote: '{key.Text}' has a table for its value, so a quote " +
+                                            "before it was deleted, or a comment swallowed the rest of its line");
+                        break;
+                    }
+                    // A stray pair whose middle reads as `map=` makes a second key; Lua keeps the
+                    // last and a reader might keep the first, so a repeated key is refused.
+                    if (!fields.TryAdd(key.Text, value))
+                    {
+                        Error = (key.Start, $"the key '{key.Text}' appears twice in one entry " +
+                                            "(a stray quote can turn text into a second key)");
+                        break;
+                    }
+                }
+                else if (Cur.IsSymbol("["))
+                {
+                    // A bracket key: valid Lua, not this format's -- read and ignored.
+                    _i++;
+                    ReadValue();
+                    if (Failed) break;
+                    if (!Cur.IsSymbol("]") || !Peek().IsSymbol("="))
+                    {
+                        Fail("unpaired quote: a bracket key is not closed with ']=', so a quote in a string " +
+                             "was not escaped (\\' or \\\")");
+                        break;
+                    }
+                    _i += 2;
+                    ReadValue();
+                    if (Failed) break;
+                }
+                else
+                {
+                    Fail(Cur.IsSymbol("{")
+                        ? MissingBrace
+                        : "unpaired quote: a value stands without a key, so a quote in a string before it was " +
+                          "not escaped (\\' or \\\")");
+                    break;
+                }
+
+                if (Cur.IsSymbol(",") || Cur.IsSymbol(";")) _i++;
+                else if (Cur.Kind == TokKind.End) { Unbalanced = true; break; }
+                else if (!Cur.IsSymbol("}") && !IsKeyAssign)
+                {
+                    FailAfterValue(Cur.IsSymbol("{")
+                        ? MissingBrace
+                        : "unpaired quote: text follows a value where a comma or the closing brace belongs, so a " +
+                          "quote in a string was not escaped (\\' or \\\")");
+                    break;
+                }
+            }
+            return new LuaEntry(fields, start, Cur.Start);
+        }
+
+        /// <summary>A value: a string, a numeral with an optional minus, a name (true, false,
+        /// nil, or anything a later check reports), or a table read by Lua's full rules.</summary>
+        private LuaValue ReadValue()
+        {
+            var t = Cur;
+            switch (t.Kind)
+            {
+                case TokKind.String:
+                case TokKind.Number:
+                case TokKind.Name:
+                    _i++;
+                    return new LuaValue(t.Kind, t.Text, t.Start, t.End);
+            }
+            if (t.IsSymbol("-") && Peek().Kind == TokKind.Number)
+            {
+                var num = Peek();
+                _i += 2;
+                return new LuaValue(TokKind.Number, "-" + num.Text, t.Start, num.End);
+            }
+            if (t.IsSymbol("{"))
+            {
+                ReadAnyTable();
+                return new LuaValue(TokKind.Symbol, "{", t.Start, _t[Math.Max(0, _i - 1)].End);
+            }
+            if (t.Kind == TokKind.End) Unbalanced = true;
+            else Fail("unpaired quote: no value follows '=', so a quote in a string was not escaped (\\' or \\\")");
+            return default;
+        }
+
+        private void ReadAnyTable()
+        {
+            if (_depth >= MaxDepth)
+            {
+                Fail($"a table nests deeper than Lua allows ({MaxDepth} levels)");
+                return;
+            }
+            _depth++;
+            ReadAnyTableBody();
+            _depth--;
+        }
+
+        private void ReadAnyTableBody()
+        {
+            _i++;
+            while (!Failed)
+            {
+                if (Cur.IsSymbol("}")) { _i++; return; }
+                if (Cur.Kind == TokKind.End) { Unbalanced = true; return; }
+                if (Cur.IsSymbol("["))
+                {
+                    _i++;
+                    ReadValue();
+                    if (Failed) return;
+                    if (!Cur.IsSymbol("]") || !Peek().IsSymbol("="))
+                    {
+                        Fail("unpaired quote: a bracket key is not closed with ']=', so a quote in a string " +
+                             "was not escaped (\\' or \\\")");
+                        return;
+                    }
+                    _i += 2;
+                }
+                else if (IsKeyAssign) _i += 2;
+                ReadValue();
+                if (Failed) return;
+                if (Cur.IsSymbol(",") || Cur.IsSymbol(";")) _i++;
+                else if (Cur.Kind == TokKind.End) { Unbalanced = true; return; }
+                else if (!Cur.IsSymbol("}"))
+                {
+                    FailAfterValue("unpaired quote: text follows a value where a comma or the closing brace belongs, so a " +
+                         "quote in a string was not escaped (\\' or \\\")");
+                    return;
+                }
+            }
+        }
+    }
+
+    // Lua names are ASCII; char.IsLetter would let `タワー=` pass as a key.
+    private static bool IsIdentStart(char c) => c is >= 'A' and <= 'Z' or >= 'a' and <= 'z' or '_';
+    private static bool IsIdentChar(char c) => IsIdentStart(c) || c is >= '0' and <= '9';
+
+    /// <summary>The level of a long bracket opening at <paramref name="at"/>
+    /// (<c>[[</c> is 0, <c>[==[</c> is 2), or -1 when there is none.</summary>
+    private static int LongBracketLevel(string s, int at)
+    {
+        if (at >= s.Length || s[at] != '[') return -1;
+        int i = at + 1;
+        while (i < s.Length && s[i] == '=') i++;
+        return i < s.Length && s[i] == '[' ? i - at - 1 : -1;
+    }
+
+    /// <summary>Index of the last character of the closing long bracket of
+    /// <paramref name="level"/>, searching from <paramref name="from"/>, or -1.</summary>
+    private static int LongBracketClose(string s, int from, int level)
+    {
+        var close = "]" + new string('=', level) + "]";
+        int at = from <= s.Length ? s.IndexOf(close, from, StringComparison.Ordinal) : -1;
+        return at < 0 ? -1 : at + close.Length - 1;
     }
 
     /// <summary>Reverse <see cref="CeLuaHygiene.EscapeLuaString"/>, including the
     /// decimal escapes it uses to break closing long brackets.</summary>
     internal static string Unescape(string s)
     {
-        var sb = new System.Text.StringBuilder(s.Length);
+        var sb = new StringBuilder(s.Length);
         for (int i = 0; i < s.Length; i++)
         {
             if (s[i] != '\\') { sb.Append(s[i]); continue; }
@@ -325,14 +969,6 @@ public static class CoordLuaParser
     }
 
     // ── Misc ────────────────────────────────────────────────────────────
-
-    private static int LineOf(string text, int index)
-    {
-        int line = 1;
-        for (int i = 0; i < index && i < text.Length; i++)
-            if (text[i] == '\n') line++;
-        return line;
-    }
 
     private static string Trim(string s) => s.Length <= 60 ? s.Trim() : s[..60].Trim() + "…";
 

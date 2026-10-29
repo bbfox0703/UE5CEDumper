@@ -33,6 +33,10 @@ public partial class PivotFieldPick : ObservableObject
     [ObservableProperty] private bool _isKey;
 
     public string Name          => Info.Name;
+    /// <summary>[SNAPDIFF-SHADOWED-PROP] What the picker shows and the pivot names this field by -- the name, with the
+    /// offset for one copy of a shadowed name. <see cref="Name"/> stays the property's own name, which the handoffs match
+    /// with the offset that picks the copy ([PIVOT-HANDOFF-SHADOWED]).</summary>
+    public string Label         => Info.Label;
     public string DeclaredType  => Info.DeclaredType;
     public int    DistinctCount => Info.DistinctCount;
     public int    InstanceCount => Info.InstanceCount;
@@ -86,6 +90,12 @@ public partial class ClassPivotViewModel : ViewModelBase
     // and leave Fields holding a mix of two classes.
     private int _classLoadId;
     private int _fieldLoadId;
+    // [PIVOT-ARRAY-LOADID] The array-field list's own counter. It used to take _classLoadId, so a class click in Array
+    // source superseded the class-list load in flight and the previous snapshot's classes stayed in the picker. A
+    // source or snapshot switch bumps it too: the class it was loading for belongs to the list being replaced, and a
+    // late result would auto-pick an array field whose prop load wipes the new source's Fields. Never the class load,
+    // and never on a Refresh that keeps the snapshot: there the class can stay selected, and nothing would re-run it.
+    private int _arrayFieldLoadId;
     private CancellationTokenSource? _pivotCts;   // heavy pivot run
     // [W1-PIVOT-LOADCTS] One CTS per list, not one shared: a field load used to cancel an in-flight CLASS load, which
     // nothing restarts, leaving the previous snapshot's classes in the picker.
@@ -369,6 +379,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         // trips Avalonia's "Source collection was modified during selection update".
         // RefreshAsync triggers the load itself once the rebuild has settled.
         if (_refreshing) return;
+        _arrayFieldLoadId++;   // [PIVOT-ARRAY-LOADID] the old snapshot's array fields must not land under this one
         PendingLoad = LoadClassesAsync();
     }
     partial void OnSelectedKeyFieldChanged(string? value) => OnPropertyChanged(nameof(CanRunPivot));
@@ -390,6 +401,8 @@ public partial class ClassPivotViewModel : ViewModelBase
         // Switching source clears the cross-source picker/result state so a stale
         // field list or row can't be Run against the wrong source. Detach bound
         // selections before clearing (Avalonia selection-model safety).
+        _arrayFieldLoadId++;   // [PIVOT-ARRAY-LOADID] a late array-field list would refill what this clears
+        _fieldLoadId++;        // ...and so would a late scalar or DataTable field list; not cancelled, so it still caches
         SelectedKeyField = null;
         SelectedArrayField = null;
         SelectedResult = null;
@@ -433,8 +446,9 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// select <paramref name="className"/> in the newest snapshot, and surface
     /// <paramref name="propName"/> (ticked as a value field unless it became the
     /// auto-suggested key). No-op with a hint if no snapshot or class match. The
-    /// caller (MainWindowViewModel) has already switched to the Class Pivot tab.</summary>
-    public async Task PivotForAsync(string className, string? propName)
+    /// caller (MainWindowViewModel) has already switched to the Class Pivot tab.
+    /// <paramref name="propOffset"/> is the property's offset in the instance, -1 when the source has none.</summary>
+    public async Task PivotForAsync(string className, string? propName, int propOffset = -1)
     {
         try
         {
@@ -451,7 +465,7 @@ public partial class ClassPivotViewModel : ViewModelBase
                 return;
             }
 
-            if (!await SelectClassAndTickPropAsync(className, propName))
+            if (!await SelectClassAndTickPropAsync(className, propName, propOffset))
             {
                 // Review 3 of c294e314: a class whose captured objects hold ONLY struct arrays has no scalar row,
                 // so it is missing from the class list -- and the helper's "not in the selected snapshot" was
@@ -466,8 +480,8 @@ public partial class ClassPivotViewModel : ViewModelBase
                 // [W1-DISCOVER-ARRAY] review follow-up: the helper ticks nothing for a prop that is not a
                 // captured numeric field -- right-click hands off any field -- and "Ready" then read like the
                 // handoff had worked. (A prop that IS the key field exists but is not ticked: still Ready.)
-                if (Fields.Any(f => f.Name == propName))
-                    StatusText = $"Ready: {className} · {propName} — press Run Pivot.";
+                if (HandedOffField(propName, propOffset) is { } handed)
+                    StatusText = $"Ready: {className} · {handed.Label} — press Run Pivot.";
                 else
                 {
                     // Second review of 4880a779: a captured STRUCT ARRAY is pivotable too, under the Snapshot
@@ -526,7 +540,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// Returns false (with a status hint) when the class isn't in the snapshot.
     /// Shared by the C5 right-click handoff (<see cref="PivotForAsync"/>) and the
     /// change-driven discovery "Use →" (<see cref="UseDiscoverCandidateAsync"/>).</summary>
-    private async Task<bool> SelectClassAndTickPropAsync(string className, string? propName)
+    private async Task<bool> SelectClassAndTickPropAsync(string className, string? propName, int propOffset)
     {
         // Clear any active class filter so the target class is visible in the picker, then
         // match against the FULL list (_allClasses) — Classes itself is now the filtered
@@ -556,12 +570,25 @@ public partial class ClassPivotViewModel : ViewModelBase
         // [W1-DISCOVER-ARRAY] second review of 4880a779: only in FIELD mode is the key pick the grouping key.
         // In Identity mode it groups nothing, so skipping it there left the handed-off prop out of the pivot
         // under a "Ready" status.
-        if (!string.IsNullOrEmpty(propName) && !(IsFieldKeyMode && SelectedKeyField == propName))
-        {
-            var pick = Fields.FirstOrDefault(f => f.Name == propName);
-            if (pick != null) pick.IsValue = true;
-        }
+        // The key pick holds a label, so a shadowed copy is compared as one.
+        var pick = HandedOffField(propName, propOffset);
+        if (pick != null && !(IsFieldKeyMode && SelectedKeyField == pick.Label))
+            pick.IsValue = true;
         return true;
+    }
+
+    /// <summary>
+    /// [PIVOT-HANDOFF-SHADOWED] The field a handoff names: the copy of <paramref name="propName"/> at
+    /// <paramref name="propOffset"/> when the class carries one there, else the first field of that name. A class can
+    /// shadow a property name ([SNAPDIFF-SHADOWED-PROP]) and the picker lists each copy apart, so the name alone ticked
+    /// the first copy whichever one the user picked. The name still decides: an offset that matches no copy (a source
+    /// with none, -1, or one measured from another base) falls back to it.
+    /// </summary>
+    private PivotFieldPick? HandedOffField(string? propName, int propOffset)
+    {
+        if (string.IsNullOrEmpty(propName)) return null;
+        return (propOffset >= 0 ? Fields.FirstOrDefault(f => f.Name == propName && f.Info.Offset == propOffset) : null)
+               ?? Fields.FirstOrDefault(f => f.Name == propName);
     }
 
     // Re-entrancy guard for the Snapshots rebuild: coalesces overlapping refreshes and
@@ -863,7 +890,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         {
             Fields.Add(new PivotFieldPick(f,
                 PivotKeyScorer.KeyScore(f), PivotKeyScorer.ValueScore(cls, f.Name)));
-            KeyFieldOptions.Add(f.Name);
+            KeyFieldOptions.Add(f.Label);   // [SNAPDIFF-SHADOWED-PROP] one entry per copy of a shadowed name
         }
 
         // Suggest a key: pick the best-scoring field. If it scores well, default
@@ -871,7 +898,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         var suggested = PivotKeyScorer.SuggestKey(fields);
         if (suggested != null && PivotKeyScorer.KeyScore(suggested) >= 0.5)
         {
-            SelectedKeyField = suggested.Name;
+            SelectedKeyField = suggested.Label;
             SelectedKeyMode  = "Field";
         }
         else
@@ -886,7 +913,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         foreach (var p in Fields.OrderByDescending(p => p.ValueScore))
         {
             if (ticked >= 3) break;
-            if (p.Name == SelectedKeyField) continue;
+            if (p.Label == SelectedKeyField) continue;
             if (p.ValueScore >= PropertyScoringTable.InterestingThreshold)
             {
                 p.IsValue = true;
@@ -978,7 +1005,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     private async Task LoadArrayFieldsAsync()
     {
         // Bump at entry so a null selection also supersedes in-flight loads.
-        int id = ++_classLoadId;
+        int id = ++_arrayFieldLoadId;   // [PIVOT-ARRAY-LOADID] never the class list's counter
         SelectedArrayField = null;   // detach selections before clearing bound lists
         SelectedKeyField = null;
         SelectedResult = null;
@@ -993,7 +1020,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         try
         {
             var list = await Task.Run(() => _store.ListPivotArrayFieldsAsync(snapId, cls));
-            if (id != _classLoadId) return;   // a newer class/snapshot superseded us
+            if (id != _arrayFieldLoadId) return;   // a newer class, snapshot or source superseded us
             foreach (var af in list) ArrayFields.Add(af);
             // Auto-select the first array field (triggers prop load).
             SelectedArrayField = ArrayFields.FirstOrDefault();
@@ -1063,7 +1090,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         var keys = new List<string>();
         if (!string.IsNullOrEmpty(SelectedKeyField)) keys.Add(SelectedKeyField);
         foreach (var f in Fields)
-            if (f.IsKey && !keys.Contains(f.Name)) keys.Add(f.Name);
+            if (f.IsKey && !keys.Contains(f.Label)) keys.Add(f.Label);
         return keys;
     }
 
@@ -1145,8 +1172,10 @@ public partial class ClassPivotViewModel : ViewModelBase
                 KeyMode     = IsFieldKeyMode ? PivotKeyMode.Field : PivotKeyMode.Identity,
                 KeyField    = SelectedKeyField ?? "",
                 KeyFields   = IsFieldKeyMode ? CollectKeyFields() : new List<string>(),
-                ValueFields = Fields.Where(f => f.IsValue).Select(f => f.Name).ToList(),
+                ValueFields = Fields.Where(f => f.IsValue).Select(f => f.Label).ToList(),
             };
+            foreach (var f in Fields)   // [SNAPDIFF-SHADOWED-PROP] which labels name one copy of a shadowed name
+                if (f.Info.Shadowed) query.ShadowedFields[f.Label] = f.Info;
             var snapRes = await Task.Run(() => _store.PivotAsync(query, ct), ct);
             SetResults(snapRes.Rows, runSession);
 
@@ -1265,7 +1294,7 @@ public partial class ClassPivotViewModel : ViewModelBase
                 StatusText = "No snapshot selected — capture one first.";
                 return;
             }
-            if (await SelectClassAndTickPropAsync(cand.ClassName, cand.PropName))
+            if (await SelectClassAndTickPropAsync(cand.ClassName, cand.PropName, cand.PropOffset))
             {
                 // The discovered property IS the thing the user wants to watch, so
                 // always project it — and group by Identity so its value shows per
@@ -1273,7 +1302,7 @@ public partial class ClassPivotViewModel : ViewModelBase
                 // property as the group key, which would hide its value in Identity
                 // mode / collapse it in Field mode.)
                 SelectedKeyMode = "Identity (object path)";
-                var pick = Fields.FirstOrDefault(f => f.Name == cand.PropName);
+                var pick = HandedOffField(cand.PropName, cand.PropOffset);
                 if (pick == null)
                 {
                     // [W1-DISCOVER-ARRAY] Say so, and run nothing: a pivot of the pre-ticked fields
@@ -1437,8 +1466,8 @@ public partial class ClassPivotViewModel : ViewModelBase
         {
             var hex = row.ObjAddr.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
                 ? row.ObjAddr.Substring(2) : row.ObjAddr;
-            await _platform.CopyToClipboardAsync(hex);
-            StatusText = $"Copied {hex}  ({row.KeyValue})";
+            bool copied = await _platform.CopyToClipboardAsync(hex);
+            StatusText = copied ? $"Copied {hex}  ({row.KeyValue})" : ClipboardConvenience.NotCopiedText(hex);
         }
         catch (Exception ex)
         {

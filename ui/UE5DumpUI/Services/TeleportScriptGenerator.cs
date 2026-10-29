@@ -279,6 +279,14 @@ public static class TeleportScriptGenerator
         // status-before-cmd publication order.
         CeLuaHygiene.AppendIdleWait(sb, "mb",
             "hadError = true; showMessage('[Teleport] mailbox busy -- markers not cleared'); break", "  ");
+        // Both waits' `break` leaves only their OWN while-loop, so the slot loop ran on: a wedged mailbox raised a
+        // dialog per slot, three for one click. A flag tested at the top of the loop is not enough
+        // ([TRACKB-A4-2026-09-10]): the DLL drains the mailbox on its own thread while CE sits in the modal, so the
+        // re-read below could pass after OK and clear this slot under "markers not cleared". So leave the slot loop
+        // right after each wait -- `break`, never `return`, which would skip the deferred untick and strand the
+        // momentary record ticked. Two lines, not `then break end`: that is the greppable shape of a SILENT break,
+        // and this one follows a dialog.
+        AppendLeaveSlotLoopOnError(sb, "  ");
         Line(sb, $"  if readInteger(mb + {CeMailboxLayout.OffCmd}) == 0 then");
         Line(sb, $"    writeQword(mb + {CeMailboxLayout.OffUfuncAddr}, slot)            -- slot");
         Line(sb, $"    writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, 6)               -- op = CLEAR_MARKER");
@@ -286,6 +294,7 @@ public static class TeleportScriptGenerator
         Line(sb, $"    writeInteger(mb + {CeMailboxLayout.OffCmd}, {CmdTeleport})  -- CMD_TELEPORT (write LAST)");
         // Same shape as the single-op wait above: momentary row, so flag and break.
         CeLuaHygiene.AppendMailboxWait(sb, "Teleport", MailboxTimeout.FlagAndBreak, indent: "    ");
+        AppendLeaveSlotLoopOnError(sb, "    ");
         // ⛔ AND RE-READ THE RESULT, which this arm did not until 2026-09-09 while the
         // single-op arm above (`:165`) always has. STATUS_DONE IS NOT A SUCCESS SIGNAL:
         // `Mimic.cpp`'s SetError writes the negative code to `result` and THEN sets
@@ -422,6 +431,16 @@ public static class TeleportScriptGenerator
             Script = Generate(Action.ClearAll),
         });
         return rows;
+    }
+
+    /// <summary>Clear all's exit from the slot loop after a wait that failed. The wait already set <c>hadError</c>
+    /// and said why; this only stops the loop asking again for the next slot.</summary>
+    private static void AppendLeaveSlotLoopOnError(StringBuilder sb, string indent)
+    {
+        Line(sb, indent + "-- a failed wait leaves only its own loop: leave the slot loop too (one failure, one dialog)");
+        Line(sb, indent + "if hadError then");
+        Line(sb, indent + "  break");
+        Line(sb, indent + "end");
     }
 
     private static string Lua(double v) => v.ToString("0.0###", CultureInfo.InvariantCulture);

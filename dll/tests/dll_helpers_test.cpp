@@ -776,6 +776,69 @@ static void Test_Stark_ShouldDrainQueue() {
            !Stark::ShouldDrainQueue(64, true));
 }
 
+// [STARK-DRAIN-OFF-GAME-THREAD] An engine WORKER thread calls ProcessEvent too, and the hook drained the queue there:
+// measured on DumperTest58 Development (UE 5.8), a queued ToggleDebugCamera hit BodyInstance.cpp's IsInGameThread
+// check (1 in ~50 toggles). The drain must run on the game thread only -- and the thread must be identified without a
+// guess that, wrong, would never drain at all.
+static void Test_Stark_DrainOnGameThreadOnly() {
+    using Stark::GameThreadIdSource;
+    using Stark::ThreadInfo;
+
+    // The three-argument gate: the two-argument cases are unchanged on the game thread...
+    EXPECT("game-thread entry with work drains",          Stark::ShouldDrainQueue(1, false, true));
+    EXPECT("empty queue never drains on the game thread", !Stark::ShouldDrainQueue(0, false, true));
+    EXPECT("our own re-entry never drains, game thread or not", !Stark::ShouldDrainQueue(1, true, true));
+    // ...and THE BUG: a worker thread's ProcessEvent with work pending must leave it for the game thread.
+    EXPECT("a worker-thread entry does NOT drain",        !Stark::ShouldDrainQueue(1, false, false));
+    EXPECT("a worker-thread entry does NOT drain, whatever the depth", !Stark::ShouldDrainQueue(64, false, false));
+
+    // Which entry is the game thread's. Unknown (0) keeps the old behaviour: every entry counts.
+    EXPECT("the identified thread is the game thread",    Stark::IsGameThreadEntry(42, 42));
+    EXPECT("another thread is not",                        !Stark::IsGameThreadEntry(43, 42));
+    EXPECT("nothing identified: every entry counts, as before", Stark::IsGameThreadEntry(43, 0));
+
+    // The pick. UE names its game thread "GameThread" (FPlatformProcess::SetupGameThread, right after PreInit sets
+    // GGameThreadId); that wins even over an earlier-created thread.
+    const ThreadInfo named[] = { { 10, false, 100 }, { 20, true, 300 }, { 30, false, 200 } };
+    const auto p1 = Stark::PickGameThread(named, 3);
+    EXPECT("the thread named GameThread is picked",       p1.tid == 20);
+    EXPECT("...by its description",                       p1.source == GameThreadIdSource::Description);
+    // No name (older engines, older Windows): the earliest-created thread, the main thread GGameThreadId is.
+    const ThreadInfo unnamed[] = { { 10, false, 300 }, { 20, false, 100 }, { 30, false, 200 } };
+    const auto p2 = Stark::PickGameThread(unnamed, 3);
+    EXPECT("no name: the earliest-created thread is picked", p2.tid == 20);
+    EXPECT("...as the main thread",                       p2.source == GameThreadIdSource::MainThread);
+    // Two named (should not happen): the earlier-created of them.
+    const ThreadInfo twoNamed[] = { { 10, true, 300 }, { 20, false, 50 }, { 30, true, 200 } };
+    EXPECT("two named: the earlier-created named one",    Stark::PickGameThread(twoNamed, 3).tid == 30);
+    const auto p0 = Stark::PickGameThread(nullptr, 0);
+    EXPECT("no threads: nothing picked",                  p0.tid == 0 && p0.source == GameThreadIdSource::Unknown);
+
+    // The validator's verdict. A NAMED game thread is the engine's own and is kept even when it did not fire (a
+    // paused game thread: invokes then wait, as on any paused game). The main-thread GUESS is given up when it did
+    // not fire while other threads did -- a gate on the wrong thread never drains and times out every invoke, which
+    // is worse than the defect it fixes.
+    EXPECT("named, fired: kept",                           Stark::KeepGameThreadGate(GameThreadIdSource::Description, 5, 100));
+    EXPECT("named, silent while others fire: still kept",  Stark::KeepGameThreadGate(GameThreadIdSource::Description, 0, 100));
+    EXPECT("main-thread guess, fired: kept",               Stark::KeepGameThreadGate(GameThreadIdSource::MainThread, 5, 100));
+    EXPECT("main-thread guess, nothing fired at all: kept (an idle game, not a wrong guess)",
+           Stark::KeepGameThreadGate(GameThreadIdSource::MainThread, 0, 0));
+    EXPECT("main-thread guess, silent while others fire: GIVEN UP",
+           !Stark::KeepGameThreadGate(GameThreadIdSource::MainThread, 0, 100));
+    EXPECT("unknown: no gate to keep",                     !Stark::KeepGameThreadGate(GameThreadIdSource::Unknown, 5, 100));
+
+    // What counts as "other threads fired". The validator's window opens inside the invoke that installed the hook,
+    // and a direct call (UE5_CallProcessEventDirect, the mailbox's off-thread-safe path) re-enters the detour on OUR
+    // thread under InOwnPeCall. A game thread can make no ProcessEvent call for the whole window (Avowed, 2026-10-27:
+    // 0 fires in 1500 ms), so counting those re-entries could give a correct main-thread guess up on our own call alone.
+    EXPECT("an engine worker's entry counts against the guess",
+           Stark::CountsAgainstGameThreadGuess(false, false));
+    EXPECT("our own nested call off the game thread does NOT",
+           !Stark::CountsAgainstGameThreadGuess(false, true));
+    EXPECT("a game-thread entry does not",                  !Stark::CountsAgainstGameThreadGuess(true, false));
+    EXPECT("a game-thread entry under our own call does not", !Stark::CountsAgainstGameThreadGuess(true, true));
+}
+
 // [VND584-05] The ProcessEvent fingerprint's byte-narrowed (clang) form, with Avowed's own bytes.
 static void Test_Stark_NarrowedFlagTests() {
     std::vector<uint8_t> body(0x400, 0x90);
@@ -2865,6 +2928,42 @@ static void Test_Stark_StatefulToggleFailure() {
     EXPECT("DBGCAMQ control: no hook is a plain failure", Stark::StatefulToggleFailure(-7) == -1);
 }
 
+// [DBGCAM-OFF-OVER-QUEUED-ON] A Debug Camera toggle that timed out stays queued. A later Set read the camera's state
+// before it ran -- an OFF read "already OFF" and reported a clean OFF -- and the queued ON then turned it on. The
+// record says whether that request has run, from the request's own promise.
+static void Test_Stark_QueuedInvoke() {
+    Stark::QueuedInvoke q;
+    EXPECT("QUEUEDINV nothing recorded is not queued", !q.StillQueued());
+
+    std::promise<int32_t> p;
+    q.Record(p.get_future().share());
+    EXPECT("QUEUEDINV a recorded request that has not run is still queued", q.StillQueued());
+    EXPECT("QUEUEDINV ...on every ask until it runs", q.StillQueued());
+
+    p.set_value(0);   // the game thread drained it
+    EXPECT("QUEUEDINV a completed request is still on record until asked", q.HasRecord());
+    EXPECT("QUEUEDINV once it has run it is not", !q.StillQueued());
+    EXPECT("QUEUEDINV ...and the record has cleared itself", !q.HasRecord());
+
+    std::promise<int32_t> p2;
+    q.Record(p2.get_future().share());
+    p2.set_value(-4);   // ran, and faulted: still not queued
+    EXPECT("QUEUEDINV a request that ran with an error is not queued either", !q.StillQueued());
+}
+
+// [DBGCAM-OFF-OVER-QUEUED-ON] review: while a toggle is still queued (or being dispatched), a Set sends nothing. The
+// same direction is the caller's toggle, already queued: -5, do not re-send. The opposite direction sent NOTHING and
+// the state it would read is from before the queued toggle: a code of its own, so no caller describes it as a queued
+// toggle of its own direction.
+static void Test_Stark_QueuedToggleAnswer() {
+    EXPECT("QTANSWER same direction is the queued toggle (-5)", Stark::QueuedToggleAnswer(true, true) == -5);
+    EXPECT("QTANSWER ...both ways", Stark::QueuedToggleAnswer(false, false) == -5);
+    EXPECT("QTANSWER an OFF over a queued ON was not sent (-6)", Stark::QueuedToggleAnswer(true, false) == -6);
+    EXPECT("QTANSWER an ON over a queued OFF was not sent (-6)", Stark::QueuedToggleAnswer(false, true) == -6);
+    EXPECT("QTANSWER -6 is its own code, not the timeout's",
+           Stark::kToggleBlockedByQueued != Stark::kInvokeTimedOutStillQueued);
+}
+
 // V3-C — server-side ordered view (filter + sort + window) over a candidate
 // pool. The DLL owns the full set; the UI is a window. These pure helpers run
 // over the DLL's own pools (no game memory), so filter/sort never touch the
@@ -3963,6 +4062,22 @@ static void Test_ValueScan_SparseContainerGeometry() {
            Macht::ComputeSetElementStride(8, 8) == Macht::ComputeSetElementStride(8));
     EXPECT("Scharf NameProperty(8) align = 4",        Scharf::RequiredAlignment("NameProperty", 8, false) == 4);
     EXPECT("Scharf WeakObjectProperty align = 4",     Scharf::RequiredAlignment("WeakObjectProperty", 8, false) == 4);
+    // [DELEGATE-PAD-ALIGN] A checked build's standalone FScriptDelegate leads with the 8-aligned std::atomic<uint64>
+    // access detector, so it is alignof 8 (24, or 32 with a 12-byte FName); unpadded it is the weak pair and an FName,
+    // alignof 4 (12 / 16 / 20). A TMap<int32, FMyDelegate> value sits at +8 on a checked build, not +4.
+    EXPECT("Scharf DelegateProperty(16) align = 4",       Scharf::RequiredAlignment("DelegateProperty", 16, false) == 4);
+    EXPECT("Scharf DelegateProperty(20, CPN) align = 4",  Scharf::RequiredAlignment("DelegateProperty", 20, true) == 4);
+    EXPECT("Scharf DelegateProperty(24, checked) align = 8", Scharf::RequiredAlignment("DelegateProperty", 24, false) == 8);
+    EXPECT("Scharf DelegateProperty(32, CPN checked) align = 8",
+           Scharf::RequiredAlignment("DelegateProperty", 32, true) == 8);
+    // Both multicast spellings are a TArray header (a pointer first): the UE4 one and the UE 4.23+ inline one, which a
+    // substring search for the UE4 spelling does not match.
+    EXPECT("Scharf MulticastInlineDelegateProperty align = 8",
+           Scharf::RequiredAlignment("MulticastInlineDelegateProperty", 16, false) == 8);
+    EXPECT("Scharf MulticastDelegateProperty (UE4) align = 8",
+           Scharf::RequiredAlignment("MulticastDelegateProperty", 16, false) == 8);
+    EXPECT("Scharf MulticastSparseDelegateProperty align = 1",
+           Scharf::RequiredAlignment("MulticastSparseDelegateProperty", 1, false) == 1);
     // [UE4-ASSETPTR-PROPS] FAssetPtr, 4.11-4.17's soft pointer, ends in an FString, so it is 8-aligned (UE415_Flyinh's
     // PDB: 0x20, with 4 bytes of padding after TagAtLastTest). 0 ("not validated") left a TMap<TAssetPtr, int32>'s
     // pair aligned by its int32 -- the stride GetMapPairLayout derives, rebuilt here, came out 0x2C, not 0x30.
@@ -8294,6 +8409,30 @@ static void Test_Grimoire_HostAllowsBackgroundThreads() {
     EXPECT("null path fails open",  HostAllowsBackgroundThreads(nullptr));
 }
 
+// [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] A PIPE dialog stays open across FIREs, holding the instance address it opened
+// with, and invoke_function finds the function by NAME on the class read at that address NOW. A slot freed and reused
+// by another class meanwhile ran that class's same-named function. The dialog now sends the class its function list
+// was read from, and the DLL refuses when the object there is of another class.
+static void Test_Renge_InvokeTargetIsExpected() {
+    std::printf("Test_Renge_InvokeTargetIsExpected\n");
+    EXPECT("the same class: invoked",                   Renge::InvokeTargetIsExpected(0xC100, 0xC100));
+    EXPECT("another class at the address: REFUSED",     !Renge::InvokeTargetIsExpected(0xC100, 0xC300));
+    EXPECT("no expectation (every older caller): invoked, as before",
+           Renge::InvokeTargetIsExpected(0, 0xC300));
+
+    // The refusal's text. The DLL knows only that the class pointer at the address changed: the slot may hold another
+    // object or none, so the text names no "class it is now". And re-opening the dialog from a view that was not walked
+    // again sends the same address and class, so the remedy is to look the object up again (in the Live Walker, Refresh).
+    const std::string text = Renge::InvokeTargetRefusalText("0x21717BB9A00", "BP_Enemy_C");
+    EXPECT("refusal: keeps the prefix callers match",        text.rfind("Not invoked: the object at 0x21717BB9A00", 0) == 0);
+    EXPECT("refusal: names the class it was opened on",      text.find("BP_Enemy_C") != std::string::npos);
+    EXPECT("refusal: claims no class the slot has now",      text.find("is now") == std::string::npos);
+    EXPECT("refusal: says to look it up again (Refresh)",    text.find("Refresh") != std::string::npos);
+    const std::string unnamed = Renge::InvokeTargetRefusalText("0x1000", "");
+    EXPECT("refusal: an unreadable expected name leaves no blank", unnamed.find("the  ") == std::string::npos
+                                                                && unnamed.find(" ()") == std::string::npos);
+}
+
 // B46 — HexToBytes could not fail, so write_mem could not report a bad pattern.
 static void Test_Renge_TryHexToBytes() {
     std::printf("Test_Renge_TryHexToBytes\n");
@@ -8632,7 +8771,10 @@ static void Test_Delegate_AccessDetectorPad() {
     // ⚠ Every one of the ~12 shipped titles measured in this repo is a Shipping build, i.e.
     // the pad-free side. Nothing red could ever have appeared there.
     constexpr int32_t kMcd = 16;              // sizeof(FMulticastScriptDelegate), unpadded
-    const int32_t kSd = 8 + DynOff::SizeofFName();   // sizeof(FScriptDelegate), unpadded
+    // sizeof(FScriptDelegate) unpadded with an 8-byte FName. A literal, not 8 + SizeofFName(): with a 12- or 4-byte
+    // FName "+ 8" is not the padded size ([DELEGATE-PAD-ALIGN]), so global FName state left by another test would turn
+    // this into a check of a size no build has.
+    constexpr int32_t kSd = 16;
 
     EXPECT("pad: Shipping FMulticastScriptDelegate (16) -> 0",
            DynOff::DelegatePadFromElementSize(kMcd, kMcd) == 0);
@@ -8657,6 +8799,20 @@ static void Test_Delegate_AccessDetectorPad() {
            DynOff::DelegatePadFromElementSize(1073742336, kMcd) < 0);
     EXPECT("pad: a zero baseSize cannot derive anything",
            DynOff::DelegatePadFromElementSize(16, 0) < 0);
+
+    // [DELEGATE-PAD-ALIGN] The detector is a std::atomic<uint64>, so the padded struct is 8-aligned and its size
+    // rounds UP to 8. A base that is not a multiple of 8 -- a 12-byte (case-preserving) or a 4-byte
+    // (UE_FNAME_OUTLINE_NUMBER) FName after the 8-byte weak pair -- is therefore not padded by exactly 8. The UE 5.4
+    // editor's own PDB gives TScriptDelegate<FNotThreadSafeDelegateMode> 0x20 with a 12-byte FName.
+    EXPECT("pad: a case-preserving checked FScriptDelegate (8 + 12, + detector, 8-aligned) is 32 -> 8",
+           DynOff::DelegatePadFromElementSize(32, 20) == 8);
+    EXPECT("pad: ...and 28, base + 8 unaligned, is no build's size", DynOff::DelegatePadFromElementSize(28, 20) < 0);
+    EXPECT("pad: a case-preserving Shipping FScriptDelegate (alignof 4) is 20 -> 0",
+           DynOff::DelegatePadFromElementSize(20, 20) == 0);
+    EXPECT("pad: a 4-byte-FName checked FScriptDelegate (8 + 4, + detector, 8-aligned) is 24 -> 8",
+           DynOff::DelegatePadFromElementSize(24, 12) == 8);
+    EXPECT("pad: ...and 20 is no build's size", DynOff::DelegatePadFromElementSize(20, 12) < 0);
+    EXPECT("pad: a 4-byte-FName Shipping FScriptDelegate is 12 -> 0", DynOff::DelegatePadFromElementSize(12, 12) == 0);
 }
 
 static void Test_Aura_IsBoundInvocationListHeader() {
@@ -9313,6 +9469,34 @@ static void Test_Ubel_Interfaces() {
            Pawn, "Shared", listFuncs, readSuper, listIfaces, hit) && hit.address == 0xA2);
     EXPECT("IFACE control: a name nowhere is not found",
            !Ubel::ResolveFunctionInChainOrInterfaces(Pawn, "Nope", listFuncs, readSuper, listIfaces, hit));
+
+    // [VND584-04] The function LIST's half: what the class gets only through an interface -- the names an invoke by name
+    // reaches through ResolveFunctionInChainOrInterfaces' second pass -- each tagged with the interface level that
+    // declares it. UInterface and above are not the interface's own functions.
+    auto listFuncsU = [&](uintptr_t c) {
+        auto v = listFuncs(c);
+        if (c == UInterfaceC) v.push_back(fn("Uber", 0xB1));   // UObject's kind of function, reached by every interface
+        return v;
+    };
+    auto isInterfaceBase = [&](uintptr_t c) { return c == UInterfaceC; };
+    const auto viaPawn = Ubel::InterfaceFunctionsOf(Pawn, listFuncsU, readSuper, listIfaces, isInterfaceBase);
+    EXPECT("IFACE-LIST ⭐: Pawn lists DoFoo, which only its base's IBar -> IFoo declares, tagged with IFoo",
+           viaPawn.size() == 1 && viaPawn[0].name == "DoFoo" && viaPawn[0].viaInterface == IFoo);
+    EXPECT("IFACE-LIST control: a name the class chain declares (Shared, on Actor) is not listed as an interface's",
+           std::none_of(viaPawn.begin(), viaPawn.end(), [](const FunctionInfo& f) { return f.name == "Shared"; }));
+    EXPECT("IFACE-LIST control: UInterface's functions are not an interface's own",
+           std::none_of(viaPawn.begin(), viaPawn.end(), [](const FunctionInfo& f) { return f.name == "Uber"; }));
+    EXPECT("IFACE-LIST control: a class implementing nothing lists nothing",
+           Ubel::InterfaceFunctionsOf(Widget, listFuncsU, readSuper, listIfaces, isInterfaceBase).empty());
+
+    // [VND584-04] Live Walker asks for a struct view's functions too, and a UScriptStruct has no UClass::Interfaces: read
+    // at that offset it is whatever the struct holds there. Only a class's meta class names a class.
+    EXPECT("IFACE-LIST ⭐: a UScriptStruct's meta class is not a class's", !Ubel::IsClassMetaName("ScriptStruct"));
+    EXPECT("IFACE-LIST ⭐: ...nor a user-defined struct's", !Ubel::IsClassMetaName("UserDefinedStruct"));
+    EXPECT("IFACE-LIST: a native class's meta class is Class", Ubel::IsClassMetaName("Class"));
+    EXPECT("IFACE-LIST: a Blueprint class's is a *Class", Ubel::IsClassMetaName("BlueprintGeneratedClass")
+           && Ubel::IsClassMetaName("WidgetBlueprintGeneratedClass"));
+    EXPECT("IFACE-LIST control: an unreadable meta class names nothing", !Ubel::IsClassMetaName(""));
 
     Ubel::ImplementedInterface ii;
     EXPECT("IFACE ⭐: Pawn implements IFoo (through its base's IBar, which derives from IFoo)",
@@ -11102,12 +11286,15 @@ int main() {
     RUN(Test_Ubel_EstimateClassInfoBytes);
     RUN(Test_Stark_ShouldUseTrampoline);
     RUN(Test_Stark_ShouldDrainQueue);
+    RUN(Test_Stark_DrainOnGameThreadOnly);
     RUN(Test_Stark_ClaimRequest);
     RUN(Test_Stark_NarrowedFlagTests);
     RUN(Test_Stark_PeOffsetSentinels);
     RUN(Test_Stark_ShouldRetryPeDetection);
     RUN(Test_Stark_PeValidationFailureVerdict);
     RUN(Test_Stark_StatefulToggleFailure);
+    RUN(Test_Stark_QueuedInvoke);
+    RUN(Test_Stark_QueuedToggleAnswer);
     RUN(Test_Lineal_StrideSweepRules);
     RUN(Test_Lineal_SerialOffsetForLayout);
     RUN(Test_Mimic_MailboxLayout);
@@ -11328,6 +11515,7 @@ int main() {
 
     // Renge — hex parsing has a failure channel (write_mem can refuse a bad pattern)
     RUN(Test_Renge_TryHexToBytes);
+    RUN(Test_Renge_InvokeTargetIsExpected);
     RUN(Test_Renge_ApplyPayloadKeepsEnvelope);   // F5 — envelope survives its payload
     RUN(Test_Dunste_ShouldCommitCollision);
     RUN(Test_Aura_DescribeSparseDelegateState);

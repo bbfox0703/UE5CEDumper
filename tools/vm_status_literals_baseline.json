@@ -8,7 +8,7 @@
   "ui/UE5DumpUI/ViewModels/InterestingFunctionsViewModel.cs": 12,
   "ui/UE5DumpUI/ViewModels/InterestingPropertiesViewModel.cs": 14,
   "ui/UE5DumpUI/ViewModels/LiveFuncsViewModel.cs": 14,
-  "ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs": 58,
+  "ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs": 56,
   "ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs": 84,
   "ui/UE5DumpUI/ViewModels/ObjectTreeViewModel.cs": 9,
   "ui/UE5DumpUI/ViewModels/PointerPanelViewModel.cs": 1,
@@ -19,6 +19,6 @@
   "ui/UE5DumpUI/ViewModels/SnapshotViewModel.cs": 27,
   "ui/UE5DumpUI/ViewModels/SpcQueryViewModel.Group.cs": 7,
   "ui/UE5DumpUI/ViewModels/SpcQueryViewModel.cs": 7,
-  "ui/UE5DumpUI/ViewModels/TeleportViewModel.cs": 143,
+  "ui/UE5DumpUI/ViewModels/TeleportViewModel.cs": 141,
   "ui/UE5DumpUI/ViewModels/ValueSearchViewModel.cs": 17
 }

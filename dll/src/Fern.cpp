@@ -2565,9 +2565,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // the UI parser needs no new branch (a missing key already falls back to
         // its default) and an older DLL that ignores the flag simply returns the
         // full shape. The header below is 99% dead weight for an export: the
-        // exporter reads `fields` and nothing else, and a batch reply is
+        // exporter reads `fields` and little else, and a batch reply is
         // positional, so even `addr` is redundant. `addr` and `stale` are kept
-        // anyway — identity for logs/debugging, and the freed-slot signal.
+        // anyway — identity for logs/debugging, and the freed-slot signal --
+        // and so is `is_definition`, which an exporter does read.
         auto EncodeInstanceWalkToJson = [&](const Ubel::InstanceWalkResult& result,
                                             bool lean = false) -> json {
             json data;
@@ -2582,7 +2583,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             }
             // Optional keys stay OPTIONAL — emitting them unconditionally would
             // change the single-call wire shape and break byte-equivalence.
-            if (!lean && result.isDefinition)
+            // [CEXML-DEFINITION-VIEW-AS-DATA] In BOTH lean and full: a definition's fields are a type's layout, and an
+            // exporter that cannot tell lays them out as the pointee's data.
+            if (result.isDefinition)
                 data["is_definition"] = true;
             if (result.isStale)
                 data["stale"] = true;
@@ -2590,6 +2593,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // stale means a class pointer that read back implausible; this, a header that could not be read at all.
             if (result.unreadable)
                 data["unreadable"] = true;
+            // [WALK-NULLCLASS-SILENT] In both lean and full too: a header that names no readable class. Its own key, so
+            // the UI can say "freed, or not an object" rather than stale's or unreadable's narrower claims.
+            if (result.noHeader)
+                data["no_header"] = true;
             // Present only when true, and !lean because the lean contract above is
             // SUBTRACTIVE ONLY — an unconditional key would make lean stop being a
             // subset of full. A CE export reads `fields` and never this.
@@ -2793,11 +2800,21 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             uintptr_t addr = Renge::StrToAddr(addrStr);
             auto funcs = Ubel::WalkFunctions(addr);
+            // [VND584-04] Opt-in, so a dump or an export that reads the class's own functions is unchanged: the functions
+            // the class gets only through an implemented interface, which an invoke by name reaches, each with the
+            // "interface" that declares it.
+            if (request.value("include_interfaces", false)) {
+                auto viaIface = Ubel::WalkInterfaceFunctions(addr);
+                funcs.insert(funcs.end(), std::make_move_iterator(viaIface.begin()),
+                             std::make_move_iterator(viaIface.end()));
+            }
 
             json funcArr = json::array();
             for (const auto& f : funcs) {
                 json fj;
                 fj["name"]    = f.name;
+                if (f.viaInterface)
+                    fj["interface"] = Ubel::GetName(f.viaInterface);
                 fj["full"]    = f.fullName;
                 fj["addr"]    = Renge::AddrToStr(f.address);
                 fj["flags"]   = f.functionFlags;
@@ -6360,6 +6377,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["fallback_reason"]    = DynOff::g_offsetsFallbackReason;
             data["ffieldclass_name"]   = DynOff::FFIELDCLASS_NAME;
             data["case_preserving"]    = DynOff::bCasePreservingName;
+            // The width every FName-sized stride uses (a measured 4 / 8 / 12, else 8 or 12 from case_preserving):
+            // a rig that re-derives a delegate size from case_preserving alone misses the measured 4.
+            data["fname_size"]         = DynOff::SizeofFName();
             data["use_fproperty"]      = DynOff::bUseFProperty;
             data["uobject_outer"]      = DynOff::UOBJECT_OUTER;
             data["ustruct_super"]      = DynOff::USTRUCT_SUPER;
@@ -6755,6 +6775,23 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     "Failed to read class from instance " + Renge::AddrToStr(instanceAddr)).dump();
             }
 
+            // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Before the function is looked up: it is found by name on this
+            // class, so another class's object at the address would run that class's same-named function.
+            uintptr_t expectClass = 0;
+            const std::string expectStr = request.value("expect_class_addr", "");
+            if (!expectStr.empty() && !Renge::TryStrToAddr(expectStr, expectClass)) {
+                return Renge::MakeError(id, "Invalid expect_class_addr").dump();
+            }
+            if (!Renge::InvokeTargetIsExpected(expectClass, classAddr)) {
+                const std::string expectName = Ubel::GetName(expectClass);
+                LOG_WARN("invoke_function: refused %s at %s -- its class pointer reads 0x%llX (name read: '%s'), "
+                         "not %s (0x%llX)", funcName.c_str(), Renge::AddrToStr(instanceAddr).c_str(),
+                         (unsigned long long)classAddr, Ubel::GetName(classAddr).c_str(), expectName.c_str(),
+                         (unsigned long long)expectClass);
+                return Renge::MakeError(id,
+                    Renge::InvokeTargetRefusalText(Renge::AddrToStr(instanceAddr), expectName)).dump();
+            }
+
             // Resolve UFunction
             uintptr_t ufuncAddr = UE5_FindFunctionByName(classAddr, funcName.c_str());
             if (ufuncAddr == 0) {
@@ -6979,7 +7016,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             Sein::Info("PIPE:cmd", "set_debug_camera: enable=%d", enable ? 1 : 0);
             int32_t state = UE5_SetDebugCamera(enable ? 1 : 0);
             json data;
-            data["state"] = state;   // resulting state: 1=on, 0=off, -1=error, -5=toggle queued [W3-DEBUGCAM-QUEUED]
+            // resulting state: 1=on, 0=off, -1=error, -5=toggle queued [W3-DEBUGCAM-QUEUED], -6=not sent: an opposite
+            // toggle is still queued [DBGCAM-OFF-OVER-QUEUED-ON]
+            data["state"] = state;
             return Renge::MakeResponse(id, data).dump();
         }
 

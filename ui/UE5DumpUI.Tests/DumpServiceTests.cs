@@ -216,6 +216,44 @@ public class DumpServiceTests
         Assert.False(lastReq!.ContainsKey("str_params"));
     }
 
+    // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] A PIPE dialog stays open across FIREs with the address it opened with; the
+    // class its function list was read from goes with each FIRE, and the DLL refuses an object of another class there.
+    [Fact]
+    public async Task InvokeFunctionAsync_ExpectClassAddr_IsSent()
+    {
+        JsonObject? lastReq = null;
+        _pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() == "invoke_function")
+                lastReq = req;
+            return new JsonObject { ["ok"] = true, ["result"] = 0 };
+        });
+
+        await CreateService().InvokeFunctionAsync("DoThing", instanceAddr: "0x1000", expectClassAddr: "0xC100",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.NotNull(lastReq);
+        Assert.Equal("0xC100", lastReq!["expect_class_addr"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task InvokeFunctionAsync_NoExpectClassAddr_OmitsTheKey()
+    {
+        JsonObject? lastReq = null;
+        _pipe.SetHandler(req =>
+        {
+            if (req["cmd"]?.GetValue<string>() == "invoke_function")
+                lastReq = req;
+            return new JsonObject { ["ok"] = true, ["result"] = 0 };
+        });
+
+        await CreateService().InvokeFunctionAsync("DoThing", instanceAddr: "0x1000",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.NotNull(lastReq);
+        Assert.False(lastReq!.ContainsKey("expect_class_addr"));
+    }
+
     [Fact]
     public void ParamBufferBuilder_ClassifiesStringTypes()
     {
@@ -1667,6 +1705,22 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task WalkInstanceAsync_ParsesNoHeader()
+    {
+        // [WALK-NULLCLASS-SILENT] Additive too: a header that names no readable class. Not stale, not unreadable.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["addr"] = "0x100", ["no_header"] = true, ["fields"] = new JsonArray(),
+        });
+
+        var r = await CreateService().WalkInstanceAsync("0x100", ct: TestContext.Current.CancellationToken);
+
+        Assert.True(r.IsNoHeader);
+        Assert.False(r.IsStale);
+        Assert.False(r.IsUnreadable);
+    }
+
+    [Fact]
     public async Task WalkInstanceAsync_ParsesEnumArrayElements()
     {
         _pipe.SetHandler(_ => new JsonObject
@@ -2558,6 +2612,38 @@ public class DumpServiceTests
         Assert.True(ps[0].IsParm);
         Assert.False(ps[1].IsParm);
         Assert.Null(ps[2].IsParm);
+    }
+
+    // [VND584-04] The function list's interface half: asked for with include_interfaces, read back as ViaInterface, and
+    // shown with the interface's name so the row says where the function comes from.
+    [Fact]
+    public async Task WalkFunctionsWithInterfacesAsync_AsksForThem_AndReadsTheInterface()
+    {
+        JsonObject? sent = null;
+        _pipe.SetHandler(req =>
+        {
+            sent = req;
+            return new JsonObject
+            {
+                ["ok"] = true, ["count"] = 2,
+                ["functions"] = new JsonArray
+                {
+                    new JsonObject { ["name"] = "Tick", ["addr"] = "0x100", ["params"] = new JsonArray() },
+                    new JsonObject { ["name"] = "DoFoo", ["addr"] = "0x200", ["interface"] = "FooInterface",
+                                     ["params"] = new JsonArray() },
+                },
+            };
+        });
+
+        IDumpService svc = CreateService();
+        var funcs = await svc.WalkFunctionsWithInterfacesAsync("0x7FF000", TestContext.Current.CancellationToken);
+
+        Assert.True(sent?["include_interfaces"]?.GetValue<bool>() ?? false);
+        Assert.Equal("", funcs[0].ViaInterface);
+        Assert.Equal("Tick", funcs[0].DisplayName);
+        Assert.Equal("FooInterface", funcs[1].ViaInterface);
+        Assert.Contains("FooInterface", funcs[1].DisplayName);
+        Assert.StartsWith("DoFoo", funcs[1].DisplayName);
     }
 
     // [A3-FIRE-STRUCT-BOOLMASK] A packed bool sub-field carries its single-bit mask on the wire,

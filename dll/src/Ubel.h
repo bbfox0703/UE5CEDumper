@@ -13,6 +13,7 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "Grimoire.h"   // DynOff::TailCheck: OverrideTailCheck's verdict
@@ -137,6 +138,9 @@ struct FunctionInfo {
     uint16_t    returnValueOffset = 0xFFFF; // UFunction::ReturnValueOffset (0xFFFF = void)
     std::vector<FunctionParam> params;
     std::string returnType;  // empty if void
+    // [VND584-04] Set only in a list that includes interface functions: the interface class that declares this one,
+    // which the object's class chain does not. 0 for a function of the class itself.
+    uintptr_t   viaInterface = 0;
 };
 
 namespace Ubel {
@@ -430,6 +434,44 @@ inline bool ResolveFunctionInChainOrInterfaces(uintptr_t classAddr, const char* 
         cls = super;
     }
     return false;
+}
+
+// [VND584-04] The functions a class gets only through the interfaces its chain implements -- exactly the names an
+// invoke by name reaches through ResolveFunctionInChainOrInterfaces' second pass, so a function LIST can offer them.
+// A name any level of the class chain declares is left out (the chain answers it first), and so is everything from
+// UInterface up, which no interface declares. Each is tagged with the interface level that declares it; a name met
+// twice keeps the first, in the resolver's own order.
+template <class ListFuncs, class ReadSuper, class ListInterfaces, class IsInterfaceBase>
+inline std::vector<FunctionInfo> InterfaceFunctionsOf(uintptr_t classAddr, ListFuncs listFuncs, ReadSuper readSuper,
+                                                     ListInterfaces listInterfaces, IsInterfaceBase isInterfaceBase) {
+    std::vector<FunctionInfo> out;
+    if (!classAddr) return out;
+    constexpr int kMaxSuperDepth = 64;
+    std::vector<uintptr_t> chain;
+    std::unordered_set<std::string> seen;
+    for (uintptr_t cls = classAddr; cls && chain.size() < kMaxSuperDepth;) {
+        chain.push_back(cls);
+        for (const FunctionInfo& f : listFuncs(cls)) seen.insert(f.name);
+        uintptr_t super = 0;
+        if (!readSuper(cls, super) || super == cls) break;
+        cls = super;
+    }
+    for (uintptr_t cls : chain) {
+        for (const ImplementedInterface& ii : listInterfaces(cls)) {
+            int depth = 0;
+            for (uintptr_t lvl = ii.cls; lvl && !isInterfaceBase(lvl) && depth < kMaxSuperDepth; ++depth) {
+                for (FunctionInfo f : listFuncs(lvl)) {
+                    if (!seen.insert(f.name).second) continue;
+                    f.viaInterface = lvl;
+                    out.push_back(std::move(f));
+                }
+                uintptr_t super = 0;
+                if (!readSuper(lvl, super) || super == lvl) break;
+                lvl = super;
+            }
+        }
+    }
+    return out;
 }
 
 // [VND584-06] Is `owner` -- a UFunction's Outer, the class that declares it -- `classAddr` or one of its SuperStructs?
@@ -726,6 +768,16 @@ int FindClassInterfacesOffset(uintptr_t cls, uintptr_t knownIface, int from, int
 // empty while it is unmeasured. ClassInterfacesMeasured() says which.
 std::vector<ImplementedInterface> ClassInterfaces(uintptr_t cls);
 bool ClassInterfacesMeasured();
+// [VND584-04] InterfaceFunctionsOf on the live class: the functions `cls` gets only through an implemented interface.
+// Empty while UClass::Interfaces is unmeasured.
+std::vector<FunctionInfo> WalkInterfaceFunctions(uintptr_t cls);
+// [VND584-04] Does a meta class's name name a CLASS -- UClass ("Class") and its Blueprint kinds, all "...Class" -- as
+// against a struct ("ScriptStruct", "UserDefinedStruct")? Only a class has UClass::Interfaces to read.
+inline bool IsClassMetaName(const std::string& metaName) {
+    constexpr char kSuffix[] = "Class";
+    constexpr size_t n = sizeof kSuffix - 1;
+    return metaName.size() >= n && metaName.compare(metaName.size() - n, n, kSuffix) == 0;
+}
 // A native (C++) class lives in a /Script/ package; a Blueprint one does not. UObject::GetInterfaceAddress branches on it.
 bool IsNativeClass(uintptr_t cls);
 
@@ -1083,6 +1135,10 @@ struct InstanceWalkResult {
     // [P1-WALK-UNREADABLE] The instance's own header could not be read (freed?), so nothing was walked. Distinct from
     // isStale, which means a class pointer that read back implausible -- a narrower verdict.
     bool        unreadable = false;
+    // [WALK-NULLCLASS-SILENT] A walk that resolved its own class found none: the header's ClassPrivate is null or
+    // unmapped. Freed and re-committed (L47 measured a zeroed page), or never an object -- the Go box takes any
+    // address -- so neither isStale's "implausible PropertiesSize" nor a "freed" claim fits it.
+    bool        noHeader = false;
     int32_t     propsSize = 0;     // UStruct::PropertiesSize — total struct/class size in bytes
     // The reflected walk RAN and its fields below are real; only the Guess-What
     // raw-byte pass was skipped, because PropertiesSize exceeds kMaxGapFillBytes.

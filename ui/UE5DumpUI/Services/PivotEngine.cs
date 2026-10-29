@@ -15,7 +15,7 @@ namespace UE5DumpUI.Services;
 /// </summary>
 public static class PivotEngine
 {
-    // One instance's captured fields (prop name -> (type, hex)).
+    // One instance's captured fields (field label -> (type, hex)).
     private sealed class Instance
     {
         public string NormPath = "";
@@ -29,6 +29,9 @@ public static class PivotEngine
 
         // 1. Fold the (instance, field) rows into per-instance records,
         //    preserving first-seen instance order for determinism.
+        // [SNAPDIFF-SHADOWED-PROP] A row of a shadowed name is filed under its copy's label (name + offset), the label
+        // the query names it by. Filed by name, the two copies overwrote each other: the last row won, in no defined order.
+        var shadowedNames = new HashSet<string>(q.ShadowedFields.Values.Select(f => f.Name), StringComparer.Ordinal);
         var byIndex = new Dictionary<long, Instance>();
         var order = new List<long>();
         foreach (var r in rows)
@@ -39,7 +42,8 @@ public static class PivotEngine
                 byIndex[r.ObjectIndex] = inst;
                 order.Add(r.ObjectIndex);
             }
-            inst.Fields[r.PropName] = (r.DeclaredType, r.Hex);
+            var label = shadowedNames.Contains(r.PropName) ? PivotFieldInfo.LabelOf(r.PropName, r.PropOffset) : r.PropName;
+            inst.Fields[label] = (r.DeclaredType, r.Hex);
         }
         result.InstanceCount = order.Count;
 

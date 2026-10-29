@@ -10,8 +10,9 @@ needs **no fixture at all**, so it runs on any injected title:
     does `DynOff::DelegatePadFromElementSize` recognise the sizes this engine actually reports?
 
 UE 5.3 gave `TScriptDelegate`/`TMulticastScriptDelegate` a `TDelegateAccessHandlerBase` base whose
-`DO_CHECK` specialization holds one `std::atomic<uint64>`, so a delegate payload is 8 bytes longer
-in Debug/Development/DebugGame than in Test/Shipping. The derivation refuses anything that is
+`DO_CHECK` specialization holds one `std::atomic<uint64>`, so in Debug/Development/DebugGame a delegate
+payload starts 8 bytes in and the 8-aligned struct rounds up to 8 (`DynOff::DelegatePaddedSize`: 24, or 32
+with a 12-byte FName), against the unpadded size in Test/Shipping. The derivation refuses anything that is
 neither, and a refusal means the field is reported as unread. **A size this repo has never seen
 would therefore turn a working read into a blank** -- which is the honest failure, but still a
 regression on that title. This is the cheap screen for it.
@@ -51,6 +52,11 @@ BATCH = 60          # walk_class_batch is the pipe-amortised form -- one call, m
 
 MCD_BASE = 16          # sizeof(FMulticastScriptDelegate) with no detector: a bare TArray header
 PAD = 8                # DynOff::kDelegateDetectorPad
+
+
+def padded(base: int) -> int:
+    """DynOff::DelegatePaddedSize: the detector is 8-aligned, so base + 8 rounds up to 8 (20 -> 32)."""
+    return (base + PAD + 7) & ~7
 MULTICAST = ("MulticastInlineDelegateProperty", "MulticastDelegateProperty")
 UNICAST = "DelegateProperty"
 SPARSE = "MulticastSparseDelegateProperty"
@@ -73,10 +79,11 @@ def main() -> int:
                     help="fail unless the surveyed classes imply this pad")
     a = ap.parse_args()
 
-    # sizeof(FName) drives the unicast base; ask the DLL rather than assuming 8.
+    # sizeof(FName) drives the unicast base; ask the DLL rather than assuming 8 -- `fname_size` is its own
+    # SizeofFName (a measured 4 / 8 / 12); a DLL before it says only case_preserving.
     off = call("get_offsets", {})
     cpn = bool(off.get("case_preserving", False))
-    fname = 12 if cpn else 8
+    fname = int(off.get("fname_size") or (12 if cpn else 8))
     uni_base = 8 + fname
     print("FName      : %d bytes (case-preserving=%s) -> unicast base %d"
           % (fname, cpn, uni_base))
@@ -112,11 +119,11 @@ def main() -> int:
                     continue
                 if sz == base:
                     pads[0].append(where)
-                elif sz == base + PAD:
+                elif sz == padded(base):
                     pads[PAD].append(where)
                 else:
                     unknown.append("%s (%s, ElementSize=%d, expected %d or %d)"
-                                   % (where, t, sz, base, base + PAD))
+                                   % (where, t, sz, base, padded(base)))
 
     print("classes    : %d walked" % seen_classes)
     total = sum(len(v) for v in pads.values())

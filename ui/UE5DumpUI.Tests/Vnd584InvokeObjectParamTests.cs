@@ -63,6 +63,8 @@ public class Vnd584InvokeObjectParamTests
     [InlineData("SoftObjectProperty", 0x28)]
     [InlineData("SoftClassProperty", 0x28)]
     [InlineData("LazyObjectProperty", 0x20)]
+    [InlineData("AssetObjectProperty", 0x20)]   // [ASSETPTR-BAKED-TOKEN] UE 4.11-4.17's soft pointer, same leading pair
+    [InlineData("AssetClassProperty", 0x20)]
     public void AfterTheCall_ASoftPointerWithAnUnsetWeakHalf_IsNotCalledNull(string type, int size)
     {
         // Review R1: a soft / lazy pointer is null only when its PATH / GUID is (TPersistentObjectPtr::IsNull is
@@ -82,6 +84,8 @@ public class Vnd584InvokeObjectParamTests
     [InlineData("SoftObjectProperty", 0x28)]
     [InlineData("SoftClassProperty", 0x28)]
     [InlineData("LazyObjectProperty", 0x20)]
+    [InlineData("AssetObjectProperty", 0x20)]   // [ASSETPTR-BAKED-TOKEN]
+    [InlineData("AssetClassProperty", 0x20)]
     public void CeReturnDecode_PrintsTheWeakPair(string type, int size)
     {
         var sb = new System.Text.StringBuilder();
@@ -96,6 +100,7 @@ public class Vnd584InvokeObjectParamTests
     [Theory]
     [InlineData("WeakObjectProperty", 8)]
     [InlineData("SoftObjectProperty", 0x28)]
+    [InlineData("AssetObjectProperty", 0x20)]   // [ASSETPTR-BAKED-TOKEN]
     public void BakedVerify_PrintsTheWeakPair(string type, int size)
     {
         var ret = new BakedParamValue("ReturnValue", type, size, 16, "");
@@ -133,6 +138,18 @@ public class Vnd584InvokeObjectParamTests
     {
         // 'pointer' made the Lua helper write the value as an address; 'lazy' is refused there unless it is 0.
         Assert.Equal("lazy", BakedScriptGenerator.MapToHelperType("LazyObjectProperty"));
+    }
+
+    // [ASSETPTR-BAKED-TOKEN] An asset pointer (UE 4.11-4.17) fell to the int32 default: a hand-edited baked value was
+    // written over its weak index. Its path is an FString inside the game that the helper cannot build, so it has its
+    // own token, refused unless it is 0, as FIRE and the CE form already refuse it (ParamBufferBuilder.IsEmptyOnlyParam).
+    [Theory]
+    [InlineData("AssetObjectProperty")]
+    [InlineData("AssetClassProperty")]
+    public void AnAssetPointer_GetsTheBakedHelpersAssetToken(string type)
+    {
+        Assert.Equal("asset", BakedScriptGenerator.MapToHelperType(type));
+        Assert.Equal("0", BakedScriptGenerator.RenderLiteral(type, "0"));       // an empty slot renders as 0
     }
 
     // ---- Review R3: the DLL wiring no test target compiles, pinned by its source order ----

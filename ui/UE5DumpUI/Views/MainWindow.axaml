@@ -17,40 +17,52 @@
         <!-- Connection buttons + status -->
         <StackPanel Orientation="Horizontal" Spacing="8"
                     VerticalAlignment="Center" Margin="0,2">
+          <!-- One shared Width ([TOOLBAR-CONNECT-WIDTH]): each button took its own label's width, about 20 DIP apart,
+               so the controls after them, the AOBMaker ⟳ included, moved at every connect and disconnect. Centred,
+               because Fluent's Button stretches its content and would leave the label at the left edge. -->
           <Button Content="{StaticResource str.Connect}"
                   Command="{Binding ConnectCommand}"
                   IsVisible="{Binding !IsConnected}"
                   ToolTip.Tip="{StaticResource str.Tip.Connect}"
-                  Classes="accent" Padding="12,4"/>
+                  Classes="accent" Padding="12,4" Width="106" HorizontalContentAlignment="Center"/>
           <Button Content="{StaticResource str.Disconnect}"
                   Command="{Binding DisconnectCommand}"
                   IsVisible="{Binding IsConnected}"
                   ToolTip.Tip="{StaticResource str.Tip.Disconnect}"
-                  Padding="12,4"/>
-          <Button Content="{StaticResource str.Toolbar.StartScan}"
-                  Command="{Binding TriggerScanCommand}"
-                  IsVisible="{Binding NeedsScan}"
-                  IsEnabled="{Binding !IsScanning}"
-                  ToolTip.Tip="{StaticResource str.Tip.StartScan}"
-                  Classes="accent" Padding="12,4"
-                  FontWeight="Bold"/>
-          <!-- Status: capped width + ellipsis + tooltip so long messages
-               (e.g. "Navigated to FooComponent::GetBar (live instance 0x…)")
-               don't push the rest of the toolbar off-screen and wrap. -->
-          <TextBlock Text="{Binding StatusText}"
-                     Foreground="#4EC9B0"
-                     VerticalAlignment="Center"
-                     Margin="4,0"
-                     MaxWidth="360"
-                     TextTrimming="CharacterEllipsis"
-                     ToolTip.Tip="{Binding StatusText}"/>
-          <TextBlock Text="{Binding ErrorMessage}"
-                     Foreground="#F44747"
-                     VerticalAlignment="Center"
-                     MaxWidth="360"
-                     TextTrimming="CharacterEllipsis"
-                     ToolTip.Tip="{Binding ErrorMessage}"
-                     IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+                  Padding="12,4" Width="106" HorizontalContentAlignment="Center"/>
+          <!-- The status slot: a FIXED width, so nothing in it moves the controls after it. Fixed, not just
+               capped ([W1-PIPEBUSY-LOG], the L64 run): a capped status line took its text's width, so each new
+               status moved every control after it, and the AOBMaker ⟳ jumped out from under the cursor when its
+               own probe wrote the result here. Start Scan and the error line share the slot
+               ([L64-TOOLBAR-FIXED-SLOT] review, [TOOLBAR-OTHER-MOVERS]): beside it they moved ⟳ too, and this
+               StackPanel does not wrap, so at the minimum window width a visible error ran past the edge. The
+               status (ellipsis + tooltip) gets 360 when alone and what the other two leave when they show. -->
+          <Grid Width="368" ColumnDefinitions="Auto,*,Auto" VerticalAlignment="Center">
+            <Button Grid.Column="0"
+                    Content="{StaticResource str.Toolbar.StartScan}"
+                    Command="{Binding TriggerScanCommand}"
+                    IsVisible="{Binding NeedsScan}"
+                    IsEnabled="{Binding !IsScanning}"
+                    ToolTip.Tip="{StaticResource str.Tip.StartScan}"
+                    Classes="accent" Padding="12,4" Margin="0,0,4,0"
+                    FontWeight="Bold"/>
+            <TextBlock Grid.Column="1"
+                       Text="{Binding StatusText}"
+                       Foreground="#4EC9B0"
+                       VerticalAlignment="Center"
+                       Margin="4,0"
+                       TextTrimming="CharacterEllipsis"
+                       ToolTip.Tip="{Binding StatusText}"/>
+            <TextBlock Grid.Column="2"
+                       Text="{Binding ErrorMessage}"
+                       Foreground="#F44747"
+                       VerticalAlignment="Center"
+                       Margin="4,0,0,0"
+                       MaxWidth="180"
+                       TextTrimming="CharacterEllipsis"
+                       ToolTip.Tip="{Binding ErrorMessage}"
+                       IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+          </Grid>
           <!-- The global stale-DLL badge now lives next to the version label (right
                edge of the toolbar) where users look for build info — see below. -->
         </StackPanel>
@@ -100,17 +112,20 @@
             <Ellipse Width="9" Height="9" Fill="#888888" VerticalAlignment="Center"
                      IsVisible="{Binding !AobMakerUi.IsRunning}"/>
           </StackPanel>
-          <!-- [AOBM-ATTACH-CHECK] Reachable but aimed elsewhere: CE has another process open, or none.
-               The tooltip carries the full sentence, with both process names and ids. -->
-          <TextBlock Text="{StaticResource str.Toolbar.AobMakerWrongProcess}"
-                     Foreground="#E0A050" FontSize="12" VerticalAlignment="Center"
-                     IsVisible="{Binding AobMakerShared.HasAttachWarning}"
-                     ToolTip.Tip="{Binding AobMakerShared.AttachWarning}"/>
           <Button Content="{StaticResource str.Toolbar.AobMakerRefresh}"
                   Command="{Binding RefreshAobMakerCommand}"
                   ToolTip.Tip="{StaticResource str.Tip.Toolbar.AobMakerRefresh}"
                   Padding="6,2" FontSize="12" VerticalAlignment="Center"/>
         </StackPanel>
+        <!-- [AOBM-ATTACH-CHECK] Reachable but aimed elsewhere: CE has another process open, or none.
+             The tooltip carries the full sentence, with both process names and ids. Its own toolbar item AFTER the
+             chip ([TOOLBAR-OTHER-MOVERS]): inside it, before ⟳, its appearing pushed ⟳ right and widened the chip,
+             which can wrap the chip to the next row. Only a configured bridge ever sets it, so it never shows
+             without the chip. -->
+        <TextBlock Text="{StaticResource str.Toolbar.AobMakerWrongProcess}"
+                   Foreground="#E0A050" FontSize="12" VerticalAlignment="Center" Margin="0,2"
+                   IsVisible="{Binding AobMakerShared.HasAttachWarning}"
+                   ToolTip.Tip="{Binding AobMakerShared.AttachWarning}"/>
 
         <!-- Options popover (⚙):
              Collapses 5 export-shape controls (Collapse Pointers + 4 slider

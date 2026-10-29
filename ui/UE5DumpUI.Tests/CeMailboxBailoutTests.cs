@@ -59,6 +59,50 @@ public class CeMailboxBailoutTests
         return b < 0 ? script[a..] : script[a..b];
     }
 
+    // ── A write that failed but is held ─────────────────────────────────────
+
+    /// <summary>MOVE-TIME-WRITEFAIL-LEAVES-ACTIVE (review of [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]):
+    /// Laufen::SetMultiplier / SetGravityDirection and Hemmung::SetDilation latch the override active, THEN try the
+    /// raw write, and answer -10 when it fails while the worker keeps re-asserting it every tick. A tick answered -10
+    /// is therefore held, not "applied nothing": unticking it without [DISABLE] left a speed or time hack running under
+    /// an OFF row. The row stays ticked and says unticking releases it. Negative control: drop the -10 branch, or untick
+    /// in it, and its row fails.</summary>
+    public static IEnumerable<object[]> WriteRetryingScripts() => new List<object[]>
+    {
+        new object[] { "Movement.WalkSpeed",  MovementScriptGenerator.Generate(MovementScriptGenerator.Knob.WalkSpeed, 150) },
+        new object[] { "Movement.GravityDir", MovementScriptGenerator.GenerateGravityDirection(0, 0, -1) },
+        new object[] { "TimeDilation.Global", TimeDilationScriptGenerator.Generate(TimeDilationScriptGenerator.Target.Global, 0.5) },
+        new object[] { "TimeDilation.Pawn",   TimeDilationScriptGenerator.Generate(TimeDilationScriptGenerator.Target.Pawn, 2.0) },
+    };
+
+    [Theory]
+    [MemberData(nameof(WriteRetryingScripts))]
+    public void A_tick_whose_write_failed_but_is_held_stays_ticked(string name, string script)
+    {
+        var enable = EnableBlock(script);
+        int b = enable.IndexOf("if state == -10 then", StringComparison.Ordinal);
+        Assert.True(b >= 0, name + ": no -10 branch");
+        Assert.True(b < enable.IndexOf("state < 0", StringComparison.Ordinal),
+            name + ": -10 must be tested before the generic failure");
+        var branch = enable[b..enable.IndexOf("\nelseif", b, StringComparison.Ordinal)];
+        Assert.DoesNotContain("Active = false", branch);
+        Assert.DoesNotContain("disableWithoutExecute", branch);
+        Assert.Contains("untick", branch);
+        Assert.Contains("-- not a failure:", branch);
+    }
+
+    // The scripts test the C# mirror; this keeps it the number the DLL answers when a latched override's write fails.
+    [Fact]
+    public void The_held_write_failure_mirror_matches_the_dll()
+    {
+        string Src(string p) => System.IO.File.ReadAllText(NumericInputCoercionTests.RepoFile(p)).Replace("\r\n", "\n");
+        var n = Constants.OverrideHeldWriteFailedResult.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        Assert.Matches(@"MR_ERR_WRITE\s*=\s*" + n + ",", Src("dll/src/Laufen.h"));
+        Assert.Matches(@"TR_ERR_WRITE\s*=\s*" + n + ",", Src("dll/src/Hemmung.h"));
+        Assert.Contains("rc = MR_ERR_WRITE;   // leave active; the worker will retry next tick", Src("dll/src/Laufen.cpp"));
+        Assert.Contains("rc = TR_ERR_WRITE;   // leave active; the worker will retry next tick", Src("dll/src/Hemmung.cpp"));
+    }
+
     // ── The rule ────────────────────────────────────────────────────────────
 
     [Theory]
@@ -75,8 +119,11 @@ public class CeMailboxBailoutTests
         for (int i = 0; i < lines.Length; i++)
         {
             // (a) Every error message must reach an untick before control leaves its
-            // branch. The window covers an if/elseif/else trio plus its `end`.
-            if (lines[i].Contains("showMessage(", StringComparison.Ordinal))
+            // branch. The window covers an if/elseif/else trio plus its `end`. A message the
+            // generator marks "-- not a failure:" reports a held state (GodMode armed with no pawn
+            // yet, GODMODE-FAILED-TICK-LATCHES-WANT): that row stays ticked on purpose.
+            if (lines[i].Contains("showMessage(", StringComparison.Ordinal)
+                && !lines[i].Contains("-- not a failure:", StringComparison.Ordinal))
             {
                 sawBailout = true;
                 Assert.True(Within(lines, i + 1, 8, "memrec.Active = false"),
@@ -169,6 +216,8 @@ public class CeMailboxBailoutTests
     public void EveryDeferredUntick_IsTheSharedEmittersText(string name, string script)
     {
         var canonical = CeLuaHygiene.DeferredUntickLua().Trim();
+        // [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] The sibling that runs no [DISABLE] is the other shared line.
+        var withoutDisable = CeLuaHygiene.DeferredUntickWithoutDisableLua().Trim();
         foreach (var line in EnableBlock(script).Split('\n').Select(l => l.Trim()))
         {
             // Only the ONE-LINER shape is required to match. A line carrying both the untick
@@ -179,8 +228,8 @@ public class CeMailboxBailoutTests
             // ImmediateUnticksIn instead.
             if (!IsUntick(line)) continue;
             if (!line.Contains("createTimer", StringComparison.Ordinal)) continue;
-            Assert.True(line == canonical,
-                name + ": an untick line differs from CeLuaHygiene.DeferredUntickLua()."
+            Assert.True(line == canonical || line == withoutDisable,
+                name + ": an untick line differs from CeLuaHygiene.DeferredUntickLua() and its WithoutDisable sibling."
                 + Environment.NewLine + "  emitted:   " + line
                 + Environment.NewLine + "  canonical: " + canonical);
         }
@@ -209,10 +258,61 @@ public class CeMailboxBailoutTests
             "scripts/tests/untick_bailout_test.lua no longer contains the line "
             + "CeLuaHygiene.DeferredUntickLua() emits, so what it proves is about a stale copy."
             + Environment.NewLine + "  expected: " + canonical);
+        var withoutDisable = CeLuaHygiene.DeferredUntickWithoutDisableLua().Trim();
+        Assert.True(text.Contains(withoutDisable, StringComparison.Ordinal),
+            "scripts/tests/untick_bailout_test.lua no longer contains the line "
+            + "CeLuaHygiene.DeferredUntickWithoutDisableLua() emits."
+            + Environment.NewLine + "  expected: " + withoutDisable);
 
         // Guard the guard: the rig must also still carry the IMMEDIATE shape, or its
         // defect-reproduction case has quietly become a second copy of the fix.
         Assert.Contains("if memrec then memrec.Active = false end", text, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] (its review's wider scope) Every stateful mailbox toggle's own
+    /// bail-outs -- no mailbox, or a DLL answer that applied nothing -- untick WITHOUT running [DISABLE]. The plain
+    /// untick runs it, and each of these [DISABLE] blocks sends a real OFF / RESET: a failed CE tick turned off the
+    /// same feature a UI card was holding. The shared timeout after the command store keeps the plain untick: the
+    /// DLL may still apply the command, and [DISABLE] undoing it is then right. Negative control: emit
+    /// <c>CeLuaHygiene.DeferredUntickLua</c> at any of these sites again and its row fails.
+    /// </summary>
+    [Theory]
+    [InlineData("DebugCameraScriptGenerator")]
+    [InlineData("FlyScriptGenerator")]
+    [InlineData("ProtectionScriptGenerator")]
+    [InlineData("ForegroundScriptGenerator")]
+    [InlineData("SeeThroughScriptGenerator")]
+    [InlineData("MovementScriptGenerator")]
+    [InlineData("TimeDilationScriptGenerator")]
+    public void A_stateful_toggles_own_bailouts_untick_without_running_DISABLE(string generator)
+    {
+        var src = File.ReadAllText(FindRepoFile($"ui/UE5DumpUI/Services/{generator}.cs"));
+        Assert.DoesNotContain("CeLuaHygiene.DeferredUntickLua(", src, StringComparison.Ordinal);
+        Assert.Contains("CeLuaHygiene.DeferredUntickWithoutDisableLua(", src, StringComparison.Ordinal);
+    }
+
+    /// <summary>
+    /// SHARED-IDLE-BUSY-BAIL-STILL-REENTERS-DISABLE (review of [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]): the
+    /// shared bails a toggle passes BEFORE it stores its command -- the contract check and the wait for an idle mailbox --
+    /// applied nothing either, yet unticked the plain way. Its [DISABLE] then sent a real OFF / RESET, and a mailbox that
+    /// was only busy for a moment is idle 50 ms later, so the OFF went through and turned off a hold a UI card owned.
+    /// After the command store the timeout keeps the plain untick: the DLL may still apply the command. Negative
+    /// control: pass <c>MailboxTimeout.UntickAndReturn</c> to either pre-send bail again and its row fails.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(MailboxScripts))]
+    public void A_toggles_bails_before_its_command_untick_without_running_DISABLE(string name, string script)
+    {
+        var enable = EnableBlock(script);
+        int send = enable.IndexOf($"writeInteger(mb + {CeMailboxLayout.OffCmd},", StringComparison.Ordinal);
+        Assert.True(send > 0, name + ": no command store");
+        var plain = CeLuaHygiene.DeferredUntickLua().Trim();
+        Assert.False(enable[..send].Contains(plain, StringComparison.Ordinal),
+            name + ": a bail before the command store runs [DISABLE]");
+        Assert.Contains(CeLuaHygiene.DeferredUntickWithoutDisableLua().Trim(), enable[..send], StringComparison.Ordinal);
+        Assert.True(enable[send..].Contains(plain, StringComparison.Ordinal),
+            name + ": the timeout after the command store must keep the plain untick");
     }
 
     private static string FindRepoFile(string relative)
@@ -390,7 +490,8 @@ public class CeMailboxBailoutTests
     /// The trainer keeps BOTH untick shapes, and they are not interchangeable.
     /// [TRAINERUNTICK-2026-08-21]
     ///
-    /// <para>The momentary TP rows arm a timer <b>before</b> their bail-outs, via the generator's
+    /// <para>The momentary TP rows arm a timer that every path reaches, after the row's one message
+    /// ([INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]), via the generator's
     /// own <c>AppendUntick</c>, which finds the record by DESCRIPTION rather than capturing
     /// <c>memrec</c>. The stateful toggles must stay ticked while the cheat is on, so they untick
     /// only on the paths that applied nothing, via the shared
@@ -408,7 +509,8 @@ public class CeMailboxBailoutTests
         var src = File.ReadAllText(
             FindRepoFile("ui/UE5DumpUI/Services/StandaloneTrainerScriptGenerator.cs"));
 
-        // The momentary shape: armed ahead of the bail-outs for the two TP rows.
+        // The momentary shape for the two TP rows: armed once, after the row's one message
+        // ([INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]: armed above a modal, it fired inside it and did nothing).
         Assert.Equal(2, Regex.Matches(src, @"AppendUntick\(sb,").Count);
 
         // The stateful shape: one per bail-out that applies nothing. Ten of them —

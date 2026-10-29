@@ -153,6 +153,26 @@ public class StandaloneTrainerScriptGeneratorTests
         Assert.Contains("mr.Active = false", save);
     }
 
+    // [INVOKE-SAMPLE-UNTICK-BEFORE-MODAL] A momentary row unticks itself from a 50 ms timer. Armed above the bail-outs, the
+    // timer fired INSIDE their showMessage -- a modal pumps timers -- while CE had not yet ticked the row, so the untick
+    // was the no-op [FREEZEUNTICK-2026-08-20] describes and a failed TP Save / Recall stayed ticked. The untick is armed
+    // after every message, and no path returns before it. Negative control: arm it first again and this fails.
+    [Theory]
+    [InlineData("TP Save")]
+    [InlineData("TP Recall")]
+    public void Tp_entries_arm_their_untick_after_every_message_and_on_every_path(string which)
+    {
+        var script = StandaloneTrainerScriptGenerator.Generate(Usable())
+            .First(e => e.Description.Contains(which)).Script.Replace("\r\n", "\n");
+        var enable = script[..script.IndexOf("[DISABLE]", System.StringComparison.Ordinal)];
+        int untick = enable.IndexOf("createTimer(50", System.StringComparison.Ordinal);
+        Assert.True(untick > 0, "no untick");
+        Assert.True(untick > enable.LastIndexOf("showMessage(", System.StringComparison.Ordinal),
+            "the untick is armed before a message");
+        var before = enable[..untick].Split('\n').Where(l => !l.Contains("syntaxcheck", System.StringComparison.Ordinal));
+        Assert.DoesNotContain(before, l => Regex.IsMatch(l, @"\breturn\b"));
+    }
+
     [Fact]
     public void Aob_scan_failure_aborts_before_close_no_fallback()
     {

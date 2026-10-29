@@ -72,13 +72,13 @@ public static class MovementScriptGenerator
         if (enable)
         {
             Line(sb, "  showMessage('[Movement] g_invokeMailbox not found -- is UE5Dumper.dll injected?')");
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         Line(sb, "  return");
         Line(sb, "end");
         // Contract check BEFORE the first write (see AppendContractCheck).
         CeLuaHygiene.AppendContractCheck(sb, "Movement",
-            enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
+            enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn);
         Line(sb);
         // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
         // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
@@ -87,7 +87,7 @@ public static class MovementScriptGenerator
         // operands land in the same mailbox, so writing them corrupts the command in
         // flight just as surely -- the same reason the contract check sits here.
         CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "Movement",
-            enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
+            enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn);
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, {(int)knob})        -- knobId: {label}");
         Line(sb, $"writeDouble(mb + {CeMailboxLayout.OffParamsData}, {Lua(sent)})   -- percent (100 = off)");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)        -- clear status");
@@ -95,16 +95,20 @@ public static class MovementScriptGenerator
         // Shared wait: real-time deadline, status-specific diagnosis, and (on ENABLE)
         // the untick that stops a timed-out row claiming to be active.
         CeLuaHygiene.AppendMailboxWait(sb, "Movement",
-            enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
+            enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn);
         if (enable)
         {
             Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=active, 0=off, <0=error");
             Line(sb, $"dbg('[Movement] {label} {Pct(percent)} -> state=' .. tostring(state))");
-            Line(sb, "if state < 0 then");
+            // The write failed but the override is latched and retried, so the row stays ticked.
+            Line(sb, $"if state == {Constants.OverrideHeldWriteFailedResult} then");
+            Line(sb, $"  showMessage('[Movement] {label} -- the write failed, but the override is held and retried every tick; " +
+                      "untick the record to release it.')  -- not a failure: the override is held, so the row stays ticked");
+            Line(sb, "elseif state < 0 then");
             // Nothing was applied, so the row must not stay ticked (same rule as the
             // timeout path above; this one was missed for the same reason).
             Line(sb, $"  showMessage('[Movement] {label} -- no pawn / no CharacterMovement (enter gameplay first)')");
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
             Line(sb, "elseif DEBUG == 0 then");
             Line(sb, $"  {CeLuaHygiene.CloseCall}   -- clean success: close the Lua Engine window");
             Line(sb, "end");
@@ -158,13 +162,13 @@ public static class MovementScriptGenerator
         if (enable)
         {
             Line(sb, "  showMessage('[Movement] g_invokeMailbox not found -- is UE5Dumper.dll injected?')");
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         Line(sb, "  return");
         Line(sb, "end");
         // Contract check BEFORE the first write (see AppendContractCheck).
         CeLuaHygiene.AppendContractCheck(sb, "Movement",
-            enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
+            enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn);
         Line(sb);
         // Bounded wait for IDLE before the FIRST write (audit #5 AA10). This
         // generator had no guard at all -- 7 of the 11 mailbox emitters did not, so
@@ -173,7 +177,7 @@ public static class MovementScriptGenerator
         // operands land in the same mailbox, so writing them corrupts the command in
         // flight just as surely -- the same reason the contract check sits here.
         CeLuaHygiene.AppendIdleWaitOrBail(sb, "mb", "Movement",
-            enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
+            enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn);
         Line(sb, $"writeQword(mb + {CeMailboxLayout.OffInstanceAddr}, 3)        -- knobId 3 = GravityDirection");
         Line(sb, $"writeDouble(mb + {CeMailboxLayout.OffParamsData}, {Lua(sx)})   -- X");
         Line(sb, $"writeDouble(mb + {CeMailboxLayout.OffParamsData1}, {Lua(sy)})   -- Y");
@@ -181,15 +185,19 @@ public static class MovementScriptGenerator
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffStatus}, 0)        -- clear status");
         Line(sb, $"writeInteger(mb + {CeMailboxLayout.OffCmd}, {CmdMovement})       -- CMD_MOVEMENT (write LAST)");
         CeLuaHygiene.AppendMailboxWait(sb, "Movement",
-            enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn);
+            enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn);
         if (enable)
         {
             Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=active, 0=off, <0=error/unavailable");
             Line(sb, "dbg('[Movement] Gravity Direction -> state=' .. tostring(state))");
-            Line(sb, "if state < 0 then");
+            // The write failed but the direction is latched and retried, so the row stays ticked.
+            Line(sb, $"if state == {Constants.OverrideHeldWriteFailedResult} then");
+            Line(sb, "  showMessage('[Movement] Gravity Direction -- the write failed, but the direction is held and retried " +
+                      "every tick; untick the record to release it.')  -- not a failure: the override is held, so the row stays ticked");
+            Line(sb, "elseif state < 0 then");
             // Applied nothing -> the row must not stay ticked.
             Line(sb, "  showMessage('[Movement] Gravity Direction -- unavailable (needs UE5.3+) or no pawn.')");
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
             Line(sb, "elseif DEBUG == 0 then");
             Line(sb, $"  {CeLuaHygiene.CloseCall}   -- clean success: close the Lua Engine window");
             Line(sb, "end");

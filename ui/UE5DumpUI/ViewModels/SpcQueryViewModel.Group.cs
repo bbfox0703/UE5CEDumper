@@ -214,8 +214,9 @@ public partial class SpcQueryViewModel
         {
             var hex = slot.Addr.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
                 ? slot.Addr.Substring(2) : slot.Addr;
-            await _platform.CopyToClipboardAsync(hex);
-            GroupStatusText = $"Copied {hex}  ({slot.ClassName}::{slot.FieldName})";
+            bool copied = await _platform.CopyToClipboardAsync(hex);
+            GroupStatusText = copied ? $"Copied {hex}  ({slot.ClassName}::{slot.FieldName})"
+                                     : Helpers.ClipboardConvenience.NotCopiedText(hex);
         }
         catch (Exception ex)
         {

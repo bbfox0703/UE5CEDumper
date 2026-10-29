@@ -55,7 +55,7 @@ public static class DebugCameraScriptGenerator
         {
             Line(sb, "  showMessage('[DebugCamera] g_invokeMailbox not found -- is " +
                       "UE5Dumper.dll injected?')");
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         else
         {
@@ -66,7 +66,7 @@ public static class DebugCameraScriptGenerator
         Line(sb, "end");
         // [W2-CEGEN-MODAL] Every shared bail below takes the block's mode: [ENABLE] announces and unticks, [DISABLE]
         // dbg()s and returns -- one EmitBlock used to give the untick the tick's modal, as MovementScriptGenerator never did.
-        var bail = enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn;
+        var bail = enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn;
         // Contract check BEFORE the first write: if the layout moved we would
         // otherwise scribble on whatever now lives at those offsets.
         CeLuaHygiene.AppendContractCheck(sb, "DebugCamera", bail);
@@ -86,7 +86,7 @@ public static class DebugCameraScriptGenerator
         // Shared wait: real-time deadline, status-specific diagnosis, and the untick
         // that stops a timed-out row claiming to be active.
         CeLuaHygiene.AppendMailboxWait(sb, "DebugCamera", bail);
-        Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=ON, 0=OFF, -1=error, -5=queued");
+        Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=ON, 0=OFF, -1=error, -5=queued, -6=not sent");
         Line(sb, $"dbg('[DebugCamera] {label} -> state=' .. tostring(state))");
         // Test against the REQUEST, not against -1. `UE5_SetDebugCamera` re-reads the
         // state after firing ToggleDebugCamera and returns whatever it finds
@@ -94,23 +94,53 @@ public static class DebugCameraScriptGenerator
         // returns 0 on an ENABLE, with no error code. Checking only -1 read that as
         // success: no message, window closed, row left ticked on a camera that never
         // turned on.
-        // [W3-DEBUGCAM-QUEUED] -5: the game thread did not answer in time, and the toggle STAYS QUEUED -- it will still
-        // run. Not a failure, so no untick, and nothing to re-send: a second tick would queue a second toggle, and the
-        // two drain ON then OFF. [ENABLE] says so (a real warning, ungated); [DISABLE] dbg()s it (no modal on an untick,
-        // [W2-CEGEN-MODAL]). Neither is a clean success, so neither closes the window. Tested BEFORE `state ~= req`.
+        // [W3-DEBUGCAM-QUEUED] -5: the game thread did not answer in time, and the toggle STAYS QUEUED. A queued ON will
+        // still run: not a failure, so no untick, and nothing to re-send ([ENABLE] says so, a real warning, ungated).
+        // [DEBUGCAM-QUEUED-OFF-NOESCALATE] A queued OFF will NOT turn the camera off (DebugCameraText has the stock-UE
+        // reason), so [DISABLE] says so ungated -- print, not a modal on an untick ([W2-CEGEN-MODAL]) -- and RAISES:
+        // CE's TMemoryRecord.setActive sets fActive only when the script succeeds, so the record stays ticked over a
+        // camera that is still on, and a later untick runs [DISABLE] again. Neither branch is a clean success, so
+        // neither closes the window. Tested BEFORE `state ~= req`.
         Line(sb, $"if state == {Constants.DebugCameraToggleQueuedResult} then");
         if (enable)
+        {
+            // [DBGCAM-QUEUEDON-UNDO-TEXT] The reason not to tick again is only that the toggle is already queued: what a
+            // second one does when it drains depends on the engine (DebugCameraText says why).
             Line(sb, $"  showMessage('[DebugCamera] {label} queued -- the game thread is busy; the toggle will run " +
-                      "when it is free. Do not tick again: a second toggle would undo it.')");
+                      "when it is free. Do not tick again: the toggle is already queued.')");
+        }
         else
-            Line(sb, $"  dbg('[DebugCamera] {label} queued -- the toggle will run when the game thread is free')");
+        {
+            Line(sb, $"  print('[DebugCamera] {label} did not complete -- the game thread is busy, and a queued OFF does " +
+                      "not turn the camera off on most engines. The record stays ticked: untick it again once the game " +
+                      "responds.')");
+            Line(sb, $"  error('[DebugCamera] {label} queued; the camera is still on')");
+        }
+        // [DBGCAM-OFF-OVER-QUEUED-ON] -6: NOT SENT -- an earlier toggle of the other direction is still queued. [ENABLE]
+        // applied nothing, so it says so and unticks; [DISABLE] sits over an earlier ON that will still turn the camera
+        // on, so it says so ungated and raises, as the queued OFF does. Tested before `state ~= req` too.
+        Line(sb, $"elseif state == {Constants.DebugCameraToggleBlockedResult} then");
+        if (enable)
+        {
+            Line(sb, $"  showMessage('[DebugCamera] {label} not sent -- an earlier OFF is still queued (the game thread " +
+                      "is busy). Tick again once the game responds.')");
+            // [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] Not the plain untick: CE runs [DISABLE] for it, which sends
+            // an OFF over the queued one, answered -5 -- [DISABLE] then raises and the record stays ticked.
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
+        }
+        else
+        {
+            Line(sb, $"  print('[DebugCamera] {label} not sent -- an earlier ON is still queued and will turn the camera " +
+                      "on. The record stays ticked: untick it again once the game responds.')");
+            Line(sb, $"  error('[DebugCamera] {label} not sent; an earlier ON is still queued')");
+        }
         Line(sb, $"elseif state ~= {req} then");
         if (enable)
         {
             Line(sb, $"  showMessage('[DebugCamera] {label} failed (state=' .. tostring(state) .. ') " +
                       "-- no live CheatManager, or the game refused the toggle.')");
-            // Nothing was applied on this branch, so the record must not stay ticked.
-            Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+            // Nothing was applied on this branch, so the record must not stay ticked -- nor send the OFF [DISABLE] would.
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }
         else
         {

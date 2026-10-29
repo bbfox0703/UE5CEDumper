@@ -285,4 +285,21 @@ public class DiscoverStoreTests : IDisposable
         Assert.True(aaa.Score > bbb!.Score);                    // shape promotes the discrete event
         Assert.Equal("Aaa", res.Rows[0].PropName);
     }
+
+    // [DISCOVER-SHADOWED-POOL] review: the Strict path feeds Rank only the rows that CHANGED, so when one copy of a shadowed
+    // name stays put Rank saw one offset and gave the moved copy the bare name -- while Class Pivot's picker, built from
+    // the whole field list, lists both with offsets.
+    [Fact]
+    public async Task OneMovedCopyOfAShadowedName_IsLabelledWithItsOffset_LikeThePicker()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        long s1 = await SeedAsync("t1", "S", new[] { PivotStoreTests.ShotSection(1, "/G.M:L.ShotA", 5) }, ct);
+        long s2 = await SeedAsync("t2", "S", new[] { PivotStoreTests.ShotSection(1, "/G.M:L.ShotA", 9) }, ct);
+
+        var res = await _store.DiscoverChangesAsync(DQ(SpcJoinMode.Strict, new[] { s1, s2 }), ct);
+
+        var row = Assert.Single(res.Rows, x => x.PropName == "PrerollTime");   // only the +296 copy moved
+        Assert.Equal(296, row.PropOffset);
+        Assert.Equal("PrerollTime@+0x128", row.PropLabel);
+    }
 }

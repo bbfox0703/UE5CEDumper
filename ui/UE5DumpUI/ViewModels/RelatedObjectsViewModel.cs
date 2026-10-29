@@ -195,8 +195,8 @@ public partial class RelatedObjectsViewModel : ViewModelBase
     {
         row ??= SelectedRelated;
         if (row == null || string.IsNullOrEmpty(row.Address)) return;
-        await _platform.CopyToClipboardAsync(row.Address);
-        StatusText = $"Copied {row.Address}";
+        bool copied = await _platform.CopyToClipboardAsync(row.Address);
+        StatusText = copied ? $"Copied {row.Address}" : Helpers.ClipboardConvenience.NotCopiedText(row.Address);
     }
 
     /// <summary>[AOBM-OBJECT-HEX] The related object in CE's hex view.</summary>

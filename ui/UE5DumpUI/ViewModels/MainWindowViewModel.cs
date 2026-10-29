@@ -324,14 +324,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public static bool LocksExperimental(string? tag) => tag != null && s_experimentalLockingTabs.Contains(tag);
 
     /// <summary>C5: switch to the Class Pivot tab and hand off the chosen
-    /// class/property. Guarded so it's inert when the pivot tab isn't available.</summary>
-    private async void HandlePivotHandoff(string className, string? propName)
+    /// class/property, with the property's offset (-1 when the source has none) so a shadowed name reaches the copy
+    /// that was chosen. Guarded so it's inert when the pivot tab isn't available.</summary>
+    private async void HandlePivotHandoff(string className, string? propName, int propOffset)
     {
         if (Pivot == null) return;
         try
         {
             SelectedTabIndex = (int)MainTabIndex.ClassPivot;
-            await Pivot.PivotForAsync(className, propName);
+            await Pivot.PivotForAsync(className, propName, propOffset);
         }
         catch (Exception ex)
         {
@@ -599,6 +600,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         Pointers = new PointerPanelViewModel(platform, dump, log, aobMaker, aobUsage, experimentalGate, snapshotStore, pipeClient, logCompression,
             aobMakerUi == null ? null : AobMakerUi);
         LiveWalker = new LiveWalkerViewModel(dump, log, platform, aobMaker, bookmarks);
+        // [FABRICATE-DEFAULT-UNSEEDED] The exponent's change handler is the only other writer, and loading the default
+        // exponent is not a change -- so without this Copy CE Field fabricated nothing until the slider moved.
+        LiveWalker.FabricateArrayCount = FabricateArrayCount;
         InstanceFinder = new InstanceFinderViewModel(dump, log, platform, AobMakerShared);
         PropertySearch = new PropertySearchViewModel(dump, log, aobMaker, platform, experimentalGate);
         GameClassFilter = new GameClassFilterViewModel(dump, log, platform);
@@ -739,11 +743,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             // C5: right-click "Pivot this property" from the three source panels ->
             // switch to the Class Pivot tab and pre-select the class/property.
-            PropertySearch.NavigateToPivot        += (cls, prop) => HandlePivotHandoff(cls, prop);
-            InterestingProperties.NavigateToPivot += (cls, prop) => HandlePivotHandoff(cls, prop);
-            LiveWalker.NavigateToPivot            += (cls, prop) => HandlePivotHandoff(cls, prop);
+            // [PIVOT-HANDOFF-SHADOWED] The offset travels too: Class Pivot lists each copy of a shadowed name apart.
+            PropertySearch.NavigateToPivot        += (cls, prop, off) => HandlePivotHandoff(cls, prop, off);
+            InterestingProperties.NavigateToPivot += (cls, prop, off) => HandlePivotHandoff(cls, prop, off);
+            LiveWalker.NavigateToPivot            += (cls, prop, off) => HandlePivotHandoff(cls, prop, off);
             // Value-locator -> pivot: a value-scan hit already carries class + field.
-            ValueSearch.NavigateToPivot           += (cls, prop) => HandlePivotHandoff(cls, prop);
+            ValueSearch.NavigateToPivot           += (cls, prop, off) => HandlePivotHandoff(cls, prop, off);
 
             // "Remove all snapshot data" (System tab) deletes every snapshot DB file —
             // the experimental tabs' cached lists are now stale, so refresh them to the
@@ -1991,12 +1996,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 }
 
                 var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 1);
-                string instanceAddr = "";
+                string instanceAddr = "", instanceClassAddr = "";
                 foreach (var inst in instances.Instances)
                 {
                     if (!inst.Name.StartsWith("Default__", StringComparison.Ordinal))
                     {
                         instanceAddr = inst.Address;
+                        instanceClassAddr = inst.ClassAddress;
                         break;
                     }
                 }
@@ -2011,7 +2017,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     className, funcName, inputParams, funcMatch.Parameters.ToList(), funcMatch.ParmsSize,
                     instanceAddr, _dump, _engineState?.UEVersion ?? 0,
                     aobMaker: _aobMaker, platform: _platform,
-                    mode: Views.InvokeDialogMode.PipeInvoke);
+                    mode: Views.InvokeDialogMode.PipeInvoke,
+                    // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The dialog keeps this address across FIREs: each is refused
+                    // if the object there is of another class by then.
+                    expectClassAddr: instanceClassAddr);
                 var result = await dialog.ShowDialog<string?>(owner);
                 StatusText = result == "ok"
                     ? $"exec {className}::{funcName} dialog closed"

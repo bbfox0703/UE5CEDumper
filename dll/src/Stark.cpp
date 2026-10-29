@@ -19,6 +19,7 @@
 
 #include <MinHook.h>
 #include <Windows.h>
+#include <tlhelp32.h>   // the game-thread identification's thread walk
 #include <intrin.h>   // _AddressOfReturnAddress -- the hook frame's stack position, for the trace's ticked scope
 
 #include <atomic>
@@ -130,6 +131,15 @@ static std::atomic<uint64_t> s_lastHookFireMs{0};
 // s_lastHookFireMs alone stays 0 forever and can't reveal the stall.
 static std::atomic<uint64_t> s_hookInstalledMs{0};
 
+// [STARK-DRAIN-OFF-GAME-THREAD] The game thread, identified at install (PickGameThread). 0 = none: every hook entry
+// counts as the game thread's, the behaviour before the gate. The engine's worker threads call ProcessEvent too, so
+// the drain and the liveness stamp key on this, and the two fire counters below let the validator check the pick.
+static std::atomic<uint32_t> s_gameThreadId{0};
+static std::atomic<uint8_t>  s_gameThreadSource{static_cast<uint8_t>(GameThreadIdSource::Unknown)};
+static std::atomic<uint64_t> s_gameThreadFireCount{0};
+static std::atomic<uint64_t> s_otherThreadFireCount{0};   // CountsAgainstGameThreadGuess: off it, and not ours
+static std::atomic<uint64_t> s_workerSkipCount{0};   // worker-thread entries that left queued work alone
+
 // Monotonic milliseconds since process start. steady_clock (not system_clock)
 // so a wall-clock adjustment can't make an interval read negative/huge.
 static uint64_t NowMs() {
@@ -203,7 +213,7 @@ struct OwnPeCallGuard {
 // reachable while the game is tearing its object pool down: Linie's map insert, and the
 // `pending` vector below. Zero cost on x64 when nothing throws (table-driven EH). (B14,
 // scope corrected by in-game verification.)
-static void HookedProcessEventBody(void* ufunc, uint64_t nowMs, Linie::ArmHint& hint) {
+static void HookedProcessEventBody(void* ufunc, uint64_t nowMs, Linie::ArmHint& hint, bool onGameThread) {
     // Live PE profiler (Linie): opt-in per-UFunction fire counting. The
     // not-recording path pays exactly one relaxed atomic load + a
     // predicted-not-taken branch; the mutex + map touch happen ONLY inside a
@@ -226,7 +236,17 @@ static void HookedProcessEventBody(void* ufunc, uint64_t nowMs, Linie::ArmHint& 
     // The gate itself lives in Stark.h as a pure predicate so it can be unit
     // tested -- no target compiles this file. Called, not mirrored: a mirrored
     // copy would prove only that the copy is right.
-    if (ShouldDrainQueue(s_queueDepth.load(std::memory_order_acquire), InOwnPeCall())) {
+    const size_t depth = s_queueDepth.load(std::memory_order_acquire);
+    if (depth != 0 && !onGameThread && !InOwnPeCall()) {
+        // [STARK-DRAIN-OFF-GAME-THREAD] An engine worker thread's ProcessEvent: the work waits for the game thread.
+        // The first one is logged so a log shows the gate acting; the count says how often after that.
+        if (s_workerSkipCount.fetch_add(1, std::memory_order_relaxed) == 0) {
+            LOG_INFO("GameThreadDispatch: a ProcessEvent on thread %lu (not the game thread %lu) left %zu queued "
+                     "request(s) for the game thread", GetCurrentThreadId(),
+                     (unsigned long)s_gameThreadId.load(std::memory_order_relaxed), depth);
+        }
+    }
+    if (ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {
         std::vector<std::shared_ptr<InvokeRequest>> pending;
 
         {
@@ -272,11 +292,20 @@ static void __fastcall HookedProcessEvent(void* thisObj, void* ufunc, void* para
     // vtable slot." relaxed: a single non-zero observation by the validator
     // is enough; we never read this back inside the hot path.
     s_hookFireCount.fetch_add(1, std::memory_order_relaxed);
+    // [STARK-DRAIN-OFF-GAME-THREAD] Whose entry this is. A worker thread's must neither drain the queue nor keep a
+    // stalled game thread looking "responsive" -- that would make every invoke wait out its timeout.
+    const uint32_t gameThread = s_gameThreadId.load(std::memory_order_relaxed);
+    const bool onGameThread = IsGameThreadEntry(GetCurrentThreadId(), gameThread);
+    if (gameThread != 0) {
+        if (onGameThread) s_gameThreadFireCount.fetch_add(1, std::memory_order_relaxed);
+        else if (CountsAgainstGameThreadGuess(onGameThread, InOwnPeCall()))
+            s_otherThreadFireCount.fetch_add(1, std::memory_order_relaxed);
+    }
     // Stamp the fire time so IsGameThreadResponsive / MsSinceLastHookFire can
     // tell "ticking now" from "went quiet". One clock read on the hot path —
     // cheap next to ProcessEvent's own work, and the atomic store is relaxed.
     uint64_t nowMs = NowMs();
-    s_lastHookFireMs.store(nowMs, std::memory_order_relaxed);
+    if (onGameThread) s_lastHookFireMs.store(nowMs, std::memory_order_relaxed);
 
     // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace's entry record is written after the body. The invokes the body
     // drained call the original ProcessEvent through the trampoline, not this hook, so they are not in the trace
@@ -290,7 +319,7 @@ static void __fastcall HookedProcessEvent(void* thisObj, void* ufunc, void* para
     // Our work, contained. See HookedProcessEventBody — a throw escaping here fast-fails
     // the game, because the caller is the game itself.
     Routine::RunThreadGuarded("GameThreadDispatch", [&] {
-        HookedProcessEventBody(ufunc, nowMs, armHint);
+        HookedProcessEventBody(ufunc, nowMs, armHint, onGameThread);
         if (Linie::IsTracing()) {
             Linie::TraceEnter(reinterpret_cast<uintptr_t>(ufunc), reinterpret_cast<uintptr_t>(thisObj), traceSp,
                               GetCurrentThreadId(), traceTok, reinterpret_cast<uintptr_t>(params), armHint);
@@ -570,6 +599,99 @@ void HoldTrampolineBlock() {
              refused.empty() ? "the main image's headers named no candidate" : refused.c_str());
 }
 
+// [STARK-DRAIN-OFF-GAME-THREAD] Identify the game thread once per process: walk its threads, read each one's
+// description (GetThreadDescription, Windows 10 1607+, resolved at run time) and creation time, and pick as
+// PickGameThread says. Once given up by the validator it stays given up: a second guess would close the gate for
+// another validation window, timing out the invokes in it.
+static std::atomic<bool> s_gameThreadTried{false};
+
+static const char* GameThreadSourceText(GameThreadIdSource s) {
+    switch (s) {
+        case GameThreadIdSource::Description: return "named GameThread by the engine";
+        case GameThreadIdSource::MainThread:  return "the main thread (no thread is named GameThread)";
+        default:                              return "unknown";
+    }
+}
+
+static void IdentifyGameThread() {
+    if (s_gameThreadTried.exchange(true)) return;
+    using FnGetThreadDescription = HRESULT(WINAPI*)(HANDLE, PWSTR*);
+    const auto getDesc = reinterpret_cast<FnGetThreadDescription>(
+        GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "GetThreadDescription"));
+
+    std::vector<ThreadInfo> threads;
+    const DWORD pid = GetCurrentProcessId();
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    if (snap == INVALID_HANDLE_VALUE) {
+        LOG_WARN("GameThreadDispatch: no thread snapshot (err %lu) -- the drain stays on every thread, as before",
+                 GetLastError());
+        return;
+    }
+    THREADENTRY32 te{};
+    te.dwSize = sizeof(te);
+    for (BOOL ok = Thread32First(snap, &te); ok; ok = Thread32Next(snap, &te)) {
+        if (te.th32OwnerProcessID != pid) continue;
+        HANDLE h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, te.th32ThreadID);
+        if (!h) continue;
+        ThreadInfo ti{ te.th32ThreadID, false, UINT64_MAX };
+        FILETIME created{}, exited{}, kernel{}, user{};
+        if (GetThreadTimes(h, &created, &exited, &kernel, &user))
+            ti.creationTime = (static_cast<uint64_t>(created.dwHighDateTime) << 32) | created.dwLowDateTime;
+        PWSTR desc = nullptr;
+        if (getDesc && SUCCEEDED(getDesc(h, &desc)) && desc) {
+            ti.namedGameThread = wcscmp(desc, L"GameThread") == 0;
+            LocalFree(desc);
+        }
+        CloseHandle(h);
+        threads.push_back(ti);
+    }
+    CloseHandle(snap);
+
+    const GameThreadPick pick = PickGameThread(threads.data(), threads.size());
+    s_gameThreadSource.store(static_cast<uint8_t>(pick.source), std::memory_order_relaxed);
+    s_gameThreadId.store(pick.tid, std::memory_order_release);
+    LOG_INFO("GameThreadDispatch: game thread %lu, %s (%zu threads walked); queued invokes drain on it only",
+             (unsigned long)pick.tid, GameThreadSourceText(pick.source), threads.size());
+}
+
+uint32_t GameThreadId() {
+    return s_gameThreadId.load(std::memory_order_relaxed);
+}
+
+GameThreadIdSource GameThreadSource() {
+    return static_cast<GameThreadIdSource>(s_gameThreadSource.load(std::memory_order_relaxed));
+}
+
+uint64_t GetGameThreadFireCount() {
+    return s_gameThreadFireCount.load(std::memory_order_relaxed);
+}
+
+uint64_t GetOtherThreadFireCount() {
+    return s_otherThreadFireCount.load(std::memory_order_relaxed);
+}
+
+void ApplyGameThreadValidation(uint64_t gameThreadFires, uint64_t otherThreadFires) {
+    const uint32_t tid = GameThreadId();
+    if (tid == 0) return;
+    const GameThreadIdSource source = GameThreadSource();
+    if (KeepGameThreadGate(source, gameThreadFires, otherThreadFires)) {
+        LOG_INFO("GameThreadDispatch: game thread %lu (%s) kept: %llu hook fires on it in the window, %llu on other "
+                 "threads (our own calls not counted); worker-thread entries that left queued work so far: %llu",
+                 (unsigned long)tid, GameThreadSourceText(source), (unsigned long long)gameThreadFires,
+                 (unsigned long long)otherThreadFires,
+                 (unsigned long long)s_workerSkipCount.load(std::memory_order_relaxed));
+        return;
+    }
+    s_gameThreadId.store(0, std::memory_order_release);
+    s_gameThreadSource.store(static_cast<uint8_t>(GameThreadIdSource::Unknown), std::memory_order_relaxed);
+    // What a silent main thread proves is only that it made no ProcessEvent call for the whole window: a thread that
+    // is not the game thread, or a game thread held up that long (a blocking load) -- the log must not pick one.
+    LOG_WARN("GameThreadDispatch: the main-thread guess %lu made no ProcessEvent call in the window while other "
+             "threads made %llu: it is not this game's game thread, or it was held up for the whole window. The drain "
+             "gate is given up for this session: queued invokes run on whichever thread enters ProcessEvent, as "
+             "before [STARK-DRAIN-OFF-GAME-THREAD]", (unsigned long)tid, (unsigned long long)otherThreadFires);
+}
+
 bool InstallHook(uintptr_t processEventAddr) {
     // Serialize the whole check-then-MH_CreateHook/MH_EnableHook sequence. Not for MinHook's
     // sake -- its spin lock guards its own tables and a duplicate create returns
@@ -590,6 +712,9 @@ bool InstallHook(uintptr_t processEventAddr) {
         LOG_ERROR("GameThreadDispatch: null processEventAddr");
         return false;
     }
+
+    // Before the hook goes active, so its first fire already knows whose it is.
+    IdentifyGameThread();
 
     // Audit fix #13: re-enable after soft disable. RemoveHook only flips
     // s_hookActive to false (the physical hook stays installed to avoid
@@ -758,7 +883,7 @@ bool IsHookActive() {
 }
 
 int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize,
-                      bool dropIfAbandoned) {
+                      bool dropIfAbandoned, std::shared_future<int32_t>* queuedOut) {
     if (!s_hookActive.load()) {
         return -7; // Hook not active
     }
@@ -779,7 +904,8 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
         req->params = params;
     }
 
-    auto future = req->promise.get_future();
+    // Shared, so a caller can keep it past a timeout and ask later whether the request has run (QueuedInvoke).
+    auto future = req->promise.get_future().share();
 
     {
         std::lock_guard<std::mutex> lock(s_queueMutex);
@@ -813,6 +939,7 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
         // buffer whose CONTENT must also stay valid until drained) get no such
         // protection. We just abandon the (now stale) result. A dropIfAbandoned
         // request was claimed as abandoned above: the drain skips it.
+        if (queuedOut && !dropIfAbandoned) *queuedOut = future;   // [DBGCAM-OFF-OVER-QUEUED-ON]
         return -5;
     }
 

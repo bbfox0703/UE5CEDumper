@@ -27,6 +27,430 @@ builds ≤696 in
 
 -----
 
+## 2026-10-29 (build 3670) — Review round 5 of the container-view fix `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`
+
+- **A DataTable rows view keeps one crumb field however you reached it.** Since 3669 the RowMap field a drill hands
+  the rows view's crumb carries the RowMap's address. The field that Refresh or a bookmark file rebuilds for the same
+  crumb now carries it too. Nothing reads that field's address yet, but the code states the one-shape rule. Red
+  `ba979b6e`, green `57638430`. That commit also narrows one remark to what is true: every *instance* row a walk
+  renders carries its address; a definition view's rows carry none.
+- Review round 6 (one finding): the bookmark half of that change had no test that could fail. It has one now, checked
+  red against the mutation (`ea943f18`, test only). Round 6 also raised an older bug, now a lead:
+  `[LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST]`. A bookmark file saved below a DataTable row view restores that view as the
+  table's own grid.
+- No user-visible change; the build carries round 5's fixes. Not checked live: the changed field is read by nothing.
+- Tests: dll_core_test 1,363 checks and dll_helpers_test 3,692, 0 failures; C# 7,101 total, 0 failed, 1 skipped;
+  headless UI 69; 36 gates. AOT UI 61,447,168 bytes.
+
+## 2026-10-29 (build 3669) — Addr on a table's RowMap row works again; Addr never computes a row's address `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`
+
+- **Addr never computes an address from a row's offset.** A row with no address of its own is refused with one line:
+  "no address was read for this row, and none is worked out from its offset". Every row a walk shows carries its own
+  address. The object + offset sum was reached only where it was wrong:
+  - a container element, whose offset counts from the container's buffer;
+  - an actor row on the GWorld view, which has no slot in the world;
+  - rows a failed re-root or a Back has left behind, which belong to another object.
+
+  Review round 3 found that last case (the rows a failed Go-box re-root leaves on screen still copied owner + offset).
+  Red `36edaf8c`, green `f4d19e45`.
+- **A table's RowMap row carries its address.** Review round 4 caught the one row that sum had got right: the RowMap
+  row a DataTable's own view adds after its walk. It now carries the table + RowMapOffset (the TSparseArray the rows
+  are read from), so its Address column, Addr, HEX and +CE all have it. Red `4afa2299`, green `72ee74fd`.
+- Comment fixes, the last two review rounds: `75b675ed`, `175e4093`.
+- **Checked live on 3669** (DumperTest Shipping, UE 5.4), on DumperTestTable_Small_1:
+  - the RowMap row shows and copies `0x1F9A04D3130`, which is the table + 0x30;
+  - in the rows view, Row_000 copies its own data address;
+  - Find Refs there reads "References to DumperTestTable_Small_1 (1)"; it used to name "RowMap".
+- Tests: dll_core_test 1,363 checks and dll_helpers_test 3,692, 0 failures; C# 7,100 total, 0 failed, 1 skipped;
+  headless UI 69; 36 gates. AOT UI 61,447,168 bytes.
+
+## 2026-10-29 (build 3668) — Review round 2 of the container-view fix `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`
+
+- **Find Refs keeps an inline struct's name.** Find Refs from a container inside an inline struct now keeps the name
+  the struct's view shows, such as "Stats (FPlayerStats)", after a Refresh or a bookmark reload. Before, it switched to
+  the struct's type name. Red `1333684a`, green `c177c226`.
+- **A refused Addr gives the reason that applies.** A row with no address says so even while Back is still loading:
+  "wait and try again" would end in the same refusal (`7db12db8` / `bcf115ad`). An Addr that copies also clears the
+  definition view's refusal line (`cf12e9b1` / `503797ce`).
+- Text: the PIPE check's protocol doc says what it catches. It catches an object freed and its memory reused; a freed
+  slot that still holds the old class pointer passes (`efe19565`).
+- Checked live on 3668 (DumperTest Shipping 5.4): an actor row's Addr was refused, and a PersistentLevel Addr then
+  copied its slot and cleared that refusal line.
+
+## 2026-10-29 (build 3667) — Review round 1 of the container-view fix `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`
+
+- **Find Refs names the owner after a Locate.** On a container reached through a Locate path, Find Refs names the owner
+  object. Before, it took the "[0]" label of the path's array step. Red `825eb0bc`, green `ca5bcb32`.
+- **Copy Addr refuses rows the trail has already left.** Back removes the container view's crumb before the owner's
+  walk returns, so for that moment the grid still shows the container's rows. A Copy Addr on one of them now copies
+  nothing (`dfbf8436` / `4e4d102d`). A later Addr that copies clears the refusal line (`a1686dd3` / `939c4150`).
+- **The PIPE refusal says only what is known.** It no longer names a class the slot "is now"; the slot may hold no
+  object at all. It also says to look the object up again, in the Live Walker with Refresh: re-opening the dialog
+  without a re-walk sends the same address (`169cb3b7` / `6c7896be`).
+- Checked live on 3667 (DumperTest Shipping 5.4):
+  - `tools/verify/invoke_expect_class.py`: 3/3 with the new wording;
+  - Find Refs on DumperTestActor_0's Arr_Int view read "References to DumperTestActor_0 (4)";
+  - an actor row's refused Addr line was cleared by the next successful Addr.
+
+## 2026-10-29 (build 3666) — On an Array / Map / Set / DataTable view, the actions name and use the owner `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`
+
+A container view lists its owner's functions and fires them at the owner (since build 3661), but its header names the
+container. Five things went wrong there:
+
+- **INV, AA(Baked) and the PIPE dialog name the owner's class.** All three name the class to find an instance of. They
+  used to bake `Array<…>`, which no class is called, so the script found nothing in CE. Red `60fff318`, green
+  `4159e0e7`.
+- **Find Refs names the owner it scans.** It used to say "References to Gear" over the owner's referrers.
+  `861a0dcf` / `a96d1d63`.
+- **The AA chip's GWorld walk ends on the owner.** It used to register the container's element buffer.
+  `98018a28` / `d4f13f42`.
+- **Addr on an element with no address copies nothing.** It used to copy the owner + the element's offset, which is a
+  slot inside the owner. An actor row on the GWorld view is refused the same way; it used to copy the world's own
+  address. `a45626c0` / `3832628c`.
+- **A PIPE dialog left open does not fire at a reused slot.** The dialog keeps its address across FIREs. It now sends
+  the class its function list was read from, and the DLL refuses if the object there has another class by then. Before,
+  the DLL found the function by name on whatever object was there. This uses the new optional pipe key
+  `expect_class_addr` (`4254466a` / `75a8ee27`; UI `a5bad19f` / `f092ec12`). The Console's parameter dialog sends it
+  too. Rig: `tools/verify/invoke_expect_class.py` (`cc75feda`).
+- **Checked live on 3666** (DumperTest Shipping, UE 5.4):
+  - The rig went 3/3: the instance's own class is invoked, its outer's class is refused with nothing run, and no key
+    is invoked as before.
+  - On DumperTestActor_0's `Arr_Int` view:
+    - Find Refs read "References to DumperTestActor_0 (4)".
+    - Addr on `[0]` copied the element's own address.
+    - The AA(Baked) dialog was titled "DumperTestActor::Vnd584_EchoWeakRef", and its script calls
+      `invokeUFunction('DumperTestActor', …)`.
+    - PIPE FIRE answered "ProcessEvent OK". The UI's pipe log shows `expect_class_addr` = DumperTestActor's class.
+  - On the GWorld view, an actor row's Addr was refused, and PersistentLevel copied its slot.
+  - GWorld → … → GameStateBase → `PlayerArray`: the AA chip's AOB walk ends at `readQword(addr + 0x160)`, the
+    GameState, with no 0x2A8 hop into the array.
+- **Not checked live:**
+  - INV: it needs CE with the AOBMaker plugin, and its button is disabled without them.
+  - Find Refs after a Locate that ends in "[0]": no fixture object reached through an array has a non-empty container.
+  - A slot actually freed and reused: the rig sends the mismatch directly.
+- Leads it left, each a new LOW row: `[LEAD-CONSOLE-PIN-EXPECT-CLASS]`, `[LEAD-LW-NULLROW-HEX]`,
+  `[LEAD-LW-SYNTH-CONTAINER-STRUCT-OWNER]` (older).
+
+## 2026-10-29 (build 3665) — A game-thread guess is no longer dropped over the DLL's own calls `[STARK-DRAIN-OFF-GAME-THREAD]`
+
+- **Follow-up from build 3664's review.** When no thread carries the name "GameThread", the DLL guesses the main thread,
+  and the install check drops that guess if it stayed silent while other threads made ProcessEvent calls. Those "other"
+  calls included the DLL's own. The check starts inside the call that installed the hook, and a direct call (the CE
+  mailbox's path for functions safe off the game thread) goes back through the hook on our own thread. A game thread
+  can be silent for the check's whole 1.5 s (Avowed, 2026-10-27: 0 calls), so our own call alone could drop a
+  correct guess. Now only other threads' calls count. Red `7d66426f`, green `2f8516ef`.
+- **The WARN when the guess is dropped says no more than it knows.** It used to say the main thread "is not this
+  game's game thread". A silent thread proves only that it made no call in those 1.5 s. The WARN now says that, gives
+  "not the game thread" and "held up the whole time" as the two possible reasons, and says the gate is off for the
+  session. The check's "kept" line now gives two counts: calls on the game thread, and calls on other threads with
+  our own left out.
+- The live rig prints the give-up WARN and the whole "kept" line (`ee275f4a`, `8dd4b74a`). A comment that said an
+  idle menu makes no ProcessEvent call at all now cites the Avowed measurement instead (`18540073`).
+- Checked live on 3665 (a smoke run). Both fixtures picked the thread named GameThread, which is also the main thread.
+  DumperTest Shipping (UE 5.4): "kept: 138 … on it, 46 on other threads", and 20/20 `CollectGarbage`. DumperTest58
+  Development (UE 5.8): "kept: 145 … on it, 44 on other threads", 50 Debug Camera toggles all as asked, 0 SEH, and 0
+  `IsInGameThread` assertions. The changed path, a main-thread guess, still needs a game whose game thread has no
+  name, as listed for 3664.
+- Review: one adversarial round on the follow-up. Four claims, two confirmed, both LOW and in text only (the idle-menu
+  sentence and the rig's 220-character cut), both fixed above.
+- Tests: dll_core_test 1,363 checks and dll_helpers_test 3,684, 0 failures; C# 7,071 total, 0 failed, 1 skipped;
+  headless UI 69; 36 gates. AOT UI 61,442,048 bytes.
+
+## 2026-10-29 (build 3664) — Queued calls run on the game thread only `[STARK-DRAIN-OFF-GAME-THREAD]`
+
+- **A queued call (FIRE, Teleport, Fly, Debug Camera, Invoke…) now runs only on the game thread.** UE 5.8 and 5.4
+  also call ProcessEvent from engine worker threads (about a quarter of the hook's fires, measured on both). Our hook
+  used to run waiting work on whichever thread came first, and once in about 50 toggles a Debug Camera ON failed the
+  engine's own `IsInGameThread` check. When the hook is installed, the DLL now finds the game thread: the thread UE
+  itself names "GameThread", or, when no thread carries that name, the main thread. A worker thread's ProcessEvent
+  leaves queued work for it. The "game thread responsive" check also counts the game thread's fires only, so a frozen
+  game thread no longer looks alive because workers keep firing.
+- **A wrong guess cannot block every call.** A thread the engine named is always kept. A main-thread guess that
+  stays silent for the install check's 1.5 s while other threads fire is dropped with a WARN in the log, and
+  queued work then drains on any thread, as before this build. Red `dc15bc5b`, green `3848ea08`; the live rig is
+  `tools/verify/stark_game_thread_drain.py` (`ccc815e1`).
+- Checked live on build 3664:
+  - DumperTest58 Development (UE 5.8): the DLL picked the thread named GameThread, the same thread `suspend.py`
+    lists as the main thread; it took 151 of 197 hook fires in the install window. 400 Debug Camera toggles through
+    the pipe and 20 through the CE mailbox all came out as asked, with no SEH and no `IsInGameThread` assertion in
+    the game's log.
+  - With only the game thread suspended, a queued ON waited and timed out (-5) rather than running on a worker, then
+    ran on the game thread once it resumed.
+  - DumperTest Shipping (UE 5.4): the named GameThread again, and the main thread; 132 of 176 fires; 20
+    CollectGarbage invokes all returned 0.
+- **Not yet seen live:**
+  - a worker thread actually entering ProcessEvent while work waited (zero skips were logged in these runs; the
+    unit tests cover that path);
+  - the main-thread fallback, which needs a game whose game thread has no OS thread name (a UE4 game is the likely
+    case, and no UE4 fixture exists).
+- Review: one adversarial round. Three claims, none a defect: each case falls back to the behaviour before this
+  build. Two of them are followed up in build 3665. The install check counted our own nested calls as other threads
+  firing, and its WARN said more than it knows.
+- Tests: dll_core_test 1,363 checks and dll_helpers_test 3,680, 0 failures; C# 7,071 total, 0 failed, 1 skipped;
+  headless UI 69; 36 gates. AOT UI 61,442,048 bytes.
+
+## 2026-10-29 (build 3663) — Debug Camera turns on again after an OFF on UE 5.8 `[DBGCAM-58-REENABLE]` `[STARK-DRAIN-OFF-GAME-THREAD]`
+
+- **A second Force ON now works on UE 5.8.** This applies to the UI's Debug Camera buttons and to the CE record. After one
+  ON→OFF, every later ON used to answer "state is now OFF". The cause, read in the 5.8.4 source and measured on
+  DumperTest58 Development: the first ON spawns a DebugCameraController, which gets a CheatManager of its own in
+  non-Shipping builds. Once a garbage collection put that CheatManager below the player's in the object list (34955
+  against 35796), the toggle went to it, and on 5.8 a toggle there can never turn the camera on. The toggle now always
+  goes to the player's CheatManager. That is right on older engines too, where an OFF still finishes through the
+  existing controller swap-back, as on 5.4. Red `729277c6`, green `8aba4dec`.
+- **Found while checking it, not fixed (the maintainer asked for one bug that night): `[STARK-DRAIN-OFF-GAME-THREAD]`.**
+  A queued call (FIRE, Teleport, Fly, Debug Camera…) can run on an engine worker thread instead of the game thread.
+  The hook drains its queue in whatever thread calls ProcessEvent. Measured once in about 50 toggles: the game's
+  own log shows an `IsInGameThread` check failing under `CheatManager.ToggleDebugCamera`. Our SEH caught it, and that
+  call returned -1 with the camera half on. It is a new MED row in the census.
+- Checked live on build 3663 (DumperTest58 Development, `tools/verify/dbgcam_reenable.py`). Under the condition that
+  broke it, ON/OFF/ON/OFF reads 1, 0, **1**, 0 through the pipe (build 3662 gave 1, 0, 0), 20 more toggles all came
+  out as asked, and the CE mailbox path re-enabled too. Review: one round, no findings. The first publish of 3663
+  failed on a stale C# source pin (updated in `67d61d00`); that unreleased output was replaced.
+- Tests: dll_core_test 1,363 checks and dll_helpers_test 3,660, 0 failures; C# 7,071 total, 0 failed, 1 skipped;
+  headless UI 69; 36 gates. AOT UI 61,442,048 bytes.
+
+## 2026-10-29 (build 3662) — A coordinate import stops at a stray quote instead of reading on; two warnings say no more than is known `[B21-CSV-QUOTE-HOLES]` `[FTEXT-REFUSAL-OVERCLAIM]` `[METHODE-MANUALMAP-EXCEPTION-CLAIM]`
+
+- **A stray quote in an imported coordinate CSV stops the import, naming its line; nothing is imported.** One
+  unpaired quote in a field used to merge every later row into one, silently. A row whose cell count differs from
+  the header now stops it too: a stray quote PAIR can be valid CSV and still shift every later column. The message
+  names what is wrong, including a space beside a quote or a quoted field that runs on to a later line. There is no
+  repair, by the maintainer's rule.
+- **The Lua import (paste or file) reads the coordinate block the way Cheat Engine's own Lua 5.3 does.** A key
+  written inside a label or a comment, such as `label='Arena z=0 plane'`, no longer sets a coordinate. A stray quote,
+  brace or escape that CE would refuse stops the import, naming its line, wherever it sits in the block, including
+  the lines above and below the table. An entry without x, y or z is reported instead of landing at the origin. A
+  20,000-entry library imports in about 0.1 s; it used to take 10 to 15 s with the app frozen. The documented
+  tolerance of a missing comma is unchanged. Its one known blind spot, `label='Door 'code=' 12'`, is recorded in the
+  census row.
+- **The Label and Group boxes refuse a double quote in a field you change**, and say so. An entry that already holds
+  one, imported or typed before this build, stays editable, and its quotes still export and read back. A label that
+  begins with an apostrophe before `= + - @` now survives a CSV round trip too.
+- **The FText refusal no longer says a zeroed FText "crashes the game".** UE 5.4 measured otherwise. App FIRE, the CE
+  parameter form and `ue5_invoke_helper.lua` now say that a function that reads it can. The refusal itself is
+  unchanged.
+- **The CE plugin's force-load warning no longer says a manually mapped DLL "cannot handle exceptions".** A run
+  showed one being contained. It now says manual mapping is not supported and could crash the game, with the same
+  advice: untick "Always force load modules".
+- Not checked live yet: unit-tested, red then green. Review: nine rounds, each finding judged by independent refuters,
+  every confirmed one fixed. Rounds 7 to 9 fuzzed against CE's own Lua 5.3, about 2M cases. Earlier rounds had used a
+  system Lua 5.4, which the maintainer caught; working-lessons 4.11 records it.
+- Tests: dll_core_test 1,360 checks and dll_helpers_test 3,660, 0 failures; C# 7,071 total, 0 failed, 1 skipped;
+  headless UI 69; 36 gates. AOT UI 61,442,048 bytes.
+
+## 2026-10-28 (no build change) — Every open item in one place, and todo.md archived by the usual convention `[OPEN-CENSUS-2026-10-28]`
+
+- **The open work is one section now.** `todo.md`'s `[OPEN-CENSUS-2026-10-28]`, right after its preamble, lists
+  every open defect and UX item (37: none HIGH or MED), the live checks owed on shipped fixes, the feature ideas and
+  what stays open by a recorded decision -- so a session asks it instead of sending agents to re-scan a 1.6 MB file.
+  Each row says where the item is recorded; 25 untagged leads got a tag there (the census commit's message says 18:
+  it was 20 then, and five more came from the archiving pass). B21's two remaining coordinate-CSV holes have a todo row
+  for the first time. A commit that opens or closes an item edits its census row.
+- **`todo.md` 1.62 MB -> 1.33 MB**: 136 closed units (11 sections, 125 table rows; 296,538 bytes) moved
+  byte-identical to `archive/todo-closed-2026-10-28-build-3661.md`, selected by the 2026-09-26 rule plus one clause
+  (an open item the census lists no longer keeps the unit that mentions it), with adversarial verifiers sending four
+  units back. `verification-register.md` moved nothing: its closed-looking sections all still carry an unrun leg, an
+  unfiled lead or a check key.
+
+## 2026-10-28 (build 3661) — A Live Walker container view stands for its owner again, address and functions alike `[LW-BACK-CONTAINER-HEADER-ADDR]`
+
+- **Back into an Array, Map, Set or DataTable rows view shows its owner again.** Back, a breadcrumb jump, the Back out
+  of a re-rooted view, a bookmark and Refresh redraw such a view without walking its owner, and left the header on
+  whichever object had been opened last -- usually the element just left. Its address and Addr copy, HEX, AA, Find
+  Refs, Related and a bookmark saved there acted on that object, and the Functions list was that object's. Measured on
+  Extinction (UE 4.15) with build 3660. The header and the Functions list now belong to the owner, as on the drill
+  that opened the view.
+- **The GWorld actor list no longer lists the last object's functions.**
+- **A Functions row cannot fire at the wrong object while the list catches up.** When the object on screen changes
+  class, its function list takes one pipe round trip to arrive. Until it does, the rows shown are the previous
+  class's, and PIPE, INV, AA(Baked) and ASM now refuse them, saying so under their own label, instead of running the
+  new object's same-named function with the old one's arguments. The rows stay on screen meanwhile, so the field grid
+  does not shift under a Back's scroll restore, and the message goes once the list arrives. A list that arrives for a
+  class no longer on screen is dropped.
+- **A DataTable's rows view no longer gains a stray RowMap row** when the table's row load arrives late: after the Back
+  out of a re-rooted view (a case this fix opened and closed), or after a Back from the rows view whose walk of the
+  table had not returned yet (older).
+- Not checked live yet: unit-tested, red then green, the tests checked against single-part mutations of the fix. Review:
+  four rounds, each finding judged by independent refuters; every confirmed one is fixed. Its pre-existing neighbours
+  -- INV and AA(Baked) on a container view name the view's own label as the class -- are a new LOW row,
+  `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`.
+- Tests: dll_core_test 1,360 checks and dll_helpers_test 3,660, 0 failures; C# 6,963 total, 0 failed, 1 skipped;
+  headless UI 69; 36 gates. AOT UI 61,352,448 bytes.
+
+## 2026-10-28 (build 3660) — A pointer to a type exports as a pointer; a Cheat Engine tick that applied nothing leaves the feature alone `[CEXML-DEFINITION-VIEW-AS-DATA]` `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]` `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]` `[LW-CRUMB-UNDERSCORE]` `[LEADFIX-REVIEW-2026-10-28]`
+
+- **A pointer to a type exports as a plain pointer.** When the target is a struct type (ScriptStruct) or a native,
+  Blueprint or Widget Blueprint class -- a DataTable's RowStruct when it is a native struct, a TSubclassOf / class
+  reference such as a GameMode's DefaultPawnClass, an array of ability classes -- Copy CE XML and the CSX export laid
+  the type's member layout out under the pointer as if it were data, so Cheat Engine read the type object's own memory
+  at those offsets: records that looked plausible, could be written, and were wrong. Measured on Extinction's
+  DT_LevelSelectData. Such a pointer is now an 8-byte pointer leaf. Other type objects (an Anim Blueprint class, a
+  Blueprint-defined row struct) are still walked as the objects they are, as before.
+- **Live Walker and Instance Finder say when they show a type definition** and give its rows no address. On one,
+  Live Walker refuses Copy CE XML, Copy CE Field, +CE Field (flat), Addr, HEX and +CE, and Instance Finder refuses
+  Copy CE XML, Addr, HEX and +CE, each naming the button. AA Script, Export CSX and Push to CE Structure Dissect still
+  work on one: they register the type object's own address, or emit the type's layout as a structure.
+- **Instance Finder's Addr copies the address of the rows shown.** While a newly picked instance was still loading,
+  it added the row's offset to the NEW instance's address.
+- **A Cheat Engine tick that applied nothing unticks without running its disable section.** That section sends a real
+  OFF on the stateful toggles (Debug Camera, Fly, GodMode, Keep Foreground, See-through, Movement, Time), so a tick the
+  DLL refused, or one that gave up waiting for a busy mailbox, turned off the same feature a UI card was holding --
+  or, on Debug Camera, raised an error and left the record ticked.
+- **A tick the DLL keeps as armed now stays ticked**, and says that unticking cancels it: GodMode ticked before a pawn
+  exists (it engages when one does), and a Movement or Time hold whose write failed but is retried every tick. Both
+  used to untick, which also cancelled the hold.
+- **The invoke helper's Debug Camera sample and the trainer's teleport save / recall untick after their message**, not
+  while it is open, when the untick did nothing and the record stayed ticked.
+- **Names keep their first underscore** in Live Walker's breadcrumb (`DumperTestActor_0` read "DumperTestActor0"), the
+  noise-denylist chips, Class Pivot's Discover snapshot picks and Proxy Deploy's drives.
+- **Fly:** when Fly ON (the Teleport tab's Fly card or its hotkey) is refused -- no pawn yet, or the MovementMode write
+  failed -- it no longer cancels the wait to restore the pawn's collision after a disable that could not restore it,
+  which left the pawn without collision.
+- Not checked live: these are unit-tested, red then green, except the Fly fix, which a pin on the DLL source covers (no
+  test target compiles that file; the DLL builds). Build 3659's own fixes passed live on 2026-10-28.
+- Review: the four leads' fixes had their own review (15 findings, 1 refuted, 2 MED), and every confirmed one is fixed;
+  these notes were fact-checked against the code by three independent readers.
+- Tests: dll_core_test 1,360 checks and dll_helpers_test 3,660, 0 failures; dissect_test.lua 425 and
+  invoke_helper_test.lua 146; C# 6,942 total, 0 failed, 1 skipped; headless UI 69; 36 gates. AOT UI 61,345,280 bytes.
+
+## 2026-10-27 (build 3659) — Debug Camera never acts on a stale state; the trainer push says why it stopped `[DBGCAM-OFF-OVER-QUEUED-ON]` `[TRAINER-PUSH-TIMEDOUT-TEXT]` `[DISCOVER-SHADOWED-POOL]` `[ASSETPTR-BAKED-TOKEN]` `[L83-PLAN-QUEUED-STRINGS]` `[LEADS-REVIEW-2026-10-27]`
+
+- **Debug Camera: a Force or an untick while an earlier toggle is still waiting for the game no longer acts on a
+  stale reading.** Before, a Force OFF while a Force ON was still queued read the camera as off, reported a clean OFF,
+  and the queued ON then turned the camera on. Now nothing is sent until the earlier toggle has run. The same
+  direction says it is already queued; the other direction says "was not sent — press again once the game responds",
+  on the Console and Teleport cards, in the Cheat Engine Debug Camera script (an untick keeps the record ticked) and in
+  the message the DLL hands a cheat table. A Cheat Engine untick no longer waits behind another request long enough to
+  pass its own deadline.
+- **The Standalone Trainer push says why it stopped**, naming the entry: no reply (it may still have been added —
+  check before pushing again), the reason Cheat Engine gave (the size limit among them), AOBMaker busy or not
+  reachable, or refused without a reason. It used to say "pipe dropped (CE closed?)" for all of these.
+- **Class Pivot's Discover keeps the two copies of a shadowed property apart**, labelled `Name@+0x…` like the picker,
+  even when only one copy changed.
+- **Baked invoke scripts refuse a value in an older UE4 asset-pointer parameter** (UE 4.11-4.17), as FIRE and the CE
+  form already did, and every invoke readout shows such a return as its index / serial pair. A script baked from
+  this build needs the invoke helper it carries (version 1.5).
+- Not checked live: these are unit-tested, red then green, several with a mutant that fails. The Debug Camera change
+  needs a stalled game thread (DumperTest Development `--idle`); the live-check plan's L83 now has a step for it.
+- Review: these fixes had their own review (13 findings, none above LOW, none refuted); every one is fixed.
+- Tests: dll_core_test 1,360 checks and dll_helpers_test 3,660, 0 failures; dissect_test.lua 425 and
+  invoke_helper_test.lua 142; C# 6,882 total, 0 failed, 1 skipped; headless UI 68; 36 gates.
+
+## 2026-10-27 (build 3658) — Fixes from two more reviews; corrections to the 3657 notes `[BATCH2-REVIEW-2026-10-27]` `[FIXREVIEW-2026-10-27]` `[LW-EMPTIED-CONTAINER-REFRESH]` `[UE4-ASSETPTR-EXPORTS]` `[STEALTH-RESET-STALE-HELD]` `[DEBUGCAM-QUEUED-OFF-NOESCALATE]` `[COORDPICK-TIMEDOUT-TEXT]` `[PIVOT-ARRAY-LOADID]`
+
+- **Live Walker: Refresh of an array that has emptied shows it empty.** An emptied array of structs larger than 256
+  bytes (active effects, inventory entries) showed "DLL error: elem_size too large" and kept the old rows on screen,
+  editable at addresses the array no longer owns. An array the walk saw empty could also be relabelled with a count
+  that appeared a moment later, over an empty grid.
+- **CE XML: an older UE4 asset pointer shows its path wherever it sits** -- as a map key or value, a set element, or a
+  member of a struct in an array -- as a single field and an array element already did.
+- **Teleport, Stealth card: Reset says "Nothing is held" when the card knows nothing is held**, and sends nothing. It
+  used to tell you to Detect first, and Detect then Reset reported "Released the stealth-meter hold." for a hold that
+  never existed. When the card cannot tell (a hold it could not match to a meter), it still says to Detect first.
+- **Debug Camera from Cheat Engine: a queued OFF says to send OFF again.** The message the DLL hands a cheat table for
+  a toggle the game has not run yet said "do not re-send" for an OFF too; on most engines a queued OFF leaves the
+  camera on. A queued ON still says not to send it again.
+- **The no-DLL coordinate picker says why nothing was added**: AOBMaker's pipe is busy (another program holds it), not
+  connected, or the push was refused without a reason -- instead of "(CE closed?)" for all three.
+- **Class Pivot**: switching the source while a class's field list is still loading no longer lets that list land
+  under the new source (where a DataTable pivot then ran it against the table's rows).
+- **Corrections to the build 3657 notes** (that entry is kept as written):
+  - 3657 also shipped two fixes it did not list: Live Walker's Copy CE Field fabricated nothing at the default
+    Fabricate count until the slider was moved; and in Class Pivot's Snapshot Array source, clicking a class while a
+    newly picked snapshot's class list was loading left the previous snapshot's classes in the picker.
+  - "says when an address has no object header instead of calling it stale": before 3657 such an address showed no
+    status at all.
+  - "every LOW and INFO is fixed": one INFO item was a check, not a fix -- the trimmed build's Name sort, done live on
+    3657.
+  - "each fix batch had its own review": the second batch had none; its review is this build's.
+  - "CSX ... instead of a block of decimal numbers": in CSX those fields were a hex byte array; only the cheat table's
+    Structure Dissect showed decimal numbers.
+- Reviews: the fixes of the batch-3 review had a review of their own (17 findings, 16 confirmed, none HIGH or MED), and
+  batch 2 had its first (7 findings, 6 confirmed: one MED, the emptied-array Refresh). Every confirmed finding is
+  fixed; the ones in the 3657 notes are corrected above.
+- Not checked live: these are unit-tested, each red then green, several with a mutant that fails. Still owed live
+  from 3657: the asset-pointer container shapes (a map, set, array or struct member), which need a level on Extinction.
+- Tests: dll_core_test 1,360 checks and dll_helpers_test 3,648, 0 failures; dissect_test.lua 425; C# 6,859 total,
+  0 failed, 1 skipped; headless UI 68; 36 gates.
+
+## 2026-10-27 (build 3657) — UE 4.11-4.17 asset pointers in every export; Live Walker lists interface functions; the toolbar holds still `[UE4-ASSETPTR-EXPORTS]` `[VND584-04]` `[L64-TOOLBAR-FIXED-SLOT]` `[TOOLBAR-CONNECT-WIDTH]` `[SNAPDIFF-SHADOWED-PROP]` `[PIVOT-HANDOFF-SHADOWED]` `[DEBUGCAM-QUEUED-OFF-NOESCALATE]` `[WALK-NULLCLASS-SILENT]` `[BATCH3-FINAL-REVIEW-2026-10-27]`
+
+- **Older UE4 games' asset pointers (TAssetPtr / TAssetSubclassOf, UE 4.11-4.17) come out right in every export.**
+  The .usmap names them instead of writing Unknown, the SDK header declares them, and CE XML shows a single one, one
+  in a DataTable row and each element of an array as a group: the weak pair in hex and the asset's path as a
+  readable string, the only name an unloaded asset has. CSX and the cheat table's Structure Dissect show them as one
+  8-byte hex value instead of a block of decimal numbers, and CSX labels a loaded array element with its object.
+  Property Search suggests them, the scorer ranks them like their 4.18 successors, Live Walker's array drill keeps
+  their paths, and an invoke parameter of this type is left empty.
+- **Live Walker's Functions list shows what a class gets only through an interface**, as
+  "DoFoo  (via FooInterface)", and the filter finds it by the interface's name too.
+- **Live Walker says when an address has no object header** instead of calling it stale, and does not retry the
+  gap fill on it. A Refresh inside an array, set or map view shows the live count, an emptied container shows empty
+  (also on Back), and a view whose parent is gone says so. A disconnect clears the status and error lines, and an
+  export it cancels is not reported as cancelled by you.
+- **The toolbar no longer jumps.** The status line is a fixed-width slot that Start Scan and the error line share
+  (it fits at 800 DIP), Connect and Disconnect have one width, and the Cheat Engine attach warning sits after the
+  AOBMaker chip, so the AOBMaker refresh button stays where it is at connect, at disconnect and on a new status.
+- **A class with two properties of the same name** (a shadowed name): Snapshot Diff and SPC's in-session query no
+  longer report phantom changes or a negative "removed" count, Class Pivot lists the two as `Name@+offset`, and a
+  handoff from Live Walker, Property Search, Interesting Properties or Value Search ticks the copy you picked.
+- **Debug Camera**: a toggle the game queued is reported as queued -- an OFF that did not complete says so and its
+  cheat-table record stays ticked, and neither card claims a state it has not reached.
+- **Teleport**: Stealth Reset with no meter detected sends nothing and says to Detect first; "Clear all markers"
+  stops after a failed wait instead of raising three dialogs; the no-DLL coordinate picker says why a push failed --
+  too large (with its size), no reply (it may still have been added, check before pressing again), or AOBMaker not
+  reached.
+- **AOBMaker**: a request over the 10 MiB message limit is refused before anything is sent, with its size as the
+  reason. Convenience copies say "Copied" only when the clipboard took the text.
+- Smaller: the injection dialogs name the per-process init log and both Cheat Engine folders; the INV button's
+  tooltip opens while it is disabled and says it needs AOBMaker; Class/Struct's spinner and error line clear on a
+  disconnect; the Snapshot quota labels show exact sizes.
+- Checked live on the published AOT build: on DumperTest 5.4 Shipping, the toolbar at 800 DIP (connect and
+  disconnect move nothing before the menus), `Vnd584_IfaceMagic  (via DumperTestIface)` with its filter and the
+  Name sort, and Class Pivot's `PrerollTime@+0xC4` / `PrerollTime@+0x128` with a Live Walker handoff ticking the
+  +0x128 copy. On Extinction (UE 4.15), `PreGameWorld` in CE: the CE XML path leaf reads
+  `/Game/Maps/PreGame/PreGameMap.PreGameMap` while the weak pair is unloaded, and the cheat table's Structure
+  Dissect and Push to CE Structure Dissect give one 8-byte hex element. Not checked live: the label of a loaded
+  array element (Extinction's only such array exists in a level).
+- Reviews: each fix batch had its own review, and a final review of all three put 13 findings to a refuter (one
+  refuted, none HIGH or MED); every LOW and INFO is fixed.
+- Tests: dll_core_test 1,357 checks and dll_helpers_test 3,648, 0 failures; dissect_test.lua 425; C# 6,848 total,
+  0 failed, 1 skipped; headless UI 68; 36 gates.
+
+## 2026-10-27 (build 3656) — Delegates read right on Development builds; CE Structure Dissect shows weak pairs in hex `[VND584-02]` `[CT-DELEGATE-PARAM-PAD]` `[CT-MULTICAST-PARAM-PAD]` `[CT-UE4-MULTICAST-SPELLING]` `[DELEGATE-PAD-ALIGN]`
+
+Build 3655 was published on the way with the first three items; 3656 carries everything below.
+
+- **CE Structure Dissect shows weak, soft and lazy pointer fields in hex.** Build 3650 made them 8-byte values, but
+  CE shows such a value as one unsigned decimal number unless told otherwise, so a weak pair's object index and
+  serial could not be read apart. They now show in hex, as the CE-XML and CSX exports already did.
+- **Delegate rows sit on what they hold.** A delegate field's row is its bound object's weak pair, in hex; a
+  multicast delegate's row is its invocation-list pointer. On a Development or Debug build of a UE 5.3+ game the
+  engine puts 8 bytes of race-detector state in front of both, and the rows used to sit on it; they now sit past it,
+  where the walk and the exports place them. UE4's older multicast spelling gets a pointer row.
+- **Call Trace reads delegate parameters on Development and Debug builds.** A delegate parameter's bound object was
+  read from those 8 bytes and showed as stale, and a multicast parameter's handler count was half of a pointer; both
+  are read past them now. A UE 4.18-4.22 multicast parameter reads as its handler count instead of raw bytes.
+- **Find References no longer misses delegate bindings on Development and Debug builds.** It read a delegate
+  field's bound object from the race-detector bytes too, found nothing there, and reported a complete scan without
+  the binding.
+- **Delegates on a case-preserving build** (an editor running a game, whose names are 12 bytes): a delegate there is
+  32 bytes behind the detector, not 28, so the dumper refused such delegates and delegate arrays as an "unexpected
+  ElementSize". It reads them now, and a map whose values are delegates is laid out with the delegate's real
+  alignment.
+- Checked live on DumperTest 5.4: the dissect rows through CE 7.7's own rendering (a weak pair 61300005FD2 = index
+  0x5FD2 / serial 0x613; on Development the delegate rows past the detector, where they used to show its 0); Call
+  Trace's delegate and multicast parameters equal to the walk, 10/10 each on Development and Shipping, and again on
+  the published 3656; Find References on Development, where 3655 listed only the control and 3656 all three
+  bindings. On the UE 5.4 editor running DumperTest as a game, 3655 refused the 32-byte delegate and its array, and
+  the fix reads both, element [1] included. DumperTest gained a native function taking a multicast delegate for this
+  and was repackaged. The UE4 multicast spelling is unit-tested only.
+- Two independent reviews (three lenses on the 21 commits that began this, two on the fixes) put every finding to a
+  refuter; none was HIGH, one MED (the Find References miss), and every LOW and INFO is fixed.
+- Tests: dll_core_test 1,352 checks and dll_helpers_test 3,639, 0 failures; dissect_test.lua 419 on CE's Lua 5.3 and
+  on Lua 5.4; C# 6,704 passed, 1 skipped; 36 gates.
+
 ## 2026-10-27 (build 3654) — Call Trace reads a call's parameter bytes for you `[PARAM-BYTES-SEGMENTS]`
 
 - **A new Bytes tab in Call Trace.** A call's parameter copies (the block ProcessEvent passes, at the call and after

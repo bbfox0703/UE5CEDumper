@@ -1304,7 +1304,11 @@ static int DbgCam_ReadState(uintptr_t& outCm, uintptr_t& outDcc) {
     // is live, was taken over the real one. Same for UDebugCameraControllerSettings (4.23+) in the DCC fallback
     // below: when its CDO sat first, it has no OriginalControllerRef, so the state read -1 and a Force ON refused
     // (read from the code; L83's 5.4 fixture met the DCC's own CDO first). [SEETHRU-PROBE-SUBSTRING]
-    uintptr_t cm = Aura::FindLiveOrDefaultOf("CheatManager");
+    // [DBGCAM-58-REENABLE] Never the Debug Camera's own: its DCC carries a CheatManager too (AddCheats forces one in
+    // non-Shipping builds), and on UE 5.8 a toggle there never enables the camera -- measured, the second Force ON a
+    // no-op once slot reuse put that CheatManager below the player's. The player's toggles in both directions on 5.8,
+    // and on older engines its OFF is the no-op the swap-back below already finishes.
+    uintptr_t cm = Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController");
     outCm = cm;   // may be 0 (some titles spawn it lazily)
 
     // Hop 1: CheatManager.DebugCameraControllerRef.
@@ -1376,18 +1380,59 @@ int32_t UE5_GetDebugCameraState() {
     return DbgCam_ReadState(cm, dcc);
 }
 
+static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintptr_t params, uint32_t paramsSize,
+                                      bool dropIfAbandoned, std::shared_future<int32_t>* queuedOut = nullptr);
+
+// [DBGCAM-OFF-OVER-QUEUED-ON] The toggle a Set left queued, until it has run, and the one a Set is dispatching now.
+// A toggle not yet run flips whatever the state reads, so no answer read before it runs is true: an OFF read "already
+// OFF" and reported a clean OFF that a queued ON then undid. Both directions: a queued OFF changes nothing on stock UE
+// 4.18-5.7 but does turn the camera off on 5.8. The pipe and the mailbox both call Set; the lock covers the check, the
+// read and the marking, never the invoke wait, which a CE untick behind another Set would otherwise sit through past
+// its own deadline.
+static std::mutex s_dbgCamMutex;
+static Stark::QueuedInvoke s_dbgCamQueued;
+static bool s_dbgCamQueuedWant = false;
+static int s_dbgCamInFlight = -1;   // -1 none, else the direction (0 OFF / 1 ON) being dispatched
+
 int32_t UE5_SetDebugCamera(int32_t enable) {
-    bool want = (enable != 0);
+    const bool want = (enable != 0);
     uintptr_t cm = 0, dcc = 0;
-    int state = DbgCam_ReadState(cm, dcc);
-    if (state < 0) {
-        LOG_WARN("UE5_SetDebugCamera: no readable CheatManager/DebugCamera state");
-        return -1;
+    int state = -1;
+    {
+        std::lock_guard<std::mutex> lk(s_dbgCamMutex);
+        if (s_dbgCamInFlight >= 0) {
+            LOG_WARN("UE5_SetDebugCamera(%d): a toggle is being dispatched -- nothing sent", enable);
+            return Stark::QueuedToggleAnswer(s_dbgCamInFlight == 1, want);
+        }
+        if (s_dbgCamQueued.StillQueued()) {
+            LOG_WARN("UE5_SetDebugCamera(%d): an earlier %s is still queued -- nothing sent", enable,
+                     s_dbgCamQueuedWant ? "ON" : "OFF");
+            return Stark::QueuedToggleAnswer(s_dbgCamQueuedWant, want);
+        }
+        state = DbgCam_ReadState(cm, dcc);
+        if (state < 0) {
+            LOG_WARN("UE5_SetDebugCamera: no readable CheatManager/DebugCamera state");
+            return -1;
+        }
+        if ((state == 1) == want) {
+            LOG_INFO("UE5_SetDebugCamera: already %s — no-op", want ? "ON" : "OFF");
+            return state;
+        }
+        s_dbgCamInFlight = want ? 1 : 0;
     }
-    if ((state == 1) == want) {
-        LOG_INFO("UE5_SetDebugCamera: already %s — no-op", want ? "ON" : "OFF");
-        return state;
-    }
+    // Every exit from here clears the in-flight mark, and keeps a toggle the dispatch left queued.
+    struct InFlight {
+        bool want;
+        std::shared_future<int32_t> queued;
+        ~InFlight() {
+            std::lock_guard<std::mutex> lk(s_dbgCamMutex);
+            s_dbgCamInFlight = -1;
+            if (queued.valid()) {
+                s_dbgCamQueued.Record(queued);
+                s_dbgCamQueuedWant = want;
+            }
+        }
+    } inFlight{ want, {} };
 
     // Known state, opposite of desired → fire ToggleDebugCamera once.
     uintptr_t cmClass = UE5_GetObjectClass(cm);
@@ -1396,7 +1441,7 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
         LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera UFunction not found");
         return -1;
     }
-    int32_t r = UE5_CallProcessEvent(cm, ufunc, 0);
+    int32_t r = CallProcessEventRouted(cm, ufunc, 0, 0, false, &inFlight.queued);
     if (r != 0) {
         LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera ProcessEvent r=%d", r);
         // [W3-DEBUGCAM-QUEUED] A TIMED-OUT toggle (-5) stays queued and still runs: pass it through, so no caller reads
@@ -2152,9 +2197,15 @@ static void TryInstallGameThreadHook(bool force = false) {
     const bool fromTable       = s_peOffsetFromVersionTable.load(std::memory_order_relaxed);
     std::thread([peAddr, validatedOffset, fromTable]() {
         uint64_t before = Stark::GetHookFireCount();
+        const uint64_t gameBefore  = Stark::GetGameThreadFireCount();
+        const uint64_t otherBefore = Stark::GetOtherThreadFireCount();
         std::this_thread::sleep_for(std::chrono::milliseconds(1500));
         uint64_t after  = Stark::GetHookFireCount();
         uint64_t delta  = after - before;
+        // [STARK-DRAIN-OFF-GAME-THREAD] The same window checks the game-thread pick: a main-thread guess that stayed
+        // silent while other threads fired is given up before its gate times out a single invoke more.
+        Stark::ApplyGameThreadValidation(Stark::GetGameThreadFireCount() - gameBefore,
+                                         Stark::GetOtherThreadFireCount() - otherBefore);
         if (delta != 0) {
             // A pass CLEARS both pieces of failure state. Without this the idle-game
             // false positive recovers its detection and its hook but never its
@@ -2326,7 +2377,7 @@ static void ReportHookState(bool active) {
 // The body of UE5_CallProcessEventEx. dropIfAbandoned: Stark::ClaimRequest -- a queued request whose waiter times out
 // never runs later. [VND584-01]
 static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintptr_t params, uint32_t paramsSize,
-                                      bool dropIfAbandoned) {
+                                      bool dropIfAbandoned, std::shared_future<int32_t>* queuedOut) {
     if (!instance || !ufunc) return -1;
 
     // Lazy, race-safe one-time detection + (retryable) hook install (audit #3).
@@ -2339,7 +2390,7 @@ static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintp
         ReportHookState(true);
         LOG_INFO("UE5_CallProcessEvent: dispatching to game thread inst=0x%llX func=0x%llX",
                  (unsigned long long)instance, (unsigned long long)ufunc);
-        return Stark::EnqueueInvoke(instance, ufunc, params, paramsSize, dropIfAbandoned);
+        return Stark::EnqueueInvoke(instance, ufunc, params, paramsSize, dropIfAbandoned, queuedOut);
     }
 
     // Hook is down. Log the fallback ONCE per state transition, not once per

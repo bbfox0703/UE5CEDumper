@@ -311,13 +311,17 @@ end
 case('AA16: ftext is REFUSED, and says why')
 do
   -- Deliberately not treated like the containers. An all-zero FText is not an
-  -- empty FText -- it holds a TSharedRef the engine dereferences -- so passing one
-  -- is a crash, and silently zeroing it would be worse than refusing.
+  -- empty FText -- its text-data pointer is null, and a callee that reads it can
+  -- crash -- so silently zeroing it would be worse than refusing.
   resetWorld()
   local ok, e = invokeUFunction('C', 'F', 24,
                                 { { name = 't', type = 'ftext', offset = 0, size = 24, value = 0 } })
   eq(ok, false, 'refused')
   contains(e, 'ftext', 'the message names the type')
+  -- [FTEXT-REFUSAL-OVERCLAIM] the reason says what a run cannot falsify
+  check(type(e) == 'string' and not e:find('crashes the game', 1, true),
+        'the message does not claim a certain crash', e)
+  contains(e, 'a function that reads it can crash the game', 'the message names the case that does crash')
 end
 
 case('AA16: a genuinely unknown token is still refused')
@@ -342,6 +346,23 @@ do
   dirtyParams()
   ok = invokeUFunction('C', 'F', 32,
                        { { name = 'ref', type = 'lazy', offset = 0, size = 32, value = 0 } })
+  eq(ok, true, '0 (null) goes through')
+  eq(nonZeroParams(0, 32), 0, 'as an all-zero slot')
+end
+
+case('ASSETPTR-BAKED-TOKEN: an asset pointer is refused unless it is 0 -- its path is a string this cannot build')
+do
+  -- UE 4.11-4.17's TAssetPtr: the weak pair, then the path as an FString inside the game. As the int32 default the
+  -- helper wrote a typed value over the weak index; FIRE and the CE form refuse any value but empty.
+  resetWorld()
+  local ok, e = invokeUFunction('C', 'F', 32,
+                                { { name = 'map', type = 'asset', offset = 0, size = 32, value = 0x1234 } })
+  eq(ok, false, 'a value in an asset slot is refused')
+  contains(e, 'asset pointer', 'and the message says what it is')
+  resetWorld()
+  dirtyParams()
+  ok = invokeUFunction('C', 'F', 32,
+                       { { name = 'map', type = 'asset', offset = 0, size = 32, value = 0 } })
   eq(ok, true, '0 (null) goes through')
   eq(nonZeroParams(0, 32), 0, 'as an all-zero slot')
 end
@@ -579,43 +600,67 @@ function createTimer(_, enabled)
 end
 
 --- A memrec whose Active obeys CE's early-exit, so an immediate untick is a NO-OP here
---- exactly as it is in CE.
-local function makeCeRecord()
-  local st = { fActive = false }
-  return setmetatable({}, {
-    __index = function(_, k) return k == 'Active' and st.fActive or nil end,
+--- exactly as it is in CE. Unticking a ticked record runs its [DISABLE] block (`disableBody`) and,
+--- as CE's setActive does, keeps it ticked when that raises; disableWithoutExecute() unticks
+--- without running it. [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]
+local function makeCeRecord(disableBody)
+  local st = { fActive = false, disables = 0 }
+  local rec
+  rec = setmetatable({}, {
+    __index = function(_, k)
+      if k == 'Active' then return st.fActive end
+      if k == 'disableWithoutExecute' then return function() st.fActive = false end end
+      return nil
+    end,
     __newindex = function(_, k, v)
       if k ~= 'Active' then return end
       if v == st.fActive then return end          -- (1) setActive's early exit
+      if not v and disableBody then
+        st.disables = st.disables + 1
+        if not runAsCeChunk(disableBody, rec) then return end   -- a raising [DISABLE] keeps it ticked
+      end
       st.fActive = v
     end,
-  }), st
+  })
+  return rec, st
+end
+
+--- Fire every armed timer that has not destroyed itself: what CE's message loop does, after a chunk
+--- returns AND inside any modal the chunk opens.
+local function pumpTimers()
+  for _, t in ipairs(TIMERS) do
+    if t.Enabled and t.OnTimer and not t.destroyed then t.OnTimer(t) end
+  end
 end
 
 --- Run [ENABLE] the way CE really does: chunk first, THEN fActive := true, then let any
 --- deferred timer fire.
-local function runEnableLikeCe(body)
+local function runEnableLikeCe(body, disableBody)
   TIMERS = {}
-  local rec, st = makeCeRecord()
+  local rec, st = makeCeRecord(disableBody)
   local ok, err = runAsCeChunk(body, rec)
   st.fActive = true                                -- (4) CE ticks the record afterwards
-  for _, t in ipairs(TIMERS) do
-    if t.Enabled and t.OnTimer then t.OnTimer(t) end
-  end
+  pumpTimers()
+  TIMERS = {}                                      -- a later case's modal must not fire this case's timers
   return ok, err, st
 end
 
-function showMessage(s) PRINTS[#PRINTS + 1] = 'showMessage: ' .. tostring(s) end
+-- [INVOKE-SAMPLE-UNTICK-BEFORE-MODAL] showMessage is MODAL: its message loop fires the timers, while the chunk is
+-- still running and CE has not ticked the record. A timer armed before it lands as a no-op.
+function showMessage(s) PRINTS[#PRINTS + 1] = 'showMessage: ' .. tostring(s); pumpTimers() end
 
 case('AA31: the Debug Camera [ENABLE] sample unticks the record when the call returns -1')
 do
   resetWorld()
-  DLL = function() I32[MB + OFF_RESULT] = -1; I32[MB + OFF_STATUS] = 1 end   -- DLL reports error
+  local sent = 0
+  DLL = function() sent = sent + 1; I32[MB + OFF_RESULT] = -1; I32[MB + OFF_STATUS] = 1 end   -- DLL reports error
   local blocks = extractSampleBlocks(HELPER)
   check(#blocks >= 2, 'the header carries the [ENABLE]/[DISABLE] sample', '#blocks=' .. #blocks)
-  local ok, err, st = runEnableLikeCe(blocks[1])
+  local ok, err, st = runEnableLikeCe(blocks[1], blocks[2])
   check(ok, 'AA31: the [ENABLE] sample runs without raising', err)
   eq(st.fActive, false, 'AA31: a -1 result unticked the record -- AFTER CE ticked it')
+  eq(sent, 1, 'and the untick sent no OFF: the tick applied nothing to undo')
+  eq(st.disables, 0, 'the untick did not run [DISABLE]')
 end
 
 case('AA31: the sample unticks when the call RAISES (mailbox gone)')
@@ -623,7 +668,7 @@ do
   resetWorld()
   SYMBOLS['g_invokeMailbox'] = nil          -- findMailbox raises -> setDebugCamera raises
   local blocks = extractSampleBlocks(HELPER)
-  local ok, _, st = runEnableLikeCe(blocks[1])
+  local ok, _, st = runEnableLikeCe(blocks[1], blocks[2])
   check(ok, 'AA31: the sample catches the raise rather than propagating it')
   eq(st.fActive, false, 'AA31: a raised error also unticked the record')
   SYMBOLS['g_invokeMailbox'] = MB           -- restore for later cases
@@ -634,9 +679,68 @@ do
   resetWorld()
   DLL = function() I32[MB + OFF_RESULT] = 1; I32[MB + OFF_STATUS] = 1 end     -- camera ON
   local blocks = extractSampleBlocks(HELPER)
-  local ok, _, st = runEnableLikeCe(blocks[1])
+  local ok, _, st = runEnableLikeCe(blocks[1], blocks[2])
   check(ok, 'the sample runs')
   eq(st.fActive, true, 'AA31: a real success keeps the record ticked')
+end
+
+-- [DEBUGCAM-QUEUED-OFF-NOESCALATE] A queued OFF (-5) does not turn the camera off on stock UE 4.18-5.7, so the
+-- [DISABLE] sample must not untick silently over a camera that stays on: it says so UNGATED (print -- an untick puts
+-- no modal over the game) and RAISES, because CE's TMemoryRecord.setActive sets fActive only when the script succeeds.
+-- The generator's [DISABLE] already does; the copy-me sample still reported only a failed pcall.
+case('DEBUGCAM-QUEUED-OFF-NOESCALATE: the [DISABLE] sample raises and says so on a queued OFF (-5)')
+do
+  resetWorld()
+  UE5_DEBUG = nil                            -- a default session: a gated line would be no report at all
+  DLL = function() I32[MB + OFF_RESULT] = -5; I32[MB + OFF_STATUS] = 1 end   -- the toggle timed out, stays queued
+  local blocks = extractSampleBlocks(HELPER)
+  local ok = runAsCeChunk(blocks[2], makeCeRecord())
+  eq(ok, false, 'the [DISABLE] sample raises, so CE keeps the record ticked over a camera still on')
+  local said = table.concat(PRINTS, '\n')
+  contains(said, 'did not complete', 'and the reason is printed ungated')
+  check(not said:find('showMessage', 1, true), 'no modal on an untick', said)
+end
+
+-- [DBGCAM-OFF-OVER-QUEUED-ON] -6: an earlier toggle of the OTHER direction is still queued, so this one sent nothing.
+-- An untick there must not untick silently: the queued ON will still turn the camera on.
+case('DBGCAM-OFF-OVER-QUEUED-ON: the [DISABLE] sample raises and says so when the OFF was not sent (-6)')
+do
+  resetWorld()
+  UE5_DEBUG = nil
+  DLL = function() I32[MB + OFF_RESULT] = -6; I32[MB + OFF_STATUS] = 1 end   -- an earlier ON is still queued
+  local blocks = extractSampleBlocks(HELPER)
+  local ok = runAsCeChunk(blocks[2], makeCeRecord())
+  eq(ok, false, 'the [DISABLE] sample raises, so CE keeps the record ticked')
+  local said = table.concat(PRINTS, '\n')
+  contains(said, 'not sent', 'and says the OFF was not sent, ungated')
+  check(not said:find('showMessage', 1, true), 'no modal on an untick', said)
+end
+
+case('DBGCAM-OFF-OVER-QUEUED-ON: the [ENABLE] sample unticks and says why when the ON was not sent (-6)')
+do
+  resetWorld()
+  local sent = 0
+  DLL = function() sent = sent + 1; I32[MB + OFF_RESULT] = -6; I32[MB + OFF_STATUS] = 1 end   -- an OFF is queued
+  local blocks = extractSampleBlocks(HELPER)
+  local ok, err, st = runEnableLikeCe(blocks[1], blocks[2])
+  check(ok, 'the sample runs', err)
+  eq(st.fActive, false, 'nothing was sent, so the record is unticked')
+  -- [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] An untick that ran [DISABLE] sent an OFF over the queued one; the DLL
+  -- answered -5 and [DISABLE] raised, so the record stayed ticked after "tick again".
+  eq(sent, 1, 'the untick sent no OFF')
+  eq(st.disables, 0, 'the untick did not run [DISABLE]')
+  contains(table.concat(PRINTS, '\n'), 'not sent', 'and the message says the ON was not sent')
+end
+
+case('DEBUGCAM-QUEUED-OFF-NOESCALATE: a completed OFF (state 0) unticks cleanly and quietly -- the control')
+do
+  resetWorld()
+  UE5_DEBUG = nil
+  DLL = function() I32[MB + OFF_RESULT] = 0; I32[MB + OFF_STATUS] = 1 end    -- camera OFF
+  local blocks = extractSampleBlocks(HELPER)
+  local ok, err = runAsCeChunk(blocks[2], makeCeRecord())
+  check(ok, 'a completed OFF does not raise', err)
+  eq(#PRINTS, 0, 'and prints nothing')
 end
 
 -- ============================================================

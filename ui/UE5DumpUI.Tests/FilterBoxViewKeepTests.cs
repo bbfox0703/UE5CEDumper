@@ -307,6 +307,67 @@ public class FilterBoxViewKeepTests
             });
     }
 
+    // [VND584-04] Live Walker's Functions list asks for the interface half too, so a function the class gets only through
+    // an interface -- which FIRE reaches by name -- is on the list it is fired from.
+    private sealed class IfaceFuncsStub : StubDumpService
+    {
+        public override Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
+            => Task.FromResult(new List<FunctionInfoModel> { new() { Name = "ReceiveTick", Address = "0x7002" } });
+        public override Task<List<FunctionInfoModel>> WalkFunctionsWithInterfacesAsync(string addr, CancellationToken ct = default)
+            => Task.FromResult(new List<FunctionInfoModel>
+            {
+                new() { Name = "ReceiveTick", Address = "0x7002" },
+                new() { Name = "DoFoo", Address = "0x7004", ViaInterface = "FooInterface" },
+            });
+    }
+
+    [Fact]
+    public async Task LiveWalker_Functions_ListTheOnesAnInterfaceBrings()
+    {
+        var dump = new IfaceFuncsStub();
+        dump.RegisterStruct("0x1000", new InstanceWalkResult
+        {
+            Address = "0x1000", Name = "Pawn_0", ClassName = "Pawn", ClassAddr = "0x5000",
+            Fields = new List<LiveFieldValue> { new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x100, Size = 4 } },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
+
+        Assert.Contains(vm.Functions, f => f.Name == "DoFoo" && f.ViaInterface == "FooInterface");
+    }
+
+    // [VND584-04] The Name column shows "(via FooInterface)"; the filter box must find what it shows (term-level AND,
+    // field-level OR, ui/CLAUDE.md), so one interface's functions can be listed by its name.
+    [Fact]
+    public async Task LiveWalker_FunctionFilter_FindsTheInterfaceItShows()
+    {
+        var dump = new IfaceFuncsStub();
+        dump.RegisterStruct("0x1000", new InstanceWalkResult
+        {
+            Address = "0x1000", Name = "Pawn_0", ClassName = "Pawn", ClassAddr = "0x5000",
+            Fields = new List<LiveFieldValue> { new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x100, Size = 4 } },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
+
+        vm.FunctionFilter = "fooint";
+
+        var only = Assert.Single(vm.Functions);
+        Assert.Equal("DoFoo", only.Name);
+    }
+
+    // [VND584-04] The wiring no VM test reaches: the grid shows DisplayName (sorting on the same path), and the DLL's
+    // walk_functions appends the interface half only on include_interfaces and names each "interface".
+    [Fact]
+    public void LiveWalker_FunctionsGrid_ShowsDisplayName_AndTheDllAnswersIncludeInterfaces()
+    {
+        var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/LiveWalkerPanel.axaml"));
+        Assert.Contains("Binding=\"{Binding DisplayName}\" SortMemberPath=\"DisplayName\"", axaml);
+        var fern = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
+        Assert.Contains("request.value(\"include_interfaces\", false)", fern);
+        Assert.Contains("fj[\"interface\"] = Ubel::GetName(f.viaInterface)", fern);
+    }
+
     private static async Task<Box> LiveWalkerFunctionsBox()
     {
         var dump = new FuncsStub();

@@ -517,9 +517,9 @@ public partial class SnapshotViewModel : ViewModelBase
         _        => 0,
     };
 
-    /// <summary>Per-game DB quota presets. "Unlimited" disables eviction.</summary>
-    public IReadOnlyList<string> QuotaOptions { get; } =
-        new[] { "512 MB", "1 GB", "2 GB", "5 GB", "Unlimited" };
+    /// <summary>Per-game DB quota choices: the auto-quota raise's own presets, then "Unlimited", which disables
+    /// eviction. A persisted quota that is none of them is listed as itself (built once, in the constructor).</summary>
+    public IReadOnlyList<string> QuotaOptions { get; }
 
     public ObservableCollection<SnapshotMeta> Snapshots { get; } = new();
 
@@ -531,7 +531,7 @@ public partial class SnapshotViewModel : ViewModelBase
     /// loop isn't running (which owns capturing while enabled).</summary>
     public bool CanManualCapture => CanCapture && !AutoSnapshotEnabled;
 
-    private int QuotaMb => _gate?.SnapshotQuotaMb ?? LabelToMb(SelectedQuotaLabel);
+    private int QuotaMb => _gate?.SnapshotQuotaMb ?? LabelToMb(SelectedQuotaLabel) ?? 1024;
     private long QuotaBytes => QuotaMb <= 0 ? 0 : (long)QuotaMb * 1024 * 1024;
 
     public SnapshotViewModel(IDumpService dump, ISnapshotStore store, ILoggingService log,
@@ -549,36 +549,57 @@ public partial class SnapshotViewModel : ViewModelBase
         };
         _platform = platform;
         _globalMemory = new KeywordSearchMemory(() => (DiffGlobalFilter, DiffRows.Count > 0));
+        QuotaOptions = BuildQuotaOptions(_gate?.SnapshotQuotaMb);
         if (_gate != null) _selectedQuotaLabel = MbToLabel(_gate.SnapshotQuotaMb);
         // Don't list yet — the per-game DB isn't known until a game connects.
     }
 
     partial void OnSelectedQuotaLabelChanged(string value)
     {
-        if (_gate != null) _gate.SnapshotQuotaMb = LabelToMb(value);
+        // [W1-QUOTA-UNLIMITED] A label that names no quota (a combo that lost its item writes null) leaves the quota
+        // alone: mapping an unknown label to a default is how a hand-edited quota got lowered.
+        if (_gate != null && LabelToMb(value) is int mb) _gate.SnapshotQuotaMb = mb;
         ShowUsageBar = QuotaMb > 0;
         _ = UpdateUsageAsync();
     }
 
-    private static int LabelToMb(string label) => label switch
+    // [W1-QUOTA-UNLIMITED] The presets ARE AutoSnapshotPlanner.QuotaPresetBytes: ApplyAutoQuota shows the raise's pick
+    // through these labels, so a preset the combo did not list could not be shown, and the write-back would lower it.
+    // A persisted quota that is not a preset (a hand-edited experimental.json) gets its own entry, in size order.
+    private static IReadOnlyList<string> BuildQuotaOptions(int? persistedMb)
     {
-        "512 MB"    => 512,
-        "1 GB"      => 1024,
-        "2 GB"      => 2048,
-        "5 GB"      => 5120,
-        "Unlimited" => 0,
-        _           => 1024,
-    };
+        var mbs = AutoSnapshotPlanner.QuotaPresetBytes.Select(b => (int)(b / (1024L * 1024))).ToList();
+        if (persistedMb is int mb && mb > 0 && !mbs.Contains(mb))
+        {
+            mbs.Add(mb);
+            mbs.Sort();
+        }
+        var labels = mbs.Select(MbToLabel).ToList();
+        labels.Add(MbToLabel(0));
+        return labels;
+    }
 
-    private static string MbToLabel(int mb) => mb switch
+    // MbToLabel and LabelToMb are inverses for every quota, not only the presets: a label that rounded a quota to the
+    // nearest preset would write the rounded value back.
+    private static int? LabelToMb(string? label)
     {
-        512  => "512 MB",
-        1024 => "1 GB",
-        2048 => "2 GB",
-        5120 => "5 GB",
-        0    => "Unlimited",
-        _    => "1 GB",
-    };
+        if (label == "Unlimited") return 0;
+        var parts = label?.Split(' ');
+        if (parts is not { Length: 2 }
+            || !int.TryParse(parts[0], NumberStyles.None, CultureInfo.InvariantCulture, out int n) || n <= 0)
+            return null;
+        return parts[1] switch
+        {
+            "MB" => n,
+            "GB" => n * 1024,
+            _    => null,
+        };
+    }
+
+    private static string MbToLabel(int mb) =>
+        mb <= 0           ? "Unlimited"
+        : mb % 1024 == 0  ? $"{(mb / 1024).ToString(CultureInfo.InvariantCulture)} GB"
+        : $"{mb.ToString(CultureInfo.InvariantCulture)} MB";
 
     public void SetEngineState(EngineState state)
     {
@@ -1638,8 +1659,10 @@ public partial class SnapshotViewModel : ViewModelBase
             if (ulong.TryParse(hex, NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var baseAddr))
             {
                 ulong addr = baseAddr + (ulong)row.PropOffset;
-                await _platform.CopyToClipboardAsync($"{addr:X}");
-                DiffStatusText = $"Copied {addr:X}  ({row.ClassName}::{row.PropName})";
+                var leaf = $"{addr:X}";
+                bool copied = await _platform.CopyToClipboardAsync(leaf);
+                DiffStatusText = copied ? $"Copied {leaf}  ({row.ClassName}::{row.PropName})"
+                                        : ClipboardConvenience.NotCopiedText(leaf);
             }
         }
         catch (Exception ex)

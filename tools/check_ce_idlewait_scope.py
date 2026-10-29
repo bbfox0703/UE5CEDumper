@@ -177,7 +177,7 @@ def main() -> int:
         print('\nThe cmd store below it is emitted for BOTH blocks, so the block that '
               'misses the wait\nwrites the mailbox while another command may still be in '
               'flight. Emit the call\nunconditionally and pass '
-              '`enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn`, '
+              '`enable ? MailboxTimeout.UntickWithoutDisableAndReturn : MailboxTimeout.SilentReturn`, '
               'as\nMovementScriptGenerator and TimeDilationScriptGenerator do.')
         return 1
 
