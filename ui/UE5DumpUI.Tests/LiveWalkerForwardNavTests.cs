@@ -1308,6 +1308,28 @@ public class LiveWalkerForwardNavTests
     }
 
     [Fact]
+    public async Task FindRefs_OnAContainerView_UnderALocateSpinesElementCrumb_NamesTheOwner_NotTheIndex()
+    {
+        // Review of 4159e0e7..f092ec12: a Locate spine labels the crumb of an object-array hop "[0]" (its address is
+        // the object reached), so the crumb before a container drilled there names an index, not the owner.
+        var (dump, vm, _) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);
+        vm.Breadcrumbs.Clear();
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Other, Label = "Other_0", FieldName = "Other_0" });
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Owner, Label = "[0]", FieldName = "[0]", IsPointerDeref = true });
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Elem, Label = "Elem_0", FieldName = "Elem_0", IsPointerDeref = true });
+        await vm.GoBackCommand.ExecuteAsync(null);       // walks the "[0]" crumb's object: the owner
+        Assert.Equal(Owner, vm.CurrentAddress);
+        Assert.Equal("Owner_0", vm.CurrentObjectName);   // the owner's own view names it
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "Gear"));
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.Equal(Owner, dump.RefsScannedAt);
+        Assert.Equal("References to Owner_0 (none found)", vm.ReferencesHeader);
+    }
+
+    [Fact]
     public async Task FindRefs_OnAnObject_StillNamesTheObject()
     {
         var (dump, vm, _) = OwnerWalker();
