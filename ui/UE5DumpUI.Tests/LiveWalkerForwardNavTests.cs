@@ -1424,6 +1424,35 @@ public class LiveWalkerForwardNavTests
     }
 
     [Fact]
+    public async Task CopyAddr_ThatCopies_TakesDownTheDefinitionViewsRefusal_Too()
+    {
+        // Review round 2: the definition-view refusal returned before _addrRefusal was set, so an Addr that copied once
+        // the instance's walk landed left "this is a type definition" up over it.
+        const string Definition = "0xDEF00";
+        var (dump, vm, platform) = OwnerWalker();
+        dump.RegisterStruct(Definition, new InstanceWalkResult
+        {
+            Address = Definition, Name = "FLootRow", ClassName = "ScriptStruct", IsDefinition = true,
+            Fields = new List<LiveFieldValue> { new() { Name = "Damage", TypeName = "IntProperty", Offset = 0x10, Size = 4 } },
+        });
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);
+        await vm.NavigateToAddressCommand.ExecuteAsync(Definition);   // re-roots, keeping the spine for Back
+        var definitionRow = vm.Fields.Single();
+        var otherWalk = dump.GateWalk(Other);
+        var back = vm.GoBackCommand.ExecuteAsync(null);                // the definition's rows stay until it lands
+        await vm.CopyFieldAddressCommand.ExecuteAsync(definitionRow);
+        Assert.Equal(LiveWalkerViewModel.DefinitionNoDataText("Addr"), vm.StatusText);
+        dump.UngateWalk(Other);
+        otherWalk.SetResult(OwnerStub.Obj(Other, "Other_0", "BP_Other_C", OtherCls));
+        await back;
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single());
+
+        Assert.Contains("30008", platform.LastClipboard);
+        Assert.DoesNotContain("type definition", vm.StatusText);
+    }
+
+    [Fact]
     public async Task CopyAddr_OnAnArrayRowWithoutAnAddress_CopiesNothing_AndSaysWhy()
     {
         // A guard: no live reply has been seen to send an array's elements without its data pointer.
