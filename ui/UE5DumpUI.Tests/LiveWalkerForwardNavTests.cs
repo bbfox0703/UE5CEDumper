@@ -1424,6 +1424,29 @@ public class LiveWalkerForwardNavTests
     }
 
     [Fact]
+    public async Task CopyAddr_OnARowsGridLeftOverByAFailedReRoot_CopiesNothing()
+    {
+        // Review round 3: a re-root that fails after clearing the spine leaves the rows with no crumb at all, so neither
+        // "the view is a container" nor "the spine has left it" could be told, and the fallback copied the table + the
+        // row's offset. Every row a walk renders carries its address, so that fallback never had a right answer.
+        var (_, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        var rows = OwnerStub.TableRows();
+        rows.Rows[0] = new() { SparseIndex = 0, RowName = "Sword (null)", DataAddr = "0x0" };
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        rows);
+        var nullRow = vm.Fields.Single();
+        await vm.NavigateToAddressCommand.ExecuteAsync("not-an-address");   // fails after clearing the spine
+        Assert.Empty(vm.Breadcrumbs);
+        Assert.Same(nullRow, vm.Fields.Single());                           // the rows stay, rootless
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(nullRow);
+
+        Assert.Null(platform.LastClipboard);                                 // was 0x40008
+        Assert.StartsWith("⚠ Addr: nothing done — no address was read for this row", vm.StatusText);
+    }
+
+    [Fact]
     public async Task CopyAddr_ThatCopies_TakesDownTheDefinitionViewsRefusal_Too()
     {
         // Review round 2: the definition-view refusal returned before _addrRefusal was set, so an Addr that copied once
