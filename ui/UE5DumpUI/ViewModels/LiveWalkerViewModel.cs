@@ -5952,6 +5952,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 hexAddr = field.FieldAddress;
             }
+            else if (IsRowOfALevelAlreadyLeft(field))
+            {
+                // The fallback below pairs the view's address with the row's offset: on a row of a level the spine has
+                // left (Back, a jump whose walk has not landed or failed), that address is another object's.
+                RefuseRowOfALevelAlreadyLeft(field, AddrLabel);
+                return;
+            }
             else if (CurrentCrumb is { IsContainerView: true } || field.HasNoParentOffset)
             {
                 // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Neither offset counts from the object shown: a container row's
