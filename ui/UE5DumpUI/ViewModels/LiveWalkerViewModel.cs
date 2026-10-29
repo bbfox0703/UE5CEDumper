@@ -5969,22 +5969,24 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 hexAddr = field.FieldAddress;
             }
+            else if ((IsRowOfALevelAlreadyLeft(field) ? _renderedCrumb : CurrentCrumb) is { IsContainerView: true }
+                     || field.HasNoParentOffset)
+            {
+                // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Neither offset counts from the object shown: a container row's
+                // counts from the container's buffer (a DataTable row whose pointer reads null has nothing else), and
+                // an actor row on the GWorld view has no slot in the world at all. Judged by the view the row was drawn
+                // for -- the spine may have left it -- and before the refusal below: this holds at every level.
+                StatusText = _addrRefusal = NoRowAddressText(AddrLabel);
+                _log.Info($"{AddrLabel} refused: {field.Name} has no address of its own (offset 0x{field.Offset:X} " +
+                          $"does not count from {CurrentAddress})");
+                return;
+            }
             else if (IsRowOfALevelAlreadyLeft(field))
             {
                 // The fallback below pairs the view's address with the row's offset: on a row of a level the spine has
                 // left (Back, a jump whose walk has not landed or failed), that address is another object's.
                 RefuseRowOfALevelAlreadyLeft(field, AddrLabel);
                 _addrRefusal = StatusText;
-                return;
-            }
-            else if (CurrentCrumb is { IsContainerView: true } || field.HasNoParentOffset)
-            {
-                // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Neither offset counts from the object shown: a container row's
-                // counts from the container's buffer (a DataTable row whose pointer reads null has nothing else), and
-                // an actor row on the GWorld view has no slot in the world at all.
-                StatusText = _addrRefusal = NoRowAddressText(AddrLabel);
-                _log.Info($"{AddrLabel} refused: {field.Name} has no address of its own (offset 0x{field.Offset:X} " +
-                          $"does not count from {CurrentAddress})");
                 return;
             }
             else if (!string.IsNullOrEmpty(CurrentAddress))
