@@ -1996,12 +1996,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 }
 
                 var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 1);
-                string instanceAddr = "";
+                string instanceAddr = "", instanceClassAddr = "";
                 foreach (var inst in instances.Instances)
                 {
                     if (!inst.Name.StartsWith("Default__", StringComparison.Ordinal))
                     {
                         instanceAddr = inst.Address;
+                        instanceClassAddr = inst.ClassAddress;
                         break;
                     }
                 }
@@ -2016,7 +2017,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     className, funcName, inputParams, funcMatch.Parameters.ToList(), funcMatch.ParmsSize,
                     instanceAddr, _dump, _engineState?.UEVersion ?? 0,
                     aobMaker: _aobMaker, platform: _platform,
-                    mode: Views.InvokeDialogMode.PipeInvoke);
+                    mode: Views.InvokeDialogMode.PipeInvoke,
+                    // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The dialog keeps this address across FIREs: each is refused
+                    // if the object there is of another class by then.
+                    expectClassAddr: instanceClassAddr);
                 var result = await dialog.ShowDialog<string?>(owner);
                 StatusText = result == "ok"
                     ? $"exec {className}::{funcName} dialog closed"

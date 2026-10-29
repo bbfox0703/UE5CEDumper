@@ -58,6 +58,10 @@ public sealed class InvokeParamDialog : Window
     private readonly string _className;
     private readonly string _funcName;
     private readonly string _instanceAddr;
+    /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The class the function list was read from, sent with every FIRE:
+    /// the dialog stays open across FIREs, and the DLL refuses when the object at <see cref="_instanceAddr"/> is of
+    /// another class by then (freed, its slot reused). Null = no check.</summary>
+    private readonly string? _expectClassAddr;
     private readonly IDumpService _dump;
     private readonly IAobMakerBridge? _aobMaker;
     private readonly IPlatformService? _platform;
@@ -96,8 +100,10 @@ public sealed class InvokeParamDialog : Window
         int ueVersion = 0,
         IAobMakerBridge? aobMaker = null,
         IPlatformService? platform = null,
-        InvokeDialogMode mode = InvokeDialogMode.PipeInvoke)
+        InvokeDialogMode mode = InvokeDialogMode.PipeInvoke,
+        string? expectClassAddr = null)
     {
+        _expectClassAddr = string.IsNullOrEmpty(expectClassAddr) ? null : expectClassAddr;
         _inputParams = inputParams;
         _allParams = allParams;
         // The chain's end, not the tail's ParmsSize: this sizes the pipe buffer, bounds the params written into it and
@@ -688,7 +694,8 @@ public sealed class InvokeParamDialog : Window
                 instanceAddr: _instanceAddr,
                 parmsSize: _parmsSize,
                 paramsHex: paramsHex,
-                stringParams: stringParams.Count > 0 ? stringParams : null);
+                stringParams: stringParams.Count > 0 ? stringParams : null,
+                expectClassAddr: _expectClassAddr);
 
             // Display results
             ShowResult(result);

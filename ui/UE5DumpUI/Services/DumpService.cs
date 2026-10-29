@@ -3632,6 +3632,10 @@ public sealed class DumpService : IDumpService
         if (directCall)
             req["direct_call"] = true;
 
+        // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Absent = no check, as for every caller that sends none.
+        if (!string.IsNullOrEmpty(expectClassAddr))
+            req["expect_class_addr"] = expectClassAddr;
+
         // String INPUT params: sent as descriptors so the DLL builds each
         // by-value FString in the game process (its Data pointer must be a
         // valid game-process address; the 16-byte slots stay zeroed in

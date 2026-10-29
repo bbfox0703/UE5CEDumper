@@ -7236,7 +7236,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 FunctionsClassName, func.Name, inputParams, func.Parameters.ToList(), func.ParmsSize,
                 CurrentAddress, _dump, _engineState?.UEVersion ?? 0,
                 aobMaker: _aobMaker, platform: _platform,
-                mode: Views.InvokeDialogMode.PipeInvoke);
+                mode: Views.InvokeDialogMode.PipeInvoke,
+                // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The class these rows were read from: the dialog outlives this
+                // view, and its every FIRE is refused if the object at the address is of another class by then.
+                expectClassAddr: _currentClassAddr);
 
             var dialogResult = await dialog.ShowDialog<string?>(owner);
 
