@@ -1424,6 +1424,22 @@ public class LiveWalkerForwardNavTests
     }
 
     [Fact]
+    public async Task TheTablesRowMapRow_CarriesTheRowMapsAddress_SoCopyAddrCopiesIt()
+    {
+        // Review round 4: f4d19e45 refused every row without an address, and the RowMap row a table's own view appends
+        // after its walk had none -- the removed fallback's table + RowMapOffset was its right address (the RowMap's
+        // TSparseArray, where the DLL reads the rows). The row lands through the UI dispatcher, so its builder is
+        // what is held here.
+        var rowMap = LiveWalkerViewModel.SyntheticRowMapField(OwnerStub.TableRows(), Table);
+        Assert.Equal("0x40030", rowMap.FieldAddress);   // the table + RowMapOffset 0x30: the Address column, Hex, +CE
+
+        var (_, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        await vm.CopyFieldAddressCommand.ExecuteAsync(rowMap);
+        Assert.Contains("40030", platform.LastClipboard);
+    }
+
+    [Fact]
     public async Task CopyAddr_OnARowsGridLeftOverByAFailedReRoot_CopiesNothing()
     {
         // Review round 3: a re-root that fails after clearing the spine leaves the rows with no crumb at all, so neither

@@ -7702,7 +7702,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// into its rows, and the row view's <see cref="BreadcrumbItem.ContainerField"/>. A row view's crumb holds
     /// this shape however the view was reached ([W4-BOOKMARK-DT], [WALK-REFRESH-SCALAR-SHRINK]), so whatever
     /// reads the crumb's field sees one shape.</summary>
-    internal static LiveFieldValue SyntheticRowMapField(DataTableWalkResult dtResult) => new()
+    internal static LiveFieldValue SyntheticRowMapField(DataTableWalkResult dtResult, string? tableAddr = null) => new()
     {
         Name = "RowMap",
         TypeName = "DataTableRows",
