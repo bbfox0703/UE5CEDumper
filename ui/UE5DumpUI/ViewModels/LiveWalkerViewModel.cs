@@ -4496,7 +4496,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         IsPointerDeref = src.IsPointerDeref,
         ScrollHintFieldName = src.ScrollHintFieldName,
         IsContainerView = true,
-        ContainerField = SyntheticRowMapField(dt),
+        ContainerField = SyntheticRowMapField(dt, src.Address),
         IsDataTableView = true,
         DataTableData = dt,
         OwnerClassAddr = src.OwnerClassAddr,
@@ -5749,7 +5749,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     containerBc.DataTableData = dtResult;
                     // [WALK-REFRESH-SCALAR-SHRINK] The crumb and the status line follow this reading, as the drill's
                     // did. The crumb's RowMap field is the drill's shape (SyntheticRowMapField), rebuilt from it.
-                    containerBc.ContainerField = SyntheticRowMapField(dtResult);
+                    containerBc.ContainerField = SyntheticRowMapField(dtResult, containerBc.Address);
                     containerBc.Label = DataTableViewLabel(dtResult);
                     var dtStatus = ContainerTruncation.FixedCapStatusLine(dtResult.Rows.Count, dtResult.RowCount, "rows");
                     if (dtStatus.Length > 0) StatusText = dtStatus;
@@ -7704,8 +7704,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// this shape however the view was reached ([W4-BOOKMARK-DT], [WALK-REFRESH-SCALAR-SHRINK]), so whatever
     /// reads the crumb's field sees one shape.</summary>
     /// <remarks>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] With <paramref name="tableAddr"/>, the row carries the RowMap's
-    /// own address -- the table + RowMapOffset, its TSparseArray, where the DLL reads the rows -- as every row a walk
-    /// renders carries its own: Copy Addr refuses a row without one, and Hex / +CE need it.</remarks>
+    /// own address -- the table + RowMapOffset, its TSparseArray, where the DLL reads the rows -- as every instance row
+    /// a walk renders carries its own: Copy Addr refuses a row without one, and Hex / +CE need it. Every caller passes
+    /// the table's address, so the crumb's field has that one shape too.</remarks>
     internal static LiveFieldValue SyntheticRowMapField(DataTableWalkResult dtResult, string? tableAddr = null) => new()
     {
         Name = "RowMap",
