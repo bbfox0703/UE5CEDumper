@@ -8419,6 +8419,18 @@ static void Test_Renge_InvokeTargetIsExpected() {
     EXPECT("another class at the address: REFUSED",     !Renge::InvokeTargetIsExpected(0xC100, 0xC300));
     EXPECT("no expectation (every older caller): invoked, as before",
            Renge::InvokeTargetIsExpected(0, 0xC300));
+
+    // The refusal's text. The DLL knows only that the class pointer at the address changed: the slot may hold another
+    // object or none, so the text names no "class it is now". And re-opening the dialog from a view that was not walked
+    // again sends the same address and class, so the remedy is to look the object up again (in the Live Walker, Refresh).
+    const std::string text = Renge::InvokeTargetRefusalText("0x21717BB9A00", "BP_Enemy_C");
+    EXPECT("refusal: keeps the prefix callers match",        text.rfind("Not invoked: the object at 0x21717BB9A00", 0) == 0);
+    EXPECT("refusal: names the class it was opened on",      text.find("BP_Enemy_C") != std::string::npos);
+    EXPECT("refusal: claims no class the slot has now",      text.find("is now") == std::string::npos);
+    EXPECT("refusal: says to look it up again (Refresh)",    text.find("Refresh") != std::string::npos);
+    const std::string unnamed = Renge::InvokeTargetRefusalText("0x1000", "");
+    EXPECT("refusal: an unreadable expected name leaves no blank", unnamed.find("the  ") == std::string::npos
+                                                                && unnamed.find(" ()") == std::string::npos);
 }
 
 // B46 — HexToBytes could not fail, so write_mem could not report a bad pattern.

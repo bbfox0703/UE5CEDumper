@@ -371,6 +371,12 @@ inline bool InvokeTargetIsExpected(uintptr_t expectedClass, uintptr_t liveClass)
     return expectedClass == 0 || expectedClass == liveClass;
 }
 
+// [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The error InvokeTargetIsExpected's refusal answers with.
+inline std::string InvokeTargetRefusalText(const std::string& instanceAddr, const std::string& expectedClassName) {
+    return "Not invoked: the object at " + instanceAddr + " is now another class's, not the " + expectedClassName
+         + " this was opened on. Open it again.";
+}
+
 // Build an error response
 inline nlohmann::json MakeError(int id, const std::string& errorMsg) {
     return {
