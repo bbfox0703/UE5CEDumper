@@ -1137,6 +1137,149 @@ public class LiveWalkerForwardNavTests
         Assert.StartsWith("Array<", vm.CurrentClassName);
         AssertShowsTheOwner(vm);
     }
+
+    // ── The actions that need a class NAME name the owner's ── [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]
+    //
+    // A container view lists its owner's functions and fires them at the owner's address, while its header names the
+    // container: Array<ObjectProperty>, Map<…>, Set<…>, DataTable<FLootRow>. INV and AA(Baked) bake a class to find an
+    // instance of, and so does the PIPE dialog's Copy AA Script; they took the header's name, which no class has, so the
+    // script found no instance in CE.
+
+    /// <summary>The CE record a script action copied when no AOBMaker is connected: its description and its script.</summary>
+    private static (string Description, string Script) CopiedAaRecord(MockPlatformService platform)
+    {
+        var entry = System.Xml.Linq.XDocument.Parse(platform.LastClipboard!).Descendants("CheatEntry").Single();
+        return ((string)entry.Element("Description")!, (string)entry.Element("AssemblerScript")!);
+    }
+
+    /// <summary>INV and AA(Baked) on <paramref name="function"/> bake <paramref name="cls"/> as the class to find an
+    /// instance of, and PIPE would hand its dialog the same name.</summary>
+    private static async Task AssertScriptsName(LiveWalkerViewModel vm, MockPlatformService platform, string cls,
+                                                string function)
+    {
+        var row = vm.Functions.Single(f => f.Name == function);
+        await vm.GenerateInvokeScriptCommand.ExecuteAsync(row);
+        var (description, script) = CopiedAaRecord(platform);
+        Assert.Contains($"local OWNER_CLASS  = '{cls}'", script);
+        Assert.Equal($"\"Invoke: {cls}::{function}\"", description);
+        await vm.CopyBakedScriptCommand.ExecuteAsync(row);   // no inputs and no return: baked at once, no dialog
+        Assert.Contains($"invokeUFunction('{cls}', ", CopiedAaRecord(platform).Script);
+        Assert.Equal(cls, vm.FunctionsClassName);   // PIPE's dialog title and its Copy AA Script (no window headless)
+    }
+
+    [Theory]
+    [InlineData("Gear", "Array<")]
+    [InlineData("Loot", "Map<")]
+    [InlineData("Pals", "Set<")]
+    public async Task OnAContainerView_TheScriptsNameTheOwnersClass_NotTheViewsLabel(string container, string label)
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await OnOwnersContainer(vm, container);
+
+        Assert.StartsWith(label, vm.CurrentClassName);   // the header still names the container
+        await AssertScriptsName(vm, platform, "BP_Owner_C", "OwnerFn");
+    }
+
+    [Fact]
+    public async Task Back_IntoAContainerView_TheScriptsNameTheOwnersClass_NotTheElementJustLeft()
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());
+        await AssertScriptsName(vm, platform, "BP_Elem_C", "ElemFn");   // the element's own view names its own class
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        AssertShowsTheOwner(vm);
+        await AssertScriptsName(vm, platform, "BP_Owner_C", "OwnerFn");
+    }
+
+    [Fact]
+    public async Task OnADataTableRowsView_TheScriptsNameTheTablesClass()
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        OwnerStub.TableRows());
+
+        Assert.StartsWith("DataTable<", vm.CurrentClassName);
+        await AssertScriptsName(vm, platform, "DataTable", "TableFn");
+    }
+
+    [Fact]
+    public async Task AContainerViewThatLearnsItsOwnerFromAWalk_LearnsItsOwnersClassName_Too()
+    {
+        // A Locate spine or a bookmark file: the container crumb knows only the owner's address.
+        var (_, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Elem);
+        vm.Breadcrumbs.Clear();
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Owner, Label = "Owner_0", FieldName = "Owner_0" });
+        vm.Breadcrumbs.Add(SyntheticGearCrumb());
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        AssertShowsTheOwner(vm);
+        await AssertScriptsName(vm, platform, "BP_Owner_C", "OwnerFn");
+    }
+
+    [Fact]
+    public async Task AContainerViewRehydratedOnBack_LearnsItsOwnersClassName_Too()
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Elem);
+        vm.Breadcrumbs.Clear();
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Owner, Label = "Owner_0", FieldName = "Owner_0" });
+        vm.Breadcrumbs.Add(SyntheticGearCrumb());
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = Elem, Label = "Elem_0", FieldName = "[0]", IsPointerDeref = true });
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        AssertShowsTheOwner(vm);
+        await AssertScriptsName(vm, platform, "BP_Owner_C", "OwnerFn");
+    }
+
+    [Fact]
+    public async Task ABookmarkedContainerView_ReResolvedFromGWorld_TheScriptsNameTheOwnersClass()
+    {
+        var (dump, vm, platform) = OwnerWalker();
+        dump.RegisterStruct("0xA8B0", new InstanceWalkResult
+        {
+            Name = "World", ClassName = "World", Address = "0xA8B0",
+            Fields = new() { new() { Name = "OwnerRef", Offset = 0x30, TypeName = "ObjectProperty", PtrAddress = Owner } },
+        });
+        var slot = vm.BookmarkSlots[0];
+        slot.SavedClassName = "Array<ObjectProperty>";
+        slot.SavedObjectName = "Gear";
+        slot.SavedAddress = "0xDEAD0";
+        slot.SavedBreadcrumbs = new List<BreadcrumbItem>
+        {
+            new() { Address = "0xDEADW", Label = "GWorld", FieldName = "GWorld", IsPointerDeref = true },
+            new() { Address = "0xDEAD0", Label = "Owner_0", FieldName = "OwnerRef", FieldOffset = 0x30, IsPointerDeref = true,
+                    TargetClassName = "BP_Owner_C" },
+            new() { Address = "0xDEAD0", Label = "Gear", FieldName = "Gear", FieldOffset = 0x40, IsContainerView = true },
+        };
+        slot.IsOccupied = true;
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        AssertShowsTheOwner(vm);
+        await AssertScriptsName(vm, platform, "BP_Owner_C", "OwnerFn");
+    }
+
+    [Fact]
+    public async Task AContainerViewBookmarkedInSession_TheScriptsNameTheOwnersClass()
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        var slot = vm.BookmarkSlots[0];
+        vm.SaveBookmarkToSlotCommand.Execute(slot);
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        AssertShowsTheOwner(vm);
+        await AssertScriptsName(vm, platform, "BP_Owner_C", "OwnerFn");
+    }
 }
 
 /// <summary>

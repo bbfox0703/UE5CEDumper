@@ -271,6 +271,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         FunctionFilter = "";
     }
     private string _currentClassAddr = "";  // The class whose functions are listed; a container view's owner's
+
+    /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The name of the class whose functions are listed.</summary>
+    internal string FunctionsClassName => CurrentClassName;
     private bool _isDefinitionView;  // True when displaying a class/struct definition (no live data)
     private DataTableWalkResult? _cachedDataTableRows;  // Cached DataTable row data
 
