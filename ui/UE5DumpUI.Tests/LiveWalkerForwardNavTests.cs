@@ -1397,11 +1397,12 @@ public class LiveWalkerForwardNavTests
     }
 
     [Fact]
-    public async Task CopyAddr_OnARowsViewTheSpineHasLeft_CopiesNothing_WhileTheOwnersWalkLoads()
+    public async Task CopyAddr_OnARowsViewTheSpineHasLeft_CopiesNothing_AndSaysTheRowHasNoAddress()
     {
         // Review of 60fff318..f092ec12: Back pops the rows view's crumb before the table's walk returns, so the trail
         // says "the table" while the grid still shows its rows -- and the trail is not a container view, so the old
-        // fallback copied the table + the row's offset again.
+        // fallback copied the table + the row's offset again. Round 2: the row has no address at ANY level, so it is
+        // told so; "wait and try again" would end in the same refusal.
         var (dump, vm, platform) = OwnerWalker();
         await vm.NavigateToAddressCommand.ExecuteAsync(Table);
         var rows = OwnerStub.TableRows();
@@ -1416,7 +1417,7 @@ public class LiveWalkerForwardNavTests
         await vm.CopyFieldAddressCommand.ExecuteAsync(nullRow);
 
         Assert.Null(platform.LastClipboard);               // was 0x40008 again
-        Assert.Contains("navigated away", vm.StatusText);
+        Assert.StartsWith("⚠ Addr: nothing done — no address was read for this row", vm.StatusText);
         dump.UngateWalk(Table);
         tableWalk.SetResult(OwnerStub.Obj(Table, "DT_Loot", "DataTable", TableCls));
         await back;
