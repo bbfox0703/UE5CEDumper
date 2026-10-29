@@ -5932,6 +5932,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         ScrollToFieldRequested?.Invoke(hit.Name);
     }
 
+    /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The refusal line the last refused Addr put up, until an Addr
+    /// copies.</summary>
+    private string? _addrRefusal;
+
     [RelayCommand]
     private async Task CopyFieldAddressAsync(LiveFieldValue? field)
     {
@@ -5957,6 +5961,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 // The fallback below pairs the view's address with the row's offset: on a row of a level the spine has
                 // left (Back, a jump whose walk has not landed or failed), that address is another object's.
                 RefuseRowOfALevelAlreadyLeft(field, AddrLabel);
+                _addrRefusal = StatusText;
                 return;
             }
             else if (CurrentCrumb is { IsContainerView: true } || field.HasNoParentOffset)
@@ -5964,7 +5969,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Neither offset counts from the object shown: a container row's
                 // counts from the container's buffer (a DataTable row whose pointer reads null has nothing else), and
                 // an actor row on the GWorld view has no slot in the world at all.
-                StatusText = NoRowAddressText(AddrLabel);
+                StatusText = _addrRefusal = NoRowAddressText(AddrLabel);
                 _log.Info($"{AddrLabel} refused: {field.Name} has no address of its own (offset 0x{field.Offset:X} " +
                           $"does not count from {CurrentAddress})");
                 return;
@@ -5979,6 +5984,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var formatted = AddressHelper.FormatAddress(
                 hexAddr, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
+            // A copy writes no line of its own, so a refusal an earlier Addr put up would say this one did nothing.
+            // Only that line goes; any line put up since stays.
+            if (_addrRefusal is { } refusal && StatusText == refusal) StatusText = "";
+            _addrRefusal = null;
         }
         catch (Exception ex)
         {
