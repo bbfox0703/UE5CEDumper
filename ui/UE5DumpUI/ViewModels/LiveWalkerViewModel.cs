@@ -8064,7 +8064,8 @@ public sealed class BreadcrumbItem : ObservableObject
 
     /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The owner's own name, as its view's header shows it, learned with
     /// <see cref="OwnerClassAddr"/>: what a reference scan from the container view (which scans the owner) is named.
-    /// Not the crumb before this one's label, which a Locate spine sets to an element index ("[0]").</summary>
+    /// For an inline-struct owner that is its crumb's label; for an object, the object's name, not the label of the
+    /// crumb before this one, which a Locate spine sets to an element index ("[0]").</summary>
     public string OwnerName { get; set; } = "";
 
     /// <summary>True if this breadcrumb represents a DataTable row container view.</summary>
