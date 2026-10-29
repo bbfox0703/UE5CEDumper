@@ -1363,6 +1363,32 @@ public class LiveWalkerForwardNavTests
     }
 
     [Fact]
+    public async Task CopyAddr_OnARowsViewTheSpineHasLeft_CopiesNothing_WhileTheOwnersWalkLoads()
+    {
+        // Review of 60fff318..f092ec12: Back pops the rows view's crumb before the table's walk returns, so the trail
+        // says "the table" while the grid still shows its rows -- and the trail is not a container view, so the old
+        // fallback copied the table + the row's offset again.
+        var (dump, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        var rows = OwnerStub.TableRows();
+        rows.Rows[0] = new() { SparseIndex = 0, RowName = "Sword (null)", DataAddr = "0x0" };
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        rows);
+        var nullRow = vm.Fields.Single();
+        var tableWalk = dump.GateWalk(Table);
+        var back = vm.GoBackCommand.ExecuteAsync(null);   // pops RowMap; the table's walk waits
+        Assert.Same(nullRow, vm.Fields.Single());          // the grid still shows the rows
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(nullRow);
+
+        Assert.Null(platform.LastClipboard);               // was 0x40008 again
+        Assert.Contains("navigated away", vm.StatusText);
+        dump.UngateWalk(Table);
+        tableWalk.SetResult(OwnerStub.Obj(Table, "DT_Loot", "DataTable", TableCls));
+        await back;
+    }
+
+    [Fact]
     public async Task CopyAddr_OnAnArrayRowWithoutAnAddress_CopiesNothing_AndSaysWhy()
     {
         // A guard: no live reply has been seen to send an array's elements without its data pointer.
