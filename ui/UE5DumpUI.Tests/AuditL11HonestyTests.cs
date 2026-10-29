@@ -814,6 +814,24 @@ public class AuditL11HonestyTests
     }
 
     [Fact]
+    public async Task DataTableRefresh_TheCrumbsRowMapField_KeepsTheShapeADrillGivesIt()
+    {
+        // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] review round 5: since 72ee74fd the RowMap row a drill hands the crumb
+        // carries the RowMap's address (the table + RowMapOffset); the field Refresh rebuilt for the same crumb did not,
+        // so one crumb's field changed shape on a Refresh.
+        var dump = new DataTableRewalkStub { Total = 5000 };
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        vm.CurrentAddress = "0x10000000";
+        var dt = DataTable(total: 5000, fetched: 64);
+        vm.NavigateToDataTableContainer(LiveWalkerViewModel.SyntheticRowMapField(dt, "0x10000000"), dt);
+        Assert.Equal("0x10000040", vm.Breadcrumbs[^1].ContainerField!.FieldAddress);   // the drill's shape
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal("0x10000040", vm.Breadcrumbs[^1].ContainerField!.FieldAddress);
+    }
+
+    [Fact]
     public void V8_DataTableDrill_RowsStillRender()
     {
         // Guard against "fixed" by suppressing the view: the rows must still be there.
