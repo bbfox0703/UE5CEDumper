@@ -338,4 +338,20 @@ public class LiveWalkerGWorldActorChainTests
 
         Assert.Contains("603BB0D0", platform.LastClipboard);   // the world + 0x30
     }
+
+    /// <summary>Review of the fix above: a successful Addr writes no status line, so the refusal an earlier Addr put up
+    /// stayed and said the copy that worked had done nothing.</summary>
+    [Fact]
+    public async Task CopyAddr_ThatCopies_TakesDownTheRefusalAnEarlierAddrPutUp()
+    {
+        var (vm, platform) = MakeVm();
+        await vm.StartFromWorldCommand.ExecuteAsync(null);
+        await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "KernelActor"));
+        Assert.StartsWith("⚠ Addr:", vm.StatusText);
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "PersistentLevel"));
+
+        Assert.Contains("603BB0D0", platform.LastClipboard);
+        Assert.DoesNotContain("nothing done", vm.StatusText);
+    }
 }
