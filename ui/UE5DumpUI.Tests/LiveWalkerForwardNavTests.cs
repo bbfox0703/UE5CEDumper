@@ -1319,6 +1319,62 @@ public class LiveWalkerForwardNavTests
         Assert.Equal("References to Owner_0 (none found)", vm.ReferencesHeader);
     }
 
+    // Copy Addr on a row with no address of its own fell back to the object shown + the row's Offset. A container row's
+    // offset counts from the container's buffer, so that copied a slot inside the owner instead -- index 0 of an array
+    // is the owner's vtable pointer -- and a DataTable row whose pointer reads null copied an address in the table's
+    // own header.
+
+    [Fact]
+    public async Task CopyAddr_OnADataTableRowWhosePointerIsNull_CopiesNothing_AndSaysWhy()
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync(Table);
+        var rows = OwnerStub.TableRows();
+        rows.Rows[0] = new() { SparseIndex = 0, RowName = "Sword (null)", DataAddr = "0x0" };   // the DLL's null row
+        vm.NavigateToDataTableContainer(new LiveFieldValue { Name = "RowMap", TypeName = "DataTableRows", Offset = 0x30 },
+                                        rows);
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single());
+
+        Assert.Null(platform.LastClipboard);   // was 0x40008: the table + FNameSize
+        Assert.StartsWith("⚠ Addr:", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task CopyAddr_OnAnArrayRowWithoutAnAddress_CopiesNothing_AndSaysWhy()
+    {
+        // A guard: no live reply has been seen to send an array's elements without its data pointer.
+        var (dump, vm, platform) = OwnerWalker();
+        var gear = new LiveFieldValue   // GearField without its data pointer
+        {
+            Name = "Gear", TypeName = "ArrayProperty", Offset = 0x40, Size = 0x10,
+            ArrayInnerType = "ObjectProperty", ArrayCount = 1, ArrayElemSize = 8, ArrayDataAddr = "",
+            ArrayElements = new() { new() { Index = 0, PtrAddress = Elem, PtrName = "Elem_0", PtrClassName = "BP_Elem_C" } },
+        };
+        dump.RegisterStruct(Owner, new InstanceWalkResult
+        {
+            Address = Owner, Name = "Owner_0", ClassName = "BP_Owner_C", ClassAddr = OwnerCls,
+            Fields = new List<LiveFieldValue> { gear },
+        });
+        await OnOwnersContainer(vm, "Gear");
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single());
+
+        Assert.Null(platform.LastClipboard);   // was 0x10000: the owner's own first qword
+        Assert.StartsWith("⚠ Addr:", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task CopyAddr_OnAnArrayRow_CopiesTheElementsAddress()
+    {
+        var (_, vm, platform) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single());
+
+        Assert.Contains("50000", platform.LastClipboard);   // TArray::Data + 0
+    }
+
     [Fact]
     public async Task AContainerViewBookmarkedInSession_TheScriptsNameTheOwnersClass()
     {

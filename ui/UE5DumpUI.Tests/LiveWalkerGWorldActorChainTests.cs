@@ -317,4 +317,25 @@ public class LiveWalkerGWorldActorChainTests
         Assert.Contains("KernelActor", ex.Message);
         Assert.DoesNotContain("FFFFFFFF", ex.Message);
     }
+
+    /// <summary>
+    /// [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Copy Addr on a row with no address of its own fell back to the object shown
+    /// + the row's Offset. An actor row has no slot in the world -- its Offset 0 is "unknown" -- so that copied the
+    /// world's own address. PersistentLevel, a real field, still copies its slot.
+    /// </summary>
+    [Fact]
+    public async Task CopyAddr_OnAnActorRow_CopiesNothing_AndSaysWhy_WhilePersistentLevelCopiesItsSlot()
+    {
+        var (vm, platform) = MakeVm();
+        await vm.StartFromWorldCommand.ExecuteAsync(null);
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "KernelActor"));
+
+        Assert.Null(platform.LastClipboard);   // was the world's own address
+        Assert.StartsWith("⚠ Addr:", vm.StatusText);
+
+        await vm.CopyFieldAddressCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == "PersistentLevel"));
+
+        Assert.Contains("603BB0D0", platform.LastClipboard);   // the world + 0x30
+    }
 }
