@@ -1857,6 +1857,11 @@ state-changing operations but works for simple getters).
                                    // ProcessEvent overflowed the game's heap and came
                                    // back only as "-4 (exception during call)".
   "params_hex": "3F800000",        // optional (hex param bytes; scalars only)
+  "expect_class_addr": "0x7FF6CC00", // optional: the class the caller's function list was read
+                                   // from. When the object at instance_addr is now of another
+                                   // class (freed and reused while a dialog stayed open), nothing
+                                   // is invoked: ok:false, "Not invoked: the object at … is now a
+                                   // <class>, not the <class> this was opened on". Absent = no check.
   // optional: string INPUT params. An FString is passed by value as
   // { Data*, Num, Max } (16 bytes) inline in the params buffer, and its Data
   // pointer must be a valid GAME-process address — which the UI can't allocate.

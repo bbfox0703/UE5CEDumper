@@ -6775,6 +6775,24 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     "Failed to read class from instance " + Renge::AddrToStr(instanceAddr)).dump();
             }
 
+            // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Before the function is looked up: it is found by name on this
+            // class, so another class's object at the address would run that class's same-named function.
+            uintptr_t expectClass = 0;
+            const std::string expectStr = request.value("expect_class_addr", "");
+            if (!expectStr.empty() && !Renge::TryStrToAddr(expectStr, expectClass)) {
+                return Renge::MakeError(id, "Invalid expect_class_addr").dump();
+            }
+            if (!Renge::InvokeTargetIsExpected(expectClass, classAddr)) {
+                LOG_WARN("invoke_function: refused %s at %s -- its class is now %s (0x%llX), not %s (0x%llX)",
+                         funcName.c_str(), Renge::AddrToStr(instanceAddr).c_str(), Ubel::GetName(classAddr).c_str(),
+                         (unsigned long long)classAddr, Ubel::GetName(expectClass).c_str(),
+                         (unsigned long long)expectClass);
+                return Renge::MakeError(id,
+                    "Not invoked: the object at " + Renge::AddrToStr(instanceAddr) + " is now a "
+                    + Ubel::GetName(classAddr) + ", not the " + Ubel::GetName(expectClass)
+                    + " this was opened on. Open it again.").dump();
+            }
+
             // Resolve UFunction
             uintptr_t ufuncAddr = UE5_FindFunctionByName(classAddr, funcName.c_str());
             if (ufuncAddr == 0) {

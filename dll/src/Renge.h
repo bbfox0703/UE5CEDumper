@@ -364,11 +364,11 @@ inline nlohmann::json MakeResponse(int id, nlohmann::json data = nlohmann::json(
 }
 
 // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] invoke_function: is the object at the instance address still of the class
-// the caller expects (`expect_class_addr`)?
+// the caller expects (`expect_class_addr`)? A dialog stays open across FIREs with the address it opened with, and the
+// function is found by NAME on the class read at that address now, so a slot freed and reused by another class would
+// run that class's same-named function. 0 = no expectation, the rule for every caller that sends none.
 inline bool InvokeTargetIsExpected(uintptr_t expectedClass, uintptr_t liveClass) {
-    (void)expectedClass;
-    (void)liveClass;
-    return true;
+    return expectedClass == 0 || expectedClass == liveClass;
 }
 
 // Build an error response
