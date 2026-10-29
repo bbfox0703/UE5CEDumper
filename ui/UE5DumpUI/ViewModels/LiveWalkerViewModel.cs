@@ -5953,7 +5953,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task CopyFieldAddressAsync(LiveFieldValue? field)
     {
         if (field == null) return;
-        if (RefuseOnDefinitionView(AddrLabel)) return;
+        if (RefuseOnDefinitionView(AddrLabel))
+        {
+            _addrRefusal = StatusText;
+            return;
+        }
 
         try
         {
