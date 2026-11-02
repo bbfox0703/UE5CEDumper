@@ -237,8 +237,13 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyTrainerRefusedNoReason,
              UE5DumpUI.ViewModels.TeleportViewModel.TrainerRefusedNoReasonText(1, 9, "E"), "1", "9", "E");
 
+        // [LEAD-PROPSEARCH-TOPTIONAL-LEAVES] Freeze / Force on a Property Search deep row
+        Same(UE5DumpUI.Models.PropertySearchMatch.KeyNestedNoAction,
+             new UE5DumpUI.Models.PropertySearchMatch { PropName = "A.B", IsNested = true }.NestedActionRefusedText,
+             "A.B");
+
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(90, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(91, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

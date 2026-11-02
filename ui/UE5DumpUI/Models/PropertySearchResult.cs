@@ -97,6 +97,15 @@ public partial class PropertySearchMatch : ObservableObject
     /// </summary>
     public bool ShowScalarActions => !IsNested;
 
+    internal const string KeyNestedNoAction = "str.PropertySearch.NestedNoAction";
+
+    /// <summary>[LEAD-PROPSEARCH-TOPTIONAL-LEAVES] Why Freeze / Force did nothing on a nested row. Its offset is not an
+    /// address on the class -- inside a TOptional&lt;FStruct&gt; it is the optional's storage, set or not -- and its
+    /// dotted name is no field of the class.</summary>
+    public string NestedActionRefusedText => Helpers.AobMakerStatus.Say(KeyNestedNoAction,
+        "Not done: {0} is a nested field with no single address on its class. List the class's instances with finder, "
+        + "then drill the path in Live Walker.", PropName);
+
     // === Force-field (Solide) per-row action gates ===
     // A direct (non-nested) row can be held by the DLL force-and-hold worker.
     // The kind is decided by the reflected property type.

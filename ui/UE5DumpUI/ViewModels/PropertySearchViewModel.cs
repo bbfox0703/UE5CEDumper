@@ -296,7 +296,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task CopyFreezeScriptAsync(PropertySearchMatch? match)
     {
-        if (match == null) return;
+        if (match == null || RefuseNested(match)) return;
         if (_aobMaker == null)
         {
             StatusText = "Freeze unavailable — no AOBMaker bridge wired";
@@ -468,7 +468,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task ForceNull(PropertySearchMatch? m)
     {
-        if (m == null) return;
+        if (m == null || RefuseNested(m)) return;
         if (ForceNullConfirm != null && !await ForceNullConfirm(m)) return;
         await ApplyForceAsync(m, "object_null");
     }
@@ -476,7 +476,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task ForceNumeric(PropertySearchMatch? m)
     {
-        if (m == null) return;
+        if (m == null || RefuseNested(m)) return;
         if (ForceValuePrompt == null) { StatusText = "Force value prompt not wired"; return; }
         ForceValuePromptResult r;
         try { r = await ForceValuePrompt(m); }
@@ -506,9 +506,19 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     /// it easily — so <c>Truncated</c> is not a rare edge case here and the status line
     /// must keep saying it out loud. See audit #5 A6.
     /// </para></summary>
+    /// <summary>[LEAD-PROPSEARCH-TOPTIONAL-LEAVES] A nested (deep) row hides Freeze and Force; the commands refuse it as
+    /// well, so no route writes at its offset -- inside a TOptional&lt;FStruct&gt;, the optional's storage whether or
+    /// not it is set -- or arms a hold on its dotted name.</summary>
+    private bool RefuseNested(PropertySearchMatch m)
+    {
+        if (m.ShowScalarActions) return false;
+        StatusText = m.NestedActionRefusedText;
+        return true;
+    }
+
     private async Task ApplyForceAsync(PropertySearchMatch? m, string kind, double value = 0, bool on = false)
     {
-        if (m == null || string.IsNullOrEmpty(m.ClassName) || string.IsNullOrEmpty(m.PropName)) return;
+        if (m == null || RefuseNested(m) || string.IsNullOrEmpty(m.ClassName) || string.IsNullOrEmpty(m.PropName)) return;
         try
         {
             var r = await _dump.ForceFieldAsync(m.ClassName, m.PropName, kind, value, on);
