@@ -27,6 +27,61 @@ builds ≤696 in
 
 -----
 
+## 2026-11-02 (build 3671) — Eleven census fixes: exports say what they left out, rows without an address stay put, a pinned Console run checks its object `[LEAD-LW-NULLROW-HEX]` `[LEAD-CONSOLE-PIN-EXPECT-CLASS]` `[LEAD-LW-SYNTH-CONTAINER-STRUCT-OWNER]` `[LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST]` `[DISSECT-SPARSE-DELEGATE-WIDTH]` `[LEAD-DT-EXPORT-64ROWS]` `[CEXPORT-NESTED-TRUNC-NOTE]` `[CEXPORT-STRIDE-NOTE]` `[CEXPORT-ENUMNAMES-NOTE]` `[CLASSPIVOT-DT-STARTUP-LOG]` `[LEAD-SECOND-UI-CRASHLOG]` `[OPEN-CENSUS-2026-10-28]`
+
+The maintainer asked for the census's open bugs to be fixed one after another. Each item is a red test commit and a
+green fix commit, and each census row names them.
+
+- **Live Walker: HEX and +CE on a row with no address of its own do nothing, and say why.** A DataTable row whose row
+  pointer reads null moved CE's hex view to 0 and added a record at 0x0. Addr, HEX, +CE and +CE Field (flat) now share
+  one check.
+- **The Console's pinned run checks the object is still the one it pinned.** The invoke reply names the class read at
+  the address (`instance_class_addr`, a new optional reply key). A pinned run sends it back as `expect_class_addr`, so
+  an object freed and its memory reused by another class is re-resolved instead of run.
+- **Bookmarks.**
+  - A bookmark file whose Array / Map / Set sits in an inline struct restores the container's elements, on load and
+    on Back. Before, the struct's bytes were read as a UObject.
+  - A bookmark saved below a DataTable row view restores that view's rows too, guarded by the row struct the next
+    crumb was drilled into. If the table changed, the load says so, and Back says the view did not restore.
+- **CE Structure Dissect (`ue5_dissect.lua`) draws a sparse delegate as its one bIsBound byte**, not a 16-byte pointer
+  over the fields after it.
+- **Exports say what they left out.**
+  - Copy CE XML and CSX name a table cut to its first page: "Only the first page of a table's rows is read: RowMap
+    (DataTable: 100 rows, 64 exported)".
+  - They also name a container cut at the Array Limit inside a struct or pointer target the export walked. One cut met
+    in many objects is said once, "in N objects", and past five the rest are counted.
+  - Copy CE Field of rows you selected reports nothing as cut, unless you selected every loaded row.
+  - When the object-array stride is a guess, each CE table and CSX opens with the badge's words as a comment. The
+    AOB-wrapped export now also carries the packed-layout note it lacked.
+  - When UEnum::Names was never found on a build, an export holding an enum field says why its dropdowns are empty.
+    Walk replies carry `enum_names_failed`, and `enum_addr` goes out even with no entries.
+- **Class Pivot left on the DataTable source no longer logs an error at start-up**, before any connection.
+- **A second UI launch no longer overwrites crash.log.** It raises the first window and exits before Avalonia starts.
+- **Review round 1.** One adversarial round over the first nine fixes found 25 issues: none HIGH or MED, all LOW or INFO,
+  each confirmed by a refuter. Every one is fixed. The two that changed behaviour:
+  - Select-all with Copy CE Field had lost the cut warning.
+  - The enum note never fired for TEnumAsByte, and missed a latch that the export's own walk set.
+- **Checked live on 3671.**
+  - DumperTest Shipping, UE 5.4, through the pipe (`tools/verify/census_pass_pipe_checks.py`):
+    - an invoke by name answers `instance_class_addr` equal to the object's class, and the pinned run with it ran;
+    - 11 enum fields carry `enum_addr` with their entries, and there is no latch;
+    - DumperTestTable_Big has 100 rows, and one page returns 64.
+  - DumperTest Shipping, in the UI:
+    - Copy CE XML of DumperTestTable_Big ends "...RowMap (DataTable: 100 rows, 64 exported)";
+    - in its rows view, Copy CE Field of one row says nothing, and Ctrl+A gives the warning;
+    - a Console run of AISystem::AIIgnorePlayers, then a pinned rerun, sent `expect_class_addr` = the reply's
+      `instance_class_addr` and answered "ProcessEvent OK";
+    - Class Pivot switched to DataTable before Connect logged nothing, and the connect listed both tables.
+  - `tools/verify/second_instance_crashlog.py` (no game): the second launch exited 1 in 0.2 s, with crash.log's bytes
+    and timestamp unchanged.
+- **Not checked live.**
+  - These have no fixture: a null DataTable row, an inline-struct-owned container in a bookmark file, a bookmark below a
+    row view, a guessed stride, a build whose UEnum::Names is not found, a CJK-first name.
+  - The dissect's sparse row was checked only on CE's own Lua 5.3, not drawn in CE.
+  - Push to CE Structure Dissect carries no header note into CE: its parser drops every XML comment.
+- Tests: dll_core_test 1,363 checks and dll_helpers_test 3,692, 0 failures; C# 7,154 total, 0 failed, 1 skipped;
+  headless UI 69; dissect_test.lua 426; 36 gates. AOT UI 61,506,560 bytes.
+
 ## 2026-10-29 (build 3670) — Review round 5 of the container-view fix `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`
 
 - **A DataTable rows view keeps one crumb field however you reached it.** Since 3669 the RowMap field a drill hands
