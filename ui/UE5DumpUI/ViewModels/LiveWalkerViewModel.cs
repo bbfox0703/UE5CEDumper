@@ -1396,8 +1396,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// read once: when the container's data address or count moved, the view is refreshed, which also stores the new
     /// reading on the crumb; otherwise the held render, and the scroll it restored, stand.
     /// </summary>
-    /// <summary>The last re-entry re-check, for a caller (a test) that must see it finish.</summary>
+    /// <summary>The last re-entry re-check. It runs after the navigation that started it has returned, so Back and
+    /// Forward are not held for an owner walk (up to the refresh timeout on a recycled object); a caller that must see
+    /// it finish -- a test -- awaits this.</summary>
     internal Task ReentryRecheck { get; private set; } = Task.CompletedTask;
+
+    /// <summary>Start the re-check without waiting for it.</summary>
+    private void StartReentryRecheck(BreadcrumbItem bc) => ReentryRecheck = RecheckReenteredContainerAsync(bc);
 
     private async Task RecheckReenteredContainerAsync(BreadcrumbItem bc)
     {
@@ -1419,8 +1424,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 && string.Equals(f.Name, held.Name, StringComparison.Ordinal)
                 && string.Equals(f.TypeName, held.TypeName, StringComparison.Ordinal));
             if (fresh == null || !ContainerMoved(held, fresh)) return;
-            _log.Info($"NAV re-entered '{held.Name}': its container moved since it was read — refreshing the view");
-            await RefreshAsync();
+            _log.Info($"NAV re-entered '{held.Name}': its container moved since it was read — rendering the new reading");
+            await ApplyOwnerReadingAsync(bc, owner, SelectedField?.Name, SelectedField?.Offset ?? int.MinValue,
+                                         () => !ReferenceEquals(CurrentCrumb, bc), timeoutCts.Token);
         }
         catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
         {
@@ -1429,6 +1435,97 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _log.Warn($"NAV re-entered '{held.Name}': the owner re-read failed ({ex.Message}) — showing the held reading");
+        }
+    }
+
+    /// <summary>
+    /// Render a container view from a fresh reading of its owner: Refresh inside the view, and the re-entry re-check
+    /// once it finds the container changed. It renders what it is given and does not clear the status line, so a
+    /// navigation's own line stands beside what this adds.
+    /// </summary>
+    private async Task ApplyOwnerReadingAsync(BreadcrumbItem containerBc, InstanceWalkResult parentResult,
+                                              string? keepFieldName, int keepFieldOffset, Func<bool> superseded,
+                                              CancellationToken ct)
+    {
+        // [WALK-NULLCLASS-SILENT] review F1: a parent with no object to read carries no fields, so the match
+        // below finds nothing. Returning there left the element rows on screen under a blank status, still
+        // editable, their addresses in memory the game may have freed. Say what a walk of that object says,
+        // and leave no row to edit.
+        if (GoneObjectStatus(parentResult) is { } gone)
+        {
+            StatusText = gone;
+            SelectedField = null;   // detach before clearing the selection-bound grid
+            Fields.Clear();         // fires OnFieldsRebuilt -> clears any stranded IsEditing latch
+            _log.Warn($"Container view: the parent {containerBc.Address} is {GoneVerdict(parentResult)} — dropped its element rows");
+            return;
+        }
+
+        // Find the container field by name and offset in the fresh result. Use the live
+        // ContainerField identity when present, else the crumb's own field name+offset.
+        var matchName   = containerBc.ContainerField?.Name   ?? containerBc.FieldName;
+        var matchOffset = containerBc.ContainerField?.Offset ?? containerBc.FieldOffset;
+        var updatedField = parentResult.Fields
+            .FirstOrDefault(f => f.Name == matchName && f.Offset == matchOffset);
+
+        if (updatedField != null)
+        {
+            // [WALK-REFRESH-SCALAR-SHRINK] Show what the drill would show now, and say what the drill would say.
+            // The parent walk's inline preview is cut at min(Array Limit, 4,096); a scalar array is re-fetched
+            // in full by the drill, so rendering that preview shrank the view to the slider (and an edited
+            // element [N >= Array Limit] vanished right after "Written").
+            // [LW-EMPTIED-CONTAINER-REFRESH] Kinds as RepopulateContainerView keys them: a count of 0 is a
+            // container emptied since the drill, and its crumb says so too.
+            string? label = null;
+            var status = "";
+            if (updatedField.ArrayCount >= 0 && !string.IsNullOrEmpty(updatedField.ArrayInnerType))
+            {
+                // Walked just now, at the slider's current value.
+                var (elements, requested, total) = await ReadArrayViewElementsAsync(
+                    updatedField, containerBc.Address, inlineIsCurrent: true, ct);
+                if (superseded()) return;
+                // The field carries this reading whole: the rows, and the count they were read at.
+                updatedField.ArrayElements = elements;
+                updatedField.ArrayCount = total;
+                label = ArrayViewLabel(updatedField, elements.Count);
+                status = ArrayViewStatus(elements.Count, updatedField.ArrayCount, requested);
+            }
+            else if (updatedField.MapCount >= 0 && !string.IsNullOrEmpty(updatedField.MapKeyType))
+            {
+                label = MapViewLabel(updatedField);
+                status = ContainerTruncation.StatusLine(updatedField.MapElements?.Count ?? 0, updatedField.MapCount);
+            }
+            else if (updatedField.SetCount >= 0 && !string.IsNullOrEmpty(updatedField.SetElemType))
+            {
+                label = SetViewLabel(updatedField);
+                status = ContainerTruncation.StatusLine(updatedField.SetElements?.Count ?? 0, updatedField.SetCount);
+            }
+
+            // Only an in-session crumb takes this reading. A path-synthetic crumb's null ContainerField is what
+            // marks it as one -- re-hydrated from a live walk, not held -- so it keeps that null and its bare name.
+            if (label != null && containerBc.ContainerField is { } heldField)
+            {
+                // A walk row carries no FieldAddress (UpdateDisplay stamps it). Same parent, same offset:
+                // the held one is still the right address by construction.
+                if (string.IsNullOrEmpty(updatedField.FieldAddress))
+                    updatedField.FieldAddress = heldField.FieldAddress;
+                containerBc.ContainerField = updatedField;
+                containerBc.Label = label;
+            }
+            // Beside a line the caller's own action set, not over it.
+            if (status.Length > 0)
+                StatusText = string.IsNullOrEmpty(StatusText) ? status : $"{StatusText} — {status}";
+
+            // [LW-BACK-CONTAINER-HEADER-ADDR] The owner was just walked, so its class is known even on a crumb
+            // that never had it.
+            if (!string.IsNullOrEmpty(parentResult.ClassAddr))
+            {
+                containerBc.OwnerClassAddr = parentResult.ClassAddr;
+                containerBc.OwnerClassName = parentResult.ClassName;
+                containerBc.OwnerName = OwnerViewName(Breadcrumbs.Count >= 2 ? Breadcrumbs[^2] : null,
+                                                      parentResult.Name);
+            }
+            RepopulateContainerView(updatedField);
+            RestoreSelectedField(keepFieldName, keepFieldOffset);
         }
     }
 
@@ -2445,7 +2542,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 RepopulateContainerView(item.ContainerField, item);
                 RestoreCrumbView(item, cameBackFrom);
-                await RecheckReenteredContainerAsync(item);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
+                StartReentryRecheck(item);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
                 return;
             }
 
@@ -2715,7 +2812,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     {
                         RepopulateContainerView(lastBc.ContainerField, lastBc);
                         RestoreCrumbView(lastBc);
-                        await RecheckReenteredContainerAsync(lastBc);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
+                        StartReentryRecheck(lastBc);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
                         return;
                     }
                     if (lastBc.IsContainerView && lastBc.ContainerField == null
@@ -2781,7 +2878,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 RepopulateContainerView(prev.ContainerField, prev);
                 RestoreCrumbView(prev, removed);
-                await RecheckReenteredContainerAsync(prev);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
+                StartReentryRecheck(prev);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
                 return;
             }
 
@@ -2895,7 +2992,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 RepopulateContainerView(next.ContainerField, next);
                 RestoreCrumbView(next);
-                await RecheckReenteredContainerAsync(next);
+                StartReentryRecheck(next);
                 return;
             }
 
@@ -4287,8 +4384,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 else if (lastBc.IsContainerView && lastBc.ContainerField != null)
                 {
                     RepopulateContainerView(lastBc.ContainerField, lastBc);
-                    await RecheckReenteredContainerAsync(lastBc);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
-                    if (RenderSuperseded(lastBc, "Bookmark")) return;
+                    StartReentryRecheck(lastBc);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
                 }
                 else if (lastBc.IsContainerView && lastBc.ContainerField == null
                          && await TryRepopulateSyntheticContainerAsync(lastBc))
@@ -5970,85 +6066,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
                 var parentResult = await _dump.WalkInstanceAsync(containerBc.Address, parentClassAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps, ct: ct);
                 if (Superseded()) return;
-
-                // [WALK-NULLCLASS-SILENT] review F1: a parent with no object to read carries no fields, so the match
-                // below finds nothing. Returning there left the element rows on screen under a blank status, still
-                // editable, their addresses in memory the game may have freed. Say what a walk of that object says,
-                // and leave no row to edit.
-                if (GoneObjectStatus(parentResult) is { } gone)
-                {
-                    StatusText = gone;
-                    SelectedField = null;   // detach before clearing the selection-bound grid
-                    Fields.Clear();         // fires OnFieldsRebuilt -> clears any stranded IsEditing latch
-                    _log.Warn($"Refresh: the container's parent {containerBc.Address} is {GoneVerdict(parentResult)} — dropped its element rows");
-                    return;
-                }
-
-                // Find the container field by name and offset in the refreshed result. Use the live
-                // ContainerField identity when present, else the crumb's own field name+offset.
-                var matchName   = containerBc.ContainerField?.Name   ?? containerBc.FieldName;
-                var matchOffset = containerBc.ContainerField?.Offset ?? containerBc.FieldOffset;
-                var updatedField = parentResult.Fields
-                    .FirstOrDefault(f => f.Name == matchName && f.Offset == matchOffset);
-
-                if (updatedField != null)
-                {
-                    // [WALK-REFRESH-SCALAR-SHRINK] Show what the drill would show now, and say what the drill would say.
-                    // The parent walk's inline preview is cut at min(Array Limit, 4,096); a scalar array is re-fetched
-                    // in full by the drill, so rendering that preview shrank the view to the slider (and an edited
-                    // element [N >= Array Limit] vanished right after "Written").
-                    // [LW-EMPTIED-CONTAINER-REFRESH] Kinds as RepopulateContainerView keys them: a count of 0 is a
-                    // container emptied since the drill, and its crumb says so too.
-                    string? label = null;
-                    var status = "";
-                    if (updatedField.ArrayCount >= 0 && !string.IsNullOrEmpty(updatedField.ArrayInnerType))
-                    {
-                        // Walked just now, at the slider's current value.
-                        var (elements, requested, total) = await ReadArrayViewElementsAsync(
-                            updatedField, containerBc.Address, inlineIsCurrent: true, ct);
-                        if (Superseded()) return;
-                        // The field carries this reading whole: the rows, and the count they were read at.
-                        updatedField.ArrayElements = elements;
-                        updatedField.ArrayCount = total;
-                        label = ArrayViewLabel(updatedField, elements.Count);
-                        status = ArrayViewStatus(elements.Count, updatedField.ArrayCount, requested);
-                    }
-                    else if (updatedField.MapCount >= 0 && !string.IsNullOrEmpty(updatedField.MapKeyType))
-                    {
-                        label = MapViewLabel(updatedField);
-                        status = ContainerTruncation.StatusLine(updatedField.MapElements?.Count ?? 0, updatedField.MapCount);
-                    }
-                    else if (updatedField.SetCount >= 0 && !string.IsNullOrEmpty(updatedField.SetElemType))
-                    {
-                        label = SetViewLabel(updatedField);
-                        status = ContainerTruncation.StatusLine(updatedField.SetElements?.Count ?? 0, updatedField.SetCount);
-                    }
-
-                    // Only an in-session crumb takes this reading. A path-synthetic crumb's null ContainerField is what
-                    // marks it as one -- re-hydrated from a live walk, not held -- so it keeps that null and its bare name.
-                    if (label != null && containerBc.ContainerField is { } heldField)
-                    {
-                        // A walk row carries no FieldAddress (UpdateDisplay stamps it). Same parent, same offset:
-                        // the held one is still the right address by construction.
-                        if (string.IsNullOrEmpty(updatedField.FieldAddress))
-                            updatedField.FieldAddress = heldField.FieldAddress;
-                        containerBc.ContainerField = updatedField;
-                        containerBc.Label = label;
-                    }
-                    if (status.Length > 0) StatusText = status;
-
-                    // [LW-BACK-CONTAINER-HEADER-ADDR] The owner was just walked, so its class is known even on a crumb
-                    // that never had it.
-                    if (!string.IsNullOrEmpty(parentResult.ClassAddr))
-                    {
-                        containerBc.OwnerClassAddr = parentResult.ClassAddr;
-                        containerBc.OwnerClassName = parentResult.ClassName;
-                        containerBc.OwnerName = OwnerViewName(Breadcrumbs.Count >= 2 ? Breadcrumbs[^2] : null,
-                                                              parentResult.Name);
-                    }
-                    RepopulateContainerView(updatedField);
-                    RestoreSelectedField(keepFieldName, keepFieldOffset);
-                }
+                await ApplyOwnerReadingAsync(containerBc, parentResult, keepFieldName, keepFieldOffset, Superseded, ct);
                 return;
             }
 
