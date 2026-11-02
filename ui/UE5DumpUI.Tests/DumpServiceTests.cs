@@ -1773,11 +1773,28 @@ public class DumpServiceTests
         int end = s.IndexOf("return data;", start, StringComparison.Ordinal);
         int flag = s.IndexOf("data[\"enum_names_failed\"] = true;", start, StringComparison.Ordinal);
         int latch = s.IndexOf("DynOff::bUEnumNamesFailed.load(", start, StringComparison.Ordinal);
-        int leanGate = s.IndexOf("if (!lean) {", start, StringComparison.Ordinal);
-        int leanGateEnd = s.IndexOf("}", leanGate, StringComparison.Ordinal);
         Assert.True(flag > start && flag < end, "the walk encoder must carry the latch");
         Assert.True(latch > start && latch < flag);
-        Assert.False(flag > leanGate && flag < leanGateEnd, "lean replies too: the CE export walks lean");
+        // Review round 1: the statement that guards the emit names no lean condition, and it is not inside the
+        // encoder's `if (!lean) {` block -- the export's resolver walks lean, and it learns the latch from them too.
+        int guard = s.LastIndexOf("if (", flag, StringComparison.Ordinal);
+        Assert.DoesNotContain("lean", s[guard..flag]);
+        int leanGate = s.IndexOf("if (!lean) {", start, StringComparison.Ordinal);
+        int leanGateEnd = s.IndexOf("}", leanGate, StringComparison.Ordinal);
+        Assert.False(flag > leanGate && flag < leanGateEnd);
+    }
+
+    [Fact]
+    public void Fern_SendsAnEnumsAddress_EvenWithNoEntries()
+    {
+        // Review round 1 of [CEXPORT-ENUMNAMES-NOTE]: enum_addr went out only beside a non-empty entry list, so under
+        // the latch a TEnumAsByte field arrived as a plain ByteProperty and an export could not tell it held an enum.
+        // Every reader of enum_addr also requires entries before it builds a dropdown.
+        var s = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
+        Assert.DoesNotContain("if (fv.enumAddr != 0 && !fv.enumEntries.empty())", s);
+        Assert.DoesNotContain("if (fv.arrayEnumAddr != 0 && !fv.arrayEnumEntries.empty())", s);
+        Assert.Contains("fj[\"enum_addr\"] = Renge::AddrToStr(fv.enumAddr);", s);
+        Assert.Contains("fj[\"enum_addr\"] = Renge::AddrToStr(fv.arrayEnumAddr);", s);
     }
 
     [Fact]

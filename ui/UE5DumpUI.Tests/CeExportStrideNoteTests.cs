@@ -167,6 +167,101 @@ public class CeExportStrideNoteTests
         Assert.Contains("Enum member names", vm.StatusText);
     }
 
+    // Review round 1 of [CEXPORT-ENUMNAMES-NOTE].
+
+    /// <summary>A stub whose walks of one address say the latch is set: the DLL detects UEnum::Names lazily, so the walk
+    /// that finds the first enum is the one whose reply first carries the flag.</summary>
+    private sealed class LatchOnWalkOf : StubDumpService
+    {
+        private readonly string _addr;
+        public LatchOnWalkOf(string addr) => _addr = addr;
+        public override async Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
+            int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
+            CancellationToken ct = default)
+        {
+            var r = await base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
+            return addr != _addr ? r : new InstanceWalkResult
+            {
+                Address = r.Address, Name = r.Name, ClassName = r.ClassName, ClassAddr = r.ClassAddr,
+                EnumNamesFailed = true, Fields = r.Fields,
+            };
+        }
+    }
+
+    private static LatchOnWalkOf NestedEnumDump()
+    {
+        var dump = new LatchOnWalkOf("0x2000");
+        dump.RegisterStruct("0x1000", new InstanceWalkResult
+        {
+            Address = "0x1000", Name = "Obj_0", ClassName = "BP_Obj_C", ClassAddr = "0xC000",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Stats", TypeName = "StructProperty", Offset = 0x10, Size = 0x10,
+                        StructTypeName = "FStats", StructClassAddr = "0xC800", StructDataAddr = "0x2000" },
+            },
+        });
+        dump.RegisterStruct("0x2000", new InstanceWalkResult   // as sent under the latch: the UEnum, no entries
+        {
+            Address = "0x2000", Name = "FStats", ClassName = "FStats", ClassAddr = "0xC800",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Mode", TypeName = "ByteProperty", Offset = 0x0, Size = 1, EnumAddr = "0xE000" },
+            },
+        });
+        return dump;
+    }
+
+    [Fact]
+    public async Task LiveWalker_CopyCeXml_LearnsTheLatchFromItsOwnWalks()
+    {
+        // The top level holds no enum, so its walk does not run the detection; the struct walk the export makes does.
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new LiveWalkerViewModel(NestedEnumDump(), new MockLoggingService(), platform);
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.Contains("<!-- Enum member names", platform.LastClipboard);   // was silent until a Refresh
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CopyCeXml_LearnsTheLatchFromItsOwnWalks()
+    {
+        var dump = NestedEnumDump();
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Name = "Obj_0", ClassName = "Obj",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Stats", TypeName = "StructProperty", Offset = 0x28, Size = 0x10,
+                        StructTypeName = "FStats", StructClassAddr = "0xC800", StructDataAddr = "0x2000" },
+            },
+        });
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new InstanceFinderViewModel(dump, new MockLoggingService(), platform);
+        vm.SelectedInstance = new InstanceResult { Address = "0x10000000", Name = "Obj_0", ClassName = "Obj" };
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.Contains("<!-- Enum member names", platform.LastClipboard);
+    }
+
+    [Fact]
+    public async Task PushToCeStructureDissect_SaysNothingAboutDropdowns_ItHasNone()
+    {
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = new LiveWalkerViewModel(EnumDump(namesFailed: true), new MockLoggingService(),
+                                         new MockPlatformService(Path.GetTempPath()), bridge);
+        vm.ApplyAobMakerProbe(true);
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
+
+        await vm.PushCsxToCeCommand.ExecuteAsync(null);
+
+        Assert.Single(bridge.AaScripts);
+        Assert.DoesNotContain("Enum member names", vm.StatusText);
+        Assert.DoesNotContain("Enum member names", bridge.AaScripts[0].Script);
+    }
+
     [Fact]
     public async Task InstanceFinder_CopyCeXml_CarriesTheNote()
     {
