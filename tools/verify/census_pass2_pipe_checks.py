@@ -47,10 +47,13 @@ def main() -> int:
         pc.ensure_scanned()
 
         # 1. delegate hex
-        inst = data(pc.request("find_instances", class_name=a.cls, exact_match=True, limit=4)).get("instances") or []
+        inst = data(pc.request("find_instances", class_name=a.cls, exact_match=True, limit=8)).get("instances") or []
+        # The class default object is listed too, and its delegates are never bound.
+        inst = [i for i in inst if not str(i.get("name", "")).startswith("Default__")]
         if not inst:
-            print(f"BAD: no {a.cls} instance")
+            print(f"BAD: no live {a.cls} instance")
             return 1
+        print(f"   walking {inst[0].get('name')} @ {inst[0]['addr']}")
         walk = data(pc.request("walk_instance", addr=inst[0]["addr"], array_limit=8, preview_limit=2))
         fields = {f.get("name"): f for f in walk.get("fields", [])}
         rows = []
