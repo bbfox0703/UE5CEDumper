@@ -887,6 +887,40 @@ public class LiveWalkerForwardNavTests
         AssertGearShowsTheMovedAllocation(vm);
     }
 
+    // Review round 2 (MED): when the owner was gone, or no longer had the field, the re-check returned without a word,
+    // and the held rows stayed on screen and editable, their addresses in memory the game may have freed. Refresh
+    // inside the view already said so for a gone owner; the re-entry now does too, and both say so for a missing field.
+
+    [Fact]
+    public async Task Back_IntoAContainerWhoseOwnerIsGone_DropsTheRows_AndSaysWhy()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        dump.RegisterStruct(Owner, new InstanceWalkResult { Address = Owner, IsStale = true });
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
+
+        Assert.Empty(vm.Fields);
+        Assert.Equal(LiveWalkerViewModel.GoneObjectStatus(new InstanceWalkResult { IsStale = true }), vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Back_IntoAContainerWhoseOwnerNoLongerHasIt_DropsTheRows_AndSaysWhy()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        dump.RegisterStruct(Owner, OwnerStub.Obj(Owner, "Owner_0", "BP_Owner_C", OwnerCls));   // no Gear any more
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
+
+        Assert.Empty(vm.Fields);
+        Assert.Contains("Gear", vm.StatusText);
+    }
+
     [Fact]
     public async Task Back_IntoAContainerThatDidNotMove_ReadsTheOwnerOnce_AndKeepsTheView()
     {
