@@ -7719,8 +7719,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // The marker above ran over newFields, which are now discarded, so re-run it over the
             // rows the grid is actually showing. Not optional and not merely tidy: clearing the
             // keyword marks zero matches on newFields while the surviving rows would keep their
-            // old flags, leaving a highlight on rows that no longer match anything.
-            MarkSearchMatches(Fields, SearchText);
+            // old flags, leaving a highlight on rows that no longer match anything. The count is
+            // these rows' too: a kept row keeps its type label, which a guessed row's fresh one can
+            // differ from by its "?". [LEAD-LW-INPLACE-SEARCHCOUNT]
+            searchMatches = MarkSearchMatches(Fields, SearchText);
+            SearchMatchCount = searchMatches;
+            HasSearchResults = searchMatches > 0;
 
             // The editing latch used to be cleared by the Replace notification this loop no longer
             // raises. Clearing it here keeps the previous guarantee exactly — a stranded `true`
