@@ -139,6 +139,74 @@ public class ValueTargetCheckTests
         }
 
         public override Task EndValueScanAsync(ulong sessionId, CancellationToken ct = default) => Task.CompletedTask;
+
+        public int GroupBegins, Refines, GroupRefines;
+
+        public override Task<GroupScanBeginResult> BeginGroupScanAsync(System.Collections.Generic.IReadOnlyList<GroupSlotInput> slots,
+            bool gameOnly = true, int maxResults = 50000, bool deep = false, bool crossObject = false, bool nativeC = false,
+            bool newestFirst = false, int pageSize = 1000, int deadlineMs = 15000, bool autoSkipNoise = false,
+            FloatRoundMode roundMode = FloatRoundMode.Round, int perSlotCap = 256, CancellationToken ct = default)
+        {
+            GroupBegins++;
+            return Task.FromResult(new GroupScanBeginResult { SessionId = 2 });
+        }
+
+        public override Task<ValueScanRefineResult> RefineValueScanAsync(ulong sessionId, ValueScanType scanType,
+            string? value = null, string? value2 = null, FloatRoundMode roundMode = FloatRoundMode.Round,
+            bool caseSensitive = false, int pageSize = 1000, CancellationToken ct = default)
+        {
+            Refines++;
+            return Task.FromResult(new ValueScanRefineResult());
+        }
+
+        public override Task<GroupScanRefineResult> RefineGroupScanAsync(ulong sessionId,
+            System.Collections.Generic.IReadOnlyList<GroupSlotInput> slots, int pageSize = 1000,
+            FloatRoundMode roundMode = FloatRoundMode.Round, CancellationToken ct = default)
+        {
+            GroupRefines++;
+            return Task.FromResult(new GroupScanRefineResult());
+        }
+
+        public override Task EndGroupScanAsync(ulong sessionId, CancellationToken ct = default) => Task.CompletedTask;
+    }
+
+    // Review round 2: Next Scan and group Next Scan refuse too, and nothing held them -- removing either check left every
+    // test green. Each asserts its session is live first, so a refusal cannot pass by the command simply returning.
+
+    [Fact]
+    public async Task NextScan_OfANonFiniteTarget_SendsNothing_AndSaysWhy()
+    {
+        var dump = new CountingScanDump();
+        var vm = new ValueSearchViewModel(dump, new MockLoggingService())
+        {
+            SelectedDataType = ValueScanDataType.Float, SelectedScanType = ValueScanType.Exact, Value = "1",
+        };
+        await vm.FirstScanCommand.ExecuteAsync(null);
+        Assert.True(vm.HasSession);
+
+        vm.Value = "1e400";
+        await vm.NextScanCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, dump.Refines);
+        Assert.Contains("1e400", vm.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task GroupNextScan_OfANonFiniteRow_SendsNothing_AndSaysWhy()
+    {
+        var dump = new CountingScanDump();
+        var vm = new ValueSearchViewModel(dump, new MockLoggingService());
+        vm.GroupInputs[0].DataType = ValueScanDataType.Float;
+        vm.GroupInputs[0].Value = "1";
+        vm.GroupInputs[1].Value = "5";
+        await vm.GroupFirstScanCommand.ExecuteAsync(null);
+        Assert.True(vm.HasGroupSession);
+
+        vm.GroupInputs[0].Value = "Infinity";
+        await vm.GroupNextScanCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, dump.GroupRefines);
+        Assert.Contains("Infinity", vm.ErrorMessage);
     }
 
     [Fact]
@@ -167,6 +235,7 @@ public class ValueTargetCheckTests
 
         await vm.GroupFirstScanCommand.ExecuteAsync(null);
 
+        Assert.Equal(0, dump.GroupBegins);
         Assert.Contains("Infinity", vm.ErrorMessage);
     }
 
