@@ -2997,6 +2997,25 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// <summary>[FLY-REPORTS-WISH] review round 2: the step between re-reads while the observed collision catches up.</summary>
     internal TimeSpan FlySettleStep { get; set; } = TimeSpan.FromMilliseconds(100);
 
+    /// <summary>How many steps the card waits at most: about a second at the default step.</summary>
+    private const int FlySettleSteps = 10;
+
+    /// <summary>
+    /// [FLY-REPORTS-WISH] review round 2: a reply to the request that changes noclip is read before the Fly worker's next
+    /// tick applies it on the game thread, so its collision is the one from before (measured on DumperTest Development:
+    /// the reply said colliding, the pawn read not colliding 103 ms later). Re-read while Fly is on and the reading
+    /// disagrees with the request; what is left after the window is what the card reports.
+    /// </summary>
+    private async Task<FlyStatus> SettleFlyCollisionAsync(FlyStatus st, bool noclipAsked)
+    {
+        for (int i = 0; i < FlySettleSteps && st.Active && !Helpers.FlyText.CollisionAgrees(noclipAsked, st.Collision); i++)
+        {
+            await Task.Delay(FlySettleStep);
+            st = await _dump.FlyGetStateAsync();
+        }
+        return st;
+    }
+
     /// <summary>Enable Fly: force MOVE_Flying and start the DLL worker (keyboard
     /// input is read DLL-side). Pushes the current speed + preset too.</summary>
     [RelayCommand]
@@ -3008,7 +3027,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var st = await _dump.FlySetAsync(enable: true, speed: FlySpeed, preset: FlyPresetIndex, noclip: FlyNoclip);
-            ApplyFlyReadout(st);
+            // Whether it engaged is the enable reply's; the collision is read once the worker has had its tick.
+            var seen = await SettleFlyCollisionAsync(st, FlyNoclip);
+            ApplyFlyReadout(seen);
             // ⛔ REPORT THE EFFECT, NOT THE ATTEMPT. HasCmc says a CharacterMovement was
             // RESOLVED — it says nothing about whether the MovementMode write landed, and
             // that write is the only reason the pawn flies. The DLL now leaves Active false
@@ -3017,7 +3038,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             StatusText = !st.HasCmc
                 ? "Fly could not engage (no CharacterMovement on this pawn)."
                 : st.Active
-                    ? $"✈ Fly ON ({Helpers.FlyText.ModeWord(FlyNoclip, st.Collision)}) — {FlyPresets[Math.Clamp(FlyPresetIndex, 0, FlyPresets.Count - 1)]}."
+                    ? $"✈ Fly ON ({Helpers.FlyText.ModeWord(FlyNoclip, seen.Collision)}) — {FlyPresets[Math.Clamp(FlyPresetIndex, 0, FlyPresets.Count - 1)]}."
                     : $"Fly did NOT engage (code {st.State}) — the pawn is still in MovementMode {st.CurrentMode}.";
         }
         catch (Exception ex)
@@ -3115,6 +3136,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         try
         {
             var st = await _dump.FlySetAsync(enable: null, speed: speed, preset: preset, noclip: noclip);
+            if (noclip is bool asked) st = await SettleFlyCollisionAsync(st, asked);   // the worker applies it next tick
             ApplyFlyReadout(st);
         }
         catch (Exception ex)

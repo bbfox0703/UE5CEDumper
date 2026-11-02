@@ -18,6 +18,11 @@ public static class FlyText
          : collision == 1 ? AobMakerStatus.Say(KeyNoclipNotApplied, "noclip asked, collision still on")
          : "noclip";
 
+    /// <summary>Does the collision read on the pawn agree with the noclip request? An unread collision (-1, or an older
+    /// DLL) has nothing to wait for.</summary>
+    public static bool CollisionAgrees(bool noclipAsked, int collision)
+        => collision < 0 || collision == (noclipAsked ? 0 : 1);
+
     /// <summary>The readout's clause, or "" when the collision was not read.</summary>
     public static string CollisionClause(int collision) => collision switch
     {
