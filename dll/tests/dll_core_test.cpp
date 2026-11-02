@@ -1596,11 +1596,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, UPROPNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, UPROPNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -4992,6 +4992,77 @@ int main() {
         DynOff::UFIELD_NEXT         = svNextU;
         DynOff::USTRUCT_CHILDREN    = svChildU;
         g_cachedUEVersion           = svVerU;
+    }
+
+    // -- UPROPNEXT-2026-11-03 -- the UProperty-mode Next probe never takes OuterPrivate ---------------------------------
+    //
+    // ⛔ POOL-FAKING (own pool and names, like UFIELDNEXT above). [UE4-USTRUCT-GIVEUP-STATS] review round 2: on a
+    // case-preserving layout OuterPrivate sits at 0x28, a Next candidate, and an Inner property's Outer chain -- the
+    // Inner, its ArrayProperty, the Function that declares that -- is two UField hops. With the Inner sampled first and
+    // its own Next null, the probe took 0x28. UField::Next always lies past OuterPrivate.
+    {
+        blk("UPROPNEXT - the UProperty-mode Next probe never takes OuterPrivate (case-preserving layout)");
+        ResetCancel();
+
+        enum : int32_t { nClass = 1, nFunction, nArrayProp, nIntProp, nScriptStruct, nNames };
+        const char* npNames[nNames] = { "", "Class", "Function", "ArrayProperty", "IntProperty", "ScriptStruct" };
+        static uint8_t npEntry[nNames][0x40] = {};
+        static uintptr_t npChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(npEntry[i] + 0x10, npNames[i], strlen(npNames[i]) + 1);
+            npChunk[i] = reinterpret_cast<uintptr_t>(npEntry[i]);
+        }
+        static uintptr_t npChunks[2] = { reinterpret_cast<uintptr_t>(npChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(npChunks), 0x10);
+
+        const bool svCpnN   = DynOff::bCasePreservingName;
+        const int  svOuterN = DynOff::UOBJECT_OUTER;
+        const int  svNextN  = DynOff::UFIELD_NEXT;
+        DynOff::bCasePreservingName = true;
+        DynOff::UOBJECT_OUTER       = 0x28;
+        DynOff::UFIELD_NEXT         = 0x30;   // DetectUPropertyMode's case-preserving guess, and the real Next here
+
+        enum { cClass, cFunction, cArray, cInt, cStruct, oInner, oArr, oFn, oP1, oP2, oP3, oStruct, kN };
+        alignas(16) static uint8_t npB[kN][0x100] = {};
+        auto A    = [&](int b) { return reinterpret_cast<uintptr_t>(npB[b]); };
+        auto putP = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)  { memcpy(b + off, &v, sizeof(v)); };
+        const int metaName[5] = { nClass, nFunction, nArrayProp, nIntProp, nScriptStruct };
+        for (int m = cClass; m <= cStruct; ++m) {
+            putP(npB[m], Grimoire::OFF_UOBJECT_CLASS, A(cClass));
+            put32(npB[m], Grimoire::OFF_UOBJECT_NAME, metaName[m]);
+        }
+        auto obj = [&](int b, int cls, int outer) {
+            putP(npB[b], Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            putP(npB[b], 0x28, outer >= 0 ? A(outer) : 0);   // OuterPrivate
+        };
+        obj(oFn, cFunction, cClass);    // a Function's Outer is its Class, which ends any UField chain
+        obj(oArr, cArray, oFn);         // a parameter of that Function
+        obj(oInner, cInt, oArr);        // the parameter's Inner; its own Next stays null
+        obj(oStruct, cStruct, -1);
+        obj(oP1, cInt, oStruct); obj(oP2, cInt, oStruct); obj(oP3, cInt, oStruct);
+        putP(npB[oP1], 0x30, A(oP2));
+        putP(npB[oP2], 0x30, A(oP3));
+
+        // The Inner first, so it is the first property the probe samples.
+        const int order[] = { oInner, oArr, oP1, oP2, oP3, oFn, oStruct };
+        constexpr int kOrder = static_cast<int>(sizeof(order) / sizeof(order[0]));
+        FakePool npPool;
+        npPool.Build(kOrder);
+        for (int i = 0; i < kOrder; ++i) {
+            const uintptr_t o = A(order[i]);
+            memcpy(npPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        }
+        Aura::InitWithExtendedLayout(npPool.Addr(), FakePool::kItemSize);
+
+        const int probed = Genau::ProbeUFieldNextUProperty();
+        check("UPROPNEXT ⭐: the probe measures Next 0x30 past an Inner whose Outer chain is two UField hops at 0x28",
+              probed == 0x30, std::to_string(probed).c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpnN;
+        DynOff::UOBJECT_OUTER       = svOuterN;
+        DynOff::UFIELD_NEXT         = svNextN;
     }
 
     // -- [UE-OVERRIDE-411] review: an override is held to the UFunction tail the game has ------------------
