@@ -99,11 +99,12 @@ public partial class PropertySearchMatch : ObservableObject
 
     internal const string KeyNestedNoAction = "str.PropertySearch.NestedNoAction";
 
-    /// <summary>[LEAD-PROPSEARCH-TOPTIONAL-LEAVES] Why Freeze / Force did nothing on a nested row. Its offset is not an
-    /// address on the class -- inside a TOptional&lt;FStruct&gt; it is the optional's storage, set or not -- and its
-    /// dotted name is no field of the class.</summary>
+    /// <summary>[LEAD-PROPSEARCH-TOPTIONAL-LEAVES] Why Freeze / Force did nothing on a nested row. Past a container its
+    /// offset is the element struct's, not the class's; inside a TOptional&lt;FStruct&gt; it is the optional's storage,
+    /// which may hold no value; and its dotted name is no field of the class for Force to resolve.</summary>
     public string NestedActionRefusedText => Helpers.AobMakerStatus.Say(KeyNestedNoAction,
-        "Not done: {0} is a nested field with no single address on its class. List the class's instances with finder, "
+        "Not done: {0} is a nested field. Freeze and Force act on a class's own fields: past a container its offset "
+        + "is the element's, and inside an optional it may hold no value. List the class's instances with finder, "
         + "then drill the path in Live Walker.", PropName);
 
     // === Force-field (Solide) per-row action gates ===
