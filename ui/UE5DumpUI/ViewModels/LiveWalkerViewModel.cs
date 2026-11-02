@@ -1390,6 +1390,59 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
+    /// [LEAD-LW-BACK-CACHED-ELEMENTS] A container view re-entered without a walk (Back, Forward, a crumb jump, an
+    /// in-session bookmark) renders the crumb's held reading, made at the drill or the last refresh inside the view. A
+    /// container that reallocated since left its element addresses in the freed allocation until Refresh. The owner is
+    /// read once: when the container's data address or count moved, the view is refreshed, which also stores the new
+    /// reading on the crumb; otherwise the held render, and the scroll it restored, stand.
+    /// </summary>
+    private async Task RecheckReenteredContainerAsync(BreadcrumbItem bc)
+    {
+        // A DataTable view's rows are walked by their own call, and a synthetic crumb was just re-read.
+        var held = bc.ContainerField;
+        if (held == null || bc.IsDataTableView || string.IsNullOrEmpty(bc.Address)
+            || !ReferenceEquals(CurrentCrumb, bc)) return;
+        string? ownerClassAddr = Breadcrumbs.Count >= 2 && !string.IsNullOrEmpty(Breadcrumbs[^2].ClassAddr)
+            ? Breadcrumbs[^2].ClassAddr : null;
+        using var timeoutCts = new CancellationTokenSource(
+            TimeSpan.FromMilliseconds(Constants.LiveWalkerRefreshTimeoutMs));
+        try
+        {
+            var owner = await _dump.WalkInstanceAsync(bc.Address, ownerClassAddr, arrayLimit: ArrayLimit,
+                                                      previewLimit: PreviewLimit, fillGaps: FillGaps,
+                                                      ct: timeoutCts.Token);
+            if (!ReferenceEquals(CurrentCrumb, bc)) return;   // moved on while it read
+            var fresh = owner.Fields.FirstOrDefault(f => f.Offset == held.Offset
+                && string.Equals(f.Name, held.Name, StringComparison.Ordinal)
+                && string.Equals(f.TypeName, held.TypeName, StringComparison.Ordinal));
+            if (fresh == null || !ContainerMoved(held, fresh)) return;
+            _log.Info($"NAV re-entered '{held.Name}': its container moved since it was read — refreshing the view");
+            await RefreshAsync();
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+        {
+            _log.Warn($"NAV re-entered '{held.Name}': the owner re-read timed out — showing the held reading");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.Warn($"NAV re-entered '{held.Name}': the owner re-read failed ({ex.Message}) — showing the held reading");
+        }
+    }
+
+    /// <summary>[LEAD-LW-BACK-CACHED-ELEMENTS] Did a container move or change size between two readings of its row?</summary>
+    internal static bool ContainerMoved(LiveFieldValue held, LiveFieldValue fresh)
+    {
+        static bool Differ(string a, string b) => ParseHexAddr(a) != ParseHexAddr(b);
+        if (!string.IsNullOrEmpty(held.ArrayInnerType))
+            return Differ(held.ArrayDataAddr, fresh.ArrayDataAddr) || held.ArrayCount != fresh.ArrayCount;
+        if (!string.IsNullOrEmpty(held.MapKeyType))
+            return Differ(held.MapDataAddr, fresh.MapDataAddr) || held.MapCount != fresh.MapCount;
+        if (!string.IsNullOrEmpty(held.SetElemType))
+            return Differ(held.SetDataAddr, fresh.SetDataAddr) || held.SetCount != fresh.SetCount;
+        return false;
+    }
+
+    /// <summary>
     /// The elements an array container view shows, how many it ASKED for, and the count they belong to (<c>Total</c>,
     /// the element read's own when it read). A re-read of the view must show what opening it showed, and the parent
     /// walk's inline preview does not: it re-applies the Array Limit to a scalar view the slider does not govern.
@@ -2389,6 +2442,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 RepopulateContainerView(item.ContainerField, item);
                 RestoreCrumbView(item, cameBackFrom);
+                await RecheckReenteredContainerAsync(item);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
                 return;
             }
 
@@ -2658,6 +2712,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     {
                         RepopulateContainerView(lastBc.ContainerField, lastBc);
                         RestoreCrumbView(lastBc);
+                        await RecheckReenteredContainerAsync(lastBc);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
                         return;
                     }
                     if (lastBc.IsContainerView && lastBc.ContainerField == null
@@ -2723,6 +2778,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 RepopulateContainerView(prev.ContainerField, prev);
                 RestoreCrumbView(prev, removed);
+                await RecheckReenteredContainerAsync(prev);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
                 return;
             }
 
@@ -2829,12 +2885,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ClearStatus();
             IsLoading = true;
 
-            // Container view with a live field: re-render from the cached elements
-            // (no memory re-read, so this case cannot go stale).
+            // Container view with a live field: re-render from the cached elements, then re-check them -- a container
+            // that reallocated since they were read left its addresses stale. [LEAD-LW-BACK-CACHED-ELEMENTS]
             if (next.IsContainerView && next.ContainerField != null)
             {
                 RepopulateContainerView(next.ContainerField, next);
                 RestoreCrumbView(next);
+                await RecheckReenteredContainerAsync(next);
                 return;
             }
 
@@ -4225,6 +4282,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 else if (lastBc.IsContainerView && lastBc.ContainerField != null)
                 {
                     RepopulateContainerView(lastBc.ContainerField, lastBc);
+                    await RecheckReenteredContainerAsync(lastBc);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
+                    if (RenderSuperseded(lastBc, "Bookmark")) return;
                 }
                 else if (lastBc.IsContainerView && lastBc.ContainerField == null
                          && await TryRepopulateSyntheticContainerAsync(lastBc))

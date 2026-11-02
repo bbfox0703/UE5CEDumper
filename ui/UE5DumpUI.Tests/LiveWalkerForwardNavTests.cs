@@ -813,6 +813,22 @@ public class LiveWalkerForwardNavTests
     }
 
     [Fact]
+    public void ContainerMoved_ReadsEachKindsOwnAddressAndCount()
+    {
+        LiveFieldValue Map(string data, int n) => new() { MapKeyType = "IntProperty", MapDataAddr = data, MapCount = n };
+        LiveFieldValue Set(string data, int n) => new() { SetElemType = "IntProperty", SetDataAddr = data, SetCount = n };
+        LiveFieldValue Arr(string data, int n) => new() { ArrayInnerType = "IntProperty", ArrayDataAddr = data, ArrayCount = n };
+
+        Assert.False(LiveWalkerViewModel.ContainerMoved(Map("0x60000", 1), Map("0x60000", 1)));
+        Assert.True(LiveWalkerViewModel.ContainerMoved(Map("0x60000", 1), Map("0x68000", 1)));
+        Assert.True(LiveWalkerViewModel.ContainerMoved(Map("0x60000", 1), Map("0x60000", 2)));
+        Assert.False(LiveWalkerViewModel.ContainerMoved(Set("0x70000", 3), Set("0x70000", 3)));
+        Assert.True(LiveWalkerViewModel.ContainerMoved(Set("0x70000", 3), Set("0x78000", 3)));
+        Assert.True(LiveWalkerViewModel.ContainerMoved(Arr("0x50000", 1), Arr("0x50000", 0)));
+        Assert.False(LiveWalkerViewModel.ContainerMoved(Arr("0x50000", 1), Arr("0x50000", 1)));
+    }
+
+    [Fact]
     public async Task Back_IntoAContainerThatDidNotMove_ReadsTheOwnerOnce_AndKeepsTheView()
     {
         var (dump, vm, _) = OwnerWalker();
