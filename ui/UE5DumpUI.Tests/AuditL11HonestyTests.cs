@@ -870,6 +870,19 @@ public class AuditL11HonestyTests
     }
 
     [Fact]
+    public void LeadDtExport64_TheAobFallbackNote_DoesNotReplaceTheLimitWarning()
+    {
+        // Review round 2: with Use AOB Symbol on and the export re-anchored below GWorld, Copy CE XML and Copy CE Field
+        // kept "AOB skipped (no GWorld path)" and threw the limit warning away -- a table cut to its page, or a
+        // container cut at the Array Limit, then said nothing. The two are about different things; both are said.
+        var line = LiveWalkerViewModel.ExportStatusExtra("AOB skipped (no GWorld path)", "⚠ RowMap cut");
+        Assert.Contains("AOB skipped", line);
+        Assert.Contains("RowMap cut", line);
+        Assert.Equal(" ⚠ RowMap cut", LiveWalkerViewModel.ExportStatusExtra(null, "⚠ RowMap cut"));
+        Assert.Equal("", LiveWalkerViewModel.ExportStatusExtra(null, null));
+    }
+
+    [Fact]
     public void LeadDtExport64_AWholeTable_AddsNoWarning()
     {
         var rowMap = LiveWalkerViewModel.SyntheticRowMapField(DataTable(total: 12, fetched: 12), "0x1000");

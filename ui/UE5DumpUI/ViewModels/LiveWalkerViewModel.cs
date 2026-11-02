@@ -1585,6 +1585,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>The CE export status line's clause for the AOB fallback and the container-limit warning.</summary>
+    internal static string ExportStatusExtra(string? aobFallbackWarn, string? limitWarn)
+        => aobFallbackWarn != null ? " " + aobFallbackWarn : (limitWarn != null ? " " + limitWarn : "");
+
     /// <summary>A status clause after the line already shown, or alone when there is none.</summary>
     private static string BesideStatus(string? current, string clause)
         => string.IsNullOrEmpty(current) ? clause : current + " — " + clause;
@@ -5225,8 +5229,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Final indicator: objects (structs + pointer targets) walked + XML line count.
             int objCount = resolvedStructs.Count + resolvedInstances.Count;
             int lineCount = xml.Count(c => c == '\n') + 1;
-            var statusExtra = aobFallbackWarn != null ? " " + aobFallbackWarn
-                : (limitWarn != null ? " " + limitWarn : "");
+            var statusExtra = ExportStatusExtra(aobFallbackWarn, limitWarn);
             var truncWarn = CeXmlExportService.LastExportTruncated
                 ? " ⚠ Truncated (object graph too large) — lower Drill Depth or use Copy CE Field"
                 : "";
@@ -5697,8 +5700,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Final indicator: objects (structs + pointer targets) walked + XML line count.
             int objCount = resolvedStructs.Count + resolvedInstances.Count;
             int lineCount = xml.Count(c => c == '\n') + 1;
-            var statusExtra = aobFallbackWarn != null ? " " + aobFallbackWarn
-                : (limitWarn != null ? " " + limitWarn : "");
+            var statusExtra = ExportStatusExtra(aobFallbackWarn, limitWarn);
             var truncWarn = CeXmlExportService.LastExportTruncated
                 ? " ⚠ Truncated (object graph too large) — lower Drill Depth or use Copy CE Field"
                 : "";
