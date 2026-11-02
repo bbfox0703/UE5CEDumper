@@ -54,7 +54,8 @@ public class CeExportStrideNoteTests
         var xml = CeXmlExportService.GenerateInstanceXml("\"Game.exe\"+1000", "Inst", "TestClass", OneField,
                                                          headerNotes: new[] { Note });
         Assert.Contains($"<!-- {Note} -->", xml);
-        Assert.DoesNotContain("<!--", CeXmlExportService.GenerateInstanceXml("\"Game.exe\"+1000", "Inst", "TestClass", OneField));
+        // The note only: "<!--" alone would also see PackedLayoutNotice, process-wide state another test may hold on.
+        Assert.DoesNotContain(Note, CeXmlExportService.GenerateInstanceXml("\"Game.exe\"+1000", "Inst", "TestClass", OneField));
     }
 
     [Fact]

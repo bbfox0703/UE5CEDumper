@@ -4094,17 +4094,6 @@ public static class CeXmlExportService
     private static string CollapseLineBreaks(string s) =>
         s.Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ');
 
-    /// <summary>
-    /// Escape special characters for XML element text content.
-    ///
-    /// <para><b>Every</b> <c>&lt;Description&gt;</c> goes through this, not just the ones
-    /// that looked risky. Description text is arbitrary GAME memory — TMap keys, TSet
-    /// elements, soft-object paths, DataTable row names — and a single <c>&amp;</c> in any
-    /// of them produces an invalid entity reference that makes Cheat Engine reject the
-    /// <b>whole document</b>. A multi-thousand-entry export then imports as nothing, with
-    /// no indication which record was at fault (audit #4 B3). Escaping a string that was
-    /// already safe is a no-op, so there is no reason to be selective.</para>
-    /// </summary>
     /// <summary>The comment lines a CE table opens with: the UE5.7+ packed-layout note (no-op otherwise) and
     /// [CEXPORT-STRIDE-NOTE] the caller's notes. The AOB-wrapped export wrote none before this.</summary>
     private static void AppendHeaderNotes(StringBuilder sb, IReadOnlyList<string>? notes)
@@ -4158,9 +4147,27 @@ public static class CeXmlExportService
     /// <summary>One XML comment line per non-empty note, or "" for none. A comment cannot hold "--".</summary>
     internal static string XmlCommentLines(IReadOnlyList<string>? notes)
         => notes == null ? ""
-         : string.Concat(notes.Where(n => !string.IsNullOrEmpty(n))
-                              .Select(n => $"<!-- {n.Replace("--", "- -")} -->\n"));
+         : string.Concat(notes.Where(n => !string.IsNullOrEmpty(n)).Select(n => $"<!-- {NoDoubleDash(n)} -->\n"));
 
+    /// <summary>One pass of Replace leaves "--" in a run of three dashes ("---" becomes "- --"), so it repeats until none
+    /// is left.</summary>
+    private static string NoDoubleDash(string s)
+    {
+        while (s.Contains("--")) s = s.Replace("--", "- -");
+        return s;
+    }
+
+    /// <summary>
+    /// Escape special characters for XML element text content.
+    ///
+    /// <para><b>Every</b> <c>&lt;Description&gt;</c> goes through this, not just the ones
+    /// that looked risky. Description text is arbitrary GAME memory — TMap keys, TSet
+    /// elements, soft-object paths, DataTable row names — and a single <c>&amp;</c> in any
+    /// of them produces an invalid entity reference that makes Cheat Engine reject the
+    /// <b>whole document</b>. A multi-thousand-entry export then imports as nothing, with
+    /// no indication which record was at fault (audit #4 B3). Escaping a string that was
+    /// already safe is a no-op, so there is no reason to be selective.</para>
+    /// </summary>
     private static string EscapeXmlContent(string s)
         => s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 
