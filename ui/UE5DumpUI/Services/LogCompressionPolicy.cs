@@ -80,18 +80,20 @@ public static class LogCompressionPolicy
 
         // [LOG-RESUME-LIVE-ROLLED] A session that rolls a category past its size cap writes the highest-numbered
         // `{prefix}-0_NNN.log`, a name IsLiveLog does not match (and must not: every CLOSED rolled file would turn
-        // live). In our own folder the newest rolled file of each category is the one a sink holds open.
+        // live). The newest rolled file of each category in a folder is that folder's slot: in our own folder a sink
+        // holds it open; in a game's folder the UI's mirror sinks may (the DLL never writes a -0_NNN name), so there
+        // it is held to the -0.log slot's idle rule.
         var all = new List<LogFileEntry>(files);
         var newestRolled = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var f in all)
-            if (f.OwnedByThisProcess && TryRolled(f.Name, out var prefix, out var seq)
-                && (!newestRolled.TryGetValue(prefix, out var best) || seq > best))
-                newestRolled[prefix] = seq;
+            if (TryRolled(f.Name, out var prefix, out var seq)
+                && (!newestRolled.TryGetValue(SlotKey(f.Path, prefix), out var best) || seq > best))
+                newestRolled[SlotKey(f.Path, prefix)] = seq;
 
         foreach (var f in all)
         {
-            if (f.OwnedByThisProcess && TryRolled(f.Name, out var prefix, out var seq)
-                && newestRolled[prefix] == seq)
+            if (TryRolled(f.Name, out var prefix, out var seq) && newestRolled[SlotKey(f.Path, prefix)] == seq
+                && (f.OwnedByThisProcess || nowUtc - f.LastWriteUtc < liveMinAge))
             {
                 plan.SkippedLive++;
                 continue;
@@ -109,6 +111,14 @@ public static class LogCompressionPolicy
             }
         }
         return plan;
+    }
+
+    /// <summary>[LOG-RESUME-LIVE-ROLLED] One category's slot in one folder: the folder part of the path, as text (this
+    /// policy does no I/O), and the category prefix.</summary>
+    private static string SlotKey(string path, string prefix)
+    {
+        int cut = Math.Max(path.LastIndexOf('\\'), path.LastIndexOf('/'));
+        return (cut >= 0 ? path[..cut] : "") + "|" + prefix;
     }
 
     /// <summary>[LOG-RESUME-LIVE-ROLLED] A rolled file of a category: <c>{prefix}-0_NNN.log</c>, Serilog's name for the
