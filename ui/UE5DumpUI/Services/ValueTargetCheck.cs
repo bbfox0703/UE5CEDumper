@@ -25,6 +25,7 @@ public static class ValueTargetCheck
             if (string.IsNullOrWhiteSpace(v)) continue;
             var t = v.Trim();
             if (t is "∞" or "+∞" or "-∞"
+                || C99NonFinite.IsMatch(t)
                 || (double.TryParse(t, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture,
                                     out var d) && !double.IsFinite(d)))
                 return AobMakerStatus.Say(KeyNonFinite,
@@ -43,6 +44,13 @@ public static class ValueTargetCheck
                                   or ValueScanType.Increased or ValueScanType.Decreased;
         return NonFiniteError(dataType, prevValue ? null : value, scanType == ValueScanType.Between ? value2 : null);
     }
+
+    /// <summary>What the DLL's std::stod (the strtod family) reads as non-finite and .NET's invariant parse does not:
+    /// C99's inf / infinity / nan / nan(chars), any case, signed or not. Without it "inf" reached the live matcher as
+    /// +inf while the snapshot store refused it as no number -- two answers to one input.</summary>
+    private static readonly System.Text.RegularExpressions.Regex C99NonFinite = new(
+        @"^[+-]?(inf(inity)?|nan(\([0-9A-Za-z_]*\))?)$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
 
     private static bool IsNumeric(ValueScanDataType dt) => dt is
         ValueScanDataType.Int8 or ValueScanDataType.Int16 or ValueScanDataType.Int32 or ValueScanDataType.Int64 or
