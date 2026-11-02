@@ -19,14 +19,21 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     private Mutex? _singleInstanceMutex;
 
     public bool TryAcquireSingleInstance()
+        => TakeSingleInstanceMutex(() => (new Mutex(true, Constants.MutexName, out bool createdNew), createdNew),
+                                   out _singleInstanceMutex);
+
+    /// <summary>Take the single-instance mutex <paramref name="open"/> creates, holding it only when this call created
+    /// it.</summary>
+    internal static bool TakeSingleInstanceMutex(Func<(Mutex Mutex, bool CreatedNew)> open, out Mutex? held)
     {
-        _singleInstanceMutex = new Mutex(true, Constants.MutexName, out bool createdNew);
+        var (mutex, createdNew) = open();
         if (!createdNew)
         {
-            _singleInstanceMutex.Dispose();
-            _singleInstanceMutex = null;
+            mutex.Dispose();
+            held = null;
             return false;
         }
+        held = mutex;
         return true;
     }
 

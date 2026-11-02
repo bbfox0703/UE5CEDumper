@@ -256,6 +256,39 @@ public class CompositionRootWiringTests : IDisposable
         var app = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/App.axaml.cs"));
         // The app keeps the platform service Main made (and the mutex it holds), rather than making a second one.
         Assert.Contains("StartupPlatform", app);
+
+        // Review round 2: a check by name passed even if App took the mutex again (the one instance would then find it
+        // held by its own Main and shut down), and nothing held the window raise (B42). App takes it only when Main
+        // did not start it; Main raises the first instance's window before it leaves.
+        Assert.Contains("if (StartupPlatform == null && !_platform.TryAcquireSingleInstance())", app);
+        int raise = program.IndexOf("ActivateExistingInstance()", check, StringComparison.Ordinal);
+        int leave = program.IndexOf("return 1;", check, StringComparison.Ordinal);
+        Assert.True(raise > check && raise < leave, "Main must raise the first instance's window before it leaves");
+
+        // Review round 2: the mutex is taken INSIDE Main's crash.log catch, so a failure there is written down
+        // rather than killing the process without a word.
+        var tryStmt = System.Text.RegularExpressions.Regex.Match(program[main..], @"\n\s*try\s*\{");
+        int guard = tryStmt.Success ? main + tryStmt.Index : -1;
+        Assert.True(guard > main && guard < check, "Main must take the mutex inside its crash.log try");
+    }
+
+    [Fact]
+    public void AMutexAnElevatedInstanceHolds_ReadsAsAnotherInstance_NotACrash()
+    {
+        // Review round 2: a first instance run as administrator holds the mutex where an unelevated second launch may
+        // not open it, and new Mutex(...) then throws UnauthorizedAccessException. That is another instance.
+        bool taken = UE5DumpUI.Services.WindowsPlatformService.TakeSingleInstanceMutex(
+            () => throw new UnauthorizedAccessException("the elevated instance's mutex"), out var held);
+        Assert.False(taken);
+        Assert.Null(held);
+        // Control: a fresh name is taken, and held.
+        bool fresh = UE5DumpUI.Services.WindowsPlatformService.TakeSingleInstanceMutex(
+            () => (new System.Threading.Mutex(true, $"UE5DumpUI_Test_{Guid.NewGuid():N}", out bool created), created),
+            out var mine);
+        Assert.True(fresh);
+        Assert.NotNull(mine);
+        mine!.ReleaseMutex();
+        mine.Dispose();
     }
 
     /// <summary>[LEAD-KEYWORD-DROPDOWN-FIRST-CLICK] The keyword boxes' dropdown style is what the headless test holds
