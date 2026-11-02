@@ -1016,8 +1016,8 @@
     <sys:String x:Key="str.PropertySearch.ForceOff">Force OFF</sys:String>
     <sys:String x:Key="str.PropertySearch.ForceNull">Force → null</sys:String>
     <sys:String x:Key="str.PropertySearch.ForceValue">Force value…</sys:String>
-    <!-- [LEAD-PROPSEARCH-TOPTIONAL-LEAVES] Freeze / Force on a deep (nested) row. {0} = the dotted path. -->
-    <sys:String x:Key="str.PropertySearch.NestedNoAction">Not done: {0} is a nested field. Freeze and Force act on a class's own fields: past a container its offset is the element's, and inside an optional it may hold no value. List the class's instances with finder, then drill the path in Live Walker.</sys:String>
+    <!-- [LEAD-PROPSEARCH-TOPTIONAL-LEAVES] Copy Offset / Freeze / Force on a deep (nested) row. {0} = the dotted path. -->
+    <sys:String x:Key="str.PropertySearch.NestedNoAction">Not done: {0} is a nested field. Copy Offset, Freeze and Force act on a class's own fields: past a container its offset is the element's, and inside an optional it may hold no value. List the class's instances with finder, then drill the path in Live Walker.</sys:String>
     <sys:String x:Key="str.PropertySearch.ForcedHeader">Forced fields:</sys:String>
     <sys:String x:Key="str.PropertySearch.ForcedClearAll">Clear all</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.ForcedClearAll">Release every forced-field hold (best-effort restore each numeric field's captured base; a pointer forced to null is not put back).</sys:String>

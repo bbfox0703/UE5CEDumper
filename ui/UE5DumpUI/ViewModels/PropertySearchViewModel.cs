@@ -490,9 +490,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         await ApplyForceAsync(m, "numeric", value: r.Value);
     }
 
-    /// <summary>[LEAD-PROPSEARCH-TOPTIONAL-LEAVES] A nested (deep) row hides Freeze and Force; the commands refuse it as
-    /// well, so no route writes at its offset -- inside a TOptional&lt;FStruct&gt;, the optional's storage whether or
-    /// not it is set -- or arms a hold on its dotted name.</summary>
+    /// <summary>[LEAD-PROPSEARCH-TOPTIONAL-LEAVES] A nested (deep) row hides Copy Offset, Freeze and Force; the commands
+    /// refuse it as well, so no route copies an element's offset as a class's, writes at its offset -- inside a
+    /// TOptional&lt;FStruct&gt;, the optional's storage whether or not it is set -- or arms a hold on its dotted name.</summary>
     private bool RefuseNested(PropertySearchMatch m)
     {
         if (m.ShowScalarActions) return false;
@@ -777,7 +777,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task CopyOffsetAsync(PropertySearchMatch? match)
     {
-        if (match == null) return;
+        if (match == null || RefuseNested(match)) return;
         if (_platform is null || !await _platform.CopyToClipboardAsync(match.OffsetHex))
             _log.Warn($"Copy Offset did nothing — the clipboard refused the write ({match.OffsetHex}).");
     }
