@@ -406,8 +406,12 @@ public class BookmarkTests
 
     // --- Cross-restart spine re-resolution ---
 
-    [Fact]
-    public async Task LoadBookmark_DeepContainerSpine_ReresolvesAfterGameRestart()
+    // [LEAD-BOOKMARK-SAMECLASS-RECYCLE] control: a spine re-walked from the live GWorld finds the object by its path, and
+    // a spawned actor's name can differ in a new launch, so a re-resolved bookmark is not held to the saved name.
+    [Theory]
+    [InlineData("BP_PlayerCharacter")]
+    [InlineData("BP_PlayerCharacter_C_2147482516")]
+    public async Task LoadBookmark_DeepContainerSpine_ReresolvesAfterGameRestart(string savedObjectName)
     {
         // A deep bookmark saved in a PREVIOUS game session: its saved addresses are all
         // stale (the game restarted, ASLR moved everything). The spine — GWorld → GameState
@@ -458,7 +462,7 @@ public class BookmarkTests
 
         var slot = vm.BookmarkSlots[0];
         slot.SavedClassName = "BP_PlayerCharacter_C";
-        slot.SavedObjectName = "BP_PlayerCharacter";
+        slot.SavedObjectName = savedObjectName;
         slot.SavedAddress = "0xDEADPAWN";   // stale, from the previous session
         slot.SavedBreadcrumbs = new List<BreadcrumbItem>
         {
@@ -557,6 +561,58 @@ public class BookmarkTests
 
         Assert.Equal("UserWidget", vm.CurrentClassName);
         Assert.Equal("0xC0DE", vm.Breadcrumbs[^1].Address);
+    }
+
+    // [LEAD-BOOKMARK-SAMECLASS-RECYCLE] On the SAVED address (nothing re-anchored the spine), the class name alone let
+    // another instance of the same class -- one that took the address in a new launch, or after the saved object was
+    // freed -- load under the bookmark's name. The saved object name tells them apart.
+    private static (LiveWalkerViewModel vm, BookmarkSlot slot) AddressRootedBookmark(string nowAtAddress)
+    {
+        var dump = new StubDumpService();
+        dump.RegisterStruct("0xE0E0", new InstanceWalkResult
+        {
+            Name = nowAtAddress, ClassName = "BP_Enemy_C", Address = "0xE0E0",
+            Fields = new() { new() { Name = "Health", Offset = 100, TypeName = "FloatProperty", TypedValue = "50" } },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        var slot = vm.BookmarkSlots[0];
+        slot.SavedClassName = "BP_Enemy_C";
+        slot.SavedObjectName = "BP_Enemy_C_3";
+        slot.SavedAddress = "0xE0E0";
+        slot.SavedBreadcrumbs = new List<BreadcrumbItem>
+        {
+            new() { Address = "0xE0E0", Label = "BP_Enemy_C_3", FieldName = "0xE0E0", IsPointerDeref = true },
+        };
+        slot.SavedSelectedFields = new() { new BookmarkFieldRef("Health", 100) };
+        slot.IsOccupied = true;
+        return (vm, slot);
+    }
+
+    [Fact]
+    public async Task LoadBookmark_SavedAddressNowHoldsAnotherInstanceOfTheClass_ReportsStale()
+    {
+        var (vm, slot) = AddressRootedBookmark(nowAtAddress: "BP_Enemy_C_7");
+        var restoreRaised = false;
+        vm.RestoreBookmarkView += (_, _, _) => restoreRaised = true;
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.Equal("BP_Enemy_C", vm.CurrentClassName);   // the class matches...
+        Assert.False(restoreRaised);                         // ...and the bookmark still does not claim it
+        Assert.Contains("stale", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LoadBookmark_SavedAddressStillHoldsTheSavedObject_Restores()
+    {
+        var (vm, slot) = AddressRootedBookmark(nowAtAddress: "BP_Enemy_C_3");
+        var restoreRaised = false;
+        vm.RestoreBookmarkView += (_, _, _) => restoreRaised = true;
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.True(restoreRaised);
+        Assert.Contains("loaded", vm.StatusText);
     }
 
     [Fact]
