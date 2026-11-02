@@ -27,6 +27,75 @@ builds ≤696 in
 
 -----
 
+## 2026-11-03 (build 3673) — Review round 2 of the census pass: all 34 findings fixed `[FLY-REPORTS-WISH]` `[LEAD-LW-BACK-CACHED-ELEMENTS]` `[LEAD-BOOKMARK-SAMECLASS-RECYCLE]` `[VALUESCAN-NONFINITE-TARGET]` `[LOG-RESUME-LIVE-ROLLED]` `[UE4-USTRUCT-GIVEUP-STATS]` `[LEAD-PROPSEARCH-TOPTIONAL-LEAVES]` `[CEXPORT-ENUMNAMES-NOTE]` `[LEAD-DT-EXPORT-64ROWS]` `[LEAD-SECOND-UI-CRASHLOG]` `[SOLIDE-RELATED-STOPS]` `[UBEL-ASCII-FIRSTCHAR]` `[D4B-DELEGATEPAD-2026-09-09]` `[OPEN-CENSUS-2026-10-28]`
+
+A second adversarial review, six reviewers over the census pass's later fixes and round 1's follow-ups, found 34 issues:
+2 MED, 16 LOW, 16 INFO. Each was checked against the code, and every one is fixed, with a red test first where
+behaviour changed.
+
+- **The Fly card waits for the collision it asked for.** `fly_set` answers before the Fly worker applies noclip, so
+  every Fly ON with noclip said "noclip asked, collision still on". Measured on 3672, DumperTest Development: the pawn
+  stopped colliding 103 ms after the reply. The card now re-reads for up to about a second, and it reports
+  "noclip off, collision still off" in the other direction.
+- **Live Walker: re-entering a container view.**
+  - Back / Forward / a crumb jump no longer wait for the owner re-read, and no longer wipe the navigation's own status
+    line.
+  - An owner that is gone, is another object, or lost the field drops the rows and says why, instead of leaving them
+    editable. Refresh inside the view does the same.
+  - A pointer slot rewritten in place shows its new target.
+- **Bookmarks.** A container view whose owner's address holds another object is caught. A bookmarked struct is checked
+  through the object holding it: an inline struct of a recycled owner reads stale, and a DataTable row whose bytes
+  changed does not.
+- **Value Search.** The non-finite check reads only the boxes the scan type sends, so a leftover hidden value no longer
+  blocks a scan. It also refuses C99 spellings the DLL reads as infinite (`inf`, `nan(ind)`).
+- **Property Search.** Copy Offset refuses a deep row, as Freeze and Force do, and the refusal now says the real reason.
+- **UE4 offset give-up.** The Next probe no longer mistakes OuterPrivate (a case-preserving 0x28) for UField::Next.
+- **Exports.**
+  - A DataTable's row enums are covered by the enum-names note: `walk_datatable_rows` carries `enum_names_failed`.
+  - The note says enum fields show as plain numbers, not that their dropdowns are empty.
+  - The AOB fallback note no longer hides the limit warning.
+- **Others.**
+  - Log compression holds a game folder's newest rolled UI mirror log like its slot.
+  - The UI's single-instance mutex is taken inside Main's crash.log catch. A mutex an elevated instance holds now reads
+    as "another instance".
+  - Wirbel's struct probe accepts a CJK name, as Ubel does.
+  - Stealth Meter's stop line comes from en.axaml.
+  - `pipe-protocol.md` documents `stops`, `fly_set` and `fly_get_state`.
+- **Checked live on 3672** (DLL side, `tools/verify/census_pass2_pipe_checks.py`): a delegate row's hex holds the whole
+  value, with no space on DumperTest Shipping and the 8-byte detector, then a space, on Development;
+  `find_stealth_meter` carries `stops`; the Fly collision reads 1, then 0 with noclip, then 1.
+
+## 2026-11-02 (build 3672) — The census pass's second half: delegate hex, a STATS UE4 give-up, bookmarks, the pipe reader `[D4B-DELEGATEPAD-2026-09-09]` `[UE4-USTRUCT-GIVEUP-STATS]` `[LEAD-PROPSEARCH-TOPTIONAL-LEAVES]` `[LEAD-BOOKMARK-SAMECLASS-RECYCLE]` `[TRACE-UI-READ-SPEED]` `[LEAD-LW-BACK-CACHED-ELEMENTS]` `[LEAD-USMAP-UDS-SHADOW]` `[UBEL-ASCII-FIRSTCHAR]` `[VALUESCAN-NONFINITE-TARGET]` `[CSX-LONG-ELEMENT-LABEL]` `[LEAD-KEYWORD-DROPDOWN-FIRST-CLICK]` `[SOLIDE-RELATED-STOPS]` `[FLY-REPORTS-WISH]` `[LOG-RESUME-LIVE-ROLLED]` `[LEAD-LW-INPLACE-SEARCHCOUNT]` `[OPEN-CENSUS-2026-10-28]`
+
+The census fix pass went on through the remaining open items, one red and one green commit each.
+
+- **A delegate row's hex holds the whole value.** On a checked build that means the 8-byte access detector, a space,
+  then the payload; Shipping's hex is unchanged.
+- **A STATS UE4 give-up** (Development / DebugGame 4.11–4.24) measures UField::Next on the property chains before it
+  ships the UStruct head. Development UE423_Flying measured live on 3671: Next 0x30, head 48/50/58/60.
+- **Live Walker.**
+  - Back / Forward / a crumb jump into a container view re-read the owner and re-render when the container moved.
+  - A bookmark on its saved address is not claimed by another instance of its class.
+  - Property Search's Freeze and Force refuse a deep row themselves.
+- **Opening a large Live Funcs trace.** The pipe's reply reader now reads 64 KB at a time, not 1 KB. Offline, the read
+  loop went from about 60 to about 600 MB/s.
+- **.usmap.** A super that a name-keyed reader cannot reach is written as none, with the whole chain kept. That covers
+  UE 5's same-named AnimBlueprintGeneratedConstantData pair, and CUE4Parse keeps one struct per name.
+- **Earlier in the pass, built here for the first time:**
+  - CJK-first names pass the DLL's name guards.
+  - Value Search refuses non-finite targets.
+  - CSX keeps a long element label's start.
+  - The keyword dropdown's first click reaches its button.
+  - Detect Stealth Meter says when its search stopped short.
+  - The Fly card reports the collision it observed.
+  - Log compression treats a live rolled log as live.
+  - An in-place refresh counts its search matches.
+- **Chased, no code change.**
+  - `walk_class` against `walk_class_batch`: 1000 of 1000 classes agree on UE 4.23 Shipping and Development; the old
+    zero was a misreading of the reply's shape.
+  - The G12/G3 log contradiction was a deliberately staged `-dirty` build (working-lessons 1.ap).
+  - A second DLL copy's auto-start was re-derived; its fix is the maintainer's call.
+
 ## 2026-11-02 (build 3671) — Eleven census fixes: exports say what they left out, rows without an address stay put, a pinned Console run checks its object `[LEAD-LW-NULLROW-HEX]` `[LEAD-CONSOLE-PIN-EXPECT-CLASS]` `[LEAD-LW-SYNTH-CONTAINER-STRUCT-OWNER]` `[LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST]` `[DISSECT-SPARSE-DELEGATE-WIDTH]` `[LEAD-DT-EXPORT-64ROWS]` `[CEXPORT-NESTED-TRUNC-NOTE]` `[CEXPORT-STRIDE-NOTE]` `[CEXPORT-ENUMNAMES-NOTE]` `[CLASSPIVOT-DT-STARTUP-LOG]` `[LEAD-SECOND-UI-CRASHLOG]` `[OPEN-CENSUS-2026-10-28]`
 
 The maintainer asked for the census's open bugs to be fixed one after another. Each item is a red test commit and a
