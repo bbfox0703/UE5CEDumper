@@ -1175,7 +1175,9 @@ public static class CeXmlExportService
         string? altRowColorOddRgb = null,
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
-        int fabricateArrayCount = 0)
+        int fabricateArrayCount = 0,
+        // [CEXPORT-STRIDE-NOTE] EngineState.StrideExportNote: "" unless the object-array stride is a guess.
+        string strideNote = "")
     {
         // Clean breadcrumbs: remove navigation cycles (e.g., Child->Parent->Child)
         // before generating XML to avoid deeply nested duplicate pointer chains.
@@ -1311,7 +1313,9 @@ public static class CeXmlExportService
         string? altRowColorOddRgb = null,
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
-        int fabricateArrayCount = 0)
+        int fabricateArrayCount = 0,
+        // [CEXPORT-STRIDE-NOTE] EngineState.StrideExportNote: "" unless the object-array stride is a guess.
+        string strideNote = "")
     {
         _nextId = 100;
         _collapsePointerNodes = collapsePointerNodes;
@@ -1457,7 +1461,9 @@ public static class CeXmlExportService
         string? altRowColorOddRgb = null,
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
-        int fabricateArrayCount = 0)
+        int fabricateArrayCount = 0,
+        // [CEXPORT-STRIDE-NOTE] EngineState.StrideExportNote: "" unless the object-array stride is a guess.
+        string strideNote = "")
     {
         var cleanedBc = CleanBreadcrumbs(breadcrumbs);
 

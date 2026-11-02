@@ -65,6 +65,8 @@ public static class CsxExportService
         // [CEXPORT-NESTED-TRUNC-NOTE] When given, filled with the fields of every struct and pointer target walked
         // below `fields`.
         List<LiveFieldValue>? resolvedFieldsOut = null,
+        // [CEXPORT-STRIDE-NOTE] EngineState.StrideExportNote: "" unless the object-array stride is a guess.
+        string strideNote = "",
         CancellationToken ct = default)
     {
         _csxStringLength = ceStringLength > 0 ? ceStringLength : Constants.DefaultCeStringLength;

@@ -121,6 +121,10 @@ public sealed class EngineState
         _ => "",
     };
 
+    /// <summary>[CEXPORT-STRIDE-NOTE] The badge's words for an export's header comment, while the stride is a guess;
+    /// "" otherwise, and on a refused engine (<see cref="ItemStrideUntrusted"/>).</summary>
+    public string StrideExportNote => "";
+
     // --- Dynamic offset validation (get_offsets) -------------------------------
     //
     // The DLL has always computed and published this verdict and the UI never asked
