@@ -42,7 +42,7 @@ public class CeExportStrideNoteTests
     public void InstanceXml_OpensWithTheNote()
     {
         var xml = CeXmlExportService.GenerateInstanceXml("\"Game.exe\"+1000", "Inst", "TestClass", OneField,
-                                                         strideNote: Note);
+                                                         headerNotes: new[] { Note });
         Assert.Contains($"<!-- {Note} -->", xml);
         Assert.DoesNotContain("<!--", CeXmlExportService.GenerateInstanceXml("\"Game.exe\"+1000", "Inst", "TestClass", OneField));
     }
@@ -52,7 +52,7 @@ public class CeExportStrideNoteTests
     {
         var xml = CeXmlExportService.GenerateHierarchicalXml("\"Game.exe\"+1000", "Root",
             new List<BreadcrumbItem> { new() { Address = "0x1000", Label = "Root", FieldName = "0x1000", IsPointerDeref = true } },
-            OneField, strideNote: Note);
+            OneField, headerNotes: new[] { Note });
         Assert.Contains($"<!-- {Note} -->", xml);
     }
 
@@ -61,14 +61,14 @@ public class CeExportStrideNoteTests
     {
         var xml = CeXmlExportService.GenerateAobWrappedXml("World",
             new List<BreadcrumbItem> { new() { Address = "0x1000", Label = "GWorld", FieldName = "GWorld", IsPointerDeref = true } },
-            OneField, aob: "48 8B 1D ?? ?? ?? ??", aobPos: 3, aobLen: 7, moduleName: "Game.exe", strideNote: Note);
+            OneField, aob: "48 8B 1D ?? ?? ?? ??", aobPos: 3, aobLen: 7, moduleName: "Game.exe", headerNotes: new[] { Note });
         Assert.Contains($"<!-- {Note} -->", xml);
     }
 
     [Fact]
     public async Task Csx_OpensWithTheNote()
     {
-        var csx = await CsxExportService.GenerateCsxAsync(new StubDumpService(), "S", OneField, strideNote: Note,
+        var csx = await CsxExportService.GenerateCsxAsync(new StubDumpService(), "S", OneField, headerNotes: new[] { Note },
                                                           ct: TestContext.Current.CancellationToken);
         Assert.Contains($"<!-- {Note} -->", csx);
     }

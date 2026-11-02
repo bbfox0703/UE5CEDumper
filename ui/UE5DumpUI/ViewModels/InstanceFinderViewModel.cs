@@ -911,7 +911,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 collapsePointerNodes: CollapsePointerNodes,
                 maxDropDownEntries: DropDownLimit,
                 ceStringLength: CeStringLength,
-                strideNote: _engineState?.StrideExportNote ?? "");   // [CEXPORT-STRIDE-NOTE]
+                headerNotes: new[] { _engineState?.StrideExportNote ?? "" });   // [CEXPORT-STRIDE-NOTE]
             // [W5-INSTEXPORT-TRUNC] Read HERE, before the clipboard await: the flag is [ThreadStatic] ("read right after
             // the synchronous Generate* call"), and after an await this method may resume on another thread.
             bool truncated = CeXmlExportService.LastExportTruncated;

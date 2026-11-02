@@ -1176,8 +1176,9 @@ public static class CeXmlExportService
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
         int fabricateArrayCount = 0,
-        // [CEXPORT-STRIDE-NOTE] EngineState.StrideExportNote: "" unless the object-array stride is a guess.
-        string strideNote = "")
+        // [CEXPORT-STRIDE-NOTE] Comment lines the export opens with (an empty one is skipped): what the view model knows
+        // about this game that the exported values cannot show.
+        IReadOnlyList<string>? headerNotes = null)
     {
         // Clean breadcrumbs: remove navigation cycles (e.g., Child->Parent->Child)
         // before generating XML to avoid deeply nested duplicate pointer chains.
@@ -1216,7 +1217,7 @@ public static class CeXmlExportService
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
-        AppendHeaderNotes(sb, strideNote);
+        AppendHeaderNotes(sb, headerNotes);
         sb.AppendLine("  <CheatEntries>");
 
         // Build the nested structure recursively via indentation tracking
@@ -1313,8 +1314,9 @@ public static class CeXmlExportService
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
         int fabricateArrayCount = 0,
-        // [CEXPORT-STRIDE-NOTE] EngineState.StrideExportNote: "" unless the object-array stride is a guess.
-        string strideNote = "")
+        // [CEXPORT-STRIDE-NOTE] Comment lines the export opens with (an empty one is skipped): what the view model knows
+        // about this game that the exported values cannot show.
+        IReadOnlyList<string>? headerNotes = null)
     {
         _nextId = 100;
         _collapsePointerNodes = collapsePointerNodes;
@@ -1349,7 +1351,7 @@ public static class CeXmlExportService
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
-        AppendHeaderNotes(sb, strideNote);
+        AppendHeaderNotes(sb, headerNotes);
         sb.AppendLine("  <CheatEntries>");
 
         var indent = "    ";
@@ -1460,8 +1462,9 @@ public static class CeXmlExportService
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
         int fabricateArrayCount = 0,
-        // [CEXPORT-STRIDE-NOTE] EngineState.StrideExportNote: "" unless the object-array stride is a guess.
-        string strideNote = "")
+        // [CEXPORT-STRIDE-NOTE] Comment lines the export opens with (an empty one is skipped): what the view model knows
+        // about this game that the exported values cannot show.
+        IReadOnlyList<string>? headerNotes = null)
     {
         var cleanedBc = CleanBreadcrumbs(breadcrumbs);
 
@@ -1503,7 +1506,7 @@ public static class CeXmlExportService
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
-        AppendHeaderNotes(sb, strideNote);
+        AppendHeaderNotes(sb, headerNotes);
         sb.AppendLine("  <CheatEntries>");
 
         // ---- Outer: AA Script entry ----
@@ -4098,17 +4101,18 @@ public static class CeXmlExportService
     /// already safe is a no-op, so there is no reason to be selective.</para>
     /// </summary>
     /// <summary>The comment lines a CE table opens with: the UE5.7+ packed-layout note (no-op otherwise) and
-    /// [CEXPORT-STRIDE-NOTE] the stride note, empty unless the object-array stride is a guess. The AOB-wrapped export
-    /// wrote neither before this.</summary>
-    private static void AppendHeaderNotes(StringBuilder sb, string strideNote)
+    /// [CEXPORT-STRIDE-NOTE] the caller's notes. The AOB-wrapped export wrote none before this.</summary>
+    private static void AppendHeaderNotes(StringBuilder sb, IReadOnlyList<string>? notes)
     {
         sb.Append(PackedLayoutNotice.XmlComment);
-        sb.Append(XmlCommentLine(strideNote));
+        sb.Append(XmlCommentLines(notes));
     }
 
-    /// <summary>One XML comment line for <paramref name="note"/>, or "" for none. A comment cannot hold "--".</summary>
-    internal static string XmlCommentLine(string note)
-        => string.IsNullOrEmpty(note) ? "" : $"<!-- {note.Replace("--", "- -")} -->\n";
+    /// <summary>One XML comment line per non-empty note, or "" for none. A comment cannot hold "--".</summary>
+    internal static string XmlCommentLines(IReadOnlyList<string>? notes)
+        => notes == null ? ""
+         : string.Concat(notes.Where(n => !string.IsNullOrEmpty(n))
+                              .Select(n => $"<!-- {n.Replace("--", "- -")} -->\n"));
 
     private static string EscapeXmlContent(string s)
         => s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
