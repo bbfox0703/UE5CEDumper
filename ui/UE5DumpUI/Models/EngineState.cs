@@ -123,7 +123,9 @@ public sealed class EngineState
 
     /// <summary>[CEXPORT-STRIDE-NOTE] The badge's words for an export's header comment, while the stride is a guess;
     /// "" otherwise, and on a refused engine (<see cref="ItemStrideUntrusted"/>).</summary>
-    public string StrideExportNote => "";
+    public string StrideExportNote => ItemStrideUntrusted
+        ? StrideGuessText(ItemDetect, ItemDetectValidated, ItemDetectProbes).TrimStart('⚠', ' ')
+        : "";
 
     // --- Dynamic offset validation (get_offsets) -------------------------------
     //

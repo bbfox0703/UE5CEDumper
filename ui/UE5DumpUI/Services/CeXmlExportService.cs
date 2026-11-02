@@ -1216,8 +1216,7 @@ public static class CeXmlExportService
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
-        // Best-effort note when the game uses the UE5.7+ UNVERIFIED packed layout (no-op otherwise).
-        sb.Append(PackedLayoutNotice.XmlComment);
+        AppendHeaderNotes(sb, strideNote);
         sb.AppendLine("  <CheatEntries>");
 
         // Build the nested structure recursively via indentation tracking
@@ -1350,8 +1349,7 @@ public static class CeXmlExportService
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
-        // Best-effort note when the game uses the UE5.7+ UNVERIFIED packed layout (no-op otherwise).
-        sb.Append(PackedLayoutNotice.XmlComment);
+        AppendHeaderNotes(sb, strideNote);
         sb.AppendLine("  <CheatEntries>");
 
         var indent = "    ";
@@ -1505,6 +1503,7 @@ public static class CeXmlExportService
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
+        AppendHeaderNotes(sb, strideNote);
         sb.AppendLine("  <CheatEntries>");
 
         // ---- Outer: AA Script entry ----
@@ -4098,6 +4097,19 @@ public static class CeXmlExportService
     /// no indication which record was at fault (audit #4 B3). Escaping a string that was
     /// already safe is a no-op, so there is no reason to be selective.</para>
     /// </summary>
+    /// <summary>The comment lines a CE table opens with: the UE5.7+ packed-layout note (no-op otherwise) and
+    /// [CEXPORT-STRIDE-NOTE] the stride note, empty unless the object-array stride is a guess. The AOB-wrapped export
+    /// wrote neither before this.</summary>
+    private static void AppendHeaderNotes(StringBuilder sb, string strideNote)
+    {
+        sb.Append(PackedLayoutNotice.XmlComment);
+        sb.Append(XmlCommentLine(strideNote));
+    }
+
+    /// <summary>One XML comment line for <paramref name="note"/>, or "" for none. A comment cannot hold "--".</summary>
+    internal static string XmlCommentLine(string note)
+        => string.IsNullOrEmpty(note) ? "" : $"<!-- {note.Replace("--", "- -")} -->\n";
+
     private static string EscapeXmlContent(string s)
         => s.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
 

@@ -32,6 +32,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     // Engine state for CE address formatting
     private EngineState? _engineState;
 
+    /// <summary>[CEXPORT-STRIDE-NOTE] What an export says about a guessed object-array stride; "" otherwise.</summary>
+    private string StrideNote => _engineState?.StrideExportNote ?? "";
+
     // Cancels an in-flight Copy CE XML / Copy CE Field export (the ResolveDrilldown
     // pipe-walk phase, which can be long for deep/wide object graphs). Recreated per
     // export; the Cancel button binds to CancelExportCommand.
@@ -4894,7 +4897,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     altColorEnabled: FlattenColorEnabled,
                     altRowColorEvenRgb: FlattenColorEven,
                     altRowColorOddRgb: FlattenColorOdd,
-                    collapseLeafPointers: CollapseLeafPointers);
+                    collapseLeafPointers: CollapseLeafPointers,
+                    strideNote: StrideNote);
             }
             else
             {
@@ -4917,7 +4921,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     altColorEnabled: FlattenColorEnabled,
                     altRowColorEvenRgb: FlattenColorEven,
                     altRowColorOddRgb: FlattenColorOdd,
-                    collapseLeafPointers: CollapseLeafPointers);
+                    collapseLeafPointers: CollapseLeafPointers,
+                    strideNote: StrideNote);
             }
 
             if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
@@ -5029,7 +5034,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var csx = await CsxExportService.GenerateCsxAsync(
                 _dump, CsxStructName(), Fields, arrayLimit: ArrayLimit, drilldownDepth: CsxDrilldownDepth,
                 format: CsxFormat.Ce77Plus, ceStringLength: CeStringLength, resolvedFieldsOut: walkedBelow,
-                ct: cts.Token);
+                strideNote: StrideNote, ct: cts.Token);
             var push = CsxStructurePushGenerator.Generate(csx);
             var result = await _aobMaker.CreateAAScriptDetailedAsync(
                 CsxStructurePushGenerator.RecordPrefix + push.RootName, push.Script, autoActivate: true,
@@ -5113,7 +5118,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var csx = await CsxExportService.GenerateCsxAsync(
                 _dump, structName, Fields, arrayLimit: ArrayLimit, drilldownDepth: CsxDrilldownDepth,
                 // [CSX-STRCHILD-BYTESIZE] the same String Len the CE XML exports use
-                format: format, ceStringLength: CeStringLength, resolvedFieldsOut: walkedBelow, ct: cts.Token);
+                format: format, ceStringLength: CeStringLength, resolvedFieldsOut: walkedBelow,
+                strideNote: StrideNote, ct: cts.Token);
 
             // Write to file (overwrite if exists — user already confirmed via dialog). No
             // token here on purpose: cancel aborts the slow resolve above; once we have the
@@ -5353,7 +5359,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     altColorEnabled: FlattenColorEnabled,
                     altRowColorEvenRgb: FlattenColorEven,
                     altRowColorOddRgb: FlattenColorOdd,
-                    collapseLeafPointers: CollapseLeafPointers);
+                    collapseLeafPointers: CollapseLeafPointers,
+                    strideNote: StrideNote);
             }
             else
             {
@@ -5378,7 +5385,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     altColorEnabled: FlattenColorEnabled,
                     altRowColorEvenRgb: FlattenColorEven,
                     altRowColorOddRgb: FlattenColorOdd,
-                    collapseLeafPointers: CollapseLeafPointers);
+                    collapseLeafPointers: CollapseLeafPointers,
+                    strideNote: StrideNote);
             }
 
             if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
