@@ -1905,6 +1905,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         if (!item.IsContainerView || item.ContainerField != null) return false;
 
+        // [LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST] A DataTable row view without rows is one whose table a bookmark load
+        // refused (gone, or not the table the rows were drilled from). No reflected field holds a table's rows, so there
+        // is nothing to re-hydrate: the caller walks the address, and this line says why that is not the row view.
+        if (item.IsDataTableView)
+        {
+            StatusText = DataTableNotRestoredText;
+            return false;
+        }
+
         // [LEAD-LW-SYNTH-CONTAINER-STRUCT-OWNER] The owner is walked with its own crumb's class, as Refresh walks it. A
         // container crumb carries none, and an inline-struct owner walked without its UScriptStruct is read as a
         // UObject: the field is not found and the view falls through to a plain walk of that address.
@@ -4123,6 +4132,27 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var lastBc = Breadcrumbs.LastOrDefault();
             bool restoredFully = true;
             bool dataTableGone = false;   // [W4-BOOKMARK-DT] say what failed, not "the game may have restarted"
+
+            // [LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST] A row view ABOVE the last crumb (the bookmark sits on a row's struct
+            // drilled from it) comes back from the file rowless too, and Back into it had no rows to show. Its rows are
+            // re-walked here, accepted only when the table names the row struct the next crumb was drilled into.
+            for (int i = 0; lastBc != null && i + 1 < Breadcrumbs.Count; i++)
+            {
+                var c = Breadcrumbs[i];
+                if (!c.IsDataTableView || c.DataTableData != null) continue;
+                var dt = await TryRewalkDataTableAboveRowAsync(c, Breadcrumbs[i + 1]);
+                if (RenderSuperseded(lastBc, "Bookmark")) return;
+                if (dt != null)
+                {
+                    Breadcrumbs[i] = WithDataTableRows(c, dt);   // the in-session shape
+                }
+                else
+                {
+                    restoredFully = false;
+                    dataTableGone = true;
+                }
+            }
+
             if (lastBc != null)
             {
                 if (lastBc.IsDataTableView && lastBc.DataTableData == null)
@@ -4521,6 +4551,25 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         {
             var dt = await _dump.WalkDataTableRowsAsync(crumb.Address);
             return string.Equals($"DataTable<{dt.RowStructName}>", savedClassName, StringComparison.Ordinal) ? dt : null;
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"Bookmark: DataTable re-walk at {crumb.Address} failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>[LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST] Re-walk the rows of a DataTable row view the bookmark sits below,
+    /// accepted only when the table names the row struct <paramref name="rowCrumb"/> was drilled into. The bookmark's
+    /// saved class name is that row's, not the table's, so it cannot guard this walk.</summary>
+    private async Task<DataTableWalkResult?> TryRewalkDataTableAboveRowAsync(BreadcrumbItem crumb, BreadcrumbItem rowCrumb)
+    {
+        var rowStruct = ParseHexAddr(rowCrumb.ClassAddr);
+        if (rowStruct == 0) return null;
+        try
+        {
+            var dt = await _dump.WalkDataTableRowsAsync(crumb.Address);
+            return ParseHexAddr(dt.RowStructAddr) == rowStruct ? dt : null;
         }
         catch (Exception ex)
         {
@@ -6249,6 +6298,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// DataTable row whose row pointer reads null arrives as "0x0"). Every row action that reads or marks the row's
     /// memory refuses it, rather than send CE to address 0.</summary>
     private static bool HasNoRowAddress(LiveFieldValue field) => ParseHexAddr(field.FieldAddress) == 0;
+
+    internal const string KeyDataTableNotRestored = "str.LiveWalker.DataTableNotRestored";
+    private static string DataTableNotRestoredText => AobMakerStatus.Say(KeyDataTableNotRestored,
+        "⚠ This DataTable view did not restore: the DataTable at its saved address is gone or has changed. The grid "
+        + "shows what is at that address now.");
 
     internal const string KeyNoRowAddress = "str.LiveWalker.NoRowAddress";
     /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] A row action refused: the row has no address of its own, and none
