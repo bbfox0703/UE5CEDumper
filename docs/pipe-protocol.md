@@ -857,9 +857,22 @@ capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily �
 { "cmd": "find_stealth_meter", "max": 8 }
 // → { "code": 0, "candidates": [ { "class_name", "class_addr", "field_name",
 //        "prop_type", "owner_addr", "current", "score" } ],   // ranked, best first
-//      "stops": { ... } }   // from build 3672: the shape get_related_objects carries. The search scores the
-//                           // pawn and the objects it owns (the Related Objects walk), so a meter past where
-//                           // that walk stopped is not found. [SOLIDE-RELATED-STOPS]
+//      "stops": { ... } }   // from build 3672: the shape get_related_objects carries (see that section). The
+//                           // search scores the pawn and the objects it owns (the Related Objects walk), so a
+//                           // meter past where that walk stopped is not found. [SOLIDE-RELATED-STOPS]
+
+// Fly (Dunste). Every key of fly_set is optional; the reply is the state read after the change.
+{ "cmd": "fly_set", "enable": true, "speed": 1200.0, "preset": 0, "noclip": true }
+{ "cmd": "fly_get_state" }
+// → { "code": 0, "active", "noclip", "has_cmc", "preset", "speed", "mode_resolved",
+//      "current_mode",           // the live MovementMode (5 = flying)
+//      "collision",              // from build 3672: bActorEnableCollision read on the pawn, 1 on / 0 off /
+//                                // -1 not read. `noclip` is the REQUEST; this is what the pawn does.
+//                                // ⚠ A fly_set reply is read before the worker's next tick applies a noclip
+//                                // change, so it shows the collision from before (measured ~100 ms on
+//                                // DumperTest): poll fly_get_state for the result. [FLY-REPORTS-WISH]
+//      "cmc_addr"?,
+//      "state" }                 // fly_set only: 1 on, 0 off, negative = Dunste::FlyResult
 ```
 
 -----
@@ -1454,9 +1467,19 @@ scan; the reverse "who points AT this object" view is `find_refs_to_uobject`.
       "class": "MyHealthAttributeSet", "relation": "AttributeSet",
       "field_name": "SpawnedAttributes[0]", "field_offset": 0x1B0, "depth": 2,
       "parent_addr": "7FF6BB000000" }
-  ]
+  ],
+  "stops": {                                   // [W4-RELATED-STOPS] absent from older DLLs
+    "result_cap_hit": false, "max_results": 128,     // related[] is full and more exist
+    "owned_cap_hit": false,  "max_owned": 128,       // the owned walk stopped after max_owned sub-objects
+    "visit_cap_hit": false,  "max_visited": 200000,  // it stopped after following max_visited pointers
+    "deadline_hit": false,   "deadline_ms": 8000,    // it ran out of its time budget
+    "cancelled": false                               // the command was cancelled
+  }
 }
 ```
+
+`stops` says why the walk stopped short, one boolean per cause, with the limit each one ran under. The same shape,
+from the same encoder, rides `find_stealth_meter`, whose search runs over this walk's list.
 
 ### get_current_target
 
