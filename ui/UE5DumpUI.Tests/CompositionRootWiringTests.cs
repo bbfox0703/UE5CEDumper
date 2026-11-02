@@ -240,6 +240,24 @@ public class CompositionRootWiringTests : IDisposable
         public void Dispose() { }
     }
 
+    /// <summary>[LEAD-SECOND-UI-CRASHLOG] A second launch found the instance mutex taken inside
+    /// <c>OnFrameworkInitializationCompleted</c> and called <c>Shutdown(1)</c> there, after which the lifetime's
+    /// <c>StartCore</c> threw "the Dispatcher shut down". Program.Main caught it and wrote it to crash.log, over the
+    /// first instance's real one. The check belongs before Avalonia starts at all, so no exception is made.</summary>
+    [Fact]
+    public void ASecondInstance_LeavesBeforeAvaloniaStarts()
+    {
+        var program = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Program.cs"));
+        int main = program.IndexOf("public static int Main(", StringComparison.Ordinal);
+        int check = program.IndexOf("TryAcquireSingleInstance()", main, StringComparison.Ordinal);
+        int start = program.IndexOf("StartWithClassicDesktopLifetime(", main, StringComparison.Ordinal);
+        Assert.True(check > main && check < start, "Main must take the instance mutex before Avalonia starts");
+
+        var app = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/App.axaml.cs"));
+        // The app keeps the platform service Main made (and the mutex it holds), rather than making a second one.
+        Assert.Contains("StartupPlatform", app);
+    }
+
     private sealed class NoopLog : ILoggingService
     {
         public void Info(string message) { }
