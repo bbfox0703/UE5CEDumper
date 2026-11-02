@@ -165,6 +165,8 @@ public class AobMakerWordingTests
              .GoneObjectStatus(new UE5DumpUI.Models.InstanceWalkResult { IsStale = true })!);
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyContainerFieldGone,
              UE5DumpUI.ViewModels.LiveWalkerViewModel.ContainerFieldGoneText("F", "O"), "F", "O");
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyContainerOwnerReplaced,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.ContainerOwnerReplacedText("N", "W", "F"), "N", "W", "F");
 
         // [CEXML-DEFINITION-VIEW-AS-DATA] the definition notice, the refusal, and the button labels it names
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyDefinitionView,
@@ -251,7 +253,7 @@ public class AobMakerWordingTests
              "A.B");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(94, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(95, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

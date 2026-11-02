@@ -276,6 +276,8 @@
     <sys:String x:Key="str.LiveWalker.Stale">⚠ This object appears to have been freed/recycled — re-open it from 🌍 GWorld or the finder.</sys:String>
     <!-- [LEAD-LW-BACK-CACHED-ELEMENTS] A container view whose owner, read again, no longer has the field. {0} = field, {1} = owner. -->
     <sys:String x:Key="str.LiveWalker.ContainerFieldGone">⚠ {0} is no longer on {1}, so its element rows were dropped — re-open it from 🌍 GWorld or the finder.</sys:String>
+    <!-- [LEAD-BOOKMARK-SAMECLASS-RECYCLE] A container view whose owner's address holds another object. {0} = now, {1} = was, {2} = field. -->
+    <sys:String x:Key="str.LiveWalker.ContainerOwnerReplaced">⚠ {0} now sits where {1} was, so {2}'s element rows were dropped — re-open it from 🌍 GWorld or the finder.</sys:String>
     <sys:String x:Key="str.LiveWalker.DefinitionView">ℹ This is a type definition (its member layout), not a live object: its rows have no address and no value, so they cannot be edited, frozen or exported as data.</sys:String>
     <sys:String x:Key="str.Walk.DefinitionNoData">⚠ {0}: nothing done — this is a type definition (its member layout), not a live object, so there is no data at these offsets.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.MatchPrev">Jump to the previous matching field (wraps to the last match)</sys:String>

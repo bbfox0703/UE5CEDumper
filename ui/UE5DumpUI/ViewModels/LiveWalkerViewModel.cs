@@ -1461,6 +1461,28 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             return;
         }
 
+        // [LEAD-BOOKMARK-SAMECLASS-RECYCLE] review round 2: the address may hold another object now -- another instance
+        // of the class, or another class with a same-named field -- and a match by field name and offset would render
+        // its container as this one's. The crumb knows its owner's class, and a UObject owner's name (an owner crumb
+        // with a struct class is a struct, whose walked "name" is a guess over its bytes). Checked before the reading
+        // is adopted below.
+        var ownerCrumb = Breadcrumbs.Count >= 2 && ReferenceEquals(Breadcrumbs[^1], containerBc) ? Breadcrumbs[^2] : null;
+        bool classDiffers = !string.IsNullOrEmpty(containerBc.OwnerClassAddr) && ParseHexAddr(parentResult.ClassAddr) != 0
+                            && ParseHexAddr(parentResult.ClassAddr) != ParseHexAddr(containerBc.OwnerClassAddr);
+        bool nameDiffers = ownerCrumb != null && string.IsNullOrEmpty(ownerCrumb.ClassAddr)
+                           && !string.IsNullOrEmpty(containerBc.OwnerName)
+                           && !string.Equals(parentResult.Name, containerBc.OwnerName, StringComparison.Ordinal);
+        if (classDiffers || nameDiffers)
+        {
+            StatusText = ContainerOwnerReplacedText(parentResult.Name, containerBc.OwnerName,
+                                                    containerBc.ContainerField?.Name ?? containerBc.FieldName);
+            SelectedField = null;
+            Fields.Clear();
+            _log.Warn($"Container view: {containerBc.Address} holds {parentResult.Name} ({parentResult.ClassName}), not "
+                      + $"{containerBc.OwnerName} ({containerBc.OwnerClassName}) — dropped its element rows");
+            return;
+        }
+
         // Find the container field by name and offset in the fresh result. Use the live
         // ContainerField identity when present, else the crumb's own field name+offset.
         var matchName   = containerBc.ContainerField?.Name   ?? containerBc.FieldName;
@@ -6447,6 +6469,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     internal static string ContainerFieldGoneText(string field, string owner) => AobMakerStatus.Say(KeyContainerFieldGone,
         "⚠ {0} is no longer on {1}, so its element rows were dropped — re-open it from \U0001F30D GWorld or the finder.",
         field, owner);
+    /// <summary>[LEAD-BOOKMARK-SAMECLASS-RECYCLE] review round 2: a container view whose owner's address, read again,
+    /// holds another object.</summary>
+    internal const string KeyContainerOwnerReplaced = "str.LiveWalker.ContainerOwnerReplaced";
+    internal static string ContainerOwnerReplacedText(string now, string was, string field) => AobMakerStatus.Say(
+        KeyContainerOwnerReplaced,
+        "⚠ {0} now sits where {1} was, so {2}'s element rows were dropped — re-open it from \U0001F30D GWorld or the finder.",
+        now, was, field);
     internal const string KeyDefinitionView = "str.LiveWalker.DefinitionView";
     internal static string DefinitionViewText => AobMakerStatus.Say(KeyDefinitionView,
         "ℹ This is a type definition (its member layout), not a live object: its rows have no address and no value, "
