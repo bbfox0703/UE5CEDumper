@@ -155,6 +155,38 @@ public class LogCompressionPolicyTests
         Assert.Equal(1, plan.SkippedTooFresh);
     }
 
+    // [LOG-RESUME-LIVE-ROLLED] A session that rolls a category past 8 MB writes the highest-numbered
+    // `{prefix}-0_NNN.log`, which IsLiveLog does not name; once it was quiet an hour, the sweep tried it and reported
+    // a failure. In our own folder the newest rolled file of each category is the live one; an older one is finished.
+
+    [Fact]
+    public void Plan_OurNewestRolledFileOfACategory_IsLive()
+    {
+        var plan = LogCompressionPolicy.Plan(new[]
+        {
+            F("view-0.log",     9_000_000, 9_000_000, 3, true),   // live: ours, the slot name
+            F("view-0_001.log", 9_000_000, 9_000_000, 3, true),   // finished: compress
+            F("view-0_002.log", 9_000_000, 9_000_000, 2, true),   // live: the newest rolled view file
+            F("pipe-0_001.log", 9_000_000, 9_000_000, 2, true),   // live: the newest rolled pipe file
+        }, Now, Hour, Min, LiveAge);
+
+        Assert.Equal(new[] { @"C:\Logs\view-0_001.log" }, plan.ToCompress);
+        Assert.Equal(3, plan.SkippedLive);
+    }
+
+    [Fact]
+    public void Plan_AGameFoldersRolledFiles_AreJudgedByAgeAsBefore()
+    {
+        // Not ours: liveness there is inferred from age, and every rolled file of a quiet folder is finished.
+        var plan = LogCompressionPolicy.Plan(new[]
+        {
+            F("walk-0_001.log", 9_000_000, 9_000_000, 48),
+            F("walk-0_002.log", 9_000_000, 9_000_000, 48),
+        }, Now, Hour, Min, LiveAge);
+
+        Assert.Equal(2, plan.ToCompress.Count);
+    }
+
     [Fact]
     public void Plan_EmptyInputIsEmpty()
     {
