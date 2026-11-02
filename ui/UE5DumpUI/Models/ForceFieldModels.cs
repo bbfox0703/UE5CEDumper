@@ -46,11 +46,6 @@ public sealed class ForceFieldResult
     public bool Truncated { get; init; }
 }
 
-/// <summary>
-/// One ranked stealth/noise/visibility-meter candidate (Solide), returned by
-/// <c>find_stealth_meter</c>. Holding it at 0 is done via <c>force_field</c> with
-/// this <see cref="ClassName"/> + <see cref="FieldName"/>.
-/// </summary>
 /// <summary>[SOLIDE-RELATED-STOPS] find_stealth_meter's candidates and why its search of the player's objects
 /// stopped short (null from an older DLL, or when it did not stop).</summary>
 public sealed class StealthMeterResult
@@ -59,6 +54,11 @@ public sealed class StealthMeterResult
     public RelatedObjectsStops? Stops { get; init; }
 }
 
+/// <summary>
+/// One ranked stealth/noise/visibility-meter candidate (Solide), returned by
+/// <c>find_stealth_meter</c>. Holding it at 0 is done via <c>force_field</c> with
+/// this <see cref="ClassName"/> + <see cref="FieldName"/>.
+/// </summary>
 public sealed class StealthCandidate
 {
     public string ClassName { get; init; } = "";
