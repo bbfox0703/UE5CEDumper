@@ -906,6 +906,46 @@ public class LiveWalkerForwardNavTests
         Assert.Equal(LiveWalkerViewModel.GoneObjectStatus(new InstanceWalkResult { IsStale = true }), vm.StatusText);
     }
 
+    // Review round 2: the re-check matched the field by name and offset only, so another object now at the owner's
+    // address -- another instance of the class (the bookmark-recycle case), or another class with a same-named field --
+    // had its container rendered as this one's. The crumb knows its owner's class and, for a UObject owner, its name.
+
+    private static void PutAnotherOwnerAt(OwnerStub dump, string name, string cls, string clsAddr)
+    {
+        var gear = OwnerStub.GearField();
+        dump.RegisterStruct(Owner, new InstanceWalkResult
+        {
+            Address = Owner, Name = name, ClassName = cls, ClassAddr = clsAddr,
+            Fields = new List<LiveFieldValue>
+            {
+                new()
+                {
+                    Name = gear.Name, TypeName = gear.TypeName, Offset = gear.Offset, Size = gear.Size,
+                    ArrayInnerType = "ObjectProperty", ArrayCount = 1, ArrayElemSize = 8, ArrayDataAddr = "0x5C000",
+                    ArrayElements = new() { new() { Index = 0, PtrAddress = Other, PtrName = "Other_0" } },
+                },
+            },
+        });
+    }
+
+    [Theory]
+    [InlineData("Owner_7", "BP_Owner_C", OwnerCls)]     // another instance of the class
+    [InlineData("Other_9", "BP_Other_C", OtherCls)]     // another class with a same-named field
+    public async Task Back_IntoAContainerWhoseOwnerAddressHoldsAnotherObject_DropsTheRows(string name, string cls,
+                                                                                       string clsAddr)
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        PutAnotherOwnerAt(dump, name, cls, clsAddr);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
+
+        Assert.Empty(vm.Fields);
+        Assert.Contains(name, vm.StatusText);
+    }
+
     [Fact]
     public async Task Back_IntoAContainerWhoseOwnerNoLongerHasIt_DropsTheRows_AndSaysWhy()
     {
