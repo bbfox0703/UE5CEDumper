@@ -25,4 +25,7 @@ public sealed class DataTableWalkResult
     public int FNameSize { get; init; }
     public int Stride { get; init; }
     public List<DataTableRowInfo> Rows { get; init; } = new();
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] UEnum::Names was never found on this build, so the rows' enum fields carry no
+    /// entries. False from an older DLL.</summary>
+    public bool EnumNamesFailed { get; init; }
 }

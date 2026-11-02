@@ -1822,6 +1822,31 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task WalkDataTableRowsAsync_CarriesTheFailedLatch()
+    {
+        // Review round 2 of [CEXPORT-ENUMNAMES-NOTE]: a DataTable's rows are read by their own command, whose reply did
+        // not say the latch was set -- and the table's own walk can run before the row walk that trips detection.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true, ["row_count"] = 0, ["rows"] = new JsonArray(), ["enum_names_failed"] = true,
+        });
+
+        var r = await CreateService().WalkDataTableRowsAsync("0x1", ct: TestContext.Current.CancellationToken);
+
+        Assert.True(r.EnumNamesFailed);
+        var fern = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
+        int h = fern.IndexOf("if (cmd == Renge::CMD_WALK_DATATABLE_ROWS)", StringComparison.Ordinal);
+        int end = fern.IndexOf("return Renge::MakeResponse(id, data)", h, StringComparison.Ordinal);
+        int latch = fern.IndexOf("data[\"enum_names_failed\"]", h, StringComparison.Ordinal);
+        Assert.True(h > 0 && latch > h && latch < end, "walk_datatable_rows must say when enum names were never found");
+
+        // ...and Live Walker latches it from every DataTable reading: one helper reads the rows, and no raw call is left.
+        var vm = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs"));
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(vm, @"_dump\.WalkDataTableRowsAsync\("));
+        Assert.Contains("_enumNamesFailed |= dt.EnumNamesFailed", vm);
+    }
+
+    [Fact]
     public void Fern_SendsAnEnumsAddress_EvenWithNoEntries()
     {
         // Review round 1 of [CEXPORT-ENUMNAMES-NOTE]: enum_addr went out only beside a non-empty entry list, so under

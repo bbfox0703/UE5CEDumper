@@ -272,6 +272,29 @@ public class CeExportStrideNoteTests
     }
 
     [Fact]
+    public void TheNote_CoversADataTablesRowEnums()
+    {
+        // Review round 2: a DataTable is exported through its synthetic RowMap field, whose own type says nothing; its
+        // rows' fields are where the enums are, and the note never looked there.
+        var rowMap = new LiveFieldValue
+        {
+            Name = "RowMap", TypeName = "DataTableRows",
+            DataTableRowData = new()
+            {
+                new DataTableRowInfo { RowName = "Sword", Fields = new() { new LiveFieldValue { Name = "Kind", TypeName = "EnumProperty" } } },
+            },
+        };
+        Assert.Equal(CeXmlExportService.EnumNamesUnavailableNote, CeXmlExportService.EnumNamesNote(true, new[] { rowMap }));
+        // Control: a table whose rows hold no enum.
+        var plain = new LiveFieldValue
+        {
+            Name = "RowMap", TypeName = "DataTableRows",
+            DataTableRowData = new() { new DataTableRowInfo { Fields = new() { new LiveFieldValue { TypeName = "IntProperty" } } } },
+        };
+        Assert.Equal("", CeXmlExportService.EnumNamesNote(true, new[] { plain }));
+    }
+
+    [Fact]
     public async Task PushToCeStructureDissect_SaysNothingAboutDropdowns_ItHasNone()
     {
         var bridge = new ScriptedAobMakerBridge { Available = true };
