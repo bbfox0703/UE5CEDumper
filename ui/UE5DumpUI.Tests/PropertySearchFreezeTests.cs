@@ -92,7 +92,7 @@ public class PropertySearchFreezeTests
     [Fact]
     public async Task CopyFreezeScript_NestedRow_RefusesBeforeDialog()
     {
-        // [LEAD-PROPSEARCH-TOPTIONAL-LEAVES] A deep row's offset is not an address on its class; inside a
+        // [LEAD-PROPSEARCH-TOPTIONAL-LEAVES] Past a container a deep row's offset is the element struct's; inside a
         // TOptional<FStruct> it lands in the optional's storage whether or not the optional is set. The row hides
         // Freeze, and the command refuses too.
         var bridge = new RecordingBridge { NextAvailability = true, NextCreateResult = true };
@@ -109,6 +109,27 @@ public class PropertySearchFreezeTests
         Assert.Equal(0, bridge.CreateAaCalls);
         Assert.Contains("Upgrade.Damage", vm.StatusText);
         Assert.Contains("Live Walker", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task CopyOffset_NestedRow_CopiesNothing()
+    {
+        // [LEAD-PROPSEARCH-TOPTIONAL-LEAVES] review round 2: the row hides Copy Offset as it hides Freeze, and past a
+        // container the offset it would copy is the element's, reading like a class offset. The command refuses too.
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), platform: platform);
+        var match = NewMatch("FloatProperty");
+        match.PropName = "Slots[].Damage";
+        match.IsNested = true;
+
+        await vm.CopyOffsetCommand.ExecuteAsync(match);
+
+        Assert.Null(platform.LastClipboard);
+        Assert.Contains("Slots[].Damage", vm.StatusText);
+
+        var direct = NewMatch("FloatProperty");   // the control: a class's own field still copies
+        await vm.CopyOffsetCommand.ExecuteAsync(direct);
+        Assert.Equal(direct.OffsetHex, platform.LastClipboard);
     }
 
     [Fact]
