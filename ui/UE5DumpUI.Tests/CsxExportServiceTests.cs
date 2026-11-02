@@ -880,6 +880,33 @@ public class CsxExportServiceTests
     }
 
     [Fact]
+    public async Task GenerateCsx_ALongStringElement_KeepsTheStartOfItsText()
+    {
+        // [CSX-LONG-ELEMENT-LABEL] A label was kept only up to 20 characters, and a longer one was dropped whole, so
+        // Arr_Str's 22-character element exported as a bare "[2]". It now keeps its first 20 characters and says it
+        // was cut; one of 20 or fewer is kept as it was.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Arr_Str", TypeName = "ArrayProperty", Offset = 0x50, Size = 16,
+                     ArrayCount = 3, ArrayInnerType = "StrProperty", ArrayElemSize = 16, ArrayDataAddr = "0x5000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, Value = "Hello world!" },
+                         new() { Index = 1, Value = "Exactly twenty chars" },
+                         new() { Index = 2, Value = "Twenty-two characters!" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1,
+                                                          ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("Description=\"[0] Hello world!\"", csx);
+        Assert.Contains("Description=\"[1] Exactly twenty chars\"", csx);
+        Assert.Contains("Description=\"[2] Twenty-two character…\"", csx);   // was "[2]"
+    }
+
+    [Fact]
     public async Task GenerateCsx_ArrayProperty_DrilldownOne_ShowsPointerElements()
     {
         // ArrayProperty with ObjectProperty inner type should expand to show pointer elements
