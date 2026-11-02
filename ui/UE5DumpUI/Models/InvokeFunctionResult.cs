@@ -12,6 +12,10 @@ public sealed class InvokeFunctionResult
     /// <summary>Resolved UObject instance address (hex string).</summary>
     public string InstanceAddr { get; init; } = "";
 
+    /// <summary>[LEAD-CONSOLE-PIN-EXPECT-CLASS] The class the DLL read at <see cref="InstanceAddr"/> (hex string); empty
+    /// from a DLL that does not send it.</summary>
+    public string InstanceClassAddr { get; init; } = "";
+
     /// <summary>Resolved UFunction address (hex string).</summary>
     public string FuncAddr { get; init; } = "";
 

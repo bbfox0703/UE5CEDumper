@@ -39,6 +39,9 @@ public class ConsoleViewModelTests
         /// pinned address was reused vs. a fresh null resolution.</summary>
         public List<string?> InstanceAddrHistory { get; } = new();
 
+        /// <summary>[LEAD-CONSOLE-PIN-EXPECT-CLASS] Every expectClassAddr passed, in call order.</summary>
+        public List<string?> ExpectClassHistory { get; } = new();
+
         /// <summary>Optional per-call result override; when set it takes
         /// precedence over <see cref="NextInvokeResult"/> for one call each.
         /// Used by the self-heal test to fail the pinned attempt + its retry
@@ -90,6 +93,7 @@ public class ConsoleViewModelTests
             LastInvokeParmsSize = parmsSize;
             LastInvokeInstanceAddr = instanceAddr;
             InstanceAddrHistory.Add(instanceAddr);
+            ExpectClassHistory.Add(expectClassAddr);
             if (InvokeThrowQueue is { Count: > 0 } && InvokeThrowQueue.Dequeue() is { } boom)
                 throw boom;
             var result = (InvokeResultQueue is { Count: > 0 })
@@ -627,6 +631,83 @@ public class ConsoleViewModelTests
         Assert.Null(fake.InstanceAddrHistory[0]);
         Assert.Equal("0x1A2B3C", fake.InstanceAddrHistory[1]);
         Assert.Equal("0x1A2B3C", fake.LastInvokeInstanceAddr);
+    }
+
+    // [LEAD-CONSOLE-PIN-EXPECT-CLASS] The pin is an address, and the DLL looks the function up by name on whatever
+    // object sits there: a pinned object freed and its memory reused by an object of another class with a same-named
+    // function ran that one. The pin now keeps the class the DLL read at the address, and a pinned run sends it.
+
+    [Fact]
+    public async Task APinnedRun_SendsTheClassThePinnedObjectHad()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            NextInvokeResult = new InvokeFunctionResult
+            {
+                Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstanceClassAddr = "0xC0DE",
+            },
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        vm.SelectedResult = vm.Results[2];   // Fly: resolves, pins
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[3];   // God: pinned
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.Equal(new string?[] { null, "0x1A2B3C" }, fake.InstanceAddrHistory);
+        Assert.Equal(new string?[] { null, "0xC0DE" }, fake.ExpectClassHistory);   // was { null, null }
+    }
+
+    [Fact]
+    public async Task APinnedRun_WhoseObjectHasAnotherClassNow_ReResolvesWithNoPin()
+    {
+        // The DLL refuses with ok:false, which DumpService throws: the [CONSOLE-PIN-THROWS] retry re-resolves by name,
+        // and nothing was dispatched on the refused call.
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            NextInvokeResult = new InvokeFunctionResult
+            {
+                Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstanceClassAddr = "0xC0DE",
+            },
+            InvokeThrowQueue = new Queue<Exception?>(new Exception?[]
+            {
+                null,
+                new InvalidOperationException("Not invoked: the object at 0x1A2B3C is no longer the UCheatManager"),
+            }),
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        vm.SelectedResult = vm.Results[2];   // Fly: pins
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[3];   // God: the pinned call is refused, then re-resolved
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.Equal(new string?[] { null, "0x1A2B3C", null }, fake.InstanceAddrHistory);
+        Assert.Equal(new string?[] { null, "0xC0DE", null }, fake.ExpectClassHistory);
+    }
+
+    [Fact]
+    public async Task APinnedRun_AgainstADllThatSendsNoClass_SendsNone_AsBefore()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            NextInvokeResult = new InvokeFunctionResult { Result = 0, Message = "OK", InstanceAddr = "0x1A2B3C" },
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        vm.SelectedResult = vm.Results[2];
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[3];
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.Equal("0x1A2B3C", fake.InstanceAddrHistory[1]);
+        Assert.Null(fake.ExpectClassHistory[1]);
     }
 
     [Fact]

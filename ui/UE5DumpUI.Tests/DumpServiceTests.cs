@@ -236,6 +236,35 @@ public class DumpServiceTests
         Assert.Equal("0xC100", lastReq!["expect_class_addr"]?.GetValue<string>());
     }
 
+    // [LEAD-CONSOLE-PIN-EXPECT-CLASS] The reply names the class the DLL read at the address it used, so a caller that
+    // keeps the address can send that class back with it.
+    [Fact]
+    public async Task InvokeFunctionAsync_ReadsTheClassOfTheObjectItUsed()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["result"] = 0, ["instance_addr"] = "0x1000", ["instance_class_addr"] = "0xC100",
+        });
+
+        var r = await CreateService().InvokeFunctionAsync("DoThing", className: "Foo",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal("0xC100", r.InstanceClassAddr);
+    }
+
+    [Fact]
+    public void Fern_InvokeReply_NamesTheClassItReadAtTheAddress()
+    {
+        var s = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
+        int start = s.IndexOf("cmd == Renge::CMD_INVOKE_FUNCTION", StringComparison.Ordinal);
+        Assert.True(start > 0);
+        int reply = s.IndexOf("data[\"instance_addr\"] = Renge::AddrToStr(instanceAddr);", start, StringComparison.Ordinal);
+        Assert.True(reply > start);
+        int next = s.IndexOf("cmd == Renge::CMD_", reply, StringComparison.Ordinal);
+        int cls = s.IndexOf("data[\"instance_class_addr\"] = Renge::AddrToStr(classAddr);", reply, StringComparison.Ordinal);
+        Assert.True(cls > reply && (next < 0 || cls < next), "the invoke reply must carry the class read at the address");
+    }
+
     [Fact]
     public async Task InvokeFunctionAsync_NoExpectClassAddr_OmitsTheKey()
     {
