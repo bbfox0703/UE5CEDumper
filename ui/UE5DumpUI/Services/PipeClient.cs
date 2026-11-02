@@ -100,6 +100,9 @@ public sealed class PipeClient : IPipeClient
         return SendFailure.TransportError;
     }
 
+    /// <summary>[TRACE-UI-READ-SPEED] The reply reader's buffer: the StreamReader default.</summary>
+    internal const int PipeReadBufferBytes = 1024;
+
     public PipeClient(ILoggingService log, string laneTag = "")
     {
         _log = log;
