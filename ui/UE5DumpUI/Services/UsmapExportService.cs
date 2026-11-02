@@ -15,10 +15,11 @@ namespace UE5DumpUI.Services;
 /// <c>vendor/RE-UE4SS/UE4SS/src/USMapGenerator/Generator.cpp</c> and
 /// <c>vendor/Dumper-7/Dumper/Generator/Private/Generators/MappingGenerator.cpp</c>. Both emit v4.
 /// Read them before touching this format again.</para>
-/// <para>⚠ Two places still differ, and knowingly.
-/// (1) Both canonical writers write an enum's REAL underlying property. This one derives it from the enum's size
-/// (1/2/4/8 -> Byte/UInt16/Int/Int64), which is the width a consumer deserializes but not its signedness. The exact
-/// fix is a DLL-side underlying-type key on walk_class. [A4-USMAP-ENUM-UNDERLYING]
+/// <para>Two places used to differ, and both are fixed.
+/// (1) FIXED: both canonical writers write an enum's REAL underlying property, and so does this one now, from the
+/// walker's enum_underlying. Only when that is missing (an older DLL, a read that did not validate) or its width
+/// disagrees with the enum's size does it fall back to the size (1/2/4/8 -> Byte/UInt16/Int/Int64), which is the
+/// width a consumer deserializes but not its signedness. [A4-USMAP-ENUM-UNDERLYING] [USMAP-ENUM-SIGNEDNESS]
 /// (2) FIXED: a container's TEnumAsByte inner (Array / Optional, Set, Map key and value) now takes the canonical
 /// [26][0][enumName] too. The walker publishes each inner's own UEnum (inner_enum / elem_enum / key_enum /
 /// value_enum), and an EnumProperty inner carries its real enum name instead of "None". [A4-USMAP-CONTAINER-ENUM]</para>
@@ -431,7 +432,7 @@ public static class UsmapExportService
                 // type is the enum's REAL width -- unversioned cooked data serializes an enum UPROPERTY as an
                 // integer of its own size, and CUE4Parse takes that size from here. A hardcoded Byte made a
                 // `: uint32` enum read 1 byte of 4 and misalign every later property of its object.
-                WriteInnerPropertyType(w, EnumUnderlyingTypeFor(f.Size));
+                WriteInnerPropertyType(w, EnumUnderlyingTypeFor(f.EnumUnderlyingType, f.Size));
                 w.Write(nameTable.IndexOf(
                     !string.IsNullOrEmpty(f.EnumName) ? f.EnumName : "None"));
                 break;
@@ -477,16 +478,31 @@ public static class UsmapExportService
         w.Write((byte)MapPropertyType(innerTypeName));
     }
 
+    /// <summary>[USMAP-ENUM-SIGNEDNESS] An EnumProperty's underlying integer type: the UnderlyingProp type the DLL
+    /// read (<c>enum_underlying</c>), which carries the signedness, when its width agrees with the field's size.
+    /// The width is what a consumer deserializes, and the size is measured on every field, so a type name read
+    /// through one pointer that disagrees with it -- or none, from an older DLL -- gives way to the size.</summary>
+    internal static string EnumUnderlyingTypeFor(string underlyingType, int size) =>
+        IntegerWidthOf(underlyingType) is int width && width == size ? underlyingType : EnumUnderlyingTypeFor(size);
+
     /// <summary>[A4-USMAP-ENUM-UNDERLYING] An EnumProperty's underlying integer type, from its element size:
-    /// 1 / 2 / 4 / 8 -> Byte / UInt16 / Int / Int64. The width is what a consumer deserializes; the signedness
-    /// needs a DLL-side underlying-type key. Anything else is Byte -- never the unmapped 0xFF, which no reader
-    /// can skip.</summary>
+    /// 1 / 2 / 4 / 8 -> Byte / UInt16 / Int / Int64. That is the width a consumer deserializes, never the
+    /// signedness. Anything else is Byte -- never the unmapped 0xFF, which no reader can skip.</summary>
     internal static string EnumUnderlyingTypeFor(int size) => size switch
     {
         2 => "UInt16Property",
         4 => "IntProperty",
         8 => "Int64Property",
         _ => "ByteProperty",
+    };
+
+    private static int? IntegerWidthOf(string typeName) => typeName switch
+    {
+        "ByteProperty" or "Int8Property" => 1,
+        "Int16Property" or "UInt16Property" => 2,
+        "IntProperty" or "UInt32Property" => 4,
+        "Int64Property" or "UInt64Property" => 8,
+        _ => null,
     };
 
     private static void WriteInnerPropertyTypeFromField(

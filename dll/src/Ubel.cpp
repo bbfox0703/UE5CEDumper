@@ -1453,6 +1453,22 @@ uintptr_t ReadPropertyEnum(uintptr_t propAddr, const std::string& typeName) {
     return e;
 }
 
+// [USMAP-ENUM-SIGNEDNESS] An EnumProperty's UnderlyingProp type -- the signedness its size cannot say, which both
+// canonical .usmap writers take from here. FEnumProperty (and UE4's UEnumProperty) declares FNumericProperty*
+// UnderlyingProp right before its UEnum* Enum, so it is read one pointer before the Enum slot. Call it only after
+// that Enum slot validated: that is what proves the family is right here. Only an integer property is accepted, since
+// no enum has any other underlying type; anything else is "" and the export falls back to the size.
+static std::string ReadEnumUnderlyingType(uintptr_t enumPropAddr) {
+    uintptr_t under = 0;
+    if (!Macht::ReadSafe(enumPropAddr + DynOff::FENUMPROP_ENUM - 8, under) || !under) return std::string();
+    std::string tn = GetPropertyTypeNameForMode(under);
+    static const char* const kIntegerTypes[] = { "ByteProperty", "Int8Property", "Int16Property", "UInt16Property",
+                                                 "IntProperty", "UInt32Property", "Int64Property", "UInt64Property" };
+    for (const char* t : kIntegerTypes)
+        if (tn == t) return tn;
+    return std::string();
+}
+
 static bool IsPrintableName(const std::string& n) {
     return Utf8Helpers::IsPlausibleNameStart(n);
 }
@@ -1530,19 +1546,19 @@ static void ReadSlotClassNames(uintptr_t prop, const std::string& tn, std::strin
     if (IsClassValuedProperty(tn)) ApplyClassValuedNames(prop, objClass, metaClass);   // [SDK-METACLASS]
 }
 
-// Forward declaration -- definition lives further down this file (line ~2441).
+// Forward declaration -- the definition lives further down this file.
 // WalkClassEx calls it at the top to ensure FSTRUCTPROP_STRUCT is calibrated
 // before any caller reads FProperty subclass extension fields.
 static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields);
 
 // Memo for the ENRICHED walk. Separate from s_walkClassCache because the two hold
 // different things: that one holds WalkClass's plain fields, this one holds the same
-// fields plus every structType / objClassName / innerType / enumName / boolFieldMask
-// read on top of them. Four call sites were already commented `// cached` — they were
-// not, and the difference is not academic: WalkClass's Fields is the FLATTENED
-// inheritance chain, so an Actor subclass carries 100-300 FieldInfo × 14 std::string,
-// deep-copied on every call, and snapshot capture / group scan reach this per struct-
-// array ELEMENT from every ParallelGObjectsScan worker at once. (B10)
+// fields plus the type metadata read on top of them. Four call sites were already
+// commented `// cached` — they were not, and the difference is not academic:
+// WalkClass's Fields is the FLATTENED inheritance chain, so an Actor subclass carries
+// 100-300 FieldInfo of a few dozen std::string each, deep-copied on every call, and
+// snapshot capture / group scan reach this per struct-array ELEMENT from every
+// ParallelGObjectsScan worker at once. (B10)
 static std::unordered_map<uintptr_t, ClassInfo> s_walkClassExCache;
 static std::mutex s_walkClassExCacheMutex;
 
@@ -1718,6 +1734,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                 std::string ename = GetName(enumPtr);
                 if (Utf8Helpers::IsPlausibleNameStart(ename))
                     fi.enumName = ename;
+                fi.enumUnderlyingType = ReadEnumUnderlyingType(fi.Address);   // [USMAP-ENUM-SIGNEDNESS]
             }
         }
 

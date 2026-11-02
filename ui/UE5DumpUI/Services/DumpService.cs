@@ -453,6 +453,8 @@ public sealed class DumpService : IDumpService
                     ElemType = fo["elem_type"]?.GetValue<string>() ?? "",
                     ElemStructType = fo["elem_struct_type"]?.GetValue<string>() ?? "",
                     EnumName = fo["enum_name"]?.GetValue<string>() ?? "",
+                    // [USMAP-ENUM-SIGNEDNESS] an EnumProperty's UnderlyingProp type; absent from an older DLL
+                    EnumUnderlyingType = fo["enum_underlying"]?.GetValue<string>() ?? "",
                     // [A4-USMAP-CONTAINER-ENUM] each container inner's own UEnum; absent from an older DLL
                     InnerEnumName = fo["inner_enum"]?.GetValue<string>() ?? "",
                     ElemEnumName  = fo["elem_enum"]?.GetValue<string>() ?? "",

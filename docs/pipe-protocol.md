@@ -1022,7 +1022,10 @@ Extended per-field keys are emitted **only when non-default**: `struct_type`,
 `key_obj_class` / `value_obj_class` / `elem_obj_class` (the class of an object-family Map key / value / Set
 element `[SDK-CONTAINER-OBJCLASS]`),
 `key_type`/`key_struct_type`, `value_type`/`value_struct_type`,
-`elem_type`/`elem_struct_type`, `enum_name`, `bool_mask`, the **MetaClass** of a
+`elem_type`/`elem_struct_type`, `enum_name`, `enum_underlying` (an EnumProperty's UnderlyingProp type, e.g.
+`Int8Property` — the signedness its `size` cannot say; sent only when the Enum slot validated and the slot names an
+integer property `[USMAP-ENUM-SIGNEDNESS]`), `inner_enum` / `elem_enum` / `key_enum` / `value_enum` (a container
+slot's own UEnum `[A4-USMAP-CONTAINER-ENUM]`), `bool_mask`, the **MetaClass** of a
 class-valued property — `meta_class` on the field itself, `inner_meta_class` /
 `key_meta_class` / `value_meta_class` / `elem_meta_class` on a container slot — plus **`prop_flags`**
 (uint64 `CPF_*` reflection flags — `SaveGame`/`BlueprintVisible`/`Net`/
