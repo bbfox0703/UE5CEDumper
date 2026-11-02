@@ -1785,6 +1785,19 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public void Ubel_NameGuards_GoThroughOneUtf8AwareCheck()
+    {
+        // [UBEL-ASCII-FIRSTCHAR] Thirteen guards in Ubel.cpp tested a name's first byte against printable ASCII, so a
+        // name opening with a CJK character was dropped. They go through Utf8Helpers::IsPlausibleNameStart (unit-tested
+        // in utf8_helpers_test); no raw first-byte test of a name may be left.
+        var s = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Ubel.cpp"));
+        var raw = System.Text.RegularExpressions.Regex.Matches(s,
+            @"\w+\[0\]\)?\s*(<|>=)\s*0x(20|7F)\b");
+        Assert.True(raw.Count == 0, "raw first-byte name checks left: " + string.Join(" | ", raw.Select(m => m.Value)));
+        Assert.Contains("IsPlausibleNameStart(", s);
+    }
+
+    [Fact]
     public void Fern_SendsAnEnumsAddress_EvenWithNoEntries()
     {
         // Review round 1 of [CEXPORT-ENUMNAMES-NOTE]: enum_addr went out only beside a non-empty entry list, so under

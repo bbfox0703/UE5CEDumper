@@ -434,4 +434,12 @@ inline std::string DecodeFStringBuffer(const uint8_t* buf, size_t bufLen, int32_
     return utf8Ok ? utf8Decoded : std::string();
 }
 
+// [UBEL-ASCII-FIRSTCHAR] Does a name read through a pointer the DLL is not sure of start like a name? It is the guard
+// against a dereference that landed on garbage: an empty name or one that opens with a control byte is refused.
+inline bool IsPlausibleNameStart(const std::string& name) {
+    if (name.empty()) return false;
+    const auto c = static_cast<unsigned char>(name[0]);
+    return c >= 0x20 && c < 0x7F;
+}
+
 } // namespace Utf8Helpers
