@@ -1107,6 +1107,32 @@ int main() {
         for (const auto& e : mc0.elements) emptyKept = emptyKept && e.value == "(0 bindings)";
         check("D3 ⭐ control: a readable EMPTY delegate still says \"(0 bindings)\"",
               emptyKept, mc0.elements.empty() ? "(none)" : mc0.elements[0].value.c_str());
+
+        // [D4B-DELEGATEPAD-2026-09-09] element bytes. A row names its element's address and size, so the hex holds the
+        // whole element: on a checked build the 8-byte access detector, a space, then the TArray header the value came
+        // from. Element [1]'s detector carries a marker, which a payload-only hex never shows.
+        check("D4b hex control: a Shipping element's hex is its 16-byte header, unchanged",
+              mc0.elements.size() == 2 && mc0.elements[1].hex == std::string(32, '0'),
+              mc0.elements.size() == 2 ? mc0.elements[1].hex.c_str() : "-");
+        alignas(16) uint8_t paddedMc[24 * 2] = {};
+        const uint64_t detector = 0x1122334455667788ull;
+        memcpy(paddedMc + 24, &detector, sizeof(detector));
+        FakeTArrayField liveMcP{ reinterpret_cast<uintptr_t>(paddedMc), 2, 2 };
+        auto mcP = Ubel::ReadMulticastDelegateArrayElements(
+            reinterpret_cast<uintptr_t>(&liveMcP), 0, 24, 0, 8);
+        check("D4b hex: a checked element still reads its header past the detector",
+              mcP.elements.size() == 2 && mcP.elements[1].value == "(0 bindings)",
+              mcP.elements.size() == 2 ? mcP.elements[1].value.c_str() : "-");
+        check("D4b hex ⭐: ...and its hex is the whole 24-byte element, detector first",
+              mcP.elements.size() == 2
+              && mcP.elements[1].hex == "8877665544332211 " + std::string(32, '0'),
+              mcP.elements.size() == 2 ? mcP.elements[1].hex.c_str() : "-");
+        FakeTArrayField deadP{ 0x1000, 2, 2 };
+        auto mcD = Ubel::ReadMulticastDelegateArrayElements(reinterpret_cast<uintptr_t>(&deadP), 0, 24, 0, 8);
+        check("D4b hex: an unread checked element keeps the element's shape in '?'",
+              mcD.elements.size() == 2 && mcD.elements[0].value == "???"
+              && mcD.elements[0].hex == std::string(16, '?') + " " + std::string(32, '?'),
+              mcD.elements.empty() ? "(none)" : mcD.elements[0].hex.c_str());
     }
 
 
@@ -3830,6 +3856,8 @@ int main() {
             alignas(8) static uint8_t cpData[2 * 32] = {};
             const uint32_t marker = 0x5A5A5A5A;
             memcpy(cpData + 32 + 8 + 16, &marker, 4);
+            const uint32_t detector = 0xC3C3C3C3;   // [D4B-DELEGATEPAD-2026-09-09] the hex opens on the detector
+            memcpy(cpData + 32, &detector, 4);
             alignas(8) static uint8_t cpInst[0x20] = {};
             *reinterpret_cast<uintptr_t*>(cpInst + 0x10) = reinterpret_cast<uintptr_t>(cpData);   // Data
             *reinterpret_cast<int32_t*>(cpInst + 0x18) = 2;                                       // Num
@@ -3837,9 +3865,15 @@ int main() {
             const auto rr = Ubel::ReadDelegateArrayElements(reinterpret_cast<uintptr_t>(cpInst), 0x10, 32, 0, 2);
             check("DELEGATEARRAYPAD ⭐: a case-preserving checked array's 32-byte elements are read, not refused",
                   rr.ok && rr.elements.size() == 2, rr.error.c_str());
-            check("DELEGATEARRAYPAD ⭐: ...at the engine's stride, so element [1]'s hex ends in its own FName's bytes",
-                  rr.elements.size() == 2 && rr.elements[1].hex.size() == 40 &&
-                  rr.elements[1].hex.compare(32, 8, "5A5A5A5A") == 0,
+            // [D4B-DELEGATEPAD-2026-09-09] The hex is the whole 32-byte element: detector, a space, the 20-byte payload
+            // (the FName's last 4 bytes at hex 17 + 32), then the 4-byte alignment tail.
+            check("DELEGATEARRAYPAD ⭐: ...at the engine's stride, so element [1]'s hex carries its own FName's bytes",
+                  rr.elements.size() == 2 && rr.elements[1].hex.size() == 65 &&
+                  rr.elements[1].hex.compare(49, 8, "5A5A5A5A") == 0,
+                  rr.elements.size() == 2 ? rr.elements[1].hex.c_str() : "-");
+            check("DELEGATEARRAYPAD ⭐: ...opening on its own detector and ending on its alignment tail",
+                  rr.elements.size() == 2 && rr.elements[1].hex.compare(0, 17, "C3C3C3C300000000 ") == 0 &&
+                  rr.elements[1].hex.size() == 65 && rr.elements[1].hex.compare(57, 8, "00000000") == 0,
                   rr.elements.size() == 2 ? rr.elements[1].hex.c_str() : "-");
         }
         DynOff::bCasePreservingName = false;
@@ -3972,6 +4006,21 @@ int main() {
         check("FINDREFSPAD control: ...while its invocation-list elements stay unpadded (8 + 8, the pair at +0)",
               wm != ma.weakLikeArrays.end() && wm->elemStride == 16 && wm->elemWeakOffset == 0,
               wm == ma.weakLikeArrays.end() ? "no entry" : std::to_string(wm->elemStride).c_str());
+
+        // [D4B-DELEGATEPAD-2026-09-09] element bytes: the walk's row for that checked DelegateProperty names offset 0x30
+        // and size 24, so its hex is those 24 bytes -- the detector, a space, then the weak pair and FName it read.
+        static uint8_t frInstA[0x100] = {};
+        memset(frInstA + 0x30, 0xAB, 8);   // the detector
+        const auto walkA = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(frInstA),
+                                              reinterpret_cast<uintptr_t>(frClsA), 64, 2, false);
+        const auto delRow = std::find_if(walkA.fields.begin(), walkA.fields.end(),
+                                         [](const auto& f) { return f.name == "Del"; });
+        check("FINDREFSPAD hex: the checked DelegateProperty is read, not refused",
+              delRow != walkA.fields.end() && delRow->typedValue.rfind("(delegate", 0) != 0,
+              delRow == walkA.fields.end() ? "no row" : delRow->typedValue.c_str());
+        check("FINDREFSPAD hex ⭐: ...and its hex is all 24 of its bytes, detector first",
+              delRow != walkA.fields.end() && delRow->hexValue == "ABABABABABABABAB " + std::string(32, '0'),
+              delRow == walkA.fields.end() ? "no row" : delRow->hexValue.c_str());
 
         // Class B, a 12-byte FName on a checked build: a TArray<FScriptDelegate> whose elements are 32 bytes.
         static uint8_t frArr[0x100] = {}, frInner[0x100] = {}, frClsB[0x100] = {};

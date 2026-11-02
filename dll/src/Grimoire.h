@@ -1455,6 +1455,18 @@ inline int32_t DelegatePadFromElementSize(int32_t elementSize, int32_t baseSize)
     if (elementSize == DelegatePaddedSize(baseSize)) return kDelegateDetectorPad;
     return -1;
 }
+/// [D4B-DELEGATEPAD-2026-09-09] The hex a delegate value's row shows. `bytes == nullptr` is an unread value.
+inline std::string DelegateHex(const uint8_t* bytes, int32_t size, int32_t pad) {
+    static constexpr char kDigits[] = "0123456789ABCDEF";
+    std::string hex;
+    if (size <= 0) return hex;
+    if (pad < 0 || pad > size) pad = 0;
+    for (int32_t i = pad; i < size; ++i) {
+        if (bytes) { hex += kDigits[bytes[i] >> 4]; hex += kDigits[bytes[i] & 0x0F]; }
+        else       hex += "??";
+    }
+    return hex;
+}
 inline bool bUseFProperty        = true;   // true = FField/FProperty (UE4.25+), false = UProperty (UE4 <4.25)
 inline bool bTaggedFFieldVariant = false;  // UE5.3+: FFieldVariant is 0x08 tagged ptr (LSB=1 → UObject)
 // TWO flags, deliberately. They used to be one, which reported a run as

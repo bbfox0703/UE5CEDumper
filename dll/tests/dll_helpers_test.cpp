@@ -8815,6 +8815,32 @@ static void Test_Delegate_AccessDetectorPad() {
     EXPECT("pad: a 4-byte-FName Shipping FScriptDelegate is 12 -> 0", DynOff::DelegatePadFromElementSize(12, 12) == 0);
 }
 
+static void Test_Delegate_Hex() {
+    // [D4B-DELEGATEPAD-2026-09-09] A delegate row names the value's own address and size, so its hex holds all of those
+    // bytes -- the detector included, set off by a space -- rather than only the payload 8 bytes in. The bytes are the
+    // bound OnActorHit measured on DumperTest Development: {State=0, Data=0x1D5F5BF5C40, Num=1, Max=4}.
+    const uint8_t mcd[24] = { 0, 0, 0, 0, 0, 0, 0, 0,
+                              0x40, 0x5C, 0xBF, 0xF5, 0xD5, 0x01, 0x00, 0x00,
+                              0x01, 0, 0, 0, 0x04, 0, 0, 0 };
+    EXPECT_EQ_STR("hex: a checked multicast shows its detector, then its TArray header",
+                  DynOff::DelegateHex(mcd, 24, 8), "0000000000000000 405CBFF5D50100000100000004000000");
+    EXPECT_EQ_STR("hex: an unread checked value keeps the same shape in '?'",
+                  DynOff::DelegateHex(nullptr, 24, 8), "???????????????? ????????????????????????????????");
+    // A case-preserving checked FScriptDelegate: detector, weak pair, 12-byte FName, then 4 bytes of alignment tail.
+    uint8_t sd[32] = {};
+    sd[0] = 0xAA; sd[31] = 0xBB;
+    const std::string sdHex = DynOff::DelegateHex(sd, 32, 8);
+    EXPECT("hex: a padded 32-byte element shows all 32 bytes and one space", sdHex.size() == 65);
+    EXPECT("hex: ...opening on the detector's first byte", sdHex.compare(0, 2, "AA") == 0);
+    EXPECT("hex: ...and closing on the alignment tail's last", sdHex.size() == 65 && sdHex.compare(63, 2, "BB") == 0);
+    // ⭐ The control: a Shipping value has no detector, and its hex is what it always was.
+    EXPECT_EQ_STR("hex control: a Shipping multicast is its 16-byte header, no space",
+                  DynOff::DelegateHex(mcd + 8, 16, 0), "405CBFF5D50100000100000004000000");
+    EXPECT_EQ_STR("hex control: an unread Shipping value is 32 '?'",
+                  DynOff::DelegateHex(nullptr, 16, 0), "????????????????????????????????");
+    EXPECT_EQ_STR("hex: no size, no hex", DynOff::DelegateHex(mcd, 0, 0), "");
+}
+
 static void Test_Aura_IsBoundInvocationListHeader() {
     // The predicate that lets the SPARSE path derive the pad it has no ElementSize for: a
     // MulticastSparseDelegateProperty's ElementSize is sizeof(FSparseDelegate) == 1 and says
@@ -11522,6 +11548,7 @@ int main() {
     RUN(Test_Ubel_DescribeUnreadableField);   // [UNREADVAL-2026-09-09] hex, not decimal
     RUN(Test_Ubel_DescribeScriptDelegate);
     RUN(Test_Delegate_AccessDetectorPad);
+    RUN(Test_Delegate_Hex);   // [D4B-DELEGATEPAD-2026-09-09] element bytes
     RUN(Test_Aura_IsBoundInvocationListHeader);
     RUN(Test_Stark_ClassifyGameThreadLiveness);
     RUN(Test_Stark_LivenessPreservesTheGateContract);
