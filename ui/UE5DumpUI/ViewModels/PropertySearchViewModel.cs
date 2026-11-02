@@ -490,6 +490,16 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         await ApplyForceAsync(m, "numeric", value: r.Value);
     }
 
+    /// <summary>[LEAD-PROPSEARCH-TOPTIONAL-LEAVES] A nested (deep) row hides Freeze and Force; the commands refuse it as
+    /// well, so no route writes at its offset -- inside a TOptional&lt;FStruct&gt;, the optional's storage whether or
+    /// not it is set -- or arms a hold on its dotted name.</summary>
+    private bool RefuseNested(PropertySearchMatch m)
+    {
+        if (m.ShowScalarActions) return false;
+        StatusText = m.NestedActionRefusedText;
+        return true;
+    }
+
     /// <summary>Force <paramref name="m"/>'s field to a value and hold it
     /// (DLL force_field), keyed on <see cref="PropertySearchMatch.ClassName"/>.
     /// <para>
@@ -506,16 +516,6 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     /// it easily — so <c>Truncated</c> is not a rare edge case here and the status line
     /// must keep saying it out loud. See audit #5 A6.
     /// </para></summary>
-    /// <summary>[LEAD-PROPSEARCH-TOPTIONAL-LEAVES] A nested (deep) row hides Freeze and Force; the commands refuse it as
-    /// well, so no route writes at its offset -- inside a TOptional&lt;FStruct&gt;, the optional's storage whether or
-    /// not it is set -- or arms a hold on its dotted name.</summary>
-    private bool RefuseNested(PropertySearchMatch m)
-    {
-        if (m.ShowScalarActions) return false;
-        StatusText = m.NestedActionRefusedText;
-        return true;
-    }
-
     private async Task ApplyForceAsync(PropertySearchMatch? m, string kind, double value = 0, bool on = false)
     {
         if (m == null || RefuseNested(m) || string.IsNullOrEmpty(m.ClassName) || string.IsNullOrEmpty(m.PropName)) return;
