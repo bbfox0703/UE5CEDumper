@@ -475,6 +475,10 @@ UI says so.
 
 **(3) The read's speed** `[TRACE-UI-READ-SPEED]` is still open. The 512 MB load took 38.3 s on 3636 (44.3 s on
 3633, and 33.4 s on 3634 with pages eight times larger): about 19 MB/s for 716 MB, against the rig's 31–36 MB/s.
+✅ **Found and fixed in source 2026-11-02:** neither suspect. The pipe's reply reader read 1 KB at a time (a
+StreamReader built without a buffer size). It now reads 64 KB at a time, as the rig does. The read loop alone went
+from ~60 to ~600 MB/s on 14 MB lines, measured offline. The live load time is still owed; the todo row has the
+numbers.
 
 **Not yet seen live:** 3638's collection period that follows the free memory. This machine always had more than
 2.5 GB free, so every load so far ran the calibrated 16 pages. 3638's load log line also gives the collections' time

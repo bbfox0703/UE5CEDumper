@@ -100,8 +100,11 @@ public sealed class PipeClient : IPipeClient
         return SendFailure.TransportError;
     }
 
-    /// <summary>[TRACE-UI-READ-SPEED] The reply reader's buffer: the StreamReader default.</summary>
-    internal const int PipeReadBufferBytes = 1024;
+    /// <summary>[TRACE-UI-READ-SPEED] The reply reader's buffer, which is the size of each read from the pipe. The
+    /// StreamReader default (1 KB) made a 14 MB pe_trace_get page ~14,000 async reads: ~60 MB/s for the read loop
+    /// against ~600 MB/s at 64 KB, measured on 14 MB lines through a named pipe (2026-11-02). The rig reads in 64 KB
+    /// blocks for the same reason.</summary>
+    internal const int PipeReadBufferBytes = 64 * 1024;
 
     public PipeClient(ILoggingService log, string laneTag = "")
     {
@@ -129,7 +132,7 @@ public sealed class PipeClient : IPipeClient
         _log.Info(Constants.LogCatPipe, $"Connecting to pipe: {Constants.PipeName}...");
         await _pipe.ConnectAsync(Constants.PipeConnectTimeoutMs, ct);
 
-        _reader = new StreamReader(_pipe, Encoding.UTF8);
+        _reader = new StreamReader(_pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: PipeReadBufferBytes);
         _writer = new StreamWriter(_pipe, Encoding.UTF8) { AutoFlush = true };
 
         IsConnected = true;
