@@ -2004,6 +2004,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.LiveWalker.FuncCopyBaked">AA(Baked)</sys:String>
     <sys:String x:Key="str.LiveWalker.FunctionsLoading">⚠ {0}: nothing done — this object's functions are still loading, and the rows shown are the previous object's.</sys:String>
     <sys:String x:Key="str.LiveWalker.NoRowAddress">⚠ {0}: nothing done — no address was read for this row, and none is worked out from its offset.</sys:String>
+    <sys:String x:Key="str.Export.EnumNamesUnavailable">Enum member names could not be read on this build (UEnum::Names was not found): the enum dropdowns are empty</sys:String>
     <sys:String x:Key="str.LiveWalker.DataTableNotRestored">⚠ This DataTable view did not restore: the DataTable at its saved address is gone or has changed. The grid shows what is at that address now.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.FuncCopyBaked">AA(Baked) = &quot;baked&quot; CE AA (Auto-Assembler) script: the param values you enter are inlined at generation time, so enabling the memory-record fires the call once with those fixed values — no runtime form. ~5x smaller than INV and redistributable. Requires ue5_invoke_helper.lua embedded in your .CT via Table -&gt; Add File... (Tools -&gt; Export CE Helper Lua File... to obtain it). Tick &quot;Verify return value&quot; in the dialog for a full before/after dump, or set UE5_DEBUG=1 to print the decoded return value.</sys:String>
 

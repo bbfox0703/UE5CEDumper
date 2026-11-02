@@ -1050,6 +1050,11 @@ Field objects include all `walk_class` fields **plus** live typed values and arr
                       // the Guess-What raw-byte pass was skipped. NOT staleness: the two
                       // used to share one bound, which is how a live 3.6 MB USaveGame
                       // was reported to the user as freed. (SANEPROPS-2026-08-26)
+  // "enum_names_failed": true,
+                      // present only when true, lean or not (from build 3671): UEnum::Names
+                      // was never located on this build, so every enum field's entries
+                      // are empty. The same process-wide latch list_enums reports.
+                      // [CEXPORT-ENUMNAMES-NOTE]
   "fields": [
     // --- Scalar field ---
     {

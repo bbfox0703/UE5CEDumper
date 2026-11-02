@@ -32,8 +32,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     // Engine state for CE address formatting
     private EngineState? _engineState;
 
-    /// <summary>[CEXPORT-STRIDE-NOTE] The comment lines an export opens with.</summary>
-    private IReadOnlyList<string> ExportNotes => new[] { _engineState?.StrideExportNote ?? "" };
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] A walk said UEnum::Names was never located. The DLL's latch is process-wide, so
+    /// one walk saying it holds until the next session.</summary>
+    private bool _enumNamesFailed;
+
+    /// <summary>[CEXPORT-STRIDE-NOTE] The comment lines an export of <paramref name="exported"/> opens with.</summary>
+    private IReadOnlyList<string> ExportNotes(IEnumerable<LiveFieldValue> exported) => new[]
+    {
+        _engineState?.StrideExportNote ?? "",
+        CeXmlExportService.EnumNamesNote(_enumNamesFailed, exported),   // [CEXPORT-ENUMNAMES-NOTE]
+    };
 
     // Cancels an in-flight Copy CE XML / Copy CE Field export (the ResolveDrilldown
     // pipe-walk phase, which can be long for deep/wide object graphs). Recreated per
@@ -4874,6 +4882,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 _log.Info("CEXML: AOB requested but root is not GWorld — falling back to direct address");
 
             StatusText = "Generating CE XML...";
+            var exportNotes = ExportNotes(fieldsForXml.Concat(resolvedStructs.Values.Concat(resolvedInstances.Values).SelectMany(v => v)));
             string xml;
             if (useAob)
             {
@@ -4898,7 +4907,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     altRowColorEvenRgb: FlattenColorEven,
                     altRowColorOddRgb: FlattenColorOdd,
                     collapseLeafPointers: CollapseLeafPointers,
-                    headerNotes: ExportNotes);
+                    headerNotes: exportNotes);
             }
             else
             {
@@ -4922,7 +4931,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     altRowColorEvenRgb: FlattenColorEven,
                     altRowColorOddRgb: FlattenColorOdd,
                     collapseLeafPointers: CollapseLeafPointers,
-                    headerNotes: ExportNotes);
+                    headerNotes: exportNotes);
             }
 
             if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
@@ -4950,7 +4959,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var sysWarn = CeXmlExportService.LastSystemFieldsSkipped > 0
                 ? $" {CeXmlExportService.LastSystemFieldsSkipped} system fields hidden"
                 : "";
-            StatusText = $"Copied: {objCount} objects, {lineCount} XML lines.{statusExtra}{truncWarn}{sysWarn}{reanchorWarn}";
+            StatusText = $"Copied: {objCount} objects, {lineCount} XML lines.{statusExtra}{truncWarn}{sysWarn}{reanchorWarn}"
+                       + CeXmlExportService.EnumNamesStatus(exportNotes);
             _log.Info($"CE XML copied to clipboard for {CurrentClassName} (AOB={useAob}, " +
                 $"descOffset={DescShowOffset}, descType={DescShowType}, " +
                 $"{resolvedStructs.Count} structs / {resolvedInstances.Count} pointers resolved, depth={CsxDrilldownDepth})");
@@ -5031,10 +5041,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsLoading = true;
             IsExporting = true;
             var walkedBelow = new List<LiveFieldValue>();   // [CEXPORT-NESTED-TRUNC-NOTE]
+            var csxNotes = ExportNotes(Fields);   // the top level: what is known before the walk below it
             var csx = await CsxExportService.GenerateCsxAsync(
                 _dump, CsxStructName(), Fields, arrayLimit: ArrayLimit, drilldownDepth: CsxDrilldownDepth,
                 format: CsxFormat.Ce77Plus, ceStringLength: CeStringLength, resolvedFieldsOut: walkedBelow,
-                headerNotes: ExportNotes, ct: cts.Token);
+                headerNotes: csxNotes, ct: cts.Token);
             var push = CsxStructurePushGenerator.Generate(csx);
             var result = await _aobMaker.CreateAAScriptDetailedAsync(
                 CsxStructurePushGenerator.RecordPrefix + push.RootName, push.Script, autoActivate: true,
@@ -5049,7 +5060,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 // The same truncation note Export CSX gives: a container clipped by the Array Limit is part-built.
                 var limitWarn = BuildContainerLimitWarning(Fields, ArrayLimit, nested: walkedBelow);
-                StatusText = limitWarn != null ? string.Join(' ', text, limitWarn) : text;
+                StatusText = (limitWarn != null ? string.Join(' ', text, limitWarn) : text) + CeXmlExportService.EnumNamesStatus(csxNotes);
             }
             _log.Info($"[AOBM-DISSECT-INJECT] structure push '{push.RootName}' ({push.Structures} structures, " +
                       $"{push.Elements} elements, {push.Script.Length} chars): created={result.Created}, " +
@@ -5115,11 +5126,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsExporting = true;
             StatusText = CsxDrilldownDepth > 0 ? "Resolving struct + pointer fields..." : "Resolving struct fields...";
             var walkedBelow = new List<LiveFieldValue>();   // [CEXPORT-NESTED-TRUNC-NOTE]
+            var csxNotes = ExportNotes(Fields);   // the top level: what is known before the walk below it
             var csx = await CsxExportService.GenerateCsxAsync(
                 _dump, structName, Fields, arrayLimit: ArrayLimit, drilldownDepth: CsxDrilldownDepth,
                 // [CSX-STRCHILD-BYTESIZE] the same String Len the CE XML exports use
                 format: format, ceStringLength: CeStringLength, resolvedFieldsOut: walkedBelow,
-                headerNotes: ExportNotes, ct: cts.Token);
+                headerNotes: csxNotes, ct: cts.Token);
 
             // Write to file (overwrite if exists — user already confirmed via dialog). No
             // token here on purpose: cancel aborts the slow resolve above; once we have the
@@ -5129,7 +5141,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Surface a truncation note so a partial export (a container clipped by
             // ArrayLimit) doesn't silently read as complete — same note Copy CE XML shows.
             var limitWarn = BuildContainerLimitWarning(Fields, ArrayLimit, nested: walkedBelow);
-            StatusText = limitWarn ?? "";
+            StatusText = ((limitWarn ?? "") + CeXmlExportService.EnumNamesStatus(csxNotes)).TrimStart();
             var formatLabel = format == CsxFormat.Ce77Plus ? "CE 7.7+ Binary" : "Pre-CE 7.7";
             _log.Info($"CSX ({formatLabel}) exported to {filePath} for {CurrentClassName}"
                 + (limitWarn != null ? $" ({limitWarn})" : ""));
@@ -5334,6 +5346,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 _log.Info("CEFieldXML: AOB requested but root is not GWorld — falling back to direct address");
 
             StatusText = "Generating CE Field XML...";
+            var exportNotes = ExportNotes(fieldsForXml.Concat(resolvedStructs.Values.Concat(resolvedInstances.Values).SelectMany(v => v)));
             string xml;
             if (useAob)
             {
@@ -5360,7 +5373,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     altRowColorEvenRgb: FlattenColorEven,
                     altRowColorOddRgb: FlattenColorOdd,
                     collapseLeafPointers: CollapseLeafPointers,
-                    headerNotes: ExportNotes);
+                    headerNotes: exportNotes);
             }
             else
             {
@@ -5386,7 +5399,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     altRowColorEvenRgb: FlattenColorEven,
                     altRowColorOddRgb: FlattenColorOdd,
                     collapseLeafPointers: CollapseLeafPointers,
-                    headerNotes: ExportNotes);
+                    headerNotes: exportNotes);
             }
 
             if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
@@ -5414,7 +5427,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var sysWarn = CeXmlExportService.LastSystemFieldsSkipped > 0
                 ? $" {CeXmlExportService.LastSystemFieldsSkipped} system fields hidden"
                 : "";
-            StatusText = $"Copied: {objCount} objects, {lineCount} XML lines.{statusExtra}{truncWarn}{sysWarn}{reanchorWarn}";
+            StatusText = $"Copied: {objCount} objects, {lineCount} XML lines.{statusExtra}{truncWarn}{sysWarn}{reanchorWarn}"
+                       + CeXmlExportService.EnumNamesStatus(exportNotes);
             _log.Info($"CE Field XML copied: {selectedSnapshot.Count} field(s) (AOB={useAob}, includeGuessed={includeGuessed}, " +
                 $"descOffset={DescShowOffset}, descType={DescShowType}, " +
                 $"{resolvedInstances.Count} pointer targets resolved at depth={CsxDrilldownDepth})");
@@ -6752,6 +6766,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // [LW-BACK-CONTAINER-HEADER-ADDR] No list, so no class on screen: a view with this class again must load it.
         _currentClassAddr = "";
         FunctionsClassName = "";
+        _enumNamesFailed = false;   // [CEXPORT-ENUMNAMES-NOTE] the DLL's latch is the previous process's
         ClearForwardStack();
         _replacedSpine = null;
         _cachedWorld = null;
@@ -7509,6 +7524,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         var prevAddr      = ParseHexAddr(CurrentAddress);
         var prevClassName = CurrentClassName;
         var prevClassAddr = _currentClassAddr;
+        _enumNamesFailed |= result.EnumNamesFailed;   // [CEXPORT-ENUMNAMES-NOTE]
 
         if (clearFieldSearch)
             ClearFieldSearchForNavigation();

@@ -2597,6 +2597,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // the UI can say "freed, or not an object" rather than stale's or unreadable's narrower claims.
             if (result.noHeader)
                 data["no_header"] = true;
+            // [CEXPORT-ENUMNAMES-NOTE] In both lean and full: UEnum::Names was never located, so every enum field above
+            // carries no entries, and a CE export's dropdowns come out empty. Only list_enums said so before. The latch
+            // is process-wide, set only by a search that ran to completion ([P1-ENUMNAMES]).
+            if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))
+                data["enum_names_failed"] = true;
             // Present only when true, and !lean because the lean contract above is
             // SUBTRACTIVE ONLY — an unconditional key would make lean stop being a
             // subset of full. A CE export reads `fields` and never this.
@@ -2789,7 +2794,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["count"] = static_cast<int>(enums.size());
             if (truncated) data["truncated"] = true;
             // [P1-ENUMNAMES] UEnum::Names was never located on this build: every enum's entries above are empty, and
-            // this is the only exit that says why. Latched only by a search that ran to completion.
+            // this says why (a walk reply does too, [CEXPORT-ENUMNAMES-NOTE]). Latched only by a search that ran to
+            // completion.
             if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire)) data["enum_names_failed"] = true;
             return Renge::MakeResponse(id, data).dump();
         }

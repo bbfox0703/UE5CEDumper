@@ -4108,6 +4108,22 @@ public static class CeXmlExportService
         sb.Append(XmlCommentLines(notes));
     }
 
+    internal const string KeyEnumNamesUnavailable = "str.Export.EnumNamesUnavailable";
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] What an export says when UEnum::Names was never located on this build.</summary>
+    internal static string EnumNamesUnavailableNote => AobMakerStatus.Say(KeyEnumNamesUnavailable,
+        "Enum member names could not be read on this build (UEnum::Names was not found): the enum dropdowns are empty");
+
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] A status line's word on the enum note an export wrote, or "".</summary>
+    internal static string EnumNamesStatus(IReadOnlyList<string> notes)
+        => notes.Contains(EnumNamesUnavailableNote) ? " ⚠ " + EnumNamesUnavailableNote : "";
+
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] The note, when <paramref name="namesFailed"/> and an exported field holds an enum
+    /// (a dropdown the latch left empty); "" otherwise.</summary>
+    internal static string EnumNamesNote(bool namesFailed, IEnumerable<LiveFieldValue> fields)
+        => namesFailed && fields.Any(f => f.TypeName == "EnumProperty" || !string.IsNullOrEmpty(f.EnumAddr)
+                                          || f.ArrayInnerType == "EnumProperty")
+            ? EnumNamesUnavailableNote : "";
+
     /// <summary>One XML comment line per non-empty note, or "" for none. A comment cannot hold "--".</summary>
     internal static string XmlCommentLines(IReadOnlyList<string>? notes)
         => notes == null ? ""
