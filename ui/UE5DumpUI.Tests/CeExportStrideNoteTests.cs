@@ -247,6 +247,20 @@ public class CeExportStrideNoteTests
     }
 
     [Fact]
+    public void TheNote_CoversAnArrayOfByteEnums_AsTheDllSendsIt()
+    {
+        // A TArray<TEnumAsByte<E>> under the latch: inner type ByteProperty, the UEnum's address, no entries.
+        var arr = new LiveFieldValue
+        {
+            Name = "Modes", TypeName = "ArrayProperty", ArrayInnerType = "ByteProperty", ArrayEnumAddr = "0xE000",
+        };
+        Assert.Equal(CeXmlExportService.EnumNamesUnavailableNote, CeXmlExportService.EnumNamesNote(true, new[] { arr }));
+        // Control: a plain byte array holds no enum.
+        Assert.Equal("", CeXmlExportService.EnumNamesNote(true,
+            new[] { new LiveFieldValue { Name = "Bytes", TypeName = "ArrayProperty", ArrayInnerType = "ByteProperty" } }));
+    }
+
+    [Fact]
     public async Task PushToCeStructureDissect_SaysNothingAboutDropdowns_ItHasNone()
     {
         var bridge = new ScriptedAobMakerBridge { Available = true };

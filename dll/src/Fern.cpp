@@ -1640,13 +1640,17 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
             fj["elements"] = elems;
         }
 
-        // CE DropDownList: full enum entries for this array field
-        if (fv.arrayEnumAddr != 0 && !fv.arrayEnumEntries.empty()) {
+        // CE DropDownList: full enum entries for this array field. [CEXPORT-ENUMNAMES-NOTE] The UEnum's address goes
+        // out without them too: under [P1-ENUMNAMES]'s latch the entries are empty, and the address is then the
+        // only sign the array holds an enum. Every UI reader requires entries before it builds a dropdown.
+        if (fv.arrayEnumAddr != 0) {
             fj["enum_addr"] = Renge::AddrToStr(fv.arrayEnumAddr);
-            json entries = json::array();
-            for (const auto& ee : fv.arrayEnumEntries)
-                entries.push_back({{"v", ee.value}, {"n", ee.name}});
-            fj["enum_entries"] = entries;
+            if (!fv.arrayEnumEntries.empty()) {
+                json entries = json::array();
+                for (const auto& ee : fv.arrayEnumEntries)
+                    entries.push_back({{"v", ee.value}, {"n", ee.name}});
+                fj["enum_entries"] = entries;
+            }
         }
     }
 
@@ -1740,12 +1744,16 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
         fj["enum_name"]  = fv.enumName;
         fj["enum_value"] = fv.enumValue;
     }
-    if (fv.enumAddr != 0 && !fv.enumEntries.empty()) {
+    // [CEXPORT-ENUMNAMES-NOTE] The address without the entries too, as for an array above: a TEnumAsByte field
+    // otherwise arrives under the latch as a plain ByteProperty.
+    if (fv.enumAddr != 0) {
         fj["enum_addr"] = Renge::AddrToStr(fv.enumAddr);
-        json enumEntries = json::array();
-        for (const auto& ee : fv.enumEntries)
-            enumEntries.push_back({{"v", ee.value}, {"n", ee.name}});
-        fj["enum_entries"] = enumEntries;
+        if (!fv.enumEntries.empty()) {
+            json enumEntries = json::array();
+            for (const auto& ee : fv.enumEntries)
+                enumEntries.push_back({{"v", ee.value}, {"n", ee.name}});
+            fj["enum_entries"] = enumEntries;
+        }
     }
 
     // StrProperty: decoded string value. The export emits an FString leaf

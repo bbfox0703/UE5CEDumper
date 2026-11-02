@@ -902,8 +902,14 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             StatusText = "Resolving struct fields...";
             // lean: this resolve feeds GenerateInstanceXml (a CE XML export), which
             // reads structure only — see the LEAN contract in Fern.cpp / §10.6.
-            var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
-                _dump, fields, arrayLimit: arrayLimit, lean: true);
+            // [CEXPORT-ENUMNAMES-NOTE] The resolve's own walks may be the first to meet an enum, and so the latch.
+            Dictionary<string, List<LiveFieldValue>> resolvedStructs;
+            using (CeXmlExportService.WatchEnumNamesLatch(out var latchSeen))
+            {
+                resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
+                    _dump, fields, arrayLimit: arrayLimit, lean: true);
+                _enumNamesFailed |= latchSeen.Value;
+            }
 
             // Compute root address in user-selected format
             var rootAddress = AddressHelper.FormatAddress(

@@ -1,4 +1,5 @@
 ﻿using System.Text;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using UE5DumpUI.Core;
 using UE5DumpUI.Helpers;
@@ -442,6 +443,7 @@ public static class CeXmlExportService
         try
         {
             walked = await dump.WalkInstanceBatchAsync(pending, arrayLimit, lean: lean);
+            foreach (var w in walked) NoteWalk(w);
         }
         catch
         {
@@ -657,6 +659,7 @@ public static class CeXmlExportService
         try
         {
             var r = await dump.WalkInstanceAsync(ptrAddr, ptrClassAddr, arrayLimit, lean: lean, ct: ct);
+            NoteWalk(r);
             // [CEXML-DEFINITION-VIEW-AS-DATA] A definition walk is the TYPE's member layout: laid out under the pointer,
             // CE would read the UScriptStruct / UClass object's own memory at instance offsets. The pointer stays a leaf.
             if (r.Fields.Count > 0 && !r.IsDefinition)
@@ -911,6 +914,7 @@ public static class CeXmlExportService
             try
             {
                 walked = await dump.WalkInstanceBatchAsync(todo, arrayLimit, lean: lean, ct: ct);
+                foreach (var w in walked) NoteWalk(w);
             }
             catch (OperationCanceledException) { throw; }
             catch
@@ -1013,6 +1017,7 @@ public static class CeXmlExportService
             walkResult = cached;
         else
             walkResult = await dump.WalkInstanceAsync(dataAddr, classAddr, arrayLimit: arrayLimit, lean: lean, ct: ct);
+        NoteWalk(walkResult);
 
         foreach (var f in walkResult.Fields)
         {
@@ -4108,6 +4113,32 @@ public static class CeXmlExportService
         sb.Append(XmlCommentLines(notes));
     }
 
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] Where the walks an export makes report the enum-names latch. The DLL detects
+    /// UEnum::Names lazily, so the export's own struct or pointer walk may be the one whose reply first carries it. An
+    /// AsyncLocal, so it reaches every walk in the resolve's async call tree and no other export's.</summary>
+    private static readonly AsyncLocal<StrongBox<bool>?> s_enumLatchSink = new();
+
+    /// <summary>Watch the walks made until the returned scope is disposed; <paramref name="seen"/> turns true when one
+    /// says the latch is set.</summary>
+    internal static IDisposable WatchEnumNamesLatch(out StrongBox<bool> seen)
+    {
+        var box = seen = new StrongBox<bool>();
+        var outer = s_enumLatchSink.Value;
+        s_enumLatchSink.Value = box;
+        return new LatchScope(() => s_enumLatchSink.Value = outer);
+    }
+
+    private sealed class LatchScope(Action restore) : IDisposable
+    {
+        public void Dispose() => restore();
+    }
+
+    /// <summary>Report one walk to the watching export, if any.</summary>
+    internal static void NoteWalk(InstanceWalkResult r)
+    {
+        if (r.EnumNamesFailed && s_enumLatchSink.Value is { } box) box.Value = true;
+    }
+
     internal const string KeyEnumNamesUnavailable = "str.Export.EnumNamesUnavailable";
     /// <summary>[CEXPORT-ENUMNAMES-NOTE] What an export says when UEnum::Names was never located on this build.</summary>
     internal static string EnumNamesUnavailableNote => AobMakerStatus.Say(KeyEnumNamesUnavailable,
@@ -4121,7 +4152,7 @@ public static class CeXmlExportService
     /// (a dropdown the latch left empty); "" otherwise.</summary>
     internal static string EnumNamesNote(bool namesFailed, IEnumerable<LiveFieldValue> fields)
         => namesFailed && fields.Any(f => f.TypeName == "EnumProperty" || !string.IsNullOrEmpty(f.EnumAddr)
-                                          || f.ArrayInnerType == "EnumProperty")
+                                          || f.ArrayInnerType == "EnumProperty" || !string.IsNullOrEmpty(f.ArrayEnumAddr))
             ? EnumNamesUnavailableNote : "";
 
     /// <summary>One XML comment line per non-empty note, or "" for none. A comment cannot hold "--".</summary>

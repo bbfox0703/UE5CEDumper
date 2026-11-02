@@ -540,6 +540,7 @@ public static class CsxExportService
             try
             {
                 var result = await dump.WalkInstanceAsync(field.PtrAddress, field.PtrClassAddr, arrayLimit, ct: ct);
+                CeXmlExportService.NoteWalk(result);   // [CEXPORT-ENUMNAMES-NOTE]
                 if (result.Fields.Count > 0 && !result.IsDefinition)
                 {
                     resolved[field.PtrAddress] = result.Fields;

@@ -36,7 +36,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// one walk saying it holds until the next session.</summary>
     private bool _enumNamesFailed;
 
-    /// <summary>[CEXPORT-STRIDE-NOTE] The comment lines an export of <paramref name="exported"/> opens with.</summary>
+    /// <summary>[CEXPORT-STRIDE-NOTE] The comment line a CSX opens with: a Structure Dissect has no dropdowns, so it has
+    /// nothing to say about enum names.</summary>
+    private IReadOnlyList<string> CsxNotes => new[] { _engineState?.StrideExportNote ?? "" };
+
+    /// <summary>[CEXPORT-STRIDE-NOTE] The comment lines a CE table of <paramref name="exported"/> opens with.</summary>
     private IReadOnlyList<string> ExportNotes(IEnumerable<LiveFieldValue> exported) => new[]
     {
         _engineState?.StrideExportNote ?? "",
@@ -4849,6 +4853,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>(StringComparer.Ordinal);
             var resolvedInstances = new Dictionary<string, List<LiveFieldValue>>(StringComparer.Ordinal);
             int lastShown = 0;
+            // [CEXPORT-ENUMNAMES-NOTE] The resolve's own walks may be the first to meet an enum, and so the latch.
+            using var latchWatch = CeXmlExportService.WatchEnumNamesLatch(out var latchSeen);
             await CeXmlExportService.ResolveDrilldownAsync(
                 _dump, fieldsForXml, resolvedStructs, resolvedInstances,
                 depth: CsxDrilldownDepth, arrayLimit: ArrayLimit,
@@ -4882,6 +4888,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 _log.Info("CEXML: AOB requested but root is not GWorld — falling back to direct address");
 
             StatusText = "Generating CE XML...";
+            _enumNamesFailed |= latchSeen.Value;
             var exportNotes = ExportNotes(fieldsForXml.Concat(resolvedStructs.Values.Concat(resolvedInstances.Values).SelectMany(v => v)));
             string xml;
             if (useAob)
@@ -5041,7 +5048,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsLoading = true;
             IsExporting = true;
             var walkedBelow = new List<LiveFieldValue>();   // [CEXPORT-NESTED-TRUNC-NOTE]
-            var csxNotes = ExportNotes(Fields);   // the top level: what is known before the walk below it
+            var csxNotes = CsxNotes;
             var csx = await CsxExportService.GenerateCsxAsync(
                 _dump, CsxStructName(), Fields, arrayLimit: ArrayLimit, drilldownDepth: CsxDrilldownDepth,
                 format: CsxFormat.Ce77Plus, ceStringLength: CeStringLength, resolvedFieldsOut: walkedBelow,
@@ -5060,7 +5067,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 // The same truncation note Export CSX gives: a container clipped by the Array Limit is part-built.
                 var limitWarn = BuildContainerLimitWarning(Fields, ArrayLimit, nested: walkedBelow);
-                StatusText = (limitWarn != null ? string.Join(' ', text, limitWarn) : text) + CeXmlExportService.EnumNamesStatus(csxNotes);
+                StatusText = limitWarn != null ? string.Join(' ', text, limitWarn) : text;
             }
             _log.Info($"[AOBM-DISSECT-INJECT] structure push '{push.RootName}' ({push.Structures} structures, " +
                       $"{push.Elements} elements, {push.Script.Length} chars): created={result.Created}, " +
@@ -5126,7 +5133,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsExporting = true;
             StatusText = CsxDrilldownDepth > 0 ? "Resolving struct + pointer fields..." : "Resolving struct fields...";
             var walkedBelow = new List<LiveFieldValue>();   // [CEXPORT-NESTED-TRUNC-NOTE]
-            var csxNotes = ExportNotes(Fields);   // the top level: what is known before the walk below it
+            var csxNotes = CsxNotes;
             var csx = await CsxExportService.GenerateCsxAsync(
                 _dump, structName, Fields, arrayLimit: ArrayLimit, drilldownDepth: CsxDrilldownDepth,
                 // [CSX-STRCHILD-BYTESIZE] the same String Len the CE XML exports use
@@ -5141,7 +5148,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Surface a truncation note so a partial export (a container clipped by
             // ArrayLimit) doesn't silently read as complete — same note Copy CE XML shows.
             var limitWarn = BuildContainerLimitWarning(Fields, ArrayLimit, nested: walkedBelow);
-            StatusText = ((limitWarn ?? "") + CeXmlExportService.EnumNamesStatus(csxNotes)).TrimStart();
+            StatusText = limitWarn ?? "";
             var formatLabel = format == CsxFormat.Ce77Plus ? "CE 7.7+ Binary" : "Pre-CE 7.7";
             _log.Info($"CSX ({formatLabel}) exported to {filePath} for {CurrentClassName}"
                 + (limitWarn != null ? $" ({limitWarn})" : ""));
@@ -5315,6 +5322,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>(StringComparer.Ordinal);
             var resolvedInstances = new Dictionary<string, List<LiveFieldValue>>(StringComparer.Ordinal);
             int lastShown = 0;
+            // [CEXPORT-ENUMNAMES-NOTE] The resolve's own walks may be the first to meet an enum, and so the latch.
+            using var latchWatch = CeXmlExportService.WatchEnumNamesLatch(out var latchSeen);
             await CeXmlExportService.ResolveDrilldownAsync(
                 _dump, fieldsForXml, resolvedStructs, resolvedInstances,
                 depth: CsxDrilldownDepth, arrayLimit: ArrayLimit,
@@ -5346,6 +5355,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 _log.Info("CEFieldXML: AOB requested but root is not GWorld — falling back to direct address");
 
             StatusText = "Generating CE Field XML...";
+            _enumNamesFailed |= latchSeen.Value;
             var exportNotes = ExportNotes(fieldsForXml.Concat(resolvedStructs.Values.Concat(resolvedInstances.Values).SelectMany(v => v)));
             string xml;
             if (useAob)
