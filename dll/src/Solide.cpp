@@ -540,7 +540,7 @@ int32_t GetState(std::vector<ForcedFieldInfo>& out) {
     return FR_OK;
 }
 
-int32_t FindStealthMeter(std::vector<StealthCandidate>& out, int32_t maxResults) {
+int32_t FindStealthMeter(std::vector<StealthCandidate>& out, int32_t maxResults, Aura::RelatedObjectsStats* stats) {
     out.clear();
     uintptr_t world = DerefWorld();
     if (!world) return FR_ERR_NOT_INIT;
@@ -551,7 +551,7 @@ int32_t FindStealthMeter(std::vector<StealthCandidate>& out, int32_t maxResults)
     if (!pawn) return FR_ERR_NO_TARGET;
 
     // Scan the pawn + its owned components/counterparts for numeric stealth fields.
-    std::vector<Aura::RelatedObject> related = Aura::GetRelatedObjects(pawn);
+    std::vector<Aura::RelatedObject> related = Aura::GetRelatedObjects(pawn, 128, stats);
     std::vector<StealthCandidate> cands;
     std::vector<std::pair<std::string, std::string>> seen; // (className, fieldName) dedupe
     for (const auto& ro : related) {

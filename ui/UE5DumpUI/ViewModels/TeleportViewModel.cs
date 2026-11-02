@@ -1966,7 +1966,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             IsBusy = true;
             ClearError();
-            var cands = await _dump.FindStealthMeterAsync();
+            var found = await _dump.FindStealthMeterDetailedAsync();
+            var cands = found.Candidates;
+            // [SOLIDE-RELATED-STOPS] Said after whichever line below: a meter past where the search stopped is missed.
+            var stopped = UE5DumpUI.Core.PartialResultNotice.StealthStopsClause(found.Stops);
             // [EXPOFF-ROUND3-PAUSED] While a hold is armed, the held meter is what Reset and the experimental teardown
             // release, so Detect only reads: overwritten, they released the newly found field or none while Solide
             // went on forcing the meter.
@@ -1974,7 +1977,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             {
                 var now = cands.FirstOrDefault(c => c.ClassName == held.ClassName && c.FieldName == held.FieldName);
                 if (now != null) StealthFieldText = $"{held.ClassName}::{held.FieldName} = {now.Current:0.###} (held)";
-                StatusText = Res.Format("str.TP.StDetectWhileHolding", held.FieldName, cands.Count);
+                StatusText = Res.Format("str.TP.StDetectWhileHolding", held.FieldName, cands.Count) + stopped;
                 return;
             }
             if (cands.Count == 0)
@@ -1984,7 +1987,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 (StealthState, StealthBadgeColor) = ("Not found", "#C9A04E");
                 StatusText = "No stealth/visibility meter auto-found on the player pawn. " +
                              "Search Property Search (e.g. 'visib', 'detect', 'noise', 'aware') " +
-                             "and Force → a numeric field to 0 instead.";
+                             "and Force → a numeric field to 0 instead." + stopped;
                 return;
             }
             var top = cands[0];
@@ -1992,7 +1995,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             StealthFieldText = $"{top.ClassName}::{top.FieldName} = {top.Current:0.###}";
             (StealthState, StealthBadgeColor) = ("Ready", "#888888");
             StatusText = $"Found {cands.Count} candidate(s). Top: {top.FieldName} (score {top.Score}). " +
-                         "Verify it, then Hold @0.";
+                         "Verify it, then Hold @0." + stopped;
         }
         catch (Exception ex)
         {

@@ -120,8 +120,16 @@ public static class PartialResultNotice
     /// </summary>
     public static string RelatedStopsClause(UE5DumpUI.Models.RelatedObjectsStops? s)
     {
-        if (s == null) return "";
+        var parts = RelatedStopCauses(s);
+        return parts.Count == 0 ? "" : " ⚠ Not the whole graph: " + string.Join("; ", parts) + ".";
+    }
+
+    /// <summary>Each cause a Related Objects walk stopped for, in its own words; none when it finished or an older DLL
+    /// did not say.</summary>
+    private static System.Collections.Generic.List<string> RelatedStopCauses(UE5DumpUI.Models.RelatedObjectsStops? s)
+    {
         var parts = new System.Collections.Generic.List<string>();
+        if (s == null) return parts;
         if (s.ResultCapHit)
             parts.Add($"the list is full at its {s.MaxResults:N0}-row limit and more related objects exist");
         if (s.OwnedCapHit)
@@ -134,13 +142,19 @@ public static class PartialResultNotice
                       + "so owned objects past that point were not examined");
         if (s.Cancelled)
             parts.Add("it was cancelled, so the list is incomplete");
-        return parts.Count == 0 ? "" : " ⚠ Not the whole graph: " + string.Join("; ", parts) + ".";
+        return parts;
     }
 
     /// <summary>[SOLIDE-RELATED-STOPS] Detect Stealth Meter's clause: the search scores the fields of the player's
     /// pawn and the objects it owns, the Related Objects walk's list, so a meter past where that walk stopped is not
     /// found. Empty when it finished, or when an older DLL did not say.</summary>
-    public static string StealthStopsClause(UE5DumpUI.Models.RelatedObjectsStops? s) => "";
+    public static string StealthStopsClause(UE5DumpUI.Models.RelatedObjectsStops? s)
+    {
+        var parts = RelatedStopCauses(s);
+        return parts.Count == 0 ? ""
+            : " ⚠ Not every object the player owns was searched, so a meter may have been missed: "
+              + string.Join("; ", parts) + ".";
+    }
 
     /// <summary>
     /// [W3-BATCH-METHOD] Cell value for a row whose analysis never RAN, so it cannot read as a real

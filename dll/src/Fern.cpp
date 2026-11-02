@@ -1491,6 +1491,22 @@ static void FillPointerSnapshot(json& data) {
 // key it still emits is byte-identical to the full shape, which is what makes
 // "lean and full produce the same XML" testable rather than hoped for.
 // ============================================================
+// [W4-RELATED-STOPS] Why a Related Objects walk stopped short, one key per cause (additive: no contract bump).
+// get_related_objects and, since [SOLIDE-RELATED-STOPS], find_stealth_meter carry it in this one shape.
+static json RelatedStopsJson(const Aura::RelatedObjectsStats& stops) {
+    json j;
+    j["result_cap_hit"] = stops.resultCapHit;
+    j["owned_cap_hit"]  = stops.ownedCapHit;
+    j["visit_cap_hit"]  = stops.visitCapHit;
+    j["deadline_hit"]   = stops.deadlineHit;
+    j["cancelled"]      = stops.cancelled;
+    j["max_results"]    = stops.maxResults;
+    j["max_owned"]      = stops.maxOwnedSubs;
+    j["max_visited"]    = stops.maxVisited;
+    j["deadline_ms"]    = stops.deadlineMs;
+    return j;
+}
+
 static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
     json fj;
     fj["name"]   = fv.name;
@@ -5832,18 +5848,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data;
             data["query_addr"] = addrStr;
             data["related"]    = arr;
-            // [W4-RELATED-STOPS] Why the list stopped short, one key per cause (additive: no contract bump).
-            json stopsJ;
-            stopsJ["result_cap_hit"] = stops.resultCapHit;
-            stopsJ["owned_cap_hit"]  = stops.ownedCapHit;
-            stopsJ["visit_cap_hit"]  = stops.visitCapHit;
-            stopsJ["deadline_hit"]   = stops.deadlineHit;
-            stopsJ["cancelled"]      = stops.cancelled;
-            stopsJ["max_results"]    = stops.maxResults;
-            stopsJ["max_owned"]      = stops.maxOwnedSubs;
-            stopsJ["max_visited"]    = stops.maxVisited;
-            stopsJ["deadline_ms"]    = stops.deadlineMs;
-            data["stops"] = stopsJ;
+            data["stops"] = RelatedStopsJson(stops);   // [W4-RELATED-STOPS]
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -7369,7 +7374,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (cmd == Renge::CMD_FIND_STEALTH_METER) {
                 int maxResults = request.value("max", 8);
                 std::vector<Solide::StealthCandidate> cands;
-                int32_t code = Solide::FindStealthMeter(cands, maxResults);
+                Aura::RelatedObjectsStats stops;   // [SOLIDE-RELATED-STOPS]
+                int32_t code = Solide::FindStealthMeter(cands, maxResults, &stops);
                 json arr = json::array();
                 for (const auto& c : cands) {
                     json j;
@@ -7383,6 +7389,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     arr.push_back(j);
                 }
                 json data; data["code"] = code; data["candidates"] = arr;
+                data["stops"] = RelatedStopsJson(stops);
                 return Renge::MakeResponse(id, data).dump();
             }
         }

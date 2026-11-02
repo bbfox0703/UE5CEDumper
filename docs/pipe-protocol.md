@@ -856,7 +856,10 @@ capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily â
 // Auto-find the player's stealth/noise/visibility/detection meter (read-only).
 { "cmd": "find_stealth_meter", "max": 8 }
 // â†’ { "code": 0, "candidates": [ { "class_name", "class_addr", "field_name",
-//        "prop_type", "owner_addr", "current", "score" } ] }   // ranked, best first
+//        "prop_type", "owner_addr", "current", "score" } ],   // ranked, best first
+//      "stops": { ... } }   // from build 3672: the shape get_related_objects carries. The search scores the
+//                           // pawn and the objects it owns (the Related Objects walk), so a meter past where
+//                           // that walk stopped is not found. [SOLIDE-RELATED-STOPS]
 ```
 
 -----

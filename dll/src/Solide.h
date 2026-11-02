@@ -26,6 +26,8 @@
 #include <string>
 #include <vector>
 
+namespace Aura { struct RelatedObjectsStats; }
+
 namespace Solide {
 
 // Result codes. Non-negative AddForce returns are the live "N held" instance
@@ -224,7 +226,10 @@ int32_t GetState(std::vector<ForcedFieldInfo>& out);
 // components (Aura::GetRelatedObjects), score every reflected numeric field with
 // MatchStealthField, return the ranked candidates (best first, up to maxResults).
 // Read-only. Returns FR_OK (out may be empty) or a negative ForceResult.
-int32_t FindStealthMeter(std::vector<StealthCandidate>& out, int32_t maxResults = 8);
+// [SOLIDE-RELATED-STOPS] `stats`, when given, says whether -- and why -- the walk of the pawn's objects stopped
+// short: a meter past that point is not found.
+int32_t FindStealthMeter(std::vector<StealthCandidate>& out, int32_t maxResults = 8,
+                         Aura::RelatedObjectsStats* stats = nullptr);
 
 // Stop and join the re-assert worker. Idempotent. Called by RemoveForce/ClearAll
 // (when nothing remains) and from UE5_Shutdown() before the DLL unloads.

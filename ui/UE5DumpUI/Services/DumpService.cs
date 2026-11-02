@@ -1097,29 +1097,32 @@ public sealed class DumpService : IDumpService
             }
         }
 
-        // [W4-RELATED-STOPS] One key per cause; absent from an older DLL, so Stops stays null ("not said").
-        RelatedObjectsStops? stops = null;
-        if (res["stops"] is JsonObject stopsNode)
-        {
-            stops = new RelatedObjectsStops
-            {
-                ResultCapHit = stopsNode["result_cap_hit"]?.GetValue<bool>() ?? false,
-                OwnedCapHit  = stopsNode["owned_cap_hit"]?.GetValue<bool>() ?? false,
-                VisitCapHit  = stopsNode["visit_cap_hit"]?.GetValue<bool>() ?? false,
-                DeadlineHit  = stopsNode["deadline_hit"]?.GetValue<bool>() ?? false,
-                Cancelled    = stopsNode["cancelled"]?.GetValue<bool>() ?? false,
-                MaxResults   = stopsNode["max_results"]?.GetValue<int>() ?? 0,
-                MaxOwned     = stopsNode["max_owned"]?.GetValue<int>() ?? 0,
-                MaxVisited   = stopsNode["max_visited"]?.GetValue<long>() ?? 0,
-                DeadlineMs   = stopsNode["deadline_ms"]?.GetValue<long>() ?? 0,
-            };
-        }
+        var stops = ParseRelatedStops(res["stops"]);
 
         return new RelatedObjectsResult
         {
             QueryAddress = res["query_addr"]?.GetValue<string>() ?? addr,
             Related = related,
             Stops = stops,
+        };
+    }
+
+    /// <summary>[W4-RELATED-STOPS] One key per cause; absent from an older DLL, so the answer is null ("not said").
+    /// get_related_objects and find_stealth_meter carry the same shape.</summary>
+    private static RelatedObjectsStops? ParseRelatedStops(JsonNode? node)
+    {
+        if (node is not JsonObject stopsNode) return null;
+        return new RelatedObjectsStops
+        {
+            ResultCapHit = stopsNode["result_cap_hit"]?.GetValue<bool>() ?? false,
+            OwnedCapHit  = stopsNode["owned_cap_hit"]?.GetValue<bool>() ?? false,
+            VisitCapHit  = stopsNode["visit_cap_hit"]?.GetValue<bool>() ?? false,
+            DeadlineHit  = stopsNode["deadline_hit"]?.GetValue<bool>() ?? false,
+            Cancelled    = stopsNode["cancelled"]?.GetValue<bool>() ?? false,
+            MaxResults   = stopsNode["max_results"]?.GetValue<int>() ?? 0,
+            MaxOwned     = stopsNode["max_owned"]?.GetValue<int>() ?? 0,
+            MaxVisited   = stopsNode["max_visited"]?.GetValue<long>() ?? 0,
+            DeadlineMs   = stopsNode["deadline_ms"]?.GetValue<long>() ?? 0,
         };
     }
 
@@ -4068,6 +4071,10 @@ public sealed class DumpService : IDumpService
     }
 
     public async Task<IReadOnlyList<StealthCandidate>> FindStealthMeterAsync(int max = 8, CancellationToken ct = default)
+        => (await FindStealthMeterDetailedAsync(max, ct)).Candidates;
+
+    /// <summary>[SOLIDE-RELATED-STOPS] The candidates, and why the search of the player's objects stopped short.</summary>
+    public async Task<StealthMeterResult> FindStealthMeterDetailedAsync(int max = 8, CancellationToken ct = default)
     {
         var req = new JsonObject { ["cmd"] = "find_stealth_meter", ["max"] = max };
         var res = await _pipe.SendAsync(req, ct);
@@ -4090,7 +4097,7 @@ public sealed class DumpService : IDumpService
                 });
             }
         }
-        return list;
+        return new StealthMeterResult { Candidates = list, Stops = ParseRelatedStops(res["stops"]) };
     }
 
     // === Fly (Dunste) — no-gravity keyboard-driven 3D flight ===
