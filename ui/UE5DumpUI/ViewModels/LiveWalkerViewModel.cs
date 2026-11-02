@@ -4850,7 +4850,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            var dt = await _dump.WalkDataTableRowsAsync(crumb.Address);
+            var dt = await ReadDataTableRowsAsync(crumb.Address);
             return string.Equals($"DataTable<{dt.RowStructName}>", savedClassName, StringComparison.Ordinal) ? dt : null;
         }
         catch (Exception ex)
@@ -4869,7 +4869,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (rowStruct == 0) return null;
         try
         {
-            var dt = await _dump.WalkDataTableRowsAsync(crumb.Address);
+            var dt = await ReadDataTableRowsAsync(crumb.Address);
             return ParseHexAddr(dt.RowStructAddr) == rowStruct ? dt : null;
         }
         catch (Exception ex)
@@ -6128,7 +6128,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                                    + "is gone or has changed — nothing to refresh.";
                         return;
                     }
-                    var dtResult = await _dump.WalkDataTableRowsAsync(containerBc.Address, ct: ct);
+                    var dtResult = await ReadDataTableRowsAsync(containerBc.Address, ct: ct);
                     if (Superseded()) return;
                     containerBc.DataTableData = dtResult;
                     // [WALK-REFRESH-SCALAR-SHRINK] The crumb and the status line follow this reading, as the drill's
@@ -8080,6 +8080,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         DataTableRowData = dtResult.Rows,
     };
 
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] review round 2: every DataTable reading goes through here, so the enum-names
+    /// latch it carries reaches the export notes -- a table's own walk can run before the row walk that trips
+    /// detection.</summary>
+    private async Task<DataTableWalkResult> ReadDataTableRowsAsync(string addr, CancellationToken ct = default)
+    {
+        var dt = await _dump.WalkDataTableRowsAsync(addr, ct: ct);
+        _enumNamesFailed |= dt.EnumNamesFailed;
+        return dt;
+    }
+
     /// <summary>
     /// Detect DataTable and inject a synthetic RowMap field for container navigation.
     /// Fire-and-forget, so the row fetch never blocks the UI.
@@ -8088,7 +8098,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            var dtResult = await _dump.WalkDataTableRowsAsync(start.DataTableAddr);
+            var dtResult = await ReadDataTableRowsAsync(start.DataTableAddr);
 
             // Inject a synthetic "RowMap" field at the end of the field list
             var syntheticField = SyntheticRowMapField(dtResult, start.DataTableAddr);

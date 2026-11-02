@@ -195,6 +195,10 @@ Total commands: **99** — a DERIVED number, regenerate it, never hand-edit:
 ```jsonc
 // Walk DataTable rows (RowMap probe, returns row keys + addresses)
 { "id": 23, "cmd": "walk_datatable_rows", "addr": "7FF123456789" }
+// → { "row_count", "row_map_offset", "row_struct_addr", "row_struct_name", "fname_size", "stride",
+//      "rows": [ { ..., "fields": [ ... ] } ],
+//      "enum_names_failed"? }   // from build 3673: true when UEnum::Names was never found, so the rows' enum
+//                               // fields carry no entries -- as a walk reply says it. [CEXPORT-ENUMNAMES-NOTE]
 ```
 
 ### Rescan & Scan Control

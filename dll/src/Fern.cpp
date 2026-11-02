@@ -6747,6 +6747,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 rows.push_back(rj);
             }
             data["rows"] = rows;
+            // [CEXPORT-ENUMNAMES-NOTE] review round 2: the rows' enum fields go out without entries under the latch, as
+            // a walk's do, so this reply says so too (additive).
+            if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire)) data["enum_names_failed"] = true;
             return Renge::MakeResponse(id, data).dump();
         }
 

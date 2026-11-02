@@ -4138,11 +4138,15 @@ public static class CeXmlExportService
         => notes.Contains(EnumNamesUnavailableNote) ? " ⚠ " + EnumNamesUnavailableNote : "";
 
     /// <summary>[CEXPORT-ENUMNAMES-NOTE] The note, when <paramref name="namesFailed"/> and an exported field holds an enum
-    /// (a dropdown the latch left empty); "" otherwise.</summary>
+    /// (a dropdown the latch left empty); "" otherwise. A DataTable goes out through its synthetic RowMap field, so its
+    /// rows' fields are looked at too (review round 2).</summary>
     internal static string EnumNamesNote(bool namesFailed, IEnumerable<LiveFieldValue> fields)
-        => namesFailed && fields.Any(f => f.TypeName == "EnumProperty" || !string.IsNullOrEmpty(f.EnumAddr)
-                                          || f.ArrayInnerType == "EnumProperty" || !string.IsNullOrEmpty(f.ArrayEnumAddr))
+        => namesFailed && fields.Any(f => HoldsEnum(f) || f.DataTableRowData?.Any(r => r.Fields.Any(HoldsEnum)) == true)
             ? EnumNamesUnavailableNote : "";
+
+    private static bool HoldsEnum(LiveFieldValue f)
+        => f.TypeName == "EnumProperty" || !string.IsNullOrEmpty(f.EnumAddr)
+           || f.ArrayInnerType == "EnumProperty" || !string.IsNullOrEmpty(f.ArrayEnumAddr);
 
     /// <summary>One XML comment line per non-empty note, or "" for none. A comment cannot hold "--".</summary>
     internal static string XmlCommentLines(IReadOnlyList<string>? notes)

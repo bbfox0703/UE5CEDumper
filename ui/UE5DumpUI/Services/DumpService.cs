@@ -1480,6 +1480,7 @@ public sealed class DumpService : IDumpService
             RowStructName = res["row_struct_name"]?.GetValue<string>() ?? "",
             FNameSize = res["fname_size"]?.GetValue<int>() ?? 0,
             Stride = res["stride"]?.GetValue<int>() ?? 0,
+            EnumNamesFailed = res["enum_names_failed"]?.GetValue<bool>() ?? false,   // [CEXPORT-ENUMNAMES-NOTE] additive
         };
 
         if (res["rows"] is JsonArray rows)
