@@ -90,6 +90,28 @@ public class PropertySearchFreezeTests
     }
 
     [Fact]
+    public async Task CopyFreezeScript_NestedRow_RefusesBeforeDialog()
+    {
+        // [LEAD-PROPSEARCH-TOPTIONAL-LEAVES] A deep row's offset is not an address on its class; inside a
+        // TOptional<FStruct> it lands in the optional's storage whether or not the optional is set. The row hides
+        // Freeze, and the command refuses too.
+        var bridge = new RecordingBridge { NextAvailability = true, NextCreateResult = true };
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge);
+        var promptCalled = false;
+        vm.FreezeValuePrompt = _ => { promptCalled = true; return Task.FromResult<string?>("1"); };
+        var match = NewMatch("FloatProperty");
+        match.PropName = "Upgrade.Damage";
+        match.IsNested = true;
+
+        await vm.CopyFreezeScriptCommand.ExecuteAsync(match);
+
+        Assert.False(promptCalled);
+        Assert.Equal(0, bridge.CreateAaCalls);
+        Assert.Contains("Upgrade.Damage", vm.StatusText);
+        Assert.Contains("Live Walker", vm.StatusText);
+    }
+
+    [Fact]
     public async Task CopyFreezeScript_UsesDefiningClassWhenPresent()
     {
         // The match's ClassName is the resolved class, but DefiningClassName

@@ -80,6 +80,38 @@ public class PropertySearchForceTests
     }
 
     [Fact]
+    public async Task Force_on_a_nested_row_sends_nothing_and_asks_nothing()
+    {
+        // [LEAD-PROPSEARCH-TOPTIONAL-LEAVES] A deep row names a dotted path, not a field of its class: the row hides the
+        // Force menu, and each command refuses too -- before the value prompt or the null confirm.
+        var dump = new RecordingDump();
+        int asked = 0;
+        var vm = new PropertySearchViewModel(dump, new NoopLog())
+        {
+            ForceValuePrompt = _ => { asked++; return Task.FromResult(ForceValuePromptResult.Accept(1)); },
+            ForceNullConfirm = _ => { asked++; return Task.FromResult(true); },
+        };
+        PropertySearchMatch Nested(string type)
+        {
+            var m = NewMatch(type, "Upgrade.Value");
+            m.IsNested = true;
+            return m;
+        }
+
+        await vm.ForceBoolOnCommand.ExecuteAsync(Nested("BoolProperty"));
+        Assert.Contains("Upgrade.Value", vm.StatusText);
+        vm.StatusText = "";
+        await vm.ForceNullCommand.ExecuteAsync(Nested("ObjectProperty"));
+        Assert.Contains("Upgrade.Value", vm.StatusText);
+        vm.StatusText = "";
+        await vm.ForceNumericCommand.ExecuteAsync(Nested("FloatProperty"));
+        Assert.Contains("Live Walker", vm.StatusText);
+
+        Assert.Equal(0, dump.ForceCalls);
+        Assert.Equal(0, asked);
+    }
+
+    [Fact]
     public async Task ForceNumeric_prompt_cancel_does_not_send()
     {
         var dump = new RecordingDump();
