@@ -258,6 +258,18 @@ public class CompositionRootWiringTests : IDisposable
         Assert.Contains("StartupPlatform", app);
     }
 
+    /// <summary>[LEAD-KEYWORD-DROPDOWN-FIRST-CLICK] The keyword boxes' dropdown style is what the headless test holds
+    /// (KeywordDropdownClickTests); this holds that the app adds it.</summary>
+    [Fact]
+    public void TheApp_AddsTheKeywordBoxStyle()
+    {
+        var app = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/App.axaml.cs"));
+        int init = app.IndexOf("public override void Initialize()", StringComparison.Ordinal);
+        int added = app.IndexOf("Styles.Add(Helpers.KeywordBoxStyle.Create())", init, StringComparison.Ordinal);
+        int next = app.IndexOf("public override", init + 1, StringComparison.Ordinal);
+        Assert.True(added > init && added < next, "App.Initialize must add the keyword-box style");
+    }
+
     private sealed class NoopLog : ILoggingService
     {
         public void Info(string message) { }
