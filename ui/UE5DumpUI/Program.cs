@@ -23,18 +23,6 @@ internal static class Program
         if (args.Length >= 4 && args[0] == "--inject-elevated")
             return RunElevatedInject(args[1], args[2], args[3]);
 
-        // [LEAD-SECOND-UI-CRASHLOG] Single instance, decided before Avalonia starts. Decided inside
-        // OnFrameworkInitializationCompleted, a second launch called Shutdown(1) there, the lifetime's StartCore then
-        // threw "the Dispatcher shut down", and the catch below wrote that to crash.log over the first instance's real
-        // one. The service, and the mutex it holds, go on to the app. (B42: the first instance's window is raised.)
-        var platform = new Services.WindowsPlatformService();
-        if (!platform.TryAcquireSingleInstance())
-        {
-            platform.ActivateExistingInstance();
-            return 1;
-        }
-        App.StartupPlatform = platform;
-
         // AOT publish gives gutted stack traces (no PDB lookup at runtime,
         // inlining opaque). A crash in the compositor thread would otherwise
         // leave the user with "the exe just closed" and no signal. This
@@ -50,12 +38,21 @@ internal static class Program
         // phase and uptime.
         try
         {
-            // RETURN the lifetime's exit code, don't discard it (audit #5 AF10).
-            // StartWithClassicDesktopLifetime hands back whatever `desktop.Shutdown(n)`
-            // was given, and App.axaml.cs deliberately passes 1 on the second-instance
-            // path — which this method then reported to the shell as 0. Anything
-            // scripting the exe (a launcher, a CI step, `Start-Process -Wait`) was told
-            // the launch succeeded when it had refused to start.
+            // [LEAD-SECOND-UI-CRASHLOG] Single instance, decided before Avalonia starts. Decided inside
+            // OnFrameworkInitializationCompleted, a second launch called Shutdown(1) there, the lifetime's StartCore
+            // then threw "the Dispatcher shut down", and the catch below wrote that to crash.log over the first
+            // instance's real one. Inside this try, so a failure taking the mutex is written down too. The service, and
+            // the mutex it holds, go on to the app. (B42: the first instance's window is raised.)
+            var platform = new Services.WindowsPlatformService();
+            if (!platform.TryAcquireSingleInstance())
+            {
+                platform.ActivateExistingInstance();
+                return 1;   // refused to start: anything scripting the exe must not read success
+            }
+            App.StartupPlatform = platform;
+
+            // RETURN the lifetime's exit code, don't discard it (audit #5 AF10): a `desktop.Shutdown(n)` in the app
+            // must reach the shell as n, not 0.
             return BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         }
         catch (Exception ex)

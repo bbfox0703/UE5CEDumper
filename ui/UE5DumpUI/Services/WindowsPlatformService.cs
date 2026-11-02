@@ -23,10 +23,18 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
                                    out _singleInstanceMutex);
 
     /// <summary>Take the single-instance mutex <paramref name="open"/> creates, holding it only when this call created
-    /// it.</summary>
+    /// it. A mutex this process may not open is another instance's too: a first instance run as administrator holds it
+    /// where an unelevated second launch is refused access (review round 2 of [LEAD-SECOND-UI-CRASHLOG]).</summary>
     internal static bool TakeSingleInstanceMutex(Func<(Mutex Mutex, bool CreatedNew)> open, out Mutex? held)
     {
-        var (mutex, createdNew) = open();
+        Mutex mutex;
+        bool createdNew;
+        try { (mutex, createdNew) = open(); }
+        catch (UnauthorizedAccessException)
+        {
+            held = null;
+            return false;
+        }
         if (!createdNew)
         {
             mutex.Dispose();
