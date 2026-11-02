@@ -21,8 +21,10 @@ namespace UE5DumpUI.Models;
 /// reconstructs fresh addresses so the bookmark still lands on the right object after a
 /// restart (see <c>LiveWalkerViewModel.TryReresolveBookmarkSpineAsync</c>). When
 /// re-resolution can't re-anchor (non-GWorld root / a hop no longer matches), the load
-/// path validates the walked class against <c>SavedClassName</c> and degrades to a
-/// "stale — re-create" message rather than showing wrong data, never auto-clearing it.
+/// path validates the walked class against <c>SavedClassName</c> and the object against
+/// <c>SavedObjectName</c> (another instance of the class can hold the saved address) and
+/// degrades to a "stale — re-create" message rather than claiming the object, never
+/// auto-clearing it.
 /// </summary>
 public sealed class BookmarkFile
 {

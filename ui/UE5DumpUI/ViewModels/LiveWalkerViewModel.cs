@@ -4266,6 +4266,14 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     {
                         restoredFully = false;
                     }
+                    // [LEAD-BOOKMARK-SAMECLASS-RECYCLE] On the SAVED address the class alone passes another instance of
+                    // it that took the address (a new launch, or the saved object freed); its name does not. A spine
+                    // re-walked from the live root found its object by path, where a spawned name may have changed.
+                    else if (resolvedSpine == null && !string.IsNullOrEmpty(slot.SavedObjectName)
+                             && !string.Equals(CurrentObjectName, slot.SavedObjectName, StringComparison.Ordinal))
+                    {
+                        restoredFully = false;
+                    }
                 }
             }
 
