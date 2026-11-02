@@ -5414,8 +5414,8 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
             // reaches this loop intact. Publishing the affirmative "(0 bindings)" for it
             // told the UI and the CE exporters that a delegate provably HAS no
             // subscribers, over memory nobody could read. "???" is this file's unread
-            // sentinel and the shape is ReadInterfaceArrayElements:3159-3164 verbatim --
-            // the other 16-byte-element reader, which already gets this right.
+            // value sentinel, as in ReadInterfaceArrayElements; the hex sentinel takes the
+            // element's own shape (DelegateHex), detector included, like a read element's.
             elem.value = "???";
             elem.hex = DynOff::DelegateHex(nullptr, stride, pad);
             result.elements.push_back(std::move(elem));
