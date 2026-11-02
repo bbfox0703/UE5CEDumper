@@ -6749,6 +6749,49 @@ int main() {
             check("USTRUCT-GIVEUP ⭐: a 4.23 childprops-probe-failed give-up ships 40/48/50/58",
                   cp423 && head() == "40/48/50/58", head().c_str());
             putP(upGuid, 0x48, A(upProp[0]));
+
+            // [UE4-USTRUCT-GIVEUP-STATS] A STATS build (Development / DebugGame) carries a TStatId after OuterPrivate, so
+            // UField::Next sits at 0x30 with an 8-byte FName (4.15 Development PDB: head 38/40/48/50, not 30/38/40/48).
+            // A give-up has no Children to measure Next on, but it has the property UObjects themselves -- this pool
+            // holds them, each with a real Outer and a TStatId that points at memory no UObject lives in.
+            {
+                static uint8_t statData[0x40] = {};
+                auto statsLayout = [&](int nextOff) {
+                    layout(4, nextOff, nextOff + 0x0C, nextOff + 0x1C);   // still no Guid / Vector
+                    for (auto& pr : upProp) {
+                        putP(pr, 0x20, A(upGuid));                        // OuterPrivate
+                        if (nextOff == 0x30) putP(pr, 0x28, A(statData)); // the TStatId
+                    }
+                };
+                FakePool stPool;
+                stPool.Build(6);
+                const uintptr_t stObjs[6] = { A(upZero), A(upGuid), A(upProp[0]), A(upProp[1]), A(upProp[2]),
+                                              A(upProp[3]) };
+                for (int i = 0; i < 6; ++i)
+                    memcpy(stPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &stObjs[i],
+                           sizeof(uintptr_t));
+                Aura::InitWithExtendedLayout(stPool.Addr(), FakePool::kItemSize);
+
+                statsLayout(0x30);
+                const bool st415 = giveUpAt(415);
+                check("USTRUCT-GIVEUP-STATS setup: a STATS 4.15 with its properties pooled still takes the give-up",
+                      st415 && !DynOff::bCasePreservingName, DynOff::g_offsetsFallbackReason);
+                check("USTRUCT-GIVEUP-STATS ⭐: ...measures UField::Next at 0x30 on the property chain",
+                      DynOff::UFIELD_NEXT == 0x30, std::to_string(DynOff::UFIELD_NEXT).c_str());
+                check("USTRUCT-GIVEUP-STATS ⭐: ...and ships the PDB's head 38/40/48/50", head() == "38/40/48/50",
+                      head().c_str());
+                giveUpAt(423);
+                check("USTRUCT-GIVEUP-STATS ⭐: a STATS 4.23 give-up ships 48/50/58/60", head() == "48/50/58/60",
+                      head().c_str());
+
+                // Control: a Shipping layout, the same properties pooled, keeps Next 0x28 and the version's head.
+                statsLayout(0x28);
+                const bool sh415 = giveUpAt(415);
+                check("USTRUCT-GIVEUP-STATS control: a Shipping 4.15 give-up measures Next 0x28, ships 30/38/40/48",
+                      sh415 && DynOff::UFIELD_NEXT == 0x28 && head() == "30/38/40/48", head().c_str());
+
+                Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+            }
         }
 
         // Review wf_b99fb861-680 (F5), pinned after the review of build 3594 found it untested: a 4.18-4.24 title
