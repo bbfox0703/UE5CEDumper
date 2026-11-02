@@ -621,7 +621,15 @@ public class LiveWalkerForwardNavTests
             CancellationToken ct = default)
             => _walkGates.TryGetValue(addr, out var gate)
                 ? gate.Task
-                : base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
+                : classAddr == null && _classlessWalks.TryGetValue(addr, out var classless)
+                    ? Task.FromResult(classless)
+                    : base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
+
+        private readonly Dictionary<string, InstanceWalkResult> _classlessWalks = new();
+
+        /// <summary>What a walk of <paramref name="addr"/> with no class answers: an inline struct's bytes read as a
+        /// UObject, as the DLL reads them, find none of the struct's fields.</summary>
+        public void RegisterClasslessWalk(string addr, InstanceWalkResult result) => _classlessWalks[addr] = result;
 
         public OwnerStub()
         {
@@ -1361,6 +1369,80 @@ public class LiveWalkerForwardNavTests
         await vm.FindReferencesCommand.ExecuteAsync(null);
 
         Assert.Equal($"References to {structViewName} (none found)", vm.ReferencesHeader);
+    }
+
+    // [LEAD-LW-SYNTH-CONTAINER-STRUCT-OWNER] A container crumb rebuilt from a bookmark file or a Locate spine has no
+    // ContainerField, and is re-hydrated by walking its owner. It walked the owner with the CONTAINER crumb's class,
+    // which a container crumb never has: an inline-struct owner's bytes were read as a UObject, the field was not found,
+    // and the view fell through to a plain walk of that address. Refresh walks with the owner crumb's class.
+
+    private const string Holder = "0x80000", StatsAddr = "0x80020", StatsCls = "0xC800";
+
+    private static OwnerStub StructOwnerStub()
+    {
+        var dump = new OwnerStub();
+        dump.RegisterStruct(Holder, new InstanceWalkResult
+        {
+            Address = Holder, Name = "Holder_0", ClassName = "BP_Holder_C", ClassAddr = "0xC700",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Stats", TypeName = "StructProperty", Offset = 0x20, Size = 0x50,
+                        StructTypeName = "FPlayerStats", StructClassAddr = StatsCls, StructDataAddr = StatsAddr },
+            },
+        });
+        dump.RegisterStruct(StatsAddr, new InstanceWalkResult
+        {
+            Address = StatsAddr, Name = "FPlayerStats", ClassName = "FPlayerStats", ClassAddr = StatsCls,
+            Fields = new List<LiveFieldValue> { OwnerStub.GearField() },
+        });
+        dump.RegisterClasslessWalk(StatsAddr, new InstanceWalkResult   // the struct's bytes read as a UObject
+        {
+            Address = StatsAddr, Name = "None", ClassName = "", ClassAddr = "",
+            Fields = new List<LiveFieldValue> { new() { Name = "Unknown_0", TypeName = "IntProperty", Offset = 0x8, Size = 4 } },
+        });
+        return dump;
+    }
+
+    /// <summary>A bookmark FILE's spine: Holder, its inline Stats struct, and Stats' Gear array, saved addresses.</summary>
+    private static async Task LoadStructOwnedGearBookmark(LiveWalkerViewModel vm)
+    {
+        var slot = vm.BookmarkSlots[0];
+        slot.SavedClassName = "Array<ObjectProperty>";
+        slot.SavedAddress = StatsAddr;
+        slot.SavedBreadcrumbs = new List<BreadcrumbItem>
+        {
+            new() { Address = Holder, Label = "Holder_0", FieldName = Holder, IsPointerDeref = true },
+            new() { Address = StatsAddr, Label = "Stats", FieldName = "Stats", FieldOffset = 0x20, ClassAddr = StatsCls },
+            new() { Address = StatsAddr, Label = "Gear", FieldName = "Gear", FieldOffset = 0x40, IsContainerView = true },
+        };
+        slot.IsOccupied = true;
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+    }
+
+    [Fact]
+    public async Task ABookmarkedContainerInAnInlineStruct_RestoresTheContainersElements()
+    {
+        var dump = StructOwnerStub();
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+
+        await LoadStructOwnedGearBookmark(vm);
+
+        Assert.Equal(new[] { "[0]" }, vm.Fields.Select(f => f.Name).ToArray());   // was the struct read as a UObject
+        Assert.Equal(StatsCls, vm.Breadcrumbs[^1].OwnerClassAddr);
+    }
+
+    [Fact]
+    public async Task BackIntoABookmarkedContainerInAnInlineStruct_ShowsTheContainersElements()
+    {
+        var dump = StructOwnerStub();
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        await LoadStructOwnedGearBookmark(vm);
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // [0] -> Elem_0
+        Assert.Equal(Elem, vm.CurrentAddress);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.Equal(new[] { "[0]" }, vm.Fields.Select(f => f.Name).ToArray());
     }
 
     [Fact]
