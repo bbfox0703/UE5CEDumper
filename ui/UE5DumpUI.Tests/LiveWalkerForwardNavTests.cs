@@ -1475,6 +1475,34 @@ public class LiveWalkerForwardNavTests
         Assert.DoesNotContain("Container element limit", vm.StatusText);   // was "Items (Array: 300 total, 1 loaded)"
     }
 
+    [Fact]
+    public async Task CopyCeField_OfEveryLoadedElement_StillCallsTheContainerCutShort()
+    {
+        // Review round 1 of [LEAD-DT-EXPORT-64ROWS]: a selection of every loaded row is not a choice to leave the rest
+        // out -- the rest were never read. Ctrl+A in a view of 2 of 300 lost the warning the export used to give.
+        const string Big = "0x90000";
+        var (dump, vm, platform) = OwnerWalker();
+        dump.RegisterStruct(Big, new InstanceWalkResult
+        {
+            Address = Big, Name = "Big_0", ClassName = "BP_Big_C", ClassAddr = "0xC900",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Items", TypeName = "ArrayProperty", Offset = 0x40, Size = 0x10,
+                        ArrayInnerType = "IntProperty", ArrayCount = 300, ArrayElemSize = 4, ArrayDataAddr = "0x91000",
+                        ArrayElements = new() { new() { Index = 0, Value = "1" }, new() { Index = 1, Value = "2" } } },
+            },
+        });
+        vm.ArrayLimit = 2;
+        await vm.NavigateToAddressCommand.ExecuteAsync(Big);
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single());
+        vm.UpdateSelectedFields(vm.Fields.ToList());   // Ctrl+A
+
+        await vm.ExportCeFieldXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("Items (Array: 300 total, 2 loaded)", vm.StatusText);
+    }
+
     // [CEXPORT-NESTED-TRUNC-NOTE] A container the export cut at the Array Limit inside a struct it walked.
 
     private static OwnerStub NestedArrayStub()
