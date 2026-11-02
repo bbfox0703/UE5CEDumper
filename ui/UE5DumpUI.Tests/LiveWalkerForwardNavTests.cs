@@ -781,6 +781,7 @@ public class LiveWalkerForwardNavTests
         ReallocateGear(dump);
 
         await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
 
         AssertGearShowsTheMovedAllocation(vm);
         AssertShowsTheOwner(vm);
@@ -795,6 +796,7 @@ public class LiveWalkerForwardNavTests
         ReallocateGear(dump);
 
         await vm.GoForwardCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
 
         AssertGearShowsTheMovedAllocation(vm);
     }
@@ -808,6 +810,7 @@ public class LiveWalkerForwardNavTests
         ReallocateGear(dump);
 
         await vm.NavigateToBreadcrumbCommand.ExecuteAsync(vm.Breadcrumbs[1]);
+        await vm.ReentryRecheck;
 
         AssertGearShowsTheMovedAllocation(vm);
     }
@@ -828,6 +831,62 @@ public class LiveWalkerForwardNavTests
         Assert.False(LiveWalkerViewModel.ContainerMoved(Arr("0x50000", 1), Arr("0x50000", 1)));
     }
 
+    // Review round 2: the re-check ran inside the navigation, so Back / Forward / a crumb jump stayed disabled for the
+    // whole owner walk (up to the refresh timeout), and it re-rendered through RefreshAsync, which cleared the
+    // navigation's own status line. It now runs after the navigation returns (ReentryRecheck), and renders the reading
+    // it took.
+
+    [Fact]
+    public async Task Back_IntoAContainerView_ReturnsBeforeTheOwnerReRead()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        var gate = dump.GateWalk(Owner);
+
+        var back = vm.GoBackCommand.ExecuteAsync(null);
+        await Task.WhenAny(back, Task.Delay(2000, TestContext.Current.CancellationToken));
+
+        Assert.True(back.IsCompleted, "Back waited for the owner re-read");
+        Assert.False(vm.IsLoading);
+        Assert.StartsWith("Array<", vm.CurrentClassName);   // the held view is up already
+        dump.UngateWalk(Owner);
+        gate.SetResult(OwnerStub.Obj(Owner, "Owner_0", "BP_Owner_C", OwnerCls));
+        await vm.ReentryRecheck;
+    }
+
+    [Fact]
+    public async Task BackOutOfAReRoot_IntoAContainerThatMoved_ShowsItsNewAllocation_AndKeepsItsStatus()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);   // the Go box re-roots, keeping the spine for Back
+        ReallocateGear(dump);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
+
+        AssertGearShowsTheMovedAllocation(vm);
+        Assert.Contains("Returned to the previous view", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task AnInSessionBookmarkOfAContainerThatMoved_ShowsItsNewAllocation()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        var slot = vm.BookmarkSlots[0];
+        vm.IsBookmarkSaveMode = true;
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);   // in save mode, a slot click saves
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);
+        ReallocateGear(dump);
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+        await vm.ReentryRecheck;
+
+        AssertGearShowsTheMovedAllocation(vm);
+    }
+
     [Fact]
     public async Task Back_IntoAContainerThatDidNotMove_ReadsTheOwnerOnce_AndKeepsTheView()
     {
@@ -842,6 +901,7 @@ public class LiveWalkerForwardNavTests
         };
 
         await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
 
         Assert.True(dump.Walks.GetValueOrDefault(Owner) <= before + 1);   // at most the re-check: no refresh's walk
         Assert.Equal(1, resets);                                           // the held render only

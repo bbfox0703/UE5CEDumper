@@ -1396,6 +1396,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// read once: when the container's data address or count moved, the view is refreshed, which also stores the new
     /// reading on the crumb; otherwise the held render, and the scroll it restored, stand.
     /// </summary>
+    /// <summary>The last re-entry re-check, for a caller (a test) that must see it finish.</summary>
+    internal Task ReentryRecheck { get; private set; } = Task.CompletedTask;
+
     private async Task RecheckReenteredContainerAsync(BreadcrumbItem bc)
     {
         // A DataTable view's rows are walked by their own call, and a synthetic crumb was just re-read.
