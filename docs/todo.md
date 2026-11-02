@@ -304,7 +304,7 @@ Open work only. **Read this when deciding what to do next.**
 | `[UE4-USTRUCT-GIVEUP-STATS]` | LOW | Development / DebugGame UE 4.11–4.24, when offset detection gives up: struct walks read fields 8 bytes short. Shipping is unaffected. | its own row |
 | `[DUMPER-SECOND-COPY-AUTOSTART]` | LOW, unreproduced | A second copy of the DLL injected into a game that already loaded it through a proxy may run its own full scan and mailbox thread. | its own row |
 | 🆕 `[TELEPORT-BUGITGO-PARENTREL]` | LOW | BugItGo moves the pawn to a parent-relative (vehicle / mount) pose as if it were world coordinates; only BugItSave warns. | residual of `[A2-CABI-TELEPORT-PARENTREL]`, under `[BLANK-W2-2026-09-10]`: "BugItGo still reads only" |
-| 🆕 `[LOG-RESUME-LIVE-ROLLED]` | LOW | After a session rolls its log past 8 MB, the compression sweep can try the still-written rolled file once it has been quiet an hour and report a failure. Diagnostics only. | residual of `[A1-LOG-RESUME]`: "Residual, unchanged: inside ONE session" |
+| 🆕 `[LOG-RESUME-LIVE-ROLLED]` | LOW | ✅ **FIXED 2026-11-02** (red `22e0e924`; green: the commit that marks this row). `LogCompressionPolicy.Plan` skips as live the newest `{prefix}-0_NNN.log` of each category in our own folder (`TryRolled`), the "different rule" the A1-LOG-RESUME row recorded; IsLiveLog is not widened, so closed rolled files and a game folder's are judged as before. ~~Original:~~ After a session rolls its log past 8 MB, the compression sweep can try the still-written rolled file once it has been quiet an hour and report a failure. Diagnostics only. | residual of `[A1-LOG-RESUME]`: "Residual, unchanged: inside ONE session" |
 | `[CADENCEBAND-2026-08-22]` | low, maybe not worth fixing | Below 25 FPS, Live Funcs labels per-frame functions "periodic timer" (a hard 40 ms band). Only ever seen on our 15 FPS fixture. | OPEN FIXES INDEX row |
 | `[FTEXT-REFUSAL-OVERCLAIM]` | LOW (wording) | ✅ **FIXED 2026-10-28** (red `e7934130`, green `95f5aa54`; rationale comments widened after review in `bba29604`). All three refusals now say a zeroed FText "is not an empty FText: a function that reads it can crash the game"; the refusal itself is unchanged. | its own row |
 | `[METHODE-MANUALMAP-EXCEPTION-CLAIM]` | LOW (wording) | ✅ **FIXED 2026-10-28** (red `98827726`, green `ae5d7cb6`; comment corrected after review in `d38a327a`). The dialog now says a manually mapped DLL "is not supported" and "could crash the game"; the advice to untick is unchanged. Why the installed CE contained an exception is left unexplained: no behaviour depends on it. | its own row |
@@ -5208,7 +5208,7 @@ diagnostics only.
     widened.
   - **Red first:** rolled files beside a `-0.log` and rolled files alone are both archived, in order, and another
     category's are left alone.
-  - ⬜ Residual, unchanged: inside ONE session that rolls, the compression sweep can still call the live rolled file
+  - ✅ Residual FIXED 2026-11-02 as `[LOG-RESUME-LIVE-ROLLED]` (see the census). As found: inside ONE session that rolls, the compression sweep can still call the live rolled file
     idle after a quiet hour. That is the "different rule" above, and it is not built.
 
 ##### ✅ `[A1-DETECT-REPUBLISH]` LOW — a Detect Player Stats run in flight at disconnect republishes the old game's rows (FIXED IN SOURCE 2026-09-12)
