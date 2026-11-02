@@ -435,11 +435,27 @@ inline std::string DecodeFStringBuffer(const uint8_t* buf, size_t bufLen, int32_
 }
 
 // [UBEL-ASCII-FIRSTCHAR] Does a name read through a pointer the DLL is not sure of start like a name? It is the guard
-// against a dereference that landed on garbage: an empty name or one that opens with a control byte is refused.
+// against a dereference that landed on garbage: an empty name, or one that opens with a control byte or with bytes
+// that are not one whole UTF-8 character, is refused. A first byte above ASCII used to be refused outright, which
+// dropped every property, parameter, struct and enum named in Japanese or Chinese.
 inline bool IsPlausibleNameStart(const std::string& name) {
     if (name.empty()) return false;
-    const auto c = static_cast<unsigned char>(name[0]);
-    return c >= 0x20 && c < 0x7F;
+    const auto* p = reinterpret_cast<const uint8_t*>(name.data());
+    const uint8_t c = p[0];
+    if (c < 0x80) return c >= 0x20 && c < 0x7F;
+    size_t need; uint32_t cp, lo, hi;
+    if      ((c & 0xE0) == 0xC0) { need = 1; cp = c & 0x1Fu; lo = 0x80;    hi = 0x7FF; }
+    else if ((c & 0xF0) == 0xE0) { need = 2; cp = c & 0x0Fu; lo = 0x800;   hi = 0xFFFF; }
+    else if ((c & 0xF8) == 0xF0) { need = 3; cp = c & 0x07u; lo = 0x10000; hi = 0x10FFFF; }
+    else return false;                                   // a lone continuation, or a 5/6-byte form
+    if (need >= name.size()) return false;               // truncated
+    for (size_t k = 1; k <= need; ++k) {
+        if ((p[k] & 0xC0) != 0x80) return false;
+        cp = (cp << 6) | (p[k] & 0x3Fu);
+    }
+    if (cp < lo || cp > hi) return false;                // overlong / out of range
+    if (cp >= 0xD800 && cp <= 0xDFFF) return false;      // surrogate half
+    return cp >= 0xA0 && cp != 0xFFFD;                   // not a C1 control, not a decoding failure's mark
 }
 
 } // namespace Utf8Helpers

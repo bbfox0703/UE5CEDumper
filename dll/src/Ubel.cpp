@@ -1361,9 +1361,8 @@ bool ResolvePropertyNameType(uintptr_t fieldAddr, std::string& outName, std::str
         outName = GetName(fieldAddr);                          // UProperty name (OFF_UOBJECT_NAME)
     }
 
-    // Reject non-ASCII / empty names (failed deref landing on garbage).
-    if (outName.empty() || static_cast<unsigned char>(outName[0]) < 0x20
-        || static_cast<unsigned char>(outName[0]) >= 0x7F)
+    // Reject an empty name or one that does not open like a name (a failed deref landing on garbage).
+    if (!Utf8Helpers::IsPlausibleNameStart(outName))
         return false;
     return true;
 }
@@ -1375,7 +1374,7 @@ static std::string ReadSlotObjectName(uintptr_t propAddr, bool (*isKind)(uintptr
     uintptr_t ptr = 0;
     if (!Macht::ReadSafe(propAddr + DynOff::FSTRUCTPROP_STRUCT, ptr) || !ptr || !isKind(ptr)) return "";
     std::string name = GetName(ptr);
-    if (name.empty() || name[0] < 0x20 || name[0] >= 0x7F) return "";
+    if (!Utf8Helpers::IsPlausibleNameStart(name)) return "";
     return name;
 }
 static std::string ReadStructTypeName(uintptr_t propAddr)    { return ReadSlotObjectName(propAddr, IsScriptStructObject); }
@@ -1455,7 +1454,7 @@ uintptr_t ReadPropertyEnum(uintptr_t propAddr, const std::string& typeName) {
 }
 
 static bool IsPrintableName(const std::string& n) {
-    return !n.empty() && static_cast<unsigned char>(n[0]) >= 0x20 && static_cast<unsigned char>(n[0]) < 0x7F;
+    return Utf8Helpers::IsPlausibleNameStart(n);
 }
 
 // [SDK-METACLASS] A class-valued property's two classes: PropertyClass, the class of the VALUE
@@ -1631,7 +1630,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
             const uintptr_t e = ReadPropertyEnum(prop, ptn);   // [ENUMSLOT-ANY-NAME]
             if (!e) return std::string();
             std::string n = GetName(e);
-            return (!n.empty() && n[0] >= 0x20 && n[0] < 0x7F) ? n : std::string();
+            return (Utf8Helpers::IsPlausibleNameStart(n)) ? n : std::string();
         };
 
         // StructProperty -> UScriptStruct name
@@ -1717,7 +1716,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
         else if (tn == "EnumProperty") {
             if (const uintptr_t enumPtr = ReadPropertyEnum(fi.Address, tn)) {   // [ENUMSLOT-ANY-NAME]
                 std::string ename = GetName(enumPtr);
-                if (!ename.empty() && ename[0] >= 0x20 && ename[0] < 0x7F)
+                if (Utf8Helpers::IsPlausibleNameStart(ename))
                     fi.enumName = ename;
             }
         }
@@ -1726,7 +1725,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
         else if (tn == "ByteProperty") {
             if (const uintptr_t enumPtr = ReadPropertyEnum(fi.Address, tn)) {   // [ENUMSLOT-ANY-NAME]
                 std::string ename = GetName(enumPtr);
-                if (!ename.empty() && ename[0] >= 0x20 && ename[0] < 0x7F)
+                if (Utf8Helpers::IsPlausibleNameStart(ename))
                     fi.enumName = ename;
             }
         }
@@ -2268,7 +2267,7 @@ static void ReadParamSlotNames(uintptr_t prop, ParamField& p) {
     if (!ptr) return;
     if (p.typeName == "InterfaceProperty") p.interfaceClass = ptr;   // [VND584-04]
     std::string name = GetName(ptr);
-    if (name.empty() || name[0] < 0x20 || name[0] >= 0x7F) return;
+    if (!Utf8Helpers::IsPlausibleNameStart(name)) return;
     (p.typeName == "StructProperty" ? p.structType : p.objClass) = std::move(name);
 }
 
@@ -3164,7 +3163,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                 // only ([STRUCTPROBE-ANY-NAME]: this path named and WALKED any named object)
                                 if (Macht::ReadSafe(cur + subclassStart, structPtr) && IsScriptStructObject(structPtr)) {
                                     std::string sn = GetName(structPtr);
-                                    if (!sn.empty() && sn[0] >= 0x20 && sn[0] < 0x7F)
+                                    if (Utf8Helpers::IsPlausibleNameStart(sn))
                                         param.structType = sn;
                                     // Phase B: walk the UScriptStruct to discover sub-fields
                                     ClassInfo structInfo = WalkClass(structPtr);
@@ -3180,7 +3179,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                 uintptr_t classPtr = 0;
                                 if (Macht::ReadSafe(cur + subclassStart, classPtr) && IsClassObject(classPtr)) {
                                     std::string cn = GetName(classPtr);
-                                    if (!cn.empty() && cn[0] >= 0x20 && cn[0] < 0x7F)
+                                    if (Utf8Helpers::IsPlausibleNameStart(cn))
                                         param.objClassName = cn;
                                 }
                             }
@@ -3578,7 +3577,7 @@ OptionalLayoutInfo ResolveOptionalLayout(uintptr_t optionalProp, int32_t optiona
             // [OPTSTRUCT-ANY-NAME] A struct, not the first named object: its MinAlignment decides the layout.
             if (!IsScriptStructObject(c)) continue;
             const std::string n = GetName(c);
-            if (n.empty() || n[0] < 0x20 || n[0] >= 0x7F) continue;
+            if (!Utf8Helpers::IsPlausibleNameStart(n)) continue;
             structAddr = c;
             break;
         }
@@ -5548,7 +5547,7 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
             // accepted any named object -- and at delta 0 it LATCHED the wrong family for the session.
             if (!IsScriptStructObject(candidate)) continue;
             std::string sname = GetName(candidate);
-            if (sname.empty() || sname[0] < 0x20 || sname[0] >= 0x7F) continue;
+            if (!Utf8Helpers::IsPlausibleNameStart(sname)) continue;
 
             if (delta != 0) {
                 int corrected = DynOff::FSTRUCTPROP_STRUCT + delta;
@@ -7427,7 +7426,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // stopped this probe at delta 0 on any named object, before the struct beyond it.
                 if (!IsScriptStructObject(candidate)) continue;
                 std::string sname = GetName(candidate);
-                if (!sname.empty() && sname[0] >= 0x20 && sname[0] < 0x7F) {
+                if (Utf8Helpers::IsPlausibleNameStart(sname)) {
                     fv.structClassAddr = candidate;
                     fv.structTypeName  = sname;
                     fv.structDataAddr  = instanceAddr + fi.Offset;
@@ -8015,7 +8014,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         || !candidate) continue;
                     if (!Grimoire::IsUserspacePointer(candidate)) continue;
                     std::string sname = GetName(candidate);
-                    if (sname.empty() || sname[0] < 0x20 || sname[0] >= 0x7F)
+                    if (!Utf8Helpers::IsPlausibleNameStart(sname))
                         continue;
                     fv.structClassAddr = candidate;
                     fv.structTypeName  = sname;
