@@ -6708,9 +6708,9 @@ int main() {
             check("USTRUCT-GIVEUP ⭐: a 4.18 give-up ships 30/38/40/48", gu418 && head() == "30/38/40/48", head().c_str());
             giveUpAt(415);
             check("USTRUCT-GIVEUP ⭐: a 4.15 give-up ships 30/38/40/48", head() == "30/38/40/48", head().c_str());
-            // The head follows the run's UField::Next, not a constant. Case-preserving names are the one 0x30 a give-up
-            // can see: the UObject repeats its ComparisonIndex as DisplayIndex. (A STATS build's 0x30 it cannot see --
-            // DynOff::UPropertyUStructHeadFor says what that costs.)
+            // The head follows the run's UField::Next, not a constant. Case-preserving names give the guess 0x30: the
+            // UObject repeats its ComparisonIndex as DisplayIndex. (A STATS build's 0x30 is measured on the property
+            // chains instead -- the USTRUCT-GIVEUP-STATS cases below.)
             put32(upGuid, Grimoire::OFF_UOBJECT_NAME + 4, 4);   // DisplayIndex == ComparisonIndex ("A")
             const bool cpn415 = giveUpAt(415);
             check("USTRUCT-GIVEUP setup: a case-preserving 4.15 gives up with UField::Next 0x30",

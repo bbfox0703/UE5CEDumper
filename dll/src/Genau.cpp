@@ -3631,6 +3631,62 @@ static int ProbeUFieldNextFProperty() {
     return -1;
 }
 
+// [UE4-USTRUCT-GIVEUP-STATS] Measure UField::Next in UProperty mode on the property UObjects themselves, with no UStruct
+// offset in hand: the give-up's UStruct head is DERIVED from Next (DynOff::UPropertyUStructHeadFor), so Next cannot be
+// found through Children as the FProperty probe does. DetectUPropertyMode only guesses it from the FName width, and a
+// STATS build (Development / DebugGame) carries a TStatId after OuterPrivate that moves it 8 further on. Each sampled
+// property's chain is followed at every candidate, the guess first, and the first that steps >= 2 UField UObjects in a
+// row wins (DynOff::PickUFieldNextOffset). A TStatId is null or points at stat data, never at a UField, and the Outer a
+// case-preserving 0x28 holds climbs to a Class within one hop. -1 = no property chained; the caller keeps the guess.
+static int ProbeUFieldNextUProperty() {
+    const int guess = DynOff::UFIELD_NEXT;
+    int offs[8];
+    int n = 0;
+    for (int c : { guess, 0x28, 0x30, 0x38, 0x40, 0x48 }) {
+        bool dup = false;
+        for (int i = 0; i < n; ++i) dup = dup || offs[i] == c;
+        if (!dup) offs[n++] = c;
+    }
+    auto classNameOf = [](uintptr_t obj) -> std::string {
+        uintptr_t cls = 0;
+        uint32_t idx = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls
+            || !Grimoire::IsUserspacePointer(cls)) return {};
+        if (!Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, idx)) return {};
+        return Serie::GetString(idx);
+    };
+    auto isUField = [](const std::string& cn) {
+        return cn == "Function" || (cn.size() > 8 && cn.compare(cn.size() - 8, 8, "Property") == 0);
+    };
+    const int32_t count = Aura::GetCount();
+    int sampled = 0;
+    for (int32_t i = 0; i < count && sampled < 64; ++i) {
+        const uintptr_t obj = Aura::GetByIndex(i);
+        if (!obj) continue;
+        const std::string cn = classNameOf(obj);
+        if (cn == "Function" || !isUField(cn)) continue;   // a property instance starts the chain
+        ++sampled;
+        int hops[8] = {};
+        for (int k = 0; k < n; ++k) {
+            uintptr_t cur = obj;
+            for (int h = 0; h < 4; ++h) {
+                uintptr_t nxt = 0;
+                if (!Macht::ReadSafe(cur + offs[k], nxt) || !nxt || nxt == cur
+                    || !Grimoire::IsUserspacePointer(nxt) || !isUField(classNameOf(nxt))) break;
+                ++hops[k];
+                cur = nxt;
+            }
+        }
+        const int picked = DynOff::PickUFieldNextOffset(offs, hops, n);
+        if (picked > 0) {
+            Sein::Info("DYNO", "ValidateAndFixOffsets: UField::Next at +0x%02X (UProperty mode, probed on a property "
+                       "chain; the guess was +0x%02X)", picked, guess);
+            return picked;
+        }
+    }
+    return -1;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DetectCasePreservingName — Measure FName size from UObject layout.
 //
@@ -3887,6 +3943,10 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         DynOff::UPROPERTY_SUBCLASS_START = DynOff::FSTRUCTPROP_STRUCT;
     }
     if (!DynOff::bUseFProperty) {
+        // [UE4-USTRUCT-GIVEUP-STATS] The head follows UField::Next, so measure Next first: DetectUPropertyMode's guess
+        // cannot see a STATS build's TStatId. A failed probe keeps the guess, as before.
+        const int probedNext = ProbeUFieldNextUProperty();
+        if (probedNext > 0) DynOff::UFIELD_NEXT = probedNext;
         // [UE4-USTRUCT-GIVEUP] The UStruct head of THIS version, so a give-up exit below ships it rather than 4.25's
         // (DynOff::UPropertyUStructHeadFor has the measurements). A Children found below re-derives all four.
         DynOff::ApplyUStructHead(DynOff::UPropertyUStructHeadFor(DynOff::UFIELD_NEXT, ueVersion));

@@ -180,10 +180,11 @@ inline int USTRUCT_SCRIPT     = 0x60;
 // Genau measures Children and derives the rest from it, so this is only what a run that cannot measure ships. An unknown
 // version gets the 4.22-4.24 head: Super and Children where 4.25's default already put them, so it is never further off
 // than that default was.
-// ⚠ The head follows the UField::Next it is GIVEN, and a give-up has no measured one: only DetectUPropertyMode's guess,
-// 0x30 for case-preserving names and 0x28 otherwise. A STATS build's TStatId (Development, DebugGame) moves Next to 0x30
-// as well, and nothing on the give-up path can see it, so such a build that gives up ships this head 8 short. The STATS
-// figures above hold for a measured Next; a give-up is version-correct on Shipping builds only.
+// ⚠ The head follows the UField::Next it is GIVEN. DetectUPropertyMode only guesses Next from the FName width (0x30 for
+// case-preserving names, 0x28 otherwise), and a STATS build's TStatId (Development, DebugGame) moves it 8 further on --
+// a give-up on the guess shipped this head 8 short (4.15 Development: 30/38/40/48 against the PDB's 38/40/48/50). So
+// Genau measures Next on the property UObjects' own chains before applying the head ([UE4-USTRUCT-GIVEUP-STATS],
+// ProbeUFieldNextUProperty); only when no property chains does a give-up still ship the guess's head.
 struct UStructHead {
     int super;
     int children;

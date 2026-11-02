@@ -8098,8 +8098,8 @@ static void Test_UPropertyUStructHeadFor() {
            is(UPropertyUStructHeadFor(0x28, 422), 0x40, 0x48, 0x50, 0x58)
            && is(UPropertyUStructHeadFor(0x28, 424), 0x40, 0x48, 0x50, 0x58));
     // A STATS build's UObject is 8 longer (TStatId), and so its UField::Next: the head follows Next, not the version --
-    // GIVEN that Next. A give-up has no measured one and passes 0x28 on such a build (DynOff::UPropertyUStructHeadFor),
-    // so these two hold for the arithmetic, not for a STATS build that gives up.
+    // GIVEN that Next. A give-up measures it on the property chains first ([UE4-USTRUCT-GIVEUP-STATS], pinned in
+    // dll_core_test's USTRUCT-GIVEUP-STATS cases); these two pin the arithmetic it then applies.
     EXPECT("USTRUCT-GIVEUP: given a measured Next 0x30 at 4.15, UE415_Flyinh's Development PDB head 38/40/48/50",
            is(UPropertyUStructHeadFor(0x30, 415), 0x38, 0x40, 0x48, 0x50));
     EXPECT("USTRUCT-GIVEUP: given a measured Next 0x30 at 4.23, UE423_Flying's Development PDB head 48/50/58/60",
