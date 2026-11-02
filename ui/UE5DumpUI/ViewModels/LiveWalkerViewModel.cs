@@ -2290,6 +2290,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
              + "so no pointer chain from GWorld exists.";
     }
 
+    /// <summary>[LEAD-DT-EXPORT-64ROWS] How many elements or rows of a container were read into it: what a selection is
+    /// measured against.</summary>
+    internal static int LoadedElementCount(LiveFieldValue f)
+        => f.DataTableRowData?.Count ?? f.ArrayElements?.Count ?? f.MapElements?.Count ?? f.SetElements?.Count ?? 0;
+
     /// <param name="elementsChosen">The fields are a container cut down to the elements the user selected
     /// (<see cref="FilterContainerToElement"/>): fewer than the total by choice, so that container is not reported
     /// as cut.</param>
@@ -5269,8 +5274,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 breadcrumbsForXml = dedupedBc.Take(dedupedBc.Count - 1).ToList();
                 var exported = FilterContainerToElement(lastBc.ContainerField!, selectedSnapshot);
                 fieldsForXml = new List<LiveFieldValue> { exported };
-                // It hands back the whole container when no selected row names an element.
-                elementsChosen = !ReferenceEquals(exported, lastBc.ContainerField);
+                // It hands back the whole container when no selected row names an element. A selection of every loaded
+                // element is no choice to leave the rest out either: the rest were never read.
+                elementsChosen = LoadedElementCount(exported) < LoadedElementCount(lastBc.ContainerField!);
             }
             else
             {
