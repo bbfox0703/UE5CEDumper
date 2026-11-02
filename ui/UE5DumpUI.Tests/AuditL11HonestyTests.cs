@@ -914,6 +914,38 @@ public class AuditL11HonestyTests
         Assert.NotNull(LiveWalkerViewModel.BuildContainerLimitWarning(new[] { chosenRows }, 128));
     }
 
+    // [CEXPORT-NESTED-TRUNC-NOTE] The warning scanned only the fields the export started from; a container cut at the
+    // Array Limit inside a struct or pointer target the export walked was not reported.
+
+    private static LiveFieldValue ClippedArray(string name) => new()
+    {
+        Name = name, TypeName = "ArrayProperty", ArrayInnerType = "IntProperty", ArrayCount = 300,
+        ArrayElements = Enumerable.Range(0, 128).Select(i => new ArrayElementValue { Index = i }).ToList(),
+    };
+
+    [Fact]
+    public void NestedTrunc_AContainerCutInsideAWalkedStruct_IsReported()
+    {
+        var top = new[] { new LiveFieldValue { Name = "HP", TypeName = "FloatProperty" } };
+
+        var warn = LiveWalkerViewModel.BuildContainerLimitWarning(top, 128, nested: new[] { ClippedArray("Slots") });
+
+        Assert.NotNull(warn);
+        Assert.Contains("Slots (Array: 300 total, 128 loaded, nested)", warn);
+    }
+
+    [Fact]
+    public void NestedTrunc_ChosenElements_StillReportACutInsideThem()
+    {
+        // The selection decides how many elements are exported, not how much of each one's own containers is.
+        var warn = LiveWalkerViewModel.BuildContainerLimitWarning(new[] { ClippedArray("Items") }, 128,
+            elementsChosen: true, nested: new[] { ClippedArray("Slots") });
+
+        Assert.NotNull(warn);
+        Assert.DoesNotContain("Items", warn);
+        Assert.Contains("Slots (Array: 300 total, 128 loaded, nested)", warn);
+    }
+
     [Fact]
     public void V8_ContainerTruncation_FixedCapStatusLine_DoesNotMentionTheSlider()
     {

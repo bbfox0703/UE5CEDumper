@@ -2278,7 +2278,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// <param name="elementsChosen">The fields are a container cut down to the elements the user selected
     /// (<see cref="FilterContainerToElement"/>): fewer than the total by choice, so nothing is reported as cut.</param>
     internal static string? BuildContainerLimitWarning(IEnumerable<LiveFieldValue> fields, int arrayLimit,
-                                                       bool elementsChosen = false)
+                                                       bool elementsChosen = false,
+                                                       IEnumerable<LiveFieldValue>? nested = null)
     {
         if (elementsChosen) return null;
         var truncated = new List<string>();

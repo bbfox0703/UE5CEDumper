@@ -1475,6 +1475,67 @@ public class LiveWalkerForwardNavTests
         Assert.DoesNotContain("Container element limit", vm.StatusText);   // was "Items (Array: 300 total, 1 loaded)"
     }
 
+    // [CEXPORT-NESTED-TRUNC-NOTE] A container the export cut at the Array Limit inside a struct it walked.
+
+    private static OwnerStub NestedArrayStub()
+    {
+        var dump = StructOwnerStub();
+        dump.RegisterStruct(StatsAddr, new InstanceWalkResult
+        {
+            Address = StatsAddr, Name = "FPlayerStats", ClassName = "FPlayerStats", ClassAddr = StatsCls,
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Slots", TypeName = "ArrayProperty", Offset = 0x0, Size = 0x10,
+                        ArrayInnerType = "IntProperty", ArrayCount = 300, ArrayElemSize = 4, ArrayDataAddr = "0x92000",
+                        ArrayElements = new() { new() { Index = 0, Value = "1" }, new() { Index = 1, Value = "2" } } },
+            },
+        });
+        return dump;
+    }
+
+    [Fact]
+    public async Task CopyCeXml_SaysANestedContainerWasCutAtTheArrayLimit()
+    {
+        var dump = NestedArrayStub();
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), platform) { ArrayLimit = 2 };
+        await vm.NavigateToAddressCommand.ExecuteAsync(Holder);
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("Slots (Array: 300 total, 2 loaded, nested)", vm.StatusText);   // was no warning at all
+    }
+
+    [Fact]
+    public async Task CopyCeField_SaysANestedContainerWasCutAtTheArrayLimit()
+    {
+        var dump = NestedArrayStub();
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), platform) { ArrayLimit = 2 };
+        await vm.NavigateToAddressCommand.ExecuteAsync(Holder);
+        vm.SelectedField = vm.Fields.Single(f => f.Name == "Stats");
+
+        await vm.ExportCeFieldXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("Slots (Array: 300 total, 2 loaded, nested)", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Csx_HandsBackTheFieldsItWalked_SoTheCallerCanSayWhatWasCut()
+    {
+        var dump = NestedArrayStub();
+        var walked = new List<LiveFieldValue>();
+        var ct = TestContext.Current.CancellationToken;
+        var holderFields = (await dump.WalkInstanceAsync(Holder, ct: ct)).Fields;
+
+        await UE5DumpUI.Services.CsxExportService.GenerateCsxAsync(dump, "Holder", holderFields, arrayLimit: 2,
+            resolvedFieldsOut: walked, ct: ct);
+
+        Assert.Contains(walked, f => f.Name == "Slots" && f.ArrayCount == 300);
+    }
+
     [Fact]
     public async Task FindRefs_OnAnObject_StillNamesTheObject()
     {

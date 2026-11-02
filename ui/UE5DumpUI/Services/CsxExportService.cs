@@ -62,6 +62,7 @@ public static class CsxExportService
         // about how much of a string a user sees; 0 or less falls back to the default, as
         // CeXmlExportService.EmitStringLeaf does.
         int ceStringLength = Constants.DefaultCeStringLength,
+        List<LiveFieldValue>? resolvedFieldsOut = null,
         CancellationToken ct = default)
     {
         _csxStringLength = ceStringLength > 0 ? ceStringLength : Constants.DefaultCeStringLength;
