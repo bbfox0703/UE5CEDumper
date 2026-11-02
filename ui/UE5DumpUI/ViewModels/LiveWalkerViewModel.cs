@@ -1390,8 +1390,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// [LEAD-LW-BACK-CACHED-ELEMENTS] A container view re-entered without a walk (Back, Forward, a crumb jump, an
-    /// in-session bookmark) renders the crumb's held reading, made at the drill or the last refresh inside the view. A
+    /// [LEAD-LW-BACK-CACHED-ELEMENTS] A container view re-entered without a walk renders the crumb's held reading, made
+    /// at the drill or the last refresh inside the view. A
     /// container that reallocated since left its element addresses in the freed allocation until Refresh. The owner is
     /// read once: when the container's data address or count moved, the view is refreshed, which also stores the new
     /// reading on the crumb; otherwise the held render, and the scroll it restored, stand.
@@ -2831,7 +2831,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// elsewhere. That degrades in two layers: a class-name mismatch is reported and
     /// the (now meaningless) selection is dropped, and a merely-changed field list is
     /// absorbed by the restore ladder, which skips rows it can't match. Container
-    /// levels re-render from cached element data and never re-read memory at all.
+    /// levels re-render from cached element data first, then re-read their owner
+    /// ([LEAD-LW-BACK-CACHED-ELEMENTS]) and render again only when the container changed.
     /// </summary>
     [RelayCommand]
     private async Task GoForwardAsync()
@@ -2917,9 +2918,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (RenderSuperseded(next, "Fwd")) return;
             UpdateDisplay(result);
 
-            // Honest degrade (same check the bookmark load path uses): a class-name
-            // mismatch means the address now holds a DIFFERENT object, so restoring
-            // the old selection would dress up wrong data as a successful return.
+            // Honest degrade: a class-name mismatch means the address now holds a
+            // DIFFERENT object, so restoring the old selection would dress up wrong data
+            // as a successful return. This is the class half of the bookmark load's check;
+            // its object-name half cannot run here, as no crumb records its object's name.
             // TargetClassName is empty on crumbs pushed before the class was known,
             // so only compare when we actually have one.
             if (!string.IsNullOrEmpty(next.TargetClassName)
