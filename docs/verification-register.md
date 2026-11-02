@@ -5280,6 +5280,17 @@ whether the record ends ticked or unticked.*
 > deliberately. Not proven; if a `Found …` / `Cannot find` pair is ever seen again on a current
 > build, that refutes the hypothesis and the guard needs re-examining.
 >
+> ✅ **EXPLAINED 2026-11-02 (`[LEAD-G12G3-LOG-CONTRADICTION]`) — not an interleave. The build was
+> staged on purpose.** The stamp reads `e4685592-dirty`, so the binary was not e4685592's code. Commit
+> `457e5113` (22:27, five minutes later) records why: G12 step 2 needed the heuristic fallback, and
+> no title takes it, so one line, `guidStruct = vectorStruct = 0;`, was inserted *after* both
+> `FindStructByName` calls as a positive control. Its message quotes these same three lines, with
+> the same addresses and indices (0x1DF1A5C9280, 4118 / 4124), and records the revert, verified in
+> the rebuilt binary. The log itself agrees: one `Logger started` (every category file gets one per
+> process), one GObjects, and heuristic output continuing straight from the guard.
+> ⭐ **The lesson:** read a log's build stamp before reasoning from the code. `-dirty` means the
+> code at that commit is not what ran.
+>
 > ⚠⚠ **THE EVIDENCE ABOVE IS PERISHABLE, AND THAT IS WHY IT IS QUOTED VERBATIM HERE.** Log retention
 > is by **age** — `Grimoire::LOG_RETENTION_DAYS = 21` — and these four files were **13-14 days old**
 > when read, i.e. they purge around **2026-09-13**. They were copied to

@@ -911,6 +911,17 @@ frames). What to do:
   unfocused game raises it, and it goes again once the game ticks -- so a coordinate measured on one side of it
   lands on the wrong control on the other. Re-screenshot after any suspend, resume or focus change (§2.5d).
 
+### 1.ap A log line the code "cannot produce" — read the build stamp first; `-dirty` means the commit is not what ran
+
+`[LEAD-G12G3-LOG-CONTRADICTION]` sat in the register for ten weeks as "a contradiction I cannot explain from the
+code": `Found 'Guid'`, `Found 'Vector'`, then `Cannot find Guid or Vector struct`, on a guard with nothing between the
+calls and the test. The call site was checked byte-identical between the log's commit and HEAD, and a cross-process
+interleave was proposed. The log's own first line said `build: 1.0.0.3338 e4685592-dirty`. The tree had been edited
+on purpose: commit `457e5113`, five minutes later, had staged `guidStruct = vectorStruct = 0;` as a positive control,
+and its message quotes the very lines. **Before reasoning from a commit's code about a log, read the stamp.** A
+`-dirty` build ran code no commit holds, so look for the experiment first: the commits around its timestamp, then
+the session that ran it.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
