@@ -37,6 +37,7 @@ public class App : Application
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
+        Styles.Add(Helpers.KeywordBoxStyle.Create());   // [LEAD-KEYWORD-DROPDOWN-FIRST-CLICK]
     }
 
     public override void OnFrameworkInitializationCompleted()
