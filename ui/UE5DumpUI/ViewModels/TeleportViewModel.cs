@@ -2983,11 +2983,14 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             _flyKnown = true;
             return;
         }
+        // [FLY-REPORTS-WISH] With the collision the DLL read on the pawn, not the one the checkbox asked for.
         FlyCurrentText = st.Active
             ? string.Format(CultureInfo.InvariantCulture,
-                "Flying at {0:0} uu/s (MovementMode = {1}).", st.Speed, st.CurrentMode)
+                "Flying at {0:0} uu/s (MovementMode = {1}{2}).", st.Speed, st.CurrentMode,
+                Helpers.FlyText.CollisionClause(st.Collision))
             : string.Format(CultureInfo.InvariantCulture,
-                "Ready (MovementMode = {0}). Toggle Fly ON to take off.", st.CurrentMode);
+                "Ready (MovementMode = {0}{1}). Toggle Fly ON to take off.", st.CurrentMode,
+                Helpers.FlyText.CollisionClause(st.Collision));
         ApplyFlyState(st.Active ? 1 : 0);
     }
 
@@ -3011,7 +3014,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             StatusText = !st.HasCmc
                 ? "Fly could not engage (no CharacterMovement on this pawn)."
                 : st.Active
-                    ? $"✈ Fly ON ({(FlyNoclip ? "noclip" : "collision")}) — {FlyPresets[Math.Clamp(FlyPresetIndex, 0, FlyPresets.Count - 1)]}."
+                    ? $"✈ Fly ON ({Helpers.FlyText.ModeWord(FlyNoclip, st.Collision)}) — {FlyPresets[Math.Clamp(FlyPresetIndex, 0, FlyPresets.Count - 1)]}."
                     : $"Fly did NOT engage (code {st.State}) — the pawn is still in MovementMode {st.CurrentMode}.";
         }
         catch (Exception ex)

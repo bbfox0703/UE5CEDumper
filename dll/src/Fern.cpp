@@ -7409,6 +7409,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["speed"]         = st.speed;         // uu/s
             data["mode_resolved"] = st.modeResolved;
             data["current_mode"]  = st.currentMode;   // live MovementMode enum (5 = flying)
+            data["collision"]     = st.collision;     // [FLY-REPORTS-WISH] observed: 1 on, 0 off, -1 not read
             if (st.hasCmc && st.cmcAddr)
                 data["cmc_addr"]  = Renge::AddrToStr(st.cmcAddr);
             return data;

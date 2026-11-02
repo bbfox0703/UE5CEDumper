@@ -4132,6 +4132,7 @@ public sealed class DumpService : IDumpService
         Speed       = res?["speed"]?.GetValue<double>() ?? 0.0,
         CurrentMode = res?["current_mode"]?.GetValue<int>() ?? -1,
         State       = res?["state"]?.GetValue<int>() ?? -1,
+        Collision   = res?["collision"]?.GetValue<int>() ?? -1,   // [FLY-REPORTS-WISH] an older DLL: not said
     };
 
     // === See-through occluders (Schlacht) ===

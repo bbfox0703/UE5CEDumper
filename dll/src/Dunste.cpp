@@ -34,6 +34,7 @@
 #include "Routine.h"   // Routine::RunTickGuarded — a throw out of a thread proc is std::terminate (B14)
 #include "Ubel.h"
 #include "Stark.h"      // IsGameThreadResponsive — gate the Noclip teleport invoke
+#include "Solitar.h"    // GetActorBool: the pawn's collision as it reads, for the status [FLY-REPORTS-WISH]
 
 #include <algorithm>
 #include <atomic>
@@ -893,6 +894,13 @@ int32_t GetStatus(FlyStatus& out) {
     Ctx c;
     int32_t rc = ResolveCtx(c, false);
     out.code = rc;
+    // [FLY-REPORTS-WISH] Collision as it IS on the pawn, read now, as Solitar reads bCanBeDamaged for GodMode. A pawn
+    // class without SetActorEnableCollision, or a call the game thread never ran, leaves it colliding under a noclip
+    // request. Read whenever a pawn resolved, a pawn without a CharacterMovement included.
+    if (c.pawn) {
+        const int32_t live = Solitar::GetActorBool(c.pawn, Ubel::GetClass(c.pawn), "bActorEnableCollision");
+        out.collision = live < 0 ? -1 : live;
+    }
     if (rc != FR_OK) return rc;
     out.hasCmc  = true;
     out.cmcAddr = c.cmc;
