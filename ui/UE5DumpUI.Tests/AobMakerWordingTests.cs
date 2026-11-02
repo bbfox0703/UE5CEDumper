@@ -171,6 +171,23 @@ public class AobMakerWordingTests
              UE5DumpUI.ViewModels.LiveWalkerViewModel.DefinitionNoDataText("A"), "A");
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFunctionsLoading,
              UE5DumpUI.ViewModels.LiveWalkerViewModel.FunctionsLoadingText("A"), "A");
+        // [LEAD-LW-NULLROW-HEX] [LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST] [CEXPORT-ENUMNAMES-NOTE] [LEAD-DT-EXPORT-64ROWS]
+        // [CEXPORT-NESTED-TRUNC-NOTE] the 2026-11-02 pass's words
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyNoRowAddress,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.NoRowAddressText("A"), "A");
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyDataTableNotRestored,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.DataTableNotRestoredText);
+        Same(CeXmlExportService.KeyEnumNamesUnavailable, CeXmlExportService.EnumNamesUnavailableNote);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyTablePageCut,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.TablePageCutText("E"), "E");
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyTableCutEntry,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.TableCutEntryText("R", 5000, 64), "R", 5000, 64);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyNestedOnce,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.NestedOnceText("E"), "E");
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyNestedMany,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.NestedManyText("E", 3), "E", 3);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyNestedMore,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.NestedMoreText(3), 3);
         // ...and the Functions row buttons that refusal names.
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFuncGenScriptLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.FuncGenScriptLabel);
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFuncPipeInvokeLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.FuncPipeInvokeLabel);
@@ -216,7 +233,7 @@ public class AobMakerWordingTests
              UE5DumpUI.ViewModels.TeleportViewModel.TrainerRefusedNoReasonText(1, 9, "E"), "1", "9", "E");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(78, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(86, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

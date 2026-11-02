@@ -2314,7 +2314,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // [LEAD-DT-EXPORT-64ROWS] A table exports the rows its RowMap field carries: one fixed page of
             // WalkDataTableRowsAsync, not the Array Limit, so it is said apart from the slider's containers.
             if (f.DataTableRowData is { } rows && f.DataTableRowCount > rows.Count)
-                tables.Add($"{f.Name} (DataTable: {f.DataTableRowCount:N0} rows, {rows.Count:N0} exported");
+                tables.Add(TableCutEntryText(f.Name, f.DataTableRowCount, rows.Count));
             if (f.ArrayCount > arrayLimit)
                 cut.Add($"{f.Name} (Array: {f.ArrayCount} total, {f.ArrayElements?.Count ?? 0} loaded");
             if (f.MapCount > arrayLimit)
@@ -2331,7 +2331,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (truncated.Count > 0)
             parts.Add($"⚠ Container element limit ({arrayLimit}): {string.Join(", ", truncated)}");
         if (tablesCut.Count > 0)
-            parts.Add($"⚠ Only the first page of a table's rows is read: {string.Join(", ", tablesCut)}");
+            parts.Add(TablePageCutText(string.Join(", ", tablesCut)));
         return parts.Count == 0 ? null : string.Join(" ", parts);
     }
 
@@ -2341,10 +2341,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         const int shown = 5;
         var grouped = open.GroupBy(e => e).Select(g => g.Count() > 1
-            ? $"{g.Key}, nested, in {g.Count()} objects)"
-            : $"{g.Key}, nested)").ToList();
+            ? NestedManyText(g.Key, g.Count())
+            : NestedOnceText(g.Key)).ToList();
         foreach (var e in grouped.Take(shown)) yield return e;
-        if (grouped.Count > shown) yield return $"and {grouped.Count - shown} more nested";
+        if (grouped.Count > shown) yield return NestedMoreText(grouped.Count - shown);
     }
 
     [RelayCommand]
@@ -6372,8 +6372,24 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// memory refuses it, rather than send CE to address 0.</summary>
     private static bool HasNoRowAddress(LiveFieldValue field) => ParseHexAddr(field.FieldAddress) == 0;
 
+    // [LEAD-DT-EXPORT-64ROWS] [CEXPORT-NESTED-TRUNC-NOTE] The export limit warning's words. An entry is held open
+    // -- "Name (Kind: ..." -- and closed by the nested words or by ")".
+    internal const string KeyTablePageCut = "str.LiveWalker.TablePageCut";
+    internal static string TablePageCutText(string entries) => AobMakerStatus.Say(KeyTablePageCut,
+        "⚠ Only the first page of a table's rows is read: {0}", entries);
+    internal const string KeyTableCutEntry = "str.LiveWalker.TableCutEntry";
+    internal static string TableCutEntryText(string name, int rows, int exported) => AobMakerStatus.Say(
+        KeyTableCutEntry, "{0} (DataTable: {1:N0} rows, {2:N0} exported", name, rows, exported);
+    internal const string KeyNestedOnce = "str.LiveWalker.NestedOnce";
+    internal static string NestedOnceText(string entry) => AobMakerStatus.Say(KeyNestedOnce, "{0}, nested)", entry);
+    internal const string KeyNestedMany = "str.LiveWalker.NestedMany";
+    internal static string NestedManyText(string entry, int objects) => AobMakerStatus.Say(KeyNestedMany,
+        "{0}, nested, in {1} objects)", entry, objects);
+    internal const string KeyNestedMore = "str.LiveWalker.NestedMore";
+    internal static string NestedMoreText(int more) => AobMakerStatus.Say(KeyNestedMore, "and {0} more nested", more);
+
     internal const string KeyDataTableNotRestored = "str.LiveWalker.DataTableNotRestored";
-    private static string DataTableNotRestoredText => AobMakerStatus.Say(KeyDataTableNotRestored,
+    internal static string DataTableNotRestoredText => AobMakerStatus.Say(KeyDataTableNotRestored,
         "⚠ This DataTable view did not restore: the DataTable at its saved address is gone or has changed. The grid "
         + "shows what is at that address now.");
 
