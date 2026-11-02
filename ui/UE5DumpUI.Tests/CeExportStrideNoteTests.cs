@@ -276,6 +276,54 @@ public class CeExportStrideNoteTests
         Assert.DoesNotContain("Enum member names", bridge.AaScripts[0].Script);
     }
 
+    // Review round 1 of [CEXPORT-STRIDE-NOTE]: each export's wiring of the note, held.
+
+    private static (LiveWalkerViewModel vm, MockPlatformService platform) GuessedWalker(string? savePath = null)
+    {
+        var dump = new StubDumpService();
+        dump.RegisterStruct("0x1000", new InstanceWalkResult
+        {
+            Address = "0x1000", Name = "Obj_0", ClassName = "BP_Obj_C", ClassAddr = "0xC000",
+            Fields = new List<LiveFieldValue> { new() { Name = "HP", TypeName = "FloatProperty", Offset = 0x10, Size = 4 } },
+        });
+        var platform = new MockPlatformService(Path.GetTempPath()) { NextSavePath = savePath };
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), platform);
+        vm.SetEngineState(Guessed);
+        return (vm, platform);
+    }
+
+    [Fact]
+    public async Task LiveWalker_CopyCeField_CarriesTheNote()
+    {
+        var (vm, platform) = GuessedWalker();
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
+        vm.SelectedField = vm.Fields.Single();
+
+        await vm.ExportCeFieldXmlCommand.ExecuteAsync(null);
+
+        Assert.Contains($"<!-- {Note} -->", platform.LastClipboard);
+    }
+
+    [Fact]
+    public async Task LiveWalker_ExportCsx_CarriesTheNote()
+    {
+        var file = Path.Combine(Path.GetTempPath(), $"UE5DumpStrideCsx_{Guid.NewGuid():N}.csx");
+        var (vm, _) = GuessedWalker(file);
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
+        try
+        {
+            await vm.ExportCsx77Command.ExecuteAsync(null);
+
+            Assert.Contains($"<!-- {Note} -->", await File.ReadAllTextAsync(file, TestContext.Current.CancellationToken));
+        }
+        finally { File.Delete(file); }
+    }
+
+    // The AOB-wrapped branch of Copy CE XML / Copy CE Field passes the same exportNotes as the hierarchical one; its
+    // generator is held above (AobWrappedXml_OpensWithTheNote). Push to CE Structure Dissect passes the CSX notes, but
+    // CsxStructurePushGenerator's parser drops every XML comment (the packed-layout note too), so nothing of it reaches
+    // CE there.
+
     [Fact]
     public async Task InstanceFinder_CopyCeXml_CarriesTheNote()
     {

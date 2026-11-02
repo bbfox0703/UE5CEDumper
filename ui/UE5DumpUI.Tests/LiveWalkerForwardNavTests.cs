@@ -1567,6 +1567,60 @@ public class LiveWalkerForwardNavTests
     }
 
     [Fact]
+    public async Task ExportCsx_SaysANestedContainerWasCutAtTheArrayLimit()
+    {
+        // Review round 1: Export CSX (to a file) passed the walked fields too, and no test held that wiring.
+        var dump = NestedArrayStub();
+        var file = Path.Combine(Path.GetTempPath(), $"UE5DumpNestedCsx_{Guid.NewGuid():N}.csx");
+        var platform = new MockPlatformService(Path.GetTempPath()) { NextSavePath = file };
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), platform) { ArrayLimit = 2 };
+        await vm.NavigateToAddressCommand.ExecuteAsync(Holder);
+        try
+        {
+            await vm.ExportCsx77Command.ExecuteAsync(null);
+
+            Assert.True(File.Exists(file));
+            Assert.Contains("Slots (Array: 300 total, 2 loaded, nested)", vm.StatusText);
+        }
+        finally { File.Delete(file); }
+    }
+
+    [Fact]
+    public async Task CopyCeXml_SaysAContainerWasCutInAPointerTargetItWalked()
+    {
+        // Review round 1: the pointer-target half of the nested scan (the resolver's resolvedInstances) had no test.
+        const string Ptr = "0x93000";
+        var dump = NestedArrayStub();
+        dump.RegisterStruct("0x94000", new InstanceWalkResult
+        {
+            Address = "0x94000", Name = "Holder2_0", ClassName = "BP_Holder2_C", ClassAddr = "0xCA00",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Target", TypeName = "ObjectProperty", Offset = 0x28, Size = 8,
+                        PtrAddress = Ptr, PtrName = "Pointee_0", PtrClassName = "BP_Pointee_C", PtrClassAddr = "0xCB00" },
+            },
+        });
+        dump.RegisterStruct(Ptr, new InstanceWalkResult
+        {
+            Address = Ptr, Name = "Pointee_0", ClassName = "BP_Pointee_C", ClassAddr = "0xCB00",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Bag", TypeName = "ArrayProperty", Offset = 0x30, Size = 0x10,
+                        ArrayInnerType = "IntProperty", ArrayCount = 300, ArrayElemSize = 4, ArrayDataAddr = "0x95000",
+                        ArrayElements = new() { new() { Index = 0, Value = "1" }, new() { Index = 1, Value = "2" } } },
+            },
+        });
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), platform) { ArrayLimit = 2, CsxDrilldownDepth = 1 };
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x94000");
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("Bag (Array: 300 total, 2 loaded, nested)", vm.StatusText);
+    }
+
+    [Fact]
     public async Task Csx_HandsBackTheFieldsItWalked_SoTheCallerCanSayWhatWasCut()
     {
         var dump = NestedArrayStub();

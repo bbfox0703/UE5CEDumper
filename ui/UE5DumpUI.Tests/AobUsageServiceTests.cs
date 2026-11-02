@@ -44,7 +44,9 @@ public sealed class MockPlatformService : IPlatformService
     public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
     public string GetMachineName() => "TEST-MACHINE";
     public void CloseImeForWindow(IntPtr windowHandle) { }
-    public Task<string?> ShowSaveFileDialogAsync(string defaultFileName, string filterName, string filterExtension) => Task.FromResult<string?>(null);
+    /// <summary>What the save dialog answers: null (the user cancelled) unless a test names a file.</summary>
+    public string? NextSavePath { get; set; }
+    public Task<string?> ShowSaveFileDialogAsync(string defaultFileName, string filterName, string filterExtension) => Task.FromResult(NextSavePath);
 }
 
 public class AobUsageServiceTests : IDisposable
