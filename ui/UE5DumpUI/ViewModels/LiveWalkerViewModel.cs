@@ -1905,7 +1905,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         if (!item.IsContainerView || item.ContainerField != null) return false;
 
-        var classAddr = string.IsNullOrEmpty(item.ClassAddr) ? null : item.ClassAddr;
+        // [LEAD-LW-SYNTH-CONTAINER-STRUCT-OWNER] The owner is walked with its own crumb's class, as Refresh walks it. A
+        // container crumb carries none, and an inline-struct owner walked without its UScriptStruct is read as a
+        // UObject: the field is not found and the view falls through to a plain walk of that address.
+        var ownerAt = Breadcrumbs.IndexOf(item);
+        var ownerCrumb = ownerAt > 0 ? Breadcrumbs[ownerAt - 1] : null;
+        var classAddr = ownerCrumb != null && !string.IsNullOrEmpty(ownerCrumb.ClassAddr)
+                        && ParseHexAddr(ownerCrumb.Address) == ParseHexAddr(item.Address)
+            ? ownerCrumb.ClassAddr
+            : string.IsNullOrEmpty(item.ClassAddr) ? null : item.ClassAddr;
         var result = await _dump.WalkInstanceAsync(item.Address, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
         result = await AutoFillGapsRetryAsync(result, item.Address, classAddr);
         // [A4-NAV-BACKFIRST-GRAFT] review: the spine moved during this walk; the caller's own
