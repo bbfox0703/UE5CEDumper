@@ -1491,8 +1491,8 @@ static void FillPointerSnapshot(json& data) {
 // key it still emits is byte-identical to the full shape, which is what makes
 // "lean and full produce the same XML" testable rather than hoped for.
 // ============================================================
-// [W4-RELATED-STOPS] Why a Related Objects walk stopped short, one key per cause (additive: no contract bump).
-// get_related_objects and, since [SOLIDE-RELATED-STOPS], find_stealth_meter carry it in this one shape.
+// [W4-RELATED-STOPS] Why a Related Objects walk stopped short, one key per cause (additive: no contract bump). One
+// encoder, so every reply built on that walk states its stops in the same shape.
 static json RelatedStopsJson(const Aura::RelatedObjectsStats& stops) {
     json j;
     j["result_cap_hit"] = stops.resultCapHit;

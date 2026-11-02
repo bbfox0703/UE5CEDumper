@@ -1108,7 +1108,7 @@ public sealed class DumpService : IDumpService
     }
 
     /// <summary>[W4-RELATED-STOPS] One key per cause; absent from an older DLL, so the answer is null ("not said").
-    /// get_related_objects and find_stealth_meter carry the same shape.</summary>
+    /// The DLL writes this shape from one encoder, so one parser reads it wherever it appears.</summary>
     private static RelatedObjectsStops? ParseRelatedStops(JsonNode? node)
     {
         if (node is not JsonObject stopsNode) return null;
