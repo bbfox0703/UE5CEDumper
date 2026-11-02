@@ -5269,21 +5269,14 @@ ReadArrayResult ReadDelegateArrayElements(
         elem.index = i;
 
         // The payload starts behind the access detector on a checked build.
-        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * stride + pad;
+        const uintptr_t elemStart = arr.Data + static_cast<int64_t>(i) * stride;
+        uintptr_t elemAddr = elemStart + pad;
 
-        // Hex of the FScriptDelegate payload we actually interpret -- not the detector in
-        // front of it, so the hex and the value can never disagree about which bytes were read.
-        std::vector<uint8_t> rawBuf(kSdBase, 0);
-        if (Macht::ReadBytesSafe(elemAddr, rawBuf.data(), kSdBase)) {
-            std::string hex;
-            hex.reserve(kSdBase * 2);
-            for (auto b : rawBuf) {
-                char hx[3];
-                snprintf(hx, sizeof(hx), "%02X", b);
-                hex += hx;
-            }
-            elem.hex = std::move(hex);
-        }
+        // Hex of the whole element the row names, detector and alignment tail included, with a space where the
+        // detector ends.
+        std::vector<uint8_t> rawBuf(static_cast<size_t>(stride), 0);
+        if (Macht::ReadBytesSafe(elemStart, rawBuf.data(), stride))
+            elem.hex = DynOff::DelegateHex(rawBuf.data(), stride, pad);
 
         // Resolve target via FWeakObjectPtr. ⛔ BOTH RETURNS ARE LOAD-BEARING: on a faulted
         // read objIdx/serial stay 0, the weak pointer resolves to null, and the element is
@@ -5424,7 +5417,7 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
             // sentinel and the shape is ReadInterfaceArrayElements:3159-3164 verbatim --
             // the other 16-byte-element reader, which already gets this right.
             elem.value = "???";
-            elem.hex = "????????????????????????????????";
+            elem.hex = DynOff::DelegateHex(nullptr, stride, pad);
             result.elements.push_back(std::move(elem));
             continue;
         }
@@ -5442,25 +5435,16 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
                                "at 0x%llX — reporting UNREADABLE, not zero bindings",
                        innerCount, static_cast<unsigned long long>(listAddr));
             elem.value = "???";
-            elem.hex = "????????????????????????????????";
+            elem.hex = DynOff::DelegateHex(nullptr, stride, pad);
             result.elements.push_back(std::move(elem));
             continue;
         }
 
-        // Hex: the 16-byte TArray header we actually interpreted, not the detector in
-        // front of it -- so the hex and the value can never disagree about which bytes
-        // were read. Keeps the width equal to the "????..." unread sentinel above.
-        uint8_t headerBuf[16] = {};
-        if (Macht::ReadBytesSafe(listAddr, headerBuf, 16)) {
-            std::string hex;
-            hex.reserve(32);
-            for (int b = 0; b < 16; ++b) {
-                char hx[3];
-                snprintf(hx, sizeof(hx), "%02X", headerBuf[b]);
-                hex += hx;
-            }
-            elem.hex = std::move(hex);
-        }
+        // Hex: the whole element the row names (its address, its size), the detector set off by a space so the
+        // TArray header the value came from still reads as one unit. The unread sentinels above share its shape.
+        std::vector<uint8_t> elemBuf(static_cast<size_t>(stride), 0);
+        if (Macht::ReadBytesSafe(elemAddr, elemBuf.data(), stride))
+            elem.hex = DynOff::DelegateHex(elemBuf.data(), stride, pad);
 
         // Build display: "(N bindings) [Target1::Fn1, Target2::Fn2, ...]"
         std::string display;
@@ -7818,15 +7802,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             }
             fv.typedValue = DescribeDelegateBinding(target, targetName, objIdx, serial, funcName);   // [R7-B-04]
 
-            // Hex: FWeakObjectPtr + FName raw bytes
-            int delegateSize = 8 + fnameSize;
-            std::vector<uint8_t> buf(delegateSize, 0);
-            if (Macht::ReadBytesSafe(fieldAddr, buf.data(), delegateSize)) {
-                std::string hex;
-                hex.reserve(delegateSize * 2);
-                for (auto b : buf) { char hx[3]; snprintf(hx, sizeof(hx), "%02X", b); hex += hx; }
-                fv.hexValue = hex;
-            }
+            // Hex: all fi.Size bytes from the field's own offset -- the detector, then the FWeakObjectPtr + FName.
+            std::vector<uint8_t> buf(static_cast<size_t>(fi.Size), 0);
+            if (Macht::ReadBytesSafe(fieldAddr - dPad, buf.data(), fi.Size))
+                fv.hexValue = DynOff::DelegateHex(buf.data(), fi.Size, dPad);
             result.fields.push_back(std::move(fv));
             continue;
         }

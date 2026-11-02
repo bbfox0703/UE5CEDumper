@@ -1455,13 +1455,18 @@ inline int32_t DelegatePadFromElementSize(int32_t elementSize, int32_t baseSize)
     if (elementSize == DelegatePaddedSize(baseSize)) return kDelegateDetectorPad;
     return -1;
 }
-/// [D4B-DELEGATEPAD-2026-09-09] The hex a delegate value's row shows. `bytes == nullptr` is an unread value.
+/// [D4B-DELEGATEPAD-2026-09-09] The hex a delegate value's row shows: all `size` bytes from the address the row names,
+/// with a space where a checked build's access detector ends. A payload-only hex left the row's address and size
+/// describing bytes its hex did not hold, and never showed the detector -- the first thing to look at when a delegate
+/// reads oddly. Shipping (pad 0) is the bare dump it always was. `bytes == nullptr` is an unread value: the same
+/// shape in '?'.
 inline std::string DelegateHex(const uint8_t* bytes, int32_t size, int32_t pad) {
     static constexpr char kDigits[] = "0123456789ABCDEF";
     std::string hex;
     if (size <= 0) return hex;
-    if (pad < 0 || pad > size) pad = 0;
-    for (int32_t i = pad; i < size; ++i) {
+    hex.reserve(static_cast<size_t>(size) * 2 + 1);
+    for (int32_t i = 0; i < size; ++i) {
+        if (i == pad && pad > 0) hex += ' ';
         if (bytes) { hex += kDigits[bytes[i] >> 4]; hex += kDigits[bytes[i] & 0x0F]; }
         else       hex += "??";
     }
