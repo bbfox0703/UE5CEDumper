@@ -5384,7 +5384,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 // Fields without a resolved address (e.g. container/struct headers) can't
                 // become a flat record — skip rather than push a bogus address.
-                if (string.IsNullOrEmpty(field.FieldAddress)) { skipped++; continue; }
+                if (HasNoRowAddress(field)) { skipped++; continue; }
 
                 var t = CeXmlExportService.MapFieldToCeRecordType(field);
                 // [A4-PUSHCE-UNPADDED] PayloadAddress, as the per-row +CE and HEX already do: on a checked build a
@@ -5968,7 +5968,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // a container row's offset counts from the container's buffer (a DataTable row whose pointer reads null
             // has no other), an actor row on the GWorld view has no slot in the world, and rows a re-root or Back
             // has left belong to another object than the one now shown. [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]
-            if (string.IsNullOrEmpty(field.FieldAddress) || field.FieldAddress == "0x0")
+            if (HasNoRowAddress(field))
             {
                 StatusText = _addrRefusal = NoRowAddressText(AddrLabel);
                 _log.Info($"{AddrLabel} refused: {field.Name} has no address of its own (offset 0x{field.Offset:X})");
@@ -6179,7 +6179,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task HexFieldAddressAsync(LiveFieldValue? field)
     {
         if (field != null && RefuseOnDefinitionView(HexLabel)) return;
-        if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.FieldAddress)) return;
+        if (_aobMaker == null || field == null) return;
+        if (HasNoRowAddress(field)) { StatusText = NoRowAddressText(HexLabel); return; }
         // PayloadAddress, not FieldAddress: on a checked build a delegate's bytes start
         // 8 bytes after the field, and parking CE's hex view on the access detector shows
         // a qword that reads 0. See LiveFieldValue.PayloadAddress.
@@ -6235,6 +6236,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     internal static string FuncCopyBakedLabel => AobMakerStatus.Say(KeyFuncCopyBakedLabel, "AA(Baked)");
     internal const string KeyFuncAsmLabel = "str.Pointers.AobMakerAsm";
     internal static string FuncAsmLabel => AobMakerStatus.Say(KeyFuncAsmLabel, "ASM");
+
+    /// <summary>[LEAD-LW-NULLROW-HEX] A row with no address of its own: none was read, or the one read is 0 (a
+    /// DataTable row whose row pointer reads null arrives as "0x0"). Every row action that reads or marks the row's
+    /// memory refuses it, rather than send CE to address 0.</summary>
+    private static bool HasNoRowAddress(LiveFieldValue field) => ParseHexAddr(field.FieldAddress) == 0;
 
     internal const string KeyNoRowAddress = "str.LiveWalker.NoRowAddress";
     /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] A row action refused: the row has no address of its own, and none
@@ -6306,7 +6312,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task AddFieldToCeAsync(LiveFieldValue? field)
     {
         if (field != null && RefuseOnDefinitionView(AddToCeLabel)) return;
-        if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.FieldAddress)) return;
+        if (_aobMaker == null || field == null) return;
+        if (HasNoRowAddress(field)) { StatusText = NoRowAddressText(AddToCeLabel); return; }
         var t = CeXmlExportService.MapFieldToCeRecordType(field);
         // PayloadAddress for the same reason the CE XML exporter adds the pad: a record left
         // on the access detector points at a qword that reads 0 on every checked build.
