@@ -2275,7 +2275,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
              + "so no pointer chain from GWorld exists.";
     }
 
-    private static string? BuildContainerLimitWarning(IEnumerable<LiveFieldValue> fields, int arrayLimit)
+    internal static string? BuildContainerLimitWarning(IEnumerable<LiveFieldValue> fields, int arrayLimit)
     {
         var truncated = new List<string>();
         foreach (var f in fields)

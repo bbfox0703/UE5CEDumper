@@ -853,6 +853,46 @@ public class AuditL11HonestyTests
             LiveWalkerViewModel.DataTableFieldPreview(DataTable(total: 12, fetched: 12)));
     }
 
+    // [LEAD-DT-EXPORT-64ROWS] Copy CE XML / CSX of a table export the rows the RowMap field carries, the same fixed
+    // page, and the export's limit warning checked only Array / Map / Set: a 5,000-row table exported 64 rows and
+    // said nothing. The page is not the Array Limit, so the warning does not name the slider for it.
+
+    [Fact]
+    public void LeadDtExport64_TheExportWarning_NamesATableCutToItsPage()
+    {
+        var rowMap = LiveWalkerViewModel.SyntheticRowMapField(DataTable(total: 5000, fetched: 64), "0x1000");
+
+        var warn = LiveWalkerViewModel.BuildContainerLimitWarning(new[] { rowMap }, arrayLimit: 128);
+
+        Assert.NotNull(warn);
+        Assert.Contains("RowMap (DataTable: 5,000 rows, 64 exported)", warn);
+        Assert.DoesNotContain("128", warn);   // a table's page is not the Array Limit
+    }
+
+    [Fact]
+    public void LeadDtExport64_AWholeTable_AddsNoWarning()
+    {
+        var rowMap = LiveWalkerViewModel.SyntheticRowMapField(DataTable(total: 12, fetched: 12), "0x1000");
+
+        Assert.Null(LiveWalkerViewModel.BuildContainerLimitWarning(new[] { rowMap }, arrayLimit: 128));
+    }
+
+    [Fact]
+    public void LeadDtExport64_ATableBesideAClippedArray_NamesBoth()
+    {
+        var rowMap = LiveWalkerViewModel.SyntheticRowMapField(DataTable(total: 5000, fetched: 64), "0x1000");
+        var arr = new LiveFieldValue
+        {
+            Name = "Items", TypeName = "ArrayProperty", ArrayInnerType = "IntProperty", ArrayCount = 300,
+            ArrayElements = Enumerable.Range(0, 128).Select(i => new ArrayElementValue { Index = i }).ToList(),
+        };
+
+        var warn = LiveWalkerViewModel.BuildContainerLimitWarning(new[] { arr, rowMap }, arrayLimit: 128);
+
+        Assert.Contains("Container element limit (128): Items (Array: 300 total, 128 loaded)", warn);
+        Assert.Contains("RowMap (DataTable: 5,000 rows, 64 exported)", warn);
+    }
+
     [Fact]
     public void V8_ContainerTruncation_FixedCapStatusLine_DoesNotMentionTheSlider()
     {
