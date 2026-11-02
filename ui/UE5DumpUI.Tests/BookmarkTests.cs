@@ -736,6 +736,7 @@ public class BookmarkTests
     private sealed class DataTableDump : StubDumpService
     {
         public string RowStruct = "FItemRow";
+        public string RowStructAddr = "0x5700";
         public bool Refuse;
         public int RowWalks;
 
@@ -746,7 +747,7 @@ public class BookmarkTests
             if (Refuse) throw new InvalidOperationException("not a DataTable (class=Actor)");
             return Task.FromResult(new DataTableWalkResult
             {
-                RowCount = 2, RowStructName = RowStruct, RowMapOffset = 0x30,
+                RowCount = 2, RowStructName = RowStruct, RowStructAddr = RowStructAddr, RowMapOffset = 0x30,
                 Rows = new()
                 {
                     new DataTableRowInfo { RowName = "Sword",  DataAddr = "0x1000", Fields = new() },
@@ -870,6 +871,70 @@ public class BookmarkTests
         Assert.Equal(1, dump.RowWalks);                         // no second, unguarded walk
         Assert.DoesNotContain(vm.Fields, f => f.Name.Contains("Sword"));
         Assert.Contains("gone or has changed", vm.StatusText);
+    }
+
+    // [LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST] A bookmark FILE saved BELOW a row view (a row's struct drilled from it)
+    // re-walked only the LAST crumb, so the row view's crumb kept no rows: Back found no reflected "RowMap" field to
+    // re-hydrate from and showed the table's own grid under the row view's label, and Refresh there said the view
+    // "did not restore" although nothing had refused it.
+
+    /// <summary>The FILE shape of a bookmark on a row's struct, drilled from the row view of
+    /// <see cref="FillDataTableSlot"/>'s table. The row crumb's class is the row struct the row view's table names.</summary>
+    private static void FillRowBelowDataTableSlot(BookmarkSlot slot, DataTableDump dump)
+    {
+        dump.RegisterStruct("0x1000", new InstanceWalkResult
+        {
+            Address = "0x1000", Name = "FItemRow", ClassName = "FItemRow", ClassAddr = "0x5700",
+            Fields = new() { new() { Name = "Damage", Offset = 0x8, TypeName = "IntProperty", TypedValue = "7" } },
+        });
+        FillDataTableSlot(slot);
+        slot.SavedBreadcrumbs.Add(new BreadcrumbItem
+        {
+            Address = "0x1000", Label = "[0] Sword", FieldName = "[0] Sword", FieldOffset = 0x8, ClassAddr = "0x5700",
+        });
+        slot.SavedAddress = "0x1000";
+        slot.SavedClassName = "FItemRow";
+    }
+
+    [Fact]
+    public async Task BookmarkFile_BelowARowView_BackShowsTheRowViewsRows()
+    {
+        var dump = new DataTableDump();
+        var vm = DataTableVm(dump);
+        var slot = vm.BookmarkSlots[0];
+        FillRowBelowDataTableSlot(slot, dump);
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+        Assert.Equal("FItemRow", vm.CurrentClassName);
+        Assert.Contains("loaded", vm.StatusText);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.Contains(vm.Fields, f => f.Name.Contains("Sword"));   // was the table's own grid
+        Assert.Contains(vm.Fields, f => f.Name.Contains("Shield"));
+        Assert.NotNull(vm.Breadcrumbs[^1].DataTableData);             // the in-session shape
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.DoesNotContain("did not restore", vm.StatusText);
+        Assert.Contains(vm.Fields, f => f.Name.Contains("Sword"));
+    }
+
+    [Theory]
+    [InlineData(false)]   // another table, whose row struct is not the one the row was drilled into
+    [InlineData(true)]    // the DLL refuses the address: it is not a DataTable any more
+    public async Task BookmarkFile_BelowARowViewWhoseTableChanged_SaysSo_AndBackSaysTheViewDidNotRestore(bool refuse)
+    {
+        var dump = new DataTableDump { RowStructAddr = "0x5800", Refuse = refuse };
+        var vm = DataTableVm(dump);
+        var slot = vm.BookmarkSlots[0];
+        FillRowBelowDataTableSlot(slot, dump);
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+        Assert.Contains("DataTable", vm.StatusText);
+        Assert.DoesNotContain("loaded", vm.StatusText);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain(vm.Fields, f => f.Name.Contains("Sword"));   // the other table's rows are not shown
+        Assert.Contains("did not restore", vm.StatusText);
     }
 
     [Fact]
