@@ -8,15 +8,17 @@ namespace UE5DumpUI.Helpers;
 public static class FlyText
 {
     internal const string KeyNoclipNotApplied = "str.TP.FlyNoclipNotApplied";
+    internal const string KeyCollisionNotRestored = "str.TP.FlyCollisionNotRestored";
     internal const string KeyCollisionOn = "str.TP.FlyCollisionOn";
     internal const string KeyCollisionOff = "str.TP.FlyCollisionOff";
 
-    /// <summary>The enable line's mode word: "collision" when noclip was not asked for, "noclip" unless the pawn
-    /// reads colliding, and then the request and what happened. -1 (an older DLL) keeps the old word.</summary>
+    /// <summary>The enable line's mode word: the one asked for when the pawn reads that way, else the request and what
+    /// happened -- in both directions, as a pawn an earlier noclip left not colliding can stay so when its restore is
+    /// refused. -1 (an older DLL) keeps the requested word.</summary>
     public static string ModeWord(bool noclipAsked, int collision)
-        => !noclipAsked ? "collision"
-         : collision == 1 ? AobMakerStatus.Say(KeyNoclipNotApplied, "noclip asked, collision still on")
-         : "noclip";
+        => noclipAsked
+            ? (collision == 1 ? AobMakerStatus.Say(KeyNoclipNotApplied, "noclip asked, collision still on") : "noclip")
+            : (collision == 0 ? AobMakerStatus.Say(KeyCollisionNotRestored, "noclip off, collision still off") : "collision");
 
     /// <summary>Does the collision read on the pawn agree with the noclip request? An unread collision (-1, or an older
     /// DLL) has nothing to wait for.</summary>

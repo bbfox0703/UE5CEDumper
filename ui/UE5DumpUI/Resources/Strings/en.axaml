@@ -2007,6 +2007,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.LiveWalker.FunctionsLoading">⚠ {0}: nothing done — this object's functions are still loading, and the rows shown are the previous object's.</sys:String>
     <sys:String x:Key="str.LiveWalker.NoRowAddress">⚠ {0}: nothing done — no address was read for this row, and none is worked out from its offset.</sys:String>
     <sys:String x:Key="str.TP.FlyNoclipNotApplied">noclip asked, collision still on</sys:String>
+    <sys:String x:Key="str.TP.FlyCollisionNotRestored">noclip off, collision still off</sys:String>
     <sys:String x:Key="str.TP.FlyCollisionOn">, collision on</sys:String>
     <sys:String x:Key="str.TP.FlyCollisionOff">, collision off</sys:String>
     <sys:String x:Key="str.ValueSearch.NonFiniteTarget">⚠ "{0}" is not a finite number: a scan target must be one.</sys:String>
