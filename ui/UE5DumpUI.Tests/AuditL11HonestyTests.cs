@@ -894,6 +894,27 @@ public class AuditL11HonestyTests
     }
 
     [Fact]
+    public void LeadDtExport64_ElementsTheUserChose_AreNotACut()
+    {
+        // Copy CE Field on a container view exports the rows or elements selected: fewer than the total by choice.
+        var rowMap = LiveWalkerViewModel.SyntheticRowMapField(DataTable(total: 5000, fetched: 64), "0x1000");
+        var chosenRows = LiveWalkerViewModel.FilterContainerToElement(rowMap,
+            new[] { new LiveFieldValue { Name = "[3] Row_3" } });
+        var arr = new LiveFieldValue
+        {
+            Name = "Items", TypeName = "ArrayProperty", ArrayInnerType = "IntProperty", ArrayCount = 300,
+            ArrayElements = Enumerable.Range(0, 128).Select(i => new ArrayElementValue { Index = i }).ToList(),
+        };
+        var chosenElems = LiveWalkerViewModel.FilterContainerToElement(arr,
+            new[] { new LiveFieldValue { Name = "[7]" } });
+
+        Assert.Null(LiveWalkerViewModel.BuildContainerLimitWarning(new[] { chosenRows }, 128, elementsChosen: true));
+        Assert.Null(LiveWalkerViewModel.BuildContainerLimitWarning(new[] { chosenElems }, 128, elementsChosen: true));
+        // Control: the same subsets, read as whole containers, would be reported.
+        Assert.NotNull(LiveWalkerViewModel.BuildContainerLimitWarning(new[] { chosenRows }, 128));
+    }
+
+    [Fact]
     public void V8_ContainerTruncation_FixedCapStatusLine_DoesNotMentionTheSlider()
     {
         var line = ContainerTruncation.FixedCapStatusLine(64, 5000, "rows");

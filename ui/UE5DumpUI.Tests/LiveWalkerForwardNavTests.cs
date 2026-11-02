@@ -1445,6 +1445,36 @@ public class LiveWalkerForwardNavTests
         Assert.Equal(new[] { "[0]" }, vm.Fields.Select(f => f.Name).ToArray());
     }
 
+    // [LEAD-DT-EXPORT-64ROWS] Copy CE Field on a container view exports the elements selected, by choice fewer than the
+    // total: the export's limit warning reported that as the container being cut short.
+
+    [Fact]
+    public async Task CopyCeField_OfOneSelectedElement_DoesNotCallTheContainerCutShort()
+    {
+        const string Big = "0x90000";
+        var (dump, vm, platform) = OwnerWalker();
+        dump.RegisterStruct(Big, new InstanceWalkResult
+        {
+            Address = Big, Name = "Big_0", ClassName = "BP_Big_C", ClassAddr = "0xC900",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Items", TypeName = "ArrayProperty", Offset = 0x40, Size = 0x10,
+                        ArrayInnerType = "IntProperty", ArrayCount = 300, ArrayElemSize = 4, ArrayDataAddr = "0x91000",
+                        ArrayElements = new() { new() { Index = 0, Value = "1" }, new() { Index = 1, Value = "2" } } },
+            },
+        });
+        vm.ArrayLimit = 2;
+        await vm.NavigateToAddressCommand.ExecuteAsync(Big);
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single());
+        vm.SelectedField = vm.Fields.Single(f => f.Name == "[1]");
+
+        await vm.ExportCeFieldXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.StartsWith("Copied:", vm.StatusText);
+        Assert.DoesNotContain("Container element limit", vm.StatusText);   // was "Items (Array: 300 total, 1 loaded)"
+    }
+
     [Fact]
     public async Task FindRefs_OnAnObject_StillNamesTheObject()
     {

@@ -2275,11 +2275,20 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
              + "so no pointer chain from GWorld exists.";
     }
 
-    internal static string? BuildContainerLimitWarning(IEnumerable<LiveFieldValue> fields, int arrayLimit)
+    /// <param name="elementsChosen">The fields are a container cut down to the elements the user selected
+    /// (<see cref="FilterContainerToElement"/>): fewer than the total by choice, so nothing is reported as cut.</param>
+    internal static string? BuildContainerLimitWarning(IEnumerable<LiveFieldValue> fields, int arrayLimit,
+                                                       bool elementsChosen = false)
     {
+        if (elementsChosen) return null;
         var truncated = new List<string>();
+        var tablesCut = new List<string>();
         foreach (var f in fields)
         {
+            // [LEAD-DT-EXPORT-64ROWS] A table exports the rows its RowMap field carries: one fixed page of
+            // WalkDataTableRowsAsync, not the Array Limit, so it is said apart from the slider's containers.
+            if (f.DataTableRowData is { } rows && f.DataTableRowCount > rows.Count)
+                tablesCut.Add($"{f.Name} (DataTable: {f.DataTableRowCount:N0} rows, {rows.Count:N0} exported)");
             if (f.ArrayCount > arrayLimit)
             {
                 int loaded = f.ArrayElements?.Count ?? 0;
@@ -2296,8 +2305,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 truncated.Add($"{f.Name} (Set: {f.SetCount} total, {loaded} loaded)");
             }
         }
-        if (truncated.Count == 0) return null;
-        return $"⚠ Container element limit ({arrayLimit}): {string.Join(", ", truncated)}";
+        var parts = new List<string>();
+        if (truncated.Count > 0)
+            parts.Add($"⚠ Container element limit ({arrayLimit}): {string.Join(", ", truncated)}");
+        if (tablesCut.Count > 0)
+            parts.Add($"⚠ Only the first page of a table's rows is read: {string.Join(", ", tablesCut)}");
+        return parts.Count == 0 ? null : string.Join(" ", parts);
     }
 
     [RelayCommand]
@@ -5194,6 +5207,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
             IReadOnlyList<BreadcrumbItem> breadcrumbsForXml;
             List<LiveFieldValue> fieldsForXml;
+            bool elementsChosen = false;   // [LEAD-DT-EXPORT-64ROWS] a container cut to the selection is not "cut short"
 
             // Struct-array elements: in the array container view each element row is a
             // StructProperty navigation (StructDataAddr = element address, StructClassAddr =
@@ -5218,8 +5232,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             else if (isContainerView)
             {
                 breadcrumbsForXml = dedupedBc.Take(dedupedBc.Count - 1).ToList();
-                fieldsForXml = new List<LiveFieldValue>
-                    { FilterContainerToElement(lastBc.ContainerField!, selectedSnapshot) };
+                var exported = FilterContainerToElement(lastBc.ContainerField!, selectedSnapshot);
+                fieldsForXml = new List<LiveFieldValue> { exported };
+                // It hands back the whole container when no selected row names an element.
+                elementsChosen = !ReferenceEquals(exported, lastBc.ContainerField);
             }
             else
             {
@@ -5366,7 +5382,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                           "the clipboard refused the write");
                 return;
             }
-            var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit);
+            var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit, elementsChosen);
             var aobFallbackWarn = (UseAobSymbol && !isGWorldRoot) ? "AOB skipped (no GWorld path)" : null;
             // Final indicator: objects (structs + pointer targets) walked + XML line count.
             int objCount = resolvedStructs.Count + resolvedInstances.Count;
