@@ -30,6 +30,27 @@ public class ValueTargetCheckTests
             Assert.NotNull(ValueTargetCheck.NonFiniteError(dt, value));
     }
 
+    // Review round 2: the DLL reads a target with std::stod, whose strtod family takes C99's spellings that .NET's
+    // invariant parse does not -- "inf" reached the live matcher as +inf ("Smaller than inf" matched every leaf) while
+    // the snapshot store answered "enter a numeric value". The check refuses what either side would read as non-finite.
+    [Theory]
+    [InlineData("inf")]
+    [InlineData("-INF")]
+    [InlineData("+Inf")]
+    [InlineData("infinity")]
+    [InlineData("nan")]
+    [InlineData("NAN(ind)")]
+    [InlineData("-nan(0x7ff8)")]
+    public void AC99NonFiniteSpelling_IsRefused(string value)
+        => Assert.NotNull(ValueTargetCheck.NonFiniteError(ValueScanDataType.NumericNoByte, value));
+
+    [Theory]
+    [InlineData("infra")]
+    [InlineData("nano")]
+    [InlineData("1inf")]
+    public void AWordThatOnlyStartsLikeOne_IsNotTheChecksToRefuse(string value)
+        => Assert.Null(ValueTargetCheck.NonFiniteError(ValueScanDataType.NumericNoByte, value));
+
     [Theory]
     [InlineData("1.5")]
     [InlineData("-3")]
