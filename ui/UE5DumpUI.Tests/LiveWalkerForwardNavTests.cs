@@ -616,10 +616,13 @@ public class LiveWalkerForwardNavTests
 
         public void UngateWalk(string addr) => _walkGates.Remove(addr);
 
+        /// <summary>How many walks each address has had.</summary>
+        public readonly Dictionary<string, int> Walks = new();
+
         public override Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
             int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
             CancellationToken ct = default)
-            => _walkGates.TryGetValue(addr, out var gate)
+            => (Walks[addr] = Walks.GetValueOrDefault(addr) + 1) > 0 && _walkGates.TryGetValue(addr, out var gate)
                 ? gate.Task
                 : classAddr == null && _classlessWalks.TryGetValue(addr, out var classless)
                     ? Task.FromResult(classless)
@@ -730,6 +733,105 @@ public class LiveWalkerForwardNavTests
         await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == container));
         AssertShowsTheOwner(vm);   // the drill: the baseline every other render is held to
         return vm;
+    }
+
+    // ── A container view re-entered after its container moved ── [LEAD-LW-BACK-CACHED-ELEMENTS]
+    //
+    // Back, Forward and a crumb jump render a container view from the crumb's held reading, made at the drill or the
+    // last refresh inside the view. A container that reallocated since then kept showing element addresses in the
+    // freed allocation until Refresh. The owner is re-read once on re-entry; the view is re-rendered only when the
+    // container's data address or count moved, so an unchanged view keeps the scroll it came back to.
+
+    /// <summary>The owner's Gear array moved to a new allocation, now holding <see cref="Other"/>.</summary>
+    private static void ReallocateGear(OwnerStub dump)
+    {
+        var gear = OwnerStub.GearField();
+        dump.RegisterStruct(Owner, new InstanceWalkResult
+        {
+            Address = Owner, Name = "Owner_0", ClassName = "BP_Owner_C", ClassAddr = OwnerCls,
+            Fields = new List<LiveFieldValue>
+            {
+                new()
+                {
+                    Name = gear.Name, TypeName = gear.TypeName, Offset = gear.Offset, Size = gear.Size,
+                    ArrayInnerType = "ObjectProperty", ArrayCount = 1, ArrayElemSize = 8, ArrayDataAddr = "0x58000",
+                    ArrayElements = new()
+                    {
+                        new() { Index = 0, PtrAddress = Other, PtrName = "Other_0", PtrClassName = "BP_Other_C" },
+                    },
+                },
+            },
+        });
+    }
+
+    private static void AssertGearShowsTheMovedAllocation(LiveWalkerViewModel vm)
+    {
+        Assert.StartsWith("Array<", vm.CurrentClassName);
+        var row = vm.Fields.Single();
+        Assert.Equal("0x58000", row.FieldAddress);
+        Assert.Equal(Other, row.PtrAddress);
+    }
+
+    [Fact]
+    public async Task Back_IntoAContainerThatMoved_ShowsItsNewAllocation()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        ReallocateGear(dump);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        AssertGearShowsTheMovedAllocation(vm);
+        AssertShowsTheOwner(vm);
+    }
+
+    [Fact]
+    public async Task Forward_IntoAContainerThatMoved_ShowsItsNewAllocation()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.GoBackCommand.ExecuteAsync(null);   // to the owner: the view goes onto Forward holding the 0x50000 reading
+        ReallocateGear(dump);
+
+        await vm.GoForwardCommand.ExecuteAsync(null);
+
+        AssertGearShowsTheMovedAllocation(vm);
+    }
+
+    [Fact]
+    public async Task ACrumbJump_IntoAContainerThatMoved_ShowsItsNewAllocation()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        ReallocateGear(dump);
+
+        await vm.NavigateToBreadcrumbCommand.ExecuteAsync(vm.Breadcrumbs[1]);
+
+        AssertGearShowsTheMovedAllocation(vm);
+    }
+
+    [Fact]
+    public async Task Back_IntoAContainerThatDidNotMove_ReadsTheOwnerOnce_AndKeepsTheView()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        var before = dump.Walks.GetValueOrDefault(Owner);
+        var resets = 0;
+        vm.Fields.CollectionChanged += (_, e) =>
+        {
+            if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset) resets++;
+        };
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.True(dump.Walks.GetValueOrDefault(Owner) <= before + 1);   // at most the re-check: no refresh's walk
+        Assert.Equal(1, resets);                                           // the held render only
+        var row = vm.Fields.Single();
+        Assert.Equal("0x50000", row.FieldAddress);
+        Assert.Equal(Elem, row.PtrAddress);
     }
 
     [Fact]
