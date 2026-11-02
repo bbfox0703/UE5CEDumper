@@ -1405,6 +1405,25 @@ public class TeleportViewModelTests
     }
 
     [Fact]
+    public async Task Fly_without_noclip_over_a_pawn_still_not_colliding_does_not_say_collision()
+    {
+        // [FLY-REPORTS-WISH] review round 2: the other direction of the same report. A pawn left not colliding (an
+        // earlier noclip whose restore the game thread refused) under a Fly ON with noclip unticked.
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.FlySettleStep = TimeSpan.FromMilliseconds(1);
+        vm.IsConnected = true;
+        vm.FlyNoclip = false;
+        fake.NextFlyStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, State = 1, Collision = 0 };
+
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("(collision)", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("collision still off", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("collision off", vm.FlyCurrentText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task Fly_noclip_toggled_in_flight_shows_the_collision_once_applied()
     {
         var fake = new FakeDumpService();
