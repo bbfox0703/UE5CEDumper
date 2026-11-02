@@ -39,6 +39,16 @@ public class CeExportStrideNoteTests
     }
 
     [Fact]
+    public void ACommentLine_HoldsNoDoubleDash_HoweverManyDashesTheNoteHas()
+    {
+        // Review round 1: one Replace("--", "- -") pass leaves "--" from a run of three ("---" -> "- --").
+        var line = CeXmlExportService.XmlCommentLines(new[] { "a---b----c" });
+        var body = line["<!--".Length..line.LastIndexOf("-->", StringComparison.Ordinal)];
+        Assert.DoesNotContain("--", body);
+        Assert.Contains("a", body);
+    }
+
+    [Fact]
     public void InstanceXml_OpensWithTheNote()
     {
         var xml = CeXmlExportService.GenerateInstanceXml("\"Game.exe\"+1000", "Inst", "TestClass", OneField,
