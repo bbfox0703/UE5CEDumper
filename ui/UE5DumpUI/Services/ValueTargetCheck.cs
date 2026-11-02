@@ -33,6 +33,11 @@ public static class ValueTargetCheck
         return null;
     }
 
+    /// <summary>The refusal for a scan target as its scan type sends it.</summary>
+    public static string? NonFiniteTargetError(ValueScanDataType dataType, ValueScanType scanType, string? value,
+                                               string? value2)
+        => NonFiniteError(dataType, value, value2);
+
     private static bool IsNumeric(ValueScanDataType dt) => dt is
         ValueScanDataType.Int8 or ValueScanDataType.Int16 or ValueScanDataType.Int32 or ValueScanDataType.Int64 or
         ValueScanDataType.UInt8 or ValueScanDataType.UInt16 or ValueScanDataType.UInt32 or ValueScanDataType.UInt64 or
