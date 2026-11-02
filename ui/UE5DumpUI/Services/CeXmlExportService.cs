@@ -4131,7 +4131,7 @@ public static class CeXmlExportService
     internal const string KeyEnumNamesUnavailable = "str.Export.EnumNamesUnavailable";
     /// <summary>[CEXPORT-ENUMNAMES-NOTE] What an export says when UEnum::Names was never located on this build.</summary>
     internal static string EnumNamesUnavailableNote => AobMakerStatus.Say(KeyEnumNamesUnavailable,
-        "Enum member names could not be read on this build (UEnum::Names was not found): the enum dropdowns are empty");
+        "Enum member names could not be read on this build (UEnum::Names was not found): enum fields have no dropdown and show as plain numbers");
 
     /// <summary>[CEXPORT-ENUMNAMES-NOTE] A status line's word on the enum note an export wrote, or "".</summary>
     internal static string EnumNamesStatus(IReadOnlyList<string> notes)

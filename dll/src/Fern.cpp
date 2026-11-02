@@ -2621,9 +2621,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // the UI can say "freed, or not an object" rather than stale's or unreadable's narrower claims.
             if (result.noHeader)
                 data["no_header"] = true;
-            // [CEXPORT-ENUMNAMES-NOTE] In both lean and full: UEnum::Names was never located, so every enum field above
-            // carries no entries, and a CE export's dropdowns come out empty. Only list_enums said so before. The latch
-            // is process-wide, set only by a search that ran to completion ([P1-ENUMNAMES]).
+            // [CEXPORT-ENUMNAMES-NOTE] In both lean and full: UEnum::Names was never located, so every enum field of this
+            // reply carries no entries, and a CE export writes no dropdown for it (a plain number). Only list_enums said
+            // so before. The latch is process-wide, set only by a search that ran to completion ([P1-ENUMNAMES]).
             if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))
                 data["enum_names_failed"] = true;
             // Present only when true, and !lean because the lean contract above is

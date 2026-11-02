@@ -2017,7 +2017,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.TP.FlyCollisionOn">, collision on</sys:String>
     <sys:String x:Key="str.TP.FlyCollisionOff">, collision off</sys:String>
     <sys:String x:Key="str.ValueSearch.NonFiniteTarget">⚠ "{0}" is not a finite number: a scan target must be one.</sys:String>
-    <sys:String x:Key="str.Export.EnumNamesUnavailable">Enum member names could not be read on this build (UEnum::Names was not found): the enum dropdowns are empty</sys:String>
+    <sys:String x:Key="str.Export.EnumNamesUnavailable">Enum member names could not be read on this build (UEnum::Names was not found): enum fields have no dropdown and show as plain numbers</sys:String>
     <sys:String x:Key="str.LiveWalker.TablePageCut">⚠ Only the first page of a table's rows is read: {0}</sys:String>
     <sys:String x:Key="str.LiveWalker.TableCutEntry">{0} (DataTable: {1:N0} rows, {2:N0} exported</sys:String>
     <sys:String x:Key="str.LiveWalker.NestedOnce">{0}, nested)</sys:String>
