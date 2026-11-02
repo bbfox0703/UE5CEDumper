@@ -1513,7 +1513,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
             // Beside a line the caller's own action set, not over it.
             if (status.Length > 0)
-                StatusText = string.IsNullOrEmpty(StatusText) ? status : $"{StatusText} — {status}";
+                StatusText = BesideStatus(StatusText, status);
 
             // [LW-BACK-CONTAINER-HEADER-ADDR] The owner was just walked, so its class is known even on a crumb
             // that never had it.
@@ -1528,6 +1528,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             RestoreSelectedField(keepFieldName, keepFieldOffset);
         }
     }
+
+    /// <summary>A status clause after the line already shown, or alone when there is none.</summary>
+    private static string BesideStatus(string? current, string clause)
+        => string.IsNullOrEmpty(current) ? clause : current + " — " + clause;
 
     /// <summary>[LEAD-LW-BACK-CACHED-ELEMENTS] Did a container move or change size between two readings of its row?</summary>
     internal static bool ContainerMoved(LiveFieldValue held, LiveFieldValue fresh)
