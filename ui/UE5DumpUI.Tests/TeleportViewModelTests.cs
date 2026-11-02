@@ -150,8 +150,11 @@ public class TeleportViewModelTests
         public override Task<FlyStatus> FlySetAsync(bool? enable, double? speed, int? preset, bool? noclip, CancellationToken ct = default)
         { FlySetCalls++; LastFlyEnable = enable; LastFlySpeed = speed; LastFlyPreset = preset; LastFlyNoclip = noclip; return Task.FromResult(NextFlyStatus); }
 
+        /// <summary>What fly_get_state answers; null answers <see cref="NextFlyStatus"/>, as fly_set does.</summary>
+        public FlyStatus? NextFlyGetStatus { get; set; }
+
         public override Task<FlyStatus> FlyGetStateAsync(CancellationToken ct = default)
-        { FlyGetStateCalls++; return Task.FromResult(NextFlyStatus); }
+        { FlyGetStateCalls++; return Task.FromResult(NextFlyGetStatus ?? NextFlyStatus); }
 
         // ── See-through (Schlacht) ──
         public SeeThroughStatus NextSeeThroughStatus { get; set; } = new() { Active = false };
@@ -1335,6 +1338,7 @@ public class TeleportViewModelTests
     {
         var fake = new FakeDumpService();
         var vm = CreateVm(fake, out _);
+        vm.FlySettleStep = TimeSpan.FromMilliseconds(1);
         vm.IsConnected = true;
         vm.FlyNoclip = true;
         fake.NextFlyStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, State = 1, Noclip = true, Collision = 1 };
@@ -1358,6 +1362,63 @@ public class TeleportViewModelTests
         await vm.ApplyFlyCommand.ExecuteAsync(null);
 
         Assert.Contains("(noclip)", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("collision off", vm.FlyCurrentText, StringComparison.Ordinal);
+    }
+
+    // [FLY-REPORTS-WISH] review round 2: fly_set answers before the Fly worker's next tick applies noclip on the game
+    // thread, so its `collision` is always the one from before. Measured on build 3672, DumperTest Development: the reply
+    // said 1, and the pawn read 0 103 ms later. The card re-reads fly_get_state until what it reads agrees with what it
+    // asked for, or a bounded window ends; then it says what it read.
+
+    [Fact]
+    public async Task Fly_noclip_says_noclip_once_the_worker_has_applied_it()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.FlySettleStep = TimeSpan.FromMilliseconds(1);
+        vm.IsConnected = true;
+        vm.FlyNoclip = true;
+        fake.NextFlyStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, State = 1, Noclip = true, Collision = 1 };
+        fake.NextFlyGetStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, Noclip = true, Collision = 0 };
+
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+
+        Assert.True(fake.FlyGetStateCalls >= 1);
+        Assert.Contains("(noclip)", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("collision off", vm.FlyCurrentText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Fly_noclip_that_never_applies_says_so_after_the_window()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.FlySettleStep = TimeSpan.FromMilliseconds(1);
+        vm.IsConnected = true;
+        vm.FlyNoclip = true;
+        fake.NextFlyStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, State = 1, Noclip = true, Collision = 1 };
+
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+
+        Assert.True(fake.FlyGetStateCalls >= 2);   // it looked again, more than once, before saying so
+        Assert.Contains("collision still on", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Fly_noclip_toggled_in_flight_shows_the_collision_once_applied()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.FlySettleStep = TimeSpan.FromMilliseconds(1);
+        vm.IsConnected = true;
+        fake.NextFlyStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, State = 1, Collision = 1 };
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+        fake.NextFlyGetStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, Noclip = true, Collision = 0 };
+
+        vm.FlyNoclip = true;   // the config push runs on its own task
+
+        for (int i = 0; i < 200 && !vm.FlyCurrentText.Contains("collision off", StringComparison.Ordinal); i++)
+            await Task.Delay(10, TestContext.Current.CancellationToken);
         Assert.Contains("collision off", vm.FlyCurrentText, StringComparison.Ordinal);
     }
 

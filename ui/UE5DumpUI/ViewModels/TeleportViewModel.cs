@@ -2994,6 +2994,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         ApplyFlyState(st.Active ? 1 : 0);
     }
 
+    /// <summary>[FLY-REPORTS-WISH] review round 2: the step between re-reads while the observed collision catches up.</summary>
+    internal TimeSpan FlySettleStep { get; set; } = TimeSpan.FromMilliseconds(100);
+
     /// <summary>Enable Fly: force MOVE_Flying and start the DLL worker (keyboard
     /// input is read DLL-side). Pushes the current speed + preset too.</summary>
     [RelayCommand]
