@@ -1883,6 +1883,9 @@ state-changing operations but works for simple getters).
   "id": 42, "ok": true,
   "result": 0,
   "instance_addr": "0x7FF6AA000",
+  "instance_class_addr": "0x7FF6CC00", // the class pointer read at instance_addr (from build
+                                   // 3671; on every reply that has instance_addr). A caller that
+                                   // keeps the address sends it back as expect_class_addr.
   "func_addr": "0x7FF123ABC",
   "parms_size": 16,
   "result_hex": "3F80000000000000...",  // post-call buffer (out-params)

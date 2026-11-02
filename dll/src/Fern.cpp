@@ -6965,6 +6965,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data;
             data["result"]        = callResult;
             data["instance_addr"] = Renge::AddrToStr(instanceAddr);
+            // [LEAD-CONSOLE-PIN-EXPECT-CLASS] So a caller that keeps the address can send it back as expect_class_addr.
+            data["instance_class_addr"] = Renge::AddrToStr(classAddr);
             data["func_addr"]     = Renge::AddrToStr(ufuncAddr);
             data["parms_size"]    = (int)bufSize;
 

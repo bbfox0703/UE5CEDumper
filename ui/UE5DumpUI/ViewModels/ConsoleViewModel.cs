@@ -68,9 +68,17 @@ public partial class ConsoleViewModel : ViewModelBase
     /// re-discover is treated as a fresh session — e.g. after reconnecting
     /// to a different game process) and self-heals on invoke failure
     /// (stale pin → drop + re-resolve, see <see cref="RunEntryAsync"/>).
+    ///
+    /// [LEAD-CONSOLE-PIN-EXPECT-CLASS] A pin keeps the class the DLL read at the address too, and a pinned invoke
+    /// sends it as <c>expect_class_addr</c>: the DLL finds the function by name on whatever object is there, so an
+    /// object freed and its memory reused by another class with a same-named function would run that one. The DLL's
+    /// refusal throws, and the stale-pin re-resolve below takes it. A same-class reuse still passes.
     /// </summary>
-    private readonly Dictionary<string, string> _stickyInstance =
+    private readonly Dictionary<string, Pin> _stickyInstance =
         new(StringComparer.Ordinal);
+
+    /// <summary>A pinned instance: its address, and the class read there (empty from a DLL that does not send it).</summary>
+    private readonly record struct Pin(string Addr, string ClassAddr);
 
     /// <summary>Cap on history entries — keeps the tail readable + the
     /// AOT-trimmed binary's ObservableCollection bounded. Old entries
@@ -467,7 +475,8 @@ public partial class ConsoleViewModel : ViewModelBase
             // this class so stateful toggles (ToggleDebugCamera, god, slomo…)
             // hit the SAME UObject on every invoke. See _stickyInstance for
             // the full "can't turn Debug Camera off" rationale.
-            _stickyInstance.TryGetValue(entry.ClassName, out var pinnedAddr);
+            _stickyInstance.TryGetValue(entry.ClassName, out var pin);
+            var pinnedAddr = pin.Addr;
             bool usedPin = !string.IsNullOrEmpty(pinnedAddr);
 
             bool reResolved = false;
@@ -480,7 +489,8 @@ public partial class ConsoleViewModel : ViewModelBase
                     className: entry.ClassName,
                     parmsSize: 0,
                     paramsHex: null,
-                    directCall: false);
+                    directCall: false,
+                    expectClassAddr: usedPin && pin.ClassAddr.Length > 0 ? pin.ClassAddr : null);
             }
             catch (Exception ex) when (usedPin && ex is not OperationCanceledException)
             {
@@ -547,7 +557,7 @@ public partial class ConsoleViewModel : ViewModelBase
             // Remember the resolved instance so the next toggle lands on the
             // same object. The DLL echoes the address it actually used.
             if (result.Success && !string.IsNullOrEmpty(result.InstanceAddr))
-                _stickyInstance[entry.ClassName] = result.InstanceAddr;
+                _stickyInstance[entry.ClassName] = new Pin(result.InstanceAddr, result.InstanceClassAddr);
 
             var resultText = result.Success
                 ? (string.IsNullOrEmpty(result.Message) ? "OK" : result.Message)
