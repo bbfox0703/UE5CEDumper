@@ -22,7 +22,8 @@ namespace UE5DumpUI.Models;
 /// restart (see <c>LiveWalkerViewModel.TryReresolveBookmarkSpineAsync</c>). When
 /// re-resolution can't re-anchor (non-GWorld root / a hop no longer matches), the load
 /// path validates the walked class against <c>SavedClassName</c> and the object against
-/// <c>SavedObjectName</c> (another instance of the class can hold the saved address) and
+/// <c>SavedObjectName</c> (another instance of the class can hold the saved address; a struct
+/// leaf, which has no name of its own, is checked through the object holding it) and
 /// degrades to a "stale — re-create" message rather than claiming the object, never
 /// auto-clearing it.
 /// </summary>

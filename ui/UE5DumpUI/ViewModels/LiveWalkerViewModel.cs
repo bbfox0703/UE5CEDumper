@@ -1390,12 +1390,28 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// [LEAD-LW-BACK-CACHED-ELEMENTS] A container view re-entered without a walk renders the crumb's held reading, made
-    /// at the drill or the last refresh inside the view. A
-    /// container that reallocated since left its element addresses in the freed allocation until Refresh. The owner is
-    /// read once: when the container's data address or count moved, the view is refreshed, which also stores the new
-    /// reading on the crumb; otherwise the held render, and the scroll it restored, stand.
+    /// [LEAD-BOOKMARK-SAMECLASS-RECYCLE] review round 2: is the bookmark's leaf, walked at its saved address, still the
+    /// object it saved? A UObject leaf answers by its own name. A struct leaf (a crumb with a struct class) has no name
+    /// of its own -- an inline struct's is its crumb label, which the saved name always equals, and a DataTable row's
+    /// is the DLL's guess over the row's bytes -- so it answers through the nearest object crumb above it, whose label
+    /// is that object's walked name. A synthetic root's label (GWorld / GameEngine) names no object, and a container
+    /// view is not an object.
     /// </summary>
+    private async Task<bool> SavedLeafIsStillTheSameAsync(BreadcrumbItem leaf, string savedObjectName)
+    {
+        if (string.IsNullOrEmpty(leaf.ClassAddr))
+            return string.Equals(CurrentObjectName, savedObjectName, StringComparison.Ordinal);
+        for (int i = Breadcrumbs.Count - 2; i >= 0; i--)
+        {
+            var c = Breadcrumbs[i];
+            if (c.IsContainerView || !string.IsNullOrEmpty(c.ClassAddr)) continue;
+            if (c.FieldName is "GWorld" or "GameEngine") return true;
+            var holder = await _dump.WalkInstanceAsync(c.Address, null, arrayLimit: 1, previewLimit: 0);
+            return GoneObjectStatus(holder) is null && string.Equals(holder.Name, c.Label, StringComparison.Ordinal);
+        }
+        return true;   // nothing above it to ask
+    }
+
     /// <summary>The last re-entry re-check. It runs after the navigation that started it has returned, so Back and
     /// Forward are not held for an owner walk (up to the refresh timeout on a recycled object); a caller that must see
     /// it finish -- a test -- awaits this.</summary>
@@ -1404,6 +1420,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// <summary>Start the re-check without waiting for it.</summary>
     private void StartReentryRecheck(BreadcrumbItem bc) => ReentryRecheck = RecheckReenteredContainerAsync(bc);
 
+    /// <summary>
+    /// [LEAD-LW-BACK-CACHED-ELEMENTS] A container view re-entered without a walk renders the crumb's held reading, made
+    /// at the drill or the last refresh inside the view, and a container that changed since left it stale. The owner is
+    /// read once: when the container changed (<see cref="ContainerChanged"/>), or the owner is gone, is another object
+    /// or lost the field, the reading is rendered through <see cref="ApplyOwnerReadingAsync"/>, which also stores it on
+    /// the crumb or drops the rows and says why; otherwise the held render, and the scroll it restored, stand.
+    /// </summary>
     private async Task RecheckReenteredContainerAsync(BreadcrumbItem bc)
     {
         // A DataTable view's rows are walked by their own call, and a synthetic crumb was just re-read.
@@ -4491,10 +4514,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     // [LEAD-BOOKMARK-SAMECLASS-RECYCLE] On the SAVED address the class alone passes another instance of
                     // it that took the address (a new launch, or the saved object freed); its name does not. A spine
                     // re-walked from the live root found its object by path, where a spawned name may have changed.
-                    else if (resolvedSpine == null && !string.IsNullOrEmpty(slot.SavedObjectName)
-                             && !string.Equals(CurrentObjectName, slot.SavedObjectName, StringComparison.Ordinal))
+                    else if (resolvedSpine == null && !string.IsNullOrEmpty(slot.SavedObjectName))
                     {
-                        restoredFully = false;
+                        bool same = await SavedLeafIsStillTheSameAsync(lastBc, slot.SavedObjectName);
+                        if (RenderSuperseded(lastBc, "Bookmark")) return;
+                        if (!same) restoredFully = false;
                     }
                 }
             }
