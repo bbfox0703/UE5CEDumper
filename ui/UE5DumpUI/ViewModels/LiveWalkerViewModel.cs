@@ -1423,8 +1423,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var fresh = owner.Fields.FirstOrDefault(f => f.Offset == held.Offset
                 && string.Equals(f.Name, held.Name, StringComparison.Ordinal)
                 && string.Equals(f.TypeName, held.TypeName, StringComparison.Ordinal));
-            if (fresh == null || !ContainerMoved(held, fresh)) return;
-            _log.Info($"NAV re-entered '{held.Name}': its container moved since it was read — rendering the new reading");
+            // A gone owner and a missing field are renders too: the shared render drops the rows and says why.
+            if (GoneObjectStatus(owner) is null && fresh != null && !ContainerMoved(held, fresh)) return;
+            _log.Info($"NAV re-entered '{held.Name}': its owner or container changed since it was read — rendering the new reading");
             await ApplyOwnerReadingAsync(bc, owner, SelectedField?.Name, SelectedField?.Offset ?? int.MinValue,
                                          () => !ReferenceEquals(CurrentCrumb, bc), timeoutCts.Token);
         }
@@ -1467,7 +1468,17 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         var updatedField = parentResult.Fields
             .FirstOrDefault(f => f.Name == matchName && f.Offset == matchOffset);
 
-        if (updatedField != null)
+        // [LEAD-LW-BACK-CACHED-ELEMENTS] review round 2: an owner that no longer has the field leaves the rows with
+        // nothing behind them, as a gone owner does, and is said the same way.
+        if (updatedField == null)
+        {
+            StatusText = ContainerFieldGoneText(matchName, parentResult.Name);
+            SelectedField = null;
+            Fields.Clear();
+            _log.Warn($"Container view: {containerBc.Address} has no '{matchName}' at +0x{matchOffset:X} now — dropped its element rows");
+            return;
+        }
+
         {
             // [WALK-REFRESH-SCALAR-SHRINK] Show what the drill would show now, and say what the drill would say.
             // The parent walk's inline preview is cut at min(Array Limit, 4,096); a scalar array is re-fetched
@@ -6430,6 +6441,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     internal const string KeyStale = "str.LiveWalker.Stale";
     private static string StaleText => AobMakerStatus.Say(KeyStale,
         "⚠ This object appears to have been freed/recycled — re-open it from \U0001F30D GWorld or the finder.");
+    /// <summary>[LEAD-LW-BACK-CACHED-ELEMENTS] review round 2: a container view whose owner, read again, no longer has
+    /// the container field.</summary>
+    internal const string KeyContainerFieldGone = "str.LiveWalker.ContainerFieldGone";
+    internal static string ContainerFieldGoneText(string field, string owner) => AobMakerStatus.Say(KeyContainerFieldGone,
+        "⚠ {0} is no longer on {1}, so its element rows were dropped — re-open it from \U0001F30D GWorld or the finder.",
+        field, owner);
     internal const string KeyDefinitionView = "str.LiveWalker.DefinitionView";
     internal static string DefinitionViewText => AobMakerStatus.Say(KeyDefinitionView,
         "ℹ This is a type definition (its member layout), not a live object: its rows have no address and no value, "
