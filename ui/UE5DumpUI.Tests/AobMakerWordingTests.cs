@@ -178,6 +178,8 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyDataTableNotRestored,
              UE5DumpUI.ViewModels.LiveWalkerViewModel.DataTableNotRestoredText);
         Same(CeXmlExportService.KeyEnumNamesUnavailable, CeXmlExportService.EnumNamesUnavailableNote);
+        Same(ValueTargetCheck.KeyNonFinite,
+             ValueTargetCheck.NonFiniteError(UE5DumpUI.Models.ValueScanDataType.Float, "1e400")!, "1e400");
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyTablePageCut,
              UE5DumpUI.ViewModels.LiveWalkerViewModel.TablePageCutText("E"), "E");
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyTableCutEntry,
@@ -233,7 +235,7 @@ public class AobMakerWordingTests
              UE5DumpUI.ViewModels.TeleportViewModel.TrainerRefusedNoReasonText(1, 9, "E"), "1", "9", "E");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(86, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(87, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]
