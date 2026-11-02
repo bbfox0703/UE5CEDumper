@@ -370,6 +370,9 @@ public sealed class FlyStatus
     /// <summary>Result of the last enable/disable (1 active / 0 off / negative),
     /// or -1 when the call carried no enable field.</summary>
     public int State { get; init; } = -1;
+    /// <summary>[FLY-REPORTS-WISH] The pawn's bActorEnableCollision as read now: 1 on, 0 off, -1 unknown (not read, or
+    /// an older DLL). <see cref="Noclip"/> is what was asked for; this is what happened.</summary>
+    public int Collision { get; init; } = -1;
 }
 
 /// <summary>Live state of the See-through occluders feature (Schlacht), returned

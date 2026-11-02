@@ -1326,6 +1326,54 @@ public class TeleportViewModelTests
     // ResetFly said "Fly OFF." unconditionally. Both would have gone on lying even after the
     // DLL started telling the truth. FlyStatus.State has carried the code all along.
 
+    // [FLY-REPORTS-WISH] "Fly ON (noclip)" was built from the card's own checkbox, and the DLL's `noclip` key is the
+    // request: a game whose pawn class has no SetActorEnableCollision, or a call the game thread never ran, left the
+    // pawn colliding under a card that said noclip. The DLL now reads bActorEnableCollision on the pawn.
+
+    [Fact]
+    public async Task Fly_noclip_with_collision_still_on_does_not_say_noclip()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.FlyNoclip = true;
+        fake.NextFlyStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, State = 1, Noclip = true, Collision = 1 };
+
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("(noclip)", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("collision still on", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("collision on", vm.FlyCurrentText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Fly_noclip_with_collision_off_says_noclip()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.FlyNoclip = true;
+        fake.NextFlyStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, State = 1, Noclip = true, Collision = 0 };
+
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+
+        Assert.Contains("(noclip)", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("collision off", vm.FlyCurrentText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Fern_And_Dunste_PublishTheObservedCollision()
+    {
+        var dunste = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Dunste.cpp"));
+        int gs = dunste.IndexOf("int32_t GetStatus(FlyStatus& out)", StringComparison.Ordinal);
+        Assert.True(dunste.IndexOf("\"bActorEnableCollision\"", gs, StringComparison.Ordinal) > gs);
+        var fern = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
+        int f = fern.IndexOf("auto flyStatusJson = ", StringComparison.Ordinal);
+        int end = fern.IndexOf("return data;", f, StringComparison.Ordinal);
+        int col = fern.IndexOf("data[\"collision\"]", f, StringComparison.Ordinal);
+        Assert.True(col > f && col < end, "the fly reply must carry the observed collision");
+    }
+
     [Fact]
     public async Task Fly_enable_that_the_DLL_REFUSED_is_not_reported_as_ON()
     {
