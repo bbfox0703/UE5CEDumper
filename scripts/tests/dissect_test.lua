@@ -1790,8 +1790,11 @@ do
   -- Untouched neighbours.
   local _, f = gti('FloatProperty', 24)
   eq(f, 4, 'D4b control: a non-delegate ignores the reported size as before')
-  local _, sp = gti('MulticastSparseDelegateProperty', 1)
-  eq(sp, 16, 'D4b: sparse is deliberately NOT re-sized here -- see the ⛔ note in TYPE_MAP')
+  -- [DISSECT-SPARSE-DELEGATE-WIDTH] An FSparseDelegate is one byte, bIsBound: the 16-byte pointer row overran
+  -- the fields after it. The CSX export already takes the engine's ElementSize, 1.
+  local spVt, sp = gti('MulticastSparseDelegateProperty', 1)
+  eq(spVt, vtByte, 'D4b: a sparse delegate row is its one bIsBound byte')
+  eq(sp, 1, 'D4b: ... one byte wide, not 16')
 end
 
 -- ============================================================
@@ -1941,7 +1944,7 @@ do
     { name = 'Mc_UE4',        typeName = 'MulticastDelegateProperty',       offset = 0x58, size = 16 },
     { name = 'Mc_UE4Checked', typeName = 'MulticastDelegateProperty',       offset = 0x68, size = 24 },
     { name = 'Mc_Odd',        typeName = 'MulticastInlineDelegateProperty', offset = 0x80, size = 20 },
-    -- CONTROL: the sparse row is the ⛔ KNOWN WRONG one in TYPE_MAP and is not moved here.
+    -- CONTROL: a sparse delegate has no detector pad, so it is not moved here.
     { name = 'Mc_Sparse',     typeName = 'MulticastSparseDelegateProperty', offset = 0x98, size = 1 },
   })
   local s = dissect.createFromClass(0xC1A55, 'MulticastPad')
@@ -1959,7 +1962,7 @@ do
   local sp = s.Element[5]
   eq(sp.Name, 'Mc_Sparse', 'VND584-02 control: the sparse row follows')
   eq(sp.Offset, 0x98, 'VND584-02 control: a sparse delegate is not moved')
-  eq(sp.Vartype, vtPointer, 'VND584-02 control: ... and keeps its TYPE_MAP type')
+  eq(sp.Vartype, vtByte, 'VND584-02 control: ... and is its one bIsBound byte [DISSECT-SPARSE-DELEGATE-WIDTH]')
 end
 
 -- ============================================================
