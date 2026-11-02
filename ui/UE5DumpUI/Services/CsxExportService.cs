@@ -876,9 +876,10 @@ public static class CsxExportService
 
         foreach (var elem in arrField.ArrayElements!)
         {
-            // Build descriptive name: prefer enum name, then short value, then bare index
+            // Build descriptive name: prefer enum name, then the value, then bare index. [CSX-LONG-ELEMENT-LABEL] A value
+            // past 20 characters keeps its start and says it was cut; it used to be dropped, leaving a bare "[2]".
             var label = !string.IsNullOrEmpty(elem.EnumName) ? elem.EnumName
-                : !string.IsNullOrEmpty(elem.Value) && elem.Value.Length <= 20 ? elem.Value
+                : !string.IsNullOrEmpty(elem.Value) ? ShortLabel(elem.Value)
                 : null;
             var name = label != null ? $"[{elem.Index}] {label}" : $"[{elem.Index}]";
 
@@ -892,6 +893,16 @@ public static class CsxExportService
         }
 
         return fields;
+    }
+
+    /// <summary>[CSX-LONG-ELEMENT-LABEL] An element label of at most 20 characters, cut with "…" past that, never between
+    /// the two halves of a surrogate pair.</summary>
+    private static string ShortLabel(string value)
+    {
+        const int max = 20;
+        if (value.Length <= max) return value;
+        int cut = char.IsHighSurrogate(value[max - 1]) ? max - 1 : max;
+        return value[..cut] + "…";
     }
 
     /// <summary>
