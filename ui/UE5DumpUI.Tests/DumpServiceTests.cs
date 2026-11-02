@@ -1809,10 +1809,16 @@ public class DumpServiceTests
         // name opening with a CJK character was dropped. They go through Utf8Helpers::IsPlausibleNameStart (unit-tested
         // in utf8_helpers_test); no raw first-byte test of a name may be left.
         var s = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Ubel.cpp"));
-        var raw = System.Text.RegularExpressions.Regex.Matches(s,
-            @"\w+\[0\]\)?\s*(<|>=)\s*0x(20|7F)\b");
-        Assert.True(raw.Count == 0, "raw first-byte name checks left: " + string.Join(" | ", raw.Select(m => m.Value)));
         Assert.Contains("IsPlausibleNameStart(", s);
+        // Review round 2: Wirbel::StructInner kept the same ASCII-only test, "mirroring" Ubel's probe, where a pin over
+        // Ubel.cpp alone could not see it. Every DLL source is held to it.
+        var src = Path.GetDirectoryName(NumericInputCoercionTests.RepoFile("dll/src/Ubel.cpp"))!;
+        var left = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(src, "*.*").Where(f => f.EndsWith(".cpp") || f.EndsWith(".h")))
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+                         File.ReadAllText(file), @"\w+\[0\]\)?\s*(<|>=)\s*0x(20|7F)\b"))
+                left.Add($"{Path.GetFileName(file)}: {m.Value}");
+        Assert.True(left.Count == 0, "raw first-byte name checks left: " + string.Join(" | ", left));
     }
 
     [Fact]
