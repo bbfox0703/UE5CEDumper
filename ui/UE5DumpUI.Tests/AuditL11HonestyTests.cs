@@ -947,6 +947,33 @@ public class AuditL11HonestyTests
     }
 
     [Fact]
+    public void NestedTrunc_TheSameCutInManyWalkedObjects_IsSaidOnce()
+    {
+        // Review round 1: the resolver walks each element of a struct array apart, so 128 FSlot elements each holding a
+        // cut Items array put "Items (...)" into the status line 128 times.
+        var nested = Enumerable.Range(0, 128).Select(_ => ClippedArray("Items")).ToArray();
+
+        var warn = LiveWalkerViewModel.BuildContainerLimitWarning(Array.Empty<LiveFieldValue>(), 128, nested: nested);
+
+        Assert.NotNull(warn);
+        Assert.Contains("Items (Array: 300 total, 128 loaded, nested, in 128 objects)", warn);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(warn!, "Items \\("));
+    }
+
+    [Fact]
+    public void NestedTrunc_ManyDifferentCuts_AreCappedAndCounted()
+    {
+        var nested = Enumerable.Range(0, 8).Select(i => ClippedArray($"A{i}")).ToArray();
+
+        var warn = LiveWalkerViewModel.BuildContainerLimitWarning(Array.Empty<LiveFieldValue>(), 128, nested: nested);
+
+        Assert.NotNull(warn);
+        Assert.Contains("A4 (Array", warn);
+        Assert.DoesNotContain("A5 (Array", warn);
+        Assert.Contains("and 3 more nested", warn);
+    }
+
+    [Fact]
     public void V8_ContainerTruncation_FixedCapStatusLine_DoesNotMentionTheSlider()
     {
         var line = ContainerTruncation.FixedCapStatusLine(64, 5000, "rows");
