@@ -51,6 +51,14 @@ public sealed class ForceFieldResult
 /// <c>find_stealth_meter</c>. Holding it at 0 is done via <c>force_field</c> with
 /// this <see cref="ClassName"/> + <see cref="FieldName"/>.
 /// </summary>
+/// <summary>[SOLIDE-RELATED-STOPS] find_stealth_meter's candidates and why its search of the player's objects
+/// stopped short (null from an older DLL, or when it did not stop).</summary>
+public sealed class StealthMeterResult
+{
+    public IReadOnlyList<StealthCandidate> Candidates { get; init; } = new List<StealthCandidate>();
+    public RelatedObjectsStops? Stops { get; init; }
+}
+
 public sealed class StealthCandidate
 {
     public string ClassName { get; init; } = "";

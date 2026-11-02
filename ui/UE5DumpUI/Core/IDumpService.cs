@@ -721,6 +721,11 @@ public interface IDumpService
     /// </summary>
     Task<IReadOnlyList<StealthCandidate>> FindStealthMeterAsync(int max = 8, CancellationToken ct = default);
 
+    /// <summary>[SOLIDE-RELATED-STOPS] <see cref="FindStealthMeterAsync"/> plus why the search of the player's objects
+    /// stopped short. The default serves fakes with a search that claims to have finished.</summary>
+    async Task<StealthMeterResult> FindStealthMeterDetailedAsync(int max = 8, CancellationToken ct = default)
+        => new StealthMeterResult { Candidates = await FindStealthMeterAsync(max, ct) };
+
     // === Teleport (Wirbel: marker save/recall + cursor teleport) ===
     // docs/teleport-spec.md §7. Model Code/Codes carry the DLL's Wirbel
     // result code (0 = OK, negatives mapped by TeleportCodes).

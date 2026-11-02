@@ -137,6 +137,11 @@ public static class PartialResultNotice
         return parts.Count == 0 ? "" : " ⚠ Not the whole graph: " + string.Join("; ", parts) + ".";
     }
 
+    /// <summary>[SOLIDE-RELATED-STOPS] Detect Stealth Meter's clause: the search scores the fields of the player's
+    /// pawn and the objects it owns, the Related Objects walk's list, so a meter past where that walk stopped is not
+    /// found. Empty when it finished, or when an older DLL did not say.</summary>
+    public static string StealthStopsClause(UE5DumpUI.Models.RelatedObjectsStops? s) => "";
+
     /// <summary>
     /// [W3-BATCH-METHOD] Cell value for a row whose analysis never RAN, so it cannot read as a real
     /// <c>0</c> ("analysed, nothing touched"). The full explanation goes in the status line

@@ -75,6 +75,11 @@ public class TeleportViewModelTests
         public override Task<IReadOnlyList<StealthCandidate>> FindStealthMeterAsync(int max = 8, CancellationToken ct = default)
         { FindStealthCalls++; return Task.FromResult(NextStealthCandidates); }
 
+        /// <summary>[SOLIDE-RELATED-STOPS] Why the search stopped short; null says it finished.</summary>
+        public RelatedObjectsStops? NextStealthStops { get; set; }
+        public override async Task<StealthMeterResult> FindStealthMeterDetailedAsync(int max = 8, CancellationToken ct = default)
+            => new StealthMeterResult { Candidates = await FindStealthMeterAsync(max, ct), Stops = NextStealthStops };
+
         // [A4-STEALTH-PRIME] Opt-in: null keeps the base stub's NotImplementedException, which every older test relied on.
         public IReadOnlyList<ForcedFieldInfo>? NextForcedFields { get; set; }
         public override Task<IReadOnlyList<ForcedFieldInfo>> GetForcedFieldsAsync(CancellationToken ct = default)
@@ -574,6 +579,67 @@ public class TeleportViewModelTests
         Assert.Equal(1, fake.FindStealthCalls);
         Assert.Contains("Visibility", vm.StealthFieldText);
         Assert.Equal("Ready", vm.StealthState);
+    }
+
+    // [SOLIDE-RELATED-STOPS] The search scores the pawn and the objects it owns, the Related Objects walk's list, which
+    // stops at 128 owned objects (and at a pointer budget and a deadline). A meter past that point was never found, and
+    // nothing said the search had not looked there.
+
+    private static RelatedObjectsStops OwnedCut => new() { OwnedCapHit = true, MaxOwned = 128 };
+
+    [Fact]
+    public async Task DetectStealthMeter_NoneFound_InAnUnfinishedSearch_SaysSo()
+    {
+        var fake = new FakeDumpService { NextStealthStops = OwnedCut };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+
+        Assert.Equal("Not found", vm.StealthState);
+        Assert.Contains("Not every object the player owns was searched", vm.StatusText);
+        Assert.Contains("128", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task DetectStealthMeter_Found_InAnUnfinishedSearch_SaysSo()
+    {
+        var fake = new FakeDumpService
+        {
+            NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "BP_Player_C", FieldName = "Visibility", Score = 9 } },
+            NextStealthStops = OwnedCut,
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+
+        Assert.Equal("Ready", vm.StealthState);
+        Assert.Contains("Not every object the player owns was searched", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task DetectStealthMeter_AFinishedSearch_SaysNothingMore()
+    {
+        var fake = new FakeDumpService { NextStealthStops = new RelatedObjectsStops { MaxOwned = 128 } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("Not every object", vm.StatusText);
+    }
+
+    [Fact]
+    public void Fern_And_Solide_CarryTheSearchsStops()
+    {
+        var solide = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Solide.cpp"));
+        Assert.Contains("Aura::GetRelatedObjects(pawn, 128, stats)", solide);
+        var fern = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
+        int h = fern.IndexOf("cmd == Renge::CMD_FIND_STEALTH_METER", StringComparison.Ordinal);
+        int stops = fern.IndexOf("data[\"stops\"]", h, StringComparison.Ordinal);
+        int end = fern.IndexOf("return Renge::MakeResponse", h, StringComparison.Ordinal);
+        Assert.True(h > 0 && stops > h && stops < end, "find_stealth_meter must carry the walk's stops");
     }
 
     [Fact]

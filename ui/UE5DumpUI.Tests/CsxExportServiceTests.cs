@@ -160,6 +160,9 @@ public class StubDumpService : IDumpService
     public virtual Task<int> ResetAllFieldsAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<IReadOnlyList<ForcedFieldInfo>> GetForcedFieldsAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<IReadOnlyList<StealthCandidate>> FindStealthMeterAsync(int max = 8, CancellationToken ct = default) => throw new NotImplementedException();
+    // As the interface's default: the candidates, a search that claims to have finished. [SOLIDE-RELATED-STOPS]
+    public virtual async Task<StealthMeterResult> FindStealthMeterDetailedAsync(int max = 8, CancellationToken ct = default)
+        => new StealthMeterResult { Candidates = await FindStealthMeterAsync(max, ct) };
     public virtual Task<DataTableWalkResult> WalkDataTableRowsAsync(string addr, int offset = 0, int limit = 64, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<TeleportPose> TeleportGetPoseAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<TeleportPose> TeleportSaveMarkerAsync(int slot, CancellationToken ct = default) => throw new NotImplementedException();

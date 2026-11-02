@@ -1785,6 +1785,24 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task FindStealthMeterDetailedAsync_ReadsTheSearchsStops()
+    {
+        // [SOLIDE-RELATED-STOPS] The same stops object get_related_objects carries.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["code"] = 0, ["candidates"] = new JsonArray(),
+            ["stops"] = new JsonObject { ["owned_cap_hit"] = true, ["max_owned"] = 128 },
+        });
+
+        var r = await ((UE5DumpUI.Core.IDumpService)CreateService()).FindStealthMeterDetailedAsync(
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.NotNull(r.Stops);
+        Assert.True(r.Stops!.OwnedCapHit);
+        Assert.Equal(128, r.Stops.MaxOwned);
+    }
+
+    [Fact]
     public void Ubel_NameGuards_GoThroughOneUtf8AwareCheck()
     {
         // [UBEL-ASCII-FIRSTCHAR] Thirteen guards in Ubel.cpp tested a name's first byte against printable ASCII, so a
