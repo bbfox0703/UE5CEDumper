@@ -329,17 +329,29 @@ public static class UsmapExportService
         var exported = new HashSet<string>(StringComparer.Ordinal);
         foreach (var c in classInfos)
             if (!string.IsNullOrEmpty(c.Name)) exported.Add(c.Name);
+        // [LEAD-USMAP-UDS-SHADOW] A reader finds a super BY NAME, and keeps one struct per name, case-insensitively
+        // (CUE4Parse: the last one wins). A super named like the struct itself, or shared by two structs, cannot be
+        // reached: UE 5 names every AnimBlueprint's constant-data struct alike, and a child AnimBP's derives from its
+        // parent's -- a by-name self-cycle on which CUE4Parse's super walk never ends.
+        var nameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var c in classInfos)
+            if (!string.IsNullOrEmpty(c.Name)) nameCounts[c.Name] = nameCounts.GetValueOrDefault(c.Name) + 1;
 
         w.Write((uint)classInfos.Count);
         foreach (var ci in classInfos)
         {
             w.Write(nameTable.IndexOf(ci.Name));            // int32: struct name index
 
-            // Super struct index: -1 if none
-            bool superReachable = !string.IsNullOrEmpty(ci.SuperName)
+            // Super struct index: -1 if none, and for a super no reader can reach by its name, which keeps the
+            // whole chain below exactly as for a super missing from the file.
+            bool superAmbiguous = !string.IsNullOrEmpty(ci.SuperName)
+                                  && (string.Equals(ci.SuperName, ci.Name, StringComparison.OrdinalIgnoreCase)
+                                      || nameCounts.GetValueOrDefault(ci.SuperName) > 1);
+            bool superReachable = !superAmbiguous
+                                  && !string.IsNullOrEmpty(ci.SuperName)
                                   && nameTable.Contains(ci.SuperName)
                                   && exported.Contains(ci.SuperName);
-            if (!string.IsNullOrEmpty(ci.SuperName) && nameTable.Contains(ci.SuperName))
+            if (!superAmbiguous && !string.IsNullOrEmpty(ci.SuperName) && nameTable.Contains(ci.SuperName))
                 w.Write(nameTable.IndexOf(ci.SuperName));
             else
                 w.Write(-1);                                // int32: super index (-1 = none)
