@@ -1585,9 +1585,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>The CE export status line's clause for the AOB fallback and the container-limit warning.</summary>
+    /// <summary>The CE export status line's clause for the AOB fallback and the container-limit warning. They are about
+    /// different things, so each is said (review round 2 of [LEAD-DT-EXPORT-64ROWS]: the AOB note used to replace the
+    /// limit warning, and a cut export then said nothing).</summary>
     internal static string ExportStatusExtra(string? aobFallbackWarn, string? limitWarn)
-        => aobFallbackWarn != null ? " " + aobFallbackWarn : (limitWarn != null ? " " + limitWarn : "");
+        => (aobFallbackWarn != null ? " " + aobFallbackWarn : "") + (limitWarn != null ? " " + limitWarn : "");
 
     /// <summary>A status clause after the line already shown, or alone when there is none.</summary>
     private static string BesideStatus(string? current, string clause)
