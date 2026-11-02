@@ -23,6 +23,18 @@ internal static class Program
         if (args.Length >= 4 && args[0] == "--inject-elevated")
             return RunElevatedInject(args[1], args[2], args[3]);
 
+        // [LEAD-SECOND-UI-CRASHLOG] Single instance, decided before Avalonia starts. Decided inside
+        // OnFrameworkInitializationCompleted, a second launch called Shutdown(1) there, the lifetime's StartCore then
+        // threw "the Dispatcher shut down", and the catch below wrote that to crash.log over the first instance's real
+        // one. The service, and the mutex it holds, go on to the app. (B42: the first instance's window is raised.)
+        var platform = new Services.WindowsPlatformService();
+        if (!platform.TryAcquireSingleInstance())
+        {
+            platform.ActivateExistingInstance();
+            return 1;
+        }
+        App.StartupPlatform = platform;
+
         // AOT publish gives gutted stack traces (no PDB lookup at runtime,
         // inlining opaque). A crash in the compositor thread would otherwise
         // leave the user with "the exe just closed" and no signal. This
