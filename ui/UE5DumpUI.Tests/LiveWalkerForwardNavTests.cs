@@ -1523,6 +1523,22 @@ public class LiveWalkerForwardNavTests
     }
 
     [Fact]
+    public async Task PushToCeStructureDissect_SaysANestedContainerWasCutAtTheArrayLimit()
+    {
+        var dump = NestedArrayStub();
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()),
+                                         bridge) { ArrayLimit = 2 };
+        vm.ApplyAobMakerProbe(true);
+        await vm.NavigateToAddressCommand.ExecuteAsync(Holder);
+
+        await vm.PushCsxToCeCommand.ExecuteAsync(null);
+
+        Assert.Single(bridge.AaScripts);
+        Assert.Contains("Slots (Array: 300 total, 2 loaded, nested)", vm.StatusText);
+    }
+
+    [Fact]
     public async Task Csx_HandsBackTheFieldsItWalked_SoTheCallerCanSayWhatWasCut()
     {
         var dump = NestedArrayStub();

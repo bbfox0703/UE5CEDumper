@@ -62,6 +62,8 @@ public static class CsxExportService
         // about how much of a string a user sees; 0 or less falls back to the default, as
         // CeXmlExportService.EmitStringLeaf does.
         int ceStringLength = Constants.DefaultCeStringLength,
+        // [CEXPORT-NESTED-TRUNC-NOTE] When given, filled with the fields of every struct and pointer target walked
+        // below `fields`.
         List<LiveFieldValue>? resolvedFieldsOut = null,
         CancellationToken ct = default)
     {
@@ -93,6 +95,12 @@ public static class CsxExportService
             foreach (var innerFields in resolvedStructs.Values)
                 await ResolveContainerPointerInstancesAsync(dump, innerFields, resolvedInstances, drilldownDepth, arrayLimit, visited, ct);
         }
+
+        // [CEXPORT-NESTED-TRUNC-NOTE] What was walked below the given fields, for the caller's limit warning: a
+        // container the Array Limit cut in there is part-built in the CSX too.
+        if (resolvedFieldsOut != null)
+            foreach (var walked in resolvedStructs.Values.Concat(resolvedInstances.Values))
+                resolvedFieldsOut.AddRange(walked);
 
         var sb = new StringBuilder();
         sb.AppendLine();

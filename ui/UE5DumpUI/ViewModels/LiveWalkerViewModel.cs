@@ -2276,36 +2276,41 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     /// <param name="elementsChosen">The fields are a container cut down to the elements the user selected
-    /// (<see cref="FilterContainerToElement"/>): fewer than the total by choice, so nothing is reported as cut.</param>
+    /// (<see cref="FilterContainerToElement"/>): fewer than the total by choice, so that container is not reported
+    /// as cut.</param>
+    /// <param name="nested">[CEXPORT-NESTED-TRUNC-NOTE] The fields of the structs and pointer targets the export walked
+    /// below <paramref name="fields"/>, whose containers the same Array Limit cut.</param>
     internal static string? BuildContainerLimitWarning(IEnumerable<LiveFieldValue> fields, int arrayLimit,
                                                        bool elementsChosen = false,
                                                        IEnumerable<LiveFieldValue>? nested = null)
     {
-        if (elementsChosen) return null;
         var truncated = new List<string>();
         var tablesCut = new List<string>();
-        foreach (var f in fields)
+        void Scan(LiveFieldValue f, string tag)
         {
             // [LEAD-DT-EXPORT-64ROWS] A table exports the rows its RowMap field carries: one fixed page of
             // WalkDataTableRowsAsync, not the Array Limit, so it is said apart from the slider's containers.
             if (f.DataTableRowData is { } rows && f.DataTableRowCount > rows.Count)
-                tablesCut.Add($"{f.Name} (DataTable: {f.DataTableRowCount:N0} rows, {rows.Count:N0} exported)");
+                tablesCut.Add($"{f.Name} (DataTable: {f.DataTableRowCount:N0} rows, {rows.Count:N0} exported{tag})");
             if (f.ArrayCount > arrayLimit)
             {
                 int loaded = f.ArrayElements?.Count ?? 0;
-                truncated.Add($"{f.Name} (Array: {f.ArrayCount} total, {loaded} loaded)");
+                truncated.Add($"{f.Name} (Array: {f.ArrayCount} total, {loaded} loaded{tag})");
             }
             if (f.MapCount > arrayLimit)
             {
                 int loaded = f.MapElements?.Count ?? 0;
-                truncated.Add($"{f.Name} (Map: {f.MapCount} total, {loaded} loaded)");
+                truncated.Add($"{f.Name} (Map: {f.MapCount} total, {loaded} loaded{tag})");
             }
             if (f.SetCount > arrayLimit)
             {
                 int loaded = f.SetElements?.Count ?? 0;
-                truncated.Add($"{f.Name} (Set: {f.SetCount} total, {loaded} loaded)");
+                truncated.Add($"{f.Name} (Set: {f.SetCount} total, {loaded} loaded{tag})");
             }
         }
+        if (!elementsChosen)
+            foreach (var f in fields) Scan(f, "");
+        foreach (var f in nested ?? Enumerable.Empty<LiveFieldValue>()) Scan(f, ", nested");
         var parts = new List<string>();
         if (truncated.Count > 0)
             parts.Add($"⚠ Container element limit ({arrayLimit}): {string.Join(", ", truncated)}");
@@ -4926,7 +4931,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                           "the clipboard refused the write");
                 return;
             }
-            var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit);
+            var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit,
+                nested: resolvedStructs.Values.Concat(resolvedInstances.Values).SelectMany(v => v));
             var aobFallbackWarn = (UseAobSymbol && !isGWorldRoot) ? "AOB skipped (no GWorld path)" : null;
             // Final indicator: objects (structs + pointer targets) walked + XML line count.
             int objCount = resolvedStructs.Count + resolvedInstances.Count;
@@ -5019,9 +5025,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ClearStatus();
             IsLoading = true;
             IsExporting = true;
+            var walkedBelow = new List<LiveFieldValue>();   // [CEXPORT-NESTED-TRUNC-NOTE]
             var csx = await CsxExportService.GenerateCsxAsync(
                 _dump, CsxStructName(), Fields, arrayLimit: ArrayLimit, drilldownDepth: CsxDrilldownDepth,
-                format: CsxFormat.Ce77Plus, ceStringLength: CeStringLength, ct: cts.Token);
+                format: CsxFormat.Ce77Plus, ceStringLength: CeStringLength, resolvedFieldsOut: walkedBelow,
+                ct: cts.Token);
             var push = CsxStructurePushGenerator.Generate(csx);
             var result = await _aobMaker.CreateAAScriptDetailedAsync(
                 CsxStructurePushGenerator.RecordPrefix + push.RootName, push.Script, autoActivate: true,
@@ -5035,7 +5043,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             else
             {
                 // The same truncation note Export CSX gives: a container clipped by the Array Limit is part-built.
-                var limitWarn = BuildContainerLimitWarning(Fields, ArrayLimit);
+                var limitWarn = BuildContainerLimitWarning(Fields, ArrayLimit, nested: walkedBelow);
                 StatusText = limitWarn != null ? string.Join(' ', text, limitWarn) : text;
             }
             _log.Info($"[AOBM-DISSECT-INJECT] structure push '{push.RootName}' ({push.Structures} structures, " +
@@ -5101,10 +5109,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsLoading = true;
             IsExporting = true;
             StatusText = CsxDrilldownDepth > 0 ? "Resolving struct + pointer fields..." : "Resolving struct fields...";
+            var walkedBelow = new List<LiveFieldValue>();   // [CEXPORT-NESTED-TRUNC-NOTE]
             var csx = await CsxExportService.GenerateCsxAsync(
                 _dump, structName, Fields, arrayLimit: ArrayLimit, drilldownDepth: CsxDrilldownDepth,
                 // [CSX-STRCHILD-BYTESIZE] the same String Len the CE XML exports use
-                format: format, ceStringLength: CeStringLength, ct: cts.Token);
+                format: format, ceStringLength: CeStringLength, resolvedFieldsOut: walkedBelow, ct: cts.Token);
 
             // Write to file (overwrite if exists — user already confirmed via dialog). No
             // token here on purpose: cancel aborts the slow resolve above; once we have the
@@ -5113,7 +5122,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
             // Surface a truncation note so a partial export (a container clipped by
             // ArrayLimit) doesn't silently read as complete — same note Copy CE XML shows.
-            var limitWarn = BuildContainerLimitWarning(Fields, ArrayLimit);
+            var limitWarn = BuildContainerLimitWarning(Fields, ArrayLimit, nested: walkedBelow);
             StatusText = limitWarn ?? "";
             var formatLabel = format == CsxFormat.Ce77Plus ? "CE 7.7+ Binary" : "Pre-CE 7.7";
             _log.Info($"CSX ({formatLabel}) exported to {filePath} for {CurrentClassName}"
@@ -5383,7 +5392,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                           "the clipboard refused the write");
                 return;
             }
-            var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit, elementsChosen);
+            var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit, elementsChosen,
+                nested: resolvedStructs.Values.Concat(resolvedInstances.Values).SelectMany(v => v));
             var aobFallbackWarn = (UseAobSymbol && !isGWorldRoot) ? "AOB skipped (no GWorld path)" : null;
             // Final indicator: objects (structs + pointer targets) walked + XML line count.
             int objCount = resolvedStructs.Count + resolvedInstances.Count;
