@@ -27,6 +27,24 @@ builds ≤696 in
 
 -----
 
+## 2026-11-03 (build 3674) — The .usmap writes an enum's real underlying type, signedness included `[USMAP-ENUM-SIGNEDNESS]` `[OPEN-CENSUS-2026-10-28]`
+
+The .usmap took an enum property's underlying integer type from its size alone, so the width was right but the sign
+could be wrong: a `: int8` enum came out as a byte, and a `: uint32` one as a signed int. Both canonical .usmap writers
+use the property's own underlying type.
+
+- **The DLL reads it.** `walk_class` (and `walk_class_batch`, and Dump All, which share its encoder) sends an enum
+  property's underlying type as `enum_underlying`. It is read only after the enum itself was read and checked, and only
+  when it names an integer type.
+- **The .usmap uses it** when its width agrees with the field's size. Otherwise (an older DLL, a read that did not
+  check out, a width that disagrees) it falls back to the size, as before.
+- **Checked live on 3674** (DumperTest Shipping, UE 5.4, `tools/verify/enum_underlying_pipe_check.py`): 7,696 classes
+  and structs, 3,558 enum fields. Every one carries a type whose width equals its size: 3,326 Byte, 221 Int, 7 UInt32,
+  4 Int8. The 11 UInt32 and Int8 fields are the ones the old guess got wrong. Their declarations in the engine source
+  agree: `EPanningMethod : int8`, `ENetObjectCountLimiterMode : uint32`.
+- Also checked live on 3673, recorded in the census rows: the Fly card's collision readout, Value Search refusing `inf`
+  but not a value left in a hidden box, and Detect Stealth Meter's found path.
+
 ## 2026-11-03 (build 3673) — Review round 2 of the census pass: all 34 findings fixed `[FLY-REPORTS-WISH]` `[LEAD-LW-BACK-CACHED-ELEMENTS]` `[LEAD-BOOKMARK-SAMECLASS-RECYCLE]` `[VALUESCAN-NONFINITE-TARGET]` `[LOG-RESUME-LIVE-ROLLED]` `[UE4-USTRUCT-GIVEUP-STATS]` `[LEAD-PROPSEARCH-TOPTIONAL-LEAVES]` `[CEXPORT-ENUMNAMES-NOTE]` `[LEAD-DT-EXPORT-64ROWS]` `[LEAD-SECOND-UI-CRASHLOG]` `[SOLIDE-RELATED-STOPS]` `[UBEL-ASCII-FIRSTCHAR]` `[D4B-DELEGATEPAD-2026-09-09]` `[OPEN-CENSUS-2026-10-28]`
 
 A second adversarial review, six reviewers over the census pass's later fixes and round 1's follow-ups, found 34 issues:
