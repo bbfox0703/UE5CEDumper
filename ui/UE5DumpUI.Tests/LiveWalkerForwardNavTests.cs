@@ -1635,6 +1635,33 @@ public class LiveWalkerForwardNavTests
     }
 
     [Fact]
+    public async Task ARefreshThatKeepsTheRows_CountsTheMatchesOnTheRowsShown()
+    {
+        // [LEAD-LW-INPLACE-SEARCHCOUNT] A refresh of the same object with the same layout copies the values onto the
+        // rows shown and keeps their type label. The match count came from the fresh rows and the highlights from the
+        // kept ones, so a guessed row whose label gained its "?" counted a match nothing showed.
+        const string Obj = "0x96000";
+        var (dump, vm, _) = OwnerWalker();
+        InstanceWalkResult Walk(string type) => new()
+        {
+            Address = Obj, Name = "Obj_0", ClassName = "BP_Obj_C", ClassAddr = "0xCD00",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "?0x10_int", TypeName = type, Offset = 0x10, Size = 4, IsGuessed = true, TypedValue = "7" },
+            },
+        };
+        dump.RegisterStruct(Obj, Walk("IntProperty"));
+        await vm.NavigateToAddressCommand.ExecuteAsync(Obj);
+        vm.SearchText = "Property?";
+        Assert.Equal(0, vm.SearchMatchCount);
+
+        dump.RegisterStruct(Obj, Walk("IntProperty?"));
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(vm.Fields.Count(f => f.IsSearchMatch), vm.SearchMatchCount);   // was 1 counted, 0 highlighted
+    }
+
+    [Fact]
     public async Task FindRefs_OnAnObject_StillNamesTheObject()
     {
         var (dump, vm, _) = OwnerWalker();
