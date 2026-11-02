@@ -545,6 +545,48 @@ public class ClassPivotViewModelTests : IDisposable
             });
     }
 
+    // ---- [CLASSPIVOT-DT-STARTUP-LOG] the DataTable source restored at start-up, before any connection ----
+
+    /// <summary>What the pipe does before Connect: every call throws.</summary>
+    private sealed class DisconnectedDump : StubDumpService
+    {
+        public int FindCalls;
+        public override Task<FindInstancesResult> FindInstancesAsync(
+            string className, bool exactMatch = false, int limit = 500, bool newestFirst = false, string nameFilter = "", IReadOnlyList<string>? excludeClasses = null, CancellationToken ct = default)
+        {
+            FindCalls++;
+            throw new InvalidOperationException("Pipe not connected");
+        }
+    }
+
+    [Fact]
+    public async Task DataTableSource_RestoredBeforeConnect_AsksNothing_AndShowsNoError()
+    {
+        // The window restores the last source from the UI options before any game is connected. Choosing "DataTable"
+        // then listed DataTables over a pipe that was not there, and wrote the failure to the log and the error line.
+        var dump = new DisconnectedDump();
+        var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, dump);
+
+        vm.SelectedSource = "DataTable";
+        if (vm.PendingLoad is { } load) await load;
+
+        Assert.Equal(0, dump.FindCalls);
+        Assert.Null(vm.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task DataTableSource_AfterADisconnect_AsksNothing()
+    {
+        var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, new DisconnectedDump());
+        vm.SetEngineState(new EngineState());
+        vm.ClearOnDisconnect();
+
+        vm.SelectedSource = "DataTable";
+        if (vm.PendingLoad is { } load) await load;
+
+        Assert.Null(vm.ErrorMessage);
+    }
+
     // ---- [W1-DT-TRUNC] the DataTable Run keeps the truncation notice its load printed ----
 
     private sealed class TruncatedDtDumpService : StubDumpService
