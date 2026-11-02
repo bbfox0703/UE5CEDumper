@@ -3636,14 +3636,16 @@ static int ProbeUFieldNextFProperty() {
 // found through Children as the FProperty probe does. DetectUPropertyMode only guesses it from the FName width, and a
 // STATS build (Development / DebugGame) carries a TStatId after OuterPrivate that moves it 8 further on. Each sampled
 // property's chain is followed at every candidate, the guess first, and the first that steps >= 2 UField UObjects in a
-// row wins (DynOff::PickUFieldNextOffset). A TStatId is null or points at stat data, never at a UField, and the Outer a
-// case-preserving 0x28 holds climbs to a Class within one hop. -1 = no property chained; the caller keeps the guess.
+// row wins (DynOff::PickUFieldNextOffset). A TStatId is null or points at stat data, never at a UField. OuterPrivate is
+// NOT safe to try: an Inner property's Outer chain (the Inner, its container property, the Function declaring that) is
+// two UField hops, and a case-preserving 0x28 is a candidate -- so only offsets past the measured OuterPrivate are, as
+// UField::Next always follows it. -1 = no property chained; the caller keeps the guess.
 static int ProbeUFieldNextUProperty() {
     const int guess = DynOff::UFIELD_NEXT;
     int offs[8];
     int n = 0;
     for (int c : { guess, 0x28, 0x30, 0x38, 0x40, 0x48 }) {
-        bool dup = false;
+        bool dup = c <= DynOff::UOBJECT_OUTER;   // at or before OuterPrivate: never Next
         for (int i = 0; i < n; ++i) dup = dup || offs[i] == c;
         if (!dup) offs[n++] = c;
     }
