@@ -24,6 +24,7 @@
 #include "Aura.h"
 #include "Ubel.h"
 #include "Stark.h"   // IsGameThreadResponsive — skip doomed POV invokes when paused
+#include "Utf8Helpers.h"   // IsPlausibleNameStart — Ubel's name guard
 
 #include <algorithm>
 #include <cctype>
@@ -736,9 +737,8 @@ uintptr_t StructInner(const FieldInfo& fi) {
             continue;
         if (!Grimoire::IsUserspacePointer(cand)) continue;
         if (!Ubel::IsScriptStructObject(cand)) continue;
-        std::string sn = Ubel::GetName(cand);
-        if (!sn.empty() && static_cast<unsigned char>(sn[0]) >= 0x20
-            && static_cast<unsigned char>(sn[0]) < 0x7F)
+        // [UBEL-ASCII-FIRSTCHAR] Ubel's own name guard, so a struct named in CJK is not refused here either.
+        if (Utf8Helpers::IsPlausibleNameStart(Ubel::GetName(cand)))
             return cand;
     }
     return 0;
