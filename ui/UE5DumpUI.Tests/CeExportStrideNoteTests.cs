@@ -92,6 +92,81 @@ public class CeExportStrideNoteTests
         Assert.Contains($"<!-- {Note} -->", platform.LastClipboard);
     }
 
+    // ── [CEXPORT-ENUMNAMES-NOTE] When UEnum::Names was never located, every enum field arrives with no entries and the
+    // exported dropdowns come out empty. The walk now says so, and an export holding an enum field says why. ──
+
+    private static StubDumpService EnumDump(bool namesFailed, string typeName = "EnumProperty")
+    {
+        var dump = new StubDumpService();
+        dump.RegisterStruct("0x1000", new InstanceWalkResult
+        {
+            Address = "0x1000", Name = "Obj_0", ClassName = "BP_Obj_C", ClassAddr = "0xC000",
+            EnumNamesFailed = namesFailed,
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Mode", TypeName = typeName, Offset = 0x10, Size = 1, EnumAddr = "0xE000" },
+            },
+        });
+        return dump;
+    }
+
+    [Fact]
+    public async Task LiveWalker_CopyCeXml_OfAnEnumField_SaysTheNamesAreUnavailable()
+    {
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new LiveWalkerViewModel(EnumDump(namesFailed: true), new MockLoggingService(), platform);
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.Contains("<!-- Enum member names", platform.LastClipboard);
+        Assert.Contains("Enum member names", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task LiveWalker_CopyCeXml_SaysNothingAboutEnums_WhenTheNamesWereRead_OrNoFieldIsAnEnum()
+    {
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new LiveWalkerViewModel(EnumDump(namesFailed: false), new MockLoggingService(), platform);
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+        Assert.DoesNotContain("Enum member names", platform.LastClipboard);
+
+        var platform2 = new MockPlatformService(Path.GetTempPath());
+        var dump2 = new StubDumpService();
+        dump2.RegisterStruct("0x1000", new InstanceWalkResult
+        {
+            Address = "0x1000", Name = "Obj_0", ClassName = "BP_Obj_C", ClassAddr = "0xC000", EnumNamesFailed = true,
+            Fields = new List<LiveFieldValue> { new() { Name = "HP", TypeName = "FloatProperty", Offset = 0x10, Size = 4 } },
+        });
+        var vm2 = new LiveWalkerViewModel(dump2, new MockLoggingService(), platform2);
+        await vm2.NavigateToAddressCommand.ExecuteAsync("0x1000");
+        await vm2.ExportCeXmlCommand.ExecuteAsync(null);
+        Assert.DoesNotContain("Enum member names", platform2.LastClipboard);
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CopyCeXml_OfAnEnumField_SaysTheNamesAreUnavailable()
+    {
+        var dump = new StubDumpService();
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Name = "Obj_0", ClassName = "Obj", EnumNamesFailed = true,
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Mode", TypeName = "ByteProperty", Offset = 0x28, Size = 1, EnumAddr = "0xE000" },
+            },
+        });
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new InstanceFinderViewModel(dump, new MockLoggingService(), platform);
+        vm.SelectedInstance = new InstanceResult { Address = "0x10000000", Name = "Obj_0", ClassName = "Obj" };
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.Contains("<!-- Enum member names", platform.LastClipboard);
+        Assert.Contains("Enum member names", vm.StatusText);
+    }
+
     [Fact]
     public async Task InstanceFinder_CopyCeXml_CarriesTheNote()
     {

@@ -1750,6 +1750,37 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task WalkInstanceAsync_ParsesEnumNamesFailed()
+    {
+        // [CEXPORT-ENUMNAMES-NOTE] Additive: UEnum::Names was never located, so the enum fields carry no entries.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["addr"] = "0x100", ["enum_names_failed"] = true, ["fields"] = new JsonArray(),
+        });
+
+        var r = await CreateService().WalkInstanceAsync("0x100", ct: TestContext.Current.CancellationToken);
+
+        Assert.True(r.EnumNamesFailed);
+    }
+
+    [Fact]
+    public void Fern_WalkReply_SaysWhenEnumNamesWereNeverFound()
+    {
+        // Both walk_instance and walk_instance_batch go through the one encoder, lean or not.
+        var s = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
+        int start = s.IndexOf("auto EncodeInstanceWalkToJson = ", StringComparison.Ordinal);
+        Assert.True(start > 0);
+        int end = s.IndexOf("return data;", start, StringComparison.Ordinal);
+        int flag = s.IndexOf("data[\"enum_names_failed\"] = true;", start, StringComparison.Ordinal);
+        int latch = s.IndexOf("DynOff::bUEnumNamesFailed.load(", start, StringComparison.Ordinal);
+        int leanGate = s.IndexOf("if (!lean) {", start, StringComparison.Ordinal);
+        int leanGateEnd = s.IndexOf("}", leanGate, StringComparison.Ordinal);
+        Assert.True(flag > start && flag < end, "the walk encoder must carry the latch");
+        Assert.True(latch > start && latch < flag);
+        Assert.False(flag > leanGate && flag < leanGateEnd, "lean replies too: the CE export walks lean");
+    }
+
+    [Fact]
     public async Task WalkInstanceAsync_ParsesEnumArrayElements()
     {
         _pipe.SetHandler(_ => new JsonObject
