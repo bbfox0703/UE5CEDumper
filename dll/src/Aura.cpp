@@ -5216,8 +5216,10 @@ PropertySearchResult SearchProperties(
                 match.fieldAddr      = lf.leafFieldAddr;  // leaf FProperty* (xref key)
                 match.boolFieldMask  = lf.boolMask;
                 match.isNested       = true;
-                // No preview source — previewClassAddr stays 0 so Phase 2 skips
-                // these rows (the swap makes classAddr 0 → no instance found).
+                // No preview source: previewClassAddr 0 keeps this row from asking for its class's
+                // instance. That alone does not keep it from a preview -- a direct match of the same class
+                // puts the class in the map -- so ResolvePropertyPreviews also skips isNested rows
+                // ([A4-CDOSCOPE-NESTED-PREVIEW]).
                 match.previewClassAddr      = 0;
                 match.previewPropertiesSize = 0;
 
