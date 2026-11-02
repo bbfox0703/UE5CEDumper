@@ -2304,39 +2304,47 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                                                        bool elementsChosen = false,
                                                        IEnumerable<LiveFieldValue>? nested = null)
     {
+        // Each entry is held open -- "Name (Kind: …" -- so the nested ones can be closed with how often they were met.
         var truncated = new List<string>();
         var tablesCut = new List<string>();
-        void Scan(LiveFieldValue f, string tag)
+        var nestedTruncated = new List<string>();
+        var nestedTablesCut = new List<string>();
+        void Scan(LiveFieldValue f, List<string> cut, List<string> tables)
         {
             // [LEAD-DT-EXPORT-64ROWS] A table exports the rows its RowMap field carries: one fixed page of
             // WalkDataTableRowsAsync, not the Array Limit, so it is said apart from the slider's containers.
             if (f.DataTableRowData is { } rows && f.DataTableRowCount > rows.Count)
-                tablesCut.Add($"{f.Name} (DataTable: {f.DataTableRowCount:N0} rows, {rows.Count:N0} exported{tag})");
+                tables.Add($"{f.Name} (DataTable: {f.DataTableRowCount:N0} rows, {rows.Count:N0} exported");
             if (f.ArrayCount > arrayLimit)
-            {
-                int loaded = f.ArrayElements?.Count ?? 0;
-                truncated.Add($"{f.Name} (Array: {f.ArrayCount} total, {loaded} loaded{tag})");
-            }
+                cut.Add($"{f.Name} (Array: {f.ArrayCount} total, {f.ArrayElements?.Count ?? 0} loaded");
             if (f.MapCount > arrayLimit)
-            {
-                int loaded = f.MapElements?.Count ?? 0;
-                truncated.Add($"{f.Name} (Map: {f.MapCount} total, {loaded} loaded{tag})");
-            }
+                cut.Add($"{f.Name} (Map: {f.MapCount} total, {f.MapElements?.Count ?? 0} loaded");
             if (f.SetCount > arrayLimit)
-            {
-                int loaded = f.SetElements?.Count ?? 0;
-                truncated.Add($"{f.Name} (Set: {f.SetCount} total, {loaded} loaded{tag})");
-            }
+                cut.Add($"{f.Name} (Set: {f.SetCount} total, {f.SetElements?.Count ?? 0} loaded");
         }
         if (!elementsChosen)
-            foreach (var f in fields) Scan(f, "");
-        foreach (var f in nested ?? Enumerable.Empty<LiveFieldValue>()) Scan(f, ", nested");
+            foreach (var f in fields) Scan(f, truncated, tablesCut);
+        foreach (var f in nested ?? Enumerable.Empty<LiveFieldValue>()) Scan(f, nestedTruncated, nestedTablesCut);
+        truncated = truncated.Select(e => e + ")").Concat(NestedEntries(nestedTruncated)).ToList();
+        tablesCut = tablesCut.Select(e => e + ")").Concat(NestedEntries(nestedTablesCut)).ToList();
         var parts = new List<string>();
         if (truncated.Count > 0)
             parts.Add($"⚠ Container element limit ({arrayLimit}): {string.Join(", ", truncated)}");
         if (tablesCut.Count > 0)
             parts.Add($"⚠ Only the first page of a table's rows is read: {string.Join(", ", tablesCut)}");
         return parts.Count == 0 ? null : string.Join(" ", parts);
+    }
+
+    /// <summary>[CEXPORT-NESTED-TRUNC-NOTE] Review round 1: the resolver walks each element of a struct array apart, so one
+    /// cut is met once per walked object. Each is said once with that count, and past a few the rest are counted.</summary>
+    private static IEnumerable<string> NestedEntries(List<string> open)
+    {
+        const int shown = 5;
+        var grouped = open.GroupBy(e => e).Select(g => g.Count() > 1
+            ? $"{g.Key}, nested, in {g.Count()} objects)"
+            : $"{g.Key}, nested)").ToList();
+        foreach (var e in grouped.Take(shown)) yield return e;
+        if (grouped.Count > shown) yield return $"and {grouped.Count - shown} more nested";
     }
 
     [RelayCommand]
