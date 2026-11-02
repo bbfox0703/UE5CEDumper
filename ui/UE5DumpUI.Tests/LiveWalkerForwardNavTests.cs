@@ -946,6 +946,36 @@ public class LiveWalkerForwardNavTests
         Assert.Contains(name, vm.StatusText);
     }
 
+    // Review round 2: a pointer array rewritten in place -- same allocation, same count, slot [0] now another object --
+    // kept its old target, though the re-check had just read the new one; drilling [0] then walked the old, perhaps
+    // freed, object.
+    [Fact]
+    public async Task Back_IntoAPointerArrayRewrittenInPlace_ShowsTheNewTarget()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        var gear = OwnerStub.GearField();
+        dump.RegisterStruct(Owner, new InstanceWalkResult
+        {
+            Address = Owner, Name = "Owner_0", ClassName = "BP_Owner_C", ClassAddr = OwnerCls,
+            Fields = new List<LiveFieldValue>
+            {
+                new()
+                {
+                    Name = gear.Name, TypeName = gear.TypeName, Offset = gear.Offset, Size = gear.Size,
+                    ArrayInnerType = "ObjectProperty", ArrayCount = 1, ArrayElemSize = 8, ArrayDataAddr = "0x50000",
+                    ArrayElements = new() { new() { Index = 0, PtrAddress = Other, PtrName = "Other_0" } },
+                },
+            },
+        });
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
+
+        Assert.Equal(Other, vm.Fields.Single().PtrAddress);
+    }
+
     [Fact]
     public async Task Back_IntoAContainerWhoseOwnerNoLongerHasIt_DropsTheRows_AndSaysWhy()
     {
