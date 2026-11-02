@@ -33,10 +33,16 @@ public static class ValueTargetCheck
         return null;
     }
 
-    /// <summary>The refusal for a scan target as its scan type sends it.</summary>
+    /// <summary>The refusal for a scan target as its scan type sends it: Value only when the type takes one (a
+    /// prev-value type compares with the previous round), Value2 only for Between. A box the type hides is never sent,
+    /// so a value left in it must not block the scan, nor be named to a user who cannot see it.</summary>
     public static string? NonFiniteTargetError(ValueScanDataType dataType, ValueScanType scanType, string? value,
                                                string? value2)
-        => NonFiniteError(dataType, value, value2);
+    {
+        bool prevValue = scanType is ValueScanType.Changed or ValueScanType.Unchanged
+                                  or ValueScanType.Increased or ValueScanType.Decreased;
+        return NonFiniteError(dataType, prevValue ? null : value, scanType == ValueScanType.Between ? value2 : null);
+    }
 
     private static bool IsNumeric(ValueScanDataType dt) => dt is
         ValueScanDataType.Int8 or ValueScanDataType.Int16 or ValueScanDataType.Int32 or ValueScanDataType.Int64 or

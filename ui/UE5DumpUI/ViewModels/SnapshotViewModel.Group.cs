@@ -202,7 +202,7 @@ public partial class SnapshotViewModel
         // [VALUESCAN-NONFINITE-TARGET] As Value Search refuses it live, so the two cannot answer differently.
         foreach (var g in GroupInputs)
         {
-            if (Services.ValueTargetCheck.NonFiniteError(g.DataType, g.Value, g.Value2) is { } nonFinite)
+            if (Services.ValueTargetCheck.NonFiniteTargetError(g.DataType, g.ScanType, g.Value, g.Value2) is { } nonFinite)
             {
                 SetError(nonFinite);
                 return;
