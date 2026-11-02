@@ -816,19 +816,44 @@ public class LiveWalkerForwardNavTests
     }
 
     [Fact]
-    public void ContainerMoved_ReadsEachKindsOwnAddressAndCount()
+    public void ContainerChanged_ReadsEachKindsOwnAddressAndCount()
     {
         LiveFieldValue Map(string data, int n) => new() { MapKeyType = "IntProperty", MapDataAddr = data, MapCount = n };
         LiveFieldValue Set(string data, int n) => new() { SetElemType = "IntProperty", SetDataAddr = data, SetCount = n };
         LiveFieldValue Arr(string data, int n) => new() { ArrayInnerType = "IntProperty", ArrayDataAddr = data, ArrayCount = n };
 
-        Assert.False(LiveWalkerViewModel.ContainerMoved(Map("0x60000", 1), Map("0x60000", 1)));
-        Assert.True(LiveWalkerViewModel.ContainerMoved(Map("0x60000", 1), Map("0x68000", 1)));
-        Assert.True(LiveWalkerViewModel.ContainerMoved(Map("0x60000", 1), Map("0x60000", 2)));
-        Assert.False(LiveWalkerViewModel.ContainerMoved(Set("0x70000", 3), Set("0x70000", 3)));
-        Assert.True(LiveWalkerViewModel.ContainerMoved(Set("0x70000", 3), Set("0x78000", 3)));
-        Assert.True(LiveWalkerViewModel.ContainerMoved(Arr("0x50000", 1), Arr("0x50000", 0)));
-        Assert.False(LiveWalkerViewModel.ContainerMoved(Arr("0x50000", 1), Arr("0x50000", 1)));
+        Assert.False(LiveWalkerViewModel.ContainerChanged(Map("0x60000", 1), Map("0x60000", 1)));
+        Assert.True(LiveWalkerViewModel.ContainerChanged(Map("0x60000", 1), Map("0x68000", 1)));
+        Assert.True(LiveWalkerViewModel.ContainerChanged(Map("0x60000", 1), Map("0x60000", 2)));
+        Assert.False(LiveWalkerViewModel.ContainerChanged(Set("0x70000", 3), Set("0x70000", 3)));
+        Assert.True(LiveWalkerViewModel.ContainerChanged(Set("0x70000", 3), Set("0x78000", 3)));
+        Assert.True(LiveWalkerViewModel.ContainerChanged(Arr("0x50000", 1), Arr("0x50000", 0)));
+        Assert.False(LiveWalkerViewModel.ContainerChanged(Arr("0x50000", 1), Arr("0x50000", 1)));
+    }
+
+    [Fact]
+    public void ContainerChanged_SeesAPointerSlotRepointedInPlace_ButNotAScalarThatChanged()
+    {
+        LiveFieldValue Map(string valuePtr) => new()
+        {
+            MapKeyType = "IntProperty", MapDataAddr = "0x60000", MapCount = 1,
+            MapElements = new() { new() { Index = 0, Key = "7", ValuePtrAddress = valuePtr } },
+        };
+        LiveFieldValue Set(string keyPtr) => new()
+        {
+            SetElemType = "ObjectProperty", SetDataAddr = "0x70000", SetCount = 1,
+            SetElements = new() { new() { Index = 0, KeyPtrAddress = keyPtr } },
+        };
+        LiveFieldValue Floats(string v) => new()
+        {
+            ArrayInnerType = "FloatProperty", ArrayDataAddr = "0x50000", ArrayCount = 1,
+            ArrayElements = new() { new() { Index = 0, Value = v } },
+        };
+
+        Assert.True(LiveWalkerViewModel.ContainerChanged(Map("0x20000"), Map("0x30000")));
+        Assert.False(LiveWalkerViewModel.ContainerChanged(Map("0x20000"), Map("0x20000")));
+        Assert.True(LiveWalkerViewModel.ContainerChanged(Set("0x20000"), Set("0x30000")));
+        Assert.False(LiveWalkerViewModel.ContainerChanged(Floats("1.5"), Floats("2.5")));   // display, not an address
     }
 
     // Review round 2: the re-check ran inside the navigation, so Back / Forward / a crumb jump stayed disabled for the

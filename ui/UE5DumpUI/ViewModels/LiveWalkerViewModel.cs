@@ -1424,7 +1424,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 && string.Equals(f.Name, held.Name, StringComparison.Ordinal)
                 && string.Equals(f.TypeName, held.TypeName, StringComparison.Ordinal));
             // A gone owner and a missing field are renders too: the shared render drops the rows and says why.
-            if (GoneObjectStatus(owner) is null && fresh != null && !ContainerMoved(held, fresh)) return;
+            if (GoneObjectStatus(owner) is null && fresh != null && !ContainerChanged(held, fresh)) return;
             _log.Info($"NAV re-entered '{held.Name}': its owner or container changed since it was read — rendering the new reading");
             await ApplyOwnerReadingAsync(bc, owner, SelectedField?.Name, SelectedField?.Offset ?? int.MinValue,
                                          () => !ReferenceEquals(CurrentCrumb, bc), timeoutCts.Token);
@@ -1566,17 +1566,42 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private static string BesideStatus(string? current, string clause)
         => string.IsNullOrEmpty(current) ? clause : current + " — " + clause;
 
-    /// <summary>[LEAD-LW-BACK-CACHED-ELEMENTS] Did a container move or change size between two readings of its row?</summary>
-    internal static bool ContainerMoved(LiveFieldValue held, LiveFieldValue fresh)
+    /// <summary>[LEAD-LW-BACK-CACHED-ELEMENTS] Did a container change between two readings of its row: moved, resized,
+    /// or -- review round 2 -- a pointer element now aiming elsewhere, which a slot rewritten in place does without
+    /// either? Compared over the elements both readings hold; a scalar value that changed is not a change here, as a
+    /// live value changes every frame and a held view of it is display, not an address.</summary>
+    internal static bool ContainerChanged(LiveFieldValue held, LiveFieldValue fresh)
     {
         static bool Differ(string a, string b) => ParseHexAddr(a) != ParseHexAddr(b);
         if (!string.IsNullOrEmpty(held.ArrayInnerType))
-            return Differ(held.ArrayDataAddr, fresh.ArrayDataAddr) || held.ArrayCount != fresh.ArrayCount;
+        {
+            if (Differ(held.ArrayDataAddr, fresh.ArrayDataAddr) || held.ArrayCount != fresh.ArrayCount) return true;
+            var now = fresh.ArrayElements?.ToDictionary(e => e.Index, e => e.PtrAddress);
+            return now != null && held.ArrayElements != null && held.ArrayElements.Any(e =>
+                now.TryGetValue(e.Index, out var p) && Differ(e.PtrAddress, p));
+        }
         if (!string.IsNullOrEmpty(held.MapKeyType))
-            return Differ(held.MapDataAddr, fresh.MapDataAddr) || held.MapCount != fresh.MapCount;
+        {
+            if (Differ(held.MapDataAddr, fresh.MapDataAddr) || held.MapCount != fresh.MapCount) return true;
+            return PointerSlotsDiffer(held.MapElements, fresh.MapElements, includeValue: true);
+        }
         if (!string.IsNullOrEmpty(held.SetElemType))
-            return Differ(held.SetDataAddr, fresh.SetDataAddr) || held.SetCount != fresh.SetCount;
+        {
+            if (Differ(held.SetDataAddr, fresh.SetDataAddr) || held.SetCount != fresh.SetCount) return true;
+            return PointerSlotsDiffer(held.SetElements, fresh.SetElements, includeValue: false);
+        }
         return false;
+    }
+
+    /// <summary>A map or set slot both readings hold whose key (or value) pointer now aims elsewhere.</summary>
+    private static bool PointerSlotsDiffer(List<ContainerElementValue>? held, List<ContainerElementValue>? fresh,
+                                           bool includeValue)
+    {
+        if (held == null || fresh == null) return false;
+        var now = fresh.GroupBy(e => e.Index).ToDictionary(g => g.Key, g => g.First());
+        return held.Any(e => now.TryGetValue(e.Index, out var f)
+            && (ParseHexAddr(e.KeyPtrAddress) != ParseHexAddr(f.KeyPtrAddress)
+                || (includeValue && ParseHexAddr(e.ValuePtrAddress) != ParseHexAddr(f.ValuePtrAddress))));
     }
 
     /// <summary>
