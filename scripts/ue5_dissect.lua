@@ -181,7 +181,8 @@ local TYPE_MAP = {
     InterfaceProperty     = { vt = vtPointer, size = 8 },
     WeakObjectProperty    = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
 
-    -- Delegates: ONE 8-byte row each, whatever `size` says (addFieldsToStruct gives them no
+    -- Delegates (unicast and multicast; the sparse one below is a single byte): ONE 8-byte
+    -- row each, whatever `size` says (addFieldsToStruct gives them no
     -- Bytesize). A DelegateProperty row is its bound object's FWeakObjectPtr, so 8 hex bytes
     -- like Weak; a multicast row is its InvocationList.Data pointer. UE 5.3+ puts an 8-byte
     -- access detector in front of a delegate payload in a CHECKED build (Debug/Development/
