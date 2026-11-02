@@ -615,6 +615,62 @@ public class BookmarkTests
         Assert.Contains("loaded", vm.StatusText);
     }
 
+    // Review round 2: a struct leaf has no name of its own -- an inline struct's is its crumb label, which the saved
+    // name always equals, and a DataTable row's is the DLL's guess over the row's bytes, which a changed row fails.
+    // Its identity is the object holding it: the nearest object crumb above, whose label is that object's walked name.
+
+    private static (LiveWalkerViewModel vm, BookmarkSlot slot) InlineStructBookmark(string ownerNowAtAddress)
+    {
+        var dump = new StubDumpService();
+        dump.RegisterStruct("0xE0E0", new InstanceWalkResult
+        {
+            Name = ownerNowAtAddress, ClassName = "BP_Enemy_C", Address = "0xE0E0", Fields = new(),
+        });
+        dump.RegisterStruct("0xE100", new InstanceWalkResult
+        {
+            Name = "Stats", ClassName = "FStats", Address = "0xE100",
+            Fields = new() { new() { Name = "Health", Offset = 0, TypeName = "FloatProperty", TypedValue = "50" } },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        var slot = vm.BookmarkSlots[0];
+        slot.SavedClassName = "FStats";
+        slot.SavedObjectName = "Stats";   // the crumb label, as a save of an inline struct records it
+        slot.SavedAddress = "0xE100";
+        slot.SavedBreadcrumbs = new List<BreadcrumbItem>
+        {
+            new() { Address = "0xE0E0", Label = "BP_Enemy_C_3", FieldName = "0xE0E0", IsPointerDeref = true },
+            new() { Address = "0xE100", Label = "Stats", FieldName = "Stats", FieldOffset = 0x100, ClassAddr = "0xF5" },
+        };
+        slot.SavedSelectedFields = new() { new BookmarkFieldRef("Health", 0) };
+        slot.IsOccupied = true;
+        return (vm, slot);
+    }
+
+    [Fact]
+    public async Task LoadBookmark_InlineStructWhoseOwnerAddressHoldsAnotherInstance_ReportsStale()
+    {
+        var (vm, slot) = InlineStructBookmark(ownerNowAtAddress: "BP_Enemy_C_7");
+        var restoreRaised = false;
+        vm.RestoreBookmarkView += (_, _, _) => restoreRaised = true;
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.False(restoreRaised);
+        Assert.Contains("stale", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LoadBookmark_InlineStructWhoseOwnerIsStillThere_Restores()
+    {
+        var (vm, slot) = InlineStructBookmark(ownerNowAtAddress: "BP_Enemy_C_3");
+        var restoreRaised = false;
+        vm.RestoreBookmarkView += (_, _, _) => restoreRaised = true;
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.True(restoreRaised);
+    }
+
     [Fact]
     public async Task LoadBookmark_GameEngineRoot_ReresolvesViaEngineAnchor()
     {
@@ -950,6 +1006,28 @@ public class BookmarkTests
         });
         slot.SavedAddress = "0x1000";
         slot.SavedClassName = "FItemRow";
+    }
+
+    [Fact]
+    public async Task BookmarkFile_OnARowWhoseBytesNameItDifferently_IsNotCalledStale()
+    {
+        // Review round 2: a row's walked "name" is the DLL's guess over the row's bytes (the struct name, or a name
+        // read where a UObject keeps one), so a row whose leading bytes changed read "stale" while its table was the
+        // same. The row is checked through the table that holds it.
+        var dump = new DataTableDump();
+        dump.RegisterStruct("0xDA7A", new InstanceWalkResult
+        {
+            Address = "0xDA7A", Name = "DT_Items", ClassName = "DataTable", Fields = new(),
+        });
+        var vm = DataTableVm(dump);
+        var slot = vm.BookmarkSlots[0];
+        FillRowBelowDataTableSlot(slot, dump);
+        slot.SavedObjectName = "SomeNameTheRowBytesGaveThen";   // the walk now names it FItemRow
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.Equal("FItemRow", vm.CurrentClassName);
+        Assert.Contains("loaded", vm.StatusText);
     }
 
     [Fact]
