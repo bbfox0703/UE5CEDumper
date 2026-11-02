@@ -791,6 +791,55 @@ public class UsmapExportServiceTests
         Assert.Equal("EGameMode", p.EnumName);
     }
 
+    // ---- [USMAP-ENUM-SIGNEDNESS] the DLL's UnderlyingProp type carries the signedness the size cannot ----
+    //
+    // Both canonical writers write the UnderlyingProp's own type. From the size alone a `: int8` enum came out
+    // ByteProperty and a `: uint32` one IntProperty.
+
+    [Theory]
+    [InlineData("Int8Property", 1, (byte)23)]
+    [InlineData("UInt32Property", 4, (byte)19)]
+    [InlineData("Int16Property", 2, (byte)22)]
+    [InlineData("UInt64Property", 8, (byte)18)]
+    [InlineData("ByteProperty", 1, (byte)0)]
+    public void BuildUsmap_EnumProperty_WritesTheUnderlyingTypeTheDllRead(string underlyingType, int size, byte underlying)
+    {
+        var structs = new List<ClassInfoModel>
+        {
+            new()
+            {
+                Name = "FSpace",
+                Fields = [ new FieldInfoModel { Name = "Space", TypeName = "EnumProperty", EnumName = "EGameMode", EnumUnderlyingType = underlyingType, Offset = 0, Size = size } ],
+            },
+        };
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap(CreateTestEnums(), structs));
+
+        Assert.Equal(underlying, Assert.Single(Assert.Single(f.Structs).Props).Underlying);
+    }
+
+    [Theory]
+    [InlineData("Int64Property", 1, (byte)0)]   // its width disagrees with the size: the size wins
+    [InlineData("FloatProperty", 4, (byte)2)]   // no enum is a float: the size wins
+    [InlineData("Garbage", 2, (byte)20)]
+    public void BuildUsmap_EnumProperty_FallsBackToTheSizeWhenTheUnderlyingTypeDisagrees(string underlyingType, int size, byte underlying)
+    {
+        // The width is what a consumer deserializes, and the size is measured on every field; a type name read from
+        // one pointer that disagrees with it is the one to distrust.
+        var structs = new List<ClassInfoModel>
+        {
+            new()
+            {
+                Name = "FSpace",
+                Fields = [ new FieldInfoModel { Name = "Space", TypeName = "EnumProperty", EnumName = "EGameMode", EnumUnderlyingType = underlyingType, Offset = 0, Size = size } ],
+            },
+        };
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap(CreateTestEnums(), structs));
+
+        Assert.Equal(underlying, Assert.Single(Assert.Single(f.Structs).Props).Underlying);
+    }
+
     [Fact]
     public void BuildUsmap_ByteEnum_IsWrittenAsTheCanonicalEnumShape()
     {

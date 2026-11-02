@@ -3500,6 +3500,93 @@ int main() {
         DynOff::bUseFProperty = savedFPropCE;
     }
 
+    // -- ENUMUNDERLYING-2026-11-03 -- an EnumProperty's UnderlyingProp type reaches FieldInfo, gated ---------------
+    //
+    // ⛔ POOL-FAKING (own pool, after CONTAINERENUM). [USMAP-ENUM-SIGNEDNESS] The .usmap took an enum's underlying type
+    // from its SIZE alone, so a `: int8` enum was written unsigned and a `: uint32` one signed. Both canonical writers
+    // write the UnderlyingProp's own type. It sits one pointer before the Enum slot, and is read only when that Enum
+    // slot validated (the family is right there) and only when it names an integer property.
+    {
+        blk("ENUMUNDERLYING - WalkClassEx publishes an EnumProperty's underlying integer type, and refuses a bad read");
+
+        static uint8_t euEntry[12][0x40] = {};
+        const char* euNames[12] = { "", "EnumProperty", "Int8Property", "UInt32Property", "StructProperty", "Signed",
+                                    "Wide", "Wrong", "NoEnum", "ESigned", "Enum", "" };
+        static uintptr_t euChunk[13] = {};
+        for (int i = 1; i <= 10; ++i) {
+            memcpy(euEntry[i] + 0x10, euNames[i], strlen(euNames[i]) + 1);
+            euChunk[i] = reinterpret_cast<uintptr_t>(euEntry[i]);
+        }
+        static uintptr_t euChunks[2] = { reinterpret_cast<uintptr_t>(euChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(euChunks), 0x10);
+
+        const bool savedFPropEU = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t euFC[5][0x20] = {};
+        auto fclass = [&](int nameIdx) { put32(euFC[nameIdx], DynOff::FFIELDCLASS_NAME, nameIdx); return A(euFC[nameIdx]); };
+
+        // One UEnum, of class Enum.
+        static uint8_t euEnum[0x40] = {}, euEnumCls[0x40] = {};
+        put32(euEnum, Grimoire::OFF_UOBJECT_NAME, 9);
+        put32(euEnumCls, Grimoire::OFF_UOBJECT_NAME, 10);
+        putP(euEnum, Grimoire::OFF_UOBJECT_CLASS, A(euEnumCls));
+
+        // The UnderlyingProps: two integer properties and a StructProperty, which no enum can have.
+        static uint8_t euI8[0x100] = {}, euU32[0x100] = {}, euStruct[0x100] = {};
+        putP(euI8, DynOff::FFIELD_CLASS, fclass(2));
+        putP(euU32, DynOff::FFIELD_CLASS, fclass(3));
+        putP(euStruct, DynOff::FFIELD_CLASS, fclass(4));
+
+        // Four EnumProperties, chained through FFIELD_NEXT.
+        static uint8_t euP[4][0x100] = {};
+        auto prop = [&](int i, int nameIdx, int32_t off, int32_t size, uintptr_t enumObj, uintptr_t under, uint8_t* next) {
+            putP(euP[i], DynOff::FFIELD_CLASS, fclass(1));
+            put32(euP[i], DynOff::FFIELD_NAME, nameIdx);
+            put32(euP[i], DynOff::FPROPERTY_OFFSET, off);
+            put32(euP[i], DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(euP[i], DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(euP[i], DynOff::FENUMPROP_ENUM, enumObj);
+            putP(euP[i], DynOff::FENUMPROP_ENUM - 8, under);
+            putP(euP[i], DynOff::FFIELD_NEXT, reinterpret_cast<uintptr_t>(next));
+        };
+        prop(0, 5, 0x40, 1, A(euEnum), A(euI8),     euP[1]);   // Signed: an int8 enum
+        prop(1, 6, 0x44, 4, A(euEnum), A(euU32),    euP[2]);   // Wide:   a uint32 enum
+        prop(2, 7, 0x48, 1, A(euEnum), A(euStruct), euP[3]);   // Wrong:  the slot names no integer property
+        prop(3, 8, 0x4C, 1, 0,         A(euI8),     nullptr);  // NoEnum: the Enum slot did not validate
+
+        static uint8_t euCls[0x100] = {};
+        put32(euCls, DynOff::USTRUCT_PROPSSIZE, 0x50);
+        putP(euCls, DynOff::USTRUCT_CHILDPROPS, A(euP[0]));
+
+        const auto& euInfo = Ubel::WalkClassEx(A(euCls));
+        auto find = [&](const char* n) -> const FieldInfo* {
+            for (const auto& f : euInfo.Fields) if (f.Name == n) return &f;
+            return nullptr;
+        };
+        const auto* sg = find("Signed");
+        const auto* wd = find("Wide");
+        const auto* wr = find("Wrong");
+        const auto* ne = find("NoEnum");
+        check("ENUMUNDERLYING control: the fake class produced its four EnumProperties, the first three with their enum",
+              sg && wd && wr && ne && sg->enumName == "ESigned" && wd->enumName == "ESigned" && wr->enumName == "ESigned",
+              std::to_string(euInfo.Fields.size()).c_str());
+        check("ENUMUNDERLYING ⭐: an int8 enum publishes Int8Property, the signedness its size cannot say",
+              sg && sg->enumUnderlyingType == "Int8Property", sg ? sg->enumUnderlyingType.c_str() : "(no field)");
+        check("ENUMUNDERLYING ⭐: a uint32 enum publishes UInt32Property",
+              wd && wd->enumUnderlyingType == "UInt32Property", wd ? wd->enumUnderlyingType.c_str() : "(no field)");
+        check("ENUMUNDERLYING: a slot naming no integer property publishes nothing",
+              wr && wr->enumUnderlyingType.empty(), wr ? wr->enumUnderlyingType.c_str() : "(no field)");
+        check("ENUMUNDERLYING: with no valid Enum slot the underlying slot is not trusted either",
+              ne && ne->enumName.empty() && ne->enumUnderlyingType.empty(),
+              ne ? ne->enumUnderlyingType.c_str() : "(no field)");
+
+        DynOff::bUseFProperty = savedFPropEU;
+    }
+
     // -- METACLASS-2026-09-27 -- a ClassProperty's MetaClass reaches FieldInfo, validated ---------------------------
     //
     // ⛔ POOL-FAKING (own pool, after CONTAINERENUM). [SDK-METACLASS] walk_class published a ClassProperty's

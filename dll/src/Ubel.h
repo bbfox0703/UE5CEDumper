@@ -59,6 +59,9 @@ struct FieldInfo {
     std::string elemType;        // SetProperty -> element FProperty type name
     std::string elemStructType;  // SetProperty element struct name (if StructProperty)
     std::string enumName;        // EnumProperty/ByteProperty -> UEnum name
+    // [USMAP-ENUM-SIGNEDNESS] An EnumProperty's UnderlyingProp type (e.g. Int8Property): the signedness its size
+    // cannot say. Empty when the Enum slot did not validate or the slot names no integer property.
+    std::string enumUnderlyingType;
     // [A4-USMAP-CONTAINER-ENUM] A container inner's UEnum: a TEnumAsByte inner's FBYTEPROP_ENUM, or an EnumProperty
     // inner's FENUMPROP_ENUM. Each its OWN field -- enumName above is the field's own enum, never an inner's.
     std::string innerEnumName;   // ArrayProperty / OptionalProperty inner

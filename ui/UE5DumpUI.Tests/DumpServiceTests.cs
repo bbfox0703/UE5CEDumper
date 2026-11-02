@@ -1127,6 +1127,26 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task WalkClassAsync_CarriesTheEnumUnderlyingType()
+    {
+        // [USMAP-ENUM-SIGNEDNESS] enum_underlying is a new, additive wire key.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true,
+            ["class"] = new JsonObject { ["name"] = "C", ["fields"] = new JsonArray
+            {
+                new JsonObject { ["name"] = "Space", ["type"] = "EnumProperty", ["enum_name"] = "ESpace", ["enum_underlying"] = "Int8Property" },
+                new JsonObject { ["name"] = "Old", ["type"] = "EnumProperty", ["enum_name"] = "EOld" },
+            } },
+        });
+
+        var model = await CreateService().WalkClassAsync("0x1", TestContext.Current.CancellationToken);
+
+        Assert.Equal("Int8Property", model.Fields[0].EnumUnderlyingType);
+        Assert.Equal("", model.Fields[1].EnumUnderlyingType);   // an older DLL sends none
+    }
+
+    [Fact]
     public async Task WalkClassAsync_CarriesEachContainerObjClass()
     {
         // [SDK-CONTAINER-OBJCLASS] key_obj_class / value_obj_class / elem_obj_class are new, additive wire keys.
