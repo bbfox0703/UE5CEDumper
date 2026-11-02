@@ -1969,7 +1969,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             var found = await _dump.FindStealthMeterDetailedAsync();
             var cands = found.Candidates;
             // [SOLIDE-RELATED-STOPS] Said after whichever line below: a meter past where the search stopped is missed.
-            var stopped = UE5DumpUI.Core.PartialResultNotice.StealthStopsClause(found.Stops);
+            var stopped = Helpers.StealthText.StopsClause(found.Stops);
             // [EXPOFF-ROUND3-PAUSED] While a hold is armed, the held meter is what Reset and the experimental teardown
             // release, so Detect only reads: overwritten, they released the newly found field or none while Solide
             // went on forcing the meter.

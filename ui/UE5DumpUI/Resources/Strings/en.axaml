@@ -2008,6 +2008,8 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.LiveWalker.NoRowAddress">⚠ {0}: nothing done — no address was read for this row, and none is worked out from its offset.</sys:String>
     <sys:String x:Key="str.TP.FlyNoclipNotApplied">noclip asked, collision still on</sys:String>
     <sys:String x:Key="str.TP.FlyCollisionNotRestored">noclip off, collision still off</sys:String>
+    <!-- [SOLIDE-RELATED-STOPS] Detect Stealth Meter whose search of the player's objects stopped short. {0} = the causes. -->
+    <sys:String x:Key="str.TP.StealthStopsLead"> ⚠ Not every object the player owns was searched, so a meter may have been missed: {0}.</sys:String>
     <sys:String x:Key="str.TP.FlyCollisionOn">, collision on</sys:String>
     <sys:String x:Key="str.TP.FlyCollisionOff">, collision off</sys:String>
     <sys:String x:Key="str.ValueSearch.NonFiniteTarget">⚠ "{0}" is not a finite number: a scan target must be one.</sys:String>

@@ -182,6 +182,11 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.Helpers.FlyText.KeyCollisionNotRestored, UE5DumpUI.Helpers.FlyText.ModeWord(false, 0));
         Same(UE5DumpUI.Helpers.FlyText.KeyCollisionOn, UE5DumpUI.Helpers.FlyText.CollisionClause(1));
         Same(UE5DumpUI.Helpers.FlyText.KeyCollisionOff, UE5DumpUI.Helpers.FlyText.CollisionClause(0));
+        // [SOLIDE-RELATED-STOPS] Detect Stealth Meter whose search stopped short
+        Same(UE5DumpUI.Helpers.StealthText.KeyStopsLead,
+             UE5DumpUI.Helpers.StealthText.StopsClause(new UE5DumpUI.Models.RelatedObjectsStops { Cancelled = true }),
+             UE5DumpUI.Core.PartialResultNotice.RelatedStopCauses(
+                 new UE5DumpUI.Models.RelatedObjectsStops { Cancelled = true })[0]);
         Same(ValueTargetCheck.KeyNonFinite,
              ValueTargetCheck.NonFiniteError(UE5DumpUI.Models.ValueScanDataType.Float, "1e400")!, "1e400");
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyTablePageCut,
@@ -244,7 +249,7 @@ public class AobMakerWordingTests
              "A.B");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(92, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(93, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]
