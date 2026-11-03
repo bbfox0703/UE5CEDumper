@@ -108,7 +108,8 @@ public static class DebugCameraScriptGenerator
             // [DBGCAM-QUEUEDON-UNDO-TEXT] The reason not to tick again is only that the toggle is already queued: what a
             // second one does when it drains depends on the engine (DebugCameraText says why).
             // [INVOKE-NONSTATIC-ON-CDO] A queued toggle on the CheatManager's class default object will run there and do
-            // nothing; the DLL (contract 7) says so in cmdOutFlags.
+            // nothing; the DLL (contract 7) says so in cmdOutFlags when this tick queued it (a re-tick answered by the
+            // toggle already queued sends nothing, and carries no bit).
             int qbit = CeMailboxLayout.InvOutNonStaticOnTemplate;
             Line(sb, $"  local _tplWarn = (readInteger(mb + {CeMailboxLayout.OffOutFlags}) or 0) % {2 * qbit} >= {qbit}");
             Line(sb, $"  showMessage('[DebugCamera] {label} queued -- the game thread is busy; the toggle will run " +

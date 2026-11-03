@@ -5,8 +5,8 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// Locks the Debug Camera memory-record AA Script shape: a STATEFUL toggle
-/// (tick = setDebugCamera(1), untick = setDebugCamera(0)), both blocks loading
-/// the embedded helper. The defining difference from BakedScriptGenerator is
+/// (tick = camera ON, untick = camera OFF), both blocks writing
+/// CMD_SET_DEBUG_CAMERA to the mailbox themselves, no helper. The defining difference from BakedScriptGenerator is
 /// that [DISABLE] is NOT a nop here — it actively turns the camera off.
 /// </summary>
 public class DebugCameraScriptGeneratorTests

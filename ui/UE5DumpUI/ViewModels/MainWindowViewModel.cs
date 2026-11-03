@@ -2129,10 +2129,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
         };
 
-        // Console -> RequestDebugCameraCeScript builds the stateful
-        // setDebugCamera [ENABLE]/[DISABLE] memory-record script and ships it
-        // to AOBMaker (a CE AA-script record) or the clipboard. Self-contained:
-        // no class/func resolution needed — the helper resolves the export.
+        // Console -> RequestDebugCameraCeScript builds the stateful Debug Camera
+        // [ENABLE]/[DISABLE] memory-record script and ships it to AOBMaker (a CE
+        // AA-script record) or the clipboard. Self-contained: no class/func
+        // resolution and no helper -- the record writes CMD_SET_DEBUG_CAMERA to the
+        // DLL's mailbox itself.
         Console.RequestDebugCameraCeScript += async () =>
         {
             try

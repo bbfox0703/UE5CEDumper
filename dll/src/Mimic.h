@@ -283,7 +283,8 @@ enum ListInstancesFlag : uint32_t {
 };
 
 // cmdOutFlags bits CMD_INVOKE (and CMD_INVOKE_BY_NAME, which ends in it) publishes (contract 7+), and
-// CMD_SET_DEBUG_CAMERA when its toggle targets the CheatManager's class default object (ran there, or queued to).
+// CMD_SET_DEBUG_CAMERA when the toggle IT sent targets the CheatManager's class default object (ran there, or queued
+// to). A re-send answered by a toggle already in flight or queued sends nothing, and carries no bit.
 // [INVOKE-NONSTATIC-ON-CDO] Never 0x1: a contract 3-6 DLL can leave LI_OUT_TRUNCATED behind after a LIST_INSTANCES,
 // and it never writes 0x2. The dispatcher clears cmdOutFlags before every command, so the bit is this command's.
 enum InvokeOutFlag : uint32_t {

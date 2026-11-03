@@ -623,7 +623,8 @@ if not invokeUFunction or _invokeOutdated then
   --- @return string|nil err   Error message on failure (nil on success)
   --- @return string|nil warn  'template' when the DLL (contract 7+) reports that the function is not static and
   ---                          the object is a class default object or another template, where it may do
-  ---                          nothing; set whether or not the call succeeded. nil otherwise, and always nil
+  ---                          nothing; set once the call reached dispatch, whether or not it then succeeded.
+  ---                          nil otherwise, and always nil
   ---                          from an older DLL. [INVOKE-NONSTATIC-ON-CDO]
   function invokeUFunction(className, funcName, parmsSize, params)
     -- Input validation BEFORE the busy check so bad args from a

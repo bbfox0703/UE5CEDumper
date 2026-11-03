@@ -27,6 +27,19 @@ builds ≤696 in
 
 -----
 
+## 2026-11-03 (build 3678) — The Console sends one command at a time `[CONSOLE-ROWRUN-SELECTED]` `[RIG-PIPE-DOUBLE-CONNECT]`
+
+- **No Console run is sent while another is still running.** A row's Run button or a history replay used to send a
+  second command while the first was still waiting on a busy game thread. A command that times out stays queued and
+  still runs, so the second one could run it twice. Now the Console says "⏳ … was not sent" and sends nothing.
+- **Checked live on DumperTest58 Development, build 3678, with its game thread suspended:** Run Selected on
+  ToggleDebugCamera, then the row's Run a second later, said it was not sent. The first answered -5 (still queued)
+  after the 5 s timeout, Recent invocations held one entry, and once the thread resumed the camera was ON: one toggle,
+  not two.
+- **Tools:** a pipe rig that reuses its client after its handle was closed now reopens it instead of reading the
+  dead handle, and ten more rigs stopped opening the pipe twice.
+- Tests: C# 7,311 total, 0 failed, 1 skipped; 37 gates. AOT UI 61,620,224 bytes.
+
 ## 2026-11-03 (build 3677) — A Console row's Run button runs its own row `[CONSOLE-ROWRUN-SELECTED]` `[RIG-PIPE-DOUBLE-CONNECT]`
 
 - **A Console row's Run button runs that row.** It used to run the row that was *selected*, and clicking the button

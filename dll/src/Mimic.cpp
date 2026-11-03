@@ -1118,8 +1118,8 @@ static void HandleSetDebugCamera() {
     int32_t state = (req == 2)
         ? UE5_GetDebugCameraState()
         : UE5_SetDebugCamera(req != 0 ? 1 : 0);
-    // [INVOKE-NONSTATIC-ON-CDO] The toggle ran on the CheatManager's class default object (contract 7). A query fires
-    // nothing, so it never reads the previous call's answer.
+    // [INVOKE-NONSTATIC-ON-CDO] The toggle this call sent targets the CheatManager's class default object (contract 7).
+    // A query fires nothing, so it never reads the previous call's answer.
     if (req != 2 && FrierenInvoke::DebugCameraFiredOnTemplate())
         g_invokeMailbox.cmdOutFlags |= INV_OUT_NONSTATIC_ON_TEMPLATE;
     if (state == -1) {

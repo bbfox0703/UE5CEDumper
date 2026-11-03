@@ -218,7 +218,7 @@ The runtime mailbox-protocol shim for **AA Script (Baked)** invocations generate
 
 | Function | Description |
 |----------|-------------|
-| `invokeUFunction(className, funcName, parmsSize, params)` | Marshal a `CMD_INVOKE_BY_NAME` mailbox request to the DLL: find an object of the class (a live one of it or of a subclass, else its own default object; a name no class has is matched as part of a class name) → find UFunction → write baked params → ProcessEvent → return ok/err, and `warn` = `'template'` when the DLL (contract 7 or later) reports that the function is not static and the object was a class default object or another template, whether or not the call succeeded |
+| `invokeUFunction(className, funcName, parmsSize, params)` | Marshal a `CMD_INVOKE_BY_NAME` mailbox request to the DLL: find an object of the class (a live one of it or of a subclass, else its own default object; a name no class has is matched as part of a class name) → find UFunction → write baked params → ProcessEvent → return ok/err, and `warn` = `'template'` when the DLL (contract 7 or later) reports that the function is not static and the object was a class default object or another template, set once the call reached dispatch whether or not it then succeeded |
 | `readUFunctionReturn(offset, valueType)` | Decode a single scalar from the params buffer. `int32` (the default) and `int16` are **signed** — a UFunction returning `-1` reads as `-1`, not `4294967295`; `uint32`/`dword` and `uint16`/`word` are the unsigned spellings, plus `float` / `double` / `bool` / `byte` / `uint64`/`qword`. Used by Verify Return Value mode |
 
 ### How it lands in your .CT
