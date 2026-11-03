@@ -3580,9 +3580,11 @@ public class InvokeScriptTests
         // Review of 83615671: the guard's arguments and its place are pinned, not just the call's name.
         var last = Body(wirbel, "void SaveLastImpl() {");
         int guard = last.IndexOf("if (!StoresUndoPoint(readOk, m.ParentRelative)) {", StringComparison.Ordinal);
+        int exit = guard >= 0 ? last.IndexOf("return;", guard, StringComparison.Ordinal) : -1;
         int store = last.IndexOf("s_lastMarker = m;", StringComparison.Ordinal);
         Assert.True(guard >= 0, "SaveLastImpl must ask StoresUndoPoint with the read's own result and flag");
-        Assert.True(store > guard, "the guard must come before the slot is written");
+        // Review 2: asking is not refusing here either -- the guard must leave before the slot is written.
+        Assert.True(exit > guard && store > exit, "the guard must return before the slot is written");
 
         // TP facing direction: the start pose is read WITH its flag and refused before the undo point; a parent-relative
         // landing re-read is reported as an unknown landing, never as numbers.

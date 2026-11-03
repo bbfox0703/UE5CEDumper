@@ -1028,7 +1028,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private bool _lastValid;
 
     /// <summary>Human summary of the last auto-saved pose, e.g. "(12.0, 3.0,
-    /// 80.0)  World1", or a placeholder before the first teleport.</summary>
+    /// 80.0)  World1", or a placeholder until an undo point is stored (a jump whose
+    /// position was not world coordinates stores none).</summary>
     [ObservableProperty] private string _lastSummary = LastEmptySummaryText;
 
     /// <summary>Recall-last is live only when connected, idle, and a pose has
