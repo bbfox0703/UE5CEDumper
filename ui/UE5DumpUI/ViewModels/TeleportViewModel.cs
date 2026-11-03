@@ -1029,7 +1029,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     /// <summary>Human summary of the last auto-saved pose, e.g. "(12.0, 3.0,
     /// 80.0)  World1", or a placeholder before the first teleport.</summary>
-    [ObservableProperty] private string _lastSummary = "(saved automatically before each teleport)";
+    [ObservableProperty] private string _lastSummary = LastEmptySummaryText;
 
     /// <summary>Recall-last is live only when connected, idle, and a pose has
     /// actually been auto-saved.</summary>
@@ -1635,8 +1635,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             var r = await _dump.TeleportRecallLastAsync();
             if (r.Code == TeleportCodes.EmptyMarker)
             {
-                StatusText = "No last position yet — recall/force/BugItGo/cursor " +
-                             "auto-saves it before each jump.";
+                StatusText = LastEmptyText;
                 return;
             }
             if (r.Code != TeleportCodes.Ok)
@@ -5740,7 +5739,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                     LastValid = m.Valid;
                     LastSummary = m.Valid
                         ? MarkerSummary(m.X, m.Y, m.Z, m.Map, m.ParentRelative)
-                        : "(saved automatically before each teleport)";
+                        : LastEmptySummaryText;
                     continue;
                 }
                 if (m.Slot < 0 || m.Slot >= Markers.Count) continue;
@@ -5762,7 +5761,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         // Raw doubles kept alongside the formatted display strings: the coordinate
         // library's per-row distance needs numbers, and this poll is already running.
-        _liveX = p.X; _liveY = p.Y; _liveZ = p.Z; _hasLivePose = true;
+        // [TELEPORT-RECALL-PARENTREL] A parent-relative read is not a world position: no distance is measured from it.
+        _liveX = p.X; _liveY = p.Y; _liveZ = p.Z; _hasLivePose = !p.ParentRelative;
 
         PoseX = p.X.ToString("0.000", CultureInfo.InvariantCulture);
         PoseY = p.Y.ToString("0.000", CultureInfo.InvariantCulture);
