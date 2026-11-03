@@ -27,6 +27,43 @@ builds ≤696 in
 
 -----
 
+## 2026-11-03 (build 3681) — The coordinate library measures no distance from a parent-relative pose; the empty undo slot's texts `[TELEPORT-RECALL-PARENTREL]`
+
+- **The library's Dist column** no longer measures from a position that is not world coordinates: on a
+  parent-relative read it shows "—".
+- **An empty Last Position** reads "(none yet — auto-saved just before a jump)", and Recall last there says the slot
+  is saved before a jump unless that position could not be read in world coordinates. Both used to say every jump
+  saves it.
+- **Checked live on DumperTest Shipping, build 3681:** a fresh launch showed the new placeholder; with the pawn
+  attached and its world read failing, the Dist column showed "—" (0 and 1,432 when healthy); a jump in that state
+  left the undo slot empty before, after and after the game resumed.
+- Tests: C# 7,332 total, 0 failed, 1 skipped; 37 gates. AOT UI 61,632,512 bytes.
+
+## 2026-11-03 (build 3680) — Recall, Force and TP facing refuse a position that is not world coordinates; the undo slot keeps the previous one `[TELEPORT-RECALL-PARENTREL]`
+
+When the pawn rides a vehicle or mount and its world position cannot be read, the dumper falls back to its position
+relative to that parent (the ⚠ parent-relative chip). Those numbers are not world coordinates, and teleporting to
+them sends the pawn somewhere unrelated, often under the map.
+
+- **Recall and Force refuse a marker saved from such a read.** Force overrides only the "saved on another map"
+  check, which can be wrong; nothing makes relative numbers world coordinates. Nothing moves, and the marker save
+  already says Recall and Force will refuse it.
+- **TP facing direction refuses to step from such a read**: there is no world position to step from.
+- **Recall last never returns to such a read.** The undo slot keeps its previous position instead (the
+  maintainer's option B); the jump itself still runs.
+- **Fill from current pos, Save current pos and Update from current** refuse such a read: the coordinate boxes and a
+  library entry cannot carry the flag, and they are sent on as world coordinates.
+- **CE:** the Recall marker and TP facing records name the refusal; a record generated earlier shows "failed (code
+  -16)".
+- **Checked live on DumperTest Shipping, build 3680:**
+  - **DLL** (`recall_parentrel_check.py`, 9/9): Recall, Force and TP facing answered -16 and the undo slot did not
+    change; a jump made while the position read was parent-relative left the undo slot at its previous world
+    position.
+  - **UI:** each refusal showed its sentence; the library stayed at 5 entries; the Last Position row did not change.
+  - **CE:** the Recall marker and TP facing records showed their refusals.
+- Tests: dll_core_test 1,413 checks and dll_helpers_test 3,732, 0 failures; C# 7,330 total, 0 failed, 1 skipped;
+  37 gates. AOT UI 61,630,976 bytes.
+
 ## 2026-11-03 (no build change) — The publish build's two test-target warnings `[BUILD-WARN-C4456-C4819]`
 
 - `dll_helpers_test`: C4456, an inner `s` in the Lager window test hid the outer one; renamed.
