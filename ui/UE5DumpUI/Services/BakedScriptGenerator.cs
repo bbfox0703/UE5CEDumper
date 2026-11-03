@@ -336,9 +336,18 @@ public static class BakedScriptGenerator
         Line(sb, verifyReturn
             ? "-- Invoke (verify mode -- prints decoded return value on success)"
             : "-- Invoke (silent on success -- only prints/showMessage on error)");
+        // [INVOKE-NONSTATIC-ON-CDO] The helper's third return: the DLL (contract 7+) says the call ran a function that is
+        // not static on a class default object or another template. An older embedded helper returns two values, so
+        // `warn` is nil there and the record behaves as it did.
         Line(sb,
-            $"local ok, err = invokeUFunction('{EscapeLua(className)}', " +
+            $"local ok, err, warn = invokeUFunction('{EscapeLua(className)}', " +
             $"'{EscapeLua(funcName)}', {parmsSize}, PARAMS)");
+        Line(sb, "if ok and warn then");
+        Line(sb, $"  print('[Invoke] WARNING: {EscapeLua(className)}::{EscapeLua(funcName)} ran on a class default " +
+                 "object or another template, not a live object -- a function that is not static may have done nothing.')");
+        Line(sb, "end");
+        Line(sb, "if not ok and warn then err = tostring(err) .. '\\n\\nThe object was a class default object or another " +
+                 "template, not a live object: a function that is not static can fail there.' end");
 
         if (verifyReturn)
         {
@@ -480,7 +489,8 @@ public static class BakedScriptGenerator
         {
             // Close on success ONLY when DEBUG is off -- if the user set UE5_DEBUG=1
             // they want the window (and any dbg output) to stay readable.
-            Line(sb, "  if ok and DEBUG == 0 then");
+            // A warned success is not clean: the window stays open on the warning. [INVOKE-NONSTATIC-ON-CDO]
+            Line(sb, "  if ok and not warn and DEBUG == 0 then");
             Line(sb, "    synchronize(function() getLuaEngine().Close() end)");
             Line(sb, "  end");
         }

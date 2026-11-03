@@ -492,9 +492,11 @@ end
 -- not send it either, and bakes it for the same reason as 4.
 -- 6: CMD_FIND_INSTANCE picks by derivation ([FINDINSTANCE-SUBSTRING-USERFACING]). Not used here either; baked
 -- for the same reason as 4.
--- ⚠ Baking 6 means this helper REFUSES a contract-5 DLL ("update UE5Dumper.dll"). That is what the pin
+-- 7: the invoke family's template warning in cmdOutFlags ([INVOKE-NONSTATIC-ON-CDO]); this helper reads only
+-- LI_OUT_TRUNCATED there. Baked for the same reason as 4.
+-- ⚠ Baking 7 means this helper REFUSES a contract-6 DLL ("update UE5Dumper.dll"). That is what the pin
 -- above encodes: the helper and the generator ship together, so they claim ONE contract.
-local UE5_SCRIPT_CONTRACT = 6
+local UE5_SCRIPT_CONTRACT = 7
 
 -- Returns true, or false + a message. Call BEFORE writing to the mailbox: if the
 -- layout moved, writing first scribbles on whatever now lives at those offsets.

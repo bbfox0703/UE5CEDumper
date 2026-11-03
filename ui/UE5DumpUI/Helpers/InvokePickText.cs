@@ -34,15 +34,40 @@ internal static class InvokePickText
     internal const string KeyTemplateClassDefault = "str.Invoke.Template.ClassDefault";
     internal const string KeyTemplateSubobject = "str.Invoke.Template.Subobject";
 
-    /// <summary>[INVOKE-NONSTATIC-ON-CDO] Whether to pin, given the template fact too: a template re-resolves.</summary>
-    internal static bool IsPinnable(string pick, string? template) => IsPinnable(pick);
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] Whether to pin, given the template fact too: a template (whatever the
+    /// function was) re-resolves, so a live object found later is used instead.</summary>
+    internal static bool IsPinnable(string pick, string? template)
+        => IsPinnable(pick) && string.IsNullOrEmpty(template);
 
-    /// <summary>[INVOKE-NONSTATIC-ON-CDO] The Console's note, from the DLL's verdict when it sent one.</summary>
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] The Console's note. From a DLL that sends the verdict, a class-default or
+    /// template warning appears only when the function is not static there; an older DLL keeps the pick-only note.</summary>
     internal static string Note(UE5DumpUI.Models.InvokeFunctionResult r)
-        => Note(r.InstancePick, r.InstanceName, r.InstanceClassName);
+    {
+        if (r.NonStaticOnTemplate is null) return Note(r.InstancePick, r.InstanceName, r.InstanceClassName);
+        if (r.InstanceName.Length == 0) return "";
+        if (r.NonStaticOnTemplate == true)
+        {
+            if (r.InstanceTemplate == Constants.InvokeTemplateSubobject)
+                return " " + TemplateSubobjectText(r.InstanceName, r.InstanceClassName, r.TemplateOwnerName);
+            // The Console resolves by class name, so its class-default pick means no live object of the class exists.
+            return " " + (r.InstancePick is Constants.InvokePickClassDefault or Constants.InvokePickPartialNameDefault
+                ? ClassDefaultText(r.InstanceName, r.InstanceClassName)
+                : TemplateClassDefaultText(r.InstanceName, r.InstanceClassName));
+        }
+        return " " + (r.InstancePick == Constants.InvokePickDebugCameraOwned
+            ? DebugCameraOwnedText(r.InstanceName, r.InstanceClassName)
+            : ObjectText(r.InstanceName, r.InstanceClassName));
+    }
 
-    /// <summary>[INVOKE-NONSTATIC-ON-CDO] The param dialog's warning line, or "".</summary>
-    internal static string TemplateWarning(UE5DumpUI.Models.InvokeFunctionResult r) => "";
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] The param dialog's warning line, or "" when the DLL raised none (or is older).
+    /// The dialog targets an address the user chose, so neither sentence claims no live object exists.</summary>
+    internal static string TemplateWarning(UE5DumpUI.Models.InvokeFunctionResult r)
+    {
+        if (r.NonStaticOnTemplate != true) return "";
+        return r.InstanceTemplate == Constants.InvokeTemplateSubobject
+            ? TemplateSubobjectText(r.InstanceName, r.InstanceClassName, r.TemplateOwnerName)
+            : TemplateClassDefaultText(r.InstanceName, r.InstanceClassName);
+    }
 
     internal static string TemplateClassDefaultText(string name, string className)
         => AobMakerStatus.Say(KeyTemplateClassDefault,

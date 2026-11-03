@@ -3680,6 +3680,10 @@ public sealed class DumpService : IDumpService
             InstancePick      = res["instance_pick"]?.GetValue<string>() ?? "",
             InstanceName      = res["instance_name"]?.GetValue<string>() ?? "",
             InstanceClassName = res["instance_class_name"]?.GetValue<string>() ?? "",
+            // [INVOKE-NONSTATIC-ON-CDO] additive keys; absent (an older DLL) stays null
+            InstanceTemplate    = res["instance_template"]?.GetValue<string>(),
+            TemplateOwnerName   = res["template_owner_name"]?.GetValue<string>() ?? "",
+            NonStaticOnTemplate = res["nonstatic_on_template"]?.GetValue<bool>(),
             FuncAddr     = res["func_addr"]?.GetValue<string>() ?? "",
             ParmsSize    = res["parms_size"]?.GetValue<int>() ?? 0,
             ResultHex    = res["result_hex"]?.GetValue<string>() ?? "",

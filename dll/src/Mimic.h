@@ -22,7 +22,9 @@ namespace Mimic {
 // Mailbox commands (CE writes to cmd field)
 enum Cmd : int32_t {
     CMD_IDLE            = 0,
-    CMD_INVOKE          = 1,  // Call ProcessEvent (instance_addr, ufunc_addr, params_data)
+    CMD_INVOKE          = 1,  // Call ProcessEvent (instance_addr, ufunc_addr, params_data). Output (contract 7+):
+                              //   cmdOutFlags INV_OUT_NONSTATIC_ON_TEMPLATE when the function is not static and
+                              //   the object is a template -- a warning beside `result`, never a refusal.
     CMD_FIND_INSTANCE   = 2,  // Find an object by class name (contract 6+): the first live object of that class
                               //   or a subclass (one a Debug Camera controller is or owns only when no other is
                               //   live), else the class's own default object; a name no class has is matched as
@@ -418,9 +420,11 @@ struct MailboxData {
                                         //        contract-1/2 script (which never writes this field)
                                         //        on exactly its old behaviour.
     volatile uint32_t cmdOutFlags;      // 0x72C: OUT — per-command output flags (contract 3+).
-                                        //        CMD_LIST_INSTANCES publishes LI_OUT_TRUNCATED here.
-                                        //        Rewritten on every command that uses it, never
-                                        //        accumulated.
+                                        //        CMD_LIST_INSTANCES publishes LI_OUT_TRUNCATED here;
+                                        //        CMD_INVOKE / CMD_INVOKE_BY_NAME publish InvokeOutFlag
+                                        //        (contract 7+). The dispatcher clears it before every
+                                        //        command (contract 7+), so a bit is always this
+                                        //        command's, never accumulated.
 };
 #pragma pack(pop)
 
@@ -511,8 +515,7 @@ constexpr bool ShouldRouteDirectInvoke(uint32_t functionFlags, bool flagsResolve
 /// `isUFunction` is ResolveFunctionInfo's answer, so the flags carry the same trust as ShouldRouteDirectInvoke's: an
 /// object that is not a UFunction warns, and only a FUNC_Static read clears it.
 constexpr bool WarnNonStaticOnTemplate(bool onTemplate, bool isUFunction, uint32_t functionFlags) {
-    (void)onTemplate; (void)isUFunction; (void)functionFlags;   // red stub
-    return false;
+    return onTemplate && !(isUFunction && (functionFlags & FUNC_FLAG_STATIC) != 0);
 }
 
 /// [UE-OVERRIDE-411] review 2: what CMD_INVOKE publishes instead of handing ProcessEvent the paramsData slab.
@@ -691,7 +694,19 @@ namespace Mimic {
 ///   versions 2 and 4 it moves on meaning alone -- the surface hash does not change. The bump makes a script generated
 ///   now refuse a DLL that would still guess. It does not reach baked scripts outside Verify Return Value mode: their
 ///   embedded invoke helper deliberately claims contract 1 (verify mode bakes the generator's own contract check).
-constexpr int32_t MAILBOX_CONTRACT = 6;
+/// 7 ([INVOKE-NONSTATIC-ON-CDO]): two changes, one bump. (a) CMD_INVOKE -- and CMD_INVOKE_BY_NAME, which ends in it --
+///   publishes InvokeOutFlag in cmdOutFlags: INV_OUT_NONSTATIC_ON_TEMPLATE when it ran a function that is not static on
+///   a template (a class-default object or one of its default subobjects), where it may have done nothing. A warning
+///   beside `result`, never a refusal. cmdOutFlags was an unused output for the invoke family, and the dispatcher now
+///   clears it before every command, so a set bit is always this command's. The new enum is layout, so the surface
+///   hash moves. (b) CMD_FIND_INSTANCE never takes a TEMPLATE for a live object: one flagged RF_ArchetypeObject -- a
+///   class-default object's default subobject, which every component-class lookup landed on (measured on DumperTest
+///   5.4) -- is passed over like a class-default object. Both ADDITIVE in the sense version 6 set out: no field moved,
+///   no result code changed, and the old pick a script could have relied on was an accident (a template taken for a
+///   live object). MAILBOX_CONTRACT_MIN stays at 1. A script claiming less than MAILBOX_CONTRACT_INVOKE_OUT reads
+///   0x72C only from a DLL that publishes at least that; the embedded invoke helper keeps claiming 1 and gates its read
+///   on the DLL's own number.
+constexpr int32_t MAILBOX_CONTRACT = 7;
 
 /// Oldest script contract still accepted. Bump ONLY when a change actually
 /// invalidates older scripts — an additive change must not move this.

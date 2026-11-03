@@ -102,7 +102,7 @@
 -- of it: R7-S3's latch release never reached a table opened before the update. The public functions below are
 -- therefore gated on VERSION: redefined only when this chunk is NEWER than the resident one, so an update takes
 -- effect while a same/older re-load stays a no-op that preserves state (the shared flags keep their own nil-init).
-local THIS_HELPER_VERSION = '1.5'   -- 1.4: this gate [R7-X5], and R7-S3's latch release on a reset mailbox; 1.5: 'asset'
+local THIS_HELPER_VERSION = '1.6'   -- 1.4: this gate [R7-X5], and R7-S3's latch release on a reset mailbox; 1.5: 'asset'; 1.6: invokeUFunction's third return, the template warning [INVOKE-NONSTATIC-ON-CDO]
 -- Compare dotted versions: true iff a < b. nil (nothing resident) is the oldest.
 local function versionLess(a, b)
   if not a then return true end
@@ -162,6 +162,11 @@ local OFF_CLASS     = 0x028  -- char[256]: class name
 local OFF_FUNC      = 0x128  -- char[256]: function name
 local OFF_ERR       = 0x228  -- char[256]: error message
 local OFF_PARAMS    = 0x328  -- uint8[1024]: inline params buffer
+local OFF_OUT_FLAGS = 0x72C  -- uint32: cmdOutFlags (contract 3+; past the end of a contract 1-2 mailbox)
+-- [INVOKE-NONSTATIC-ON-CDO] The invoke family's warning bit in cmdOutFlags, published from this contract on. This
+-- helper still CLAIMS contract 1, so it reads the word only when the DLL's own number says it is published.
+local INV_OUT_NONSTATIC_ON_TEMPLATE = 2
+local MAILBOX_CONTRACT_INVOKE_OUT = 7
 
 local CMD_INVOKE_BY_NAME = 4
 local STATUS_DONE        = 1
@@ -217,7 +222,7 @@ local function checkContract()
       'the DLL is older than this script (script %d, DLL speaks %d) -- update UE5Dumper.dll',
       UE5_SCRIPT_CONTRACT, cur)
   end
-  return true
+  return true, cur   -- the DLL's own contract, for outputs newer than this helper's claim
 end
 
 local function findMailbox()
@@ -235,7 +240,7 @@ local function findMailbox()
   -- a write lands on whatever now occupies those offsets.
   local ok, why = checkContract()
   if not ok then error('[ue5_invoke] ' .. why) end
-  return mb
+  return mb, why   -- on success checkContract's second value is the DLL's contract
 end
 
 local function writeMbStr(mb, off, str)
@@ -616,6 +621,9 @@ if not invokeUFunction or _invokeOutdated then
   ---                          See writeBakedParams for supported types.
   --- @return boolean ok       True on success
   --- @return string|nil err   Error message on failure (nil on success)
+  --- @return string|nil warn  'template' when the DLL (contract 7+) reports that the call ran a function that is
+  ---                          not static on a class default object or another template, where it may have done
+  ---                          nothing; nil otherwise, and always nil from an older DLL. [INVOKE-NONSTATIC-ON-CDO]
   function invokeUFunction(className, funcName, parmsSize, params)
     -- Input validation BEFORE the busy check so bad args from a
     -- concurrent caller surface as the real validation error
@@ -666,7 +674,7 @@ if not invokeUFunction or _invokeOutdated then
     -- wrapper ensures the flag is ALWAYS cleared, even if any
     -- write/read throws (e.g. mailbox address turned invalid).
     _ue5_invoke_busy = true
-    local pok, ok_or_err, err_or_nil = pcall(function()
+    local pok, ok_or_err, err_or_nil, warn_or_nil = pcall(function()
       -- Reclaim the PREVIOUS invoke's FString buffers before this one allocates more.
       -- The mailbox is synchronous, so by the time a NEW invoke starts (we are past the
       -- busy check, so the prior call finished) its ProcessEvent has long returned and
@@ -686,7 +694,7 @@ if not invokeUFunction or _invokeOutdated then
       end
       _ue5_invoke_str_bufs = {}
 
-      local ok_mb, mb = pcall(findMailbox)
+      local ok_mb, mb, dllContract = pcall(findMailbox)
       if not ok_mb then
         return false, tostring(mb)
       end
@@ -721,14 +729,22 @@ if not invokeUFunction or _invokeOutdated then
         return false, err_w
       end
 
+      -- [INVOKE-NONSTATIC-ON-CDO] Read only after the DLL finished, and only from a DLL that publishes the bit: below
+      -- contract 7 the word is another command's, or past the end of the mailbox.
+      local warn = nil
+      if (tonumber(dllContract) or 0) >= MAILBOX_CONTRACT_INVOKE_OUT then
+        local outFlags = readInteger(mb + OFF_OUT_FLAGS) or 0
+        if outFlags % (2 * INV_OUT_NONSTATIC_ON_TEMPLATE) >= INV_OUT_NONSTATIC_ON_TEMPLATE then warn = 'template' end
+      end
+
       local result = readInteger(mb + OFF_RESULT, true)   -- signed: rc is int32
       if result ~= 0 then
         return false, string.format(
           '%s::%s -> result=%d (%s)',
-          className, funcName, result, readErrMsg(mb))
+          className, funcName, result, readErrMsg(mb)), warn
       end
 
-      return true
+      return true, nil, warn
     end)
     -- Released only when the mailbox is ours again. A timeout sets
     -- _ue5_invoke_stale_mb above and the guard stays up until the DLL publishes
@@ -742,8 +758,8 @@ if not invokeUFunction or _invokeOutdated then
       -- captured the message as ok_or_err.
       return false, tostring(ok_or_err)
     end
-    -- Soft return path: inner function returned (ok, err)
-    return ok_or_err, err_or_nil
+    -- Soft return path: inner function returned (ok, err, warn)
+    return ok_or_err, err_or_nil, warn_or_nil
   end
 
   registerLuaFunctionHighlight('invokeUFunction')

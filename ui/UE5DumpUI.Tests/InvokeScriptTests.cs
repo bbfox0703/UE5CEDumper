@@ -761,7 +761,7 @@ public class InvokeScriptTests
         Assert.Contains("t == 'fstring'", content);
         Assert.Contains("t == 'fstringn'", content);
         Assert.Contains("t == 'fstruct'", content);               // by-value struct param support
-        Assert.Contains("THIS_HELPER_VERSION = '1.5'", content);   // [R7-X5] the version gate; 1.5 ([ASSETPTR-BAKED-TOKEN]) replaces a resident 1.4
+        Assert.Contains("THIS_HELPER_VERSION = '1.6'", content);   // [R7-X5] the version gate; 1.6 ([INVOKE-NONSTATIC-ON-CDO]) replaces a resident 1.5
         Assert.Contains("t == 'asset'", content);
     }
 

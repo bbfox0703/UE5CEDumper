@@ -306,6 +306,9 @@ static void PollingThreadBody() {
             // handler had just set via SetError. Pre-clearing leaves errorMsg empty on
             // success and populated on failure -- the only consistent pairing.
             g_invokeMailbox.errorMsg[0] = '\0';
+            // [INVOKE-NONSTATIC-ON-CDO] Same reasoning for the output flags (contract 7): an INVOKE_BY_NAME whose
+            // lookup fails never reaches HandleInvoke, and must not carry the previous invoke's warning.
+            g_invokeMailbox.cmdOutFlags = 0;
 
             LOG_INFO("Mailbox: received cmd=%d", cmd);
 
@@ -767,6 +770,17 @@ static void HandleInvoke() {
                                                 sizeof(g_invokeMailbox.paramsData), isStaticNative, objWhy)) {
             SetError(MB_ERR_INVOKE_OBJECT_PARAM, ("Not invoked: " + objWhy).c_str());
             return;
+        }
+    }
+
+    // [INVOKE-NONSTATIC-ON-CDO] After the last refusal, before the call (which may destroy the object): a function that
+    // is not static on a template may do nothing there. Warned through cmdOutFlags (contract 7), never refused.
+    {
+        const Aura::TemplateInfo tpl = Aura::TemplateOf(instanceAddr);
+        if (WarnNonStaticOnTemplate(tpl.kind != Aura::TemplateKind::None, flagsResolved, fi.functionFlags)) {
+            g_invokeMailbox.cmdOutFlags |= INV_OUT_NONSTATIC_ON_TEMPLATE;
+            LOG_WARN("Mailbox: INVOKE '%s' is not static and 0x%llX is a %s -- it may do nothing there",
+                     fi.name.c_str(), (unsigned long long)instanceAddr, Aura::TemplateKindWire(tpl.kind));
         }
     }
 

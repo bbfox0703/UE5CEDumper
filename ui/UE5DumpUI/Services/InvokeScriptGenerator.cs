@@ -351,14 +351,34 @@ public static class InvokeScriptGenerator
         Line(sb);
 
         Line(sb, $"local result = readInteger(mb + {OffResult}, true)");
-        Line(sb, "if result == 0 then dbg('  INVOKED OK!')");
-        Line(sb, "else print('  INVOKE FAILED: error code ' .. tostring(result) .. ' ' .. readErr()); showMessage('INVOKE FAILED:\\nerror code ' .. tostring(result)) end");
+        AppendTemplateWarning(sb, "");
         // DEBUG-only: decode + print the return value from the params buffer.
         AppendReturnDebugPrint(sb, className, funcName, func, "");
-        // Clean success (no args, DEBUG off) -> close the Lua Engine window.
-        Line(sb, $"if result == 0 and DEBUG == 0 then {CeLuaHygiene.CloseCall} end");
+        // Clean success (no args, DEBUG off) -> close the Lua Engine window. A warned success is not clean: the
+        // window stays open on the warning. [INVOKE-NONSTATIC-ON-CDO]
+        Line(sb, $"if result == 0 and not _tplWarn and DEBUG == 0 then {CeLuaHygiene.CloseCall} end");
         AppendCleanupTimer(sb, 0);
         Line(sb);
+    }
+
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] The invoke's outcome lines. The DLL (contract 7, which this script claims)
+    /// sets INV_OUT_NONSTATIC_ON_TEMPLATE in cmdOutFlags when the function is not static and the object is a class
+    /// default object or another template: a warned success prints it -- ungated, a genuine problem -- and is not a clean
+    /// success, and a failure says it beside the error. A warning, never a refusal: a game's own command may still work
+    /// there. Defines <c>_tplWarn</c> for the caller's close line.</summary>
+    private static void AppendTemplateWarning(StringBuilder sb, string ind)
+    {
+        int bit = CeMailboxLayout.InvOutNonStaticOnTemplate;
+        Line(sb, $"{ind}local _tplWarn = (readInteger(mb + {CeMailboxLayout.OffOutFlags}) or 0) % {2 * bit} >= {bit}   " +
+                 "-- INV_OUT_NONSTATIC_ON_TEMPLATE");
+        Line(sb, $"{ind}if result == 0 then dbg('  INVOKED OK!')");
+        Line(sb, $"{ind}else print('  INVOKE FAILED: error code ' .. tostring(result) .. ' ' .. readErr()); " +
+                 "showMessage('INVOKE FAILED:\\nerror code ' .. tostring(result) .. (_tplWarn and " +
+                 "'\\n\\nThe object was a class default object or another template, not a live object: a function " +
+                 "that is not static can fail there.' or '')) end");
+        Line(sb, $"{ind}if result == 0 and _tplWarn then print(string.format('[Invoke] WARNING: %s::%s ran on a class " +
+                 "default object or another template, not a live object -- a function that is not static may have done " +
+                 "nothing.', OWNER_CLASS, FUNC_NAME)) end");
     }
 
     private static void AppendParamForm(StringBuilder sb, string className, string funcName,
@@ -533,8 +553,7 @@ public static class InvokeScriptGenerator
         Line(sb, "    dbg('  Invoking via mailbox...')");
         Line(sb, "    waitDone()");
         Line(sb, $"    local result = readInteger(mb + {OffResult}, true)");
-        Line(sb, "    if result == 0 then dbg('  INVOKED OK!')");
-        Line(sb, "    else print('  INVOKE FAILED: error code ' .. tostring(result) .. ' ' .. readErr()); showMessage('INVOKE FAILED:\\nerror code ' .. tostring(result)) end");
+        AppendTemplateWarning(sb, "    ");
         // DEBUG-only: decode + print the return value (the created form closes
         // below, but the Lua Engine console keeps the printed value visible).
         AppendReturnDebugPrint(sb, className, funcName, func, "    ");

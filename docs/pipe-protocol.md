@@ -1935,6 +1935,14 @@ state-changing operations but works for simple getters).
                                    // "partial_name_default". The Console pins only "live" / "address".
   "instance_name": "CheatManager_0",       // the object's and its class's names, read before
   "instance_class_name": "CheatManager",   // the call (which may destroy the object)
+  "instance_template": "",         // from build 3676: "" (a live object), "class_default", or "template" (a
+                                   // class default object's default subobject, or another archetype)
+  "template_owner_name": "Default__Character", // with "template", when a class default object owns it
+  "nonstatic_on_template": false,  // the WARNING verdict: the function is not static (by the flags the DLL
+                                   // read, never direct_call) and the object is a template, where it may do
+                                   // nothing or fault. Never a refusal. A static function on a class default
+                                   // object (a function library) is false. Absent = an older DLL.
+                                   // [INVOKE-NONSTATIC-ON-CDO]
   "func_addr": "0x7FF123ABC",
   "parms_size": 16,
   "result_hex": "3F80000000000000...",  // post-call buffer (out-params)

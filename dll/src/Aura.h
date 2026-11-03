@@ -183,8 +183,11 @@ TemplateInfo TemplateOf(uintptr_t obj);
 
 // The template kind's name on the pipe (invoke_function's instance_template): "" for a live object.
 constexpr const char* TemplateKindWire(TemplateKind k) {
-    (void)k;   // red stub
-    return "";
+    switch (k) {
+        case TemplateKind::ClassDefault: return "class_default";
+        case TemplateKind::Template:     return "template";
+        default:                         return "";
+    }
 }
 
 // Get the detected FUObjectItem stride in bytes (16 or 24)

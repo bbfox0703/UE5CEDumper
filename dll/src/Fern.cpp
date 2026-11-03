@@ -42,6 +42,7 @@
 #include "Sense.h"     // Diagnostics — dispatch timing + process facts
 #include "Voll.h"      // Accept-loop capacity logging policy — ERROR_PIPE_BUSY once, not 1/s ([PIPEBUSY])
 #include "BuildStamp.h"
+#include "Mimic.h"       // WarnNonStaticOnTemplate -- the one rule both invoke lanes use, [INVOKE-NONSTATIC-ON-CDO]
 
 #include <json.hpp>
 #include <algorithm>
@@ -6859,6 +6860,17 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // keep the caller's parms_size alone, unchecked (review 2; check_processevent_buffers).
             FunctionInfo fi{};
             const bool resolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);
+            // [INVOKE-NONSTATIC-ON-CDO] The object is a template, and the function -- by the flags read here, never the
+            // caller's direct_call claim -- is not static: it may do nothing there. Warned, never refused.
+            const Aura::TemplateInfo tpl = Aura::TemplateOf(instanceAddr);
+            const bool nonStaticOnTemplate =
+                Mimic::WarnNonStaticOnTemplate(tpl.kind != Aura::TemplateKind::None, resolved, fi.functionFlags);
+            const std::string tplOwnerName =
+                (tpl.kind == Aura::TemplateKind::Template && tpl.owner) ? Ubel::GetName(tpl.owner) : std::string();
+            if (nonStaticOnTemplate)
+                Sein::Warn("PIPE:cmd", "invoke_function: %s on %s (%s) is not static and the object is a %s%s%s -- it "
+                           "may do nothing there, or fault", funcName.c_str(), instName.c_str(), instClass.c_str(),
+                           Aura::TemplateKindWire(tpl.kind), tplOwnerName.empty() ? "" : " of ", tplOwnerName.c_str());
             const size_t authoritative = Ubel::ParamBufferSize(ufuncAddr, resolved ? fi.parmsSize : 0);
             const size_t asked = (parmsSize > 0) ? static_cast<size_t>(parmsSize) : 0;
             if (asked > 0 && authoritative > asked) {
@@ -7005,6 +7017,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["instance_pick"]       = pickWire;
             data["instance_name"]       = instName;
             data["instance_class_name"] = instClass;
+            // [INVOKE-NONSTATIC-ON-CDO] The object's template fact (the Console pins only a live one) and the warning
+            // verdict, apart: a static function on a template is the normal case (additive keys).
+            data["instance_template"]     = Aura::TemplateKindWire(tpl.kind);
+            if (!tplOwnerName.empty()) data["template_owner_name"] = tplOwnerName;
+            data["nonstatic_on_template"] = nonStaticOnTemplate;
             data["func_addr"]     = Renge::AddrToStr(ufuncAddr);
             data["parms_size"]    = (int)bufSize;
 

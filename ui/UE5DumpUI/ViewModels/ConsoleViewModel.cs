@@ -560,7 +560,8 @@ public partial class ConsoleViewModel : ViewModelBase
             // Remember the resolved instance so the next toggle lands on the
             // same object. The DLL echoes the address it actually used, and how it picked it: a class-default or a
             // Debug-Camera-owned pick re-resolves next time instead. [FINDINSTANCE-SUBSTRING-USERFACING]
-            if (result.Success && !string.IsNullOrEmpty(result.InstanceAddr) && InvokePickText.IsPinnable(result.InstancePick))
+            if (result.Success && !string.IsNullOrEmpty(result.InstanceAddr)
+                && InvokePickText.IsPinnable(result.InstancePick, result.InstanceTemplate))
                 _stickyInstance[entry.ClassName] = new Pin(result.InstanceAddr, result.InstanceClassAddr);
 
             var resultText = result.Success
@@ -583,7 +584,7 @@ public partial class ConsoleViewModel : ViewModelBase
                 ? (reResolved ? $" (re-resolved {result.InstanceAddr})"
                    : usedPin  ? $" (pinned {result.InstanceAddr})"
                               : $" (instance {result.InstanceAddr})")
-                : "") + InvokePickText.Note(result.InstancePick, result.InstanceName, result.InstanceClassName);
+                : "") + InvokePickText.Note(result);
 
             StatusText = result.Success
                 ? $"✓ {entry.FuncName}: {resultText}{pinNote}"

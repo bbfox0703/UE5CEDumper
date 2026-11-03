@@ -712,7 +712,8 @@ public sealed class InvokeParamDialog : Window
         }
     }
 
-    /// <summary>The lines above the post-call buffer: the outcome. [INVOKE-NONSTATIC-ON-CDO]</summary>
+    /// <summary>The lines above the post-call buffer: the outcome, then the DLL's template warning when it raised one
+    /// -- on a failure too, where it is the likely reason. [INVOKE-NONSTATIC-ON-CDO]</summary>
     internal static List<string> HeaderLines(InvokeFunctionResult result, int fireCount)
     {
         var lines = new List<string>();
@@ -727,6 +728,8 @@ public sealed class InvokeParamDialog : Window
                 : $"error code {result.Result}";
             lines.Add($"[#{fireCount}] INVOKE FAILED: {errorDetail}");
         }
+        var warning = UE5DumpUI.Helpers.InvokePickText.TemplateWarning(result);
+        if (warning.Length > 0) lines.Add(warning);
         return lines;
     }
 

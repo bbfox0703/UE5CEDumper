@@ -607,8 +607,8 @@ public class CeLuaHygieneTests
             new[] { new BakedParamValue("Amount", "IntProperty", 4, 0, "1000") });
 
         Assert.Contains("local DEBUG = UE5_DEBUG or 0", s);
-        // Silent-on-success close is now gated on DEBUG too.
-        Assert.Contains("if ok and DEBUG == 0 then", s);
+        // Silent-on-success close is now gated on DEBUG too -- and on no template warning ([INVOKE-NONSTATIC-ON-CDO]).
+        Assert.Contains("if ok and not warn and DEBUG == 0 then", s);
         Assert.Contains(CeLuaHygiene.CloseCall, s);
     }
 

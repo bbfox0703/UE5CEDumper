@@ -120,8 +120,13 @@ import sys
 # Debug Camera's own CheatManager), and moving MIN would refuse every saved .CT. A script that relied on one now gets a
 # different answer -- for the Debug Camera case a silent result 0 -- and Mimic.h's version-6 entry says which. The bump
 # is there so a script generated now refuses a DLL that would still guess.
-GOLDEN_VERSION = 6
-GOLDEN_HASH = "f6738c50c61a4d9b4677c58a16121b3a3ac95d3f99518a1508edc4ec6794470a"
+# NOTE on version 7 ([INVOKE-NONSTATIC-ON-CDO]): like version 5 this one moved the HASH as well as the version, and
+# correctly so -- the new `InvokeOutFlag` enum (INV_OUT_NONSTATIC_ON_TEMPLATE = 0x2, published in cmdOutFlags by the
+# invoke family) is layout. ADDITIVE: cmdOutFlags was an unused output for CMD_INVOKE, the bit is not the 0x1 an older
+# DLL can leave behind, and the dispatcher now clears the word before every command. The same bump carries
+# FIND_INSTANCE passing over templates (an accident ended, as in version 6). MAILBOX_CONTRACT_MIN stays 1.
+GOLDEN_VERSION = 7
+GOLDEN_HASH = "e47d01698e530071c5de8cc11f7d5a2b341ea2f2569da1c2468cced81acc3ee7"
 
 MIMIC_H = os.path.join("dll", "src", "Mimic.h")
 LAYOUT_CS = os.path.join("ui", "UE5DumpUI", "Services", "CeMailboxLayout.cs")
@@ -129,7 +134,7 @@ LAYOUT_CS = os.path.join("ui", "UE5DumpUI", "Services", "CeMailboxLayout.cs")
 # Enums whose VALUES a generated script depends on.
 CONTRACT_ENUMS = ("Cmd", "TeleportOp", "FlyOp", "ForegroundOp",
                   "QueryPtrOp", "TimeOp", "ProtectOp", "ListInstancesFlag",
-                  "Status", "InitState")
+                  "InvokeOutFlag", "Status", "InitState")
 
 # ---------------------------------------------------------------------------
 # Hand-copied layout mirrors outside Mimic.h / CeMailboxLayout.cs (AA36)
@@ -146,7 +151,7 @@ LUA_MIRRORS = (
 
 # A constant in a mirrored file whose NAME matches one of these is layout surface and
 # must be registered below. Anything else in those files is ordinary script state.
-LUA_LAYOUT_PREFIXES = ("OFF_", "CMD_", "STATUS_", "INIT_", "LI_",
+LUA_LAYOUT_PREFIXES = ("OFF_", "CMD_", "STATUS_", "INIT_", "LI_", "INV_OUT_",
                        "ENTRY_SIZE_", "MAILBOX_", "MAX_PAGES")
 
 # Lua constant name -> the MailboxData field whose offset it copies.
@@ -185,6 +190,7 @@ LUA_ENUM_ALIASES = {
         ("InitState", ("INIT_IDLE", "INIT_RUNNING", "INIT_READY",
                        "INIT_FAILED", "INIT_SKIPPED")),
         ("ListInstancesFlag", ("LI_IN_DERIVED", "LI_OUT_TRUNCATED")),
+        ("InvokeOutFlag", ("INV_OUT_NONSTATIC_ON_TEMPLATE",)),
     )
     for name in names
 }
@@ -194,6 +200,7 @@ LUA_CONSTEXPR_ALIASES = {
     "ENTRY_SIZE_EXACT": "LIST_INSTANCES_ENTRY_EXACT",
     "ENTRY_SIZE_DERIVED": "LIST_INSTANCES_ENTRY_DERIVED",
     "MAX_PAGES": "LIST_INSTANCES_MAX_PAGES",
+    "MAILBOX_CONTRACT_INVOKE_OUT": "MAILBOX_CONTRACT_INVOKE_OUT",
 }
 
 # Sizes of the scalar types MailboxData is built from. Absent type -> hard failure,
