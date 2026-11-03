@@ -2096,17 +2096,24 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
         if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx)) continue;
         const std::string objName = Serie::GetString(nameIdx);
         if (objName.empty()) continue;
-        const bool isCdo = objName.rfind("Default__", 0) == 0;
+        // [INVOKE-NONSTATIC-ON-CDO] A TEMPLATE is never "live": a class-default object, and an archetype -- a CDO's
+        // default subobject, which every component-class lookup used to land on (measured), or a Blueprint's component
+        // template. ObjectFlags is read directly; the name test also covers a CDO whose flags read nothing.
+        uint32_t objFlags = 0;
+        Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_FLAGS, objFlags);
+        const bool isCdo = objName.rfind("Default__", 0) == 0 || (objFlags & Grimoire::RF_CLASS_DEFAULT_OBJECT) != 0;
+        const bool isTemplate = isCdo || (objFlags & Grimoire::RF_ARCHETYPE_OBJECT) != 0;
 
-        if (!v.derives) {   // the partial-name rule the user-facing lookups always had: the first non-CDO, else the first
+        if (!v.derives) {   // the partial-name rule the user-facing lookups always had: the first non-template, else the first
             if (!partialFirst) { partialFirst = obj; partialFirstCls = cls; }
-            if (!isCdo && !partialLive) { partialLive = obj; partialLiveCls = cls; }
+            if (!isTemplate && !partialLive) { partialLive = obj; partialLiveCls = cls; }
             continue;
         }
         namedSeen = true;
-        if (isCdo) {
-            // A subclass's CDO derives too; only the named class's own default object may stand in.
-            if (!cdo && LowerAscii(Ubel::GetName(cls)) == lowerQuery) { cdo = obj; cdoCls = cls; }
+        if (isTemplate) {
+            // A subclass's CDO derives too, and so does another class's default subobject; only the named class's own
+            // default object may stand in.
+            if (isCdo && !cdo && LowerAscii(Ubel::GetName(cls)) == lowerQuery) { cdo = obj; cdoCls = cls; }
             continue;
         }
         if (!lowerSkip.empty() && (v.viaSkip || ownedBySkip(obj) || actorOwnedBySkip(obj, cls))) {
@@ -2148,8 +2155,31 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
 }
 
 TemplateInfo TemplateOf(uintptr_t obj) {
-    (void)obj;   // red stub
-    return TemplateInfo{};
+    TemplateInfo t;
+    if (!obj) return t;
+    auto isClassDefault = [](uintptr_t o, uint32_t flags) {
+        uint32_t nameIdx = 0;
+        if ((flags & Grimoire::RF_CLASS_DEFAULT_OBJECT) != 0) return true;
+        return Macht::ReadSafe(o + Grimoire::OFF_UOBJECT_NAME, nameIdx)
+            && Serie::GetString(nameIdx).rfind("Default__", 0) == 0;
+    };
+    uint32_t flags = 0;
+    Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_FLAGS, flags);
+    if (isClassDefault(obj, flags)) { t.kind = TemplateKind::ClassDefault; t.owner = obj; return t; }
+    // A class-default object up the outer chain makes it one of that object's subobjects, flag or not.
+    uintptr_t o = obj, firstOuter = 0;
+    for (int hop = 0; hop < Grimoire::AURA_USERPICK_MAX_OUTER_HOPS; ++hop) {
+        uintptr_t outer = 0;
+        if (!Macht::ReadSafe(o + DynOff::UOBJECT_OUTER, outer) || !outer || outer == o) break;
+        if (!firstOuter) firstOuter = outer;
+        uint32_t outerFlags = 0;
+        Macht::ReadSafe(outer + Grimoire::OFF_UOBJECT_FLAGS, outerFlags);
+        if (isClassDefault(outer, outerFlags)) { t.kind = TemplateKind::Template; t.owner = outer; return t; }
+        o = outer;
+    }
+    // An archetype with no class-default object above it: a Blueprint's component template, outered to its class.
+    if ((flags & Grimoire::RF_ARCHETYPE_OBJECT) != 0) { t.kind = TemplateKind::Template; t.owner = firstOuter; }
+    return t;
 }
 
 uintptr_t FindLiveOrDefaultOf(const std::string& className) {
