@@ -130,6 +130,10 @@ public partial class ConsoleViewModel : ViewModelBase
     /// captured at Load. Null when the game ships no such command.</summary>
     private AllFunctionEntry? _debugCamEntry;
 
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] A Debug Camera Force is in flight. Not <see cref="IsDebugCameraBusy"/>, which
+    /// a state query sets too, and a query toggles nothing.</summary>
+    private bool _forcingDebugCamera;
+
     /// <summary>
     /// Raised when the user activates an exec command that has parameters
     /// (NumParms &gt; 0). MainWindow handler fetches full FunctionInfoModel
@@ -396,13 +400,13 @@ public partial class ConsoleViewModel : ViewModelBase
 
     /// <summary>[CONSOLE-ROWRUN-SELECTED] A row's own Run button runs that row. A click on a button inside a DataGrid
     /// cell does not select the row, so running the selection ran whatever row was selected before, or nothing. The
-    /// selection follows the row that ran, so the grid shows which one it was.</summary>
+    /// selection follows a row that runs (or opens its parameter dialog), so the grid shows which one it was; a refused
+    /// row leaves it on the row that is still running.</summary>
     [RelayCommand]
     private async Task RunRowAsync(AllFunctionEntry? entry)
     {
         if (entry == null) return;
-        SelectedResult = entry;
-        await RunEntryAsync(entry);
+        await RunEntryAsync(entry, onStart: () => SelectedResult = entry);
     }
 
     /// <summary>
@@ -467,26 +471,29 @@ public partial class ConsoleViewModel : ViewModelBase
     /// <summary>
     /// Core run path — chosen entry → either direct invoke (no-arg) or
     /// param dialog (has args). Records the outcome in
-    /// <see cref="History"/>.
+    /// <see cref="History"/>. <paramref name="onStart"/> runs only when the entry does run (or opens its dialog).
     /// </summary>
-    private async Task RunEntryAsync(AllFunctionEntry entry)
+    private async Task RunEntryAsync(AllFunctionEntry entry, Action? onStart = null)
     {
         if (entry.NumParms > 0)
         {
             StatusText = $"{entry.FuncName} takes {entry.NumParms} param(s) — " +
                          $"opening param dialog.";
+            onStart?.Invoke();
             RequestParameterInvoke?.Invoke(entry.ClassName, entry.FuncName, entry.ClassAddr);
             return;
         }
 
-        // [CONSOLE-ROWRUN-SELECTED] One run at a time, whichever path started it: a second invoke sent while the first
-        // waits on a busy game thread can run the command twice, since a timed-out invoke stays queued. Not every button
+        // [CONSOLE-ROWRUN-SELECTED] One run at a time, whichever path started it, the Debug Camera Force included: a
+        // second invoke sent while the first waits on a busy game thread can run twice, since a timed-out invoke stays
+        // queued, and a Force and a ToggleDebugCamera run each queue a toggle that cancels the other. Not every button
         // that reaches here is disabled while a run is in flight, so the refusal lives here.
-        if (IsRunning)
+        if (IsRunning || _forcingDebugCamera)
         {
             StatusText = ConsoleRunText.StillRunningText(entry.FuncName);
             return;
         }
+        onStart?.Invoke();
 
         try
         {
@@ -834,10 +841,18 @@ public partial class ConsoleViewModel : ViewModelBase
     {
         if (_debugCamEntry == null) return;
         var want = wantOn ? "ON" : "OFF";
+        // [CONSOLE-ROWRUN-SELECTED] Not while a Console run is in flight: it may be a ToggleDebugCamera queued on a busy
+        // game thread, and this would queue a second toggle that undoes it.
+        if (IsRunning)
+        {
+            StatusText = ConsoleRunText.ForceStillRunningText(want);
+            return;
+        }
         try
         {
             ClearError();
             IsDebugCameraBusy = true;
+            _forcingDebugCamera = true;
             var set = await _dump.SetDebugCameraDetailedAsync(wantOn);
             var state = set.State;
             ApplyDebugCameraState(state, forcingOff: !wantOn);
@@ -864,6 +879,7 @@ public partial class ConsoleViewModel : ViewModelBase
         finally
         {
             IsDebugCameraBusy = false;
+            _forcingDebugCamera = false;
         }
     }
 }

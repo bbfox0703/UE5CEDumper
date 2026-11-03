@@ -1454,7 +1454,7 @@
     <sys:String x:Key="str.Con.RunSelected">Run Selected</sys:String>
     <sys:String x:Key="str.Con.RunRow">Run</sys:String>
     <!-- [CONSOLE-ROWRUN-SELECTED] a run refused while another is in flight -->
-    <sys:String x:Key="str.Con.StillRunning">⏳ {0} was not sent — another command is still running. Run it again once that one finishes.</sys:String>
+    <sys:String x:Key="str.Con.StillRunning">⏳ {0} was not sent — a Console command is still running. Wait for its result first.</sys:String>
     <sys:String x:Key="str.Con.OpenLive">Live</sys:String>
     <sys:String x:Key="str.Con.CopyAaScript">AA(B)</sys:String>
     <sys:String x:Key="str.Con.HistoryHeader">Recent invocations</sys:String>
