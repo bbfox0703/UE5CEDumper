@@ -123,12 +123,12 @@ GATES = [
      "proxy_refresh.py's controls failed -- it would miss a deployed proxy, touch a DLL that is not ours, refresh "
      "one a running game maps, or lose a backup. Run 'py tools/verify/proxy_refresh.py --selftest'", False),
 
-    # [RIG-PIPE-DOUBLE-CONNECT] every pipe rig opens through PipeClient: a second connect that leaks a handle takes
-    # the slot the UI leaves free, and the rig then cannot connect while the UI is up
+    # [RIG-PIPE-DOUBLE-CONNECT] the pipe rigs open through PipeClient: a second connect that opens again while the
+    # first handle is held needs the pipe instance the UI leaves free, and the rig then cannot connect while the UI is up
     ("pipe_client_selftest",
      ["tools/verify/pipe_client.py", "--selftest"],
-     "PipeClient.connect() opened a second pipe handle on an open client -- with the UI connected, a rig then finds "
-     "no free pipe instance. Run 'py tools/verify/pipe_client.py --selftest'", False),
+     "PipeClient.connect() opened again on an open client (with the UI connected, a rig then finds no free pipe "
+     "instance) or did not reopen a closed one. Run 'py tools/verify/pipe_client.py --selftest'", False),
 
     ("check_axaml_strings",
      ["tools/check_axaml_strings.py"],
