@@ -234,6 +234,10 @@ public class AobMakerWordingTests
         Same(InvokePickText.KeyTemplateClassDefault, InvokePickText.TemplateClassDefaultText("Default__Actor", "Actor"),
              "Default__Actor", "Actor");
         Same(DebugCameraText.KeyOnTemplate, DebugCameraText.OnTemplateText);
+        // [DEBUGCAM-FORCEON-CDO] a Force ON refused for no live CheatManager; -1 is a failure, not that case
+        Same(DebugCameraText.KeyNoLiveCheatManager, DebugCameraText.NoLiveCheatManagerText);
+        Same(DebugCameraText.KeyForceFailed, DebugCameraText.ForceFailed(wantOn: true), "ON");
+        Same(DebugCameraText.KeyStateUnknown, DebugCameraText.StateUnknownText);
         Same(InvokePickText.KeyTemplateSubobject,
              InvokePickText.TemplateSubobjectText("CharMoveComp", "CharacterMovementComponent", "Default__Character"),
              "CharMoveComp", "CharacterMovementComponent", "Default__Character");
@@ -294,7 +298,7 @@ public class AobMakerWordingTests
         Same(InvokePickText.KeyTargetByClass, InvokePickText.TargetByClassText("CheatManager"), "CheatManager");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(113, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(116, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

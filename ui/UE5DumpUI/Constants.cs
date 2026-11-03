@@ -122,6 +122,11 @@ public static class Constants
     // the caller's own direction, so it is never read as -5: send it again once the game responds.
     public const int DebugCameraToggleBlockedResult = -6;
 
+    // [DEBUGCAM-FORCEON-CDO] set_debug_camera's `state` -17 (Mimic::DBGCAM_ERR_NO_LIVE_CHEATMANAGER): a Force ON NOT SENT,
+    // because no CheatManager is live and ToggleDebugCamera does nothing on its class default object. The DLL read the
+    // camera OFF ("already ON" answers first), so the badge reads OFF, not Unknown.
+    public const int DebugCameraNoLiveCheatManagerResult = -17;
+
     // ── Movement result codes (Laufen) ──────────────────────────────────────
     // set_gravity_direction's `state` carries Laufen::MoveResult (dll/src/Laufen.h). -4, MR_ERR_REFLECT,
     // is what a pre-5.3 engine returns: the CMC exists but has no reflected GravityDirection. It is NOT

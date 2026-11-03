@@ -160,6 +160,33 @@ public class DebugCameraScriptGeneratorTests
         Assert.DoesNotContain("showMessage(", off);
     }
 
+    // [DEBUGCAM-FORCEON-CDO] -17: the DLL refused the ON -- no CheatManager is live, and the toggle does nothing on its
+    // class default object. The tick says so and unticks without [DISABLE] (nothing was applied, and [DISABLE] would
+    // send an OFF). [DISABLE] never gets -17: an OFF is never refused. The generic failure no longer names a missing
+    // CheatManager, which has its own code now.
+    [Fact]
+    public void A_refused_ON_says_there_is_no_live_CheatManager_and_unticks_without_DISABLE()
+    {
+        var s = DebugCameraScriptGenerator.Generate();
+        int d = s.IndexOf("[DISABLE]", System.StringComparison.Ordinal);
+        var enable = s[..d];
+        int b = enable.IndexOf($"elseif state == {UE5DumpUI.Constants.DebugCameraNoLiveCheatManagerResult} then",
+                               System.StringComparison.Ordinal);
+        Assert.True(b >= 0, "no -17 branch");
+        int fail = enable.IndexOf("elseif state ~= 1 then", System.StringComparison.Ordinal);
+        Assert.True(b < fail, "-17 must be tested before the failure");
+        var branch = enable[b..enable.IndexOf("\nelse", b + 1, System.StringComparison.Ordinal)];
+        Assert.Contains("showMessage('[DebugCamera] ON not sent -- there is no live CheatManager", branch);
+        Assert.Contains(CeLuaHygiene.DeferredUntickWithoutDisableLua("  "), branch);
+        Assert.True(branch.IndexOf("showMessage(", System.StringComparison.Ordinal)
+                    < branch.IndexOf("createTimer(", System.StringComparison.Ordinal), branch);
+        Assert.DoesNotContain(CeLuaHygiene.CloseCall, branch);
+        Assert.DoesNotContain("-17", s[d..]);
+
+        var generic = enable[fail..enable.IndexOf("\nelse", fail + 1, System.StringComparison.Ordinal)];
+        Assert.DoesNotContain("'no live CheatManager, or the game refused", generic);
+    }
+
     // [DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE] A tick that applied nothing unticked with `memrec.Active = false`,
     // and CE runs [DISABLE] for that: it sent an OFF nobody asked for. Over a queued OFF (the -6 tick) that OFF answered
     // -5, so [DISABLE] printed "OFF did not complete" and raised -- the record stayed ticked under a dialog that had said

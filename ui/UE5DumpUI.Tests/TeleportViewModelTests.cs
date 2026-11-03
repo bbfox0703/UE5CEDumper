@@ -1863,6 +1863,51 @@ public class TeleportViewModelTests
     }
 
     [Fact]
+    public async Task ForceDebugCameraOn_refused_for_no_live_CheatManager_says_so_and_the_badge_stays_OFF()
+    {
+        // [DEBUGCAM-FORCEON-CDO] The Teleport card's (and the debugcam_on hotkey's) twin of the Console's refusal.
+        var fake = new FakeDumpService { NextDebugCameraState = Constants.DebugCameraNoLiveCheatManagerResult };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+
+        Assert.True(fake.LastSetDebugCameraEnable);
+        Assert.Contains(UE5DumpUI.Helpers.DebugCameraText.NoLiveCheatManagerText, vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("re-drive", vm.StatusText, StringComparison.Ordinal);
+        Assert.Equal("OFF", vm.DebugCameraState);
+    }
+
+    [Fact]
+    public async Task ForceDebugCamera_minus1_is_a_failure_not_a_missing_CheatManager()
+    {
+        // [DEBUGCAM-FORCEON-CDO] -17 says "no live CheatManager"; -1 is a read or a toggle that failed.
+        var fake = new FakeDumpService { NextDebugCameraState = -1 };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ForceDebugCameraOffCommand.ExecuteAsync(null);
+
+        Assert.Equal("Unknown", vm.DebugCameraState);
+        Assert.Contains(UE5DumpUI.Helpers.DebugCameraText.ForceFailed(wantOn: false), vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("no live CheatManager", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RefreshDebugCamera_minus1_is_a_failed_read_not_advice_to_enter_gameplay()
+    {
+        // [DEBUGCAM-FORCEON-CDO] With no live CheatManager the state reads OFF; -1 is a read that failed.
+        var fake = new FakeDumpService { NextDebugCameraState = -1 };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.RefreshDebugCameraCommand.ExecuteAsync(null);
+
+        Assert.Equal("Unknown", vm.DebugCameraState);
+        Assert.Equal(UE5DumpUI.Helpers.DebugCameraText.StateUnknownText, vm.StatusText);
+    }
+
+    [Fact]
     public async Task ForceDebugCamera_reports_a_queued_toggle_as_queued()
     {
         // [W3-DEBUGCAM-QUEUED] The Teleport card's twin of the Console's Force: a queued toggle is not a failure.

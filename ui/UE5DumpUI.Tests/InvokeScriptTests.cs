@@ -3045,10 +3045,12 @@ public class InvokeScriptTests
     }
 
     [Fact]
-    public void DebugCameraForce_WarnsWhenItsToggleRanOnATemplate()
+    public void SetDebugCamera_refuses_a_toggle_on_a_template_before_one_is_marked_in_flight()
     {
-        // [INVOKE-NONSTATIC-ON-CDO] Force ON / OFF fires the non-static ToggleDebugCamera on whatever CheatManager the
-        // state read found -- its class default object when none is live. Warned on both lanes, never refused.
+        // [DEBUGCAM-FORCEON-CDO] With no live CheatManager the state read lands on its class default object, where
+        // ToggleDebugCamera does nothing (4.20+: GetOuterAPlayerController() is null on a CDO) or worse (4.18/4.19: a raw
+        // cast of the package). A Force ON there is refused before anything is marked in flight, so nothing is queued and
+        // no later -5 / -6 can be about a toggle on a template; a Force OFF only swaps the controller back.
         static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
         {
             int c = l.IndexOf("//", StringComparison.Ordinal);
@@ -3062,34 +3064,83 @@ public class InvokeScriptTests
         }
 
         var set = Body(CodeOnly(DllSource("Frieren.cpp")), "int32_t UE5_SetDebugCamera(int32_t enable) {");
-        int verdict = set.IndexOf("Aura::TemplateOf(cm)", StringComparison.Ordinal);
+        var step = System.Text.RegularExpressions.Regex.Match(set,
+            @"DebugCameraForceStep\(\s*want\s*,\s*Aura::TemplateOf\(cm\)\.kind\s*!=\s*Aura::TemplateKind::None\s*\)");
+        Assert.True(step.Success, "the step is decided from the request and whether the CheatManager is a template");
+        int read = set.IndexOf("DbgCam_ReadState(", StringComparison.Ordinal);
+        int already = set.IndexOf("already %s", StringComparison.Ordinal);
+        Assert.True(read > 0 && already > read && step.Index > already,
+            "decided after the state read and the 'already' answer, which stay as they are");
+        int refuse = set.IndexOf("return Mimic::DBGCAM_ERR_NO_LIVE_CHEATMANAGER;", step.Index, StringComparison.Ordinal);
+        int swapOnly = set.IndexOf("== Mimic::DbgCamForceStep::SwapBackOnly", step.Index, StringComparison.Ordinal);
+        int mark = set.IndexOf("s_dbgCamInFlight = want ? 1 : 0;", StringComparison.Ordinal);
+        Assert.True(refuse > step.Index && mark > refuse, "a refused ON returns before anything is marked in flight");
+        Assert.True(swapOnly > step.Index && mark > swapOnly, "an OFF with no live CheatManager never reaches the marking");
+        var swapBranch = set[swapOnly..mark];
+        Assert.Contains("DbgCam_SwapControllerBack(dcc)", swapBranch, StringComparison.Ordinal);
+        Assert.Contains("return state;", swapBranch, StringComparison.Ordinal);
+        Assert.DoesNotContain("CallProcessEventRouted", swapBranch, StringComparison.Ordinal);
         int fire = set.IndexOf("CallProcessEventRouted(cm, ufunc", StringComparison.Ordinal);
-        Assert.True(verdict > 0 && fire > verdict && set.Contains("Mimic::WarnNonStaticOnTemplate(", StringComparison.Ordinal),
-            "the verdict is taken on the CheatManager the toggle is about to run on");
-        // Review of ef20e198: the flag is reset before the first exit (an already-ON/OFF no-op fires nothing), and
-        // cleared again when the call was never dispatched (-2/-3/-7/-8 all come back as -1) -- only a toggle that ran
-        // (-4) or will run (-5) keeps it.
-        int reset = set.IndexOf("t_dbgCamFiredOnTemplate = false;", StringComparison.Ordinal);
-        Assert.True(reset > 0 && reset < set.IndexOf("return ", StringComparison.Ordinal), "reset before the first exit");
-        Assert.Matches(@"if \(r != 0 && r != -4 && r != Stark::kInvokeTimedOutStillQueued\)\s*t_dbgCamFiredOnTemplate = false;",
-            set[fire..]);
+        Assert.True(fire > mark, "the toggle is sent only past the marking, which a template never reaches");
+    }
+
+    [Fact]
+    public void SetDebugCamera_publishes_no_template_warning()
+    {
+        // [DEBUGCAM-FORCEON-CDO] No toggle can reach a template any more, so the DLL's "the toggle ran on the class
+        // default object" verdict ([INVOKE-NONSTATIC-ON-CDO]) is gone on every lane. The UI and CE readers stay, for a
+        // DLL from builds 3676-3681.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found -- re-point this pin");
+            return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
+        }
+
+        var frieren = CodeOnly(DllSource("Frieren.cpp"));
+        var set = Body(frieren, "int32_t UE5_SetDebugCamera(int32_t enable) {");
+        Assert.DoesNotContain("WarnNonStaticOnTemplate", set, StringComparison.Ordinal);
+        Assert.DoesNotContain("t_dbgCamFiredOnTemplate", frieren, StringComparison.Ordinal);
+        Assert.DoesNotContain("DebugCameraFiredOnTemplate", frieren, StringComparison.Ordinal);
 
         var fern = CodeOnly(DllSource("Fern.cpp"));
         int start = fern.IndexOf("cmd == Renge::CMD_SET_DEBUG_CAMERA", StringComparison.Ordinal);
         var handler = fern[start..fern.IndexOf("cmd == Renge::CMD_", start + 1, StringComparison.Ordinal)];
-        Assert.Contains("data[\"nonstatic_on_template\"] = FrierenInvoke::DebugCameraFiredOnTemplate()", handler,
-            StringComparison.Ordinal);
+        Assert.DoesNotContain("nonstatic_on_template", handler, StringComparison.Ordinal);
+        Assert.DoesNotContain("DebugCameraFiredOnTemplate", fern, StringComparison.Ordinal);
 
         var mimic = CodeOnly(DllSource("Mimic.cpp"));
-        int dbg = mimic.IndexOf("UE5_SetDebugCamera(req != 0 ? 1 : 0)", StringComparison.Ordinal);
-        int outBit = mimic.IndexOf("FrierenInvoke::DebugCameraFiredOnTemplate()", dbg, StringComparison.Ordinal);
-        Assert.True(dbg > 0 && outBit > dbg && outBit - dbg < 900, "CMD_SET_DEBUG_CAMERA publishes the bit too");
-        Assert.Contains("req != 2 && FrierenInvoke::DebugCameraFiredOnTemplate()", mimic, StringComparison.Ordinal);   // a query fires nothing
+        var dbg = Body(mimic, "static void HandleSetDebugCamera() {");
+        Assert.DoesNotContain("INV_OUT_NONSTATIC_ON_TEMPLATE", dbg, StringComparison.Ordinal);
+        Assert.DoesNotContain("DebugCameraFiredOnTemplate", mimic, StringComparison.Ordinal);
+        int refused = dbg.IndexOf("state == DBGCAM_ERR_NO_LIVE_CHEATMANAGER", StringComparison.Ordinal);
+        Assert.True(refused > 0, "the refusal has its own errorMsg");
+        Assert.Contains("no live CheatManager", dbg[refused..dbg.IndexOf("} else", refused, StringComparison.Ordinal)],
+            StringComparison.Ordinal);
+        int minus1 = dbg.IndexOf("state == -1", StringComparison.Ordinal);
+        Assert.True(minus1 > 0, "the -1 errorMsg is still there");
+        Assert.DoesNotContain("no live CheatManager",
+            dbg[minus1..dbg.IndexOf("} else", minus1, StringComparison.Ordinal)], StringComparison.Ordinal);
+    }
 
-        // CE: a Force ON that did not take says why when the bit is set.
-        var on = DebugCameraScriptGenerator.Generate();
-        Assert.Contains($"readInteger(mb + {CeMailboxLayout.OffOutFlags})", on, StringComparison.Ordinal);
-        Assert.Contains("class default object", on, StringComparison.Ordinal);
+    [Fact]
+    public void DebugCamera_refusal_code_is_registered_and_mirrored()
+    {
+        // [DEBUGCAM-FORCEON-CDO] -17 reaches CE in CMD_SET_DEBUG_CAMERA's `result`, the field CMD_TELEPORT's -16 and the
+        // invoke family's -12..-15 share: the registry note must move on, or the next code collides.
+        var mimicH = DllSource("Mimic.h").Replace("\r\n", "\n");
+        var m = System.Text.RegularExpressions.Regex.Match(mimicH, @"DBGCAM_ERR_NO_LIVE_CHEATMANAGER\s*=\s*(-\d+)");
+        Assert.True(m.Success, "Mimic::DBGCAM_ERR_NO_LIVE_CHEATMANAGER not found");
+        Assert.Equal(UE5DumpUI.Constants.DebugCameraNoLiveCheatManagerResult,
+            int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Contains("-17 is taken", mimicH, StringComparison.Ordinal);
+        Assert.Contains("The next mailbox-wide code takes -18.", mimicH, StringComparison.Ordinal);
+        Assert.DoesNotContain("The next mailbox-wide code takes -17.", mimicH, StringComparison.Ordinal);
     }
 
     [Fact]

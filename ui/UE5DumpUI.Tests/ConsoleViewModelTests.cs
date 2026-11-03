@@ -1603,6 +1603,9 @@ public class ConsoleViewModelTests
 
         Assert.Equal("Unknown", vm.DebugCameraState);
         Assert.Contains("unknown", vm.StatusText);
+        // [DEBUGCAM-FORCEON-CDO] With no live CheatManager the state reads OFF, so -1 is a failed read, not advice to
+        // enter gameplay.
+        Assert.Equal(DebugCameraText.StateUnknownText, vm.StatusText);
     }
 
     [Fact]
@@ -1686,7 +1689,28 @@ public class ConsoleViewModelTests
         await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
 
         Assert.Equal("Unknown", vm.DebugCameraState);
-        Assert.Contains("no live CheatManager", vm.StatusText);
+        // [DEBUGCAM-FORCEON-CDO] -1 is a read or a toggle that failed; "no live CheatManager" is -17's, and it never
+        // came back as -1 (the state reads OFF there).
+        Assert.Contains(DebugCameraText.ForceFailed(wantOn: true), vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("no live CheatManager", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ForceOn_refused_for_no_live_CheatManager_says_so_and_the_badge_stays_OFF()
+    {
+        // [DEBUGCAM-FORCEON-CDO] -17: the DLL sent nothing -- no CheatManager is live, and the toggle does nothing on its
+        // class default object. It read the camera OFF, so the badge says OFF; read as an unknown code, the line said
+        // "the game may re-drive the camera" under an Unknown badge.
+        var fake = new FakeDumpService { SetDebugCameraResult = Constants.DebugCameraNoLiveCheatManagerResult };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+
+        Assert.Equal(new[] { true }, fake.SetDebugCameraCalls);
+        Assert.Contains(DebugCameraText.NoLiveCheatManagerText, vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("re-drive", vm.StatusText, StringComparison.Ordinal);
+        Assert.Equal("OFF", vm.DebugCameraState);
     }
 
     [Fact]

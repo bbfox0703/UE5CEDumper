@@ -529,6 +529,11 @@ constexpr bool WarnNonStaticOnTemplate(bool onTemplate, bool isUFunction, uint32
     return onTemplate && !(isUFunction && (functionFlags & FUNC_FLAG_STATIC) != 0);
 }
 
+// RED SCAFFOLD [DEBUGCAM-FORCEON-CDO]
+constexpr int32_t DBGCAM_ERR_NO_LIVE_CHEATMANAGER = -17;
+enum class DbgCamForceStep : uint8_t { Toggle, SwapBackOnly, RefuseNoLiveCheatManager };
+constexpr DbgCamForceStep DebugCameraForceStep(bool, bool) { return DbgCamForceStep::Toggle; }
+
 /// [UE-OVERRIDE-411] review 2: what CMD_INVOKE publishes instead of handing ProcessEvent the paramsData slab.
 /// Negative and apart from ProcessEvent's own codes (Frieren.h lists them) and the mailbox's -10 / -11; like
 /// MB_ERR_HANDLER_THREW in Mimic.cpp, not a contract change, because every script treats a non-zero result as a

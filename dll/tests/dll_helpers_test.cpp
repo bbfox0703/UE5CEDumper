@@ -8512,6 +8512,28 @@ static void Test_Mimic_WarnNonStaticOnTemplate() {
     static_assert(!WarnNonStaticOnTemplate(false, true, 0), "WarnNonStaticOnTemplate must be constexpr-evaluable");
 }
 
+// [DEBUGCAM-FORCEON-CDO] A Debug Camera Force whose CheatManager is a template (its class default object: none is
+// live) sends no ToggleDebugCamera there. ON is refused with its own code; OFF goes straight to the swap-back.
+static void Test_Mimic_DebugCameraForceStep() {
+    std::printf("Test_Mimic_DebugCameraForceStep\n");
+    using namespace Mimic;
+    EXPECT("DBGCAM-CDO: an ON whose CheatManager is a template is refused",
+           DebugCameraForceStep(true, true) == DbgCamForceStep::RefuseNoLiveCheatManager);
+    EXPECT("DBGCAM-CDO: an OFF there sends no toggle, only the swap-back",
+           DebugCameraForceStep(false, true) == DbgCamForceStep::SwapBackOnly);
+    EXPECT("DBGCAM-CDO control: a live CheatManager toggles both ways",
+           DebugCameraForceStep(true, false) == DbgCamForceStep::Toggle
+           && DebugCameraForceStep(false, false) == DbgCamForceStep::Toggle);
+    EXPECT("DBGCAM-CDO: the refusal's code is its own", DBGCAM_ERR_NO_LIVE_CHEATMANAGER == -17
+           && DBGCAM_ERR_NO_LIVE_CHEATMANAGER != -1
+           && DBGCAM_ERR_NO_LIVE_CHEATMANAGER != Stark::kInvokeTimedOutStillQueued
+           && DBGCAM_ERR_NO_LIVE_CHEATMANAGER != Stark::kToggleBlockedByQueued
+           && (DBGCAM_ERR_NO_LIVE_CHEATMANAGER < MB_ERR_INVOKE_NOT_OWNED || DBGCAM_ERR_NO_LIVE_CHEATMANAGER > MB_ERR_INVOKE_UNRESOLVED)
+           && DBGCAM_ERR_NO_LIVE_CHEATMANAGER != Wirbel::TP_ERR_PARENT_RELATIVE);
+    static_assert(DebugCameraForceStep(true, false) == DbgCamForceStep::Toggle,
+                  "DebugCameraForceStep must be constexpr-evaluable");
+}
+
 // [FINDINSTANCE-SUBSTRING-USERFACING] invoke_function names the object a class name resolved to, and a cut-short
 // lookup is never reported as an absent class. The UI's Self-Test matches the two openings, so they are pinned too.
 static void Test_UserPick_WireAndTexts() {
@@ -11441,6 +11463,7 @@ int main() {
     RUN(Test_Wirbel_StoresUndoPoint);
     RUN(Test_UserPick_WireAndTexts);
     RUN(Test_Mimic_WarnNonStaticOnTemplate);
+    RUN(Test_Mimic_DebugCameraForceStep);
     RUN(Test_Mimic_InvokeRouting);
     RUN(Test_Mimic_InvokeSlab);
     RUN(Test_Mimic_InitFastPath);
