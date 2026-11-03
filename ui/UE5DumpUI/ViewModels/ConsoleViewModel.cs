@@ -558,11 +558,13 @@ public partial class ConsoleViewModel : ViewModelBase
             }
 
             // Remember the resolved instance so the next toggle lands on the
-            // same object. The DLL echoes the address it actually used, and how it picked it: a class-default or a
-            // Debug-Camera-owned pick re-resolves next time instead. [FINDINSTANCE-SUBSTRING-USERFACING]
+            // same object. The DLL echoes the address it actually used, and how it picked it: a pick or template
+            // InvokePickText.IsPinnable declines re-resolves next time instead. [FINDINSTANCE-SUBSTRING-USERFACING]
             if (result.Success && !string.IsNullOrEmpty(result.InstanceAddr)
                 && InvokePickText.IsPinnable(result.InstancePick, result.InstanceTemplate))
                 _stickyInstance[entry.ClassName] = new Pin(result.InstanceAddr, result.InstanceClassAddr);
+            else if (usedPin && !string.IsNullOrEmpty(result.InstanceTemplate))
+                _stickyInstance.Remove(entry.ClassName);   // the pinned address now holds a template: re-resolve next time
 
             var resultText = result.Success
                 ? (string.IsNullOrEmpty(result.Message) ? "OK" : result.Message)
