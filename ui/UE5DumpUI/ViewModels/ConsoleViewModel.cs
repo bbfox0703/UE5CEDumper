@@ -479,6 +479,15 @@ public partial class ConsoleViewModel : ViewModelBase
             return;
         }
 
+        // [CONSOLE-ROWRUN-SELECTED] One run at a time, whichever path started it: a second invoke sent while the first
+        // waits on a busy game thread can run the command twice, since a timed-out invoke stays queued. Not every button
+        // that reaches here is disabled while a run is in flight, so the refusal lives here.
+        if (IsRunning)
+        {
+            StatusText = ConsoleRunText.StillRunningText(entry.FuncName);
+            return;
+        }
+
         try
         {
             ClearError();
