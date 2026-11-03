@@ -27,6 +27,14 @@ builds ≤696 in
 
 -----
 
+## 2026-11-03 (no build change) — The publish build's two test-target warnings `[BUILD-WARN-C4456-C4819]`
+
+- `dll_helpers_test`: C4456, an inner `s` in the Lager window test hid the outer one; renamed.
+- The three `owncopy_*` fixtures for `dll_core_test` were the only C++ targets built without `/utf-8`. They include
+  `Mimic.h`, whose comments are UTF-8, so a zh-TW (code page 950) machine warned C4819. They now take `/utf-8` like
+  every other target.
+- Test targets only: the DLL, the proxies and the UI are unchanged.
+
 ## 2026-11-03 (build 3679) — A refused Console run keeps the selection; the Debug Camera Force and a run never overlap `[CONSOLE-ROWRUN-SELECTED]`
 
 - **A refused row Run leaves the selection** on the row that is still running.

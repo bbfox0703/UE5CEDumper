@@ -10826,12 +10826,12 @@ static void Test_Lager_SummarizeWindow() {
         m.push_back(LgTyped(base + 0x8000000ull, base + 0xA000000ull, base + 0x8000000ull, Lager::kMemImage)); // 32 MB module
         m.push_back(LgTyped(base + 0xA000000ull, base + 0xB000000ull, base + 0xA000000ull, Lager::kMemMapped));// 16 MB view
         m.push_back(LgFree(base + 0xB000000ull, 0x7FF000000000ull));
-        const Lager::WindowSummary s = Lager::SummarizeWindow(m, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
-        EXPECT_EQ_U64("heap bytes are totalled as private", s.privateBytes, 0x8000000ull);
-        EXPECT_EQ_U64("module bytes as image", s.imageBytes, 0x2000000ull);
-        EXPECT_EQ_U64("view bytes as mapped", s.mappedBytes, 0x1000000ull);
+        const Lager::WindowSummary typed = Lager::SummarizeWindow(m, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+        EXPECT_EQ_U64("heap bytes are totalled as private", typed.privateBytes, 0x8000000ull);
+        EXPECT_EQ_U64("module bytes as image", typed.imageBytes, 0x2000000ull);
+        EXPECT_EQ_U64("view bytes as mapped", typed.mappedBytes, 0x1000000ull);
         EXPECT("the largest occupant is the heap allocation",
-               s.largestTakenType == Lager::kMemPrivate && s.largestTakenBase == base);
+               typed.largestTakenType == Lager::kMemPrivate && typed.largestTakenBase == base);
         EXPECT("free is not typed", Lager::MemTypeName(0) == std::string("other"));
     }
 }
