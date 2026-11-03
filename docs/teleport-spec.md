@@ -452,8 +452,8 @@ Op codes (`Grimoire.h` + mirrored in the C# constants file):
 |---|---|---|---|
 | 0 | GET_POSE | — | pose block |
 | 1 | SAVE | — | pose block (the saved pose) |
-| 2 | RECALL | — | — |
-| 3 | RECALL_FORCE | — | — |
+| 2 | RECALL | — | `[177]` tier (`result=-7` map mismatch; `result=-16` refused, nothing moved, when the marker came from a parent-relative read) |
+| 3 | RECALL_FORCE | — | `[177]` tier (skips only the map check: `result=-16` for a parent-relative marker, as RECALL) |
 | 4 | CURSOR | `[0..7]` double zOffset, `[8]` u8 traceChannel, `[9]` u8 fallbackToCenter | `[0..23]` 3×double hit point |
 | 5 | GET_MARKER | — | pose block (`result=-6` if slot empty) |
 | 6 | CLEAR_MARKER | — | — |
@@ -477,12 +477,24 @@ BugItGo flow stays textbox-based via `teleport_recall_marker`, so there is no
 pipe command / C export for this slot.
 
 The **"last" slot** (op 7/8) is a system-managed extra marker the DLL writes
-automatically right before *every* jump (RECALL / RECALL_FORCE / CURSOR and the
-pipe BugItGo explicit-pose path), so a teleport that lands the pawn somewhere
+automatically right before a jump (RECALL / RECALL_FORCE / CURSOR / RELATIVE /
+BUGIT_GO and the explicit-pose path), so a teleport that lands the pawn somewhere
 bad can be undone. RECALL_LAST is a **one-way restore** — it never overwrites the
 slot, so repeated calls always return to the same pre-teleport spot. The user
 can never save into it (no SAVE op for "last"); the map check is skipped (the
-pose is always from moments ago on the current map).
+pose is normally from moments ago on the current map). A pose before the jump
+that is not world coordinates — unreadable, or the parent-relative fallback —
+leaves the previous one, so the slot can be older than the most recent jump and
+never holds relative numbers `[TELEPORT-RECALL-PARENTREL]`.
+
+**Marker RECALL / RECALL_FORCE and RELATIVE** refuse a parent-relative pose the
+same way BUGIT_GO does, with `-16` before the "last" auto-save: a marker saved
+from the fallback (Force overrides only the map check, which can be wrong;
+nothing makes relative numbers world coordinates), and a TP-facing step whose
+start pose came from it. A parent-relative marker on another map answers `-16`,
+not `-7`, so Force is not offered for a refusal it could not get past. A
+RELATIVE whose landing re-read falls back is reported as an unknown landing
+`[TELEPORT-RECALL-PARENTREL]`.
 
 Pose block layout in `paramsData` (offsets relative to 0x328):
 
@@ -520,7 +532,7 @@ results into `paramsData`. Document the new command in
 | -8 | Trace found no blocking hit | "Nothing under cursor/center within range" |
 | -9 | Mouse position unavailable and center fallback disabled | "No cursor — enable center fallback" |
 | -10 | Tier 2 raw-write fallback also failed | "Write failed (protected memory?)" |
-| -16 | Jump refused: the stored pose came from a parent-relative read, not world coordinates; nothing moved (mailbox `BUGIT_GO` only; no pipe command or export answers it) | "BugIt again while the game responds (focus it / Keep Foreground), or off the vehicle or mount" |
+| -16 | Jump refused: the stored pose (a BugIt, a marker) or the current pose (TP facing) came from a parent-relative read, not world coordinates; nothing moved. Mailbox `BUGIT_GO`, `RECALL`, `RECALL_FORCE` and `RELATIVE`; the pipe's `teleport_recall_marker` (slot) and `teleport_relative`; `UE5_TeleportRecallMarker` / `UE5_TeleportRelative` | "Save (or BugIt) again while the game responds (focus it / Keep Foreground), or off the vehicle or mount" |
 
 -11 to -15 are not Wirbel codes: the mailbox publishes its own codes there, in the
 same `result` field (`Mimic.h`, `Mimic.cpp`).
@@ -1044,7 +1056,8 @@ Reuses the existing `Wirbel::RecallExplicit` (no new core): force-teleport to an
 exact world X/Y/Z, **no map check**, optional rotation restore. Already exposed on
 the pipe via `teleport_recall_marker` (x/y/z variant). New surfaces only add a CE
 mailbox op + export + a dedicated UI section (X/Y/Z + optional Pitch/Yaw/Roll +
-"Fill from current"). Also undoable via Recall last.
+"Fill from current", which refuses a parent-relative read: the boxes cannot
+carry the flag `[TELEPORT-RECALL-PARENTREL]`). Also undoable via Recall last.
 
 ### 16.3 Force mouse cursor (`Wirbel::SetMouseCursor` / `GetMouseCursor`)
 

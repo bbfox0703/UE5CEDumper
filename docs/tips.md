@@ -270,8 +270,13 @@ invoking the engine's own functions, so it's clean across UE4 and UE5.
 on Marker 1/2/3. Later click **Recall** to jump back (rotation restored, fall
 velocity zeroed). Markers live in the DLL, so they survive a UI restart as long
 as the game keeps running. Recall is refused with a hint if you've changed maps
-— click **Force** to override (you may land in an unloaded area). Markers store
-coordinates only, so dying / respawning never breaks them.
+— click **Force** to override (you may land in an unloaded area). A marker saved
+from a parent-relative read (⚠ in its row: an attached pawn whose world position
+could not be read) is refused by Recall and Force alike, since those numbers are
+not world coordinates — save it again while the game is responding. Markers store
+coordinates only, so dying / respawning never breaks them. **Recall last** undoes
+the most recent jump; when the position before a jump could not be read in world
+coordinates, it keeps the previous one.
 
 **Teleport to the cursor (2.5D / 45° games).** For top-down ARPGs (Titan
 Quest-likes) click **Teleport to cursor** — the pawn jumps to whatever's under

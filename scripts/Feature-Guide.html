@@ -590,7 +590,9 @@ MARKERS (BugItGo-style)
   Stand somewhere, Save on Marker 1 / 2 / 3.  Recall to jump back (rotation
   restored, fall velocity zeroed).  Markers live in the DLL, so they survive a UI
   restart while the game runs.  Recall is refused with a hint if you changed maps;
-  Force overrides.  Copy as BugItGo puts a "BugItGo X Y Z" string on the
+  Force overrides.  A marker saved from a parent-relative read (the warning in its
+  row) is refused by Recall and Force alike: its numbers are not world
+  coordinates.  Copy as BugItGo puts a "BugItGo X Y Z" string on the
   clipboard; paste one back + Run to teleport there.  On a parent-relative read
   (the warning chip) it copies nothing: those numbers are not world coordinates.
 

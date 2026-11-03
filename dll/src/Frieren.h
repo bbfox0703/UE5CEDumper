@@ -207,8 +207,9 @@ __declspec(dllexport) int32_t   UE5_TeleportToCursor(double zOffset,
 __declspec(dllexport) int32_t   UE5_TeleportGetMarker(int32_t slot, double* outPose6,
                                     char* outMapName, int32_t mapNameCap);
 __declspec(dllexport) int32_t   UE5_TeleportClearMarker(int32_t slot);
-// Recall the system "last" pose (auto-saved before every recall/force/BugItGo/
-// cursor jump) — one-way restore so a bad teleport can be undone.
+// Recall the system "last" pose (auto-saved before a jump; a pose that is not
+// world coordinates leaves the previous one) — one-way restore so a bad teleport
+// can be undone.
 __declspec(dllexport) int32_t   UE5_TeleportRecallLast();
 __declspec(dllexport) int32_t   UE5_TeleportGetLast(double* outPose6,
                                     char* outMapName, int32_t mapNameCap);

@@ -741,7 +741,8 @@ public interface IDumpService
     Task<TeleportPose> TeleportSaveMarkerAsync(int slot, CancellationToken ct = default);
 
     /// <summary>Recall to marker slot 0..2. Refused on map mismatch unless
-    /// <paramref name="force"/>.</summary>
+    /// <paramref name="force"/>, and refused (-16) for a marker saved from a
+    /// parent-relative read, force or not. [TELEPORT-RECALL-PARENTREL]</summary>
     Task<TeleportResult> TeleportRecallMarkerAsync(int slot, bool force, CancellationToken ct = default);
 
     /// <summary>Recall to an explicit pose (BugItGo interop). Bypasses the
@@ -764,9 +765,10 @@ public interface IDumpService
     Task<int> TeleportClearMarkerAsync(int slot, CancellationToken ct = default);
 
     /// <summary>Recall the system "last" pose — the position auto-saved DLL-side
-    /// right before the most recent recall / force / BugItGo / cursor teleport,
-    /// so a teleport that went wrong can be undone. One-way restore (the slot is
-    /// never overwritten by this call); map check is skipped.</summary>
+    /// right before a jump, so a teleport that went wrong can be undone. A jump
+    /// whose pose was not world coordinates leaves the previous one. One-way
+    /// restore (the slot is never overwritten by this call); map check is
+    /// skipped.</summary>
     Task<TeleportResult> TeleportRecallLastAsync(CancellationToken ct = default);
 
     /// <summary>Read the camera POV (read-only): the on-screen camera's world

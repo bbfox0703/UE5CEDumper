@@ -168,13 +168,15 @@ enum Cmd : int32_t {
 enum TeleportOp : uint64_t {
     TP_OP_GET_POSE     = 0,
     TP_OP_SAVE         = 1,
-    TP_OP_RECALL       = 2,
-    TP_OP_RECALL_FORCE = 3,
+    TP_OP_RECALL       = 2,  // result -16 for a marker saved from a parent-relative read, nothing moved;
+    TP_OP_RECALL_FORCE = 3,  //   RECALL_FORCE skips only the map check (-7), so it answers -16 too. A new
+                             //   result on existing ops, as BUGIT_GO's below. [TELEPORT-RECALL-PARENTREL]
     TP_OP_CURSOR       = 4,
     TP_OP_GET_MARKER   = 5,
     TP_OP_CLEAR_MARKER = 6,
-    TP_OP_RECALL_LAST  = 7,  // recall the system "last" pose (auto-saved before
-                             //   every recall/force/BugItGo/cursor jump). slot ignored.
+    TP_OP_RECALL_LAST  = 7,  // recall the system "last" pose (auto-saved before a
+                             //   jump; a pose that is not world coordinates leaves the
+                             //   previous one). slot ignored.
     TP_OP_GET_LAST     = 8,  // read the system "last" slot (pose block output)
     TP_OP_BUGIT_SAVE   = 9,  // store current pose into the BugIt slot (pose block
                              //   output, like SAVE); user-triggered, slot ignored.
@@ -197,7 +199,8 @@ enum TeleportOp : uint64_t {
                              //     negative = backward), [8] u8 mode (0 = horizontal
                              //     keep-Z, 1 = full 3D include pitch). slot ignored.
                              //   Output pose block (resulting pose, like GET_POSE) +
-                             //     [177] tier.
+                             //     [177] tier. result -16 when the current pose came from
+                             //     a parent-relative read: nothing moved. [TELEPORT-RECALL-PARENTREL]
     TP_OP_EXPLICIT     = 13, // teleport to explicit world coordinates (force; no
                              //   map check). Input paramsData: [0..47] 6 doubles
                              //   X,Y,Z,Pitch,Yaw,Roll, [48] u8 hasRot (restore
@@ -544,7 +547,7 @@ constexpr int32_t MB_ERR_INVOKE_OBJECT_PARAM = -14;
 /// and every script shows errorMsg for a non-zero result -- which says to re-open the form, whose creation re-runs FIND.
 constexpr int32_t MB_ERR_INVOKE_NOT_OWNED = -15;
 /// ⚠ -16 is taken: Wirbel::TP_ERR_PARENT_RELATIVE reaches CE in the same `result` field on CMD_TELEPORT
-/// ([TELEPORT-BUGITGO-PARENTREL]). The next mailbox-wide code takes -17.
+/// ([TELEPORT-BUGITGO-PARENTREL], [TELEPORT-RECALL-PARENTREL]). The next mailbox-wide code takes -17.
 
 /// May CMD_INVOKE hand ProcessEvent the slab? 0 = yes, otherwise the refusal to publish.
 ///
@@ -644,7 +647,7 @@ extern "C" __declspec(dllexport) extern Mimic::MailboxData g_invokeMailbox;
 //
 // WHAT IS NOT A CHANGE AT ALL: a new negative result code on a command or op whose
 //   every generated block reports a negative result it has no message for and keeps
-//   its window open -- today CMD_TELEPORT (TP_OP_BUGIT_GO's -16) and the invoke
+//   its window open -- today CMD_TELEPORT (the -16 of BUGIT_GO, RECALL, RECALL_FORCE and RELATIVE) and the invoke
 //   family (MB_ERR_INVOKE_* -12..-15). Check the generators first: some [DISABLE]
 //   blocks report a negative state only through dbg(), and the GodMode [ENABLE]
 //   reads any negative state as "armed", so a new code there IS a change.
