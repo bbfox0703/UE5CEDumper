@@ -250,7 +250,7 @@ Shared by the Console panel (here) and CE Lua (`setDebugCamera` export). All log
 
 `nonstatic_on_template` (from build 3676) is a WARNING beside `state`: the toggle targets the CheatManager's class
 default object -- no live CheatManager, usual in a Shipping build -- where it does nothing. It is set only when the
-toggle ran or is queued to run. Absent = an older DLL.
+toggle THIS call sent ran or is queued to run; a re-send answered by a toggle already queued is false. Absent = an older DLL.
 The mailbox's CMD_SET_DEBUG_CAMERA publishes the same thing as `INV_OUT_NONSTATIC_ON_TEMPLATE` in cmdOutFlags
 (contract 7). `[INVOKE-NONSTATIC-ON-CDO]`
 

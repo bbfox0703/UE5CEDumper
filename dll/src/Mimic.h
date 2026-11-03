@@ -50,8 +50,9 @@ enum Cmd : int32_t {
                               //           queued -- send again once the game responds.
                               //           [W3-DEBUGCAM-QUEUED]; MB3 in Mimic.cpp: no contract bump)
                               //           cmdOutFlags INV_OUT_NONSTATIC_ON_TEMPLATE (contract 7+) when the
-                              //           toggle targets the CheatManager's class default object (no live
-                              //           one), where it does nothing. [INVOKE-NONSTATIC-ON-CDO]
+                              //           toggle it sent targets the CheatManager's class default object
+                              //           (no live one), where it does nothing; a re-send answered by a toggle already queued
+                              //           carries none. [INVOKE-NONSTATIC-ON-CDO]
     CMD_TELEPORT        = 8,  // Teleport (Wirbel): marker save/recall + cursor teleport.
                               //   Input:  instanceAddr = op (TeleportOp below)
                               //           ufuncAddr    = slot (0..2) for SAVE/RECALL/GET/CLEAR

@@ -27,6 +27,24 @@ builds ≤696 in
 
 -----
 
+## 2026-11-03 (build 3679) — A refused Console run keeps the selection; the Debug Camera Force and a run never overlap `[CONSOLE-ROWRUN-SELECTED]`
+
+- **A refused row Run leaves the selection** on the row that is still running.
+- **The refusal reads "⏳ … was not sent — a Console command is still running. Wait for its result first."** It no
+  longer calls the running command "another": it can be the same command, started a second way. And it no longer
+  says to run it again.
+- **The Debug Camera Force On / Off and a Console run no longer overlap.** Each refuses while the other is in flight:
+  both queue a toggle on a busy game thread, and two toggles cancel out.
+- **Correction to build 3678's entry:** "one command at a time" holds only while the first call is in flight, up to
+  the 5 s dispatch timeout. After that the command can still be queued (the status line says so), and a second run
+  is sent behind it. In 3678 the Force and a run could also still overlap; 3679 closes that.
+- **Checked live on DumperTest58 Development, build 3679, with its game thread suspended:**
+  - During a ToggleDebugCamera run, another row's Run said it was not sent, and the selection stayed on
+    ToggleDebugCamera. Force On was refused the same way.
+  - During a Force OFF, the ToggleDebugCamera row's Run was refused, and Recent invocations gained nothing.
+  - Each time, one toggle drained once the thread resumed.
+- Tests: C# 7,314 total, 0 failed, 1 skipped; 37 gates. AOT UI 61,621,248 bytes.
+
 ## 2026-11-03 (build 3678) — The Console sends one command at a time `[CONSOLE-ROWRUN-SELECTED]` `[RIG-PIPE-DOUBLE-CONNECT]`
 
 - **No Console run is sent while another is still running.** A row's Run button or a history replay used to send a

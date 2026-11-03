@@ -7078,8 +7078,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // resulting state: 1=on, 0=off, -1=error, -5=toggle queued [W3-DEBUGCAM-QUEUED], -6=not sent: an opposite
             // toggle is still queued [DBGCAM-OFF-OVER-QUEUED-ON]
             data["state"] = state;
-            // [INVOKE-NONSTATIC-ON-CDO] The toggle targets the CheatManager's class default object (none is live), where
-            // it does nothing. A warning beside `state` (additive key); read on this thread right after the call.
+            // [INVOKE-NONSTATIC-ON-CDO] The toggle this call sent targets the CheatManager's class default object (none
+            // is live), where it does nothing; a re-send answered by a toggle already queued reads false. A warning beside `state`
+            // (additive key); read on this thread right after the call.
             data["nonstatic_on_template"] = FrierenInvoke::DebugCameraFiredOnTemplate();
             return Renge::MakeResponse(id, data).dump();
         }
