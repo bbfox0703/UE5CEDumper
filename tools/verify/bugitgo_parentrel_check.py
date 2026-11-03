@@ -108,7 +108,6 @@ def main() -> int:
     l78("attach")
     try:
         with PipeClient(timeout=60) as pc:
-            pc.connect()
             print("build:", pc.assert_build(None) if a.expect == "refuse" else
                   data(pc.request("get_pointers")).get("build_number"))
 

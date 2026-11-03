@@ -42,7 +42,6 @@ def main() -> int:
     bad = 0
 
     with PipeClient(timeout=180) as pc:
-        pc.connect()
         print("build:", pc.assert_build())
         pc.ensure_scanned()
 

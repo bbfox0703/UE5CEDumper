@@ -27,7 +27,6 @@ def main() -> int:
     a = ap.parse_args()
 
     with PipeClient(timeout=300) as pc:
-        pc.connect()
         print("build:", pc.request("get_pointers").get("build_number"))
         pc.ensure_scanned()
 

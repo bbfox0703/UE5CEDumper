@@ -50,7 +50,6 @@ def main() -> int:
     ap.add_argument("--cycles", type=int, default=0, help="extra ON/OFF pairs after the first two")
     a = ap.parse_args()
     with PipeClient() as pc:
-        pc.connect()
         print("build:", pc.assert_build())
         pc.ensure_scanned()
         print("CheatManagers (player, DCC-owned):", cheat_manager_indices(pc))

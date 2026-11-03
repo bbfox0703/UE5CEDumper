@@ -95,7 +95,6 @@ def main() -> int:
         print(f"{label:3} {'OK ' if ok else 'BAD'}  {detail}")
 
     with PipeClient(timeout=180) as pc:
-        pc.connect()
         print("build:", pc.assert_build())
         pc.ensure_scanned()
 

@@ -59,7 +59,6 @@ def main() -> int:
 
     wrong = 0
     with PipeClient() as pc:
-        pc.connect()
         print("build:", pc.assert_build())
         pc.ensure_scanned()
         if a.gc:

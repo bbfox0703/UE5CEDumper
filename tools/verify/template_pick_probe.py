@@ -61,7 +61,6 @@ def main() -> int:
     base = MB.mailbox_addr(str(pid))
     m = MB.Mem(pid)
     with PipeClient(timeout=120) as pc:
-        pc.connect()
         print("build:", data(pc.request("get_pointers")).get("build_number"))
         pc.ensure_scanned()
         for cls in a.classes or DEFAULT_CLASSES:
