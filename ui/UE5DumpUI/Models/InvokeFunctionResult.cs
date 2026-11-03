@@ -30,7 +30,8 @@ public sealed class InvokeFunctionResult
     /// DLL that does not say.</summary>
     public string? InstanceTemplate { get; init; }
 
-    /// <summary>The class-default object a "template" belongs to, when the DLL found one.</summary>
+    /// <summary>What a "template" belongs to: the class default object above it, or, for an archetype with none, its
+    /// own outer (a Blueprint class, for its component templates).</summary>
     public string TemplateOwnerName { get; init; } = "";
 
     /// <summary>The DLL's verdict: the call ran a function that is not static on a template, where it may do nothing.

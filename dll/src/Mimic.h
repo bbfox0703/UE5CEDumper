@@ -49,6 +49,9 @@ enum Cmd : int32_t {
                               //           -6 = not sent: an earlier toggle of the other direction is still
                               //           queued -- send again once the game responds.
                               //           [W3-DEBUGCAM-QUEUED]; MB3 in Mimic.cpp: no contract bump)
+                              //           cmdOutFlags INV_OUT_NONSTATIC_ON_TEMPLATE (contract 7+) when the
+                              //           toggle targets the CheatManager's class default object (no live
+                              //           one), where it does nothing. [INVOKE-NONSTATIC-ON-CDO]
     CMD_TELEPORT        = 8,  // Teleport (Wirbel): marker save/recall + cursor teleport.
                               //   Input:  instanceAddr = op (TeleportOp below)
                               //           ufuncAddr    = slot (0..2) for SAVE/RECALL/GET/CLEAR
@@ -180,7 +183,7 @@ enum TeleportOp : uint64_t {
                              //   op, not a contract change: every contract-checking teleport record already shows
                              //   "failed (code N)" for a negative result it has no message for, and keeps its window
                              //   open, and an older DLL answers it exactly as before. The BugIt record's "BugItGo will
-                             //   refuse this pose" holds because it bakes contract 6, which no DLL without the
+                             //   refuse this pose" holds because it bakes contract 6 or later, which no DLL without the
                              //   refusal publishes.
     TP_OP_GET_POV      = 11, // read the camera POV (read-only). slot ignored.
                              //   Output POV block in paramsData:
@@ -285,8 +288,9 @@ enum ListInstancesFlag : uint32_t {
 // and it never writes 0x2. The dispatcher clears cmdOutFlags before every command, so the bit is this command's.
 enum InvokeOutFlag : uint32_t {
     INV_OUT_NONSTATIC_ON_TEMPLATE = 0x2,  // the call reached dispatch with a function that is not static on a TEMPLATE
-                                          //   (a class-default object or one of its default subobjects): it may have
-                                          //   done nothing there. A warning: `result` is the call's own answer.
+                                          //   (a class-default object, one of its default subobjects, or another
+                                          //   archetype such as a Blueprint's component template): it may have done
+                                          //   nothing there. A warning: `result` is the call's own answer.
 };
 // The first contract whose invoke family publishes InvokeOutFlag; a script claiming less reads 0x72C only from a DLL
 // that publishes at least this (0x72C lies past the end of a contract 1-2 MailboxData).
@@ -421,9 +425,9 @@ struct MailboxData {
                                         //        contract-1/2 script (which never writes this field)
                                         //        on exactly its old behaviour.
     volatile uint32_t cmdOutFlags;      // 0x72C: OUT — per-command output flags (contract 3+).
-                                        //        CMD_LIST_INSTANCES publishes LI_OUT_TRUNCATED here;
-                                        //        CMD_INVOKE / CMD_INVOKE_BY_NAME publish InvokeOutFlag
-                                        //        (contract 7+). The dispatcher clears it before every
+                                        //        Each command publishes its own out-flag enum here
+                                        //        (ListInstancesFlag, InvokeOutFlag -- see who sets each
+                                        //        in its comment). The dispatcher clears it before every
                                         //        command (contract 7+), so a bit is always this
                                         //        command's, never accumulated.
 };
@@ -697,8 +701,9 @@ namespace Mimic {
 ///   embedded invoke helper deliberately claims contract 1 (verify mode bakes the generator's own contract check).
 /// 7 ([INVOKE-NONSTATIC-ON-CDO]): two changes, one bump. (a) CMD_INVOKE -- and CMD_INVOKE_BY_NAME, which ends in it --
 ///   publishes InvokeOutFlag in cmdOutFlags: INV_OUT_NONSTATIC_ON_TEMPLATE when it ran a function that is not static on
-///   a template (a class-default object or one of its default subobjects), where it may have done nothing -- and so
-///   does CMD_SET_DEBUG_CAMERA when its toggle ran on the CheatManager's class default object (none was live). A
+///   a template (a class-default object, one of its default subobjects, or another archetype), where it may have done
+///   nothing -- and so does CMD_SET_DEBUG_CAMERA when its toggle targets the CheatManager's class default object (none
+///   was live). A
 ///   warning beside `result`, never a refusal. cmdOutFlags was an unused output for both, and the dispatcher now
 ///   clears it before every command, so a set bit is always this command's. The new enum is layout, so the surface
 ///   hash moves. (b) CMD_FIND_INSTANCE never takes a TEMPLATE for a live object: one flagged RF_ArchetypeObject -- a

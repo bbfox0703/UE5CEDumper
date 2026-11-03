@@ -39,8 +39,8 @@ internal static class DebugCameraText
         => onTemplate == true ? status + " " + OnTemplateText : status;
 
     internal static string OnTemplateText => Say(KeyOnTemplate,
-        "⚠ The toggle ran on the CheatManager's class default object: there is no live CheatManager (usual in a " +
-        "Shipping build), so it does nothing there.");
+        "⚠ The toggle targets the CheatManager's class default object: there is no live CheatManager (usual in a " +
+        "Shipping build), and a toggle there does nothing.");
 
     internal const string KeyBlockedOn = "str.DbgCam.BlockedOn";
     internal const string KeyBlockedOff = "str.DbgCam.BlockedOff";

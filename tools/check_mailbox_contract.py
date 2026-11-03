@@ -15,8 +15,7 @@ WHY THIS EXISTS
 WHAT IS IN THE HASH (matches the rule in dll/src/Mimic.h)
   1. Every `MailboxData` field: name, type and declared offset comment
   2. Every `Cmd` value
-  3. Every per-command op enum value (TeleportOp / FlyOp / ProtectOp / QueryPtrOp /
-     TimeOp / ForegroundOp)
+  3. Every per-command op and flag enum value (the CONTRACT_ENUMS tuple below names them)
   4. `Status` and `InitState` values
   It deliberately ignores comments, blank lines and prose, so documentation edits do not
   trip it — only the values a generated script actually depends on.
@@ -38,8 +37,10 @@ WHAT ELSE MIRRORS THE LAYOUT (audit #5 AA36)
       just the sum of the preceding field sizes) rather than read from the `// 0xNNN:`
       comments — which also validates those comments, since the Lua copies were made
       from them;
-    * `CMD_* / STATUS_* / INIT_* / LI_*` are compared against the enum member of the
-      same name, and `ENTRY_SIZE_* / MAX_PAGES` against their `constexpr` originals;
+    * enum-shaped literals (`CMD_*`, `STATUS_*`, the flag prefixes -- LUA_LAYOUT_PREFIXES
+      below) are compared against the enum member of the same name, and constant-shaped
+      ones (`ENTRY_SIZE_*`, `MAX_PAGES`, `MAILBOX_CONTRACT_*`) against their `constexpr`
+      originals;
     * each mirror's own `UE5_SCRIPT_CONTRACT` must fall inside [MIN, MAILBOX_CONTRACT],
       which is the very range its runtime `checkContract()` asserts against the DLL.
 
@@ -122,7 +123,8 @@ import sys
 # is there so a script generated now refuses a DLL that would still guess.
 # NOTE on version 7 ([INVOKE-NONSTATIC-ON-CDO]): like version 5 this one moved the HASH as well as the version, and
 # correctly so -- the new `InvokeOutFlag` enum (INV_OUT_NONSTATIC_ON_TEMPLATE = 0x2, published in cmdOutFlags by the
-# invoke family) is layout. ADDITIVE: cmdOutFlags was an unused output for CMD_INVOKE, the bit is not the 0x1 an older
+# invoke family and CMD_SET_DEBUG_CAMERA, when a function that is not static runs on a class default object or another
+# archetype) is layout. ADDITIVE: cmdOutFlags was an unused output for those commands, the bit is not the 0x1 an older
 # DLL can leave behind, and the dispatcher now clears the word before every command. The same bump carries
 # FIND_INSTANCE passing over templates (an accident ended, as in version 6). MAILBOX_CONTRACT_MIN stays 1.
 GOLDEN_VERSION = 7

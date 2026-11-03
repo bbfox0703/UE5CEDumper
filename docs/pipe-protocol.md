@@ -248,8 +248,9 @@ Shared by the Console panel (here) and CE Lua (`setDebugCamera` export). All log
 // → { "ok": true, "state": 0, "nonstatic_on_template": false }
 ```
 
-`nonstatic_on_template` (from build 3676) is a WARNING beside `state`: the toggle ran on the CheatManager's class
-default object -- no live CheatManager, usual in a Shipping build -- where it does nothing. Absent = an older DLL.
+`nonstatic_on_template` (from build 3676) is a WARNING beside `state`: the toggle targets the CheatManager's class
+default object -- no live CheatManager, usual in a Shipping build -- where it does nothing. It is set only when the
+toggle ran or is queued to run. Absent = an older DLL.
 The mailbox's CMD_SET_DEBUG_CAMERA publishes the same thing as `INV_OUT_NONSTATIC_ON_TEMPLATE` in cmdOutFlags
 (contract 7). `[INVOKE-NONSTATIC-ON-CDO]`
 
@@ -1942,7 +1943,8 @@ state-changing operations but works for simple getters).
   "instance_class_name": "CheatManager",   // the call (which may destroy the object)
   "instance_template": "",         // from build 3676: "" (a live object), "class_default", or "template" (a
                                    // class default object's default subobject, or another archetype)
-  "template_owner_name": "Default__Character", // with "template", when a class default object owns it
+  "template_owner_name": "Default__Character", // with "template": the class default object above it, or, for
+                                   // an archetype with none, its own outer (e.g. a Blueprint class)
   "nonstatic_on_template": false,  // the WARNING verdict: the function is not static (by the flags the DLL
                                    // read, never direct_call) and the object is a template, where it may do
                                    // nothing or fault. Never a refusal. A static function on a class default

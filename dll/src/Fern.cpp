@@ -6868,10 +6868,6 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 Mimic::WarnNonStaticOnTemplate(tpl.kind != Aura::TemplateKind::None, resolved, fi.functionFlags);
             const std::string tplOwnerName =
                 (tpl.kind == Aura::TemplateKind::Template && tpl.owner) ? Ubel::GetName(tpl.owner) : std::string();
-            if (nonStaticOnTemplate)
-                Sein::Warn("PIPE:cmd", "invoke_function: %s on %s (%s) is not static and the object is a %s%s%s -- it "
-                           "may do nothing there, or fault", funcName.c_str(), instName.c_str(), instClass.c_str(),
-                           Aura::TemplateKindWire(tpl.kind), tplOwnerName.empty() ? "" : " of ", tplOwnerName.c_str());
             const size_t authoritative = Ubel::ParamBufferSize(ufuncAddr, resolved ? fi.parmsSize : 0);
             const size_t asked = (parmsSize > 0) ? static_cast<size_t>(parmsSize) : 0;
             if (asked > 0 && authoritative > asked) {
@@ -6976,6 +6972,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 ? reinterpret_cast<uintptr_t>(paramBuf.data())
                 : 0;
 
+            // Logged here, past every refusal, so the log never warns about a call that was not made.
+            if (nonStaticOnTemplate)
+                Sein::Warn("PIPE:cmd", "invoke_function: %s on %s (%s) is not static and the object is a %s%s%s -- it "
+                           "may do nothing there, or fault", funcName.c_str(), instName.c_str(), instClass.c_str(),
+                           Aura::TemplateKindWire(tpl.kind), tplOwnerName.empty() ? "" : " of ", tplOwnerName.c_str());
             Sein::Info("PIPE:cmd", "invoke_function: %s::%s inst=%s (%s, class %s, pick=%s) func=%s parms=%d direct=%d",
                          className.c_str(), funcName.c_str(),
                          Renge::AddrToStr(instanceAddr).c_str(), instName.c_str(), instClass.c_str(), pickWire,
@@ -7077,7 +7078,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // resulting state: 1=on, 0=off, -1=error, -5=toggle queued [W3-DEBUGCAM-QUEUED], -6=not sent: an opposite
             // toggle is still queued [DBGCAM-OFF-OVER-QUEUED-ON]
             data["state"] = state;
-            // [INVOKE-NONSTATIC-ON-CDO] The toggle ran on the CheatManager's class default object (none is live), where
+            // [INVOKE-NONSTATIC-ON-CDO] The toggle targets the CheatManager's class default object (none is live), where
             // it does nothing. A warning beside `state` (additive key); read on this thread right after the call.
             data["nonstatic_on_template"] = FrierenInvoke::DebugCameraFiredOnTemplate();
             return Renge::MakeResponse(id, data).dump();

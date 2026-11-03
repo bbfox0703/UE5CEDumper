@@ -8,12 +8,12 @@ namespace UE5DumpUI.Services;
 /// Unlike <see cref="BakedScriptGenerator"/> (a one-shot invoke whose
 /// <c>[DISABLE]</c> is a nop), this is a STATEFUL checkbox: ticking runs
 /// <c>[ENABLE]</c> → <c>setDebugCamera(1)</c> (camera ON), unticking runs
-/// <c>[DISABLE]</c> → <c>setDebugCamera(0)</c> (camera OFF). Both blocks load
-/// <c>ue5_invoke_helper.lua</c> (embedded in the .CT) and call the shared
-/// <c>setDebugCamera</c> wrapper, which forwards to the <c>UE5_SetDebugCamera</c>
-/// DLL export — so the whole toggle + controller-swap fallback (for Shipping
-/// builds that strip <c>DisableDebugCamera</c>) runs DLL-side, identical to the
-/// Console panel's Force On / Force Off.
+/// <c>[DISABLE]</c> → <c>setDebugCamera(0)</c> (camera OFF). Both blocks are
+/// self-contained: they send CMD_SET_DEBUG_CAMERA through the DLL's mailbox
+/// directly (no <c>ue5_invoke_helper.lua</c>), so the whole toggle +
+/// controller-swap fallback (for Shipping builds that strip
+/// <c>DisableDebugCamera</c>) runs DLL-side, identical to the Console panel's
+/// Force On / Force Off.
 /// </summary>
 public static class DebugCameraScriptGenerator
 {
@@ -28,7 +28,8 @@ public static class DebugCameraScriptGenerator
 
     // Mimic mailbox layout (must match dll/src/Mimic.h MailboxData):
     //   0x00 cmd (write LAST to trigger), 0x04 status (poll == 1), 0x08 result,
-    //   0x10 instanceAddr (here: the request 0=OFF / 1=ON). CMD_SET_DEBUG_CAMERA=7.
+    //   0x10 instanceAddr (here: the request 0=OFF / 1=ON), 0x72C cmdOutFlags (the template warning, read on an ON
+    //   that did not take or is queued). CMD_SET_DEBUG_CAMERA=7.
     private static void EmitBlock(StringBuilder sb, string header, bool enable)
     {
         var label = enable ? "ON" : "OFF";

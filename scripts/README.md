@@ -218,7 +218,7 @@ The runtime mailbox-protocol shim for **AA Script (Baked)** invocations generate
 
 | Function | Description |
 |----------|-------------|
-| `invokeUFunction(className, funcName, parmsSize, params)` | Marshal a `CMD_INVOKE_BY_NAME` mailbox request to the DLL: find an object of the class (a live one of it or of a subclass, else its own default object; a name no class has is matched as part of a class name) → find UFunction → write baked params → ProcessEvent → return ok/err |
+| `invokeUFunction(className, funcName, parmsSize, params)` | Marshal a `CMD_INVOKE_BY_NAME` mailbox request to the DLL: find an object of the class (a live one of it or of a subclass, else its own default object; a name no class has is matched as part of a class name) → find UFunction → write baked params → ProcessEvent → return ok/err, and `warn` = `'template'` when a contract-7 DLL reports that a function that is not static ran on a class default object or another template |
 | `readUFunctionReturn(offset, valueType)` | Decode a single scalar from the params buffer. `int32` (the default) and `int16` are **signed** — a UFunction returning `-1` reads as `-1`, not `4294967295`; `uint32`/`dword` and `uint16`/`word` are the unsigned spellings, plus `float` / `double` / `bool` / `byte` / `uint64`/`qword`. Used by Verify Return Value mode |
 
 ### How it lands in your .CT
@@ -235,7 +235,7 @@ The file is the same in both cases — read from the manifest resource embedded 
 ```lua
 local tf = findTableFile('ue5_invoke_helper.lua')
 -- ... ss.copyFrom + load + fn() ...
-local ok, err = invokeUFunction('Class', 'Func', parmsSize, PARAMS)
+local ok, err, warn = invokeUFunction('Class', 'Func', parmsSize, PARAMS)
 ```
 
 If `findTableFile` returns nil the script `showMessage`s a setup hint and bails — there is **no filesystem fallback** by design (avoids ambiguity over which copy is in use).

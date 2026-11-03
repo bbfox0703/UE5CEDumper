@@ -1505,9 +1505,9 @@
     <sys:String x:Key="str.DbgCam.QueuedOff">⏳ Force OFF did not complete — the game thread is busy (stalled or unfocused), and a queued OFF does not turn the camera off on most engines: press Force OFF again once the game responds.</sys:String>
     <!-- [DBGCAM-OFF-OVER-QUEUED-ON] The DLL's -6: this Force was NOT sent, because an earlier one of the other direction is still queued. -->
     <sys:String x:Key="str.DbgCam.BlockedOn">⏳ Force ON was not sent — an earlier Force OFF is still queued (the game thread is busy). Press Force ON again once the game responds.</sys:String>
-    <!-- [INVOKE-NONSTATIC-ON-CDO] a Force whose toggle ran on the CheatManager's class default object -->
-    <sys:String x:Key="str.DbgCam.OnTemplate">⚠ The toggle ran on the CheatManager's class default object: there is no live CheatManager (usual in a Shipping build), so it does nothing there.</sys:String>
     <sys:String x:Key="str.DbgCam.BlockedOff">⏳ Force OFF was not sent — an earlier Force ON is still queued (the game thread is busy) and will turn the camera on. Press Force OFF again once the game responds.</sys:String>
+    <!-- [INVOKE-NONSTATIC-ON-CDO] a Force whose toggle targets the CheatManager's class default object -->
+    <sys:String x:Key="str.DbgCam.OnTemplate">⚠ The toggle targets the CheatManager's class default object: there is no live CheatManager (usual in a Shipping build), and a toggle there does nothing.</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.CopyCe">Generate a stateful CE memory-record AA Script (tick = camera ON, untick = camera OFF) — the same robust DLL path as Force On/Off. Self-contained: talks to the DLL mailbox directly, so NO ue5_invoke_helper.lua embed is needed (just UE5Dumper.dll injected). Ships to AOBMaker if connected, else the clipboard.</sys:String>
 
     <!-- Teleport panel (BugIt-style: marker save/recall + cursor teleport) -->

@@ -39,8 +39,8 @@ internal static class CeMailboxLayout
     // InvokeScriptTests.ParamsDataBytes_MatchesMimicH reads Mimic.h's declaration back.
     public const int    ParamsDataBytes = 1024;
 
-    // cmdOutFlags (contract 3+) and the bit CMD_INVOKE / CMD_INVOKE_BY_NAME publish in it (Mimic.h InvokeOutFlag,
-    // contract 7+). [INVOKE-NONSTATIC-ON-CDO]
+    // cmdOutFlags (contract 3+) and the template-warning bit published in it (Mimic.h InvokeOutFlag, contract 7+, which
+    // says which commands set it). [INVOKE-NONSTATIC-ON-CDO]
     public const string OffOutFlags = "0x72C";
     public const int    InvOutNonStaticOnTemplate = 0x2;
 
