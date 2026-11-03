@@ -27,6 +27,52 @@ builds ≤696 in
 
 -----
 
+## 2026-11-03 (build 3677) — A Console row's Run button runs its own row `[CONSOLE-ROWRUN-SELECTED]` `[RIG-PIPE-DOUBLE-CONNECT]`
+
+- **A Console row's Run button runs that row.** It used to run the row that was *selected*, and clicking the button
+  does not select its row. So with nothing selected it only said "Pick an exec command from the list first.", and with
+  another row selected it ran that other command. Present since build 731. Now it runs its own row and selects it;
+  the toolbar's Run Selected is unchanged.
+- **Checked live on DumperTest58 Development, build 3677:** with nothing selected, the ToggleDebugCamera row's Run
+  ran it on the live CheatManager. With `PlayerController::Camera` selected, the same button ran ToggleDebugCamera
+  again (pinned), and Camera's parameter dialog did not open.
+- **Tools:** the pipe rigs no longer open a second pipe handle, which left no pipe instance free while the UI was
+  connected. `pipe_client.py --selftest` is now a gate (37).
+- Tests: C# 7,309 total, 0 failed, 1 skipped; 37 gates. AOT UI 61,619,712 bytes.
+
+## 2026-11-03 (build 3676) — A function that is not static, run on a class default object or another template, is warned about; class lookups never take a template; mailbox contract 7 `[INVOKE-NONSTATIC-ON-CDO]` `[OPEN-CENSUS-2026-10-28]`
+
+- **Warn, never refuse.** When an invoke runs a function that is not static on a class default object, one of its
+  default subobjects, or another template (such as a Blueprint's component template), it still runs, and you are
+  told. A game's own commands often work there, so nothing is blocked.
+  - **Live Walker / param dialog:** a ⚠ line under the result names the object and what it is a template of.
+  - **Console:** the status says so, and the Console no longer reuses ("pins") such an object.
+  - **Debug Camera Force On / Off:** says when the toggle targets the CheatManager's class default object, which
+    happens when there is no live CheatManager (usual in a Shipping build).
+  - **CE records** (INV, AA(Baked), and scripts using the invoke helper): print the warning even with `UE5_DEBUG`
+    off, and keep the Lua Engine window open. The Debug Camera record adds it to the message of an ON that did not
+    take or is queued.
+- **"An instance of class X" never lands on a template.** A component class used to resolve to a component of some
+  class default object; it now takes the live component.
+- **Mailbox contract 7** (minimum still 1): every saved .CT keeps working. `ue5_invoke_helper.lua` 1.6 reads the
+  warning only from a DLL that publishes it.
+- **Checked live, build 3676:**
+  - **The pipe and the mailbox** (`invoke_template_live.py`): all 15 checks pass on DumperTest Shipping (5.4),
+    DumperTest58 Development (5.8) and UE427_3rdPerson Shipping (4.27). On 3675 every component class had landed
+    on a default subobject; on 3676 each lands on the live one.
+  - **The param dialog:** `K2_GetActorLocation` on `Default__Actor` showed the warning. `GetMaxAcceleration` on the
+    pawn's live movement component returned 1500 with no warning; on a template's it returned 2048 with the warning.
+    A static function on `Default__KismetSystemLibrary` showed none.
+  - **CE:** the INV and AA(Baked) records for a class with no live object printed the warning and stayed open; the
+    INV record for a live object printed nothing and closed.
+  - **Console and Debug Camera** (DumperTest58 Development, a live CheatManager): ToggleDebugCamera named its
+    CheatManager, then ran pinned on it; Force On / Off carried no note.
+  - **BugItGo's UI and CE halves, from build 3675** (DumperTest Shipping, a parent-relative pose staged with l78):
+    Copy as BugItGo refused, emptied the Run field and left the clipboard alone. The CE BugIt record warned that
+    BugItGo will refuse the pose; the BugItGo record refused it, and the pawn did not move.
+- Tests: dll_core_test 1,413 checks and dll_helpers_test 3,723, 0 failures; C# 7,306 total, 0 failed, 1 skipped;
+  36 gates. AOT UI 61,614,592 bytes.
+
 ## 2026-11-03 (build 3675) — BugItGo refuses a parent-relative BugIt; "an instance of class X" picks by derivation; mailbox contract 6 `[TELEPORT-BUGITGO-PARENTREL]` `[FINDINSTANCE-SUBSTRING-USERFACING]` `[OPEN-CENSUS-2026-10-28]`
 
 - **BugItGo no longer drives a vehicle-relative pose in as world coordinates.**
