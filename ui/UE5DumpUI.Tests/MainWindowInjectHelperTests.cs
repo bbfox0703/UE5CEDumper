@@ -173,6 +173,60 @@ public class MainWindowInjectHelperTests
         Assert.Contains(nameof(TeleportViewModel.AobMakerNote), teleport);
     }
 
+    // ------------------------------------------------------------------
+    // [PROPSEARCH-FREEZE-STALE-AOBMAKER] Property Search's Freeze follows what the app knows about the plugin
+    // ------------------------------------------------------------------
+    //
+    // Measured on build 3682: AOBMaker connected while the Properties tab was open, the toolbar ⟳ said "AOBMaker
+    // plugin connected", and Freeze stayed disabled until a tab switch -- ⟳ repainted four panels by name and
+    // Property Search was not one of them. A disabled button cannot reach the probe its click would run.
+
+    [Fact]
+    public async Task ToolbarRefresh_AfterThePluginConnects_EnablesPropertySearchFreeze()
+    {
+        var bridge = new RecordingBridge { NextAvailability = false };
+        var vm = BuildVm(aobMaker: bridge);
+        await vm.PropertySearch.RefreshAobMakerAvailabilityAsync();   // the panel's own probe: CE not up yet
+        Assert.False(vm.PropertySearch.IsAobMakerAvailable);
+
+        bridge.NextAvailability = true;                               // CE + AOBMaker start, the user presses ⟳
+        await vm.RefreshAobMakerCommand.ExecuteAsync(null);
+
+        Assert.True(vm.IsAobMakerAvailable);
+        Assert.True(vm.PropertySearch.IsAobMakerAvailable);
+    }
+
+    [Fact]
+    public async Task ToolbarRefresh_AfterThePluginGoes_DisablesPropertySearchFreeze()
+    {
+        // The other direction: an enabled Freeze over a dead pipe only fails at the click.
+        var bridge = new RecordingBridge { NextAvailability = true };
+        var vm = BuildVm(aobMaker: bridge);
+        await vm.PropertySearch.RefreshAobMakerAvailabilityAsync();
+        Assert.True(vm.PropertySearch.IsAobMakerAvailable);
+
+        bridge.NextAvailability = false;
+        await vm.RefreshAobMakerCommand.ExecuteAsync(null);
+
+        Assert.False(vm.PropertySearch.IsAobMakerAvailable);
+    }
+
+    [Fact]
+    public async Task AnotherPanelsProbe_ReachesPropertySearch_AndItsOwnProbeReachesTheToolbar()
+    {
+        // The shared status is what every other panel's tab-activation probe publishes to; following it, not a list,
+        // is what stops the next panel from going stale the same way.
+        var bridge = new RecordingBridge { NextAvailability = true };
+        var vm = BuildVm(aobMaker: bridge);
+        await vm.AobMakerShared.ProbeAsync();
+        Assert.True(vm.PropertySearch.IsAobMakerAvailable);
+
+        bridge.NextAvailability = false;
+        await vm.PropertySearch.RefreshAobMakerAvailabilityAsync();   // what Property Search learns, everyone learns
+        Assert.False(vm.AobMakerShared.IsAvailable);
+        Assert.False(vm.IsAobMakerAvailable);
+    }
+
     [Fact]
     public async Task LiveWalkerProbe_ReasonChangesWhileOffline_TheNoteRepaints()
     {

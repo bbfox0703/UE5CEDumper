@@ -172,6 +172,21 @@ public class PropertySearchFreezeTests
     }
 
     [Fact]
+    public async Task Search_ReprobesThePlugin_SoTheNewRowsFreezeButtonsAreCurrent()
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] Fresh rows are where Freeze appears; a plugin that came up since the tab
+        // opened must not leave them disabled until a tab switch.
+        var bridge = new RecordingBridge { NextAvailability = true };
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge) { SearchQuery = "Health" };
+        Assert.False(vm.IsAobMakerAvailable);
+
+        await vm.SearchCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, bridge.CheckCalls);
+        Assert.True(vm.IsAobMakerAvailable);
+    }
+
+    [Fact]
     public void FreezeUnavailableTooltip_ReflectsAvailabilityFlag()
     {
         var bridge = new RecordingBridge { NextAvailability = false };
