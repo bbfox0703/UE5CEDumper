@@ -79,8 +79,17 @@ public class ConsoleViewModelTests
         /// <summary>[INVOKE-NONSTATIC-ON-CDO] The DLL's verdict on a Force; null = an older DLL.</summary>
         public bool? SetDebugCameraOnTemplate { get; set; }
 
+        /// <summary>[CONSOLE-ROWRUN-SELECTED] When set, every Force waits on it after it is recorded: a Force in
+        /// flight.</summary>
+        public TaskCompletionSource? ForceGate { get; set; }
+
         public override async Task<DebugCameraSetResult> SetDebugCameraDetailedAsync(bool enable, CancellationToken ct = default)
-            => new(await SetDebugCameraAsync(enable, ct), SetDebugCameraOnTemplate);
+        {
+            var state = await SetDebugCameraAsync(enable, ct);
+            if (ForceGate is { } gate)
+                await gate.Task;
+            return new(state, SetDebugCameraOnTemplate);
+        }
 
         public override Task<AllFunctionsResult> ListAllFunctionsAsync(
             bool gameOnly = true, int limit = 100000, CancellationToken ct = default)
@@ -544,6 +553,85 @@ public class ConsoleViewModelTests
             await Task.WhenAll(first, typed, replay);
         }
         Assert.Equal(2, vm.History.Count);
+    }
+
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] review 2: a refused row Run leaves the selection on the row that is running,
+    /// and the refusal does not call the running command "another" -- it can be the same one, reached through a second
+    /// path, and "run it again" was then the advice that sends it twice.</summary>
+    [Fact]
+    public async Task RunRow_refused_while_a_run_is_in_flight_leaves_the_selection()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() }
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        var fly = vm.Results[2];
+        fake.InvokeGate = new TaskCompletionSource();
+        vm.SelectedResult = fly;
+
+        var first = vm.RunSelectedCommand.ExecuteAsync(null);
+        var second = vm.RunRowCommand.ExecuteAsync(vm.Results[3]);   // God, refused: the selection must stay on Fly
+        try
+        {
+            Assert.Equal(1, fake.InvokeCallCount);
+            Assert.Same(fly, vm.SelectedResult);
+            Assert.DoesNotContain("another", vm.StatusText);
+            Assert.DoesNotContain("again", vm.StatusText);
+        }
+        finally
+        {
+            fake.InvokeGate.SetResult();
+            await Task.WhenAll(first, second);
+        }
+    }
+
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] review 2: the Debug Camera Force and a run of ToggleDebugCamera each queue a
+    /// toggle on a busy game thread, and two cancel out. Neither is sent while the other is in flight.</summary>
+    [Fact]
+    public async Task Force_while_a_run_is_in_flight_sends_nothing()
+    {
+        var fake = new FakeDumpService { InvokeGate = new TaskCompletionSource() };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+        var toggle = vm.Results.First(r => r.FuncName == "ToggleDebugCamera");
+
+        var run = vm.RunRowCommand.ExecuteAsync(toggle);
+        var force = vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+        try
+        {
+            Assert.Empty(fake.SetDebugCameraCalls);
+            Assert.Contains("still running", vm.StatusText);
+        }
+        finally
+        {
+            fake.InvokeGate.SetResult();
+            await Task.WhenAll(run, force);
+        }
+    }
+
+    [Fact]
+    public async Task Run_while_a_Force_is_in_flight_sends_nothing()
+    {
+        var fake = new FakeDumpService { ForceGate = new TaskCompletionSource() };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+        var toggle = vm.Results.First(r => r.FuncName == "ToggleDebugCamera");
+
+        var force = vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+        Assert.Single(fake.SetDebugCameraCalls);
+        var run = vm.RunRowCommand.ExecuteAsync(toggle);
+        try
+        {
+            Assert.Equal(0, fake.InvokeCallCount);
+            Assert.Contains("still running", vm.StatusText);
+        }
+        finally
+        {
+            fake.ForceGate.SetResult();
+            await Task.WhenAll(force, run);
+        }
     }
 
     /// <summary>[CONSOLE-ROWRUN-SELECTED] The row's Run button hands the command its own row, as the row's Live and
