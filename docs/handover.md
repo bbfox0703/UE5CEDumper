@@ -564,6 +564,9 @@ preconditions and a few refuse to run in the wrong state rather than degrading i
   reading them off a screenshot is how a quoted string gets silently paraphrased. Collect into a
   table and `f:write(table.concat(L,'\n'))` to the scratchpad, then `cat` it — the transcript is
   then byte-exact, and a Lua `error()` even carries its own `:line`, which pins WHICH branch spoke.
+  A record's `showMessage` is caught the same way, and no modal opens over the game: replace the global with a
+  function that appends to the table, set `getAddressList()[i].Active = true` inside `pcall`, then put the original
+  back (measured 2026-11-03 on the Teleport BugIt / BugItGo records).
 * ⚠ **A record you cannot see may still exist.** `scripts/UE5CEDumper.CT`'s real tick target,
   `Inject DLL + Start Pipe Server`, is a HIDDEN CHILD of `init` (`moHideChildren="1"`). Ticking
   `init` un-hides it **without activating it**. `getAddressList()` indexes hidden records
