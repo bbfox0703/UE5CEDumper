@@ -136,6 +136,26 @@ public class TeleportScriptGeneratorTests
     }
 
     [Fact]
+    public void BugItGo_record_bakes_its_negative_code_the_same_in_every_culture()
+    {
+        // Review of 22badc06: the -16 was interpolated with the user's culture, and ICU's sv-SE writes the minus as
+        // U+2212 -- a character Lua cannot parse, so the whole BugItGo record failed to compile.
+        var saved = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("sv-SE");
+            var s = TeleportScriptGenerator.Generate(TeleportScriptGenerator.Action.BugItGo);
+            Assert.DoesNotContain("−", s);
+            Assert.Contains($"code == {TeleportCodes.ParentRelative.ToString(System.Globalization.CultureInfo.InvariantCulture)} then",
+                s, StringComparison.Ordinal);
+            var r = RunTeleport(TeleportScriptGenerator.Action.BugItGo, TeleportCodes.ParentRelative);
+            Assert.Equal("true|nil", r["OK"]);
+            Assert.Contains("PARENT-RELATIVE", r["MSG"], StringComparison.Ordinal);
+        }
+        finally { System.Globalization.CultureInfo.CurrentCulture = saved; }
+    }
+
+    [Fact]
     public void BugItGo_control_a_clean_jump_shows_nothing_and_closes_the_window()
     {
         var r = RunTeleport(TeleportScriptGenerator.Action.BugItGo, 0);
