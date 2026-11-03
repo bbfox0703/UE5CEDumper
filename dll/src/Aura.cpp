@@ -2264,15 +2264,20 @@ UserInstance ResolveUserInstance(const std::string& className) {
 
 LocalPcScan ScanForLocalPlayerController() {
     LocalPcScan out;
-    // The walk passes over templates itself ([LISTINSTANCES-KEEPS-TEMPLATES]), so every row is a live controller.
+    // The walk passes over templates itself ([LISTINSTANCES-KEEPS-TEMPLATES]); the loop passes over garbage.
     const SearchResultSet rset =
         FindInstancesDerivedFrom(Grimoire::AURA_LOCALPC_BASE_CLASS, Grimoire::AURA_LOCALPC_SCAN_MAX);
-    if (rset.aborted) { out.pick = LocalPcPick::Cancelled; return out; }   // a candidate met on the way proves nothing
+    // A lower-ranked controller met before the cut may be outranked past it, and a cancel means the client is gone or
+    // the DLL is shutting down: nothing waits for the answer.
+    if (rset.aborted) { out.pick = LocalPcPick::Cancelled; return out; }
     uintptr_t other = 0, none = 0;
     for (const auto& r : rset.results) {
         if (!r.addr) continue;
-        const int32_t off = Ubel::FindFieldOffset(r.classAddr, Grimoire::AURA_LOCALPC_PLAYER_PROPERTY,
-                                                  Grimoire::AURA_LOCALPC_PLAYER_PROPERTY, "Controller", "ObjectProperty");
+        // A destroyed controller keeps its Player until GC: UEngine::LoadMap destroys the old PC and nulls
+        // LocalPlayer.PlayerController -- the moment every chain fails and lands here -- but not the PC's Player.
+        if (*Ubel::WeakTargetGarbageTag(r.addr, r.index) != '\0') continue;
+        // Exact only: a fuzzy arm would read AController::PlayerState, which every server-side controller has set.
+        const int32_t off = Ubel::FindFieldOffset(r.classAddr, Grimoire::AURA_LOCALPC_PLAYER_PROPERTY);
         uintptr_t player = 0;
         if (off >= 0) Macht::ReadSafe(r.addr + static_cast<uintptr_t>(off), player);
         if (player) {
@@ -2282,7 +2287,7 @@ LocalPcScan ScanForLocalPlayerController() {
             continue;
         }
         // A debug camera with no Player is inactive: pawnless, with nothing to hop back to.
-        if (!none && !ClassDerivesFromAny(r.classAddr, {Grimoire::AURA_USERPICK_DCC_CLASS})) none = r.addr;
+        if (!none && !ClassDerivesFromAny(r.classAddr, {Grimoire::AURA_DEBUGCAM_CLASS})) none = r.addr;
     }
     if (other) return { other, LocalPcPick::OtherPlayer };
     if (none)  return { none,  LocalPcPick::NoPlayer };

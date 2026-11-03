@@ -100,8 +100,9 @@ bool WriteFloatAt(uintptr_t addr, int32_t size, double v) {
 // Resolve the active AWorldSettings: reflected chain GWorld→PersistentLevel→
 // WorldSettings first (gives EXACTLY the persistent level's settings, correct
 // across subclasses), then an Aura::FindInstancesDerivedFrom("WorldSettings")
-// instance-scan fallback (substring match catches game subclasses; first
-// non-CDO).
+// instance-scan fallback (by derivation, so a game subclass named without the
+// word is found and a class merely named with it is not; the first live one,
+// templates passed over).
 uintptr_t ResolveWorldSettings(uintptr_t world) {
     if (world) {
         uintptr_t worldClass = Ubel::GetClass(world);
@@ -126,9 +127,9 @@ uintptr_t ResolveWorldSettings(uintptr_t world) {
     return 0;
 }
 
-// Resolve the local PlayerController: engine chain first, instance-scan fallback
-// (prefer the PC whose UPlayer* Player field is non-null). Identical to
-// Laufen/Solitar.
+// Resolve the local PlayerController: engine chain first, then the shared
+// instance-scan fallback (Aura::ScanForLocalPlayerController: the local
+// player's controller first). Identical to Laufen/Solitar.
 uintptr_t ResolveLocalPC(uintptr_t world) {
     do {
         if (!world) break;
@@ -161,7 +162,7 @@ uintptr_t HopThroughDebugCamera(uintptr_t pc) {
     if (!pc) return pc;
     uintptr_t cls = Ubel::GetClass(pc);
     // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] Derivation: a game's debug camera may be named without the word.
-    if (!Aura::ClassDerivesFromAny(cls, {Grimoire::AURA_USERPICK_DCC_CLASS})) return pc;
+    if (!Aura::ClassDerivesFromAny(cls, {Grimoire::AURA_DEBUGCAM_CLASS})) return pc;
     int32_t origOff = Ubel::FindFieldOffset(cls, "OriginalControllerRef",
                                             "OriginalController", nullptr, "ObjectProperty");
     uintptr_t orig = ReadPtrAt(pc, origOff);

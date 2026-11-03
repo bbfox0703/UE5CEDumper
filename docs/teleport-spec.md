@@ -139,7 +139,7 @@ Deliverables for the user:
 | Class walk incl. inherited fields | `Ubel::WalkClassEx` | Field offsets by name on engine base classes. UFunction param walking too (a `UFunction` is a `UStruct`; its children are the param properties). |
 | Function lookup | `UE5_FindFunctionByName(classAddr, name)` | Find `K2_SetActorLocation`, `K2_TeleportTo`, etc. |
 | Game-thread invoke | `UE5_CallProcessEvent(instance, ufunc, paramsPtr)` (Stark queue) | ALL invokes in this feature. **Never** use the static-native direct path (`UE5_CallProcessEventDirect`) for traces or actor mutation — traces read the physics scene, actor moves mutate world state; both must run on the game thread. |
-| Instance finder | `Aura::ScanForLocalPlayerController` / `Aura::FindLiveOrDefaultOf` | Fallback PlayerController resolution (by derivation); CheatManager detection (Tier 0). |
+| Instance finder | `Aura::ScanForLocalPlayerController` / `Aura::FindLiveOrDefaultOf` + `Aura::TemplateOf` | Fallback PlayerController resolution (by derivation); CheatManager detection (Tier 0: a template is not live -- `DbgCam_ReadState`, `[DEBUGCAM-FORCEON-CDO]`). |
 | Object name reader | existing Frieren export used by the UI/CE for object names (via `Serie`) | Map-name capture for markers. |
 | Mailbox | `Mimic.cpp/.h`, `g_invokeMailbox` | CE Lua entry point. New `CMD_TELEPORT=8` handler delegates to the same exports the pipe uses. |
 | Pipe | `Fern.cpp` + `Renge.h` | 6 new request/response commands (§7). |
@@ -267,8 +267,9 @@ properties via Ubel (offsets + types + `ParmsSize`), then:
 
 When the Debug Camera feature (this project's own) is ON, the LocalPlayer's
 `PlayerController` **is the DebugCameraController** — its `Pawn` is null or a
-spectator. Before erroring with `-3`: if the resolved PC's class name contains
-`"DebugCameraController"`, follow `OriginalControllerRef` (reuse
+spectator. Before erroring with `-3`: if the resolved PC's class derives from
+`ADebugCameraController` (`Aura::ClassDerivesFromAny`; a game's subclass may be
+named without the word, `[FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS]`), follow `OriginalControllerRef` (reuse
 `DbgCam_ReadState` plumbing) to the real PC and continue. This makes
 "fly somewhere with debug camera → save marker" work naturally.
 

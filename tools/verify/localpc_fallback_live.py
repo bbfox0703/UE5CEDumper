@@ -60,7 +60,9 @@ CHECKS -- one line each, "<ID> OK|BAD  <detail>"; the exit code is 0 only when e
   restore   R0  both pointers read their baseline values
             R9  the game thread runs again: CPU time advances, liveness "responsive"
             R10 the invoke timeout is the baseline's, and the hint cache's persisted invokeTimeoutMs are unchanged
-  An aborted phase prints "<P>X BAD aborted: ..." (P = B, K, C, R).
+            R11 after R1..R8, with the game thread running, both pointers still read their baseline values
+  An aborted phase prints "<P>X BAD aborted: ..." (P = B, K, C, R). A separate verb that leaves a break in place
+  prints "STILL IN EFFECT (...)" before its RESULT line.
 
 NOT PROVEN HERE: on DumperTest the substring scan this row replaced would have picked the same controller, so this shows
 the derivation walk running live, picking the LocalPlayer-owned controller, and every module accepting it; the ranking
@@ -80,6 +82,7 @@ import re
 import struct
 import sys
 import time
+import traceback
 
 HERE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -201,6 +204,7 @@ class Rig:
         self.v = DCR.Verdicts()
         self.pc = None
         self.pid = self.image = self.mem = None
+        self.build = ""
         self.gworld = 0
         self.offs: dict = {}
 
@@ -230,7 +234,8 @@ class Rig:
             return
         pc = DCR.RecordingClient(self.ev, timeout=180).connect()
         try:
-            print("build:", pc.assert_build(), flush=True)
+            self.build = pc.assert_build()
+            print("build:", self.build, flush=True)
             ptrs = pc.ensure_scanned()
             try:
                 pid, image = DCR.resolve_process(self.args.process, ptrs.get("pid"))
@@ -411,7 +416,10 @@ def pc_lines(rig: Rig, mark: Mark) -> list:
     since = mark.t.timestamp() - 2.0   # a file's mtime is coarser than its line stamps
     for p in sorted(folder.glob("*.log")):
         try:
-            if p.stat().st_mtime < since:
+            # The live <cat>-0.log is read whatever its mtime says: the DLL holds it open, and NTFS may report the
+            # last-write time of a file still open for writing late, which would skip the very lines being waited for.
+            # An archive is only ever written before its rename, so its mtime is honest.
+            if not p.stem.endswith("-0") and p.stat().st_mtime < since:
                 continue
             text = p.read_text(encoding="utf-8", errors="replace")
         except OSError:
@@ -455,8 +463,12 @@ def game_tid(pid) -> int:
 def phase_baseline(rig: Rig, st: dict) -> bool:
     rig.phase("baseline")
     rig.open_pipe()
-    if st.get("pid") == rig.pid and (st.get("saved") or st.get("tid") or st.get("timeout_set")):
-        raise RigError(f"{STATE} records a break still in effect -- run `restore` first")
+    if st.get("saved") or st.get("tid") or st.get("timeout_set"):
+        # A break recorded for ANOTHER process still running is as live as one on this process: clearing the state
+        # here would lose the only record of the pointers and the thread `restore` must put back there.
+        old, img = st.get("pid"), st.get("image") or ""
+        if old == rig.pid or (img and any(p == old for p, _ in S.pids(img))):
+            raise RigError(f"{STATE} records a break still in effect on pid {old} ({img}) -- run `restore` first")
     try:
         ch = rig.read_chain()
     except RigError as e:
@@ -647,6 +659,12 @@ def phase_restore(rig: Rig, st: dict) -> bool:
           f"(baseline {base.get('hints', {})})")
     if base and "tid" not in st:
         module_checks(rig, "R", module_reads(rig), base)
+        # R0 read the pointers while the thread was still frozen. A write_mem the DLL had taken but not yet run when
+        # the rig was killed would land only after the resume, so the pointers are read again with the game running.
+        lp, ws = rig.mem.u64(h(base["lp_pc_slot"])), rig.mem.u64(h(base["ws_slot"]))
+        rig.v("R11", hx(lp) == base["pc0"] and hx(ws) == base["ws0"],
+              f"with the game thread running: LocalPlayer.PlayerController={hx(lp)} (PC0 {base['pc0']}), "
+              f"PersistentLevel.WorldSettings={hx(ws)} (WS0 {base['ws0']})")
     return True
 
 
@@ -660,6 +678,12 @@ def guarded(rig: Rig, verb: str, st: dict) -> bool:
         return fn(rig, st)
     except (RigError, PipeError, SystemExit, OSError) as e:   # mailbox_poke / dbgcam helpers fail with SystemExit
         rig.v(f"{prefix}X", False, f"aborted: {e}")
+        return False
+    except Exception as e:   # noqa: BLE001
+        # A bug of the rig's own (a reply shaped unlike the one expected) must still end as a BAD row and let `all`
+        # reach its restore with the verdicts saved, not as a traceback that skips the RESULT line.
+        rig.ev.save("traceback", {"phase": verb, "traceback": traceback.format_exc()})
+        rig.v(f"{prefix}X", False, f"aborted: {type(e).__name__}: {e}")
         return False
 
 
@@ -690,10 +714,19 @@ def main() -> int:
         if rig.pc is not None:
             rig.pc.close()
         rig.ev.phase = a.verb
-        rig.ev.save("verdicts", {"verb": a.verb, "image": rig.image, "pid": rig.pid, "rows": rig.v.rows,
-                                 "state": st})
+        rig.ev.save("verdicts", {"verb": a.verb, "build": rig.build, "image": rig.image, "pid": rig.pid,
+                                 "rows": rig.v.rows, "state": st})
+    # A separate verb leaves its break in place on purpose, a failed one included: say so, so a frozen game is never
+    # mistaken for a hung one.
+    left = [k for k, on in (("game thread SUSPENDED", st.get("tid")),
+                            ("pointer(s) at 0: " + ", ".join(st.get("saved") or {}), st.get("saved")),
+                            ("invoke timeout lowered", st.get("timeout_set"))) if on]
+    if left:
+        print(f"STILL IN EFFECT ({'; '.join(left)}) -- run: py tools/verify/localpc_fallback_live.py restore",
+              flush=True)
     n, bad = len(rig.v.rows), rig.v.bad
-    print(f"RESULT: {'PASS' if n and not bad else 'FAIL'} ({n} check(s), {bad} BAD); state: {STATE}")
+    print(f"RESULT: {'PASS' if n and not bad else 'FAIL'} ({n} check(s), {bad} BAD) on build {rig.build or '?'}; "
+          f"state: {STATE}")
     return 0 if n and not bad else 1
 
 

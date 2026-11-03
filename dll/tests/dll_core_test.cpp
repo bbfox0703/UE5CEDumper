@@ -5438,6 +5438,7 @@ int main() {
         // Review 1: the Player lookup is exact. Rename the reflected member: with no 'Player' field, a fuzzy arm would read
         // a PlayerState-like member -- set only on the inactive debug camera here -- and take it as a Player.
         put32(lpPlayerProp, DynOff::FFIELD_NAME, lPlayerState);
+        DynOff::g_propertyFamilyEpoch.fetch_add(1);   // the class walks above cached the member's old name
         putP(lpB[oPcMain1], kPlayerOff, 0);
         putP(lpB[oFreeCam0], kPlayerOff, A(oNetConn0));
         Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
@@ -5445,6 +5446,7 @@ int main() {
         check("LOCALPC ⭐: with no 'Player' member, nothing reads as a Player -- not PlayerState -- and the debug camera stays out",
               is(s, oPcMain2, Aura::LocalPcPick::NoPlayer), nm(s.pc).c_str());
         put32(lpPlayerProp, DynOff::FFIELD_NAME, lPlayerProp);
+        DynOff::g_propertyFamilyEpoch.fetch_add(1);
         putP(lpB[oFreeCam0], kPlayerOff, 0);
         Tot::g_perCommand.store(true);
         s = Aura::ScanForLocalPlayerController();

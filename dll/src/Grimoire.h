@@ -115,20 +115,26 @@ constexpr int32_t SANITY_MAX_SPARSE_BITS = 0x100000;
 /// with kMaxElementsCeiling (0x2000000), which was deliberately split from it.
 constexpr int32_t SANITY_MAX_UOBJECTS = 0x800000;
 
+// The engine's debug camera controller (ADebugCameraController : APlayerController). Tested by derivation: a game's
+// subclass may be named without the word, and UDebugCameraControllerSettings has it without being one.
+constexpr const char* AURA_DEBUGCAM_CLASS = "DebugCameraController";
+
 // --- User-facing "an instance of class X" (Aura::ResolveUserInstance) --- [FINDINSTANCE-SUBSTRING-USERFACING]
 // A Debug Camera controller owns objects of the classes users ask for -- its own CheatManager (AddCheats forces one
 // in non-Shipping builds), that CheatManager's extensions -- and is itself a PlayerController. A user's invoke on
 // "CheatManager" means the player's, so such an object is taken only when no other live one exists.
-constexpr const char* AURA_USERPICK_DCC_CLASS = "DebugCameraController";
-// [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] Aura::ScanForLocalPlayerController: the base every candidate derives
-// from, the APlayerController member that names its UPlayer, the class a local one derives from, and the walk's cap.
+constexpr const char* AURA_USERPICK_DCC_CLASS = AURA_DEBUGCAM_CLASS;
+// How far up an object's outer chain the Debug Camera test looks. Real chains are a handful of hops (extension ->
+// CheatManager -> controller -> level -> world -> package); a longer one is a corrupt or cyclic chain, not ownership.
+constexpr int AURA_USERPICK_MAX_OUTER_HOPS = 16;
+
+// --- Internal local-PlayerController scan (Aura::ScanForLocalPlayerController) --- [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS]
+// The base every candidate derives from, the APlayerController member that names its UPlayer (matched exactly), the
+// class a local one derives from, and the walk's cap.
 constexpr const char* AURA_LOCALPC_BASE_CLASS         = "PlayerController";
 constexpr const char* AURA_LOCALPC_PLAYER_PROPERTY    = "Player";
 constexpr const char* AURA_LOCALPC_LOCAL_PLAYER_CLASS = "LocalPlayer";
 constexpr int         AURA_LOCALPC_SCAN_MAX           = 100;
-// How far up an object's outer chain the Debug Camera test looks. Real chains are a handful of hops (extension ->
-// CheatManager -> controller -> level -> world -> package); a longer one is a corrupt or cyclic chain, not ownership.
-constexpr int AURA_USERPICK_MAX_OUTER_HOPS = 16;
 // The reflected AActor::Owner (an ObjectProperty). An actor the Debug Camera controller spawns -- its HUD, its
 // PlayerCameraManager, its spectator pawn -- has the level as its outer and the controller as this. The same hop bound
 // applies to the owner chain.

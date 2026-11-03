@@ -204,7 +204,7 @@ uintptr_t ResolveLocalPC(uintptr_t world) {
 uintptr_t HopThroughDebugCamera(uintptr_t pc) {
     if (!pc) return pc;
     uintptr_t cls = Ubel::GetClass(pc);
-    if (!Aura::ClassDerivesFromAny(cls, {"DebugCameraController"})) return pc;
+    if (!Aura::ClassDerivesFromAny(cls, {Grimoire::AURA_DEBUGCAM_CLASS})) return pc;
     int32_t origOff = Ubel::FindFieldOffset(cls, "OriginalControllerRef",
                                             "OriginalControllerRef", nullptr, "ObjectProperty");
     uintptr_t orig = ReadPtrAt(pc, origOff);

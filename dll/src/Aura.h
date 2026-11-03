@@ -164,10 +164,13 @@ UserInstance ResolveUserInstance(const std::string& className);
 
 // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The local PlayerController found by walking the object array, for a
 // caller whose GWorld -> OwningGameInstance -> LocalPlayers[0] -> PlayerController chain gave none. Derivation, never a
-// class-name substring, and never a template. Ranked by APlayerController::Player: a LocalPlayer, else any UPlayer (a
-// listen server's remote NetConnection), else none. A Debug Camera controller with no Player is inactive -- pawnless,
-// with nothing to hop back to -- and is never taken; an active one holds the LocalPlayer and is taken, as the chain
-// itself would give it. A walk cut short answers Cancelled: a candidate met on the way proves nothing.
+// class-name substring, never a template, never a destroyed controller (garbage: UEngine::LoadMap leaves the old PC
+// holding its Player until GC, exactly while the chain is broken). Ranked by APlayerController::Player, matched
+// exactly: a LocalPlayer, else any UPlayer (a listen server's remote NetConnection), else none. A Debug Camera
+// controller with no Player is inactive -- pawnless, with nothing to hop back to -- and is never taken; an active one
+// holds a LocalPlayer and is taken, as the chain itself would give it. With more than one local player
+// (split-screen) the first held one in object order, which need not be LocalPlayers[0]: the chain that failed was
+// the only thing that knew the order. A walk cut short answers Cancelled.
 enum class LocalPcPick : uint8_t { None, Cancelled, LocalPlayer, OtherPlayer, NoPlayer };
 struct LocalPcScan {
     uintptr_t   pc = 0;

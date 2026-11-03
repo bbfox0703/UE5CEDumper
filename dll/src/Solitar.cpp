@@ -94,8 +94,9 @@ uintptr_t ReadPtrAt(uintptr_t obj, int32_t off) {
 
 // ---- resolution chain (docs/godmode-spec.md §4-5.2) ----
 
-// Resolve the LOCAL PlayerController: engine chain first, instance-scan fallback
-// (prefer the PC whose UPlayer* Player field is non-null).
+// Resolve the LOCAL PlayerController: engine chain first, then the shared
+// instance-scan fallback (Aura::ScanForLocalPlayerController: the local player's
+// controller first).
 uintptr_t ResolveLocalPC(uintptr_t world) {
     do {
         if (!world) break;
@@ -131,7 +132,7 @@ uintptr_t HopThroughDebugCamera(uintptr_t pc) {
     if (!pc) return pc;
     uintptr_t cls = Ubel::GetClass(pc);
     // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] Derivation: a game's debug camera may be named without the word.
-    if (!Aura::ClassDerivesFromAny(cls, {Grimoire::AURA_USERPICK_DCC_CLASS})) return pc;
+    if (!Aura::ClassDerivesFromAny(cls, {Grimoire::AURA_DEBUGCAM_CLASS})) return pc;
     int32_t origOff = Ubel::FindFieldOffset(cls, "OriginalControllerRef",
                                             "OriginalController", nullptr, "ObjectProperty");
     uintptr_t orig = ReadPtrAt(pc, origOff);
