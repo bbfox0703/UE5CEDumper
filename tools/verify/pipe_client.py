@@ -72,6 +72,9 @@ class PipeClient:
         # closed behind the client's back is reopened instead of handed back.
         if self._f is not None and not self._f.closed:
             return self
+        # A new connection starts with no bytes of the last one: a partial line left there would be glued to this
+        # connection's first reply, which then fails to parse and is dropped.
+        self._buf.clear()
         last = None
         for _ in range(retries):
             try:
