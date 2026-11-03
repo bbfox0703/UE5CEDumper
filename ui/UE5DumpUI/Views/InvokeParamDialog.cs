@@ -712,6 +712,14 @@ public sealed class InvokeParamDialog : Window
         }
     }
 
+    /// <summary>[MAINWINDOW-INVOKE-LIMIT1-CDO] What a FIRE sends.</summary>
+    internal static (string? InstanceAddr, string? ClassName, string? ExpectClassAddr) FireTarget(
+        string instanceAddr, string className, string? expectClassAddr)
+        => (instanceAddr, null, expectClassAddr);
+
+    internal static List<string> HeaderLines(InvokeFunctionResult result, int fireCount, bool byClassName)
+        => HeaderLines(result, fireCount);
+
     /// <summary>The lines above the post-call buffer: the outcome, then the DLL's template warning when it raised one
     /// -- on a failure too, where it is the likely reason. [INVOKE-NONSTATIC-ON-CDO]</summary>
     internal static List<string> HeaderLines(InvokeFunctionResult result, int fireCount)

@@ -1471,6 +1471,8 @@
     <!-- [INVOKE-NONSTATIC-ON-CDO] a function that is not static ran on a template -->
     <sys:String x:Key="str.Invoke.Template.ClassDefault">⚠ {0} is the class default object of {1} (a template), not a live object: a function that is not static may do nothing there, or fail; one that does not use its object may still work</sys:String>
     <sys:String x:Key="str.Invoke.Template.Subobject">⚠ {0} ({1}) is a template, part of {2}, not a live object: a function that is not static may do nothing there, or fail; one that does not use its object may still work</sys:String>
+    <!-- [MAINWINDOW-INVOKE-LIMIT1-CDO] the param dialog opened on a class, with no object -->
+    <sys:String x:Key="str.Invoke.Dialog.TargetByClass">Runs on a live {0} (or a subclass), found again at each FIRE; with none live, on its class default object.</sys:String>
     <sys:String x:Key="str.Tip.Con.Load">Scan every UFunction and surface those marked with UFUNCTION(exec) (FUNC_Exec=0x200). Many games leave these intact in cooked Shipping — they're the cheat surface the developer already curated.</sys:String>
     <sys:String x:Key="str.Tip.Con.GameOnly">When OFF (default), engine-side UCheatManager exec commands are included — usually what you want. Flip ON to see only game-specific exec commands.</sys:String>
     <sys:String x:Key="str.Tip.Con.ClearFilter">Clear the command-name filter and show the full list again.</sys:String>

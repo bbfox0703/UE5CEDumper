@@ -79,6 +79,14 @@ internal static class InvokePickText
             "⚠ {0} ({1}) is a template, part of {2}, not a live object: a function that is not static may do nothing " +
             "there, or fail; one that does not use its object may still work", name, className, owner);
 
+    internal const string KeyTargetByClass = "str.Invoke.Dialog.TargetByClass";
+    /// <summary>[MAINWINDOW-INVOKE-LIMIT1-CDO] The param dialog's line, before any FIRE, when it was opened on a class and
+    /// no object: where each FIRE will land.</summary>
+    internal static string TargetByClassText(string className)
+        => AobMakerStatus.Say(KeyTargetByClass,
+            "Runs on a live {0} (or a subclass), found again at each FIRE; with none live, on its class default object.",
+            className);
+
     internal static string ObjectText(string name, string className)
         => AobMakerStatus.Say(KeyObject, "on {0} ({1})", name, className);
 

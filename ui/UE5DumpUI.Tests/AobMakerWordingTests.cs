@@ -290,8 +290,11 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyLastEmptySummary,
              UE5DumpUI.ViewModels.TeleportViewModel.LastEmptySummaryText);
 
+        // [MAINWINDOW-INVOKE-LIMIT1-CDO] the param dialog opened on a class, with no object
+        Same(InvokePickText.KeyTargetByClass, InvokePickText.TargetByClassText("CheatManager"), "CheatManager");
+
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(112, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(113, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]
