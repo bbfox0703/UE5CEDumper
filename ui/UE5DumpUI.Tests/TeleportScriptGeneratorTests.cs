@@ -93,8 +93,8 @@ public class TeleportScriptGeneratorTests
             function writeInteger(a, v)
               MEM[a] = v
               if a == MB + {{CeMailboxLayout.OffCmd}} and v == {{CeMailboxLayout.CmdTeleport}} then
-                MEM[MB + {{CeMailboxLayout.OffResult}}] = {{result}}
-                MEM[MB + 0x3DA] = {{poseFlags}}
+                MEM[MB + {{CeMailboxLayout.OffResult}}] = {{result.ToString(System.Globalization.CultureInfo.InvariantCulture)}}
+                MEM[MB + 0x3DA] = {{poseFlags.ToString(System.Globalization.CultureInfo.InvariantCulture)}}
                 MEM[MB + {{CeMailboxLayout.OffStatus}}] = {{CeMailboxLayout.StatusDone}}
                 MEM[MB + {{CeMailboxLayout.OffCmd}}] = 0
               end
