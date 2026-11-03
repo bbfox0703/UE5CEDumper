@@ -41,18 +41,22 @@ constexpr int32_t BugItGoRefusal(bool stored, bool parentRelative) {
     return parentRelative ? TP_ERR_PARENT_RELATIVE : TP_OK;
 }
 
-// [TELEPORT-RECALL-PARENTREL] What a marker Recall or Force answers before anything moves.
+// [TELEPORT-RECALL-PARENTREL] What a marker Recall or Force answers before anything moves. An empty slot wins; then a
+// marker saved from the parent-relative fallback is refused, Force or not -- Force overrides the map check, which can
+// be wrong, and nothing makes relative numbers world coordinates; then the map check, which Force skips. A
+// parent-relative marker on another map is -16, so Force is not offered for a refusal it could not get past.
 constexpr int32_t RecallMarkerRefusal(bool stored, bool parentRelative, bool force, bool sameMap) {
-    (void)parentRelative;
     if (!stored) return TP_ERR_EMPTY_MARKER;
+    if (parentRelative) return TP_ERR_PARENT_RELATIVE;
     if (!force && !sameMap) return TP_ERR_MAP_MISMATCH;
     return TP_OK;
 }
 
-// [TELEPORT-RECALL-PARENTREL] Whether the pose read just before a jump becomes the undo ("last") point.
+// [TELEPORT-RECALL-PARENTREL] Whether the pose read just before a jump becomes the undo ("last") point. A pose that is
+// not world coordinates does not: the slot keeps its previous pose, as it already did for a pose it could not read, so
+// Recall last never drives relative numbers into the pawn -- at the cost of returning to an older place.
 constexpr bool StoresUndoPoint(bool readOk, bool parentRelative) {
-    (void)parentRelative;
-    return readOk;
+    return readOk && !parentRelative;
 }
 
 // Pose always crosses this layer as doubles regardless of engine width
@@ -67,7 +71,8 @@ struct Marker {
     Pose P{};
     char MapName[Grimoire::TELEPORT_MAPNAME_CAP] = {};
     // [W2-MARKER-PARENTREL] The pose was saved from the raw parent-relative fallback (an attached pawn whose
-    // world-space read failed): P is NOT world coordinates, and recalling it drives the pawn there as if it were.
+    // world-space read failed): P is NOT world coordinates. Recall and Force refuse such a marker, BugItGo such a
+    // BugIt, and the "last" slot never takes one. [TELEPORT-RECALL-PARENTREL]
     bool ParentRelative = false;
 };
 
@@ -203,8 +208,11 @@ int32_t GetPov(Pov& out);
 int32_t SaveMarker(int32_t slot);
 
 // Teleport back to a saved marker. Refuses with TP_ERR_MAP_MISMATCH when the
-// current map differs from the marker's, unless force. tierOut (optional):
-// 1 = invoke path (K2_SetActorLocation), 2 = raw-write fallback.
+// current map differs from the marker's, unless force; refuses with
+// TP_ERR_PARENT_RELATIVE a marker saved from the parent-relative fallback, force
+// or not (RecallMarkerRefusal). A refusal moves neither the pawn nor the "last"
+// slot. tierOut (optional): 1 = invoke path (K2_SetActorLocation), 2 = raw-write
+// fallback.
 int32_t RecallMarker(int32_t slot, bool force, uint8_t* tierOut);
 
 // Teleport to an explicit pose (BugItGo interop, pipe-only path). Bypasses
@@ -228,11 +236,13 @@ int32_t GetMarker(int32_t slot, Marker& out);
 int32_t ClearMarker(int32_t slot);
 
 // Recall to the system "last" position — the pose captured automatically right
-// before the most recent recall / force / BugItGo / cursor teleport, so a
-// teleport that lands the pawn somewhere bad can be undone. One-way restore:
+// before a jump, so a teleport that lands the pawn somewhere bad can be undone.
+// A jump whose pose could not be read in world coordinates (unreadable, or the
+// parent-relative fallback) leaves the previous one, so it can be older than the
+// most recent jump (StoresUndoPoint). One-way restore:
 // this does NOT itself update the last slot (repeated calls always return to
 // the same pre-teleport spot). System-managed — never user-saved. Map check is
-// skipped (the last pose is always from moments ago on the current map).
+// skipped (the last pose is normally from moments ago on the current map).
 // TP_ERR_EMPTY_MARKER when nothing has been auto-saved yet.
 int32_t RecallLast(uint8_t* tierOut);
 
@@ -263,8 +273,11 @@ int32_t BugItGo(uint8_t* tierOut);
 // ControlRotation. outNewPose receives the resulting pose (re-read after the
 // move) so the caller can display the landed X/Y/Z/Pitch/Yaw. The pre-jump pose
 // is auto-saved (RecallLast undoes it). tierOut: 1 invoke / 2 raw write.
+// TP_ERR_PARENT_RELATIVE when the current pose came from the parent-relative
+// fallback: there is no world position to step from, and nothing moves.
 // outLandingKnown (optional): FALSE when the post-move pose re-read FAILED, so
-// outNewPose is untouched -- NOT a landing at the origin. The move itself still
+// outNewPose is untouched -- NOT a landing at the origin -- or fell back to the
+// parent-relative numbers, which are not a world landing. The move itself still
 // succeeded (that is what the return code says); publish nothing for the landing
 // rather than zeros nobody measured. [TPREL-ZEROPOSE-2026-09-10]
 int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose,

@@ -53,9 +53,10 @@ using namespace Wirbel;  // TeleportResult codes
 std::mutex s_opMutex;
 Marker s_markers[Grimoire::TELEPORT_SLOTS];
 
-// System "last" slot — the pose captured automatically right before every
-// recall / force / BugItGo / cursor teleport (see SaveLastImpl). Never user
-// saved; recalled one-way via Wirbel::RecallLast so a bad teleport is undoable.
+// System "last" slot — the pose captured automatically right before a jump
+// (see SaveLastImpl, which keeps the previous one when the pose is not world
+// coordinates). Never user saved; recalled one-way via Wirbel::RecallLast so a
+// bad teleport is undoable.
 Marker s_lastMarker;
 
 // BugIt slot — a single user-triggered pose stored by Wirbel::BugItSave and
@@ -1353,7 +1354,17 @@ int32_t RecallTo(const Pose& p, bool restoreRot, uint8_t* tierOut) {
 // s_opMutex (uses the lock-free GetPoseImpl, not the public GetPose export).
 void SaveLastImpl() {
     Marker m{};
-    if (GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), nullptr, nullptr, &m.ParentRelative) != TP_OK) return;
+    const bool readOk =
+        GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), nullptr, nullptr, &m.ParentRelative) == TP_OK;
+    // [TELEPORT-RECALL-PARENTREL] A parent-relative pose is not world coordinates: the slot keeps its previous pose
+    // (StoresUndoPoint), and the jump still runs.
+    if (!StoresUndoPoint(readOk, m.ParentRelative)) {
+        if (readOk)
+            LOG_WARN("Teleport: last position NOT updated -- the pose before this jump came from a PARENT-RELATIVE "
+                     "read (%.1f, %.1f, %.1f), not world coordinates; Recall last keeps the previous one",
+                     m.P.X, m.P.Y, m.P.Z);
+        return;
+    }
     m.Valid = true;
     s_lastMarker = m;
     LOG_INFO("Teleport: last position auto-saved (%.1f, %.1f, %.1f) map='%s'",
@@ -1511,16 +1522,21 @@ int32_t RecallMarker(int32_t slot, bool force, uint8_t* tierOut) {
     if (!s_markers[slot].Valid) return TP_ERR_EMPTY_MARKER;
     Marker m = s_markers[slot];
 
-    if (!force) {
-        // Cross-map recall = void fall / unloaded streaming cell (§11 caveat 5).
-        char cur[Grimoire::TELEPORT_MAPNAME_CAP] = {};
-        CopyMapName(DerefWorld(), cur, sizeof(cur));
-        if (!IEquals(std::string(cur), m.MapName)) {
-            LOG_WARN("Teleport: recall %d refused — map '%s' != marker map '%s'",
-                     slot, cur, m.MapName);
-            return TP_ERR_MAP_MISMATCH;
-        }
-    }
+    // Cross-map recall = void fall / unloaded streaming cell (§11 caveat 5). Force skips the check, so the map is
+    // read only when it counts.
+    char cur[Grimoire::TELEPORT_MAPNAME_CAP] = {};
+    if (!force) CopyMapName(DerefWorld(), cur, sizeof(cur));
+    const bool sameMap = force || IEquals(std::string(cur), m.MapName);
+    // [TELEPORT-RECALL-PARENTREL] Refused before SaveLastImpl, as BugItGo is: a refused jump moves neither the pawn nor
+    // the undo slot.
+    const int32_t refusal = RecallMarkerRefusal(m.Valid, m.ParentRelative, force, sameMap);
+    if (refusal == TP_ERR_PARENT_RELATIVE)
+        LOG_WARN("Teleport: recall %d refused -- the marker came from a PARENT-RELATIVE read (%.1f, %.1f, %.1f), not "
+                 "world coordinates; nothing moved%s", slot, m.P.X, m.P.Y, m.P.Z, force ? " (Force too)" : "");
+    else if (refusal == TP_ERR_MAP_MISMATCH)
+        LOG_WARN("Teleport: recall %d refused — map '%s' != marker map '%s'",
+                 slot, cur, m.MapName);
+    if (refusal != TP_OK) return refusal;
     SaveLastImpl();   // remember where we were, in case this recall goes wrong
     int32_t rc = RecallTo(m.P, /*restoreRot=*/true, tierOut);
     LOG_INFO("Teleport: recall %d -> rc=%d", slot, rc);
@@ -1811,8 +1827,17 @@ int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose,
     // Current world position (GetPoseImpl handles attached pawns via
     // K2_GetActorLocation; RelativeLocation == world otherwise).
     Pose cur{};
-    rc = GetPoseImpl(cur, nullptr, 0, nullptr);
+    bool startParentRelative = false;
+    rc = GetPoseImpl(cur, nullptr, 0, nullptr, nullptr, &startParentRelative);
     if (rc != TP_OK) return rc;
+    // [TELEPORT-RECALL-PARENTREL] The world read failed and fell back to the parent-relative numbers: there is no world
+    // position to step from, and stepping from those would land at the pawn's offset from its parent, measured from the
+    // world origin. Refused before the undo point, so nothing moves.
+    if (startParentRelative) {
+        LOG_WARN("Teleport: relative move refused -- the current pose came from a PARENT-RELATIVE read (%.1f, %.1f, "
+                 "%.1f), not world coordinates; nothing moved", cur.X, cur.Y, cur.Z);
+        return TP_ERR_PARENT_RELATIVE;
+    }
 
     double fwd[3] = {};
     if (!GetForward(c, horizontalOnly, fwd)) {
@@ -1834,10 +1859,13 @@ int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose,
     // zeros for the user to copy or save. The move itself SUCCEEDED, so this is not an
     // error code -- the caller is told the landing is unknown and publishes nothing
     // rather than a number nobody measured. [TPREL-ZEROPOSE-2026-09-10]
+    // [TELEPORT-RECALL-PARENTREL] A re-read that fell back to the parent-relative numbers is not a world landing either:
+    // it is reported as unknown, the same way.
+    bool landingParentRelative = false;
+    const bool landingRead =
+        GetPoseImpl(outNewPose, nullptr, 0, nullptr, nullptr, &landingParentRelative) == TP_OK;
     if (outLandingKnown)
-        *outLandingKnown = (GetPoseImpl(outNewPose, nullptr, 0, nullptr) == TP_OK);
-    else
-        GetPoseImpl(outNewPose, nullptr, 0, nullptr);   // best-effort re-read
+        *outLandingKnown = landingRead && !landingParentRelative;
     LOG_INFO("Teleport: relative %.1f uu (%s) fwd=(%.3f, %.3f, %.3f) -> (%.1f, %.1f, %.1f)",
              distance, horizontalOnly ? "horizontal" : "3D",
              fwd[0], fwd[1], fwd[2], dest[0], dest[1], dest[2]);
