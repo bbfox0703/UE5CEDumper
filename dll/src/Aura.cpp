@@ -2098,11 +2098,10 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
         if (objName.empty()) continue;
         // [INVOKE-NONSTATIC-ON-CDO] A TEMPLATE is never "live": a class-default object, and an archetype -- a CDO's
         // default subobject, which every component-class lookup used to land on (measured), or a Blueprint's component
-        // template. ObjectFlags is read directly; the name test also covers a CDO whose flags read nothing.
-        uint32_t objFlags = 0;
-        Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_FLAGS, objFlags);
-        const bool isCdo = objName.rfind("Default__", 0) == 0 || (objFlags & Grimoire::RF_CLASS_DEFAULT_OBJECT) != 0;
-        const bool isTemplate = isCdo || (objFlags & Grimoire::RF_ARCHETYPE_OBJECT) != 0;
+        // template. TemplateOf decides, so the pick and the invoke's template verdict never disagree on one object.
+        const TemplateInfo tpl = TemplateOf(obj);
+        const bool isCdo = tpl.kind == TemplateKind::ClassDefault;
+        const bool isTemplate = tpl.kind != TemplateKind::None;
 
         if (!v.derives) {   // the partial-name rule the user-facing lookups always had: the first non-template, else the first
             if (!partialFirst) { partialFirst = obj; partialFirstCls = cls; }
