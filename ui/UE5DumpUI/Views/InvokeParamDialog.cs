@@ -13,12 +13,13 @@ using UE5DumpUI.Services;
 namespace UE5DumpUI.Views;
 
 /// <summary>
-/// Two entry-points for this dialog (each opened by a different LiveWalker
-/// button on a UFunction row):
+/// The two ways this dialog opens; a caller picks one by whether a live call is what the user asked for:
 /// <list type="bullet">
 /// <item><see cref="PipeInvoke"/> -- shows FIRE + Copy AA Script + Cancel.
 ///     User can either test the call live in-app via the pipe, or bake the
-///     current form values into a redistributable AA Script.</item>
+///     current form values into a redistributable AA Script. FIRE runs on the
+///     object the dialog was given, or -- given none -- on whatever object the DLL
+///     resolves the class name to at that FIRE.</item>
 /// <item><see cref="CopyBakedScript"/> -- shows Copy AA Script + Cancel
 ///     only. FIRE is hidden so a user opening the dialog from the
 ///     "Copy AA Script (Baked)" button can't accidentally invoke the
