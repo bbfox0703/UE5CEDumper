@@ -1703,7 +1703,7 @@ SearchResultSet SearchByName(const std::string& query, int maxResults, bool inst
     return rset;
 }
 
-SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch, int maxResults, bool newestFirst, const std::string& nameFilter, const std::vector<std::string>& excludeClasses, bool buildHistogram) {
+SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch, int maxResults, bool newestFirst, const std::string& nameFilter, const std::vector<std::string>& excludeClasses, bool buildHistogram, bool /*skipTemplates (RED STUB)*/) {
     SearchResultSet rset;
 
     // Convert queries to lowercase for case-insensitive comparison

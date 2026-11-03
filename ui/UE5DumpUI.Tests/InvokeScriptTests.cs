@@ -3131,6 +3131,52 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void WritePools_never_hold_a_template()
+    {
+        // [LISTINSTANCES-KEEPS-TEMPLATES] Freeze (CMD_LIST_INSTANCES) and Force (Solide) write into every object their
+        // pool lists. A template there -- a class default object, one of its default subobjects, a Blueprint component
+        // template -- passes its value to every later spawn, and the freeze helper never restores. Mimic.cpp and
+        // Solide.cpp reach no C++ test target, so their source is pinned here; dll_core_test pins the walkers.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found -- re-point this pin");
+            return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
+        }
+
+        var list = Body(CodeOnly(DllSource("Mimic.cpp")), "static void HandleListInstances() {");
+        Assert.Contains("Aura::FindInstancesDerivedFrom(className, cap)", list, StringComparison.Ordinal);
+        Assert.Contains("/*buildHistogram=*/false, /*skipTemplates=*/true)", list, StringComparison.Ordinal);
+        Assert.Contains("Aura::TemplateOf(r.addr).kind != Aura::TemplateKind::None", list, StringComparison.Ordinal);
+        Assert.DoesNotContain("find(\"Default__\")", list, StringComparison.Ordinal);
+
+        var solide = Body(CodeOnly(DllSource("Solide.cpp")), "void ApplyJobLocked(");
+        Assert.Contains("Aura::FindInstancesDerivedFrom(", solide, StringComparison.Ordinal);
+        Assert.Contains("Aura::TemplateOf(r.addr).kind != Aura::TemplateKind::None", solide, StringComparison.Ordinal);
+        Assert.DoesNotContain("FindInstancesByClass(", solide, StringComparison.Ordinal);
+        Assert.DoesNotContain("find(\"Default__\")", solide, StringComparison.Ordinal);
+
+        // The Property Search preview samples what Force / Freeze would hold [CDOSCOPE-2026-08-20], so it skips the
+        // same templates; only the row's own class default stands in, and is marked as such.
+        var aura = CodeOnly(DllSource("Aura.cpp"));
+        int from = aura.IndexOf("std::unordered_map<uintptr_t, uintptr_t> cdoOnlyMap;", StringComparison.Ordinal);
+        int to = aura.IndexOf("ChoosePreviewSource(", Math.Max(from, 0), StringComparison.Ordinal);
+        Assert.True(from > 0 && to > from, "the preview sweep moved -- re-point this pin");
+        var sweep = aura[from..to];
+        Assert.Contains("TemplateOf(", sweep, StringComparison.Ordinal);
+        Assert.DoesNotContain("find(\"Default__\")", sweep, StringComparison.Ordinal);
+
+        // A meaning change of CMD_LIST_INSTANCES: a script generated now refuses a DLL that still lists templates.
+        Assert.Contains("constexpr int32_t MAILBOX_CONTRACT = 8;", DllSource("Mimic.h"), StringComparison.Ordinal);
+        Assert.Equal(8, CeMailboxLayout.ContractVersion);
+    }
+
+    [Fact]
     public void DebugCamera_refusal_code_is_registered_and_mirrored()
     {
         // [DEBUGCAM-FORCEON-CDO] -17 reaches CE in CMD_SET_DEBUG_CAMERA's `result`, the field CMD_TELEPORT's -16 and the

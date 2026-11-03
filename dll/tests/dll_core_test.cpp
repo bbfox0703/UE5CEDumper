@@ -4960,7 +4960,7 @@ int main() {
                bBPDcc, bBPPc, bCheatMgr, bCheatExt, bAbilityExt, bBPCheats, bKsl, bGameModeBase, bGameMode, bBPGameMode,
                bBPChar, bCdoActorChannel, bCdoCheatExt, bCdoCheatMgr, bCdoActor, bCdoKsl, bCdoGameMode, bCdoBPChar,
                bAbility0, bCm0, bDcc0, bPc0, bCheats0, bAbility1, bGm0, bChar0, bHud, bDcHud, bDcHud0, bHud0,
-               bCmc, bCdoCmc, bTplMove, bLiveMove, kBlobs };
+               bCmc, bCdoCmc, bTplMove, bLiveMove, bScsMove, kBlobs };
         alignas(16) static uint8_t upB[kBlobs][0x200] = {};
         auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(upB[b]); };
         auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
@@ -5038,6 +5038,10 @@ int main() {
         obj(bTplMove, bCmc, nCharMoveComp, bCdoBPChar);
         put32(upB[bTplMove], Grimoire::OFF_UOBJECT_FLAGS, 0x40021);
         obj(bLiveMove, bCmc, nCharMoveComp, bChar0);
+        // [LISTINSTANCES-KEEPS-TEMPLATES] A Blueprint's component template: RF_ArchetypeObject, outered to the CLASS (no
+        // class-default object above it).
+        obj(bScsMove, bCmc, nCharMoveComp, bBPChar);
+        put32(upB[bScsMove], Grimoire::OFF_UOBJECT_FLAGS, 0x20);
 
         FakePool upPool;
         upPool.Build(128);
@@ -5155,6 +5159,50 @@ int main() {
         check("USERPICK ⭐: ...and the lookup passes it over too -- the class's own default object stands in",
               is(r, bCdoCmc, Aura::UserPick::ClassDefault), nm(r.obj).c_str());
         put32(upB[bTplMove], Grimoire::OFF_UOBJECT_FLAGS, 0x40021);
+
+        // Phase F -- the WRITE pools hold no template. [LISTINSTANCES-KEEPS-TEMPLATES] Freeze (CMD_LIST_INSTANCES) and
+        // Force (Solide) write into every object these walks return; a template written there reaches every later spawn,
+        // and the freeze helper never restores. Templates are built at class load, so they sit below the live object and
+        // fill a cap first. Order: the CDO, its default subobject, a Blueprint component template, then the live one.
+        slot(19, bScsMove);
+        slot(20, bLiveMove);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        check("LISTPOOL setup: the Blueprint component template is a template, owned by its class",
+              Aura::TemplateOf(A(bScsMove)).kind == Aura::TemplateKind::Template
+              && Aura::TemplateOf(A(bScsMove)).owner == A(bBPChar));
+        auto addrs = [&](const Aura::SearchResultSet& s) {
+            std::string out;
+            for (const auto& e : s.results) out += nm(e.addr) + "@" + std::to_string(e.index) + " ";
+            return out;
+        };
+        auto rs = Aura::FindInstancesDerivedFrom("CharacterMovementComponent", 10);
+        check("LISTPOOL ⭐ F1: the derived pool holds the live component only",
+              rs.results.size() == 1 && rs.results[0].addr == A(bLiveMove), addrs(rs).c_str());
+        int32_t total = -1;
+        rs = Aura::FindInstancesDerivedFrom("CharacterMovementComponent", 1, 0, &total);
+        check("LISTPOOL ⭐ F2: templates do not fill the cap -- one slot holds the live one, and it is not capped",
+              rs.results.size() == 1 && rs.results[0].addr == A(bLiveMove) && !rs.truncated, addrs(rs).c_str());
+        check("LISTPOOL ⭐ F3: the total counts live objects only", total == 1, std::to_string(total).c_str());
+        put32(upB[bTplMove], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        rs = Aura::FindInstancesDerivedFrom("CharacterMovementComponent", 10);
+        check("LISTPOOL ⭐ F4: with no flags read, a Default__ outer still keeps the subobject out (TemplateOf's rule)",
+              rs.results.size() == 1 && rs.results[0].addr == A(bLiveMove), addrs(rs).c_str());
+        put32(upB[bTplMove], Grimoire::OFF_UOBJECT_FLAGS, 0x40021);
+        rs = Aura::FindInstancesByClass("CharacterMovementComponent", true, 1, false, "", {}, false, /*skipTemplates=*/true);
+        check("LISTPOOL ⭐ F5: the exact pool asked to skip templates takes the live component",
+              rs.results.size() == 1 && rs.results[0].addr == A(bLiveMove), addrs(rs).c_str());
+        rs = Aura::FindInstancesByClass("CharacterMovementComponent", true, 10);
+        check("LISTPOOL control F6: the exact read (Instance Finder's) still lists every template, in index order",
+              rs.results.size() == 4 && rs.results[0].addr == A(bCdoCmc) && rs.results[1].addr == A(bTplMove)
+              && rs.results[2].addr == A(bScsMove) && rs.results[3].addr == A(bLiveMove), addrs(rs).c_str());
+        rs = Aura::FindInstancesDerivedFrom("Actor", 10);
+        check("LISTPOOL control F7: a derived pool with no template in it is unchanged",
+              rs.results.size() == 5 && rs.results[0].addr == A(bDcc0) && rs.results[1].addr == A(bGm0)
+              && rs.results[2].addr == A(bChar0) && rs.results[3].addr == A(bDcHud0) && rs.results[4].addr == A(bHud0),
+              addrs(rs).c_str());
+        slot(19, -1);
+        slot(20, -1);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
 
         // Phase D -- a walk cut short is not "not found", and the old 100-match cap is gone.
         Tot::g_perCommand.store(true);

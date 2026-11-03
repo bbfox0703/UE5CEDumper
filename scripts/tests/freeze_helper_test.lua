@@ -869,6 +869,21 @@ do
         'SCOPE: and it says which side to update', tostring(err))
 end
 
+case('TEMPLATES: a contract-7 DLL, which still lists templates, is REFUSED')
+do
+  -- [LISTINSTANCES-KEEPS-TEMPLATES] A contract-7 DLL's LIST_INSTANCES lists a class default object's default
+  -- subobjects and Blueprint component templates as instances; a freeze written into one reaches every later spawn,
+  -- and this helper never restores. Refused before anything is written, as SCOPE refuses a contract-2 DLL.
+  resetWorld()
+  installMailbox{ pages = { { 0x2000 } }, contractCur = 7 }
+  local h = freezeProperty{ className = 'CharacterMovementComponent', propOffset = 0x20, valueType = 'int32', value = 1 }
+  local ok, err = h.start()
+  eq(ok, false, 'refused')
+  check(type(err) == 'string' and err:find('update UE5Dumper.dll', 1, true) ~= nil,
+        'TEMPLATES: and it says which side to update', tostring(err))
+  eq(#WRITES, 0, 'nothing was written')
+end
+
 -- ============================================================
 -- [FREEZESTUCK-2026-08-18]: an abandoned freeze must untick its record.
 --

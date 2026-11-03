@@ -289,7 +289,7 @@ SearchResultSet SearchByName(const std::string& query, int maxResults = 200, boo
 // callers that want a bounded first-N scan and ignore the histogram), the loop keeps
 // the early exit at maxResults and skips the tally — so those hot paths are not
 // regressed into a full-array walk.
-SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch = false, int maxResults = 500, bool newestFirst = false, const std::string& nameFilter = "", const std::vector<std::string>& excludeClasses = {}, bool buildHistogram = false);
+SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch = false, int maxResults = 500, bool newestFirst = false, const std::string& nameFilter = "", const std::vector<std::string>& excludeClasses = {}, bool buildHistogram = false, bool skipTemplates = false);
 
 // LIVE instances of `baseClassName` AND of every class derived from it.
 //
