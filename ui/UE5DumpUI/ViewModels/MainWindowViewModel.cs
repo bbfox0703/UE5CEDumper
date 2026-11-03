@@ -604,7 +604,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // exponent is not a change -- so without this Copy CE Field fabricated nothing until the slider moved.
         LiveWalker.FabricateArrayCount = FabricateArrayCount;
         InstanceFinder = new InstanceFinderViewModel(dump, log, platform, AobMakerShared);
-        PropertySearch = new PropertySearchViewModel(dump, log, aobMaker, platform, experimentalGate);
+        PropertySearch = new PropertySearchViewModel(dump, log, aobMaker, platform, experimentalGate, AobMakerShared);
         GameClassFilter = new GameClassFilterViewModel(dump, log, platform);
         InterestingFunctions = new InterestingFunctionsViewModel(dump, log, aobMaker, platform);
         LiveFuncs = new LiveFuncsViewModel(dump, log, platform, AobMakerShared, experimentalGate);
@@ -3251,8 +3251,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// Top-toolbar "&#x27F3;" button: re-probe whether Cheat Engine is running with
     /// the AOBMaker plugin loaded and update the always-visible status chip. Navigation
     /// and Add-to-CE actions already re-probe on use, so this is purely for at-a-glance
-    /// feedback. Propagates the result to the Live Walker and Pointers panels so all
-    /// three indicators (and their button enablement) agree.
+    /// feedback. Propagates the result to the panels whose buttons read it, so the chip and
+    /// those buttons agree.
     /// </summary>
     [RelayCommand]
     private async Task RefreshAobMakerAsync()

@@ -550,8 +550,7 @@ public partial class MainWindow : Window
     /// 1. Stop Live Walker auto-refresh when the user switches away
     ///    from Live Walker (no point polling while viewing other tabs).
     /// 2. Refresh AOBMaker availability for tabs whose actions depend
-    ///    on the CE plugin (LiveWalker, InterestingFunctions, Pointers).
-    ///    The re-check is fire-and-forget (cooldown-throttled where the
+    ///    on the CE plugin. The re-check is fire-and-forget (cooldown-throttled where the
     ///    panel VM supports it) so rapid tab switches don't stack 2s
     ///    pipe-connect timeouts -- keeps the grayout state honest when
     ///    the user starts/stops CE without blocking the UI thread.

@@ -20,6 +20,12 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
     private readonly IAobMakerBridge? _aobMaker;
+
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] The app's shared "is the plugin reachable" flag. Freeze follows it
+    /// and this panel's probes publish to it: a flag of its own went stale whenever someone else learned the news
+    /// (measured on build 3682, the toolbar ⟳ said "connected" over a disabled Freeze), and a disabled button cannot
+    /// reach the probe its click would run.</summary>
+    private readonly AobMakerStatus? _aobStatus;
     private readonly IPlatformService? _platform;
     private readonly IExperimentalGate? _experimentalGate;
 
@@ -203,11 +209,15 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     public PropertySearchViewModel(IDumpService dump, ILoggingService log,
                                    IAobMakerBridge? aobMaker = null,
                                    IPlatformService? platform = null,
-                                   IExperimentalGate? experimentalGate = null)
+                                   IExperimentalGate? experimentalGate = null,
+                                   AobMakerStatus? aobStatus = null)
     {
         _dump = dump;
         _log = log;
         _aobMaker = aobMaker;
+        _aobStatus = aobStatus;
+        if (_aobStatus != null)
+            _aobStatus.PropertyChanged += OnSharedAobMakerChanged;
         _platform = platform;
         _experimentalGate = experimentalGate;
         _resultFilterMemory = new KeywordSearchMemory(() => (ResultFilter, Results.Count > 0));
@@ -256,8 +266,8 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
 
     /// <summary>
     /// Re-probe AOBMaker pipe so the Freeze button enablement reflects the
-    /// current state. Called on tab activation + before each Freeze click;
-    /// cooldown prevents pipe spam on rapid interactions.
+    /// current state; cooldown prevents pipe spam on rapid interactions.
+    /// The answer is published to the shared status, so the toolbar chip and the other panels learn it too.
     /// </summary>
     public async Task RefreshAobMakerAvailabilityAsync()
     {
@@ -270,14 +280,32 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         if (now - _lastAobMakerCheck < AobMakerCheckCooldown)
             return;
         _lastAobMakerCheck = now;
+        bool ok;
         try
         {
-            IsAobMakerAvailable = await _aobMaker.CheckAvailabilityAsync();
+            ok = await _aobMaker.CheckAvailabilityAsync();
         }
         catch
         {
-            IsAobMakerAvailable = false;
+            ok = false;
         }
+        PublishAobMaker(ok);
+    }
+
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] Take what this panel learned, and tell the shared status. Its change
+    /// comes back through <see cref="OnSharedAobMakerChanged"/> with the same value, which raises nothing.</summary>
+    private void PublishAobMaker(bool available)
+    {
+        IsAobMakerAvailable = available;
+        _aobStatus?.Apply(available);
+    }
+
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] Follow what any other probe or push learned. Not gated by this
+    /// panel's cooldown: the news is free, only a probe costs a pipe connect.</summary>
+    private void OnSharedAobMakerChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(AobMakerStatus.IsAvailable) && _aobStatus != null)
+            IsAobMakerAvailable = _aobStatus.IsAvailable;
     }
 
     /// <summary>
@@ -361,7 +389,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         }
         finally
         {
-            IsAobMakerAvailable = _aobMaker?.IsAvailable ?? false;
+            PublishAobMaker(_aobMaker?.IsAvailable ?? false);
         }
 
         StatusText = sent
@@ -625,6 +653,10 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             StatusText = "Enter a property name or type filter";
             return;
         }
+
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] Fresh rows are where Freeze appears, so the plugin is asked again now.
+        // Not awaited: with Cheat Engine absent the connect waits up to 2 s, and the search must not.
+        _ = RefreshAobMakerAvailabilityAsync();
 
         try
         {
@@ -902,6 +934,8 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         _disposed = true;
         if (_experimentalGate != null)
             _experimentalGate.Changed -= OnExperimentalGateChanged;
+        if (_aobStatus != null)
+            _aobStatus.PropertyChanged -= OnSharedAobMakerChanged;
         _xrefBatchCts?.Cancel();
         _xrefBatchCts?.Dispose();
         _resultFilterDebounce?.Dispose();
