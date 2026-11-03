@@ -35,7 +35,8 @@ internal static class DebugCameraText
 
     /// <summary>[INVOKE-NONSTATIC-ON-CDO] A Force's status, plus the DLL's warning when the toggle ran on the
     /// CheatManager's class default object: there is no live CheatManager, so the toggle does nothing there.</summary>
-    internal static string WithTemplateNote(string status, bool? onTemplate) => status;
+    internal static string WithTemplateNote(string status, bool? onTemplate)
+        => onTemplate == true ? status + " " + OnTemplateText : status;
 
     internal static string OnTemplateText => Say(KeyOnTemplate,
         "⚠ The toggle ran on the CheatManager's class default object: there is no live CheatManager (usual in a " +

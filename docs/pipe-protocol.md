@@ -245,8 +245,13 @@ Shared by the Console panel (here) and CE Lua (`setDebugCamera` export). All log
 
 // Force ON (enable:true) / OFF (enable:false); idempotent
 { "id": 51, "cmd": "set_debug_camera", "enable": false }
-// → { "ok": true, "state": 0 }
+// → { "ok": true, "state": 0, "nonstatic_on_template": false }
 ```
+
+`nonstatic_on_template` (from build 3676) is a WARNING beside `state`: the toggle ran on the CheatManager's class
+default object -- no live CheatManager, usual in a Shipping build -- where it does nothing. Absent = an older DLL.
+The mailbox's CMD_SET_DEBUG_CAMERA publishes the same thing as `INV_OUT_NONSTATIC_ON_TEMPLATE` in cmdOutFlags
+(contract 7). `[INVOKE-NONSTATIC-ON-CDO]`
 
 ### Value Search (build 738 + Phase 2 build 757)
 

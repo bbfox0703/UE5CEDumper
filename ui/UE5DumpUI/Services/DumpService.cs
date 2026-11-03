@@ -3713,7 +3713,17 @@ public sealed class DumpService : IDumpService
     }
 
     public async Task<DebugCameraSetResult> SetDebugCameraDetailedAsync(bool enable, CancellationToken ct = default)
-        => new(await SetDebugCameraAsync(enable, ct), null);   // red stub
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "set_debug_camera",
+            ["enable"] = enable,
+        };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+        // [INVOKE-NONSTATIC-ON-CDO] additive key; absent (an older DLL) stays null
+        return new(res["state"]?.GetValue<int>() ?? -1, res["nonstatic_on_template"]?.GetValue<bool>());
+    }
 
     // === God Mode (Solitar) — docs/godmode-spec.md §6.1 ===
 

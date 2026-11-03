@@ -46,6 +46,7 @@ extern "C" int32_t  UE5_CallProcessEventDirect(uintptr_t, uintptr_t, uintptr_t);
 // [VND584-01] Frieren.cpp: a picked object in a weak / soft parameter becomes the engine's own value before the call.
 namespace FrierenInvoke {
 bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why);
+bool DebugCameraFiredOnTemplate();
 }
 extern uintptr_t    g_cachedGObjects;
 extern uintptr_t    g_cachedGNames;
@@ -1117,6 +1118,10 @@ static void HandleSetDebugCamera() {
     int32_t state = (req == 2)
         ? UE5_GetDebugCameraState()
         : UE5_SetDebugCamera(req != 0 ? 1 : 0);
+    // [INVOKE-NONSTATIC-ON-CDO] The toggle ran on the CheatManager's class default object (contract 7). A query fires
+    // nothing, so it never reads the previous call's answer.
+    if (req != 2 && FrierenInvoke::DebugCameraFiredOnTemplate())
+        g_invokeMailbox.cmdOutFlags |= INV_OUT_NONSTATIC_ON_TEMPLATE;
     if (state == -1) {
         strncpy(g_invokeMailbox.errorMsg,
                 "Debug Camera: no live CheatManager / unreadable state",

@@ -279,7 +279,8 @@ enum ListInstancesFlag : uint32_t {
                              //   routinely, so it is normal here, not exceptional.
 };
 
-// cmdOutFlags bits CMD_INVOKE (and CMD_INVOKE_BY_NAME, which ends in it) publishes (contract 7+).
+// cmdOutFlags bits CMD_INVOKE (and CMD_INVOKE_BY_NAME, which ends in it) publishes (contract 7+), and
+// CMD_SET_DEBUG_CAMERA when its non-static ToggleDebugCamera ran on the CheatManager's class default object.
 // [INVOKE-NONSTATIC-ON-CDO] Never 0x1: a contract 3-6 DLL can leave LI_OUT_TRUNCATED behind after a LIST_INSTANCES,
 // and it never writes 0x2. The dispatcher clears cmdOutFlags before every command, so the bit is this command's.
 enum InvokeOutFlag : uint32_t {
@@ -696,8 +697,9 @@ namespace Mimic {
 ///   embedded invoke helper deliberately claims contract 1 (verify mode bakes the generator's own contract check).
 /// 7 ([INVOKE-NONSTATIC-ON-CDO]): two changes, one bump. (a) CMD_INVOKE -- and CMD_INVOKE_BY_NAME, which ends in it --
 ///   publishes InvokeOutFlag in cmdOutFlags: INV_OUT_NONSTATIC_ON_TEMPLATE when it ran a function that is not static on
-///   a template (a class-default object or one of its default subobjects), where it may have done nothing. A warning
-///   beside `result`, never a refusal. cmdOutFlags was an unused output for the invoke family, and the dispatcher now
+///   a template (a class-default object or one of its default subobjects), where it may have done nothing -- and so
+///   does CMD_SET_DEBUG_CAMERA when its toggle ran on the CheatManager's class default object (none was live). A
+///   warning beside `result`, never a refusal. cmdOutFlags was an unused output for both, and the dispatcher now
 ///   clears it before every command, so a set bit is always this command's. The new enum is layout, so the surface
 ///   hash moves. (b) CMD_FIND_INSTANCE never takes a TEMPLATE for a live object: one flagged RF_ArchetypeObject -- a
 ///   class-default object's default subobject, which every component-class lookup landed on (measured on DumperTest

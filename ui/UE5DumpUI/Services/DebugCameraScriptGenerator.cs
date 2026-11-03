@@ -137,8 +137,14 @@ public static class DebugCameraScriptGenerator
         Line(sb, $"elseif state ~= {req} then");
         if (enable)
         {
+            // [INVOKE-NONSTATIC-ON-CDO] The DLL (contract 7, which this record claims) says when the toggle ran on the
+            // CheatManager's class default object -- no live CheatManager, where it does nothing.
+            int bit = CeMailboxLayout.InvOutNonStaticOnTemplate;
+            Line(sb, $"  local _tplWarn = (readInteger(mb + {CeMailboxLayout.OffOutFlags}) or 0) % {2 * bit} >= {bit}");
             Line(sb, $"  showMessage('[DebugCamera] {label} failed (state=' .. tostring(state) .. ') " +
-                      "-- no live CheatManager, or the game refused the toggle.')");
+                      "-- ' .. (_tplWarn and 'the toggle ran on the CheatManager class default object: there is no " +
+                      "live CheatManager (usual in a Shipping build).' or 'no live CheatManager, or the game refused " +
+                      "the toggle.'))");
             // Nothing was applied on this branch, so the record must not stay ticked -- nor send the OFF [DISABLE] would.
             Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }

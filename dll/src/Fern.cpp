@@ -97,6 +97,7 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
 // [VND584-01] Frieren.cpp: a picked object in a weak / soft parameter becomes the engine's own value before the call.
 namespace FrierenInvoke {
 bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why);
+bool DebugCameraFiredOnTemplate();
 }
 
 // ============================================================
@@ -7076,6 +7077,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // resulting state: 1=on, 0=off, -1=error, -5=toggle queued [W3-DEBUGCAM-QUEUED], -6=not sent: an opposite
             // toggle is still queued [DBGCAM-OFF-OVER-QUEUED-ON]
             data["state"] = state;
+            // [INVOKE-NONSTATIC-ON-CDO] The toggle ran on the CheatManager's class default object (none is live), where
+            // it does nothing. A warning beside `state` (additive key); read on this thread right after the call.
+            data["nonstatic_on_template"] = FrierenInvoke::DebugCameraFiredOnTemplate();
             return Renge::MakeResponse(id, data).dump();
         }
 
