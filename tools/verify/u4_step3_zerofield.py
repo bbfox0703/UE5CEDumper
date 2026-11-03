@@ -95,7 +95,7 @@ def count_lines(text, name, addr):
 
 def main():
     fails = []
-    with PipeClient().connect() as c:
+    with PipeClient() as c:
         say("DLL build %s" % c.assert_build())
 
         inst, withf, zero, good = survey(c)
@@ -180,7 +180,7 @@ def main():
 
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "survey":
-        with PipeClient().connect() as c:
+        with PipeClient() as c:
             inst, withf, zero, good = survey(c)
             say("%d ScriptStructs: %d with fields, %d zero-field, %d usable"
                 % (len(inst), withf, len(zero), len(good)))

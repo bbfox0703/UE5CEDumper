@@ -147,7 +147,7 @@ def main() -> int:
     args = ap.parse_args()
     globals()["BASE"], globals()["FIELD"] = args.base, args.field
 
-    with PipeClient().connect() as c:
+    with PipeClient() as c:
         c.request("reset_all_fields")
 
         cdo = _cdo(c, BASE)

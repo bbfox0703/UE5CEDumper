@@ -57,7 +57,7 @@ def _derived_line() -> str | None:
 
 
 def main() -> int:
-    with PipeClient().connect() as c:
+    with PipeClient() as c:
         # ── find same-prefix strangers: name starts with FORCE_CLASS, class differs ──
         seen, cand = set(), []
         for probe in (FORCE_CLASS, FORCE_CLASS + "Component", FORCE_CLASS + "Channel"):

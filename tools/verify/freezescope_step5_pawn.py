@@ -92,7 +92,7 @@ def main():
         raise SystemExit("step5: OpenProcess failed for pid %d" % pid)
     say("target: %s (pid %d)" % (name, pid))
 
-    with PipeClient().connect() as c:
+    with PipeClient() as c:
         say("DLL build %s" % c.assert_build())
 
         rows = c.request("search_properties", query=FIELD, limit=10).get("results") or []

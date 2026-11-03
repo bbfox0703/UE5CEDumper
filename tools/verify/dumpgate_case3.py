@@ -33,7 +33,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 
 def livehash():
     from pipe_client import PipeClient
-    with PipeClient().connect() as c:
+    with PipeClient() as c:
         r = c.request("get_pointers")
         d = r.get("data", r) or {}
         h = str(d.get("pe_hash", "") or "")
