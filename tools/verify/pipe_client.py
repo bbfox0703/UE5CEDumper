@@ -215,8 +215,10 @@ def selftest() -> int:
         c.connect()
         again = len(opened)
         c._f.close()   # closed directly, not through close(), so the attribute still holds it
+        c._buf.extend(b'{"id":7,"partial')   # what a timed-out read leaves behind
         c.connect()
         reopened = len(opened)
+        leftover = len(c._buf)
         c.close()
     finally:
         if had:
@@ -225,10 +227,11 @@ def selftest() -> int:
             del g["open"]
     bad = 0
     for label, got, want in (("connect inside `with`", twice, 1), ("connect after close", again, 2),
-                             ("connect after the handle was closed directly", reopened, 3)):
+                             ("connect after the handle was closed directly", reopened, 3),
+                             ("bytes a reopened connection inherits", leftover, 0)):
         ok = got == want
         bad += not ok
-        print(f"{'OK ' if ok else 'BAD'}  {label}: {got} open(s), want {want}")
+        print(f"{'OK ' if ok else 'BAD'}  {label}: {got}, want {want}")
     print("RESULT:", "PASS" if bad == 0 else f"FAIL ({bad})")
     return 0 if bad == 0 else 1
 
