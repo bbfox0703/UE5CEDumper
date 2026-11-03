@@ -64,12 +64,6 @@ public class ConsoleViewModelTests
         public List<bool> SetDebugCameraCalls { get; } = new();
         public int GetDebugCameraStateCallCount { get; private set; }
 
-        public override Task<int> GetDebugCameraStateAsync(CancellationToken ct = default)
-        {
-            GetDebugCameraStateCallCount++;
-            return Task.FromResult(NextDebugCameraState);
-        }
-
         public override Task<int> SetDebugCameraAsync(bool enable, CancellationToken ct = default)
         {
             SetDebugCameraCalls.Add(enable);
@@ -83,9 +77,28 @@ public class ConsoleViewModelTests
         /// flight.</summary>
         public TaskCompletionSource? ForceGate { get; set; }
 
+        /// <summary>When set, the next Force throws it (after it is recorded): a pipe that broke mid-Force.</summary>
+        public Exception? ForceThrow { get; set; }
+
+        /// <summary>When set, every state query waits on it: a Refresh in flight.</summary>
+        public TaskCompletionSource? QueryGate { get; set; }
+
+        public override async Task<int> GetDebugCameraStateAsync(CancellationToken ct = default)
+        {
+            GetDebugCameraStateCallCount++;
+            if (QueryGate is { } gate)
+                await gate.Task;
+            return NextDebugCameraState;
+        }
+
         public override async Task<DebugCameraSetResult> SetDebugCameraDetailedAsync(bool enable, CancellationToken ct = default)
         {
             var state = await SetDebugCameraAsync(enable, ct);
+            if (ForceThrow is { } boom)
+            {
+                ForceThrow = null;
+                throw boom;
+            }
             if (ForceGate is { } gate)
                 await gate.Task;
             return new(state, SetDebugCameraOnTemplate);
@@ -631,6 +644,48 @@ public class ConsoleViewModelTests
         {
             fake.ForceGate.SetResult();
             await Task.WhenAll(force, run);
+        }
+    }
+
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] review 3: the Force's in-flight flag is cleared when it finishes, whether it
+    /// answered or threw -- left set, it would refuse every later run.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_run_after_a_finished_Force_is_sent(bool forceThrows)
+    {
+        var fake = new FakeDumpService();
+        if (forceThrows) fake.ForceThrow = new InvalidOperationException("pipe broke");
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+        Assert.Single(fake.SetDebugCameraCalls);
+
+        await vm.RunRowCommand.ExecuteAsync(vm.Results.First(r => r.FuncName == "Fly"));
+
+        Assert.Equal(1, fake.InvokeCallCount);
+    }
+
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] review 3: a Refresh is a state query and toggles nothing, so a run is not
+    /// refused while one is in flight -- the reason the Force has its own flag rather than IsDebugCameraBusy.</summary>
+    [Fact]
+    public async Task A_run_during_a_Refresh_is_sent()
+    {
+        var fake = new FakeDumpService { QueryGate = new TaskCompletionSource() };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+
+        var refresh = vm.RefreshDebugCameraStateCommand.ExecuteAsync(null);
+        Assert.True(vm.IsDebugCameraBusy);
+        var run = vm.RunRowCommand.ExecuteAsync(vm.Results.First(r => r.FuncName == "Fly"));
+        try
+        {
+            Assert.Equal(1, fake.InvokeCallCount);
+        }
+        finally
+        {
+            fake.QueryGate.SetResult();
+            await Task.WhenAll(refresh, run);
         }
     }
 
