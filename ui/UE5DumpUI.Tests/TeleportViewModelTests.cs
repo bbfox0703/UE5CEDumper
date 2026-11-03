@@ -1236,6 +1236,31 @@ public class TeleportViewModelTests
     }
 
     [Fact]
+    public async Task CopyAsBugItGo_a_parent_relative_pose_is_not_copied_and_empties_the_run_field()
+    {
+        // [TELEPORT-BUGITGO-PARENTREL] A "BugItGo X Y Z" string claims world coordinates to whatever reads it, and a
+        // parent-relative read is not -- the string cannot carry the flag a marker keeps. Copy refused nothing, so the
+        // Run field (and the `bugitgo` hotkey) then drove those numbers into the pawn as world coordinates.
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, X = 1, Y = 2, Z = 3, Source = "raw", ParentRelative = true, ParentRelativeKnown = true },
+        };
+        var vm = CreateVm(fake, out var platform);
+        vm.IsConnected = true;
+        vm.BugItGoInput = "BugItGo 9 9 9";
+
+        await vm.CopyAsBugItGoCommand.ExecuteAsync(null);
+
+        Assert.Null(platform.LastClipboard);
+        Assert.Equal("", vm.BugItGoInput);                       // not the older string either: the hotkey would fire it
+        Assert.Equal(TeleportViewModel.BugItParentRelativeText, vm.StatusText);
+        Assert.True(vm.PoseParentRelative);                      // the pose card's chip still shows it
+
+        await vm.RunBugItGoCommand.ExecuteAsync(null);
+        Assert.Null(fake.LastExplicit);
+    }
+
+    [Fact]
     public async Task CopyAsBugItGo_a_refused_clipboard_is_not_claimed_and_the_run_field_is_still_filled()
     {
         // The blind-spot sweep's round-3 tail: the line said "copied + filled the Run field" whatever the clipboard answered, so a

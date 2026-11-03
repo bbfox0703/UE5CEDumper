@@ -220,6 +220,9 @@ public class AobMakerWordingTests
         Same(ClipboardConvenience.KeyNotCopied, ClipboardConvenience.NotCopiedText("7FF6"), "7FF6");
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyBugItNotCopied,
              UE5DumpUI.ViewModels.TeleportViewModel.BugItNotCopiedText("BugItGo 1 2 3"), "BugItGo 1 2 3");
+        // [TELEPORT-BUGITGO-PARENTREL] Copy as BugItGo refusing a parent-relative read
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyBugItParentRelative,
+             UE5DumpUI.ViewModels.TeleportViewModel.BugItParentRelativeText);
 
         // [COORDPICK-TIMEDOUT-TEXT] The no-DLL coordinate picker's push with no reply in time
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordNoDllTimedOut,
@@ -253,7 +256,7 @@ public class AobMakerWordingTests
              "A.B");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(95, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(96, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

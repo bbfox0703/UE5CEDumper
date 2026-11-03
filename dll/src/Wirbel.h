@@ -29,7 +29,17 @@ enum TeleportResult : int32_t {
     TP_ERR_NO_HIT        = -8,   // trace found no blocking hit
     TP_ERR_NO_CURSOR     = -9,   // mouse position unavailable, center fallback off
     TP_ERR_WRITE_FAILED  = -10,  // tier-2 raw write also failed
+    // -11..-15 are skipped: the mailbox publishes its own codes there, in the same `result` field (Mimic.h).
+    TP_ERR_PARENT_RELATIVE = -16,  // jump refused: the stored pose came from a parent-relative read, not world coords
 };
+
+// [TELEPORT-BUGITGO-PARENTREL] What BugItGo answers for its slot before anything moves. An empty slot wins; a pose
+// stored from the parent-relative fallback is refused rather than driven into the pawn as world coordinates. Pure, so
+// dll_helpers_test pins it.
+constexpr int32_t BugItGoRefusal(bool stored, bool parentRelative) {
+    (void)parentRelative;
+    return stored ? TP_OK : TP_ERR_EMPTY_MARKER;
+}
 
 // Pose always crosses this layer as doubles regardless of engine width
 // (UE4 float FVector/FRotator values are widened at the read boundary).

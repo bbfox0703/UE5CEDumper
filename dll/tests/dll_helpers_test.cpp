@@ -47,6 +47,7 @@
 #include "../src/Methode.h"    // NarrowForAnsiLoad (header-inline, pure) -- the CE-plugin inject path, [PATH-METHODE-NO8DOT3]
 #include "../src/Flamme.h"     // ShouldPublishAtomicWrite (constexpr, pure) — hint-cache publish gate
 #include "../src/Lager.h"      // MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY])
+#include "../src/Wirbel.h"     // BugItGoRefusal (constexpr, pure) -- [TELEPORT-BUGITGO-PARENTREL]
 
 #include <Windows.h>
 
@@ -1341,6 +1342,21 @@ static void Test_Mimic_InitFastPath() {
            && !Mimic::InitFastPathOk(false, false, false) && !Mimic::InitFastPathOk(true, false, true)
            && !Mimic::InitFastPathOk(false, true, true) && !Mimic::InitFastPathOk(false, false, true));
     static_assert(Mimic::InitFastPathOk(true, true, false), "InitFastPathOk must be constexpr-evaluable");
+}
+
+// [TELEPORT-BUGITGO-PARENTREL] BugItGo drove a BugIt taken from the parent-relative fallback (an attached pawn whose
+// world-space read failed) into the pawn as world coordinates; only BugItSave reported the flag.
+static void Test_Wirbel_BugItGoRefusal() {
+    EXPECT("BUGITGO-PARENTREL: the refusal code is -16, clear of the mailbox's own -11..-15",
+           Wirbel::TP_ERR_PARENT_RELATIVE == -16);
+    EXPECT("BUGITGO-PARENTREL: a stored parent-relative BugIt is refused",
+           Wirbel::BugItGoRefusal(true, true) == Wirbel::TP_ERR_PARENT_RELATIVE);
+    EXPECT("BUGITGO-PARENTREL control: a stored world-space BugIt goes",
+           Wirbel::BugItGoRefusal(true, false) == Wirbel::TP_OK);
+    EXPECT("BUGITGO-PARENTREL control: an empty slot is -6 either way -- emptiness wins",
+           Wirbel::BugItGoRefusal(false, false) == Wirbel::TP_ERR_EMPTY_MARKER
+           && Wirbel::BugItGoRefusal(false, true) == Wirbel::TP_ERR_EMPTY_MARKER);
+    static_assert(Wirbel::BugItGoRefusal(true, false) == Wirbel::TP_OK, "BugItGoRefusal must be constexpr-evaluable");
 }
 
 static void Test_Mimic_InvokeRouting() {
@@ -11326,6 +11342,7 @@ int main() {
     RUN(Test_Mimic_MailboxLayout);
     RUN(Test_Mimic_ListInstancesGeometry);
     RUN(Test_Mimic_CommandNumbering);
+    RUN(Test_Wirbel_BugItGoRefusal);
     RUN(Test_Mimic_InvokeRouting);
     RUN(Test_Mimic_InvokeSlab);
     RUN(Test_Mimic_InitFastPath);

@@ -272,6 +272,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             "BugIt: {0} (filled the Run field; not copied, so do not paste: the clipboard still holds what was there before).",
             bugItGo);
 
+    internal const string KeyBugItParentRelative = "str.TP.BugItParentRelative";
+    /// <summary>[TELEPORT-BUGITGO-PARENTREL] A "BugItGo X Y Z" string claims world coordinates to whatever reads it --
+    /// the Run field, the game's own console -- and cannot carry the parent-relative flag a marker keeps, so Copy as
+    /// BugItGo refuses such a read instead of handing it on.</summary>
+    internal static string BugItParentRelativeText => AobMakerStatus.Say(KeyBugItParentRelative,
+        "⚠ BugIt: not copied, and the Run field was emptied. The pose came from a PARENT-RELATIVE read (an attached " +
+        "pawn whose world position could not be read), so these numbers are not world coordinates, and BugItGo would " +
+        "drive the pawn there as if they were. Copy again while the game is responding (focus it, or turn on Keep " +
+        "Foreground), or once off the vehicle or mount.");
+
     internal const string KeyCoordNoDllNotAdded = "str.TP.LibNoDllNotAdded";
     /// <summary>[COORDPICK-OVERSIZE-REASON] A no-DLL picker push refused with a reason says it; the reason's own closing
     /// period is dropped, as the sentence adds one.</summary>

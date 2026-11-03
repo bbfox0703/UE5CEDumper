@@ -3107,6 +3107,45 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void BugItGo_RefusesAParentRelativeBugItBeforeTheUndoPoint()
+    {
+        // [TELEPORT-BUGITGO-PARENTREL] BugItSave recorded the parent-relative flag and BugItGo never read it, so a BugIt
+        // taken on a vehicle or mount was driven into the pawn as world coordinates. Wirbel.cpp reaches no test target,
+        // so this pins its source (dll_helpers_test pins BugItGoRefusal itself). Comments are stripped: the fix's own
+        // comments name the calls.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found");
+            int end = src.IndexOf("\n}\n", at, StringComparison.Ordinal);
+            return src[at..end];
+        }
+        var wirbel = CodeOnly(DllSource("Wirbel.cpp"));
+
+        var go = Body(wirbel, "int32_t BugItGo(uint8_t* tierOut) {");
+        int refusal = go.IndexOf("BugItGoRefusal(s_bugItMarker.Valid, s_bugItMarker.ParentRelative)", StringComparison.Ordinal);
+        int undo = go.IndexOf("SaveLastImpl();", StringComparison.Ordinal);
+        int jump = go.IndexOf("RecallTo(", StringComparison.Ordinal);
+        Assert.True(refusal >= 0, "BugItGo must ask BugItGoRefusal with the stored slot's own parent-relative flag");
+        Assert.True(undo > refusal && jump > undo,
+            "the refusal must come before the undo point and the jump: a refused jump moves neither the pawn nor 'last'");
+        Assert.Contains("LOG_WARN(\"Teleport: BugItGo refused", go, StringComparison.Ordinal);
+
+        var save = Body(wirbel, "int32_t BugItSave(Pose& out,");
+        Assert.Contains("LOG_WARN(\"Teleport: BugIt stored from a PARENT-RELATIVE read", save, StringComparison.Ordinal);
+
+        Assert.Matches(@"TP_ERR_PARENT_RELATIVE\s*=\s*-16\s*,", DllSource("Wirbel.h"));
+        Assert.Equal(-16, TeleportCodes.ParentRelative);
+        // Control: the mailbox handler still passes BugItGo's code straight through, with no field of its own.
+        Assert.Contains("rc = Wirbel::BugItGo(&tier);", DllSource("Mimic.cpp"), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TeleportTransports_PublishTheParentRelativeFlagAndNeverAZeroLanding()
     {
         // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS], the mailbox and C ABI halves. No test target compiles Mimic.cpp

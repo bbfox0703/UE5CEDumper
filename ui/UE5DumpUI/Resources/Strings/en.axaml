@@ -1540,6 +1540,8 @@
     <sys:String x:Key="str.TP.BugHint">Paste 'BugItGo X Y Z', 'X Y Z', or a ?BugLoc=(...)?BugRot=(...) string</sys:String>
     <!-- Copy as BugItGo fills the Run field whatever the clipboard does: a refused copy keeps that half and drops the claim. -->
     <sys:String x:Key="str.TP.BugItNotCopied">BugIt: {0} (filled the Run field; not copied, so do not paste: the clipboard still holds what was there before).</sys:String>
+    <!-- [TELEPORT-BUGITGO-PARENTREL] Copy as BugItGo on a parent-relative read -->
+    <sys:String x:Key="str.TP.BugItParentRelative">⚠ BugIt: not copied, and the Run field was emptied. The pose came from a PARENT-RELATIVE read (an attached pawn whose world position could not be read), so these numbers are not world coordinates, and BugItGo would drive the pawn there as if they were. Copy again while the game is responding (focus it, or turn on Keep Foreground), or once off the vehicle or mount.</sys:String>
     <sys:String x:Key="str.TP.LastHeader">Last Position (auto-saved)</sys:String>
     <sys:String x:Key="str.TP.LastHint">The dumper records where you were just before every Recall / Force / BugItGo / cursor teleport, so you can undo a jump that went wrong. This slot is managed by the system — you can't save into it, only recall it.</sys:String>
     <sys:String x:Key="str.TP.RecallLast">Recall last</sys:String>

@@ -542,6 +542,9 @@ public static class TeleportCodes
     public const int NoHit         = -8;
     public const int NoCursor      = -9;
     public const int WriteFailed   = -10;
+    /// <summary>[TELEPORT-BUGITGO-PARENTREL] The mailbox's BugItGo refused a BugIt stored from a parent-relative read.
+    /// No pipe command answers it, so <see cref="Describe"/> has no arm for it; the generated CE record names it.</summary>
+    public const int ParentRelative = -16;
 
     public static string Describe(int code) => code switch
     {
