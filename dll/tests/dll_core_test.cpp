@@ -4926,7 +4926,7 @@ int main() {
                          nGameModeBase, nGameMode, nBPGameMode, nBPChar, nCdoActorChannel, nCdoCheatExt, nCdoCheatMgr,
                          nCdoActor, nCdoKsl, nCdoGameMode, nCdoBPChar, nAbility0, nCheatMgr0, nBPDcc0, nBPPc0,
                          nBPCheats0, nAbility1, nBPGameMode0, nBPChar0, nHud, nDcHud, nObjProp, nOwner, nDcHud0, nHud0,
-                         nNames };
+                         nCmc, nCdoCmc, nCharMoveComp, nNames };
         const char* upNames[nNames] = { "", "Class", "/Script/Engine", "Package", "Object", "Channel", "ActorChannel",
             "Actor", "Controller", "PlayerController", "DebugCameraController", "BP_DebugCamera_C",
             "BP_ThirdPersonPlayerController_C", "CheatManager", "CheatManagerExtension",
@@ -4936,7 +4936,8 @@ int main() {
             "Default__BP_PlayerCharacter_C", "AbilitySystemCheatManagerExtension_0", "CheatManager_0",
             "BP_DebugCamera_C_0", "BP_ThirdPersonPlayerController_C_0", "BP_Cheats_C_0",
             "AbilitySystemCheatManagerExtension_1", "BP_GameMode_C_0", "BP_PlayerCharacter_C_0", "HUD", "DebugCameraHUD",
-            "ObjectProperty", "Owner", "DebugCameraHUD_0", "HUD_0" };
+            "ObjectProperty", "Owner", "DebugCameraHUD_0", "HUD_0", "CharacterMovementComponent",
+            "Default__CharacterMovementComponent", "CharMoveComp" };
         static uint8_t upEntry[nNames][0x40] = {};
         static uintptr_t upChunk[nNames + 1] = {};
         for (int i = 1; i < nNames; ++i) {
@@ -4958,7 +4959,8 @@ int main() {
         enum { bMeta, bPkgCls, bPkg, bObject, bChannel, bActorChannel, bActor, bController, bPlayerController, bDcc,
                bBPDcc, bBPPc, bCheatMgr, bCheatExt, bAbilityExt, bBPCheats, bKsl, bGameModeBase, bGameMode, bBPGameMode,
                bBPChar, bCdoActorChannel, bCdoCheatExt, bCdoCheatMgr, bCdoActor, bCdoKsl, bCdoGameMode, bCdoBPChar,
-               bAbility0, bCm0, bDcc0, bPc0, bCheats0, bAbility1, bGm0, bChar0, bHud, bDcHud, bDcHud0, bHud0, kBlobs };
+               bAbility0, bCm0, bDcc0, bPc0, bCheats0, bAbility1, bGm0, bChar0, bHud, bDcHud, bDcHud0, bHud0,
+               bCmc, bCdoCmc, bTplMove, bLiveMove, kBlobs };
         alignas(16) static uint8_t upB[kBlobs][0x200] = {};
         auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(upB[b]); };
         auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
@@ -5027,6 +5029,15 @@ int main() {
         putP(upB[bDcHud0], kOwnerOff, A(bDcc0));          // the DCC's HUD: owned by the DCC, outer the level
         obj(bHud0, bHud, nHud0, -1);
         putP(upB[bHud0], kOwnerOff, A(bPc0));             // the player's HUD
+        // [INVOKE-NONSTATIC-ON-CDO] A class-default object's DEFAULT SUBOBJECT: its own name, the CDO as its outer,
+        // RF_ArchetypeObject in its flags -- the shape measured on DumperTest 5.4 (0x40021), where every component-class
+        // lookup landed on one. The live pawn's component of the same name sits higher.
+        klass(bCmc, nCmc, bObject);
+        obj(bCdoCmc, bCmc, nCdoCmc, bPkg);
+        put32(upB[bCdoCmc], Grimoire::OFF_UOBJECT_FLAGS, 0x31);
+        obj(bTplMove, bCmc, nCharMoveComp, bCdoBPChar);
+        put32(upB[bTplMove], Grimoire::OFF_UOBJECT_FLAGS, 0x40021);
+        obj(bLiveMove, bCmc, nCharMoveComp, bChar0);
 
         FakePool upPool;
         upPool.Build(128);
@@ -5111,6 +5122,35 @@ int main() {
         r = Aura::ResolveUserInstance("PlayerController");
         check("USERPICK ⭐: with no player controller live, the DCC itself, and the pick says so",
               is(r, bDcc0, Aura::UserPick::DebugCameraOwned), nm(r.obj).c_str());
+
+        // Phase E -- a template sits below the live object of its class. [INVOKE-NONSTATIC-ON-CDO]
+        slot(17, bCdoCmc);
+        slot(18, bTplMove);
+        slot(19, bLiveMove);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        r = Aura::ResolveUserInstance("CharacterMovementComponent");
+        check("USERPICK ⭐: a component lookup takes the live pawn's component, not the class default object's template",
+              is(r, bLiveMove, Aura::UserPick::Live), nm(r.obj).c_str());
+        check("USERPICK ⭐: ...and so does the internal pick", Aura::FindLiveOrDefaultOf("CharacterMovementComponent") ==
+              A(bLiveMove));
+        r = Aura::ResolveUserInstance("MovementComp");
+        check("USERPICK ⭐: a partial name skips the template too", is(r, bLiveMove, Aura::UserPick::PartialLive),
+              nm(r.obj).c_str());
+        slot(19, -1);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        r = Aura::ResolveUserInstance("CharacterMovementComponent");
+        check("USERPICK ⭐: with only templates, the class's OWN default object stands in -- never another's template",
+              is(r, bCdoCmc, Aura::UserPick::ClassDefault), nm(r.obj).c_str());
+        check("USERPICK ⭐: TemplateOf -- the class default object, its subobject (owned by it), a live object",
+              Aura::TemplateOf(A(bCdoCmc)).kind == Aura::TemplateKind::ClassDefault
+              && Aura::TemplateOf(A(bTplMove)).kind == Aura::TemplateKind::Template
+              && Aura::TemplateOf(A(bTplMove)).owner == A(bCdoBPChar)
+              && Aura::TemplateOf(A(bLiveMove)).kind == Aura::TemplateKind::None);
+        put32(upB[bTplMove], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        check("USERPICK ⭐: with no flags read, a Default__ outer still makes it a template, owned by that outer",
+              Aura::TemplateOf(A(bTplMove)).kind == Aura::TemplateKind::Template
+              && Aura::TemplateOf(A(bTplMove)).owner == A(bCdoBPChar));
+        put32(upB[bTplMove], Grimoire::OFF_UOBJECT_FLAGS, 0x40021);
 
         // Phase D -- a walk cut short is not "not found", and the old 100-match cap is gone.
         Tot::g_perCommand.store(true);

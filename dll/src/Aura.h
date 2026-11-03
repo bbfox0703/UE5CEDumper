@@ -170,6 +170,17 @@ constexpr const char* UserPickWire(UserPick p) {
     }
 }
 
+// [INVOKE-NONSTATIC-ON-CDO] Is this object a TEMPLATE rather than a world object? ClassDefault: a class-default object
+// (named Default__, or RF_ClassDefaultObject). Template: an archetype -- a class-default object's default subobject, or a
+// Blueprint's component template -- found by RF_ArchetypeObject on itself or a class-default object up its outer chain;
+// `owner` is that outer, or its own outer when only the flag says so.
+enum class TemplateKind : uint8_t { None, ClassDefault, Template };
+struct TemplateInfo {
+    TemplateKind kind = TemplateKind::None;
+    uintptr_t    owner = 0;
+};
+TemplateInfo TemplateOf(uintptr_t obj);
+
 // Get the detected FUObjectItem stride in bytes (16 or 24)
 int GetItemSize();
 

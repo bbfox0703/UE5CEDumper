@@ -128,6 +128,14 @@ constexpr int AURA_USERPICK_MAX_OUTER_HOPS = 16;
 // applies to the owner chain.
 constexpr const char* AURA_USERPICK_OWNER_PROPERTY = "Owner";
 
+// UObject::ObjectFlags (at OFF_UOBJECT_FLAGS) bits a TEMPLATE carries, rather than a world object: the same values from
+// UE 4.12 to 5.8 (RE-UE4SS Flags412 / Flags415; UE 5.8 ObjectMacros.h). RF_ArchetypeObject propagates to a class-default
+// object's default subobjects (RF_PropagateToSubObjects), and a Blueprint's component templates carry it too. Measured on
+// DumperTest 5.4 Shipping: class-default objects 0x31, their default subobjects 0x40021, a live component neither bit --
+// and every component-class lookup had landed on such a subobject. [INVOKE-NONSTATIC-ON-CDO]
+constexpr uint32_t RF_CLASS_DEFAULT_OBJECT = 0x10;
+constexpr uint32_t RF_ARCHETYPE_OBJECT     = 0x20;
+
 // --- UObject offsets ---
 // UObjectBase layout: VTable(8) + Flags(4) + Index(4) + Class*(8) + FName(?) + Outer*(8)
 // Most offsets are stable, but Outer shifts when CasePreservingName is active (the

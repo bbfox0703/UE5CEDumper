@@ -2147,6 +2147,11 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
     return r;
 }
 
+TemplateInfo TemplateOf(uintptr_t obj) {
+    (void)obj;   // red stub
+    return TemplateInfo{};
+}
+
 uintptr_t FindLiveOrDefaultOf(const std::string& className) {
     return FindLiveOrDefaultOf(className, std::string());
 }
