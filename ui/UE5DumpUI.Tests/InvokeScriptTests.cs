@@ -2750,6 +2750,226 @@ public class InvokeScriptTests
             + "would still take the first class whose name merely contains the one it sent");
     }
 
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] Run a no-parameter INV record's [ENABLE] on CE's own Lua VM against a fake
+    /// mailbox that answers FIND_INSTANCE, FIND_FUNCTION and then INVOKE with <paramref name="result"/> and
+    /// <paramref name="outFlags"/> in cmdOutFlags. Returns OK / DIALOGS / WARNED / CLOSED / ACTIVE.</summary>
+    private static Dictionary<string, string> RunInvoke(int result, int outFlags)
+    {
+        var s = InvokeScriptGenerator.Generate("Actor", "K2_GetActorLocation", new FunctionInfoModel { Name = "K2_GetActorLocation" });
+        int from = s.IndexOf("{$lua}\n", StringComparison.Ordinal) + "{$lua}\n".Length;
+        string enable = s[from..s.IndexOf("{$asm}", from, StringComparison.Ordinal)];
+        static string I(int v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string lua = $$"""
+            UE5_DEBUG = 0
+            local MB, CV = 0x100000, 0x200000
+            MEM = {}
+            MEM[CV + {{CeMailboxLayout.OffContractMagic}}] = {{CeMailboxLayout.ContractMagic}}
+            MEM[CV + {{CeMailboxLayout.OffContractCur}}] = {{CeMailboxLayout.ContractVersion}}
+            MEM[CV + {{CeMailboxLayout.OffContractMin}}] = 1
+            DIALOGS, WARNED, CLOSED, TIMERS = 0, false, false, {}
+            local T = 0
+            function getTickCount() T = T + 50 return T end
+            function sleep() end
+            function processMessages() end
+            function processMessagesPaintOnly() end
+            function reinitializeSymbolhandler() end
+            function getAddressSafe(n)
+              if n == 'g_invokeMailbox' or n == 'UE5Dumper.g_invokeMailbox' then return MB end
+              if n == '{{CeMailboxLayout.ContractSymbol}}' or n == 'UE5Dumper.{{CeMailboxLayout.ContractSymbol}}' then return CV end
+              return nil
+            end
+            function readInteger(a) return MEM[a] or 0 end
+            function readQword(a) return MEM[a] or 0 end
+            function readString() return '' end
+            function writeQword(a, v) MEM[a] = v end
+            function writeByte(a, v) MEM[a] = v end
+            function writeBytes() end
+            function writeString() end
+            local function finish(res)
+              MEM[MB + {{CeMailboxLayout.OffResult}}] = res
+              MEM[MB + {{CeMailboxLayout.OffStatus}}] = {{CeMailboxLayout.StatusDone}}
+              MEM[MB + {{CeMailboxLayout.OffCmd}}] = 0
+            end
+            function writeInteger(a, v)
+              MEM[a] = v
+              if a ~= MB + {{CeMailboxLayout.OffCmd}} then return end
+              if v == 2 then MEM[MB + {{CeMailboxLayout.OffInstanceAddr}}] = 0x5000 finish(0)
+              elseif v == 3 then MEM[MB + {{CeMailboxLayout.OffUfuncAddr}}] = 0x6000 finish(0)
+              elseif v == 1 then MEM[MB + {{CeMailboxLayout.OffOutFlags}}] = {{I(outFlags)}} finish({{I(result)}}) end
+            end
+            function print(m) if tostring(m):find('WARNING', 1, true) then WARNED = true end end
+            function showMessage() DIALOGS = DIALOGS + 1 end
+            function createTimer() local t = { destroy = function() end } TIMERS[#TIMERS + 1] = t return t end
+            function synchronize(f) f() end
+            function getLuaEngine() return { Close = function() CLOSED = true end } end
+            local memrec = { Active = true, ID = 1 }
+            local chunk = assert(load('local syntaxcheck,memrec=...\n' .. [==[
+            {{enable}}
+            ]==]))
+            local ok, err = pcall(chunk, false, memrec)
+            for _, t in ipairs(TIMERS) do if t.OnTimer then t.OnTimer(t) end end
+            io.write('OK=' .. tostring(ok) .. '|' .. tostring(err) .. '\n')
+            io.write('DIALOGS=' .. DIALOGS .. '\n')
+            io.write('WARNED=' .. tostring(WARNED) .. '\n')
+            io.write('CLOSED=' .. tostring(CLOSED) .. '\n')
+            io.write('ACTIVE=' .. tostring(memrec.Active) .. '\n')
+            """;
+        var (exit, output) = CeLua53Host.Run(lua);
+        Assert.True(exit == 0, output);
+        return output.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                     .Where(l => l.Contains('='))
+                     .ToDictionary(l => l[..l.IndexOf('=')], l => l[(l.IndexOf('=') + 1)..]);
+    }
+
+    [Fact]
+    public void InvokeRecord_a_warned_success_prints_the_warning_and_keeps_its_window_open()
+    {
+        var r = RunInvoke(0, CeMailboxLayout.InvOutNonStaticOnTemplate);
+
+        Assert.Equal("true|nil", r["OK"]);
+        Assert.Equal("true", r["WARNED"]);
+        Assert.Equal("0", r["DIALOGS"]);       // a print, not a dialog: the call may well have worked
+        Assert.Equal("false", r["CLOSED"]);
+        Assert.Equal("false", r["ACTIVE"]);    // the momentary record still unticks
+    }
+
+    [Theory]
+    [InlineData(0)]   // nothing set
+    [InlineData(1)]   // LI_OUT_TRUNCATED left behind by an older DLL's LIST_INSTANCES: not this warning
+    public void InvokeRecord_control_a_clean_success_closes_its_window(int outFlags)
+    {
+        var r = RunInvoke(0, outFlags);
+
+        Assert.Equal("true|nil", r["OK"]);
+        Assert.Equal("false", r["WARNED"]);
+        Assert.Equal("true", r["CLOSED"]);
+    }
+
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] Load the embedded invoke helper on CE's Lua VM and call invokeUFunction once
+    /// against a fake mailbox whose DLL speaks contract <paramref name="cur"/> and answers CMD_INVOKE_BY_NAME with
+    /// <paramref name="result"/> and <paramref name="outFlags"/>. Returns "ok|err|warn".</summary>
+    private static string RunHelper(int cur, int result, long outFlags)
+    {
+        static string I(long v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string lua = $$"""
+            local MB, CV = 0x100000, 0x200000
+            MEM = {}
+            MEM[CV + 0x00] = {{CeMailboxLayout.ContractMagic}}
+            MEM[CV + 0x04] = {{I(cur)}}
+            MEM[CV + 0x08] = 1
+            MEM[MB + 0x72C] = {{I(outFlags)}}
+            local T = 0
+            function getTickCount() T = T + 50 return T end
+            function sleep() end
+            function processMessages() end
+            function processMessagesPaintOnly() end
+            function registerLuaFunctionHighlight() end
+            function getAddressSafe(n)
+              if n == 'g_invokeMailbox' then return MB end
+              if n == 'g_mailboxContract' then return CV end
+              return nil
+            end
+            function readInteger(a, signed) return MEM[a] or 0 end
+            function readBytes() return 0 end
+            function readString() return '' end
+            function writeByte(a, v) MEM[a] = v end
+            function writeBytes() end
+            function writeString() end
+            function writeQword(a, v) MEM[a] = v end
+            function deAlloc() end
+            function writeInteger(a, v)
+              MEM[a] = v
+              if a == MB and v == 4 then
+                MEM[MB + 0x08] = {{I(result)}}
+                MEM[MB + 0x04] = 1
+                MEM[MB] = 0
+              end
+            end
+            local chunk = assert(load([==[
+            {{HelperLuaResource.Read()}}
+            ]==]))
+            chunk()
+            local ok, err, warn = invokeUFunction('Actor', 'K2_GetActorLocation', 0, {})
+            io.write('R=' .. tostring(ok) .. '|' .. tostring(err ~= nil) .. '|' .. tostring(warn) .. '\n')
+            """;
+        var (exit, output) = CeLua53Host.Run(lua);
+        Assert.True(exit == 0, output);
+        var line = output.Replace("\r\n", "\n").Split('\n').First(l => l.StartsWith("R=", StringComparison.Ordinal));
+        return line[2..];
+    }
+
+    [Theory]
+    [InlineData(7, 0, 2L, "true|false|template")]        // a warned success: the third return says so
+    [InlineData(7, -4, 2L, "false|true|template")]       // a warned failure: the reason travels with the error
+    [InlineData(7, 0, 0L, "true|false|nil")]             // control: a clean success
+    [InlineData(7, 0, 1L, "true|false|nil")]             // control: an older LIST_INSTANCES' bit is not this one
+    [InlineData(6, 0, 0xFFFFFFFFL, "true|false|nil")]    // control: below contract 7 the word is never read
+    public void InvokeHelper_returns_the_template_warning_only_from_a_contract7_dll(int cur, int result, long outFlags,
+                                                                                    string expected)
+    {
+        Assert.Equal(expected, RunHelper(cur, result, outFlags));
+    }
+
+    [Fact]
+    public void NonStaticOnTemplate_IsDecidedOnceInTheDllAndPublishedOnBothLanes()
+    {
+        // [INVOKE-NONSTATIC-ON-CDO] Warn, never refuse. The DLL decides from the flags it read itself (never the caller's
+        // direct_call claim) and publishes the verdict on the pipe and, for CE, in cmdOutFlags. No test target compiles
+        // Fern or Mimic, so this pins their source; dll_helpers_test pins the rule and dll_core_test TemplateOf.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found -- re-point this pin");
+            return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
+        }
+
+        var fern = CodeOnly(DllSource("Fern.cpp"));
+        int start = fern.IndexOf("cmd == Renge::CMD_INVOKE_FUNCTION", StringComparison.Ordinal);
+        var invoke = fern[start..fern.IndexOf("cmd == Renge::CMD_", start + 1, StringComparison.Ordinal)];
+        Assert.Contains("Aura::TemplateOf(instanceAddr)", invoke, StringComparison.Ordinal);
+        Assert.Matches(@"Mimic::WarnNonStaticOnTemplate\([^;]*resolved,\s*fi\.functionFlags\)", invoke);
+        Assert.DoesNotMatch(@"WarnNonStaticOnTemplate\([^;]*directCall", invoke);
+        foreach (var key in new[] { "instance_template", "template_owner_name", "nonstatic_on_template" })
+            Assert.Contains($"data[\"{key}\"]", invoke, StringComparison.Ordinal);
+
+        var mimic = CodeOnly(DllSource("Mimic.cpp"));
+        var handle = Body(mimic, "static void HandleInvoke() {");
+        int prep = handle.IndexOf("PrepareObjectParams(", StringComparison.Ordinal);
+        int verdict = handle.IndexOf("Aura::TemplateOf(instanceAddr)", StringComparison.Ordinal);
+        int bit = handle.IndexOf("INV_OUT_NONSTATIC_ON_TEMPLATE", StringComparison.Ordinal);
+        int call = handle.IndexOf("UE5_CallProcessEventDirect(", StringComparison.Ordinal);
+        Assert.True(prep >= 0 && verdict > prep && bit > verdict && call > bit,
+            "the verdict is taken after the last refusal and published before the call");
+        int clearErr = mimic.IndexOf("g_invokeMailbox.errorMsg[0] = '\\0';", StringComparison.Ordinal);
+        int clearOut = mimic.IndexOf("g_invokeMailbox.cmdOutFlags = 0;", StringComparison.Ordinal);
+        Assert.True(clearErr >= 0 && clearOut > clearErr && clearOut - clearErr < 600,
+            "the dispatcher clears cmdOutFlags before every command, beside errorMsg");
+
+        var mimicH = DllSource("Mimic.h");
+        Assert.Matches(@"INV_OUT_NONSTATIC_ON_TEMPLATE\s*=\s*0x2\b", mimicH);
+        Assert.Equal(2, CeMailboxLayout.InvOutNonStaticOnTemplate);
+        Assert.Equal("0x72C", CeMailboxLayout.OffOutFlags);
+        Assert.True(CeMailboxLayout.ContractVersion >= 7,
+            "a script that reads the invoke warning must claim contract 7: an older DLL never writes the bit");
+
+        // CE: the INV script reads the bit and keeps its window open on a warned success; the baked record takes the
+        // helper's third return.
+        var inv = InvokeScriptGenerator.Generate("Actor", "K2_GetActorLocation", new FunctionInfoModel { Name = "K2_GetActorLocation" });
+        Assert.Contains($"readInteger(mb + {CeMailboxLayout.OffOutFlags})", inv, StringComparison.Ordinal);
+        Assert.Contains("if result == 0 and not _tplWarn and DEBUG == 0 then", inv, StringComparison.Ordinal);
+        var baked = BakedScriptGenerator.Generate("Actor", "K2_GetActorLocation", 24, new List<BakedParamValue>());
+        Assert.Contains("local ok, err, warn = invokeUFunction(", baked, StringComparison.Ordinal);
+        Assert.Contains("if ok and not warn and DEBUG == 0 then", baked, StringComparison.Ordinal);
+        var helper = HelperLuaResource.Read();
+        Assert.Contains("local THIS_HELPER_VERSION = '1.6'", helper, StringComparison.Ordinal);
+        Assert.Contains("local MAILBOX_CONTRACT_INVOKE_OUT = 7", helper, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void SeeThrough_PublishesARestoreThatGaveUp()
     {

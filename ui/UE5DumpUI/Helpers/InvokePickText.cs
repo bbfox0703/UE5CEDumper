@@ -31,6 +31,29 @@ internal static class InvokePickText
         };
     }
 
+    internal const string KeyTemplateClassDefault = "str.Invoke.Template.ClassDefault";
+    internal const string KeyTemplateSubobject = "str.Invoke.Template.Subobject";
+
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] Whether to pin, given the template fact too: a template re-resolves.</summary>
+    internal static bool IsPinnable(string pick, string? template) => IsPinnable(pick);
+
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] The Console's note, from the DLL's verdict when it sent one.</summary>
+    internal static string Note(UE5DumpUI.Models.InvokeFunctionResult r)
+        => Note(r.InstancePick, r.InstanceName, r.InstanceClassName);
+
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] The param dialog's warning line, or "".</summary>
+    internal static string TemplateWarning(UE5DumpUI.Models.InvokeFunctionResult r) => "";
+
+    internal static string TemplateClassDefaultText(string name, string className)
+        => AobMakerStatus.Say(KeyTemplateClassDefault,
+            "⚠ {0} is the class default object of {1} (a template), not a live object: a function that is not static " +
+            "may do nothing there, or fail; one that does not use its object may still work", name, className);
+
+    internal static string TemplateSubobjectText(string name, string className, string owner)
+        => AobMakerStatus.Say(KeyTemplateSubobject,
+            "⚠ {0} ({1}) is a template, part of {2}, not a live object: a function that is not static may do nothing " +
+            "there, or fail; one that does not use its object may still work", name, className, owner);
+
     internal static string ObjectText(string name, string className)
         => AobMakerStatus.Say(KeyObject, "on {0} ({1})", name, className);
 

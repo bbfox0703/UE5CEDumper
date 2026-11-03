@@ -701,6 +701,86 @@ public class ConsoleViewModelTests
         Assert.DoesNotContain("⚠", vm.StatusText, StringComparison.Ordinal);
     }
 
+    // [INVOKE-NONSTATIC-ON-CDO] The note follows the DLL's verdict when it sends one: a static function on a class
+    // default object is the normal case and says nothing alarming; a template part of a class default object is
+    // reported, and never pinned.
+
+    private async Task<(FakeDumpService fake, ConsoleViewModel vm)> RunFlyThenGodWith(InvokeFunctionResult result)
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            NextInvokeResult = result,
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[2];   // Fly
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[3];   // God, the same class
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        return (fake, vm);
+    }
+
+    [Fact]
+    public async Task A_class_default_pick_running_a_static_function_does_not_warn()
+    {
+        var (_, vm) = await RunFlyThenGodWith(new InvokeFunctionResult
+        {
+            Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstancePick = "class_default",
+            InstanceName = "Default__CheatManager", InstanceClassName = "CheatManager",
+            InstanceTemplate = "class_default", NonStaticOnTemplate = false,
+        });
+
+        Assert.DoesNotContain("⚠", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains(InvokePickText.ObjectText("Default__CheatManager", "CheatManager"), vm.StatusText,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_class_default_pick_running_a_nonstatic_function_warns_control()
+    {
+        var (_, vm) = await RunFlyThenGodWith(new InvokeFunctionResult
+        {
+            Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstancePick = "class_default",
+            InstanceName = "Default__CheatManager", InstanceClassName = "CheatManager",
+            InstanceTemplate = "class_default", NonStaticOnTemplate = true,
+        });
+
+        Assert.Contains(InvokePickText.ClassDefaultText("Default__CheatManager", "CheatManager"), vm.StatusText,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_live_pick_on_a_template_subobject_warns_and_is_not_pinned()
+    {
+        var (fake, vm) = await RunFlyThenGodWith(new InvokeFunctionResult
+        {
+            Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstancePick = "live",
+            InstanceName = "CharMoveComp", InstanceClassName = "CharacterMovementComponent",
+            InstanceTemplate = "template", TemplateOwnerName = "Default__Character", NonStaticOnTemplate = true,
+        });
+
+        Assert.Contains(InvokePickText.TemplateSubobjectText("CharMoveComp", "CharacterMovementComponent",
+            "Default__Character"), vm.StatusText, StringComparison.Ordinal);
+        Assert.Null(fake.InstanceAddrHistory[1]);   // a template re-resolves; a live object spawned later is found
+    }
+
+    [Fact]
+    public void InvokePickText_template_warning_for_the_param_dialog()
+    {
+        static InvokeFunctionResult R(string? tpl, bool? warn, string owner = "") => new()
+        {
+            InstanceName = "X_0", InstanceClassName = "X", InstanceTemplate = tpl, NonStaticOnTemplate = warn,
+            TemplateOwnerName = owner,
+        };
+        Assert.Equal(InvokePickText.TemplateClassDefaultText("X_0", "X"), InvokePickText.TemplateWarning(R("class_default", true)));
+        Assert.Equal(InvokePickText.TemplateSubobjectText("X_0", "X", "Default__Y"),
+                     InvokePickText.TemplateWarning(R("template", true, "Default__Y")));
+        Assert.Equal("", InvokePickText.TemplateWarning(R("class_default", false)));   // a static function there
+        Assert.Equal("", InvokePickText.TemplateWarning(R(null, null)));                // an older DLL
+        Assert.Equal("", InvokePickText.TemplateWarning(R("", false)));                 // a live object
+    }
+
     [Theory]
     [InlineData("", true)]
     [InlineData("live", true)]

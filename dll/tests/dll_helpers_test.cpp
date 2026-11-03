@@ -1305,10 +1305,10 @@ static void Test_Mimic_CommandNumbering() {
     // The published compatibility RANGE. A script checks MIN <= its baked
     // version <= CONTRACT before its first write.
     EXPECT("contract range is sane", Mimic::MAILBOX_CONTRACT_MIN <= Mimic::MAILBOX_CONTRACT);
-    // 6 since [FINDINSTANCE-SUBSTRING-USERFACING]: FIND_INSTANCE's className picks by derivation, a meaning change
-    // that refuses no saved .CT, so MIN stays 1. (5 was [W5-OFFSETS-MAILBOX], CMD_OFFSETS_VERDICT; 4 was
-    // [W2-TPREL-TRANSPORTS], the parent-relative pose flag.)
-    EXPECT("contract is 6",          Mimic::MAILBOX_CONTRACT     == 6);
+    // 7 since [INVOKE-NONSTATIC-ON-CDO]: cmdOutFlags carries the invoke family's template warning, and FIND_INSTANCE
+    // never takes a template for a live object -- additive, so MIN stays 1. (6 was [FINDINSTANCE-SUBSTRING-USERFACING],
+    // the derivation pick; 5 [W5-OFFSETS-MAILBOX]; 4 [W2-TPREL-TRANSPORTS].)
+    EXPECT("contract is 7",          Mimic::MAILBOX_CONTRACT     == 7);
     EXPECT("contract min is 1",      Mimic::MAILBOX_CONTRACT_MIN == 1);
 
     // g_mailboxContract is a SEPARATE exported symbol, read before anything is
@@ -8450,6 +8450,32 @@ static void Test_Renge_InvokeTargetIsExpected() {
                                                                 && unnamed.find(" ()") == std::string::npos);
 }
 
+// [INVOKE-NONSTATIC-ON-CDO] A user-facing invoke WARNS -- never refuses -- when a function that is not static runs on a
+// template (a class-default object or one of its default subobjects). A static function there is the normal case
+// (a function library), and a live object is never a template.
+static void Test_Mimic_WarnNonStaticOnTemplate() {
+    std::printf("Test_Mimic_WarnNonStaticOnTemplate\n");
+    using namespace Mimic;
+    EXPECT("NONSTATIC-CDO: a native, non-static function on a template warns",
+           WarnNonStaticOnTemplate(true, true, FUNC_FLAG_NATIVE));
+    EXPECT("NONSTATIC-CDO: a Blueprint (no flags) function on a template warns", WarnNonStaticOnTemplate(true, true, 0));
+    EXPECT("NONSTATIC-CDO: an object that is not a UFunction warns -- static-ness unknown",
+           WarnNonStaticOnTemplate(true, false, FUNC_FLAG_STATIC));
+    EXPECT("NONSTATIC-CDO control: a static function on a template (KismetSystemLibrary) does not warn",
+           !WarnNonStaticOnTemplate(true, true, FUNC_FLAG_NATIVE | FUNC_FLAG_STATIC)
+           && !WarnNonStaticOnTemplate(true, true, FUNC_FLAG_STATIC));
+    EXPECT("NONSTATIC-CDO control: a live object never warns",
+           !WarnNonStaticOnTemplate(false, true, 0) && !WarnNonStaticOnTemplate(false, false, 0));
+    EXPECT("NONSTATIC-CDO control: the mailbox bit is not the one an older DLL leaves behind",
+           static_cast<uint32_t>(INV_OUT_NONSTATIC_ON_TEMPLATE) == 0x2u && MAILBOX_CONTRACT_INVOKE_OUT == 7);
+    EXPECT("NONSTATIC-CDO: the template kinds' pipe names",
+           std::string(Aura::TemplateKindWire(Aura::TemplateKind::ClassDefault)) == "class_default"
+           && std::string(Aura::TemplateKindWire(Aura::TemplateKind::Template)) == "template");
+    EXPECT("NONSTATIC-CDO control: a live object's name is empty",
+           std::string(Aura::TemplateKindWire(Aura::TemplateKind::None)).empty());
+    static_assert(!WarnNonStaticOnTemplate(false, true, 0), "WarnNonStaticOnTemplate must be constexpr-evaluable");
+}
+
 // [FINDINSTANCE-SUBSTRING-USERFACING] invoke_function names the object a class name resolved to, and a cut-short
 // lookup is never reported as an absent class. The UI's Self-Test matches the two openings, so they are pinned too.
 static void Test_UserPick_WireAndTexts() {
@@ -11376,6 +11402,7 @@ int main() {
     RUN(Test_Mimic_CommandNumbering);
     RUN(Test_Wirbel_BugItGoRefusal);
     RUN(Test_UserPick_WireAndTexts);
+    RUN(Test_Mimic_WarnNonStaticOnTemplate);
     RUN(Test_Mimic_InvokeRouting);
     RUN(Test_Mimic_InvokeSlab);
     RUN(Test_Mimic_InitFastPath);

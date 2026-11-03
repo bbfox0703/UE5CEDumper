@@ -712,22 +712,32 @@ public sealed class InvokeParamDialog : Window
         }
     }
 
-    private void ShowResult(InvokeFunctionResult result)
+    /// <summary>The lines above the post-call buffer: the outcome. [INVOKE-NONSTATIC-ON-CDO]</summary>
+    internal static List<string> HeaderLines(InvokeFunctionResult result, int fireCount)
     {
-        _resultLabel.IsVisible = true;
-
         var lines = new List<string>();
-
         if (result.Success)
         {
-            lines.Add($"[#{_fireCount}] ProcessEvent OK  (result={result.Result})");
+            lines.Add($"[#{fireCount}] ProcessEvent OK  (result={result.Result})");
         }
         else
         {
             var errorDetail = !string.IsNullOrEmpty(result.Error)
                 ? result.Error
                 : $"error code {result.Result}";
-            lines.Add($"[#{_fireCount}] INVOKE FAILED: {errorDetail}");
+            lines.Add($"[#{fireCount}] INVOKE FAILED: {errorDetail}");
+        }
+        return lines;
+    }
+
+    private void ShowResult(InvokeFunctionResult result)
+    {
+        _resultLabel.IsVisible = true;
+
+        var lines = HeaderLines(result, _fireCount);
+
+        if (!result.Success)
+        {
             _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#F44747"));
             _resultLabel.Text = string.Join("\n", lines);
             return;

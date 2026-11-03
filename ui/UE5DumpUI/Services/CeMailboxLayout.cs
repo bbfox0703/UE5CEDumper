@@ -39,6 +39,11 @@ internal static class CeMailboxLayout
     // InvokeScriptTests.ParamsDataBytes_MatchesMimicH reads Mimic.h's declaration back.
     public const int    ParamsDataBytes = 1024;
 
+    // cmdOutFlags (contract 3+) and the bit CMD_INVOKE / CMD_INVOKE_BY_NAME publish in it (Mimic.h InvokeOutFlag,
+    // contract 7+). [INVOKE-NONSTATIC-ON-CDO]
+    public const string OffOutFlags = "0x72C";
+    public const int    InvOutNonStaticOnTemplate = 0x2;
+
     // Auto-start readiness values written to OffInitState (must match Mimic.h
     // InitState). Unlike every other field here this one is NOT part of a
     // command round-trip — the DLL publishes it once during start-up so a CE Lua

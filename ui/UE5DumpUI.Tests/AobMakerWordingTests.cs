@@ -230,6 +230,12 @@ public class AobMakerWordingTests
              "Default__CheatManager", "CheatManager");
         Same(InvokePickText.KeyDebugCameraOwned, InvokePickText.DebugCameraOwnedText("CheatManager_0", "CheatManager"),
              "CheatManager_0", "CheatManager");
+        // [INVOKE-NONSTATIC-ON-CDO] a function that is not static ran on a template
+        Same(InvokePickText.KeyTemplateClassDefault, InvokePickText.TemplateClassDefaultText("Default__Actor", "Actor"),
+             "Default__Actor", "Actor");
+        Same(InvokePickText.KeyTemplateSubobject,
+             InvokePickText.TemplateSubobjectText("CharMoveComp", "CharacterMovementComponent", "Default__Character"),
+             "CharMoveComp", "CharacterMovementComponent", "Default__Character");
 
         // [COORDPICK-TIMEDOUT-TEXT] The no-DLL coordinate picker's push with no reply in time
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordNoDllTimedOut,
@@ -263,7 +269,7 @@ public class AobMakerWordingTests
              "A.B");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(99, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(101, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

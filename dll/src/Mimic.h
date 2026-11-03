@@ -277,6 +277,20 @@ enum ListInstancesFlag : uint32_t {
                              //   routinely, so it is normal here, not exceptional.
 };
 
+// cmdOutFlags bits CMD_INVOKE (and CMD_INVOKE_BY_NAME, which ends in it) publishes (contract 7+).
+// [INVOKE-NONSTATIC-ON-CDO] Never 0x1: a contract 3-6 DLL can leave LI_OUT_TRUNCATED behind after a LIST_INSTANCES,
+// and it never writes 0x2. The dispatcher clears cmdOutFlags before every command, so the bit is this command's.
+enum InvokeOutFlag : uint32_t {
+    INV_OUT_NONSTATIC_ON_TEMPLATE = 0x2,  // the call reached dispatch with a function that is not static on a TEMPLATE
+                                          //   (a class-default object or one of its default subobjects): it may have
+                                          //   done nothing there. A warning: `result` is the call's own answer.
+};
+// The first contract whose invoke family publishes InvokeOutFlag; a script claiming less reads 0x72C only from a DLL
+// that publishes at least this (0x72C lies past the end of a contract 1-2 MailboxData).
+constexpr int32_t MAILBOX_CONTRACT_INVOKE_OUT = 7;
+static_assert((static_cast<uint32_t>(INV_OUT_NONSTATIC_ON_TEMPLATE) & static_cast<uint32_t>(LI_OUT_TRUNCATED)) == 0,
+              "the invoke warning must never share the bit an older DLL leaves behind after LIST_INSTANCES");
+
 // Mailbox status (DLL writes to status field)
 enum Status : int32_t {
     STATUS_IDLE         = 0,
@@ -489,6 +503,16 @@ constexpr bool ShouldRouteDirectInvoke(uint32_t functionFlags, bool flagsResolve
     return flagsResolved
         && (functionFlags & (FUNC_FLAG_NATIVE | FUNC_FLAG_STATIC))
                == (FUNC_FLAG_NATIVE | FUNC_FLAG_STATIC);
+}
+
+/// [INVOKE-NONSTATIC-ON-CDO] Warn -- never refuse -- when a user-facing invoke runs a function that is not static on a
+/// TEMPLATE (a class-default object, or one of its default subobjects): it may do nothing there, or fault (UE 5.8's
+/// CheatManager commands on Default__CheatManager dereference a null owner), and a game's own command may still work.
+/// `isUFunction` is ResolveFunctionInfo's answer, so the flags carry the same trust as ShouldRouteDirectInvoke's: an
+/// object that is not a UFunction warns, and only a FUNC_Static read clears it.
+constexpr bool WarnNonStaticOnTemplate(bool onTemplate, bool isUFunction, uint32_t functionFlags) {
+    (void)onTemplate; (void)isUFunction; (void)functionFlags;   // red stub
+    return false;
 }
 
 /// [UE-OVERRIDE-411] review 2: what CMD_INVOKE publishes instead of handing ProcessEvent the paramsData slab.

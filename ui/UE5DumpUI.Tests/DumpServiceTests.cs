@@ -271,6 +271,37 @@ public class DumpServiceTests
         Assert.Equal("CheatManager", r.InstanceClassName);
     }
 
+    // [INVOKE-NONSTATIC-ON-CDO] The reply says whether the object is a template and whether the call ran a function that
+    // is not static there; absent keys (an older DLL) stay null, so the UI keeps its older note.
+    [Fact]
+    public async Task InvokeFunctionAsync_ReadsTheTemplateVerdict()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["result"] = 0, ["instance_addr"] = "0x1000", ["instance_template"] = "template",
+            ["template_owner_name"] = "Default__Character", ["nonstatic_on_template"] = true,
+        });
+
+        var r = await CreateService().InvokeFunctionAsync("Jump", className: "CharacterMovementComponent",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal("template", r.InstanceTemplate);
+        Assert.Equal("Default__Character", r.TemplateOwnerName);
+        Assert.True(r.NonStaticOnTemplate);
+    }
+
+    [Fact]
+    public async Task InvokeFunctionAsync_control_an_older_dll_sends_no_template_verdict()
+    {
+        _pipe.SetHandler(_ => new JsonObject { ["ok"] = true, ["result"] = 0, ["instance_addr"] = "0x1000" });
+
+        var r = await CreateService().InvokeFunctionAsync("Jump", className: "X",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Null(r.InstanceTemplate);
+        Assert.Null(r.NonStaticOnTemplate);
+    }
+
     [Fact]
     public async Task InvokeFunctionAsync_control_an_older_dll_sends_no_pick()
     {

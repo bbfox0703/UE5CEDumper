@@ -104,6 +104,11 @@ public static class Constants
     public const string InvokePickPartialName = "partial_name";
     public const string InvokePickPartialNameDefault = "partial_name_default";
 
+    // invoke_function's `instance_template` (Aura::TemplateKindWire): a class-default object, or another template.
+    // [INVOKE-NONSTATIC-ON-CDO]
+    public const string InvokeTemplateClassDefault = "class_default";
+    public const string InvokeTemplateSubobject = "template";
+
     // set_debug_camera's `state` -5: the ToggleDebugCamera call TIMED OUT on the game thread and STAYS QUEUED. The two
     // directions differ. A queued ON will run: not a failure, so say "queued, do not press again", because a second
     // Force ON queues a second toggle [W3-DEBUGCAM-QUEUED]. A queued OFF does not turn the camera off on stock UE

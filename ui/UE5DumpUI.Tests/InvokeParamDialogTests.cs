@@ -7,6 +7,40 @@ namespace UE5DumpUI.Tests;
 
 public class InvokeParamDialogTests
 {
+    // --- [INVOKE-NONSTATIC-ON-CDO] the header lines carry the DLL's template warning ---
+
+    [Theory]
+    [InlineData(0, "")]
+    [InlineData(-4, "ProcessEvent error code -4 (exception during call)")]
+    public void HeaderLines_carry_the_template_warning_on_success_and_on_failure(int result, string error)
+    {
+        var r = new InvokeFunctionResult
+        {
+            Result = result, Error = error, InstanceName = "Default__Actor", InstanceClassName = "Actor",
+            InstanceTemplate = "class_default", NonStaticOnTemplate = true,
+        };
+
+        var lines = InvokeParamDialog.HeaderLines(r, 3);
+
+        Assert.Equal(2, lines.Count);
+        Assert.StartsWith("[#3] ", lines[0], System.StringComparison.Ordinal);
+        Assert.Equal(UE5DumpUI.Helpers.InvokePickText.TemplateClassDefaultText("Default__Actor", "Actor"), lines[1]);
+    }
+
+    [Theory]
+    [InlineData(null)]    // an older DLL
+    [InlineData(false)]   // a static function on a template, or a live object
+    public void HeaderLines_control_no_warning_without_the_verdict(bool? warn)
+    {
+        var r = new InvokeFunctionResult
+        {
+            Result = 0, InstanceName = "Default__KismetSystemLibrary", InstanceClassName = "KismetSystemLibrary",
+            InstanceTemplate = warn is null ? null : "class_default", NonStaticOnTemplate = warn,
+        };
+
+        Assert.Single(InvokeParamDialog.HeaderLines(r, 1));
+    }
+
     // --- HexToBytes ---
 
     [Fact]

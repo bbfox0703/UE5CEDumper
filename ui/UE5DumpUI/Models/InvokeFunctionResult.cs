@@ -25,6 +25,18 @@ public sealed class InvokeFunctionResult
     public string InstanceName { get; init; } = "";
     public string InstanceClassName { get; init; } = "";
 
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] Whether the object is a template: "" (a live object), "class_default", or
+    /// "template" (one of a class-default object's default subobjects, or a Blueprint's component template). Null from a
+    /// DLL that does not say.</summary>
+    public string? InstanceTemplate { get; init; }
+
+    /// <summary>The class-default object a "template" belongs to, when the DLL found one.</summary>
+    public string TemplateOwnerName { get; init; } = "";
+
+    /// <summary>The DLL's verdict: the call ran a function that is not static on a template, where it may do nothing.
+    /// A warning, never a refusal. Null from a DLL that does not say.</summary>
+    public bool? NonStaticOnTemplate { get; init; }
+
     /// <summary>Resolved UFunction address (hex string).</summary>
     public string FuncAddr { get; init; } = "";
 
