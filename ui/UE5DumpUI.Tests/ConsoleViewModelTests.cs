@@ -772,6 +772,67 @@ public class ConsoleViewModelTests
     }
 
     [Fact]
+    public async Task A_live_pick_from_a_contract7_dll_is_pinned_control()
+    {
+        // Review of bfdd4116: a new DLL always sends instance_template "" for a live object; `template is null` would have
+        // pinned nothing against it, and only an older DLL's null was tested.
+        var (fake, _) = await RunFlyThenGodWith(new InvokeFunctionResult
+        {
+            Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstancePick = "live",
+            InstanceName = "CheatManager_0", InstanceClassName = "CheatManager",
+            InstanceTemplate = "", NonStaticOnTemplate = false,
+        });
+
+        Assert.Equal("0x1A2B3C", fake.InstanceAddrHistory[1]);
+    }
+
+    [Fact]
+    public async Task A_pin_whose_run_comes_back_as_a_template_is_dropped()
+    {
+        // Review of bfdd4116: a pin is made only from a live object, but a pinned run answering "template" kept it.
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            InvokeResultQueue = new Queue<InvokeFunctionResult>(new[]
+            {
+                new InvokeFunctionResult { Result = 0, InstanceAddr = "0x1A2B3C", InstancePick = "live",
+                    InstanceName = "CheatManager_0", InstanceClassName = "CheatManager", InstanceTemplate = "",
+                    NonStaticOnTemplate = false },
+                new InvokeFunctionResult { Result = 0, InstanceAddr = "0x1A2B3C", InstancePick = "address",
+                    InstanceName = "CheatManager_0", InstanceClassName = "CheatManager", InstanceTemplate = "template",
+                    TemplateOwnerName = "Default__X", NonStaticOnTemplate = true },
+                new InvokeFunctionResult { Result = 0, InstanceAddr = "0x9999", InstancePick = "live",
+                    InstanceName = "CheatManager_1", InstanceClassName = "CheatManager", InstanceTemplate = "",
+                    NonStaticOnTemplate = false },
+            }),
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[2];   // Fly
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.Equal("0x1A2B3C", fake.InstanceAddrHistory[1]);   // pinned
+        Assert.Null(fake.InstanceAddrHistory[2]);                 // dropped: it came back a template
+    }
+
+    [Fact]
+    public void InvokePickText_note_follows_the_verdict_for_every_pick()
+    {
+        static InvokeFunctionResult R(string pick, string tpl, bool warn) => new()
+        {
+            InstancePick = pick, InstanceName = "X_0", InstanceClassName = "X", InstanceTemplate = tpl,
+            NonStaticOnTemplate = warn,
+        };
+        Assert.Equal(" " + InvokePickText.DebugCameraOwnedText("X_0", "X"),
+                     InvokePickText.Note(R("debug_camera_owned", "", false)));
+        Assert.Equal(" " + InvokePickText.TemplateClassDefaultText("X_0", "X"),
+                     InvokePickText.Note(R("address", "class_default", true)));   // a CDO given by address
+        Assert.Equal(" " + InvokePickText.ObjectText("X_0", "X"), InvokePickText.Note(R("live", "", false)));
+    }
+
+    [Fact]
     public void InvokePickText_template_warning_for_the_param_dialog()
     {
         static InvokeFunctionResult R(string? tpl, bool? warn, string owner = "") => new()
