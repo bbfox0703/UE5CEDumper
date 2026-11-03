@@ -3560,19 +3560,29 @@ public class InvokeScriptTests
 
         // Recall and Force: one refusal, outside the map check Force skips, before the undo point and the jump.
         var recall = Body(wirbel, "int32_t RecallMarker(int32_t slot, bool force, uint8_t* tierOut) {");
-        int refusal = recall.IndexOf("RecallMarkerRefusal(m.Valid, m.ParentRelative, force,", StringComparison.Ordinal);
+        int refusal = recall.IndexOf("RecallMarkerRefusal(m.Valid, m.ParentRelative, force, sameMap)", StringComparison.Ordinal);
+        int returned = recall.IndexOf("if (refusal != TP_OK) return refusal;", StringComparison.Ordinal);
         int undo = recall.IndexOf("SaveLastImpl();", StringComparison.Ordinal);
         int jump = recall.IndexOf("RecallTo(", StringComparison.Ordinal);
-        Assert.True(refusal >= 0, "RecallMarker must ask RecallMarkerRefusal with the marker's own flag and the force bit");
-        Assert.True(undo > refusal && jump > undo, "the refusal must come before the undo point and the jump");
+        Assert.True(refusal >= 0, "RecallMarker must ask RecallMarkerRefusal with the marker's own flag, the force bit "
+                                  + "and the map it compared");
+        // Review of 83615671: asking is not refusing -- the answer must be returned, before the undo point and the jump.
+        Assert.True(returned > refusal && undo > returned && jump > undo,
+            "the refusal must be RETURNED before the undo point and the jump");
+        // ...and the map argument must be the real comparison, which Force alone may skip.
+        Assert.Contains("const bool sameMap = force || IEquals(std::string(cur), m.MapName);", recall, StringComparison.Ordinal);
+        Assert.Contains("if (!force) CopyMapName(DerefWorld(), cur, sizeof(cur));", recall, StringComparison.Ordinal);
         Assert.DoesNotContain("TP_ERR_MAP_MISMATCH;", recall);   // the map check's answer is RecallMarkerRefusal's now
         Assert.Contains("LOG_WARN(\"Teleport: recall %d refused -- the marker came from a PARENT-RELATIVE read", recall,
             StringComparison.Ordinal);
 
         // The undo point keeps its previous pose rather than take a parent-relative one.
+        // Review of 83615671: the guard's arguments and its place are pinned, not just the call's name.
         var last = Body(wirbel, "void SaveLastImpl() {");
-        Assert.Contains("StoresUndoPoint(", last, StringComparison.Ordinal);
-        Assert.Contains("&m.ParentRelative", last, StringComparison.Ordinal);
+        int guard = last.IndexOf("if (!StoresUndoPoint(readOk, m.ParentRelative)) {", StringComparison.Ordinal);
+        int store = last.IndexOf("s_lastMarker = m;", StringComparison.Ordinal);
+        Assert.True(guard >= 0, "SaveLastImpl must ask StoresUndoPoint with the read's own result and flag");
+        Assert.True(store > guard, "the guard must come before the slot is written");
 
         // TP facing direction: the start pose is read WITH its flag and refused before the undo point; a parent-relative
         // landing re-read is reported as an unknown landing, never as numbers.

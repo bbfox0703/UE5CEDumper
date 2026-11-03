@@ -330,6 +330,18 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         "world position could not be read), so these numbers are not world coordinates. Try again while the game is " +
         "responding (focus it, or turn on Keep Foreground), or once off the vehicle or mount.");
 
+    internal const string KeyLastEmpty = "str.TP.LastEmpty";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] Recall last on an empty slot. A jump whose position could not be read in
+    /// world coordinates saves no undo point, so "every jump auto-saves it" is not true.</summary>
+    internal static string LastEmptyText => AobMakerStatus.Say(KeyLastEmpty,
+        "No last position yet — it is auto-saved just before a jump, unless the position then could not be read in " +
+        "world coordinates (a parent-relative read on a vehicle or mount).");
+
+    internal const string KeyLastEmptySummary = "str.TP.LastEmptySummary";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] The Last Position row before any undo point is stored.</summary>
+    internal static string LastEmptySummaryText => AobMakerStatus.Say(KeyLastEmptySummary,
+        "(none yet — auto-saved just before a jump)");
+
     internal const string KeyCoordNoDllNotAdded = "str.TP.LibNoDllNotAdded";
     /// <summary>[COORDPICK-OVERSIZE-REASON] A no-DLL picker push refused with a reason says it; the reason's own closing
     /// period is dropped, as the sentence adds one.</summary>

@@ -286,9 +286,12 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyLibParentRelative,
              UE5DumpUI.ViewModels.TeleportViewModel.LibParentRelativeText);
         Same(UE5DumpUI.Models.TeleportCodes.KeyParentRelative, UE5DumpUI.Models.TeleportCodes.ParentRelativeText);
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyLastEmpty, UE5DumpUI.ViewModels.TeleportViewModel.LastEmptyText);
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyLastEmptySummary,
+             UE5DumpUI.ViewModels.TeleportViewModel.LastEmptySummaryText);
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(110, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(112, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

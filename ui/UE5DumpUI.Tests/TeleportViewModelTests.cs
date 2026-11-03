@@ -1289,6 +1289,42 @@ public class TeleportViewModelTests
         Assert.Equal(TeleportViewModel.LibParentRelativeText, vm.CoordStatus);
     }
 
+    /// <summary>Review of e6c2f841: the library's distance column measured from the live pose whatever it was, so a
+    /// parent-relative read was taken for world coordinates there too.</summary>
+    [Fact]
+    public async Task A_parent_relative_pose_gives_the_library_no_distance()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Source = "invoke", Map = "Map01" } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.LoadCoordLibraryForGame("Game.exe");
+        vm.CoordX = 100; vm.CoordY = 0; vm.CoordZ = 0;
+        await vm.AddCoordFromFieldsCommand.ExecuteAsync(null);
+        await vm.RefreshPoseCommand.ExecuteAsync(null);
+        Assert.True(vm.CoordResults[0].HasDistance);          // control: a world pose measures
+
+        fake.NextPose = new() { Code = 0, Source = "raw", Map = "Map01", X = 30, Y = 31, Z = 284,
+                                ParentRelative = true, ParentRelativeKnown = true };
+        await vm.RefreshPoseCommand.ExecuteAsync(null);
+
+        Assert.False(vm.CoordResults[0].HasDistance);
+    }
+
+    /// <summary>Review of 017e8a76: a jump whose position could not be read in world coordinates saves no undo point,
+    /// so the empty-slot texts no longer say every jump saves it.</summary>
+    [Fact]
+    public async Task RecallLast_on_an_empty_slot_does_not_claim_every_jump_saves_it()
+    {
+        var fake = new FakeDumpService { NextResult = new() { Code = TeleportCodes.EmptyMarker } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        Assert.Equal(TeleportViewModel.LastEmptySummaryText, vm.LastSummary);
+
+        await vm.RecallLastCommand.ExecuteAsync(null);
+
+        Assert.Equal(TeleportViewModel.LastEmptyText, vm.StatusText);
+    }
+
     [Fact]
     public void Describe_names_a_parent_relative_refusal()
     {
