@@ -131,12 +131,13 @@ def main() -> int:
                 print("the degraded marker is not flagged parent-relative -- nothing below would mean anything")
                 return 1
 
-            # C -- Recall, Force and TP facing refuse it, before the undo point.
+            # C -- Recall, Force and TP facing refuse it, before the undo point. RELATIVE writes its output block only
+            # on success, so its [177] is not an answer on a refusal (the poison stays); RECALL's handler zeroes it.
             for label, op, slot, params in (("C1", TP_OP_RECALL, 1, b""), ("C2", TP_OP_RECALL_FORCE, 1, b""),
                                             ("C3", TP_OP_RELATIVE, 0, struct.pack("<d", 100.0) + b"\x00")):
                 res, _, tier, _, err = teleport(m, base, op, slot=slot, params=params)
                 rl, lp, _ = get_last(m, base)
-                verdict(label, res == TP_ERR_PARENT_RELATIVE and tier == 0 and "-16" in err
+                verdict(label, res == TP_ERR_PARENT_RELATIVE and (op == TP_OP_RELATIVE or tier == 0) and "-16" in err
                         and rl == 0 and math.dist(lp, l0) < 1,
                         f"op {op} slot {slot + 1}: result={res} tier={tier} err={err!r}; last {fmt(lp)}")
 
