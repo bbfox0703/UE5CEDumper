@@ -336,9 +336,9 @@ public static class BakedScriptGenerator
         Line(sb, verifyReturn
             ? "-- Invoke (verify mode -- prints decoded return value on success)"
             : "-- Invoke (silent on success -- only prints/showMessage on error)");
-        // [INVOKE-NONSTATIC-ON-CDO] The helper's third return: the DLL (contract 7+) says the call ran a function that is
-        // not static on a class default object or another template. An older embedded helper returns two values, so
-        // `warn` is nil there and the record behaves as it did.
+        // [INVOKE-NONSTATIC-ON-CDO] The helper's third return: the DLL (contract 7+) says the function is not static and
+        // the object was a class default object or another template, whether or not the call succeeded. An older
+        // embedded helper returns two values, so `warn` is nil there and the record behaves as it did.
         Line(sb,
             $"local ok, err, warn = invokeUFunction('{EscapeLua(className)}', " +
             $"'{EscapeLua(funcName)}', {parmsSize}, PARAMS)");

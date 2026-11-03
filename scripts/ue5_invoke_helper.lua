@@ -621,9 +621,10 @@ if not invokeUFunction or _invokeOutdated then
   ---                          See writeBakedParams for supported types.
   --- @return boolean ok       True on success
   --- @return string|nil err   Error message on failure (nil on success)
-  --- @return string|nil warn  'template' when the DLL (contract 7+) reports that the call ran a function that is
-  ---                          not static on a class default object or another template, where it may have done
-  ---                          nothing; nil otherwise, and always nil from an older DLL. [INVOKE-NONSTATIC-ON-CDO]
+  --- @return string|nil warn  'template' when the DLL (contract 7+) reports that the function is not static and
+  ---                          the object is a class default object or another template, where it may do
+  ---                          nothing; set whether or not the call succeeded. nil otherwise, and always nil
+  ---                          from an older DLL. [INVOKE-NONSTATIC-ON-CDO]
   function invokeUFunction(className, funcName, parmsSize, params)
     -- Input validation BEFORE the busy check so bad args from a
     -- concurrent caller surface as the real validation error
@@ -950,7 +951,7 @@ if not setDebugCamera or _invokeOutdated then
   -- req: 0 = OFF, 1 = ON, 2 = query (read state, no change).
   -- Reuses the file-local mailbox helpers + the shared AA19 guard.
   local function dbgCamMailbox(req)
-    -- The state, then [INVOKE-NONSTATIC-ON-CDO] 'template' when the DLL (contract 7+) says the toggle ran on the
+    -- The state, then [INVOKE-NONSTATIC-ON-CDO] 'template' when the DLL (contract 7+) says the toggle targets the
     -- CheatManager's class default object -- no live CheatManager, where it does nothing. A caller that takes one
     -- value still gets the state. A query fires nothing, so it never reads the word.
     local state, mb, cur = simpleMailboxCall(CMD_SET_DEBUG_CAMERA, function(mb)
@@ -970,7 +971,7 @@ if not setDebugCamera or _invokeOutdated then
   ---                       an OFF leaves the camera on, stock UE 4.18-5.7: send it again once the game responds),
   ---                       -6=not sent (an earlier toggle of the other direction is still queued: send it again once
   ---                       the game responds)
-  --- @return string|nil warn  'template' when the toggle ran on the CheatManager's class default object (no live
+  --- @return string|nil warn  'template' when the toggle targets the CheatManager's class default object (no live
   ---                       CheatManager), where it does nothing; nil otherwise and from an older DLL
   function setDebugCamera(enable)
     return dbgCamMailbox((enable and enable ~= 0) and 1 or 0)

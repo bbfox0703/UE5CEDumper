@@ -6972,7 +6972,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 ? reinterpret_cast<uintptr_t>(paramBuf.data())
                 : 0;
 
-            // Logged here, past every refusal, so the log never warns about a call that was not made.
+            // Logged here, past every refusal this handler makes, so it never warns about a call it refused itself.
             if (nonStaticOnTemplate)
                 Sein::Warn("PIPE:cmd", "invoke_function: %s on %s (%s) is not static and the object is a %s%s%s -- it "
                            "may do nothing there, or fault", funcName.c_str(), instName.c_str(), instClass.c_str(),

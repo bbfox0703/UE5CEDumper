@@ -283,7 +283,7 @@ enum ListInstancesFlag : uint32_t {
 };
 
 // cmdOutFlags bits CMD_INVOKE (and CMD_INVOKE_BY_NAME, which ends in it) publishes (contract 7+), and
-// CMD_SET_DEBUG_CAMERA when its non-static ToggleDebugCamera ran on the CheatManager's class default object.
+// CMD_SET_DEBUG_CAMERA when its toggle targets the CheatManager's class default object (ran there, or queued to).
 // [INVOKE-NONSTATIC-ON-CDO] Never 0x1: a contract 3-6 DLL can leave LI_OUT_TRUNCATED behind after a LIST_INSTANCES,
 // and it never writes 0x2. The dispatcher clears cmdOutFlags before every command, so the bit is this command's.
 enum InvokeOutFlag : uint32_t {
@@ -515,8 +515,9 @@ constexpr bool ShouldRouteDirectInvoke(uint32_t functionFlags, bool flagsResolve
 }
 
 /// [INVOKE-NONSTATIC-ON-CDO] Warn -- never refuse -- when a user-facing invoke runs a function that is not static on a
-/// TEMPLATE (a class-default object, or one of its default subobjects): it may do nothing there, or fault (UE 5.8's
-/// CheatManager commands on Default__CheatManager dereference a null owner), and a game's own command may still work.
+/// TEMPLATE (a class-default object, one of its default subobjects, or another archetype such as a Blueprint's
+/// component template): it may do nothing there, or fault (UE 5.8's CheatManager commands on Default__CheatManager
+/// dereference a null owner), and a game's own command may still work.
 /// `isUFunction` is ResolveFunctionInfo's answer, so the flags carry the same trust as ShouldRouteDirectInvoke's: an
 /// object that is not a UFunction warns, and only a FUNC_Static read clears it.
 constexpr bool WarnNonStaticOnTemplate(bool onTemplate, bool isUFunction, uint32_t functionFlags) {
@@ -625,7 +626,8 @@ extern "C" __declspec(dllexport) extern Mimic::MailboxData g_invokeMailbox;
 //   1. MailboxData field offsets, or its size
 //   2. Cmd values
 //   3. Op values inside a command (TeleportOp / FlyOp / ProtectOp / QueryPtrOp /
-//      TimeOp / ForegroundOp, and Laufen's knobIds)
+//      TimeOp / ForegroundOp, and Laufen's knobIds), and the flag enums a command reads or
+//      publishes (ListInstancesFlag, InvokeOutFlag)
 //   4. Status / InitState values, or result-code meanings
 //   5. The meaning of an EXISTING field at an existing offset
 //
@@ -700,13 +702,13 @@ namespace Mimic {
 ///   now refuse a DLL that would still guess. It does not reach baked scripts outside Verify Return Value mode: their
 ///   embedded invoke helper deliberately claims contract 1 (verify mode bakes the generator's own contract check).
 /// 7 ([INVOKE-NONSTATIC-ON-CDO]): two changes, one bump. (a) CMD_INVOKE -- and CMD_INVOKE_BY_NAME, which ends in it --
-///   publishes InvokeOutFlag in cmdOutFlags: INV_OUT_NONSTATIC_ON_TEMPLATE when it ran a function that is not static on
+///   publishes InvokeOutFlag in cmdOutFlags: INV_OUT_NONSTATIC_ON_TEMPLATE when it calls a function that is not static on
 ///   a template (a class-default object, one of its default subobjects, or another archetype), where it may have done
 ///   nothing -- and so does CMD_SET_DEBUG_CAMERA when its toggle targets the CheatManager's class default object (none
-///   was live). A
-///   warning beside `result`, never a refusal. cmdOutFlags was an unused output for both, and the dispatcher now
-///   clears it before every command, so a set bit is always this command's. The new enum is layout, so the surface
-///   hash moves. (b) CMD_FIND_INSTANCE never takes a TEMPLATE for a live object: one flagged RF_ArchetypeObject -- a
+///   was live). A warning beside `result`, never a refusal. cmdOutFlags was an unused output for both, and the
+///   dispatcher now clears it before every command, so a set bit is always this command's. The new enum is layout,
+///   so the surface hash moves. (b) CMD_FIND_INSTANCE never takes a TEMPLATE for a live object: one flagged
+///   RF_ArchetypeObject -- a
 ///   class-default object's default subobject, which every component-class lookup landed on (measured on DumperTest
 ///   5.4) -- is passed over like a class-default object. Both ADDITIVE in the sense version 6 set out: no field moved,
 ///   no result code changed, and the old pick a script could have relied on was an accident (a template taken for a

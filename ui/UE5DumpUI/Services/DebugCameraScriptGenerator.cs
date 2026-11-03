@@ -7,8 +7,8 @@ namespace UE5DumpUI.Services;
 ///
 /// Unlike <see cref="BakedScriptGenerator"/> (a one-shot invoke whose
 /// <c>[DISABLE]</c> is a nop), this is a STATEFUL checkbox: ticking runs
-/// <c>[ENABLE]</c> → <c>setDebugCamera(1)</c> (camera ON), unticking runs
-/// <c>[DISABLE]</c> → <c>setDebugCamera(0)</c> (camera OFF). Both blocks are
+/// <c>[ENABLE]</c> → request 1 (camera ON), unticking runs
+/// <c>[DISABLE]</c> → request 0 (camera OFF). Both blocks are
 /// self-contained: they send CMD_SET_DEBUG_CAMERA through the DLL's mailbox
 /// directly (no <c>ue5_invoke_helper.lua</c>), so the whole toggle +
 /// controller-swap fallback (for Shipping builds that strip
