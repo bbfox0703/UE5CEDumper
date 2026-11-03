@@ -1436,6 +1436,9 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
                      "no live CheatManager, so it does nothing there", (unsigned long long)cm);
     }
     int32_t r = CallProcessEventRouted(cm, ufunc, 0, 0, false, &inFlight.queued);
+    // Only a toggle that ran (-4: it threw inside) or will run (-5: queued) keeps the warning; every other failure
+    // dispatched nothing.
+    if (r != 0 && r != -4 && r != Stark::kInvokeTimedOutStillQueued) t_dbgCamFiredOnTemplate = false;
     if (r != 0) {
         LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera ProcessEvent r=%d", r);
         // [W3-DEBUGCAM-QUEUED] A TIMED-OUT toggle (-5) stays queued and still runs: pass it through, so no caller reads
