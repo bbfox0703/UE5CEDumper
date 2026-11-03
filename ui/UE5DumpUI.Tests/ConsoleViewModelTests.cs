@@ -431,6 +431,62 @@ public class ConsoleViewModelTests
         Assert.Equal("Fly", vm.History[0].FuncName);
     }
 
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] A row's Run button runs ITS row. A click on a button inside a DataGrid cell
+    /// does not select the row (measured on build 3676: "Pick an exec command from the list first." with nothing
+    /// selected), so a button that ran the selection ran whatever row was selected before -- another command.</summary>
+    [Fact]
+    public async Task RunRow_runs_its_own_row_not_the_selected_one()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() }
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        var fly = vm.Results[2];
+        var god = vm.Results[3];
+        Assert.Equal("God", god.FuncName);
+        vm.SelectedResult = fly;
+
+        await vm.RunRowCommand.ExecuteAsync(god);
+
+        Assert.Equal(1, fake.InvokeCallCount);
+        Assert.Equal("God", fake.LastInvokeFunc);
+        Assert.Same(god, vm.SelectedResult);   // the selection follows the row that ran
+    }
+
+    [Fact]
+    public async Task RunRow_with_nothing_selected_still_runs_its_row()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() }
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.Null(vm.SelectedResult);
+
+        await vm.RunRowCommand.ExecuteAsync(vm.Results[2]);
+
+        Assert.Equal(1, fake.InvokeCallCount);
+        Assert.Equal("Fly", fake.LastInvokeFunc);
+    }
+
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] The row's Run button hands the command its own row, as the row's Live and
+    /// AA(B) buttons already do; the toolbar's Run Selected keeps running the selection.</summary>
+    [Fact]
+    public void Row_run_button_passes_its_row()
+    {
+        var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/ConsolePanel.axaml"));
+        int at = axaml.IndexOf("Content=\"{StaticResource str.Con.RunRow}\"", StringComparison.Ordinal);
+        Assert.True(at >= 0, "the row's Run button is missing from ConsolePanel.axaml");
+        int start = axaml.LastIndexOf("<Button", at, StringComparison.Ordinal);
+        int end = axaml.IndexOf("/>", at, StringComparison.Ordinal);
+        var tag = axaml[start..end];
+        Assert.Contains(".RunRowCommand}\"", tag);
+        Assert.Contains("CommandParameter=\"{Binding}\"", tag);
+    }
+
     [Fact]
     public async Task RunSelected_with_params_raises_RequestParameterInvoke_and_skips_pipe()
     {

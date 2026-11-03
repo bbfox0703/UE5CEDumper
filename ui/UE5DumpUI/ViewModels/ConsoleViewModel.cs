@@ -394,6 +394,10 @@ public partial class ConsoleViewModel : ViewModelBase
         await RunEntryAsync(row);
     }
 
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] A row's own Run button.</summary>
+    [RelayCommand]
+    private Task RunRowAsync(AllFunctionEntry? entry) => RunSelectedAsync();
+
     /// <summary>
     /// Run the command typed in the textbox. Resolves against the
     /// discovered exec list by exact funcName match (case-insensitive).
