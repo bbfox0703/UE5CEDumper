@@ -32,6 +32,8 @@ CHECKS -- one line each, "<ID> OK|BAD  <detail>"; the exit code is 0 only when e
           D4-stall   game_thread reads unresponsive while the pipe still answers
           D4-on      Force ON -> -17 in < 1.0 s (a toggle sent would wait out the invoke timeout and answer -5)
           D4-off     Force OFF -> 0 (not -6, which would mean a toggle had been queued)
+                     Both are BAD when the --stall-max watchdog resumed the thread before they answered: the answer
+                     then came from a running game thread and proves nothing about a frozen one.
           D4-resume  the suspend count drained and game_thread reads responsive again
   D5    mailbox CMD_SET_DEBUG_CAMERA (7), cmdOutFlags and result poisoned before each command:
           D5-on      req=1 -> result -17, cmdOutFlags 0, errorMsg holds "no live CheatManager"
@@ -39,9 +41,14 @@ CHECKS -- one line each, "<ID> OK|BAD  <detail>"; the exit code is 0 only when e
           D5-query   req=2 -> 0, cmdOutFlags 0
   D6    g_mailboxContract: the magic, current >= 8, min 1
   LOG   the DLL's logs (%LOCALAPPDATA%\UE5CEDumper\Logs\<exe stem>\), lines stamped since the rig started: the
-        refusal line "no live CheatManager -- ToggleDebugCamera does nothing" appears, and no
-        "ToggleDebugCamera ProcessEvent" line does. Best effort: a log that cannot be found prints "LOG --" and is
-        not counted.
+        refusal line "no live CheatManager -- ToggleDebugCamera does nothing" appears once per Force ON sent, and no
+        line of the toggle path does -- "UE5_SetDebugCamera(n) -> state=" (a toggle dispatched and answered, which
+        logs no warning at all), "ToggleDebugCamera ProcessEvent r=" (one that failed) or "ToggleDebugCamera
+        UFunction not found" (past the refusal gate). In CONTROL mode the toggles are real, so only the failure line
+        counts against it. Best effort: a log that cannot be found prints "LOG --" and is not counted.
+
+EXIT CODE: 0 = every check passed in REFUSAL mode; 1 = a check failed, or none ran; 2 = a CONTROL run whose checks all
+passed -- not a pass of the row, because the -17 refusal was never exercised.
 
 CONTROL MODE (a live CheatManager, e.g. `launch_dumpertest.py dev`): only D1 runs, and nothing is toggled -- a Force
 ON there really runs the toggle -- unless --allow-live-toggle is given; then C-on (ON -> 1) and C-off (OFF -> 0), as
@@ -88,6 +95,10 @@ STALL_SETTLE_S = 1.5                # l78's wait: three times the DLL's 500 ms s
 DUMPER_MODULES = ("ue5dumper.dll", "version.dll", "dxgi.dll", "dinput8.dll", "winmm.dll")
 REFUSAL_LINE = "no live CheatManager -- ToggleDebugCamera does nothing"
 TOGGLE_PE_LINE = "ToggleDebugCamera ProcessEvent"
+# Frieren.cpp's UE5_SetDebugCamera past its refusal gate. A toggle that dispatches and returns 0 logs only the
+# "-> state=" INFO line, so the failure line alone cannot show that no toggle was sent.
+TOGGLE_PATH = re.compile(r"UE5_SetDebugCamera\([01]\) -> state=|ToggleDebugCamera (?:ProcessEvent r=|UFunction not found)")
+STALL_MAX_FLOOR_S = 5.0             # the settle wait plus two round trips at their limit, with room to spare
 LOG_TS = re.compile(r"^\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]")
 
 
@@ -292,13 +303,20 @@ def stall_checks(pc, a, pid, image, v) -> int:
               f"hook_fire_count={gt.get('hook_fire_count')} (the pipe answered)"
               + ("" if stalled else " -- not stalled, so D4-on / D4-off would prove nothing"))
             if stalled:
+                # A watchdog resume before an answer means that answer came from a running game thread: it would pass
+                # on a DLL that dispatches the toggle, so it cannot count for the frozen case.
                 ok, st, t, key = set_cam(pc, True)
+                held = not fired.is_set()
                 sent_on += 1
-                v("D4-on", ok and st == NO_LIVE_CHEATMANAGER and t < ROUND_TRIP_LIMIT_S,
+                v("D4-on", ok and st == NO_LIVE_CHEATMANAGER and t < ROUND_TRIP_LIMIT_S and held,
                   f"set_debug_camera(true) while stalled -> state={st} in {t:.3f} s"
-                  + (", nonstatic_on_template PRESENT" if key else ""))
+                  + (", nonstatic_on_template PRESENT" if key else "")
+                  + ("" if held else " -- the watchdog resumed the game thread first"))
                 ok, st, t, _ = set_cam(pc, False)
-                v("D4-off", ok and st == 0, f"set_debug_camera(false) while stalled -> state={st} in {t:.3f} s")
+                held = not fired.is_set()
+                v("D4-off", ok and st == 0 and held,
+                  f"set_debug_camera(false) while stalled -> state={st} in {t:.3f} s"
+                  + ("" if held else " -- the watchdog resumed the game thread first"))
     finally:
         watchdog.cancel()
         if attempted:
@@ -405,7 +423,7 @@ def log_check(image, t_start, sent_on, control, v, ev):
         return
     since = t_start.timestamp() - 2.0   # a file's mtime is coarser than its line stamps
     files = sorted(p for p in folder.glob("*.log") if p.stat().st_mtime >= since)
-    refusals, toggles, read = [], [], []
+    refusals, toggles, entered, read = [], [], [], []
     for p in files:
         try:
             text = p.read_text(encoding="utf-8", errors="replace")
@@ -427,15 +445,23 @@ def log_check(image, t_start, sent_on, control, v, ev):
                 refusals.append(f"{p.name}: {line}")
             if TOGGLE_PE_LINE in line:
                 toggles.append(f"{p.name}: {line}")
+            if TOGGLE_PATH.search(line):
+                entered.append(f"{p.name}: {line}")
     ev.save("dll_log_lines", {"folder": str(folder), "since": t_start.isoformat(timespec="milliseconds"),
-                              "files_read": read, "refusal_lines": refusals, "toggle_processevent_lines": toggles})
+                              "files_read": read, "refusal_lines": refusals, "toggle_processevent_lines": toggles,
+                              "toggle_path_lines": entered})
     if not read:
         print(f"LOG --  nothing in {folder} written since the rig started (not counted)")
         return
-    v("LOG", not toggles and (control or refusals),
-      f"{folder.name}: {len(refusals)} refusal line(s) for {sent_on} Force ON(s) sent, {len(toggles)} "
-      f"'{TOGGLE_PE_LINE}' line(s) since {t_start:%H:%M:%S} ({', '.join(read)})")
-    for line in toggles[:5]:
+    # Every refused ON logs one warning, so fewer lines than ONs sent means one of them took another path.
+    if control:
+        ok, shown = not toggles, toggles
+    else:
+        ok, shown = not entered and len(refusals) >= sent_on > 0, entered
+    v("LOG", ok,
+      f"{folder.name}: {len(refusals)} refusal line(s) for {sent_on} Force ON(s) sent, {len(entered)} toggle-path "
+      f"line(s), {len(toggles)} '{TOGGLE_PE_LINE}' line(s) since {t_start:%H:%M:%S} ({', '.join(read)})")
+    for line in shown[:5]:
         print(f"    {line}")
 
 
@@ -453,6 +479,8 @@ def main() -> int:
     a = ap.parse_args()
     if a.stall_invoke_timeout_ms and a.stall_invoke_timeout_ms < 150:
         ap.error("--stall-invoke-timeout-ms below 150 fails healthy invokes at the fixture's 15 FPS (l78)")
+    if a.stall_max < STALL_MAX_FLOOR_S:
+        ap.error(f"--stall-max below {STALL_MAX_FLOOR_S:g} s resumes the game thread before D4 can finish")
 
     t_start = dt.datetime.now()
     ev = Evidence()
@@ -530,9 +558,10 @@ def main() -> int:
         print(f"RESULT: FAIL ({v.bad} of {total}) on build {build or '?'}")
         return 1
     if mode == "CONTROL":
+        # Not 0: a caller that reads only the exit code would otherwise record a pass of a row this run never tested.
         print(f"RESULT: CONTROL PASS ({total} checks) on build {build} -- the -17 refusal was NOT exercised "
-              f"(a CheatManager is live); this run does not close [{TAG}]")
-        return 0
+              f"(a CheatManager is live); this run does not close [{TAG}] (exit 2)")
+        return 2
     print(f"RESULT: PASS ({total} checks) on build {build}")
     return 0
 

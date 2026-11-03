@@ -192,7 +192,7 @@ class Rig:
         # The flags decide the template verdict as much as the name does, so they go on disk beside get_object's reply.
         self.ev.add("memory", {"read": "ObjectFlags", "addr": hex(addr + OFF_UOBJECT_FLAGS)},
                     {"flags": flags if flags is None else hex(flags)})
-        info ={"addr": hex(addr), "name": g.get("name", "") or "", "class": g.get("class", "") or "",
+        info = {"addr": hex(addr), "name": g.get("name", "") or "", "class": g.get("class", "") or "",
                 "outer": a2i(g.get("outer_addr", "0") or "0"), "flags": flags}
         self.objinfo[addr] = info
         return info

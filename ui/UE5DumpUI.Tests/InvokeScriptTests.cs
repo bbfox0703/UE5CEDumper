@@ -3188,6 +3188,26 @@ public class InvokeScriptTests
             Assert.True(hop.Contains("Aura::ClassDerivesFromAny(", StringComparison.Ordinal)
                         && !hop.Contains(".find(\"DebugCameraController\")", StringComparison.Ordinal), file + ": " + hop);
         }
+        // Review 1: every caller still hops the controller ResolveLocalPC returns -- the scan can now return an active
+        // debug camera, which is pawnless. Wirbel's POV alone keeps it: it wants the on-screen view.
+        foreach (var file in new[] { "Dunste.cpp", "Edel.cpp", "Hemmung.cpp", "Laufen.cpp", "Solide.cpp", "Solitar.cpp", "Wirbel.cpp" })
+        {
+            var src = CodeOnly(Lf(DllSource(file)));
+            int povFrom = src.IndexOf("int32_t GetPovImpl(Pov& out) {", StringComparison.Ordinal);
+            int povTo = povFrom >= 0 ? src.IndexOf("\n}\n", povFrom, StringComparison.Ordinal) : -1;
+            int calls = 0;
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(src,
+                         @"(?<var>[\w.]+) = ResolveLocalPC\("))
+            {
+                if (povFrom >= 0 && m.Index > povFrom && m.Index < povTo) continue;
+                var v = m.Groups["var"].Value;
+                var after = src.Substring(m.Index, Math.Min(400, src.Length - m.Index));
+                Assert.True(after.Contains($"{v} = HopThroughDebugCamera({v})", StringComparison.Ordinal),
+                    file + ": " + after);
+                ++calls;
+            }
+            Assert.True(calls > 0, file + ": no ResolveLocalPC caller found -- re-point this pin");
+        }
         var dunste = Body(CodeOnly(Lf(DllSource("Dunste.cpp"))), "uintptr_t ResolveLocalPC(uintptr_t world");
         int gate = dunste.IndexOf("if (!allowScan) return 0;", StringComparison.Ordinal);
         Assert.True(gate > 0 && gate < dunste.IndexOf("Aura::ScanForLocalPlayerController()", StringComparison.Ordinal),

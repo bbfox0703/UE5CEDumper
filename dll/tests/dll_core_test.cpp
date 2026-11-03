@@ -5283,13 +5283,13 @@ int main() {
         enum : int32_t { lClass = 1, lEngine, lPackage, lObject, lActor, lController, lPlayerController, lDcc, lFreeCam,
                          lPcMain, lWidget, lPlayer, lLocalPlayer, lNetConn, lWorldSettings, lBPWS, lPcgWS, lObjProp,
                          lPlayerProp, lOwningPlayer, lCdoPcMain, lWidget0, lFreeCam0, lPcMain0, lPcMain1, lLocalPlayer0,
-                         lNetConn0, lPcg0, lWS0, lNames };
+                         lNetConn0, lPcg0, lWS0, lPcMain2, lViewer, lPlayerState, lNames };
         const char* lpNames[lNames] = { "", "Class", "/Script/Engine", "Package", "Object", "Actor", "Controller",
             "PlayerController", "DebugCameraController", "BP_FreeCam_C", "BP_PC_Main_C", "WBP_PlayerControllerHint_C",
             "Player", "LocalPlayer", "NetConnection", "WorldSettings", "BP_WS_C", "PCGRemoveActorsFromWorldSettings",
             "ObjectProperty", "Player", "OwningPlayer", "Default__BP_PC_Main_C", "WBP_PlayerControllerHint_C_0",
             "BP_FreeCam_C_0", "BP_PC_Main_C_0", "BP_PC_Main_C_1", "LocalPlayer_0", "NetConnection_0",
-            "PCGRemoveActorsFromWorldSettings_0", "BP_WS_C_0" };
+            "PCGRemoveActorsFromWorldSettings_0", "BP_WS_C_0", "BP_PC_Main_C_2", "BP_Viewer_C", "PlayerState" };
         static uint8_t lpEntry[lNames][0x40] = {};
         static uintptr_t lpChunk[lNames + 1] = {};
         for (int i = 1; i < lNames; ++i) {
@@ -5310,7 +5310,7 @@ int main() {
 
         enum { cMeta, cPkgCls, cPkg, cObject, cActor, cController, cPlayerController, cDcc, cFreeCam, cPcMain, cWidget,
                cPlayer, cLocalPlayer, cNetConn, cWorldSettings, cBPWS, cPcgWS, oCdoPcMain, oWidget0, oFreeCam0, oPcMain0,
-               oPcMain1, oLocalPlayer0, oNetConn0, oPcg0, oWS0, oTplPc, kLBlobs };
+               oPcMain1, oLocalPlayer0, oNetConn0, oPcg0, oWS0, oTplPc, cViewer, oPcMain2, kLBlobs };
         alignas(16) static uint8_t lpB[kLBlobs][0x200] = {};
         auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(lpB[b]); };
         auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
@@ -5342,6 +5342,7 @@ int main() {
         klass(cWorldSettings, lWorldSettings, cActor);
         klass(cBPWS, lBPWS, cWorldSettings);
         klass(cPcgWS, lPcgWS, cObject);                // PCG's node settings: the word in its name, no AWorldSettings
+        klass(cViewer, lViewer, cLocalPlayer);         // a game's ULocalPlayer, named without the word
         // APlayerController::Player and the widget's OwningPlayer, both reflected ObjectProperties at 0x100.
         constexpr int32_t kPlayerOff = 0x100;
         static uint8_t lpObjPropFC[0x20] = {}, lpPlayerProp[0x100] = {}, lpOwningProp[0x100] = {};
@@ -5359,13 +5360,14 @@ int main() {
         prop(lpOwningProp, lOwningPlayer, cWidget);
         obj(oCdoPcMain, cPcMain, lCdoPcMain, cPkg);
         put32(lpB[oCdoPcMain], Grimoire::OFF_UOBJECT_FLAGS, 0x31);
-        obj(oLocalPlayer0, cLocalPlayer, lLocalPlayer0, -1);
+        obj(oLocalPlayer0, cViewer, lLocalPlayer0, -1);
         obj(oNetConn0, cNetConn, lNetConn0, -1);
         obj(oWidget0, cWidget, lWidget0, -1);
         putP(lpB[oWidget0], kPlayerOff, A(oLocalPlayer0));       // the widget's OwningPlayer is the local player
         obj(oFreeCam0, cFreeCam, lFreeCam0, -1);                  // an INACTIVE debug camera: no Player
         obj(oPcMain0, cPcMain, lPcMain0, -1);
         putP(lpB[oPcMain0], kPlayerOff, A(oNetConn0));            // a remote player's PC
+        obj(oPcMain2, cPcMain, lPcMain2, -1);                     // a game PC with no Player
         obj(oPcMain1, cPcMain, lPcMain1, -1);
         putP(lpB[oPcMain1], kPlayerOff, A(oLocalPlayer0));        // the local player's PC
         obj(oPcg0, cPcgWS, lPcg0, -1);
@@ -5381,30 +5383,34 @@ int main() {
         };
         auto nm = [](uintptr_t o) { return o ? Ubel::GetName(o) : std::string("(0)"); };
         auto is = [&](const Aura::LocalPcScan& s, int b, Aura::LocalPcPick p) { return s.pc == A(b) && s.pick == p; };
-        const int order[] = { oCdoPcMain, oWidget0, oFreeCam0, oPcMain0, oPcMain1, oLocalPlayer0, oNetConn0, oPcg0, oWS0 };
-        for (int i = 0; i < 9; ++i) slot(i, order[i]);
+        // Every wrong object sits below the right one; a second game PC with no Player sits below the remote one.
+        const int order[] = { oCdoPcMain, oWidget0, oFreeCam0, oPcMain2, oPcMain0, oPcMain1, oLocalPlayer0, oNetConn0,
+                              oPcg0, oWS0 };
+        for (int i = 0; i < 10; ++i) slot(i, order[i]);
         Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
 
         auto sub = Aura::FindInstancesByClass("PlayerController", false, 100);
         check("LOCALPC control: the old substring walk's first row is the widget -- the trap",
               !sub.results.empty() && sub.results[0].addr == A(oWidget0),
               sub.results.empty() ? "(none)" : nm(sub.results[0].addr).c_str());
+        check("LOCALPC setup: the local player is a game subclass named without the word",
+              Ubel::GetName(Ubel::GetClass(A(oLocalPlayer0))).find("LocalPlayer") == std::string::npos);
 
         auto s = Aura::ScanForLocalPlayerController();
         check("LOCALPC ⭐: the local player's game PC (named without the word) wins over the widget and a remote PC",
               is(s, oPcMain1, Aura::LocalPcPick::LocalPlayer), nm(s.pc).c_str());
-        slot(4, -1);
+        slot(5, -1);
         Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
         s = Aura::ScanForLocalPlayerController();
-        check("LOCALPC ⭐: with no local PC, the remote player's PC, and the pick says so",
+        check("LOCALPC ⭐: with no local PC, a remote player's PC ranks above a PC with no Player below it",
               is(s, oPcMain0, Aura::LocalPcPick::OtherPlayer), nm(s.pc).c_str());
         putP(lpB[oPcMain0], kPlayerOff, 0);
         s = Aura::ScanForLocalPlayerController();
-        check("LOCALPC ⭐: with no Player anywhere, a PC with none -- never the inactive debug camera below it",
-              is(s, oPcMain0, Aura::LocalPcPick::NoPlayer), nm(s.pc).c_str());
+        check("LOCALPC ⭐: with no Player anywhere, the first PC with none -- never the inactive debug camera below it",
+              is(s, oPcMain2, Aura::LocalPcPick::NoPlayer), nm(s.pc).c_str());
         // Debug Camera ON: UPlayer::SwitchController moved the local player to the debug camera and nulled the old PC's.
         putP(lpB[oFreeCam0], kPlayerOff, A(oLocalPlayer0));
-        slot(4, oPcMain1);
+        slot(5, oPcMain1);
         putP(lpB[oPcMain1], kPlayerOff, 0);
         Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
         s = Aura::ScanForLocalPlayerController();
@@ -5412,12 +5418,40 @@ int main() {
               is(s, oFreeCam0, Aura::LocalPcPick::LocalPlayer), nm(s.pc).c_str());
         check("LOCALPC ⭐: ...and it is recognised as a debug camera by derivation, with no word in its name",
               s.pc && Aura::ClassDerivesFromAny(Ubel::GetClass(s.pc), {Grimoire::AURA_USERPICK_DCC_CLASS}));
+        // Review 1: UEngine::LoadMap destroys the old PC and nulls LocalPlayer.PlayerController, but the destroyed PC keeps
+        // Player = the local player until garbage collection -- exactly when every chain fails and falls back here.
+        putP(lpB[oFreeCam0], kPlayerOff, 0);
+        putP(lpB[oPcMain1], kPlayerOff, A(oLocalPlayer0));
+        putP(lpB[oPcMain0], kPlayerOff, A(oLocalPlayer0));
+        put32(lpB[oPcMain0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);   // UE5 garbage
+        s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: a destroyed PC still holding the local player loses to the live one above it",
+              is(s, oPcMain1, Aura::LocalPcPick::LocalPlayer), nm(s.pc).c_str());
+        slot(5, -1);
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+        s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: ...and on its own it is never taken -- a live PC with no Player is",
+              is(s, oPcMain2, Aura::LocalPcPick::NoPlayer), nm(s.pc).c_str());
+        put32(lpB[oPcMain0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        putP(lpB[oPcMain0], kPlayerOff, 0);
+        slot(5, oPcMain1);
+        // Review 1: the Player lookup is exact. Rename the reflected member: with no 'Player' field, a fuzzy arm would read
+        // a PlayerState-like member -- set only on the inactive debug camera here -- and take it as a Player.
+        put32(lpPlayerProp, DynOff::FFIELD_NAME, lPlayerState);
+        putP(lpB[oPcMain1], kPlayerOff, 0);
+        putP(lpB[oFreeCam0], kPlayerOff, A(oNetConn0));
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+        s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: with no 'Player' member, nothing reads as a Player -- not PlayerState -- and the debug camera stays out",
+              is(s, oPcMain2, Aura::LocalPcPick::NoPlayer), nm(s.pc).c_str());
+        put32(lpPlayerProp, DynOff::FFIELD_NAME, lPlayerProp);
+        putP(lpB[oFreeCam0], kPlayerOff, 0);
         Tot::g_perCommand.store(true);
         s = Aura::ScanForLocalPlayerController();
         ResetCancel();
-        check("LOCALPC ⭐: a cancelled walk answers Cancelled and nothing", s.pc == 0 && s.pick == Aura::LocalPcPick::Cancelled,
-              nm(s.pc).c_str());
-        for (int i = 0; i < 9; ++i) slot(i, -1);
+        check("LOCALPC ⭐: a cancel pending at the first slot answers Cancelled and nothing",
+              s.pc == 0 && s.pick == Aura::LocalPcPick::Cancelled, nm(s.pc).c_str());
+        for (int i = 0; i < 10; ++i) slot(i, -1);
         slot(0, oCdoPcMain);
         slot(1, oTplPc);
         Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
@@ -5426,8 +5460,8 @@ int main() {
         slot(0, oPcg0);
         slot(1, oWS0);
         Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
-        auto ws = Aura::FindInstancesDerivedFrom("WorldSettings", 64);
-        check("LOCALPC control: a WorldSettings walk by derivation takes the game's, not PCG's node settings below it",
+        auto ws = Aura::FindInstancesDerivedFrom(Grimoire::TIME_WORLDSETTINGS_CLASS, Grimoire::TIME_WORLDSETTINGS_SCAN_MAX);
+        check("LOCALPC control: Hemmung's WorldSettings walk takes the game's, not PCG's node settings below it",
               !ws.results.empty() && ws.results[0].addr == A(oWS0),
               ws.results.empty() ? "(none)" : nm(ws.results[0].addr).c_str());
 
