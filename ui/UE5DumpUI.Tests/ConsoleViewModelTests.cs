@@ -88,7 +88,11 @@ public class ConsoleViewModelTests
             return Task.FromResult(NextListResult);
         }
 
-        public override Task<InvokeFunctionResult> InvokeFunctionAsync(
+        /// <summary>[CONSOLE-ROWRUN-SELECTED] When set, every invoke waits on it: a run held in flight, as one waiting on
+        /// a busy game thread is.</summary>
+        public TaskCompletionSource? InvokeGate { get; set; }
+
+        public override async Task<InvokeFunctionResult> InvokeFunctionAsync(
             string funcName, string? instanceAddr = null, string? className = null,
             int parmsSize = 0, string? paramsHex = null, bool directCall = false,
             IReadOnlyList<InvokeStringParam>? stringParams = null, string? expectClassAddr = null,
@@ -101,12 +105,14 @@ public class ConsoleViewModelTests
             LastInvokeInstanceAddr = instanceAddr;
             InstanceAddrHistory.Add(instanceAddr);
             ExpectClassHistory.Add(expectClassAddr);
+            if (InvokeGate is { } gate)
+                await gate.Task;
             if (InvokeThrowQueue is { Count: > 0 } && InvokeThrowQueue.Dequeue() is { } boom)
                 throw boom;
             var result = (InvokeResultQueue is { Count: > 0 })
                 ? InvokeResultQueue.Dequeue()
                 : NextInvokeResult;
-            return Task.FromResult(result);
+            return result;
         }
     }
 
@@ -470,6 +476,62 @@ public class ConsoleViewModelTests
 
         Assert.Equal(1, fake.InvokeCallCount);
         Assert.Equal("Fly", fake.LastInvokeFunc);
+    }
+
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] review: the row's Run button no longer shares Run Selected's command, so
+    /// nothing disabled it while a toolbar run was in flight. A second invoke sent while the first waits on a busy game
+    /// thread could run the command twice (a timed-out invoke stays queued), so every run path refuses while one is
+    /// in flight.</summary>
+    [Fact]
+    public async Task RunRow_while_a_run_is_in_flight_sends_nothing()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() }
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        var fly = vm.Results[2];
+        var god = vm.Results[3];
+        fake.InvokeGate = new TaskCompletionSource();
+        vm.SelectedResult = fly;
+
+        var first = vm.RunSelectedCommand.ExecuteAsync(null);
+        Assert.True(vm.IsRunning);
+        await vm.RunRowCommand.ExecuteAsync(god);
+
+        Assert.Equal(1, fake.InvokeCallCount);
+        Assert.Equal("Fly", fake.LastInvokeFunc);
+        Assert.Contains("God", vm.StatusText);
+        Assert.Contains("still running", vm.StatusText);
+        fake.InvokeGate.SetResult();
+        await first;
+        Assert.False(vm.IsRunning);
+        Assert.Single(vm.History);
+    }
+
+    [Fact]
+    public async Task Typed_run_and_replay_while_a_run_is_in_flight_send_nothing()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() }
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        await vm.RunRowCommand.ExecuteAsync(vm.Results[3]);   // God, completes: a history entry to replay
+        Assert.Single(vm.History);
+        fake.InvokeGate = new TaskCompletionSource();
+
+        var first = vm.RunRowCommand.ExecuteAsync(vm.Results[2]);   // Fly, held in flight
+        vm.CommandInput = "god";
+        await vm.RunCommandTextCommand.ExecuteAsync(null);
+        await vm.ReplayHistoryCommand.ExecuteAsync(vm.History[0]);
+
+        Assert.Equal(2, fake.InvokeCallCount);
+        fake.InvokeGate.SetResult();
+        await first;
+        Assert.Equal(2, vm.History.Count);
     }
 
     /// <summary>[CONSOLE-ROWRUN-SELECTED] The row's Run button hands the command its own row, as the row's Live and

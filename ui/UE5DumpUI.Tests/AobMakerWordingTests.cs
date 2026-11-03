@@ -269,8 +269,11 @@ public class AobMakerWordingTests
              new UE5DumpUI.Models.PropertySearchMatch { PropName = "A.B", IsNested = true }.NestedActionRefusedText,
              "A.B");
 
+        // [CONSOLE-ROWRUN-SELECTED] a Console run refused while another is in flight
+        Same(ConsoleRunText.KeyStillRunning, ConsoleRunText.StillRunningText("Fly"), "Fly");
+
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(102, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(103, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]
