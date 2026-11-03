@@ -131,7 +131,11 @@ import sys
 # CheatManager's class default object with -17 instead of sending a toggle there, so it no longer sets the bit. The
 # bit's meaning did not move, and -17 is a new negative code only an ON gets, which every [ENABLE] reports -- Mimic.h's
 # "not a change at all" case.
-GOLDEN_VERSION = 7
+# NOTE on version 8 ([LISTINSTANCES-KEEPS-TEMPLATES]): a MEANING-only bump, so the hash is unchanged. CMD_LIST_INSTANCES
+# never lists a template (a class default object's default subobjects, a Blueprint's component templates), and its
+# total and LI_OUT_TRUNCATED count live objects only. A script that relied on freezing a template did so by accident
+# (the command says "live"); MAILBOX_CONTRACT_MIN stays 1, and the bump makes a new script refuse a contract-7 DLL.
+GOLDEN_VERSION = 8
 GOLDEN_HASH = "e47d01698e530071c5de8cc11f7d5a2b341ea2f2569da1c2468cced81acc3ee7"
 
 MIMIC_H = os.path.join("dll", "src", "Mimic.h")

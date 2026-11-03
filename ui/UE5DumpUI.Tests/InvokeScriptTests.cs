@@ -3149,13 +3149,15 @@ public class InvokeScriptTests
             return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
         }
 
-        var list = Body(CodeOnly(DllSource("Mimic.cpp")), "static void HandleListInstances() {");
+        // A working copy may hold CRLF (git config is per machine); Body looks for "\n}\n".
+        static string Lf(string s) => s.Replace("\r\n", "\n");
+        var list = Body(CodeOnly(Lf(DllSource("Mimic.cpp"))), "static void HandleListInstances() {");
         Assert.Contains("Aura::FindInstancesDerivedFrom(className, cap)", list, StringComparison.Ordinal);
         Assert.Contains("/*buildHistogram=*/false, /*skipTemplates=*/true)", list, StringComparison.Ordinal);
         Assert.Contains("Aura::TemplateOf(r.addr).kind != Aura::TemplateKind::None", list, StringComparison.Ordinal);
         Assert.DoesNotContain("find(\"Default__\")", list, StringComparison.Ordinal);
 
-        var solide = Body(CodeOnly(DllSource("Solide.cpp")), "void ApplyJobLocked(");
+        var solide = Body(CodeOnly(Lf(DllSource("Solide.cpp"))), "void ApplyJobLocked(");
         Assert.Contains("Aura::FindInstancesDerivedFrom(", solide, StringComparison.Ordinal);
         Assert.Contains("Aura::TemplateOf(r.addr).kind != Aura::TemplateKind::None", solide, StringComparison.Ordinal);
         Assert.DoesNotContain("FindInstancesByClass(", solide, StringComparison.Ordinal);
@@ -3163,12 +3165,12 @@ public class InvokeScriptTests
 
         // The Property Search preview samples what Force / Freeze would hold [CDOSCOPE-2026-08-20], so it skips the
         // same templates; only the row's own class default stands in, and is marked as such.
-        var aura = CodeOnly(DllSource("Aura.cpp"));
+        var aura = CodeOnly(Lf(DllSource("Aura.cpp")));
         int from = aura.IndexOf("std::unordered_map<uintptr_t, uintptr_t> cdoOnlyMap;", StringComparison.Ordinal);
         int to = aura.IndexOf("ChoosePreviewSource(", Math.Max(from, 0), StringComparison.Ordinal);
         Assert.True(from > 0 && to > from, "the preview sweep moved -- re-point this pin");
         var sweep = aura[from..to];
-        Assert.Contains("TemplateOf(", sweep, StringComparison.Ordinal);
+        Assert.Contains("TemplateOfImpl(obj, &previewOuterMemo)", sweep, StringComparison.Ordinal);
         Assert.DoesNotContain("find(\"Default__\")", sweep, StringComparison.Ordinal);
 
         // A meaning change of CMD_LIST_INSTANCES: a script generated now refuses a DLL that still lists templates.

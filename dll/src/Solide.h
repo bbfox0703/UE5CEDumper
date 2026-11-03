@@ -14,8 +14,8 @@
 // Structurally the multi-instance sibling of Hemmung (absolute-value hold): same
 // s_mutex + s_workerMutex two-lock split, same write-on-drift re-assert worker,
 // same "no cached instance pointers — re-resolve every tick" discipline. The
-// difference: the target is a POOL (Aura::FindInstancesByClass(className) each
-// tick, bounded + CDO-skipped), not one re-resolved pawn. Reuses the public
+// difference: the target is a POOL (Aura::FindInstancesDerivedFrom(className) each
+// tick, bounded + template-skipped), not one re-resolved pawn. Reuses the public
 // Solitar bool write (SetActorBool/GetActorBool -- a packed bit, or a native
 // bool's whole byte, Solitar::PickBoolBits) for the bool kind and clones
 // Hemmung's LWC-width-aware float read/write for the numeric kind. Pure reflected
@@ -54,7 +54,7 @@ enum ForceKind : int32_t {
 
 // One active hold-job, for the UI list + N-held honesty badge + Locate handoff.
 struct ForcedFieldInfo {
-    std::string className;    // class whose instances are held (substring-matched)
+    std::string className;    // class whose instances are held (and its subclasses')
     std::string fieldName;    // reflected property being forced
     int32_t     kind = K_BOOL;
     double      value = 0.0;  // desired value (bool: 1/0; numeric: absolute)

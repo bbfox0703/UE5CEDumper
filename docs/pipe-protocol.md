@@ -849,7 +849,10 @@ nothing and the hold silently held nothing. This is a **derivation** test on the
 super chain, NOT a name-substring match — `"Enemy"` does not capture `"EnemyProjectile"`
 unless that class genuinely derives from `Enemy`.
 
-Two consequences worth planning for: class-default objects are excluded, and the pool is
+Two consequences worth planning for: templates are excluded — class-default objects, their
+default subobjects and Blueprint component templates (`Aura::TemplateOf`; build 3682,
+`[LISTINSTANCES-KEEPS-TEMPLATES]`: every later spawn copies what a template holds), so
+`held` counts live objects only — and the pool is
 capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily —
 `get_forced_fields` / the `force_field` reply carry `truncated` for exactly that, and
 `held` is then a floor rather than a total.

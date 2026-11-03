@@ -290,6 +290,9 @@ SearchResultSet SearchByName(const std::string& query, int maxResults = 200, boo
 // the early exit at maxResults and skips the tally — so those hot paths are not
 // regressed into a full-array walk.
 SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch = false, int maxResults = 500, bool newestFirst = false, const std::string& nameFilter = "", const std::vector<std::string>& excludeClasses = {}, bool buildHistogram = false, bool skipTemplates = false);
+// skipTemplates: [LISTINSTANCES-KEEPS-TEMPLATES] a caller that WRITES to the pool passes true, and a template
+// (TemplateOf) is then no match at all -- no cap slot, no histogram row. Off by default: the Instance Finder lists
+// class defaults and templates on purpose (a Blueprint's defaults are found there).
 
 // LIVE instances of `baseClassName` AND of every class derived from it.
 //
@@ -301,11 +304,14 @@ SearchResultSet FindInstancesByClass(const std::string& className, bool exactMat
 // UClass super chain instead, which is the actual derivation relation.
 //
 // Two behaviours that are part of the contract, not incidental:
-//   * Class-default objects are skipped INSIDE the walk, before the result cap.
-//     A base like AActor is the ancestor of thousands of classes, each with a
-//     Default__ object, and those are constructed at class-load time so they
-//     occupy the low GObjects indices — filtering them afterwards would leave a
-//     caller with `maxResults` CDOs and zero live instances.
+//   * Templates (TemplateOf: class-default objects, their default subobjects,
+//     Blueprint component templates) are skipped INSIDE the walk, before the
+//     result cap. A base like AActor is the ancestor of thousands of classes,
+//     each with a Default__ object, and templates are constructed at class-load
+//     time so they occupy the low GObjects indices — filtering them afterwards
+//     would leave a caller with `maxResults` templates and zero live instances.
+//     Callers write to the pool, and a template passes what it holds to every
+//     later spawn. [LISTINSTANCES-KEEPS-TEMPLATES]
 //   * SearchResult::className is the CONCRETE class of each instance, not the
 //     queried base, so a caller can still tell the subclasses apart.
 //

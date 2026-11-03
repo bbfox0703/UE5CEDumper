@@ -1305,10 +1305,10 @@ static void Test_Mimic_CommandNumbering() {
     // The published compatibility RANGE. A script checks MIN <= its baked
     // version <= CONTRACT before its first write.
     EXPECT("contract range is sane", Mimic::MAILBOX_CONTRACT_MIN <= Mimic::MAILBOX_CONTRACT);
-    // 7 since [INVOKE-NONSTATIC-ON-CDO]: cmdOutFlags carries the invoke family's template warning, and FIND_INSTANCE
-    // never takes a template for a live object -- additive, so MIN stays 1. (6 was [FINDINSTANCE-SUBSTRING-USERFACING],
-    // the derivation pick; 5 [W5-OFFSETS-MAILBOX]; 4 [W2-TPREL-TRANSPORTS].)
-    EXPECT("contract is 7",          Mimic::MAILBOX_CONTRACT     == 7);
+    // 8 since [LISTINSTANCES-KEEPS-TEMPLATES]: LIST_INSTANCES lists no template -- a meaning change an older script
+    // relied on only by accident, so MIN stays 1. (7 was [INVOKE-NONSTATIC-ON-CDO], the invoke template warning;
+    // 6 [FINDINSTANCE-SUBSTRING-USERFACING], the derivation pick; 5 [W5-OFFSETS-MAILBOX]; 4 [W2-TPREL-TRANSPORTS].)
+    EXPECT("contract is 8",          Mimic::MAILBOX_CONTRACT     == 8);
     EXPECT("contract min is 1",      Mimic::MAILBOX_CONTRACT_MIN == 1);
 
     // g_mailboxContract is a SEPARATE exported symbol, read before anything is

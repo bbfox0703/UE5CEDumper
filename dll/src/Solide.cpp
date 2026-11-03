@@ -349,9 +349,10 @@ void ApplyJobLocked(Job& job, bool restore, bool* drifted) {
     auto rset = Aura::FindInstancesDerivedFrom(job.className, Grimoire::SOLIDE_MAX_INSTANCES);
     std::unordered_set<uintptr_t> seen;
     for (const auto& r : rset.results) {
-        // Aura already drops CDOs (it has to, before its cap). Kept as the
-        // local invariant: ApplyToInstance must never write a class default.
-        if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
+        // Aura already drops templates (it has to, before its cap). Kept as the
+        // local invariant: ApplyToInstance must never write a template, whose value every
+        // later spawn copies. [LISTINSTANCES-KEEPS-TEMPLATES]
+        if (!r.addr || Aura::TemplateOf(r.addr).kind != Aura::TemplateKind::None) continue;
         uintptr_t cls = r.classAddr ? r.classAddr : Ubel::GetClass(r.addr);
         if (!cls) continue;
         seen.insert(r.addr);
@@ -380,9 +381,9 @@ void ApplyJobLocked(Job& job, bool restore, bool* drifted) {
         //
         // Uses Aura's own `truncated` rather than re-deriving "capped" from the result
         // size, so the prune guard and the UI badge can never disagree about whether the
-        // pool was complete. Equivalent on this path by construction: FindInstancesByClass
-        // is called with the default buildHistogram=false, where Aura sets
-        // truncated = (results.size() >= maxResults) — exactly the old test, negated.
+        // pool was complete. Equivalent on this path by construction: FindInstancesDerivedFrom
+        // is called without totalOut, where Aura sets truncated = (results.size() >= maxResults)
+        // — exactly the old test, negated.
         if (!rset.truncated) {
             for (auto it = job.baseByOwner.begin(); it != job.baseByOwner.end(); )
                 it = seen.count(it->first) ? std::next(it) : job.baseByOwner.erase(it);

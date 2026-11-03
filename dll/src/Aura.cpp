@@ -1703,8 +1703,12 @@ SearchResultSet SearchByName(const std::string& query, int maxResults, bool inst
     return rset;
 }
 
-SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch, int maxResults, bool newestFirst, const std::string& nameFilter, const std::vector<std::string>& excludeClasses, bool buildHistogram, bool /*skipTemplates (RED STUB)*/) {
+// TemplateOf with a per-walk memo of the outer-chain half; defined beside TemplateOf.
+static TemplateInfo TemplateOfImpl(uintptr_t obj, std::unordered_map<uintptr_t, uintptr_t>* outerMemo);
+
+SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch, int maxResults, bool newestFirst, const std::string& nameFilter, const std::vector<std::string>& excludeClasses, bool buildHistogram, bool skipTemplates) {
     SearchResultSet rset;
+    std::unordered_map<uintptr_t, uintptr_t> outerMemo;   // TemplateOfImpl's, for skipTemplates
 
     // Convert queries to lowercase for case-insensitive comparison
     std::string lowerQuery = className;
@@ -1791,6 +1795,11 @@ SearchResultSet FindInstancesByClass(const std::string& className, bool exactMat
             for (auto& c : lowerObjName) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
             if (lowerObjName.find(lowerName) == std::string::npos) continue;
         }
+
+        // [LISTINSTANCES-KEEPS-TEMPLATES] A caller that WRITES to the pool asks for no template: not a match at all, so
+        // it neither takes a cap slot nor reaches the histogram. Templates are built at class load and sit at the low
+        // indices this walk reaches first.
+        if (skipTemplates && TemplateOfImpl(obj, &outerMemo).kind != TemplateKind::None) continue;
 
         // This row satisfies the class+name query. Tally it PRE-exclude (full pool)
         // so the picker can still surface — and untick — an excluded/past-cap class.
@@ -1881,6 +1890,9 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
     // per-CLASS one, which is what makes "AActor and everything under it"
     // affordable at all.
     std::unordered_map<uintptr_t, bool> derivedCache;
+    std::unordered_map<uintptr_t, uintptr_t> outerMemo;   // TemplateOfImpl's
+    int templatesSkipped = 0;
+    const auto t0 = std::chrono::steady_clock::now();
 
     int32_t count = GetCount();
     rset.scanned = count;
@@ -1928,13 +1940,16 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
         if (objName.empty()) continue;
         rset.named++;
 
-        // CDO skip, and it has to happen HERE — before the cap. A base like
+        // Template skip, and it has to happen HERE — before the cap. A base like
         // AActor is the ancestor of thousands of classes, EVERY one of which
-        // contributes a Default__ object, and CDOs are constructed at
+        // contributes a Default__ object, and templates are constructed at
         // class-load time so they sit at the LOW GObjects indices this walk
         // reaches first. A caller that filtered afterwards would be handed
-        // maxResults class-default rows and not one live instance.
-        if (objName.rfind("Default__", 0) == 0) continue;
+        // maxResults templates and not one live instance.
+        // [LISTINSTANCES-KEEPS-TEMPLATES] Every template, not only the Default__ object: its default subobjects
+        // and a Blueprint's component templates too (TemplateOf). The pool is written to, and what a template
+        // holds, every later spawn copies.
+        if (TemplateOfImpl(obj, &outerMemo).kind != TemplateKind::None) { ++templatesSkipped; continue; }
 
         ++matchTotal;
         if (static_cast<int>(rset.results.size()) >= maxResults) continue;   // count, don't append
@@ -1957,10 +1972,14 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
     rset.truncated = totalOut ? (matchTotal > maxResults)
                              : (static_cast<int>(rset.results.size()) >= maxResults);
 
-    Sein::Info("PIPE:find", "FindInstancesDerivedFrom base='%s': %d live instance(s)%s over %d distinct class(es), scanned=%d, nonNull=%d",
+    // templates= makes a misread flags word diagnosable (every candidate passed over); ms= is the walk's cost.
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - t0).count();
+    Sein::Info("PIPE:find", "FindInstancesDerivedFrom base='%s': %d live instance(s)%s over %d distinct class(es), "
+                 "templates=%d, scanned=%d, nonNull=%d, ms=%lld",
                  baseClassName.c_str(), (int)rset.results.size(),
                  rset.truncated ? " (capped)" : "",
-                 (int)derivedCache.size(), rset.scanned, rset.nonNull);
+                 (int)derivedCache.size(), templatesSkipped, rset.scanned, rset.nonNull, ms);
     return rset;
 }
 
@@ -2153,32 +2172,60 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
     return r;
 }
 
-TemplateInfo TemplateOf(uintptr_t obj) {
+static bool IsClassDefaultObject(uintptr_t o, uint32_t flags) {
+    uint32_t nameIdx = 0;
+    if ((flags & Grimoire::RF_CLASS_DEFAULT_OBJECT) != 0) return true;
+    return Macht::ReadSafe(o + Grimoire::OFF_UOBJECT_NAME, nameIdx)
+        && Serie::GetString(nameIdx).rfind("Default__", 0) == 0;
+}
+
+// The class-default object that `outer` is, or sits under, within the hop bound counted from the object below it;
+// 0 for none. Depends only on `outer`, which is what lets a walk memoize it per first outer.
+static uintptr_t ClassDefaultAtOrAbove(uintptr_t outer) {
+    uintptr_t o = outer;
+    for (int hop = 0; hop < Grimoire::AURA_USERPICK_MAX_OUTER_HOPS; ++hop) {
+        uint32_t flags = 0;
+        Macht::ReadSafe(o + Grimoire::OFF_UOBJECT_FLAGS, flags);
+        if (IsClassDefaultObject(o, flags)) return o;
+        uintptr_t next = 0;
+        if (!Macht::ReadSafe(o + DynOff::UOBJECT_OUTER, next) || !next || next == o) break;
+        o = next;
+    }
+    return 0;
+}
+
+// [LISTINSTANCES-KEEPS-TEMPLATES] `outerMemo`: first outer -> ClassDefaultAtOrAbove(it), for one walk. A pool walk asks
+// for every candidate, and candidates share their outers (a level's actors, an actor's components), so the outer
+// chain is read once per distinct first outer instead of once per object. Same verdict with or without it.
+static TemplateInfo TemplateOfImpl(uintptr_t obj, std::unordered_map<uintptr_t, uintptr_t>* outerMemo) {
     TemplateInfo t;
     if (!obj) return t;
-    auto isClassDefault = [](uintptr_t o, uint32_t flags) {
-        uint32_t nameIdx = 0;
-        if ((flags & Grimoire::RF_CLASS_DEFAULT_OBJECT) != 0) return true;
-        return Macht::ReadSafe(o + Grimoire::OFF_UOBJECT_NAME, nameIdx)
-            && Serie::GetString(nameIdx).rfind("Default__", 0) == 0;
-    };
     uint32_t flags = 0;
     Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_FLAGS, flags);
-    if (isClassDefault(obj, flags)) { t.kind = TemplateKind::ClassDefault; t.owner = obj; return t; }
+    if (IsClassDefaultObject(obj, flags)) { t.kind = TemplateKind::ClassDefault; t.owner = obj; return t; }
     // A class-default object up the outer chain makes it one of that object's subobjects, flag or not.
-    uintptr_t o = obj, firstOuter = 0;
-    for (int hop = 0; hop < Grimoire::AURA_USERPICK_MAX_OUTER_HOPS; ++hop) {
-        uintptr_t outer = 0;
-        if (!Macht::ReadSafe(o + DynOff::UOBJECT_OUTER, outer) || !outer || outer == o) break;
-        if (!firstOuter) firstOuter = outer;
-        uint32_t outerFlags = 0;
-        Macht::ReadSafe(outer + Grimoire::OFF_UOBJECT_FLAGS, outerFlags);
-        if (isClassDefault(outer, outerFlags)) { t.kind = TemplateKind::Template; t.owner = outer; return t; }
-        o = outer;
+    uintptr_t firstOuter = 0;
+    if (!Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, firstOuter) || firstOuter == obj) firstOuter = 0;
+    if (firstOuter) {
+        uintptr_t owner = 0;
+        bool known = false;
+        if (outerMemo) {
+            const auto hit = outerMemo->find(firstOuter);
+            if (hit != outerMemo->end()) { owner = hit->second; known = true; }
+        }
+        if (!known) {
+            owner = ClassDefaultAtOrAbove(firstOuter);
+            if (outerMemo) outerMemo->emplace(firstOuter, owner);
+        }
+        if (owner) { t.kind = TemplateKind::Template; t.owner = owner; return t; }
     }
     // An archetype with no class-default object above it: a Blueprint's component template, outered to its class.
     if ((flags & Grimoire::RF_ARCHETYPE_OBJECT) != 0) { t.kind = TemplateKind::Template; t.owner = firstOuter; }
     return t;
+}
+
+TemplateInfo TemplateOf(uintptr_t obj) {
+    return TemplateOfImpl(obj, nullptr);
 }
 
 uintptr_t FindLiveOrDefaultOf(const std::string& className) {
@@ -5422,15 +5469,15 @@ PropertySearchResult SearchProperties(
         // showed the Blueprint default forever (Health = 100 while the player is at 37).
         // `obj != cls` only excluded the UClass itself, never its CDO. (audit #5 A5)
         //
-        // Same `Default__` test Solide.cpp (`ResolveLocalPC`, `ApplyJobLocked`), Wirbel.cpp and Edel.cpp (`ResolveLocalPC`) already
-        // apply — a name compare rather than RF_ClassDefaultObject because the flags word is
-        // one more unverified offset, and CLAUDE.md's rule is that UObject offsets are probed,
-        // not assumed. The name is only resolved for objects whose class we actually want,
-        // which is a handful out of the pool.
+        // [LISTINSTANCES-KEEPS-TEMPLATES] The rule the Force / Freeze pools apply (TemplateOf): a class default object,
+        // one of its default subobjects or a Blueprint component template is never a live sample. Before, only a
+        // Default__ name was passed over, so a component row previewed a class default's subobject as live while its
+        // Force held nothing. Tested only for objects whose class we actually want, a handful out of the pool.
         std::unordered_map<uintptr_t, uintptr_t> instanceMap;
         // Classes for which the CDO is all that exists. Used only after the sweep, so a live
         // instance appearing later always wins — the whole point of the finding.
         std::unordered_map<uintptr_t, uintptr_t> cdoOnlyMap;
+        std::unordered_map<uintptr_t, uintptr_t> previewOuterMemo;   // TemplateOfImpl's
 
         // Live instances of a SUBCLASS of a preview class. [CDOSCOPE-2026-08-20]
         //
@@ -5493,13 +5540,13 @@ PropertySearchResult SearchProperties(
                 if (derivedMap.count(anc) == 0) { wantsDerived = true; break; }
             if (!wantsExact && !wantsDerived) continue;
 
-            uint32_t nameIdx = 0;
-            if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx) &&
-                Serie::GetString(nameIdx).find("Default__") != std::string::npos) {
+            const TemplateKind tk = TemplateOfImpl(obj, &previewOuterMemo).kind;
+            if (tk != TemplateKind::None) {
                 // Only the row's OWN class default is offered as the last-resort sample. A
                 // subclass CDO is another class's default, which would be a worse answer than
-                // the row's own and is not what the actions would touch either.
-                if (exact) cdoOnlyMap.emplace(cls, obj);   // first CDO wins; live still preferred
+                // the row's own and is not what the actions would touch either; nor is any other template.
+                if (exact && tk == TemplateKind::ClassDefault)
+                    cdoOnlyMap.emplace(cls, obj);   // first CDO wins; live still preferred
                 continue;
             }
 

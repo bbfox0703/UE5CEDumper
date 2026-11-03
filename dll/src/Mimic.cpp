@@ -956,7 +956,7 @@ static void HandleListFunctions() {
     SetDone(0);
 }
 
-// Enumerate all live (non-CDO) instances of a class for the property-freeze
+// Enumerate all live instances of a class -- never a template -- for the property-freeze
 // helper. Paginated identically to LIST_FUNCTIONS so the CE Lua side can pull
 // multi-page result sets through the single-slot mailbox.
 //
@@ -1009,24 +1009,23 @@ static void HandleListInstances() {
 
     // Caps live in Mimic.h beside the page geometry they have to agree with.
     const int cap = derived ? LIST_INSTANCES_MAX_DERIVED : LIST_INSTANCES_MAX_EXACT;
+    // [LISTINSTANCES-KEEPS-TEMPLATES] Both walks skip templates (TemplateOf) INSIDE the walk, before the cap: they are
+    // built at class load and sit at the low indices a walk reaches first, so filtering only afterwards could return
+    // a page of nothing but templates.
     Aura::SearchResultSet rset = derived
         ? Aura::FindInstancesDerivedFrom(className, cap)
-        : Aura::FindInstancesByClass(className, /*exactMatch=*/true, /*maxResults=*/cap);
+        : Aura::FindInstancesByClass(className, /*exactMatch=*/true, /*maxResults=*/cap, /*newestFirst=*/false,
+                                     /*nameFilter=*/"", /*excludeClasses=*/{}, /*buildHistogram=*/false, /*skipTemplates=*/true);
 
-    // CDO filter: the class default object (Default__BP_Foo_C) is the
-    // template, not a live instance. Freezing its property would touch the
-    // template state — never what the user wants.
-    //
-    // The derived walk already drops CDOs INSIDE its loop (it has to — a base like
-    // AActor has thousands of them at the low GObjects indices, and filtering after
-    // the cap would return a page of nothing but templates). This second pass is
-    // therefore a no-op there and the real filter on the exact path; both are kept
-    // so neither path depends on the other's behaviour.
+    // Every entry published here is an object the freeze helper WRITES to, and never restores: a template among them
+    // -- a class default object, one of its default subobjects, a Blueprint component template -- would pass the
+    // frozen value to every later spawn. The walks already passed them over; this states the rule where the pool is
+    // published, so it does not rest on either walk alone.
     struct LiveEntry { uint64_t obj; uint64_t cls; };
     std::vector<LiveEntry> live;
     live.reserve(rset.results.size());
     for (const auto& r : rset.results) {
-        if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
+        if (!r.addr || Aura::TemplateOf(r.addr).kind != Aura::TemplateKind::None) continue;
         live.push_back({ static_cast<uint64_t>(r.addr), static_cast<uint64_t>(r.classAddr) });
     }
 

@@ -15,7 +15,8 @@
 
     * This helper locks a PROPERTY (offset + type) on ALL live
       instances of a given UE class -- and, by default, of every
-      SUBCLASS of it (cfg.derived). It re-enumerates instances every
+      SUBCLASS of it (cfg.derived) -- never a class's default object
+      or another template (the DLL lists none, contract 8+). It re-enumerates instances every
       few seconds via the DLL mailbox (CMD_LIST_INSTANCES), so newly
       spawned teammates / pickups / NPCs are picked up automatically
       and freed instances drop off.
@@ -494,9 +495,13 @@ end
 -- for the same reason as 4.
 -- 7: the invoke family's template warning in cmdOutFlags ([INVOKE-NONSTATIC-ON-CDO]); this helper reads only
 -- LI_OUT_TRUNCATED there. Baked for the same reason as 4.
--- ⚠ Baking 7 means this helper REFUSES a contract-6 DLL ("update UE5Dumper.dll"). That is what the pin
+-- 8: CMD_LIST_INSTANCES never lists a template ([LISTINSTANCES-KEEPS-TEMPLATES]) -- this time a change THIS helper
+-- depends on: it writes into every address the DLL lists and never restores, so a contract-7 DLL, which still
+-- lists a class default object's subobjects and Blueprint component templates, would pass the frozen value to
+-- every later spawn.
+-- ⚠ Baking 8 means this helper REFUSES a contract-7 DLL ("update UE5Dumper.dll"). That is what the pin
 -- above encodes: the helper and the generator ship together, so they claim ONE contract.
-local UE5_SCRIPT_CONTRACT = 7
+local UE5_SCRIPT_CONTRACT = 8
 
 -- Returns true, or false + a message. Call BEFORE writing to the mailbox: if the
 -- layout moved, writing first scribbles on whatever now lives at those offsets.

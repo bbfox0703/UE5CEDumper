@@ -33,7 +33,9 @@ enum Cmd : int32_t {
     CMD_FIND_FUNCTION   = 3,  // Find UFunction by name on instance's class
     CMD_INVOKE_BY_NAME  = 4,  // Combined: find instance + find function + invoke
     CMD_LIST_FUNCTIONS  = 5,  // List all UFunctions on an instance's class (paginated)
-    CMD_LIST_INSTANCES  = 6,  // List all live (non-CDO) instances of a class (paginated).
+    CMD_LIST_INSTANCES  = 6,  // List all live instances of a class (paginated) -- never a template
+                              //   (Aura::TemplateOf: a class default object, its default subobjects, a
+                              //   Blueprint component template; contract 8, [LISTINSTANCES-KEEPS-TEMPLATES]).
                               //   Scope is chosen by cmdFlags & LI_IN_DERIVED
                               //   (contract 3+): clear = the exact class only,
                               //   set = that class AND every subclass. See the
@@ -755,7 +757,16 @@ namespace Mimic {
 ///   bit's meaning did not move (it still names a call that reached a template, which this command can no longer
 ///   make), and -17 is a new negative code only an ON gets (WHAT IS NOT A CHANGE AT ALL above). No bump, and the surface
 ///   hash does not change.
-constexpr int32_t MAILBOX_CONTRACT = 7;
+/// 8 ([LISTINSTANCES-KEEPS-TEMPLATES]): CMD_LIST_INSTANCES never lists a TEMPLATE -- a class default object's default
+///   subobjects and a Blueprint's component templates join the class default objects it already skipped, in both
+///   scopes, before the cap. A MEANING change (item 5); no field moved and no result code changed, so the surface hash
+///   does not move. The total (parmsSize), the page count and LI_OUT_TRUNCATED now count live objects only.
+///   MAILBOX_CONTRACT_MIN stays at 1, by version 6's rule, and one accident ends: a script that froze a template on
+///   purpose, so later spawns would inherit the value, now holds live objects only (on GAS 5.3+ that includes a
+///   GameplayEffect class default's component subobjects). The fix is DLL-side, so an older script gets the clean
+///   pool from this DLL with nothing to regenerate; the bump makes a script generated now refuse a contract-7 DLL,
+///   which would still hand it templates to write.
+constexpr int32_t MAILBOX_CONTRACT = 8;
 
 /// Oldest script contract still accepted. Bump ONLY when a change actually
 /// invalidates older scripts — an additive change must not move this.
