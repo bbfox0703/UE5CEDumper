@@ -723,6 +723,9 @@ public class ConsoleViewModelTests
         Assert.Equal(" " + InvokePickText.ObjectText("X_0", "X"), InvokePickText.Note("partial_name", "X_0", "X"));
         Assert.Equal(" " + InvokePickText.ClassDefaultText("Default__X", "X"),
                      InvokePickText.Note("class_default", "Default__X", "X"));
+        // Review of fbedfa9a: a partial-name pick that is a default object is one too, with no live object of its class.
+        Assert.Equal(" " + InvokePickText.ClassDefaultText("Default__X", "X"),
+                     InvokePickText.Note("partial_name_default", "Default__X", "X"));
         Assert.Equal(" " + InvokePickText.DebugCameraOwnedText("X_0", "X"),
                      InvokePickText.Note("debug_camera_owned", "X_0", "X"));
     }
