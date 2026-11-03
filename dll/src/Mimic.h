@@ -23,7 +23,11 @@ namespace Mimic {
 enum Cmd : int32_t {
     CMD_IDLE            = 0,
     CMD_INVOKE          = 1,  // Call ProcessEvent (instance_addr, ufunc_addr, params_data)
-    CMD_FIND_INSTANCE   = 2,  // Find non-CDO instance by class name
+    CMD_FIND_INSTANCE   = 2,  // Find an object by class name (contract 6+): the first live object of that class
+                              //   or a subclass (one a Debug Camera controller is or owns only when no other is
+                              //   live), else the class's own default object; a name no class has is matched as
+                              //   part of a class name. INVOKE_BY_NAME and LIST_FUNCTIONS' class-name branch
+                              //   resolve through it. [FINDINSTANCE-SUBSTRING-USERFACING]
     CMD_FIND_FUNCTION   = 3,  // Find UFunction by name on instance's class
     CMD_INVOKE_BY_NAME  = 4,  // Combined: find instance + find function + invoke
     CMD_LIST_FUNCTIONS  = 5,  // List all UFunctions on an instance's class (paginated)
@@ -594,6 +598,15 @@ extern "C" __declspec(dllexport) extern Mimic::MailboxData g_invokeMailbox;
 // WHAT IS NOT (additive ⇒ bump MAILBOX_CONTRACT only, leave the MIN alone):
 //   a new Cmd, a new op at a previously unused number, a new knobId. Old scripts
 //   never referenced them, so they stay valid.
+//   ALSO a meaning change (item 5) that refuses no saved script: one whose old
+//   behaviour a script could only have relied on by accident, and that fails
+//   VISIBLY when it did (version 6 is the case). Moving MIN for it would refuse
+//   every saved .CT, the ones the change fixes included.
+//
+// WHAT IS NOT A CHANGE AT ALL: a new negative result code on an existing command
+//   or op. Every contract-checking script reports a negative result it has no
+//   message for and keeps its window open (MB_ERR_HANDLER_THREW, -12..-15, the
+//   Debug Camera's -5/-6, TP_OP_BUGIT_GO's -16).
 //
 // TWO numbers, because the answer is a RANGE and the two failure directions need
 // different advice:
@@ -632,7 +645,20 @@ namespace Mimic {
 ///   previously unused number, so no older script can send it or read its output, and
 ///   MAILBOX_CONTRACT_MIN stays at 1. Unlike versions 2 and 4 this DOES move the surface hash -- a new
 ///   enum member is layout -- so tools/check_mailbox_contract.py takes a new golden pair.
-constexpr int32_t MAILBOX_CONTRACT = 5;
+/// 6 ([FINDINSTANCE-SUBSTRING-USERFACING]): CMD_FIND_INSTANCE -- and CMD_INVOKE_BY_NAME and CMD_LIST_FUNCTIONS'
+///   class-name branch, which resolve through it -- picks by DERIVATION: the first live object of the class named in
+///   className or of a subclass (one a Debug Camera controller is or owns only when no other is live), else that
+///   class's own default object. The class-name SUBSTRING match it used before now answers only a name no object's
+///   class chain has, without the old 100-match cap. A MEANING change (item 5); no field moved and no result code
+///   changed (a lookup cut short by shutdown answers -2 with its own errorMsg). It refuses no saved script, so
+///   MAILBOX_CONTRACT_MIN stays at 1, but it is not invisible to all of them: a script that sent a name some class
+///   HAS and relied on reaching an UNRELATED class whose name merely contains it now gets that class's object and a
+///   -3 "function not found", and one that relied on the Debug Camera's own CheatManager (a ToggleDebugCamera OFF on
+///   4.18-5.7) now reaches the player's. Both relied on an accident, and both fail visibly. Moving MIN would refuse
+///   every saved .CT, the ones this fixes included. Like versions 2 and 4 it moves on meaning alone -- the surface hash
+///   does not change. The bump makes a script generated now refuse a DLL that would still guess; it does not reach
+///   baked scripts, whose embedded invoke helper deliberately claims contract 1.
+constexpr int32_t MAILBOX_CONTRACT = 6;
 
 /// Oldest script contract still accepted. Bump ONLY when a change actually
 /// invalidates older scripts — an additive change must not move this.

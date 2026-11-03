@@ -597,8 +597,11 @@ if not invokeUFunction or _invokeOutdated then
   --- Uses CMD_INVOKE_BY_NAME -- the DLL handles findInstance +
   --- findFunction in one mailbox round-trip.
   ---
-  --- @param className string  e.g. 'PlayerCharacter' (must match a
-  ---                          live, non-CDO instance's UClass name)
+  --- @param className string  e.g. 'PlayerCharacter'. The DLL takes a live
+  ---                          object of the class so named or of a subclass,
+  ---                          else that class's own default object; a name no
+  ---                          class has (as here, for BP_PlayerCharacter_C) is
+  ---                          matched as part of a class name
   --- @param funcName  string  e.g. 'AddMoney'
   --- @param parmsSize number  Total params buffer size in bytes: where the
   ---                          function's parameter chain ends, which the

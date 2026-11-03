@@ -10,9 +10,25 @@ internal static class InvokePickText
     internal const string KeyClassDefault = "str.Invoke.Pick.ClassDefault";
     internal const string KeyDebugCameraOwned = "str.Invoke.Pick.DebugCameraOwned";
 
-    internal static bool IsPinnable(string pick) => true;
+    /// <summary>Whether the Console may keep running the class's commands on this object. A class-default pick
+    /// re-resolves instead, so a CheatManager spawned later is found, and so does a Debug-Camera-owned one, so a
+    /// Debug Camera destroyed later leaves no pin on it. An empty pick is an older DLL that never said: pinned, as
+    /// before.</summary>
+    internal static bool IsPinnable(string pick)
+        => pick is "" or Constants.InvokePickLive or Constants.InvokePickAddress;
 
-    internal static string Note(string pick, string name, string className) => "";
+    /// <summary>What to append to the run's status line: " " and the sentence for the pick, or "" when the DLL named
+    /// no object.</summary>
+    internal static string Note(string pick, string name, string className)
+    {
+        if (pick.Length == 0 || name.Length == 0) return "";
+        return " " + pick switch
+        {
+            Constants.InvokePickClassDefault => ClassDefaultText(name, className),
+            Constants.InvokePickDebugCameraOwned => DebugCameraOwnedText(name, className),
+            _ => ObjectText(name, className),
+        };
+    }
 
     internal static string ObjectText(string name, string className)
         => AobMakerStatus.Say(KeyObject, "on {0} ({1})", name, className);

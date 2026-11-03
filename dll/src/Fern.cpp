@@ -70,7 +70,6 @@ extern HMODULE g_hDllModule;
 
 // Forward declare ExportAPI functions (extern "C" must be at global scope)
 extern "C" bool      UE5_Init();
-extern "C" uintptr_t UE5_FindInstanceOfClass(const char* className);
 extern "C" uintptr_t UE5_GetObjectClass(uintptr_t obj);
 extern "C" uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName);
 extern "C" int32_t   UE5_CallProcessEventDirect(uintptr_t instance, uintptr_t ufunc, uintptr_t params);
@@ -6776,17 +6775,24 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             // Resolve instance address
             uintptr_t instanceAddr = 0;
+            const char* pickWire = Renge::INVOKE_PICK_ADDRESS;   // [FINDINSTANCE-SUBSTRING-USERFACING]
             if (!instAddrStr.empty()) {
                 instanceAddr = Renge::StrToAddr(instAddrStr);
                 if (instanceAddr == 0) {
                     return Renge::MakeError(id, "Invalid instance_addr").dump();
                 }
             } else if (!className.empty()) {
-                instanceAddr = UE5_FindInstanceOfClass(className.c_str());
-                if (instanceAddr == 0) {
-                    return Renge::MakeError(id,
-                        "No instance found for class: " + className).dump();
+                // The user-facing resolver the C ABI and the mailbox share (Aura.h). A cut-short walk is not "no
+                // instance": the Self-Test reads that text as the class being absent.
+                const Aura::UserInstance found = Aura::ResolveUserInstance(className);
+                if (found.pick == Aura::UserPick::Cancelled) {
+                    return Renge::MakeError(id, Renge::InstanceLookupCancelledText(className)).dump();
                 }
+                if (found.obj == 0) {
+                    return Renge::MakeError(id, Renge::InstanceNotFoundText(className)).dump();
+                }
+                instanceAddr = found.obj;
+                pickWire = Aura::UserPickWire(found.pick);
             } else {
                 return Renge::MakeError(id,
                     "Either instance_addr or class_name is required").dump();
@@ -6798,6 +6804,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeError(id,
                     "Failed to read class from instance " + Renge::AddrToStr(instanceAddr)).dump();
             }
+            // [FINDINSTANCE-SUBSTRING-USERFACING] Read BEFORE the call, which may destroy the object: the reply and a
+            // "Function not found" name what the class name resolved to.
+            const std::string instName  = Ubel::GetName(instanceAddr);
+            const std::string instClass = Ubel::GetName(classAddr);
 
             // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Before the function is looked up: it is found by name on this
             // class, so another class's object at the address would run that class's same-named function.
@@ -6819,8 +6829,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // Resolve UFunction
             uintptr_t ufuncAddr = UE5_FindFunctionByName(classAddr, funcName.c_str());
             if (ufuncAddr == 0) {
-                return Renge::MakeError(id,
-                    "Function not found: " + funcName).dump();
+                return Renge::MakeError(id, Renge::FunctionNotFoundText(funcName, instName, instClass)).dump();
             }
 
             // Build parameter buffer (zero-filled, then overlay hex bytes).
@@ -6954,9 +6963,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 ? reinterpret_cast<uintptr_t>(paramBuf.data())
                 : 0;
 
-            Sein::Info("PIPE:cmd", "invoke_function: %s::%s inst=%s func=%s parms=%d direct=%d",
+            Sein::Info("PIPE:cmd", "invoke_function: %s::%s inst=%s (%s, class %s, pick=%s) func=%s parms=%d direct=%d",
                          className.c_str(), funcName.c_str(),
-                         Renge::AddrToStr(instanceAddr).c_str(),
+                         Renge::AddrToStr(instanceAddr).c_str(), instName.c_str(), instClass.c_str(), pickWire,
                          Renge::AddrToStr(ufuncAddr).c_str(),
                          (int)bufSize, directCall ? 1 : 0);
 
@@ -6991,6 +7000,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["instance_addr"] = Renge::AddrToStr(instanceAddr);
             // [LEAD-CONSOLE-PIN-EXPECT-CLASS] So a caller that keeps the address can send it back as expect_class_addr.
             data["instance_class_addr"] = Renge::AddrToStr(classAddr);
+            // [FINDINSTANCE-SUBSTRING-USERFACING] How a class name was resolved ("address" when one was sent), and
+            // what it resolved to; the Console pins only a live or given object (additive keys).
+            data["instance_pick"]       = pickWire;
+            data["instance_name"]       = instName;
+            data["instance_class_name"] = instClass;
             data["func_addr"]     = Renge::AddrToStr(ufuncAddr);
             data["parms_size"]    = (int)bufSize;
 

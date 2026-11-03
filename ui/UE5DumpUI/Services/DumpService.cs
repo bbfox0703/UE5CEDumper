@@ -3676,6 +3676,10 @@ public sealed class DumpService : IDumpService
             Result       = res["result"]?.GetValue<int>() ?? -999,
             InstanceAddr = res["instance_addr"]?.GetValue<string>() ?? "",
             InstanceClassAddr = res["instance_class_addr"]?.GetValue<string>() ?? "",
+            // [FINDINSTANCE-SUBSTRING-USERFACING] additive keys; an older DLL sends none
+            InstancePick      = res["instance_pick"]?.GetValue<string>() ?? "",
+            InstanceName      = res["instance_name"]?.GetValue<string>() ?? "",
+            InstanceClassName = res["instance_class_name"]?.GetValue<string>() ?? "",
             FuncAddr     = res["func_addr"]?.GetValue<string>() ?? "",
             ParmsSize    = res["parms_size"]?.GetValue<int>() ?? 0,
             ResultHex    = res["result_hex"]?.GetValue<string>() ?? "",

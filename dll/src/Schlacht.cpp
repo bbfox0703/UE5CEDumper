@@ -372,7 +372,7 @@ bool InvokeSetHidden(uintptr_t actor, bool hidden) {
 // "Active -- nothing blocking the view". Two GObjects scans, once per enable, each stopping at its class.
 //
 // ⚠ Ask the CLASS, by full path -- never Ubel::GetClass() of an instance found by name. The first version asked
-// UE5_FindInstanceOfClass("Actor"), a class-name SUBSTRING match that falls back to the first matching CDO; on
+// UE5_FindInstanceOfClass("Actor"), then a class-name SUBSTRING match that fell back to the first matching CDO; on
 // DumperTest Shipping 5.4 that was Default__ActorChannel, a UChannel, so FindFuncByName found nothing and See-through
 // was refused as "cooked out" on a build that has SetActorHiddenInGame. [SEETHRU-PROBE-SUBSTRING]
 bool ProbeProducers(const char** missing) {

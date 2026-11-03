@@ -28,8 +28,8 @@ namespace UE5DumpUI.ViewModels;
 /// hide most hits.
 ///
 /// Run uses the existing <see cref="IDumpService.InvokeFunctionAsync"/>
-/// path with classname-only resolution (DLL finds the first non-CDO
-/// instance). Works without a ParamBuffer for no-arg exec commands —
+/// path with classname-only resolution (the DLL takes a live object of the
+/// class or a subclass, else its default object). Works without a ParamBuffer for no-arg exec commands —
 /// the common case. For exec commands with parameters, the Run path
 /// raises <see cref="RequestParameterInvoke"/> so MainWindow can open
 /// the standard InvokeParamDialog flow.
@@ -55,7 +55,7 @@ public partial class ConsoleViewModel : ViewModelBase
     /// the owning object. Such commands MUST land on the <b>same</b>
     /// UObject on every invoke. Plain classname resolution
     /// (<c>UE5_FindInstanceOfClass</c>) re-scans GObjects and returns
-    /// "the first non-CDO instance" each call — but the very first invoke
+    /// the first live object of the class each call — but the very first invoke
     /// can mutate the object graph (e.g. EnableDebugCamera spawns an
     /// <c>ADebugCameraController</c>), so a later call may resolve a
     /// <i>different</i> instance whose toggle state is fresh → it silently
@@ -555,8 +555,9 @@ public partial class ConsoleViewModel : ViewModelBase
             }
 
             // Remember the resolved instance so the next toggle lands on the
-            // same object. The DLL echoes the address it actually used.
-            if (result.Success && !string.IsNullOrEmpty(result.InstanceAddr))
+            // same object. The DLL echoes the address it actually used, and how it picked it: a class-default or a
+            // Debug-Camera-owned pick re-resolves next time instead. [FINDINSTANCE-SUBSTRING-USERFACING]
+            if (result.Success && !string.IsNullOrEmpty(result.InstanceAddr) && InvokePickText.IsPinnable(result.InstancePick))
                 _stickyInstance[entry.ClassName] = new Pin(result.InstanceAddr, result.InstanceClassAddr);
 
             var resultText = result.Success
@@ -575,11 +576,11 @@ public partial class ConsoleViewModel : ViewModelBase
             // Surface which instance the call landed on, and whether it was a
             // pinned reuse / a self-heal re-resolve, so the user can tell a
             // toggle is hitting one stable object across on/off cycles.
-            var pinNote = !string.IsNullOrEmpty(result.InstanceAddr)
+            var pinNote = (!string.IsNullOrEmpty(result.InstanceAddr)
                 ? (reResolved ? $" (re-resolved {result.InstanceAddr})"
                    : usedPin  ? $" (pinned {result.InstanceAddr})"
                               : $" (instance {result.InstanceAddr})")
-                : "";
+                : "") + InvokePickText.Note(result.InstancePick, result.InstanceName, result.InstanceClassName);
 
             StatusText = result.Success
                 ? $"✓ {entry.FuncName}: {resultText}{pinNote}"
@@ -587,7 +588,8 @@ public partial class ConsoleViewModel : ViewModelBase
 
             _log.Info($"Console.Run: {entry.ClassName}::{entry.FuncName} → " +
                       $"success={result.Success}, code={result.Result}, " +
-                      $"instance={result.InstanceAddr}, usedPin={usedPin}, " +
+                      $"instance={result.InstanceAddr} ({result.InstanceName}, pick={result.InstancePick}), " +
+                      $"usedPin={usedPin}, " +
                       $"reResolved={reResolved}");
         }
         catch (Exception ex)

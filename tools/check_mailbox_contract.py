@@ -52,8 +52,9 @@ WHEN IT FIRES, YOU HAVE EXACTLY TWO CHOICES
   * The change is ADDITIVE (a new Cmd, a new op at an unused number, a new knobId):
     bump MAILBOX_CONTRACT and CeMailboxLayout.ContractVersion. Leave the MIN alone —
     old scripts never referenced the new thing, so they stay valid.
-  * The change BREAKS older scripts (a moved field, a renumbered op, changed semantics):
+  * The change BREAKS older scripts (a moved field, a renumbered op, a meaning an older script relied on):
     bump MAILBOX_CONTRACT, CeMailboxLayout.ContractVersion **and** MAILBOX_CONTRACT_MIN.
+    A meaning change that refuses no saved script is the first kind (Mimic.h's "WHAT IS NOT", version 6).
   Then update GOLDEN below to the printed hash.
 
 Usage:
@@ -110,7 +111,13 @@ import sys
 # send it or read its output, and no field moved -- so MAILBOX_CONTRACT_MIN stays at 1 and every saved .CT keeps
 # working. The command answers "were the DynOff offsets measured?", which CE Lua could not ask before while
 # ue5_dissect.lua built structures from those offsets.
-GOLDEN_VERSION = 5
+# NOTE on version 6 ([FINDINSTANCE-SUBSTRING-USERFACING]): the version moved and the HASH did not, as for versions 2
+# and 4. CMD_FIND_INSTANCE's className now picks by derivation (the first live object of the class or a subclass, the
+# Debug Camera's last, else the class's own default object) where it matched a class-name substring -- a change of
+# MEANING, which no field, offset or enum value this script hashes can show. MAILBOX_CONTRACT_MIN stays 1: no saved
+# script is refused, and the ones that relied on an unrelated class's object fail visibly (Mimic.h's version-6 entry
+# says which). The bump is there so a script generated now refuses a DLL that would still guess.
+GOLDEN_VERSION = 6
 GOLDEN_HASH = "f6738c50c61a4d9b4677c58a16121b3a3ac95d3f99518a1508edc4ec6794470a"
 
 MIMIC_H = os.path.join("dll", "src", "Mimic.h")
@@ -443,7 +450,7 @@ def main():
                   "  you just moved. Decide which kind of change this is:\n"
                   "    additive (new Cmd / new op at an unused number / new knobId)\n"
                   "      -> bump MAILBOX_CONTRACT + CeMailboxLayout.ContractVersion only\n"
-                  "    breaking (moved field / renumbered op / changed meaning)\n"
+                  "    breaking (moved field / renumbered op / a meaning an older script relied on)\n"
                   "      -> ALSO bump MAILBOX_CONTRACT_MIN\n"
                   "  then re-run with --update and paste the new golden pair.")
         else:

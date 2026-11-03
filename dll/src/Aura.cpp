@@ -1964,98 +1964,171 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
     return rset;
 }
 
-uintptr_t FindLiveOrDefaultOf(const std::string& className) {
-    return FindLiveOrDefaultOf(className, std::string());
+// [FINDINSTANCE-SUBSTRING-USERFACING] The one walk behind FindLiveOrDefaultOf and ResolveUserInstance -- two copies
+// of it drifted before (Mimic's "reuse existing logic" twin). What the two lookups do with an object that a class named
+// `skipOuterOf` is, or owns, is their real difference: a STATE read must never take it, so FindLiveOrDefaultOf drops
+// it; a user's invoke takes it before a class-default object, which has no owner to act through, so
+// ResolveUserInstance ranks it last among the live ones.
+namespace {
+struct InstanceWalk {
+    const char* who;           // the log line's name
+    std::string skipOuterOf;   // "" = none
+    bool keepSkipped;          // rank a skipped object last instead of dropping it
+    bool partialFallback;      // a name no deriving object answers to is matched as part of a class name
+};
 }
 
-uintptr_t FindLiveOrDefaultOf(const std::string& className, const std::string& skipOuterOf) {
+static std::string LowerAscii(std::string s) {
+    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+static UserInstance WalkForInstance(const std::string& className, const InstanceWalk& how) {
     // [SEETHRU-PROBE-SUBSTRING] One walk, derivation-gated -- the contract is in Aura.h. The CDO fallback is picked up
     // DURING the walk rather than by a second scan: a function library has no live instance, so the walk always runs
-    // to the end for one, and a second pass would double what the substring scan it replaces cost.
-    if (className.empty()) return 0;
-    std::string lowerQuery = className;
-    for (auto& c : lowerQuery) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    std::string lowerSkip = skipOuterOf;
-    for (auto& c : lowerSkip) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    // to the end for one, and a second pass would double the cost.
+    UserInstance r;
+    if (className.empty()) return r;
+    const std::string lowerQuery = LowerAscii(className);
+    const std::string lowerSkip  = LowerAscii(how.skipOuterOf);
 
-    std::unordered_map<uintptr_t, bool> derivedCache;   // per UClass, as in FindInstancesDerivedFrom
-    std::unordered_map<uintptr_t, bool> skipCache;      // per outer UClass
-    uintptr_t cdo = 0;
+    // Per distinct UClass, one super-chain walk (bounded like ClassChainMatchesLower): does it derive from the query,
+    // and was a class named `skipOuterOf` met strictly BEFORE the query's own level -- an object that IS such a class,
+    // reached through a base (PlayerController, Actor). Naming that class itself meets the query first.
+    struct Verdict { bool derives = false; bool viaSkip = false; };
+    std::unordered_map<uintptr_t, Verdict> verdicts;
+    auto verdictOf = [&](uintptr_t cls) {
+        auto it = verdicts.find(cls);
+        if (it != verdicts.end()) return it->second;
+        Verdict v;
+        bool metSkip = false;
+        uintptr_t c = cls;
+        for (int guard = 0; c && guard < 64; ++guard) {
+            const std::string n = LowerAscii(Ubel::GetName(c));
+            if (n == lowerQuery) { v.derives = true; v.viaSkip = metSkip; break; }
+            if (!lowerSkip.empty() && n == lowerSkip) metSkip = true;
+            uintptr_t super = 0;
+            if (!Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super) || !super || super == c)
+                break;
+            c = super;
+        }
+        verdicts.emplace(cls, v);
+        return v;
+    };
+    // Owned: some object up the outer chain is of a class deriving from `skipOuterOf`. The whole chain, not the
+    // immediate outer: a CheatManager's extension sits two hops below the Debug Camera controller.
+    std::unordered_map<uintptr_t, bool> skipClasses;   // per outer UClass
+    auto ownedBySkip = [&](uintptr_t obj) {
+        uintptr_t o = obj;
+        for (int hop = 0; hop < Grimoire::AURA_USERPICK_MAX_OUTER_HOPS; ++hop) {
+            uintptr_t outer = 0, outerCls = 0;
+            if (!Macht::ReadSafe(o + DynOff::UOBJECT_OUTER, outer) || !outer || outer == o) return false;
+            if (!Macht::ReadSafe(outer + Grimoire::OFF_UOBJECT_CLASS, outerCls) || !outerCls) return false;
+            auto sk = skipClasses.find(outerCls);
+            const bool hit = sk != skipClasses.end()
+                ? sk->second : skipClasses.emplace(outerCls, ClassChainMatchesLower(outerCls, lowerSkip)).first->second;
+            if (hit) return true;
+            o = outer;
+        }
+        return false;
+    };
+    std::unordered_map<uintptr_t, bool> partialClasses;   // per UClass: its own name contains the query
+
+    uintptr_t cdo = 0, cdoCls = 0, skipped = 0, skippedCls = 0;
+    uintptr_t partialFirst = 0, partialFirstCls = 0, partialLive = 0, partialLiveCls = 0;
+    // "A class has that name" is approximated by "an object of that class or a subclass exists": a loaded class with
+    // no instance and no default object in GObjects falls to the partial-name match.
+    bool namedSeen = false;
     const int32_t count = GetCount();
+    r.scanned = count;
     for (int32_t i = 0; i < count; ++i) {
         if ((i & 0xFFF) == 0 && Tot::Requested()) {
-            Sein::Warn("PIPE:find", "FindLiveOrDefaultOf '%s': aborted at %d/%d -- returning nothing",
-                       className.c_str(), i, count);
-            return 0;
+            Sein::Warn("PIPE:find", "%s '%s': aborted at %d/%d -- returning nothing", how.who, className.c_str(), i,
+                       count);
+            r.pick = UserPick::Cancelled;   // obj stays 0: a live instance may sit past where it stopped
+            return r;
         }
         const uintptr_t obj = GetByIndex(i);
         if (!obj) continue;
         uintptr_t cls = 0;
         if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
 
-        bool isDerived;
-        auto it = derivedCache.find(cls);
-        if (it != derivedCache.end()) {
-            isDerived = it->second;
-        } else {
-            isDerived = ClassChainMatchesLower(cls, lowerQuery);
-            derivedCache.emplace(cls, isDerived);
+        const Verdict v = verdictOf(cls);
+        if (!v.derives) {
+            if (!how.partialFallback || namedSeen) continue;
+            auto pc = partialClasses.find(cls);
+            const bool partial = pc != partialClasses.end() ? pc->second
+                : partialClasses.emplace(cls, LowerAscii(Ubel::GetName(cls)).find(lowerQuery) != std::string::npos)
+                      .first->second;
+            if (!partial) continue;
         }
-        if (!isDerived) continue;
 
         uint32_t nameIdx = 0;
         if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx)) continue;
         const std::string objName = Serie::GetString(nameIdx);
         if (objName.empty()) continue;
+        const bool isCdo = objName.rfind("Default__", 0) == 0;
 
-        if (objName.rfind("Default__", 0) == 0) {
-            // A subclass's CDO derives too; only the named class's own default object may stand in.
-            if (!cdo) {
-                std::string clsName = Ubel::GetName(cls);
-                for (auto& c : clsName) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                if (clsName == lowerQuery) cdo = obj;
-            }
+        if (!v.derives) {   // the partial-name rule the user-facing lookups always had: the first non-CDO, else the first
+            if (!partialFirst) { partialFirst = obj; partialFirstCls = cls; }
+            if (!isCdo && !partialLive) { partialLive = obj; partialLiveCls = cls; }
             continue;
         }
-        if (!lowerSkip.empty()) {
-            uintptr_t outer = 0, outerCls = 0;
-            if (Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, outer) && outer &&
-                Macht::ReadSafe(outer + Grimoire::OFF_UOBJECT_CLASS, outerCls) && outerCls) {
-                auto sk = skipCache.find(outerCls);
-                const bool skip = sk != skipCache.end()
-                    ? sk->second : skipCache.emplace(outerCls, ClassChainMatchesLower(outerCls, lowerSkip)).first->second;
-                if (skip) {
-                    Sein::Info("PIPE:find", "FindLiveOrDefaultOf '%s': skipped 0x%llX (%s) -- its outer is a %s",
-                               className.c_str(), static_cast<unsigned long long>(obj), objName.c_str(),
-                               skipOuterOf.c_str());
-                    continue;
-                }
-            }
+        namedSeen = true;
+        if (isCdo) {
+            // A subclass's CDO derives too; only the named class's own default object may stand in.
+            if (!cdo && LowerAscii(Ubel::GetName(cls)) == lowerQuery) { cdo = obj; cdoCls = cls; }
+            continue;
         }
-        Sein::Info("PIPE:find", "FindLiveOrDefaultOf '%s' -> 0x%llX (%s, class %s)", className.c_str(),
+        if (!lowerSkip.empty() && (v.viaSkip || ownedBySkip(obj))) {
+            Sein::Info("PIPE:find", "%s '%s': passed over 0x%llX (%s) -- it is or belongs to a %s", how.who,
+                       className.c_str(), static_cast<unsigned long long>(obj), objName.c_str(),
+                       how.skipOuterOf.c_str());
+            if (how.keepSkipped && !skipped) { skipped = obj; skippedCls = cls; }
+            continue;
+        }
+        Sein::Info("PIPE:find", "%s '%s' -> 0x%llX (%s, class %s)", how.who, className.c_str(),
                    static_cast<unsigned long long>(obj), objName.c_str(), Ubel::GetName(cls).c_str());
-        return obj;
+        r.obj = obj; r.cls = cls; r.pick = UserPick::Live;
+        return r;
     }
-    if (cdo)
-        Sein::Warn("PIPE:find", "FindLiveOrDefaultOf '%s' -> only its CDO: 0x%llX", className.c_str(),
+
+    if (skipped) {
+        r.obj = skipped; r.cls = skippedCls; r.pick = UserPick::DebugCameraOwned;
+        Sein::Warn("PIPE:find", "%s '%s' -> 0x%llX (%s): only objects of or owned by a %s were live", how.who,
+                   className.c_str(), static_cast<unsigned long long>(skipped), Ubel::GetName(skipped).c_str(),
+                   how.skipOuterOf.c_str());
+    } else if (cdo) {
+        r.obj = cdo; r.cls = cdoCls; r.pick = UserPick::ClassDefault;
+        Sein::Warn("PIPE:find", "%s '%s' -> only its CDO: 0x%llX", how.who, className.c_str(),
                    static_cast<unsigned long long>(cdo));
-    else
-        Sein::Warn("PIPE:find", "FindLiveOrDefaultOf '%s' -> not found (scanned=%d)", className.c_str(), count);
-    return cdo;
+    } else if (namedSeen) {
+        Sein::Warn("PIPE:find", "%s '%s' -> objects of a subclass exist, but none live and no default object of its own",
+                   how.who, className.c_str());
+    } else if (partialLive || partialFirst) {
+        r.obj = partialLive ? partialLive : partialFirst;
+        r.cls = partialLive ? partialLiveCls : partialFirstCls;
+        r.pick = partialLive ? UserPick::PartialLive : UserPick::PartialDefault;
+        Sein::Warn("PIPE:find", "%s '%s' -> no class of that name has objects; matched as part of a class name: 0x%llX "
+                   "(%s, class %s)", how.who, className.c_str(), static_cast<unsigned long long>(r.obj),
+                   Ubel::GetName(r.obj).c_str(), Ubel::GetName(r.cls).c_str());
+    } else {
+        Sein::Warn("PIPE:find", "%s '%s' -> not found (scanned=%d)", how.who, className.c_str(), count);
+    }
+    return r;
+}
+
+uintptr_t FindLiveOrDefaultOf(const std::string& className) {
+    return FindLiveOrDefaultOf(className, std::string());
+}
+
+uintptr_t FindLiveOrDefaultOf(const std::string& className, const std::string& skipOuterOf) {
+    return WalkForInstance(className, InstanceWalk{ "FindLiveOrDefaultOf", skipOuterOf, false, false }).obj;
 }
 
 UserInstance ResolveUserInstance(const std::string& className) {
-    // Red stub: today's pick (a class-name substring, first non-CDO, else the first match).
-    UserInstance r;
-    if (className.empty()) return r;
-    auto rset = FindInstancesByClass(className, false, 100);
-    r.scanned = rset.scanned;
-    for (const auto& x : rset.results)
-        if (x.addr && x.name.find("Default__") == std::string::npos) { r.obj = x.addr; r.cls = x.classAddr; r.pick = UserPick::Live; return r; }
-    if (!rset.results.empty() && rset.results[0].addr) {
-        r.obj = rset.results[0].addr; r.cls = rset.results[0].classAddr; r.pick = UserPick::ClassDefault;
-    }
-    return r;
+    return WalkForInstance(className,
+                           InstanceWalk{ "ResolveUserInstance", Grimoire::AURA_USERPICK_DCC_CLASS, true, true });
 }
 
 uintptr_t FindClassByPath(const std::string& classPath) {

@@ -389,12 +389,15 @@ inline std::string InstanceNotFoundText(const std::string& className) {
     return "No instance found for class: " + className;
 }
 inline std::string InstanceLookupCancelledText(const std::string& className) {
-    return "No instance found for class: " + className;
+    return "Instance lookup for class " + className
+         + " was cut short (the command was cancelled, or the DLL is shutting down) -- nothing was invoked";
 }
 inline std::string FunctionNotFoundText(const std::string& funcName, const std::string& objName,
                                         const std::string& className) {
-    (void)objName; (void)className;
-    return "Function not found: " + funcName;
+    std::string s = "Function not found: " + funcName;
+    if (!objName.empty()) s += " on " + objName;
+    if (!className.empty()) s += " (class " + className + ")";
+    return s;
 }
 
 // Build an error response

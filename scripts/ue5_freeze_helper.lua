@@ -490,9 +490,11 @@ end
 -- (FreezeHelper_BakesTheSameContractVersionAsTheGenerator).
 -- 5: CMD_OFFSETS_VERDICT ([W5-OFFSETS-MAILBOX]) -- "were the DynOff offsets measured?". This helper does
 -- not send it either, and bakes it for the same reason as 4.
--- ⚠ Baking 5 means this helper REFUSES a contract-4 DLL ("update UE5Dumper.dll"). That is what the pin
+-- 6: CMD_FIND_INSTANCE picks by derivation ([FINDINSTANCE-SUBSTRING-USERFACING]). Not used here either; baked
+-- for the same reason as 4.
+-- ⚠ Baking 6 means this helper REFUSES a contract-5 DLL ("update UE5Dumper.dll"). That is what the pin
 -- above encodes: the helper and the generator ship together, so they claim ONE contract.
-local UE5_SCRIPT_CONTRACT = 5
+local UE5_SCRIPT_CONTRACT = 6
 
 -- Returns true, or false + a message. Call BEFORE writing to the mailbox: if the
 -- layout moved, writing first scribbles on whatever now lives at those offsets.

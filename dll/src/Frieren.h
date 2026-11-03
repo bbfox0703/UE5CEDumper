@@ -104,7 +104,9 @@ __declspec(dllexport) uintptr_t UE5_GetFieldPropertyClass(uintptr_t fieldAddr);
 __declspec(dllexport) int32_t   UE5_GetClassPropsSize(uintptr_t classAddr);
 
 // === UFunction Invocation ===
-// Find first non-CDO instance of a class by name. Returns UObject* address or 0.
+// An object of the class named `className`: the first live one of it or a subclass (one a Debug Camera controller is
+// or owns only when no other is live), else that class's own default object; a name no class has is matched as part
+// of a class name. Returns the UObject* address, or 0 when nothing is usable or the lookup was cut short.
 __declspec(dllexport) uintptr_t UE5_FindInstanceOfClass(const char* className);
 
 // Find a UFunction by name on a UClass. Returns UFunction* address or 0.

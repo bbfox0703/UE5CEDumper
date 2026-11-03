@@ -1887,7 +1887,12 @@ state-changing operations but works for simple getters).
   "cmd": "invoke_function",
   "func_name": "Attack",           // required
   "instance_addr": "0x7FF6AA000",  // optional (one of instance_addr / class_name required)
-  "class_name": "BP_Player_C",     // optional
+  "class_name": "BP_Player_C",     // optional: the first LIVE object of this class or a subclass
+                                   // (one a Debug Camera controller is or owns only when no other
+                                   // is live), else this class's own default object; a name no
+                                   // class has is matched as part of a class name. Case-insensitive.
+                                   // The same resolver as UE5_FindInstanceOfClass and the
+                                   // mailbox's FIND_INSTANCE. [FINDINSTANCE-SUBSTRING-USERFACING]
   "parms_size": 16,                // optional -- the DLL reads UFunction::ParmsSize
                                    // itself and uses the LARGER of the two. Omitting it
                                    // is safe as of build 3350; before that it defaulted
@@ -1924,11 +1929,23 @@ state-changing operations but works for simple getters).
   "instance_class_addr": "0x7FF6CC00", // the class pointer read at instance_addr (from build
                                    // 3671; on every reply that has instance_addr). A caller that
                                    // keeps the address sends it back as expect_class_addr.
+  "instance_pick": "live",         // how the object was chosen (from build 3675; on every reply
+                                   // that has instance_addr): "address" (the caller sent one),
+                                   // "live", "debug_camera_owned", "class_default", "partial_name",
+                                   // "partial_name_default". The Console pins only "live" / "address".
+  "instance_name": "CheatManager_0",       // the object's and its class's names, read before
+  "instance_class_name": "CheatManager",   // the call (which may destroy the object)
   "func_addr": "0x7FF123ABC",
   "parms_size": 16,
   "result_hex": "3F80000000000000...",  // post-call buffer (out-params)
   "message": "ProcessEvent OK"
 }
+
+// Errors before anything is invoked (ok:false), for a class_name lookup:
+//   "No instance found for class: X"          -- nothing usable (the UI's Self-Test matches this opening)
+//   "Instance lookup for class X was cut short (...) -- nothing was invoked"
+//                                             -- cancelled or shutting down; NOT "no instance"
+//   "Function not found: F on OBJ (class C)"  -- names what the class name resolved to
 
 // Response (ProcessEvent error)
 {

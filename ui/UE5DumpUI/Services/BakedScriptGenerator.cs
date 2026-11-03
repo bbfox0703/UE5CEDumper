@@ -116,8 +116,9 @@ public static class BakedScriptGenerator
     /// baked parameter values.
     /// </summary>
     /// <param name="className">UClass name (e.g. "PlayerCharacter"). The
-    ///     helper's CMD_INVOKE_BY_NAME path will <c>findInstance</c> live
-    ///     non-CDO objects matching this name.</param>
+    ///     helper's CMD_INVOKE_BY_NAME path takes a live object of the class
+    ///     so named or of a subclass, else its own default object; a name no
+    ///     class has is matched as part of a class name.</param>
     /// <param name="funcName">UFunction name (e.g. "AddMoney").</param>
     /// <param name="parmsSize">Total size of the function's params buffer
     ///     in bytes. The helper zero-fills this range before writing baked

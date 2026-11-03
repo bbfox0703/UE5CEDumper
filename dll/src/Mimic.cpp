@@ -532,34 +532,20 @@ static void HandleFindInstance() {
 
     LOG_INFO("Mailbox: FIND_INSTANCE class='%s'", className);
 
-    // Reuse existing logic from UE5_FindInstanceOfClass
-    auto rset = Aura::FindInstancesByClass(className, false, 100);
-
-    // Prefer non-CDO instance
-    uintptr_t found = 0;
-    for (const auto& r : rset.results) {
-        if (r.addr && r.name.find("Default__") == std::string::npos) {
-            found = r.addr;
-            break;
-        }
-    }
-
-    // Fallback: first result even if CDO
-    if (!found && !rset.results.empty() && rset.results[0].addr) {
-        found = rset.results[0].addr;
-        LOG_WARN("Mailbox: FIND_INSTANCE only CDO found for '%s'", className);
-    }
-
-    if (found) {
-        g_invokeMailbox.instanceAddr = found;
-        LOG_INFO("Mailbox: FIND_INSTANCE '%s' -> 0x%llX",
-                 className, (unsigned long long)found);
+    // [FINDINSTANCE-SUBSTRING-USERFACING] The resolver the C ABI and the pipe share (Aura.h); its rule is contract 6.
+    const Aura::UserInstance found = Aura::ResolveUserInstance(className);
+    g_invokeMailbox.instanceAddr = found.obj;
+    char msg[256];
+    if (found.pick == Aura::UserPick::Cancelled) {
+        // This thread is cancel-immune (Tot::MarkCancelImmune), so only a shutdown cuts the walk short.
+        snprintf(msg, sizeof(msg), "Instance lookup for '%s' was cut short: the DLL is shutting down", className);
+        SetError(-2, msg);
+    } else if (found.obj) {
+        LOG_INFO("Mailbox: FIND_INSTANCE '%s' -> 0x%llX (%s)", className, (unsigned long long)found.obj,
+                 Aura::UserPickWire(found.pick));
         SetDone(0);
     } else {
-        g_invokeMailbox.instanceAddr = 0;
-        char msg[256];
-        snprintf(msg, sizeof(msg), "No instance of '%s' found (scanned=%d)",
-                 className, rset.scanned);
+        snprintf(msg, sizeof(msg), "No instance of '%s' found (scanned=%d)", className, found.scanned);
         SetError(-2, msg);
     }
 }
@@ -868,19 +854,16 @@ static void HandleListFunctions() {
 
         LOG_INFO("Mailbox: LIST_FUNCTIONS finding instance of '%s'...", className);
 
-        auto rset = Aura::FindInstancesByClass(className, false, 100);
-        for (const auto& r : rset.results) {
-            if (r.addr && r.name.find("Default__") == std::string::npos) {
-                instanceAddr = r.addr;
-                break;
-            }
-        }
-        if (!instanceAddr && !rset.results.empty() && rset.results[0].addr) {
-            instanceAddr = rset.results[0].addr;
-        }
+        // [FINDINSTANCE-SUBSTRING-USERFACING] FIND_INSTANCE's resolver. The list is the picked object's class's own
+        // functions, so a base-class name lists the subclass the pick landed on.
+        const Aura::UserInstance found = Aura::ResolveUserInstance(className);
+        instanceAddr = found.obj;
         if (!instanceAddr) {
             char msg[256];
-            snprintf(msg, sizeof(msg), "No instance of '%s' found", className);
+            if (found.pick == Aura::UserPick::Cancelled)
+                snprintf(msg, sizeof(msg), "Instance lookup for '%s' was cut short: the DLL is shutting down", className);
+            else
+                snprintf(msg, sizeof(msg), "No instance of '%s' found", className);
             SetError(-2, msg);
             return;
         }

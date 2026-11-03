@@ -559,6 +559,11 @@ extern "C" {
     __declspec(dllexport) int32_t   UE5_GetClassPropsSize(uintptr_t classAddr);
 
     // === UFunction Invocation (3) ===
+    // The first live object of className or a subclass (one a Debug Camera controller is or owns only
+    // when no other is live), else that class's own default object; a name no class has is matched as
+    // part of a class name. 0 = nothing usable, or a lookup cut short. The same resolver
+    // (Aura::ResolveUserInstance) as the pipe's invoke_function class_name and the mailbox's
+    // FIND_INSTANCE. [FINDINSTANCE-SUBSTRING-USERFACING]
     __declspec(dllexport) uintptr_t UE5_FindInstanceOfClass(const char* className);
     __declspec(dllexport) uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName);
     __declspec(dllexport) int32_t   UE5_CallProcessEvent(uintptr_t instance, uintptr_t func,

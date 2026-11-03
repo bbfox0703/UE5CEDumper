@@ -2688,8 +2688,9 @@ public class InvokeScriptTests
         Assert.Contains("SCHLACHT_ACTOR_CLASS_PATH = \"/Script/Engine.Actor\"", grimoire, StringComparison.Ordinal);
         Assert.Contains("SCHLACHT_KSL_CLASS_PATH   = \"/Script/Engine.KismetSystemLibrary\"", grimoire, StringComparison.Ordinal);
 
-        // No internal caller left on the substring lookup. Frieren keeps exactly ONE occurrence: the definition, which
-        // stays substring because the C ABI, the pipe's invoke_function and the mailbox's FIND_INSTANCE twin are user-facing.
+        // No internal caller left on the user-facing lookup. Frieren keeps exactly ONE occurrence: the definition, which
+        // ranks the Debug Camera's objects last where an internal state read must never take them
+        // (UserFacingClassLookups_AllResolveThroughOneDerivationResolver pins what it resolves through).
         Assert.Equal(0, Count(schlacht, "UE5_FindInstanceOfClass("));
         Assert.Equal(0, Count(CodeOnly(DllSource("Wirbel.cpp")), "UE5_FindInstanceOfClass("));
         var frieren = CodeOnly(DllSource("Frieren.cpp"));

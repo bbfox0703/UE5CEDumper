@@ -1155,36 +1155,14 @@ int32_t UE5_GetClassPropsSize(uintptr_t classAddr) {
 
 // === UFunction Invocation ===
 
-// ⚠ A class-name SUBSTRING match (Aura::FindInstancesByClass, exactMatch=false) that falls back to the FIRST matching
-// CDO -- not "an instance of this class". Kept as-is because it is USER-facing: the C ABI, the pipe's
-// `invoke_function class_name`, and the mailbox's FIND_INSTANCE twin in Mimic.cpp. ⛔ Internal callers use
-// Aura::FindLiveOrDefaultOf (derivation-gated) or Aura::FindClassByPath: "Actor" through THIS answered
-// Default__ActorChannel on UE 5.4 Shipping and See-through refused a build that can hide. [SEETHRU-PROBE-SUBSTRING]
+// The user-facing "an instance of class X": Aura::ResolveUserInstance, the one resolver the pipe's invoke_function
+// class_name and the mailbox's FIND_INSTANCE share (its rule is in Aura.h; it logs the pick under PIPE:find). It used
+// to match a class-name SUBSTRING and take the first non-CDO match, else the first match, so "CheatManager" landed on a
+// cheat extension or the Debug Camera's own CheatManager. [FINDINSTANCE-SUBSTRING-USERFACING] Internal callers keep
+// Aura::FindLiveOrDefaultOf or Aura::FindClassByPath: a state read must never take the Debug Camera's object at all.
 uintptr_t UE5_FindInstanceOfClass(const char* className) {
     if (!className || !className[0]) return 0;
-
-    auto rset = Aura::FindInstancesByClass(className, false, 100);
-
-    // Prefer non-CDO instance
-    for (const auto& r : rset.results) {
-        if (r.addr && r.name.find("Default__") == std::string::npos) {
-            LOG_INFO("UE5_FindInstanceOfClass: '%s' -> 0x%llX (%s)",
-                     className, (unsigned long long)r.addr, r.name.c_str());
-            return r.addr;
-        }
-    }
-
-    // Fallback: return first result even if CDO
-    if (!rset.results.empty() && rset.results[0].addr) {
-        LOG_WARN("UE5_FindInstanceOfClass: '%s' -> only CDO: 0x%llX (%s)",
-                 className, (unsigned long long)rset.results[0].addr,
-                 rset.results[0].name.c_str());
-        return rset.results[0].addr;
-    }
-
-    LOG_WARN("UE5_FindInstanceOfClass: '%s' -> not found (scanned=%d)",
-             className, rset.scanned);
-    return 0;
+    return Aura::ResolveUserInstance(className).obj;   // 0 = nothing usable, or a lookup cut short
 }
 
 // Adapters for Ubel::ResolveFunctionInChain — the live-memory half the header's
@@ -1298,10 +1276,11 @@ static bool DbgCam_WritePtr(uintptr_t obj, int off, uintptr_t val) {
 // Returns 1=ON, 0=OFF, -1=unknown. Outputs the CheatManager + DCC for reuse.
 static int DbgCam_ReadState(uintptr_t& outCm, uintptr_t& outDcc) {
     outCm = 0; outDcc = 0;
-    // Derivation-gated, never the class-name substring UE5_FindInstanceOfClass matches: the stock engine has
-    // UCheatManagerExtension (4.27+) and GAS's UAbilitySystemCheatManagerExtension, which contain "CheatManager" and
-    // are no UCheatManager -- a live extension at a lower GObjects index, or the extension's CDO when no CheatManager
-    // is live, was taken over the real one. Same for UDebugCameraControllerSettings (4.23+) in the DCC fallback
+    // Derivation-gated, never a class-name substring: the stock engine has UCheatManagerExtension (4.27+) and GAS's
+    // UAbilitySystemCheatManagerExtension, which contain "CheatManager" and are no UCheatManager -- a live extension at
+    // a lower GObjects index, or the extension's CDO when no CheatManager is live, was taken over the real one.
+    // FindLiveOrDefaultOf, not the user-facing ResolveUserInstance: a STATE read must never take the Debug Camera's
+    // own CheatManager, where an invoke takes it when nothing else is live. Same for UDebugCameraControllerSettings (4.23+) in the DCC fallback
     // below: when its CDO sat first, it has no OriginalControllerRef, so the state read -1 and a Force ON refused
     // (read from the code; L83's 5.4 fixture met the DCC's own CDO first). [SEETHRU-PROBE-SUBSTRING]
     // [DBGCAM-58-REENABLE] Never the Debug Camera's own: its DCC carries a CheatManager too (AddCheats forces one in
@@ -1321,7 +1300,7 @@ static int DbgCam_ReadState(uintptr_t& outCm, uintptr_t& outDcc) {
     }
     // Fallback: DebugCameraControllerRef can be null even with the camera live —
     // some titles don't populate it (DQIII HD-2D), or there are several
-    // CheatManagers and FindInstanceOfClass picked the wrong one. Find the DCC by
+    // CheatManagers and the one above is not the one that spawned it. Find the DCC by
     // instance scan; its OriginalControllerRef is the authoritative active flag.
     if (!dcc) {
         dcc = Aura::FindLiveOrDefaultOf("DebugCameraController");

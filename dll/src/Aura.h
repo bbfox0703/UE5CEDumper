@@ -115,13 +115,13 @@ uintptr_t FindClassByPath(const std::string& classPath);
 // The first LIVE instance of the class named `className` or of any class derived from it; failing that,
 // the class-default object of THAT class; else 0. Case-insensitive, like FindInstancesByClass.
 //
-// ⚠ This is what `UE5_FindInstanceOfClass` was assumed to be, and is not: that export (and the pipe's
-// `invoke_function class_name` and the mailbox's FIND_INSTANCE, which share its shape) gates on a class
-// name SUBSTRING and falls back to the FIRST matching CDO. On a UE 5.4 Shipping build "Actor" answered
+// ⚠ Internal callers use THIS, never the user-facing ResolveUserInstance below. The user-facing lookups once matched
+// a class-name SUBSTRING and fell back to the FIRST matching CDO: on a UE 5.4 Shipping build "Actor" answered
 // Default__ActorChannel -- a UChannel -- and See-through refused a build that has SetActorHiddenInGame
-// [SEETHRU-PROBE-SUBSTRING]. The stock engine has the same trap for two more internal lookups:
-// UCheatManagerExtension / UAbilitySystemCheatManagerExtension contain "CheatManager", and
-// UDebugCameraControllerSettings contains "DebugCameraController". Internal callers use THIS.
+// [SEETHRU-PROBE-SUBSTRING]. The stock engine has the same trap for two more lookups: UCheatManagerExtension /
+// UAbilitySystemCheatManagerExtension contain "CheatManager", and UDebugCameraControllerSettings contains
+// "DebugCameraController". ResolveUserInstance now shares this walk, but a user's invoke may take the Debug Camera's
+// own object when nothing else is live, which an internal STATE read must never do.
 //
 // Derivation is the super-chain walk FindInstancesDerivedFrom uses. The CDO fallback is the named class's
 // OWN default object, never a subclass's: a function library (KismetSystemLibrary, WidgetBlueprintLibrary)
@@ -129,7 +129,9 @@ uintptr_t FindClassByPath(const std::string& classPath);
 // returns 0, not a CDO it met on the way: a live instance may sit past where it stopped.
 uintptr_t FindLiveOrDefaultOf(const std::string& className);
 
-// The same pick, skipping a live instance whose OUTER derives from `skipOuterOf`. [DBGCAM-58-REENABLE] A Debug
+// The same pick, skipping a live instance that IS of a class deriving from `skipOuterOf` (reached through a base of
+// it) or that one owns -- some object up its outer chain derives from it. A skipped object is dropped, never handed
+// back: with only such objects live, the class's own default object stands in. [DBGCAM-58-REENABLE] A Debug
 // Camera controller gets a CheatManager of its own (ADebugCameraController::AddCheats forces one in non-Shipping
 // builds), and once GObjects slot reuse puts it below the player's, the plain pick lands on it -- where, on UE 5.8,
 // ToggleDebugCamera can never enable the camera again (FDebugCameraManager::EnableDebugCamera needs the controller's
@@ -158,8 +160,14 @@ UserInstance ResolveUserInstance(const std::string& className);
 
 // The pick's name on the pipe (invoke_function's instance_pick); "" for None and Cancelled, which never reach a reply.
 constexpr const char* UserPickWire(UserPick p) {
-    (void)p;
-    return "";
+    switch (p) {
+        case UserPick::Live:             return "live";
+        case UserPick::DebugCameraOwned: return "debug_camera_owned";
+        case UserPick::ClassDefault:     return "class_default";
+        case UserPick::PartialLive:      return "partial_name";
+        case UserPick::PartialDefault:   return "partial_name_default";
+        default:                         return "";
+    }
 }
 
 // Get the detected FUObjectItem stride in bytes (16 or 24)
