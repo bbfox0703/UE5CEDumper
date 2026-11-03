@@ -394,9 +394,16 @@ public partial class ConsoleViewModel : ViewModelBase
         await RunEntryAsync(row);
     }
 
-    /// <summary>[CONSOLE-ROWRUN-SELECTED] A row's own Run button.</summary>
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] A row's own Run button runs that row. A click on a button inside a DataGrid
+    /// cell does not select the row, so running the selection ran whatever row was selected before, or nothing. The
+    /// selection follows the row that ran, so the grid shows which one it was.</summary>
     [RelayCommand]
-    private Task RunRowAsync(AllFunctionEntry? entry) => RunSelectedAsync();
+    private async Task RunRowAsync(AllFunctionEntry? entry)
+    {
+        if (entry == null) return;
+        SelectedResult = entry;
+        await RunEntryAsync(entry);
+    }
 
     /// <summary>
     /// Run the command typed in the textbox. Resolves against the

@@ -229,7 +229,8 @@
             <DataTemplate x:DataType="m:AllFunctionEntry">
               <StackPanel Orientation="Horizontal" Spacing="4">
                 <Button Content="{StaticResource str.Con.RunRow}"
-                        Command="{Binding $parent[UserControl].((vm:ConsoleViewModel)DataContext).RunSelectedCommand}"
+                        Command="{Binding $parent[UserControl].((vm:ConsoleViewModel)DataContext).RunRowCommand}"
+                        CommandParameter="{Binding}"
                         ToolTip.Tip="{StaticResource str.Tip.Con.RunRow}"
                         Foreground="#4EC9B0" Background="Transparent"
                         BorderThickness="1" BorderBrush="#4EC9B0"
