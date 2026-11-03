@@ -3539,6 +3539,60 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void Recall_Force_Facing_AndTheUndoPoint_RefuseAParentRelativePose()
+    {
+        // [TELEPORT-RECALL-PARENTREL] Marker Recall and Force, TP facing direction and the undo slot each used a pose read
+        // from the parent-relative fallback as world coordinates. Wirbel.cpp reaches no test target, so this pins its
+        // source; dll_helpers_test pins RecallMarkerRefusal and StoresUndoPoint themselves.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found");
+            int end = src.IndexOf("\n}\n", at, StringComparison.Ordinal);
+            return src[at..end];
+        }
+        var wirbel = CodeOnly(DllSource("Wirbel.cpp"));
+
+        // Recall and Force: one refusal, outside the map check Force skips, before the undo point and the jump.
+        var recall = Body(wirbel, "int32_t RecallMarker(int32_t slot, bool force, uint8_t* tierOut) {");
+        int refusal = recall.IndexOf("RecallMarkerRefusal(m.Valid, m.ParentRelative, force,", StringComparison.Ordinal);
+        int undo = recall.IndexOf("SaveLastImpl();", StringComparison.Ordinal);
+        int jump = recall.IndexOf("RecallTo(", StringComparison.Ordinal);
+        Assert.True(refusal >= 0, "RecallMarker must ask RecallMarkerRefusal with the marker's own flag and the force bit");
+        Assert.True(undo > refusal && jump > undo, "the refusal must come before the undo point and the jump");
+        Assert.DoesNotContain("TP_ERR_MAP_MISMATCH;", recall);   // the map check's answer is RecallMarkerRefusal's now
+        Assert.Contains("LOG_WARN(\"Teleport: recall %d refused -- the marker came from a PARENT-RELATIVE read", recall,
+            StringComparison.Ordinal);
+
+        // The undo point keeps its previous pose rather than take a parent-relative one.
+        var last = Body(wirbel, "void SaveLastImpl() {");
+        Assert.Contains("StoresUndoPoint(", last, StringComparison.Ordinal);
+        Assert.Contains("&m.ParentRelative", last, StringComparison.Ordinal);
+
+        // TP facing direction: the start pose is read WITH its flag and refused before the undo point; a parent-relative
+        // landing re-read is reported as an unknown landing, never as numbers.
+        var rel = Body(wirbel, "int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose,");
+        int startRead = rel.IndexOf("GetPoseImpl(cur, nullptr, 0, nullptr, nullptr, &startParentRelative)", StringComparison.Ordinal);
+        int startRefusal = rel.IndexOf("if (startParentRelative)", StringComparison.Ordinal);
+        int relUndo = rel.IndexOf("SaveLastImpl();", StringComparison.Ordinal);
+        Assert.True(startRead >= 0, "TeleportRelative must read its start pose with the parent-relative flag");
+        Assert.True(startRefusal > startRead && relUndo > startRefusal,
+            "a parent-relative start must be refused before the undo point and the jump");
+        Assert.Contains("return TP_ERR_PARENT_RELATIVE;", rel, StringComparison.Ordinal);
+        Assert.Contains("&landingParentRelative", rel, StringComparison.Ordinal);
+        Assert.Contains("!landingParentRelative", rel, StringComparison.Ordinal);
+
+        // Control: the transports still pass Wirbel's code straight through.
+        var mimic = DllSource("Mimic.cpp");
+        Assert.Contains("rc = Wirbel::RecallMarker(slot, op == TP_OP_RECALL_FORCE, &tier);", mimic, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void TeleportTransports_PublishTheParentRelativeFlagAndNeverAZeroLanding()
     {
         // [W2-MARKER-PARENTREL] / [W2-TPREL-TRANSPORTS], the mailbox and C ABI halves. No test target compiles Mimic.cpp

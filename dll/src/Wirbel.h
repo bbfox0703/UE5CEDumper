@@ -41,6 +41,20 @@ constexpr int32_t BugItGoRefusal(bool stored, bool parentRelative) {
     return parentRelative ? TP_ERR_PARENT_RELATIVE : TP_OK;
 }
 
+// [TELEPORT-RECALL-PARENTREL] What a marker Recall or Force answers before anything moves.
+constexpr int32_t RecallMarkerRefusal(bool stored, bool parentRelative, bool force, bool sameMap) {
+    (void)parentRelative;
+    if (!stored) return TP_ERR_EMPTY_MARKER;
+    if (!force && !sameMap) return TP_ERR_MAP_MISMATCH;
+    return TP_OK;
+}
+
+// [TELEPORT-RECALL-PARENTREL] Whether the pose read just before a jump becomes the undo ("last") point.
+constexpr bool StoresUndoPoint(bool readOk, bool parentRelative) {
+    (void)parentRelative;
+    return readOk;
+}
+
 // Pose always crosses this layer as doubles regardless of engine width
 // (UE4 float FVector/FRotator values are widened at the read boundary).
 struct Pose {

@@ -1360,6 +1360,42 @@ static void Test_Wirbel_BugItGoRefusal() {
     static_assert(Wirbel::BugItGoRefusal(true, false) == Wirbel::TP_OK, "BugItGoRefusal must be constexpr-evaluable");
 }
 
+// [TELEPORT-RECALL-PARENTREL] Marker Recall and Force drove a marker saved from the parent-relative fallback into the
+// pawn as world coordinates. Force overrides the map check, which can be wrong; nothing makes relative numbers world
+// coordinates, so Force refuses them too.
+static void Test_Wirbel_RecallMarkerRefusal() {
+    using Wirbel::RecallMarkerRefusal;
+    EXPECT("RECALL-PARENTREL: Recall refuses a parent-relative marker",
+           RecallMarkerRefusal(true, true, false, true) == Wirbel::TP_ERR_PARENT_RELATIVE);
+    EXPECT("RECALL-PARENTREL: Force refuses it too",
+           RecallMarkerRefusal(true, true, true, true) == Wirbel::TP_ERR_PARENT_RELATIVE);
+    EXPECT("RECALL-PARENTREL: on another map it is -16, not -7 -- Force could not get past it, so it is not offered",
+           RecallMarkerRefusal(true, true, false, false) == Wirbel::TP_ERR_PARENT_RELATIVE
+           && RecallMarkerRefusal(true, true, true, false) == Wirbel::TP_ERR_PARENT_RELATIVE);
+    EXPECT("RECALL-PARENTREL control: a world-space marker on another map is -7, and Force gets past it",
+           RecallMarkerRefusal(true, false, false, false) == Wirbel::TP_ERR_MAP_MISMATCH
+           && RecallMarkerRefusal(true, false, true, false) == Wirbel::TP_OK);
+    EXPECT("RECALL-PARENTREL control: a world-space marker on this map goes",
+           RecallMarkerRefusal(true, false, false, true) == Wirbel::TP_OK);
+    EXPECT("RECALL-PARENTREL control: an empty slot is -6 whatever else holds -- emptiness wins",
+           RecallMarkerRefusal(false, true, true, false) == Wirbel::TP_ERR_EMPTY_MARKER
+           && RecallMarkerRefusal(false, false, false, true) == Wirbel::TP_ERR_EMPTY_MARKER);
+    static_assert(RecallMarkerRefusal(true, false, false, true) == Wirbel::TP_OK,
+                  "RecallMarkerRefusal must be constexpr-evaluable");
+}
+
+// [TELEPORT-RECALL-PARENTREL] The undo slot took a parent-relative pose, so Recall last drove relative numbers into the
+// pawn as world coordinates. It keeps its previous pose instead, as it already did for a pose it could not read.
+static void Test_Wirbel_StoresUndoPoint() {
+    EXPECT("RECALL-PARENTREL: a parent-relative pose does not become the undo point",
+           !Wirbel::StoresUndoPoint(true, true));
+    EXPECT("RECALL-PARENTREL control: a world-space pose does",
+           Wirbel::StoresUndoPoint(true, false));
+    EXPECT("RECALL-PARENTREL control: an unreadable pose never did",
+           !Wirbel::StoresUndoPoint(false, false) && !Wirbel::StoresUndoPoint(false, true));
+    static_assert(Wirbel::StoresUndoPoint(true, false), "StoresUndoPoint must be constexpr-evaluable");
+}
+
 static void Test_Mimic_InvokeRouting() {
     constexpr uint32_t N = Mimic::FUNC_FLAG_NATIVE;   // 0x0400
     constexpr uint32_t S = Mimic::FUNC_FLAG_STATIC;   // 0x2000
@@ -11401,6 +11437,8 @@ int main() {
     RUN(Test_Mimic_ListInstancesGeometry);
     RUN(Test_Mimic_CommandNumbering);
     RUN(Test_Wirbel_BugItGoRefusal);
+    RUN(Test_Wirbel_RecallMarkerRefusal);
+    RUN(Test_Wirbel_StoresUndoPoint);
     RUN(Test_UserPick_WireAndTexts);
     RUN(Test_Mimic_WarnNonStaticOnTemplate);
     RUN(Test_Mimic_InvokeRouting);
