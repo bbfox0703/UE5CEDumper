@@ -68,6 +68,9 @@ class PipeClient:
 
     # -- lifecycle ------------------------------------------------------------
     def connect(self, retries: int = 10, delay: float = 1.0) -> "PipeClient":
+        # [RIG-PIPE-DOUBLE-CONNECT] Already open: a second handle would take a pipe instance the UI may need.
+        if self._f is not None:
+            return self
         last = None
         for _ in range(retries):
             try:
