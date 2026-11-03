@@ -281,7 +281,10 @@ hits land on the wrong surface, bump the **Channel** number (games remap trace
 channels); **Z offset** lifts you off the ground so you don't spawn inside it.
 
 **BugItGo interop.** **Copy as BugItGo** puts a `BugItGo X Y Z` string on the
-clipboard (handy for sharing a spot). Paste any `BugItGo X Y Z`, bare `X Y Z`,
+clipboard (handy for sharing a spot). On a parent-relative read (the ⚠ chip: an
+attached pawn whose world position could not be read) it copies nothing and empties
+the box, because those numbers are not world coordinates; the CE BugItGo record
+refuses a BugIt stored from one for the same reason. Paste any `BugItGo X Y Z`, bare `X Y Z`,
 or a full `?BugLoc=(…)?BugRot=(…)` string into the box and click **Run** to
 teleport there — no CheatManager needed. (Note: invoking the game's own `BugIt`
 from the Console tab returns nothing on purpose — it writes to the game's log /

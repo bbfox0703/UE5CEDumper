@@ -168,7 +168,12 @@ enum TeleportOp : uint64_t {
     TP_OP_GET_LAST     = 8,  // read the system "last" slot (pose block output)
     TP_OP_BUGIT_SAVE   = 9,  // store current pose into the BugIt slot (pose block
                              //   output, like SAVE); user-triggered, slot ignored.
-    TP_OP_BUGIT_GO     = 10, // teleport to the stored BugIt pose (no-op when empty)
+    TP_OP_BUGIT_GO     = 10, // teleport to the stored BugIt pose (no-op when empty: result -6). result -16
+                             //   when the stored BugIt came from a parent-relative read: nothing moved and the
+                             //   "last" slot is untouched [TELEPORT-BUGITGO-PARENTREL]. A new result on an existing
+                             //   op, not a contract change: every contract-checking teleport record already shows
+                             //   "failed (code N)" for a negative result it has no message for, and keeps its window
+                             //   open, and an older DLL answers it exactly as before.
     TP_OP_GET_POV      = 11, // read the camera POV (read-only). slot ignored.
                              //   Output POV block in paramsData:
                              //     [0..47]  6 doubles cam X,Y,Z,Pitch,Yaw,Roll
@@ -497,6 +502,8 @@ constexpr int32_t MB_ERR_INVOKE_OBJECT_PARAM = -14;
 /// Blueprint class left to another class's function. Additive like -12 / -13: a script on an older DLL never gets it,
 /// and every script shows errorMsg for a non-zero result -- which says to re-open the form, whose creation re-runs FIND.
 constexpr int32_t MB_ERR_INVOKE_NOT_OWNED = -15;
+/// ⚠ -16 is taken: Wirbel::TP_ERR_PARENT_RELATIVE reaches CE in the same `result` field on CMD_TELEPORT
+/// ([TELEPORT-BUGITGO-PARENTREL]). The next mailbox-wide code takes -17.
 
 /// May CMD_INVOKE hand ProcessEvent the slab? 0 = yes, otherwise the refusal to publish.
 ///

@@ -96,7 +96,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "recall_last",  DisplayName = "Recall last",
             Hint = "Undo the last teleport — return to the position from just before it." });
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "bugit",        DisplayName = "Copy BugItGo",
-            Hint = "Copy the current position as a 'BugItGo X Y Z' string to the clipboard." });
+            Hint = "Copy the current position as a 'BugItGo X Y Z' string to the clipboard (never a parent-relative read)." });
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "bugitgo",      DisplayName = "Run BugItGo",
             Hint = "Teleport to the coordinates in the BugItGo field (filled by Copy BugItGo, or pasted)." });
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "debugcam_on",  DisplayName = "Debug cam ON",
@@ -1633,6 +1633,15 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 return;
             }
             ApplyPoseAndMovement(p);
+            if (p.ParentRelative)
+            {
+                // [TELEPORT-BUGITGO-PARENTREL] The string cannot carry the flag, and whatever reads it takes it for
+                // world coordinates. The Run field is emptied too, not left holding an older string that the
+                // `bugitgo` hotkey would then fire.
+                BugItGoInput = "";
+                StatusText = BugItParentRelativeText;
+                return;
+            }
             string s = string.Format(CultureInfo.InvariantCulture,
                 "BugItGo {0:0.000} {1:0.000} {2:0.000}", p.X, p.Y, p.Z);
             // Paste straight into the Run field so the user can fire BugItGo

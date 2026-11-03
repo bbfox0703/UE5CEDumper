@@ -460,13 +460,19 @@ Op codes (`Grimoire.h` + mirrored in the C# constants file):
 | 7 | RECALL_LAST | — (slot ignored) | `[177]` tier (recall the system auto-saved "last" pose) |
 | 8 | GET_LAST | — | pose block (`result=-6` if nothing auto-saved yet) |
 | 9 | BUGIT_SAVE | — (slot ignored) | pose block (stores the pose in the BugIt slot) |
-| 10 | BUGIT_GO | — | `[177]` tier (`result=-6` no-op if no BugIt stored yet) |
+| 10 | BUGIT_GO | — | `[177]` tier (`result=-6` no-op if no BugIt stored yet; `result=-16` refused, nothing moved, when the stored BugIt came from a parent-relative read) |
 
 The **BugIt slot** (op 9/10) is a single user-triggered pose (UE BugIt/BugItGo
 semantics) the DLL holds between hotkey presses: BUGIT_SAVE stores the current
 pose (and returns it so the Lua can also clipboard a `BugItGo X Y Z` string),
 BUGIT_GO teleports to it (restores rotation; auto-saves "last" first like every
-jump; no-op when nothing stored). Mailbox-only (CE Lua path) — the UI's own
+jump; no-op when nothing stored). A BugIt taken from the parent-relative
+fallback (an attached pawn whose world-space read failed; pose flags bit0) is
+stored and reported, but BUGIT_GO **refuses** it with `-16` before the "last"
+auto-save, so nothing moves `[TELEPORT-BUGITGO-PARENTREL]`: those numbers are
+the pawn's offset from its parent, and driven in as world coordinates they land
+somewhere unrelated. A BugIt taken while the world-space read works replaces
+it. Mailbox-only (CE Lua path) — the UI's own
 BugItGo flow stays textbox-based via `teleport_recall_marker`, so there is no
 pipe command / C export for this slot.
 
@@ -494,9 +500,9 @@ Pose block layout in `paramsData` (offsets relative to 0x328):
 ⚠ Op 4 (CURSOR) reads its inputs **before** writing outputs into the same
 buffer.
 
-Handler `HandleTeleport()` in `Mimic.cpp` is a thin switch that delegates to
-the `UE5_Teleport*` exports (identical to `HandleSetDebugCamera`'s style),
-then copies results into `paramsData`. Document the new command in
+Handler `HandleTeleport()` in `Mimic.cpp` is a thin switch that calls the
+`Wirbel::` functions directly (not the `UE5_Teleport*` exports), then copies
+results into `paramsData`. Document the new command in
 `Mimic.h`'s `Cmd` enum comment block.
 
 ### Error / result codes (shared across exports, pipe, mailbox)
@@ -514,6 +520,10 @@ then copies results into `paramsData`. Document the new command in
 | -8 | Trace found no blocking hit | "Nothing under cursor/center within range" |
 | -9 | Mouse position unavailable and center fallback disabled | "No cursor — enable center fallback" |
 | -10 | Tier 2 raw-write fallback also failed | "Write failed (protected memory?)" |
+| -16 | Jump refused: the stored pose came from a parent-relative read, not world coordinates; nothing moved (mailbox `BUGIT_GO` only; no pipe command or export answers it) | "BugIt again while the game responds (focus it / Keep Foreground), or off the vehicle or mount" |
+
+-11 to -15 are not Wirbel codes: the mailbox publishes its own codes there, in the
+same `result` field (`Mimic.h`, `Mimic.cpp`).
 
 -----
 

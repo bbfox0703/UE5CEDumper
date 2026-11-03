@@ -37,8 +37,8 @@ enum TeleportResult : int32_t {
 // stored from the parent-relative fallback is refused rather than driven into the pawn as world coordinates. Pure, so
 // dll_helpers_test pins it.
 constexpr int32_t BugItGoRefusal(bool stored, bool parentRelative) {
-    (void)parentRelative;
-    return stored ? TP_OK : TP_ERR_EMPTY_MARKER;
+    if (!stored) return TP_ERR_EMPTY_MARKER;
+    return parentRelative ? TP_ERR_PARENT_RELATIVE : TP_OK;
 }
 
 // Pose always crosses this layer as doubles regardless of engine width
@@ -235,7 +235,9 @@ int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSour
 
 // BugItGo: teleport to the pose stored by the most recent BugItSave (restores
 // rotation, one-way like a marker recall). TP_ERR_EMPTY_MARKER (no-op) when no
-// BugIt has been stored yet.
+// BugIt has been stored yet. TP_ERR_PARENT_RELATIVE when the stored BugIt came from
+// the parent-relative fallback: nothing moves and the "last" slot is untouched; a
+// BugIt taken while the world-space read works replaces it. [TELEPORT-BUGITGO-PARENTREL]
 int32_t BugItGo(uint8_t* tierOut);
 
 // Teleport along the pawn's facing direction by `distance` unreal units

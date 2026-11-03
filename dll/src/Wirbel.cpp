@@ -454,8 +454,9 @@ int32_t GetPoseImpl(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSo
             // ⚠ It is a separate flag rather than a third `source` value on purpose: the
             // CE mailbox publishes that byte as `[176] source (0=raw, 1=invoke)`, and
             // adding a value would change the MEANING of a contract field -- exactly the
-            // change Mimic.h says the surface hash cannot see. The mailbox is deliberately
-            // left alone here; the pipe carries the flag.
+            // change Mimic.h says the surface hash cannot see. The `source` byte is left
+            // alone; the pipe carries the flag, and so does the mailbox's own pose-flags
+            // byte [178] since contract 4.
             if (outParentRelative) *outParentRelative = true;
             LOG_WARN("Teleport: attached pawn but K2_GetActorLocation failed — "
                      "falling back to RelativeLocation (parent-relative!)");
@@ -1768,6 +1769,8 @@ int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSour
     if (rc != TP_OK) return rc;
     m.Valid = true;
     s_bugItMarker = m;
+    if (m.ParentRelative)   // [TELEPORT-BUGITGO-PARENTREL] the producer-side half of BugItGo's refusal
+        LOG_WARN("Teleport: BugIt stored from a PARENT-RELATIVE read -- not world coordinates; BugItGo will refuse it");
     out = m.P;
     if (outParentRelative) *outParentRelative = m.ParentRelative;   // [W2-MARKER-PARENTREL]
     if (mapName && mapNameCap > 0) {
@@ -1782,7 +1785,14 @@ int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSour
 
 int32_t BugItGo(uint8_t* tierOut) {
     std::lock_guard<std::mutex> lock(s_opMutex);
-    if (!s_bugItMarker.Valid) return TP_ERR_EMPTY_MARKER;   // no BugIt yet -> no-op
+    // [TELEPORT-BUGITGO-PARENTREL] Refused before SaveLastImpl: a refused jump is not a jump, so neither the pawn nor
+    // the "last" (undo) slot moves. A parent-relative pose driven in as world coordinates lands at the pawn's offset
+    // from its parent, measured from the world origin -- not where the BugIt was taken.
+    const int32_t refusal = BugItGoRefusal(s_bugItMarker.Valid, s_bugItMarker.ParentRelative);
+    if (refusal == TP_ERR_PARENT_RELATIVE)
+        LOG_WARN("Teleport: BugItGo refused -- the stored BugIt (%.1f, %.1f, %.1f) came from a PARENT-RELATIVE read, "
+                 "not world coordinates; nothing moved", s_bugItMarker.P.X, s_bugItMarker.P.Y, s_bugItMarker.P.Z);
+    if (refusal != TP_OK) return refusal;   // TP_ERR_EMPTY_MARKER: no BugIt yet -> no-op
     Marker m = s_bugItMarker;
     SaveLastImpl();   // BugItGo is a jump -> record the undo point first
     int32_t rc = RecallTo(m.P, /*restoreRot=*/true, tierOut);

@@ -1345,7 +1345,7 @@ static void Test_Mimic_InitFastPath() {
 }
 
 // [TELEPORT-BUGITGO-PARENTREL] BugItGo drove a BugIt taken from the parent-relative fallback (an attached pawn whose
-// world-space read failed) into the pawn as world coordinates; only BugItSave reported the flag.
+// world-space read failed) into the pawn as world coordinates; BugItSave reported the flag and nothing read it.
 static void Test_Wirbel_BugItGoRefusal() {
     EXPECT("BUGITGO-PARENTREL: the refusal code is -16, clear of the mailbox's own -11..-15",
            Wirbel::TP_ERR_PARENT_RELATIVE == -16);

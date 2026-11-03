@@ -198,7 +198,11 @@ public static class TeleportScriptGenerator
             Line(sb, "    if poseFlags % 2 == 1 then");
             Line(sb, "      hadError = true");
             Line(sb, $"      showMessage('[Teleport] {label}: the pose came from a PARENT-RELATIVE read (an attached pawn). ' ..");
-            Line(sb, "        'These numbers are NOT world coordinates -- do not save or recall them as a marker.')");
+            // [TELEPORT-BUGITGO-PARENTREL] the BugIt record also says the jump back will be refused, so that refusal
+            // is not the first the user hears of it.
+            Line(sb, op == 9
+                ? "        'These numbers are NOT world coordinates -- do not save or recall them as a marker. BugItGo will refuse this pose.')"
+                : "        'These numbers are NOT world coordinates -- do not save or recall them as a marker.')");
             Line(sb, "    end");
             Line(sb, "  end");
         }
@@ -210,11 +214,22 @@ public static class TeleportScriptGenerator
         Line(sb, "    hadError = true");
         Line(sb, "    showMessage('[Teleport] marker saved on another map -- recall refused. " +
                  "Use the UI Force button.')");
-        // Wirbel defines TEN negative codes; only -7 had a message, so the other nine
-        // (-6 empty marker, -8 no hit, -9 no cursor, ...) reached dbg() — silent at the
-        // shipped DEBUG==0 — left hadError false, and closed the window. "Recall marker
-        // 2" on an empty slot looked exactly like a successful recall. Report the rest
-        // generically rather than inventing per-code prose the DLL can outgrow.
+        if (op == 10)
+        {
+            // [TELEPORT-BUGITGO-PARENTREL] The DLL refuses a BugIt stored from a parent-relative read. A record from
+            // before this fix reports it through the generic branch below, which is enough to see it; this one says
+            // why, and what to do instead.
+            Line(sb, $"  elseif not hadError and code == {TeleportCodes.ParentRelative} then");
+            Line(sb, "    hadError = true");
+            Line(sb, $"    showMessage('[Teleport] {label}: refused -- the stored BugIt came from a PARENT-RELATIVE read ' ..");
+            Line(sb, "      '(an attached pawn), so it is NOT world coordinates. Nothing moved. BugIt again while the game ' ..");
+            Line(sb, "      'is responding (focus it, or turn on Keep Foreground), or once off the vehicle or mount.')");
+        }
+        // Only -7 had a message, so every other negative code (-6 empty marker, -8 no
+        // hit, -9 no cursor, ...) reached dbg() — silent at the shipped DEBUG==0 — left
+        // hadError false, and closed the window. "Recall marker 2" on an empty slot
+        // looked exactly like a successful recall. Report the rest generically rather
+        // than inventing per-code prose the DLL can outgrow.
         Line(sb, "  elseif not hadError and code < 0 then");
         Line(sb, "    hadError = true");
         Line(sb, $"    showMessage('[Teleport] {label} failed (code ' .. tostring(code) .. ')')");
