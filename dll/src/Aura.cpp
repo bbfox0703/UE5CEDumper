@@ -2015,20 +2015,49 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
         verdicts.emplace(cls, v);
         return v;
     };
-    // Owned: some object up the outer chain is of a class deriving from `skipOuterOf`. The whole chain, not the
-    // immediate outer: a CheatManager's extension sits two hops below the Debug Camera controller.
-    std::unordered_map<uintptr_t, bool> skipClasses;   // per outer UClass
+    std::unordered_map<uintptr_t, bool> skipClasses;   // per UClass: derives from `skipOuterOf`
+    auto isSkipClass = [&](uintptr_t cls) {
+        auto sk = skipClasses.find(cls);
+        return sk != skipClasses.end() ? sk->second
+                                       : skipClasses.emplace(cls, ClassChainMatchesLower(cls, lowerSkip)).first->second;
+    };
+    // Owned, the UObject way: some object up the OUTER chain is of a class deriving from `skipOuterOf`. The whole
+    // chain, not the immediate outer: a CheatManager's extension sits two hops below the Debug Camera controller.
     auto ownedBySkip = [&](uintptr_t obj) {
         uintptr_t o = obj;
         for (int hop = 0; hop < Grimoire::AURA_USERPICK_MAX_OUTER_HOPS; ++hop) {
             uintptr_t outer = 0, outerCls = 0;
             if (!Macht::ReadSafe(o + DynOff::UOBJECT_OUTER, outer) || !outer || outer == o) return false;
             if (!Macht::ReadSafe(outer + Grimoire::OFF_UOBJECT_CLASS, outerCls) || !outerCls) return false;
-            auto sk = skipClasses.find(outerCls);
-            const bool hit = sk != skipClasses.end()
-                ? sk->second : skipClasses.emplace(outerCls, ClassChainMatchesLower(outerCls, lowerSkip)).first->second;
-            if (hit) return true;
+            if (isSkipClass(outerCls)) return true;
             o = outer;
+        }
+        return false;
+    };
+    // Owned, the actor way: an actor the controller spawned (its HUD, its PlayerCameraManager, its spectator pawn) has
+    // the LEVEL as its outer, and the controller as its AActor::Owner -- a reflected object property, found per class
+    // by name. -1 = the class has none.
+    std::unordered_map<uintptr_t, int32_t> ownerOffsets;
+    auto ownerOffsetOf = [&](uintptr_t cls) {
+        auto it = ownerOffsets.find(cls);
+        if (it != ownerOffsets.end()) return it->second;
+        FieldInfo f{};
+        const int32_t off = Ubel::FindField(cls, Grimoire::AURA_USERPICK_OWNER_PROPERTY, nullptr, nullptr, nullptr, f)
+                            && f.TypeName == "ObjectProperty" ? f.Offset : -1;
+        ownerOffsets.emplace(cls, off);
+        return off;
+    };
+    auto actorOwnedBySkip = [&](uintptr_t obj, uintptr_t cls) {
+        uintptr_t o = obj, c = cls;
+        for (int hop = 0; hop < Grimoire::AURA_USERPICK_MAX_OUTER_HOPS; ++hop) {
+            const int32_t off = ownerOffsetOf(c);
+            if (off < 0) return false;
+            uintptr_t owner = 0, ownerCls = 0;
+            if (!Macht::ReadSafe(o + static_cast<uintptr_t>(off), owner) || !owner || owner == o) return false;
+            if (!Macht::ReadSafe(owner + Grimoire::OFF_UOBJECT_CLASS, ownerCls) || !ownerCls) return false;
+            if (isSkipClass(ownerCls)) return true;
+            o = owner;
+            c = ownerCls;
         }
         return false;
     };
@@ -2080,7 +2109,7 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
             if (!cdo && LowerAscii(Ubel::GetName(cls)) == lowerQuery) { cdo = obj; cdoCls = cls; }
             continue;
         }
-        if (!lowerSkip.empty() && (v.viaSkip || ownedBySkip(obj))) {
+        if (!lowerSkip.empty() && (v.viaSkip || ownedBySkip(obj) || actorOwnedBySkip(obj, cls))) {
             Sein::Info("PIPE:find", "%s '%s': passed over 0x%llX (%s) -- it is or belongs to a %s", how.who,
                        className.c_str(), static_cast<unsigned long long>(obj), objName.c_str(),
                        how.skipOuterOf.c_str());

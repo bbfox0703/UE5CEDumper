@@ -123,6 +123,10 @@ constexpr const char* AURA_USERPICK_DCC_CLASS = "DebugCameraController";
 // How far up an object's outer chain the Debug Camera test looks. Real chains are a handful of hops (extension ->
 // CheatManager -> controller -> level -> world -> package); a longer one is a corrupt or cyclic chain, not ownership.
 constexpr int AURA_USERPICK_MAX_OUTER_HOPS = 16;
+// The reflected AActor::Owner (an ObjectProperty). An actor the Debug Camera controller spawns -- its HUD, its
+// PlayerCameraManager, its spectator pawn -- has the level as its outer and the controller as this. The same hop bound
+// applies to the owner chain.
+constexpr const char* AURA_USERPICK_OWNER_PROPERTY = "Owner";
 
 // --- UObject offsets ---
 // UObjectBase layout: VTable(8) + Flags(4) + Index(4) + Class*(8) + FName(?) + Outer*(8)
