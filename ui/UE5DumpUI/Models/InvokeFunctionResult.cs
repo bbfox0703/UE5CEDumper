@@ -16,6 +16,15 @@ public sealed class InvokeFunctionResult
     /// from a DLL that does not send it.</summary>
     public string InstanceClassAddr { get; init; } = "";
 
+    /// <summary>[FINDINSTANCE-SUBSTRING-USERFACING] How the DLL chose <see cref="InstanceAddr"/>: one of
+    /// <c>Constants.InvokePick*</c> ("address" when the caller sent one); empty from a DLL that does not say.</summary>
+    public string InstancePick { get; init; } = "";
+
+    /// <summary>The object's name and its class's name, read before the call; empty from a DLL that does not send
+    /// them.</summary>
+    public string InstanceName { get; init; } = "";
+    public string InstanceClassName { get; init; } = "";
+
     /// <summary>Resolved UFunction address (hex string).</summary>
     public string FuncAddr { get; init; } = "";
 

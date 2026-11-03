@@ -1596,11 +1596,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, UPROPNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, DBGCAM58, USERPICK, UFIELDNEXT, UPROPNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, UPROPNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, DBGCAM58, USERPICK, UFIELDNEXT, UPROPNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -4908,6 +4908,203 @@ int main() {
         DynOff::bCasePreservingName = svCpnD;
         DynOff::bUseFProperty       = svFPropD;
         g_cachedUEVersion           = svVerD;
+    }
+
+    // -- USERPICK-2026-11-03 -- the USER-facing "an instance of class X" lookup picks by derivation ---------------------
+    //
+    // ⛔ POOL-FAKING, like PROBECLASS / DBGCAM58: own object pool AND own name pool. [FINDINSTANCE-SUBSTRING-USERFACING]
+    // The C ABI export, the pipe's invoke_function class_name and the mailbox's FIND_INSTANCE matched a class-name
+    // SUBSTRING and took the first non-CDO match, else the first match -- so "CheatManager" landed on a cheat EXTENSION
+    // (GAS's included) or on the Debug Camera's own CheatManager, whichever sat lower in GObjects. Every wrong object
+    // here sits BELOW the right one.
+    {
+        blk("USERPICK - the user-facing class lookup picks by derivation, ranks the Debug Camera's objects last");
+        ResetCancel();
+
+        enum : int32_t { nClass = 1, nEngine, nPackage, nObject, nChannel, nActorChannel, nActor, nController,
+                         nPlayerController, nDcc, nBPDcc, nBPPc, nCheatMgr, nCheatExt, nAbilityExt, nBPCheats, nKsl,
+                         nGameModeBase, nGameMode, nBPGameMode, nBPChar, nCdoActorChannel, nCdoCheatExt, nCdoCheatMgr,
+                         nCdoActor, nCdoKsl, nCdoGameMode, nCdoBPChar, nAbility0, nCheatMgr0, nBPDcc0, nBPPc0,
+                         nBPCheats0, nAbility1, nBPGameMode0, nBPChar0, nNames };
+        const char* upNames[nNames] = { "", "Class", "/Script/Engine", "Package", "Object", "Channel", "ActorChannel",
+            "Actor", "Controller", "PlayerController", "DebugCameraController", "BP_DebugCamera_C",
+            "BP_ThirdPersonPlayerController_C", "CheatManager", "CheatManagerExtension",
+            "AbilitySystemCheatManagerExtension", "BP_Cheats_C", "KismetSystemLibrary", "GameModeBase", "GameMode",
+            "BP_GameMode_C", "BP_PlayerCharacter_C", "Default__ActorChannel", "Default__CheatManagerExtension",
+            "Default__CheatManager", "Default__Actor", "Default__KismetSystemLibrary", "Default__GameMode",
+            "Default__BP_PlayerCharacter_C", "AbilitySystemCheatManagerExtension_0", "CheatManager_0",
+            "BP_DebugCamera_C_0", "BP_ThirdPersonPlayerController_C_0", "BP_Cheats_C_0",
+            "AbilitySystemCheatManagerExtension_1", "BP_GameMode_C_0", "BP_PlayerCharacter_C_0" };
+        static uint8_t upEntry[nNames][0x40] = {};
+        static uintptr_t upChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(upEntry[i] + 0x10, upNames[i], strlen(upNames[i]) + 1);
+            upChunk[i] = reinterpret_cast<uintptr_t>(upEntry[i]);
+        }
+        static uintptr_t upChunks[2] = { reinterpret_cast<uintptr_t>(upChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(upChunks), 0x10);
+        check("USERPICK setup: the name pool resolves the longest name",
+              Serie::GetString(nAbility1) == "AbilitySystemCheatManagerExtension_1", Serie::GetString(nAbility1).c_str());
+
+        const bool     svCpnU   = DynOff::bCasePreservingName;
+        const bool     svFPropU = DynOff::bUseFProperty;
+        const uint32_t svVerU   = g_cachedUEVersion;
+        DynOff::bCasePreservingName = false;
+        DynOff::bUseFProperty       = true;
+        g_cachedUEVersion           = 508;
+
+        enum { bMeta, bPkgCls, bPkg, bObject, bChannel, bActorChannel, bActor, bController, bPlayerController, bDcc,
+               bBPDcc, bBPPc, bCheatMgr, bCheatExt, bAbilityExt, bBPCheats, bKsl, bGameModeBase, bGameMode, bBPGameMode,
+               bBPChar, bCdoActorChannel, bCdoCheatExt, bCdoCheatMgr, bCdoActor, bCdoKsl, bCdoGameMode, bCdoBPChar,
+               bAbility0, bCm0, bDcc0, bPc0, bCheats0, bAbility1, bGm0, bChar0, kBlobs };
+        alignas(16) static uint8_t upB[kBlobs][0x200] = {};
+        auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(upB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto obj = [&](int b, int cls, int32_t name, int outer) {
+            memset(upB[b], 0, sizeof(upB[b]));
+            putP(upB[b], Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            put32(upB[b], Grimoire::OFF_UOBJECT_NAME, name);
+            putP(upB[b], DynOff::UOBJECT_OUTER, A(outer));
+        };
+        auto klass = [&](int b, int32_t name, int super) {
+            obj(b, bMeta, name, bPkg);
+            putP(upB[b], DynOff::USTRUCT_SUPER, A(super));
+        };
+        obj(bMeta, bMeta, nClass, -1);
+        obj(bPkgCls, bMeta, nPackage, -1);
+        obj(bPkg, bPkgCls, nEngine, -1);
+        klass(bObject, nObject, -1);
+        klass(bChannel, nChannel, bObject);
+        klass(bActorChannel, nActorChannel, bChannel);
+        klass(bActor, nActor, bObject);
+        klass(bController, nController, bActor);
+        klass(bPlayerController, nPlayerController, bController);
+        klass(bDcc, nDcc, bPlayerController);            // ADebugCameraController : APlayerController
+        klass(bBPDcc, nBPDcc, bDcc);
+        klass(bBPPc, nBPPc, bPlayerController);
+        klass(bCheatMgr, nCheatMgr, bObject);
+        klass(bCheatExt, nCheatExt, bObject);
+        klass(bAbilityExt, nAbilityExt, bCheatExt);      // GAS's: "CheatManager" in its name, not a UCheatManager
+        klass(bBPCheats, nBPCheats, bCheatMgr);          // a game's CheatManager with no "CheatManager" in its name
+        klass(bKsl, nKsl, bObject);
+        klass(bGameModeBase, nGameModeBase, bActor);
+        klass(bGameMode, nGameMode, bGameModeBase);
+        klass(bBPGameMode, nBPGameMode, bGameModeBase);  // "GameMode" in its name, NOT a GameMode
+        klass(bBPChar, nBPChar, bActor);
+        obj(bCdoActorChannel, bActorChannel, nCdoActorChannel, bPkg);
+        obj(bCdoCheatExt, bCheatExt, nCdoCheatExt, bPkg);
+        obj(bCdoCheatMgr, bCheatMgr, nCdoCheatMgr, bPkg);
+        obj(bCdoActor, bActor, nCdoActor, bPkg);
+        obj(bCdoKsl, bKsl, nCdoKsl, bPkg);
+        obj(bCdoGameMode, bGameMode, nCdoGameMode, bPkg);
+        obj(bCdoBPChar, bBPChar, nCdoBPChar, bPkg);
+        obj(bDcc0, bBPDcc, nBPDcc0, -1);
+        obj(bCm0, bCheatMgr, nCheatMgr0, bDcc0);         // the Debug Camera's own CheatManager...
+        obj(bAbility0, bAbilityExt, nAbility0, bCm0);    // ...and its extension, two outer hops below the DCC
+        obj(bPc0, bBPPc, nBPPc0, -1);
+        obj(bCheats0, bBPCheats, nBPCheats0, bPc0);      // the player's CheatManager...
+        obj(bAbility1, bAbilityExt, nAbility1, bCheats0);   // ...and its extension
+        obj(bGm0, bBPGameMode, nBPGameMode0, -1);
+        obj(bChar0, bBPChar, nBPChar0, -1);
+
+        FakePool upPool;
+        upPool.Build(128);
+        auto slot = [&](int i, int b) {
+            const uintptr_t o = A(b);
+            memcpy(upPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        };
+        auto nm = [](uintptr_t o) { return o ? Ubel::GetName(o) : std::string("(0)"); };
+        auto is = [&](const Aura::UserInstance& r, int b, Aura::UserPick p) { return r.obj == A(b) && r.pick == p; };
+
+        // Phase A -- class-default objects only, each wrong one first.
+        const int phaseA[] = { bCdoActorChannel, bCdoCheatExt, bCdoCheatMgr, bCdoActor, bCdoKsl, bCdoGameMode, bCdoBPChar };
+        for (int i = 0; i < 7; ++i) slot(i, phaseA[i]);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+
+        auto r = Aura::ResolveUserInstance("CheatManager");
+        check("USERPICK ⭐: nothing live -- CheatManager's OWN default object, not the extension's met first",
+              is(r, bCdoCheatMgr, Aura::UserPick::ClassDefault), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("Actor");
+        check("USERPICK ⭐: ...and Actor's, not ActorChannel's", is(r, bCdoActor, Aura::UserPick::ClassDefault),
+              nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("KismetSystemLibrary");
+        check("USERPICK control: a function library answers with its own default object, as it always did",
+              is(r, bCdoKsl, Aura::UserPick::ClassDefault), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("Cheat");
+        check("USERPICK ⭐: a name no class has is still matched as part of a class name, and says so",
+              is(r, bCdoCheatExt, Aura::UserPick::PartialDefault), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("NoSuchClass_Xyz");
+        check("USERPICK control: an unknown name resolves to nothing",
+              r.obj == 0 && r.pick == Aura::UserPick::None, nm(r.obj).c_str());
+
+        // Phase B -- live objects; the Debug Camera's, a cheat extension and a GameMode look-alike sit lowest.
+        const int phaseB[] = { bAbility0, bCm0, bDcc0, bPc0, bCheats0, bAbility1, bGm0, bChar0 };
+        for (int i = 0; i < 8; ++i) slot(7 + i, phaseB[i]);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+
+        r = Aura::ResolveUserInstance("CheatManager");
+        check("USERPICK ⭐: the player's CheatManager (a game subclass without the word) -- not the DCC's, not GAS's",
+              is(r, bCheats0, Aura::UserPick::Live), nm(r.obj).c_str());
+        check("USERPICK control: the internal unfiltered pick is the DCC's -- the case the rank exists for",
+              Aura::FindLiveOrDefaultOf("CheatManager") == A(bCm0), nm(Aura::FindLiveOrDefaultOf("CheatManager")).c_str());
+        check("USERPICK control: set_debug_camera's filtered pick agrees with the user's",
+              Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController") == A(bCheats0));
+        check("USERPICK control: the name is compared case-insensitively",
+              Aura::ResolveUserInstance("cheatmanager").obj == r.obj);
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK ⭐: PlayerController is the player's, never the DCC that derivation alone would take first",
+              is(r, bPc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        check("USERPICK control: ...which is what derivation alone takes",
+              Aura::FindLiveOrDefaultOf("PlayerController") == A(bDcc0));
+        r = Aura::ResolveUserInstance("DebugCameraController");
+        check("USERPICK ⭐: naming the Debug Camera controller itself is not ranked down",
+              is(r, bDcc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("AbilitySystemCheatManagerExtension");
+        check("USERPICK ⭐: an extension two outer hops below the DCC is ranked down too -- the player's wins",
+              is(r, bAbility1, Aura::UserPick::Live), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("Actor");
+        check("USERPICK ⭐: Actor is a live actor, and not the DCC", is(r, bPc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("GameMode");
+        check("USERPICK ⭐: a name some class HAS never takes an unrelated class that merely contains it",
+              is(r, bCdoGameMode, Aura::UserPick::ClassDefault), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("PlayerCharacter");
+        check("USERPICK control: a partial name lands where it always did", r.obj == A(bChar0), nm(r.obj).c_str());
+        check("USERPICK ⭐: ...and says it was matched as part of a class name", r.pick == Aura::UserPick::PartialLive);
+
+        // Phase C -- only the Debug Camera's objects are live.
+        slot(10, -1);   // the player's controller
+        slot(11, -1);   // its CheatManager
+        slot(12, -1);   // its extension
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+
+        r = Aura::ResolveUserInstance("CheatManager");
+        check("USERPICK ⭐: with only the DCC's CheatManager live, an invoke takes it over the default object",
+              is(r, bCm0, Aura::UserPick::DebugCameraOwned), nm(r.obj).c_str());
+        check("USERPICK control: set_debug_camera's STATE read still never takes it -- the CDO stands in (DBGCAM58)",
+              Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController") == A(bCdoCheatMgr));
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK ⭐: with no player controller live, the DCC itself, and the pick says so",
+              is(r, bDcc0, Aura::UserPick::DebugCameraOwned), nm(r.obj).c_str());
+
+        // Phase D -- a walk cut short is not "not found", and the old 100-match cap is gone.
+        Tot::g_perCommand.store(true);
+        r = Aura::ResolveUserInstance("Actor");
+        ResetCancel();
+        check("USERPICK ⭐: a cancelled walk answers Cancelled and nothing", r.obj == 0 && r.pick == Aura::UserPick::Cancelled,
+              nm(r.obj).c_str());
+        for (int i = 0; i < 128; ++i) slot(i, -1);
+        for (int i = 0; i < 101; ++i) slot(i, bCdoBPChar);
+        slot(101, bChar0);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        r = Aura::ResolveUserInstance("PlayerCharacter");
+        check("USERPICK ⭐: a live match past 101 default objects is still found",
+              is(r, bChar0, Aura::UserPick::PartialLive), nm(r.obj).c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpnU;
+        DynOff::bUseFProperty       = svFPropU;
+        g_cachedUEVersion           = svVerU;
     }
 
     // -- WALKIFACEGUARD-2026-10-27 -- WalkInterfaceFunctions asks only a class for its interfaces ------------------------

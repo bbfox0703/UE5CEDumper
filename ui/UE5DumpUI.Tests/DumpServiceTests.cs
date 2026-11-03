@@ -252,6 +252,38 @@ public class DumpServiceTests
         Assert.Equal("0xC100", r.InstanceClassAddr);
     }
 
+    // [FINDINSTANCE-SUBSTRING-USERFACING] The reply says how the class name was resolved and names the object, so the
+    // Console can show it and decline to pin a class-default or Debug-Camera-owned pick.
+    [Fact]
+    public async Task InvokeFunctionAsync_ReadsHowTheObjectWasPickedAndItsNames()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["result"] = 0, ["instance_addr"] = "0x1000", ["instance_pick"] = "class_default",
+            ["instance_name"] = "Default__CheatManager", ["instance_class_name"] = "CheatManager",
+        });
+
+        var r = await CreateService().InvokeFunctionAsync("God", className: "CheatManager",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal("class_default", r.InstancePick);
+        Assert.Equal("Default__CheatManager", r.InstanceName);
+        Assert.Equal("CheatManager", r.InstanceClassName);
+    }
+
+    [Fact]
+    public async Task InvokeFunctionAsync_control_an_older_dll_sends_no_pick()
+    {
+        _pipe.SetHandler(_ => new JsonObject { ["ok"] = true, ["result"] = 0, ["instance_addr"] = "0x1000" });
+
+        var r = await CreateService().InvokeFunctionAsync("God", className: "CheatManager",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal("", r.InstancePick);
+        Assert.Equal("", r.InstanceName);
+        Assert.Equal("", r.InstanceClassName);
+    }
+
     [Fact]
     public void Fern_InvokeReply_NamesTheClassItReadAtTheAddress()
     {

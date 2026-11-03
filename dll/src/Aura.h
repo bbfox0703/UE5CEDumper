@@ -136,6 +136,32 @@ uintptr_t FindLiveOrDefaultOf(const std::string& className);
 // Player, which the DCC has only while active).
 uintptr_t FindLiveOrDefaultOf(const std::string& className, const std::string& skipOuterOf);
 
+// [FINDINSTANCE-SUBSTRING-USERFACING] What a USER-facing "an instance of class X" lookup took, and why. The C ABI
+// UE5_FindInstanceOfClass, the pipe's invoke_function class_name and the mailbox's FIND_INSTANCE (with INVOKE_BY_NAME
+// and LIST_FUNCTIONS' class-name branch) all resolve through ResolveUserInstance.
+enum class UserPick : uint8_t {
+    None,              // nothing usable; obj 0
+    Cancelled,         // the walk was cut short; obj 0, never a candidate met on the way
+    Live,              // a live object of the named class or a subclass
+    DebugCameraOwned,  // the same, but one a Debug Camera controller owns or is: no other was live
+    ClassDefault,      // the named class's own class-default object: nothing of it was live
+    PartialLive,       // no object derives from a class of that exact name: a live object whose class name contains it
+    PartialDefault,    // ...and none of those was live: the first object whose class name contains it
+};
+struct UserInstance {
+    uintptr_t obj = 0;
+    uintptr_t cls = 0;
+    UserPick  pick = UserPick::None;
+    int32_t   scanned = 0;
+};
+UserInstance ResolveUserInstance(const std::string& className);
+
+// The pick's name on the pipe (invoke_function's instance_pick); "" for None and Cancelled, which never reach a reply.
+constexpr const char* UserPickWire(UserPick p) {
+    (void)p;
+    return "";
+}
+
 // Get the detected FUObjectItem stride in bytes (16 or 24)
 int GetItemSize();
 

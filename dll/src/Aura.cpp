@@ -2044,6 +2044,20 @@ uintptr_t FindLiveOrDefaultOf(const std::string& className, const std::string& s
     return cdo;
 }
 
+UserInstance ResolveUserInstance(const std::string& className) {
+    // Red stub: today's pick (a class-name substring, first non-CDO, else the first match).
+    UserInstance r;
+    if (className.empty()) return r;
+    auto rset = FindInstancesByClass(className, false, 100);
+    r.scanned = rset.scanned;
+    for (const auto& x : rset.results)
+        if (x.addr && x.name.find("Default__") == std::string::npos) { r.obj = x.addr; r.cls = x.classAddr; r.pick = UserPick::Live; return r; }
+    if (!rset.results.empty() && rset.results[0].addr) {
+        r.obj = rset.results[0].addr; r.cls = rset.results[0].classAddr; r.pick = UserPick::ClassDefault;
+    }
+    return r;
+}
+
 uintptr_t FindClassByPath(const std::string& classPath) {
     // [SEETHRU-PROBE-SUBSTRING] FindByFullName, not FindByNameOrPath: that one falls back to a bare-FName match,
     // and a class the caller named by package must not be answered by whatever else shares its leaf name.

@@ -1,4 +1,5 @@
 using UE5DumpUI.Core;
+using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
 using UE5DumpUI.ViewModels;
 using Xunit;
@@ -631,6 +632,99 @@ public class ConsoleViewModelTests
         Assert.Null(fake.InstanceAddrHistory[0]);
         Assert.Equal("0x1A2B3C", fake.InstanceAddrHistory[1]);
         Assert.Equal("0x1A2B3C", fake.LastInvokeInstanceAddr);
+    }
+
+    // [FINDINSTANCE-SUBSTRING-USERFACING] A class name resolves to the class's own default object when nothing of it is
+    // live, and to the Debug Camera's object when that is the only live one. Pinning either kept every later run of the
+    // class on it -- after a CheatManager spawned, after the Debug Camera was destroyed. Those picks re-resolve instead.
+
+    private async Task<(FakeDumpService fake, ConsoleViewModel vm)> RunFlyThenGod(string pick)
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            NextInvokeResult = new InvokeFunctionResult
+            {
+                Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstancePick = pick,
+                InstanceName = pick == "class_default" ? "Default__CheatManager" : "CheatManager_0",
+                InstanceClassName = "CheatManager",
+            },
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[2];   // Fly
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[3];   // God, the same class
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        return (fake, vm);
+    }
+
+    [Theory]
+    [InlineData("class_default")]
+    [InlineData("debug_camera_owned")]
+    public async Task A_class_default_or_debug_camera_pick_is_not_pinned(string pick)
+    {
+        var (fake, _) = await RunFlyThenGod(pick);
+
+        Assert.Equal(2, fake.InvokeCallCount);
+        Assert.Null(fake.InstanceAddrHistory[0]);
+        Assert.Null(fake.InstanceAddrHistory[1]);   // re-resolved, not pinned
+    }
+
+    [Theory]
+    [InlineData("live")]
+    [InlineData("")]   // an older DLL, which never says: pinned, as before
+    public async Task A_live_pick_is_pinned_control(string pick)
+    {
+        var (fake, _) = await RunFlyThenGod(pick);
+
+        Assert.Equal("0x1A2B3C", fake.InstanceAddrHistory[1]);
+    }
+
+    [Fact]
+    public async Task A_class_default_pick_says_so_in_the_status()
+    {
+        var (_, vm) = await RunFlyThenGod("class_default");
+
+        Assert.Contains("⚠", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("Default__CheatManager", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains(InvokePickText.ClassDefaultText("Default__CheatManager", "CheatManager"), vm.StatusText,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_live_pick_names_the_object_in_the_status()
+    {
+        var (_, vm) = await RunFlyThenGod("live");
+
+        Assert.Contains(InvokePickText.ObjectText("CheatManager_0", "CheatManager"), vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("⚠", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("", true)]
+    [InlineData("live", true)]
+    [InlineData("address", true)]
+    [InlineData("class_default", false)]
+    [InlineData("debug_camera_owned", false)]
+    [InlineData("partial_name", false)]
+    [InlineData("partial_name_default", false)]
+    public void InvokePickText_pins_only_a_live_or_given_object(string pick, bool pinnable)
+    {
+        Assert.Equal(pinnable, InvokePickText.IsPinnable(pick));
+    }
+
+    [Fact]
+    public void InvokePickText_note_for_each_pick()
+    {
+        Assert.Equal("", InvokePickText.Note("", "X_0", "X"));                       // an older DLL: nothing to say
+        Assert.Equal("", InvokePickText.Note("live", "", ""));                        // nor without a name
+        Assert.Equal(" " + InvokePickText.ObjectText("X_0", "X"), InvokePickText.Note("live", "X_0", "X"));
+        Assert.Equal(" " + InvokePickText.ObjectText("X_0", "X"), InvokePickText.Note("partial_name", "X_0", "X"));
+        Assert.Equal(" " + InvokePickText.ClassDefaultText("Default__X", "X"),
+                     InvokePickText.Note("class_default", "Default__X", "X"));
+        Assert.Equal(" " + InvokePickText.DebugCameraOwnedText("X_0", "X"),
+                     InvokePickText.Note("debug_camera_owned", "X_0", "X"));
     }
 
     // [LEAD-CONSOLE-PIN-EXPECT-CLASS] The pin is an address, and the DLL looks the function up by name on whatever

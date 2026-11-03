@@ -382,6 +382,21 @@ inline std::string InvokeTargetRefusalText(const std::string& instanceAddr, cons
            " Refresh.";
 }
 
+// [FINDINSTANCE-SUBSTRING-USERFACING] invoke_function's texts about the object a class name resolved to. The
+// "No instance found for class:" and "Function not found" openings are matched by the UI's Self-Test, so they stay.
+constexpr const char* INVOKE_PICK_ADDRESS = "address";   // instance_pick when the caller sent instance_addr
+inline std::string InstanceNotFoundText(const std::string& className) {
+    return "No instance found for class: " + className;
+}
+inline std::string InstanceLookupCancelledText(const std::string& className) {
+    return "No instance found for class: " + className;
+}
+inline std::string FunctionNotFoundText(const std::string& funcName, const std::string& objName,
+                                        const std::string& className) {
+    (void)objName; (void)className;
+    return "Function not found: " + funcName;
+}
+
 // Build an error response
 inline nlohmann::json MakeError(int id, const std::string& errorMsg) {
     return {

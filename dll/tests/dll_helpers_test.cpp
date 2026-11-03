@@ -1305,9 +1305,10 @@ static void Test_Mimic_CommandNumbering() {
     // The published compatibility RANGE. A script checks MIN <= its baked
     // version <= CONTRACT before its first write.
     EXPECT("contract range is sane", Mimic::MAILBOX_CONTRACT_MIN <= Mimic::MAILBOX_CONTRACT);
-    // 5 since [W5-OFFSETS-MAILBOX] (batch L45) added CMD_OFFSETS_VERDICT. ADDITIVE -- a new Cmd, so MIN stays 1 and
-    // every saved .CT is still accepted. (4 was 76f93b94, [W2-TPREL-TRANSPORTS]: the parent-relative pose flag.)
-    EXPECT("contract is 5",          Mimic::MAILBOX_CONTRACT     == 5);
+    // 6 since [FINDINSTANCE-SUBSTRING-USERFACING]: FIND_INSTANCE's className picks by derivation, a meaning change
+    // that refuses no saved .CT, so MIN stays 1. (5 was [W5-OFFSETS-MAILBOX], CMD_OFFSETS_VERDICT; 4 was
+    // [W2-TPREL-TRANSPORTS], the parent-relative pose flag.)
+    EXPECT("contract is 6",          Mimic::MAILBOX_CONTRACT     == 6);
     EXPECT("contract min is 1",      Mimic::MAILBOX_CONTRACT_MIN == 1);
 
     // g_mailboxContract is a SEPARATE exported symbol, read before anything is
@@ -8449,6 +8450,37 @@ static void Test_Renge_InvokeTargetIsExpected() {
                                                                 && unnamed.find(" ()") == std::string::npos);
 }
 
+// [FINDINSTANCE-SUBSTRING-USERFACING] invoke_function names the object a class name resolved to, and a cut-short
+// lookup is never reported as an absent class. The UI's Self-Test matches the two openings, so they are pinned too.
+static void Test_UserPick_WireAndTexts() {
+    std::printf("Test_UserPick_WireAndTexts\n");
+    EXPECT("USERPICK wire: live",                 std::string(Aura::UserPickWire(Aura::UserPick::Live)) == "live");
+    EXPECT("USERPICK wire: debug_camera_owned",
+           std::string(Aura::UserPickWire(Aura::UserPick::DebugCameraOwned)) == "debug_camera_owned");
+    EXPECT("USERPICK wire: class_default",
+           std::string(Aura::UserPickWire(Aura::UserPick::ClassDefault)) == "class_default");
+    EXPECT("USERPICK wire: partial_name",         std::string(Aura::UserPickWire(Aura::UserPick::PartialLive)) == "partial_name");
+    EXPECT("USERPICK wire: partial_name_default",
+           std::string(Aura::UserPickWire(Aura::UserPick::PartialDefault)) == "partial_name_default");
+    EXPECT("USERPICK wire control: None and Cancelled never reach a reply",
+           std::string(Aura::UserPickWire(Aura::UserPick::None)).empty()
+           && std::string(Aura::UserPickWire(Aura::UserPick::Cancelled)).empty());
+    EXPECT("USERPICK wire control: the address pick is the pipe's own word", std::string(Renge::INVOKE_PICK_ADDRESS) == "address");
+
+    EXPECT("USERPICK text control: not-found keeps the opening Self-Test matches",
+           Renge::InstanceNotFoundText("Foo") == "No instance found for class: Foo");
+    const std::string cut = Renge::InstanceLookupCancelledText("Foo");
+    EXPECT("USERPICK text: a cut-short lookup is not reported as an absent class",
+           cut.find("No instance found") == std::string::npos && cut.find("Foo") != std::string::npos);
+    const std::string nf = Renge::FunctionNotFoundText("God", "AbilitySystemCheatManagerExtension_0",
+                                                       "AbilitySystemCheatManagerExtension");
+    EXPECT("USERPICK text control: function-not-found keeps the opening Self-Test matches",
+           nf.rfind("Function not found: God", 0) == 0);
+    EXPECT("USERPICK text: function-not-found names the object and the class it looked on",
+           nf.find("AbilitySystemCheatManagerExtension_0") != std::string::npos
+           && nf.find("(class AbilitySystemCheatManagerExtension)") != std::string::npos);
+}
+
 // B46 — HexToBytes could not fail, so write_mem could not report a bad pattern.
 static void Test_Renge_TryHexToBytes() {
     std::printf("Test_Renge_TryHexToBytes\n");
@@ -11343,6 +11375,7 @@ int main() {
     RUN(Test_Mimic_ListInstancesGeometry);
     RUN(Test_Mimic_CommandNumbering);
     RUN(Test_Wirbel_BugItGoRefusal);
+    RUN(Test_UserPick_WireAndTexts);
     RUN(Test_Mimic_InvokeRouting);
     RUN(Test_Mimic_InvokeSlab);
     RUN(Test_Mimic_InitFastPath);

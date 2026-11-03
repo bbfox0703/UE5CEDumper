@@ -2004,7 +2004,8 @@ public class InvokeScriptTests
         Assert.Contains("dll-too-old", lua);
 
         Assert.Equal(16, CeMailboxLayout.CmdOffsetsVerdict);
-        Assert.Equal(5, CeMailboxLayout.ContractVersion);   // baked into every emitted script
+        Assert.True(CeMailboxLayout.ContractVersion >= 5,   // baked into every emitted script
+            "a script that sends CMD_OFFSETS_VERDICT must claim contract 5 -- an older DLL answers it 'Unknown command'");
     }
 
     [Fact]
@@ -2697,6 +2698,55 @@ public class InvokeScriptTests
         Assert.Contains("uintptr_t cm = Aura::FindLiveOrDefaultOf(\"CheatManager\", \"DebugCameraController\");", frieren,
                         StringComparison.Ordinal);
         Assert.Contains("dcc = Aura::FindLiveOrDefaultOf(\"DebugCameraController\");", frieren, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UserFacingClassLookups_AllResolveThroughOneDerivationResolver()
+    {
+        // [FINDINSTANCE-SUBSTRING-USERFACING] The C ABI export, the pipe's invoke_function class_name and the mailbox's
+        // FIND_INSTANCE / LIST_FUNCTIONS each matched a class-name SUBSTRING and took the first non-CDO match, else the
+        // first match. dll_core_test's USERPICK block pins Aura::ResolveUserInstance; no test target compiles Frieren,
+        // Fern or Mimic, so this pins that all three USE it. Comments are stripped: the fix's comments name the old call.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found -- re-point this pin");
+            return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
+        }
+
+        var frieren = Body(CodeOnly(DllSource("Frieren.cpp")), "uintptr_t UE5_FindInstanceOfClass(const char* className) {");
+        Assert.Contains("Aura::ResolveUserInstance(", frieren, StringComparison.Ordinal);
+        Assert.DoesNotContain("FindInstancesByClass(", frieren, StringComparison.Ordinal);
+
+        var mimic = CodeOnly(DllSource("Mimic.cpp"));
+        foreach (var handler in new[] { "static void HandleFindInstance() {", "static void HandleListFunctions() {" })
+        {
+            var body = Body(mimic, handler);
+            Assert.Contains("Aura::ResolveUserInstance(", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("FindInstancesByClass(", body, StringComparison.Ordinal);
+        }
+
+        var fern = CodeOnly(DllSource("Fern.cpp"));
+        int start = fern.IndexOf("cmd == Renge::CMD_INVOKE_FUNCTION", StringComparison.Ordinal);
+        int next = fern.IndexOf("cmd == Renge::CMD_", start + 1, StringComparison.Ordinal);
+        Assert.True(start > 0 && next > start, "invoke_function's block not found -- re-point this pin");
+        var invoke = fern[start..next];
+        Assert.Contains("Aura::ResolveUserInstance(className)", invoke, StringComparison.Ordinal);
+        Assert.DoesNotContain("UE5_FindInstanceOfClass(", invoke, StringComparison.Ordinal);
+        Assert.Contains("Renge::InstanceNotFoundText(", invoke, StringComparison.Ordinal);
+        Assert.Contains("Renge::InstanceLookupCancelledText(", invoke, StringComparison.Ordinal);
+        Assert.Contains("Renge::FunctionNotFoundText(", invoke, StringComparison.Ordinal);
+        foreach (var key in new[] { "instance_pick", "instance_name", "instance_class_name" })
+            Assert.Contains($"data[\"{key}\"]", invoke, StringComparison.Ordinal);
+
+        Assert.True(CeMailboxLayout.ContractVersion >= 6,
+            "a script generated now relies on FIND_INSTANCE's derivation pick, so it must refuse a contract-5 DLL that "
+            + "would still take the first class whose name merely contains the one it sent");
     }
 
     [Fact]

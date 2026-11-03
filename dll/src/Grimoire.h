@@ -115,6 +115,15 @@ constexpr int32_t SANITY_MAX_SPARSE_BITS = 0x100000;
 /// with kMaxElementsCeiling (0x2000000), which was deliberately split from it.
 constexpr int32_t SANITY_MAX_UOBJECTS = 0x800000;
 
+// --- User-facing "an instance of class X" (Aura::ResolveUserInstance) --- [FINDINSTANCE-SUBSTRING-USERFACING]
+// A Debug Camera controller owns objects of the classes users ask for -- its own CheatManager (AddCheats forces one
+// in non-Shipping builds), that CheatManager's extensions -- and is itself a PlayerController. A user's invoke on
+// "CheatManager" means the player's, so such an object is taken only when no other live one exists.
+constexpr const char* AURA_USERPICK_DCC_CLASS = "DebugCameraController";
+// How far up an object's outer chain the Debug Camera test looks. Real chains are a handful of hops (extension ->
+// CheatManager -> controller -> level -> world -> package); a longer one is a corrupt or cyclic chain, not ownership.
+constexpr int AURA_USERPICK_MAX_OUTER_HOPS = 16;
+
 // --- UObject offsets ---
 // UObjectBase layout: VTable(8) + Flags(4) + Index(4) + Class*(8) + FName(?) + Outer*(8)
 // Most offsets are stable, but Outer shifts when CasePreservingName is active (the

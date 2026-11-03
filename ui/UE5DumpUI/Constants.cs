@@ -95,6 +95,15 @@ public static class Constants
     // [W3-CONSOLE-REINVOKE]
     public const int InvokeDispatchTimeoutResult = -5;
 
+    // invoke_function's `instance_pick`: how the DLL chose the object for a class name (Aura::UserPickWire, plus
+    // "address" when the caller sent one). [FINDINSTANCE-SUBSTRING-USERFACING]
+    public const string InvokePickLive = "live";
+    public const string InvokePickAddress = "address";
+    public const string InvokePickDebugCameraOwned = "debug_camera_owned";
+    public const string InvokePickClassDefault = "class_default";
+    public const string InvokePickPartialName = "partial_name";
+    public const string InvokePickPartialNameDefault = "partial_name_default";
+
     // set_debug_camera's `state` -5: the ToggleDebugCamera call TIMED OUT on the game thread and STAYS QUEUED. The two
     // directions differ. A queued ON will run: not a failure, so say "queued, do not press again", because a second
     // Force ON queues a second toggle [W3-DEBUGCAM-QUEUED]. A queued OFF does not turn the camera off on stock UE

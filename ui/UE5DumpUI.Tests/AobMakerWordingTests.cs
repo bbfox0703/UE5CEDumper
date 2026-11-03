@@ -223,6 +223,13 @@ public class AobMakerWordingTests
         // [TELEPORT-BUGITGO-PARENTREL] Copy as BugItGo refusing a parent-relative read
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyBugItParentRelative,
              UE5DumpUI.ViewModels.TeleportViewModel.BugItParentRelativeText);
+        // [FINDINSTANCE-SUBSTRING-USERFACING] the object a Console run's class name resolved to
+        Same(InvokePickText.KeyObject, InvokePickText.ObjectText("CheatManager_0", "CheatManager"),
+             "CheatManager_0", "CheatManager");
+        Same(InvokePickText.KeyClassDefault, InvokePickText.ClassDefaultText("Default__CheatManager", "CheatManager"),
+             "Default__CheatManager", "CheatManager");
+        Same(InvokePickText.KeyDebugCameraOwned, InvokePickText.DebugCameraOwnedText("CheatManager_0", "CheatManager"),
+             "CheatManager_0", "CheatManager");
 
         // [COORDPICK-TIMEDOUT-TEXT] The no-DLL coordinate picker's push with no reply in time
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordNoDllTimedOut,
@@ -256,7 +263,7 @@ public class AobMakerWordingTests
              "A.B");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(96, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(99, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]
