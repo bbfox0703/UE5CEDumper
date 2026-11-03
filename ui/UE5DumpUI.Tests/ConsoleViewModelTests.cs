@@ -76,6 +76,12 @@ public class ConsoleViewModelTests
             return Task.FromResult(SetDebugCameraResult ?? (enable ? 1 : 0));
         }
 
+        /// <summary>[INVOKE-NONSTATIC-ON-CDO] The DLL's verdict on a Force; null = an older DLL.</summary>
+        public bool? SetDebugCameraOnTemplate { get; set; }
+
+        public override async Task<DebugCameraSetResult> SetDebugCameraDetailedAsync(bool enable, CancellationToken ct = default)
+            => new(await SetDebugCameraAsync(enable, ct), SetDebugCameraOnTemplate);
+
         public override Task<AllFunctionsResult> ListAllFunctionsAsync(
             bool gameOnly = true, int limit = 100000, CancellationToken ct = default)
         {
@@ -1263,6 +1269,34 @@ public class ConsoleViewModelTests
 
         Assert.Equal("Unknown", vm.DebugCameraState);
         Assert.Contains("unknown", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ForceOn_whose_toggle_ran_on_the_class_default_object_says_so()
+    {
+        // [INVOKE-NONSTATIC-ON-CDO] With no live CheatManager (a Shipping build) the toggle runs on its class default
+        // object and does nothing; the line used to say only "the game may re-drive the camera".
+        var fake = new FakeDumpService { SetDebugCameraResult = 0, SetDebugCameraOnTemplate = true };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+
+        Assert.Contains(DebugCameraText.OnTemplateText, vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]   // an older DLL
+    public async Task ForceOn_control_no_template_note_without_the_verdict(bool? onTemplate)
+    {
+        var fake = new FakeDumpService { SetDebugCameraResult = 0, SetDebugCameraOnTemplate = onTemplate };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain(DebugCameraText.OnTemplateText, vm.StatusText, StringComparison.Ordinal);
     }
 
     [Fact]

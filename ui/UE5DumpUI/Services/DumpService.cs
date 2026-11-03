@@ -3712,6 +3712,9 @@ public sealed class DumpService : IDumpService
         return res["state"]?.GetValue<int>() ?? -1;
     }
 
+    public async Task<DebugCameraSetResult> SetDebugCameraDetailedAsync(bool enable, CancellationToken ct = default)
+        => new(await SetDebugCameraAsync(enable, ct), null);   // red stub
+
     // === God Mode (Solitar) — docs/godmode-spec.md §6.1 ===
 
     public async Task<int> GetGodModeAsync(CancellationToken ct = default)

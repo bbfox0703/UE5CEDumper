@@ -138,6 +138,10 @@ public class StubDumpService : IDumpService
     public virtual Task<InvokeFunctionResult> InvokeFunctionAsync(string funcName, string? instanceAddr = null, string? className = null, int parmsSize = 0, string? paramsHex = null, bool directCall = false, IReadOnlyList<InvokeStringParam>? stringParams = null, string? expectClassAddr = null, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<int> GetDebugCameraStateAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<int> SetDebugCameraAsync(bool enable, CancellationToken ct = default) => throw new NotImplementedException();
+    /// <summary>Wraps <see cref="SetDebugCameraAsync"/> with no template verdict, as an older DLL answers, so a fake that
+    /// overrides only that method keeps working.</summary>
+    public virtual async Task<DebugCameraSetResult> SetDebugCameraDetailedAsync(bool enable, CancellationToken ct = default)
+        => new(await SetDebugCameraAsync(enable, ct), null);
     public virtual Task<int> GetGodModeAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<int> SetGodModeAsync(bool enable, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<int> GetForegroundLockAsync(CancellationToken ct = default) => throw new NotImplementedException();

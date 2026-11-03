@@ -1764,9 +1764,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             IsBusy = true;
             ClearError();
-            var state = await _dump.SetDebugCameraAsync(wantOn);
+            var set = await _dump.SetDebugCameraDetailedAsync(wantOn);
+            var state = set.State;
             ApplyDebugCameraState(state, forcingOff: !wantOn);
-            StatusText = state switch
+            StatusText = DebugCameraText.WithTemplateNote(state switch
             {
                 1 when wantOn  => "✓ Debug Camera forced ON.",
                 0 when !wantOn => "✓ Debug Camera forced OFF.",
@@ -1778,7 +1779,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 Constants.DebugCameraToggleBlockedResult => DebugCameraText.Blocked(wantOn),
                 _  => $"⚠ Force {want}: state is now {(state == 1 ? "ON" : "OFF")} " +
                       "— the game may re-drive the camera.",
-            };
+            }, set.NonStaticOnTemplate);
         }
         catch (Exception ex)
         {

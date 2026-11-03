@@ -291,6 +291,29 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task SetDebugCameraDetailedAsync_ReadsTheStateAndTheTemplateVerdict()
+    {
+        // [INVOKE-NONSTATIC-ON-CDO] set_debug_camera says when its toggle ran on the CheatManager's class default object.
+        _pipe.SetHandler(_ => new JsonObject { ["ok"] = true, ["state"] = 0, ["nonstatic_on_template"] = true });
+
+        var r = await CreateService().SetDebugCameraDetailedAsync(true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, r.State);
+        Assert.True(r.NonStaticOnTemplate);
+    }
+
+    [Fact]
+    public async Task SetDebugCameraDetailedAsync_control_an_older_dll_sends_no_verdict()
+    {
+        _pipe.SetHandler(_ => new JsonObject { ["ok"] = true, ["state"] = 1 });
+
+        var r = await CreateService().SetDebugCameraDetailedAsync(true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, r.State);
+        Assert.Null(r.NonStaticOnTemplate);
+    }
+
+    [Fact]
     public async Task InvokeFunctionAsync_control_an_older_dll_sends_no_template_verdict()
     {
         _pipe.SetHandler(_ => new JsonObject { ["ok"] = true, ["result"] = 0, ["instance_addr"] = "0x1000" });

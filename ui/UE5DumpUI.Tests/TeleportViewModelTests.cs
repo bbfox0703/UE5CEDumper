@@ -47,6 +47,11 @@ public class TeleportViewModelTests
         public override Task<int> SetDebugCameraAsync(bool enable, CancellationToken ct = default)
         { SetDebugCameraCalls++; LastSetDebugCameraEnable = enable; return Task.FromResult(NextDebugCameraState); }
 
+        public bool? NextDebugCameraOnTemplate { get; set; }   // [INVOKE-NONSTATIC-ON-CDO] null = an older DLL
+
+        public override async Task<DebugCameraSetResult> SetDebugCameraDetailedAsync(bool enable, CancellationToken ct = default)
+            => new(await SetDebugCameraAsync(enable, ct), NextDebugCameraOnTemplate);
+
         public override Task<int> GetDebugCameraStateAsync(CancellationToken ct = default)
         { GetDebugCameraCalls++; return Task.FromResult(NextDebugCameraState); }
 
@@ -1665,6 +1670,19 @@ public class TeleportViewModelTests
     }
 
     // ── Debug Camera force on/off ──────────────────────────────────────
+
+    [Fact]
+    public async Task ForceDebugCameraOn_whose_toggle_ran_on_the_class_default_object_says_so()
+    {
+        // [INVOKE-NONSTATIC-ON-CDO] the Teleport card's Force shares the Console's note.
+        var fake = new FakeDumpService { NextDebugCameraState = 0, NextDebugCameraOnTemplate = true };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+
+        Assert.Contains(UE5DumpUI.Helpers.DebugCameraText.OnTemplateText, vm.StatusText, StringComparison.Ordinal);
+    }
 
     [Fact]
     public async Task ForceDebugCameraOn_calls_dll_and_sets_badge()

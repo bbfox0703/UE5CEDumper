@@ -233,6 +233,7 @@ public class AobMakerWordingTests
         // [INVOKE-NONSTATIC-ON-CDO] a function that is not static ran on a template
         Same(InvokePickText.KeyTemplateClassDefault, InvokePickText.TemplateClassDefaultText("Default__Actor", "Actor"),
              "Default__Actor", "Actor");
+        Same(DebugCameraText.KeyOnTemplate, DebugCameraText.OnTemplateText);
         Same(InvokePickText.KeyTemplateSubobject,
              InvokePickText.TemplateSubobjectText("CharMoveComp", "CharacterMovementComponent", "Default__Character"),
              "CharMoveComp", "CharacterMovementComponent", "Default__Character");
@@ -269,7 +270,7 @@ public class AobMakerWordingTests
              "A.B");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(101, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(102, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

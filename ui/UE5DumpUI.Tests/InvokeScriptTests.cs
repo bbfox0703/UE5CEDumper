@@ -2971,6 +2971,46 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void DebugCameraForce_WarnsWhenItsToggleRanOnATemplate()
+    {
+        // [INVOKE-NONSTATIC-ON-CDO] Force ON / OFF fires the non-static ToggleDebugCamera on whatever CheatManager the
+        // state read found -- its class default object when none is live. Warned on both lanes, never refused.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found -- re-point this pin");
+            return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
+        }
+
+        var set = Body(CodeOnly(DllSource("Frieren.cpp")), "int32_t UE5_SetDebugCamera(int32_t enable) {");
+        int verdict = set.IndexOf("Aura::TemplateOf(cm)", StringComparison.Ordinal);
+        int fire = set.IndexOf("CallProcessEventRouted(cm, ufunc", StringComparison.Ordinal);
+        Assert.True(verdict > 0 && fire > verdict && set.Contains("Mimic::WarnNonStaticOnTemplate(", StringComparison.Ordinal),
+            "the verdict is taken on the CheatManager the toggle is about to run on");
+
+        var fern = CodeOnly(DllSource("Fern.cpp"));
+        int start = fern.IndexOf("cmd == Renge::CMD_SET_DEBUG_CAMERA", StringComparison.Ordinal);
+        var handler = fern[start..fern.IndexOf("cmd == Renge::CMD_", start + 1, StringComparison.Ordinal)];
+        Assert.Contains("data[\"nonstatic_on_template\"] = FrierenInvoke::DebugCameraFiredOnTemplate()", handler,
+            StringComparison.Ordinal);
+
+        var mimic = CodeOnly(DllSource("Mimic.cpp"));
+        int dbg = mimic.IndexOf("UE5_SetDebugCamera(req != 0 ? 1 : 0)", StringComparison.Ordinal);
+        int outBit = mimic.IndexOf("FrierenInvoke::DebugCameraFiredOnTemplate()", dbg, StringComparison.Ordinal);
+        Assert.True(dbg > 0 && outBit > dbg && outBit - dbg < 900, "CMD_SET_DEBUG_CAMERA publishes the bit too");
+
+        // CE: a Force ON that did not take says why when the bit is set.
+        var on = DebugCameraScriptGenerator.Generate();
+        Assert.Contains($"readInteger(mb + {CeMailboxLayout.OffOutFlags})", on, StringComparison.Ordinal);
+        Assert.Contains("class default object", on, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SeeThrough_PublishesARestoreThatGaveUp()
     {
         var src = DllSource("Schlacht.cpp");

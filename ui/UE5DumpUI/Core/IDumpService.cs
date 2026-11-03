@@ -558,6 +558,10 @@ public interface IDumpService
     /// </summary>
     Task<int> SetDebugCameraAsync(bool enable, CancellationToken ct = default);
 
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] <see cref="SetDebugCameraAsync"/>, plus the DLL's warning that the toggle ran on
+    /// the CheatManager's class default object (no live CheatManager), where it does nothing.</summary>
+    Task<DebugCameraSetResult> SetDebugCameraDetailedAsync(bool enable, CancellationToken ct = default);
+
     // === God Mode (Solitar: force AActor.bCanBeDamaged) ===
 
     /// <summary>

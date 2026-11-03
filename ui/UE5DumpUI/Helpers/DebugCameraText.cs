@@ -31,6 +31,16 @@ internal static class DebugCameraText
                             "queued OFF does not turn the camera off on most engines: " +
                             "press Force OFF again once the game responds.");
 
+    internal const string KeyOnTemplate = "str.DbgCam.OnTemplate";
+
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] A Force's status, plus the DLL's warning when the toggle ran on the
+    /// CheatManager's class default object: there is no live CheatManager, so the toggle does nothing there.</summary>
+    internal static string WithTemplateNote(string status, bool? onTemplate) => status;
+
+    internal static string OnTemplateText => Say(KeyOnTemplate,
+        "⚠ The toggle ran on the CheatManager's class default object: there is no live CheatManager (usual in a " +
+        "Shipping build), so it does nothing there.");
+
     internal const string KeyBlockedOn = "str.DbgCam.BlockedOn";
     internal const string KeyBlockedOff = "str.DbgCam.BlockedOff";
 
