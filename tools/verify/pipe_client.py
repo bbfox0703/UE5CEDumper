@@ -187,14 +187,17 @@ class PipeClient:
 
 
 def selftest() -> int:
-    """[RIG-PIPE-DOUBLE-CONNECT] `with PipeClient() as c:` connects, and a second `c.connect()` must not open a
-    second handle: the DLL serves three pipe instances and the UI holds two, so the leaked one left none and the rig
-    failed to connect after ten retries. No pipe is opened -- `open` is replaced for the duration."""
+    """[RIG-PIPE-DOUBLE-CONNECT] `with PipeClient() as c:` connects, and a second `c.connect()` must not open again:
+    it opened a second handle while the first was still held, which needs a second pipe instance at the same moment.
+    The DLL serves three and the UI holds two, so with the UI up the rig failed after ten retries. A handle closed
+    behind the client's back is reopened, not handed back. No pipe is opened -- `open` is replaced for the duration."""
     opened = []
 
     class FakeHandle:
+        closed = False
+
         def close(self):
-            pass
+            self.closed = True
 
     def fake_open(*args, **kwargs):
         opened.append(args[0])
@@ -210,6 +213,9 @@ def selftest() -> int:
             twice = len(opened)
         c.connect()
         again = len(opened)
+        c._f.close()   # closed directly, not through close(), so the attribute still holds it
+        c.connect()
+        reopened = len(opened)
         c.close()
     finally:
         if had:
@@ -217,7 +223,8 @@ def selftest() -> int:
         else:
             del g["open"]
     bad = 0
-    for label, got, want in (("connect inside `with`", twice, 1), ("connect after close", again, 2)):
+    for label, got, want in (("connect inside `with`", twice, 1), ("connect after close", again, 2),
+                             ("connect after the handle was closed directly", reopened, 3)):
         ok = got == want
         bad += not ok
         print(f"{'OK ' if ok else 'BAD'}  {label}: {got} open(s), want {want}")
