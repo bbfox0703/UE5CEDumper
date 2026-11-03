@@ -194,7 +194,9 @@ def selftest() -> int:
     """[RIG-PIPE-DOUBLE-CONNECT] `with PipeClient() as c:` connects, and a second `c.connect()` must not open again:
     it opened a second handle while the first was still held, which needs a second pipe instance at the same moment.
     The DLL serves three and the UI holds two, so with the UI up the rig failed after ten retries. A handle closed
-    behind the client's back is reopened, not handed back. No pipe is opened -- `open` is replaced for the duration."""
+    behind the client's back is reopened, not handed back, and the reopened connection starts with no bytes of the old
+    one -- while a connect() on an open client keeps them, since they belong to the live connection. No pipe is
+    opened -- `open` is replaced for the duration."""
     opened = []
 
     class FakeHandle:
@@ -213,8 +215,10 @@ def selftest() -> int:
     try:
         c = PipeClient()
         with c:
+            c._buf.extend(b'{"id":3,"partial')   # the live connection's own unread bytes
             c.connect()
             twice = len(opened)
+            kept = len(c._buf)
         c.connect()
         again = len(opened)
         c._f.close()   # closed directly, not through close(), so the attribute still holds it
@@ -229,7 +233,8 @@ def selftest() -> int:
         else:
             del g["open"]
     bad = 0
-    for label, got, want in (("connect inside `with`", twice, 1), ("connect after close", again, 2),
+    for label, got, want in (("connect inside `with`", twice, 1), ("bytes kept by a connect on an open client", kept, 16),
+                             ("connect after close", again, 2),
                              ("connect after the handle was closed directly", reopened, 3),
                              ("bytes a reopened connection inherits", leftover, 0)):
         ok = got == want
