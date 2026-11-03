@@ -219,7 +219,8 @@ public static class TeleportScriptGenerator
             // [TELEPORT-BUGITGO-PARENTREL] The DLL refuses a BugIt stored from a parent-relative read. A record from
             // before this fix reports it through the generic branch below, which is enough to see it; this one says
             // why, and what to do instead.
-            Line(sb, $"  elseif not hadError and code == {TeleportCodes.ParentRelative} then");
+            // Invariant: a negative int in the user's culture can carry U+2212 (ICU's sv-SE), which Lua cannot parse.
+            Line(sb, $"  elseif not hadError and code == {TeleportCodes.ParentRelative.ToString(CultureInfo.InvariantCulture)} then");
             Line(sb, "    hadError = true");
             Line(sb, $"    showMessage('[Teleport] {label}: refused -- the stored BugIt came from a PARENT-RELATIVE read ' ..");
             Line(sb, "      '(an attached pawn), so it is NOT world coordinates. Nothing moved. BugIt again while the game ' ..");
