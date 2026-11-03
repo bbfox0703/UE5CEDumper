@@ -2241,6 +2241,24 @@ UserInstance ResolveUserInstance(const std::string& className) {
                            InstanceWalk{ "ResolveUserInstance", Grimoire::AURA_USERPICK_DCC_CLASS, true, true });
 }
 
+LocalPcScan ScanForLocalPlayerController() {
+    // RED SCAFFOLD [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS]: today's substring scan, moved verbatim.
+    LocalPcScan out;
+    auto rset = FindInstancesByClass("PlayerController", false, 100);
+    uintptr_t firstNonCdo = 0;
+    for (const auto& r : rset.results) {
+        if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
+        if (!firstNonCdo) firstNonCdo = r.addr;
+        uintptr_t cls = Ubel::GetClass(r.addr);
+        int32_t playerOff = Ubel::FindFieldOffset(cls, "Player", "Player", "Controller", "ObjectProperty");
+        uintptr_t player = 0;
+        if (playerOff >= 0 && Macht::ReadSafe(r.addr + static_cast<uintptr_t>(playerOff), player) && player)
+            return { r.addr, LocalPcPick::LocalPlayer };
+    }
+    if (firstNonCdo) return { firstNonCdo, LocalPcPick::NoPlayer };
+    return out;
+}
+
 uintptr_t FindClassByPath(const std::string& classPath) {
     // [SEETHRU-PROBE-SUBSTRING] FindByFullName, not FindByNameOrPath: that one falls back to a bare-FName match,
     // and a class the caller named by package must not be answered by whatever else shares its leaf name.

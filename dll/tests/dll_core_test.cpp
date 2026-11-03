@@ -1596,11 +1596,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, DBGCAM58, USERPICK, UFIELDNEXT, UPROPNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, DBGCAM58, USERPICK, LOCALPC, UFIELDNEXT, UPROPNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, DBGCAM58, USERPICK, UFIELDNEXT, UPROPNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, DBGCAM58, USERPICK, LOCALPC, UFIELDNEXT, UPROPNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -5222,6 +5222,174 @@ int main() {
         DynOff::bCasePreservingName = svCpnU;
         DynOff::bUseFProperty       = svFPropU;
         g_cachedUEVersion           = svVerU;
+    }
+
+    // -- LOCALPC-2026-11-03 -- the internal local-PlayerController fallback picks by derivation ------------------------
+    //
+    // ⛔ POOL-FAKING, like USERPICK: own object pool AND own name pool. [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] Seven
+    // modules fell back, when their GWorld chain gave no controller, to the first object whose CLASS NAME contains
+    // "PlayerController" and whose fuzzy 'Player' field was set, else the first such object at all: a widget named after
+    // the word won with its OwningPlayer, a game PC named without it was missed, and an active Debug Camera never was.
+    // Every wrong object here sits BELOW the right one.
+    {
+        blk("LOCALPC - the local PlayerController fallback picks by derivation, the local player first");
+        ResetCancel();
+
+        enum : int32_t { lClass = 1, lEngine, lPackage, lObject, lActor, lController, lPlayerController, lDcc, lFreeCam,
+                         lPcMain, lWidget, lPlayer, lLocalPlayer, lNetConn, lWorldSettings, lBPWS, lPcgWS, lObjProp,
+                         lPlayerProp, lOwningPlayer, lCdoPcMain, lWidget0, lFreeCam0, lPcMain0, lPcMain1, lLocalPlayer0,
+                         lNetConn0, lPcg0, lWS0, lNames };
+        const char* lpNames[lNames] = { "", "Class", "/Script/Engine", "Package", "Object", "Actor", "Controller",
+            "PlayerController", "DebugCameraController", "BP_FreeCam_C", "BP_PC_Main_C", "WBP_PlayerControllerHint_C",
+            "Player", "LocalPlayer", "NetConnection", "WorldSettings", "BP_WS_C", "PCGRemoveActorsFromWorldSettings",
+            "ObjectProperty", "Player", "OwningPlayer", "Default__BP_PC_Main_C", "WBP_PlayerControllerHint_C_0",
+            "BP_FreeCam_C_0", "BP_PC_Main_C_0", "BP_PC_Main_C_1", "LocalPlayer_0", "NetConnection_0",
+            "PCGRemoveActorsFromWorldSettings_0", "BP_WS_C_0" };
+        static uint8_t lpEntry[lNames][0x40] = {};
+        static uintptr_t lpChunk[lNames + 1] = {};
+        for (int i = 1; i < lNames; ++i) {
+            memcpy(lpEntry[i] + 0x10, lpNames[i], strlen(lpNames[i]) + 1);
+            lpChunk[i] = reinterpret_cast<uintptr_t>(lpEntry[i]);
+        }
+        static uintptr_t lpChunks[2] = { reinterpret_cast<uintptr_t>(lpChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(lpChunks), 0x10);
+        check("LOCALPC setup: the name pool resolves the longest name",
+              Serie::GetString(lPcg0) == "PCGRemoveActorsFromWorldSettings_0", Serie::GetString(lPcg0).c_str());
+
+        const bool     svCpnL   = DynOff::bCasePreservingName;
+        const bool     svFPropL = DynOff::bUseFProperty;
+        const uint32_t svVerL   = g_cachedUEVersion;
+        DynOff::bCasePreservingName = false;
+        DynOff::bUseFProperty       = true;
+        g_cachedUEVersion           = 508;
+
+        enum { cMeta, cPkgCls, cPkg, cObject, cActor, cController, cPlayerController, cDcc, cFreeCam, cPcMain, cWidget,
+               cPlayer, cLocalPlayer, cNetConn, cWorldSettings, cBPWS, cPcgWS, oCdoPcMain, oWidget0, oFreeCam0, oPcMain0,
+               oPcMain1, oLocalPlayer0, oNetConn0, oPcg0, oWS0, oTplPc, kLBlobs };
+        alignas(16) static uint8_t lpB[kLBlobs][0x200] = {};
+        auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(lpB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto obj = [&](int b, int cls, int32_t name, int outer) {
+            memset(lpB[b], 0, sizeof(lpB[b]));
+            putP(lpB[b], Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            put32(lpB[b], Grimoire::OFF_UOBJECT_NAME, name);
+            putP(lpB[b], DynOff::UOBJECT_OUTER, A(outer));
+        };
+        auto klass = [&](int b, int32_t name, int super) {
+            obj(b, cMeta, name, cPkg);
+            putP(lpB[b], DynOff::USTRUCT_SUPER, A(super));
+        };
+        obj(cMeta, cMeta, lClass, -1);
+        obj(cPkgCls, cMeta, lPackage, -1);
+        obj(cPkg, cPkgCls, lEngine, -1);
+        klass(cObject, lObject, -1);
+        klass(cActor, lActor, cObject);
+        klass(cController, lController, cActor);
+        klass(cPlayerController, lPlayerController, cController);
+        klass(cDcc, lDcc, cPlayerController);          // ADebugCameraController : APlayerController
+        klass(cFreeCam, lFreeCam, cDcc);               // a game's debug camera, named without the word
+        klass(cPcMain, lPcMain, cPlayerController);    // a game's PlayerController, named without the word
+        klass(cWidget, lWidget, cObject);              // the word in its name, no PlayerController
+        klass(cPlayer, lPlayer, cObject);
+        klass(cLocalPlayer, lLocalPlayer, cPlayer);
+        klass(cNetConn, lNetConn, cPlayer);            // a listen server's remote player
+        klass(cWorldSettings, lWorldSettings, cActor);
+        klass(cBPWS, lBPWS, cWorldSettings);
+        klass(cPcgWS, lPcgWS, cObject);                // PCG's node settings: the word in its name, no AWorldSettings
+        // APlayerController::Player and the widget's OwningPlayer, both reflected ObjectProperties at 0x100.
+        constexpr int32_t kPlayerOff = 0x100;
+        static uint8_t lpObjPropFC[0x20] = {}, lpPlayerProp[0x100] = {}, lpOwningProp[0x100] = {};
+        put32(lpObjPropFC, DynOff::FFIELDCLASS_NAME, lObjProp);
+        auto prop = [&](uint8_t* p, int32_t name, int owner) {
+            putP(p, DynOff::FFIELD_CLASS, reinterpret_cast<uintptr_t>(lpObjPropFC));
+            put32(p, DynOff::FFIELD_NAME, name);
+            put32(p, DynOff::FPROPERTY_OFFSET, kPlayerOff);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, 8);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(lpB[owner], DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(p));
+            put32(lpB[owner], DynOff::USTRUCT_PROPSSIZE, kPlayerOff + 8);
+        };
+        prop(lpPlayerProp, lPlayerProp, cPlayerController);
+        prop(lpOwningProp, lOwningPlayer, cWidget);
+        obj(oCdoPcMain, cPcMain, lCdoPcMain, cPkg);
+        put32(lpB[oCdoPcMain], Grimoire::OFF_UOBJECT_FLAGS, 0x31);
+        obj(oLocalPlayer0, cLocalPlayer, lLocalPlayer0, -1);
+        obj(oNetConn0, cNetConn, lNetConn0, -1);
+        obj(oWidget0, cWidget, lWidget0, -1);
+        putP(lpB[oWidget0], kPlayerOff, A(oLocalPlayer0));       // the widget's OwningPlayer is the local player
+        obj(oFreeCam0, cFreeCam, lFreeCam0, -1);                  // an INACTIVE debug camera: no Player
+        obj(oPcMain0, cPcMain, lPcMain0, -1);
+        putP(lpB[oPcMain0], kPlayerOff, A(oNetConn0));            // a remote player's PC
+        obj(oPcMain1, cPcMain, lPcMain1, -1);
+        putP(lpB[oPcMain1], kPlayerOff, A(oLocalPlayer0));        // the local player's PC
+        obj(oPcg0, cPcgWS, lPcg0, -1);
+        obj(oWS0, cBPWS, lWS0, -1);
+        obj(oTplPc, cPcMain, lPcMain0, oCdoPcMain);               // a class default object's subobject: a template
+        put32(lpB[oTplPc], Grimoire::OFF_UOBJECT_FLAGS, 0x40021);
+
+        FakePool lpPool;
+        lpPool.Build(64);
+        auto slot = [&](int i, int b) {
+            const uintptr_t o = A(b);
+            memcpy(lpPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        };
+        auto nm = [](uintptr_t o) { return o ? Ubel::GetName(o) : std::string("(0)"); };
+        auto is = [&](const Aura::LocalPcScan& s, int b, Aura::LocalPcPick p) { return s.pc == A(b) && s.pick == p; };
+        const int order[] = { oCdoPcMain, oWidget0, oFreeCam0, oPcMain0, oPcMain1, oLocalPlayer0, oNetConn0, oPcg0, oWS0 };
+        for (int i = 0; i < 9; ++i) slot(i, order[i]);
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+
+        auto sub = Aura::FindInstancesByClass("PlayerController", false, 100);
+        check("LOCALPC control: the old substring walk's first row is the widget -- the trap",
+              !sub.results.empty() && sub.results[0].addr == A(oWidget0),
+              sub.results.empty() ? "(none)" : nm(sub.results[0].addr).c_str());
+
+        auto s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: the local player's game PC (named without the word) wins over the widget and a remote PC",
+              is(s, oPcMain1, Aura::LocalPcPick::LocalPlayer), nm(s.pc).c_str());
+        slot(4, -1);
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+        s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: with no local PC, the remote player's PC, and the pick says so",
+              is(s, oPcMain0, Aura::LocalPcPick::OtherPlayer), nm(s.pc).c_str());
+        putP(lpB[oPcMain0], kPlayerOff, 0);
+        s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: with no Player anywhere, a PC with none -- never the inactive debug camera below it",
+              is(s, oPcMain0, Aura::LocalPcPick::NoPlayer), nm(s.pc).c_str());
+        // Debug Camera ON: UPlayer::SwitchController moved the local player to the debug camera and nulled the old PC's.
+        putP(lpB[oFreeCam0], kPlayerOff, A(oLocalPlayer0));
+        slot(4, oPcMain1);
+        putP(lpB[oPcMain1], kPlayerOff, 0);
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+        s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: Debug Camera on -- the active debug camera holds the local player and is taken, as the chain does",
+              is(s, oFreeCam0, Aura::LocalPcPick::LocalPlayer), nm(s.pc).c_str());
+        check("LOCALPC ⭐: ...and it is recognised as a debug camera by derivation, with no word in its name",
+              s.pc && Aura::ClassDerivesFromAny(Ubel::GetClass(s.pc), {Grimoire::AURA_USERPICK_DCC_CLASS}));
+        Tot::g_perCommand.store(true);
+        s = Aura::ScanForLocalPlayerController();
+        ResetCancel();
+        check("LOCALPC ⭐: a cancelled walk answers Cancelled and nothing", s.pc == 0 && s.pick == Aura::LocalPcPick::Cancelled,
+              nm(s.pc).c_str());
+        for (int i = 0; i < 9; ++i) slot(i, -1);
+        slot(0, oCdoPcMain);
+        slot(1, oTplPc);
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+        s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: with only templates, nothing", s.pc == 0 && s.pick == Aura::LocalPcPick::None, nm(s.pc).c_str());
+        slot(0, oPcg0);
+        slot(1, oWS0);
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+        auto ws = Aura::FindInstancesDerivedFrom("WorldSettings", 64);
+        check("LOCALPC control: a WorldSettings walk by derivation takes the game's, not PCG's node settings below it",
+              !ws.results.empty() && ws.results[0].addr == A(oWS0),
+              ws.results.empty() ? "(none)" : nm(ws.results[0].addr).c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpnL;
+        DynOff::bUseFProperty       = svFPropL;
+        g_cachedUEVersion           = svVerL;
     }
 
     // -- WALKIFACEGUARD-2026-10-27 -- WalkInterfaceFunctions asks only a class for its interfaces ------------------------

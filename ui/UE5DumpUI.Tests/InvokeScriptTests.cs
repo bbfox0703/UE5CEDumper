@@ -3140,6 +3140,72 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void InternalClassLookups_NeverMatchAClassNameSubstring()
+    {
+        // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The DLL's own fallbacks looked a class up by a NAME SUBSTRING: a
+        // widget named after "PlayerController" won the local-controller scan with its OwningPlayer, a game PC or
+        // AWorldSettings subclass named without the word was missed, and a Debug Camera subclass named without the word
+        // was never hopped through. None of these modules reach a C++ test target, so their source is pinned here;
+        // dll_core_test's LOCALPC block pins Aura::ScanForLocalPlayerController itself.
+        static string Lf(string s) => s.Replace("\r\n", "\n");
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found -- re-point this pin");
+            return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
+        }
+
+        // (1) Every FindInstancesByClass call outside Aura passes an exact match -- except the Instance Finder's own,
+        // which forwards the client's choice.
+        const string finder = "FindInstancesByClass(className, exactMatch, limit, newestFirst, nameFilter, excludeClasses, "
+                              + "/*buildHistogram=*/true)";
+        foreach (var path in Directory.GetFiles(Path.GetDirectoryName(NumericInputCoercionTests.RepoFile("dll/src/Aura.cpp"))!, "*.cpp"))
+        {
+            if (Path.GetFileName(path) == "Aura.cpp") continue;
+            var src = CodeOnly(Lf(File.ReadAllText(path)));
+            for (int at = src.IndexOf("FindInstancesByClass(", StringComparison.Ordinal); at >= 0;
+                 at = src.IndexOf("FindInstancesByClass(", at + 1, StringComparison.Ordinal))
+            {
+                var call = src[at..src.IndexOf(';', at)];
+                Assert.True(call.Contains("/*exactMatch=*/true", StringComparison.Ordinal) || call.StartsWith(finder, StringComparison.Ordinal),
+                    Path.GetFileName(path) + ": " + call);
+            }
+        }
+
+        // (2) The seven local-controller fallbacks share Aura's derivation scan, and every Debug Camera hop tests
+        // derivation.
+        foreach (var file in new[] { "Dunste.cpp", "Edel.cpp", "Hemmung.cpp", "Laufen.cpp", "Solide.cpp", "Solitar.cpp", "Wirbel.cpp" })
+        {
+            var src = CodeOnly(Lf(DllSource(file)));
+            var resolve = Body(src, "uintptr_t ResolveLocalPC(uintptr_t world");
+            Assert.True(resolve.Contains("Aura::ScanForLocalPlayerController()", StringComparison.Ordinal), file + ": " + resolve);
+            var hop = Body(src, "uintptr_t HopThroughDebugCamera(uintptr_t pc) {");
+            Assert.True(hop.Contains("Aura::ClassDerivesFromAny(", StringComparison.Ordinal)
+                        && !hop.Contains(".find(\"DebugCameraController\")", StringComparison.Ordinal), file + ": " + hop);
+        }
+        var dunste = Body(CodeOnly(Lf(DllSource("Dunste.cpp"))), "uintptr_t ResolveLocalPC(uintptr_t world");
+        int gate = dunste.IndexOf("if (!allowScan) return 0;", StringComparison.Ordinal);
+        Assert.True(gate > 0 && gate < dunste.IndexOf("Aura::ScanForLocalPlayerController()", StringComparison.Ordinal),
+            "the fly worker's ticks still never scan");
+
+        // (3) Hemmung's world-dilation fallback: AWorldSettings by derivation, never a class-default stand-in (the
+        // re-assert worker would write TimeDilation into the template the next level's settings are built from).
+        var ws = Body(CodeOnly(Lf(DllSource("Hemmung.cpp"))), "uintptr_t ResolveWorldSettings(uintptr_t world) {");
+        Assert.Contains("Aura::FindInstancesDerivedFrom(Grimoire::TIME_WORLDSETTINGS_CLASS", ws, StringComparison.Ordinal);
+        Assert.DoesNotContain("FindLiveOrDefaultOf", ws, StringComparison.Ordinal);
+
+        // (4) The version ladder's CharacterMovementComponent rung reads the ENGINE class by path.
+        var frieren = CodeOnly(Lf(DllSource("Frieren.cpp")));
+        Assert.Contains("Aura::FindClassByPath(Grimoire::VERSION_CMC_CLASS_PATH)", frieren, StringComparison.Ordinal);
+        Assert.Contains("\"/Script/Engine.CharacterMovementComponent\"", DllSource("Grimoire.h"), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void WritePools_never_hold_a_template()
     {
         // [LISTINSTANCES-KEEPS-TEMPLATES] Freeze (CMD_LIST_INSTANCES) and Force (Solide) write into every object their

@@ -158,6 +158,15 @@ struct UserInstance {
 };
 UserInstance ResolveUserInstance(const std::string& className);
 
+// [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The local PlayerController found by walking the object array, for a
+// caller whose GWorld -> OwningGameInstance -> LocalPlayers[0] -> PlayerController chain gave none.
+enum class LocalPcPick : uint8_t { None, Cancelled, LocalPlayer, OtherPlayer, NoPlayer };
+struct LocalPcScan {
+    uintptr_t   pc = 0;
+    LocalPcPick pick = LocalPcPick::None;
+};
+LocalPcScan ScanForLocalPlayerController();
+
 // The pick's name on the pipe (invoke_function's instance_pick); "" for None and Cancelled, which never reach a reply.
 constexpr const char* UserPickWire(UserPick p) {
     switch (p) {
