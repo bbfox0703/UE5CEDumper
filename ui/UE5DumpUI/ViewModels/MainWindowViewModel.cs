@@ -1825,19 +1825,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     return;
                 }
 
-                // Find a live instance so the script's invokeUFunction has a target. The
-                // helper uses CMD_INVOKE_BY_NAME which finds an instance itself, but
-                // running it now lets us surface a clear error if the class is CDO-only.
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 1);
-                string instanceAddr = "";
-                foreach (var inst in instances.Instances)
-                {
-                    if (!inst.Name.StartsWith("Default__", StringComparison.Ordinal))
-                    {
-                        instanceAddr = inst.Address;
-                        break;
-                    }
-                }
+                // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the script names the class and the DLL resolves
+                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here only ever
+                // found the class default object.
+                const string instanceAddr = "";
 
                 // Fast path: TRULY trivial functions only (no inputs AND no return).
                 // Functions like KismetSystemLibrary::GetGameName have no inputs
@@ -1995,17 +1986,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     return;
                 }
 
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 1);
-                string instanceAddr = "", instanceClassAddr = "";
-                foreach (var inst in instances.Instances)
-                {
-                    if (!inst.Name.StartsWith("Default__", StringComparison.Ordinal))
-                    {
-                        instanceAddr = inst.Address;
-                        instanceClassAddr = inst.ClassAddress;
-                        break;
-                    }
-                }
+                // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the dialog sends the class name, and the DLL
+                // picks the object at each FIRE with the resolver the Console's own Run uses (derivation, a live object
+                // first, the Debug Camera's last, then the class default object under its warning). An exact-name
+                // lookup here took the class default object and left FIRE with nothing to send.
 
                 if (Avalonia.Application.Current?.ApplicationLifetime is not
                     Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
@@ -2015,12 +1999,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 var inputParams = funcMatch.InputParams.ToList();
                 var dialog = new Views.InvokeParamDialog(
                     className, funcName, inputParams, funcMatch.Parameters.ToList(), funcMatch.ParmsSize,
-                    instanceAddr, _dump, _engineState?.UEVersion ?? 0,
+                    "", _dump, _engineState?.UEVersion ?? 0,
                     aobMaker: _aobMaker, platform: _platform,
-                    mode: Views.InvokeDialogMode.PipeInvoke,
-                    // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The dialog keeps this address across FIREs: each is refused
-                    // if the object there is of another class by then.
-                    expectClassAddr: instanceClassAddr);
+                    mode: Views.InvokeDialogMode.PipeInvoke);
                 var result = await dialog.ShowDialog<string?>(owner);
                 StatusText = result == "ok"
                     ? $"exec {className}::{funcName} dialog closed"
@@ -2055,16 +2036,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     return;
                 }
 
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 1);
-                string instanceAddr = "";
-                foreach (var inst in instances.Instances)
-                {
-                    if (!inst.Name.StartsWith("Default__", StringComparison.Ordinal))
-                    {
-                        instanceAddr = inst.Address;
-                        break;
-                    }
-                }
+                // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the script names the class and the DLL resolves
+                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here only ever
+                // found the class default object.
+                const string instanceAddr = "";
 
                 var inputParams = funcMatch.InputParams.ToList();
                 var hasReturn = funcMatch.Parameters.Any(p => p.IsReturn);
