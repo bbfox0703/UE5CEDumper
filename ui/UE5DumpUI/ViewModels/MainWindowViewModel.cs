@@ -1826,8 +1826,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 }
 
                 // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the script names the class and the DLL resolves
-                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here only ever
-                // found the class default object.
+                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here normally
+                // found the class default object first.
                 const string instanceAddr = "";
 
                 // Fast path: TRULY trivial functions only (no inputs AND no return).
@@ -1987,9 +1987,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 }
 
                 // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the dialog sends the class name, and the DLL
-                // picks the object at each FIRE with the resolver the Console's own Run uses (derivation, a live object
-                // first, the Debug Camera's last, then the class default object under its warning). An exact-name
-                // lookup here took the class default object and left FIRE with nothing to send.
+                // picks the object at each FIRE with Aura::ResolveUserInstance (its contract is in Aura.h). An exact-name
+                // lookup here normally found the class default object first and left FIRE with nothing to send.
 
                 if (Avalonia.Application.Current?.ApplicationLifetime is not
                     Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
@@ -2037,8 +2036,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 }
 
                 // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the script names the class and the DLL resolves
-                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here only ever
-                // found the class default object.
+                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here normally
+                // found the class default object first.
                 const string instanceAddr = "";
 
                 var inputParams = funcMatch.InputParams.ToList();

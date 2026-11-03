@@ -527,7 +527,8 @@ public interface IDumpService
     /// <param name="expectClassAddr">[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The class the caller's function list was
     ///     read from. The DLL invokes nothing when the object at <paramref name="instanceAddr"/> is now of another
     ///     class: a dialog that stays open keeps its address while the game frees the object and reuses the slot.
-    ///     Null = no check.</param>
+    ///     Null = no check. The DLL also applies it to an object picked by <paramref name="className"/>, and it is class
+    ///     equality, not derivation: a caller sending a class name should not send it.</param>
     Task<InvokeFunctionResult> InvokeFunctionAsync(
         string funcName,
         string? instanceAddr = null,

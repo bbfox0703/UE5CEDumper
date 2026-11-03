@@ -164,7 +164,7 @@ public sealed class InvokeParamDialog : Window
         root.Children.Add(header);
 
         // [MAINWINDOW-INVOKE-LIMIT1-CDO] Opened on a class with no object: say where each FIRE will land before the first.
-        if (mode == InvokeDialogMode.PipeInvoke && string.IsNullOrEmpty(instanceAddr))
+        if (ShowsTargetByClassLine(mode, instanceAddr))
         {
             var target = new TextBlock
             {
@@ -730,10 +730,17 @@ public sealed class InvokeParamDialog : Window
         }
     }
 
+    /// <summary>[MAINWINDOW-INVOKE-LIMIT1-CDO] Whether the dialog says, before the first FIRE, that each FIRE lands on
+    /// whatever object the class name resolves to: only a dialog that can FIRE and was given no object.</summary>
+    internal static bool ShowsTargetByClassLine(InvokeDialogMode mode, string instanceAddr)
+        => mode == InvokeDialogMode.PipeInvoke && string.IsNullOrEmpty(instanceAddr);
+
     /// <summary>[MAINWINDOW-INVOKE-LIMIT1-CDO] What a FIRE sends. A dialog opened on a class, with no object known, sends
-    /// the class name, and the DLL resolves it at each FIRE as the Console's own Run does. One opened on an object sends
-    /// that address and the class check that goes with it; a class check without an address checks nothing, since the
-    /// DLL reads the class from the object it picks.</summary>
+    /// the class name, and the DLL resolves it at each FIRE with Aura::ResolveUserInstance -- the resolver behind the
+    /// Console's Run, though not the Console's per-class pin, which this dialog neither reads nor sets. It sends no class
+    /// check then: the DLL applies expect_class_addr to the object it picks too, and as an equality test it would refuse
+    /// a subclass object (a Blueprint's _C) or a partial-name pick the resolver legitimately chose; with no kept address
+    /// there is nothing for it to protect. One opened on an object sends that address and its class check.</summary>
     internal static (string? InstanceAddr, string? ClassName, string? ExpectClassAddr) FireTarget(
         string instanceAddr, string className, string? expectClassAddr)
         => string.IsNullOrEmpty(instanceAddr) ? (null, className, null) : (instanceAddr, null, expectClassAddr);

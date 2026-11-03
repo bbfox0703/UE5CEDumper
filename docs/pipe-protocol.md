@@ -1925,7 +1925,9 @@ state-changing operations but works for simple getters).
                                    // "Not invoked: the object at … is no longer the <class> this
                                    // was opened on …". A freed slot still holding the old class
                                    // pointer passes; one reading 0 or unreadable answers "Failed
-                                   // to read class …" first. Absent = no check.
+                                   // to read class …" first. Absent = no check. Also applied
+                                   // to an object picked by class_name, as class EQUALITY (not
+                                   // derivation): a caller sending class_name should not send it.
   // optional: string INPUT params. An FString is passed by value as
   // { Data*, Num, Max } (16 bytes) inline in the params buffer, and its Data
   // pointer must be a valid GAME-process address — which the UI can't allocate.

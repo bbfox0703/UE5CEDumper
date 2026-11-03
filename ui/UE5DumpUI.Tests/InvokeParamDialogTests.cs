@@ -42,10 +42,11 @@ public class InvokeParamDialogTests
     }
 
     // --- [MAINWINDOW-INVOKE-LIMIT1-CDO] a dialog opened on a class, with no object ---
-    // Three MainWindow handlers looked up "a live instance" by exact class name with limit 1: that one row is the class
-    // default object, which they skip, so the dialog opened with no address and its FIRE sent neither instance_addr nor
-    // class_name -- the DLL answered "Either instance_addr or class_name is required". The dialog now sends the class
-    // name, and the DLL resolves it at each FIRE as the Console's own Run does.
+    // Three MainWindow handlers looked up "a live instance" by exact class name with limit 1: that one row is normally
+    // the class default object, which they skip, so the dialog opened with no address and its FIRE sent neither
+    // instance_addr nor class_name -- the DLL answered "Either instance_addr or class_name is required". The dialog now
+    // sends the class name, and the DLL resolves it at each FIRE with the resolver behind the Console's Run (not the
+    // Console's per-class pin).
 
     [Fact]
     public void FireTarget_without_an_address_sends_the_class_name()
@@ -59,7 +60,8 @@ public class InvokeParamDialogTests
     [Fact]
     public void FireTarget_without_an_address_drops_the_class_check()
     {
-        // The DLL reads the class from the object it picks; a check against a class address checks nothing then.
+        // The DLL applies expect_class_addr to the object it picks too, as an equality test: sent with a class name it
+        // would refuse every subclass object the resolver may take (a Blueprint's _C), so it must not be sent.
         Assert.Null(InvokeParamDialog.FireTarget("", "PlayerController", "0x7FF6CC00").ExpectClassAddr);
     }
 
@@ -135,8 +137,12 @@ public class InvokeParamDialogTests
             Assert.Contains("new Views.InvokeParamDialog(", body, System.StringComparison.Ordinal);
             Assert.DoesNotContain("FindInstancesAsync(", body, System.StringComparison.Ordinal);
         }
-        Assert.DoesNotContain("expectClassAddr:", Handler(src, "Console.RequestParameterInvoke +="),
-            System.StringComparison.Ordinal);
+        var consoleDialog = Handler(src, "Console.RequestParameterInvoke +=");
+        Assert.DoesNotContain("expectClassAddr:", consoleDialog, System.StringComparison.Ordinal);
+        // Review 1: the dialog that can FIRE is given no address, so FIRE goes by class name (a ban on text alone let
+        // a swapped variable or a helper lookup through).
+        Assert.Contains("\"\", _dump, _engineState?.UEVersion ?? 0", consoleDialog, System.StringComparison.Ordinal);
+        Assert.Contains("mode: Views.InvokeDialogMode.PipeInvoke", consoleDialog, System.StringComparison.Ordinal);
         Assert.DoesNotContain("exactMatch: true, limit: 1)", src, System.StringComparison.Ordinal);
     }
 
@@ -150,6 +156,32 @@ public class InvokeParamDialogTests
         Assert.Contains("expectClassAddr: target.ExpectClassAddr", src, System.StringComparison.Ordinal);
         Assert.Contains("HeaderLines(result, _fireCount, byClassName: string.IsNullOrEmpty(_instanceAddr))", src,
             System.StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(InvokeDialogMode.PipeInvoke, "", true)]
+    [InlineData(InvokeDialogMode.PipeInvoke, "0x1000", false)]        // FIRE goes to that address
+    [InlineData(InvokeDialogMode.CopyBakedScript, "", false)]        // no FIRE at all
+    [InlineData(InvokeDialogMode.CopyBakedScript, "0x1000", false)]
+    public void The_target_by_class_line_shows_only_where_FIRE_goes_by_class_name(InvokeDialogMode mode, string addr,
+                                                                                 bool shown)
+    {
+        // Review 1 of [MAINWINDOW-INVOKE-LIMIT1-CDO]: nothing pinned the pre-FIRE line.
+        Assert.Equal(shown, InvokeParamDialog.ShowsTargetByClassLine(mode, addr));
+    }
+
+    [Fact]
+    public void The_dialog_builds_the_target_by_class_line_from_the_predicate()
+    {
+        var src = CodeOnly(System.IO.File.ReadAllText(
+            NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/InvokeParamDialog.cs")));
+        int ctor = src.IndexOf("public InvokeParamDialog(", System.StringComparison.Ordinal);
+        Assert.True(ctor > 0, "the constructor moved -- re-point this pin");
+        int gate = src.IndexOf("if (ShowsTargetByClassLine(mode, instanceAddr))", ctor, System.StringComparison.Ordinal);
+        int line = src.IndexOf("InvokePickText.TargetByClassText(className)", ctor, System.StringComparison.Ordinal);
+        int nextMember = src.IndexOf("\n    private ", ctor, System.StringComparison.Ordinal);
+        Assert.True(gate > ctor && line > gate && (nextMember < 0 || line < nextMember),
+            "the constructor shows the line under the predicate");
     }
 
     // --- HexToBytes ---

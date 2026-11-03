@@ -59,8 +59,9 @@ internal static class InvokePickText
             : ObjectText(r.InstanceName, r.InstanceClassName));
     }
 
-    /// <summary>[INVOKE-NONSTATIC-ON-CDO] The param dialog's warning line, or "" when the DLL raised none (or is older).
-    /// The dialog targets an address the user chose, so neither sentence claims no live object exists.</summary>
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] The param dialog's warning line for a FIRE sent to an address, or "" when the
+    /// DLL raised none (or is older). The user chose that address, so neither sentence claims no live object exists; a
+    /// FIRE sent by class name shows <see cref="Note"/> instead (InvokeParamDialog.HeaderLines).</summary>
     internal static string TemplateWarning(UE5DumpUI.Models.InvokeFunctionResult r)
     {
         if (r.NonStaticOnTemplate != true) return "";
