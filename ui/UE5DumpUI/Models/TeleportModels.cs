@@ -542,8 +542,9 @@ public static class TeleportCodes
     public const int NoHit         = -8;
     public const int NoCursor      = -9;
     public const int WriteFailed   = -10;
-    /// <summary>[TELEPORT-BUGITGO-PARENTREL] The mailbox's BugItGo refused a BugIt stored from a parent-relative read.
-    /// No pipe command answers it, so <see cref="Describe"/> has no arm for it; the generated CE record names it.</summary>
+    /// <summary>[TELEPORT-BUGITGO-PARENTREL] A jump refused because its pose came from a parent-relative read: the
+    /// mailbox's BugItGo, and ([TELEPORT-RECALL-PARENTREL]) marker Recall / Force and TP facing direction on every
+    /// transport. Callers with a sentence of their own use it; <see cref="Describe"/> covers the rest.</summary>
     public const int ParentRelative = -16;
 
     internal const string KeyParentRelative = "str.TP.CodeParentRelative";
@@ -565,6 +566,7 @@ public static class TeleportCodes
         NoHit        => "Nothing under the cursor / center within range.",
         NoCursor     => "No cursor available — enable the screen-center fallback.",
         WriteFailed  => "Raw write failed (protected memory?).",
+        ParentRelative => ParentRelativeText,
         _            => $"Teleport failed (code {code}).",
     };
 }

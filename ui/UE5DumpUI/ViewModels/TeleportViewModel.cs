@@ -1533,10 +1533,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             }
             ApplyPose(p);
             UpdateMarkerRow(slot, p);
-            // [W2-MARKER-PARENTREL] The save the pose card warns against now says so where it happens.
+            // [W2-MARKER-PARENTREL] The save the pose card warns against now says so where it happens, and
+            // ([TELEPORT-RECALL-PARENTREL]) that Recall and Force will refuse it.
             StatusText = p.ParentRelative
-                ? $"Marker {slot + 1} saved — ⚠ from a PARENT-RELATIVE read: these are not world coordinates, "
-                  + "and recalling it drives the pawn there as if they were."
+                ? MarkerSavedParentRelativeText(slot + 1)
                 : $"Marker {slot + 1} saved.";
         }
         catch (Exception ex)
@@ -1565,6 +1565,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             {
                 StatusText = $"Marker {slot + 1} saved on '{r.MarkerMap}', you're on " +
                              $"'{r.CurrentMap}' — press Force to recall anyway.";
+                return;
+            }
+            if (r.Code == TeleportCodes.ParentRelative)   // [TELEPORT-RECALL-PARENTREL] Force too: no override exists
+            {
+                StatusText = RecallParentRelativeText(force, slot + 1);
                 return;
             }
             if (r.Code != TeleportCodes.Ok)
@@ -3741,6 +3746,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var p = await _dump.TeleportRelativeAsync(RelativeDistance, RelativeHorizontal);
+            if (p.Code == TeleportCodes.ParentRelative)   // [TELEPORT-RECALL-PARENTREL]
+            {
+                StatusText = RelativeParentRelativeText;
+                return;
+            }
             if (p.Code != TeleportCodes.Ok)
             {
                 StatusText = $"TP facing: {TeleportCodes.Describe(p.Code)}";
@@ -3814,6 +3824,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 return;
             }
             ApplyPoseAndMovement(p);
+            if (p.ParentRelative)   // [TELEPORT-RECALL-PARENTREL] the boxes cannot carry the flag
+            {
+                StatusText = CoordFillParentRelativeText;
+                return;
+            }
             CoordX = p.X; CoordY = p.Y; CoordZ = p.Z;
             CoordPitch = p.Pitch; CoordYaw = p.Yaw; CoordRoll = p.Roll;
             StatusText = "Filled coordinates from the current pose.";
@@ -4225,6 +4240,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 return;
             }
             ApplyPoseAndMovement(p);
+            if (p.ParentRelative)   // [TELEPORT-RECALL-PARENTREL] an entry cannot carry the flag
+            {
+                CoordStatus = LibParentRelativeText;
+                return;
+            }
             var entry = FromPose(p, NextCoordLabel(p.Map));
             if (!AddCoordEntry(entry)) return;
             CoordStatus = $"Saved '{entry.Label}' ({CoordPrecision.Text(entry.X)}, " +
@@ -4425,6 +4445,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 return;
             }
             ApplyPoseAndMovement(p);
+            if (p.ParentRelative)   // [TELEPORT-RECALL-PARENTREL] an entry cannot carry the flag
+            {
+                CoordStatus = LibParentRelativeText;
+                return;
+            }
             var e = row.Entry;
             e.Map = p.Map ?? "";
             e.X = CoordPrecision.Round(p.X);
