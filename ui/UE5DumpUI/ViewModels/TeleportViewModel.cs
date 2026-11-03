@@ -282,6 +282,54 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         "drive the pawn there as if they were. Copy again while the game is responding (focus it, or turn on Keep " +
         "Foreground), or once off the vehicle or mount.");
 
+    internal const string KeyRecallParentRelative = "str.TP.RecallParentRelative";
+    internal const string KeyForceParentRelative = "str.TP.ForceParentRelative";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] Recall and Force of a marker saved from a parent-relative read: the DLL
+    /// refuses both (-16). Force overrides only the map check; nothing makes relative numbers world coordinates.</summary>
+    internal static string RecallParentRelativeText(bool force, int markerNumber) => force
+        ? AobMakerStatus.Say(KeyForceParentRelative,
+            "⚠ Force {0}: refused — the marker was saved from a PARENT-RELATIVE read (an attached pawn whose world " +
+            "position could not be read), so it is not world coordinates, and Force cannot change that. Nothing moved. " +
+            "Save it again while the game is responding (focus it, or turn on Keep Foreground), or once off the " +
+            "vehicle or mount.", markerNumber)
+        : AobMakerStatus.Say(KeyRecallParentRelative,
+            "⚠ Recall {0}: refused — the marker was saved from a PARENT-RELATIVE read (an attached pawn whose world " +
+            "position could not be read), so it is not world coordinates; Force refuses it too. Nothing moved. Save it " +
+            "again while the game is responding (focus it, or turn on Keep Foreground), or once off the vehicle or " +
+            "mount.", markerNumber);
+
+    internal const string KeyMarkerSavedParentRelative = "str.TP.MarkerSavedParentRelative";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] The producer-side half: the save says Recall and Force will refuse the
+    /// marker, so the refusal is not the first the user hears of it.</summary>
+    internal static string MarkerSavedParentRelativeText(int markerNumber) => AobMakerStatus.Say(
+        KeyMarkerSavedParentRelative,
+        "Marker {0} saved — ⚠ from a PARENT-RELATIVE read: these are not world coordinates, so Recall and Force will " +
+        "refuse it. Save it again while the game is responding, or once off the vehicle or mount.", markerNumber);
+
+    internal const string KeyRelativeParentRelative = "str.TP.RelParentRelative";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] TP facing direction steps from the current pose; a parent-relative one has
+    /// no world position to step from, and the DLL refuses (-16).</summary>
+    internal static string RelativeParentRelativeText => AobMakerStatus.Say(KeyRelativeParentRelative,
+        "⚠ TP facing: refused — the current position came from a PARENT-RELATIVE read (an attached pawn whose world " +
+        "position could not be read), so there is no world position to step from. Nothing moved. Try again while the " +
+        "game is responding (focus it, or turn on Keep Foreground), or once off the vehicle or mount.");
+
+    internal const string KeyCoordFillParentRelative = "str.TP.CoordFillParentRelative";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] The coordinate boxes claim world coordinates to TP to coordinates, its
+    /// hotkey and the library, and cannot carry the flag, so Fill from current pos refuses such a read.</summary>
+    internal static string CoordFillParentRelativeText => AobMakerStatus.Say(KeyCoordFillParentRelative,
+        "⚠ Not filled: the current pose came from a PARENT-RELATIVE read (an attached pawn whose world position could " +
+        "not be read), so these numbers are not world coordinates. Fill again while the game is responding (focus it, " +
+        "or turn on Keep Foreground), or once off the vehicle or mount.");
+
+    internal const string KeyLibParentRelative = "str.TP.LibParentRelative";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] A library entry has no field for the flag, and its CSV and CE exports claim
+    /// world coordinates, so Save current pos and Update from current refuse such a read.</summary>
+    internal static string LibParentRelativeText => AobMakerStatus.Say(KeyLibParentRelative,
+        "⚠ The library was not changed: the current pose came from a PARENT-RELATIVE read (an attached pawn whose " +
+        "world position could not be read), so these numbers are not world coordinates. Try again while the game is " +
+        "responding (focus it, or turn on Keep Foreground), or once off the vehicle or mount.");
+
     internal const string KeyCoordNoDllNotAdded = "str.TP.LibNoDllNotAdded";
     /// <summary>[COORDPICK-OVERSIZE-REASON] A no-DLL picker push refused with a reason says it; the reason's own closing
     /// period is dropped, as the sentence adds one.</summary>

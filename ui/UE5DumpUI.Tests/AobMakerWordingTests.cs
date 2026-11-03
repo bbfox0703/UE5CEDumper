@@ -272,8 +272,23 @@ public class AobMakerWordingTests
         // [CONSOLE-ROWRUN-SELECTED] a Console run refused while another is in flight
         Same(ConsoleRunText.KeyStillRunning, ConsoleRunText.StillRunningText("Fly"), "Fly");
 
+        // [TELEPORT-RECALL-PARENTREL] Recall / Force / TP facing / Fill / the library on a parent-relative pose
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyRecallParentRelative,
+             UE5DumpUI.ViewModels.TeleportViewModel.RecallParentRelativeText(false, 2), "2");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyForceParentRelative,
+             UE5DumpUI.ViewModels.TeleportViewModel.RecallParentRelativeText(true, 2), "2");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyMarkerSavedParentRelative,
+             UE5DumpUI.ViewModels.TeleportViewModel.MarkerSavedParentRelativeText(1), "1");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyRelativeParentRelative,
+             UE5DumpUI.ViewModels.TeleportViewModel.RelativeParentRelativeText);
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordFillParentRelative,
+             UE5DumpUI.ViewModels.TeleportViewModel.CoordFillParentRelativeText);
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyLibParentRelative,
+             UE5DumpUI.ViewModels.TeleportViewModel.LibParentRelativeText);
+        Same(UE5DumpUI.Models.TeleportCodes.KeyParentRelative, UE5DumpUI.Models.TeleportCodes.ParentRelativeText);
+
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(103, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(110, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

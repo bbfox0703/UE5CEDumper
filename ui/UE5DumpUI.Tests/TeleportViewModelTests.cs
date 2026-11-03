@@ -1183,6 +1183,120 @@ public class TeleportViewModelTests
         Assert.Equal("Unavailable", vm.WorldTimeState);
     }
 
+    // ── [TELEPORT-RECALL-PARENTREL] a pose that is not world coordinates ───────────
+    // Marker Recall and Force, TP facing direction, Fill from current pos and the coordinate library each took a pose read
+    // from the parent-relative fallback for world coordinates. The DLL now refuses the jumps (-16); the UI refuses to
+    // store such numbers where nothing can carry the flag.
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Recall_and_Force_of_a_parent_relative_marker_say_why_and_that_Force_cannot_help(bool force)
+    {
+        var fake = new FakeDumpService { NextResult = new() { Code = TeleportCodes.ParentRelative } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        if (force) await vm.ForceRecallMarkerCommand.ExecuteAsync(1);
+        else await vm.RecallMarkerCommand.ExecuteAsync(1);
+
+        Assert.Equal(force, fake.LastForce);
+        Assert.Equal(TeleportViewModel.RecallParentRelativeText(force, 2), vm.StatusText);
+        Assert.DoesNotContain("code -16", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task SaveMarker_from_a_parent_relative_read_says_Recall_and_Force_will_refuse_it()
+    {
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, X = 1, Y = 2, Z = 3, ParentRelative = true, ParentRelativeKnown = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.SaveMarkerCommand.ExecuteAsync(0);
+
+        Assert.Equal(TeleportViewModel.MarkerSavedParentRelativeText(1), vm.StatusText);
+        Assert.DoesNotContain("drives the pawn there", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task TeleportRelative_refused_for_a_parent_relative_start_says_why()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = TeleportCodes.ParentRelative } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.TeleportRelativeCommand.ExecuteAsync(null);
+
+        Assert.Equal(TeleportViewModel.RelativeParentRelativeText, vm.StatusText);
+    }
+
+    [Fact]
+    public async Task FillCoordsFromCurrent_refuses_a_parent_relative_pose()
+    {
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, X = 100, Y = 200, Z = 300, ParentRelative = true, ParentRelativeKnown = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.CoordX = 7; vm.CoordY = 8; vm.CoordZ = 9;
+
+        await vm.FillCoordsFromCurrentCommand.ExecuteAsync(null);
+
+        Assert.Equal(7, vm.CoordX);                   // the boxes keep what they held
+        Assert.Equal(9, vm.CoordZ);
+        Assert.Equal(TeleportViewModel.CoordFillParentRelativeText, vm.StatusText);
+        Assert.True(vm.PoseParentRelative);           // the pose card's chip still shows the read
+    }
+
+    [Fact]
+    public async Task SaveCurrentPos_refuses_a_parent_relative_pose()
+    {
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, Map = "Map01", X = 100, ParentRelative = true, ParentRelativeKnown = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.LoadCoordLibraryForGame("Game.exe");
+
+        await vm.SaveCurrentPosToLibraryCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.CoordEntries);
+        Assert.Equal(TeleportViewModel.LibParentRelativeText, vm.CoordStatus);
+    }
+
+    [Fact]
+    public async Task UpdateCoordFromCurrent_refuses_a_parent_relative_pose()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01" } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.LoadCoordLibraryForGame("Game.exe");
+        vm.CoordX = 1; vm.CoordY = 2; vm.CoordZ = 3;
+        await vm.AddCoordFromFieldsCommand.ExecuteAsync(null);   // selects the new row
+        Assert.NotNull(vm.SelectedCoord);
+        fake.NextPose = new() { Code = 0, Map = "Map02", X = 50, Y = 60, Z = 70, ParentRelative = true, ParentRelativeKnown = true };
+
+        await vm.UpdateCoordFromCurrentCommand.ExecuteAsync(null);
+
+        var e = Assert.Single(vm.CoordEntries);
+        Assert.Equal(1, e.X);
+        Assert.Equal("Map01", e.Map);
+        Assert.Equal(TeleportViewModel.LibParentRelativeText, vm.CoordStatus);
+    }
+
+    [Fact]
+    public void Describe_names_a_parent_relative_refusal()
+    {
+        var text = TeleportCodes.Describe(TeleportCodes.ParentRelative);
+        Assert.Equal(TeleportCodes.ParentRelativeText, text);
+        Assert.DoesNotContain("code -16", text);
+    }
+
     [Fact]
     public async Task Recall_maps_minus7_to_force_hint_and_does_not_force()
     {

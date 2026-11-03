@@ -176,8 +176,48 @@ public class TeleportScriptGeneratorTests
         Assert.Equal("1", r["DIALOGS"]);
         Assert.Contains("failed (code -6)", r["MSG"], StringComparison.Ordinal);
         Assert.Equal("false", r["CLOSED"]);
+        // Recall last never gets -16 (the undo slot never takes a parent-relative pose), so its record has no such arm.
         Assert.DoesNotContain("Nothing moved",
-            TeleportScriptGenerator.Generate(TeleportScriptGenerator.Action.Recall, 0), StringComparison.Ordinal);
+            TeleportScriptGenerator.Generate(TeleportScriptGenerator.Action.RecallLast, 0), StringComparison.Ordinal);
+    }
+
+    /// <summary>[TELEPORT-RECALL-PARENTREL] The DLL refuses a Recall of a marker saved from a parent-relative read, and a
+    /// TP facing step from such a pose, with -16. The records name it as BugItGo's does; a record from before shows the
+    /// generic "failed (code -16)", also with its window open.</summary>
+    [Theory]
+    [InlineData(TeleportScriptGenerator.Action.Recall)]
+    [InlineData(TeleportScriptGenerator.Action.Relative)]
+    public void Recall_and_facing_records_name_a_parent_relative_refusal_and_keep_the_window_open(
+        TeleportScriptGenerator.Action action)
+    {
+        var r = RunTeleport(action, TeleportCodes.ParentRelative);
+
+        Assert.Equal("true|nil", r["OK"]);
+        Assert.Equal("1", r["DIALOGS"]);
+        Assert.Contains("PARENT-RELATIVE", r["MSG"], StringComparison.Ordinal);
+        Assert.Contains("Nothing moved", r["MSG"], StringComparison.Ordinal);
+        Assert.DoesNotContain("code -16", r["MSG"], StringComparison.Ordinal);
+        Assert.Equal("false", r["ACTIVE"]);
+        Assert.Equal("false", r["CLOSED"]);
+    }
+
+    [Theory]
+    [InlineData(TeleportScriptGenerator.Action.Recall)]
+    [InlineData(TeleportScriptGenerator.Action.Relative)]
+    public void Recall_and_facing_records_bake_the_refusal_code_the_same_in_every_culture(
+        TeleportScriptGenerator.Action action)
+    {
+        var saved = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("sv-SE");
+            var s = TeleportScriptGenerator.Generate(action);
+            Assert.DoesNotContain("−", s);
+            Assert.Contains($"code == {TeleportCodes.ParentRelative.ToString(System.Globalization.CultureInfo.InvariantCulture)} then",
+                s, StringComparison.Ordinal);
+            Assert.Contains("PARENT-RELATIVE", RunTeleport(action, TeleportCodes.ParentRelative)["MSG"], StringComparison.Ordinal);
+        }
+        finally { System.Globalization.CultureInfo.CurrentCulture = saved; }
     }
 
     [Fact]

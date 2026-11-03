@@ -546,6 +546,12 @@ public static class TeleportCodes
     /// No pipe command answers it, so <see cref="Describe"/> has no arm for it; the generated CE record names it.</summary>
     public const int ParentRelative = -16;
 
+    internal const string KeyParentRelative = "str.TP.CodeParentRelative";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] The fallback line for a -16 a caller has no sentence of its own for.</summary>
+    internal static string ParentRelativeText => UE5DumpUI.Helpers.AobMakerStatus.Say(KeyParentRelative,
+        "Refused: the position came from a parent-relative read (an attached pawn), not world coordinates — nothing " +
+        "moved.");
+
     public static string Describe(int code) => code switch
     {
         Ok           => "OK",
