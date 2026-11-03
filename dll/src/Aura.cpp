@@ -1704,11 +1704,13 @@ SearchResultSet SearchByName(const std::string& query, int maxResults, bool inst
 }
 
 // TemplateOf with a per-walk memo of the outer-chain half; defined beside TemplateOf.
-static TemplateInfo TemplateOfImpl(uintptr_t obj, std::unordered_map<uintptr_t, uintptr_t>* outerMemo);
+static TemplateInfo TemplateOfImpl(uintptr_t obj, std::unordered_map<uintptr_t, uintptr_t>* outerMemo,
+                                   const std::string* knownName = nullptr);
 
 SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch, int maxResults, bool newestFirst, const std::string& nameFilter, const std::vector<std::string>& excludeClasses, bool buildHistogram, bool skipTemplates) {
     SearchResultSet rset;
     std::unordered_map<uintptr_t, uintptr_t> outerMemo;   // TemplateOfImpl's, for skipTemplates
+    int templatesSkipped = 0;
 
     // Convert queries to lowercase for case-insensitive comparison
     std::string lowerQuery = className;
@@ -1799,7 +1801,10 @@ SearchResultSet FindInstancesByClass(const std::string& className, bool exactMat
         // [LISTINSTANCES-KEEPS-TEMPLATES] A caller that WRITES to the pool asks for no template: not a match at all, so
         // it neither takes a cap slot nor reaches the histogram. Templates are built at class load and sit at the low
         // indices this walk reaches first.
-        if (skipTemplates && TemplateOfImpl(obj, &outerMemo).kind != TemplateKind::None) continue;
+        if (skipTemplates && TemplateOfImpl(obj, &outerMemo, &objName).kind != TemplateKind::None) {
+            ++templatesSkipped;
+            continue;
+        }
 
         // This row satisfies the class+name query. Tally it PRE-exclude (full pool)
         // so the picker can still surface — and untick — an excluded/past-cap class.
@@ -1847,10 +1852,11 @@ SearchResultSet FindInstancesByClass(const std::string& className, bool exactMat
         rset.classDistinct = static_cast<int>(rset.classHistogram.size());
     }
 
-    Sein::Info("PIPE:find", "FindInstancesByClass class='%s' name='%s': %d found%s, scanned=%d, nonNull=%d, named=%d, distinct=%d, excluded=%d",
+    rset.templatesSkipped = templatesSkipped;
+    Sein::Info("PIPE:find", "FindInstancesByClass class='%s' name='%s': %d found%s, scanned=%d, nonNull=%d, named=%d, distinct=%d, excluded=%d, templates=%d",
                  className.c_str(), nameFilter.c_str(), (int)rset.results.size(),
                  rset.truncated ? " (capped)" : "", rset.scanned, rset.nonNull, rset.named,
-                 rset.classDistinct, (int)excludeSet.size());
+                 rset.classDistinct, (int)excludeSet.size(), templatesSkipped);
     return rset;
 }
 
@@ -1947,9 +1953,14 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
         // reaches first. A caller that filtered afterwards would be handed
         // maxResults templates and not one live instance.
         // [LISTINSTANCES-KEEPS-TEMPLATES] Every template, not only the Default__ object: its default subobjects
-        // and a Blueprint's component templates too (TemplateOf). The pool is written to, and what a template
-        // holds, every later spawn copies.
-        if (TemplateOfImpl(obj, &outerMemo).kind != TemplateKind::None) { ++templatesSkipped; continue; }
+        // and a Blueprint's component templates too (TemplateOf). A pool that is written to must hold none: what
+        // a template holds, every later spawn copies. With an outer filter the pool is one object's children, and
+        // a template's outer is a package, a class or a class default object: the name alone keeps a level's
+        // actors off the flags word, which TemplateOf reads at a fixed offset no probe confirms.
+        const bool isTemplate = outerFilter
+            ? objName.rfind("Default__", 0) == 0
+            : TemplateOfImpl(obj, &outerMemo, &objName).kind != TemplateKind::None;
+        if (isTemplate) { ++templatesSkipped; continue; }
 
         ++matchTotal;
         if (static_cast<int>(rset.results.size()) >= maxResults) continue;   // count, don't append
@@ -1966,6 +1977,7 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
     }
 
     if (totalOut) *totalOut = matchTotal;
+    rset.templatesSkipped = templatesSkipped;
     // ONE source for "is this a page or the whole set". When an exact total was asked
     // for, derive the flag from it — a second flag computed by a different code path is
     // audit #4's own named root cause, and this handler's caller publishes `truncated`.
@@ -2172,9 +2184,11 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
     return r;
 }
 
-static bool IsClassDefaultObject(uintptr_t o, uint32_t flags) {
-    uint32_t nameIdx = 0;
+// `knownName`: the object's name when the caller already decoded it, so a walk does not decode it twice.
+static bool IsClassDefaultObject(uintptr_t o, uint32_t flags, const std::string* knownName = nullptr) {
     if ((flags & Grimoire::RF_CLASS_DEFAULT_OBJECT) != 0) return true;
+    if (knownName) return knownName->rfind("Default__", 0) == 0;
+    uint32_t nameIdx = 0;
     return Macht::ReadSafe(o + Grimoire::OFF_UOBJECT_NAME, nameIdx)
         && Serie::GetString(nameIdx).rfind("Default__", 0) == 0;
 }
@@ -2196,13 +2210,16 @@ static uintptr_t ClassDefaultAtOrAbove(uintptr_t outer) {
 
 // [LISTINSTANCES-KEEPS-TEMPLATES] `outerMemo`: first outer -> ClassDefaultAtOrAbove(it), for one walk. A pool walk asks
 // for every candidate, and candidates share their outers (a level's actors, an actor's components), so the outer
-// chain is read once per distinct first outer instead of once per object. Same verdict with or without it.
-static TemplateInfo TemplateOfImpl(uintptr_t obj, std::unordered_map<uintptr_t, uintptr_t>* outerMemo) {
+// chain is read once per distinct first outer instead of once per object. Same verdict with or without it. The memo
+// stops at the first outer: a deeper one would have to carry the hop budget to keep the verdict identical, and
+// siblings already share their first outer.
+static TemplateInfo TemplateOfImpl(uintptr_t obj, std::unordered_map<uintptr_t, uintptr_t>* outerMemo,
+                                   const std::string* knownName) {
     TemplateInfo t;
     if (!obj) return t;
     uint32_t flags = 0;
     Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_FLAGS, flags);
-    if (IsClassDefaultObject(obj, flags)) { t.kind = TemplateKind::ClassDefault; t.owner = obj; return t; }
+    if (IsClassDefaultObject(obj, flags, knownName)) { t.kind = TemplateKind::ClassDefault; t.owner = obj; return t; }
     // A class-default object up the outer chain makes it one of that object's subobjects, flag or not.
     uintptr_t firstOuter = 0;
     if (!Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, firstOuter) || firstOuter == obj) firstOuter = 0;
@@ -2226,6 +2243,10 @@ static TemplateInfo TemplateOfImpl(uintptr_t obj, std::unordered_map<uintptr_t, 
 
 TemplateInfo TemplateOf(uintptr_t obj) {
     return TemplateOfImpl(obj, nullptr);
+}
+
+TemplateInfo TemplateOf(uintptr_t obj, TemplateOuterMemo& outerMemo) {
+    return TemplateOfImpl(obj, &outerMemo);
 }
 
 uintptr_t FindLiveOrDefaultOf(const std::string& className) {
@@ -5500,6 +5521,8 @@ PropertySearchResult SearchProperties(
         // one of its default subobjects or a Blueprint component template is never a live sample. Before, only a
         // Default__ name was passed over, so a component row previewed a class default's subobject as live while its
         // Force held nothing. Tested only for objects whose class we actually want, a handful out of the pool.
+        // TemplateOf reads ObjectFlags at a fixed +0x08 (stable 4.12-5.8, measured on 4.27 / 5.4 / 5.8), the one
+        // UObject field here no probe confirms; a misread passes a live object over, which only costs the preview.
         std::unordered_map<uintptr_t, uintptr_t> instanceMap;
         // Classes for which the CDO is all that exists. Used only after the sweep, so a live
         // instance appearing later always wins — the whole point of the finding.

@@ -3229,12 +3229,12 @@ public class InvokeScriptTests
         var list = Body(CodeOnly(Lf(DllSource("Mimic.cpp"))), "static void HandleListInstances() {");
         Assert.Contains("Aura::FindInstancesDerivedFrom(className, cap)", list, StringComparison.Ordinal);
         Assert.Contains("/*buildHistogram=*/false, /*skipTemplates=*/true)", list, StringComparison.Ordinal);
-        Assert.Contains("Aura::TemplateOf(r.addr).kind != Aura::TemplateKind::None", list, StringComparison.Ordinal);
+        Assert.Contains("Aura::TemplateOf(r.addr, outerMemo).kind != Aura::TemplateKind::None", list, StringComparison.Ordinal);
         Assert.DoesNotContain("find(\"Default__\")", list, StringComparison.Ordinal);
 
         var solide = Body(CodeOnly(Lf(DllSource("Solide.cpp"))), "void ApplyJobLocked(");
         Assert.Contains("Aura::FindInstancesDerivedFrom(", solide, StringComparison.Ordinal);
-        Assert.Contains("Aura::TemplateOf(r.addr).kind != Aura::TemplateKind::None", solide, StringComparison.Ordinal);
+        Assert.Contains("Aura::TemplateOf(r.addr, outerMemo).kind != Aura::TemplateKind::None", solide, StringComparison.Ordinal);
         Assert.DoesNotContain("FindInstancesByClass(", solide, StringComparison.Ordinal);
         Assert.DoesNotContain("find(\"Default__\")", solide, StringComparison.Ordinal);
 

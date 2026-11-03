@@ -88,7 +88,7 @@
                                      -- return true to include, false to skip
 
   Constants exposed:
-    UE5_FREEZE_HELPER_VERSION = '1.6'   -- 1.1 added cfg.boolMask (packed bitfield bools)
+    UE5_FREEZE_HELPER_VERSION = '1.7'   -- 1.1 added cfg.boolMask (packed bitfield bools)
                                         -- 1.2 start() returns (ok, err, count)
                                         -- 1.3 cfg.derived + cfg.memrec; start() also
                                         --     returns `capped`
@@ -104,6 +104,10 @@
                                         --     released no longer blocks a rescan
                                         --     [R7-C-01] [R7-C-03]
                                         --     and a same-version re-load is a no-op
+                                        -- 1.7 bakes contract 8: refuses a DLL that still
+                                        --     lists templates [LISTINSTANCES-KEEPS-TEMPLATES].
+                                        --     MUST bump: a resident 1.6 would keep
+                                        --     accepting contract 7
 
   =========================================================================
   SAMPLES
@@ -279,7 +283,7 @@
 -- and re-added it kept running the OLD code. Gate the definitions on VERSION instead
 -- -- redefine only when this chunk is NEWER than the resident one -- so an update
 -- takes effect while a same/older re-load stays a no-op that preserves state.
-local THIS_HELPER_VERSION = '1.6'   -- 1.6: the shared mailbox latch [R7-C-01] [R7-C-03]
+local THIS_HELPER_VERSION = '1.7'   -- 1.6: the shared mailbox latch [R7-C-01] [R7-C-03]; 1.7: contract 8
 -- Compare dotted versions: true iff a < b. nil (nothing resident) is the oldest.
 local function versionLess(a, b)
   if not a then return true end

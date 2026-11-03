@@ -16,7 +16,7 @@ Pipe (invoke_function class_name):
   P6 "NoSuchClass_Xyz"                  -> ok:false, "No instance found for class: NoSuchClass_Xyz"
   P7 "Actor" / NoSuchFunc_Xyz           -> ok:false, "Function not found: NoSuchFunc_Xyz on <object> (class <class>)"
 Mailbox (CMD_FIND_INSTANCE, driven like mailbox_poke.py):
-  M1 g_mailboxContract reads current 6, min 1
+  M1 g_mailboxContract reads current >= 6, min 1
   M2 "Actor" -> result 0 and the object P1 used (both lanes share one resolver)
   M3 "NoSuchClass_Xyz" -> -2, "No instance of 'NoSuchClass_Xyz' found (scanned=...)"
   M4 "DumperTestAct" -> the object P3 used
@@ -172,7 +172,7 @@ def main() -> int:
                     break
         if cv:
             magic, cur, lo = struct.unpack("<III", m.read(cv, 12))
-            verdict("M1", cur == 6 and lo == 1, f"magic={magic:#x} current={cur} min={lo}")
+            verdict("M1", cur >= 6 and lo == 1, f"magic={magic:#x} current={cur} min={lo}")   # a floor, not a pin
         else:
             verdict("M1", False, "g_mailboxContract not found")
 

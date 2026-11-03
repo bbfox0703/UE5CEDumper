@@ -7359,12 +7359,15 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // Was the instance pool capped? AddForce's int32_t return is fully spoken
                 // for (negative = ForceResult, non-negative = held count — see audit L2,
                 // do not overload it), so read the flag back off the job instead.
-                if (held > 0) {
+                // [LISTINSTANCES-KEEPS-TEMPLATES] ...and the templates it passed over, with held 0 too: an
+                // armed hold can then say whether only templates of the class exist (additive key).
+                if (held >= 0) {
                     std::vector<Solide::ForcedFieldInfo> st;
                     if (Solide::GetState(st) == Solide::FR_OK) {
                         for (const auto& f : st) {
                             if (f.className == className && f.fieldName == fieldName) {
-                                data["truncated"] = f.poolTruncated;
+                                if (held > 0) data["truncated"] = f.poolTruncated;
+                                data["templates_skipped"] = f.templatesSkipped;
                                 break;
                             }
                         }
@@ -7401,6 +7404,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     j["value"]      = f.value;
                     j["held"]       = f.held;
                     j["truncated"]  = f.poolTruncated;  // held is a floor, not a total
+                    j["templates_skipped"] = f.templatesSkipped;   // [LISTINSTANCES-KEEPS-TEMPLATES]
                     if (f.sampleOwner && f.sampleOffset >= 0) {
                         j["owner_addr"]   = Renge::AddrToStr(f.sampleOwner);
                         j["field_offset"] = f.sampleOffset;

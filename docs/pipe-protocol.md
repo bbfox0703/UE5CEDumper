@@ -868,6 +868,9 @@ capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily â
   "kind": "bool", "on": true }
 // â†’ { "held": 3, "resolved": true, "code": 0 }   // held = live "N held" count (0 = matched nothing)
 //   `"truncated": true` is added when the instance pool hit its cap.
+//   `"templates_skipped": n` (from build 3682): templates of the class the pool passed over, never written
+//   (class default objects, their subobjects, Blueprint component templates). With held 0 it says only templates
+//   exist. Absent = an older DLL. `[LISTINSTANCES-KEEPS-TEMPLATES]`
 
 // Release one hold (best-effort restore the captured base; object-null is not reversible).
 { "cmd": "reset_field", "class_name": "BP_Enemy_C", "field_name": "bInvincible" }
@@ -878,7 +881,7 @@ capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily â
 // Snapshot the active holds + their live counts.
 { "cmd": "get_forced_fields" }
 // â†’ { "code": 0, "fields": [ { "class_name", "field_name", "kind", "value",
-//        "held", "owner_addr"?, "field_offset"? } ] }
+//        "held", "truncated", "templates_skipped", "owner_addr"?, "field_offset"? } ] }
 
 // Auto-find the player's stealth/noise/visibility/detection meter (read-only).
 { "cmd": "find_stealth_meter", "max": 8 }

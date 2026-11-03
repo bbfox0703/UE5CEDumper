@@ -61,6 +61,7 @@ struct Job {
     // Last tick's pool hit the cap → `held` is a floor. Also the single definition of
     // "capped" used by the base-prune guard below.
     bool        poolTruncated = false;
+    int32_t     templatesSkipped = 0;   // ForcedFieldInfo::templatesSkipped
 };
 std::vector<Job> s_jobs;
 
@@ -338,11 +339,12 @@ void ApplyJobLocked(Job& job, bool restore, bool* drifted) {
     // derives from "Enemy", which is when it SHOULD be.
     auto rset = Aura::FindInstancesDerivedFrom(job.className, Grimoire::SOLIDE_MAX_INSTANCES);
     std::unordered_set<uintptr_t> seen;
+    Aura::TemplateOuterMemo outerMemo;
     for (const auto& r : rset.results) {
         // Aura already drops templates (it has to, before its cap). Kept as the
         // local invariant: ApplyToInstance must never write a template, whose value every
         // later spawn copies. [LISTINSTANCES-KEEPS-TEMPLATES]
-        if (!r.addr || Aura::TemplateOf(r.addr).kind != Aura::TemplateKind::None) continue;
+        if (!r.addr || Aura::TemplateOf(r.addr, outerMemo).kind != Aura::TemplateKind::None) continue;
         uintptr_t cls = r.classAddr ? r.classAddr : Ubel::GetClass(r.addr);
         if (!cls) continue;
         seen.insert(r.addr);
@@ -362,6 +364,7 @@ void ApplyJobLocked(Job& job, bool restore, bool* drifted) {
         // Aura already computed this two lines up and we used to drop it on the floor,
         // leaving "held: 0" and "held: 256 of who-knows-how-many" indistinguishable.
         job.poolTruncated = rset.truncated;
+        job.templatesSkipped = rset.templatesSkipped;
         // Prune per-instance bases for owners no longer in the live pool — bounds the map
         // and avoids restoring a stale base to a GC-reused address. Only when the pool was
         // NOT capped: a capped result is a shifting first-N window, so an absent owner may
@@ -526,6 +529,7 @@ int32_t GetState(std::vector<ForcedFieldInfo>& out) {
         fi.sampleOwner = j.sampleOwner;
         fi.sampleOffset= j.sampleOffset;
         fi.poolTruncated = j.poolTruncated;
+        fi.templatesSkipped = j.templatesSkipped;
         out.push_back(std::move(fi));
     }
     return FR_OK;

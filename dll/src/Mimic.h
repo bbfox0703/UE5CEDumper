@@ -763,9 +763,12 @@ namespace Mimic {
 ///   subobjects and a Blueprint's component templates join the class default objects it already skipped, in both
 ///   scopes, before the cap. A MEANING change (item 5); no field moved and no result code changed, so the surface hash
 ///   does not move. The total (parmsSize), the page count and LI_OUT_TRUNCATED now count live objects only.
-///   MAILBOX_CONTRACT_MIN stays at 1, by version 6's rule, and one accident ends: a script that froze a template on
-///   purpose, so later spawns would inherit the value, now holds live objects only (on GAS 5.3+ that includes a
-///   GameplayEffect class default's component subobjects). The fix is DLL-side, so an older script gets the clean
+///   MAILBOX_CONTRACT_MIN stays at 1, by version 6's rule: the command has always promised live instances, and since
+///   version 7 (b) a template is not one, so a pool holding templates was a defect even though the old "(non-CDO)"
+///   gloss named only the class default object. Two accidents end: a freeze that also reached a template (so later
+///   spawns inherited the value) now holds live objects only; and on GAS 5.3+ a GameplayEffect class default's
+///   component subobjects -- templates, usually the only objects of their classes, read by every application rather
+///   than copied by spawns -- are no longer frozen at all. The fix is DLL-side, so an older script gets the clean
 ///   pool from this DLL with nothing to regenerate; the bump makes a script generated now refuse a contract-7 DLL,
 ///   which would still hand it templates to write.
 constexpr int32_t MAILBOX_CONTRACT = 8;

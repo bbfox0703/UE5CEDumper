@@ -4043,6 +4043,8 @@ public sealed class DumpService : IDumpService
             Code      = res["code"]?.GetValue<int>() ?? 0,
             // Absent on an older DLL (and on held<=0, where the DLL omits it) → false.
             Truncated = res["truncated"]?.GetValue<bool>() ?? false,
+            // [LISTINSTANCES-KEEPS-TEMPLATES] Absent on an older DLL → 0.
+            TemplatesSkipped = res["templates_skipped"]?.GetValue<int>() ?? 0,
         };
     }
 
@@ -4088,6 +4090,7 @@ public sealed class DumpService : IDumpService
                     OwnerAddr   = f["owner_addr"]?.GetValue<string>() ?? "",
                     FieldOffset = f["field_offset"]?.GetValue<int>() ?? -1,
                     Truncated   = f["truncated"]?.GetValue<bool>() ?? false,
+                    TemplatesSkipped = f["templates_skipped"]?.GetValue<int>() ?? 0,
                 });
             }
         }

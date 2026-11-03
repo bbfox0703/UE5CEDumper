@@ -2124,7 +2124,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             if (r.Held == 0)
             {
                 (StealthState, StealthBadgeColor) = (StealthArmedState, "#E0A050");
-                StatusText = Res.Format("str.TP.StArmed", c.FieldName, c.ClassName);
+                StatusText = Res.Format("str.TP.StArmed", c.FieldName, c.ClassName)
+                    // [LISTINSTANCES-KEEPS-TEMPLATES] Property Search's note, when only templates of the class exist.
+                    + ForceText.TemplatesOnlySuffix(c.ClassName, r.TemplatesSkipped);
                 return;
             }
             (StealthState, StealthBadgeColor) = (StealthHoldingState, "#4EC9B0");

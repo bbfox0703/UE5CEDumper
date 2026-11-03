@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -196,6 +197,10 @@ struct TemplateInfo {
     uintptr_t    owner = 0;
 };
 TemplateInfo TemplateOf(uintptr_t obj);
+// The same verdict, for a caller testing many objects: `outerMemo` remembers the outer-chain half by first outer,
+// which siblings share (a level's actors, an actor's components). One memo per pass -- outers can change between.
+using TemplateOuterMemo = std::unordered_map<uintptr_t, uintptr_t>;
+TemplateInfo TemplateOf(uintptr_t obj, TemplateOuterMemo& outerMemo);
 
 // The template kind's name on the pipe (invoke_function's instance_template): "" for a live object.
 constexpr const char* TemplateKindWire(TemplateKind k) {
@@ -253,7 +258,9 @@ struct SearchResult {
 
 // Search results with diagnostic counters for debugging
 struct SearchResultSet {
-    int templatesSkipped = 0;   // RED SCAFFOLD [LISTINSTANCES-KEEPS-TEMPLATES] review 1
+    // [LISTINSTANCES-KEEPS-TEMPLATES] Templates a walk that skips them passed over before its cap: a pool armed on
+    // nothing can then say whether only templates of the class exist.
+    int templatesSkipped = 0;
     std::vector<SearchResult> results;
     int32_t scanned = 0;    // Total indices iterated (= GetCount() at call time)
     int32_t nonNull = 0;    // Objects that were non-null
@@ -327,8 +334,13 @@ SearchResultSet FindInstancesByClass(const std::string& className, bool exactMat
 //     each with a Default__ object, and templates are constructed at class-load
 //     time so they occupy the low GObjects indices — filtering them afterwards
 //     would leave a caller with `maxResults` templates and zero live instances.
-//     Callers write to the pool, and a template passes what it holds to every
-//     later spawn. [LISTINSTANCES-KEEPS-TEMPLATES]
+//     A pool that is written to must hold no template: what a template holds,
+//     every later spawn copies. A read-only listing loses nothing by the skip,
+//     since a template is no live instance either. [LISTINSTANCES-KEEPS-TEMPLATES]
+//     With `outerFilter` the test is the Default__ name alone: the pool is then
+//     the children of one object, and a template's outer is a package, a class
+//     or a class default object -- so a level's actors (walk_world) never depend
+//     on the flags word TemplateOf reads at a fixed, unprobed offset.
 //   * SearchResult::className is the CONCRETE class of each instance, not the
 //     queried base, so a caller can still tell the subclasses apart.
 //

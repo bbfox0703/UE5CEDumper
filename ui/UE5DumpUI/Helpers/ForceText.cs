@@ -16,4 +16,8 @@ internal static class ForceText
         "Only templates of {0} exist right now ({1}: class default objects and their subobjects), and a Force never "
         + "writes a template, since every later spawn copies it. To change one anyway, edit its address from the "
         + "Instance Finder.", className, templates);
+
+    /// <summary>The note as a suffix for the ARMED line: "" when no template was passed over.</summary>
+    internal static string TemplatesOnlySuffix(string className, int templates)
+        => templates > 0 ? " " + TemplatesOnlyNote(className, templates) : "";
 }

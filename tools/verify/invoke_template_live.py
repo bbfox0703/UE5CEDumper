@@ -16,7 +16,7 @@ Pipe (invoke_function):
   T5 that object's CapsuleComponent template / K2_GetComponentLocation -> "template", owned by it, WARNED
   T6 FIND_INSTANCE of component classes: none lands on a template any more (it did on 3675 -- measured)
 Mailbox:
-  M1 g_mailboxContract 7 / 1
+  M1 g_mailboxContract >= 7 / 1
   M2 FIND_FUNCTION + INVOKE K2_GetActorLocation on Default__Actor -> result 0, cmdOutFlags bit 0x2
   M3 the same on T2's live actor                                   -> cmdOutFlags 0
   M4 INVOKE_BY_NAME KismetSystemLibrary IsPackagedForDistribution   -> cmdOutFlags 0 (static)
@@ -158,7 +158,7 @@ def main() -> int:
                 if cv:
                     break
         magic, cur, lo = struct.unpack("<III", m.read(cv, 12)) if cv else (0, 0, 0)
-        verdict("M1", cur == 7 and lo == 1, f"current={cur} min={lo}")
+        verdict("M1", cur >= 7 and lo == 1, f"current={cur} min={lo}")   # a floor: later bumps keep the warning
 
         def invoke_on(obj):
             res, _, ufunc, _, err = cmd(m, base, CMD_FIND_FUNCTION, inst=obj, fn="K2_GetActorLocation")

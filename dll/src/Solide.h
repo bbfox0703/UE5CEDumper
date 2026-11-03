@@ -69,6 +69,10 @@ struct ForcedFieldInfo {
     // scan path breaks at the cap (Aura.cpp), and counting past it would cost a full
     // GObjects walk on every 300 ms re-assert tick.
     bool        poolTruncated = false;
+    // [LISTINSTANCES-KEEPS-TEMPLATES] Templates of the class the pool passed over on the last tick (a class default
+    // object, its subobjects, a Blueprint component template): never written, since every later spawn copies them.
+    // With held 0 it tells "nothing spawned yet" from "only templates of this class exist".
+    int32_t     templatesSkipped = 0;
 };
 
 // One ranked stealth-meter candidate from FindStealthMeter.

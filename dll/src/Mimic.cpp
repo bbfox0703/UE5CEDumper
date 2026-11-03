@@ -1024,8 +1024,9 @@ static void HandleListInstances() {
     struct LiveEntry { uint64_t obj; uint64_t cls; };
     std::vector<LiveEntry> live;
     live.reserve(rset.results.size());
+    Aura::TemplateOuterMemo outerMemo;
     for (const auto& r : rset.results) {
-        if (!r.addr || Aura::TemplateOf(r.addr).kind != Aura::TemplateKind::None) continue;
+        if (!r.addr || Aura::TemplateOf(r.addr, outerMemo).kind != Aura::TemplateKind::None) continue;
         live.push_back({ static_cast<uint64_t>(r.addr), static_cast<uint64_t>(r.classAddr) });
     }
 

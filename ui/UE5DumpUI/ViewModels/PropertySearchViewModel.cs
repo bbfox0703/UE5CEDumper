@@ -537,7 +537,10 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
                 // (audit #5 Z11)
                 StatusText = $"⏳ Force {m.PropName} = ARMED but holding nothing yet — no live instance of "
                            + $"{m.ClassName} or any subclass exists right now. It will apply automatically "
-                           + $"as soon as one spawns; use \"Forced fields\" below to release it.";
+                           + $"as soon as one spawns; use \"Forced fields\" below to release it."
+                           // [LISTINSTANCES-KEEPS-TEMPLATES] ...unless only templates of the class exist, which
+                           // a spawn may never follow (a GameplayEffect's component subobjects).
+                           + Helpers.ForceText.TemplatesOnlySuffix(m.ClassName, r.TemplatesSkipped);
             else
             {
                 var what = kind == "bool" ? (on ? "ON" : "OFF")

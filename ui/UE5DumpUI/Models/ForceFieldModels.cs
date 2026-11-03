@@ -27,6 +27,10 @@ public sealed class ForcedFieldInfo
     /// GObjects walk on every re-assert tick.
     /// </summary>
     public bool Truncated { get; init; }
+
+    /// <summary>[LISTINSTANCES-KEEPS-TEMPLATES] As <see cref="ForceFieldResult.TemplatesSkipped"/>, on the last
+    /// re-assert tick.</summary>
+    public int TemplatesSkipped { get; init; }
 }
 
 /// <summary>
@@ -45,7 +49,9 @@ public sealed class ForceFieldResult
     /// </summary>
     public bool Truncated { get; init; }
 
-    /// <summary>RED SCAFFOLD [LISTINSTANCES-KEEPS-TEMPLATES] review 1.</summary>
+    /// <summary>[LISTINSTANCES-KEEPS-TEMPLATES] Templates of the class the pool passed over (a class default object,
+    /// its subobjects, a Blueprint component template), never written. With <see cref="Held"/> 0 it says only
+    /// templates exist. 0 from an older DLL.</summary>
     public int TemplatesSkipped { get; init; }
 }
 

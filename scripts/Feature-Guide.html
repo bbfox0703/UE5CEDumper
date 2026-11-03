@@ -306,7 +306,10 @@ Reflection metadata:
 The "find every live object of class X" tab.
 
   1. Type a class name (e.g. PlayerController, or a game class like BP_Hero_C).
-  2. It lists every live, non-CDO instance with its address + class.
+  2. It lists every object of that class with its address + class -- class
+     defaults (Default__...) and Blueprint templates included.  By default the
+     lowest GObjects indices come first, which is where a Blueprint's defaults
+     are found; tick "Newest first" to keep just-spawned instances instead.
   3. Double-click / "Live" a row  -&gt; opens it in Live Walker.
 
 Options:
