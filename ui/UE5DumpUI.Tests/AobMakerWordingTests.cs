@@ -238,6 +238,9 @@ public class AobMakerWordingTests
         Same(DebugCameraText.KeyNoLiveCheatManager, DebugCameraText.NoLiveCheatManagerText);
         Same(DebugCameraText.KeyForceFailed, DebugCameraText.ForceFailed(wantOn: true), "ON");
         Same(DebugCameraText.KeyStateUnknown, DebugCameraText.StateUnknownText);
+        // [LISTINSTANCES-KEEPS-TEMPLATES] a Force armed on nothing because only templates of the class exist
+        Same(ForceText.KeyTemplatesOnly, ForceText.TemplatesOnlyNote("CharacterMovementComponent", 3),
+             "CharacterMovementComponent", 3);
         Same(InvokePickText.KeyTemplateSubobject,
              InvokePickText.TemplateSubobjectText("CharMoveComp", "CharacterMovementComponent", "Default__Character"),
              "CharMoveComp", "CharacterMovementComponent", "Default__Character");
@@ -298,7 +301,7 @@ public class AobMakerWordingTests
         Same(InvokePickText.KeyTargetByClass, InvokePickText.TargetByClassText("CheatManager"), "CheatManager");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(116, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(117, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

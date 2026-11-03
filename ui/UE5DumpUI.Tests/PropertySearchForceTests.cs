@@ -183,6 +183,33 @@ public class PropertySearchForceTests
         Assert.Contains("release", vm.StatusText, StringComparison.OrdinalIgnoreCase);
     }
 
+    /// <summary>[LISTINSTANCES-KEEPS-TEMPLATES] review 1: a hold armed on nothing because every object of the class is
+    /// a template says so -- "it applies as soon as one spawns" alone sent the user waiting for a spawn that a
+    /// GameplayEffect's component subobjects, say, never get.</summary>
+    [Fact]
+    public async Task Force_zero_held_because_only_templates_exist_says_so()
+    {
+        var dump = new RecordingDump { NextForce = new() { Held = 0, Code = 0, Resolved = false, TemplatesSkipped = 3 } };
+        var vm = new PropertySearchViewModel(dump, new NoopLog());
+        var match = NewMatch("BoolProperty", "bInvincible");
+
+        await vm.ForceBoolOnCommand.ExecuteAsync(match);
+
+        Assert.Contains("ARMED", vm.StatusText);
+        Assert.Contains(UE5DumpUI.Helpers.ForceText.TemplatesOnlyNote(match.ClassName, 3), vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Force_zero_held_with_no_template_passed_over_has_no_templates_note()
+    {
+        var dump = new RecordingDump { NextForce = new() { Held = 0, Code = 0, Resolved = false, TemplatesSkipped = 0 } };
+        var vm = new PropertySearchViewModel(dump, new NoopLog());
+
+        await vm.ForceBoolOnCommand.ExecuteAsync(NewMatch("BoolProperty", "bInvincible"));
+
+        Assert.DoesNotContain("Only templates", vm.StatusText, StringComparison.Ordinal);
+    }
+
     /// <summary>The genuinely-futile case still reports as an error, unchanged: a
     /// negative code is the "resolved but type-refused everywhere" verdict.</summary>
     [Fact]

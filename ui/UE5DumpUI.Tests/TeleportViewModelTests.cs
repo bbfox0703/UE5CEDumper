@@ -982,6 +982,25 @@ public class TeleportViewModelTests
     }
 
     [Fact]
+    public async Task HoldStealth_zero_held_because_only_templates_exist_says_so()
+    {
+        // [LISTINSTANCES-KEEPS-TEMPLATES] review 1: the Teleport card's twin of Property Search's note.
+        var fake = new FakeDumpService
+        {
+            NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "C", FieldName = "F" } },
+            NextForce = new() { Held = 0, Resolved = false, TemplatesSkipped = 2 },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        await vm.HoldStealthCommand.ExecuteAsync(null);
+
+        Assert.Equal("Armed @0", vm.StealthState);
+        Assert.Contains(UE5DumpUI.Helpers.ForceText.TemplatesOnlyNote("C", 2), vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task HoldStealth_refused_with_nothing_armed_shows_not_found()
     {
         // A negative code on a first hold: Solide dropped the job it refused, so nothing is armed.

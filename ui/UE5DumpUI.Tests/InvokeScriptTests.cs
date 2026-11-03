@@ -3246,11 +3246,23 @@ public class InvokeScriptTests
         Assert.True(from > 0 && to > from, "the preview sweep moved -- re-point this pin");
         var sweep = aura[from..to];
         Assert.Contains("TemplateOfImpl(obj, &previewOuterMemo)", sweep, StringComparison.Ordinal);
+        // Review 1: only the row's OWN class default stands in -- not a subclass's, not another template.
+        Assert.Contains("exact && tk == TemplateKind::ClassDefault", sweep, StringComparison.Ordinal);
         Assert.DoesNotContain("find(\"Default__\")", sweep, StringComparison.Ordinal);
 
         // A meaning change of CMD_LIST_INSTANCES: a script generated now refuses a DLL that still lists templates.
-        Assert.Contains("constexpr int32_t MAILBOX_CONTRACT = 8;", DllSource("Mimic.h"), StringComparison.Ordinal);
-        Assert.Equal(8, CeMailboxLayout.ContractVersion);
+        Assert.True(CeMailboxLayout.ContractVersion >= 8,
+            "a script that relies on a template-free LIST_INSTANCES must claim contract 8: an older DLL still lists templates");
+
+        // Review 1: the Force reply and the forced-fields list say how many templates the pool passed over, so a hold
+        // armed on nothing can say why; the walks' post-filters share a memo, as the walks do.
+        var fern = CodeOnly(Lf(DllSource("Fern.cpp")));
+        Assert.Contains("data[\"templates_skipped\"]", fern, StringComparison.Ordinal);
+        Assert.Contains("j[\"templates_skipped\"]", fern, StringComparison.Ordinal);
+        Assert.Contains("Aura::TemplateOf(r.addr, outerMemo)", list, StringComparison.Ordinal);
+        Assert.Contains("Aura::TemplateOf(r.addr, outerMemo)", solide, StringComparison.Ordinal);
+        var dumpSvc = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Services/DumpService.cs"));
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(dumpSvc, @"TemplatesSkipped\s*=\s*\w+\[""templates_skipped""\]").Count);
     }
 
     [Fact]

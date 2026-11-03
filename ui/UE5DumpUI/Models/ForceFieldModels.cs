@@ -44,6 +44,9 @@ public sealed class ForceFieldResult
     /// instances exist unheld. See <see cref="ForcedFieldInfo.Truncated"/>.
     /// </summary>
     public bool Truncated { get; init; }
+
+    /// <summary>RED SCAFFOLD [LISTINSTANCES-KEEPS-TEMPLATES] review 1.</summary>
+    public int TemplatesSkipped { get; init; }
 }
 
 /// <summary>[SOLIDE-RELATED-STOPS] find_stealth_meter's candidates and why its search of the player's objects

@@ -4960,7 +4960,8 @@ int main() {
                bBPDcc, bBPPc, bCheatMgr, bCheatExt, bAbilityExt, bBPCheats, bKsl, bGameModeBase, bGameMode, bBPGameMode,
                bBPChar, bCdoActorChannel, bCdoCheatExt, bCdoCheatMgr, bCdoActor, bCdoKsl, bCdoGameMode, bCdoBPChar,
                bAbility0, bCm0, bDcc0, bPc0, bCheats0, bAbility1, bGm0, bChar0, bHud, bDcHud, bDcHud0, bHud0,
-               bCmc, bCdoCmc, bTplMove, bLiveMove, bScsMove, kBlobs };
+               bCmc, bCdoCmc, bTplMove, bLiveMove, bScsMove, bTplMove2, bLiveMove2, bLevel, bAct1, bAct2, bAct3,
+               kBlobs };
         alignas(16) static uint8_t upB[kBlobs][0x200] = {};
         auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(upB[b]); };
         auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
@@ -5042,6 +5043,16 @@ int main() {
         // class-default object above it).
         obj(bScsMove, bCmc, nCharMoveComp, bBPChar);
         put32(upB[bScsMove], Grimoire::OFF_UOBJECT_FLAGS, 0x20);
+        // Review 1: a second template under the same class default (flags 0, so only the memoized outer can tell) and
+        // a second live component under the same pawn -- both are memo HITS on their first outer.
+        obj(bTplMove2, bCmc, nCharMoveComp, bCdoBPChar);
+        obj(bLiveMove2, bCmc, nCharMoveComp, bChar0);
+        // A level and three actors outered to it (walk_world's shape); the third carries stray flag bits.
+        obj(bLevel, bObject, nBPChar0, -1);
+        obj(bAct1, bBPChar, nBPChar0, bLevel);
+        obj(bAct2, bBPChar, nBPChar0, bLevel);
+        obj(bAct3, bBPChar, nBPChar0, bLevel);
+        put32(upB[bAct3], Grimoire::OFF_UOBJECT_FLAGS, 0x30);
 
         FakePool upPool;
         upPool.Build(128);
@@ -5191,12 +5202,46 @@ int main() {
         rs = Aura::FindInstancesByClass("CharacterMovementComponent", true, 1, false, "", {}, false, /*skipTemplates=*/true);
         check("LISTPOOL ⭐ F5: the exact pool asked to skip templates takes the live component",
               rs.results.size() == 1 && rs.results[0].addr == A(bLiveMove), addrs(rs).c_str());
-        rs = Aura::FindInstancesByClass("CharacterMovementComponent", true, 10);
-        check("LISTPOOL control F6: the exact read (Instance Finder's) still lists every template, in index order",
+        rs = Aura::FindInstancesByClass("CharacterMovementComponent", true, 10, false, "", {}, /*buildHistogram=*/true);
+        check("LISTPOOL control F6: the Instance Finder's exact read still lists every template, in index order",
               rs.results.size() == 4 && rs.results[0].addr == A(bCdoCmc) && rs.results[1].addr == A(bTplMove)
-              && rs.results[2].addr == A(bScsMove) && rs.results[3].addr == A(bLiveMove), addrs(rs).c_str());
+              && rs.results[2].addr == A(bScsMove) && rs.results[3].addr == A(bLiveMove)
+              && rs.classHistogram.size() == 1 && rs.classHistogram[0].second == 4, addrs(rs).c_str());
+        // Review 1: memo hits in both directions, and the count of templates passed over.
+        slot(21, bTplMove2);
+        slot(22, bLiveMove2);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        rs = Aura::FindInstancesDerivedFrom("CharacterMovementComponent", 10);
+        check("LISTPOOL ⭐ F8: a memo hit keeps the second live component and drops the second template",
+              rs.results.size() == 2 && rs.results[0].addr == A(bLiveMove) && rs.results[1].addr == A(bLiveMove2),
+              addrs(rs).c_str());
+        check("LISTPOOL ⭐ F9: the walk counts the templates it passed over", rs.templatesSkipped == 4,
+              std::to_string(rs.templatesSkipped).c_str());
+        rs = Aura::FindInstancesByClass("CharacterMovementComponent", true, 10, false, "", {}, false, /*skipTemplates=*/true);
+        check("LISTPOOL ⭐ F10: the exact pool agrees, and counts them too",
+              rs.results.size() == 2 && rs.results[0].addr == A(bLiveMove) && rs.results[1].addr == A(bLiveMove2)
+              && rs.templatesSkipped == 4, addrs(rs).c_str());
+        bool agree = true;
+        for (int b : { bCdoCmc, bTplMove, bScsMove, bLiveMove, bTplMove2, bLiveMove2 }) {
+            const bool live = b == bLiveMove || b == bLiveMove2;
+            agree = agree && ((Aura::TemplateOf(A(b)).kind == Aura::TemplateKind::None) == live);
+        }
+        check("LISTPOOL control F11: TemplateOf agrees with the walks on every slot", agree);
+        slot(21, bLevel);
+        slot(22, bAct1);
+        slot(23, bAct2);
+        slot(24, bAct3);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        int32_t levelTotal = -1;
+        rs = Aura::FindActorsInLevel(A(bLevel), 10, &levelTotal);
+        check("LISTPOOL ⭐ F12: walk_world's level list keeps every actor outered to the level -- by name, not the "
+              "flags word (one actor carries stray bits)",
+              rs.results.size() == 3 && levelTotal == 3 && rs.results[0].addr == A(bAct1)
+              && rs.results[2].addr == A(bAct3), addrs(rs).c_str());
+        for (int i = 21; i <= 24; ++i) slot(i, -1);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
         rs = Aura::FindInstancesDerivedFrom("Actor", 10);
-        check("LISTPOOL control F7: a derived pool with no template in it is unchanged",
+        check("LISTPOOL control F7: a derived pool whose only templates are class defaults keeps every live member",
               rs.results.size() == 5 && rs.results[0].addr == A(bDcc0) && rs.results[1].addr == A(bGm0)
               && rs.results[2].addr == A(bChar0) && rs.results[3].addr == A(bDcHud0) && rs.results[4].addr == A(bHud0),
               addrs(rs).c_str());

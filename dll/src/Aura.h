@@ -253,6 +253,7 @@ struct SearchResult {
 
 // Search results with diagnostic counters for debugging
 struct SearchResultSet {
+    int templatesSkipped = 0;   // RED SCAFFOLD [LISTINSTANCES-KEEPS-TEMPLATES] review 1
     std::vector<SearchResult> results;
     int32_t scanned = 0;    // Total indices iterated (= GetCount() at call time)
     int32_t nonNull = 0;    // Objects that were non-null
