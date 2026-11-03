@@ -27,6 +27,29 @@ builds ≤696 in
 
 -----
 
+## 2026-11-03 (build 3682) — Debug Camera Force ON with no live CheatManager is refused; Freeze and Force never write a template; the param dialog FIRE by class name; the local-PlayerController fallback by derivation `[DEBUGCAM-FORCEON-CDO]` `[LISTINSTANCES-KEEPS-TEMPLATES]` `[MAINWINDOW-INVOKE-LIMIT1-CDO]` `[FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS]`
+
+- **Debug Camera Force ON with no live CheatManager** (every UE 5 Shipping build by default) is no longer sent: the
+  Console row, the Teleport card, the hotkey and the CE record say there is no live CheatManager and the badge stays
+  OFF. The DLL answers -17 at once (pipe, mailbox, C ABI), with no game-thread call. Force OFF there switches the
+  controller back by hand. A failed Force or refresh (-1) no longer claims "no live CheatManager".
+- **Freeze and Force hold live objects only.** A class default object's subobjects and a Blueprint's component
+  templates are no longer frozen or forced -- whatever a template holds, every later spawn copies, and the freeze
+  helper never restores. Counts and the "capped" flag count live objects. Mailbox contract 8 (MIN 1): a newly
+  generated freeze record refuses an older DLL. A Force armed on nothing because only templates of the class exist
+  says so. The Property Search preview no longer shows a template's value as live.
+- **The param dialog opened from the Console** now FIREs: it sends the class name, and the DLL picks a live object
+  at each FIRE (the line above the arguments says so; the result names the object).
+- **When a game's world chain breaks** (menus, travel), teleport, god mode, movement, time, current target, the
+  stealth meter and fly find the local PlayerController by class derivation, the local player's first, never a
+  destroyed one; a debug camera subclass named without the word is hopped like the stock one.
+- **Checked live on build 3682** (DumperTest Shipping 5.4, UE427_3rdPerson Shipping 4.27, DumperTest58 Development 5.8):
+  `dbgcam_cdo_refusal.py --stall` 14/14 (plus controls on the two fixtures with a live CheatManager);
+  `listinstances_templates_live.py` 10/10 on all three; `localpc_fallback_live.py all` 39/39 on all three;
+  `localpc_dbgcam_live.py` 12/12 (the active debug camera picked and hopped); UI and CE checks as in the rows.
+- Tests: C# 7,358 total, 0 failed, 1 skipped; dll_core_test 1,440; dll_helpers_test 3,736; 37 gates. AOT UI
+  61,639,168 bytes.
+
 ## 2026-11-03 (build 3681) — The coordinate library measures no distance from a parent-relative pose; the empty undo slot's texts `[TELEPORT-RECALL-PARENTREL]`
 
 - **The library's Dist column** no longer measures from a position that is not world coordinates: on a
