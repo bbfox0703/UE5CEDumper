@@ -542,7 +542,7 @@ public interface IDumpService
     /// <summary>
     /// Read the live Debug Camera state (DLL-side two-hop reflection read of
     /// DebugCameraController.OriginalControllerRef). 1 = ON, 0 = OFF,
-    /// -1 = unknown / no live CheatManager.
+    /// -1 = unknown (the read failed). No live CheatManager reads OFF: no Debug Camera can be live without one.
     /// </summary>
     Task<int> GetDebugCameraStateAsync(CancellationToken ct = default);
 
@@ -555,11 +555,15 @@ public interface IDumpService
     /// when the toggle is QUEUED. A queued ON will still run, so never re-send it [W3-DEBUGCAM-QUEUED];
     /// a queued OFF does not turn the camera off on stock UE 4.18-5.7, so the camera stays on until a
     /// Force OFF (or a CE untick) sent again once the game responds. [DEBUGCAM-QUEUED-OFF-NOESCALATE]
+    /// <see cref="Constants.DebugCameraToggleBlockedResult"/>: not sent, an opposite toggle is still queued.
+    /// <see cref="Constants.DebugCameraNoLiveCheatManagerResult"/>: an ON not sent, because no CheatManager is live.
+    /// [DEBUGCAM-FORCEON-CDO]
     /// </summary>
     Task<int> SetDebugCameraAsync(bool enable, CancellationToken ct = default);
 
     /// <summary>[INVOKE-NONSTATIC-ON-CDO] <see cref="SetDebugCameraAsync"/>, plus the DLL's warning that the toggle ran on
-    /// the CheatManager's class default object (no live CheatManager), where it does nothing.</summary>
+    /// the CheatManager's class default object (no live CheatManager), where it does nothing. Only a DLL from builds
+    /// 3676-3681 sends it; a newer one refuses that ON with -17 ([DEBUGCAM-FORCEON-CDO]).</summary>
     Task<DebugCameraSetResult> SetDebugCameraDetailedAsync(bool enable, CancellationToken ct = default);
 
     // === God Mode (Solitar: force AActor.bCanBeDamaged) ===

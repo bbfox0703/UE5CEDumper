@@ -181,7 +181,7 @@ public class DebugCameraScriptGeneratorTests
         Assert.True(branch.IndexOf("showMessage(", System.StringComparison.Ordinal)
                     < branch.IndexOf("createTimer(", System.StringComparison.Ordinal), branch);
         Assert.DoesNotContain(CeLuaHygiene.CloseCall, branch);
-        Assert.DoesNotContain("-17", s[d..]);
+        Assert.DoesNotContain("state == -17", s[d..]);
 
         var generic = enable[fail..enable.IndexOf("\nelse", fail + 1, System.StringComparison.Ordinal)];
         Assert.DoesNotContain("'no live CheatManager, or the game refused", generic);

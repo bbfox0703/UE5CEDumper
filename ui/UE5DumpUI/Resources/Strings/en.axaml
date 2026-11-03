@@ -1501,7 +1501,7 @@
     <sys:String x:Key="str.Con.Col.Params">Params</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.State">Live Debug Camera state, read from the CheatManager's DebugCameraControllerRef member — the exact field ToggleDebugCamera branches on. ON = a DebugCameraController is active (next plain toggle would turn it OFF). Press ↻ to re-read.</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.Refresh">Re-read the live Debug Camera state from the CheatManager instance.</sys:String>
-    <sys:String x:Key="str.Tip.Con.DbgCam.ForceOn">Ensure Debug Camera is ON: read current state, and fire ToggleDebugCamera only if it is currently OFF. Idempotent — does nothing if already ON.</sys:String>
+    <sys:String x:Key="str.Tip.Con.DbgCam.ForceOn">Ensure Debug Camera is ON: read current state, and fire ToggleDebugCamera only if it is currently OFF. Idempotent — does nothing if already ON. Needs a live CheatManager: with none (UE 5 leaves it out of Shipping builds by default) nothing is sent, and the status says so.</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.ForceOff">Ensure Debug Camera is OFF: read current state, and fire ToggleDebugCamera only if it is currently ON. This is the reliable "turn it off" — plain Run just flips whatever state it's in.</sys:String>
     <!-- [DEBUGCAM-QUEUED-OFF-NOESCALATE] Force ON / OFF that timed out and stays queued (Console and Teleport cards).
          A queued OFF does not turn the camera off on stock UE 4.18-5.7, so it must not promise to run. -->
@@ -1510,8 +1510,14 @@
     <!-- [DBGCAM-OFF-OVER-QUEUED-ON] The DLL's -6: this Force was NOT sent, because an earlier one of the other direction is still queued. -->
     <sys:String x:Key="str.DbgCam.BlockedOn">⏳ Force ON was not sent — an earlier Force OFF is still queued (the game thread is busy). Press Force ON again once the game responds.</sys:String>
     <sys:String x:Key="str.DbgCam.BlockedOff">⏳ Force OFF was not sent — an earlier Force ON is still queued (the game thread is busy) and will turn the camera on. Press Force OFF again once the game responds.</sys:String>
-    <!-- [INVOKE-NONSTATIC-ON-CDO] a Force whose toggle targets the CheatManager's class default object -->
+    <!-- [INVOKE-NONSTATIC-ON-CDO] a Force whose toggle targets the CheatManager's class default object. Only a DLL
+         from builds 3676-3681 says so: a newer one refuses that ON (str.DbgCam.NoLiveCheatManager). -->
     <sys:String x:Key="str.DbgCam.OnTemplate">⚠ The toggle targets the CheatManager's class default object: there is no live CheatManager (usual in a Shipping build), and a toggle there does nothing.</sys:String>
+    <!-- [DEBUGCAM-FORCEON-CDO] the DLL's -17: a Force ON not sent, because no CheatManager is live; -1 is a failure,
+         never that case, and a state that reads -1 is a read that failed. -->
+    <sys:String x:Key="str.DbgCam.NoLiveCheatManager">⛔ Force ON was not sent — there is no live CheatManager, and ToggleDebugCamera does nothing on its class default object. UE 5 leaves it out of Shipping builds by default; elsewhere, enter gameplay first. The camera stays OFF.</sys:String>
+    <sys:String x:Key="str.DbgCam.ForceFailed">Force {0} failed: the Debug Camera state could not be read, or the toggle did not run (see the DLL log).</sys:String>
+    <sys:String x:Key="str.DbgCam.StateUnknown">Debug Camera state unknown — the DLL could not read it (see the DLL log).</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.CopyCe">Generate a stateful CE memory-record AA Script (tick = camera ON, untick = camera OFF) — the same robust DLL path as Force On/Off. Self-contained: talks to the DLL mailbox directly, so NO ue5_invoke_helper.lua embed is needed (just UE5Dumper.dll injected). Ships to AOBMaker if connected, else the clipboard.</sys:String>
 
     <!-- Teleport panel (BugIt-style: marker save/recall + cursor teleport) -->
@@ -1617,14 +1623,14 @@
     <sys:String x:Key="str.Tip.TP.SaveCt">Backup: save a Cheat Engine .CT file with the same records (17 teleport, 4 movement, 2 time and, while Experimental features is on, 4 Fly), for when AOBMaker isn't connected. Import via CE File → Open.</sys:String>
     <!-- Teleport: Debug Camera (free-look) -->
     <sys:String x:Key="str.TP.DcHeader">Debug Camera (free-look)</sys:String>
-    <sys:String x:Key="str.TP.DcHint">Detach the view into a free-fly debug camera (UCheatManager::ToggleDebugCamera). Turning it back OFF is handled even on Shipping builds that stripped the disable path — the DLL switches the local player's controller back. Needs a live PlayerController, so enter gameplay first. Available only on games that kept ToggleDebugCamera.</sys:String>
+    <sys:String x:Key="str.TP.DcHint">Detach the view into a free-fly debug camera (UCheatManager::ToggleDebugCamera). Turning it back OFF is handled even on Shipping builds that stripped the disable path — the DLL switches the local player's controller back. Needs a live CheatManager, so enter gameplay first; UE 5 leaves it out of Shipping builds by default, and Force ON then says so. Available only on games that kept ToggleDebugCamera.</sys:String>
     <sys:String x:Key="str.TP.DcState">State:</sys:String>
     <sys:String x:Key="str.TP.DcOn">Force ON</sys:String>
     <sys:String x:Key="str.TP.DcOff">Force OFF</sys:String>
     <sys:String x:Key="str.TP.DcRefresh">↻</sys:String>
-    <sys:String x:Key="str.Tip.TP.DcOn">Deterministically enable the debug camera (reads state first, only toggles if needed). Idempotent — pressing again when it's already ON does nothing.</sys:String>
+    <sys:String x:Key="str.Tip.TP.DcOn">Deterministically enable the debug camera (reads state first, only toggles if needed). Idempotent — pressing again when it's already ON does nothing. Needs a live CheatManager: with none (UE 5 leaves it out of Shipping builds by default) nothing is sent, and the status says so.</sys:String>
     <sys:String x:Key="str.Tip.TP.DcOff">Deterministically disable the debug camera and return control to the player. On builds that stripped the disable path, the DLL swaps the local player's controller back to the original PlayerController.</sys:String>
-    <sys:String x:Key="str.Tip.TP.DcRefresh">Re-read the live debug-camera state (1=ON / 0=OFF / unknown if no live CheatManager).</sys:String>
+    <sys:String x:Key="str.Tip.TP.DcRefresh">Re-read the live debug-camera state (ON / OFF; OFF with no live CheatManager, since no debug camera can be live then; unknown only when the read fails).</sys:String>
 
     <!-- God Mode (Solitar — force AActor.bCanBeDamaged) -->
     <sys:String x:Key="str.TP.GmHeader">God Mode</sys:String>

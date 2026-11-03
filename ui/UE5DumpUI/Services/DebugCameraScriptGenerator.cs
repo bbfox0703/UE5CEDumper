@@ -29,7 +29,8 @@ public static class DebugCameraScriptGenerator
     // Mimic mailbox layout (must match dll/src/Mimic.h MailboxData):
     //   0x00 cmd (write LAST to trigger), 0x04 status (poll == 1), 0x08 result,
     //   0x10 instanceAddr (here: the request 0=OFF / 1=ON), 0x72C cmdOutFlags (the template warning, read on an ON
-    //   that did not take or is queued). CMD_SET_DEBUG_CAMERA=7.
+    //   that did not take or is queued; only a DLL from builds 3676-3681 sets it, a newer one answers -17 instead).
+    //   CMD_SET_DEBUG_CAMERA=7.
     private static void EmitBlock(StringBuilder sb, string header, bool enable)
     {
         var label = enable ? "ON" : "OFF";
@@ -87,7 +88,7 @@ public static class DebugCameraScriptGenerator
         // Shared wait: real-time deadline, status-specific diagnosis, and the untick
         // that stops a timed-out row claiming to be active.
         CeLuaHygiene.AppendMailboxWait(sb, "DebugCamera", bail);
-        Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=ON, 0=OFF, -1=error, -5=queued, -6=not sent");
+        Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=ON, 0=OFF, -1=error, -5=queued, -6=not sent, -17=no live CheatManager");
         Line(sb, $"dbg('[DebugCamera] {label} -> state=' .. tostring(state))");
         // Test against the REQUEST, not against -1. `UE5_SetDebugCamera` re-reads the
         // state after firing ToggleDebugCamera and returns whatever it finds
@@ -142,17 +143,29 @@ public static class DebugCameraScriptGenerator
                       "on. The record stays ticked: untick it again once the game responds.')");
             Line(sb, $"  error('[DebugCamera] {label} not sent; an earlier ON is still queued')");
         }
+        // [DEBUGCAM-FORCEON-CDO] -17: an ON the DLL did not send -- no CheatManager is live, and the toggle does nothing on
+        // its class default object. Nothing was applied: say so and untick without [DISABLE], which would send an OFF.
+        // [DISABLE] has no branch: an OFF is never refused. A record generated before this branch reports -17 through
+        // the failure below, and unticks the same way.
+        if (enable)
+        {
+            Line(sb, $"elseif state == {Constants.DebugCameraNoLiveCheatManagerResult} then");
+            Line(sb, $"  showMessage('[DebugCamera] {label} not sent -- there is no live CheatManager (UE 5 leaves it " +
+                      "out of Shipping builds by default), and the toggle does nothing on its class default object.')");
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
+        }
         Line(sb, $"elseif state ~= {req} then");
         if (enable)
         {
-            // [INVOKE-NONSTATIC-ON-CDO] The DLL (contract 7, which this record claims) says when the toggle ran on the
-            // CheatManager's class default object -- no live CheatManager, where it does nothing.
+            // [INVOKE-NONSTATIC-ON-CDO] A DLL from builds 3676-3681 (contract 7, which this record claims) says when the
+            // toggle ran on the CheatManager's class default object -- no live CheatManager, where it does nothing. A newer
+            // DLL refuses that ON (-17, above), so without the bit this is a read that failed or a toggle that did not take.
             int bit = CeMailboxLayout.InvOutNonStaticOnTemplate;
             Line(sb, $"  local _tplWarn = (readInteger(mb + {CeMailboxLayout.OffOutFlags}) or 0) % {2 * bit} >= {bit}");
             Line(sb, $"  showMessage('[DebugCamera] {label} failed (state=' .. tostring(state) .. ') " +
                       "-- ' .. (_tplWarn and 'the toggle ran on the CheatManager class default object: there is no " +
-                      "live CheatManager (usual in a Shipping build).' or 'no live CheatManager, or the game refused " +
-                      "the toggle.'))");
+                      "live CheatManager (usual in a Shipping build).' or 'the state could not be read, or the game " +
+                      "refused the toggle.'))");
             // Nothing was applied on this branch, so the record must not stay ticked -- nor send the OFF [DISABLE] would.
             Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }

@@ -760,7 +760,7 @@ public partial class ConsoleViewModel : ViewModelBase
     }
 
     /// <summary>Map the DLL's Debug Camera result (1=on, 0=off, -1=unknown,
-    /// -5=toggle queued) onto the badge. A queued toggle's badge depends on its
+    /// -5=toggle queued, -6=not sent, -17=ON refused) onto the badge. A queued toggle's badge depends on its
     /// direction, so a Force OFF says <paramref name="forcingOff"/>.</summary>
     private void ApplyDebugCameraState(int state, bool forcingOff = false)
     {
@@ -781,7 +781,13 @@ public partial class ConsoleViewModel : ViewModelBase
             else SetDebugCameraState(true);
             return;
         }
-        SetDebugCameraState(state switch { 1 => true, 0 => false, _ => (bool?)null });
+        // [DEBUGCAM-FORCEON-CDO] A refused ON read the camera OFF first ("already ON" answers before it).
+        SetDebugCameraState(state switch
+        {
+            1 => true,
+            0 or Constants.DebugCameraNoLiveCheatManagerResult => false,
+            _ => (bool?)null,
+        });
     }
 
     /// <summary>↻ — re-read and display the live Debug Camera state. The
@@ -801,8 +807,8 @@ public partial class ConsoleViewModel : ViewModelBase
             {
                 1 => "Debug Camera is ON.",
                 0 => "Debug Camera is OFF.",
-                _ => "Debug Camera state unknown (no live CheatManager — " +
-                     "enter gameplay so a PlayerController spawns, then ↻).",
+                // [DEBUGCAM-FORCEON-CDO] No live CheatManager reads OFF; -1 is a read that failed.
+                _ => DebugCameraText.StateUnknownText,
             };
         }
         catch (Exception ex)
@@ -860,8 +866,9 @@ public partial class ConsoleViewModel : ViewModelBase
             {
                 1 when wantOn  => "✓ Debug Camera forced ON.",
                 0 when !wantOn => "✓ Debug Camera forced OFF.",
-                -1 => $"Force {want}: no live CheatManager / unreadable state " +
-                      "(enter gameplay first).",
+                // [DEBUGCAM-FORCEON-CDO] -1 is a failure; no live CheatManager is -17, and only an ON gets it.
+                -1 => DebugCameraText.ForceFailed(wantOn),
+                Constants.DebugCameraNoLiveCheatManagerResult => DebugCameraText.NoLiveCheatManagerText,
                 // [W3-DEBUGCAM-QUEUED] Not a failure. [DEBUGCAM-QUEUED-OFF-NOESCALATE] But only a queued ON will still
                 // take; a queued OFF does not turn the camera off -- DebugCameraText says why.
                 Constants.DebugCameraToggleQueuedResult => DebugCameraText.Queued(wantOn),

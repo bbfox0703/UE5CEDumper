@@ -127,6 +127,10 @@ import sys
 # archetype) is layout. ADDITIVE: cmdOutFlags was an unused output for those commands, the bit is not the 0x1 an older
 # DLL can leave behind, and the dispatcher now clears the word before every command. The same bump carries
 # FIND_INSTANCE passing over templates (an accident ended, as in version 6). MAILBOX_CONTRACT_MIN stays 1.
+# 2026-11-03 ([DEBUGCAM-FORCEON-CDO], still version 7, hash unchanged): CMD_SET_DEBUG_CAMERA refuses an ON on the
+# CheatManager's class default object with -17 instead of sending a toggle there, so it no longer sets the bit. The
+# bit's meaning did not move, and -17 is a new negative code only an ON gets, which every [ENABLE] reports -- Mimic.h's
+# "not a change at all" case.
 GOLDEN_VERSION = 7
 GOLDEN_HASH = "e47d01698e530071c5de8cc11f7d5a2b341ea2f2569da1c2468cced81acc3ee7"
 

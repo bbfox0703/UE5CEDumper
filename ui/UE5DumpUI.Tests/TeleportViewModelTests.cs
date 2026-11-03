@@ -1824,7 +1824,7 @@ public class TeleportViewModelTests
     [Fact]
     public async Task ForceDebugCameraOn_whose_toggle_ran_on_the_class_default_object_says_so()
     {
-        // [INVOKE-NONSTATIC-ON-CDO] the Teleport card's Force shares the Console's note.
+        // [INVOKE-NONSTATIC-ON-CDO] the Teleport card's Force shares the Console's note (a DLL from builds 3676-3681).
         var fake = new FakeDumpService { NextDebugCameraState = 0, NextDebugCameraOnTemplate = true };
         var vm = CreateVm(fake, out _);
         vm.SetConnected(true);

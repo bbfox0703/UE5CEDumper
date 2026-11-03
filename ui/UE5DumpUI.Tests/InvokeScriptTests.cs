@@ -2959,7 +2959,8 @@ public class InvokeScriptTests
     }
 
     [Theory]
-    [InlineData(7, 0, 2L, false, "0|template")]      // the toggle ran on the CheatManager's class default object
+    [InlineData(7, 0, 2L, false, "0|template")]      // the toggle ran on the CheatManager's class default object (builds 3676-3681)
+    [InlineData(7, -17, 0L, false, "-17|nil")]       // [DEBUGCAM-FORCEON-CDO] a newer DLL refuses that ON: the code, no warning
     [InlineData(7, 1, 0L, false, "1|nil")]           // control: a clean ON
     [InlineData(6, 0, 0xFFFFFFFFL, false, "0|nil")]  // control: below contract 7 the word is never read
     [InlineData(7, 1, 2L, true, "1|nil")]            // control: a query fires nothing and says nothing
@@ -2973,7 +2974,8 @@ public class InvokeScriptTests
     public void DebugCameraRecord_a_queued_ON_names_the_class_default_object_too()
     {
         // Review of ef20e198: only the failed-ON branch read the bit; a queued ON on the class default object will run
-        // there and do nothing, and the record said only "queued -- do not tick again".
+        // there and do nothing, and the record said only "queued -- do not tick again". Kept for a DLL from builds
+        // 3676-3681: a newer one never queues that toggle ([DEBUGCAM-FORCEON-CDO]).
         var s = DebugCameraScriptGenerator.Generate();
         int queued = s.IndexOf("queued -- the game thread is busy; the toggle will run", StringComparison.Ordinal);
         Assert.True(queued > 0, "the queued-ON message moved -- re-point this pin");

@@ -49,10 +49,12 @@ enum Cmd : int32_t {
                               //           -6 = not sent: an earlier toggle of the other direction is still
                               //           queued -- send again once the game responds.
                               //           [W3-DEBUGCAM-QUEUED]; MB3 in Mimic.cpp: no contract bump)
-                              //           cmdOutFlags INV_OUT_NONSTATIC_ON_TEMPLATE (contract 7+) when the
-                              //           toggle it sent targets the CheatManager's class default object
-                              //           (no live one), where it does nothing; a re-send answered by a toggle already queued
-                              //           carries none. [INVOKE-NONSTATIC-ON-CDO]
+                              //           -17 = an ON not sent: no CheatManager is live, and the toggle does
+                              //           nothing on its class default object (DBGCAM_ERR_NO_LIVE_CHEATMANAGER;
+                              //           an OFF is never refused). [DEBUGCAM-FORCEON-CDO]
+                              //           cmdOutFlags: builds 3676-3681 set INV_OUT_NONSTATIC_ON_TEMPLATE for a toggle
+                              //           sent to that class default object [INVOKE-NONSTATIC-ON-CDO]; since -17 no
+                              //           toggle goes there, so this command leaves the word 0.
     CMD_TELEPORT        = 8,  // Teleport (Wirbel): marker save/recall + cursor teleport.
                               //   Input:  instanceAddr = op (TeleportOp below)
                               //           ufuncAddr    = slot (0..2) for SAVE/RECALL/GET/CLEAR
@@ -286,9 +288,9 @@ enum ListInstancesFlag : uint32_t {
                              //   routinely, so it is normal here, not exceptional.
 };
 
-// cmdOutFlags bits CMD_INVOKE (and CMD_INVOKE_BY_NAME, which ends in it) publishes (contract 7+), and
-// CMD_SET_DEBUG_CAMERA when the toggle IT sent targets the CheatManager's class default object (ran there, or queued
-// to). A re-send answered by a toggle already in flight or queued sends nothing, and carries no bit.
+// cmdOutFlags bits CMD_INVOKE (and CMD_INVOKE_BY_NAME, which ends in it) publishes (contract 7+). CMD_SET_DEBUG_CAMERA
+// published the bit too in builds 3676-3681, for a toggle it sent to the CheatManager's class default object; it now
+// refuses that toggle (-17, [DEBUGCAM-FORCEON-CDO]), so it never sets the bit -- what the bit means is unchanged.
 // [INVOKE-NONSTATIC-ON-CDO] Never 0x1: a contract 3-6 DLL can leave LI_OUT_TRUNCATED behind after a LIST_INSTANCES,
 // and it never writes 0x2. The dispatcher clears cmdOutFlags before every command, so the bit is this command's.
 enum InvokeOutFlag : uint32_t {
@@ -521,18 +523,38 @@ constexpr bool ShouldRouteDirectInvoke(uint32_t functionFlags, bool flagsResolve
 
 /// [INVOKE-NONSTATIC-ON-CDO] Warn -- never refuse -- when a user-facing invoke runs a function that is not static on a
 /// TEMPLATE (a class-default object, one of its default subobjects, or another archetype such as a Blueprint's
-/// component template): it may do nothing there, or fault (UE 5.8's CheatManager commands on Default__CheatManager
-/// dereference a null owner), and a game's own command may still work.
+/// component template): it may do nothing there, or fault (a CheatManager command that dereferences its owner, such as
+/// God's GetOuterAPlayerController()->GetPawn(), meets null on Default__CheatManager from 4.20 on), and a game's own
+/// command may still work.
 /// `isUFunction` is ResolveFunctionInfo's answer, so the flags carry the same trust as ShouldRouteDirectInvoke's: an
 /// object that is not a UFunction warns, and only a FUNC_Static read clears it.
 constexpr bool WarnNonStaticOnTemplate(bool onTemplate, bool isUFunction, uint32_t functionFlags) {
     return onTemplate && !(isUFunction && (functionFlags & FUNC_FLAG_STATIC) != 0);
 }
 
-// RED SCAFFOLD [DEBUGCAM-FORCEON-CDO]
+/// [DEBUGCAM-FORCEON-CDO] CMD_SET_DEBUG_CAMERA / set_debug_camera / UE5_SetDebugCamera: a Force ON not sent, because the
+/// CheatManager the state read found is a template -- its class default object, so none is live. ToggleDebugCamera does
+/// nothing there on 4.20+ (DECLARE_WITHIN's GetOuterAPlayerController() answers null on a CDO, and every toggle path
+/// guards it) and is undefined behaviour on 4.18/4.19 (a raw cast of the /Script/Engine package). UE 5 compiles the
+/// CheatManager out of Shipping by default (UE_WITH_CHEAT_MANAGER), so this is the usual UE 5 Shipping answer; a UE 4
+/// standalone game creates one unless it turns cheats off (AGameModeBase::AllowCheats).
 constexpr int32_t DBGCAM_ERR_NO_LIVE_CHEATMANAGER = -17;
-enum class DbgCamForceStep : uint8_t { Toggle, SwapBackOnly, RefuseNoLiveCheatManager };
-constexpr DbgCamForceStep DebugCameraForceStep(bool, bool) { return DbgCamForceStep::Toggle; }
+
+/// What a Debug Camera Force does once it has read the state and found the camera in the other state.
+enum class DbgCamForceStep : uint8_t {
+    Toggle,                    // a live CheatManager: send ToggleDebugCamera
+    SwapBackOnly,              // OFF with no live CheatManager: the toggle would do nothing, so only switch back
+    RefuseNoLiveCheatManager,  // ON with no live CheatManager: nothing can turn the camera on
+};
+
+/// An ON is refused rather than sent, so no toggle on a template is ever dispatched or left queued, and a later -5 / -6
+/// always refers to a toggle on a live CheatManager. An OFF is never refused: a camera that is on while only the class
+/// default object stands in (the player's CheatManager is gone) still turns off through the swap-back, which is where a
+/// no-op toggle there ended up anyway.
+constexpr DbgCamForceStep DebugCameraForceStep(bool want, bool cheatManagerIsTemplate) {
+    return !cheatManagerIsTemplate ? DbgCamForceStep::Toggle
+         : want ? DbgCamForceStep::RefuseNoLiveCheatManager : DbgCamForceStep::SwapBackOnly;
+}
 
 /// [UE-OVERRIDE-411] review 2: what CMD_INVOKE publishes instead of handing ProcessEvent the paramsData slab.
 /// Negative and apart from ProcessEvent's own codes (Frieren.h lists them) and the mailbox's -10 / -11; like
@@ -552,7 +574,8 @@ constexpr int32_t MB_ERR_INVOKE_OBJECT_PARAM = -14;
 /// and every script shows errorMsg for a non-zero result -- which says to re-open the form, whose creation re-runs FIND.
 constexpr int32_t MB_ERR_INVOKE_NOT_OWNED = -15;
 /// ⚠ -16 is taken: Wirbel::TP_ERR_PARENT_RELATIVE reaches CE in the same `result` field on CMD_TELEPORT
-/// ([TELEPORT-BUGITGO-PARENTREL], [TELEPORT-RECALL-PARENTREL]). The next mailbox-wide code takes -17.
+/// ([TELEPORT-BUGITGO-PARENTREL], [TELEPORT-RECALL-PARENTREL]). ⚠ -17 is taken too: DBGCAM_ERR_NO_LIVE_CHEATMANAGER on
+/// CMD_SET_DEBUG_CAMERA ([DEBUGCAM-FORCEON-CDO]). The next mailbox-wide code takes -18.
 
 /// May CMD_INVOKE hand ProcessEvent the slab? 0 = yes, otherwise the refusal to publish.
 ///
@@ -652,8 +675,10 @@ extern "C" __declspec(dllexport) extern Mimic::MailboxData g_invokeMailbox;
 //
 // WHAT IS NOT A CHANGE AT ALL: a new negative result code on a command or op whose
 //   every generated block reports a negative result it has no message for and keeps
-//   its window open -- today CMD_TELEPORT (the -16 of BUGIT_GO, RECALL, RECALL_FORCE and RELATIVE) and the invoke
-//   family (MB_ERR_INVOKE_* -12..-15). Check the generators first: some [DISABLE]
+//   its window open -- today CMD_TELEPORT (the -16 of BUGIT_GO, RECALL, RECALL_FORCE and RELATIVE), the invoke
+//   family (MB_ERR_INVOKE_* -12..-15) and CMD_SET_DEBUG_CAMERA's -17, which only an ON gets: every [ENABLE] reports
+//   a state it has no branch for and unticks, and the [DISABLE] blocks that report a negative only through dbg() never receive it,
+//   because an OFF is never refused. Check the generators first: some [DISABLE]
 //   blocks report a negative state only through dbg(), and the GodMode [ENABLE]
 //   reads any negative state as "armed", so a new code there IS a change.
 //
@@ -725,6 +750,11 @@ namespace Mimic {
 ///   live object). MAILBOX_CONTRACT_MIN stays at 1. A script claiming less than MAILBOX_CONTRACT_INVOKE_OUT reads
 ///   0x72C only from a DLL that publishes at least that; the embedded invoke helper keeps claiming 1 and gates its read
 ///   on the DLL's own number.
+///   2026-11-03 ([DEBUGCAM-FORCEON-CDO], still 7): CMD_SET_DEBUG_CAMERA refuses an ON whose CheatManager is a template
+///   with -17 and sends an OFF there straight to the swap-back, so it no longer sets INV_OUT_NONSTATIC_ON_TEMPLATE. The
+///   bit's meaning did not move (it still names a call that reached a template, which this command can no longer
+///   make), and -17 is a new negative code only an ON gets (WHAT IS NOT A CHANGE AT ALL above). No bump, and the surface
+///   hash does not change.
 constexpr int32_t MAILBOX_CONTRACT = 7;
 
 /// Oldest script contract still accepted. Bump ONLY when a change actually

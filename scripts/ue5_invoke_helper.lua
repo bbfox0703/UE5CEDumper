@@ -20,7 +20,8 @@
     ok, err, warn = invokeUFunction(className, funcName, parmsSize, params)   -- warn: 'template' (contract 7+ DLL)
     value   = readUFunctionReturn(offset, valueType)
     freed   = freeInvokeStringBuffers() -- free FString INPUT-param buffers (UNSAFE unless read-only)
-    state, warn = setDebugCamera(enable)   -- robust force on/off (1=on,0=off,-1=err,-5=queued); warn as above
+    state, warn = setDebugCamera(enable)   -- robust force on/off (1=on,0=off,-1=err,-5=queued,-6=not sent,
+                                           -- -17=ON refused: no live CheatManager); warn: builds 3676-3681 only
     state   = getDebugCameraState()    -- 1=on, 0=off, -1=unknown
     ok, why = getOffsetsVerdict()      -- were the DynOff offsets MEASURED? why = the reason when not
 
@@ -51,7 +52,10 @@
     end
     if not ok or state ~= 1 then
       -- -6: NOT SENT, an earlier OFF is still queued -- tick again once the game responds. [DBGCAM-OFF-OVER-QUEUED-ON]
+      -- -17: NOT SENT, no CheatManager is live (UE 5 leaves it out of Shipping by default), and the toggle does nothing on its class
+      -- default object. An OFF is never refused, so [DISABLE] never sees it. [DEBUGCAM-FORCEON-CDO]
       local why = (ok and state == -6) and 'not sent -- an earlier OFF is still queued; tick again once the game responds'
+                  or (ok and state == -17) and 'not sent -- there is no live CheatManager (UE 5 leaves it out of Shipping by default)'
                   or ok and ('returned state ' .. tostring(state)) or ('error: ' .. tostring(state))
       showMessage('[Debug Camera] could not enable -- ' .. why)
       -- DEFERRED, and armed only AFTER the message: an immediate memrec.Active = false inside
@@ -971,10 +975,12 @@ if not setDebugCamera or _invokeOutdated then
   --- @return number state  1=ON, 0=OFF, -1=error, -5=toggle queued (an ON will run: do not re-send;
   ---                       an OFF leaves the camera on, stock UE 4.18-5.7: send it again once the game responds),
   ---                       -6=not sent (an earlier toggle of the other direction is still queued: send it again once
-  ---                       the game responds)
+  ---                       the game responds), -17=an ON not sent: no CheatManager is live, and the toggle does
+  ---                       nothing on its class default object [DEBUGCAM-FORCEON-CDO]
   --- @return string|nil warn  'template' when the toggle this call sent targets the CheatManager's class default
-  ---                       object (no live CheatManager), where it does nothing; nil for a re-send answered by a toggle already queued,
-  ---                       nil otherwise, and nil from an older DLL
+  ---                       object (no live CheatManager), where it does nothing -- only a DLL from builds 3676-3681
+  ---                       sends that toggle; a newer one answers -17. nil for a re-send answered by a toggle already
+  ---                       queued, nil otherwise, and nil from an older DLL
   function setDebugCamera(enable)
     return dbgCamMailbox((enable and enable ~= 0) and 1 or 0)
   end

@@ -1372,17 +1372,11 @@ static std::mutex s_dbgCamMutex;
 static Stark::QueuedInvoke s_dbgCamQueued;
 static bool s_dbgCamQueuedWant = false;
 static int s_dbgCamInFlight = -1;   // -1 none, else the direction (0 OFF / 1 ON) being dispatched
-// [INVOKE-NONSTATIC-ON-CDO] Whether this thread's last UE5_SetDebugCamera fired its non-static toggle on a template --
-// the CheatManager's class default object, when none is live -- where it does nothing. Per thread, because the pipe
-// and the mailbox each call UE5_SetDebugCamera on their own thread and read this right after; the C ABI keeps its
-// int32 signature. Read through FrierenInvoke::DebugCameraFiredOnTemplate.
-static thread_local bool t_dbgCamFiredOnTemplate = false;
 
 int32_t UE5_SetDebugCamera(int32_t enable) {
     const bool want = (enable != 0);
     uintptr_t cm = 0, dcc = 0;
     int state = -1;
-    t_dbgCamFiredOnTemplate = false;
     {
         std::lock_guard<std::mutex> lk(s_dbgCamMutex);
         if (s_dbgCamInFlight >= 0) {
@@ -1401,6 +1395,23 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
         }
         if ((state == 1) == want) {
             LOG_INFO("UE5_SetDebugCamera: already %s — no-op", want ? "ON" : "OFF");
+            return state;
+        }
+        // [DEBUGCAM-FORCEON-CDO] A template here is the class default object (FindLiveOrDefaultOf's only fallback): no
+        // CheatManager is live, and ToggleDebugCamera does nothing there (4.18/4.19: worse). Decided before the
+        // marking, so no toggle on a template is ever dispatched or left queued.
+        const auto step = Mimic::DebugCameraForceStep(want, Aura::TemplateOf(cm).kind != Aura::TemplateKind::None);
+        if (step == Mimic::DbgCamForceStep::RefuseNoLiveCheatManager) {
+            LOG_WARN("UE5_SetDebugCamera(1): no live CheatManager -- ToggleDebugCamera does nothing on its class "
+                     "default object 0x%llX; not sent", (unsigned long long)cm);
+            return Mimic::DBGCAM_ERR_NO_LIVE_CHEATMANAGER;
+        }
+        if (step == Mimic::DbgCamForceStep::SwapBackOnly) {
+            // The camera reads ON ("already OFF" answered above), its CheatManager is gone: switch back by hand, the
+            // end a no-op toggle reached through the escalation below. No game-thread call, so under the lock.
+            if (dcc && DbgCam_SwapControllerBack(dcc))
+                state = DbgCam_ReadState(cm, dcc);
+            LOG_INFO("UE5_SetDebugCamera(0): no live CheatManager -- swap-back only -> state=%d", state);
             return state;
         }
         s_dbgCamInFlight = want ? 1 : 0;
@@ -1426,19 +1437,7 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
         LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera UFunction not found");
         return -1;
     }
-    {
-        FunctionInfo tfi{};
-        const bool isFn = Ubel::ResolveFunctionInfo(ufunc, tfi);
-        t_dbgCamFiredOnTemplate = Mimic::WarnNonStaticOnTemplate(
-            Aura::TemplateOf(cm).kind != Aura::TemplateKind::None, isFn, tfi.functionFlags);
-        if (t_dbgCamFiredOnTemplate)
-            LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera runs on 0x%llX, the CheatManager's class default object -- "
-                     "no live CheatManager, so it does nothing there", (unsigned long long)cm);
-    }
     int32_t r = CallProcessEventRouted(cm, ufunc, 0, 0, false, &inFlight.queued);
-    // Only a toggle that ran (-4: it threw inside) or will run (-5: queued) keeps the warning; every other failure
-    // dispatched nothing.
-    if (r != 0 && r != -4 && r != Stark::kInvokeTimedOutStillQueued) t_dbgCamFiredOnTemplate = false;
     if (r != 0) {
         LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera ProcessEvent r=%d", r);
         // [W3-DEBUGCAM-QUEUED] A TIMED-OUT toggle (-5) stays queued and still runs: pass it through, so no caller reads
@@ -2586,9 +2585,6 @@ bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool dir
     if (!ok) LOG_WARN("invoke: %s refused -- %s", layout.funcName.c_str(), why.c_str());
     return ok;
 }
-// [INVOKE-NONSTATIC-ON-CDO] This thread's last UE5_SetDebugCamera fired its toggle on a template. Read right after it.
-bool DebugCameraFiredOnTemplate() { return t_dbgCamFiredOnTemplate; }
-
 }  // namespace FrierenInvoke
 }  // extern "C++"
 

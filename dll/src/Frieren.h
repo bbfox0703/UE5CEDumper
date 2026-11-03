@@ -172,16 +172,21 @@ __declspec(dllexport) int       UE5_GetProcessEventOffset();
 
 // === Debug Camera (robust force on/off; shared by UI pipe + CE Lua) ===
 // Read the live Debug Camera state. 1 = ON (a DebugCameraController is
-// possessing the player), 0 = OFF, -1 = unknown / no live CheatManager.
+// possessing the player), 0 = OFF, -1 = unknown (the reflection read failed).
 // Two-hop reflection read of DebugCameraController.OriginalControllerRef.
+// No live CheatManager reads OFF: no Debug Camera can be live without one.
 __declspec(dllexport) int32_t   UE5_GetDebugCameraState();
 
 // Force Debug Camera ON (enable!=0) or OFF (enable==0). Idempotent — no-op if
 // already in the desired state. Fires ToggleDebugCamera only when needed; if a
 // disable can't take (Shipping builds that strip DisableDebugCamera), switches
 // the local player's controller back to the original PlayerController by hand.
-// Returns the resulting state (1/0) or -1 on error. All offsets resolved live
-// from reflection (UE4/UE5 version-agnostic).
+// Returns the resulting state (1/0) or -1 when the state did not read or the toggle
+// never ran. All offsets resolved live from reflection (UE4/UE5 version-agnostic).
+// -17 = an ON NOT SENT: no CheatManager is live (UE 5 compiles it out of Shipping by
+// default), and ToggleDebugCamera does nothing on its class default object. An OFF
+// there sends no toggle either; it switches the controller back by hand.
+// [DEBUGCAM-FORCEON-CDO]
 // -5 = the toggle TIMED OUT on the game thread and stays QUEUED. A queued ON will still
 // run, so it is not re-sent. A queued OFF drains on the original controller's
 // CheatManager, which on stock UE 4.18-5.7 leaves the camera on, so the OFF is sent

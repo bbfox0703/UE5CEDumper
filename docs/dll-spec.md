@@ -579,6 +579,9 @@ extern "C" {
     // While an earlier toggle is queued or being dispatched, a Set sends
     // nothing: -5 for the same direction, -6 for the opposite one.
     // [W3-DEBUGCAM-QUEUED] [DBGCAM-OFF-OVER-QUEUED-ON]
+    // -17 = an ON not sent: no CheatManager is live, and ToggleDebugCamera does
+    // nothing on its class default object. No live CheatManager READS 0 (OFF);
+    // an OFF there switches the controller back by hand. [DEBUGCAM-FORCEON-CDO]
     __declspec(dllexport) int32_t   UE5_GetDebugCameraState();
     __declspec(dllexport) int32_t   UE5_SetDebugCamera(int32_t enable);
 

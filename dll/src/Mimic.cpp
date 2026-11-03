@@ -46,7 +46,6 @@ extern "C" int32_t  UE5_CallProcessEventDirect(uintptr_t, uintptr_t, uintptr_t);
 // [VND584-01] Frieren.cpp: a picked object in a weak / soft parameter becomes the engine's own value before the call.
 namespace FrierenInvoke {
 bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why);
-bool DebugCameraFiredOnTemplate();
 }
 extern uintptr_t    g_cachedGObjects;
 extern uintptr_t    g_cachedGNames;
@@ -1109,8 +1108,9 @@ static void HandleListInstances() {
 
 // CMD_SET_DEBUG_CAMERA: robust Debug Camera force on/off, shared with the UI
 // pipe (set_debug_camera). instanceAddr carries the request: 0=OFF, 1=ON,
-// 2=query (read state, no change). result gets the resulting state (1/0/-1), or
-// -5 when the toggle is QUEUED (errorMsg says what to do, which depends on the direction).
+// 2=query (read state, no change). result gets the resulting state (1/0/-1), -5 when the toggle is QUEUED (errorMsg
+// says what to do, which depends on the direction), -6 when an opposite toggle is still queued, or -17 for an ON
+// with no live CheatManager.
 // Delegates entirely to the Frieren exports, which own the toggle +
 // controller-swap fallback.
 static void HandleSetDebugCamera() {
@@ -1118,13 +1118,21 @@ static void HandleSetDebugCamera() {
     int32_t state = (req == 2)
         ? UE5_GetDebugCameraState()
         : UE5_SetDebugCamera(req != 0 ? 1 : 0);
-    // [INVOKE-NONSTATIC-ON-CDO] The toggle this call sent targets the CheatManager's class default object (contract 7).
-    // A query fires nothing, so it never reads the previous call's answer.
-    if (req != 2 && FrierenInvoke::DebugCameraFiredOnTemplate())
-        g_invokeMailbox.cmdOutFlags |= INV_OUT_NONSTATIC_ON_TEMPLATE;
+    // [DEBUGCAM-FORCEON-CDO] No toggle reaches the CheatManager's class default object any more (an ON there is -17),
+    // so this command leaves cmdOutFlags as the dispatcher cleared it; builds 3676-3681 set the template bit here.
     if (state == -1) {
+        // -1 is a state that did not read or a toggle that never ran. No live CheatManager is not -1: the state reads
+        // OFF there, and an ON answers -17.
         strncpy(g_invokeMailbox.errorMsg,
-                "Debug Camera: no live CheatManager / unreadable state",
+                "Debug Camera: unreadable state, or the toggle did not run",
+                sizeof(g_invokeMailbox.errorMsg) - 1);
+        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+    } else if (state == DBGCAM_ERR_NO_LIVE_CHEATMANAGER) {
+        // [DEBUGCAM-FORCEON-CDO] A new negative code, only for an ON: every [ENABLE] reports it (Mimic.h, WHAT IS NOT
+        // A CHANGE AT ALL).
+        strncpy(g_invokeMailbox.errorMsg,
+                "Debug Camera: ON not sent -- no live CheatManager (UE 5 leaves it out of Shipping by default); "
+                "ToggleDebugCamera does nothing on its class default object",
                 sizeof(g_invokeMailbox.errorMsg) - 1);
         g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
     } else if (state == Stark::kInvokeTimedOutStillQueued) {

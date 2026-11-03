@@ -205,6 +205,9 @@ found). Use **Force On / Force Off** (robust — handles Shipping builds whose
 `DisableDebugCamera` is stripped by switching the player's controller back), or
 **Copy CE Script** for a self-contained CE checkbox (tick = on, untick = off).
 Caveat: this is a *separate* camera; game logic keeps running underneath.
+It also needs a live CheatManager. UE 5 compiles the CheatManager out of Shipping
+builds by default (a UE 4 game creates one unless it turns cheats off); without one,
+Force On sends nothing and says so (the CE checkbox unticks itself): use approach 2 or 3.
 
 **2. Rotate the SpringArm / SceneComponent (most common real fix).**
 Instances → find `SpringArmComponent` → open it in **Live Walker** → look at

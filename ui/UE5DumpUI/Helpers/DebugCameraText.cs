@@ -34,7 +34,8 @@ internal static class DebugCameraText
     internal const string KeyOnTemplate = "str.DbgCam.OnTemplate";
 
     /// <summary>[INVOKE-NONSTATIC-ON-CDO] A Force's status, plus the DLL's warning when the toggle ran on the
-    /// CheatManager's class default object: there is no live CheatManager, so the toggle does nothing there.</summary>
+    /// CheatManager's class default object: there is no live CheatManager, so the toggle does nothing there. Only a DLL
+    /// from builds 3676-3681 sends it; a newer one refuses that ON (<see cref="NoLiveCheatManagerText"/>).</summary>
     internal static string WithTemplateNote(string status, bool? onTemplate)
         => onTemplate == true ? status + " " + OnTemplateText : status;
 
@@ -48,7 +49,8 @@ internal static class DebugCameraText
     /// no CheatManager is live, and ToggleDebugCamera does nothing on its class default object.</summary>
     internal static string NoLiveCheatManagerText => Say(KeyNoLiveCheatManager,
         "⛔ Force ON was not sent — there is no live CheatManager, and ToggleDebugCamera does nothing on its class " +
-        "default object. A Shipping build usually has none; in other builds, enter gameplay first. The camera stays OFF.");
+        "default object. UE 5 leaves it out of Shipping builds by default; elsewhere, enter gameplay first. The camera " +
+        "stays OFF.");
 
     internal const string KeyForceFailed = "str.DbgCam.ForceFailed";
 

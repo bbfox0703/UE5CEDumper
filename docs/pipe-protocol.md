@@ -236,7 +236,18 @@ Total commands: **99** — a DERIVED number, regenerate it, never hand-edit:
 
 ### Debug Camera (robust force on/off)
 
-Shared by the Console panel (here) and CE Lua (`setDebugCamera` export). All logic — two-hop state read, ToggleDebugCamera invoke, and controller-swap fallback for Shipping builds that strip `DisableDebugCamera` — lives in the DLL (`UE5_GetDebugCameraState` / `UE5_SetDebugCamera`). `state`: `1` = ON, `0` = OFF, `-1` = unknown/error.
+Shared by the Console panel (here) and CE Lua (`setDebugCamera` export). All logic — two-hop state read, ToggleDebugCamera invoke, and controller-swap fallback for Shipping builds that strip `DisableDebugCamera` — lives in the DLL (`UE5_GetDebugCameraState` / `UE5_SetDebugCamera`). `state`: `1` = ON, `0` = OFF, `-1` = unknown/error
+(a state that did not read, or a toggle that never ran). No live CheatManager reads `0`: no Debug Camera can be live
+without one. `set_debug_camera` only:
+
+- `-5`: the toggle timed out on the game thread and stays QUEUED. A queued ON will still run, so do not re-send it; a
+  queued OFF does not turn the camera off on stock UE 4.18-5.7, so send OFF again once the game responds.
+  `[W3-DEBUGCAM-QUEUED]`
+- `-6`: NOT SENT, because an earlier toggle of the other direction is still queued; send again once the game responds.
+  `[DBGCAM-OFF-OVER-QUEUED-ON]`
+- `-17` (from build 3682): an ON NOT SENT, because no CheatManager is live (UE 5 compiles it out of Shipping by
+  default) and ToggleDebugCamera does nothing on its class default object. Answered at once, with no game-thread call.
+  An OFF is never refused: with no live CheatManager it switches the controller back by hand. `[DEBUGCAM-FORCEON-CDO]`
 
 ```jsonc
 // Read live state
@@ -245,14 +256,15 @@ Shared by the Console panel (here) and CE Lua (`setDebugCamera` export). All log
 
 // Force ON (enable:true) / OFF (enable:false); idempotent
 { "id": 51, "cmd": "set_debug_camera", "enable": false }
-// → { "ok": true, "state": 0, "nonstatic_on_template": false }
+// → { "ok": true, "state": 0 }
 ```
 
-`nonstatic_on_template` (from build 3676) is a WARNING beside `state`: the toggle targets the CheatManager's class
-default object -- no live CheatManager, usual in a Shipping build -- where it does nothing. It is set only when the
-toggle THIS call sent ran or is queued to run; a re-send answered by a toggle already queued is false. Absent = an older DLL.
-The mailbox's CMD_SET_DEBUG_CAMERA publishes the same thing as `INV_OUT_NONSTATIC_ON_TEMPLATE` in cmdOutFlags
-(contract 7). `[INVOKE-NONSTATIC-ON-CDO]`
+`nonstatic_on_template` (builds 3676-3681 only) was a WARNING beside `state`: the toggle targets the CheatManager's class
+default object -- no live CheatManager, usual in a Shipping build -- where it does nothing. It was set only when the
+toggle THIS call sent ran or was queued to run; a re-send answered by a toggle already queued was false. From build
+3682 that toggle is never sent (`-17` above), and the key is absent; absent also means a DLL older than 3676. Those
+builds' mailbox CMD_SET_DEBUG_CAMERA published the same thing as `INV_OUT_NONSTATIC_ON_TEMPLATE` in cmdOutFlags
+(contract 7); a newer one leaves the word 0. `[INVOKE-NONSTATIC-ON-CDO]`
 
 ### Value Search (build 738 + Phase 2 build 757)
 

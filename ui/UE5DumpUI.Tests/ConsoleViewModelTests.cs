@@ -1612,7 +1612,8 @@ public class ConsoleViewModelTests
     public async Task ForceOn_whose_toggle_ran_on_the_class_default_object_says_so()
     {
         // [INVOKE-NONSTATIC-ON-CDO] With no live CheatManager (a Shipping build) the toggle runs on its class default
-        // object and does nothing; the line used to say only "the game may re-drive the camera".
+        // object and does nothing; the line used to say only "the game may re-drive the camera". Only a DLL from builds
+        // 3676-3681 answers this way: a newer one refuses that ON with -17 ([DEBUGCAM-FORCEON-CDO]).
         var fake = new FakeDumpService { SetDebugCameraResult = 0, SetDebugCameraOnTemplate = true };
         var vm = CreateVm(fake);
         vm.SeedForTests(DebugCamEntries());
