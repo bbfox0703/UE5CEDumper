@@ -17,10 +17,10 @@
   findTableFile and call invokeUFunction(...).
 
   Public API (re-declaration-safe, syntax-highlighted):
-    ok, err = invokeUFunction(className, funcName, parmsSize, params)
+    ok, err, warn = invokeUFunction(className, funcName, parmsSize, params)   -- warn: 'template' (contract 7+ DLL)
     value   = readUFunctionReturn(offset, valueType)
     freed   = freeInvokeStringBuffers() -- free FString INPUT-param buffers (UNSAFE unless read-only)
-    state   = setDebugCamera(enable)   -- robust force on/off (1=on,0=off,-1=err,-5=queued)
+    state, warn = setDebugCamera(enable)   -- robust force on/off (1=on,0=off,-1=err,-5=queued); warn as above
     state   = getDebugCameraState()    -- 1=on, 0=off, -1=unknown
     ok, why = getOffsetsVerdict()      -- were the DynOff offsets MEASURED? why = the reason when not
 
@@ -88,7 +88,7 @@
     {$asm}
 
   Constants exposed:
-    UE5_INVOKE_HELPER_VERSION  = '1.5'  (a newer copy re-loaded into a session replaces the resident one)
+    UE5_INVOKE_HELPER_VERSION  = '1.6'  (a newer copy re-loaded into a session replaces the resident one)
     UE5_INVOKE_PARAMS_OFFSET   = 0x328  (params_data offset within mailbox)
 ]]
 
@@ -907,8 +907,8 @@ local function simpleMailboxCall(cmd, prepare)
 
   _ue5_invoke_busy = true
   local latched = false
-  local pok, res, mb_out = pcall(function()
-    local mb = findMailbox()
+  local pok, res, mb_out, cur_out = pcall(function()
+    local mb, cur = findMailbox()
     if prepare then prepare(mb) end
     writeByte(mb + OFF_ERR, 0)            -- the DLL only writes errorMsg on a failure (audit #5 AA18)
     writeInteger(mb + OFF_STATUS, 0)      -- clear status
@@ -921,13 +921,13 @@ local function simpleMailboxCall(cmd, prepare)
       latched = true
       error(err_w)
     end
-    return readInteger(mb + OFF_RESULT, true), mb   -- signed: result codes are negative
+    return readInteger(mb + OFF_RESULT, true), mb, cur   -- signed: result codes are negative
   end)
   if not latched then
     _ue5_invoke_busy = false
   end
   if not pok then error(tostring(res)) end
-  return res, mb_out
+  return res, mb_out, cur_out   -- the result, the mailbox, and the DLL's own contract
 end
 
 -- ============================================================
@@ -950,12 +950,18 @@ if not setDebugCamera or _invokeOutdated then
   -- req: 0 = OFF, 1 = ON, 2 = query (read state, no change).
   -- Reuses the file-local mailbox helpers + the shared AA19 guard.
   local function dbgCamMailbox(req)
-    -- The state only: simpleMailboxCall also hands back the mailbox address, and this one's caller
-    -- (setDebugCamera) returns straight through to CE Lua, which expects a single number.
-    local state = simpleMailboxCall(CMD_SET_DEBUG_CAMERA, function(mb)
+    -- The state, then [INVOKE-NONSTATIC-ON-CDO] 'template' when the DLL (contract 7+) says the toggle ran on the
+    -- CheatManager's class default object -- no live CheatManager, where it does nothing. A caller that takes one
+    -- value still gets the state. A query fires nothing, so it never reads the word.
+    local state, mb, cur = simpleMailboxCall(CMD_SET_DEBUG_CAMERA, function(mb)
       writeQword(mb + OFF_INSTANCE, req)   -- 0x010: request (0/1/2)
     end)
-    return state
+    local warn = nil
+    if req ~= 2 and (tonumber(cur) or 0) >= MAILBOX_CONTRACT_INVOKE_OUT then
+      local outFlags = readInteger(mb + OFF_OUT_FLAGS) or 0
+      if outFlags % (2 * INV_OUT_NONSTATIC_ON_TEMPLATE) >= INV_OUT_NONSTATIC_ON_TEMPLATE then warn = 'template' end
+    end
+    return state, warn
   end
 
   --- Force Debug Camera ON (enable ~= 0) or OFF. Idempotent.
@@ -964,6 +970,8 @@ if not setDebugCamera or _invokeOutdated then
   ---                       an OFF leaves the camera on, stock UE 4.18-5.7: send it again once the game responds),
   ---                       -6=not sent (an earlier toggle of the other direction is still queued: send it again once
   ---                       the game responds)
+  --- @return string|nil warn  'template' when the toggle ran on the CheatManager's class default object (no live
+  ---                       CheatManager), where it does nothing; nil otherwise and from an older DLL
   function setDebugCamera(enable)
     return dbgCamMailbox((enable and enable ~= 0) and 1 or 0)
   end
