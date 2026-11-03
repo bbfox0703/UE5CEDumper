@@ -2992,6 +2992,13 @@ public class InvokeScriptTests
         int fire = set.IndexOf("CallProcessEventRouted(cm, ufunc", StringComparison.Ordinal);
         Assert.True(verdict > 0 && fire > verdict && set.Contains("Mimic::WarnNonStaticOnTemplate(", StringComparison.Ordinal),
             "the verdict is taken on the CheatManager the toggle is about to run on");
+        // Review of ef20e198: the flag is reset before the first exit (an already-ON/OFF no-op fires nothing), and
+        // cleared again when the call was never dispatched (-2/-3/-7/-8 all come back as -1) -- only a toggle that ran
+        // (-4) or will run (-5) keeps it.
+        int reset = set.IndexOf("t_dbgCamFiredOnTemplate = false;", StringComparison.Ordinal);
+        Assert.True(reset > 0 && reset < set.IndexOf("return ", StringComparison.Ordinal), "reset before the first exit");
+        Assert.Matches(@"if \(r != 0 && r != -4 && r != Stark::kInvokeTimedOutStillQueued\)\s*t_dbgCamFiredOnTemplate = false;",
+            set[fire..]);
 
         var fern = CodeOnly(DllSource("Fern.cpp"));
         int start = fern.IndexOf("cmd == Renge::CMD_SET_DEBUG_CAMERA", StringComparison.Ordinal);
@@ -3003,6 +3010,7 @@ public class InvokeScriptTests
         int dbg = mimic.IndexOf("UE5_SetDebugCamera(req != 0 ? 1 : 0)", StringComparison.Ordinal);
         int outBit = mimic.IndexOf("FrierenInvoke::DebugCameraFiredOnTemplate()", dbg, StringComparison.Ordinal);
         Assert.True(dbg > 0 && outBit > dbg && outBit - dbg < 900, "CMD_SET_DEBUG_CAMERA publishes the bit too");
+        Assert.Contains("req != 2 && FrierenInvoke::DebugCameraFiredOnTemplate()", mimic, StringComparison.Ordinal);   // a query fires nothing
 
         // CE: a Force ON that did not take says why when the bit is set.
         var on = DebugCameraScriptGenerator.Generate();
