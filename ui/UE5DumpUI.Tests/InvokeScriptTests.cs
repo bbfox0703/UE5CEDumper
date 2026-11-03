@@ -2910,6 +2910,80 @@ public class InvokeScriptTests
         Assert.Equal(expected, RunHelper(cur, result, outFlags));
     }
 
+    /// <summary>Review of ef20e198: the helper's public setDebugCamera dropped the bit CMD_SET_DEBUG_CAMERA now publishes.
+    /// Runs the embedded helper and calls setDebugCamera(1) against a fake DLL answering <paramref name="state"/>.</summary>
+    private static string RunHelperDebugCamera(int cur, int state, long outFlags, bool query = false)
+    {
+        static string I(long v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string call = query ? "getDebugCameraState()" : "setDebugCamera(1)";
+        string lua = $$"""
+            local MB, CV = 0x100000, 0x200000
+            MEM = {}
+            MEM[CV + 0x00] = {{CeMailboxLayout.ContractMagic}}
+            MEM[CV + 0x04] = {{I(cur)}}
+            MEM[CV + 0x08] = 1
+            local T = 0
+            function getTickCount() T = T + 50 return T end
+            function sleep() end
+            function processMessages() end
+            function processMessagesPaintOnly() end
+            function registerLuaFunctionHighlight() end
+            function getAddressSafe(n)
+              if n == 'g_invokeMailbox' then return MB end
+              if n == 'g_mailboxContract' then return CV end
+              return nil
+            end
+            function readInteger(a) return MEM[a] or 0 end
+            function readString() return '' end
+            function writeByte(a, v) MEM[a] = v end
+            function writeQword(a, v) MEM[a] = v end
+            function writeInteger(a, v)
+              MEM[a] = v
+              if a == MB and v == 7 then
+                MEM[MB + 0x08] = {{I(state)}}
+                MEM[MB + 0x72C] = {{I(outFlags)}}
+                MEM[MB + 0x04] = 1
+                MEM[MB] = 0
+              end
+            end
+            local chunk = assert(load([==[
+            {{HelperLuaResource.Read()}}
+            ]==]))
+            chunk()
+            local s, warn = {{call}}
+            io.write('R=' .. tostring(s) .. '|' .. tostring(warn) .. '\n')
+            """;
+        var (exit, output) = CeLua53Host.Run(lua);
+        Assert.True(exit == 0, output);
+        return output.Replace("\r\n", "\n").Split('\n').First(l => l.StartsWith("R=", StringComparison.Ordinal))[2..];
+    }
+
+    [Theory]
+    [InlineData(7, 0, 2L, false, "0|template")]      // the toggle ran on the CheatManager's class default object
+    [InlineData(7, 1, 0L, false, "1|nil")]           // control: a clean ON
+    [InlineData(6, 0, 0xFFFFFFFFL, false, "0|nil")]  // control: below contract 7 the word is never read
+    [InlineData(7, 1, 2L, true, "1|nil")]            // control: a query fires nothing and says nothing
+    public void InvokeHelper_setDebugCamera_returns_the_template_warning(int cur, int state, long outFlags, bool query,
+                                                                         string expected)
+    {
+        Assert.Equal(expected, RunHelperDebugCamera(cur, state, outFlags, query));
+    }
+
+    [Fact]
+    public void DebugCameraRecord_a_queued_ON_names_the_class_default_object_too()
+    {
+        // Review of ef20e198: only the failed-ON branch read the bit; a queued ON on the class default object will run
+        // there and do nothing, and the record said only "queued -- do not tick again".
+        var s = DebugCameraScriptGenerator.Generate();
+        int queued = s.IndexOf("queued -- the game thread is busy; the toggle will run", StringComparison.Ordinal);
+        Assert.True(queued > 0, "the queued-ON message moved -- re-point this pin");
+        int lineStart = s.LastIndexOf('\n', queued);
+        int read = s.LastIndexOf($"readInteger(mb + {CeMailboxLayout.OffOutFlags})", queued, StringComparison.Ordinal);
+        Assert.True(read > s.LastIndexOf("if state == ", queued, StringComparison.Ordinal),
+            "the queued-ON branch reads cmdOutFlags itself");
+        Assert.Contains("_tplWarn", s[lineStart..s.IndexOf('\n', queued)], StringComparison.Ordinal);
+    }
+
     [Fact]
     public void NonStaticOnTemplate_IsDecidedOnceInTheDllAndPublishedOnBothLanes()
     {
