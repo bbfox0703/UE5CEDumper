@@ -498,14 +498,20 @@ public class ConsoleViewModelTests
 
         var first = vm.RunSelectedCommand.ExecuteAsync(null);
         Assert.True(vm.IsRunning);
-        await vm.RunRowCommand.ExecuteAsync(god);
-
-        Assert.Equal(1, fake.InvokeCallCount);
-        Assert.Equal("Fly", fake.LastInvokeFunc);
-        Assert.Contains("God", vm.StatusText);
-        Assert.Contains("still running", vm.StatusText);
-        fake.InvokeGate.SetResult();
-        await first;
+        // Not awaited before the asserts: a second invoke that WAS sent waits on the same gate, and would hang here.
+        var second = vm.RunRowCommand.ExecuteAsync(god);
+        try
+        {
+            Assert.Equal(1, fake.InvokeCallCount);
+            Assert.Equal("Fly", fake.LastInvokeFunc);
+            Assert.Contains("God", vm.StatusText);
+            Assert.Contains("still running", vm.StatusText);
+        }
+        finally
+        {
+            fake.InvokeGate.SetResult();
+            await Task.WhenAll(first, second);
+        }
         Assert.False(vm.IsRunning);
         Assert.Single(vm.History);
     }
@@ -525,12 +531,18 @@ public class ConsoleViewModelTests
 
         var first = vm.RunRowCommand.ExecuteAsync(vm.Results[2]);   // Fly, held in flight
         vm.CommandInput = "god";
-        await vm.RunCommandTextCommand.ExecuteAsync(null);
-        await vm.ReplayHistoryCommand.ExecuteAsync(vm.History[0]);
-
-        Assert.Equal(2, fake.InvokeCallCount);
-        fake.InvokeGate.SetResult();
-        await first;
+        // Not awaited before the assert, for the reason in the test above.
+        var typed = vm.RunCommandTextCommand.ExecuteAsync(null);
+        var replay = vm.ReplayHistoryCommand.ExecuteAsync(vm.History[0]);
+        try
+        {
+            Assert.Equal(2, fake.InvokeCallCount);
+        }
+        finally
+        {
+            fake.InvokeGate.SetResult();
+            await Task.WhenAll(first, typed, replay);
+        }
         Assert.Equal(2, vm.History.Count);
     }
 
