@@ -139,7 +139,7 @@ Deliverables for the user:
 | Class walk incl. inherited fields | `Ubel::WalkClassEx` | Field offsets by name on engine base classes. UFunction param walking too (a `UFunction` is a `UStruct`; its children are the param properties). |
 | Function lookup | `UE5_FindFunctionByName(classAddr, name)` | Find `K2_SetActorLocation`, `K2_TeleportTo`, etc. |
 | Game-thread invoke | `UE5_CallProcessEvent(instance, ufunc, paramsPtr)` (Stark queue) | ALL invokes in this feature. **Never** use the static-native direct path (`UE5_CallProcessEventDirect`) for traces or actor mutation — traces read the physics scene, actor moves mutate world state; both must run on the game thread. |
-| Instance finder | `Aura::FindInstancesByClass` | Fallback PlayerController resolution; CheatManager detection (Tier 0). |
+| Instance finder | `Aura::ScanForLocalPlayerController` / `Aura::FindLiveOrDefaultOf` | Fallback PlayerController resolution (by derivation); CheatManager detection (Tier 0). |
 | Object name reader | existing Frieren export used by the UI/CE for object names (via `Serie`) | Map-name capture for markers. |
 | Mailbox | `Mimic.cpp/.h`, `g_invokeMailbox` | CE Lua entry point. New `CMD_TELEPORT=8` handler delegates to the same exports the pipe uses. |
 | Pipe | `Fern.cpp` + `Renge.h` | 6 new request/response commands (§7). |
@@ -180,9 +180,13 @@ UWorld* world = deref(g_cachedGWorld)
                                     already resolves on the LocalPlayer class)
 ```
 
-**Fallback** (any hop unresolvable): `Aura::FindInstancesByClass` with
-contains-match `"PlayerController"`, skip CDOs, prefer the instance whose
-`Player` (ObjectProperty on AController) is non-null — that's the local one.
+**Fallback** (any hop unresolvable): `Aura::ScanForLocalPlayerController` — every
+live object DERIVED from `APlayerController` (never a class-name substring, never a
+template), ranked by its `Player` (ObjectProperty on APlayerController): a
+`ULocalPlayer` first — that's the local one — then any other UPlayer (a listen
+server's remote connection), then none. An inactive Debug Camera controller (no
+Player) is never taken; an active one holds the LocalPlayer, as the chain gives it,
+and §5.6's hop applies. `[FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS]`
 Log which path won (`source: "chain" | "scan"`).
 
 ### 5.2 Pawn, Root, Pose

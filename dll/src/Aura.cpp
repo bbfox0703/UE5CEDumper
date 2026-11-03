@@ -2242,20 +2242,29 @@ UserInstance ResolveUserInstance(const std::string& className) {
 }
 
 LocalPcScan ScanForLocalPlayerController() {
-    // RED SCAFFOLD [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS]: today's substring scan, moved verbatim.
     LocalPcScan out;
-    auto rset = FindInstancesByClass("PlayerController", false, 100);
-    uintptr_t firstNonCdo = 0;
+    // The walk passes over templates itself ([LISTINSTANCES-KEEPS-TEMPLATES]), so every row is a live controller.
+    const SearchResultSet rset =
+        FindInstancesDerivedFrom(Grimoire::AURA_LOCALPC_BASE_CLASS, Grimoire::AURA_LOCALPC_SCAN_MAX);
+    if (rset.aborted) { out.pick = LocalPcPick::Cancelled; return out; }   // a candidate met on the way proves nothing
+    uintptr_t other = 0, none = 0;
     for (const auto& r : rset.results) {
-        if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
-        if (!firstNonCdo) firstNonCdo = r.addr;
-        uintptr_t cls = Ubel::GetClass(r.addr);
-        int32_t playerOff = Ubel::FindFieldOffset(cls, "Player", "Player", "Controller", "ObjectProperty");
+        if (!r.addr) continue;
+        const int32_t off = Ubel::FindFieldOffset(r.classAddr, Grimoire::AURA_LOCALPC_PLAYER_PROPERTY,
+                                                  Grimoire::AURA_LOCALPC_PLAYER_PROPERTY, "Controller", "ObjectProperty");
         uintptr_t player = 0;
-        if (playerOff >= 0 && Macht::ReadSafe(r.addr + static_cast<uintptr_t>(playerOff), player) && player)
-            return { r.addr, LocalPcPick::LocalPlayer };
+        if (off >= 0) Macht::ReadSafe(r.addr + static_cast<uintptr_t>(off), player);
+        if (player) {
+            if (ClassDerivesFromAny(Ubel::GetClass(player), {Grimoire::AURA_LOCALPC_LOCAL_PLAYER_CLASS}))
+                return { r.addr, LocalPcPick::LocalPlayer };
+            if (!other) other = r.addr;
+            continue;
+        }
+        // A debug camera with no Player is inactive: pawnless, with nothing to hop back to.
+        if (!none && !ClassDerivesFromAny(r.classAddr, {Grimoire::AURA_USERPICK_DCC_CLASS})) none = r.addr;
     }
-    if (firstNonCdo) return { firstNonCdo, LocalPcPick::NoPlayer };
+    if (other) return { other, LocalPcPick::OtherPlayer };
+    if (none)  return { none,  LocalPcPick::NoPlayer };
     return out;
 }
 

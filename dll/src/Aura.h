@@ -122,6 +122,9 @@ uintptr_t FindClassByPath(const std::string& classPath);
 // UAbilitySystemCheatManagerExtension contain "CheatManager", and UDebugCameraControllerSettings contains
 // "DebugCameraController". ResolveUserInstance now shares this walk, but a user's invoke may take the Debug Camera's
 // own object when nothing else is live, which an internal STATE read must never do.
+// ⚠ Not for a caller that WRITES, or must never be handed a template: the class default object stands in when
+// nothing is live. Such a caller walks FindInstancesDerivedFrom (which skips templates), or, for the local
+// PlayerController, ScanForLocalPlayerController. [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS]
 //
 // Derivation is the super-chain walk FindInstancesDerivedFrom uses. The CDO fallback is the named class's
 // OWN default object, never a subclass's: a function library (KismetSystemLibrary, WidgetBlueprintLibrary)
@@ -159,7 +162,11 @@ struct UserInstance {
 UserInstance ResolveUserInstance(const std::string& className);
 
 // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The local PlayerController found by walking the object array, for a
-// caller whose GWorld -> OwningGameInstance -> LocalPlayers[0] -> PlayerController chain gave none.
+// caller whose GWorld -> OwningGameInstance -> LocalPlayers[0] -> PlayerController chain gave none. Derivation, never a
+// class-name substring, and never a template. Ranked by APlayerController::Player: a LocalPlayer, else any UPlayer (a
+// listen server's remote NetConnection), else none. A Debug Camera controller with no Player is inactive -- pawnless,
+// with nothing to hop back to -- and is never taken; an active one holds the LocalPlayer and is taken, as the chain
+// itself would give it. A walk cut short answers Cancelled: a candidate met on the way proves nothing.
 enum class LocalPcPick : uint8_t { None, Cancelled, LocalPlayer, OtherPlayer, NoPlayer };
 struct LocalPcScan {
     uintptr_t   pc = 0;

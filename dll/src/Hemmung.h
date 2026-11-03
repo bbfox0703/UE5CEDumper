@@ -21,7 +21,7 @@
 //
 // Reach: DIL_GLOBAL resolves AWorldSettings via GWorld→PersistentLevel→
 // WorldSettings (reflected ObjectProperty chain) with an
-// Aura::FindInstancesByClass("WorldSettings") fallback; DIL_PAWN reuses the
+// Aura::FindInstancesDerivedFrom("WorldSettings") fallback; DIL_PAWN reuses the
 // local-pawn chain (GWorld→GameInstance→LocalPlayers[0]→PC→Pawn). All offsets
 // resolved by FName (DynOff rule) → UE4/UE5-agnostic. Pure reflected memory
 // read/write via Macht (SEH) — NO UFunction invoke, NO game thread. No cached

@@ -1815,6 +1815,9 @@ constexpr double MOVE_MULT_MAX            = 10.0;    // 1000% — UI slider ceil
 
 // --- Time dilation (Hemmung) — global slow-mo / freeze-time / speed-up ---
 constexpr int    TIME_REASSERT_MS         = 250;     // re-assert worker tick (write-on-drift)
+// [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The world-dilation fallback's AWorldSettings walk: base class and cap.
+constexpr const char* TIME_WORLDSETTINGS_CLASS    = "WorldSettings";
+constexpr int         TIME_WORLDSETTINGS_SCAN_MAX = 64;
 constexpr double TIME_DILATION_MIN        = 0.0;     // 0 = frozen (near-freeze if the game NaNs on exact 0)
 constexpr double TIME_DILATION_MAX        = 100.0;   // 100x — DLL safety clamp (UI ceilings are lower: world 3x, pawn 10x)
 
@@ -1842,6 +1845,8 @@ constexpr int     SCHLACHT_MAX_EXTRA_ITERS = 16;     // extra trace iterations b
 // substring answered "Actor" with Default__ActorChannel on UE 5.4 Shipping. [SEETHRU-PROBE-SUBSTRING]
 constexpr const char* SCHLACHT_ACTOR_CLASS_PATH = "/Script/Engine.Actor";                // declares SetActorHiddenInGame
 constexpr const char* SCHLACHT_KSL_CLASS_PATH   = "/Script/Engine.KismetSystemLibrary";  // declares LineTraceSingle
+// [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The version ladder's CharacterMovementComponent rung reads the engine class.
+constexpr const char* VERSION_CMC_CLASS_PATH    = "/Script/Engine.CharacterMovementComponent";
 } // namespace Grimoire
 
 // ============================================================

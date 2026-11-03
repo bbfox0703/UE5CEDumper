@@ -178,27 +178,25 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
     // stock 5.3 title with a CMC to 504. The rule and its measurements are DynOff::CmcMarkerVersion. Best-effort and
     // bounded: one CMC answers it.
     bool cmcProp = false, cmcFunc = false;
+    // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The ENGINE class, by path: a marker of the engine's version must never
+    // read a game subclass's own property, and guessing the class from the first object whose class name contains
+    // the word is the [SEETHRU-PROBE-SUBSTRING] shape.
     auto probeCmc = [&](bool& prop, bool& func) -> bool {
-        auto cmcSet = Aura::FindInstancesByClass("CharacterMovementComponent", false, 3);
-        for (const auto& r : cmcSet.results) {
-            if (!r.addr) continue;
-            uintptr_t cls = Ubel::GetClass(r.addr);
-            if (!cls) continue;
-            prop = Ubel::FindFieldOffset(cls, "GravityDirection", "GravityDirection",
-                                         nullptr, "StructProperty") >= 0;
-            FunctionInfo fn;
-            func = Ubel::ResolveFunctionInChain(
-                cls, "SetGravityDirection",
-                [](uintptr_t c) { return Ubel::WalkFunctions(c); },
-                [](uintptr_t c, uintptr_t& super) {
-                    return Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
-                },
-                fn);
-            cmcProp = prop;
-            cmcFunc = func;
-            return true;
-        }
-        return false;
+        const uintptr_t cls = Aura::FindClassByPath(Grimoire::VERSION_CMC_CLASS_PATH);
+        if (!cls) return false;
+        prop = Ubel::FindFieldOffset(cls, "GravityDirection", "GravityDirection",
+                                     nullptr, "StructProperty") >= 0;
+        FunctionInfo fn;
+        func = Ubel::ResolveFunctionInChain(
+            cls, "SetGravityDirection",
+            [](uintptr_t c) { return Ubel::WalkFunctions(c); },
+            [](uintptr_t c, uintptr_t& super) {
+                return Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
+            },
+            fn);
+        cmcProp = prop;
+        cmcFunc = func;
+        return true;
     };
 
     // [VER-MARKERS-PAST-504] The 5.5 and 5.6 rungs' probes, the classes they sample and how many are
