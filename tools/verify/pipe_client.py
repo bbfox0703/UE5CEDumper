@@ -183,7 +183,48 @@ class PipeClient:
         return reply
 
 
+def selftest() -> int:
+    """[RIG-PIPE-DOUBLE-CONNECT] `with PipeClient() as c:` connects, and a second `c.connect()` must not open a
+    second handle: the DLL serves three pipe instances and the UI holds two, so the leaked one left none and the rig
+    failed to connect after ten retries. No pipe is opened -- `open` is replaced for the duration."""
+    opened = []
+
+    class FakeHandle:
+        def close(self):
+            pass
+
+    def fake_open(*args, **kwargs):
+        opened.append(args[0])
+        return FakeHandle()
+
+    g = globals()
+    had, saved = "open" in g, g.get("open")
+    g["open"] = fake_open
+    try:
+        c = PipeClient()
+        with c:
+            c.connect()
+            twice = len(opened)
+        c.connect()
+        again = len(opened)
+        c.close()
+    finally:
+        if had:
+            g["open"] = saved
+        else:
+            del g["open"]
+    bad = 0
+    for label, got, want in (("connect inside `with`", twice, 1), ("connect after close", again, 2)):
+        ok = got == want
+        bad += not ok
+        print(f"{'OK ' if ok else 'BAD'}  {label}: {got} open(s), want {want}")
+    print("RESULT:", "PASS" if bad == 0 else f"FAIL ({bad})")
+    return 0 if bad == 0 else 1
+
+
 def main() -> int:
+    if sys.argv[1:] == ["--selftest"]:
+        return selftest()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("cmd")
     ap.add_argument("--args", default="{}", help="JSON object of extra request fields")
