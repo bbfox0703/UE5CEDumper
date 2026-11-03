@@ -2960,7 +2960,7 @@ public class InvokeScriptTests
 
     [Theory]
     [InlineData(7, 0, 2L, false, "0|template")]      // the toggle ran on the CheatManager's class default object (builds 3676-3681)
-    [InlineData(7, -17, 0L, false, "-17|nil")]       // [DEBUGCAM-FORCEON-CDO] a newer DLL refuses that ON: the code, no warning
+    [InlineData(7, -17, 0L, false, "-17|nil")]       // control [DEBUGCAM-FORCEON-CDO]: a refused ON passes through, no warning
     [InlineData(7, 1, 0L, false, "1|nil")]           // control: a clean ON
     [InlineData(6, 0, 0xFFFFFFFFL, false, "0|nil")]  // control: below contract 7 the word is never read
     [InlineData(7, 1, 2L, true, "1|nil")]            // control: a query fires nothing and says nothing
@@ -3067,8 +3067,10 @@ public class InvokeScriptTests
 
         var set = Body(CodeOnly(DllSource("Frieren.cpp")), "int32_t UE5_SetDebugCamera(int32_t enable) {");
         var step = System.Text.RegularExpressions.Regex.Match(set,
-            @"DebugCameraForceStep\(\s*want\s*,\s*Aura::TemplateOf\(cm\)\.kind\s*!=\s*Aura::TemplateKind::None\s*\)");
-        Assert.True(step.Success, "the step is decided from the request and whether the CheatManager is a template");
+            @"const bool noLiveCheatManager = !cm \|\| Aura::TemplateOf\(cm\)\.kind != Aura::TemplateKind::None;\s*"
+            + @"const auto step = Mimic::DebugCameraForceStep\(want, noLiveCheatManager\);");
+        Assert.True(step.Success,
+            "the step is decided from the request and whether a CheatManager is live (none found counts as none live)");
         int read = set.IndexOf("DbgCam_ReadState(", StringComparison.Ordinal);
         int already = set.IndexOf("already %s", StringComparison.Ordinal);
         Assert.True(read > 0 && already > read && step.Index > already,
@@ -3084,6 +3086,13 @@ public class InvokeScriptTests
         Assert.DoesNotContain("CallProcessEventRouted", swapBranch, StringComparison.Ordinal);
         int fire = set.IndexOf("CallProcessEventRouted(cm, ufunc", StringComparison.Ordinal);
         Assert.True(fire > mark, "the toggle is sent only past the marking, which a template never reaches");
+        // Review 1: each step value is tied to its own branch -- an OFF refused, swapped guards or a conditional return
+        // passed the index checks above.
+        Assert.Matches(@"if \(step == Mimic::DbgCamForceStep::RefuseNoLiveCheatManager\) \{[^{}]*"
+            + @"return Mimic::DBGCAM_ERR_NO_LIVE_CHEATMANAGER;\s*\}", set);
+        Assert.Matches(@"if \(step == Mimic::DbgCamForceStep::SwapBackOnly\) \{[^{}]*DbgCam_SwapControllerBack\(dcc\)"
+            + @"[^{}]*return state;\s*\}\s*s_dbgCamInFlight = want \? 1 : 0;", set);
+        Assert.DoesNotContain("DBGCAM_ERR_NO_LIVE_CHEATMANAGER", swapBranch, StringComparison.Ordinal);
     }
 
     [Fact]

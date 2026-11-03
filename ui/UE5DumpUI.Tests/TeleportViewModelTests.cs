@@ -1896,7 +1896,7 @@ public class TeleportViewModelTests
     [Fact]
     public async Task RefreshDebugCamera_minus1_is_a_failed_read_not_advice_to_enter_gameplay()
     {
-        // [DEBUGCAM-FORCEON-CDO] With no live CheatManager the state reads OFF; -1 is a read that failed.
+        // [DEBUGCAM-FORCEON-CDO] -1 is a read that failed, never the no-live-CheatManager case.
         var fake = new FakeDumpService { NextDebugCameraState = -1 };
         var vm = CreateVm(fake, out _);
         vm.SetConnected(true);

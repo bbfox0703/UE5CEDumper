@@ -543,7 +543,7 @@ public interface IDumpService
     /// <summary>
     /// Read the live Debug Camera state (DLL-side two-hop reflection read of
     /// DebugCameraController.OriginalControllerRef). 1 = ON, 0 = OFF,
-    /// -1 = unknown (the read failed). No live CheatManager reads OFF: no Debug Camera can be live without one.
+    /// -1 = unknown (the read failed). With no live CheatManager (the Debug Camera's own never counts) the read lands on its class default object and answers 0 or 1, never -1: OFF, unless a Debug Camera controller is already active, which reads ON.
     /// </summary>
     Task<int> GetDebugCameraStateAsync(CancellationToken ct = default);
 

@@ -1603,8 +1603,8 @@ public class ConsoleViewModelTests
 
         Assert.Equal("Unknown", vm.DebugCameraState);
         Assert.Contains("unknown", vm.StatusText);
-        // [DEBUGCAM-FORCEON-CDO] With no live CheatManager the state reads OFF, so -1 is a failed read, not advice to
-        // enter gameplay.
+        // [DEBUGCAM-FORCEON-CDO] -1 is a failed read, never the no-live-CheatManager case, so no advice to enter
+        // gameplay.
         Assert.Equal(DebugCameraText.StateUnknownText, vm.StatusText);
     }
 
@@ -1691,7 +1691,7 @@ public class ConsoleViewModelTests
 
         Assert.Equal("Unknown", vm.DebugCameraState);
         // [DEBUGCAM-FORCEON-CDO] -1 is a read or a toggle that failed; "no live CheatManager" is -17's, and it never
-        // came back as -1 (the state reads OFF there).
+        // came back as -1 (that read lands on the class default object and answers 0 or 1).
         Assert.Contains(DebugCameraText.ForceFailed(wantOn: true), vm.StatusText, StringComparison.Ordinal);
         Assert.DoesNotContain("no live CheatManager", vm.StatusText);
     }

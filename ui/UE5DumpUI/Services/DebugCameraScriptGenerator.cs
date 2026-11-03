@@ -146,7 +146,8 @@ public static class DebugCameraScriptGenerator
         // [DEBUGCAM-FORCEON-CDO] -17: an ON the DLL did not send -- no CheatManager is live, and the toggle does nothing on
         // its class default object. Nothing was applied: say so and untick without [DISABLE], which would send an OFF.
         // [DISABLE] has no branch: an OFF is never refused. A record generated before this branch reports -17 through
-        // the failure below, and unticks the same way.
+        // the failure below and keeps its window open; records since 2026-10-28 untick the same way, records from
+        // 2026-08-21 to 10-28 untick through [DISABLE] (a harmless OFF), and older ones stay ticked.
         if (enable)
         {
             Line(sb, $"elseif state == {Constants.DebugCameraNoLiveCheatManagerResult} then");

@@ -1120,10 +1120,10 @@ static void HandleSetDebugCamera() {
     // [DEBUGCAM-FORCEON-CDO] No toggle reaches the CheatManager's class default object any more (an ON there is -17),
     // so this command leaves cmdOutFlags as the dispatcher cleared it; builds 3676-3681 set the template bit here.
     if (state == -1) {
-        // -1 is a state that did not read or a toggle that never ran. No live CheatManager is not -1: the state reads
-        // OFF there, and an ON answers -17.
+        // -1 is a state that did not read or a toggle that failed (-4 faulted inside it). Never the no-live-CheatManager
+        // case: its read lands on the class default object and answers 0 or 1, and an ON there answers -17.
         strncpy(g_invokeMailbox.errorMsg,
-                "Debug Camera: unreadable state, or the toggle did not run",
+                "Debug Camera: unreadable state, or the toggle failed (see the DLL log)",
                 sizeof(g_invokeMailbox.errorMsg) - 1);
         g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
     } else if (state == DBGCAM_ERR_NO_LIVE_CHEATMANAGER) {

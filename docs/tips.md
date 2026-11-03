@@ -206,7 +206,8 @@ found). Use **Force On / Force Off** (robust — handles Shipping builds whose
 **Copy CE Script** for a self-contained CE checkbox (tick = on, untick = off).
 Caveat: this is a *separate* camera; game logic keeps running underneath.
 It also needs a live CheatManager. UE 5 compiles the CheatManager out of Shipping
-builds by default (a UE 4 game creates one unless it turns cheats off); without one,
+builds by default (a UE 4 game creates one only when it runs standalone, unless it
+overrides `AGameModeBase::AllowCheats`); without one,
 Force On sends nothing and says so (the CE checkbox unticks itself): use approach 2 or 3.
 
 **2. Rotate the SpringArm / SceneComponent (most common real fix).**

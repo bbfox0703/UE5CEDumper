@@ -34,7 +34,7 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 - **Value Search（數值搜尋）** — Cheat-Engine 風格的 First Scan / Next Scan，掃描每個 UE 屬性（數字、字串、向量、array / map / set），不需知道 offset 就能找到目標。**Group 模式**能找出同時持有多個數值的物件（例如 `Str + Def + Dex + Int`），另有可選的 **Deep** 模式深入巢狀容器。
 - **Teleport（傳送）** — 3 個 marker 存檔 / 召回（BugItGo 風格）、俯視 / 2.5D 遊戲的**傳送到游標**、可自設全域熱鍵，以及唯讀的**相機 POV** 讀值。¹
 - **角色調整（Player tuning）** — **Super Jump / Move Speed / Gravity** 滑桿、**God Mode（無敵）**、**Time Dilation（全域或僅玩家的慢動作 / 凍結 / 快轉）** — 全部以反射強制設定並對抗每 tick 覆寫，因此重生後仍維持。可綁熱鍵或匯出成 CE 開 / 關記錄。
-- **Debug Camera（除錯相機）** — 強制開 / 關自由飛行除錯相機，即使在通常會卡住的 Shipping build 也能可靠開關。
+- **Debug Camera（除錯相機）** — 強制開 / 關自由飛行除錯相機，即使在通常會卡住的 Shipping build 也能可靠開關（需要執行中的 CheatManager；UE 5 的 Shipping build 預設沒有，此時 Force On 會直接說明）。
 - **Console（主控台）** — 發現並一鍵呼叫許多遊戲保留的 `fly` / `god` / `ghost` / 遊戲特定 exec 指令。
 - **即時函式剖析器（Live Funcs）** — 錄下*一個*遊戲內動作（開商店、衝刺），就能看到實際觸發了哪些 UFunction，附 baseline 差異 + 雜訊過濾。名稱搜尋找不到時，用「行為」找。
 - **一鍵 CE 匯出** — 指標鏈 XML、Structure Dissect (CSX)、SDK headers、AA 腳本、多列 `.CT` 批次。

@@ -944,7 +944,7 @@ end
 -- return the export's int result (observed: state=nil). The DLL handler
 -- (CMD_SET_DEBUG_CAMERA=7) owns the whole toggle + controller-swap
 -- fallback, so the UI (pipe) and CE Lua (here) share one implementation.
--- Returns the resulting state: 1 = ON, 0 = OFF, -1 = error/unknown, -5 = the toggle
+-- Every state code is listed in setDebugCamera's @return below. -5 = the toggle
 -- is QUEUED: the game thread did not answer in time. A queued ON will run when the game
 -- thread is free, so do not re-send it [W3-DEBUGCAM-QUEUED]. A queued OFF does NOT turn
 -- the camera off on stock UE 4.18-5.7, so the camera stays on: untick / Force OFF again

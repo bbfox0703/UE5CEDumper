@@ -237,8 +237,9 @@ Total commands: **99** — a DERIVED number, regenerate it, never hand-edit:
 ### Debug Camera (robust force on/off)
 
 Shared by the Console panel (here) and CE Lua (`setDebugCamera` export). All logic — two-hop state read, ToggleDebugCamera invoke, and controller-swap fallback for Shipping builds that strip `DisableDebugCamera` — lives in the DLL (`UE5_GetDebugCameraState` / `UE5_SetDebugCamera`). `state`: `1` = ON, `0` = OFF, `-1` = unknown/error
-(a state that did not read, or a toggle that never ran). No live CheatManager reads `0`: no Debug Camera can be live
-without one. `set_debug_camera` only:
+(a state that did not read, or a toggle that failed). With no live CheatManager (the Debug Camera's own never counts)
+the read lands on its class default object and answers `0` or `1`, never `-1`: OFF, unless a Debug Camera controller
+is already active, which reads ON. `set_debug_camera` only:
 
 - `-5`: the toggle timed out on the game thread and stays QUEUED. A queued ON will still run, so do not re-send it; a
   queued OFF does not turn the camera off on stock UE 4.18-5.7, so send OFF again once the game responds.
@@ -246,7 +247,8 @@ without one. `set_debug_camera` only:
 - `-6`: NOT SENT, because an earlier toggle of the other direction is still queued; send again once the game responds.
   `[DBGCAM-OFF-OVER-QUEUED-ON]`
 - `-17` (from build 3682): an ON NOT SENT, because no CheatManager is live (UE 5 compiles it out of Shipping by
-  default) and ToggleDebugCamera does nothing on its class default object. Answered at once, with no game-thread call.
+  default) and ToggleDebugCamera does nothing on its class default object (4.20+; undefined behaviour on 4.18/4.19).
+  Answered at once, with no game-thread call.
   An OFF is never refused: with no live CheatManager it switches the controller back by hand. `[DEBUGCAM-FORCEON-CDO]`
 
 ```jsonc

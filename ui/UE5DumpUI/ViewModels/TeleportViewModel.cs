@@ -1806,7 +1806,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             {
                 1 => "Debug Camera is ON.",
                 0 => "Debug Camera is OFF.",
-                // [DEBUGCAM-FORCEON-CDO] No live CheatManager reads OFF; -1 is a read that failed.
+                // [DEBUGCAM-FORCEON-CDO] -1 is a read that failed, never the no-live-CheatManager case.
                 _ => DebugCameraText.StateUnknownText,
             };
         }

@@ -1365,9 +1365,9 @@ static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintp
 // [DBGCAM-OFF-OVER-QUEUED-ON] The toggle a Set left queued, until it has run, and the one a Set is dispatching now.
 // A toggle not yet run flips whatever the state reads, so no answer read before it runs is true: an OFF read "already
 // OFF" and reported a clean OFF that a queued ON then undid. Both directions: a queued OFF changes nothing on stock UE
-// 4.18-5.7 but does turn the camera off on 5.8. The pipe and the mailbox both call Set; the lock covers the check, the
-// read and the marking, never the invoke wait, which a CE untick behind another Set would otherwise sit through past
-// its own deadline.
+// 4.18-5.7 but does turn the camera off on 5.8. The pipe and the mailbox both call Set; everything a Set does runs under
+// the lock except a game-thread wait (the invoke), which a CE untick behind another Set would otherwise sit through
+// past its own deadline.
 static std::mutex s_dbgCamMutex;
 static Stark::QueuedInvoke s_dbgCamQueued;
 static bool s_dbgCamQueuedWant = false;
@@ -1397,10 +1397,12 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
             LOG_INFO("UE5_SetDebugCamera: already %s — no-op", want ? "ON" : "OFF");
             return state;
         }
-        // [DEBUGCAM-FORCEON-CDO] A template here is the class default object (FindLiveOrDefaultOf's only fallback): no
-        // CheatManager is live, and ToggleDebugCamera does nothing there (4.18/4.19: worse). Decided before the
-        // marking, so no toggle on a template is ever dispatched or left queued.
-        const auto step = Mimic::DebugCameraForceStep(want, Aura::TemplateOf(cm).kind != Aura::TemplateKind::None);
+        // [DEBUGCAM-FORCEON-CDO] A template here is the class default object (FindLiveOrDefaultOf's only fallback), and
+        // 0 is no CheatManager at all: either way none is live, and ToggleDebugCamera does nothing on the default
+        // object (4.18/4.19: worse). Decided before the marking, so no toggle on a template is ever dispatched or left
+        // queued.
+        const bool noLiveCheatManager = !cm || Aura::TemplateOf(cm).kind != Aura::TemplateKind::None;
+        const auto step = Mimic::DebugCameraForceStep(want, noLiveCheatManager);
         if (step == Mimic::DbgCamForceStep::RefuseNoLiveCheatManager) {
             LOG_WARN("UE5_SetDebugCamera(1): no live CheatManager -- ToggleDebugCamera does nothing on its class "
                      "default object 0x%llX; not sent", (unsigned long long)cm);
@@ -1441,7 +1443,8 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
     if (r != 0) {
         LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera ProcessEvent r=%d", r);
         // [W3-DEBUGCAM-QUEUED] A TIMED-OUT toggle (-5) stays queued and still runs: pass it through, so no caller reads
-        // "nothing happened" and sends a second toggle that drains after it. Every other failure ran nothing: -1.
+        // "nothing happened" and sends a second toggle that drains after it. Every other failure answers -1: -4
+        // entered the toggle and faulted inside it, the rest ran nothing.
         return Stark::StatefulToggleFailure(r);
     }
 

@@ -542,7 +542,8 @@ constexpr bool WarnNonStaticOnTemplate(bool onTemplate, bool isUFunction, uint32
 /// standalone game creates one unless it turns cheats off (AGameModeBase::AllowCheats).
 constexpr int32_t DBGCAM_ERR_NO_LIVE_CHEATMANAGER = -17;
 
-/// What a Debug Camera Force does once it has read the state and found the camera in the other state.
+/// What a Debug Camera Force does once it has read the state and found the camera in the other state. No live
+/// CheatManager: the state read found only the class default object, or no CheatManager at all.
 enum class DbgCamForceStep : uint8_t {
     Toggle,                    // a live CheatManager: send ToggleDebugCamera
     SwapBackOnly,              // OFF with no live CheatManager: the toggle would do nothing, so only switch back
@@ -553,8 +554,8 @@ enum class DbgCamForceStep : uint8_t {
 /// always refers to a toggle on a live CheatManager. An OFF is never refused: a camera that is on while only the class
 /// default object stands in (the player's CheatManager is gone) still turns off through the swap-back, which is where a
 /// no-op toggle there ended up anyway.
-constexpr DbgCamForceStep DebugCameraForceStep(bool want, bool cheatManagerIsTemplate) {
-    return !cheatManagerIsTemplate ? DbgCamForceStep::Toggle
+constexpr DbgCamForceStep DebugCameraForceStep(bool want, bool noLiveCheatManager) {
+    return !noLiveCheatManager ? DbgCamForceStep::Toggle
          : want ? DbgCamForceStep::RefuseNoLiveCheatManager : DbgCamForceStep::SwapBackOnly;
 }
 
@@ -679,8 +680,9 @@ extern "C" __declspec(dllexport) extern Mimic::MailboxData g_invokeMailbox;
 //   every generated block reports a negative result it has no message for and keeps
 //   its window open -- today CMD_TELEPORT (the -16 of BUGIT_GO, RECALL, RECALL_FORCE and RELATIVE), the invoke
 //   family (MB_ERR_INVOKE_* -12..-15) and CMD_SET_DEBUG_CAMERA's -17, which only an ON gets: every [ENABLE] reports
-//   a state it has no branch for and unticks, and the [DISABLE] blocks that report a negative only through dbg() never receive it,
-//   because an OFF is never refused. Check the generators first: some [DISABLE]
+//   a state it has no branch for and keeps its window open (records since 2026-08-21 also untick; older ones stay
+//   ticked, as they did for an answer of 0), and the [DISABLE] blocks that report a negative only through dbg() never
+//   receive it, because an OFF is never refused. Check the generators first: some [DISABLE]
 //   blocks report a negative state only through dbg(), and the GodMode [ENABLE]
 //   reads any negative state as "armed", so a new code there IS a change.
 //

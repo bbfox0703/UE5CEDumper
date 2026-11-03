@@ -503,19 +503,23 @@ Discovers UFUNCTION(exec) console commands -- the game's own cheat / debug verbs
      class.
   2. Fire one directly, or export it as an AA script.
 
-Debug Camera (works UE4 + UE5):
+Debug Camera (UE4 + UE5 when a CheatManager is live):
   When ToggleDebugCamera is found, a Debug Camera row appears.  It spawns UE's
   free-fly ADebugCameraController (WASD + mouse), zero memory edits.  Use
   Force On / Force Off (robust -- handles Shipping builds whose DisableDebugCamera
   was stripped), or Copy CE Script for a self-contained CE checkbox.
+  Force On needs a live CheatManager.  UE 5 leaves it out of Shipping builds by
+  default; with none, Force On sends nothing and says so (the CE checkbox
+  unticks itself).
 
 UCheatManager caveat:
-  UE wraps UCheatManager verbs (Fly / Ghost / God / Slomo / Teleport) in
-  #if !UE_BUILD_SHIPPING.  The reflection metadata survives the cook (you can
-  list + invoke them) but the BODY is stripped -- so Result = 0 and nothing
-  happens in a Shipping build.  The panel flags this with an orange footer when
-  the exec's class looks like a CheatManager.  Verify against a game-specific
-  target instead.
+  The cheat verbs (Fly / Ghost / God / Slomo / Teleport) keep their bodies in a
+  Shipping build; what is usually missing is a live CheatManager.  UE 5 compiles
+  its creation out of Shipping, and a UE 4 game creates one only when it runs
+  standalone.  The invoke then lands on the class default object, where a verb
+  does nothing (Result = 0) or faults.  The panel flags this with an orange
+  footer when the exec's class looks like a CheatManager.  Verify against a
+  game-specific target instead.
 
 --------------------------------------------------------------------------------
 <span class="hdr" id="sec-13">13.  LIVE FUNCS (Call Profiler)</span>
@@ -779,7 +783,9 @@ RECIPE D -- rotate a locked / fixed-view camera
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   Diagnose first:  Teleport -&gt; Camera POV -&gt; Get POV.  If the camera barely moves
   when you teleport the pawn, the camera is independent.
-    Easiest:  Console -&gt; Debug Camera -&gt; Force On (free-fly WASD camera).
+    Easiest:  Console -&gt; Debug Camera -&gt; Force On (free-fly WASD camera; needs a
+              live CheatManager -- not on a stock UE 5 Shipping game, so use the
+              SpringArm fix below there).
     Common fix:  Instances -&gt; SpringArmComponent -&gt; Live Walker -&gt; edit
                  RelativeRotation.Yaw.  Snaps back?  Flip bUsePawnControlRotation /
                  bInheritYaw, or invoke K2_SetRelativeRotation instead of a raw

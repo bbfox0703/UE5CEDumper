@@ -55,15 +55,15 @@ internal static class DebugCameraText
     internal const string KeyForceFailed = "str.DbgCam.ForceFailed";
 
     /// <summary>[DEBUGCAM-FORCEON-CDO] A Force answered -1. It no longer means "no live CheatManager" (that is
-    /// <see cref="NoLiveCheatManagerText"/>): the state did not read, or the toggle never ran.</summary>
+    /// <see cref="NoLiveCheatManagerText"/>): the state did not read, or the toggle failed.</summary>
     internal static string ForceFailed(bool wantOn) => AobMakerStatus.Say(KeyForceFailed,
-        "Force {0} failed: the Debug Camera state could not be read, or the toggle did not run (see the DLL log).",
+        "Force {0} failed: the Debug Camera state could not be read, or the toggle failed (see the DLL log).",
         wantOn ? "ON" : "OFF");
 
     internal const string KeyStateUnknown = "str.DbgCam.StateUnknown";
 
-    /// <summary>[DEBUGCAM-FORCEON-CDO] ↻ read -1. With no live CheatManager the state reads OFF (no Debug Camera can be
-    /// live), so -1 is a read that failed, never "enter gameplay".</summary>
+    /// <summary>[DEBUGCAM-FORCEON-CDO] ↻ read -1: a read that failed, never the no-live-CheatManager case (that read
+    /// lands on the class default object and answers 0 or 1), so never "enter gameplay".</summary>
     internal static string StateUnknownText => Say(KeyStateUnknown,
         "Debug Camera state unknown — the DLL could not read it (see the DLL log).");
 
