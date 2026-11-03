@@ -315,8 +315,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         "game is responding (focus it, or turn on Keep Foreground), or once off the vehicle or mount.");
 
     internal const string KeyCoordFillParentRelative = "str.TP.CoordFillParentRelative";
-    /// <summary>[TELEPORT-RECALL-PARENTREL] The coordinate boxes claim world coordinates to TP to coordinates, its
-    /// hotkey and the library, and cannot carry the flag, so Fill from current pos refuses such a read.</summary>
+    /// <summary>[TELEPORT-RECALL-PARENTREL] Whatever reads the coordinate boxes takes them for world coordinates, and
+    /// they cannot carry the flag, so Fill from current pos refuses such a read.</summary>
     internal static string CoordFillParentRelativeText => AobMakerStatus.Say(KeyCoordFillParentRelative,
         "⚠ Not filled: the current pose came from a PARENT-RELATIVE read (an attached pawn whose world position could " +
         "not be read), so these numbers are not world coordinates. Fill again while the game is responding (focus it, " +
@@ -1020,7 +1020,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     public bool HasHotkeyWarning => !string.IsNullOrEmpty(HotkeyWarning);
 
-    // ── System "last" position (auto-saved before every jump) ──────────
+    // ── System "last" position (auto-saved before a jump) ──────────
     /// <summary>True once the DLL has auto-saved a pre-teleport pose (enables
     /// the Recall-last button). System-managed — the user never saves this.</summary>
     [ObservableProperty]
@@ -5879,7 +5879,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>A marker row's summary. [W2-MARKER-PARENTREL] A parent-relative save says so in the row: its
-    /// numbers are not world coordinates, and recalling it drives the pawn there as if they were.</summary>
+    /// numbers are not world coordinates, so Recall and Force refuse it. [TELEPORT-RECALL-PARENTREL]</summary>
     internal static string MarkerSummary(double x, double y, double z, string map, bool parentRelative)
         => string.Format(CultureInfo.InvariantCulture, "({0:0.0}, {1:0.0}, {2:0.0})  {3}", x, y, z, map)
            + (parentRelative ? "  ⚠ parent-relative (not world)" : "");

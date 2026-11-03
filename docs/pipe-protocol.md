@@ -2090,7 +2090,9 @@ Activity card (that one shows *what* crossed the pipe; this shows what it *cost*
 for malformed requests. `tier`: 1 = engine invoke (clean), 2 = raw-write
 fallback (game may snap back). Codes (§8): 0 OK, -1 not-init, -2 no controller,
 -3 no pawn, -4 reflection, -5 invoke-timeout, -6 empty marker, -7 map mismatch,
--8 no hit, -9 no cursor, -10 write failed.
+-8 no hit, -9 no cursor, -10 write failed, -16 refused: the stored marker or the
+current pose (TP facing) came from a parent-relative read, nothing moved
+`[TELEPORT-RECALL-PARENTREL]`.
 
 ```jsonc
 { "cmd": "teleport_get_pose" }
@@ -2114,6 +2116,7 @@ fallback (game may snap back). Codes (§8): 0 OK, -1 not-init, -2 no controller,
 
 { "cmd": "teleport_recall_marker", "slot": 0, "force": false }
 → { "code":0, "tier":1 }   |   { "code":-7,"map":"Map_B","markerMap":"Map_A" }
+  |   { "code":-16, "tier":0 }   // a marker saved from a parent-relative read; force too
 // Explicit-pose variant (BugItGo): pass x/y/z (+optional pitch/yaw/roll)
 // instead of slot — bypasses the marker store and the map check.
 { "cmd": "teleport_recall_marker", "x":…, "y":…, "z":…, "pitch":…, "yaw":…, "roll":… }
@@ -2133,7 +2136,8 @@ fallback (game may snap back). Codes (§8): 0 OK, -1 not-init, -2 no controller,
 
 // Teleport along the pawn's facing by `distance` uu (negative = backward).
 // horizontal=true keeps Z (ground-plane); false = full 3D forward (incl. pitch).
-// Returns the resulting pose. Undoable via teleport_recall_last.
+// Returns the resulting pose. Undoable via teleport_recall_last. Code -16 when
+// the current pose came from a parent-relative read (nothing moved).
 { "cmd": "teleport_relative", "distance":100.0, "horizontal":true }
 → { "code":0, "tier":1, "x":…,"y":…,"z":…, "pitch":…,"yaw":…,"roll":… }
 

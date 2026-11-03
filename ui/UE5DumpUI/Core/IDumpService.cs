@@ -758,7 +758,8 @@ public interface IDumpService
 
     /// <summary>Read all marker slots. The response also carries the system
     /// "last" slot as a sentinel entry with <see cref="TeleportMarker.Slot"/> ==
-    /// -1 (the pose auto-saved before the most recent jump).</summary>
+    /// -1 (the pose auto-saved before a jump; one whose pose was not world
+    /// coordinates leaves the previous one).</summary>
     Task<List<TeleportMarker>> TeleportGetMarkersAsync(CancellationToken ct = default);
 
     /// <summary>Clear marker slot 0..2.</summary>
@@ -781,7 +782,9 @@ public interface IDumpService
     /// unreal units (negative = backward). <paramref name="horizontal"/> keeps Z
     /// (ground-plane move); when false the full 3D forward (including pitch) is
     /// used. Returns the resulting pose so the caller can show the landed
-    /// X/Y/Z/Pitch/Yaw. The pre-jump pose is auto-saved (RecallLast undoes it).</summary>
+    /// X/Y/Z/Pitch/Yaw. The pre-jump pose is auto-saved (RecallLast undoes it).
+    /// Code -16 when the current pose came from a parent-relative read: there is
+    /// no world position to step from, and nothing moves. [TELEPORT-RECALL-PARENTREL]</summary>
     Task<TeleportPose> TeleportRelativeAsync(double distance, bool horizontal,
         CancellationToken ct = default);
 

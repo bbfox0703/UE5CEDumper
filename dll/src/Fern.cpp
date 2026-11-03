@@ -7757,7 +7757,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             }
             // Append the system "last" slot as a sentinel entry (slot = -1) so
             // the UI refreshes it together with the real markers in one round
-            // trip. It is auto-saved DLL-side before every jump and recalled
+            // trip. It is auto-saved DLL-side before a jump (unless that pose is not
+            // world coordinates, which leaves the previous one) and recalled
             // one-way (teleport_recall_last) — never user-saved/cleared.
             {
                 Wirbel::Marker last{};

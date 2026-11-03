@@ -417,8 +417,9 @@ usual; pose numbers are JSON doubles):
 // teleport_clear_marker
 { "cmd": "teleport_clear_marker", "slot": 0 } → { "code":0 }
 
-// teleport_recall_last — one-way undo of the most recent jump (recall the
-// system "last" pose). EmptyMarker (-6) when nothing has been auto-saved yet.
+// teleport_recall_last — one-way undo: recall the system "last" pose, auto-saved
+// before a jump (a jump whose pose was not world coordinates leaves the previous
+// one). EmptyMarker (-6) when nothing has been auto-saved yet.
 { "cmd": "teleport_recall_last" } → { "code":0, "tier":1 }
 ```
 
@@ -465,8 +466,8 @@ Op codes (`Grimoire.h` + mirrored in the C# constants file):
 The **BugIt slot** (op 9/10) is a single user-triggered pose (UE BugIt/BugItGo
 semantics) the DLL holds between hotkey presses: BUGIT_SAVE stores the current
 pose (and returns it so the Lua can also clipboard a `BugItGo X Y Z` string),
-BUGIT_GO teleports to it (restores rotation; auto-saves "last" first like every
-jump; no-op when nothing stored). A BugIt taken from the parent-relative
+BUGIT_GO teleports to it (restores rotation; auto-saves "last" first as the other
+jumps do; no-op when nothing stored). A BugIt taken from the parent-relative
 fallback (an attached pawn whose world-space read failed; pose flags bit0) is
 stored and reported, but BUGIT_GO **refuses** it with `-16` before the "last"
 auto-save, so nothing moves `[TELEPORT-BUGITGO-PARENTREL]`: those numbers are
@@ -532,7 +533,7 @@ results into `paramsData`. Document the new command in
 | -8 | Trace found no blocking hit | "Nothing under cursor/center within range" |
 | -9 | Mouse position unavailable and center fallback disabled | "No cursor — enable center fallback" |
 | -10 | Tier 2 raw-write fallback also failed | "Write failed (protected memory?)" |
-| -16 | Jump refused: the stored pose (a BugIt, a marker) or the current pose (TP facing) came from a parent-relative read, not world coordinates; nothing moved. Mailbox `BUGIT_GO`, `RECALL`, `RECALL_FORCE` and `RELATIVE`; the pipe's `teleport_recall_marker` (slot) and `teleport_relative`; `UE5_TeleportRecallMarker` / `UE5_TeleportRelative` | "Save (or BugIt) again while the game responds (focus it / Keep Foreground), or off the vehicle or mount" |
+| -16 | Jump refused: the stored pose (a BugIt, a marker) or the current pose (TP facing) came from a parent-relative read, not world coordinates; nothing moved. Mailbox `BUGIT_GO`, `RECALL`, `RECALL_FORCE` and `RELATIVE`; the pipe's `teleport_recall_marker` (slot) and `teleport_relative`; `UE5_TeleportRecallMarker` / `UE5_TeleportRelative` | "Save (or BugIt) again — for TP facing, try again — while the game responds (focus it / Keep Foreground), or off the vehicle or mount" |
 
 -11 to -15 are not Wirbel codes: the mailbox publishes its own codes there, in the
 same `result` field (`Mimic.h`, `Mimic.cpp`).

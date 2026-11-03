@@ -30,7 +30,8 @@ enum TeleportResult : int32_t {
     TP_ERR_NO_CURSOR     = -9,   // mouse position unavailable, center fallback off
     TP_ERR_WRITE_FAILED  = -10,  // tier-2 raw write also failed
     // -11..-15 are skipped: the mailbox publishes its own codes there, in the same `result` field (Mimic.h).
-    TP_ERR_PARENT_RELATIVE = -16,  // jump refused: the stored pose came from a parent-relative read, not world coords
+    TP_ERR_PARENT_RELATIVE = -16,  // jump refused: the stored (BugIt, marker) or current (TP facing) pose came
+                                   //   from a parent-relative read, not world coords
 };
 
 // [TELEPORT-BUGITGO-PARENTREL] What BugItGo answers for its slot before anything moves. An empty slot wins; a pose
