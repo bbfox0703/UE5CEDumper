@@ -4925,7 +4925,8 @@ int main() {
                          nPlayerController, nDcc, nBPDcc, nBPPc, nCheatMgr, nCheatExt, nAbilityExt, nBPCheats, nKsl,
                          nGameModeBase, nGameMode, nBPGameMode, nBPChar, nCdoActorChannel, nCdoCheatExt, nCdoCheatMgr,
                          nCdoActor, nCdoKsl, nCdoGameMode, nCdoBPChar, nAbility0, nCheatMgr0, nBPDcc0, nBPPc0,
-                         nBPCheats0, nAbility1, nBPGameMode0, nBPChar0, nNames };
+                         nBPCheats0, nAbility1, nBPGameMode0, nBPChar0, nHud, nDcHud, nObjProp, nOwner, nDcHud0, nHud0,
+                         nNames };
         const char* upNames[nNames] = { "", "Class", "/Script/Engine", "Package", "Object", "Channel", "ActorChannel",
             "Actor", "Controller", "PlayerController", "DebugCameraController", "BP_DebugCamera_C",
             "BP_ThirdPersonPlayerController_C", "CheatManager", "CheatManagerExtension",
@@ -4934,7 +4935,8 @@ int main() {
             "Default__CheatManager", "Default__Actor", "Default__KismetSystemLibrary", "Default__GameMode",
             "Default__BP_PlayerCharacter_C", "AbilitySystemCheatManagerExtension_0", "CheatManager_0",
             "BP_DebugCamera_C_0", "BP_ThirdPersonPlayerController_C_0", "BP_Cheats_C_0",
-            "AbilitySystemCheatManagerExtension_1", "BP_GameMode_C_0", "BP_PlayerCharacter_C_0" };
+            "AbilitySystemCheatManagerExtension_1", "BP_GameMode_C_0", "BP_PlayerCharacter_C_0", "HUD", "DebugCameraHUD",
+            "ObjectProperty", "Owner", "DebugCameraHUD_0", "HUD_0" };
         static uint8_t upEntry[nNames][0x40] = {};
         static uintptr_t upChunk[nNames + 1] = {};
         for (int i = 1; i < nNames; ++i) {
@@ -4956,7 +4958,7 @@ int main() {
         enum { bMeta, bPkgCls, bPkg, bObject, bChannel, bActorChannel, bActor, bController, bPlayerController, bDcc,
                bBPDcc, bBPPc, bCheatMgr, bCheatExt, bAbilityExt, bBPCheats, bKsl, bGameModeBase, bGameMode, bBPGameMode,
                bBPChar, bCdoActorChannel, bCdoCheatExt, bCdoCheatMgr, bCdoActor, bCdoKsl, bCdoGameMode, bCdoBPChar,
-               bAbility0, bCm0, bDcc0, bPc0, bCheats0, bAbility1, bGm0, bChar0, kBlobs };
+               bAbility0, bCm0, bDcc0, bPc0, bCheats0, bAbility1, bGm0, bChar0, bHud, bDcHud, bDcHud0, bHud0, kBlobs };
         alignas(16) static uint8_t upB[kBlobs][0x200] = {};
         auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(upB[b]); };
         auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
@@ -5007,6 +5009,24 @@ int main() {
         obj(bAbility1, bAbilityExt, nAbility1, bCheats0);   // ...and its extension
         obj(bGm0, bBPGameMode, nBPGameMode0, -1);
         obj(bChar0, bBPChar, nBPChar0, -1);
+        // Review of fbedfa9a: an actor the DCC spawns has the LEVEL as its outer and the DCC as its AActor::Owner.
+        // Actor gets a reflected `Owner` ObjectProperty; the DCC's HUD sits below the player's.
+        constexpr int32_t kOwnerOff = 0x100;
+        static uint8_t upObjPropFC[0x20] = {}, upOwnerProp[0x100] = {};
+        put32(upObjPropFC, DynOff::FFIELDCLASS_NAME, nObjProp);
+        putP(upOwnerProp, DynOff::FFIELD_CLASS, reinterpret_cast<uintptr_t>(upObjPropFC));
+        put32(upOwnerProp, DynOff::FFIELD_NAME, nOwner);
+        put32(upOwnerProp, DynOff::FPROPERTY_OFFSET, kOwnerOff);
+        put32(upOwnerProp, DynOff::FPROPERTY_ELEMSIZE, 8);
+        put32(upOwnerProp, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+        putP(upB[bActor], DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(upOwnerProp));
+        put32(upB[bActor], DynOff::USTRUCT_PROPSSIZE, kOwnerOff + 8);
+        klass(bHud, nHud, bActor);
+        klass(bDcHud, nDcHud, bHud);
+        obj(bDcHud0, bDcHud, nDcHud0, -1);
+        putP(upB[bDcHud0], kOwnerOff, A(bDcc0));          // the DCC's HUD: owned by the DCC, outer the level
+        obj(bHud0, bHud, nHud0, -1);
+        putP(upB[bHud0], kOwnerOff, A(bPc0));             // the player's HUD
 
         FakePool upPool;
         upPool.Build(128);
@@ -5039,8 +5059,8 @@ int main() {
               r.obj == 0 && r.pick == Aura::UserPick::None, nm(r.obj).c_str());
 
         // Phase B -- live objects; the Debug Camera's, a cheat extension and a GameMode look-alike sit lowest.
-        const int phaseB[] = { bAbility0, bCm0, bDcc0, bPc0, bCheats0, bAbility1, bGm0, bChar0 };
-        for (int i = 0; i < 8; ++i) slot(7 + i, phaseB[i]);
+        const int phaseB[] = { bAbility0, bCm0, bDcc0, bPc0, bCheats0, bAbility1, bGm0, bChar0, bDcHud0, bHud0 };
+        for (int i = 0; i < 10; ++i) slot(7 + i, phaseB[i]);
         Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
 
         r = Aura::ResolveUserInstance("CheatManager");
@@ -5071,6 +5091,11 @@ int main() {
         r = Aura::ResolveUserInstance("PlayerCharacter");
         check("USERPICK control: a partial name lands where it always did", r.obj == A(bChar0), nm(r.obj).c_str());
         check("USERPICK ⭐: ...and says it was matched as part of a class name", r.pick == Aura::UserPick::PartialLive);
+        r = Aura::ResolveUserInstance("HUD");
+        check("USERPICK ⭐: an actor the DCC OWNS (AActor::Owner; its outer is the level) is ranked last too",
+              is(r, bHud0, Aura::UserPick::Live), nm(r.obj).c_str());
+        check("USERPICK control: ...and the unfiltered internal pick is the DCC's HUD, the lower one",
+              Aura::FindLiveOrDefaultOf("HUD") == A(bDcHud0));
 
         // Phase C -- only the Debug Camera's objects are live.
         slot(10, -1);   // the player's controller
