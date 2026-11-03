@@ -27,6 +27,34 @@ builds ≤696 in
 
 -----
 
+## 2026-11-03 (build 3675) — BugItGo refuses a parent-relative BugIt; "an instance of class X" picks by derivation; mailbox contract 6 `[TELEPORT-BUGITGO-PARENTREL]` `[FINDINSTANCE-SUBSTRING-USERFACING]` `[OPEN-CENSUS-2026-10-28]`
+
+- **BugItGo no longer drives a vehicle-relative pose in as world coordinates.**
+  - A BugIt taken while the pawn is attached and its world position cannot be read stores numbers relative to the
+    parent (vehicle, mount, platform). The CE BugItGo record now refuses it: nothing moves, and the "last" slot is not
+    touched. The record says why. The BugIt record also warns that BugItGo will refuse that pose.
+  - The UI's own pair: **Copy as BugItGo** copies nothing on such a read and empties the Run field, since a
+    `BugItGo X Y Z` string cannot carry the flag.
+  - Marker Recall and Recall last still accept such a pose; that is filed as `[TELEPORT-RECALL-PARENTREL]`.
+- **"An instance of class X" picks the right object.** The Console's exec runs, CE scripts (FIND_INSTANCE,
+  invokeUFunction) and the C ABI lookup used to take the first object whose class NAME merely contained the text. Now:
+  - the first live object of that class or a subclass;
+  - an object the Debug Camera controller is or owns, only when no other is live;
+  - else the class's own default object;
+  - and a name no class has is still matched as part of a class name, as before.
+  So "CheatManager" no longer lands on a cheat extension or on the Debug Camera's own CheatManager, and "Actor" no
+  longer lands on an ActorChannel.
+- **The Console says which object it used** (name and class), warns when it is a class default object or the Debug
+  Camera's, and keeps reusing ("pins") only a live object.
+- **Mailbox contract 6** (minimum still 1): every saved .CT keeps working. A script generated now refuses an older DLL
+  that would still guess.
+- **Checked live on DumperTest Shipping, build 3674 against 3675:**
+  - **BugItGo.** On 3674 it moved the pawn 1,461.7 uu to the parent-relative numbers read as world coordinates. On
+    3675 it answered -16 and the pawn moved 0.0 uu.
+  - **Class lookup.** On 3674, "Actor" took `Default__ActorChannel` ("Function not found") and the mailbox's
+    "CheatManager" took `Default__CheatManagerExtension`. On 3675 those are a live `DirectionalLight` and
+    `Default__CheatManager`, and all 12 checks pass.
+
 ## 2026-11-03 (build 3674) — The .usmap writes an enum's real underlying type, signedness included `[USMAP-ENUM-SIGNEDNESS]` `[OPEN-CENSUS-2026-10-28]`
 
 The .usmap took an enum property's underlying integer type from its size alone, so the width was right but the sign
