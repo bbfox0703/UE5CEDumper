@@ -5150,6 +5150,10 @@ int main() {
         check("USERPICK ⭐: with no flags read, a Default__ outer still makes it a template, owned by that outer",
               Aura::TemplateOf(A(bTplMove)).kind == Aura::TemplateKind::Template
               && Aura::TemplateOf(A(bTplMove)).owner == A(bCdoBPChar));
+        // Review of 69f4fc42: the lookup and TemplateOf must agree -- one reply said `live` and `template` together.
+        r = Aura::ResolveUserInstance("CharacterMovementComponent");
+        check("USERPICK ⭐: ...and the lookup passes it over too -- the class's own default object stands in",
+              is(r, bCdoCmc, Aura::UserPick::ClassDefault), nm(r.obj).c_str());
         put32(upB[bTplMove], Grimoire::OFF_UOBJECT_FLAGS, 0x40021);
 
         // Phase D -- a walk cut short is not "not found", and the old 100-match cap is gone.
