@@ -532,7 +532,7 @@ static void HandleFindInstance() {
 
     LOG_INFO("Mailbox: FIND_INSTANCE class='%s'", className);
 
-    // [FINDINSTANCE-SUBSTRING-USERFACING] The resolver the C ABI and the pipe share (Aura.h); its rule is contract 6.
+    // [FINDINSTANCE-SUBSTRING-USERFACING] The user-facing resolver (Aura.h); its rule is contract 6.
     const Aura::UserInstance found = Aura::ResolveUserInstance(className);
     g_invokeMailbox.instanceAddr = found.obj;
     char msg[256];

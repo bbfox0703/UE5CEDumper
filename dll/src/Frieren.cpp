@@ -1155,8 +1155,8 @@ int32_t UE5_GetClassPropsSize(uintptr_t classAddr) {
 
 // === UFunction Invocation ===
 
-// The user-facing "an instance of class X": Aura::ResolveUserInstance, the one resolver the pipe's invoke_function
-// class_name and the mailbox's FIND_INSTANCE share (its rule is in Aura.h; it logs the pick under PIPE:find). It used
+// The user-facing "an instance of class X": Aura::ResolveUserInstance, the resolver every user-facing class lookup
+// shares (its rule is in Aura.h; it logs the pick under PIPE:find). It used
 // to match a class-name SUBSTRING and take the first non-CDO match, else the first match, so "CheatManager" landed on a
 // cheat extension or the Debug Camera's own CheatManager. [FINDINSTANCE-SUBSTRING-USERFACING] Internal callers keep
 // Aura::FindLiveOrDefaultOf or Aura::FindClassByPath: a state read must never take the Debug Camera's object at all.

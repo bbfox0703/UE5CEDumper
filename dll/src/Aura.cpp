@@ -1964,8 +1964,8 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
     return rset;
 }
 
-// [FINDINSTANCE-SUBSTRING-USERFACING] The one walk behind FindLiveOrDefaultOf and ResolveUserInstance -- two copies
-// of it drifted before (Mimic's "reuse existing logic" twin). What the two lookups do with an object that a class named
+// [FINDINSTANCE-SUBSTRING-USERFACING] One walk for both class lookups below -- two copies of such a walk drifted
+// before (Mimic's "reuse existing logic" twin). What the two lookups do with an object that a class named
 // `skipOuterOf` is, or owns, is their real difference: a STATE read must never take it, so FindLiveOrDefaultOf drops
 // it; a user's invoke takes it before a class-default object, which has no owner to act through, so
 // ResolveUserInstance ranks it last among the live ones.

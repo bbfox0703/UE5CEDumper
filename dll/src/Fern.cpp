@@ -6782,8 +6782,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     return Renge::MakeError(id, "Invalid instance_addr").dump();
                 }
             } else if (!className.empty()) {
-                // The user-facing resolver the C ABI and the mailbox share (Aura.h). A cut-short walk is not "no
-                // instance": the Self-Test reads that text as the class being absent.
+                // The user-facing resolver (Aura.h). A cut-short walk is not "no instance": the Self-Test reads that
+                // text as the class being absent.
                 const Aura::UserInstance found = Aura::ResolveUserInstance(className);
                 if (found.pick == Aura::UserPick::Cancelled) {
                     return Renge::MakeError(id, Renge::InstanceLookupCancelledText(className)).dump();

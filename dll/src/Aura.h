@@ -138,9 +138,9 @@ uintptr_t FindLiveOrDefaultOf(const std::string& className);
 // Player, which the DCC has only while active).
 uintptr_t FindLiveOrDefaultOf(const std::string& className, const std::string& skipOuterOf);
 
-// [FINDINSTANCE-SUBSTRING-USERFACING] What a USER-facing "an instance of class X" lookup took, and why. The C ABI
-// UE5_FindInstanceOfClass, the pipe's invoke_function class_name and the mailbox's FIND_INSTANCE (with INVOKE_BY_NAME
-// and LIST_FUNCTIONS' class-name branch) all resolve through ResolveUserInstance.
+// [FINDINSTANCE-SUBSTRING-USERFACING] What a USER-facing "an instance of class X" lookup took, and why. Every such
+// lookup resolves through ResolveUserInstance; a source pin in InvokeScriptTests
+// (UserFacingClassLookups_AllResolveThroughOneDerivationResolver) covers the ones no test target compiles.
 enum class UserPick : uint8_t {
     None,              // nothing usable; obj 0
     Cancelled,         // the walk was cut short; obj 0, never a candidate met on the way

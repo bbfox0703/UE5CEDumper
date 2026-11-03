@@ -4647,8 +4647,8 @@ int main() {
     // -- SEETHRU-PROBE-SUBSTRING-2026-09-23 -- the probe asks a CLASS found by path; internal lookups gate on derivation --
     //
     // ⛔ POOL-FAKING, like OFFSETS: own object pool AND own name pool, last. [SEETHRU-PROBE-SUBSTRING] See-through's
-    // producer probe resolved "Actor" through UE5_FindInstanceOfClass -- a class-name SUBSTRING match that falls back to
-    // the FIRST matching CDO -- and on DumperTest Shipping 5.4 that was Default__ActorChannel, a UChannel with no
+    // producer probe resolved "Actor" through UE5_FindInstanceOfClass -- then a class-name SUBSTRING match that fell back
+    // to the FIRST matching CDO -- and on DumperTest Shipping 5.4 that was Default__ActorChannel, a UChannel with no
     // SetActorHiddenInGame, so See-through ON refused (-3) on a build that has it. Phase A is that pool: the first object
     // whose class name contains "actor" is ActorChannel's CDO, and nothing live matches. The CheatManager rows are the same
     // trap in the stock engine: UCheatManagerExtension (Engine) and GAS's UAbilitySystemCheatManagerExtension.

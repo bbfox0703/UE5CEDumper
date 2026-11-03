@@ -177,7 +177,9 @@ enum TeleportOp : uint64_t {
                              //   "last" slot is untouched [TELEPORT-BUGITGO-PARENTREL]. A new result on an existing
                              //   op, not a contract change: every contract-checking teleport record already shows
                              //   "failed (code N)" for a negative result it has no message for, and keeps its window
-                             //   open, and an older DLL answers it exactly as before.
+                             //   open, and an older DLL answers it exactly as before. The BugIt record's "BugItGo will
+                             //   refuse this pose" holds because it bakes contract 6, which no DLL without the
+                             //   refusal publishes.
     TP_OP_GET_POV      = 11, // read the camera POV (read-only). slot ignored.
                              //   Output POV block in paramsData:
                              //     [0..47]  6 doubles cam X,Y,Z,Pitch,Yaw,Roll
@@ -598,15 +600,18 @@ extern "C" __declspec(dllexport) extern Mimic::MailboxData g_invokeMailbox;
 // WHAT IS NOT (additive ⇒ bump MAILBOX_CONTRACT only, leave the MIN alone):
 //   a new Cmd, a new op at a previously unused number, a new knobId. Old scripts
 //   never referenced them, so they stay valid.
-//   ALSO a meaning change (item 5) that refuses no saved script: one whose old
-//   behaviour a script could only have relied on by accident, and that fails
-//   VISIBLY when it did (version 6 is the case). Moving MIN for it would refuse
-//   every saved .CT, the ones the change fixes included.
+//   ALSO a meaning change (item 5) whose old behaviour a script could only have
+//   relied on by ACCIDENT (version 6 is the case). It is still a meaning change --
+//   a script that did rely on it may now get a different answer, in some cases a
+//   silent one -- but moving MIN would refuse every saved .CT, the ones the change
+//   fixes included. Write down which accidents end, as version 6 does.
 //
-// WHAT IS NOT A CHANGE AT ALL: a new negative result code on an existing command
-//   or op. Every contract-checking script reports a negative result it has no
-//   message for and keeps its window open (MB_ERR_HANDLER_THREW, -12..-15, the
-//   Debug Camera's -5/-6, TP_OP_BUGIT_GO's -16).
+// WHAT IS NOT A CHANGE AT ALL: a new negative result code on a command or op whose
+//   every generated block reports a negative result it has no message for and keeps
+//   its window open -- today CMD_TELEPORT (TP_OP_BUGIT_GO's -16) and the invoke
+//   family (MB_ERR_INVOKE_* -12..-15). Check the generators first: some [DISABLE]
+//   blocks report a negative state only through dbg(), and the GodMode [ENABLE]
+//   reads any negative state as "armed", so a new code there IS a change.
 //
 // TWO numbers, because the answer is a RANGE and the two failure directions need
 // different advice:
@@ -650,14 +655,18 @@ namespace Mimic {
 ///   className or of a subclass (one a Debug Camera controller is or owns only when no other is live), else that
 ///   class's own default object. The class-name SUBSTRING match it used before now answers only a name no object's
 ///   class chain has, without the old 100-match cap. A MEANING change (item 5); no field moved and no result code
-///   changed (a lookup cut short by shutdown answers -2 with its own errorMsg). It refuses no saved script, so
-///   MAILBOX_CONTRACT_MIN stays at 1, but it is not invisible to all of them: a script that sent a name some class
-///   HAS and relied on reaching an UNRELATED class whose name merely contains it now gets that class's object and a
-///   -3 "function not found", and one that relied on the Debug Camera's own CheatManager (a ToggleDebugCamera OFF on
-///   4.18-5.7) now reaches the player's. Both relied on an accident, and both fail visibly. Moving MIN would refuse
-///   every saved .CT, the ones this fixes included. Like versions 2 and 4 it moves on meaning alone -- the surface hash
-///   does not change. The bump makes a script generated now refuse a DLL that would still guess; it does not reach
-///   baked scripts, whose embedded invoke helper deliberately claims contract 1.
+///   changed (a lookup cut short by shutdown answers -2 with its own errorMsg). MAILBOX_CONTRACT_MIN stays at 1, but
+///   two accidents end, and a script that relied on one gets a different answer:
+///     * it sent a name some class HAS and relied on reaching an UNRELATED class whose name merely contains it. It
+///       now gets that class's object -- or its default object -- and either -3 "function not found" or, for a
+///       function the two classes share, result 0 from an object that may do nothing;
+///     * it relied on reaching the Debug Camera's own CheatManager (a ToggleDebugCamera OFF on 4.18-5.7). It now
+///       reaches the player's, where that toggle is a no-op: result 0, the camera stays on, visible only in the game.
+///       CMD_SET_DEBUG_CAMERA is the supported OFF.
+///   Both relied on an accident, and moving MIN would refuse every saved .CT, the ones this fixes included. Like
+///   versions 2 and 4 it moves on meaning alone -- the surface hash does not change. The bump makes a script generated
+///   now refuse a DLL that would still guess. It does not reach baked scripts outside Verify Return Value mode: their
+///   embedded invoke helper deliberately claims contract 1 (verify mode bakes the generator's own contract check).
 constexpr int32_t MAILBOX_CONTRACT = 6;
 
 /// Oldest script contract still accepted. Bump ONLY when a change actually

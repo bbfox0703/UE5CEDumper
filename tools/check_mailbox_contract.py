@@ -54,7 +54,8 @@ WHEN IT FIRES, YOU HAVE EXACTLY TWO CHOICES
     old scripts never referenced the new thing, so they stay valid.
   * The change BREAKS older scripts (a moved field, a renumbered op, a meaning an older script relied on):
     bump MAILBOX_CONTRACT, CeMailboxLayout.ContractVersion **and** MAILBOX_CONTRACT_MIN.
-    A meaning change that refuses no saved script is the first kind (Mimic.h's "WHAT IS NOT", version 6).
+    A meaning change whose old behaviour a script could only have relied on by ACCIDENT is the first kind
+    (Mimic.h's "WHAT IS NOT", version 6), and the bump entry says which accidents end.
   Then update GOLDEN below to the printed hash.
 
 Usage:
@@ -114,9 +115,11 @@ import sys
 # NOTE on version 6 ([FINDINSTANCE-SUBSTRING-USERFACING]): the version moved and the HASH did not, as for versions 2
 # and 4. CMD_FIND_INSTANCE's className now picks by derivation (the first live object of the class or a subclass, the
 # Debug Camera's last, else the class's own default object) where it matched a class-name substring -- a change of
-# MEANING, which no field, offset or enum value this script hashes can show. MAILBOX_CONTRACT_MIN stays 1: no saved
-# script is refused, and the ones that relied on an unrelated class's object fail visibly (Mimic.h's version-6 entry
-# says which). The bump is there so a script generated now refuses a DLL that would still guess.
+# MEANING, which no field, offset or enum value this script hashes can show. MAILBOX_CONTRACT_MIN stays 1: the old
+# picks a script could have relied on were accidents (an unrelated class reached through a name some class has; the
+# Debug Camera's own CheatManager), and moving MIN would refuse every saved .CT. A script that relied on one now gets a
+# different answer -- for the Debug Camera case a silent result 0 -- and Mimic.h's version-6 entry says which. The bump
+# is there so a script generated now refuses a DLL that would still guess.
 GOLDEN_VERSION = 6
 GOLDEN_HASH = "f6738c50c61a4d9b4677c58a16121b3a3ac95d3f99518a1508edc4ec6794470a"
 
