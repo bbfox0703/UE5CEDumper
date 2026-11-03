@@ -24,7 +24,8 @@ internal static class InvokePickText
         if (pick.Length == 0 || name.Length == 0) return "";
         return " " + pick switch
         {
-            Constants.InvokePickClassDefault => ClassDefaultText(name, className),
+            // A partial-name pick that is a default object has no live object of its class either.
+            Constants.InvokePickClassDefault or Constants.InvokePickPartialNameDefault => ClassDefaultText(name, className),
             Constants.InvokePickDebugCameraOwned => DebugCameraOwnedText(name, className),
             _ => ObjectText(name, className),
         };
@@ -33,12 +34,13 @@ internal static class InvokePickText
     internal static string ObjectText(string name, string className)
         => AobMakerStatus.Say(KeyObject, "on {0} ({1})", name, className);
 
+    // Neither sentence says the call ran: the note is on the failure line too, where nothing may have been dispatched.
     internal static string ClassDefaultText(string name, string className)
         => AobMakerStatus.Say(KeyClassDefault,
-            "⚠ ran on {0}, the class default object: no live {1} exists, so an engine cheat command has no effect " +
-            "there (a command that does not use its owner may still work)", name, className);
+            "⚠ the object is {0}, the class default object: no live {1} exists, so an engine cheat command has no " +
+            "effect there (a command that does not use its owner may still work)", name, className);
 
     internal static string DebugCameraOwnedText(string name, string className)
         => AobMakerStatus.Say(KeyDebugCameraOwned,
-            "⚠ ran on {0} ({1}), which belongs to the Debug Camera: no other live one exists", name, className);
+            "⚠ the object is {0} ({1}), which belongs to the Debug Camera: no other live one exists", name, className);
 }

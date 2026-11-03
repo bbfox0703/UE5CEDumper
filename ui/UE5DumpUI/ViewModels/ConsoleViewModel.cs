@@ -53,18 +53,21 @@ public partial class ConsoleViewModel : ViewModelBase
     /// <c>DebugCameraControllerRef</c> member (null → Enable, set →
     /// Disable); <c>god</c>/<c>slomo</c>/set-then-reset commands mutate
     /// the owning object. Such commands MUST land on the <b>same</b>
-    /// UObject on every invoke. Plain classname resolution
-    /// (<c>UE5_FindInstanceOfClass</c>) re-scans GObjects and returns
-    /// the first live object of the class each call — but the very first invoke
-    /// can mutate the object graph (e.g. EnableDebugCamera spawns an
-    /// <c>ADebugCameraController</c>), so a later call may resolve a
-    /// <i>different</i> instance whose toggle state is fresh → it silently
-    /// re-runs Enable instead of Disable. The classic symptom is
-    /// "Debug Camera turns on but won't turn off".
+    /// UObject on every invoke. Plain classname resolution (the DLL's
+    /// <c>Aura::ResolveUserInstance</c>) re-scans GObjects each call — but the
+    /// very first invoke can mutate the object graph (e.g. EnableDebugCamera
+    /// spawns an <c>ADebugCameraController</c> with a CheatManager of its own),
+    /// and objects of the class spawned or destroyed between runs can change
+    /// which one a fresh scan meets first. A stateful toggle that lands on a
+    /// <i>different</i> instance silently re-runs Enable instead of Disable.
+    /// The classic symptom is "Debug Camera turns on but won't turn off" (the
+    /// resolver now ranks the Debug Camera's own objects last, but the pin
+    /// still guards the rest).
     ///
     /// Fix: pin the address the DLL actually used (echoed back as
     /// <c>instance_addr</c>) per class and reuse it on the next invoke of
-    /// any exec on that class. Cleared on <see cref="LoadAsync"/> (a
+    /// any exec on that class -- except a pick
+    /// <see cref="Helpers.InvokePickText.IsPinnable"/> declines. Cleared on <see cref="LoadAsync"/> (a
     /// re-discover is treated as a fresh session — e.g. after reconnecting
     /// to a different game process) and self-heals on invoke failure
     /// (stale pin → drop + re-resolve, see <see cref="RunEntryAsync"/>).

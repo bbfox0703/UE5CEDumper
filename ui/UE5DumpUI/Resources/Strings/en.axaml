@@ -1461,11 +1461,11 @@
          Development build these same commands work. The cause is a missing
          INSTANCE, not a missing body: docs/lessons-learned.md (the UCheatManager
          entry) measured the bodies intact in a Shipping EXE. -->
+    <sys:String x:Key="str.Con.CheatManagerHint">⚠ On a Shipping build there is usually no live CheatManager, only its default object, so the engine's cheat commands report success (Result=0) but have no effect in game. Exec commands the game defines itself usually still work — use one of those to check that invoking works.</sys:String>
     <!-- [FINDINSTANCE-SUBSTRING-USERFACING] the object a class name resolved to, after a Console run -->
     <sys:String x:Key="str.Invoke.Pick.Object">on {0} ({1})</sys:String>
-    <sys:String x:Key="str.Invoke.Pick.ClassDefault">⚠ ran on {0}, the class default object: no live {1} exists, so an engine cheat command has no effect there (a command that does not use its owner may still work)</sys:String>
-    <sys:String x:Key="str.Invoke.Pick.DebugCameraOwned">⚠ ran on {0} ({1}), which belongs to the Debug Camera: no other live one exists</sys:String>
-    <sys:String x:Key="str.Con.CheatManagerHint">⚠ On a Shipping build there is usually no live CheatManager, only its default object, so the engine's cheat commands report success (Result=0) but have no effect in game. Exec commands the game defines itself usually still work — use one of those to check that invoking works.</sys:String>
+    <sys:String x:Key="str.Invoke.Pick.ClassDefault">⚠ the object is {0}, the class default object: no live {1} exists, so an engine cheat command has no effect there (a command that does not use its owner may still work)</sys:String>
+    <sys:String x:Key="str.Invoke.Pick.DebugCameraOwned">⚠ the object is {0} ({1}), which belongs to the Debug Camera: no other live one exists</sys:String>
     <sys:String x:Key="str.Tip.Con.Load">Scan every UFunction and surface those marked with UFUNCTION(exec) (FUNC_Exec=0x200). Many games leave these intact in cooked Shipping — they're the cheat surface the developer already curated.</sys:String>
     <sys:String x:Key="str.Tip.Con.GameOnly">When OFF (default), engine-side UCheatManager exec commands are included — usually what you want. Flip ON to see only game-specific exec commands.</sys:String>
     <sys:String x:Key="str.Tip.Con.ClearFilter">Clear the command-name filter and show the full list again.</sys:String>
