@@ -27,6 +27,34 @@ builds ≤696 in
 
 -----
 
+## 2026-11-04 (build 3686) — A pick never refuses a live object while a collection runs; mailbox contract 9 `[INVOKE-PICK-GARBAGE]`
+
+- Review 1 of build 3685's fix. Telling a destroyed object apart now uses its destroyed flags alone. On UE4 and UE
+  5.0-5.3 a garbage collection first marks every object it may free, and live ones are marked too until it clears them,
+  so the old test could pass over every live object while one ran. This covers an invoke by class name, the Console's
+  Run, the CE invoke helper, Navigate / Locate, the internal state reads and the local-PlayerController fallback.
+- A destroyed object is no longer a partial class name's last-resort match either. The DLL log says how many destroyed
+  objects a lookup passed over.
+- **Mailbox contract 9** (MIN stays 1): CE's FIND_INSTANCE, and the INVOKE_BY_NAME and LIST_FUNCTIONS lookups through it,
+  never hand over a destroyed object. A table generated now refuses an older DLL; an older table works unchanged with
+  this DLL. The freeze helper bakes 9 and stays version 1.7.
+- **Checked live on build 3686** (DumperTest Shipping): `invoke_pick_garbage_live.py` 8/8. The destroyed actor stayed in
+  GObjects, flagged garbage, from the destroy until after the last lookup. The by-name invoke, find_live_instance and the
+  mailbox all took the next live actor, and the DLL log said "passed over 1 destroyed".
+- Tests: dll_core_test 1,464; dll_helpers_test 3,746; C# 7,433 total, 0 failed, 1 skipped; Lua 11/11; 37 gates; six
+  mutations, each killed. AOT UI 61,664,256 bytes.
+
+## 2026-11-04 (build 3685) — An invoke by class name never takes a destroyed object `[INVOKE-PICK-GARBAGE]`
+
+- An actor destroyed in play stays in the object list until the next garbage collection (about a minute on a stock
+  engine), and an invoke by class name could land on it if it sat first. An invoke by class name and the DLL's internal
+  state reads (the Debug Camera's CheatManager among them) now pass over it, as Navigate already did. With only
+  destroyed objects of a class left, an invoke falls back as it does with none live.
+- **Checked live on build 3685** (DumperTest Shipping): `invoke_pick_garbage_live.py` 6/6. A destroyed StaticMeshActor
+  stayed in GObjects, flagged garbage. The by-name invoke, find_live_instance and the mailbox's FIND_INSTANCE took the
+  next one, while the old exact-name lookup still listed the destroyed one first.
+- AOT UI 61,663,744 bytes.
+
 ## 2026-11-04 (build 3684) — Navigate and Locate open a live object of the class or a subclass, never a template `[MAINWINDOW-NAVIGATE-EXACT-NAME]`
 
 - **"Live" and "Locate in GWorld / GameEngine"** (Interesting Funcs, Interesting Props, Live Funcs, Console, Detect
