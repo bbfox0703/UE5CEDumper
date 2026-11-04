@@ -27,6 +27,25 @@ builds ≤696 in
 
 -----
 
+## 2026-11-04 (build 3684) — Navigate and Locate open a live object of the class or a subclass, never a template `[MAINWINDOW-NAVIGATE-EXACT-NAME]`
+
+- **"Live" and "Locate in GWorld / GameEngine"** (Interesting Funcs, Interesting Props, Live Funcs, Console, Detect
+  Stats, the Xref dialog) and Detect Stats' live check now ask the DLL for **a live object of the class or of a
+  subclass**: a class whose objects are all of a Blueprint or game subclass (`Character` in a third-person game) opens
+  that object instead of falling back to the class view, and a class default object's subobject (a template) is never
+  opened or searched from. An object of the class itself comes first; a destroyed one, not yet collected, is passed
+  over; the Debug Camera's own objects come last, and the line says so.
+- A function opened on a subclass's object is not in Live Walker's list (it shows a class's own functions): the line
+  now says the function is inherited, instead of "not in this class". Every Locate names the object it searches from.
+- A DLL older than this UI (a proxy left in a game folder) still answers, with the old exact-name lookup, and the line
+  says how to replace it.
+- New pipe command `find_live_instance` (105 commands).
+- **Checked live on build 3684** (DumperTest Shipping, AOT UI): `live_instance_lookup_live.py` 7/7; the navigate,
+  Locate and inherited-function lines as recorded in the row.
+- Three review rounds (1 MED + 3 LOW + 8 INFO, 7 LOW + 8 INFO, 5 LOW + 5 INFO), all fixed but one INFO kept on purpose,
+  each round mutation-checked.
+- Tests: C# 7,433 total, 0 failed, 1 skipped; headless 70; dll_core_test 1,451; 37 gates. AOT UI 61,663,744 bytes.
+
 ## 2026-11-04 (build 3683) — Property Search's status line wraps on a row of its own; Freeze lights up when AOBMaker connects `[PROPSEARCH-STATUS-CLIPPED]` `[PROPSEARCH-FREEZE-STALE-AOBMAKER]`
 
 - **Property Search's status line has a row of its own** under the search bar and wraps there, so a long status --
