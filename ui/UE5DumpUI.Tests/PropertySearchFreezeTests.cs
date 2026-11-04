@@ -195,7 +195,7 @@ public class PropertySearchFreezeTests
         // the value dialog opened over a dead pipe and the push failed with the wrong reason.
         var gate = new TaskCompletionSource<bool>();
         var bridge = new RecordingBridge { NextAvailability = true };
-        await bridge.CheckAvailabilityAsync();               // what an earlier probe said, before CE closed...
+        await bridge.CheckAvailabilityAsync(TestContext.Current.CancellationToken);   // an earlier probe, before CE closed...
         bridge.CheckGate = gate.Task;
         var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge) { SearchQuery = "Health" };
         Assert.True(vm.IsAobMakerAvailable);                 // ...and what the panel starts from
