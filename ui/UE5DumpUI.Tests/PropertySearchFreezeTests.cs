@@ -170,6 +170,63 @@ public class PropertySearchFreezeTests
 
         Assert.Equal(1, bridge.CreateAaCalls);
         Assert.Contains("not sent", vm.StatusText);
+        Assert.Contains("rejected", vm.StatusText);   // a reply came back: the plugin was reached and said no
+    }
+
+    // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 3, F-C. The bool push folded three outcomes into one line: no reply (the
+    // record may still exist, so a second press could add a second one), a refusal that carried its reason, and a pipe
+    // that never opened. The detailed call tells them apart, as the Teleport pushes already do.
+
+    private static async Task<(PropertySearchViewModel Vm, RecordingBridge Bridge)> FreezePushAsync(
+        SymbolScriptResult outcome, bool? availableAfter = null)
+    {
+        var bridge = new RecordingBridge
+        {
+            NextAvailability = true, NextDetailed = outcome, AvailabilityAfterCreate = availableAfter,
+        };
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge)
+        {
+            FreezeValuePrompt = _ => Task.FromResult<string?>("1"),
+        };
+        await vm.CopyFreezeScriptCommand.ExecuteAsync(NewMatch("FloatProperty"));
+        return (vm, bridge);
+    }
+
+    [Fact]
+    public async Task Freeze_WithNoReply_SaysItMayStillHaveBeenAdded()
+    {
+        var (vm, bridge) = await FreezePushAsync(new SymbolScriptResult(false, null, null, null, TimedOut: true));
+
+        Assert.Equal(1, bridge.CreateAaCalls);
+        Assert.Contains("may still have been added", vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("rejected", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Freeze_RefusedWithAReason_SaysTheReason()
+    {
+        const string reason = "the request is 11,000,000 bytes, too large for AOBMaker's 10 MiB message limit";
+        var (vm, _) = await FreezePushAsync(new SymbolScriptResult(false, null, null, reason + "."));
+
+        Assert.Contains(reason, vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("rejected", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Freeze_ThePrePushGate_SaysWhyThePluginIsUnreachable()
+    {
+        // The gate before the value dialog said only "not reachable"; the push's own failure line says why. One
+        // condition, one sentence.
+        var bridge = new RecordingBridge { NextAvailability = false };
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge)
+        {
+            FreezeValuePrompt = _ => Task.FromResult<string?>("1"),
+        };
+
+        await vm.CopyFreezeScriptCommand.ExecuteAsync(NewMatch("FloatProperty"));
+
+        Assert.Equal(0, bridge.CreateAaCalls);
+        Assert.Contains(UE5DumpUI.Helpers.AobMakerUnavailable.Text(bridge), vm.StatusText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -389,6 +446,9 @@ public class PropertySearchFreezeTests
         public Task<bool>? CheckGate { get; set; }
         /// <summary>When set, a push leaves the bridge this available (a push that finds the pipe gone).</summary>
         public bool? AvailabilityAfterCreate { get; set; }
+        /// <summary>When set, what the detailed push answers; otherwise it reports <see cref="NextCreateResult"/> as
+        /// the interface's default body does.</summary>
+        public SymbolScriptResult? NextDetailed { get; set; }
         public int CheckCalls { get; private set; }
         public int CreateAaCalls { get; private set; }
         public string LastDescription { get; private set; } = "";
@@ -412,6 +472,13 @@ public class PropertySearchFreezeTests
             LastScript = script;
             if (AvailabilityAfterCreate is bool a) IsAvailable = a;
             return Task.FromResult(NextCreateResult);
+        }
+
+        public async Task<SymbolScriptResult> CreateAAScriptDetailedAsync(string description, string script,
+            bool autoActivate = true, string? group = null, CancellationToken ct = default)
+        {
+            var created = await CreateAAScriptAsync(description, script, autoActivate, group, ct);
+            return NextDetailed ?? SymbolScriptResult.FromCreated(created);
         }
 
         public Task<bool> NavigateHexViewAsync(string h, CancellationToken ct = default) => Task.FromResult(false);

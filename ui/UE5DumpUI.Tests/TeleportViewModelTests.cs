@@ -4142,6 +4142,32 @@ public class TeleportViewModelTests
         Assert.DoesNotContain("pipe dropped", vm.CoordStatus);
     }
 
+    [Fact]
+    public async Task A_push_that_finds_the_pipe_gone_reaches_the_toolbar_even_when_the_flag_already_said_so()
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 3, F-A. The no-DLL push is gated on the BRIDGE, not this panel's flag,
+        // so the flag can already say "down" when the push learns the pipe is gone. Set directly, false -> false raised
+        // nothing, and the toolbar chip -- which mirrors a change -- kept saying "connected" over a dead pipe.
+        var bridge = new ScriptedAobMakerBridge
+        {
+            Available = true, AaResult = false, AaDetail = new SymbolScriptResult(false, null, null, null),
+            AvailableAfterCall = false,
+        };
+        var vm = new TeleportViewModel(new FakeDumpService(), new NoopLogger(), new FakePlatform(), aobMaker: bridge,
+                                       experimentalGate: new FakeExperimentalGate(enabled: true));
+        vm.LoadCoordLibraryForGame("Game.exe");
+        vm.CoordX = 1; vm.CoordY = 2; vm.CoordZ = 3;
+        vm.AddCoordFromFieldsCommand.Execute(null);
+        Assert.False(vm.IsAobMakerAvailable);
+        var heard = new List<bool>();
+        vm.AobMakerProbed += heard.Add;
+
+        await vm.ExportCoordLuaNoDllCommand.ExecuteAsync(null);
+
+        Assert.Single(bridge.AaScripts);
+        Assert.Equal(new[] { false }, heard);
+    }
+
     private static async Task<string> NoDllPushStatusAsync(SymbolScriptResult detail, bool? availableAfter = null,
                                                            AobMakerFailure? failure = null)
     {

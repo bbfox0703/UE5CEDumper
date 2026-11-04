@@ -286,26 +286,30 @@ public class AobMakerStatusTests
         Assert.Equal(1, bridge.CheckCalls);
     }
 
+    /// <summary>The non-comment lines of a source file.</summary>
+    private static string[] CodeLines(string relative)
+        => File.ReadAllLines(NumericInputCoercionTests.RepoFile(relative))
+               .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)).ToArray();
+
     [Fact]
     public void The_cooldown_runs_on_a_clock_that_never_steps_back()
     {
         // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 2, INFO 4. On the wall clock, a step back (NTP, or by hand) makes
         // "time since the last probe" negative, and no refresh probes again until the clock catches up.
-        var code = string.Join("\n", File.ReadAllLines(RepoFile("ui/UE5DumpUI/Helpers/AobMakerStatus.cs"))
-                                         .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+        var code = string.Join("\n", CodeLines("ui/UE5DumpUI/Helpers/AobMakerStatus.cs"));
         Assert.DoesNotContain("DateTime", code, StringComparison.Ordinal);
         Assert.Contains("Environment.TickCount64", code, StringComparison.Ordinal);
     }
 
-    private static string RepoFile(string relative)
+    [Theory]
+    [InlineData("ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs")]
+    [InlineData("ui/UE5DumpUI/ViewModels/InterestingFunctionsViewModel.cs")]
+    public void The_flag_keeping_panels_probe_cooldowns_never_step_back_either(string file)
     {
-        var dir = AppContext.BaseDirectory;
-        for (var i = 0; i < 8 && dir is not null; i++, dir = Path.GetDirectoryName(dir))
-        {
-            var candidate = Path.Combine(dir, relative.Replace('/', Path.DirectorySeparatorChar));
-            if (File.Exists(candidate)) return candidate;
-        }
-        throw new FileNotFoundException($"could not locate {relative} from {AppContext.BaseDirectory}");
+        // Review 3, F-B: the same wall-clock cooldown, on two panels whose probes now feed the toolbar chip.
+        var lines = CodeLines(file).Where(l => l.Contains("_lastAobMakerCheck", StringComparison.Ordinal)).ToArray();
+        Assert.NotEmpty(lines);
+        Assert.All(lines, l => Assert.DoesNotContain("DateTime", l, StringComparison.Ordinal));
     }
 
     [Fact]
