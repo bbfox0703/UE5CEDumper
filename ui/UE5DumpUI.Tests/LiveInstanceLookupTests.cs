@@ -83,13 +83,45 @@ public class LiveInstanceLookupTests
     [InlineData("InterestingProperties.LocateInGameEngine +=")]
     [InlineData("DetectStats.LocateInGWorld +=")]
     [InlineData("_xrefLocateHandler = async")]
-    [InlineData("InterestingProperties.NavigateToProperty +=")]
-    public void A_lookup_whose_pick_needs_a_word_says_it(string subscription)
+    public void A_Locate_always_writes_the_top_bar_with_its_pick(string subscription)
     {
-        // Review 2: a Debug Camera's object, or an older DLL's exact-name answer, was said by no handler but the three
-        // function navigates -- and nothing failed when a handler dropped its note.
+        // Review 2: a Debug Camera's object, or an older DLL's exact-name answer, was said by no Locate. Review 3: it was
+        // written only when there was something to say, so the NEXT Locate left the previous object's warning there.
         var body = Handler(Source("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"), subscription);
-        Assert.Contains("PickNote(live, className)", body, StringComparison.Ordinal);
+        Assert.Contains("StatusText = LocateStatusText(live, className, ", body, StringComparison.Ordinal);
+        Assert.Contains("LiveWalker.StatusText = NoLiveInstanceToLocateText(className, ", body, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("InterestingFunctions.NavigateToFunction +=", 2)]
+    [InlineData("LiveFuncs.NavigateToFunction +=", 2)]
+    [InlineData("Console.NavigateToFunction +=", 2)]
+    [InlineData("InterestingProperties.NavigateToProperty +=", 3)]
+    public void A_navigate_says_its_pick_on_every_line_it_writes(string subscription, int lines)
+    {
+        // Review 3: the class-view fallback ("showing class metadata") and the class-not-found line are where a navigate's
+        // older-DLL miss is said -- no subclass was looked for -- and deleting the notes there kept every test green. The
+        // function navigates' hit line carries it through FunctionNavigateText; the property navigate's hit line, here.
+        var body = Handler(Source("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"), subscription);
+        Assert.Equal(lines, System.Text.RegularExpressions.Regex.Matches(body, @"\+ PickNote\(live, className\)").Count);
+    }
+
+    [Fact]
+    public void An_older_DLL_s_line_says_how_to_replace_it_and_that_it_may_be_a_template()
+    {
+        // Review 3: "Refresh the proxy DLL" sent the user to Proxy Deploy's Refresh, which re-reads the deploy status and
+        // replaces nothing; and the line named one of the old lookup's two limits.
+        var miss = new UE5DumpUI.Models.LiveInstanceResult { Pick = UE5DumpUI.Models.LiveInstanceResult.PickLegacy };
+        foreach (var line in new[]
+                 {
+                     UE5DumpUI.ViewModels.MainWindowViewModel.PickNote(miss, "Character"),
+                     UE5DumpUI.ViewModels.MainWindowViewModel.NoLiveInstanceToLocateText("Character", "GWorld", miss),
+                 })
+        {
+            Assert.DoesNotContain("Refresh the proxy", line, StringComparison.Ordinal);
+            Assert.Contains("Update All", line, StringComparison.Ordinal);
+            Assert.Contains("template", line, StringComparison.Ordinal);
+        }
     }
 
     [Theory]

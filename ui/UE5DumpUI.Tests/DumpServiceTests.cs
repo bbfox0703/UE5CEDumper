@@ -2608,6 +2608,37 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task FindLiveInstance_AnOldDllsAnswer_ThatArrivesAfterAReconnect_DoesNotMarkTheNewConnection()
+    {
+        // Review 3: the "Unknown command" reply's continuation can run after the connection dropped and a newer DLL
+        // connected -- and set the flag for a connection that has the command.
+        var pipe = new MockPipeClient();
+        var cmds = new List<string>();
+        bool reconnectDuringRequest = true;
+        pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]!.GetValue<string>();
+            cmds.Add(cmd);
+            if (cmd != "find_live_instance") return new JsonObject { ["ok"] = true, ["instances"] = new JsonArray() };
+            if (reconnectDuringRequest)
+            {
+                reconnectDuringRequest = false;
+                pipe.ConnectAsync(TestContext.Current.CancellationToken);   // the game swapped while this request was out
+                return new JsonObject { ["ok"] = false, ["error"] = "Unknown command: find_live_instance" };
+            }
+            return new JsonObject { ["ok"] = true, ["pick"] = "none", ["scanned"] = 1 };
+        });
+        var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
+        var ct = TestContext.Current.CancellationToken;
+
+        await dump.FindLiveInstanceAsync("A", ct);
+        cmds.Clear();
+        await dump.FindLiveInstanceAsync("A", ct);
+
+        Assert.Equal("find_live_instance", cmds[0]);
+    }
+
+    [Fact]
     public async Task FindLiveInstance_AnotherError_IsStillAnError()
     {
         var pipe = new MockPipeClient();

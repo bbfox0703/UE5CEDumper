@@ -372,13 +372,34 @@ public class MainWindowInjectHelperTests
     private sealed class LiveLookupDump : StubDumpService
     {
         public List<string> Asked { get; } = new();
+        /// <summary>What every lookup answers; nothing live by default.</summary>
+        public UE5DumpUI.Models.LiveInstanceResult Answer { get; set; } = new();
 
         public override Task<UE5DumpUI.Models.LiveInstanceResult> FindLiveInstanceAsync(string className,
                                                                                         CancellationToken ct = default)
         {
             Asked.Add(className);
-            return Task.FromResult(new UE5DumpUI.Models.LiveInstanceResult());   // nothing live
+            return Task.FromResult(Answer);
         }
+    }
+
+    [Fact]
+    public void A_Locate_an_older_DLL_missed_says_no_subclass_was_looked_for()
+    {
+        // Review 3: the miss line takes the lookup's answer; dropping it at the call site compiled and said "or of a
+        // subclass" again.
+        var miss = new UE5DumpUI.Models.LiveInstanceResult { Pick = UE5DumpUI.Models.LiveInstanceResult.PickLegacy };
+        var vm = BuildVm(aobMaker: null, dump: new LiveLookupDump { Answer = miss });
+
+        vm.InterestingProperties.LocateRowInGWorldCommand.Execute(new UE5DumpUI.Models.ScoredPropertyRow
+        {
+            Match = new UE5DumpUI.Models.PropertySearchMatch { ClassName = "AMyActor", PropName = "Health" },
+            FinalScore = 1, Category = UE5DumpUI.Services.PropertyCategory.Other, KeywordHits = 0, ClassBonus = 0,
+            IsUnusualLocation = false,
+        });
+
+        Assert.Equal(MainWindowViewModel.NoLiveInstanceToLocateText("AMyActor", "GWorld", miss), vm.LiveWalker.StatusText);
+        Assert.DoesNotContain("or of a subclass", vm.LiveWalker.StatusText, StringComparison.Ordinal);
     }
 
     [Fact]
