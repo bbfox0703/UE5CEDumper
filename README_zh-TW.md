@@ -112,7 +112,7 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 * **切到背景就暫停的遊戲**會讓需要呼叫遊戲的操作逾時。此時 UI 會顯示「game thread stalled」提示，實驗性的 **Keep Foreground** 開關可繞過它。
 * **大型 Array / Map / Set** 的讀取數量受 Live Walker 的 **Array Limit** 滑桿限制。
 
-各遊戲的註記收錄於 [docs/test-games.md](docs/test-games.md)。
+各遊戲的註記收錄於 [docs/test-games.md](docs/test-games.md)。跨版本仍存在的已知問題與限制收錄於 [docs/known-issues.md](docs/known-issues.md)（英文）。
 
 ---
 

@@ -22,6 +22,7 @@ document gets a row HERE**, not there.
 |----------|----------|
 | [toolchain.md](toolchain.md) | **What a machine needs, and why** — the reasoning behind `bootstrap.cmd`. ⚠ Read before installing anything on a new machine: tiers, the VS2026 winget id + `.vsconfig` list, the do-NOT-install pairs, how to prove the env works. |
 | [roadmap.md](roadmap.md) | **Current state** — capability matrix, per-game configuration, tested games, long-running concerns. ⚠ Rows are stale past build 797; read its own banner before trusting one. |
+| [known-issues.md](known-issues.md) | **User-facing: issues and limitations that last across releases** — each release's notes link here instead of repeating them. One-time "after updating" steps stay in the release notes; a design decision is not an issue. English only. |
 | [tips.md](tips.md) | **User-facing how-to recipes** — goal → which panel/button. First recipe: forcing camera rotation in fixed-view (2.5D/45°) games. |
 | [wiki-zh-TW-style.md](wiki-zh-TW-style.md) | 🇹🇼 **Before writing or re-translating a zh-TW Wiki page** — the rules (English first, translate from the source, UI names stay English) and the glossary derived from the maintainer's own hand edits. |
 | [wiki-ja-JP-style.md](wiki-ja-JP-style.md) | 🇯🇵 **Before writing or re-translating a ja-JP Wiki page** — JTF + Microsoft base, the half-width-space decision, long-vowel rule, glossary (row/column is the OPPOSITE of zh-TW), and the textlint check. The maintainer cannot read Japanese: keep the reviewer + textlint steps. |

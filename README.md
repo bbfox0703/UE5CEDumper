@@ -114,7 +114,7 @@ To build from source: `bootstrap.cmd` shows what the machine needs, then `build.
 * **Games that pause in the background** make anything that calls into the game time out. The UI shows a "game thread stalled" banner when that happens, and the experimental **Keep Foreground** toggle works around it.
 * **Large arrays, maps and sets** are read up to the **Array Limit** slider in the Live Walker.
 
-Per-game notes are in [docs/test-games.md](docs/test-games.md).
+Per-game notes are in [docs/test-games.md](docs/test-games.md). Issues and limitations that last across releases are in [docs/known-issues.md](docs/known-issues.md).
 
 ---
 

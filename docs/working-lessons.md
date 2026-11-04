@@ -3873,8 +3873,9 @@ other machine does not keep following the old one.
    release whose body is a generated commit list.
 3. Replace that body with prepared notes in the format of v3397 (`gh release view v3397 --json body`;
    v3546 is the same format with more items): an intro line, `## About this release`, an optional
-   `## New`, `## Fixed`, a compare link, the fall-back-to-the-previous-release line, the `## Setup`
-   block and the unsigned-exe notes.
+   `## New`, `## Fixed`, `## Known issues` (one link), an optional `## After updating`, a compare link, the
+   fall-back-to-the-previous-release line, the `## Setup` block and the unsigned-exe notes. v3686 is the first
+   in the 2026-11-04 shape.
 4. Leave it a draft. The maintainer checks the build and publishes.
 
 *Why.* The notes are for users, not a changelog, and the maintainer publishes only after trying the
@@ -3887,8 +3888,13 @@ English. **One item is one sentence, two at most, and one wherever it can be** (
 2026-10-27): what changed, with no sub-bullets, no how-it-works and no measurements; a reader who
 wants the detail has the compare link. A thing the user must do or must not do goes in a
 one-line `> ⚠` or `> ℹ️` note under the list. The v3615 draft was first written with sub-bullets and
-ran to 8,300 characters; the maintainer had it cut to 3,700. Aim for 20–30
-user-facing items and leave small fixes out, but do not pad: a release with twelve has twelve. Two
+ran to 8,300 characters; the maintainer had it cut to 3,700. **`## Fixed` (2026-11-04):** one sentence for each fix
+whose RECORDED severity is MED or higher; every LOW fix together is the one line "Minor bug fixes.", and every UI / UX
+tweak or fix the one line "UI tweaks and fixes.". A defect that never reached a published release (it came and went
+between two tags, review rounds included) is not a fix for the notes, whatever its severity. **`## Known issues`** is
+one line linking [known-issues.md](known-issues.md), which holds what lasts across releases; a one-time step after
+updating (redeploy the proxy, push a CE record again) goes under `## After updating`, and a design decision or a
+setting a user chooses to change is not an issue. Do not pad: a release with twelve items has twelve. Two
 kinds of work get one line each, never an item per change: Wiki work ("Updated the Wiki.") and bulk
 hint or tooltip corrections. Copy the `## Setup` block from the last PUBLISHED release, which the
 maintainer may have edited after publishing, not from a local draft. An `@` before a word becomes a user mention in
