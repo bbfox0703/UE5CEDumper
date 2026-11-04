@@ -22,12 +22,20 @@ public sealed class DumpService : IDumpService
         _log = log;
         _codePage = codePage;
         // A new connection may be a different DLL.
-        _pipe.ConnectionStateChanged += _ => _noLiveLookup = false;
+        _pipe.ConnectionStateChanged += _ =>
+        {
+            Interlocked.Increment(ref _connectionGen);
+            _noLiveLookup = false;
+        };
     }
 
     /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] This connection's DLL answered find_live_instance "Unknown command":
     /// ask it the old lookup straight away, and warn once, rather than a failing round trip on every call.</summary>
     private volatile bool _noLiveLookup;
+
+    /// <summary>Counts connection changes, so an "Unknown command" that answers a request sent before a reconnect does
+    /// not mark the newer DLL's connection.</summary>
+    private int _connectionGen;
 
     public async Task<EngineState> InitAsync(CancellationToken ct = default)
     {
@@ -827,6 +835,7 @@ public sealed class DumpService : IDumpService
     public async Task<LiveInstanceResult> FindLiveInstanceAsync(string className, CancellationToken ct = default)
     {
         if (_noLiveLookup) return await LegacyLiveInstanceAsync(className, ct);
+        int gen = Volatile.Read(ref _connectionGen);
         var res = await _pipe.SendAsync(new JsonObject
         {
             ["cmd"] = "find_live_instance",
@@ -838,9 +847,12 @@ public sealed class DumpService : IDumpService
         if (res["ok"]?.GetValue<bool>() == false
             && (res["error"]?.GetValue<string>() ?? "").StartsWith("Unknown command", StringComparison.Ordinal))
         {
-            _noLiveLookup = true;
-            _log.Warn("find_live_instance: the injected DLL predates it; live objects are looked up by exact class name "
-                      + "until the next connection");
+            if (gen == Volatile.Read(ref _connectionGen))
+            {
+                _noLiveLookup = true;
+                _log.Warn("find_live_instance: the injected DLL predates it; live objects are looked up by exact class "
+                          + "name until the next connection");
+            }
             return await LegacyLiveInstanceAsync(className, ct);
         }
         CheckResponse(res);
@@ -855,8 +867,8 @@ public sealed class DumpService : IDumpService
         };
     }
 
-    /// <summary>The lookup the navigate and Locate handlers made before find_live_instance: an exact class name, five
-    /// rows, the first not named Default__. Hit or miss, the answer is marked legacy.</summary>
+    /// <summary>The "a live object of this class" lookup as it was made before find_live_instance existed: an exact class
+    /// name, five rows, the first not named Default__. Hit or miss, the answer is marked legacy.</summary>
     private async Task<LiveInstanceResult> LegacyLiveInstanceAsync(string className, CancellationToken ct)
     {
         var old = await FindInstancesAsync(className, exactMatch: true, limit: 5, ct: ct);

@@ -417,7 +417,7 @@ public class MainWindowInjectHelperTests
 
         Assert.Equal(new[] { "AMyActor" }, dump.Asked);
         Assert.Equal((int)MainTabIndex.LiveWalker, vm.SelectedTabIndex);
-        Assert.Equal(MainWindowViewModel.NoLiveInstanceToLocateText("AMyActor", "GWorld"), vm.LiveWalker.StatusText);
+        Assert.Equal(MainWindowViewModel.NoLiveInstanceToLocateText("AMyActor", "GWorld", new UE5DumpUI.Models.LiveInstanceResult()), vm.LiveWalker.StatusText);
     }
 
     private static MainWindowViewModel BuildVm(IAobMakerBridge? aobMaker, IDumpService? dump = null)

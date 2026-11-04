@@ -2100,7 +2100,8 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
     uintptr_t cdo = 0, cdoCls = 0, skipped = 0, skippedCls = 0;
     uintptr_t subLive = 0, subLiveCls = 0;   // preferExact: the first live object of a subclass, held for the end
     // For the closing line: a pick that says "nothing" while destroyed objects were passed over, or a misread garbage
-    // flag that passed over live ones, must show in the log -- one number, not a line per object.
+    // flag that passed over live ones, must show in the log -- one number, not a line per object. Once a subclass's
+    // object is held, only objects of the class itself are looked at, so the count stops for the rest.
     int32_t garbagePassed = 0;
     bool exactPassed = false;   // an object of the class itself was passed over (a Debug Camera's, or destroyed)
     auto destroyedNote = [&] {

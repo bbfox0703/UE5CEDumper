@@ -309,7 +309,7 @@ public class AobMakerWordingTests
         Same(InvokePickText.KeyTargetByClass, InvokePickText.TargetByClassText("CheatManager"), "CheatManager");
         // [MAINWINDOW-NAVIGATE-EXACT-NAME] a Locate with nothing live to search from
         Same(UE5DumpUI.ViewModels.MainWindowViewModel.KeyNoLiveInstanceToLocate,
-             UE5DumpUI.ViewModels.MainWindowViewModel.NoLiveInstanceToLocateText("PlayerController", "GWorld"),
+             UE5DumpUI.ViewModels.MainWindowViewModel.NoLiveInstanceToLocateText("PlayerController", "GWorld", new UE5DumpUI.Models.LiveInstanceResult()),
              "PlayerController", "GWorld");
         var subclassPick = new UE5DumpUI.Models.LiveInstanceResult
         {
@@ -325,9 +325,12 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.MainWindowViewModel.KeyNoLiveInstanceToLocateLegacy,
              UE5DumpUI.ViewModels.MainWindowViewModel.NoLiveInstanceToLocateText("Character", "GWorld", legacyMiss),
              "Character", "GWorld");
+        Same(UE5DumpUI.ViewModels.MainWindowViewModel.KeyLocating,
+             UE5DumpUI.ViewModels.MainWindowViewModel.LocateStatusText(subclassPick, "PlayerController", "GWorld"),
+             "BP_PC_C_0", "BP_PC_C", "GWorld");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(124, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(125, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

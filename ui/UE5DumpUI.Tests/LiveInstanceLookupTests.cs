@@ -183,6 +183,18 @@ public class LiveInstanceLookupTests
     }
 
     [Fact]
+    public void A_Locate_s_top_bar_line_names_its_object_and_says_its_pick()
+    {
+        var plain = UE5DumpUI.ViewModels.MainWindowViewModel.LocateStatusText(
+            Pick("BP_Hero_C_0", "BP_Hero_C"), "Character", "GWorld");
+        Assert.Equal("Locating BP_Hero_C_0 (BP_Hero_C) in GWorld.", plain);
+        var dcc = Pick("CheatManager_1", "CheatManager", UE5DumpUI.Models.LiveInstanceResult.PickDebugCameraOwned);
+        Assert.Equal("Locating CheatManager_1 (CheatManager) in GameEngine. "
+                     + UE5DumpUI.Helpers.InvokePickText.DebugCameraOwnedText("CheatManager_1", "CheatManager"),
+                     UE5DumpUI.ViewModels.MainWindowViewModel.LocateStatusText(dcc, "CheatManager", "GameEngine"));
+    }
+
+    [Fact]
     public void An_older_DLL_s_answer_says_its_limits_hit_or_miss()
     {
         // Review 2: its miss said "no live instance of X or of a subclass", and no subclass had been looked for.
