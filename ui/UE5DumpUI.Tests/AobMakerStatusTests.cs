@@ -237,12 +237,61 @@ public class AobMakerStatusTests
         Assert.Contains(nameof(AobMakerStatus.DllTip), raised);
     }
 
+    // ---- [PROPSEARCH-FREEZE-STALE-AOBMAKER] RefreshAsync: the answer a caller about to act on it should use ----
+
+    [Fact]
+    public async Task Refresh_joins_the_probe_in_flight_instead_of_trusting_the_answer_from_before_it()
+    {
+        // The cooldown starts when a probe STARTS, so inside it the flag still says what was true before the probe.
+        var gate = new TaskCompletionSource<bool>();
+        var bridge = new BridgeWithoutAttachQuery { CheckGate = gate.Task };
+        var status = new AobMakerStatus(bridge);
+        status.Apply(true);                                  // what was true before Cheat Engine closed
+
+        status.TryProbe();                                   // a tab switch: its probe waits on the pipe
+        var answer = status.RefreshAsync();
+        Assert.False(answer.IsCompleted);
+        gate.SetResult(false);
+
+        Assert.False(await answer);
+        Assert.False(status.IsAvailable);
+        Assert.Equal(1, bridge.CheckCalls);
+    }
+
+    [Fact]
+    public async Task Refresh_inside_the_cooldown_answers_the_current_flag_without_a_connect()
+    {
+        var bridge = new BridgeWithoutAttachQuery();
+        var status = new AobMakerStatus(bridge);
+        Assert.True(await status.RefreshAsync());
+        status.Apply(false);                                 // a push since then found the pipe gone
+
+        Assert.False(await status.RefreshAsync());
+        Assert.Equal(1, bridge.CheckCalls);
+    }
+
+    [Fact]
+    public async Task Refresh_without_a_bridge_says_unavailable()
+    {
+        var status = new AobMakerStatus(null);
+        status.Apply(true);
+        Assert.False(await status.RefreshAsync());
+        Assert.False(status.IsAvailable);
+    }
+
     private sealed class BridgeWithoutAttachQuery : IAobMakerBridge
     {
         public bool ThrowOnCheck { get; init; }
+        /// <summary>When set, a probe waits for this answer: the 2 s pipe connect with Cheat Engine absent.</summary>
+        public Task<bool>? CheckGate { get; init; }
+        public int CheckCalls { get; private set; }
         public bool IsAvailable => true;
         public Task<bool> CheckAvailabilityAsync(CancellationToken ct = default)
-            => ThrowOnCheck ? throw new IOException("pipe broke") : Task.FromResult(true);
+        {
+            CheckCalls++;
+            if (ThrowOnCheck) throw new IOException("pipe broke");
+            return CheckGate ?? Task.FromResult(true);
+        }
         public Task<bool> NavigateHexViewAsync(string hexAddress, CancellationToken ct = default) => Task.FromResult(true);
         public Task<bool> NavigateDisassemblerAsync(string hexAddress, CancellationToken ct = default) => Task.FromResult(true);
         public Task<bool> CreateAAScriptAsync(string description, string script, bool autoActivate = true,

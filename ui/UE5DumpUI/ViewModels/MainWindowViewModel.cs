@@ -809,14 +809,25 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 IsAobMakerAvailable = Pointers.IsAobMakerAvailable;
         };
 
-        // Mirror the per-tab AOBMaker availability (LiveWalker + Pointers each
-        // probe on their own tab activation) into the always-visible top-toolbar
-        // chip so its state stays correct from any tab without a manual refresh.
+        // Mirror what each panel that keeps an AOBMaker flag of its own learns (it probes on its own tab activation)
+        // into the always-visible top-toolbar chip, and through the chip into AobMakerShared, so the chip and every
+        // panel that follows the shared status stay correct from any tab without a manual refresh.
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] A panel missing here leaves those stale: two were, until that row's review.
         IsAobMakerAvailable = _aobMaker?.IsAvailable ?? false;
         LiveWalker.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(LiveWalkerViewModel.IsAobMakerAvailable))
                 IsAobMakerAvailable = LiveWalker.IsAobMakerAvailable;
+        };
+        InterestingFunctions.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(InterestingFunctionsViewModel.IsAobMakerAvailable))
+                IsAobMakerAvailable = InterestingFunctions.IsAobMakerAvailable;
+        };
+        Teleport.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(TeleportViewModel.IsAobMakerAvailable))
+                IsAobMakerAvailable = Teleport.IsAobMakerAvailable;
         };
 
         // Wire Pointers Extra Scan -> refresh all panels after rescan results applied

@@ -74,28 +74,52 @@ public sealed partial class AobMakerStatus : ObservableObject
         NotifyReasonChanged();
     }
 
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] The probe still waiting on the pipe, if any. The cooldown starts when
+    /// a probe STARTS, so without this a caller inside it got the answer from before the probe: measured by review,
+    /// a Freeze clicked while a Search's probe waited opened its value dialog over a pipe that was already gone.</summary>
+    private Task<bool>? _probe;
+
     /// <summary>Probe the pipe now and publish the result.</summary>
-    public async Task<bool> ProbeAsync()
+    public Task<bool> ProbeAsync()
     {
         if (Bridge == null)
         {
             IsAvailable = false;
-            return false;
+            return Task.FromResult(false);
         }
         _lastProbe = DateTime.UtcNow;
+        return _probe = RunProbeAsync(Bridge);
+    }
+
+    private async Task<bool> RunProbeAsync(IAobMakerBridge bridge)
+    {
         bool ok;
-        try { ok = await Bridge.CheckAvailabilityAsync(); }
+        try { ok = await bridge.CheckAvailabilityAsync(); }
         catch (Exception) { ok = false; }
         IsAvailable = ok;
         NotifyReasonChanged();
         return ok;
     }
 
-    /// <summary>Probe unless one ran within <see cref="ProbeCooldown"/>. Fire-and-forget, for tab activation.</summary>
+    /// <summary>The answer a caller about to act on it should use: the probe in flight when there is one, the current
+    /// flag when a probe ran within <see cref="ProbeCooldown"/>, and otherwise a new probe.</summary>
+    public Task<bool> RefreshAsync()
+    {
+        if (Bridge == null)
+        {
+            IsAvailable = false;
+            return Task.FromResult(false);
+        }
+        if (_probe is { IsCompleted: false } inFlight) return inFlight;
+        if (DateTime.UtcNow - _lastProbe < ProbeCooldown) return Task.FromResult(IsAvailable);
+        return ProbeAsync();
+    }
+
+    /// <summary><see cref="RefreshAsync"/>, fire-and-forget, for tab activation.</summary>
     public void TryProbe()
     {
-        if (Bridge == null || DateTime.UtcNow - _lastProbe < ProbeCooldown) return;
-        _ = ProbeAsync();
+        if (Bridge == null) return;
+        _ = RefreshAsync();
     }
 
     /// <summary>

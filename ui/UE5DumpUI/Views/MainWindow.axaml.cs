@@ -546,25 +546,6 @@ public partial class MainWindow : Window
     }
 
     /// <summary>
-    /// Per-tab activation work:
-    /// 1. Stop Live Walker auto-refresh when the user switches away
-    ///    from Live Walker (no point polling while viewing other tabs).
-    /// 2. Refresh AOBMaker availability for tabs whose actions depend
-    ///    on the CE plugin. The re-check is fire-and-forget (cooldown-throttled where the
-    ///    panel VM supports it) so rapid tab switches don't stack 2s
-    ///    pipe-connect timeouts -- keeps the grayout state honest when
-    ///    the user starts/stops CE without blocking the UI thread.
-    /// </summary>
-    /// <remarks>
-    /// Routing is keyed on the selected <see cref="TabItem.Tag"/>, NOT its
-    /// position. Index-based routing here has silently drifted twice as tabs
-    /// were inserted into MainWindow.axaml (the Pointers re-check pointed at
-    /// the wrong index, and the autorefresh-stop assumed LiveWalker == 0).
-    /// The Tag travels with its TabItem, so reordering can't break this.
-    /// SelectedItem is the outer TabControl's selection, so inner
-    /// SelectionChanged events bubbling from child grids are harmless.
-    /// </remarks>
-    /// <summary>
     /// (Re)subscribe to the ObjectTree sub-VM's PropertyChanged so collapse
     /// toggles resize the left grid column. Resubscribes if the DataContext is
     /// swapped (it normally isn't), and syncs the column to the current state.
@@ -677,6 +658,26 @@ public partial class MainWindow : Window
         return true;
     }
 
+    /// <summary>
+    /// Per-tab activation work:
+    /// 1. Stop Live Walker auto-refresh when the user switches away
+    ///    from Live Walker (no point polling while viewing other tabs).
+    /// 2. Refresh AOBMaker availability for tabs whose actions depend
+    ///    on the CE plugin. The re-check is fire-and-forget (cooldown-throttled where the
+    ///    panel VM supports it) so rapid tab switches don't stack 2s
+    ///    pipe-connect timeouts -- keeps the grayout state honest when
+    ///    the user starts/stops CE without blocking the UI thread.
+    ///    A panel whose tab has no Tag probes from its own view instead.
+    /// </summary>
+    /// <remarks>
+    /// Routing is keyed on the selected <see cref="TabItem.Tag"/>, NOT its
+    /// position. Index-based routing here has silently drifted twice as tabs
+    /// were inserted into MainWindow.axaml (the Pointers re-check pointed at
+    /// the wrong index, and the autorefresh-stop assumed LiveWalker == 0).
+    /// The Tag travels with its TabItem, so reordering can't break this.
+    /// SelectedItem is the outer TabControl's selection, so inner
+    /// SelectionChanged events bubbling from child grids are harmless.
+    /// </remarks>
     private void MainTabs_SelectionChanged(object? sender, SelectionChangedEventArgs e)
     {
         if (sender is not TabControl tabs) return;

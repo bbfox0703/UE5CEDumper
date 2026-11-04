@@ -218,13 +218,29 @@ public class MainWindowInjectHelperTests
         // is what stops the next panel from going stale the same way.
         var bridge = new RecordingBridge { NextAvailability = true };
         var vm = BuildVm(aobMaker: bridge);
-        await vm.AobMakerShared.ProbeAsync();
-        Assert.True(vm.PropertySearch.IsAobMakerAvailable);
-
-        bridge.NextAvailability = false;
         await vm.PropertySearch.RefreshAobMakerAvailabilityAsync();   // what Property Search learns, everyone learns
-        Assert.False(vm.AobMakerShared.IsAvailable);
-        Assert.False(vm.IsAobMakerAvailable);
+        Assert.True(vm.AobMakerShared.IsAvailable);
+        Assert.True(vm.IsAobMakerAvailable);
+
+        // A probe started from elsewhere (ProbeAsync, not the cooldown-bound refresh: they share one cooldown now).
+        bridge.NextAvailability = false;
+        await vm.AobMakerShared.ProbeAsync();
+        Assert.False(vm.PropertySearch.IsAobMakerAvailable);
+        Assert.Equal(2, bridge.CheckCalls);
+    }
+
+    [Fact]
+    public async Task PropertySearchAndTheSharedStatus_KeepOneCooldown()
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 1, INFO 2. Two cooldowns cost a second pipe connect -- 2 s of the
+        // bridge's lock with CE absent -- when a Search was followed by a switch to a tab that probes the shared status.
+        var bridge = new RecordingBridge { NextAvailability = true };
+        var vm = BuildVm(aobMaker: bridge);
+        await vm.PropertySearch.RefreshAobMakerAvailabilityAsync();
+        vm.AobMakerShared.TryProbe();
+        await vm.AobMakerShared.RefreshAsync();
+
+        Assert.Equal(1, bridge.CheckCalls);
     }
 
     [Fact]

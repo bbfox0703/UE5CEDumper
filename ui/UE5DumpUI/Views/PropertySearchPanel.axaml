@@ -56,19 +56,20 @@
               Classes="accent" Padding="12,4"/>
       </StackPanel>
 
-      <!-- Docked Right (nothing fills the row) so it keeps its full width; it is short. -->
+      <!-- Docked Right. Nothing fills this row (LastChildFill off): as the last child the note
+           would otherwise fill it and sit straight after the Search button. -->
       <TextBlock Text="{Binding ClassFilterNote}" DockPanel.Dock="Right"
                  IsVisible="{Binding ClassFilterNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                  Foreground="#E0A050" VerticalAlignment="Center" FontSize="12" Margin="8,0,0,0"/>
     </DockPanel>
 
-    <!-- [PROPSEARCH-STATUS-CLIPPED] The status line has a row of its own and wraps there. The
-         tail of a long status is this panel's honesty clause ("cap reached, more exist unheld";
-         a Force armed on nothing "applies as soon as one spawns"; the templates-only note). As
+    <!-- [PROPSEARCH-STATUS-CLIPPED] The status line has a row of its own and wraps there. This
+         panel puts a status's qualifier at its END (a capped count, a hold armed on nothing). As
          the search row's fill child it got what the controls left — measured on build 3682 in
-         a 1389-px window, the armed-on-nothing message ended "... CheatManager or..." — and its
+         a 1389-px window, a Force armed on nothing ended "... CheatManager or..." — and its
          tooltip ([FORCESTATUSCLIP-2026-08-22]) made the tail recoverable only by a hover nobody
-         knows to make. Beside the controls, wrapping would instead grow the search row. -->
+         knows to make. Beside the controls, wrapping would instead grow the search row. Not the
+         outer DockPanel's last child, which would fill and ignore its Dock. -->
     <TextBlock DockPanel.Dock="Top" Text="{Binding StatusText}"
                Foreground="#AAB8D0" FontSize="13" FontFamily="Consolas, Menlo, monospace"
                TextWrapping="Wrap" Margin="0,0,0,6"
