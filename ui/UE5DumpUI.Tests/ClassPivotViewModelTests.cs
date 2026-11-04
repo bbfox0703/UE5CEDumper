@@ -56,6 +56,17 @@ public class ClassPivotViewModelTests : IDisposable
         await _store.FinalizeSnapshotAsync(id, 3, 6, ct);
     }
 
+    /// <summary>[CLASSPIVOT-DT-CONNECT-RACE] Connect, then let the snapshot-list refresh the connect starts, and the
+    /// class load it ends with, settle. The refresh runs on the thread pool: a test that went straight on raced it, and
+    /// when it landed after a DataTable was picked, its class reload replaced PendingLoad and, with a class still picked
+    /// from a snapshot source, cleared the table's fields (CI, and 4 of 6 runs of one such test alone).</summary>
+    private static async Task ConnectAsync(ClassPivotViewModel vm)
+    {
+        vm.SetEngineState(new EngineState());
+        await vm.PendingRefresh!;
+        await SettleLoadsAsync(vm);
+    }
+
     /// <summary>[R7-X1] Await until PendingLoad stops changing -- ClassPivotViewModel.SettleLoadsAsync's rule. A load
     /// can start the next one, so a fixed count of awaits races the chain.</summary>
     private static async Task SettleLoadsAsync(ClassPivotViewModel vm)
@@ -578,7 +589,7 @@ public class ClassPivotViewModelTests : IDisposable
     public async Task DataTableSource_AfterADisconnect_AsksNothing()
     {
         var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, new DisconnectedDump());
-        vm.SetEngineState(new EngineState());
+        await ConnectAsync(vm);
         vm.ClearOnDisconnect();
 
         vm.SelectedSource = "DataTable";
@@ -617,7 +628,7 @@ public class ClassPivotViewModelTests : IDisposable
     public async Task DataTableRun_KeepsTheTruncationNotice_ItsLoadPrinted()
     {
         var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, new TruncatedDtDumpService());
-        vm.SetEngineState(new EngineState());   // connected: the source lists DataTables
+        await ConnectAsync(vm);   // connected: the source lists DataTables
         vm.SelectedSource = "DataTable";
         await vm.PendingLoad!;
         vm.SelectedDataTable = vm.DataTables[0];
@@ -670,7 +681,7 @@ public class ClassPivotViewModelTests : IDisposable
     {
         var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, new DtDumpService());
 
-        vm.SetEngineState(new EngineState());   // connected: the source lists DataTables
+        await ConnectAsync(vm);   // connected: the source lists DataTables
         vm.SelectedSource = "DataTable";   // empty list → triggers a DataTable refresh
         await vm.PendingLoad!;
 
@@ -684,7 +695,7 @@ public class ClassPivotViewModelTests : IDisposable
     public async Task DataTableSource_SelectTable_LoadsFields_AndRunProjectsRows()
     {
         var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, new DtDumpService());
-        vm.SetEngineState(new EngineState());   // connected: the source lists DataTables
+        await ConnectAsync(vm);   // connected: the source lists DataTables
         vm.SelectedSource = "DataTable";
         await vm.PendingLoad!;
 
@@ -739,7 +750,7 @@ public class ClassPivotViewModelTests : IDisposable
         // cleared. Bumping at entry makes the null path supersede the in-flight walk.
         var dump = new GatedDtDumpService();
         var vm = new ClassPivotViewModel(_store, new MockLoggingService(), null, dump);
-        vm.SetEngineState(new EngineState());   // connected: the source lists DataTables
+        await ConnectAsync(vm);   // connected: the source lists DataTables
         vm.SelectedSource = "DataTable";
         await vm.PendingLoad!;   // FindInstances → DataTables populated
 
@@ -1521,7 +1532,7 @@ public class ClassPivotViewModelTests : IDisposable
         var vm = new ClassPivotViewModel(store, new MockLoggingService(), null, new DtDumpService());
         var arrayFieldLoad = await PickArrayClassAAsync(vm);
 
-        vm.SetEngineState(new EngineState());   // connected: the source lists DataTables
+        await ConnectAsync(vm);   // connected: the source lists DataTables
         vm.SelectedSource = "DataTable";                            // lists the DataTables
         await SettleLoadsAsync(vm);
         vm.SelectedDataTable = vm.DataTables[0];
@@ -1638,7 +1649,7 @@ public class ClassPivotViewModelTests : IDisposable
         var vm = new ClassPivotViewModel(store, new MockLoggingService(), null, new DtDumpService());
         await vm.RefreshAsync();
         await SettleLoadsAsync(vm);
-        vm.SetEngineState(new EngineState());   // connected: the source lists DataTables
+        await ConnectAsync(vm);   // connected: the source lists DataTables
         vm.SelectedSource = "DataTable";
         await SettleLoadsAsync(vm);
         vm.SelectedDataTable = vm.DataTables[0];
@@ -1847,7 +1858,7 @@ public class ClassPivotViewModelTests : IDisposable
         await vm.PendingLoad!;   // and any field load the class load started
         Assert.Equal("G-OLD", vm.SelectedSnapshot!.GameSessionId);
 
-        vm.SetEngineState(new EngineState());   // connected: the source lists DataTables
+        await ConnectAsync(vm);   // connected: the source lists DataTables
         vm.SelectedSource = "DataTable";
         await vm.PendingLoad!;
         vm.SelectedDataTable = vm.DataTables[0];
