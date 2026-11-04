@@ -437,7 +437,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         IsAobMakerAvailable = available;
         OnPropertyChanged(nameof(AobMakerNote));
+        AobMakerProbed?.Invoke(available);
     }
+
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] Every answer <see cref="ApplyAobMakerProbe"/> applies, changed or not,
+    /// for the toolbar chip: the flag raises only on a change, so a probe that confirmed it reached nobody else.</summary>
+    public event Action<bool>? AobMakerProbed;
 
     // AOB Symbol toggle for CE XML export. The AOB anchor only makes sense when
     // the Live Walker root is GWorld (the AOB symbol resolves GWorld); from any

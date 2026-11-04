@@ -415,7 +415,13 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     {
         IsAobMakerAvailable = available;
         OnPropertyChanged(nameof(AobMakerNote));
+        AobMakerProbed?.Invoke(available);
     }
+
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] Every answer <see cref="ApplyAobMakerProbe"/> applies, changed or not,
+    /// for the toolbar chip: the flag raises only on a change, and it starts "up", so the first probe after Cheat
+    /// Engine came up reached nobody else.</summary>
+    public event Action<bool>? AobMakerProbed;
 
     // Filter inputs all funnel into a single ApplyFilter pass. Each
     // partial method fires once per ObservableProperty change.

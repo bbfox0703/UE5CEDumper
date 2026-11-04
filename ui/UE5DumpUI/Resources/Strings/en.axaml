@@ -1008,6 +1008,8 @@
     <sys:String x:Key="str.PropertySearch.TypeHint">Type filter (start typing — e.g. opt, weak)</sys:String>
     <sys:String x:Key="str.PropertySearch.ResultFilterLabel">Filter results:</sys:String>
     <sys:String x:Key="str.PropertySearch.ResultFilterHint">Refine current results (no re-query)</sys:String>
+    <!-- [PROPSEARCH-FREEZE-STALE-AOBMAKER] {0} = why the plugin is unreachable (str.AobMaker.Unavailable.*) -->
+    <sys:String x:Key="str.PropertySearch.FreezeNotReachable">Freeze script not sent: {0}</sys:String>
     <sys:String x:Key="str.PropertySearch.Search">Search</sys:String>
     <sys:String x:Key="str.PropertySearch.GameOnly">Game classes only</sys:String>
     <sys:String x:Key="str.PropertySearch.Deep">Deep (structs/containers)</sys:String>

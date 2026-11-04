@@ -241,17 +241,23 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         IsAobMakerAvailable = available;
         OnPropertyChanged(nameof(AobMakerNote));
+        AobMakerProbed?.Invoke(available);
     }
+
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] Every answer <see cref="ApplyAobMakerProbe"/> applies, changed or not,
+    /// for the toolbar chip: the flag raises only on a change, so a probe that confirmed it reached nobody else.</summary>
+    public event Action<bool>? AobMakerProbed;
 
     /// <summary>Probe AOBMaker availability (the delivery channel for trainer export).</summary>
     public async Task CheckAobMakerAsync()
     {
         if (_aobMaker == null) return;
-        try { IsAobMakerAvailable = await _aobMaker.CheckAvailabilityAsync(); }
-        catch { IsAobMakerAvailable = false; }
+        bool ok;
+        try { ok = await _aobMaker.CheckAvailabilityAsync(); }
+        catch { ok = false; }
         // [W1-PIPEBUSY-STATUS] The note also depends on WHY it failed, which can change (absent -> busy) while
-        // IsAobMakerAvailable stays false and so raises nothing.
-        OnPropertyChanged(nameof(AobMakerNote));
+        // IsAobMakerAvailable stays false and so raises nothing: ApplyAobMakerProbe repaints it regardless.
+        ApplyAobMakerProbe(ok);
     }
 
     internal const string KeyTrainerPushed = "str.TP.Trainer.Pushed";

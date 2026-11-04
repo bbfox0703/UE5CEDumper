@@ -238,6 +238,10 @@ public class AobMakerWordingTests
         Same(DebugCameraText.KeyNoLiveCheatManager, DebugCameraText.NoLiveCheatManagerText);
         Same(DebugCameraText.KeyForceFailed, DebugCameraText.ForceFailed(wantOn: true), "ON");
         Same(DebugCameraText.KeyStateUnknown, DebugCameraText.StateUnknownText);
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] a Freeze whose push found the plugin unreachable
+        Same(UE5DumpUI.ViewModels.PropertySearchViewModel.KeyFreezeNotReachable,
+             UE5DumpUI.ViewModels.PropertySearchViewModel.FreezeNotReachableText(null),
+             AobMakerUnavailable.Text(null));
         // [LISTINSTANCES-KEEPS-TEMPLATES] a Force armed on nothing because only templates of the class exist
         Same(ForceText.KeyTemplatesOnly, ForceText.TemplatesOnlyNote("CharacterMovementComponent", 3),
              "CharacterMovementComponent", 3);
@@ -301,7 +305,7 @@ public class AobMakerWordingTests
         Same(InvokePickText.KeyTargetByClass, InvokePickText.TargetByClassText("CheatManager"), "CheatManager");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(117, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(118, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

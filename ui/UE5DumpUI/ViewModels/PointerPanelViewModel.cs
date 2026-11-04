@@ -166,7 +166,12 @@ public partial class PointerPanelViewModel : ViewModelBase
     {
         IsAobMakerAvailable = available;
         NotifyAobMakerProperties();
+        AobMakerProbed?.Invoke(available);
     }
+
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] Every answer <see cref="ApplyAobMakerProbe"/> applies, changed or not,
+    /// for the toolbar chip: the flag raises only on a change, so a probe that confirmed it reached nobody else.</summary>
+    public event Action<bool>? AobMakerProbed;
 
     // --- Extra Scan state ---
     [ObservableProperty] private bool _isScanning;
@@ -742,12 +747,10 @@ public partial class PointerPanelViewModel : ViewModelBase
     public async Task CheckAobMakerAsync()
     {
         if (_aobMaker == null) return;
-        try
-        {
-            IsAobMakerAvailable = await _aobMaker.CheckAvailabilityAsync();
-            NotifyAobMakerProperties();
-        }
-        catch { IsAobMakerAvailable = false; OnPropertyChanged(nameof(AobMakerOfflineText)); }
+        bool ok;
+        try { ok = await _aobMaker.CheckAvailabilityAsync(); }
+        catch { ok = false; }
+        ApplyAobMakerProbe(ok);
     }
 
     /// <summary>Hide the stale pointer block + all HasData-gated badges/actions on

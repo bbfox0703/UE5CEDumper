@@ -371,10 +371,20 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             PublishAobMaker(_aobMaker?.IsAvailable ?? false);
         }
 
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 2: a push that found the pipe gone -- inside the cooldown, or with
+        // Cheat Engine closed while the value dialog was open -- was reported as a rejection.
         StatusText = sent
             ? $"Freeze script created in CE: {description}"
-            : "Freeze script not sent — AOBMaker rejected the request";
+            : IsAobMakerAvailable
+                ? "Freeze script not sent — AOBMaker rejected the request"
+                : FreezeNotReachableText(_aobMaker);
     }
+
+    internal const string KeyFreezeNotReachable = "str.PropertySearch.FreezeNotReachable";
+
+    /// <summary>A Freeze whose push found the plugin unreachable, with the reason the bridge recorded.</summary>
+    internal static string FreezeNotReachableText(IAobMakerBridge? bridge)
+        => AobMakerStatus.Say(KeyFreezeNotReachable, "Freeze script not sent: {0}", AobMakerUnavailable.Text(bridge));
 
     /// <summary>
     /// Map one search-result row + the dialog's validated literal onto the generator's

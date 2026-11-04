@@ -20,7 +20,14 @@ public sealed partial class AobMakerStatus : ObservableObject
     /// <summary>A tab switch can fire several probes in a row; each one is a pipe connect that waits up to 2 s when
     /// Cheat Engine is absent.</summary>
     private static readonly TimeSpan ProbeCooldown = TimeSpan.FromSeconds(5);
-    private DateTime _lastProbe = DateTime.MinValue;
+
+    /// <summary><see cref="Environment.TickCount64"/> when the last probe started; null before the first. A monotonic
+    /// clock: on the wall clock a step back (NTP, or by hand) made the time since the last probe negative, and nothing
+    /// probed again until the clock caught up.</summary>
+    private long? _lastProbeTick;
+
+    private bool InCooldown => _lastProbeTick is long t
+                               && Environment.TickCount64 - t < (long)ProbeCooldown.TotalMilliseconds;
 
     public AobMakerStatus(IAobMakerBridge? bridge) => Bridge = bridge;
 
@@ -75,11 +82,13 @@ public sealed partial class AobMakerStatus : ObservableObject
     }
 
     /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] The probe still waiting on the pipe, if any. The cooldown starts when
-    /// a probe STARTS, so without this a caller inside it got the answer from before the probe: measured by review,
-    /// a Freeze clicked while a Search's probe waited opened its value dialog over a pipe that was already gone.</summary>
+    /// a probe STARTS, so without this a caller inside it got the answer from before the probe: found by that row's
+    /// review 1 and reproduced by a test, a Freeze clicked while a Search's probe waited opened its value dialog over
+    /// a pipe that was already gone.</summary>
     private Task<bool>? _probe;
 
-    /// <summary>Probe the pipe now and publish the result.</summary>
+    /// <summary>Probe the pipe now and publish the result. A probe already waiting on the pipe answers this caller
+    /// too: a second connect would queue behind it on the bridge and cost up to 2 s more with Cheat Engine absent.</summary>
     public Task<bool> ProbeAsync()
     {
         if (Bridge == null)
@@ -87,7 +96,8 @@ public sealed partial class AobMakerStatus : ObservableObject
             IsAvailable = false;
             return Task.FromResult(false);
         }
-        _lastProbe = DateTime.UtcNow;
+        if (_probe is { IsCompleted: false } inFlight) return inFlight;
+        _lastProbeTick = Environment.TickCount64;
         return _probe = RunProbeAsync(Bridge);
     }
 
@@ -102,7 +112,7 @@ public sealed partial class AobMakerStatus : ObservableObject
     }
 
     /// <summary>The answer a caller about to act on it should use: the probe in flight when there is one, the current
-    /// flag when a probe ran within <see cref="ProbeCooldown"/>, and otherwise a new probe.</summary>
+    /// flag when a probe started within <see cref="ProbeCooldown"/>, and otherwise a new probe.</summary>
     public Task<bool> RefreshAsync()
     {
         if (Bridge == null)
@@ -111,7 +121,7 @@ public sealed partial class AobMakerStatus : ObservableObject
             return Task.FromResult(false);
         }
         if (_probe is { IsCompleted: false } inFlight) return inFlight;
-        if (DateTime.UtcNow - _lastProbe < ProbeCooldown) return Task.FromResult(IsAvailable);
+        if (InCooldown) return Task.FromResult(IsAvailable);
         return ProbeAsync();
     }
 
