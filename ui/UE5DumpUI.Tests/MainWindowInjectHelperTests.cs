@@ -228,6 +228,25 @@ public class MainWindowInjectHelperTests
     }
 
     [Fact]
+    public async Task TeleportsAndInterestingFunctionsProbes_ReachTheToolbarAndPropertySearch()
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 1, F2. These two panels keep a flag of their own and probe on their
+        // own tab activation, but only Live Walker's and Pointers' flags were mirrored into the toolbar chip -- so what
+        // they learned reached neither the chip nor anything that follows the shared status.
+        var bridge = new RecordingBridge { NextAvailability = true };
+        var vm = BuildVm(aobMaker: bridge);
+        await vm.Teleport.CheckAobMakerAsync();
+        Assert.True(vm.IsAobMakerAvailable);
+        Assert.True(vm.PropertySearch.IsAobMakerAvailable);
+
+        await vm.InterestingFunctions.CheckAobMakerAsync();   // its own flag learns "yes" too...
+        bridge.NextAvailability = false;
+        await vm.InterestingFunctions.CheckAobMakerAsync();   // ...and then that the plugin is gone
+        Assert.False(vm.IsAobMakerAvailable);
+        Assert.False(vm.PropertySearch.IsAobMakerAvailable);
+    }
+
+    [Fact]
     public async Task LiveWalkerProbe_ReasonChangesWhileOffline_TheNoteRepaints()
     {
         // [R7-S12] ...and Live Walker's own tab-activation probe had the same false -> false gap.

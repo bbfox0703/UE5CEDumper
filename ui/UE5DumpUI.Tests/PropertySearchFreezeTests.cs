@@ -1,5 +1,6 @@
 using System.Text.RegularExpressions;
 using UE5DumpUI.Core;
+using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using UE5DumpUI.ViewModels;
@@ -187,6 +188,77 @@ public class PropertySearchFreezeTests
     }
 
     [Fact]
+    public async Task Freeze_WhileTheSearchProbeIsInFlight_WaitsForItsAnswer()
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 1, F1. The probe sets its cooldown when it STARTS, so a Freeze
+        // clicked while the Search's probe still waits on the pipe skipped its own probe and trusted the old "yes":
+        // the value dialog opened over a dead pipe and the push failed with the wrong reason.
+        var gate = new TaskCompletionSource<bool>();
+        var bridge = new RecordingBridge { CheckGate = gate.Task };
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge) { SearchQuery = "Health" };
+        vm.IsAobMakerAvailable = true;                       // what an earlier probe said, before CE closed
+        var prompted = false;
+        vm.FreezeValuePrompt = _ => { prompted = true; return Task.FromResult<string?>("1"); };
+
+        await vm.SearchCommand.ExecuteAsync(null);           // its probe now waits on the pipe
+        var freeze = vm.CopyFreezeScriptCommand.ExecuteAsync(NewMatch("FloatProperty"));
+        Assert.False(prompted);                              // the click waits for that answer...
+        gate.SetResult(false);
+        await freeze;
+
+        Assert.False(prompted);                              // ...which says the plugin is gone
+        Assert.Equal(0, bridge.CreateAaCalls);
+        Assert.Equal(1, bridge.CheckCalls);
+        Assert.Contains("not reachable", vm.StatusText);
+    }
+
+    [Fact]
+    public void TheFlagStartsFromTheSharedStatus_NotTheBridgesCache()
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 1, INFO 1. The panel follows CHANGES of the shared status, so a
+        // start from anything else stays wrong until the status changes again.
+        var bridge = new RecordingBridge();                  // never probed: its cache says false
+        var status = new AobMakerStatus(bridge);
+        status.Apply(true);
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge, aobStatus: status);
+
+        Assert.True(vm.IsAobMakerAvailable);
+    }
+
+    [Fact]
+    public async Task WhatTheSearchProbeAndAFreezePushLearn_ReachTheSharedStatus()
+    {
+        var bridge = new RecordingBridge { NextAvailability = true };
+        var status = new AobMakerStatus(bridge);
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge, aobStatus: status)
+        {
+            SearchQuery = "Health",
+            FreezeValuePrompt = _ => Task.FromResult<string?>("1"),
+        };
+
+        await vm.SearchCommand.ExecuteAsync(null);
+        Assert.True(status.IsAvailable);
+
+        bridge.AvailabilityAfterCreate = false;              // the push finds the pipe gone
+        await vm.CopyFreezeScriptCommand.ExecuteAsync(NewMatch("FloatProperty"));
+        Assert.Equal(1, bridge.CreateAaCalls);
+        Assert.False(status.IsAvailable);
+        Assert.False(vm.IsAobMakerAvailable);
+    }
+
+    [Fact]
+    public void ADisposedPanelNoLongerFollowsTheSharedStatus()
+    {
+        var status = new AobMakerStatus(new RecordingBridge());
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), new RecordingBridge(), aobStatus: status);
+        vm.Dispose();
+
+        status.Apply(true);
+
+        Assert.False(vm.IsAobMakerAvailable);
+    }
+
+    [Fact]
     public void FreezeUnavailableTooltip_ReflectsAvailabilityFlag()
     {
         var bridge = new RecordingBridge { NextAvailability = false };
@@ -291,6 +363,11 @@ public class PropertySearchFreezeTests
     {
         public bool NextAvailability { get; set; }
         public bool NextCreateResult { get; set; }
+        /// <summary>When set, a probe waits for this answer instead of <see cref="NextAvailability"/>: the 2 s pipe
+        /// connect with Cheat Engine absent.</summary>
+        public Task<bool>? CheckGate { get; set; }
+        /// <summary>When set, a push leaves the bridge this available (a push that finds the pipe gone).</summary>
+        public bool? AvailabilityAfterCreate { get; set; }
         public int CheckCalls { get; private set; }
         public int CreateAaCalls { get; private set; }
         public string LastDescription { get; private set; } = "";
@@ -298,11 +375,12 @@ public class PropertySearchFreezeTests
 
         public bool IsAvailable { get; private set; }
 
-        public Task<bool> CheckAvailabilityAsync(CancellationToken ct = default)
+        public async Task<bool> CheckAvailabilityAsync(CancellationToken ct = default)
         {
             CheckCalls++;
-            IsAvailable = NextAvailability;
-            return Task.FromResult(NextAvailability);
+            var answer = CheckGate is null ? NextAvailability : await CheckGate;
+            IsAvailable = answer;
+            return answer;
         }
 
         public Task<bool> CreateAAScriptAsync(string description, string script,
@@ -311,6 +389,7 @@ public class PropertySearchFreezeTests
             CreateAaCalls++;
             LastDescription = description;
             LastScript = script;
+            if (AvailabilityAfterCreate is bool a) IsAvailable = a;
             return Task.FromResult(NextCreateResult);
         }
 

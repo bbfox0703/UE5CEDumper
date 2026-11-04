@@ -49,6 +49,24 @@ public class PropertySearchStatusRowTests
         var parent = status.Parent!;
         Assert.Equal("DockPanel", parent.Name.LocalName);
         Assert.Equal("UserControl", parent.Parent!.Name.LocalName);
+        // The outer DockPanel's last child fills what is left and ignores its Dock: there the status would be the grid.
+        Assert.NotSame(status, parent.Elements().Last());
+        // An empty status takes no row.
+        Assert.Equal("{Binding StatusText, Converter={x:Static StringConverters.IsNotNullOrEmpty}}",
+                     Attr(status, "IsVisible"));
+    }
+
+    [Fact]
+    public void TheClassFilterNoteStaysDockedRight()
+    {
+        // With the status gone from the search row, the note is that row's last child; with LastChildFill on it would
+        // fill the row and sit left, straight after the Search button.
+        var doc = XDocument.Load(RepoFile("ui/UE5DumpUI/Views/PropertySearchPanel.axaml"));
+        var note = Assert.Single(doc.Descendants(),
+            e => e.Name.LocalName == "TextBlock" && Attr(e, "Text") == "{Binding ClassFilterNote}");
+        Assert.Equal("Right", Attr(note, "DockPanel.Dock"));
+        Assert.Equal("DockPanel", note.Parent!.Name.LocalName);
+        Assert.Equal("False", Attr(note.Parent, "LastChildFill"));
     }
 
     [Fact]
