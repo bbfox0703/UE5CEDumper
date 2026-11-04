@@ -2477,6 +2477,54 @@ public class DumpServiceTests
     public void TheTraceReadersRunOnTheBulkLane(string cmd, bool bulk)
         => Assert.Equal(bulk, LaneRoutingPipeClient.IsBulk(cmd));
 
+    // ---- [MAINWINDOW-NAVIGATE-EXACT-NAME] find_live_instance ----
+
+    [Fact]
+    public async Task FindLiveInstance_SendsTheClass_AndReadsTheObject()
+    {
+        var pipe = new MockPipeClient();
+        JsonObject? sent = null;
+        pipe.SetHandler(req =>
+        {
+            sent = req;
+            return new JsonObject
+            {
+                ["ok"] = true, ["pick"] = "live", ["scanned"] = 24530, ["addr"] = "0x2A0", ["name"] = "BP_PC_C_0",
+                ["class"] = "BP_PC_C", ["class_addr"] = "0x1F0",
+            };
+        });
+        var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
+
+        var r = await dump.FindLiveInstanceAsync("PlayerController", TestContext.Current.CancellationToken);
+
+        Assert.Equal("find_live_instance", sent!["cmd"]!.GetValue<string>());
+        Assert.Equal("PlayerController", sent["class_name"]!.GetValue<string>());
+        Assert.True(r.Found);
+        Assert.Equal("0x2A0", r.Address);
+        Assert.Equal("BP_PC_C", r.ClassName);          // a subclass of the class asked for
+        Assert.Equal("live", r.Pick);
+        Assert.Equal(24530, r.Scanned);
+    }
+
+    [Fact]
+    public async Task FindLiveInstance_WithNothingLive_IsNotFound()
+    {
+        var pipe = new MockPipeClient();
+        pipe.SetHandler(_ => new JsonObject { ["ok"] = true, ["pick"] = "none", ["scanned"] = 100 });
+        var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
+
+        var r = await dump.FindLiveInstanceAsync("CheatManager", TestContext.Current.CancellationToken);
+
+        Assert.False(r.Found);
+        Assert.Equal("none", r.Pick);
+    }
+
+    [Fact]
+    public void FindLiveInstance_RunsOnTheBulkLane()
+        // The resolver walk invoke_function runs, which is on the bulk lane: it walks every object, and keeps the
+        // interactive lane (Live Walker) answering meanwhile.
+        => Assert.True(LaneRoutingPipeClient.IsBulk("find_live_instance"));
+
     // ---- [LIVEFUNCS-STEP3] native stack snapshots (docs/live-funcs-step3-items.md, S3-U1) ----
     // The replies are parsed from JSON text, as the pipe delivers them, so every number reads the way it will on the wire.
 

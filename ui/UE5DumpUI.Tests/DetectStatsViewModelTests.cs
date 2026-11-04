@@ -18,7 +18,7 @@ public class DetectStatsViewModelTests
         public List<PropertySearchMatch> Matches { get; } = new();
         public Dictionary<string, string> InstanceAddrByClass { get; } = new();
         public Dictionary<string, List<LiveFieldValue>> WalkByAddr { get; } = new();
-        public int FindInstancesCalls { get; private set; }
+        public int LiveProbeCalls { get; private set; }
         /// <summary>When set, the scorer's batch answers only once it completes.</summary>
         public TaskCompletionSource<bool>? HoldSearch { get; set; }
 
@@ -40,15 +40,12 @@ public class DetectStatsViewModelTests
             };
         }
 
-        public override Task<FindInstancesResult> FindInstancesAsync(
-            string className, bool exactMatch = false, int limit = 500, bool newestFirst = false,
-            string nameFilter = "", IReadOnlyList<string>? excludeClasses = null, CancellationToken ct = default)
+        public override Task<LiveInstanceResult> FindLiveInstanceAsync(string className, CancellationToken ct = default)
         {
-            FindInstancesCalls++;
-            var list = new List<InstanceResult>();
-            if (InstanceAddrByClass.TryGetValue(className, out var addr))
-                list.Add(new InstanceResult { Address = addr, Name = className + "_0", ClassName = className });
-            return Task.FromResult(new FindInstancesResult { Instances = list });
+            LiveProbeCalls++;
+            return Task.FromResult(InstanceAddrByClass.TryGetValue(className, out var addr)
+                ? new LiveInstanceResult { Address = addr, Name = className + "_0", ClassName = className, Pick = "live" }
+                : new LiveInstanceResult());
         }
 
         public override Task<InstanceWalkResult> WalkInstanceAsync(
@@ -114,7 +111,7 @@ public class DetectStatsViewModelTests
     {
         var dump = new FakeDump();
         dump.Matches.Add(M("Gold", "SomeDataAsset", "IntProperty", 0x40));
-        // No InstanceAddrByClass entry → FindInstances returns empty.
+        // No InstanceAddrByClass entry → the live probe answers none.
 
         var vm = Vm(dump);
         await vm.DetectCommand.ExecuteAsync(null);
@@ -159,7 +156,7 @@ public class DetectStatsViewModelTests
         await vm.DetectCommand.ExecuteAsync(null);
 
         Assert.Equal(2, vm.Results.Count);
-        Assert.Equal(1, dump.FindInstancesCalls);          // one probe for the shared class
+        Assert.Equal(1, dump.LiveProbeCalls);          // one probe for the shared class
         Assert.All(vm.Results, r => Assert.True(r.HasMaxSibling)); // Health + MaxHealth family
         Assert.All(vm.Results, r => Assert.True(r.IsConfirmed));
     }
@@ -185,7 +182,7 @@ public class DetectStatsViewModelTests
         await vm.DetectCommand.ExecuteAsync(null);
 
         Assert.Equal(40, vm.Results.Count);
-        Assert.Equal(30, dump.FindInstancesCalls);          // the cap really did bite
+        Assert.Equal(30, dump.LiveProbeCalls);          // the cap really did bite
 
         var probed   = vm.Results.Where(r => r.WasProbed).ToList();
         var unprobed = vm.Results.Where(r => !r.WasProbed).ToList();
@@ -337,7 +334,7 @@ public class DetectStatsViewModelTests
 
         dump.HoldSearch.SetResult(true);
         await run;
-        Assert.Equal(0, dump.FindInstancesCalls);
+        Assert.Equal(0, dump.LiveProbeCalls);
         Assert.Empty(vm.Results);
         Assert.Equal(idle, vm.StatusText);
         Assert.False(vm.IsBusy);

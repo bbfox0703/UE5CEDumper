@@ -3406,6 +3406,31 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             return Renge::MakeResponse(id, std::move(data)).dump();
         }
 
+        // === find_live_instance: one live object of a class or a subclass, or none === [MAINWINDOW-NAVIGATE-EXACT-NAME]
+        // The user-facing resolver, so a navigation lands where the Console's Run does: derivation, never a template,
+        // and an object a Debug Camera controller is or owns only when nothing else is live. Its class-default and
+        // partial-name picks are an invoke's fallbacks -- a static function runs on a class default object -- and answer
+        // none here: Live Walker opened on a template, or a path search started from one, is what this exists to stop.
+        if (cmd == Renge::CMD_FIND_LIVE_INSTANCE) {
+            const std::string className = request.value("class_name", "");
+            if (className.empty()) return Renge::MakeError(id, "Missing class_name").dump();
+            const Aura::UserInstance found = Aura::ResolveUserInstance(className);
+            // A cut-short walk is not "none": a live object may sit past where it stopped.
+            if (found.pick == Aura::UserPick::Cancelled)
+                return Renge::MakeError(id, Renge::InstanceLookupCancelledText(className)).dump();
+            const bool live = found.pick == Aura::UserPick::Live || found.pick == Aura::UserPick::DebugCameraOwned;
+            json data;
+            data["scanned"] = found.scanned;
+            data["pick"]    = live ? Aura::UserPickWire(found.pick) : "none";
+            if (live) {
+                data["addr"]       = Renge::AddrToStr(found.obj);
+                data["name"]       = Ubel::GetName(found.obj);
+                data["class"]      = Ubel::GetName(found.cls);
+                data["class_addr"] = Renge::AddrToStr(found.cls);
+            }
+            return Renge::MakeResponse(id, std::move(data)).dump();
+        }
+
         // === search_properties: Keyword search across all UClass properties ===
         if (cmd == Renge::CMD_SEARCH_PROPERTIES) {
             std::string query = request.value("query", "");

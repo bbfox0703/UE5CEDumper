@@ -117,6 +117,16 @@ public interface IDumpService
     // carries a full-pool class histogram (ClassHistogram / ClassDistinct) that
     // includes excluded classes so the picker can still untick them.
     Task<FindInstancesResult> FindInstancesAsync(string className, bool exactMatch = false, int limit = 500, bool newestFirst = false, string nameFilter = "", IReadOnlyList<string>? excludeClasses = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// [MAINWINDOW-NAVIGATE-EXACT-NAME] One live object of <paramref name="className"/> or of a class derived from it,
+    /// never a template, or none: the object to open in Live Walker or to search a path from. Not
+    /// <see cref="FindInstancesAsync"/>: its class gate is a name test, so a class whose live objects are all of a
+    /// subclass answered none, and it lists templates, which a <c>Default__</c> name skip does not all catch.
+    /// </summary>
+    Task<LiveInstanceResult> FindLiveInstanceAsync(string className, CancellationToken ct = default)
+        => throw new NotSupportedException("This service has no live-instance lookup.");
+
     Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default);
 
     /// <summary>

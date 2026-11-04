@@ -818,6 +818,25 @@ public sealed class DumpService : IDumpService
         return result;
     }
 
+    public async Task<LiveInstanceResult> FindLiveInstanceAsync(string className, CancellationToken ct = default)
+    {
+        var res = await _pipe.SendAsync(new JsonObject
+        {
+            ["cmd"] = "find_live_instance",
+            ["class_name"] = className,
+        }, ct);
+        CheckResponse(res);
+        return new LiveInstanceResult
+        {
+            Address = res["addr"]?.GetValue<string>() ?? "",
+            Name = res["name"]?.GetValue<string>() ?? "",
+            ClassName = res["class"]?.GetValue<string>() ?? "",
+            ClassAddress = res["class_addr"]?.GetValue<string>() ?? "",
+            Pick = res["pick"]?.GetValue<string>() ?? "none",
+            Scanned = res["scanned"]?.GetValue<int>() ?? 0,
+        };
+    }
+
     public async Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default)
     {
         var req = new JsonObject

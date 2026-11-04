@@ -1299,11 +1299,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
         };
 
-        // Wire InterestingFunctions -> Live Walker (with find_instance fallback to ClassStruct).
+        // Wire InterestingFunctions -> Live Walker (with a fallback to ClassStruct).
         // The Finder gives us (className, funcName), but Live Walker is instance-based:
-        //   1. Try FindInstancesAsync(className, exactMatch=true) -- pick the first non-CDO live instance.
+        //   1. Ask for a live object of the class or a subclass (LiveInstanceAddressAsync).
         //   2. On hit: switch to Live Walker tab + navigate to that instance + auto-scroll to funcName.
-        //   3. On miss (CDO-only class, or class not yet instantiated): switch to ClassStruct tab so
+        //   3. On miss (nothing of it is live): switch to ClassStruct tab so
         //      the user at least sees the function in the class metadata, with a status hint.
         InterestingFunctions.NavigateToFunction += async (className, funcName) =>
         {
@@ -1311,17 +1311,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 if (string.IsNullOrEmpty(className)) return;
 
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                // Skip CDO entries (their name typically starts with "Default__"); pick the first
-                // real instance so Live Walker has something to walk.
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var liveAddr = await LiveInstanceAddressAsync(className);
 
                 if (!string.IsNullOrEmpty(liveAddr))
                 {
@@ -1368,7 +1358,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         LiveFuncs.NavigateToCallTrace += () => SelectedTabIndex = (int)MainTabIndex.CallTrace;
 
         // Wire Live Funcs (PE profiler) -> Live Walker, same instance-based handoff
-        // as the Interesting Functions finder: find a live non-CDO instance of the
+        // as the Interesting Functions finder: find a live object of the
         // class, open it in Live Walker, and auto-select the discovered function.
         LiveFuncs.NavigateToFunction += async (className, funcName) =>
         {
@@ -1376,15 +1366,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 if (string.IsNullOrEmpty(className)) return;
 
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var liveAddr = await LiveInstanceAddressAsync(className);
 
                 if (!string.IsNullOrEmpty(liveAddr))
                 {
@@ -1433,8 +1415,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
         };
 
-        // Wire InterestingFunctions -> "Locate in GWorld": resolve a live (non-CDO)
-        // instance of the function's class (same find_instance path as
+        // Wire InterestingFunctions -> "Locate in GWorld": resolve a live
+        // object of the function's class (same lookup as
         // NavigateToFunction above), then run the GWorld path search in parent mode
         // (stop before drilling into the instance). A function isn't itself a world
         // object, so the meaningful target is "where do instances of this class live".
@@ -1443,19 +1425,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 if (string.IsNullOrEmpty(className)) return;
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var liveAddr = await LiveInstanceAddressAsync(className);
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = $"No live (non-CDO) instance of {className} to locate in GWorld.";
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GWorld");
                     return;
                 }
                 await LiveWalker.LocateInGWorldAsync(liveAddr, 0, null, stopAtParent: true);
@@ -1468,7 +1442,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         // Xref dialog (code-behind, no per-instance DI): give it the app's AOBMaker
         // bridge for "Disassemble in CE", and handle its "Locate class" request by
-        // resolving a live (non-CDO) instance + navigating to Live Walker — same
+        // resolving a live object + navigating to Live Walker — same
         // class-name path as the Interesting Functions locate just above.
         Views.PropertyXrefDialog.SharedAobMaker = aobMaker;
         Views.FunctionPropsDialog.SharedAobMaker = aobMaker;   // [AOBM-FUNC-DISASM]
@@ -1477,19 +1451,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 if (string.IsNullOrEmpty(className)) return;
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var liveAddr = await LiveInstanceAddressAsync(className);
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = $"No live (non-CDO) instance of {className} to locate in GWorld.";
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GWorld");
                     return;
                 }
                 await LiveWalker.LocateInGWorldAsync(liveAddr, 0, null, stopAtParent: true);
@@ -1506,19 +1472,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 if (string.IsNullOrEmpty(className)) return;
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var liveAddr = await LiveInstanceAddressAsync(className);
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = $"No live (non-CDO) instance of {className} to locate in GameEngine.";
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GameEngine");
                     return;
                 }
                 await LiveWalker.LocateInGameEngineAsync(liveAddr, 0, null, stopAtParent: true);
@@ -1530,7 +1488,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         };
 
         // Wire InterestingProperties -> Live Walker. Same pattern as
-        // InterestingFunctions: try find_instance for a non-CDO live address,
+        // InterestingFunctions: ask for a live object of the class,
         // fall back to ClassStruct when none. We don't scroll to the
         // specific property row in round 1 (LiveWalker has no public
         // ScrollToField yet) — the property name is left in the status
@@ -1541,15 +1499,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 if (string.IsNullOrEmpty(className)) return;
 
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var liveAddr = await LiveInstanceAddressAsync(className);
 
                 if (!string.IsNullOrEmpty(liveAddr))
                 {
@@ -1593,19 +1543,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 if (string.IsNullOrEmpty(className)) return;
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var liveAddr = await LiveInstanceAddressAsync(className);
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = $"No live (non-CDO) instance of {className} to locate in GWorld.";
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GWorld");
                     return;
                 }
                 await LiveWalker.LocateInGWorldAsync(liveAddr, 0, null, stopAtParent: true);
@@ -1620,19 +1562,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 if (string.IsNullOrEmpty(className)) return;
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var liveAddr = await LiveInstanceAddressAsync(className);
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = $"No live (non-CDO) instance of {className} to locate in GameEngine.";
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GameEngine");
                     return;
                 }
                 await LiveWalker.LocateInGameEngineAsync(liveAddr, 0, null, stopAtParent: true);
@@ -1663,19 +1597,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 if (string.IsNullOrEmpty(className)) return;
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var liveAddr = await LiveInstanceAddressAsync(className);
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = $"No live (non-CDO) instance of {className} to locate in GWorld.";
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GWorld");
                     return;
                 }
                 await LiveWalker.LocateInGWorldAsync(liveAddr, 0, null, stopAtParent: true);
@@ -1937,15 +1863,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 if (string.IsNullOrEmpty(className)) return;
 
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var liveAddr = await LiveInstanceAddressAsync(className);
 
                 if (!string.IsNullOrEmpty(liveAddr))
                 {
@@ -3264,6 +3182,25 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             StatusText = $"Save Cheat Table failed: {ex.Message}";
         }
     }
+
+    /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] The address of a live object of <paramref name="className"/> or of a
+    /// class derived from it -- never a template -- or null: the object a navigate opens in Live Walker and a Locate
+    /// searches a path from. One DLL answer for every such handler: an exact-name lookup that skipped names starting
+    /// <c>Default__</c> answered none for a class whose live objects are all of a subclass, and handed over a class
+    /// default object's default subobject, which is not named so.</summary>
+    private async Task<string?> LiveInstanceAddressAsync(string className)
+    {
+        var found = await _dump.FindLiveInstanceAsync(className);
+        if (!found.Found) return null;
+        _log.Info($"Live instance of {className}: {found.Name} ({found.ClassName}) @ {found.Address}, pick {found.Pick}");
+        return found.Address;
+    }
+
+    internal const string KeyNoLiveInstanceToLocate = "str.LiveWalker.NoLiveInstanceToLocate";
+
+    /// <summary>A Locate with nothing live to search from. <paramref name="root"/> is GWorld or GameEngine.</summary>
+    internal static string NoLiveInstanceToLocateText(string className, string root) => Helpers.AobMakerStatus.Say(
+        KeyNoLiveInstanceToLocate, "No live instance of {0} or of a subclass to locate in {1}.", className, root);
 
     /// <summary>
     /// Top-toolbar "&#x27F3;" button: re-probe whether Cheat Engine is running with

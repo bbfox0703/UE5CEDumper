@@ -269,6 +269,8 @@
     <!-- [AOBM-LIVEWALKER-HEX-SILENT] What the HEX status line calls a pointer field's target ({0} = the field). -->
     <sys:String x:Key="str.LiveWalker.PtrTargetLabel">{0} target</sys:String>
     <!-- [WALK-NULLCLASS-SILENT] The header names no readable class: freed, or never an object (Go takes any address). -->
+    <!-- [MAINWINDOW-NAVIGATE-EXACT-NAME] {0} = the class, {1} = GWorld or GameEngine -->
+    <sys:String x:Key="str.LiveWalker.NoLiveInstanceToLocate">No live instance of {0} or of a subclass to locate in {1}.</sys:String>
     <sys:String x:Key="str.LiveWalker.NoHeader">⚠ No UObject header at this address — freed, or not an object. Re-open it from 🌍 GWorld or the finder.</sys:String>
     <!-- [P1-WALK-UNREADABLE] The DLL could not read the object's header at all. -->
     <sys:String x:Key="str.LiveWalker.Unreadable">⚠ This object is no longer readable (freed?) — re-open it from 🌍 GWorld or the finder.</sys:String>

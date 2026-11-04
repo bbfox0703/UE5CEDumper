@@ -112,6 +112,10 @@ Total commands: **99** — a DERIVED number, regenerate it, never hand-edit:
 // filter), so a wanted instance that today sits past the cap survives once the
 // noise classes ahead of it are excluded.
 { "id": 12, "cmd": "find_instances", "class_name": "BP_Player_C", "limit": 5000, "exact_match": false, "newest_first": false, "exclude_classes": ["StaticMeshActor", "NiagaraActor"] }
+
+// One LIVE object of a class or of a subclass -- never a template -- or none: the object to open
+// or to search a path from. [MAINWINDOW-NAVIGATE-EXACT-NAME]
+{ "id": 12, "cmd": "find_live_instance", "class_name": "PlayerController" }
 ```
 
 ### Array Reading
@@ -1330,6 +1334,27 @@ The DLL scans the whole array for this path (the cheap internal callers that don
 need the histogram keep the old early-exit at `limit`). `truncated` now means "more
 non-excluded matches exist than were returned" — narrow the query, exclude more
 noise, or raise `limit`.
+
+### find_live_instance
+
+```jsonc
+{ "id": 12, "ok": true, "pick": "live", "scanned": 24530,
+  "addr": "7FF6AA000000", "name": "BP_PlayerController_C_0", "class": "BP_PlayerController_C",
+  "class_addr": "7FF6CC000000" }
+
+// Nothing of the class is live (only its class default object and templates, or nothing at all):
+{ "id": 12, "ok": true, "pick": "none", "scanned": 24530 }
+```
+
+`[MAINWINDOW-NAVIGATE-EXACT-NAME]` The object a UI opens in Live Walker or searches a path from, picked by the
+resolver `invoke_function` uses for a `class_name` (`Aura::ResolveUserInstance`): class **derivation**, so a class
+whose live objects are all of a subclass answers one of them (`class` names the object's own class); **never a
+template** -- a class default object, one of its default subobjects or a Blueprint component template
+(`TemplateOf`); and an object a Debug Camera controller is or owns only when nothing else is live
+(`pick: "debug_camera_owned"`). That resolver's class-default and partial-name picks are an invoke's fallbacks
+and answer `none` here. `addr`, `name`, `class` and `class_addr` are present only with an object. A walk cut short
+(the client went away) is an error, not `none`. Not `find_instances`, whose class gate is a name test --
+`exact_match` is name equality -- and which lists templates on purpose. Runs on the bulk lane.
 
 ### find_by_address
 

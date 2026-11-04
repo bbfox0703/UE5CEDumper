@@ -36,6 +36,10 @@ constexpr const char* CMD_WALK_INSTANCE    = "walk_instance";
 constexpr const char* CMD_WALK_INSTANCE_BATCH = "walk_instance_batch";
 constexpr const char* CMD_WALK_WORLD       = "walk_world";
 constexpr const char* CMD_FIND_INSTANCES   = "find_instances";
+// [MAINWINDOW-NAVIGATE-EXACT-NAME] One live object of a class or of a subclass, never a template, or none: the object a
+// UI opens or searches from. find_instances cannot answer that -- its class gate is a name test, and it lists
+// templates on purpose.
+constexpr const char* CMD_FIND_LIVE_INSTANCE = "find_live_instance";
 constexpr const char* CMD_FIND_BY_ADDRESS  = "find_by_address";
 constexpr const char* CMD_FIND_REFS_TO_UOBJ = "find_refs_to_uobject";
 constexpr const char* CMD_FIND_PATH_FROM_GWORLD = "find_path_from_gworld";

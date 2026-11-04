@@ -365,10 +365,44 @@ public class MainWindowInjectHelperTests
     // Wiring helpers
     // ------------------------------------------------------------------
 
-    private static MainWindowViewModel BuildVm(IAobMakerBridge? aobMaker)
+    // ------------------------------------------------------------------
+    // [MAINWINDOW-NAVIGATE-EXACT-NAME] a Locate asks find_live_instance, and says so when nothing is live
+    // ------------------------------------------------------------------
+
+    private sealed class LiveLookupDump : StubDumpService
+    {
+        public List<string> Asked { get; } = new();
+
+        public override Task<UE5DumpUI.Models.LiveInstanceResult> FindLiveInstanceAsync(string className,
+                                                                                        CancellationToken ct = default)
+        {
+            Asked.Add(className);
+            return Task.FromResult(new UE5DumpUI.Models.LiveInstanceResult());   // nothing live
+        }
+    }
+
+    [Fact]
+    public void A_Locate_with_nothing_live_says_so_in_Live_Walker()
+    {
+        var dump = new LiveLookupDump();
+        var vm = BuildVm(aobMaker: null, dump: dump);
+
+        vm.InterestingProperties.LocateRowInGWorldCommand.Execute(new UE5DumpUI.Models.ScoredPropertyRow
+        {
+            Match = new UE5DumpUI.Models.PropertySearchMatch { ClassName = "AMyActor", PropName = "Health" },
+            FinalScore = 1, Category = UE5DumpUI.Services.PropertyCategory.Other, KeywordHits = 0, ClassBonus = 0,
+            IsUnusualLocation = false,
+        });
+
+        Assert.Equal(new[] { "AMyActor" }, dump.Asked);
+        Assert.Equal((int)MainTabIndex.LiveWalker, vm.SelectedTabIndex);
+        Assert.Equal(MainWindowViewModel.NoLiveInstanceToLocateText("AMyActor", "GWorld"), vm.LiveWalker.StatusText);
+    }
+
+    private static MainWindowViewModel BuildVm(IAobMakerBridge? aobMaker, IDumpService? dump = null)
         => new MainWindowViewModel(
             pipeClient: new NoopPipeClient(),
-            dump: new StubDumpService(),
+            dump: dump ?? new StubDumpService(),
             log: new NoopLog(),
             platform: new NoopPlatform(),
             aobUsage: null,

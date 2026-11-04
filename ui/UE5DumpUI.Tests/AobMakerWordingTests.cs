@@ -307,9 +307,13 @@ public class AobMakerWordingTests
 
         // [MAINWINDOW-INVOKE-LIMIT1-CDO] the param dialog opened on a class, with no object
         Same(InvokePickText.KeyTargetByClass, InvokePickText.TargetByClassText("CheatManager"), "CheatManager");
+        // [MAINWINDOW-NAVIGATE-EXACT-NAME] a Locate with nothing live to search from
+        Same(UE5DumpUI.ViewModels.MainWindowViewModel.KeyNoLiveInstanceToLocate,
+             UE5DumpUI.ViewModels.MainWindowViewModel.NoLiveInstanceToLocateText("PlayerController", "GWorld"),
+             "PlayerController", "GWorld");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(120, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(121, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]
