@@ -27,6 +27,26 @@ builds ≤696 in
 
 -----
 
+## 2026-11-04 (build 3683) — Property Search's status line wraps on a row of its own; Freeze lights up when AOBMaker connects `[PROPSEARCH-STATUS-CLIPPED]` `[PROPSEARCH-FREEZE-STALE-AOBMAKER]`
+
+- **Property Search's status line has a row of its own** under the search bar and wraps there, so a long status --
+  a capped Force count, a hold armed on nothing, the templates-only note -- is read whole instead of ending in "..."
+  with the rest in a tooltip.
+- **Freeze follows what the app knows about the AOBMaker plugin.** It used to stay grey after the plugin connected
+  until the tab was switched; now the toolbar ⟳, any panel's probe and a fresh Search all update it, and what
+  Property Search learns updates the toolbar's DLL dot. A Freeze clicked while a probe is still waiting on the pipe
+  waits for its answer instead of opening the value dialog over a pipe that is gone.
+- **The toolbar's DLL dot hears every probe answer** of Live Walker, the System tab, Interesting Functions and
+  Teleport, not only a change of their own flag: Interesting Functions' first probe after Cheat Engine came up never
+  reached it, and a "down" confirmed while the dot said "up" left it saying connected.
+- **A failed Freeze says which failure it was**: no reply (the record may still have been added -- check before
+  sending it again), a refusal with the plugin's reason, a rejection, or an unreachable plugin with why.
+- The availability cooldowns run on a monotonic clock; a clock set back no longer stops the re-checks.
+- **Checked live on build 3683** (DumperTest Shipping, AOT UI): the status rows and the Freeze / DLL-dot transitions
+  as recorded in the two rows.
+- Three review rounds (2 LOW + 5 INFO, 2 LOW + 3 INFO, 6 INFO), all fixed and mutation-checked.
+- Tests: C# 7,387 total, 0 failed, 1 skipped; headless 70; 37 gates. AOT UI 61,645,312 bytes.
+
 ## 2026-11-03 (build 3682) — Debug Camera Force ON with no live CheatManager is refused; Freeze and Force never write a template; the param dialog FIRE by class name; the local-PlayerController fallback by derivation `[DEBUGCAM-FORCEON-CDO]` `[LISTINSTANCES-KEEPS-TEMPLATES]` `[MAINWINDOW-INVOKE-LIMIT1-CDO]` `[FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS]`
 
 - **Debug Camera Force ON with no live CheatManager** (every UE 5 Shipping build by default) is no longer sent: the
