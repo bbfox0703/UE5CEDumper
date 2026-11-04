@@ -4,20 +4,14 @@ Open work only. **Read this when deciding what to do next.**
 
 > 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
 >
-> ▶ **Current programme:** `[FIXPASS-2026-10-27]` (the maintainer: fix every open LOW / INFO). Batches 1-3 shipped in
-> build 3657 and passed live on its AOT build (`[BATCH3-LIVE-3657]`); batch 2's own review and the review of batch 3's
-> fixes shipped in build 3658 (`[BATCH2-REVIEW-2026-10-27]`, `[FIXREVIEW-2026-10-27]`), and the five LOW leads batch 3 left
-> in build 3659 (`[TRAINER-PUSH-TIMEDOUT-TEXT]`, `[DISCOVER-SHADOWED-POOL]`, `[DBGCAM-OFF-OVER-QUEUED-ON]`,
-> `[ASSETPTR-BAKED-TOKEN]`, `[L83-PLAN-QUEUED-STRINGS]`); both builds' fixes passed live on 3659's AOT build on 2026-10-28
-> (`[LIVE-3659-2026-10-28]`), which raised four leads -- `[CEXML-DEFINITION-VIEW-AS-DATA]` (MED, pre-existing),
-> `[DBGCAM-ENABLE-BLOCKED-UNTICK-REENTERS-DISABLE]`, `[INVOKE-SAMPLE-UNTICK-BEFORE-MODAL]` and `[LW-CRUMB-UNDERSCORE]`
-> (LOW) -- all fixed on 2026-10-28 (red/green in each row), as is every confirmed finding of the review of those fixes
-> (`[LEADFIX-REVIEW-2026-10-28]`); shipped in build 3660 (AOT) and checked live on 2026-10-28 (`[LIVE-3660-2026-10-28]`:
-> Debug Camera on UE 5.8 and a game-filled TArray<TAssetPtr> included; a TMap / TSet of TAssetPtr has no fixture on this
-> PC and a loaded element's label none on Extinction), which raised two pre-existing leads: `[DBGCAM-58-REENABLE]` (fixed
-> in build 3663) and `[LW-BACK-CONTAINER-HEADER-ADDR]` (fixed in build 3661 after four review rounds, checked live; its
-> review left the LOW `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`, fixed in builds 3666–3670). Every open item, ranked:
-> `[OPEN-CENSUS-2026-10-28]`. · Before it, the
+> ▶ **Current programme:** none active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
+> open bugs one after another) ended with build 3686 (dev-log 3671–3686). Census Table A holds 0 HIGH / 0 MED and five
+> LOW or unrated rows -- `[CEFORM-LUAENGINE-VANISH]`, `[DUMPER-SECOND-COPY-AUTOSTART]` (needs the maintainer's call),
+> `[CADENCEBAND-2026-08-22]`, `[W4-DEEPWALK-750MS]`, `[LEAD-PUBLISH-FAILED-BUT-BUILT]` -- which the maintainer judged not
+> significant (2026-11-04); `[AOBM-CEXML-PUSH]` and `[AOBM-CT-PUSH]` stay on hold. Every open item, ranked:
+> `[OPEN-CENSUS-2026-10-28]` (Tables B–D: live checks owed, feature ideas, open by decision). · Before it,
+> `[FIXPASS-2026-10-27]` (the maintainer: fix every open LOW / INFO) ran batches 1-3 and their reviews and leads through
+> builds 3657–3670 (`[BATCH3-LIVE-3657]`, `[LIVE-3659-2026-10-28]`, `[LIVE-3660-2026-10-28]`; dev-log 3657–3670). · Before it, the
 > known-issues fix pass of 2026-10-13/14 is done (builds 3647-3649, dev-log
 > 3649): every row it took is built and checked live, `[MH-PRERESERVE-PROXY]` included; the maintainer's calls are in
 > the rows and working-lessons §6. Still owed live, each row says how: a crash mid-capture on a large title
@@ -25,7 +19,7 @@ Open work only. **Read this when deciding what to do next.**
 > override at once (`[OVERRIDE-REVIEW2-LOWS]`), `[INT8-PREVIEW]`, `[UE4-USTRUCT-GIVEUP]`, `[AOB-SKIP-OWN-DLL]`; open LOW
 > rows it left: `[DUMPER-SECOND-COPY-AUTOSTART]` (`[UE4-USTRUCT-GIVEUP-STATS]` and
 > `[UBEL-ASCII-FIRSTCHAR]` fixed 2026-11-02) ·
-> `[LIVEFUNCS-TIMELINE-2026-10-04]` (Live Funcs) · the census fix pass of 2026-11-02 (the maintainer: fix the census's open bugs one after another; build 3671 and on, dev-log 3671) · the
+> `[LIVEFUNCS-TIMELINE-2026-10-04]` (Live Funcs) · the
 > `[VENDOR-UE584-2026-10-26]` fix pass is DONE -- every row fixed in builds 3650-3652 and checked live where a
 > fixture or title exists (dev-log 3650-3652) · open but idle: the `[FIXPASS-2026-09-10]` live-check backlog. Change this line in the commit that starts or ends a programme.
 
