@@ -162,6 +162,14 @@ struct UserInstance {
 };
 UserInstance ResolveUserInstance(const std::string& className);
 
+// [MAINWINDOW-NAVIGATE-EXACT-NAME] The object a UI opens or searches a path from (the pipe's find_live_instance): the
+// same derivation walk, never a template, the Debug Camera's own objects last -- with three differences from an
+// invoke's pick. An object of the named class ITSELF comes before a subclass's met first: a function's row names the
+// class that declares it, and Live Walker lists an object's own class's functions only. A destroyed object GC has not
+// collected yet is passed over. And no partial-name fallback: a name no class answers to is answered by nothing.
+// Live or DebugCameraOwned is an object to open; ClassDefault, None and Cancelled are not.
+UserInstance FindLiveInstanceOf(const std::string& className);
+
 // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The local PlayerController found by walking the object array, for a
 // caller whose GWorld -> OwningGameInstance -> LocalPlayers[0] -> PlayerController chain gave none. Derivation, never a
 // class-name substring, never a template, never a destroyed controller (garbage: UEngine::LoadMap leaves the old PC

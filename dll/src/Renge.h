@@ -396,6 +396,11 @@ inline std::string InstanceLookupCancelledText(const std::string& className) {
     return "Instance lookup for class " + className
          + " was cut short (the command was cancelled, or the DLL is shutting down) -- nothing was invoked";
 }
+// [MAINWINDOW-NAVIGATE-EXACT-NAME] find_live_instance's: it invokes nothing, and a cut-short walk is not "none".
+inline std::string LiveInstanceLookupCancelledText(const std::string& className) {
+    return "The lookup of a live " + className
+         + " was cut short (the command was cancelled, or the DLL is shutting down); it may have one -- ask again";
+}
 inline std::string FunctionNotFoundText(const std::string& funcName, const std::string& objName,
                                         const std::string& className) {
     std::string s = "Function not found: " + funcName;

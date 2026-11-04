@@ -825,6 +825,24 @@ public sealed class DumpService : IDumpService
             ["cmd"] = "find_live_instance",
             ["class_name"] = className,
         }, ct);
+        // [MAINWINDOW-NAVIGATE-EXACT-NAME] A proxy DLL left in a game folder outlives a UI upgrade, and one older than
+        // the command answers "Unknown command": every navigate and Locate would then do nothing. Its own lookup still
+        // answers, with the old limits (an exact class name, a Default__ name skip).
+        if (res["ok"]?.GetValue<bool>() == false
+            && (res["error"]?.GetValue<string>() ?? "").StartsWith("Unknown command", StringComparison.Ordinal))
+        {
+            _log.Warn($"find_live_instance: the injected DLL predates it; '{className}' looked up by exact name instead");
+            var old = await FindInstancesAsync(className, exactMatch: true, limit: 5, ct: ct);
+            var hit = old.Instances.FirstOrDefault(i =>
+                !string.IsNullOrEmpty(i.Address) && !i.Name.StartsWith("Default__", StringComparison.Ordinal));
+            return hit == null
+                ? new LiveInstanceResult { Pick = LiveInstanceResult.PickNone }
+                : new LiveInstanceResult
+                {
+                    Address = hit.Address, Name = hit.Name, ClassName = hit.ClassName, ClassAddress = hit.ClassAddress,
+                    Pick = LiveInstanceResult.PickLegacy,
+                };
+        }
         CheckResponse(res);
         return new LiveInstanceResult
         {
@@ -832,7 +850,7 @@ public sealed class DumpService : IDumpService
             Name = res["name"]?.GetValue<string>() ?? "",
             ClassName = res["class"]?.GetValue<string>() ?? "",
             ClassAddress = res["class_addr"]?.GetValue<string>() ?? "",
-            Pick = res["pick"]?.GetValue<string>() ?? "none",
+            Pick = res["pick"]?.GetValue<string>() ?? LiveInstanceResult.PickNone,
             Scanned = res["scanned"]?.GetValue<int>() ?? 0,
         };
     }

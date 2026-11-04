@@ -230,7 +230,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public ObservableCollection<string> FilterHistory => _filterMemory.History;
 
     /// <summary>Raised by the per-row "Live" action so MainWindow can open the
-    /// function in Live Walker (find a live non-CDO instance, else Class Struct).
+    /// function in Live Walker (a live object of the class or a subclass, else Class Struct).
     /// Payload = (className, funcName). Mirrors InterestingFunctionsViewModel.</summary>
     public event Action<string, string>? NavigateToFunction;
 

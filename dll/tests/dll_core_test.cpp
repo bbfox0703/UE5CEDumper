@@ -4961,7 +4961,7 @@ int main() {
                bBPChar, bCdoActorChannel, bCdoCheatExt, bCdoCheatMgr, bCdoActor, bCdoKsl, bCdoGameMode, bCdoBPChar,
                bAbility0, bCm0, bDcc0, bPc0, bCheats0, bAbility1, bGm0, bChar0, bHud, bDcHud, bDcHud0, bHud0,
                bCmc, bCdoCmc, bTplMove, bLiveMove, bScsMove, bTplMove2, bLiveMove2, bLevel, bAct1, bAct2, bAct3,
-               kBlobs };
+               bPcExact, kBlobs };
         alignas(16) static uint8_t upB[kBlobs][0x200] = {};
         auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(upB[b]); };
         auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
@@ -5123,6 +5123,38 @@ int main() {
         check("USERPICK control: ...and the unfiltered internal pick is the DCC's HUD, the lower one",
               Aura::FindLiveOrDefaultOf("HUD") == A(bDcHud0));
 
+        // Phase B2 -- [MAINWINDOW-NAVIGATE-EXACT-NAME] the navigation pick (find_live_instance): an object of the named
+        // class ITSELF before a subclass's met first, never a destroyed one, and no partial-name fallback. A plain
+        // PlayerController sits far above the game's subclass.
+        obj(bPcExact, bPlayerController, nPlayerController, -1);
+        slot(40, bPcExact);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        r = Aura::FindLiveInstanceOf("PlayerController");
+        check("USERPICK ⭐ NAVPICK: an object of the class itself, over the game's subclass met first",
+              is(r, bPcExact, Aura::UserPick::Live), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK NAVPICK control: ...where an invoke's pick takes the first live one, the subclass's",
+              is(r, bPc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        put32(upB[bPcExact], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);   // UE5 RF_MirroredGarbage: destroyed, not collected
+        r = Aura::FindLiveInstanceOf("PlayerController");
+        check("USERPICK ⭐ NAVPICK: a destroyed object is passed over -- the subclass's live one answers",
+              is(r, bPc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        r = Aura::FindLiveInstanceOf("Actor");
+        check("USERPICK ⭐ NAVPICK: with nothing of the class itself, the first live subclass object, not the DCC",
+              is(r, bPc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        r = Aura::FindLiveInstanceOf("PlayerCharacter");
+        check("USERPICK ⭐ NAVPICK: no partial-name fallback -- a name no class has answers nothing",
+              r.obj == 0 && r.pick == Aura::UserPick::None, nm(r.obj).c_str());
+        r = Aura::FindLiveInstanceOf("KismetSystemLibrary");
+        check("USERPICK NAVPICK control: a class with nothing live gives no object to open",
+              r.pick != Aura::UserPick::Live && r.pick != Aura::UserPick::DebugCameraOwned, nm(r.obj).c_str());
+        r = Aura::FindLiveInstanceOf("HUD");
+        check("USERPICK ⭐ NAVPICK: the Debug Camera's own still ranks last", is(r, bHud0, Aura::UserPick::Live),
+              nm(r.obj).c_str());
+        put32(upB[bPcExact], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        slot(40, -1);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+
         // Phase C -- only the Debug Camera's objects are live.
         slot(10, -1);   // the player's controller
         slot(11, -1);   // its CheatManager
@@ -5137,6 +5169,9 @@ int main() {
         r = Aura::ResolveUserInstance("PlayerController");
         check("USERPICK ⭐: with no player controller live, the DCC itself, and the pick says so",
               is(r, bDcc0, Aura::UserPick::DebugCameraOwned), nm(r.obj).c_str());
+        r = Aura::FindLiveInstanceOf("CheatManager");
+        check("USERPICK ⭐ NAVPICK: with only the DCC's CheatManager live, the navigation pick takes it, and says so",
+              is(r, bCm0, Aura::UserPick::DebugCameraOwned), nm(r.obj).c_str());
 
         // Phase E -- a template sits below the live object of its class. [INVOKE-NONSTATIC-ON-CDO]
         slot(17, bCdoCmc);

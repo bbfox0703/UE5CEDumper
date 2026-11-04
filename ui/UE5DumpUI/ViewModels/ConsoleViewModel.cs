@@ -654,8 +654,8 @@ public partial class ConsoleViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Per-row "Live" — try find_instance + open in LiveWalker;
-    /// MainWindow falls back to ClassStruct on CDO-only classes.</summary>
+    /// <summary>Per-row "Live" — find a live object of the class or a subclass and open it
+    /// in LiveWalker; MainWindow falls back to ClassStruct when nothing of it is live.</summary>
     [RelayCommand]
     private void OpenInLiveWalker(AllFunctionEntry? row)
     {

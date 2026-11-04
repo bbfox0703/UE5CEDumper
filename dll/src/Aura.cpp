@@ -2006,6 +2006,8 @@ struct InstanceWalk {
     std::string skipOuterOf;   // "" = none
     bool keepSkipped;          // rank a skipped object last instead of dropping it
     bool partialFallback;      // a name no deriving object answers to is matched as part of a class name
+    bool preferExact = false;  // a live object of the named class itself before a subclass's met first
+    bool skipGarbage = false;  // pass over a destroyed object GC has not collected yet
 };
 }
 
@@ -2026,7 +2028,8 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
     // Per distinct UClass, one super-chain walk (bounded like ClassChainMatchesLower): does it derive from the query,
     // and was a class named `skipOuterOf` met strictly BEFORE the query's own level -- an object that IS such a class,
     // reached through a base (PlayerController, Actor). Naming that class itself meets the query first.
-    struct Verdict { bool derives = false; bool viaSkip = false; };
+    // `exact`: the class IS the query, not a subclass of it.
+    struct Verdict { bool derives = false; bool viaSkip = false; bool exact = false; };
     std::unordered_map<uintptr_t, Verdict> verdicts;
     auto verdictOf = [&](uintptr_t cls) {
         auto it = verdicts.find(cls);
@@ -2036,7 +2039,7 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
         uintptr_t c = cls;
         for (int guard = 0; c && guard < 64; ++guard) {
             const std::string n = LowerAscii(Ubel::GetName(c));
-            if (n == lowerQuery) { v.derives = true; v.viaSkip = metSkip; break; }
+            if (n == lowerQuery) { v.derives = true; v.viaSkip = metSkip; v.exact = guard == 0; break; }
             if (!lowerSkip.empty() && n == lowerSkip) metSkip = true;
             uintptr_t super = 0;
             if (!Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super) || !super || super == c)
@@ -2095,6 +2098,7 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
     std::unordered_map<uintptr_t, bool> partialClasses;   // per UClass: its own name contains the query
 
     uintptr_t cdo = 0, cdoCls = 0, skipped = 0, skippedCls = 0;
+    uintptr_t subLive = 0, subLiveCls = 0;   // preferExact: the first live object of a subclass, held for the end
     uintptr_t partialFirst = 0, partialFirstCls = 0, partialLive = 0, partialLiveCls = 0;
     // "A class has that name" is approximated by "an object of that class or a subclass exists": a loaded class with
     // no instance and no default object in GObjects falls to the partial-name match.
@@ -2146,11 +2150,20 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
             if (isCdo && !cdo && LowerAscii(Ubel::GetName(cls)) == lowerQuery) { cdo = obj; cdoCls = cls; }
             continue;
         }
+        // [MAINWINDOW-NAVIGATE-EXACT-NAME] A destroyed object stays in GObjects until the next garbage collection, and
+        // a low index makes it the first met: no object to open, nor to search a path from (it has left its level).
+        if (how.skipGarbage && *Ubel::WeakTargetGarbageTag(obj, i) != '\0') continue;
         if (!lowerSkip.empty() && (v.viaSkip || ownedBySkip(obj) || actorOwnedBySkip(obj, cls))) {
             Sein::Info("PIPE:find", "%s '%s': passed over 0x%llX (%s) -- it is or belongs to a %s", how.who,
                        className.c_str(), static_cast<unsigned long long>(obj), objName.c_str(),
                        how.skipOuterOf.c_str());
             if (how.keepSkipped && !skipped) { skipped = obj; skippedCls = cls; }
+            continue;
+        }
+        // [MAINWINDOW-NAVIGATE-EXACT-NAME] A function's row names the class that DECLARES it, and Live Walker lists an
+        // object's own class's functions: an object of that class itself shows the function, a subclass's does not.
+        if (how.preferExact && !v.exact) {
+            if (!subLive) { subLive = obj; subLiveCls = cls; }
             continue;
         }
         Sein::Info("PIPE:find", "%s '%s' -> 0x%llX (%s, class %s)", how.who, className.c_str(),
@@ -2159,6 +2172,13 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
         return r;
     }
 
+    if (subLive) {
+        Sein::Info("PIPE:find", "%s '%s' -> 0x%llX (%s, class %s): no object of the class itself is live", how.who,
+                   className.c_str(), static_cast<unsigned long long>(subLive), Ubel::GetName(subLive).c_str(),
+                   Ubel::GetName(subLiveCls).c_str());
+        r.obj = subLive; r.cls = subLiveCls; r.pick = UserPick::Live;
+        return r;
+    }
     if (skipped) {
         r.obj = skipped; r.cls = skippedCls; r.pick = UserPick::DebugCameraOwned;
         Sein::Warn("PIPE:find", "%s '%s' -> 0x%llX (%s): only objects of or owned by a %s were live", how.who,
@@ -2260,6 +2280,12 @@ uintptr_t FindLiveOrDefaultOf(const std::string& className, const std::string& s
 UserInstance ResolveUserInstance(const std::string& className) {
     return WalkForInstance(className,
                            InstanceWalk{ "ResolveUserInstance", Grimoire::AURA_USERPICK_DCC_CLASS, true, true });
+}
+
+UserInstance FindLiveInstanceOf(const std::string& className) {
+    return WalkForInstance(className, InstanceWalk{ "FindLiveInstanceOf", Grimoire::AURA_USERPICK_DCC_CLASS, true,
+                                                    /*partialFallback=*/false, /*preferExact=*/true,
+                                                    /*skipGarbage=*/true });
 }
 
 LocalPcScan ScanForLocalPlayerController() {

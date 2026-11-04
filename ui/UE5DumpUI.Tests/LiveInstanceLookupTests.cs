@@ -76,6 +76,49 @@ public class LiveInstanceLookupTests
         Assert.DoesNotContain("not in this class", body, StringComparison.Ordinal);
     }
 
+    private static UE5DumpUI.Models.LiveInstanceResult Pick(string name, string cls, string pick = "live") =>
+        new() { Address = "0x2A0", Name = name, ClassName = cls, Pick = pick };
+
+    [Fact]
+    public void A_selected_function_says_where_it_landed()
+    {
+        var line = UE5DumpUI.ViewModels.MainWindowViewModel.FunctionNavigateText(
+            "Character", "Jump", Pick("BP_Hero_C_0", "BP_Hero_C"), picked: true, "function");
+        Assert.Equal("Navigated to Character::Jump (live instance 0x2A0)", line);
+    }
+
+    [Fact]
+    public void An_inherited_function_on_a_subclass_object_is_said_to_be_inherited_not_missing()
+    {
+        var line = UE5DumpUI.ViewModels.MainWindowViewModel.FunctionNavigateText(
+            "Character", "Jump", Pick("BP_Hero_C_0", "BP_Hero_C"), picked: false, "function");
+        Assert.DoesNotContain("not in this class", line, StringComparison.Ordinal);
+        Assert.Contains("BP_Hero_C_0", line, StringComparison.Ordinal);
+        Assert.Contains("a subclass of Character", line, StringComparison.Ordinal);
+        Assert.Contains("Jump is declared on Character", line, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_function_missing_from_the_class_itself_still_says_so()
+    {
+        // The class is matched case-insensitively, as the DLL matches it.
+        var line = UE5DumpUI.ViewModels.MainWindowViewModel.FunctionNavigateText(
+            "PlayerController", "Nope", Pick("PlayerController_0", "playercontroller"), picked: false, "exec");
+        Assert.Equal("Navigated to PlayerController @ 0x2A0; exec 'Nope' not in this class", line);
+    }
+
+    [Fact]
+    public void The_Debug_Camera_s_own_object_is_named_as_such()
+    {
+        var dcc = Pick("CheatManager_1", "CheatManager", UE5DumpUI.Models.LiveInstanceResult.PickDebugCameraOwned);
+        Assert.EndsWith(UE5DumpUI.ViewModels.MainWindowViewModel.DebugCameraNote(dcc, "CheatManager"),
+            UE5DumpUI.ViewModels.MainWindowViewModel.FunctionNavigateText("CheatManager", "Slomo", dcc, true, "exec"),
+            StringComparison.Ordinal);
+        Assert.Contains("Debug Camera", UE5DumpUI.ViewModels.MainWindowViewModel.DebugCameraNote(dcc, "CheatManager"),
+            StringComparison.Ordinal);
+        Assert.Equal("", UE5DumpUI.ViewModels.MainWindowViewModel.DebugCameraNote(Pick("X_0", "X"), "X"));
+    }
+
     [Fact]
     public void No_MainWindow_lookup_is_left_on_the_exact_name()
     {

@@ -106,9 +106,9 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
     public event Action<string>? NavigateToInstanceFinder;
 
     /// <summary>Raised to locate a live instance of the property's class within the
-    /// GWorld object graph. Payload = class name (MainWindow resolves a
-    /// representative non-CDO instance via find_instance, then runs the path
-    /// search). Mirrors the Interesting Functions per-row 🌍 handoff.</summary>
+    /// GWorld object graph. Payload = class name (MainWindow asks find_live_instance
+    /// for a live object of it, then runs the path search). Mirrors the
+    /// Interesting Functions per-row 🌍 handoff.</summary>
     public event Action<string>? LocateInGWorld;
 
     /// <summary>Engine-rooted counterpart of <see cref="LocateInGWorld"/> (path search

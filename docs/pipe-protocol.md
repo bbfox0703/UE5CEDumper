@@ -3,7 +3,7 @@
 Named pipe: `\\.\pipe\UE5DumpBfx`
 Format: JSON, newline-delimited (one message per `\n`)
 Direction: bidirectional — Request/Response + async push Events
-Total commands: **99** — a DERIVED number, regenerate it, never hand-edit:
+Total commands: **105** — a DERIVED number, regenerate it, never hand-edit:
 `grep -c 'constexpr const char\* CMD' dll/src/Renge.h`. (It read 31 from build ~547 until
 2026-08-05, i.e. it was wrong by a factor of three for most of this project's life.)
 
@@ -1346,15 +1346,31 @@ noise, or raise `limit`.
 { "id": 12, "ok": true, "pick": "none", "scanned": 24530 }
 ```
 
-`[MAINWINDOW-NAVIGATE-EXACT-NAME]` The object a UI opens in Live Walker or searches a path from, picked by the
-resolver `invoke_function` uses for a `class_name` (`Aura::ResolveUserInstance`): class **derivation**, so a class
-whose live objects are all of a subclass answers one of them (`class` names the object's own class); **never a
-template** -- a class default object, one of its default subobjects or a Blueprint component template
-(`TemplateOf`); and an object a Debug Camera controller is or owns only when nothing else is live
-(`pick: "debug_camera_owned"`). That resolver's class-default and partial-name picks are an invoke's fallbacks
-and answer `none` here. `addr`, `name`, `class` and `class_addr` are present only with an object. A walk cut short
-(the client went away) is an error, not `none`. Not `find_instances`, whose class gate is a name test --
-`exact_match` is name equality -- and which lists templates on purpose. Runs on the bulk lane.
+`[MAINWINDOW-NAVIGATE-EXACT-NAME]` The object a UI opens in Live Walker or searches a path from
+(`Aura::FindLiveInstanceOf`). It walks the object array as the resolver `invoke_function` uses for a `class_name`
+does (`Aura::ResolveUserInstance`):
+
+* class **derivation**, so a class whose live objects are all of a subclass answers one of them (`class` names the
+  object's own class);
+* **never a template** -- a class default object, one of its default subobjects or a Blueprint component template
+  (`TemplateOf`);
+* an object a Debug Camera controller is or owns only when nothing else is live (`pick: "debug_camera_owned"`).
+
+It differs from that resolver in three ways:
+
+* an object of the named class **itself** comes before a subclass's met first, because a function's row names the
+  class that declares it and Live Walker lists an object's own class's functions only;
+* a **destroyed** object that garbage collection has not taken yet is passed over (it has left its level, so no
+  path search from it can succeed);
+* there is **no partial-name fallback**, and its class-default pick (an invoke's fallback: a static function runs
+  on a class default object) answers `none`.
+
+`addr`, `name`, `class` and `class_addr` are present only with an object. `scanned` is the size of the object array
+when the walk began, not the number of entries it looked at: it stops at the first object of the class itself. A
+walk cut short (the client went away) is an error, not `none`. Not `find_instances`, whose class gate is a name
+test -- `exact_match` is name equality -- and which lists templates on purpose. Runs on the bulk lane. A DLL older
+than this command answers `Unknown command`; the UI then falls back to `find_instances` (`exact_match`, the first
+object not named `Default__*`) and marks the answer `legacy`.
 
 ### find_by_address
 

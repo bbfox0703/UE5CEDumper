@@ -268,9 +268,13 @@
     <sys:String x:Key="str.LiveWalker.MatchNext">▼</sys:String>
     <!-- [AOBM-LIVEWALKER-HEX-SILENT] What the HEX status line calls a pointer field's target ({0} = the field). -->
     <sys:String x:Key="str.LiveWalker.PtrTargetLabel">{0} target</sys:String>
-    <!-- [WALK-NULLCLASS-SILENT] The header names no readable class: freed, or never an object (Go takes any address). -->
     <!-- [MAINWINDOW-NAVIGATE-EXACT-NAME] {0} = the class, {1} = GWorld or GameEngine -->
     <sys:String x:Key="str.LiveWalker.NoLiveInstanceToLocate">No live instance of {0} or of a subclass to locate in {1}.</sys:String>
+    <!-- [MAINWINDOW-NAVIGATE-EXACT-NAME] {0} = the object, {1} = its class, {2} = the class the function's row names, {3} = the function -->
+    <sys:String x:Key="str.Main.NavigatedToSubclass">Opened {0} ({1}, a subclass of {2}): {3} is declared on {2}, and Live Walker lists only {1}'s own functions.</sys:String>
+    <!-- [MAINWINDOW-NAVIGATE-EXACT-NAME] {0} = the object, {1} = the class asked for -->
+    <sys:String x:Key="str.Main.LiveIsDebugCameraOwned">{0} is the Debug Camera's own: nothing else of {1} is live.</sys:String>
+    <!-- [WALK-NULLCLASS-SILENT] The header names no readable class: freed, or never an object (Go takes any address). -->
     <sys:String x:Key="str.LiveWalker.NoHeader">⚠ No UObject header at this address — freed, or not an object. Re-open it from 🌍 GWorld or the finder.</sys:String>
     <!-- [P1-WALK-UNREADABLE] The DLL could not read the object's header at all. -->
     <sys:String x:Key="str.LiveWalker.Unreadable">⚠ This object is no longer readable (freed?) — re-open it from 🌍 GWorld or the finder.</sys:String>
@@ -1102,7 +1106,7 @@
     <sys:String x:Key="str.Tip.IF.GameplayActions">Opt-in (default off). Fold an extra keyword pack into scoring for character-control + world-interaction + shop verbs the default buckets skip — Dash / Dodge / Roll / Slide / Climb / Interact / Use / Open / Buy / Sell / Shop / Vendor / Merchant / Trade / Purchase. Lets a plain OpenShop() / Dash() / Interact() clear the threshold and show up (tip: combine with a name filter like "shop" or "buy"). Re-scores the loaded set in place — no reload needed. Noisier by design; turn off to return to the cheat-value default.</sys:String>
     <sys:String x:Key="str.Tip.IF.CallableOnly">Filter (default off): show only functions flagged BlueprintCallable or Exec. Gameplay/control/shop entry points are almost always one of these two, and both flags survive cooking — so this hides native getters/setters/engine plumbing noise. Pairs well with "Gameplay Actions" + "Show All" to browse callable action functions. Pure display filter — doesn't change scores.</sys:String>
     <sys:String x:Key="str.Tip.IF.Props">List the properties this function reads/writes. Blueprint functions: an exact bytecode scan. Native (C++) functions: a heuristic recovered from the machine code, shown with a Conf column (no analysis is possible only when this build cannot locate the function's native code).</sys:String>
-    <sys:String x:Key="str.Tip.IF.OpenLive">Try to open this function in Live Walker. If the class has no live (non-CDO) instance, falls back to the Class Struct tab. Auto-expands the Functions section and selects the target row.</sys:String>
+    <sys:String x:Key="str.Tip.IF.OpenLive">Try to open this function in Live Walker, on a live object of its class or a subclass. If none is live, falls back to the Class Struct tab. Auto-expands the Functions section and selects the target row -- when the object opened is of a subclass, an inherited function is not in its list, and the status line says so.</sys:String>
     <sys:String x:Key="str.Tip.IF.LocateGWorld">Locate in GWorld: find a live instance of this function's class, then show the shortest pointer path from GWorld down to it in Live Walker (stops at the parent that points to it)</sys:String>
     <sys:String x:Key="str.Tip.IF.LocateGameEngine">Locate in GameEngine: find a live instance of this function's class, then show the shortest pointer path from the live UGameEngine down to it in Live Walker (stops at the parent that points to it). Reaches engine-layer objects the GWorld graph can't — for most world actors, use Locate in GWorld.</sys:String>
     <sys:String x:Key="str.Tip.IF.CopyAaScript">Open the Copy AA Script (Baked) dialog for this function. Output requires ue5_invoke_helper.lua embedded in your CE table (Tools -&gt; Export CE Helper Lua File...).</sys:String>

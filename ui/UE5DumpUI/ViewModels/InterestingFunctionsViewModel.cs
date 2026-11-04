@@ -154,7 +154,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     // routes to the right destination panel. Two events:
     //
     // - NavigateToFunction(className, funcName): try to find a live
-    //   non-CDO instance of `className`; on hit, switch to LiveWalker
+    //   object of `className` or a subclass; on hit, switch to LiveWalker
     //   tab + walk to instance + auto-scroll to `funcName` row. On
     //   miss, switch to ClassStruct tab + walk class metadata.
     // - RequestCopyBakedScript(className, funcName, classAddr): fetch full
@@ -174,8 +174,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     public event Action<string>? NavigateToInstanceFinder;
 
     /// <summary>Raised to locate a live instance of the function's class within
-    /// the GWorld object graph. Payload = class name (MainWindow resolves a
-    /// representative instance via find_instance, then runs the path search).</summary>
+    /// the GWorld object graph. Payload = class name (MainWindow asks find_live_instance for
+    /// a live object of it, then runs the path search).</summary>
     public event Action<string>? LocateInGWorld;
 
     /// <summary>Engine-rooted counterpart of <see cref="LocateInGWorld"/> (path search
