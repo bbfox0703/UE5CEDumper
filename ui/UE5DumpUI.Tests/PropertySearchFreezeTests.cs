@@ -194,9 +194,11 @@ public class PropertySearchFreezeTests
         // clicked while the Search's probe still waits on the pipe skipped its own probe and trusted the old "yes":
         // the value dialog opened over a dead pipe and the push failed with the wrong reason.
         var gate = new TaskCompletionSource<bool>();
-        var bridge = new RecordingBridge { CheckGate = gate.Task };
+        var bridge = new RecordingBridge { NextAvailability = true };
+        await bridge.CheckAvailabilityAsync();               // what an earlier probe said, before CE closed...
+        bridge.CheckGate = gate.Task;
         var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge) { SearchQuery = "Health" };
-        vm.IsAobMakerAvailable = true;                       // what an earlier probe said, before CE closed
+        Assert.True(vm.IsAobMakerAvailable);                 // ...and what the panel starts from
         var prompted = false;
         vm.FreezeValuePrompt = _ => { prompted = true; return Task.FromResult<string?>("1"); };
 
@@ -208,7 +210,7 @@ public class PropertySearchFreezeTests
 
         Assert.False(prompted);                              // ...which says the plugin is gone
         Assert.Equal(0, bridge.CreateAaCalls);
-        Assert.Equal(1, bridge.CheckCalls);
+        Assert.Equal(2, bridge.CheckCalls);                  // the earlier probe and the Search's: the click made none
         Assert.Contains("not reachable", vm.StatusText);
     }
 
