@@ -5544,6 +5544,26 @@ int main() {
         put32(lpB[oPcMain0], Grimoire::OFF_UOBJECT_FLAGS, 0);
         putP(lpB[oPcMain0], kPlayerOff, 0);
         slot(5, oPcMain1);
+        // [INVOKE-PICK-GARBAGE] Review 1: on UE 5.0-5.3 and UE4 a garbage collection first marks every non-root object
+        // Unreachable (item bit 28) and clears it from the reachable ones; the local player's PC is no destroyed one then.
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+        uint8_t* lpcItem = lpPool.chunks[0].data() + static_cast<size_t>(5) * FakePool::kItemSize;   // oPcMain1's slot
+        auto putLpcItemFlags = [&](uint32_t f) { memcpy(lpcItem + 0x08, &f, sizeof(f)); };
+        for (unsigned ver : { 503u, 427u }) {
+            g_cachedUEVersion = ver;
+            putLpcItemFlags(1u << 28);
+            s = Aura::ScanForLocalPlayerController();
+            check(ver >= 500 ? "LOCALPC ⭐: mid-collection (Unreachable only, UE 5.3), the local player's PC is still taken"
+                             : "LOCALPC ⭐: mid-collection on UE4 too",
+                  is(s, oPcMain1, Aura::LocalPcPick::LocalPlayer), nm(s.pc).c_str());
+            putLpcItemFlags(ver >= 500 ? (1u << 21) : (1u << 29));   // Garbage / PendingKill: destroyed
+            s = Aura::ScanForLocalPlayerController();
+            check(ver >= 500 ? "LOCALPC control: a UE 5.3 Garbage item is passed over"
+                             : "LOCALPC control: a UE4 PendingKill item is passed over",
+                  is(s, oPcMain2, Aura::LocalPcPick::NoPlayer), nm(s.pc).c_str());
+        }
+        putLpcItemFlags(0);
+        g_cachedUEVersion = 508;
         // Review 1: the Player lookup is exact. Rename the reflected member: with no 'Player' field, a fuzzy arm would read
         // a PlayerState-like member -- set only on the inactive debug camera here -- and take it as a Player.
         put32(lpPlayerProp, DynOff::FFIELD_NAME, lPlayerState);
