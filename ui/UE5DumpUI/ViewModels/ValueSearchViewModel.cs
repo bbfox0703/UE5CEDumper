@@ -996,6 +996,11 @@ public partial class ValueSearchViewModel : ViewModelBase
             ErrorMessage = "Between requires Value and Value2.";
             return;
         }
+        if (Services.ValueTargetCheck.NonFiniteTargetError(SelectedDataType, SelectedScanType, Value, Value2) is { } nonFinite)
+        {
+            ErrorMessage = nonFinite;   // [VALUESCAN-NONFINITE-TARGET]
+            return;
+        }
 
         // Record what this heavy operation costs the DLL dispatcher. Automatic rather than
         // a measurement session: the evidence then accumulates from real use instead of only
@@ -1090,6 +1095,11 @@ public partial class ValueSearchViewModel : ViewModelBase
         if (SelectedScanType == ValueScanType.Between && string.IsNullOrWhiteSpace(Value2))
         {
             ErrorMessage = "Between requires Value and Value2.";
+            return;
+        }
+        if (Services.ValueTargetCheck.NonFiniteTargetError(SelectedDataType, SelectedScanType, Value, Value2) is { } nonFinite)
+        {
+            ErrorMessage = nonFinite;   // [VALUESCAN-NONFINITE-TARGET]
             return;
         }
 
@@ -1453,6 +1463,11 @@ public partial class ValueSearchViewModel : ViewModelBase
             if (g.ScanType == ValueScanType.Between && string.IsNullOrWhiteSpace(g.Value2))
             {
                 error = "A Between row needs both a low and a high value.";
+                return false;
+            }
+            if (Services.ValueTargetCheck.NonFiniteTargetError(g.DataType, g.ScanType, g.Value, g.Value2) is { } nf)
+            {
+                error = nf;   // [VALUESCAN-NONFINITE-TARGET]
                 return false;
             }
         }

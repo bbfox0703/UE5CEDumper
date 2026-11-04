@@ -47,6 +47,11 @@ public class TeleportViewModelTests
         public override Task<int> SetDebugCameraAsync(bool enable, CancellationToken ct = default)
         { SetDebugCameraCalls++; LastSetDebugCameraEnable = enable; return Task.FromResult(NextDebugCameraState); }
 
+        public bool? NextDebugCameraOnTemplate { get; set; }   // [INVOKE-NONSTATIC-ON-CDO] null = an older DLL
+
+        public override async Task<DebugCameraSetResult> SetDebugCameraDetailedAsync(bool enable, CancellationToken ct = default)
+            => new(await SetDebugCameraAsync(enable, ct), NextDebugCameraOnTemplate);
+
         public override Task<int> GetDebugCameraStateAsync(CancellationToken ct = default)
         { GetDebugCameraCalls++; return Task.FromResult(NextDebugCameraState); }
 
@@ -74,6 +79,11 @@ public class TeleportViewModelTests
 
         public override Task<IReadOnlyList<StealthCandidate>> FindStealthMeterAsync(int max = 8, CancellationToken ct = default)
         { FindStealthCalls++; return Task.FromResult(NextStealthCandidates); }
+
+        /// <summary>[SOLIDE-RELATED-STOPS] Why the search stopped short; null says it finished.</summary>
+        public RelatedObjectsStops? NextStealthStops { get; set; }
+        public override async Task<StealthMeterResult> FindStealthMeterDetailedAsync(int max = 8, CancellationToken ct = default)
+            => new StealthMeterResult { Candidates = await FindStealthMeterAsync(max, ct), Stops = NextStealthStops };
 
         // [A4-STEALTH-PRIME] Opt-in: null keeps the base stub's NotImplementedException, which every older test relied on.
         public IReadOnlyList<ForcedFieldInfo>? NextForcedFields { get; set; }
@@ -145,8 +155,11 @@ public class TeleportViewModelTests
         public override Task<FlyStatus> FlySetAsync(bool? enable, double? speed, int? preset, bool? noclip, CancellationToken ct = default)
         { FlySetCalls++; LastFlyEnable = enable; LastFlySpeed = speed; LastFlyPreset = preset; LastFlyNoclip = noclip; return Task.FromResult(NextFlyStatus); }
 
+        /// <summary>What fly_get_state answers; null answers <see cref="NextFlyStatus"/>, as fly_set does.</summary>
+        public FlyStatus? NextFlyGetStatus { get; set; }
+
         public override Task<FlyStatus> FlyGetStateAsync(CancellationToken ct = default)
-        { FlyGetStateCalls++; return Task.FromResult(NextFlyStatus); }
+        { FlyGetStateCalls++; return Task.FromResult(NextFlyGetStatus ?? NextFlyStatus); }
 
         // ── See-through (Schlacht) ──
         public SeeThroughStatus NextSeeThroughStatus { get; set; } = new() { Active = false };
@@ -576,6 +589,67 @@ public class TeleportViewModelTests
         Assert.Equal("Ready", vm.StealthState);
     }
 
+    // [SOLIDE-RELATED-STOPS] The search scores the pawn and the objects it owns, the Related Objects walk's list, which
+    // stops at 128 owned objects (and at a pointer budget and a deadline). A meter past that point was never found, and
+    // nothing said the search had not looked there.
+
+    private static RelatedObjectsStops OwnedCut => new() { OwnedCapHit = true, MaxOwned = 128 };
+
+    [Fact]
+    public async Task DetectStealthMeter_NoneFound_InAnUnfinishedSearch_SaysSo()
+    {
+        var fake = new FakeDumpService { NextStealthStops = OwnedCut };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+
+        Assert.Equal("Not found", vm.StealthState);
+        Assert.Contains("Not every object the player owns was searched", vm.StatusText);
+        Assert.Contains("128", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task DetectStealthMeter_Found_InAnUnfinishedSearch_SaysSo()
+    {
+        var fake = new FakeDumpService
+        {
+            NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "BP_Player_C", FieldName = "Visibility", Score = 9 } },
+            NextStealthStops = OwnedCut,
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+
+        Assert.Equal("Ready", vm.StealthState);
+        Assert.Contains("Not every object the player owns was searched", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task DetectStealthMeter_AFinishedSearch_SaysNothingMore()
+    {
+        var fake = new FakeDumpService { NextStealthStops = new RelatedObjectsStops { MaxOwned = 128 } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("Not every object", vm.StatusText);
+    }
+
+    [Fact]
+    public void Fern_And_Solide_CarryTheSearchsStops()
+    {
+        var solide = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Solide.cpp"));
+        Assert.Contains("Aura::GetRelatedObjects(pawn, 128, stats)", solide);
+        var fern = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
+        int h = fern.IndexOf("cmd == Renge::CMD_FIND_STEALTH_METER", StringComparison.Ordinal);
+        int stops = fern.IndexOf("data[\"stops\"]", h, StringComparison.Ordinal);
+        int end = fern.IndexOf("return Renge::MakeResponse", h, StringComparison.Ordinal);
+        Assert.True(h > 0 && stops > h && stops < end, "find_stealth_meter must carry the walk's stops");
+    }
+
     [Fact]
     public async Task DetectStealthMeter_none_found_shows_amber_not_found()
     {
@@ -908,6 +982,25 @@ public class TeleportViewModelTests
     }
 
     [Fact]
+    public async Task HoldStealth_zero_held_because_only_templates_exist_says_so()
+    {
+        // [LISTINSTANCES-KEEPS-TEMPLATES] review 1: the Teleport card's twin of Property Search's note.
+        var fake = new FakeDumpService
+        {
+            NextStealthCandidates = new List<StealthCandidate> { new() { ClassName = "C", FieldName = "F" } },
+            NextForce = new() { Held = 0, Resolved = false, TemplatesSkipped = 2 },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.DetectStealthMeterCommand.ExecuteAsync(null);
+        await vm.HoldStealthCommand.ExecuteAsync(null);
+
+        Assert.Equal("Armed @0", vm.StealthState);
+        Assert.Contains(UE5DumpUI.Helpers.ForceText.TemplatesOnlyNote("C", 2), vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task HoldStealth_refused_with_nothing_armed_shows_not_found()
     {
         // A negative code on a first hold: Solide dropped the job it refused, so nothing is armed.
@@ -1109,6 +1202,156 @@ public class TeleportViewModelTests
         Assert.Equal("Unavailable", vm.WorldTimeState);
     }
 
+    // ── [TELEPORT-RECALL-PARENTREL] a pose that is not world coordinates ───────────
+    // Marker Recall and Force, TP facing direction, Fill from current pos and the coordinate library each took a pose read
+    // from the parent-relative fallback for world coordinates. The DLL now refuses the jumps (-16); the UI refuses to
+    // store such numbers where nothing can carry the flag.
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Recall_and_Force_of_a_parent_relative_marker_say_why_and_that_Force_cannot_help(bool force)
+    {
+        var fake = new FakeDumpService { NextResult = new() { Code = TeleportCodes.ParentRelative } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        if (force) await vm.ForceRecallMarkerCommand.ExecuteAsync(1);
+        else await vm.RecallMarkerCommand.ExecuteAsync(1);
+
+        Assert.Equal(force, fake.LastForce);
+        Assert.Equal(TeleportViewModel.RecallParentRelativeText(force, 2), vm.StatusText);
+        Assert.DoesNotContain("code -16", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task SaveMarker_from_a_parent_relative_read_says_Recall_and_Force_will_refuse_it()
+    {
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, X = 1, Y = 2, Z = 3, ParentRelative = true, ParentRelativeKnown = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.SaveMarkerCommand.ExecuteAsync(0);
+
+        Assert.Equal(TeleportViewModel.MarkerSavedParentRelativeText(1), vm.StatusText);
+        Assert.DoesNotContain("drives the pawn there", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task TeleportRelative_refused_for_a_parent_relative_start_says_why()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = TeleportCodes.ParentRelative } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+
+        await vm.TeleportRelativeCommand.ExecuteAsync(null);
+
+        Assert.Equal(TeleportViewModel.RelativeParentRelativeText, vm.StatusText);
+    }
+
+    [Fact]
+    public async Task FillCoordsFromCurrent_refuses_a_parent_relative_pose()
+    {
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, X = 100, Y = 200, Z = 300, ParentRelative = true, ParentRelativeKnown = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.CoordX = 7; vm.CoordY = 8; vm.CoordZ = 9;
+
+        await vm.FillCoordsFromCurrentCommand.ExecuteAsync(null);
+
+        Assert.Equal(7, vm.CoordX);                   // the boxes keep what they held
+        Assert.Equal(9, vm.CoordZ);
+        Assert.Equal(TeleportViewModel.CoordFillParentRelativeText, vm.StatusText);
+        Assert.True(vm.PoseParentRelative);           // the pose card's chip still shows the read
+    }
+
+    [Fact]
+    public async Task SaveCurrentPos_refuses_a_parent_relative_pose()
+    {
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, Map = "Map01", X = 100, ParentRelative = true, ParentRelativeKnown = true },
+        };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.LoadCoordLibraryForGame("Game.exe");
+
+        await vm.SaveCurrentPosToLibraryCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.CoordEntries);
+        Assert.Equal(TeleportViewModel.LibParentRelativeText, vm.CoordStatus);
+    }
+
+    [Fact]
+    public async Task UpdateCoordFromCurrent_refuses_a_parent_relative_pose()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01" } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.LoadCoordLibraryForGame("Game.exe");
+        vm.CoordX = 1; vm.CoordY = 2; vm.CoordZ = 3;
+        await vm.AddCoordFromFieldsCommand.ExecuteAsync(null);   // selects the new row
+        Assert.NotNull(vm.SelectedCoord);
+        fake.NextPose = new() { Code = 0, Map = "Map02", X = 50, Y = 60, Z = 70, ParentRelative = true, ParentRelativeKnown = true };
+
+        await vm.UpdateCoordFromCurrentCommand.ExecuteAsync(null);
+
+        var e = Assert.Single(vm.CoordEntries);
+        Assert.Equal(1, e.X);
+        Assert.Equal("Map01", e.Map);
+        Assert.Equal(TeleportViewModel.LibParentRelativeText, vm.CoordStatus);
+    }
+
+    /// <summary>Review of e6c2f841: the library's distance column measured from the live pose whatever it was, so a
+    /// parent-relative read was taken for world coordinates there too.</summary>
+    [Fact]
+    public async Task A_parent_relative_pose_gives_the_library_no_distance()
+    {
+        var fake = new FakeDumpService { NextPose = new() { Code = 0, Source = "invoke", Map = "Map01" } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.LoadCoordLibraryForGame("Game.exe");
+        vm.CoordX = 100; vm.CoordY = 0; vm.CoordZ = 0;
+        await vm.AddCoordFromFieldsCommand.ExecuteAsync(null);
+        await vm.RefreshPoseCommand.ExecuteAsync(null);
+        Assert.True(vm.CoordResults[0].HasDistance);          // control: a world pose measures
+
+        fake.NextPose = new() { Code = 0, Source = "raw", Map = "Map01", X = 30, Y = 31, Z = 284,
+                                ParentRelative = true, ParentRelativeKnown = true };
+        await vm.RefreshPoseCommand.ExecuteAsync(null);
+
+        Assert.False(vm.CoordResults[0].HasDistance);
+    }
+
+    /// <summary>Review of 017e8a76: a jump whose position could not be read in world coordinates saves no undo point,
+    /// so the empty-slot texts no longer say every jump saves it.</summary>
+    [Fact]
+    public async Task RecallLast_on_an_empty_slot_does_not_claim_every_jump_saves_it()
+    {
+        var fake = new FakeDumpService { NextResult = new() { Code = TeleportCodes.EmptyMarker } };
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        Assert.Equal(TeleportViewModel.LastEmptySummaryText, vm.LastSummary);
+
+        await vm.RecallLastCommand.ExecuteAsync(null);
+
+        Assert.Equal(TeleportViewModel.LastEmptyText, vm.StatusText);
+    }
+
+    [Fact]
+    public void Describe_names_a_parent_relative_refusal()
+    {
+        var text = TeleportCodes.Describe(TeleportCodes.ParentRelative);
+        Assert.Equal(TeleportCodes.ParentRelativeText, text);
+        Assert.DoesNotContain("code -16", text);
+    }
+
     [Fact]
     public async Task Recall_maps_minus7_to_force_hint_and_does_not_force()
     {
@@ -1164,6 +1407,31 @@ public class TeleportViewModelTests
         Assert.StartsWith("BugItGo 100.000 200.000 300.000", platform.LastClipboard);
         // Also pasted into the Run field so BugItGo can fire immediately.
         Assert.StartsWith("BugItGo 100.000 200.000 300.000", vm.BugItGoInput);
+    }
+
+    [Fact]
+    public async Task CopyAsBugItGo_a_parent_relative_pose_is_not_copied_and_empties_the_run_field()
+    {
+        // [TELEPORT-BUGITGO-PARENTREL] A "BugItGo X Y Z" string claims world coordinates to whatever reads it, and a
+        // parent-relative read is not -- the string cannot carry the flag a marker keeps. Copy refused nothing, so the
+        // Run field (and the `bugitgo` hotkey) then drove those numbers into the pawn as world coordinates.
+        var fake = new FakeDumpService
+        {
+            NextPose = new() { Code = 0, X = 1, Y = 2, Z = 3, Source = "raw", ParentRelative = true, ParentRelativeKnown = true },
+        };
+        var vm = CreateVm(fake, out var platform);
+        vm.IsConnected = true;
+        vm.BugItGoInput = "BugItGo 9 9 9";
+
+        await vm.CopyAsBugItGoCommand.ExecuteAsync(null);
+
+        Assert.Null(platform.LastClipboard);
+        Assert.Equal("", vm.BugItGoInput);                       // not the older string either: the hotkey would fire it
+        Assert.Equal(TeleportViewModel.BugItParentRelativeText, vm.StatusText);
+        Assert.True(vm.PoseParentRelative);                      // the pose card's chip still shows it
+
+        await vm.RunBugItGoCommand.ExecuteAsync(null);
+        Assert.Null(fake.LastExplicit);
     }
 
     [Fact]
@@ -1259,6 +1527,131 @@ public class TeleportViewModelTests
     // ApplyFly keyed its "Fly ON" on st.HasCmc -- "a CharacterMovement was RESOLVED" -- and
     // ResetFly said "Fly OFF." unconditionally. Both would have gone on lying even after the
     // DLL started telling the truth. FlyStatus.State has carried the code all along.
+
+    // [FLY-REPORTS-WISH] "Fly ON (noclip)" was built from the card's own checkbox, and the DLL's `noclip` key is the
+    // request: a game whose pawn class has no SetActorEnableCollision, or a call the game thread never ran, left the
+    // pawn colliding under a card that said noclip. The DLL now reads bActorEnableCollision on the pawn.
+
+    [Fact]
+    public async Task Fly_noclip_with_collision_still_on_does_not_say_noclip()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.FlySettleStep = TimeSpan.FromMilliseconds(1);
+        vm.IsConnected = true;
+        vm.FlyNoclip = true;
+        fake.NextFlyStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, State = 1, Noclip = true, Collision = 1 };
+
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("(noclip)", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("collision still on", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("collision on", vm.FlyCurrentText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Fly_noclip_with_collision_off_says_noclip()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.IsConnected = true;
+        vm.FlyNoclip = true;
+        fake.NextFlyStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, State = 1, Noclip = true, Collision = 0 };
+
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+
+        Assert.Contains("(noclip)", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("collision off", vm.FlyCurrentText, StringComparison.Ordinal);
+    }
+
+    // [FLY-REPORTS-WISH] review round 2: fly_set answers before the Fly worker's next tick applies noclip on the game
+    // thread, so its `collision` is always the one from before. Measured on build 3672, DumperTest Development: the reply
+    // said 1, and the pawn read 0 103 ms later. The card re-reads fly_get_state until what it reads agrees with what it
+    // asked for, or a bounded window ends; then it says what it read.
+
+    [Fact]
+    public async Task Fly_noclip_says_noclip_once_the_worker_has_applied_it()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.FlySettleStep = TimeSpan.FromMilliseconds(1);
+        vm.IsConnected = true;
+        vm.FlyNoclip = true;
+        fake.NextFlyStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, State = 1, Noclip = true, Collision = 1 };
+        fake.NextFlyGetStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, Noclip = true, Collision = 0 };
+
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+
+        Assert.True(fake.FlyGetStateCalls >= 1);
+        Assert.Contains("(noclip)", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("collision off", vm.FlyCurrentText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Fly_noclip_that_never_applies_says_so_after_the_window()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.FlySettleStep = TimeSpan.FromMilliseconds(1);
+        vm.IsConnected = true;
+        vm.FlyNoclip = true;
+        fake.NextFlyStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, State = 1, Noclip = true, Collision = 1 };
+
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+
+        Assert.True(fake.FlyGetStateCalls >= 2);   // it looked again, more than once, before saying so
+        Assert.Contains("collision still on", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Fly_without_noclip_over_a_pawn_still_not_colliding_does_not_say_collision()
+    {
+        // [FLY-REPORTS-WISH] review round 2: the other direction of the same report. A pawn left not colliding (an
+        // earlier noclip whose restore the game thread refused) under a Fly ON with noclip unticked.
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.FlySettleStep = TimeSpan.FromMilliseconds(1);
+        vm.IsConnected = true;
+        vm.FlyNoclip = false;
+        fake.NextFlyStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, State = 1, Collision = 0 };
+
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("(collision)", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("collision still off", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("collision off", vm.FlyCurrentText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Fly_noclip_toggled_in_flight_shows_the_collision_once_applied()
+    {
+        var fake = new FakeDumpService();
+        var vm = CreateVm(fake, out _);
+        vm.FlySettleStep = TimeSpan.FromMilliseconds(1);
+        vm.IsConnected = true;
+        fake.NextFlyStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, State = 1, Collision = 1 };
+        await vm.ApplyFlyCommand.ExecuteAsync(null);
+        fake.NextFlyGetStatus = new FlyStatus { HasCmc = true, Active = true, CurrentMode = 5, Noclip = true, Collision = 0 };
+
+        vm.FlyNoclip = true;   // the config push runs on its own task
+
+        for (int i = 0; i < 200 && !vm.FlyCurrentText.Contains("collision off", StringComparison.Ordinal); i++)
+            await Task.Delay(10, TestContext.Current.CancellationToken);
+        Assert.Contains("collision off", vm.FlyCurrentText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Fern_And_Dunste_PublishTheObservedCollision()
+    {
+        var dunste = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Dunste.cpp"));
+        int gs = dunste.IndexOf("int32_t GetStatus(FlyStatus& out)", StringComparison.Ordinal);
+        Assert.True(dunste.IndexOf("\"bActorEnableCollision\"", gs, StringComparison.Ordinal) > gs);
+        var fern = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
+        int f = fern.IndexOf("auto flyStatusJson = ", StringComparison.Ordinal);
+        int end = fern.IndexOf("return data;", f, StringComparison.Ordinal);
+        int col = fern.IndexOf("data[\"collision\"]", f, StringComparison.Ordinal);
+        Assert.True(col > f && col < end, "the fly reply must carry the observed collision");
+    }
 
     [Fact]
     public async Task Fly_enable_that_the_DLL_REFUSED_is_not_reported_as_ON()
@@ -1448,6 +1841,19 @@ public class TeleportViewModelTests
     // ── Debug Camera force on/off ──────────────────────────────────────
 
     [Fact]
+    public async Task ForceDebugCameraOn_whose_toggle_ran_on_the_class_default_object_says_so()
+    {
+        // [INVOKE-NONSTATIC-ON-CDO] the Teleport card's Force shares the Console's note (a DLL from builds 3676-3681).
+        var fake = new FakeDumpService { NextDebugCameraState = 0, NextDebugCameraOnTemplate = true };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+
+        Assert.Contains(UE5DumpUI.Helpers.DebugCameraText.OnTemplateText, vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task ForceDebugCameraOn_calls_dll_and_sets_badge()
     {
         var fake = new FakeDumpService { NextDebugCameraState = 1 };
@@ -1473,6 +1879,51 @@ public class TeleportViewModelTests
         Assert.Equal(1, fake.SetDebugCameraCalls);
         Assert.False(fake.LastSetDebugCameraEnable);
         Assert.Equal("OFF", vm.DebugCameraState);
+    }
+
+    [Fact]
+    public async Task ForceDebugCameraOn_refused_for_no_live_CheatManager_says_so_and_the_badge_stays_OFF()
+    {
+        // [DEBUGCAM-FORCEON-CDO] The Teleport card's (and the debugcam_on hotkey's) twin of the Console's refusal.
+        var fake = new FakeDumpService { NextDebugCameraState = Constants.DebugCameraNoLiveCheatManagerResult };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+
+        Assert.True(fake.LastSetDebugCameraEnable);
+        Assert.Contains(UE5DumpUI.Helpers.DebugCameraText.NoLiveCheatManagerText, vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("re-drive", vm.StatusText, StringComparison.Ordinal);
+        Assert.Equal("OFF", vm.DebugCameraState);
+    }
+
+    [Fact]
+    public async Task ForceDebugCamera_minus1_is_a_failure_not_a_missing_CheatManager()
+    {
+        // [DEBUGCAM-FORCEON-CDO] -17 says "no live CheatManager"; -1 is a read or a toggle that failed.
+        var fake = new FakeDumpService { NextDebugCameraState = -1 };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.ForceDebugCameraOffCommand.ExecuteAsync(null);
+
+        Assert.Equal("Unknown", vm.DebugCameraState);
+        Assert.Contains(UE5DumpUI.Helpers.DebugCameraText.ForceFailed(wantOn: false), vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("no live CheatManager", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task RefreshDebugCamera_minus1_is_a_failed_read_not_advice_to_enter_gameplay()
+    {
+        // [DEBUGCAM-FORCEON-CDO] -1 is a read that failed, never the no-live-CheatManager case.
+        var fake = new FakeDumpService { NextDebugCameraState = -1 };
+        var vm = CreateVm(fake, out _);
+        vm.SetConnected(true);
+
+        await vm.RefreshDebugCameraCommand.ExecuteAsync(null);
+
+        Assert.Equal("Unknown", vm.DebugCameraState);
+        Assert.Equal(UE5DumpUI.Helpers.DebugCameraText.StateUnknownText, vm.StatusText);
     }
 
     [Fact]
@@ -3689,6 +4140,32 @@ public class TeleportViewModelTests
         Assert.False(bridge.AaScripts[0].AutoActivate);   // still pushed unticked, into the trainer's group
         Assert.Contains(reason, vm.CoordStatus);
         Assert.DoesNotContain("pipe dropped", vm.CoordStatus);
+    }
+
+    [Fact]
+    public async Task A_push_that_finds_the_pipe_gone_reaches_the_toolbar_even_when_the_flag_already_said_so()
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 3, F-A. The no-DLL push is gated on the BRIDGE, not this panel's flag,
+        // so the flag can already say "down" when the push learns the pipe is gone. Set directly, false -> false raised
+        // nothing, and the toolbar chip -- which mirrors a change -- kept saying "connected" over a dead pipe.
+        var bridge = new ScriptedAobMakerBridge
+        {
+            Available = true, AaResult = false, AaDetail = new SymbolScriptResult(false, null, null, null),
+            AvailableAfterCall = false,
+        };
+        var vm = new TeleportViewModel(new FakeDumpService(), new NoopLogger(), new FakePlatform(), aobMaker: bridge,
+                                       experimentalGate: new FakeExperimentalGate(enabled: true));
+        vm.LoadCoordLibraryForGame("Game.exe");
+        vm.CoordX = 1; vm.CoordY = 2; vm.CoordZ = 3;
+        vm.AddCoordFromFieldsCommand.Execute(null);
+        Assert.False(vm.IsAobMakerAvailable);
+        var heard = new List<bool>();
+        vm.AobMakerProbed += heard.Add;
+
+        await vm.ExportCoordLuaNoDllCommand.ExecuteAsync(null);
+
+        Assert.Single(bridge.AaScripts);
+        Assert.Equal(new[] { false }, heard);
     }
 
     private static async Task<string> NoDllPushStatusAsync(SymbolScriptResult detail, bool? availableAfter = null,

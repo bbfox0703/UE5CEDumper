@@ -86,7 +86,7 @@ def main() -> int:
     what = sys.argv[1]
     OUT.mkdir(exist_ok=True)
 
-    with PipeClient().connect() as c:
+    with PipeClient() as c:
         if what == "probe":
             s = _state(c)
             print(json.dumps({k: s[k] for k in sorted(s) if k != "id"}, indent=2))

@@ -406,8 +406,12 @@ public class BookmarkTests
 
     // --- Cross-restart spine re-resolution ---
 
-    [Fact]
-    public async Task LoadBookmark_DeepContainerSpine_ReresolvesAfterGameRestart()
+    // [LEAD-BOOKMARK-SAMECLASS-RECYCLE] control: a spine re-walked from the live GWorld finds the object by its path, and
+    // a spawned actor's name can differ in a new launch, so a re-resolved bookmark is not held to the saved name.
+    [Theory]
+    [InlineData("BP_PlayerCharacter")]
+    [InlineData("BP_PlayerCharacter_C_2147482516")]
+    public async Task LoadBookmark_DeepContainerSpine_ReresolvesAfterGameRestart(string savedObjectName)
     {
         // A deep bookmark saved in a PREVIOUS game session: its saved addresses are all
         // stale (the game restarted, ASLR moved everything). The spine — GWorld → GameState
@@ -458,7 +462,7 @@ public class BookmarkTests
 
         var slot = vm.BookmarkSlots[0];
         slot.SavedClassName = "BP_PlayerCharacter_C";
-        slot.SavedObjectName = "BP_PlayerCharacter";
+        slot.SavedObjectName = savedObjectName;
         slot.SavedAddress = "0xDEADPAWN";   // stale, from the previous session
         slot.SavedBreadcrumbs = new List<BreadcrumbItem>
         {
@@ -557,6 +561,114 @@ public class BookmarkTests
 
         Assert.Equal("UserWidget", vm.CurrentClassName);
         Assert.Equal("0xC0DE", vm.Breadcrumbs[^1].Address);
+    }
+
+    // [LEAD-BOOKMARK-SAMECLASS-RECYCLE] On the SAVED address (nothing re-anchored the spine), the class name alone let
+    // another instance of the same class -- one that took the address in a new launch, or after the saved object was
+    // freed -- load under the bookmark's name. The saved object name tells them apart.
+    private static (LiveWalkerViewModel vm, BookmarkSlot slot) AddressRootedBookmark(string nowAtAddress)
+    {
+        var dump = new StubDumpService();
+        dump.RegisterStruct("0xE0E0", new InstanceWalkResult
+        {
+            Name = nowAtAddress, ClassName = "BP_Enemy_C", Address = "0xE0E0",
+            Fields = new() { new() { Name = "Health", Offset = 100, TypeName = "FloatProperty", TypedValue = "50" } },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        var slot = vm.BookmarkSlots[0];
+        slot.SavedClassName = "BP_Enemy_C";
+        slot.SavedObjectName = "BP_Enemy_C_3";
+        slot.SavedAddress = "0xE0E0";
+        slot.SavedBreadcrumbs = new List<BreadcrumbItem>
+        {
+            new() { Address = "0xE0E0", Label = "BP_Enemy_C_3", FieldName = "0xE0E0", IsPointerDeref = true },
+        };
+        slot.SavedSelectedFields = new() { new BookmarkFieldRef("Health", 100) };
+        slot.IsOccupied = true;
+        return (vm, slot);
+    }
+
+    [Fact]
+    public async Task LoadBookmark_SavedAddressNowHoldsAnotherInstanceOfTheClass_ReportsStale()
+    {
+        var (vm, slot) = AddressRootedBookmark(nowAtAddress: "BP_Enemy_C_7");
+        var restoreRaised = false;
+        vm.RestoreBookmarkView += (_, _, _) => restoreRaised = true;
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.Equal("BP_Enemy_C", vm.CurrentClassName);   // the class matches...
+        Assert.False(restoreRaised);                         // ...and the bookmark still does not claim it
+        Assert.Contains("stale", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LoadBookmark_SavedAddressStillHoldsTheSavedObject_Restores()
+    {
+        var (vm, slot) = AddressRootedBookmark(nowAtAddress: "BP_Enemy_C_3");
+        var restoreRaised = false;
+        vm.RestoreBookmarkView += (_, _, _) => restoreRaised = true;
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.True(restoreRaised);
+        Assert.Contains("loaded", vm.StatusText);
+    }
+
+    // Review round 2: a struct leaf has no name of its own -- an inline struct's is its crumb label, which the saved
+    // name always equals, and a DataTable row's is the DLL's guess over the row's bytes, which a changed row fails.
+    // Its identity is the object holding it: the nearest object crumb above, whose label is that object's walked name.
+
+    private static (LiveWalkerViewModel vm, BookmarkSlot slot) InlineStructBookmark(string ownerNowAtAddress)
+    {
+        var dump = new StubDumpService();
+        dump.RegisterStruct("0xE0E0", new InstanceWalkResult
+        {
+            Name = ownerNowAtAddress, ClassName = "BP_Enemy_C", Address = "0xE0E0", Fields = new(),
+        });
+        dump.RegisterStruct("0xE100", new InstanceWalkResult
+        {
+            Name = "Stats", ClassName = "FStats", Address = "0xE100",
+            Fields = new() { new() { Name = "Health", Offset = 0, TypeName = "FloatProperty", TypedValue = "50" } },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        var slot = vm.BookmarkSlots[0];
+        slot.SavedClassName = "FStats";
+        slot.SavedObjectName = "Stats";   // the crumb label, as a save of an inline struct records it
+        slot.SavedAddress = "0xE100";
+        slot.SavedBreadcrumbs = new List<BreadcrumbItem>
+        {
+            new() { Address = "0xE0E0", Label = "BP_Enemy_C_3", FieldName = "0xE0E0", IsPointerDeref = true },
+            new() { Address = "0xE100", Label = "Stats", FieldName = "Stats", FieldOffset = 0x100, ClassAddr = "0xF5" },
+        };
+        slot.SavedSelectedFields = new() { new BookmarkFieldRef("Health", 0) };
+        slot.IsOccupied = true;
+        return (vm, slot);
+    }
+
+    [Fact]
+    public async Task LoadBookmark_InlineStructWhoseOwnerAddressHoldsAnotherInstance_ReportsStale()
+    {
+        var (vm, slot) = InlineStructBookmark(ownerNowAtAddress: "BP_Enemy_C_7");
+        var restoreRaised = false;
+        vm.RestoreBookmarkView += (_, _, _) => restoreRaised = true;
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.False(restoreRaised);
+        Assert.Contains("stale", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task LoadBookmark_InlineStructWhoseOwnerIsStillThere_Restores()
+    {
+        var (vm, slot) = InlineStructBookmark(ownerNowAtAddress: "BP_Enemy_C_3");
+        var restoreRaised = false;
+        vm.RestoreBookmarkView += (_, _, _) => restoreRaised = true;
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.True(restoreRaised);
     }
 
     [Fact]
@@ -736,6 +848,7 @@ public class BookmarkTests
     private sealed class DataTableDump : StubDumpService
     {
         public string RowStruct = "FItemRow";
+        public string RowStructAddr = "0x5700";
         public bool Refuse;
         public int RowWalks;
 
@@ -746,7 +859,7 @@ public class BookmarkTests
             if (Refuse) throw new InvalidOperationException("not a DataTable (class=Actor)");
             return Task.FromResult(new DataTableWalkResult
             {
-                RowCount = 2, RowStructName = RowStruct, RowMapOffset = 0x30,
+                RowCount = 2, RowStructName = RowStruct, RowStructAddr = RowStructAddr, RowMapOffset = 0x30,
                 Rows = new()
                 {
                     new DataTableRowInfo { RowName = "Sword",  DataAddr = "0x1000", Fields = new() },
@@ -870,6 +983,92 @@ public class BookmarkTests
         Assert.Equal(1, dump.RowWalks);                         // no second, unguarded walk
         Assert.DoesNotContain(vm.Fields, f => f.Name.Contains("Sword"));
         Assert.Contains("gone or has changed", vm.StatusText);
+    }
+
+    // [LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST] A bookmark FILE saved BELOW a row view (a row's struct drilled from it)
+    // re-walked only the LAST crumb, so the row view's crumb kept no rows: Back found no reflected "RowMap" field to
+    // re-hydrate from and showed the table's own grid under the row view's label, and Refresh there said the view
+    // "did not restore" although nothing had refused it.
+
+    /// <summary>The FILE shape of a bookmark on a row's struct, drilled from the row view of
+    /// <see cref="FillDataTableSlot"/>'s table. The row crumb's class is the row struct the row view's table names.</summary>
+    private static void FillRowBelowDataTableSlot(BookmarkSlot slot, DataTableDump dump)
+    {
+        dump.RegisterStruct("0x1000", new InstanceWalkResult
+        {
+            Address = "0x1000", Name = "FItemRow", ClassName = "FItemRow", ClassAddr = "0x5700",
+            Fields = new() { new() { Name = "Damage", Offset = 0x8, TypeName = "IntProperty", TypedValue = "7" } },
+        });
+        FillDataTableSlot(slot);
+        slot.SavedBreadcrumbs.Add(new BreadcrumbItem
+        {
+            Address = "0x1000", Label = "[0] Sword", FieldName = "[0] Sword", FieldOffset = 0x8, ClassAddr = "0x5700",
+        });
+        slot.SavedAddress = "0x1000";
+        slot.SavedClassName = "FItemRow";
+    }
+
+    [Fact]
+    public async Task BookmarkFile_OnARowWhoseBytesNameItDifferently_IsNotCalledStale()
+    {
+        // Review round 2: a row's walked "name" is the DLL's guess over the row's bytes (the struct name, or a name
+        // read where a UObject keeps one), so a row whose leading bytes changed read "stale" while its table was the
+        // same. The row is checked through the table that holds it.
+        var dump = new DataTableDump();
+        dump.RegisterStruct("0xDA7A", new InstanceWalkResult
+        {
+            Address = "0xDA7A", Name = "DT_Items", ClassName = "DataTable", Fields = new(),
+        });
+        var vm = DataTableVm(dump);
+        var slot = vm.BookmarkSlots[0];
+        FillRowBelowDataTableSlot(slot, dump);
+        slot.SavedObjectName = "SomeNameTheRowBytesGaveThen";   // the walk now names it FItemRow
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+
+        Assert.Equal("FItemRow", vm.CurrentClassName);
+        Assert.Contains("loaded", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task BookmarkFile_BelowARowView_BackShowsTheRowViewsRows()
+    {
+        var dump = new DataTableDump();
+        var vm = DataTableVm(dump);
+        var slot = vm.BookmarkSlots[0];
+        FillRowBelowDataTableSlot(slot, dump);
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+        Assert.Equal("FItemRow", vm.CurrentClassName);
+        Assert.Contains("loaded", vm.StatusText);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.Contains(vm.Fields, f => f.Name.Contains("Sword"));   // was the table's own grid
+        Assert.Contains(vm.Fields, f => f.Name.Contains("Shield"));
+        Assert.NotNull(vm.Breadcrumbs[^1].DataTableData);             // the in-session shape
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.DoesNotContain("did not restore", vm.StatusText);
+        Assert.Contains(vm.Fields, f => f.Name.Contains("Sword"));
+    }
+
+    [Theory]
+    [InlineData(false)]   // another table, whose row struct is not the one the row was drilled into
+    [InlineData(true)]    // the DLL refuses the address: it is not a DataTable any more
+    public async Task BookmarkFile_BelowARowViewWhoseTableChanged_SaysSo_AndBackSaysTheViewDidNotRestore(bool refuse)
+    {
+        var dump = new DataTableDump { RowStructAddr = "0x5800", Refuse = refuse };
+        var vm = DataTableVm(dump);
+        var slot = vm.BookmarkSlots[0];
+        FillRowBelowDataTableSlot(slot, dump);
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+        Assert.Contains("DataTable", vm.StatusText);
+        Assert.DoesNotContain("loaded", vm.StatusText);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain(vm.Fields, f => f.Name.Contains("Sword"));   // the other table's rows are not shown
+        Assert.Contains("did not restore", vm.StatusText);
     }
 
     [Fact]

@@ -204,7 +204,7 @@ uintptr_t ResolveLocalPC(uintptr_t world) {
 uintptr_t HopThroughDebugCamera(uintptr_t pc) {
     if (!pc) return pc;
     uintptr_t cls = Ubel::GetClass(pc);
-    if (!Aura::ClassDerivesFromAny(cls, {"DebugCameraController"})) return pc;
+    if (!Aura::ClassDerivesFromAny(cls, {Grimoire::AURA_DEBUGCAM_CLASS})) return pc;
     int32_t origOff = Ubel::FindFieldOffset(cls, "OriginalControllerRef",
                                             "OriginalControllerRef", nullptr, "ObjectProperty");
     uintptr_t orig = ReadPtrAt(pc, origOff);
@@ -372,7 +372,7 @@ bool InvokeSetHidden(uintptr_t actor, bool hidden) {
 // "Active -- nothing blocking the view". Two GObjects scans, once per enable, each stopping at its class.
 //
 // ⚠ Ask the CLASS, by full path -- never Ubel::GetClass() of an instance found by name. The first version asked
-// UE5_FindInstanceOfClass("Actor"), a class-name SUBSTRING match that falls back to the first matching CDO; on
+// UE5_FindInstanceOfClass("Actor"), then a class-name SUBSTRING match that fell back to the first matching CDO; on
 // DumperTest Shipping 5.4 that was Default__ActorChannel, a UChannel, so FindFuncByName found nothing and See-through
 // was refused as "cooked out" on a build that has SetActorHiddenInGame. [SEETHRU-PROBE-SUBSTRING]
 bool ProbeProducers(const char** missing) {

@@ -21,7 +21,21 @@ public sealed class DumpService : IDumpService
         _pipe = pipe;
         _log = log;
         _codePage = codePage;
+        // A new connection may be a different DLL.
+        _pipe.ConnectionStateChanged += _ =>
+        {
+            Interlocked.Increment(ref _connectionGen);
+            _noLiveLookup = false;
+        };
     }
+
+    /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] This connection's DLL answered find_live_instance "Unknown command":
+    /// ask it the old lookup straight away, and warn once, rather than a failing round trip on every call.</summary>
+    private volatile bool _noLiveLookup;
+
+    /// <summary>Counts connection changes, so an "Unknown command" that answers a request sent before a reconnect does
+    /// not mark the newer DLL's connection.</summary>
+    private int _connectionGen;
 
     public async Task<EngineState> InitAsync(CancellationToken ct = default)
     {
@@ -453,6 +467,8 @@ public sealed class DumpService : IDumpService
                     ElemType = fo["elem_type"]?.GetValue<string>() ?? "",
                     ElemStructType = fo["elem_struct_type"]?.GetValue<string>() ?? "",
                     EnumName = fo["enum_name"]?.GetValue<string>() ?? "",
+                    // [USMAP-ENUM-SIGNEDNESS] an EnumProperty's UnderlyingProp type; absent from an older DLL
+                    EnumUnderlyingType = fo["enum_underlying"]?.GetValue<string>() ?? "",
                     // [A4-USMAP-CONTAINER-ENUM] each container inner's own UEnum; absent from an older DLL
                     InnerEnumName = fo["inner_enum"]?.GetValue<string>() ?? "",
                     ElemEnumName  = fo["elem_enum"]?.GetValue<string>() ?? "",
@@ -609,6 +625,7 @@ public sealed class DumpService : IDumpService
             IsStale = o["stale"]?.GetValue<bool>() ?? false,
             IsUnreadable = o["unreadable"]?.GetValue<bool>() ?? false,   // [P1-WALK-UNREADABLE] additive
             IsNoHeader = o["no_header"]?.GetValue<bool>() ?? false,       // [WALK-NULLCLASS-SILENT] additive
+            EnumNamesFailed = o["enum_names_failed"]?.GetValue<bool>() ?? false,   // [CEXPORT-ENUMNAMES-NOTE] additive
             GapFillSkipped = o["gap_fill_skipped"]?.GetValue<bool>() ?? false,
             PropertiesSize = o["props_size"]?.GetValue<int>() ?? 0,
         };
@@ -813,6 +830,57 @@ public sealed class DumpService : IDumpService
         }
 
         return result;
+    }
+
+    public async Task<LiveInstanceResult> FindLiveInstanceAsync(string className, CancellationToken ct = default)
+    {
+        if (_noLiveLookup) return await LegacyLiveInstanceAsync(className, ct);
+        int gen = Volatile.Read(ref _connectionGen);
+        var res = await _pipe.SendAsync(new JsonObject
+        {
+            ["cmd"] = "find_live_instance",
+            ["class_name"] = className,
+        }, ct);
+        // [MAINWINDOW-NAVIGATE-EXACT-NAME] A proxy DLL left in a game folder outlives a UI upgrade, and one older than
+        // the command answers "Unknown command": every navigate and Locate would then do nothing. Its own lookup still
+        // answers, with the old limits, and the answer is marked so the line can say them.
+        if (res["ok"]?.GetValue<bool>() == false
+            && (res["error"]?.GetValue<string>() ?? "").StartsWith("Unknown command", StringComparison.Ordinal))
+        {
+            if (gen == Volatile.Read(ref _connectionGen))
+            {
+                _noLiveLookup = true;
+                _log.Warn("find_live_instance: the injected DLL predates it; live objects are looked up by exact class "
+                          + "name until the next connection");
+            }
+            return await LegacyLiveInstanceAsync(className, ct);
+        }
+        CheckResponse(res);
+        return new LiveInstanceResult
+        {
+            Address = res["addr"]?.GetValue<string>() ?? "",
+            Name = res["name"]?.GetValue<string>() ?? "",
+            ClassName = res["class"]?.GetValue<string>() ?? "",
+            ClassAddress = res["class_addr"]?.GetValue<string>() ?? "",
+            Pick = res["pick"]?.GetValue<string>() ?? LiveInstanceResult.PickNone,
+            Scanned = res["scanned"]?.GetValue<int>() ?? 0,
+        };
+    }
+
+    /// <summary>The "a live object of this class" lookup as it was made before find_live_instance existed: an exact class
+    /// name, five rows, the first not named Default__. Hit or miss, the answer is marked legacy.</summary>
+    private async Task<LiveInstanceResult> LegacyLiveInstanceAsync(string className, CancellationToken ct)
+    {
+        var old = await FindInstancesAsync(className, exactMatch: true, limit: 5, ct: ct);
+        var hit = old.Instances.FirstOrDefault(i =>
+            !string.IsNullOrEmpty(i.Address) && !i.Name.StartsWith("Default__", StringComparison.Ordinal));
+        return hit == null
+            ? new LiveInstanceResult { Pick = LiveInstanceResult.PickLegacy }
+            : new LiveInstanceResult
+            {
+                Address = hit.Address, Name = hit.Name, ClassName = hit.ClassName, ClassAddress = hit.ClassAddress,
+                Pick = LiveInstanceResult.PickLegacy,
+            };
     }
 
     public async Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default)
@@ -1096,29 +1164,32 @@ public sealed class DumpService : IDumpService
             }
         }
 
-        // [W4-RELATED-STOPS] One key per cause; absent from an older DLL, so Stops stays null ("not said").
-        RelatedObjectsStops? stops = null;
-        if (res["stops"] is JsonObject stopsNode)
-        {
-            stops = new RelatedObjectsStops
-            {
-                ResultCapHit = stopsNode["result_cap_hit"]?.GetValue<bool>() ?? false,
-                OwnedCapHit  = stopsNode["owned_cap_hit"]?.GetValue<bool>() ?? false,
-                VisitCapHit  = stopsNode["visit_cap_hit"]?.GetValue<bool>() ?? false,
-                DeadlineHit  = stopsNode["deadline_hit"]?.GetValue<bool>() ?? false,
-                Cancelled    = stopsNode["cancelled"]?.GetValue<bool>() ?? false,
-                MaxResults   = stopsNode["max_results"]?.GetValue<int>() ?? 0,
-                MaxOwned     = stopsNode["max_owned"]?.GetValue<int>() ?? 0,
-                MaxVisited   = stopsNode["max_visited"]?.GetValue<long>() ?? 0,
-                DeadlineMs   = stopsNode["deadline_ms"]?.GetValue<long>() ?? 0,
-            };
-        }
+        var stops = ParseRelatedStops(res["stops"]);
 
         return new RelatedObjectsResult
         {
             QueryAddress = res["query_addr"]?.GetValue<string>() ?? addr,
             Related = related,
             Stops = stops,
+        };
+    }
+
+    /// <summary>[W4-RELATED-STOPS] One key per cause; absent from an older DLL, so the answer is null ("not said").
+    /// The DLL writes this shape from one encoder, so one parser reads it wherever it appears.</summary>
+    private static RelatedObjectsStops? ParseRelatedStops(JsonNode? node)
+    {
+        if (node is not JsonObject stopsNode) return null;
+        return new RelatedObjectsStops
+        {
+            ResultCapHit = stopsNode["result_cap_hit"]?.GetValue<bool>() ?? false,
+            OwnedCapHit  = stopsNode["owned_cap_hit"]?.GetValue<bool>() ?? false,
+            VisitCapHit  = stopsNode["visit_cap_hit"]?.GetValue<bool>() ?? false,
+            DeadlineHit  = stopsNode["deadline_hit"]?.GetValue<bool>() ?? false,
+            Cancelled    = stopsNode["cancelled"]?.GetValue<bool>() ?? false,
+            MaxResults   = stopsNode["max_results"]?.GetValue<int>() ?? 0,
+            MaxOwned     = stopsNode["max_owned"]?.GetValue<int>() ?? 0,
+            MaxVisited   = stopsNode["max_visited"]?.GetValue<long>() ?? 0,
+            DeadlineMs   = stopsNode["deadline_ms"]?.GetValue<long>() ?? 0,
         };
     }
 
@@ -1476,6 +1547,7 @@ public sealed class DumpService : IDumpService
             RowStructName = res["row_struct_name"]?.GetValue<string>() ?? "",
             FNameSize = res["fname_size"]?.GetValue<int>() ?? 0,
             Stride = res["stride"]?.GetValue<int>() ?? 0,
+            EnumNamesFailed = res["enum_names_failed"]?.GetValue<bool>() ?? false,   // [CEXPORT-ENUMNAMES-NOTE] additive
         };
 
         if (res["rows"] is JsonArray rows)
@@ -3668,6 +3740,15 @@ public sealed class DumpService : IDumpService
         {
             Result       = res["result"]?.GetValue<int>() ?? -999,
             InstanceAddr = res["instance_addr"]?.GetValue<string>() ?? "",
+            InstanceClassAddr = res["instance_class_addr"]?.GetValue<string>() ?? "",
+            // [FINDINSTANCE-SUBSTRING-USERFACING] additive keys; an older DLL sends none
+            InstancePick      = res["instance_pick"]?.GetValue<string>() ?? "",
+            InstanceName      = res["instance_name"]?.GetValue<string>() ?? "",
+            InstanceClassName = res["instance_class_name"]?.GetValue<string>() ?? "",
+            // [INVOKE-NONSTATIC-ON-CDO] additive keys; absent (an older DLL) stays null
+            InstanceTemplate    = res["instance_template"]?.GetValue<string>(),
+            TemplateOwnerName   = res["template_owner_name"]?.GetValue<string>() ?? "",
+            NonStaticOnTemplate = res["nonstatic_on_template"]?.GetValue<bool>(),
             FuncAddr     = res["func_addr"]?.GetValue<string>() ?? "",
             ParmsSize    = res["parms_size"]?.GetValue<int>() ?? 0,
             ResultHex    = res["result_hex"]?.GetValue<string>() ?? "",
@@ -3694,6 +3775,19 @@ public sealed class DumpService : IDumpService
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
         return res["state"]?.GetValue<int>() ?? -1;
+    }
+
+    public async Task<DebugCameraSetResult> SetDebugCameraDetailedAsync(bool enable, CancellationToken ct = default)
+    {
+        var req = new JsonObject
+        {
+            ["cmd"] = "set_debug_camera",
+            ["enable"] = enable,
+        };
+        var res = await _pipe.SendAsync(req, ct);
+        CheckResponse(res);
+        // [INVOKE-NONSTATIC-ON-CDO] additive key; absent (an older DLL) stays null
+        return new(res["state"]?.GetValue<int>() ?? -1, res["nonstatic_on_template"]?.GetValue<bool>());
     }
 
     // === God Mode (Solitar) — docs/godmode-spec.md §6.1 ===
@@ -4014,6 +4108,8 @@ public sealed class DumpService : IDumpService
             Code      = res["code"]?.GetValue<int>() ?? 0,
             // Absent on an older DLL (and on held<=0, where the DLL omits it) → false.
             Truncated = res["truncated"]?.GetValue<bool>() ?? false,
+            // [LISTINSTANCES-KEEPS-TEMPLATES] Absent on an older DLL → 0.
+            TemplatesSkipped = res["templates_skipped"]?.GetValue<int>() ?? 0,
         };
     }
 
@@ -4059,6 +4155,7 @@ public sealed class DumpService : IDumpService
                     OwnerAddr   = f["owner_addr"]?.GetValue<string>() ?? "",
                     FieldOffset = f["field_offset"]?.GetValue<int>() ?? -1,
                     Truncated   = f["truncated"]?.GetValue<bool>() ?? false,
+                    TemplatesSkipped = f["templates_skipped"]?.GetValue<int>() ?? 0,
                 });
             }
         }
@@ -4066,6 +4163,10 @@ public sealed class DumpService : IDumpService
     }
 
     public async Task<IReadOnlyList<StealthCandidate>> FindStealthMeterAsync(int max = 8, CancellationToken ct = default)
+        => (await FindStealthMeterDetailedAsync(max, ct)).Candidates;
+
+    /// <summary>[SOLIDE-RELATED-STOPS] The candidates, and why the search of the player's objects stopped short.</summary>
+    public async Task<StealthMeterResult> FindStealthMeterDetailedAsync(int max = 8, CancellationToken ct = default)
     {
         var req = new JsonObject { ["cmd"] = "find_stealth_meter", ["max"] = max };
         var res = await _pipe.SendAsync(req, ct);
@@ -4088,7 +4189,7 @@ public sealed class DumpService : IDumpService
                 });
             }
         }
-        return list;
+        return new StealthMeterResult { Candidates = list, Stops = ParseRelatedStops(res["stops"]) };
     }
 
     // === Fly (Dunste) — no-gravity keyboard-driven 3D flight ===
@@ -4123,6 +4224,7 @@ public sealed class DumpService : IDumpService
         Speed       = res?["speed"]?.GetValue<double>() ?? 0.0,
         CurrentMode = res?["current_mode"]?.GetValue<int>() ?? -1,
         State       = res?["state"]?.GetValue<int>() ?? -1,
+        Collision   = res?["collision"]?.GetValue<int>() ?? -1,   // [FLY-REPORTS-WISH] an older DLL: not said
     };
 
     // === See-through occluders (Schlacht) ===

@@ -372,4 +372,61 @@ public class AobMakerRowButtonsTests : IDisposable
         Assert.Equal(AobMakerUnavailable.Text(bridge), vm.StatusText);
         Assert.False(vm.IsAobMakerAvailable);
     }
+
+    // ---- [LEAD-LW-NULLROW-HEX] a row with no address of its own: HEX / +CE moved CE to 0x0 or did nothing silently ----
+
+    /// <summary>A DataTable row whose row pointer reads null: the DLL hands its address as "0x0".</summary>
+    private static LiveFieldValue NullRow => new()
+    {
+        Name = "[0] Sword", TypeName = "StructProperty", Offset = 0x8, FieldAddress = "0x0", StructDataAddr = "0x0",
+    };
+
+    [Fact]
+    public async Task LiveWalker_HEX_on_a_row_whose_pointer_is_null_moves_nothing_and_says_why()
+    {
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = Walker(bridge);
+
+        await vm.HexFieldAddressCommand.ExecuteAsync(NullRow);
+
+        Assert.Null(bridge.LastHex);   // was "0": CE's hex view parked on address 0
+        Assert.Equal(LiveWalkerViewModel.NoRowAddressText(LiveWalkerViewModel.HexLabel), vm.StatusText);
+    }
+
+    [Fact]
+    public async Task LiveWalker_PlusCE_on_a_row_whose_pointer_is_null_adds_nothing_and_says_why()
+    {
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = Walker(bridge);
+
+        await vm.AddFieldToCeCommand.ExecuteAsync(NullRow);
+
+        Assert.Empty(bridge.Records);   // was a record at 0x0
+        Assert.Equal(LiveWalkerViewModel.NoRowAddressText(LiveWalkerViewModel.AddToCeLabel), vm.StatusText);
+    }
+
+    [Fact]
+    public async Task LiveWalker_HEX_on_a_row_with_no_address_says_why_instead_of_nothing()
+    {
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = Walker(bridge);
+
+        await vm.HexFieldAddressCommand.ExecuteAsync(new LiveFieldValue { Name = "[2]", TypeName = "IntProperty" });
+
+        Assert.Null(bridge.LastHex);
+        Assert.Equal(LiveWalkerViewModel.NoRowAddressText(LiveWalkerViewModel.HexLabel), vm.StatusText);
+    }
+
+    [Fact]
+    public async Task LiveWalker_PlusCE_flat_skips_a_row_whose_pointer_is_null()
+    {
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = Walker(bridge);
+        vm.SelectedField = NullRow;
+
+        await vm.PushCeFieldToCeCommand.ExecuteAsync(null);
+
+        Assert.Empty(bridge.Records);   // was a record at 0x0
+        Assert.Equal("Added to CE: 0 record(s), 1 skipped", vm.StatusText);
+    }
 }

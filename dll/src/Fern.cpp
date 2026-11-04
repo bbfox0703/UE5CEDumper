@@ -42,6 +42,7 @@
 #include "Sense.h"     // Diagnostics — dispatch timing + process facts
 #include "Voll.h"      // Accept-loop capacity logging policy — ERROR_PIPE_BUSY once, not 1/s ([PIPEBUSY])
 #include "BuildStamp.h"
+#include "Mimic.h"       // WarnNonStaticOnTemplate -- the one rule both invoke lanes use, [INVOKE-NONSTATIC-ON-CDO]
 
 #include <json.hpp>
 #include <algorithm>
@@ -70,7 +71,6 @@ extern HMODULE g_hDllModule;
 
 // Forward declare ExportAPI functions (extern "C" must be at global scope)
 extern "C" bool      UE5_Init();
-extern "C" uintptr_t UE5_FindInstanceOfClass(const char* className);
 extern "C" uintptr_t UE5_GetObjectClass(uintptr_t obj);
 extern "C" uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName);
 extern "C" int32_t   UE5_CallProcessEventDirect(uintptr_t instance, uintptr_t ufunc, uintptr_t params);
@@ -1491,6 +1491,22 @@ static void FillPointerSnapshot(json& data) {
 // key it still emits is byte-identical to the full shape, which is what makes
 // "lean and full produce the same XML" testable rather than hoped for.
 // ============================================================
+// [W4-RELATED-STOPS] Why a Related Objects walk stopped short, one key per cause (additive: no contract bump). One
+// encoder, so every reply built on that walk states its stops in the same shape.
+static json RelatedStopsJson(const Aura::RelatedObjectsStats& stops) {
+    json j;
+    j["result_cap_hit"] = stops.resultCapHit;
+    j["owned_cap_hit"]  = stops.ownedCapHit;
+    j["visit_cap_hit"]  = stops.visitCapHit;
+    j["deadline_hit"]   = stops.deadlineHit;
+    j["cancelled"]      = stops.cancelled;
+    j["max_results"]    = stops.maxResults;
+    j["max_owned"]      = stops.maxOwnedSubs;
+    j["max_visited"]    = stops.maxVisited;
+    j["deadline_ms"]    = stops.deadlineMs;
+    return j;
+}
+
 static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
     json fj;
     fj["name"]   = fv.name;
@@ -1640,13 +1656,17 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
             fj["elements"] = elems;
         }
 
-        // CE DropDownList: full enum entries for this array field
-        if (fv.arrayEnumAddr != 0 && !fv.arrayEnumEntries.empty()) {
+        // CE DropDownList: full enum entries for this array field. [CEXPORT-ENUMNAMES-NOTE] The UEnum's address goes
+        // out without them too: under [P1-ENUMNAMES]'s latch the entries are empty, and the address is then the
+        // only sign the array holds an enum. Every UI reader requires entries before it builds a dropdown.
+        if (fv.arrayEnumAddr != 0) {
             fj["enum_addr"] = Renge::AddrToStr(fv.arrayEnumAddr);
-            json entries = json::array();
-            for (const auto& ee : fv.arrayEnumEntries)
-                entries.push_back({{"v", ee.value}, {"n", ee.name}});
-            fj["enum_entries"] = entries;
+            if (!fv.arrayEnumEntries.empty()) {
+                json entries = json::array();
+                for (const auto& ee : fv.arrayEnumEntries)
+                    entries.push_back({{"v", ee.value}, {"n", ee.name}});
+                fj["enum_entries"] = entries;
+            }
         }
     }
 
@@ -1740,12 +1760,16 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
         fj["enum_name"]  = fv.enumName;
         fj["enum_value"] = fv.enumValue;
     }
-    if (fv.enumAddr != 0 && !fv.enumEntries.empty()) {
+    // [CEXPORT-ENUMNAMES-NOTE] The address without the entries too, as for an array above: a TEnumAsByte field
+    // otherwise arrives under the latch as a plain ByteProperty.
+    if (fv.enumAddr != 0) {
         fj["enum_addr"] = Renge::AddrToStr(fv.enumAddr);
-        json enumEntries = json::array();
-        for (const auto& ee : fv.enumEntries)
-            enumEntries.push_back({{"v", ee.value}, {"n", ee.name}});
-        fj["enum_entries"] = enumEntries;
+        if (!fv.enumEntries.empty()) {
+            json enumEntries = json::array();
+            for (const auto& ee : fv.enumEntries)
+                enumEntries.push_back({{"v", ee.value}, {"n", ee.name}});
+            fj["enum_entries"] = enumEntries;
+        }
     }
 
     // StrProperty: decoded string value. The export emits an FString leaf
@@ -2597,6 +2621,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // the UI can say "freed, or not an object" rather than stale's or unreadable's narrower claims.
             if (result.noHeader)
                 data["no_header"] = true;
+            // [CEXPORT-ENUMNAMES-NOTE] In both lean and full: UEnum::Names was never located, so every enum field of this
+            // reply carries no entries, and a CE export writes no dropdown for it (a plain number). Only list_enums said
+            // so before. The latch is process-wide, set only by a search that ran to completion ([P1-ENUMNAMES]).
+            if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))
+                data["enum_names_failed"] = true;
             // Present only when true, and !lean because the lean contract above is
             // SUBTRACTIVE ONLY — an unconditional key would make lean stop being a
             // subset of full. A CE export reads `fields` and never this.
@@ -2671,6 +2700,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 if (!f.elemType.empty())         fj["elem_type"]         = f.elemType;
                 if (!f.elemStructType.empty())   fj["elem_struct_type"]  = f.elemStructType;
                 if (!f.enumName.empty())         fj["enum_name"]         = f.enumName;
+                // [USMAP-ENUM-SIGNEDNESS] an EnumProperty's UnderlyingProp type (additive key)
+                if (!f.enumUnderlyingType.empty()) fj["enum_underlying"] = f.enumUnderlyingType;
                 // [A4-USMAP-CONTAINER-ENUM] a container inner's own UEnum (additive keys)
                 if (!f.innerEnumName.empty())    fj["inner_enum"]        = f.innerEnumName;
                 if (!f.elemEnumName.empty())     fj["elem_enum"]         = f.elemEnumName;
@@ -2789,7 +2820,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["count"] = static_cast<int>(enums.size());
             if (truncated) data["truncated"] = true;
             // [P1-ENUMNAMES] UEnum::Names was never located on this build: every enum's entries above are empty, and
-            // this is the only exit that says why. Latched only by a search that ran to completion.
+            // this says why (a walk reply does too, [CEXPORT-ENUMNAMES-NOTE]). Latched only by a search that ran to
+            // completion.
             if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire)) data["enum_names_failed"] = true;
             return Renge::MakeResponse(id, data).dump();
         }
@@ -3371,6 +3403,32 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["class_histogram"] = HistogramToJson(rset.classHistogram, kClassHistogramMaxRows);
             data["class_distinct"]  = rset.classDistinct;
             // std::move — find_instances caps at 50000 rows (audit #5 F5).
+            return Renge::MakeResponse(id, std::move(data)).dump();
+        }
+
+        // === find_live_instance: one live object of a class or a subclass, or none === [MAINWINDOW-NAVIGATE-EXACT-NAME]
+        // Aura::FindLiveInstanceOf: the derivation walk the Console's Run resolves through, never a template nor a
+        // destroyed object, one a Debug Camera controller is or owns only when nothing else is live -- plus its own
+        // rules (Aura.h). The class default object it can answer is an invoke's fallback (a static function runs on
+        // one) and answers none here: Live Walker opened on a template, or a path search started from one, is what this
+        // exists to stop.
+        if (cmd == Renge::CMD_FIND_LIVE_INSTANCE) {
+            const std::string className = request.value("class_name", "");
+            if (className.empty()) return Renge::MakeError(id, "Missing class_name").dump();
+            const Aura::UserInstance found = Aura::FindLiveInstanceOf(className);
+            // A cut-short walk is not "none": a live object may sit past where it stopped.
+            if (found.pick == Aura::UserPick::Cancelled)
+                return Renge::MakeError(id, Renge::LiveInstanceLookupCancelledText(className)).dump();
+            const bool live = found.pick == Aura::UserPick::Live || found.pick == Aura::UserPick::DebugCameraOwned;
+            json data;
+            data["scanned"] = found.scanned;
+            data["pick"]    = live ? Aura::UserPickWire(found.pick) : "none";
+            if (live) {
+                data["addr"]       = Renge::AddrToStr(found.obj);
+                data["name"]       = Ubel::GetName(found.obj);
+                data["class"]      = Ubel::GetName(found.cls);
+                data["class_addr"] = Renge::AddrToStr(found.cls);
+            }
             return Renge::MakeResponse(id, std::move(data)).dump();
         }
 
@@ -5818,18 +5876,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data;
             data["query_addr"] = addrStr;
             data["related"]    = arr;
-            // [W4-RELATED-STOPS] Why the list stopped short, one key per cause (additive: no contract bump).
-            json stopsJ;
-            stopsJ["result_cap_hit"] = stops.resultCapHit;
-            stopsJ["owned_cap_hit"]  = stops.ownedCapHit;
-            stopsJ["visit_cap_hit"]  = stops.visitCapHit;
-            stopsJ["deadline_hit"]   = stops.deadlineHit;
-            stopsJ["cancelled"]      = stops.cancelled;
-            stopsJ["max_results"]    = stops.maxResults;
-            stopsJ["max_owned"]      = stops.maxOwnedSubs;
-            stopsJ["max_visited"]    = stops.maxVisited;
-            stopsJ["deadline_ms"]    = stops.deadlineMs;
-            data["stops"] = stopsJ;
+            data["stops"] = RelatedStopsJson(stops);   // [W4-RELATED-STOPS]
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -6728,6 +6775,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 rows.push_back(rj);
             }
             data["rows"] = rows;
+            // [CEXPORT-ENUMNAMES-NOTE] review round 2: the rows' enum fields go out without entries under the latch, as
+            // a walk's do, so this reply says so too (additive).
+            if (DynOff::bUEnumNamesFailed.load(std::memory_order_acquire)) data["enum_names_failed"] = true;
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -6752,17 +6802,24 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             // Resolve instance address
             uintptr_t instanceAddr = 0;
+            const char* pickWire = Renge::INVOKE_PICK_ADDRESS;   // [FINDINSTANCE-SUBSTRING-USERFACING]
             if (!instAddrStr.empty()) {
                 instanceAddr = Renge::StrToAddr(instAddrStr);
                 if (instanceAddr == 0) {
                     return Renge::MakeError(id, "Invalid instance_addr").dump();
                 }
             } else if (!className.empty()) {
-                instanceAddr = UE5_FindInstanceOfClass(className.c_str());
-                if (instanceAddr == 0) {
-                    return Renge::MakeError(id,
-                        "No instance found for class: " + className).dump();
+                // The user-facing resolver (Aura.h). A cut-short walk is not "no instance": the Self-Test reads that
+                // text as the class being absent.
+                const Aura::UserInstance found = Aura::ResolveUserInstance(className);
+                if (found.pick == Aura::UserPick::Cancelled) {
+                    return Renge::MakeError(id, Renge::InstanceLookupCancelledText(className)).dump();
                 }
+                if (found.obj == 0) {
+                    return Renge::MakeError(id, Renge::InstanceNotFoundText(className)).dump();
+                }
+                instanceAddr = found.obj;
+                pickWire = Aura::UserPickWire(found.pick);
             } else {
                 return Renge::MakeError(id,
                     "Either instance_addr or class_name is required").dump();
@@ -6774,6 +6831,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeError(id,
                     "Failed to read class from instance " + Renge::AddrToStr(instanceAddr)).dump();
             }
+            // [FINDINSTANCE-SUBSTRING-USERFACING] Read BEFORE the call, which may destroy the object: the reply and a
+            // "Function not found" name what the class name resolved to.
+            const std::string instName  = Ubel::GetName(instanceAddr);
+            const std::string instClass = Ubel::GetName(classAddr);
 
             // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] Before the function is looked up: it is found by name on this
             // class, so another class's object at the address would run that class's same-named function.
@@ -6795,8 +6856,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // Resolve UFunction
             uintptr_t ufuncAddr = UE5_FindFunctionByName(classAddr, funcName.c_str());
             if (ufuncAddr == 0) {
-                return Renge::MakeError(id,
-                    "Function not found: " + funcName).dump();
+                return Renge::MakeError(id, Renge::FunctionNotFoundText(funcName, instName, instClass)).dump();
             }
 
             // Build parameter buffer (zero-filled, then overlay hex bytes).
@@ -6826,6 +6886,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // keep the caller's parms_size alone, unchecked (review 2; check_processevent_buffers).
             FunctionInfo fi{};
             const bool resolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);
+            // [INVOKE-NONSTATIC-ON-CDO] The object is a template, and the function -- by the flags read here, never the
+            // caller's direct_call claim -- is not static: it may do nothing there. Warned, never refused.
+            const Aura::TemplateInfo tpl = Aura::TemplateOf(instanceAddr);
+            const bool nonStaticOnTemplate =
+                Mimic::WarnNonStaticOnTemplate(tpl.kind != Aura::TemplateKind::None, resolved, fi.functionFlags);
+            const std::string tplOwnerName =
+                (tpl.kind == Aura::TemplateKind::Template && tpl.owner) ? Ubel::GetName(tpl.owner) : std::string();
             const size_t authoritative = Ubel::ParamBufferSize(ufuncAddr, resolved ? fi.parmsSize : 0);
             const size_t asked = (parmsSize > 0) ? static_cast<size_t>(parmsSize) : 0;
             if (asked > 0 && authoritative > asked) {
@@ -6930,9 +6997,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 ? reinterpret_cast<uintptr_t>(paramBuf.data())
                 : 0;
 
-            Sein::Info("PIPE:cmd", "invoke_function: %s::%s inst=%s func=%s parms=%d direct=%d",
+            // Logged here, past every refusal this handler makes, so it never warns about a call it refused itself.
+            if (nonStaticOnTemplate)
+                Sein::Warn("PIPE:cmd", "invoke_function: %s on %s (%s) is not static and the object is a %s%s%s -- it "
+                           "may do nothing there, or fault", funcName.c_str(), instName.c_str(), instClass.c_str(),
+                           Aura::TemplateKindWire(tpl.kind), tplOwnerName.empty() ? "" : " of ", tplOwnerName.c_str());
+            Sein::Info("PIPE:cmd", "invoke_function: %s::%s inst=%s (%s, class %s, pick=%s) func=%s parms=%d direct=%d",
                          className.c_str(), funcName.c_str(),
-                         Renge::AddrToStr(instanceAddr).c_str(),
+                         Renge::AddrToStr(instanceAddr).c_str(), instName.c_str(), instClass.c_str(), pickWire,
                          Renge::AddrToStr(ufuncAddr).c_str(),
                          (int)bufSize, directCall ? 1 : 0);
 
@@ -6965,6 +7037,18 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data;
             data["result"]        = callResult;
             data["instance_addr"] = Renge::AddrToStr(instanceAddr);
+            // [LEAD-CONSOLE-PIN-EXPECT-CLASS] So a caller that keeps the address can send it back as expect_class_addr.
+            data["instance_class_addr"] = Renge::AddrToStr(classAddr);
+            // [FINDINSTANCE-SUBSTRING-USERFACING] How a class name was resolved ("address" when one was sent), and
+            // what it resolved to; the Console pins only a live or given object (additive keys).
+            data["instance_pick"]       = pickWire;
+            data["instance_name"]       = instName;
+            data["instance_class_name"] = instClass;
+            // [INVOKE-NONSTATIC-ON-CDO] The object's template fact (the Console pins only a live one) and the warning
+            // verdict, apart: a static function on a template is the normal case (additive keys).
+            data["instance_template"]     = Aura::TemplateKindWire(tpl.kind);
+            if (!tplOwnerName.empty()) data["template_owner_name"] = tplOwnerName;
+            data["nonstatic_on_template"] = nonStaticOnTemplate;
             data["func_addr"]     = Renge::AddrToStr(ufuncAddr);
             data["parms_size"]    = (int)bufSize;
 
@@ -7017,7 +7101,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int32_t state = UE5_SetDebugCamera(enable ? 1 : 0);
             json data;
             // resulting state: 1=on, 0=off, -1=error, -5=toggle queued [W3-DEBUGCAM-QUEUED], -6=not sent: an opposite
-            // toggle is still queued [DBGCAM-OFF-OVER-QUEUED-ON]
+            // toggle is still queued [DBGCAM-OFF-OVER-QUEUED-ON], -17=ON not sent: no live CheatManager
+            // [DEBUGCAM-FORCEON-CDO]. Builds 3676-3681 also sent `nonstatic_on_template` for a toggle on the
+            // CheatManager's class default object; none is sent there now, so the key is gone.
             data["state"] = state;
             return Renge::MakeResponse(id, data).dump();
         }
@@ -7299,12 +7385,15 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // Was the instance pool capped? AddForce's int32_t return is fully spoken
                 // for (negative = ForceResult, non-negative = held count — see audit L2,
                 // do not overload it), so read the flag back off the job instead.
-                if (held > 0) {
+                // [LISTINSTANCES-KEEPS-TEMPLATES] ...and the templates it passed over, with held 0 too: an
+                // armed hold can then say whether only templates of the class exist (additive key).
+                if (held >= 0) {
                     std::vector<Solide::ForcedFieldInfo> st;
                     if (Solide::GetState(st) == Solide::FR_OK) {
                         for (const auto& f : st) {
                             if (f.className == className && f.fieldName == fieldName) {
-                                data["truncated"] = f.poolTruncated;
+                                if (held > 0) data["truncated"] = f.poolTruncated;
+                                data["templates_skipped"] = f.templatesSkipped;
                                 break;
                             }
                         }
@@ -7341,6 +7430,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     j["value"]      = f.value;
                     j["held"]       = f.held;
                     j["truncated"]  = f.poolTruncated;  // held is a floor, not a total
+                    j["templates_skipped"] = f.templatesSkipped;   // [LISTINSTANCES-KEEPS-TEMPLATES]
                     if (f.sampleOwner && f.sampleOffset >= 0) {
                         j["owner_addr"]   = Renge::AddrToStr(f.sampleOwner);
                         j["field_offset"] = f.sampleOffset;
@@ -7353,7 +7443,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (cmd == Renge::CMD_FIND_STEALTH_METER) {
                 int maxResults = request.value("max", 8);
                 std::vector<Solide::StealthCandidate> cands;
-                int32_t code = Solide::FindStealthMeter(cands, maxResults);
+                Aura::RelatedObjectsStats stops;   // [SOLIDE-RELATED-STOPS]
+                int32_t code = Solide::FindStealthMeter(cands, maxResults, &stops);
                 json arr = json::array();
                 for (const auto& c : cands) {
                     json j;
@@ -7367,6 +7458,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     arr.push_back(j);
                 }
                 json data; data["code"] = code; data["candidates"] = arr;
+                data["stops"] = RelatedStopsJson(stops);
                 return Renge::MakeResponse(id, data).dump();
             }
         }
@@ -7386,6 +7478,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["speed"]         = st.speed;         // uu/s
             data["mode_resolved"] = st.modeResolved;
             data["current_mode"]  = st.currentMode;   // live MovementMode enum (5 = flying)
+            data["collision"]     = st.collision;     // [FLY-REPORTS-WISH] observed: 1 on, 0 off, -1 not read
             if (st.hasCmc && st.cmcAddr)
                 data["cmc_addr"]  = Renge::AddrToStr(st.cmcAddr);
             return data;
@@ -7691,7 +7784,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             }
             // Append the system "last" slot as a sentinel entry (slot = -1) so
             // the UI refreshes it together with the real markers in one round
-            // trip. It is auto-saved DLL-side before every jump and recalled
+            // trip. It is auto-saved DLL-side before a jump (unless that pose is not
+            // world coordinates, which leaves the previous one) and recalled
             // one-way (teleport_recall_last) — never user-saved/cleared.
             {
                 Wirbel::Marker last{};

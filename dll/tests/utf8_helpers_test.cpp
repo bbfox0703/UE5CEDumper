@@ -39,6 +39,27 @@ static int g_fail = 0;
     } \
 } while (0)
 
+// [UBEL-ASCII-FIRSTCHAR] Six-plus Ubel guards refused a name whose first byte is not printable ASCII, so a property,
+// parameter or struct named in Japanese or Chinese was dropped on UE4 and UE5 alike. A name may open with any one
+// complete UTF-8 character that is not a control; garbage still fails.
+static void Test_IsPlausibleNameStart() {
+    using Utf8Helpers::IsPlausibleNameStart;
+    EXPECT("ascii name", IsPlausibleNameStart("Health"));
+    EXPECT("empty refused", !IsPlausibleNameStart(""));
+    EXPECT("C0 control refused", !IsPlausibleNameStart("\x01" "abc"));
+    EXPECT("DEL refused", !IsPlausibleNameStart("\x7F" "abc"));
+    EXPECT("CJK first (攻撃力)", IsPlausibleNameStart("\xE6\x94\xBB\xE6\x92\x83\xE5\x8A\x9B"));
+    EXPECT("Latin-1 letter first (é)", IsPlausibleNameStart("\xC3\xA9t\xC3\xA9"));
+    EXPECT("4-byte character first (U+20000)", IsPlausibleNameStart("\xF0\xA0\x80\x80" "x"));
+    EXPECT("lone continuation refused", !IsPlausibleNameStart("\x80" "abc"));
+    EXPECT("truncated lead refused", !IsPlausibleNameStart("\xE6\x94"));
+    EXPECT("overlong refused", !IsPlausibleNameStart("\xC0\xAF" "a"));
+    EXPECT("C1 control refused (U+0085)", !IsPlausibleNameStart("\xC2\x85" "a"));
+    EXPECT("surrogate refused", !IsPlausibleNameStart("\xED\xA0\x80" "a"));
+    EXPECT("replacement char refused (U+FFFD)", !IsPlausibleNameStart("\xEF\xBF\xBD" "a"));
+    EXPECT("5-byte form refused", !IsPlausibleNameStart("\xF8\x88\x80\x80\x80"));
+}
+
 // ----- Sanitize tests --------------------------------------------------------
 
 static void Test_Sanitize_AsciiPassthrough() {
@@ -855,6 +876,7 @@ int main() {
     Test_Decode_MultiByteStillWinsOverZeroedSlack();
     Test_IsWellFormedUtf8();
     Test_LooksLikeDecodedText();
+    Test_IsPlausibleNameStart();   // [UBEL-ASCII-FIRSTCHAR]
 
     // U7 — character-boundary truncation for the property-search preview
     Test_TruncateUtf8_ShorterThanLimitUntouched();

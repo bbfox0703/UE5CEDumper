@@ -99,9 +99,10 @@ bool WriteFloatAt(uintptr_t addr, int32_t size, double v) {
 
 // Resolve the active AWorldSettings: reflected chain GWorld→PersistentLevel→
 // WorldSettings first (gives EXACTLY the persistent level's settings, correct
-// across subclasses), then an Aura::FindInstancesByClass("WorldSettings")
-// instance-scan fallback (substring match catches game subclasses; first
-// non-CDO).
+// across subclasses), then an Aura::FindInstancesDerivedFrom("WorldSettings")
+// instance-scan fallback (by derivation, so a game subclass named without the
+// word is found and a class merely named with it is not; the first live one,
+// templates passed over).
 uintptr_t ResolveWorldSettings(uintptr_t world) {
     if (world) {
         uintptr_t worldClass = Ubel::GetClass(world);
@@ -116,19 +117,19 @@ uintptr_t ResolveWorldSettings(uintptr_t world) {
             if (ws) return ws;
         }
     }
-    // Fallback: scan GObjects for a WorldSettings instance (subclass-tolerant via
-    // substring match). Single-player games have one; take the first non-CDO.
-    auto rset = Aura::FindInstancesByClass("WorldSettings", false, 64);
-    for (const auto& r : rset.results) {
-        if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
-        return r.addr;
-    }
+    // Fallback: the first live AWorldSettings, by derivation -- a game's subclass may be named without the word, and
+    // a class merely named with it (PCG's node settings) has no TimeDilation. Never a template stand-in: the
+    // re-assert worker would write TimeDilation into the default the next level's settings are built from, so not
+    // FindLiveOrDefaultOf; the walk itself passes over templates. [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS]
+    for (const auto& r : Aura::FindInstancesDerivedFrom(Grimoire::TIME_WORLDSETTINGS_CLASS,
+                                                        Grimoire::TIME_WORLDSETTINGS_SCAN_MAX).results)
+        if (r.addr) return r.addr;
     return 0;
 }
 
-// Resolve the local PlayerController: engine chain first, instance-scan fallback
-// (prefer the PC whose UPlayer* Player field is non-null). Identical to
-// Laufen/Solitar.
+// Resolve the local PlayerController: engine chain first, then the shared
+// instance-scan fallback (Aura::ScanForLocalPlayerController: the local
+// player's controller first). Identical to Laufen/Solitar.
 uintptr_t ResolveLocalPC(uintptr_t world) {
     do {
         if (!world) break;
@@ -153,25 +154,15 @@ uintptr_t ResolveLocalPC(uintptr_t world) {
         if (pc) return pc;
     } while (false);
 
-    auto rset = Aura::FindInstancesByClass("PlayerController", false, 100);
-    uintptr_t firstNonCdo = 0;
-    for (const auto& r : rset.results) {
-        if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
-        if (!firstNonCdo) firstNonCdo = r.addr;
-        uintptr_t cls = Ubel::GetClass(r.addr);
-        int32_t playerOff = Ubel::FindFieldOffset(cls, "Player", "Player",
-                                                  "Controller", "ObjectProperty");
-        if (playerOff >= 0 && ReadPtrAt(r.addr, playerOff))
-            return r.addr;
-    }
-    return firstNonCdo;
+    // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] By derivation, the local player's controller first.
+    return Aura::ScanForLocalPlayerController().pc;
 }
 
 uintptr_t HopThroughDebugCamera(uintptr_t pc) {
     if (!pc) return pc;
     uintptr_t cls = Ubel::GetClass(pc);
-    std::string clsName = Ubel::GetName(cls);
-    if (clsName.find("DebugCameraController") == std::string::npos) return pc;
+    // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] Derivation: a game's debug camera may be named without the word.
+    if (!Aura::ClassDerivesFromAny(cls, {Grimoire::AURA_DEBUGCAM_CLASS})) return pc;
     int32_t origOff = Ubel::FindFieldOffset(cls, "OriginalControllerRef",
                                             "OriginalController", nullptr, "ObjectProperty");
     uintptr_t orig = ReadPtrAt(pc, origOff);

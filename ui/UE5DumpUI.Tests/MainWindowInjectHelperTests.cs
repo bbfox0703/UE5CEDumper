@@ -173,6 +173,134 @@ public class MainWindowInjectHelperTests
         Assert.Contains(nameof(TeleportViewModel.AobMakerNote), teleport);
     }
 
+    // ------------------------------------------------------------------
+    // [PROPSEARCH-FREEZE-STALE-AOBMAKER] Property Search's Freeze follows what the app knows about the plugin
+    // ------------------------------------------------------------------
+    //
+    // Measured on build 3682: AOBMaker connected while the Properties tab was open, the toolbar ⟳ said "AOBMaker
+    // plugin connected", and Freeze stayed disabled until a tab switch -- ⟳ repainted four panels by name and
+    // Property Search was not one of them. A disabled button cannot reach the probe its click would run.
+
+    [Fact]
+    public async Task ToolbarRefresh_AfterThePluginConnects_EnablesPropertySearchFreeze()
+    {
+        var bridge = new RecordingBridge { NextAvailability = false };
+        var vm = BuildVm(aobMaker: bridge);
+        await vm.PropertySearch.RefreshAobMakerAvailabilityAsync();   // the panel's own probe: CE not up yet
+        Assert.False(vm.PropertySearch.IsAobMakerAvailable);
+
+        bridge.NextAvailability = true;                               // CE + AOBMaker start, the user presses ⟳
+        await vm.RefreshAobMakerCommand.ExecuteAsync(null);
+
+        Assert.True(vm.IsAobMakerAvailable);
+        Assert.True(vm.PropertySearch.IsAobMakerAvailable);
+    }
+
+    [Fact]
+    public async Task ToolbarRefresh_AfterThePluginGoes_DisablesPropertySearchFreeze()
+    {
+        // The other direction: an enabled Freeze over a dead pipe only fails at the click.
+        var bridge = new RecordingBridge { NextAvailability = true };
+        var vm = BuildVm(aobMaker: bridge);
+        await vm.PropertySearch.RefreshAobMakerAvailabilityAsync();
+        Assert.True(vm.PropertySearch.IsAobMakerAvailable);
+
+        bridge.NextAvailability = false;
+        await vm.RefreshAobMakerCommand.ExecuteAsync(null);
+
+        Assert.False(vm.PropertySearch.IsAobMakerAvailable);
+    }
+
+    [Fact]
+    public async Task AnotherPanelsProbe_ReachesPropertySearch_AndItsOwnProbeReachesTheToolbar()
+    {
+        // The shared status reaches Property Search whoever probes it, and Property Search's own probe reaches it.
+        var bridge = new RecordingBridge { NextAvailability = true };
+        var vm = BuildVm(aobMaker: bridge);
+        await vm.PropertySearch.RefreshAobMakerAvailabilityAsync();   // what Property Search learns, everyone learns
+        Assert.True(vm.AobMakerShared.IsAvailable);
+        Assert.True(vm.IsAobMakerAvailable);
+
+        // A probe started from elsewhere (ProbeAsync, not the cooldown-bound refresh: they share one cooldown now).
+        bridge.NextAvailability = false;
+        await vm.AobMakerShared.ProbeAsync();
+        Assert.False(vm.PropertySearch.IsAobMakerAvailable);
+        Assert.Equal(2, bridge.CheckCalls);
+    }
+
+    [Fact]
+    public async Task PropertySearchAndTheSharedStatus_KeepOneCooldown()
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 1, INFO 2. Two cooldowns cost a second pipe connect -- 2 s of the
+        // bridge's lock with CE absent -- when a Search was followed by a switch to a tab that probes the shared status.
+        var bridge = new RecordingBridge { NextAvailability = true };
+        var vm = BuildVm(aobMaker: bridge);
+        await vm.PropertySearch.RefreshAobMakerAvailabilityAsync();
+        vm.AobMakerShared.TryProbe();
+        await vm.AobMakerShared.RefreshAsync();
+
+        Assert.Equal(1, bridge.CheckCalls);
+    }
+
+    [Fact]
+    public async Task TeleportsAndInterestingFunctionsProbes_ReachTheToolbarAndPropertySearch()
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 1, F2. These two panels keep a flag of their own and probe on their
+        // own tab activation, but only Live Walker's and Pointers' flags were mirrored into the toolbar chip -- so what
+        // they learned reached neither the chip nor anything that follows the shared status.
+        var bridge = new RecordingBridge { NextAvailability = true };
+        var vm = BuildVm(aobMaker: bridge);
+        await vm.Teleport.CheckAobMakerAsync();
+        Assert.True(vm.IsAobMakerAvailable);
+        Assert.True(vm.PropertySearch.IsAobMakerAvailable);
+
+        bridge.NextAvailability = false;
+        await vm.InterestingFunctions.CheckAobMakerAsync();   // its flag starts "up", so this is a change
+        Assert.False(vm.IsAobMakerAvailable);
+        Assert.False(vm.PropertySearch.IsAobMakerAvailable);
+    }
+
+    /// <summary>A flag-keeping panel's own probe, and a way to set its flag without one.</summary>
+    private static (Func<Task> Probe, Action<bool> SetFlag) FlagKeepingPanel(MainWindowViewModel vm, string panel)
+        => panel switch
+        {
+            "LiveWalker" => (() => vm.LiveWalker.CheckAobMakerAsync(), v => vm.LiveWalker.IsAobMakerAvailable = v),
+            "Pointers" => (() => vm.Pointers.CheckAobMakerAsync(), v => vm.Pointers.IsAobMakerAvailable = v),
+            "InterestingFunctions" => (() => vm.InterestingFunctions.CheckAobMakerAsync(),
+                                       v => vm.InterestingFunctions.IsAobMakerAvailable = v),
+            "Teleport" => (() => vm.Teleport.CheckAobMakerAsync(), v => vm.Teleport.IsAobMakerAvailable = v),
+            _ => throw new ArgumentOutOfRangeException(nameof(panel), panel, null),
+        };
+
+    [Theory]
+    [InlineData("LiveWalker")]
+    [InlineData("Pointers")]
+    [InlineData("InterestingFunctions")]
+    [InlineData("Teleport")]
+    public async Task APanelsProbe_ThatConfirmsItsOwnFlag_StillReachesTheToolbar(string panel)
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 2, F1. The chip mirrors a panel's flag on a CHANGE, and a probe
+        // that confirms what the flag already says raises none: Interesting Functions' flag starts "up", so its first
+        // probe after Cheat Engine came up reached nobody, and a "down" confirmed while the chip said "up" left the
+        // chip saying "connected" over a dead pipe.
+        var bridge = new RecordingBridge { NextAvailability = true };
+        var vm = BuildVm(aobMaker: bridge);
+        var (probe, setFlag) = FlagKeepingPanel(vm, panel);
+
+        setFlag(true);                    // the panel already says "up"...
+        vm.IsAobMakerAvailable = false;   // ...while the chip, and the shared status behind it, say "down"
+        await probe();
+        Assert.True(vm.IsAobMakerAvailable);
+        Assert.True(vm.PropertySearch.IsAobMakerAvailable);
+
+        bridge.NextAvailability = false;
+        setFlag(false);
+        vm.IsAobMakerAvailable = true;
+        await probe();
+        Assert.False(vm.IsAobMakerAvailable);
+        Assert.False(vm.PropertySearch.IsAobMakerAvailable);
+    }
+
     [Fact]
     public async Task LiveWalkerProbe_ReasonChangesWhileOffline_TheNoteRepaints()
     {
@@ -237,10 +365,65 @@ public class MainWindowInjectHelperTests
     // Wiring helpers
     // ------------------------------------------------------------------
 
-    private static MainWindowViewModel BuildVm(IAobMakerBridge? aobMaker)
+    // ------------------------------------------------------------------
+    // [MAINWINDOW-NAVIGATE-EXACT-NAME] a Locate asks find_live_instance, and says so when nothing is live
+    // ------------------------------------------------------------------
+
+    private sealed class LiveLookupDump : StubDumpService
+    {
+        public List<string> Asked { get; } = new();
+        /// <summary>What every lookup answers; nothing live by default.</summary>
+        public UE5DumpUI.Models.LiveInstanceResult Answer { get; set; } = new();
+
+        public override Task<UE5DumpUI.Models.LiveInstanceResult> FindLiveInstanceAsync(string className,
+                                                                                        CancellationToken ct = default)
+        {
+            Asked.Add(className);
+            return Task.FromResult(Answer);
+        }
+    }
+
+    [Fact]
+    public void A_Locate_an_older_DLL_missed_says_no_subclass_was_looked_for()
+    {
+        // Review 3: the miss line takes the lookup's answer; dropping it at the call site compiled and said "or of a
+        // subclass" again.
+        var miss = new UE5DumpUI.Models.LiveInstanceResult { Pick = UE5DumpUI.Models.LiveInstanceResult.PickLegacy };
+        var vm = BuildVm(aobMaker: null, dump: new LiveLookupDump { Answer = miss });
+
+        vm.InterestingProperties.LocateRowInGWorldCommand.Execute(new UE5DumpUI.Models.ScoredPropertyRow
+        {
+            Match = new UE5DumpUI.Models.PropertySearchMatch { ClassName = "AMyActor", PropName = "Health" },
+            FinalScore = 1, Category = UE5DumpUI.Services.PropertyCategory.Other, KeywordHits = 0, ClassBonus = 0,
+            IsUnusualLocation = false,
+        });
+
+        Assert.Equal(MainWindowViewModel.NoLiveInstanceToLocateText("AMyActor", "GWorld", miss), vm.LiveWalker.StatusText);
+        Assert.DoesNotContain("or of a subclass", vm.LiveWalker.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void A_Locate_with_nothing_live_says_so_in_Live_Walker()
+    {
+        var dump = new LiveLookupDump();
+        var vm = BuildVm(aobMaker: null, dump: dump);
+
+        vm.InterestingProperties.LocateRowInGWorldCommand.Execute(new UE5DumpUI.Models.ScoredPropertyRow
+        {
+            Match = new UE5DumpUI.Models.PropertySearchMatch { ClassName = "AMyActor", PropName = "Health" },
+            FinalScore = 1, Category = UE5DumpUI.Services.PropertyCategory.Other, KeywordHits = 0, ClassBonus = 0,
+            IsUnusualLocation = false,
+        });
+
+        Assert.Equal(new[] { "AMyActor" }, dump.Asked);
+        Assert.Equal((int)MainTabIndex.LiveWalker, vm.SelectedTabIndex);
+        Assert.Equal(MainWindowViewModel.NoLiveInstanceToLocateText("AMyActor", "GWorld", new UE5DumpUI.Models.LiveInstanceResult()), vm.LiveWalker.StatusText);
+    }
+
+    private static MainWindowViewModel BuildVm(IAobMakerBridge? aobMaker, IDumpService? dump = null)
         => new MainWindowViewModel(
             pipeClient: new NoopPipeClient(),
-            dump: new StubDumpService(),
+            dump: dump ?? new StubDumpService(),
             log: new NoopLog(),
             platform: new NoopPlatform(),
             aobUsage: null,

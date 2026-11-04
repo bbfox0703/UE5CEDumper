@@ -35,6 +35,9 @@ public sealed class FieldInfoModel
     public string ElemType { get; init; } = "";          // SetProperty -> element type
     public string ElemStructType { get; init; } = "";    // SetProperty element struct name
     public string EnumName { get; init; } = "";          // EnumProperty/ByteProperty -> UEnum name
+    // [USMAP-ENUM-SIGNEDNESS] an EnumProperty's UnderlyingProp type (e.g. Int8Property); "" from an older DLL, or
+    // when the DLL's read did not validate
+    public string EnumUnderlyingType { get; init; } = "";
     // [A4-USMAP-CONTAINER-ENUM] a container inner's UEnum (a TEnumAsByte or an EnumProperty inner); "" when none
     public string InnerEnumName { get; init; } = "";     // ArrayProperty / OptionalProperty inner
     public string ElemEnumName { get; init; } = "";      // SetProperty element

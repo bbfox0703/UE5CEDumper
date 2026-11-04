@@ -732,6 +732,9 @@ if(BUILD_DLL_TESTS)
             target_compile_definitions(owncopy_${_oc} PRIVATE OWNCOPY_FIXTURE_LEGACY)
         endif()
         if(MSVC)
+            # /utf-8 as every other target: the fixture includes Mimic.h, whose comments are UTF-8, and without it cl
+            # reads them in the system code page -- C4819 on a zh-TW (950) machine.
+            target_compile_options(owncopy_${_oc} PRIVATE /utf-8)
             target_link_options(owncopy_${_oc} PRIVATE /NOENTRY)
         endif()
         add_dependencies(dll_core_test owncopy_${_oc})

@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -115,26 +116,115 @@ uintptr_t FindClassByPath(const std::string& classPath);
 // The first LIVE instance of the class named `className` or of any class derived from it; failing that,
 // the class-default object of THAT class; else 0. Case-insensitive, like FindInstancesByClass.
 //
-// ⚠ This is what `UE5_FindInstanceOfClass` was assumed to be, and is not: that export (and the pipe's
-// `invoke_function class_name` and the mailbox's FIND_INSTANCE, which share its shape) gates on a class
-// name SUBSTRING and falls back to the FIRST matching CDO. On a UE 5.4 Shipping build "Actor" answered
+// ⚠ Internal callers use THIS, never the user-facing ResolveUserInstance below. The user-facing lookups once matched
+// a class-name SUBSTRING and fell back to the FIRST matching CDO: on a UE 5.4 Shipping build "Actor" answered
 // Default__ActorChannel -- a UChannel -- and See-through refused a build that has SetActorHiddenInGame
-// [SEETHRU-PROBE-SUBSTRING]. The stock engine has the same trap for two more internal lookups:
-// UCheatManagerExtension / UAbilitySystemCheatManagerExtension contain "CheatManager", and
-// UDebugCameraControllerSettings contains "DebugCameraController". Internal callers use THIS.
+// [SEETHRU-PROBE-SUBSTRING]. The stock engine has the same trap for two more lookups: UCheatManagerExtension /
+// UAbilitySystemCheatManagerExtension contain "CheatManager", and UDebugCameraControllerSettings contains
+// "DebugCameraController". ResolveUserInstance now shares this walk, but a user's invoke may take the Debug Camera's
+// own object when nothing else is live, which an internal STATE read must never do.
+// ⚠ Not for a caller that WRITES, or must never be handed a template: the class default object stands in when
+// nothing is live. Such a caller walks FindInstancesDerivedFrom (which skips templates), or, for the local
+// PlayerController, ScanForLocalPlayerController. [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS]
 //
 // Derivation is the super-chain walk FindInstancesDerivedFrom uses. The CDO fallback is the named class's
 // OWN default object, never a subclass's: a function library (KismetSystemLibrary, WidgetBlueprintLibrary)
 // has no live instance, and its CDO is the object a static UFunction is invoked on. A cancelled walk
 // returns 0, not a CDO it met on the way: a live instance may sit past where it stopped.
+// [INVOKE-PICK-GARBAGE] "Live" is never a destroyed object: an actor destroyed in play is marked garbage and stays in
+// GObjects until the next collection -- about a minute on a stock engine (gc.TimeBetweenPurgingPendingKillObjects) --
+// and an early, low-index one is met before its live successor. Every pick in this family passes over it, by
+// DynOff::IsDestroyedObject: never on Unreachable alone, which a collection in progress sets on live objects too.
 uintptr_t FindLiveOrDefaultOf(const std::string& className);
 
-// The same pick, skipping a live instance whose OUTER derives from `skipOuterOf`. [DBGCAM-58-REENABLE] A Debug
+// The same pick, skipping a live instance that IS of a class deriving from `skipOuterOf` (reached through a base of
+// it) or that one owns -- some object up its outer chain derives from it. A skipped object is dropped, never handed
+// back: with only such objects live, the class's own default object stands in. [DBGCAM-58-REENABLE] A Debug
 // Camera controller gets a CheatManager of its own (ADebugCameraController::AddCheats forces one in non-Shipping
 // builds), and once GObjects slot reuse puts it below the player's, the plain pick lands on it -- where, on UE 5.8,
 // ToggleDebugCamera can never enable the camera again (FDebugCameraManager::EnableDebugCamera needs the controller's
 // Player, which the DCC has only while active).
 uintptr_t FindLiveOrDefaultOf(const std::string& className, const std::string& skipOuterOf);
+
+// [FINDINSTANCE-SUBSTRING-USERFACING] What a USER-facing "an instance of class X" lookup took, and why. Every such
+// lookup resolves through ResolveUserInstance; a source pin in InvokeScriptTests
+// (UserFacingClassLookups_AllResolveThroughOneDerivationResolver) covers the ones no test target compiles.
+enum class UserPick : uint8_t {
+    None,              // nothing usable; obj 0
+    Cancelled,         // the walk was cut short; obj 0, never a candidate met on the way
+    Live,              // a live object of the named class or a subclass
+    DebugCameraOwned,  // the same, but one a Debug Camera controller owns or is: no other was live
+    ClassDefault,      // the named class's own class-default object: nothing of it was live
+    PartialLive,       // no object derives from a class of that exact name: a live object whose class name contains it
+    PartialDefault,    // ...and none of those was live: the first object whose class name contains it
+};
+struct UserInstance {
+    uintptr_t obj = 0;
+    uintptr_t cls = 0;
+    UserPick  pick = UserPick::None;
+    int32_t   scanned = 0;
+};
+UserInstance ResolveUserInstance(const std::string& className);
+
+// [MAINWINDOW-NAVIGATE-EXACT-NAME] The object a UI opens or searches a path from (the pipe's find_live_instance): the
+// same derivation walk, never a template nor a destroyed object, the Debug Camera's own objects last -- with two
+// differences from an invoke's pick. An object of the named class ITSELF comes before a subclass's met first: a
+// function's row names the class that declares it, and Live Walker lists an object's own class's functions, not its
+// superclasses'. And no partial-name fallback: a name no class answers to is answered by nothing.
+// Live or DebugCameraOwned is an object to open; ClassDefault, None and Cancelled are not.
+UserInstance FindLiveInstanceOf(const std::string& className);
+
+// [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The local PlayerController found by walking the object array, for a
+// caller whose GWorld -> OwningGameInstance -> LocalPlayers[0] -> PlayerController chain gave none. Derivation, never a
+// class-name substring, never a template, never a destroyed controller (garbage: UEngine::LoadMap leaves the old PC
+// holding its Player until GC, exactly while the chain is broken). Ranked by APlayerController::Player, matched
+// exactly: a LocalPlayer, else any UPlayer (a listen server's remote NetConnection), else none. A Debug Camera
+// controller with no Player is inactive -- pawnless, with nothing to hop back to -- and is never taken; an active one
+// holds a LocalPlayer and is taken, as the chain itself would give it. With more than one local player
+// (split-screen) the first held one in object order, which need not be LocalPlayers[0]: the chain that failed was
+// the only thing that knew the order. A walk cut short answers Cancelled.
+enum class LocalPcPick : uint8_t { None, Cancelled, LocalPlayer, OtherPlayer, NoPlayer };
+struct LocalPcScan {
+    uintptr_t   pc = 0;
+    LocalPcPick pick = LocalPcPick::None;
+};
+LocalPcScan ScanForLocalPlayerController();
+
+// The pick's name on the pipe (invoke_function's instance_pick); "" for None and Cancelled, which never reach a reply.
+constexpr const char* UserPickWire(UserPick p) {
+    switch (p) {
+        case UserPick::Live:             return "live";
+        case UserPick::DebugCameraOwned: return "debug_camera_owned";
+        case UserPick::ClassDefault:     return "class_default";
+        case UserPick::PartialLive:      return "partial_name";
+        case UserPick::PartialDefault:   return "partial_name_default";
+        default:                         return "";
+    }
+}
+
+// [INVOKE-NONSTATIC-ON-CDO] Is this object a TEMPLATE rather than a world object? ClassDefault: a class-default object
+// (named Default__, or RF_ClassDefaultObject). Template: an archetype -- a class-default object's default subobject, or a
+// Blueprint's component template -- found by RF_ArchetypeObject on itself or a class-default object up its outer chain;
+// `owner` is that outer, or its own outer when only the flag says so.
+enum class TemplateKind : uint8_t { None, ClassDefault, Template };
+struct TemplateInfo {
+    TemplateKind kind = TemplateKind::None;
+    uintptr_t    owner = 0;
+};
+TemplateInfo TemplateOf(uintptr_t obj);
+// The same verdict, for a caller testing many objects: `outerMemo` remembers the outer-chain half by first outer,
+// which siblings share (a level's actors, an actor's components). One memo per pass -- outers can change between.
+using TemplateOuterMemo = std::unordered_map<uintptr_t, uintptr_t>;
+TemplateInfo TemplateOf(uintptr_t obj, TemplateOuterMemo& outerMemo);
+
+// The template kind's name on the pipe (invoke_function's instance_template): "" for a live object.
+constexpr const char* TemplateKindWire(TemplateKind k) {
+    switch (k) {
+        case TemplateKind::ClassDefault: return "class_default";
+        case TemplateKind::Template:     return "template";
+        default:                         return "";
+    }
+}
 
 // Get the detected FUObjectItem stride in bytes (16 or 24)
 int GetItemSize();
@@ -183,6 +273,9 @@ struct SearchResult {
 
 // Search results with diagnostic counters for debugging
 struct SearchResultSet {
+    // [LISTINSTANCES-KEEPS-TEMPLATES] Templates a walk that skips them passed over before its cap: a pool armed on
+    // nothing can then say whether only templates of the class exist.
+    int templatesSkipped = 0;
     std::vector<SearchResult> results;
     int32_t scanned = 0;    // Total indices iterated (= GetCount() at call time)
     int32_t nonNull = 0;    // Objects that were non-null
@@ -235,7 +328,10 @@ SearchResultSet SearchByName(const std::string& query, int maxResults = 200, boo
 // callers that want a bounded first-N scan and ignore the histogram), the loop keeps
 // the early exit at maxResults and skips the tally — so those hot paths are not
 // regressed into a full-array walk.
-SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch = false, int maxResults = 500, bool newestFirst = false, const std::string& nameFilter = "", const std::vector<std::string>& excludeClasses = {}, bool buildHistogram = false);
+SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch = false, int maxResults = 500, bool newestFirst = false, const std::string& nameFilter = "", const std::vector<std::string>& excludeClasses = {}, bool buildHistogram = false, bool skipTemplates = false);
+// skipTemplates: [LISTINSTANCES-KEEPS-TEMPLATES] a caller that WRITES to the pool passes true, and a template
+// (TemplateOf) is then no match at all -- no cap slot, no histogram row. Off by default: the Instance Finder lists
+// class defaults and templates on purpose (a Blueprint's defaults are found there).
 
 // LIVE instances of `baseClassName` AND of every class derived from it.
 //
@@ -247,11 +343,19 @@ SearchResultSet FindInstancesByClass(const std::string& className, bool exactMat
 // UClass super chain instead, which is the actual derivation relation.
 //
 // Two behaviours that are part of the contract, not incidental:
-//   * Class-default objects are skipped INSIDE the walk, before the result cap.
-//     A base like AActor is the ancestor of thousands of classes, each with a
-//     Default__ object, and those are constructed at class-load time so they
-//     occupy the low GObjects indices — filtering them afterwards would leave a
-//     caller with `maxResults` CDOs and zero live instances.
+//   * Templates (TemplateOf: class-default objects, their default subobjects,
+//     Blueprint component templates) are skipped INSIDE the walk, before the
+//     result cap. A base like AActor is the ancestor of thousands of classes,
+//     each with a Default__ object, and templates are constructed at class-load
+//     time so they occupy the low GObjects indices — filtering them afterwards
+//     would leave a caller with `maxResults` templates and zero live instances.
+//     A pool that is written to must hold no template: what a template holds,
+//     every later spawn copies. A read-only listing loses nothing by the skip,
+//     since a template is no live instance either. [LISTINSTANCES-KEEPS-TEMPLATES]
+//     With `outerFilter` the test is the Default__ name alone: the pool is then
+//     the children of one object, and a template's outer is a package, a class
+//     or a class default object -- so a level's actors (walk_world) never depend
+//     on the flags word TemplateOf reads at a fixed, unprobed offset.
 //   * SearchResult::className is the CONCRETE class of each instance, not the
 //     queried base, so a caller can still tell the subclasses apart.
 //

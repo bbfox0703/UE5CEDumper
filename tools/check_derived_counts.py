@@ -125,7 +125,11 @@ CHECKS = [
             ("docs/architecture.md",      r"JSON dispatch \((\d+) commands\)"),
             ("docs/architecture.md",      r"Named Pipe JSON IPC protocol \((\d+) commands\)"),
             ("docs/dll-spec.md",          r"For the JSON protocol \((\d+) commands"),
+            ("docs/dll-spec.md",          r"For the JSON pipe protocol \(\*\*(\d+)\*\* commands"),
             ("docs/naming-convention.md", r"Named Pipe JSON IPC \((\d+) commands\)"),
+            # The protocol's own header said "derive it, never hand-edit" and read 99 against a real 105: a number
+            # whose own prose says to re-derive it is a number nothing derives. [MAINWINDOW-NAVIGATE-EXACT-NAME]
+            ("docs/pipe-protocol.md",     r"Total commands: \*\*(\d+)\*\*"),
             # The SOURCE header. It is not a doc, and that is exactly why it drifted to
             # "~30" against a real 99 and stayed there: the registry covered every file
             # that derives FROM this one and not this one. (audit #5 AD7/AD22)

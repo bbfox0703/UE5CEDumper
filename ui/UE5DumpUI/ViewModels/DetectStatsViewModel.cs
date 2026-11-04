@@ -18,7 +18,7 @@ namespace UE5DumpUI.ViewModels;
 ///
 /// One button that runs the shipped structural scorer (P2a/P2b), takes the
 /// top-scoring candidate stat fields, and CONFIRMS each against the live game:
-///   - a live (non-CDO) instance of the owning class exists, and
+///   - a live object of the owning class or a subclass exists (never a template), and
 ///   - the field holds a plausible numeric value right now (or is a GAS attribute),
 ///   - plus the static signals the scorer already computes (Max sibling / GAS / flags),
 ///   - and — opt-in — the field DECREASED across the two most-recent snapshots
@@ -231,12 +231,12 @@ public partial class DetectStatsViewModel : ViewModelBase
                 {
                     try
                     {
-                        var inst = await _dump.FindInstancesAsync(grp.Key, exactMatch: true, limit: 3);
+                        // [MAINWINDOW-NAVIGATE-EXACT-NAME] A live object of the class or a subclass, never a template:
+                        // an exact-name lookup confirmed nothing for a class whose live objects are all of a subclass,
+                        // and could read a class default object's default subobject, which is not named Default__.
+                        var live = await _dump.FindLiveInstanceAsync(grp.Key);
                         if (gen != _detectGen) return;   // [A1-DETECT-REPUBLISH]
-                        var live = inst.Instances.FirstOrDefault(i =>
-                            !string.IsNullOrEmpty(i.Address) &&
-                            !i.Name.StartsWith("Default__", StringComparison.Ordinal));
-                        if (live != null)
+                        if (live.Found)
                         {
                             liveExists = true;
                             walk = await _dump.WalkInstanceAsync(live.Address);

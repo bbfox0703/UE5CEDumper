@@ -240,6 +240,69 @@ public class CompositionRootWiringTests : IDisposable
         public void Dispose() { }
     }
 
+    /// <summary>[LEAD-SECOND-UI-CRASHLOG] A second launch found the instance mutex taken inside
+    /// <c>OnFrameworkInitializationCompleted</c> and called <c>Shutdown(1)</c> there, after which the lifetime's
+    /// <c>StartCore</c> threw "the Dispatcher shut down". Program.Main caught it and wrote it to crash.log, over the
+    /// first instance's real one. The check belongs before Avalonia starts at all, so no exception is made.</summary>
+    [Fact]
+    public void ASecondInstance_LeavesBeforeAvaloniaStarts()
+    {
+        var program = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Program.cs"));
+        int main = program.IndexOf("public static int Main(", StringComparison.Ordinal);
+        int check = program.IndexOf("TryAcquireSingleInstance()", main, StringComparison.Ordinal);
+        int start = program.IndexOf("StartWithClassicDesktopLifetime(", main, StringComparison.Ordinal);
+        Assert.True(check > main && check < start, "Main must take the instance mutex before Avalonia starts");
+
+        var app = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/App.axaml.cs"));
+        // The app keeps the platform service Main made (and the mutex it holds), rather than making a second one.
+        Assert.Contains("StartupPlatform", app);
+
+        // Review round 2: a check by name passed even if App took the mutex again (the one instance would then find it
+        // held by its own Main and shut down), and nothing held the window raise (B42). App takes it only when Main
+        // did not start it; Main raises the first instance's window before it leaves.
+        Assert.Contains("if (StartupPlatform == null && !_platform.TryAcquireSingleInstance())", app);
+        int raise = program.IndexOf("ActivateExistingInstance()", check, StringComparison.Ordinal);
+        int leave = program.IndexOf("return 1;", check, StringComparison.Ordinal);
+        Assert.True(raise > check && raise < leave, "Main must raise the first instance's window before it leaves");
+
+        // Review round 2: the mutex is taken INSIDE Main's crash.log catch, so a failure there is written down
+        // rather than killing the process without a word.
+        var tryStmt = System.Text.RegularExpressions.Regex.Match(program[main..], @"\n\s*try\s*\{");
+        int guard = tryStmt.Success ? main + tryStmt.Index : -1;
+        Assert.True(guard > main && guard < check, "Main must take the mutex inside its crash.log try");
+    }
+
+    [Fact]
+    public void AMutexAnElevatedInstanceHolds_ReadsAsAnotherInstance_NotACrash()
+    {
+        // Review round 2: a first instance run as administrator holds the mutex where an unelevated second launch may
+        // not open it, and new Mutex(...) then throws UnauthorizedAccessException. That is another instance.
+        bool taken = UE5DumpUI.Services.WindowsPlatformService.TakeSingleInstanceMutex(
+            () => throw new UnauthorizedAccessException("the elevated instance's mutex"), out var held);
+        Assert.False(taken);
+        Assert.Null(held);
+        // Control: a fresh name is taken, and held.
+        bool fresh = UE5DumpUI.Services.WindowsPlatformService.TakeSingleInstanceMutex(
+            () => (new System.Threading.Mutex(true, $"UE5DumpUI_Test_{Guid.NewGuid():N}", out bool created), created),
+            out var mine);
+        Assert.True(fresh);
+        Assert.NotNull(mine);
+        mine!.ReleaseMutex();
+        mine.Dispose();
+    }
+
+    /// <summary>[LEAD-KEYWORD-DROPDOWN-FIRST-CLICK] The keyword boxes' dropdown style is what the headless test holds
+    /// (KeywordDropdownClickTests); this holds that the app adds it.</summary>
+    [Fact]
+    public void TheApp_AddsTheKeywordBoxStyle()
+    {
+        var app = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/App.axaml.cs"));
+        int init = app.IndexOf("public override void Initialize()", StringComparison.Ordinal);
+        int added = app.IndexOf("Styles.Add(Helpers.KeywordBoxStyle.Create())", init, StringComparison.Ordinal);
+        int next = app.IndexOf("public override", init + 1, StringComparison.Ordinal);
+        Assert.True(added > init && added < next, "App.Initialize must add the keyword-box style");
+    }
+
     private sealed class NoopLog : ILoggingService
     {
         public void Info(string message) { }

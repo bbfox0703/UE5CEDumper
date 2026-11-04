@@ -25,6 +25,9 @@ public sealed class InstanceWalkResult
     /// (ClassPrivate null or unmapped): freed, or never an object. Distinct from <see cref="IsStale"/> and
     /// <see cref="IsUnreadable"/>. False from an older DLL.</summary>
     public bool IsNoHeader { get; init; }
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] UEnum::Names was never located on this build (a process-wide latch), so every
+    /// enum field carries no entries. False from an older DLL.</summary>
+    public bool EnumNamesFailed { get; init; }
     /// <summary>
     /// The reflected walk RAN and <see cref="Fields"/> is complete; only the DLL's
     /// Guess-What raw-byte pass was skipped, because the class is larger than the

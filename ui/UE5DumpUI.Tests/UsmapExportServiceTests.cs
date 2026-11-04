@@ -791,6 +791,55 @@ public class UsmapExportServiceTests
         Assert.Equal("EGameMode", p.EnumName);
     }
 
+    // ---- [USMAP-ENUM-SIGNEDNESS] the DLL's UnderlyingProp type carries the signedness the size cannot ----
+    //
+    // Both canonical writers write the UnderlyingProp's own type. From the size alone a `: int8` enum came out
+    // ByteProperty and a `: uint32` one IntProperty.
+
+    [Theory]
+    [InlineData("Int8Property", 1, (byte)23)]
+    [InlineData("UInt32Property", 4, (byte)19)]
+    [InlineData("Int16Property", 2, (byte)22)]
+    [InlineData("UInt64Property", 8, (byte)18)]
+    [InlineData("ByteProperty", 1, (byte)0)]
+    public void BuildUsmap_EnumProperty_WritesTheUnderlyingTypeTheDllRead(string underlyingType, int size, byte underlying)
+    {
+        var structs = new List<ClassInfoModel>
+        {
+            new()
+            {
+                Name = "FSpace",
+                Fields = [ new FieldInfoModel { Name = "Space", TypeName = "EnumProperty", EnumName = "EGameMode", EnumUnderlyingType = underlyingType, Offset = 0, Size = size } ],
+            },
+        };
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap(CreateTestEnums(), structs));
+
+        Assert.Equal(underlying, Assert.Single(Assert.Single(f.Structs).Props).Underlying);
+    }
+
+    [Theory]
+    [InlineData("Int64Property", 1, (byte)0)]   // its width disagrees with the size: the size wins
+    [InlineData("FloatProperty", 4, (byte)2)]   // no enum is a float: the size wins
+    [InlineData("Garbage", 2, (byte)20)]
+    public void BuildUsmap_EnumProperty_FallsBackToTheSizeWhenTheUnderlyingTypeDisagrees(string underlyingType, int size, byte underlying)
+    {
+        // The width is what a consumer deserializes, and the size is measured on every field; a type name read from
+        // one pointer that disagrees with it is the one to distrust.
+        var structs = new List<ClassInfoModel>
+        {
+            new()
+            {
+                Name = "FSpace",
+                Fields = [ new FieldInfoModel { Name = "Space", TypeName = "EnumProperty", EnumName = "EGameMode", EnumUnderlyingType = underlyingType, Offset = 0, Size = size } ],
+            },
+        };
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap(CreateTestEnums(), structs));
+
+        Assert.Equal(underlying, Assert.Single(Assert.Single(f.Structs).Props).Underlying);
+    }
+
     [Fact]
     public void BuildUsmap_ByteEnum_IsWrittenAsTheCanonicalEnumShape()
     {
@@ -876,6 +925,57 @@ public class UsmapExportServiceTests
         var child = Assert.Single(f.Structs);
         Assert.Equal(new[] { "BaseA", "BaseB", "Own" }, child.Props.Select(p => p.Name));
         Assert.Equal(new ushort[] { 0, 1, 2 }, child.Props.Select(p => p.SchemaIndex));
+    }
+
+    // [LEAD-USMAP-UDS-SHADOW] A .usmap names a struct's super BY NAME, and CUE4Parse keeps one struct per name
+    // (`structs[s.Name] = s`, case-insensitive: the last one wins) and resolves Super by name. UE 5 gives every
+    // AnimBlueprint's generated constant-data struct the same name, and a child AnimBP's derives from its parent's:
+    // DumperTest 5.1's export wrote one with super = its own name and 0 records, a by-name self-cycle on which
+    // CUE4Parse's CountProperties never ends. A super a name-keyed reader cannot reach is written as none, with the
+    // whole chain kept -- what the export already does for a super that is missing from the file.
+
+    private static ClassInfoModel ChainChild(string name, string superName) => new()
+    {
+        Name = name, SuperName = superName, SuperPropertiesSize = 8, OwnPropertiesStart = 8, PropertiesSize = 12,
+        Fields =
+        [
+            new FieldInfoModel { Name = "BaseA", TypeName = "IntProperty", Offset = 0, Size = 4 },
+            new FieldInfoModel { Name = "BaseB", TypeName = "IntProperty", Offset = 4, Size = 4 },
+            new FieldInfoModel { Name = "Own", TypeName = "IntProperty", Offset = 8, Size = 4 },
+        ],
+    };
+
+    private static ClassInfoModel ChainBase(string name) => new()
+    {
+        Name = name, PropertiesSize = 8,
+        Fields =
+        [
+            new FieldInfoModel { Name = "BaseA", TypeName = "IntProperty", Offset = 0, Size = 4 },
+            new FieldInfoModel { Name = "BaseB", TypeName = "IntProperty", Offset = 4, Size = 4 },
+        ],
+    };
+
+    [Fact]
+    public void BuildUsmap_ASuperNamedLikeTheStructItself_IsWrittenAsNone_AndTheChainIsKept()
+    {
+        const string N = "AnimBlueprintGeneratedConstantData";
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap([], [ChainBase(N), ChainChild(N, N)]));
+
+        var child = f.Structs[1];
+        Assert.Equal(N, child.Name);
+        Assert.Null(child.Super);
+        Assert.Equal(new[] { "BaseA", "BaseB", "Own" }, child.Props.Select(p => p.Name));
+    }
+
+    [Fact]
+    public void BuildUsmap_ASuperWhoseNameTwoStructsShare_IsWrittenAsNone_AndTheChainIsKept()
+    {
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap([],
+            [ChainBase("FShared"), ChainBase("fshared"), ChainChild("FChild", "FShared")]));
+
+        var child = f.Structs.Single(s => s.Name == "FChild");
+        Assert.Null(child.Super);
+        Assert.Equal(new[] { "BaseA", "BaseB", "Own" }, child.Props.Select(p => p.Name));
     }
 
     /// <summary>⚠ An EMPTY base reports PropertiesSize 1 while empty-base optimisation puts the

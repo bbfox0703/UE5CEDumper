@@ -29,7 +29,6 @@ def main() -> int:
     a = ap.parse_args()
 
     with PipeClient() as pc:
-        pc.connect()
         print("build:", pc.assert_build())
         pc.ensure_scanned()
         found = data(pc.request("find_instances", class_name=a.cls, exact_match=True, limit=8))

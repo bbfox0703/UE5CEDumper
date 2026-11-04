@@ -105,6 +105,9 @@ struct FlyStatus {
     bool      modeResolved   = false;  // MovementMode field found this instant
     int32_t   currentMode    = -1;     // live MovementMode enum byte (-1 = unknown)
     uintptr_t cmcAddr        = 0;
+    // [FLY-REPORTS-WISH] The pawn's bActorEnableCollision as read now: 1 on, 0 off, -1 not read. `noclip` above is
+    // what was asked for; this is what happened.
+    int32_t   collision      = -1;
 };
 
 // Enable/disable fly. On enable: capture the pawn's current MovementMode (to

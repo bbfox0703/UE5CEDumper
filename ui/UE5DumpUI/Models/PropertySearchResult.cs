@@ -97,6 +97,17 @@ public partial class PropertySearchMatch : ObservableObject
     /// </summary>
     public bool ShowScalarActions => !IsNested;
 
+    internal const string KeyNestedNoAction = "str.PropertySearch.NestedNoAction";
+
+    /// <summary>[LEAD-PROPSEARCH-TOPTIONAL-LEAVES] Why Copy Offset / Freeze / Force did nothing on a nested row. Past a
+    /// container its offset is the element struct's, not the class's; inside a TOptional&lt;FStruct&gt; it is the
+    /// optional's storage, which may hold no value; and its dotted name is no field of the class for Force to
+    /// resolve.</summary>
+    public string NestedActionRefusedText => Helpers.AobMakerStatus.Say(KeyNestedNoAction,
+        "Not done: {0} is a nested field. Copy Offset, Freeze and Force act on a class's own fields: past a container "
+        + "its offset is the element's, and inside an optional it may hold no value. List the class's instances with "
+        + "finder, then drill the path in Live Walker.", PropName);
+
     // === Force-field (Solide) per-row action gates ===
     // A direct (non-nested) row can be held by the DLL force-and-hold worker.
     // The kind is decided by the reflected property type.

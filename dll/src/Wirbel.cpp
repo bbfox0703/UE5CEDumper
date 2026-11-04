@@ -24,6 +24,7 @@
 #include "Aura.h"
 #include "Ubel.h"
 #include "Stark.h"   // IsGameThreadResponsive — skip doomed POV invokes when paused
+#include "Utf8Helpers.h"   // IsPlausibleNameStart — Ubel's name guard
 
 #include <algorithm>
 #include <cctype>
@@ -52,9 +53,10 @@ using namespace Wirbel;  // TeleportResult codes
 std::mutex s_opMutex;
 Marker s_markers[Grimoire::TELEPORT_SLOTS];
 
-// System "last" slot — the pose captured automatically right before every
-// recall / force / BugItGo / cursor teleport (see SaveLastImpl). Never user
-// saved; recalled one-way via Wirbel::RecallLast so a bad teleport is undoable.
+// System "last" slot — the pose captured automatically right before a jump
+// (see SaveLastImpl, which keeps the previous one when the pose is not world
+// coordinates). Never user saved; recalled one-way via Wirbel::RecallLast so a
+// bad teleport is undoable.
 Marker s_lastMarker;
 
 // BugIt slot — a single user-triggered pose stored by Wirbel::BugItSave and
@@ -291,8 +293,9 @@ struct Chain {
 // reuse the chain it already resolved).
 void ReadMovementState(const Chain& c, MovementState& m);
 
-// Resolve the LOCAL PlayerController: engine chain first, instance-scan
-// fallback (prefer the PC whose UPlayer* Player field is non-null).
+// Resolve the LOCAL PlayerController: engine chain first, then the shared
+// instance-scan fallback (Aura::ScanForLocalPlayerController: the local player's
+// controller first).
 uintptr_t ResolveLocalPC(uintptr_t world) {
     do {
         if (!world) break;
@@ -321,24 +324,16 @@ uintptr_t ResolveLocalPC(uintptr_t world) {
         }
     } while (false);
 
-    auto rset = Aura::FindInstancesByClass("PlayerController", false, 100);
-    uintptr_t firstNonCdo = 0;
-    for (const auto& r : rset.results) {
-        if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
-        if (!firstNonCdo) firstNonCdo = r.addr;
-        uintptr_t cls = Ubel::GetClass(r.addr);
-        int32_t playerOff = Ubel::FindFieldOffset(cls, "Player", "Player",
-                                                  "Controller", "ObjectProperty");
-        if (playerOff >= 0 && ReadPtrAt(r.addr, playerOff)) {
-            LOG_INFO("Teleport: local PC 0x%llX via instance scan (Player set)",
-                     (unsigned long long)r.addr);
-            return r.addr;
-        }
-    }
-    if (firstNonCdo)
-        LOG_WARN("Teleport: PC 0x%llX via instance scan WITHOUT Player check",
-                 (unsigned long long)firstNonCdo);
-    return firstNonCdo;
+    // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] By derivation, the local player's controller first.
+    const Aura::LocalPcScan s = Aura::ScanForLocalPlayerController();
+    if (s.pick == Aura::LocalPcPick::LocalPlayer)
+        LOG_INFO("Teleport: local PC 0x%llX via instance scan (Player set)", (unsigned long long)s.pc);
+    else if (s.pick == Aura::LocalPcPick::OtherPlayer)
+        LOG_WARN("Teleport: PC 0x%llX via instance scan (a remote Player; no local one found)",
+                 (unsigned long long)s.pc);
+    else if (s.pick == Aura::LocalPcPick::NoPlayer)
+        LOG_WARN("Teleport: PC 0x%llX via instance scan WITHOUT a Player", (unsigned long long)s.pc);
+    return s.pc;
 }
 
 // §5.6: when the Debug Camera is active the LocalPlayer's controller IS the
@@ -347,8 +342,8 @@ uintptr_t ResolveLocalPC(uintptr_t world) {
 uintptr_t HopThroughDebugCamera(uintptr_t pc) {
     if (!pc) return pc;
     uintptr_t cls = Ubel::GetClass(pc);
-    std::string clsName = Ubel::GetName(cls);
-    if (clsName.find("DebugCameraController") == std::string::npos) return pc;
+    // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] Derivation: a game's debug camera may be named without the word.
+    if (!Aura::ClassDerivesFromAny(cls, {Grimoire::AURA_DEBUGCAM_CLASS})) return pc;
     int32_t origOff = Ubel::FindFieldOffset(cls, "OriginalControllerRef",
                                             "OriginalController", nullptr, "ObjectProperty");
     uintptr_t orig = ReadPtrAt(pc, origOff);
@@ -453,8 +448,9 @@ int32_t GetPoseImpl(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSo
             // ⚠ It is a separate flag rather than a third `source` value on purpose: the
             // CE mailbox publishes that byte as `[176] source (0=raw, 1=invoke)`, and
             // adding a value would change the MEANING of a contract field -- exactly the
-            // change Mimic.h says the surface hash cannot see. The mailbox is deliberately
-            // left alone here; the pipe carries the flag.
+            // change Mimic.h says the surface hash cannot see. The `source` byte is left
+            // alone; the pipe carries the flag, and so does the mailbox's own pose-flags
+            // byte [178] since contract 4.
             if (outParentRelative) *outParentRelative = true;
             LOG_WARN("Teleport: attached pawn but K2_GetActorLocation failed — "
                      "falling back to RelativeLocation (parent-relative!)");
@@ -736,9 +732,8 @@ uintptr_t StructInner(const FieldInfo& fi) {
             continue;
         if (!Grimoire::IsUserspacePointer(cand)) continue;
         if (!Ubel::IsScriptStructObject(cand)) continue;
-        std::string sn = Ubel::GetName(cand);
-        if (!sn.empty() && static_cast<unsigned char>(sn[0]) >= 0x20
-            && static_cast<unsigned char>(sn[0]) < 0x7F)
+        // [UBEL-ASCII-FIRSTCHAR] Ubel's own name guard, so a struct named in CJK is not refused here either.
+        if (Utf8Helpers::IsPlausibleNameStart(Ubel::GetName(cand)))
             return cand;
     }
     return 0;
@@ -1352,7 +1347,17 @@ int32_t RecallTo(const Pose& p, bool restoreRot, uint8_t* tierOut) {
 // s_opMutex (uses the lock-free GetPoseImpl, not the public GetPose export).
 void SaveLastImpl() {
     Marker m{};
-    if (GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), nullptr, nullptr, &m.ParentRelative) != TP_OK) return;
+    const bool readOk =
+        GetPoseImpl(m.P, m.MapName, sizeof(m.MapName), nullptr, nullptr, &m.ParentRelative) == TP_OK;
+    // [TELEPORT-RECALL-PARENTREL] A parent-relative pose is not world coordinates: the slot keeps its previous pose
+    // (StoresUndoPoint), and the jump still runs.
+    if (!StoresUndoPoint(readOk, m.ParentRelative)) {
+        if (readOk)
+            LOG_WARN("Teleport: last position NOT updated -- the pose before this jump came from a PARENT-RELATIVE "
+                     "read (%.1f, %.1f, %.1f), not world coordinates; Recall last keeps the previous one",
+                     m.P.X, m.P.Y, m.P.Z);
+        return;
+    }
     m.Valid = true;
     s_lastMarker = m;
     LOG_INFO("Teleport: last position auto-saved (%.1f, %.1f, %.1f) map='%s'",
@@ -1510,16 +1515,21 @@ int32_t RecallMarker(int32_t slot, bool force, uint8_t* tierOut) {
     if (!s_markers[slot].Valid) return TP_ERR_EMPTY_MARKER;
     Marker m = s_markers[slot];
 
-    if (!force) {
-        // Cross-map recall = void fall / unloaded streaming cell (§11 caveat 5).
-        char cur[Grimoire::TELEPORT_MAPNAME_CAP] = {};
-        CopyMapName(DerefWorld(), cur, sizeof(cur));
-        if (!IEquals(std::string(cur), m.MapName)) {
-            LOG_WARN("Teleport: recall %d refused — map '%s' != marker map '%s'",
-                     slot, cur, m.MapName);
-            return TP_ERR_MAP_MISMATCH;
-        }
-    }
+    // Cross-map recall = void fall / unloaded streaming cell (§11 caveat 5). Force skips the check, so the map is
+    // read only when it counts.
+    char cur[Grimoire::TELEPORT_MAPNAME_CAP] = {};
+    if (!force) CopyMapName(DerefWorld(), cur, sizeof(cur));
+    const bool sameMap = force || IEquals(std::string(cur), m.MapName);
+    // [TELEPORT-RECALL-PARENTREL] Refused before SaveLastImpl, as BugItGo is: a refused jump moves neither the pawn nor
+    // the undo slot.
+    const int32_t refusal = RecallMarkerRefusal(m.Valid, m.ParentRelative, force, sameMap);
+    if (refusal == TP_ERR_PARENT_RELATIVE)
+        LOG_WARN("Teleport: recall %d refused -- the marker came from a PARENT-RELATIVE read (%.1f, %.1f, %.1f), not "
+                 "world coordinates; nothing moved%s", slot, m.P.X, m.P.Y, m.P.Z, force ? " (Force too)" : "");
+    else if (refusal == TP_ERR_MAP_MISMATCH)
+        LOG_WARN("Teleport: recall %d refused — map '%s' != marker map '%s'",
+                 slot, cur, m.MapName);
+    if (refusal != TP_OK) return refusal;
     SaveLastImpl();   // remember where we were, in case this recall goes wrong
     int32_t rc = RecallTo(m.P, /*restoreRot=*/true, tierOut);
     LOG_INFO("Teleport: recall %d -> rc=%d", slot, rc);
@@ -1768,6 +1778,8 @@ int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSour
     if (rc != TP_OK) return rc;
     m.Valid = true;
     s_bugItMarker = m;
+    if (m.ParentRelative)   // [TELEPORT-BUGITGO-PARENTREL] the producer-side half of BugItGo's refusal
+        LOG_WARN("Teleport: BugIt stored from a PARENT-RELATIVE read -- not world coordinates; BugItGo will refuse it");
     out = m.P;
     if (outParentRelative) *outParentRelative = m.ParentRelative;   // [W2-MARKER-PARENTREL]
     if (mapName && mapNameCap > 0) {
@@ -1782,7 +1794,14 @@ int32_t BugItSave(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSour
 
 int32_t BugItGo(uint8_t* tierOut) {
     std::lock_guard<std::mutex> lock(s_opMutex);
-    if (!s_bugItMarker.Valid) return TP_ERR_EMPTY_MARKER;   // no BugIt yet -> no-op
+    // [TELEPORT-BUGITGO-PARENTREL] Refused before SaveLastImpl: a refused jump is not a jump, so neither the pawn nor
+    // the "last" (undo) slot moves. A parent-relative pose driven in as world coordinates lands at the pawn's offset
+    // from its parent, measured from the world origin -- not where the BugIt was taken.
+    const int32_t refusal = BugItGoRefusal(s_bugItMarker.Valid, s_bugItMarker.ParentRelative);
+    if (refusal == TP_ERR_PARENT_RELATIVE)
+        LOG_WARN("Teleport: BugItGo refused -- the stored BugIt (%.1f, %.1f, %.1f) came from a PARENT-RELATIVE read, "
+                 "not world coordinates; nothing moved", s_bugItMarker.P.X, s_bugItMarker.P.Y, s_bugItMarker.P.Z);
+    if (refusal != TP_OK) return refusal;   // TP_ERR_EMPTY_MARKER: no BugIt yet -> no-op
     Marker m = s_bugItMarker;
     SaveLastImpl();   // BugItGo is a jump -> record the undo point first
     int32_t rc = RecallTo(m.P, /*restoreRot=*/true, tierOut);
@@ -1801,8 +1820,17 @@ int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose,
     // Current world position (GetPoseImpl handles attached pawns via
     // K2_GetActorLocation; RelativeLocation == world otherwise).
     Pose cur{};
-    rc = GetPoseImpl(cur, nullptr, 0, nullptr);
+    bool startParentRelative = false;
+    rc = GetPoseImpl(cur, nullptr, 0, nullptr, nullptr, &startParentRelative);
     if (rc != TP_OK) return rc;
+    // [TELEPORT-RECALL-PARENTREL] The world read failed and fell back to the parent-relative numbers: there is no world
+    // position to step from, and stepping from those would land at the pawn's offset from its parent, measured from the
+    // world origin. Refused before the undo point, so nothing moves.
+    if (startParentRelative) {
+        LOG_WARN("Teleport: relative move refused -- the current pose came from a PARENT-RELATIVE read (%.1f, %.1f, "
+                 "%.1f), not world coordinates; nothing moved", cur.X, cur.Y, cur.Z);
+        return TP_ERR_PARENT_RELATIVE;
+    }
 
     double fwd[3] = {};
     if (!GetForward(c, horizontalOnly, fwd)) {
@@ -1824,10 +1852,13 @@ int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose,
     // zeros for the user to copy or save. The move itself SUCCEEDED, so this is not an
     // error code -- the caller is told the landing is unknown and publishes nothing
     // rather than a number nobody measured. [TPREL-ZEROPOSE-2026-09-10]
+    // [TELEPORT-RECALL-PARENTREL] A re-read that fell back to the parent-relative numbers is not a world landing either:
+    // it is reported as unknown, the same way.
+    bool landingParentRelative = false;
+    const bool landingRead =
+        GetPoseImpl(outNewPose, nullptr, 0, nullptr, nullptr, &landingParentRelative) == TP_OK;
     if (outLandingKnown)
-        *outLandingKnown = (GetPoseImpl(outNewPose, nullptr, 0, nullptr) == TP_OK);
-    else
-        GetPoseImpl(outNewPose, nullptr, 0, nullptr);   // best-effort re-read
+        *outLandingKnown = landingRead && !landingParentRelative;
     LOG_INFO("Teleport: relative %.1f uu (%s) fwd=(%.3f, %.3f, %.3f) -> (%.1f, %.1f, %.1f)",
              distance, horizontalOnly ? "horizontal" : "3D",
              fwd[0], fwd[1], fwd[2], dest[0], dest[1], dest[2]);

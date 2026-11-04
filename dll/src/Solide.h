@@ -14,8 +14,8 @@
 // Structurally the multi-instance sibling of Hemmung (absolute-value hold): same
 // s_mutex + s_workerMutex two-lock split, same write-on-drift re-assert worker,
 // same "no cached instance pointers — re-resolve every tick" discipline. The
-// difference: the target is a POOL (Aura::FindInstancesByClass(className) each
-// tick, bounded + CDO-skipped), not one re-resolved pawn. Reuses the public
+// difference: the target is a POOL (Aura::FindInstancesDerivedFrom(className) each
+// tick, bounded + template-skipped), not one re-resolved pawn. Reuses the public
 // Solitar bool write (SetActorBool/GetActorBool -- a packed bit, or a native
 // bool's whole byte, Solitar::PickBoolBits) for the bool kind and clones
 // Hemmung's LWC-width-aware float read/write for the numeric kind. Pure reflected
@@ -25,6 +25,8 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+
+namespace Aura { struct RelatedObjectsStats; }
 
 namespace Solide {
 
@@ -52,7 +54,7 @@ enum ForceKind : int32_t {
 
 // One active hold-job, for the UI list + N-held honesty badge + Locate handoff.
 struct ForcedFieldInfo {
-    std::string className;    // class whose instances are held (substring-matched)
+    std::string className;    // class whose instances are held (and its subclasses')
     std::string fieldName;    // reflected property being forced
     int32_t     kind = K_BOOL;
     double      value = 0.0;  // desired value (bool: 1/0; numeric: absolute)
@@ -67,6 +69,10 @@ struct ForcedFieldInfo {
     // scan path breaks at the cap (Aura.cpp), and counting past it would cost a full
     // GObjects walk on every 300 ms re-assert tick.
     bool        poolTruncated = false;
+    // [LISTINSTANCES-KEEPS-TEMPLATES] Templates of the class the pool passed over on the last tick (a class default
+    // object, its subobjects, a Blueprint component template): never written, since every later spawn copies them.
+    // With held 0 it tells "nothing spawned yet" from "only templates of this class exist".
+    int32_t     templatesSkipped = 0;
 };
 
 // One ranked stealth-meter candidate from FindStealthMeter.
@@ -224,7 +230,10 @@ int32_t GetState(std::vector<ForcedFieldInfo>& out);
 // components (Aura::GetRelatedObjects), score every reflected numeric field with
 // MatchStealthField, return the ranked candidates (best first, up to maxResults).
 // Read-only. Returns FR_OK (out may be empty) or a negative ForceResult.
-int32_t FindStealthMeter(std::vector<StealthCandidate>& out, int32_t maxResults = 8);
+// [SOLIDE-RELATED-STOPS] `stats`, when given, says whether -- and why -- the walk of the pawn's objects stopped
+// short: a meter past that point is not found.
+int32_t FindStealthMeter(std::vector<StealthCandidate>& out, int32_t maxResults = 8,
+                         Aura::RelatedObjectsStats* stats = nullptr);
 
 // Stop and join the re-assert worker. Idempotent. Called by RemoveForce/ClearAll
 // (when nothing remains) and from UE5_Shutdown() before the DLL unloads.

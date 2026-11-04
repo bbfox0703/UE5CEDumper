@@ -54,6 +54,188 @@ public class TeleportScriptGeneratorTests
         Assert.Contains("writeQword(mb + 0x10, 10)", bugitgo); // op BUGIT_GO
     }
 
+    // ---- [TELEPORT-BUGITGO-PARENTREL] the BugItGo record names the DLL's refusal of a parent-relative BugIt ----
+
+    /// <summary>Run one teleport record's [ENABLE] on CE's own Lua VM against a fake mailbox that finishes
+    /// CMD_TELEPORT at once with <paramref name="result"/> and pose flags <paramref name="poseFlags"/> at
+    /// paramsData[178]. Returns OK / DIALOGS / MSG (the last dialog) / ACTIVE / CLOSED.</summary>
+    private static Dictionary<string, string> RunTeleport(TeleportScriptGenerator.Action action, int result,
+                                                          int poseFlags = 0)
+    {
+        var s = TeleportScriptGenerator.Generate(action);
+        int from = s.IndexOf("{$lua}\n", StringComparison.Ordinal) + "{$lua}\n".Length;
+        string enable = s[from..s.IndexOf("{$asm}", from, StringComparison.Ordinal)];
+        string lua = $$"""
+            UE5_DEBUG = 0
+            local MB, CV = 0x100000, 0x200000
+            MEM = {}
+            MEM[CV + {{CeMailboxLayout.OffContractMagic}}] = {{CeMailboxLayout.ContractMagic}}
+            MEM[CV + {{CeMailboxLayout.OffContractCur}}] = {{CeMailboxLayout.ContractVersion}}
+            MEM[CV + {{CeMailboxLayout.OffContractMin}}] = {{CeMailboxLayout.ContractVersion}}
+            DIALOGS, MSG, CLOSED, TIMERS = 0, '', false, {}
+            local T = 0
+            function getTickCount() T = T + 50 return T end
+            function sleep() end
+            function processMessages() end
+            function processMessagesPaintOnly() end
+            function reinitializeSymbolhandler() end
+            function getAddressSafe(n)
+              if n == 'g_invokeMailbox' then return MB end
+              if n == '{{CeMailboxLayout.ContractSymbol}}' then return CV end
+              return nil
+            end
+            function readInteger(a) return MEM[a] or 0 end
+            function readDouble(a) return MEM[a] or 0 end
+            function readBytes(a) return { MEM[a] or 0 } end
+            function writeQword(a, v) MEM[a] = v end
+            function writeDouble(a, v) MEM[a] = v end
+            function writeBytes(a, v) MEM[a] = v end
+            function writeInteger(a, v)
+              MEM[a] = v
+              if a == MB + {{CeMailboxLayout.OffCmd}} and v == {{CeMailboxLayout.CmdTeleport}} then
+                MEM[MB + {{CeMailboxLayout.OffResult}}] = {{result.ToString(System.Globalization.CultureInfo.InvariantCulture)}}
+                MEM[MB + 0x3DA] = {{poseFlags.ToString(System.Globalization.CultureInfo.InvariantCulture)}}
+                MEM[MB + {{CeMailboxLayout.OffStatus}}] = {{CeMailboxLayout.StatusDone}}
+                MEM[MB + {{CeMailboxLayout.OffCmd}}] = 0
+              end
+            end
+            function showMessage(m) DIALOGS = DIALOGS + 1 MSG = m end
+            function createTimer() local t = { destroy = function() end } TIMERS[#TIMERS + 1] = t return t end
+            function synchronize(f) f() end
+            function getLuaEngine() return { Close = function() CLOSED = true end } end
+            local memrec = { Active = true, ID = 1 }
+            local chunk = assert(load('local syntaxcheck,memrec=...\n' .. [==[
+            {{enable}}
+            ]==]))
+            local ok, err = pcall(chunk, false, memrec)
+            for _, t in ipairs(TIMERS) do if t.OnTimer then t.OnTimer(t) end end   -- the deferred untick fires
+            print('OK=' .. tostring(ok) .. '|' .. tostring(err))
+            print('DIALOGS=' .. DIALOGS)
+            print('MSG=' .. MSG)
+            print('ACTIVE=' .. tostring(memrec.Active))
+            print('CLOSED=' .. tostring(CLOSED))
+            """;
+        var (exit, output) = CeLua53Host.Run(lua);
+        Assert.True(exit == 0, output);
+        return output.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                     .Where(l => l.Contains('='))
+                     .ToDictionary(l => l[..l.IndexOf('=')], l => l[(l.IndexOf('=') + 1)..]);
+    }
+
+    [Fact]
+    public void BugItGo_refused_for_a_parent_relative_BugIt_says_so_and_keeps_the_window_open()
+    {
+        var r = RunTeleport(TeleportScriptGenerator.Action.BugItGo, TeleportCodes.ParentRelative);
+
+        Assert.Equal("true|nil", r["OK"]);
+        Assert.Equal("1", r["DIALOGS"]);
+        Assert.Contains("PARENT-RELATIVE", r["MSG"], StringComparison.Ordinal);
+        Assert.Contains("Nothing moved", r["MSG"], StringComparison.Ordinal);
+        Assert.Equal("false", r["ACTIVE"]);   // the momentary record unticks itself...
+        Assert.Equal("false", r["CLOSED"]);   // ...and leaves the Lua Engine window open on the refusal
+    }
+
+    [Fact]
+    public void BugItGo_record_bakes_its_negative_code_the_same_in_every_culture()
+    {
+        // Review of 22badc06: the -16 was interpolated with the user's culture, and ICU's sv-SE writes the minus as
+        // U+2212 -- a character Lua cannot parse, so the whole BugItGo record failed to compile.
+        var saved = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("sv-SE");
+            var s = TeleportScriptGenerator.Generate(TeleportScriptGenerator.Action.BugItGo);
+            Assert.DoesNotContain("−", s);
+            Assert.Contains($"code == {TeleportCodes.ParentRelative.ToString(System.Globalization.CultureInfo.InvariantCulture)} then",
+                s, StringComparison.Ordinal);
+            var r = RunTeleport(TeleportScriptGenerator.Action.BugItGo, TeleportCodes.ParentRelative);
+            Assert.Equal("true|nil", r["OK"]);
+            Assert.Contains("PARENT-RELATIVE", r["MSG"], StringComparison.Ordinal);
+        }
+        finally { System.Globalization.CultureInfo.CurrentCulture = saved; }
+    }
+
+    [Fact]
+    public void BugItGo_control_a_clean_jump_shows_nothing_and_closes_the_window()
+    {
+        var r = RunTeleport(TeleportScriptGenerator.Action.BugItGo, 0);
+
+        Assert.Equal("true|nil", r["OK"]);
+        Assert.Equal("0", r["DIALOGS"]);
+        Assert.Equal("false", r["ACTIVE"]);
+        Assert.Equal("true", r["CLOSED"]);
+    }
+
+    [Fact]
+    public void BugItGo_control_any_other_failure_is_the_generic_report_an_older_record_also_shows()
+    {
+        // The generic `code < 0` branch every contract-checking record carries is what a record generated before this
+        // fix shows for -16: visible, window open, nothing moved.
+        var r = RunTeleport(TeleportScriptGenerator.Action.BugItGo, TeleportCodes.EmptyMarker);
+
+        Assert.Equal("1", r["DIALOGS"]);
+        Assert.Contains("failed (code -6)", r["MSG"], StringComparison.Ordinal);
+        Assert.Equal("false", r["CLOSED"]);
+        // Recall last never gets -16 (the undo slot never takes a parent-relative pose), so its record has no such arm.
+        Assert.DoesNotContain("Nothing moved",
+            TeleportScriptGenerator.Generate(TeleportScriptGenerator.Action.RecallLast, 0), StringComparison.Ordinal);
+    }
+
+    /// <summary>[TELEPORT-RECALL-PARENTREL] The DLL refuses a Recall of a marker saved from a parent-relative read, and a
+    /// TP facing step from such a pose, with -16. The records name it as BugItGo's does; a record from before shows the
+    /// generic "failed (code -16)", also with its window open.</summary>
+    [Theory]
+    [InlineData(TeleportScriptGenerator.Action.Recall)]
+    [InlineData(TeleportScriptGenerator.Action.Relative)]
+    public void Recall_and_facing_records_name_a_parent_relative_refusal_and_keep_the_window_open(
+        TeleportScriptGenerator.Action action)
+    {
+        var r = RunTeleport(action, TeleportCodes.ParentRelative);
+
+        Assert.Equal("true|nil", r["OK"]);
+        Assert.Equal("1", r["DIALOGS"]);
+        Assert.Contains("PARENT-RELATIVE", r["MSG"], StringComparison.Ordinal);
+        Assert.Contains("Nothing moved", r["MSG"], StringComparison.Ordinal);
+        Assert.DoesNotContain("code -16", r["MSG"], StringComparison.Ordinal);
+        Assert.Equal("false", r["ACTIVE"]);
+        Assert.Equal("false", r["CLOSED"]);
+    }
+
+    [Theory]
+    [InlineData(TeleportScriptGenerator.Action.Recall)]
+    [InlineData(TeleportScriptGenerator.Action.Relative)]
+    public void Recall_and_facing_records_bake_the_refusal_code_the_same_in_every_culture(
+        TeleportScriptGenerator.Action action)
+    {
+        var saved = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("sv-SE");
+            var s = TeleportScriptGenerator.Generate(action);
+            Assert.DoesNotContain("−", s);
+            Assert.Contains($"code == {TeleportCodes.ParentRelative.ToString(System.Globalization.CultureInfo.InvariantCulture)} then",
+                s, StringComparison.Ordinal);
+            Assert.Contains("PARENT-RELATIVE", RunTeleport(action, TeleportCodes.ParentRelative)["MSG"], StringComparison.Ordinal);
+        }
+        finally { System.Globalization.CultureInfo.CurrentCulture = saved; }
+    }
+
+    [Fact]
+    public void BugIt_from_a_parent_relative_read_warns_that_BugItGo_will_refuse_it()
+    {
+        // The producer-side half: the BugIt record already says the pose is not world coordinates; it now also says
+        // the jump back will be refused, so the refusal is not the first the user hears of it.
+        var r = RunTeleport(TeleportScriptGenerator.Action.BugIt, 0, poseFlags: 1);
+
+        Assert.Equal("1", r["DIALOGS"]);
+        Assert.Contains("PARENT-RELATIVE", r["MSG"], StringComparison.Ordinal);
+        Assert.Contains("BugItGo will refuse", r["MSG"], StringComparison.Ordinal);
+        Assert.Equal("false", r["CLOSED"]);
+        // Control: a marker save carries the same warning, but no BugItGo sentence.
+        Assert.DoesNotContain("BugItGo will refuse", RunTeleport(TeleportScriptGenerator.Action.Save, 0, poseFlags: 1)["MSG"],
+            StringComparison.Ordinal);
+    }
+
     [Fact]
     public void Cursor_record_uses_op_4_and_bakes_params()
     {

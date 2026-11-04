@@ -22,12 +22,21 @@ namespace Mimic {
 // Mailbox commands (CE writes to cmd field)
 enum Cmd : int32_t {
     CMD_IDLE            = 0,
-    CMD_INVOKE          = 1,  // Call ProcessEvent (instance_addr, ufunc_addr, params_data)
-    CMD_FIND_INSTANCE   = 2,  // Find non-CDO instance by class name
+    CMD_INVOKE          = 1,  // Call ProcessEvent (instance_addr, ufunc_addr, params_data). Output (contract 7+):
+                              //   cmdOutFlags INV_OUT_NONSTATIC_ON_TEMPLATE when the function is not static and
+                              //   the object is a template -- a warning beside `result`, never a refusal.
+    CMD_FIND_INSTANCE   = 2,  // Find an object by class name (contract 6+): the first live object of that class
+                              //   or a subclass (one a Debug Camera controller is or owns only when no other is
+                              //   live), else the class's own default object; a name no class has is matched as
+                              //   part of a class name. INVOKE_BY_NAME and LIST_FUNCTIONS' class-name branch
+                              //   resolve through it. [FINDINSTANCE-SUBSTRING-USERFACING] Never a destroyed
+                              //   object, at any of those steps (contract 9, [INVOKE-PICK-GARBAGE]).
     CMD_FIND_FUNCTION   = 3,  // Find UFunction by name on instance's class
     CMD_INVOKE_BY_NAME  = 4,  // Combined: find instance + find function + invoke
     CMD_LIST_FUNCTIONS  = 5,  // List all UFunctions on an instance's class (paginated)
-    CMD_LIST_INSTANCES  = 6,  // List all live (non-CDO) instances of a class (paginated).
+    CMD_LIST_INSTANCES  = 6,  // List all live instances of a class (paginated) -- never a template
+                              //   (Aura::TemplateOf: a class default object, its default subobjects, a
+                              //   Blueprint component template; contract 8, [LISTINSTANCES-KEEPS-TEMPLATES]).
                               //   Scope is chosen by cmdFlags & LI_IN_DERIVED
                               //   (contract 3+): clear = the exact class only,
                               //   set = that class AND every subclass. See the
@@ -43,6 +52,12 @@ enum Cmd : int32_t {
                               //           -6 = not sent: an earlier toggle of the other direction is still
                               //           queued -- send again once the game responds.
                               //           [W3-DEBUGCAM-QUEUED]; MB3 in Mimic.cpp: no contract bump)
+                              //           -17 = an ON not sent: no CheatManager is live, and the toggle does
+                              //           nothing on its class default object (DBGCAM_ERR_NO_LIVE_CHEATMANAGER;
+                              //           an OFF is never refused). [DEBUGCAM-FORCEON-CDO]
+                              //           cmdOutFlags: builds 3676-3681 set INV_OUT_NONSTATIC_ON_TEMPLATE for a toggle
+                              //           sent to that class default object [INVOKE-NONSTATIC-ON-CDO]; since -17 no
+                              //           toggle goes there, so this command leaves the word 0.
     CMD_TELEPORT        = 8,  // Teleport (Wirbel): marker save/recall + cursor teleport.
                               //   Input:  instanceAddr = op (TeleportOp below)
                               //           ufuncAddr    = slot (0..2) for SAVE/RECALL/GET/CLEAR
@@ -158,17 +173,26 @@ enum Cmd : int32_t {
 enum TeleportOp : uint64_t {
     TP_OP_GET_POSE     = 0,
     TP_OP_SAVE         = 1,
-    TP_OP_RECALL       = 2,
-    TP_OP_RECALL_FORCE = 3,
+    TP_OP_RECALL       = 2,  // result -16 for a marker saved from a parent-relative read, nothing moved;
+    TP_OP_RECALL_FORCE = 3,  //   RECALL_FORCE skips only the map check (-7), so it answers -16 too. A new
+                             //   result on existing ops, as BUGIT_GO's below. [TELEPORT-RECALL-PARENTREL]
     TP_OP_CURSOR       = 4,
     TP_OP_GET_MARKER   = 5,
     TP_OP_CLEAR_MARKER = 6,
-    TP_OP_RECALL_LAST  = 7,  // recall the system "last" pose (auto-saved before
-                             //   every recall/force/BugItGo/cursor jump). slot ignored.
+    TP_OP_RECALL_LAST  = 7,  // recall the system "last" pose (auto-saved before a
+                             //   jump; a pose that is not world coordinates leaves the
+                             //   previous one). slot ignored.
     TP_OP_GET_LAST     = 8,  // read the system "last" slot (pose block output)
     TP_OP_BUGIT_SAVE   = 9,  // store current pose into the BugIt slot (pose block
                              //   output, like SAVE); user-triggered, slot ignored.
-    TP_OP_BUGIT_GO     = 10, // teleport to the stored BugIt pose (no-op when empty)
+    TP_OP_BUGIT_GO     = 10, // teleport to the stored BugIt pose (no-op when empty: result -6). result -16
+                             //   when the stored BugIt came from a parent-relative read: nothing moved and the
+                             //   "last" slot is untouched [TELEPORT-BUGITGO-PARENTREL]. A new result on an existing
+                             //   op, not a contract change: every contract-checking teleport record already shows
+                             //   "failed (code N)" for a negative result it has no message for, and keeps its window
+                             //   open, and an older DLL answers it exactly as before. The BugIt record's "BugItGo will
+                             //   refuse this pose" holds because it bakes contract 6 or later, which no DLL without the
+                             //   refusal publishes.
     TP_OP_GET_POV      = 11, // read the camera POV (read-only). slot ignored.
                              //   Output POV block in paramsData:
                              //     [0..47]  6 doubles cam X,Y,Z,Pitch,Yaw,Roll
@@ -180,7 +204,8 @@ enum TeleportOp : uint64_t {
                              //     negative = backward), [8] u8 mode (0 = horizontal
                              //     keep-Z, 1 = full 3D include pitch). slot ignored.
                              //   Output pose block (resulting pose, like GET_POSE) +
-                             //     [177] tier.
+                             //     [177] tier. result -16 when the current pose came from
+                             //     a parent-relative read: nothing moved. [TELEPORT-RECALL-PARENTREL]
     TP_OP_EXPLICIT     = 13, // teleport to explicit world coordinates (force; no
                              //   map check). Input paramsData: [0..47] 6 doubles
                              //   X,Y,Z,Pitch,Yaw,Roll, [48] u8 hasRot (restore
@@ -265,6 +290,23 @@ enum ListInstancesFlag : uint32_t {
                              //   unheld. A derived sweep off a broad base reaches this
                              //   routinely, so it is normal here, not exceptional.
 };
+
+// cmdOutFlags bits CMD_INVOKE (and CMD_INVOKE_BY_NAME, which ends in it) publishes (contract 7+). CMD_SET_DEBUG_CAMERA
+// published the bit too in builds 3676-3681, for a toggle it sent to the CheatManager's class default object; it now
+// refuses that toggle (-17, [DEBUGCAM-FORCEON-CDO]), so it never sets the bit -- what the bit means is unchanged.
+// [INVOKE-NONSTATIC-ON-CDO] Never 0x1: a contract 3-6 DLL can leave LI_OUT_TRUNCATED behind after a LIST_INSTANCES,
+// and it never writes 0x2. The dispatcher clears cmdOutFlags before every command, so the bit is this command's.
+enum InvokeOutFlag : uint32_t {
+    INV_OUT_NONSTATIC_ON_TEMPLATE = 0x2,  // the call reached dispatch with a function that is not static on a TEMPLATE
+                                          //   (a class-default object, one of its default subobjects, or another
+                                          //   archetype such as a Blueprint's component template): it may have done
+                                          //   nothing there. A warning: `result` is the call's own answer.
+};
+// The first contract whose invoke family publishes InvokeOutFlag; a script claiming less reads 0x72C only from a DLL
+// that publishes at least this (0x72C lies past the end of a contract 1-2 MailboxData).
+constexpr int32_t MAILBOX_CONTRACT_INVOKE_OUT = 7;
+static_assert((static_cast<uint32_t>(INV_OUT_NONSTATIC_ON_TEMPLATE) & static_cast<uint32_t>(LI_OUT_TRUNCATED)) == 0,
+              "the invoke warning must never share the bit an older DLL leaves behind after LIST_INSTANCES");
 
 // Mailbox status (DLL writes to status field)
 enum Status : int32_t {
@@ -393,9 +435,11 @@ struct MailboxData {
                                         //        contract-1/2 script (which never writes this field)
                                         //        on exactly its old behaviour.
     volatile uint32_t cmdOutFlags;      // 0x72C: OUT — per-command output flags (contract 3+).
-                                        //        CMD_LIST_INSTANCES publishes LI_OUT_TRUNCATED here.
-                                        //        Rewritten on every command that uses it, never
-                                        //        accumulated.
+                                        //        Each command publishes its own out-flag enum here
+                                        //        (ListInstancesFlag, InvokeOutFlag -- see who sets each
+                                        //        in its comment). The dispatcher clears it before every
+                                        //        command (contract 7+), so a bit is always this
+                                        //        command's, never accumulated.
 };
 #pragma pack(pop)
 
@@ -480,6 +524,42 @@ constexpr bool ShouldRouteDirectInvoke(uint32_t functionFlags, bool flagsResolve
                == (FUNC_FLAG_NATIVE | FUNC_FLAG_STATIC);
 }
 
+/// [INVOKE-NONSTATIC-ON-CDO] Warn -- never refuse -- when a user-facing invoke runs a function that is not static on a
+/// TEMPLATE (a class-default object, one of its default subobjects, or another archetype such as a Blueprint's
+/// component template): it may do nothing there, or fault (a CheatManager command that dereferences its owner, such as
+/// God's GetOuterAPlayerController()->GetPawn(), meets null on Default__CheatManager from 4.20 on), and a game's own
+/// command may still work.
+/// `isUFunction` is ResolveFunctionInfo's answer, so the flags carry the same trust as ShouldRouteDirectInvoke's: an
+/// object that is not a UFunction warns, and only a FUNC_Static read clears it.
+constexpr bool WarnNonStaticOnTemplate(bool onTemplate, bool isUFunction, uint32_t functionFlags) {
+    return onTemplate && !(isUFunction && (functionFlags & FUNC_FLAG_STATIC) != 0);
+}
+
+/// [DEBUGCAM-FORCEON-CDO] CMD_SET_DEBUG_CAMERA / set_debug_camera / UE5_SetDebugCamera: a Force ON not sent, because the
+/// CheatManager the state read found is a template -- its class default object, so none is live. ToggleDebugCamera does
+/// nothing there on 4.20+ (DECLARE_WITHIN's GetOuterAPlayerController() answers null on a CDO, and every toggle path
+/// guards it) and is undefined behaviour on 4.18/4.19 (a raw cast of the /Script/Engine package). UE 5 compiles the
+/// CheatManager out of Shipping by default (UE_WITH_CHEAT_MANAGER), so this is the usual UE 5 Shipping answer; a UE 4
+/// standalone game creates one unless it turns cheats off (AGameModeBase::AllowCheats).
+constexpr int32_t DBGCAM_ERR_NO_LIVE_CHEATMANAGER = -17;
+
+/// What a Debug Camera Force does once it has read the state and found the camera in the other state. No live
+/// CheatManager: the state read found only the class default object, or no CheatManager at all.
+enum class DbgCamForceStep : uint8_t {
+    Toggle,                    // a live CheatManager: send ToggleDebugCamera
+    SwapBackOnly,              // OFF with no live CheatManager: the toggle would do nothing, so only switch back
+    RefuseNoLiveCheatManager,  // ON with no live CheatManager: nothing can turn the camera on
+};
+
+/// An ON is refused rather than sent, so no toggle on a template is ever dispatched or left queued, and a later -5 / -6
+/// always refers to a toggle on a live CheatManager. An OFF is never refused: a camera that is on while only the class
+/// default object stands in (the player's CheatManager is gone) still turns off through the swap-back, which is where a
+/// no-op toggle there ended up anyway.
+constexpr DbgCamForceStep DebugCameraForceStep(bool want, bool noLiveCheatManager) {
+    return !noLiveCheatManager ? DbgCamForceStep::Toggle
+         : want ? DbgCamForceStep::RefuseNoLiveCheatManager : DbgCamForceStep::SwapBackOnly;
+}
+
 /// [UE-OVERRIDE-411] review 2: what CMD_INVOKE publishes instead of handing ProcessEvent the paramsData slab.
 /// Negative and apart from ProcessEvent's own codes (Frieren.h lists them) and the mailbox's -10 / -11; like
 /// MB_ERR_HANDLER_THREW in Mimic.cpp, not a contract change, because every script treats a non-zero result as a
@@ -497,6 +577,9 @@ constexpr int32_t MB_ERR_INVOKE_OBJECT_PARAM = -14;
 /// Blueprint class left to another class's function. Additive like -12 / -13: a script on an older DLL never gets it,
 /// and every script shows errorMsg for a non-zero result -- which says to re-open the form, whose creation re-runs FIND.
 constexpr int32_t MB_ERR_INVOKE_NOT_OWNED = -15;
+/// ⚠ -16 is taken: Wirbel::TP_ERR_PARENT_RELATIVE reaches CE in the same `result` field on CMD_TELEPORT
+/// ([TELEPORT-BUGITGO-PARENTREL], [TELEPORT-RECALL-PARENTREL]). ⚠ -17 is taken too: DBGCAM_ERR_NO_LIVE_CHEATMANAGER on
+/// CMD_SET_DEBUG_CAMERA ([DEBUGCAM-FORCEON-CDO]). The next mailbox-wide code takes -18.
 
 /// May CMD_INVOKE hand ProcessEvent the slab? 0 = yes, otherwise the refusal to publish.
 ///
@@ -580,13 +663,29 @@ extern "C" __declspec(dllexport) extern Mimic::MailboxData g_invokeMailbox;
 //   1. MailboxData field offsets, or its size
 //   2. Cmd values
 //   3. Op values inside a command (TeleportOp / FlyOp / ProtectOp / QueryPtrOp /
-//      TimeOp / ForegroundOp, and Laufen's knobIds)
+//      TimeOp / ForegroundOp, and Laufen's knobIds), and the flag enums a command reads or
+//      publishes (ListInstancesFlag, InvokeOutFlag)
 //   4. Status / InitState values, or result-code meanings
 //   5. The meaning of an EXISTING field at an existing offset
 //
 // WHAT IS NOT (additive ⇒ bump MAILBOX_CONTRACT only, leave the MIN alone):
 //   a new Cmd, a new op at a previously unused number, a new knobId. Old scripts
 //   never referenced them, so they stay valid.
+//   ALSO a meaning change (item 5) whose old behaviour a script could only have
+//   relied on by ACCIDENT (version 6 is the case). It is still a meaning change --
+//   a script that did rely on it may now get a different answer, in some cases a
+//   silent one -- but moving MIN would refuse every saved .CT, the ones the change
+//   fixes included. Write down which accidents end, as version 6 does.
+//
+// WHAT IS NOT A CHANGE AT ALL: a new negative result code on a command or op whose
+//   every generated block reports a negative result it has no message for and keeps
+//   its window open -- today CMD_TELEPORT (the -16 of BUGIT_GO, RECALL, RECALL_FORCE and RELATIVE), the invoke
+//   family (MB_ERR_INVOKE_* -12..-15) and CMD_SET_DEBUG_CAMERA's -17, which only an ON gets: every [ENABLE] reports
+//   a state it has no branch for and keeps its window open (records since 2026-08-21 also untick; older ones stay
+//   ticked, as they did for an answer of 0), and the [DISABLE] blocks that report a negative only through dbg() never
+//   receive it, because an OFF is never refused. Check the generators first: some [DISABLE]
+//   blocks report a negative state only through dbg(), and the GodMode [ENABLE]
+//   reads any negative state as "armed", so a new code there IS a change.
 //
 // TWO numbers, because the answer is a RANGE and the two failure directions need
 // different advice:
@@ -625,7 +724,65 @@ namespace Mimic {
 ///   previously unused number, so no older script can send it or read its output, and
 ///   MAILBOX_CONTRACT_MIN stays at 1. Unlike versions 2 and 4 this DOES move the surface hash -- a new
 ///   enum member is layout -- so tools/check_mailbox_contract.py takes a new golden pair.
-constexpr int32_t MAILBOX_CONTRACT = 5;
+/// 6 ([FINDINSTANCE-SUBSTRING-USERFACING]): CMD_FIND_INSTANCE -- and CMD_INVOKE_BY_NAME and CMD_LIST_FUNCTIONS'
+///   class-name branch, which resolve through it -- picks by DERIVATION: the first live object of the class named in
+///   className or of a subclass (one a Debug Camera controller is or owns only when no other is live), else that
+///   class's own default object. The class-name SUBSTRING match it used before now answers only a name no object's
+///   class chain has, without the old 100-match cap. A MEANING change (item 5); no field moved and no result code
+///   changed (a lookup cut short by shutdown answers -2 with its own errorMsg). MAILBOX_CONTRACT_MIN stays at 1, but
+///   two accidents end, and a script that relied on one gets a different answer:
+///     * it sent a name some class HAS and relied on reaching an UNRELATED class whose name merely contains it. It
+///       now gets that class's object -- or its default object -- and either -3 "function not found" or, for a
+///       function the two classes share, result 0 from an object that may do nothing;
+///     * it relied on reaching the Debug Camera's own CheatManager (a ToggleDebugCamera OFF on 4.18-5.7). It now
+///       reaches the player's, where that toggle is a no-op: result 0, the camera stays on, visible only in the game.
+///       CMD_SET_DEBUG_CAMERA is the supported OFF.
+///   Both relied on an accident, and moving MIN would refuse every saved .CT, the ones this fixes included. Like
+///   versions 2 and 4 it moves on meaning alone -- the surface hash does not change. The bump makes a script generated
+///   now refuse a DLL that would still guess. It does not reach baked scripts outside Verify Return Value mode: their
+///   embedded invoke helper deliberately claims contract 1 (verify mode bakes the generator's own contract check).
+/// 7 ([INVOKE-NONSTATIC-ON-CDO]): two changes, one bump. (a) CMD_INVOKE -- and CMD_INVOKE_BY_NAME, which ends in it --
+///   publishes InvokeOutFlag in cmdOutFlags: INV_OUT_NONSTATIC_ON_TEMPLATE when it calls a function that is not static on
+///   a template (a class-default object, one of its default subobjects, or another archetype), where it may have done
+///   nothing -- and so does CMD_SET_DEBUG_CAMERA when its toggle targets the CheatManager's class default object (none
+///   was live). A warning beside `result`, never a refusal. cmdOutFlags was an unused output for both, and the
+///   dispatcher now clears it before every command, so a set bit is always this command's. The new enum is layout,
+///   so the surface hash moves. (b) CMD_FIND_INSTANCE never takes a TEMPLATE for a live object: one flagged
+///   RF_ArchetypeObject -- a
+///   class-default object's default subobject, which every component-class lookup landed on (measured on DumperTest
+///   5.4) -- is passed over like a class-default object. Both ADDITIVE in the sense version 6 set out: no field moved,
+///   no result code changed, and the old pick a script could have relied on was an accident (a template taken for a
+///   live object). MAILBOX_CONTRACT_MIN stays at 1. A script claiming less than MAILBOX_CONTRACT_INVOKE_OUT reads
+///   0x72C only from a DLL that publishes at least that; the embedded invoke helper keeps claiming 1 and gates its read
+///   on the DLL's own number.
+///   2026-11-03 ([DEBUGCAM-FORCEON-CDO], still 7): CMD_SET_DEBUG_CAMERA refuses an ON whose CheatManager is a template
+///   with -17 and sends an OFF there straight to the swap-back, so it no longer sets INV_OUT_NONSTATIC_ON_TEMPLATE. The
+///   bit's meaning did not move (it still names a call that reached a template, which this command can no longer
+///   make), and -17 is a new negative code only an ON gets (WHAT IS NOT A CHANGE AT ALL above). No bump, and the surface
+///   hash does not change.
+/// 8 ([LISTINSTANCES-KEEPS-TEMPLATES]): CMD_LIST_INSTANCES never lists a TEMPLATE -- a class default object's default
+///   subobjects and a Blueprint's component templates join the class default objects it already skipped, in both
+///   scopes, before the cap. A MEANING change (item 5); no field moved and no result code changed, so the surface hash
+///   does not move. The total (parmsSize), the page count and LI_OUT_TRUNCATED now count live objects only.
+///   MAILBOX_CONTRACT_MIN stays at 1, by version 6's rule: the command has always promised live instances, and since
+///   version 7 (b) a template is not one, so a pool holding templates was a defect even though the old "(non-CDO)"
+///   gloss named only the class default object. Two accidents end: a freeze that also reached a template (so later
+///   spawns inherited the value) now holds live objects only; and on GAS 5.3+ a GameplayEffect class default's
+///   component subobjects -- templates, usually the only objects of their classes, read by every application rather
+///   than copied by spawns -- are no longer frozen at all. The fix is DLL-side, so an older script gets the clean
+///   pool from this DLL with nothing to regenerate; the bump makes a script generated now refuse a contract-7 DLL,
+///   which would still hand it templates to write.
+/// 9 ([INVOKE-PICK-GARBAGE]): CMD_FIND_INSTANCE -- with CMD_INVOKE_BY_NAME and CMD_LIST_FUNCTIONS' class-name branch,
+///   which resolve through it -- never picks a DESTROYED object (UE5 Garbage, UE 5.0-5.3 RF_PendingKill, UE4 item
+///   PendingKill), at any step: the live pick, the Debug Camera's last resort, and a partial class-name match. An actor
+///   destroyed in play stays in GObjects until the next collection (about a minute on a stock engine), and a low index
+///   made it the first object met: an invoke reached an object that had left its level, and one the engine may free
+///   under it. A MEANING change (item 5); no field moved and no result code changed, so the surface hash does not move.
+///   MAILBOX_CONTRACT_MIN stays at 1, by version 6's rule: the command promises a live object, and a destroyed one was
+///   an accident no script could rely on. The fix is DLL-side, so an older script gets the live object from this DLL
+///   with nothing to regenerate; the bump makes a script generated now refuse a contract-8 DLL, which would still hand
+///   it a destroyed one.
+constexpr int32_t MAILBOX_CONTRACT = 9;
 
 /// Oldest script contract still accepted. Bump ONLY when a change actually
 /// invalidates older scripts — an additive change must not move this.

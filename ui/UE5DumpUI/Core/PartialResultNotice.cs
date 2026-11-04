@@ -120,8 +120,16 @@ public static class PartialResultNotice
     /// </summary>
     public static string RelatedStopsClause(UE5DumpUI.Models.RelatedObjectsStops? s)
     {
-        if (s == null) return "";
+        var parts = RelatedStopCauses(s);
+        return parts.Count == 0 ? "" : " ⚠ Not the whole graph: " + string.Join("; ", parts) + ".";
+    }
+
+    /// <summary>Each cause a Related Objects walk stopped for, in its own words; none when it finished or an older DLL
+    /// did not say.</summary>
+    internal static System.Collections.Generic.List<string> RelatedStopCauses(UE5DumpUI.Models.RelatedObjectsStops? s)
+    {
         var parts = new System.Collections.Generic.List<string>();
+        if (s == null) return parts;
         if (s.ResultCapHit)
             parts.Add($"the list is full at its {s.MaxResults:N0}-row limit and more related objects exist");
         if (s.OwnedCapHit)
@@ -134,7 +142,7 @@ public static class PartialResultNotice
                       + "so owned objects past that point were not examined");
         if (s.Cancelled)
             parts.Add("it was cancelled, so the list is incomplete");
-        return parts.Count == 0 ? "" : " ⚠ Not the whole graph: " + string.Join("; ", parts) + ".";
+        return parts;
     }
 
     /// <summary>

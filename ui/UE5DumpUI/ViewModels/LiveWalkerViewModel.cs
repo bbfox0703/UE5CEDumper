@@ -32,6 +32,21 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     // Engine state for CE address formatting
     private EngineState? _engineState;
 
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] A walk said UEnum::Names was never located. The DLL's latch is process-wide, so
+    /// one walk saying it holds until the next session.</summary>
+    private bool _enumNamesFailed;
+
+    /// <summary>[CEXPORT-STRIDE-NOTE] The comment line a CSX opens with: a Structure Dissect has no dropdowns, so it has
+    /// nothing to say about enum names.</summary>
+    private IReadOnlyList<string> CsxNotes => new[] { _engineState?.StrideExportNote ?? "" };
+
+    /// <summary>[CEXPORT-STRIDE-NOTE] The comment lines a CE table of <paramref name="exported"/> opens with.</summary>
+    private IReadOnlyList<string> ExportNotes(IEnumerable<LiveFieldValue> exported) => new[]
+    {
+        _engineState?.StrideExportNote ?? "",
+        CeXmlExportService.EnumNamesNote(_enumNamesFailed, exported),   // [CEXPORT-ENUMNAMES-NOTE]
+    };
+
     // Cancels an in-flight Copy CE XML / Copy CE Field export (the ResolveDrilldown
     // pipe-walk phase, which can be long for deep/wide object graphs). Recreated per
     // export; the Cancel button binds to CancelExportCommand.
@@ -422,7 +437,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         IsAobMakerAvailable = available;
         OnPropertyChanged(nameof(AobMakerNote));
+        AobMakerProbed?.Invoke(available);
     }
+
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] Every answer <see cref="ApplyAobMakerProbe"/> applies, changed or not,
+    /// for the toolbar chip: the flag raises only on a change, so a probe that confirmed it reached nobody else.</summary>
+    public event Action<bool>? AobMakerProbed;
 
     // AOB Symbol toggle for CE XML export. The AOB anchor only makes sense when
     // the Live Walker root is GWorld (the AOB symbol resolves GWorld); from any
@@ -575,8 +595,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     // are never dropped, and a "N system fields hidden" note shows when anything was skipped.
     [ObservableProperty] private bool _excludeSystemComponents = true;
 
-    // AOBMaker CE Plugin detection cooldown (avoids spamming pipe connect on rapid navigation)
-    private DateTime _lastAobMakerCheck = DateTime.MinValue;
+    // AOBMaker CE Plugin detection cooldown (avoids spamming pipe connect on rapid navigation). Environment.TickCount64
+    // at the last check, null before the first: on the wall clock a step back made the time since the last check
+    // negative, and nothing re-checked until the clock caught up. [PROPSEARCH-FREEZE-STALE-AOBMAKER]
+    private long? _lastAobMakerCheck;
     private static readonly TimeSpan AobMakerCheckCooldown = TimeSpan.FromSeconds(5);
 
     // Auto-refresh
@@ -1375,6 +1397,250 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
+    /// [LEAD-BOOKMARK-SAMECLASS-RECYCLE] review round 2: is the bookmark's leaf, walked at its saved address, still the
+    /// object it saved? A UObject leaf answers by its own name. A struct leaf (a crumb with a struct class) has no name
+    /// of its own -- an inline struct's is its crumb label, which the saved name always equals, and a DataTable row's
+    /// is the DLL's guess over the row's bytes -- so it answers through the nearest object crumb above it, whose label
+    /// is that object's walked name. A synthetic root's label (GWorld / GameEngine) names no object, and a container
+    /// view is not an object.
+    /// </summary>
+    private async Task<bool> SavedLeafIsStillTheSameAsync(BreadcrumbItem leaf, string savedObjectName)
+    {
+        if (string.IsNullOrEmpty(leaf.ClassAddr))
+            return string.Equals(CurrentObjectName, savedObjectName, StringComparison.Ordinal);
+        for (int i = Breadcrumbs.Count - 2; i >= 0; i--)
+        {
+            var c = Breadcrumbs[i];
+            if (c.IsContainerView || !string.IsNullOrEmpty(c.ClassAddr)) continue;
+            if (c.FieldName is "GWorld" or "GameEngine") return true;
+            var holder = await _dump.WalkInstanceAsync(c.Address, null, arrayLimit: 1, previewLimit: 0);
+            return GoneObjectStatus(holder) is null && string.Equals(holder.Name, c.Label, StringComparison.Ordinal);
+        }
+        return true;   // nothing above it to ask
+    }
+
+    /// <summary>The last re-entry re-check. It runs after the navigation that started it has returned, so Back and
+    /// Forward are not held for an owner walk (up to the refresh timeout on a recycled object); a caller that must see
+    /// it finish -- a test -- awaits this.</summary>
+    internal Task ReentryRecheck { get; private set; } = Task.CompletedTask;
+
+    /// <summary>Start the re-check without waiting for it.</summary>
+    private void StartReentryRecheck(BreadcrumbItem bc) => ReentryRecheck = RecheckReenteredContainerAsync(bc);
+
+    /// <summary>
+    /// [LEAD-LW-BACK-CACHED-ELEMENTS] A container view re-entered without a walk renders the crumb's held reading, made
+    /// at the drill or the last refresh inside the view, and a container that changed since left it stale. The owner is
+    /// read once: when the container changed (<see cref="ContainerChanged"/>), or the owner is gone, is another object
+    /// or lost the field, the reading is rendered through <see cref="ApplyOwnerReadingAsync"/>, which also stores it on
+    /// the crumb or drops the rows and says why; otherwise the held render, and the scroll it restored, stand.
+    /// </summary>
+    private async Task RecheckReenteredContainerAsync(BreadcrumbItem bc)
+    {
+        // A DataTable view's rows are walked by their own call, and a synthetic crumb was just re-read.
+        var held = bc.ContainerField;
+        if (held == null || bc.IsDataTableView || string.IsNullOrEmpty(bc.Address)
+            || !ReferenceEquals(CurrentCrumb, bc)) return;
+        string? ownerClassAddr = Breadcrumbs.Count >= 2 && !string.IsNullOrEmpty(Breadcrumbs[^2].ClassAddr)
+            ? Breadcrumbs[^2].ClassAddr : null;
+        using var timeoutCts = new CancellationTokenSource(
+            TimeSpan.FromMilliseconds(Constants.LiveWalkerRefreshTimeoutMs));
+        try
+        {
+            var owner = await _dump.WalkInstanceAsync(bc.Address, ownerClassAddr, arrayLimit: ArrayLimit,
+                                                      previewLimit: PreviewLimit, fillGaps: FillGaps,
+                                                      ct: timeoutCts.Token);
+            if (!ReferenceEquals(CurrentCrumb, bc)) return;   // moved on while it read
+            var fresh = owner.Fields.FirstOrDefault(f => f.Offset == held.Offset
+                && string.Equals(f.Name, held.Name, StringComparison.Ordinal)
+                && string.Equals(f.TypeName, held.TypeName, StringComparison.Ordinal));
+            // A gone owner and a missing field are renders too: the shared render drops the rows and says why.
+            if (GoneObjectStatus(owner) is null && fresh != null && !ContainerChanged(held, fresh)) return;
+            _log.Info($"NAV re-entered '{held.Name}': its owner or container changed since it was read — rendering the new reading");
+            await ApplyOwnerReadingAsync(bc, owner, SelectedField?.Name, SelectedField?.Offset ?? int.MinValue,
+                                         () => !ReferenceEquals(CurrentCrumb, bc), timeoutCts.Token);
+        }
+        catch (OperationCanceledException) when (timeoutCts.IsCancellationRequested)
+        {
+            _log.Warn($"NAV re-entered '{held.Name}': the owner re-read timed out — showing the held reading");
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log.Warn($"NAV re-entered '{held.Name}': the owner re-read failed ({ex.Message}) — showing the held reading");
+        }
+    }
+
+    /// <summary>
+    /// Render a container view from a fresh reading of its owner: Refresh inside the view, and the re-entry re-check
+    /// once it finds the container changed. It renders what it is given and does not clear the status line, so a
+    /// navigation's own line stands beside what this adds.
+    /// </summary>
+    private async Task ApplyOwnerReadingAsync(BreadcrumbItem containerBc, InstanceWalkResult parentResult,
+                                              string? keepFieldName, int keepFieldOffset, Func<bool> superseded,
+                                              CancellationToken ct)
+    {
+        // [WALK-NULLCLASS-SILENT] review F1: a parent with no object to read carries no fields, so the match
+        // below finds nothing. Returning there left the element rows on screen under a blank status, still
+        // editable, their addresses in memory the game may have freed. Say what a walk of that object says,
+        // and leave no row to edit.
+        if (GoneObjectStatus(parentResult) is { } gone)
+        {
+            StatusText = gone;
+            SelectedField = null;   // detach before clearing the selection-bound grid
+            Fields.Clear();         // fires OnFieldsRebuilt -> clears any stranded IsEditing latch
+            _log.Warn($"Container view: the parent {containerBc.Address} is {GoneVerdict(parentResult)} — dropped its element rows");
+            return;
+        }
+
+        // [LEAD-BOOKMARK-SAMECLASS-RECYCLE] review round 2: the address may hold another object now -- another instance
+        // of the class, or another class with a same-named field -- and a match by field name and offset would render
+        // its container as this one's. The crumb knows its owner's class, and a UObject owner's name (an owner crumb
+        // with a struct class is a struct, whose walked "name" is a guess over its bytes). Checked before the reading
+        // is adopted below.
+        var ownerCrumb = Breadcrumbs.Count >= 2 && ReferenceEquals(Breadcrumbs[^1], containerBc) ? Breadcrumbs[^2] : null;
+        bool classDiffers = !string.IsNullOrEmpty(containerBc.OwnerClassAddr) && ParseHexAddr(parentResult.ClassAddr) != 0
+                            && ParseHexAddr(parentResult.ClassAddr) != ParseHexAddr(containerBc.OwnerClassAddr);
+        bool nameDiffers = ownerCrumb != null && string.IsNullOrEmpty(ownerCrumb.ClassAddr)
+                           && !string.IsNullOrEmpty(containerBc.OwnerName)
+                           && !string.Equals(parentResult.Name, containerBc.OwnerName, StringComparison.Ordinal);
+        if (classDiffers || nameDiffers)
+        {
+            StatusText = ContainerOwnerReplacedText(parentResult.Name, containerBc.OwnerName,
+                                                    containerBc.ContainerField?.Name ?? containerBc.FieldName);
+            SelectedField = null;
+            Fields.Clear();
+            _log.Warn($"Container view: {containerBc.Address} holds {parentResult.Name} ({parentResult.ClassName}), not "
+                      + $"{containerBc.OwnerName} ({containerBc.OwnerClassName}) — dropped its element rows");
+            return;
+        }
+
+        // Find the container field by name and offset in the fresh result. Use the live
+        // ContainerField identity when present, else the crumb's own field name+offset.
+        var matchName   = containerBc.ContainerField?.Name   ?? containerBc.FieldName;
+        var matchOffset = containerBc.ContainerField?.Offset ?? containerBc.FieldOffset;
+        var updatedField = parentResult.Fields
+            .FirstOrDefault(f => f.Name == matchName && f.Offset == matchOffset);
+
+        // [LEAD-LW-BACK-CACHED-ELEMENTS] review round 2: an owner that no longer has the field leaves the rows with
+        // nothing behind them, as a gone owner does, and is said the same way.
+        if (updatedField == null)
+        {
+            StatusText = ContainerFieldGoneText(matchName, parentResult.Name);
+            SelectedField = null;
+            Fields.Clear();
+            _log.Warn($"Container view: {containerBc.Address} has no '{matchName}' at +0x{matchOffset:X} now — dropped its element rows");
+            return;
+        }
+
+        {
+            // [WALK-REFRESH-SCALAR-SHRINK] Show what the drill would show now, and say what the drill would say.
+            // The parent walk's inline preview is cut at min(Array Limit, 4,096); a scalar array is re-fetched
+            // in full by the drill, so rendering that preview shrank the view to the slider (and an edited
+            // element [N >= Array Limit] vanished right after "Written").
+            // [LW-EMPTIED-CONTAINER-REFRESH] Kinds as RepopulateContainerView keys them: a count of 0 is a
+            // container emptied since the drill, and its crumb says so too.
+            string? label = null;
+            var status = "";
+            if (updatedField.ArrayCount >= 0 && !string.IsNullOrEmpty(updatedField.ArrayInnerType))
+            {
+                // Walked just now, at the slider's current value.
+                var (elements, requested, total) = await ReadArrayViewElementsAsync(
+                    updatedField, containerBc.Address, inlineIsCurrent: true, ct);
+                if (superseded()) return;
+                // The field carries this reading whole: the rows, and the count they were read at.
+                updatedField.ArrayElements = elements;
+                updatedField.ArrayCount = total;
+                label = ArrayViewLabel(updatedField, elements.Count);
+                status = ArrayViewStatus(elements.Count, updatedField.ArrayCount, requested);
+            }
+            else if (updatedField.MapCount >= 0 && !string.IsNullOrEmpty(updatedField.MapKeyType))
+            {
+                label = MapViewLabel(updatedField);
+                status = ContainerTruncation.StatusLine(updatedField.MapElements?.Count ?? 0, updatedField.MapCount);
+            }
+            else if (updatedField.SetCount >= 0 && !string.IsNullOrEmpty(updatedField.SetElemType))
+            {
+                label = SetViewLabel(updatedField);
+                status = ContainerTruncation.StatusLine(updatedField.SetElements?.Count ?? 0, updatedField.SetCount);
+            }
+
+            // Only an in-session crumb takes this reading. A path-synthetic crumb's null ContainerField is what
+            // marks it as one -- re-hydrated from a live walk, not held -- so it keeps that null and its bare name.
+            if (label != null && containerBc.ContainerField is { } heldField)
+            {
+                // A walk row carries no FieldAddress (UpdateDisplay stamps it). Same parent, same offset:
+                // the held one is still the right address by construction.
+                if (string.IsNullOrEmpty(updatedField.FieldAddress))
+                    updatedField.FieldAddress = heldField.FieldAddress;
+                containerBc.ContainerField = updatedField;
+                containerBc.Label = label;
+            }
+            // Beside a line the caller's own action set, not over it.
+            if (status.Length > 0)
+                StatusText = BesideStatus(StatusText, status);
+
+            // [LW-BACK-CONTAINER-HEADER-ADDR] The owner was just walked, so its class is known even on a crumb
+            // that never had it.
+            if (!string.IsNullOrEmpty(parentResult.ClassAddr))
+            {
+                containerBc.OwnerClassAddr = parentResult.ClassAddr;
+                containerBc.OwnerClassName = parentResult.ClassName;
+                containerBc.OwnerName = OwnerViewName(Breadcrumbs.Count >= 2 ? Breadcrumbs[^2] : null,
+                                                      parentResult.Name);
+            }
+            RepopulateContainerView(updatedField);
+            RestoreSelectedField(keepFieldName, keepFieldOffset);
+        }
+    }
+
+    /// <summary>The CE export status line's clause for the AOB fallback and the container-limit warning. They are about
+    /// different things, so each is said (review round 2 of [LEAD-DT-EXPORT-64ROWS]: the AOB note used to replace the
+    /// limit warning, and a cut export then said nothing).</summary>
+    internal static string ExportStatusExtra(string? aobFallbackWarn, string? limitWarn)
+        => (aobFallbackWarn != null ? " " + aobFallbackWarn : "") + (limitWarn != null ? " " + limitWarn : "");
+
+    /// <summary>A status clause after the line already shown, or alone when there is none.</summary>
+    private static string BesideStatus(string? current, string clause)
+        => string.IsNullOrEmpty(current) ? clause : current + " — " + clause;
+
+    /// <summary>[LEAD-LW-BACK-CACHED-ELEMENTS] Did a container change between two readings of its row: moved, resized,
+    /// or -- review round 2 -- a pointer element now aiming elsewhere, which a slot rewritten in place does without
+    /// either? Compared over the elements both readings hold; a scalar value that changed is not a change here, as a
+    /// live value changes every frame and a held view of it is display, not an address.</summary>
+    internal static bool ContainerChanged(LiveFieldValue held, LiveFieldValue fresh)
+    {
+        static bool Differ(string a, string b) => ParseHexAddr(a) != ParseHexAddr(b);
+        if (!string.IsNullOrEmpty(held.ArrayInnerType))
+        {
+            if (Differ(held.ArrayDataAddr, fresh.ArrayDataAddr) || held.ArrayCount != fresh.ArrayCount) return true;
+            var now = fresh.ArrayElements?.ToDictionary(e => e.Index, e => e.PtrAddress);
+            return now != null && held.ArrayElements != null && held.ArrayElements.Any(e =>
+                now.TryGetValue(e.Index, out var p) && Differ(e.PtrAddress, p));
+        }
+        if (!string.IsNullOrEmpty(held.MapKeyType))
+        {
+            if (Differ(held.MapDataAddr, fresh.MapDataAddr) || held.MapCount != fresh.MapCount) return true;
+            return PointerSlotsDiffer(held.MapElements, fresh.MapElements, includeValue: true);
+        }
+        if (!string.IsNullOrEmpty(held.SetElemType))
+        {
+            if (Differ(held.SetDataAddr, fresh.SetDataAddr) || held.SetCount != fresh.SetCount) return true;
+            return PointerSlotsDiffer(held.SetElements, fresh.SetElements, includeValue: false);
+        }
+        return false;
+    }
+
+    /// <summary>A map or set slot both readings hold whose key (or value) pointer now aims elsewhere.</summary>
+    private static bool PointerSlotsDiffer(List<ContainerElementValue>? held, List<ContainerElementValue>? fresh,
+                                           bool includeValue)
+    {
+        if (held == null || fresh == null) return false;
+        var now = fresh.GroupBy(e => e.Index).ToDictionary(g => g.Key, g => g.First());
+        return held.Any(e => now.TryGetValue(e.Index, out var f)
+            && (ParseHexAddr(e.KeyPtrAddress) != ParseHexAddr(f.KeyPtrAddress)
+                || (includeValue && ParseHexAddr(e.ValuePtrAddress) != ParseHexAddr(f.ValuePtrAddress))));
+    }
+
+    /// <summary>
     /// The elements an array container view shows, how many it ASKED for, and the count they belong to (<c>Total</c>,
     /// the element read's own when it read). A re-read of the view must show what opening it showed, and the parent
     /// walk's inline preview does not: it re-applies the Array Limit to a scalar view the slider does not govern.
@@ -1905,7 +2171,24 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         if (!item.IsContainerView || item.ContainerField != null) return false;
 
-        var classAddr = string.IsNullOrEmpty(item.ClassAddr) ? null : item.ClassAddr;
+        // [LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST] A DataTable row view without rows is one whose table a bookmark load
+        // refused (gone, or not the table the rows were drilled from). No reflected field holds a table's rows, so there
+        // is nothing to re-hydrate: the caller walks the address, and this line says why that is not the row view.
+        if (item.IsDataTableView)
+        {
+            StatusText = DataTableNotRestoredText;
+            return false;
+        }
+
+        // [LEAD-LW-SYNTH-CONTAINER-STRUCT-OWNER] The owner is walked with its own crumb's class, as Refresh walks it. A
+        // container crumb carries none, and an inline-struct owner walked without its UScriptStruct is read as a
+        // UObject: the field is not found and the view falls through to a plain walk of that address.
+        var ownerAt = Breadcrumbs.IndexOf(item);
+        var ownerCrumb = ownerAt > 0 ? Breadcrumbs[ownerAt - 1] : null;
+        var classAddr = ownerCrumb != null && !string.IsNullOrEmpty(ownerCrumb.ClassAddr)
+                        && ParseHexAddr(ownerCrumb.Address) == ParseHexAddr(item.Address)
+            ? ownerCrumb.ClassAddr
+            : string.IsNullOrEmpty(item.ClassAddr) ? null : item.ClassAddr;
         var result = await _dump.WalkInstanceAsync(item.Address, classAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps);
         result = await AutoFillGapsRetryAsync(result, item.Address, classAddr);
         // [A4-NAV-BACKFIRST-GRAFT] review: the spine moved during this walk; the caller's own
@@ -2258,29 +2541,61 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
              + "so no pointer chain from GWorld exists.";
     }
 
-    private static string? BuildContainerLimitWarning(IEnumerable<LiveFieldValue> fields, int arrayLimit)
+    /// <summary>[LEAD-DT-EXPORT-64ROWS] How many elements or rows of a container were read into it: what a selection is
+    /// measured against.</summary>
+    internal static int LoadedElementCount(LiveFieldValue f)
+        => f.DataTableRowData?.Count ?? f.ArrayElements?.Count ?? f.MapElements?.Count ?? f.SetElements?.Count ?? 0;
+
+    /// <param name="elementsChosen">The fields are a container cut down to the elements the user selected
+    /// (<see cref="FilterContainerToElement"/>): fewer than the total by choice, so that container is not reported
+    /// as cut.</param>
+    /// <param name="nested">[CEXPORT-NESTED-TRUNC-NOTE] The fields of the structs and pointer targets the export walked
+    /// below <paramref name="fields"/>, whose containers the same Array Limit cut.</param>
+    internal static string? BuildContainerLimitWarning(IEnumerable<LiveFieldValue> fields, int arrayLimit,
+                                                       bool elementsChosen = false,
+                                                       IEnumerable<LiveFieldValue>? nested = null)
     {
+        // Each entry is held open -- "Name (Kind: …" -- so the nested ones can be closed with how often they were met.
         var truncated = new List<string>();
-        foreach (var f in fields)
+        var tablesCut = new List<string>();
+        var nestedTruncated = new List<string>();
+        var nestedTablesCut = new List<string>();
+        void Scan(LiveFieldValue f, List<string> cut, List<string> tables)
         {
+            // [LEAD-DT-EXPORT-64ROWS] A table exports the rows its RowMap field carries: one fixed page of
+            // WalkDataTableRowsAsync, not the Array Limit, so it is said apart from the slider's containers.
+            if (f.DataTableRowData is { } rows && f.DataTableRowCount > rows.Count)
+                tables.Add(TableCutEntryText(f.Name, f.DataTableRowCount, rows.Count));
             if (f.ArrayCount > arrayLimit)
-            {
-                int loaded = f.ArrayElements?.Count ?? 0;
-                truncated.Add($"{f.Name} (Array: {f.ArrayCount} total, {loaded} loaded)");
-            }
+                cut.Add($"{f.Name} (Array: {f.ArrayCount} total, {f.ArrayElements?.Count ?? 0} loaded");
             if (f.MapCount > arrayLimit)
-            {
-                int loaded = f.MapElements?.Count ?? 0;
-                truncated.Add($"{f.Name} (Map: {f.MapCount} total, {loaded} loaded)");
-            }
+                cut.Add($"{f.Name} (Map: {f.MapCount} total, {f.MapElements?.Count ?? 0} loaded");
             if (f.SetCount > arrayLimit)
-            {
-                int loaded = f.SetElements?.Count ?? 0;
-                truncated.Add($"{f.Name} (Set: {f.SetCount} total, {loaded} loaded)");
-            }
+                cut.Add($"{f.Name} (Set: {f.SetCount} total, {f.SetElements?.Count ?? 0} loaded");
         }
-        if (truncated.Count == 0) return null;
-        return $"⚠ Container element limit ({arrayLimit}): {string.Join(", ", truncated)}";
+        if (!elementsChosen)
+            foreach (var f in fields) Scan(f, truncated, tablesCut);
+        foreach (var f in nested ?? Enumerable.Empty<LiveFieldValue>()) Scan(f, nestedTruncated, nestedTablesCut);
+        truncated = truncated.Select(e => e + ")").Concat(NestedEntries(nestedTruncated)).ToList();
+        tablesCut = tablesCut.Select(e => e + ")").Concat(NestedEntries(nestedTablesCut)).ToList();
+        var parts = new List<string>();
+        if (truncated.Count > 0)
+            parts.Add($"⚠ Container element limit ({arrayLimit}): {string.Join(", ", truncated)}");
+        if (tablesCut.Count > 0)
+            parts.Add(TablePageCutText(string.Join(", ", tablesCut)));
+        return parts.Count == 0 ? null : string.Join(" ", parts);
+    }
+
+    /// <summary>[CEXPORT-NESTED-TRUNC-NOTE] Review round 1: the resolver walks each element of a struct array apart, so one
+    /// cut is met once per walked object. Each is said once with that count, and past a few the rest are counted.</summary>
+    private static IEnumerable<string> NestedEntries(List<string> open)
+    {
+        const int shown = 5;
+        var grouped = open.GroupBy(e => e).Select(g => g.Count() > 1
+            ? NestedManyText(g.Key, g.Count())
+            : NestedOnceText(g.Key)).ToList();
+        foreach (var e in grouped.Take(shown)) yield return e;
+        if (grouped.Count > shown) yield return NestedMoreText(grouped.Count - shown);
     }
 
     [RelayCommand]
@@ -2325,6 +2640,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 RepopulateContainerView(item.ContainerField, item);
                 RestoreCrumbView(item, cameBackFrom);
+                StartReentryRecheck(item);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
                 return;
             }
 
@@ -2594,6 +2910,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     {
                         RepopulateContainerView(lastBc.ContainerField, lastBc);
                         RestoreCrumbView(lastBc);
+                        StartReentryRecheck(lastBc);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
                         return;
                     }
                     if (lastBc.IsContainerView && lastBc.ContainerField == null
@@ -2659,6 +2976,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 RepopulateContainerView(prev.ContainerField, prev);
                 RestoreCrumbView(prev, removed);
+                StartReentryRecheck(prev);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
                 return;
             }
 
@@ -2711,7 +3029,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// elsewhere. That degrades in two layers: a class-name mismatch is reported and
     /// the (now meaningless) selection is dropped, and a merely-changed field list is
     /// absorbed by the restore ladder, which skips rows it can't match. Container
-    /// levels re-render from cached element data and never re-read memory at all.
+    /// levels re-render from cached element data first, then re-read their owner
+    /// ([LEAD-LW-BACK-CACHED-ELEMENTS]) and render again only when the container changed.
     /// </summary>
     [RelayCommand]
     private async Task GoForwardAsync()
@@ -2765,12 +3084,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ClearStatus();
             IsLoading = true;
 
-            // Container view with a live field: re-render from the cached elements
-            // (no memory re-read, so this case cannot go stale).
+            // Container view with a live field: re-render from the cached elements, then re-check them -- a container
+            // that reallocated since they were read left its addresses stale. [LEAD-LW-BACK-CACHED-ELEMENTS]
             if (next.IsContainerView && next.ContainerField != null)
             {
                 RepopulateContainerView(next.ContainerField, next);
                 RestoreCrumbView(next);
+                StartReentryRecheck(next);
                 return;
             }
 
@@ -2796,9 +3116,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (RenderSuperseded(next, "Fwd")) return;
             UpdateDisplay(result);
 
-            // Honest degrade (same check the bookmark load path uses): a class-name
-            // mismatch means the address now holds a DIFFERENT object, so restoring
-            // the old selection would dress up wrong data as a successful return.
+            // Honest degrade: a class-name mismatch means the address now holds a
+            // DIFFERENT object, so restoring the old selection would dress up wrong data
+            // as a successful return. This is the class half of the bookmark load's check;
+            // its object-name half cannot run here, as no crumb records its object's name.
             // TargetClassName is empty on crumbs pushed before the class was known,
             // so only compare when we actually have one.
             if (!string.IsNullOrEmpty(next.TargetClassName)
@@ -4115,6 +4436,27 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var lastBc = Breadcrumbs.LastOrDefault();
             bool restoredFully = true;
             bool dataTableGone = false;   // [W4-BOOKMARK-DT] say what failed, not "the game may have restarted"
+
+            // [LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST] A row view ABOVE the last crumb (the bookmark sits on a row's struct
+            // drilled from it) comes back from the file rowless too, and Back into it had no rows to show. Its rows are
+            // re-walked here, accepted only when the table names the row struct the next crumb was drilled into.
+            for (int i = 0; lastBc != null && i + 1 < Breadcrumbs.Count; i++)
+            {
+                var c = Breadcrumbs[i];
+                if (!c.IsDataTableView || c.DataTableData != null) continue;
+                var dt = await TryRewalkDataTableAboveRowAsync(c, Breadcrumbs[i + 1]);
+                if (RenderSuperseded(lastBc, "Bookmark")) return;
+                if (dt != null)
+                {
+                    Breadcrumbs[i] = WithDataTableRows(c, dt);   // the in-session shape
+                }
+                else
+                {
+                    restoredFully = false;
+                    dataTableGone = true;
+                }
+            }
+
             if (lastBc != null)
             {
                 if (lastBc.IsDataTableView && lastBc.DataTableData == null)
@@ -4140,6 +4482,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 else if (lastBc.IsContainerView && lastBc.ContainerField != null)
                 {
                     RepopulateContainerView(lastBc.ContainerField, lastBc);
+                    StartReentryRecheck(lastBc);   // [LEAD-LW-BACK-CACHED-ELEMENTS]
                 }
                 else if (lastBc.IsContainerView && lastBc.ContainerField == null
                          && await TryRepopulateSyntheticContainerAsync(lastBc))
@@ -4180,6 +4523,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                         && !string.Equals(CurrentClassName, slot.SavedClassName, StringComparison.Ordinal))
                     {
                         restoredFully = false;
+                    }
+                    // [LEAD-BOOKMARK-SAMECLASS-RECYCLE] On the SAVED address the class alone passes another instance of
+                    // it that took the address (a new launch, or the saved object freed); its name does not. A spine
+                    // re-walked from the live root found its object by path, where a spawned name may have changed.
+                    else if (resolvedSpine == null && !string.IsNullOrEmpty(slot.SavedObjectName))
+                    {
+                        bool same = await SavedLeafIsStillTheSameAsync(lastBc, slot.SavedObjectName);
+                        if (RenderSuperseded(lastBc, "Bookmark")) return;
+                        if (!same) restoredFully = false;
                     }
                 }
             }
@@ -4511,8 +4863,27 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            var dt = await _dump.WalkDataTableRowsAsync(crumb.Address);
+            var dt = await ReadDataTableRowsAsync(crumb.Address);
             return string.Equals($"DataTable<{dt.RowStructName}>", savedClassName, StringComparison.Ordinal) ? dt : null;
+        }
+        catch (Exception ex)
+        {
+            _log.Warn($"Bookmark: DataTable re-walk at {crumb.Address} failed: {ex.Message}");
+            return null;
+        }
+    }
+
+    /// <summary>[LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST] Re-walk the rows of a DataTable row view the bookmark sits below,
+    /// accepted only when the table names the row struct <paramref name="rowCrumb"/> was drilled into. The bookmark's
+    /// saved class name is that row's, not the table's, so it cannot guard this walk.</summary>
+    private async Task<DataTableWalkResult?> TryRewalkDataTableAboveRowAsync(BreadcrumbItem crumb, BreadcrumbItem rowCrumb)
+    {
+        var rowStruct = ParseHexAddr(rowCrumb.ClassAddr);
+        if (rowStruct == 0) return null;
+        try
+        {
+            var dt = await ReadDataTableRowsAsync(crumb.Address);
+            return ParseHexAddr(dt.RowStructAddr) == rowStruct ? dt : null;
         }
         catch (Exception ex)
         {
@@ -4762,6 +5133,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>(StringComparer.Ordinal);
             var resolvedInstances = new Dictionary<string, List<LiveFieldValue>>(StringComparer.Ordinal);
             int lastShown = 0;
+            // [CEXPORT-ENUMNAMES-NOTE] The resolve's own walks may be the first to meet an enum, and so the latch.
+            using var latchWatch = CeXmlExportService.WatchEnumNamesLatch(out var latchSeen);
             await CeXmlExportService.ResolveDrilldownAsync(
                 _dump, fieldsForXml, resolvedStructs, resolvedInstances,
                 depth: CsxDrilldownDepth, arrayLimit: ArrayLimit,
@@ -4795,6 +5168,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 _log.Info("CEXML: AOB requested but root is not GWorld — falling back to direct address");
 
             StatusText = "Generating CE XML...";
+            _enumNamesFailed |= latchSeen.Value;
+            var exportNotes = ExportNotes(fieldsForXml.Concat(resolvedStructs.Values.Concat(resolvedInstances.Values).SelectMany(v => v)));
             string xml;
             if (useAob)
             {
@@ -4818,7 +5193,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     altColorEnabled: FlattenColorEnabled,
                     altRowColorEvenRgb: FlattenColorEven,
                     altRowColorOddRgb: FlattenColorOdd,
-                    collapseLeafPointers: CollapseLeafPointers);
+                    collapseLeafPointers: CollapseLeafPointers,
+                    headerNotes: exportNotes);
             }
             else
             {
@@ -4841,7 +5217,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     altColorEnabled: FlattenColorEnabled,
                     altRowColorEvenRgb: FlattenColorEven,
                     altRowColorOddRgb: FlattenColorOdd,
-                    collapseLeafPointers: CollapseLeafPointers);
+                    collapseLeafPointers: CollapseLeafPointers,
+                    headerNotes: exportNotes);
             }
 
             if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
@@ -4855,20 +5232,21 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                           "the clipboard refused the write");
                 return;
             }
-            var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit);
+            var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit,
+                nested: resolvedStructs.Values.Concat(resolvedInstances.Values).SelectMany(v => v));
             var aobFallbackWarn = (UseAobSymbol && !isGWorldRoot) ? "AOB skipped (no GWorld path)" : null;
             // Final indicator: objects (structs + pointer targets) walked + XML line count.
             int objCount = resolvedStructs.Count + resolvedInstances.Count;
             int lineCount = xml.Count(c => c == '\n') + 1;
-            var statusExtra = aobFallbackWarn != null ? " " + aobFallbackWarn
-                : (limitWarn != null ? " " + limitWarn : "");
+            var statusExtra = ExportStatusExtra(aobFallbackWarn, limitWarn);
             var truncWarn = CeXmlExportService.LastExportTruncated
                 ? " ⚠ Truncated (object graph too large) — lower Drill Depth or use Copy CE Field"
                 : "";
             var sysWarn = CeXmlExportService.LastSystemFieldsSkipped > 0
                 ? $" {CeXmlExportService.LastSystemFieldsSkipped} system fields hidden"
                 : "";
-            StatusText = $"Copied: {objCount} objects, {lineCount} XML lines.{statusExtra}{truncWarn}{sysWarn}{reanchorWarn}";
+            StatusText = $"Copied: {objCount} objects, {lineCount} XML lines.{statusExtra}{truncWarn}{sysWarn}{reanchorWarn}"
+                       + CeXmlExportService.EnumNamesStatus(exportNotes);
             _log.Info($"CE XML copied to clipboard for {CurrentClassName} (AOB={useAob}, " +
                 $"descOffset={DescShowOffset}, descType={DescShowType}, " +
                 $"{resolvedStructs.Count} structs / {resolvedInstances.Count} pointers resolved, depth={CsxDrilldownDepth})");
@@ -4948,9 +5326,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ClearStatus();
             IsLoading = true;
             IsExporting = true;
+            var walkedBelow = new List<LiveFieldValue>();   // [CEXPORT-NESTED-TRUNC-NOTE]
+            var csxNotes = CsxNotes;
             var csx = await CsxExportService.GenerateCsxAsync(
                 _dump, CsxStructName(), Fields, arrayLimit: ArrayLimit, drilldownDepth: CsxDrilldownDepth,
-                format: CsxFormat.Ce77Plus, ceStringLength: CeStringLength, ct: cts.Token);
+                format: CsxFormat.Ce77Plus, ceStringLength: CeStringLength, resolvedFieldsOut: walkedBelow,
+                headerNotes: csxNotes, ct: cts.Token);
             var push = CsxStructurePushGenerator.Generate(csx);
             var result = await _aobMaker.CreateAAScriptDetailedAsync(
                 CsxStructurePushGenerator.RecordPrefix + push.RootName, push.Script, autoActivate: true,
@@ -4964,7 +5345,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             else
             {
                 // The same truncation note Export CSX gives: a container clipped by the Array Limit is part-built.
-                var limitWarn = BuildContainerLimitWarning(Fields, ArrayLimit);
+                var limitWarn = BuildContainerLimitWarning(Fields, ArrayLimit, nested: walkedBelow);
                 StatusText = limitWarn != null ? string.Join(' ', text, limitWarn) : text;
             }
             _log.Info($"[AOBM-DISSECT-INJECT] structure push '{push.RootName}' ({push.Structures} structures, " +
@@ -5030,10 +5411,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsLoading = true;
             IsExporting = true;
             StatusText = CsxDrilldownDepth > 0 ? "Resolving struct + pointer fields..." : "Resolving struct fields...";
+            var walkedBelow = new List<LiveFieldValue>();   // [CEXPORT-NESTED-TRUNC-NOTE]
+            var csxNotes = CsxNotes;
             var csx = await CsxExportService.GenerateCsxAsync(
                 _dump, structName, Fields, arrayLimit: ArrayLimit, drilldownDepth: CsxDrilldownDepth,
                 // [CSX-STRCHILD-BYTESIZE] the same String Len the CE XML exports use
-                format: format, ceStringLength: CeStringLength, ct: cts.Token);
+                format: format, ceStringLength: CeStringLength, resolvedFieldsOut: walkedBelow,
+                headerNotes: csxNotes, ct: cts.Token);
 
             // Write to file (overwrite if exists — user already confirmed via dialog). No
             // token here on purpose: cancel aborts the slow resolve above; once we have the
@@ -5042,7 +5426,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
             // Surface a truncation note so a partial export (a container clipped by
             // ArrayLimit) doesn't silently read as complete — same note Copy CE XML shows.
-            var limitWarn = BuildContainerLimitWarning(Fields, ArrayLimit);
+            var limitWarn = BuildContainerLimitWarning(Fields, ArrayLimit, nested: walkedBelow);
             StatusText = limitWarn ?? "";
             var formatLabel = format == CsxFormat.Ce77Plus ? "CE 7.7+ Binary" : "Pre-CE 7.7";
             _log.Info($"CSX ({formatLabel}) exported to {filePath} for {CurrentClassName}"
@@ -5137,6 +5521,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
             IReadOnlyList<BreadcrumbItem> breadcrumbsForXml;
             List<LiveFieldValue> fieldsForXml;
+            bool elementsChosen = false;   // [LEAD-DT-EXPORT-64ROWS] a container cut to the selection is not "cut short"
 
             // Struct-array elements: in the array container view each element row is a
             // StructProperty navigation (StructDataAddr = element address, StructClassAddr =
@@ -5161,8 +5546,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             else if (isContainerView)
             {
                 breadcrumbsForXml = dedupedBc.Take(dedupedBc.Count - 1).ToList();
-                fieldsForXml = new List<LiveFieldValue>
-                    { FilterContainerToElement(lastBc.ContainerField!, selectedSnapshot) };
+                var exported = FilterContainerToElement(lastBc.ContainerField!, selectedSnapshot);
+                fieldsForXml = new List<LiveFieldValue> { exported };
+                // It hands back the whole container when no selected row names an element. A selection of every loaded
+                // element is no choice to leave the rest out either: the rest were never read.
+                elementsChosen = LoadedElementCount(exported) < LoadedElementCount(lastBc.ContainerField!);
             }
             else
             {
@@ -5214,6 +5602,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var resolvedStructs = new Dictionary<string, List<LiveFieldValue>>(StringComparer.Ordinal);
             var resolvedInstances = new Dictionary<string, List<LiveFieldValue>>(StringComparer.Ordinal);
             int lastShown = 0;
+            // [CEXPORT-ENUMNAMES-NOTE] The resolve's own walks may be the first to meet an enum, and so the latch.
+            using var latchWatch = CeXmlExportService.WatchEnumNamesLatch(out var latchSeen);
             await CeXmlExportService.ResolveDrilldownAsync(
                 _dump, fieldsForXml, resolvedStructs, resolvedInstances,
                 depth: CsxDrilldownDepth, arrayLimit: ArrayLimit,
@@ -5245,6 +5635,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 _log.Info("CEFieldXML: AOB requested but root is not GWorld — falling back to direct address");
 
             StatusText = "Generating CE Field XML...";
+            _enumNamesFailed |= latchSeen.Value;
+            var exportNotes = ExportNotes(fieldsForXml.Concat(resolvedStructs.Values.Concat(resolvedInstances.Values).SelectMany(v => v)));
             string xml;
             if (useAob)
             {
@@ -5270,7 +5662,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     altColorEnabled: FlattenColorEnabled,
                     altRowColorEvenRgb: FlattenColorEven,
                     altRowColorOddRgb: FlattenColorOdd,
-                    collapseLeafPointers: CollapseLeafPointers);
+                    collapseLeafPointers: CollapseLeafPointers,
+                    headerNotes: exportNotes);
             }
             else
             {
@@ -5295,7 +5688,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                     altColorEnabled: FlattenColorEnabled,
                     altRowColorEvenRgb: FlattenColorEven,
                     altRowColorOddRgb: FlattenColorOdd,
-                    collapseLeafPointers: CollapseLeafPointers);
+                    collapseLeafPointers: CollapseLeafPointers,
+                    headerNotes: exportNotes);
             }
 
             if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
@@ -5309,20 +5703,21 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                           "the clipboard refused the write");
                 return;
             }
-            var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit);
+            var limitWarn = BuildContainerLimitWarning(fieldsForXml, ArrayLimit, elementsChosen,
+                nested: resolvedStructs.Values.Concat(resolvedInstances.Values).SelectMany(v => v));
             var aobFallbackWarn = (UseAobSymbol && !isGWorldRoot) ? "AOB skipped (no GWorld path)" : null;
             // Final indicator: objects (structs + pointer targets) walked + XML line count.
             int objCount = resolvedStructs.Count + resolvedInstances.Count;
             int lineCount = xml.Count(c => c == '\n') + 1;
-            var statusExtra = aobFallbackWarn != null ? " " + aobFallbackWarn
-                : (limitWarn != null ? " " + limitWarn : "");
+            var statusExtra = ExportStatusExtra(aobFallbackWarn, limitWarn);
             var truncWarn = CeXmlExportService.LastExportTruncated
                 ? " ⚠ Truncated (object graph too large) — lower Drill Depth or use Copy CE Field"
                 : "";
             var sysWarn = CeXmlExportService.LastSystemFieldsSkipped > 0
                 ? $" {CeXmlExportService.LastSystemFieldsSkipped} system fields hidden"
                 : "";
-            StatusText = $"Copied: {objCount} objects, {lineCount} XML lines.{statusExtra}{truncWarn}{sysWarn}{reanchorWarn}";
+            StatusText = $"Copied: {objCount} objects, {lineCount} XML lines.{statusExtra}{truncWarn}{sysWarn}{reanchorWarn}"
+                       + CeXmlExportService.EnumNamesStatus(exportNotes);
             _log.Info($"CE Field XML copied: {selectedSnapshot.Count} field(s) (AOB={useAob}, includeGuessed={includeGuessed}, " +
                 $"descOffset={DescShowOffset}, descType={DescShowType}, " +
                 $"{resolvedInstances.Count} pointer targets resolved at depth={CsxDrilldownDepth})");
@@ -5384,7 +5779,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 // Fields without a resolved address (e.g. container/struct headers) can't
                 // become a flat record — skip rather than push a bogus address.
-                if (string.IsNullOrEmpty(field.FieldAddress)) { skipped++; continue; }
+                if (HasNoRowAddress(field)) { skipped++; continue; }
 
                 var t = CeXmlExportService.MapFieldToCeRecordType(field);
                 // [A4-PUSHCE-UNPADDED] PayloadAddress, as the per-row +CE and HEX already do: on a checked build a
@@ -5744,7 +6139,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                                    + "is gone or has changed — nothing to refresh.";
                         return;
                     }
-                    var dtResult = await _dump.WalkDataTableRowsAsync(containerBc.Address, ct: ct);
+                    var dtResult = await ReadDataTableRowsAsync(containerBc.Address, ct: ct);
                     if (Superseded()) return;
                     containerBc.DataTableData = dtResult;
                     // [WALK-REFRESH-SCALAR-SHRINK] The crumb and the status line follow this reading, as the drill's
@@ -5768,85 +6163,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
                 var parentResult = await _dump.WalkInstanceAsync(containerBc.Address, parentClassAddr, arrayLimit: ArrayLimit, previewLimit: PreviewLimit, fillGaps: FillGaps, ct: ct);
                 if (Superseded()) return;
-
-                // [WALK-NULLCLASS-SILENT] review F1: a parent with no object to read carries no fields, so the match
-                // below finds nothing. Returning there left the element rows on screen under a blank status, still
-                // editable, their addresses in memory the game may have freed. Say what a walk of that object says,
-                // and leave no row to edit.
-                if (GoneObjectStatus(parentResult) is { } gone)
-                {
-                    StatusText = gone;
-                    SelectedField = null;   // detach before clearing the selection-bound grid
-                    Fields.Clear();         // fires OnFieldsRebuilt -> clears any stranded IsEditing latch
-                    _log.Warn($"Refresh: the container's parent {containerBc.Address} is {GoneVerdict(parentResult)} — dropped its element rows");
-                    return;
-                }
-
-                // Find the container field by name and offset in the refreshed result. Use the live
-                // ContainerField identity when present, else the crumb's own field name+offset.
-                var matchName   = containerBc.ContainerField?.Name   ?? containerBc.FieldName;
-                var matchOffset = containerBc.ContainerField?.Offset ?? containerBc.FieldOffset;
-                var updatedField = parentResult.Fields
-                    .FirstOrDefault(f => f.Name == matchName && f.Offset == matchOffset);
-
-                if (updatedField != null)
-                {
-                    // [WALK-REFRESH-SCALAR-SHRINK] Show what the drill would show now, and say what the drill would say.
-                    // The parent walk's inline preview is cut at min(Array Limit, 4,096); a scalar array is re-fetched
-                    // in full by the drill, so rendering that preview shrank the view to the slider (and an edited
-                    // element [N >= Array Limit] vanished right after "Written").
-                    // [LW-EMPTIED-CONTAINER-REFRESH] Kinds as RepopulateContainerView keys them: a count of 0 is a
-                    // container emptied since the drill, and its crumb says so too.
-                    string? label = null;
-                    var status = "";
-                    if (updatedField.ArrayCount >= 0 && !string.IsNullOrEmpty(updatedField.ArrayInnerType))
-                    {
-                        // Walked just now, at the slider's current value.
-                        var (elements, requested, total) = await ReadArrayViewElementsAsync(
-                            updatedField, containerBc.Address, inlineIsCurrent: true, ct);
-                        if (Superseded()) return;
-                        // The field carries this reading whole: the rows, and the count they were read at.
-                        updatedField.ArrayElements = elements;
-                        updatedField.ArrayCount = total;
-                        label = ArrayViewLabel(updatedField, elements.Count);
-                        status = ArrayViewStatus(elements.Count, updatedField.ArrayCount, requested);
-                    }
-                    else if (updatedField.MapCount >= 0 && !string.IsNullOrEmpty(updatedField.MapKeyType))
-                    {
-                        label = MapViewLabel(updatedField);
-                        status = ContainerTruncation.StatusLine(updatedField.MapElements?.Count ?? 0, updatedField.MapCount);
-                    }
-                    else if (updatedField.SetCount >= 0 && !string.IsNullOrEmpty(updatedField.SetElemType))
-                    {
-                        label = SetViewLabel(updatedField);
-                        status = ContainerTruncation.StatusLine(updatedField.SetElements?.Count ?? 0, updatedField.SetCount);
-                    }
-
-                    // Only an in-session crumb takes this reading. A path-synthetic crumb's null ContainerField is what
-                    // marks it as one -- re-hydrated from a live walk, not held -- so it keeps that null and its bare name.
-                    if (label != null && containerBc.ContainerField is { } heldField)
-                    {
-                        // A walk row carries no FieldAddress (UpdateDisplay stamps it). Same parent, same offset:
-                        // the held one is still the right address by construction.
-                        if (string.IsNullOrEmpty(updatedField.FieldAddress))
-                            updatedField.FieldAddress = heldField.FieldAddress;
-                        containerBc.ContainerField = updatedField;
-                        containerBc.Label = label;
-                    }
-                    if (status.Length > 0) StatusText = status;
-
-                    // [LW-BACK-CONTAINER-HEADER-ADDR] The owner was just walked, so its class is known even on a crumb
-                    // that never had it.
-                    if (!string.IsNullOrEmpty(parentResult.ClassAddr))
-                    {
-                        containerBc.OwnerClassAddr = parentResult.ClassAddr;
-                        containerBc.OwnerClassName = parentResult.ClassName;
-                        containerBc.OwnerName = OwnerViewName(Breadcrumbs.Count >= 2 ? Breadcrumbs[^2] : null,
-                                                              parentResult.Name);
-                    }
-                    RepopulateContainerView(updatedField);
-                    RestoreSelectedField(keepFieldName, keepFieldOffset);
-                }
+                await ApplyOwnerReadingAsync(containerBc, parentResult, keepFieldName, keepFieldOffset, Superseded, ct);
                 return;
             }
 
@@ -5968,7 +6285,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // a container row's offset counts from the container's buffer (a DataTable row whose pointer reads null
             // has no other), an actor row on the GWorld view has no slot in the world, and rows a re-root or Back
             // has left belong to another object than the one now shown. [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]
-            if (string.IsNullOrEmpty(field.FieldAddress) || field.FieldAddress == "0x0")
+            if (HasNoRowAddress(field))
             {
                 StatusText = _addrRefusal = NoRowAddressText(AddrLabel);
                 _log.Info($"{AddrLabel} refused: {field.Name} has no address of its own (offset 0x{field.Offset:X})");
@@ -6040,7 +6357,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     public async Task CheckAobMakerAsync()
     {
         if (_aobMaker == null) return;
-        _lastAobMakerCheck = DateTime.UtcNow;
+        _lastAobMakerCheck = Environment.TickCount64;
         bool ok;
         try
         {
@@ -6060,7 +6377,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     public void TryCheckAobMaker()
     {
         if (_aobMaker == null) return;
-        if (DateTime.UtcNow - _lastAobMakerCheck < AobMakerCheckCooldown) return;
+        if (_lastAobMakerCheck is long t
+            && Environment.TickCount64 - t < (long)AobMakerCheckCooldown.TotalMilliseconds) return;
         _ = CheckAobMakerAsync();
     }
 
@@ -6179,7 +6497,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task HexFieldAddressAsync(LiveFieldValue? field)
     {
         if (field != null && RefuseOnDefinitionView(HexLabel)) return;
-        if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.FieldAddress)) return;
+        if (_aobMaker == null || field == null) return;
+        if (HasNoRowAddress(field)) { StatusText = NoRowAddressText(HexLabel); return; }
         // PayloadAddress, not FieldAddress: on a checked build a delegate's bytes start
         // 8 bytes after the field, and parking CE's hex view on the access detector shows
         // a qword that reads 0. See LiveFieldValue.PayloadAddress.
@@ -6205,6 +6524,19 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     internal const string KeyStale = "str.LiveWalker.Stale";
     private static string StaleText => AobMakerStatus.Say(KeyStale,
         "⚠ This object appears to have been freed/recycled — re-open it from \U0001F30D GWorld or the finder.");
+    /// <summary>[LEAD-LW-BACK-CACHED-ELEMENTS] review round 2: a container view whose owner, read again, no longer has
+    /// the container field.</summary>
+    internal const string KeyContainerFieldGone = "str.LiveWalker.ContainerFieldGone";
+    internal static string ContainerFieldGoneText(string field, string owner) => AobMakerStatus.Say(KeyContainerFieldGone,
+        "⚠ {0} is no longer on {1}, so its element rows were dropped — re-open it from \U0001F30D GWorld or the finder.",
+        field, owner);
+    /// <summary>[LEAD-BOOKMARK-SAMECLASS-RECYCLE] review round 2: a container view whose owner's address, read again,
+    /// holds another object.</summary>
+    internal const string KeyContainerOwnerReplaced = "str.LiveWalker.ContainerOwnerReplaced";
+    internal static string ContainerOwnerReplacedText(string now, string was, string field) => AobMakerStatus.Say(
+        KeyContainerOwnerReplaced,
+        "⚠ {0} now sits where {1} was, so {2}'s element rows were dropped — re-open it from \U0001F30D GWorld or the finder.",
+        now, was, field);
     internal const string KeyDefinitionView = "str.LiveWalker.DefinitionView";
     internal static string DefinitionViewText => AobMakerStatus.Say(KeyDefinitionView,
         "ℹ This is a type definition (its member layout), not a live object: its rows have no address and no value, "
@@ -6235,6 +6567,32 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     internal static string FuncCopyBakedLabel => AobMakerStatus.Say(KeyFuncCopyBakedLabel, "AA(Baked)");
     internal const string KeyFuncAsmLabel = "str.Pointers.AobMakerAsm";
     internal static string FuncAsmLabel => AobMakerStatus.Say(KeyFuncAsmLabel, "ASM");
+
+    /// <summary>[LEAD-LW-NULLROW-HEX] A row with no address of its own: none was read, or the one read is 0 (a
+    /// DataTable row whose row pointer reads null arrives as "0x0"). Every row action that reads or marks the row's
+    /// memory refuses it, rather than send CE to address 0.</summary>
+    private static bool HasNoRowAddress(LiveFieldValue field) => ParseHexAddr(field.FieldAddress) == 0;
+
+    // [LEAD-DT-EXPORT-64ROWS] [CEXPORT-NESTED-TRUNC-NOTE] The export limit warning's words. An entry is held open
+    // -- "Name (Kind: ..." -- and closed by the nested words or by ")".
+    internal const string KeyTablePageCut = "str.LiveWalker.TablePageCut";
+    internal static string TablePageCutText(string entries) => AobMakerStatus.Say(KeyTablePageCut,
+        "⚠ Only the first page of a table's rows is read: {0}", entries);
+    internal const string KeyTableCutEntry = "str.LiveWalker.TableCutEntry";
+    internal static string TableCutEntryText(string name, int rows, int exported) => AobMakerStatus.Say(
+        KeyTableCutEntry, "{0} (DataTable: {1:N0} rows, {2:N0} exported", name, rows, exported);
+    internal const string KeyNestedOnce = "str.LiveWalker.NestedOnce";
+    internal static string NestedOnceText(string entry) => AobMakerStatus.Say(KeyNestedOnce, "{0}, nested)", entry);
+    internal const string KeyNestedMany = "str.LiveWalker.NestedMany";
+    internal static string NestedManyText(string entry, int objects) => AobMakerStatus.Say(KeyNestedMany,
+        "{0}, nested, in {1} objects)", entry, objects);
+    internal const string KeyNestedMore = "str.LiveWalker.NestedMore";
+    internal static string NestedMoreText(int more) => AobMakerStatus.Say(KeyNestedMore, "and {0} more nested", more);
+
+    internal const string KeyDataTableNotRestored = "str.LiveWalker.DataTableNotRestored";
+    internal static string DataTableNotRestoredText => AobMakerStatus.Say(KeyDataTableNotRestored,
+        "⚠ This DataTable view did not restore: the DataTable at its saved address is gone or has changed. The grid "
+        + "shows what is at that address now.");
 
     internal const string KeyNoRowAddress = "str.LiveWalker.NoRowAddress";
     /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] A row action refused: the row has no address of its own, and none
@@ -6306,7 +6664,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task AddFieldToCeAsync(LiveFieldValue? field)
     {
         if (field != null && RefuseOnDefinitionView(AddToCeLabel)) return;
-        if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.FieldAddress)) return;
+        if (_aobMaker == null || field == null) return;
+        if (HasNoRowAddress(field)) { StatusText = NoRowAddressText(AddToCeLabel); return; }
         var t = CeXmlExportService.MapFieldToCeRecordType(field);
         // PayloadAddress for the same reason the CE XML exporter adds the pad: a record left
         // on the access detector points at a qword that reads 0 on every checked build.
@@ -6648,6 +7007,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // [LW-BACK-CONTAINER-HEADER-ADDR] No list, so no class on screen: a view with this class again must load it.
         _currentClassAddr = "";
         FunctionsClassName = "";
+        _enumNamesFailed = false;   // [CEXPORT-ENUMNAMES-NOTE] the DLL's latch is the previous process's
         ClearForwardStack();
         _replacedSpine = null;
         _cachedWorld = null;
@@ -7405,6 +7765,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         var prevAddr      = ParseHexAddr(CurrentAddress);
         var prevClassName = CurrentClassName;
         var prevClassAddr = _currentClassAddr;
+        _enumNamesFailed |= result.EnumNamesFailed;   // [CEXPORT-ENUMNAMES-NOTE]
 
         if (clearFieldSearch)
             ClearFieldSearchForNavigation();
@@ -7559,8 +7920,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // The marker above ran over newFields, which are now discarded, so re-run it over the
             // rows the grid is actually showing. Not optional and not merely tidy: clearing the
             // keyword marks zero matches on newFields while the surviving rows would keep their
-            // old flags, leaving a highlight on rows that no longer match anything.
-            MarkSearchMatches(Fields, SearchText);
+            // old flags, leaving a highlight on rows that no longer match anything. The count is
+            // these rows' too: a kept row keeps its type label, which a guessed row's fresh one can
+            // differ from by its "?". [LEAD-LW-INPLACE-SEARCHCOUNT]
+            searchMatches = MarkSearchMatches(Fields, SearchText);
+            SearchMatchCount = searchMatches;
+            HasSearchResults = searchMatches > 0;
 
             // The editing latch used to be cleared by the Replace notification this loop no longer
             // raises. Clearing it here keeps the previous guarantee exactly — a stranded `true`
@@ -7727,6 +8092,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         DataTableRowData = dtResult.Rows,
     };
 
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] review round 2: every DataTable reading goes through here, so the enum-names
+    /// latch it carries reaches the export notes -- a table's own walk can run before the row walk that trips
+    /// detection.</summary>
+    private async Task<DataTableWalkResult> ReadDataTableRowsAsync(string addr, CancellationToken ct = default)
+    {
+        var dt = await _dump.WalkDataTableRowsAsync(addr, ct: ct);
+        _enumNamesFailed |= dt.EnumNamesFailed;
+        return dt;
+    }
+
     /// <summary>
     /// Detect DataTable and inject a synthetic RowMap field for container navigation.
     /// Fire-and-forget, so the row fetch never blocks the UI.
@@ -7735,7 +8110,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            var dtResult = await _dump.WalkDataTableRowsAsync(start.DataTableAddr);
+            var dtResult = await ReadDataTableRowsAsync(start.DataTableAddr);
 
             // Inject a synthetic "RowMap" field at the end of the field list
             var syntheticField = SyntheticRowMapField(dtResult, start.DataTableAddr);

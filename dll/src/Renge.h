@@ -36,6 +36,10 @@ constexpr const char* CMD_WALK_INSTANCE    = "walk_instance";
 constexpr const char* CMD_WALK_INSTANCE_BATCH = "walk_instance_batch";
 constexpr const char* CMD_WALK_WORLD       = "walk_world";
 constexpr const char* CMD_FIND_INSTANCES   = "find_instances";
+// [MAINWINDOW-NAVIGATE-EXACT-NAME] One live object of a class or of a subclass, never a template, or none: the object a
+// UI opens or searches from. find_instances cannot answer that -- its class gate is a name test, and it lists
+// templates on purpose.
+constexpr const char* CMD_FIND_LIVE_INSTANCE = "find_live_instance";
 constexpr const char* CMD_FIND_BY_ADDRESS  = "find_by_address";
 constexpr const char* CMD_FIND_REFS_TO_UOBJ = "find_refs_to_uobject";
 constexpr const char* CMD_FIND_PATH_FROM_GWORLD = "find_path_from_gworld";
@@ -380,6 +384,29 @@ inline std::string InvokeTargetRefusalText(const std::string& instanceAddr, cons
     return "Not invoked: the object at " + instanceAddr + " is no longer the " + was
          + " this was opened on (its class pointer has changed). Look it up again before firing; in the Live Walker,"
            " Refresh.";
+}
+
+// [FINDINSTANCE-SUBSTRING-USERFACING] invoke_function's texts about the object a class name resolved to. The
+// "No instance found for class:" and "Function not found" openings are matched by the UI's Self-Test, so they stay.
+constexpr const char* INVOKE_PICK_ADDRESS = "address";   // instance_pick when the caller sent instance_addr
+inline std::string InstanceNotFoundText(const std::string& className) {
+    return "No instance found for class: " + className;
+}
+inline std::string InstanceLookupCancelledText(const std::string& className) {
+    return "Instance lookup for class " + className
+         + " was cut short (the command was cancelled, or the DLL is shutting down) -- nothing was invoked";
+}
+// [MAINWINDOW-NAVIGATE-EXACT-NAME] find_live_instance's: it invokes nothing, and a cut-short walk is not "none".
+inline std::string LiveInstanceLookupCancelledText(const std::string& className) {
+    return "The lookup of a live " + className
+         + " was cut short (the command was cancelled, or the DLL is shutting down); it may have one -- ask again";
+}
+inline std::string FunctionNotFoundText(const std::string& funcName, const std::string& objName,
+                                        const std::string& className) {
+    std::string s = "Function not found: " + funcName;
+    if (!objName.empty()) s += " on " + objName;
+    if (!className.empty()) s += " (class " + className + ")";
+    return s;
 }
 
 // Build an error response

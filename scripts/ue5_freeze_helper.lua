@@ -15,7 +15,8 @@
 
     * This helper locks a PROPERTY (offset + type) on ALL live
       instances of a given UE class -- and, by default, of every
-      SUBCLASS of it (cfg.derived). It re-enumerates instances every
+      SUBCLASS of it (cfg.derived) -- never a class's default object
+      or another template (the DLL lists none, contract 8+). It re-enumerates instances every
       few seconds via the DLL mailbox (CMD_LIST_INSTANCES), so newly
       spawned teammates / pickups / NPCs are picked up automatically
       and freed instances drop off.
@@ -87,7 +88,7 @@
                                      -- return true to include, false to skip
 
   Constants exposed:
-    UE5_FREEZE_HELPER_VERSION = '1.6'   -- 1.1 added cfg.boolMask (packed bitfield bools)
+    UE5_FREEZE_HELPER_VERSION = '1.7'   -- 1.1 added cfg.boolMask (packed bitfield bools)
                                         -- 1.2 start() returns (ok, err, count)
                                         -- 1.3 cfg.derived + cfg.memrec; start() also
                                         --     returns `capped`
@@ -103,6 +104,10 @@
                                         --     released no longer blocks a rescan
                                         --     [R7-C-01] [R7-C-03]
                                         --     and a same-version re-load is a no-op
+                                        -- 1.7 bakes contract 8: refuses a DLL that still
+                                        --     lists templates [LISTINSTANCES-KEEPS-TEMPLATES].
+                                        --     MUST bump: a resident 1.6 would keep
+                                        --     accepting contract 7
 
   =========================================================================
   SAMPLES
@@ -278,7 +283,7 @@
 -- and re-added it kept running the OLD code. Gate the definitions on VERSION instead
 -- -- redefine only when this chunk is NEWER than the resident one -- so an update
 -- takes effect while a same/older re-load stays a no-op that preserves state.
-local THIS_HELPER_VERSION = '1.6'   -- 1.6: the shared mailbox latch [R7-C-01] [R7-C-03]
+local THIS_HELPER_VERSION = '1.7'   -- 1.6: the shared mailbox latch [R7-C-01] [R7-C-03]; 1.7: contract 8
 -- Compare dotted versions: true iff a < b. nil (nothing resident) is the oldest.
 local function versionLess(a, b)
   if not a then return true end
@@ -490,9 +495,19 @@ end
 -- (FreezeHelper_BakesTheSameContractVersionAsTheGenerator).
 -- 5: CMD_OFFSETS_VERDICT ([W5-OFFSETS-MAILBOX]) -- "were the DynOff offsets measured?". This helper does
 -- not send it either, and bakes it for the same reason as 4.
--- ⚠ Baking 5 means this helper REFUSES a contract-4 DLL ("update UE5Dumper.dll"). That is what the pin
+-- 6: CMD_FIND_INSTANCE picks by derivation ([FINDINSTANCE-SUBSTRING-USERFACING]). Not used here either; baked
+-- for the same reason as 4.
+-- 7: the invoke family's template warning in cmdOutFlags ([INVOKE-NONSTATIC-ON-CDO]); this helper reads only
+-- LI_OUT_TRUNCATED there. Baked for the same reason as 4.
+-- 8: CMD_LIST_INSTANCES never lists a template ([LISTINSTANCES-KEEPS-TEMPLATES]) -- this time a change THIS helper
+-- depends on: it writes into every address the DLL lists and never restores, so a contract-7 DLL, which still
+-- lists a class default object's subobjects and Blueprint component templates, would pass the frozen value to
+-- every later spawn.
+-- 9: CMD_FIND_INSTANCE never hands over a destroyed object ([INVOKE-PICK-GARBAGE]). Not used here; baked for the
+-- same reason as 4. A resident 1.7 that bakes 8 keeps working against a contract-9 DLL, so the version stays.
+-- ⚠ Baking 9 means this helper REFUSES a contract-8 DLL ("update UE5Dumper.dll"). That is what the pin
 -- above encodes: the helper and the generator ship together, so they claim ONE contract.
-local UE5_SCRIPT_CONTRACT = 5
+local UE5_SCRIPT_CONTRACT = 9
 
 -- Returns true, or false + a message. Call BEFORE writing to the mailbox: if the
 -- layout moved, writing first scribbles on whatever now lives at those offsets.

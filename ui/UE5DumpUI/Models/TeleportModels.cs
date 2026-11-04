@@ -370,6 +370,9 @@ public sealed class FlyStatus
     /// <summary>Result of the last enable/disable (1 active / 0 off / negative),
     /// or -1 when the call carried no enable field.</summary>
     public int State { get; init; } = -1;
+    /// <summary>[FLY-REPORTS-WISH] The pawn's bActorEnableCollision as read now: 1 on, 0 off, -1 unknown (not read, or
+    /// an older DLL). <see cref="Noclip"/> is what was asked for; this is what happened.</summary>
+    public int Collision { get; init; } = -1;
 }
 
 /// <summary>Live state of the See-through occluders feature (Schlacht), returned
@@ -443,8 +446,8 @@ public sealed class TeleportMarker
     public string Map { get; init; } = "";
 
     /// <summary>[W2-MARKER-PARENTREL] The marker was saved from a PARENT-RELATIVE read (an attached pawn whose
-    /// world-space read failed): X/Y/Z are not world coordinates, and recalling it drives the pawn there as if
-    /// they were. The key is absent on a healthy marker and from an older DLL.</summary>
+    /// world-space read failed): X/Y/Z are not world coordinates, so Recall and Force refuse it (-16, [TELEPORT-RECALL-PARENTREL]).
+    /// The key is absent on a healthy marker and from an older DLL.</summary>
     public bool ParentRelative { get; init; }
 }
 
@@ -539,6 +542,16 @@ public static class TeleportCodes
     public const int NoHit         = -8;
     public const int NoCursor      = -9;
     public const int WriteFailed   = -10;
+    /// <summary>[TELEPORT-BUGITGO-PARENTREL] A jump refused because its pose came from a parent-relative read: the
+    /// mailbox's BugItGo, and ([TELEPORT-RECALL-PARENTREL]) marker Recall / Force and TP facing direction on every
+    /// transport. Callers with a sentence of their own use it; <see cref="Describe"/> covers the rest.</summary>
+    public const int ParentRelative = -16;
+
+    internal const string KeyParentRelative = "str.TP.CodeParentRelative";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] The fallback line for a -16 a caller has no sentence of its own for.</summary>
+    internal static string ParentRelativeText => UE5DumpUI.Helpers.AobMakerStatus.Say(KeyParentRelative,
+        "Refused: the position came from a parent-relative read (an attached pawn), not world coordinates — nothing " +
+        "moved.");
 
     public static string Describe(int code) => code switch
     {
@@ -553,6 +566,7 @@ public static class TeleportCodes
         NoHit        => "Nothing under the cursor / center within range.",
         NoCursor     => "No cursor available — enable the screen-center fallback.",
         WriteFailed  => "Raw write failed (protected memory?).",
+        ParentRelative => ParentRelativeText,
         _            => $"Teleport failed (code {code}).",
     };
 }

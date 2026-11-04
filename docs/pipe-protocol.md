@@ -3,7 +3,7 @@
 Named pipe: `\\.\pipe\UE5DumpBfx`
 Format: JSON, newline-delimited (one message per `\n`)
 Direction: bidirectional — Request/Response + async push Events
-Total commands: **99** — a DERIVED number, regenerate it, never hand-edit:
+Total commands: **105** — a DERIVED number, regenerate it, never hand-edit:
 `grep -c 'constexpr const char\* CMD' dll/src/Renge.h`. (It read 31 from build ~547 until
 2026-08-05, i.e. it was wrong by a factor of three for most of this project's life.)
 
@@ -112,6 +112,10 @@ Total commands: **99** — a DERIVED number, regenerate it, never hand-edit:
 // filter), so a wanted instance that today sits past the cap survives once the
 // noise classes ahead of it are excluded.
 { "id": 12, "cmd": "find_instances", "class_name": "BP_Player_C", "limit": 5000, "exact_match": false, "newest_first": false, "exclude_classes": ["StaticMeshActor", "NiagaraActor"] }
+
+// One LIVE object of a class or of a subclass -- never a template -- or none: the object to open
+// or to search a path from. [MAINWINDOW-NAVIGATE-EXACT-NAME]
+{ "id": 12, "cmd": "find_live_instance", "class_name": "PlayerController" }
 ```
 
 ### Array Reading
@@ -195,6 +199,10 @@ Total commands: **99** — a DERIVED number, regenerate it, never hand-edit:
 ```jsonc
 // Walk DataTable rows (RowMap probe, returns row keys + addresses)
 { "id": 23, "cmd": "walk_datatable_rows", "addr": "7FF123456789" }
+// → { "row_count", "row_map_offset", "row_struct_addr", "row_struct_name", "fname_size", "stride",
+//      "rows": [ { ..., "fields": [ ... ] } ],
+//      "enum_names_failed"? }   // from build 3673: true when UEnum::Names was never found, so the rows' enum
+//                               // fields carry no entries -- as a walk reply says it. [CEXPORT-ENUMNAMES-NOTE]
 ```
 
 ### Rescan & Scan Control
@@ -232,7 +240,20 @@ Total commands: **99** — a DERIVED number, regenerate it, never hand-edit:
 
 ### Debug Camera (robust force on/off)
 
-Shared by the Console panel (here) and CE Lua (`setDebugCamera` export). All logic — two-hop state read, ToggleDebugCamera invoke, and controller-swap fallback for Shipping builds that strip `DisableDebugCamera` — lives in the DLL (`UE5_GetDebugCameraState` / `UE5_SetDebugCamera`). `state`: `1` = ON, `0` = OFF, `-1` = unknown/error.
+Shared by the Console panel (here) and CE Lua (`setDebugCamera` export). All logic — two-hop state read, ToggleDebugCamera invoke, and controller-swap fallback for Shipping builds that strip `DisableDebugCamera` — lives in the DLL (`UE5_GetDebugCameraState` / `UE5_SetDebugCamera`). `state`: `1` = ON, `0` = OFF, `-1` = unknown/error
+(a state that did not read, or a toggle that failed). With no live CheatManager (the Debug Camera's own never counts)
+the read lands on its class default object and answers `0` or `1`, never `-1`: OFF, unless a Debug Camera controller
+is already active, which reads ON. `set_debug_camera` only:
+
+- `-5`: the toggle timed out on the game thread and stays QUEUED. A queued ON will still run, so do not re-send it; a
+  queued OFF does not turn the camera off on stock UE 4.18-5.7, so send OFF again once the game responds.
+  `[W3-DEBUGCAM-QUEUED]`
+- `-6`: NOT SENT, because an earlier toggle of the other direction is still queued; send again once the game responds.
+  `[DBGCAM-OFF-OVER-QUEUED-ON]`
+- `-17` (from build 3682): an ON NOT SENT, because no CheatManager is live (UE 5 compiles it out of Shipping by
+  default) and ToggleDebugCamera does nothing on its class default object (4.20+; undefined behaviour on 4.18/4.19).
+  Answered at once, with no game-thread call.
+  An OFF is never refused: with no live CheatManager it switches the controller back by hand. `[DEBUGCAM-FORCEON-CDO]`
 
 ```jsonc
 // Read live state
@@ -243,6 +264,13 @@ Shared by the Console panel (here) and CE Lua (`setDebugCamera` export). All log
 { "id": 51, "cmd": "set_debug_camera", "enable": false }
 // → { "ok": true, "state": 0 }
 ```
+
+`nonstatic_on_template` (builds 3676-3681 only) was a WARNING beside `state`: the toggle targets the CheatManager's class
+default object -- no live CheatManager, usual in a Shipping build -- where it does nothing. It was set only when the
+toggle THIS call sent ran or was queued to run; a re-send answered by a toggle already queued was false. From build
+3682 that toggle is never sent (`-17` above), and the key is absent; absent also means a DLL older than 3676. Those
+builds' mailbox CMD_SET_DEBUG_CAMERA published the same thing as `INV_OUT_NONSTATIC_ON_TEMPLATE` in cmdOutFlags
+(contract 7); a newer one leaves the word 0. `[INVOKE-NONSTATIC-ON-CDO]`
 
 ### Value Search (build 738 + Phase 2 build 757)
 
@@ -827,7 +855,10 @@ nothing and the hold silently held nothing. This is a **derivation** test on the
 super chain, NOT a name-substring match — `"Enemy"` does not capture `"EnemyProjectile"`
 unless that class genuinely derives from `Enemy`.
 
-Two consequences worth planning for: class-default objects are excluded, and the pool is
+Two consequences worth planning for: templates are excluded — class-default objects, their
+default subobjects and Blueprint component templates (`Aura::TemplateOf`; build 3682,
+`[LISTINSTANCES-KEEPS-TEMPLATES]`: every later spawn copies what a template holds), so
+`held` counts live objects only — and the pool is
 capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily —
 `get_forced_fields` / the `force_field` reply carry `truncated` for exactly that, and
 `held` is then a floor rather than a total.
@@ -841,6 +872,9 @@ capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily �
   "kind": "bool", "on": true }
 // → { "held": 3, "resolved": true, "code": 0 }   // held = live "N held" count (0 = matched nothing)
 //   `"truncated": true` is added when the instance pool hit its cap.
+//   `"templates_skipped": n` (from build 3682): templates of the class the pool passed over, never written
+//   (class default objects, their subobjects, Blueprint component templates). With held 0 it says only templates
+//   exist. Absent = an older DLL. `[LISTINSTANCES-KEEPS-TEMPLATES]`
 
 // Release one hold (best-effort restore the captured base; object-null is not reversible).
 { "cmd": "reset_field", "class_name": "BP_Enemy_C", "field_name": "bInvincible" }
@@ -851,12 +885,28 @@ capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily �
 // Snapshot the active holds + their live counts.
 { "cmd": "get_forced_fields" }
 // → { "code": 0, "fields": [ { "class_name", "field_name", "kind", "value",
-//        "held", "owner_addr"?, "field_offset"? } ] }
+//        "held", "truncated", "templates_skipped", "owner_addr"?, "field_offset"? } ] }
 
 // Auto-find the player's stealth/noise/visibility/detection meter (read-only).
 { "cmd": "find_stealth_meter", "max": 8 }
 // → { "code": 0, "candidates": [ { "class_name", "class_addr", "field_name",
-//        "prop_type", "owner_addr", "current", "score" } ] }   // ranked, best first
+//        "prop_type", "owner_addr", "current", "score" } ],   // ranked, best first
+//      "stops": { ... } }   // from build 3672: the shape get_related_objects carries (see that section). The
+//                           // search scores the pawn and the objects it owns (the Related Objects walk), so a
+//                           // meter past where that walk stopped is not found. [SOLIDE-RELATED-STOPS]
+
+// Fly (Dunste). Every key of fly_set is optional; the reply is the state read after the change.
+{ "cmd": "fly_set", "enable": true, "speed": 1200.0, "preset": 0, "noclip": true }
+{ "cmd": "fly_get_state" }
+// → { "code": 0, "active", "noclip", "has_cmc", "preset", "speed", "mode_resolved",
+//      "current_mode",           // the live MovementMode (5 = flying)
+//      "collision",              // from build 3672: bActorEnableCollision read on the pawn, 1 on / 0 off /
+//                                // -1 not read. `noclip` is the REQUEST; this is what the pawn does.
+//                                // ⚠ A fly_set reply is read before the worker's next tick applies a noclip
+//                                // change, so it shows the collision from before (measured ~100 ms on
+//                                // DumperTest): poll fly_get_state for the result. [FLY-REPORTS-WISH]
+//      "cmc_addr"?,
+//      "state" }                 // fly_set only: 1 on, 0 off, negative = Dunste::FlyResult
 ```
 
 -----
@@ -1002,7 +1052,10 @@ Extended per-field keys are emitted **only when non-default**: `struct_type`,
 `key_obj_class` / `value_obj_class` / `elem_obj_class` (the class of an object-family Map key / value / Set
 element `[SDK-CONTAINER-OBJCLASS]`),
 `key_type`/`key_struct_type`, `value_type`/`value_struct_type`,
-`elem_type`/`elem_struct_type`, `enum_name`, `bool_mask`, the **MetaClass** of a
+`elem_type`/`elem_struct_type`, `enum_name`, `enum_underlying` (an EnumProperty's UnderlyingProp type, e.g.
+`Int8Property` — the signedness its `size` cannot say; sent only when the Enum slot validated and the slot names an
+integer property `[USMAP-ENUM-SIGNEDNESS]`), `inner_enum` / `elem_enum` / `key_enum` / `value_enum` (a container
+slot's own UEnum `[A4-USMAP-CONTAINER-ENUM]`), `bool_mask`, the **MetaClass** of a
 class-valued property — `meta_class` on the field itself, `inner_meta_class` /
 `key_meta_class` / `value_meta_class` / `elem_meta_class` on a container slot — plus **`prop_flags`**
 (uint64 `CPF_*` reflection flags — `SaveGame`/`BlueprintVisible`/`Net`/
@@ -1050,6 +1103,11 @@ Field objects include all `walk_class` fields **plus** live typed values and arr
                       // the Guess-What raw-byte pass was skipped. NOT staleness: the two
                       // used to share one bound, which is how a live 3.6 MB USaveGame
                       // was reported to the user as freed. (SANEPROPS-2026-08-26)
+  // "enum_names_failed": true,
+                      // present only when true, lean or not (from build 3671): UEnum::Names
+                      // was never located on this build, so every enum field's entries
+                      // are empty. The same process-wide latch list_enums reports.
+                      // [CEXPORT-ENUMNAMES-NOTE]
   "fields": [
     // --- Scalar field ---
     {
@@ -1277,6 +1335,44 @@ need the histogram keep the old early-exit at `limit`). `truncated` now means "m
 non-excluded matches exist than were returned" — narrow the query, exclude more
 noise, or raise `limit`.
 
+### find_live_instance
+
+```jsonc
+{ "id": 12, "ok": true, "pick": "live", "scanned": 24530,
+  "addr": "7FF6AA000000", "name": "BP_PlayerController_C_0", "class": "BP_PlayerController_C",
+  "class_addr": "7FF6CC000000" }
+
+// Nothing of the class is live (only its class default object and templates, or nothing at all):
+{ "id": 12, "ok": true, "pick": "none", "scanned": 24530 }
+```
+
+`[MAINWINDOW-NAVIGATE-EXACT-NAME]` The object a UI opens in Live Walker or searches a path from
+(`Aura::FindLiveInstanceOf`). It walks the object array as the resolver `invoke_function` uses for a `class_name`
+does (`Aura::ResolveUserInstance`):
+
+* class **derivation**, so a class whose live objects are all of a subclass answers one of them (`class` names the
+  object's own class);
+* **never a template** -- a class default object, one of its default subobjects or a Blueprint component template
+  (`TemplateOf`);
+* **never a destroyed** object that garbage collection has not taken yet (`[INVOKE-PICK-GARBAGE]`: it has left its
+  level, so no path search from it, nor an invoke on it, does what was asked). An object that a collection in progress
+  has only marked Unreachable is not destroyed, and is still picked (from build 3686);
+* an object a Debug Camera controller is or owns only when nothing else is live (`pick: "debug_camera_owned"`).
+
+It differs from that resolver in two ways:
+
+* an object of the named class **itself** comes before a subclass's met first, because a function's row names the
+  class that declares it and Live Walker lists an object's own class's functions, not its superclasses';
+* there is **no partial-name fallback**, and its class-default pick (an invoke's fallback: a static function runs
+  on a class default object) answers `none`.
+
+`addr`, `name`, `class` and `class_addr` are present only with an object. `scanned` is the size of the object array
+when the walk began, not the number of entries it looked at: it stops at the first object of the class itself. A
+walk cut short (the client went away) is an error, not `none`. Not `find_instances`, whose class gate is a name
+test -- `exact_match` is name equality -- and which lists templates on purpose. Runs on the bulk lane. A DLL older
+than this command answers `Unknown command`; the UI then falls back to `find_instances` (`exact_match`, the first
+object not named `Default__*`) and marks the answer `legacy`.
+
 ### find_by_address
 
 ```jsonc
@@ -1446,9 +1542,19 @@ scan; the reverse "who points AT this object" view is `find_refs_to_uobject`.
       "class": "MyHealthAttributeSet", "relation": "AttributeSet",
       "field_name": "SpawnedAttributes[0]", "field_offset": 0x1B0, "depth": 2,
       "parent_addr": "7FF6BB000000" }
-  ]
+  ],
+  "stops": {                                   // [W4-RELATED-STOPS] absent from older DLLs
+    "result_cap_hit": false, "max_results": 128,     // related[] is full and more exist
+    "owned_cap_hit": false,  "max_owned": 128,       // the owned walk stopped after max_owned sub-objects
+    "visit_cap_hit": false,  "max_visited": 200000,  // it stopped after following max_visited pointers
+    "deadline_hit": false,   "deadline_ms": 8000,    // it ran out of its time budget
+    "cancelled": false                               // the command was cancelled
+  }
 }
 ```
+
+`stops` says why the walk stopped short, one boolean per cause, with the limit each one ran under. The same shape,
+from the same encoder, rides `find_stealth_meter`, whose search runs over this walk's list.
 
 ### get_current_target
 
@@ -1849,7 +1955,12 @@ state-changing operations but works for simple getters).
   "cmd": "invoke_function",
   "func_name": "Attack",           // required
   "instance_addr": "0x7FF6AA000",  // optional (one of instance_addr / class_name required)
-  "class_name": "BP_Player_C",     // optional
+  "class_name": "BP_Player_C",     // optional: the first LIVE object of this class or a subclass
+                                   // (one a Debug Camera controller is or owns only when no other
+                                   // is live), else this class's own default object; a name no
+                                   // class has is matched as part of a class name. Case-insensitive.
+                                   // The same resolver as UE5_FindInstanceOfClass and the
+                                   // mailbox's FIND_INSTANCE. [FINDINSTANCE-SUBSTRING-USERFACING]
   "parms_size": 16,                // optional -- the DLL reads UFunction::ParmsSize
                                    // itself and uses the LARGER of the two. Omitting it
                                    // is safe as of build 3350; before that it defaulted
@@ -1864,7 +1975,9 @@ state-changing operations but works for simple getters).
                                    // "Not invoked: the object at … is no longer the <class> this
                                    // was opened on …". A freed slot still holding the old class
                                    // pointer passes; one reading 0 or unreadable answers "Failed
-                                   // to read class …" first. Absent = no check.
+                                   // to read class …" first. Absent = no check. Also applied
+                                   // to an object picked by class_name, as class EQUALITY (not
+                                   // derivation): a caller sending class_name should not send it.
   // optional: string INPUT params. An FString is passed by value as
   // { Data*, Num, Max } (16 bytes) inline in the params buffer, and its Data
   // pointer must be a valid GAME-process address — which the UI can't allocate.
@@ -1883,11 +1996,38 @@ state-changing operations but works for simple getters).
   "id": 42, "ok": true,
   "result": 0,
   "instance_addr": "0x7FF6AA000",
+  "instance_class_addr": "0x7FF6CC00", // the class pointer read at instance_addr (from build
+                                   // 3671; on every reply that has instance_addr). A caller that
+                                   // keeps the address sends it back as expect_class_addr.
+  "instance_pick": "live",         // how the object was chosen (from build 3675; on every reply
+                                   // that has instance_addr): "address" (the caller sent one),
+                                   // "live", "debug_camera_owned", "class_default", "partial_name",
+                                   // "partial_name_default". The Console pins only "live" / "address".
+                                   // A destroyed object GC has not collected yet is never picked
+                                   // (from build 3685; at every step, a partial name's included,
+                                   // from 3686). [INVOKE-PICK-GARBAGE]
+  "instance_name": "CheatManager_0",       // the object's and its class's names, read before
+  "instance_class_name": "CheatManager",   // the call (which may destroy the object)
+  "instance_template": "",         // from build 3676: "" (a live object), "class_default", or "template" (a
+                                   // class default object's default subobject, or another archetype)
+  "template_owner_name": "Default__Character", // with "template": the class default object above it, or, for
+                                   // an archetype with none, its own outer (e.g. a Blueprint class)
+  "nonstatic_on_template": false,  // the WARNING verdict: the function is not static (by the flags the DLL
+                                   // read, never direct_call) and the object is a template, where it may do
+                                   // nothing or fault. Never a refusal. A static function on a class default
+                                   // object (a function library) is false. Absent = an older DLL.
+                                   // [INVOKE-NONSTATIC-ON-CDO]
   "func_addr": "0x7FF123ABC",
   "parms_size": 16,
   "result_hex": "3F80000000000000...",  // post-call buffer (out-params)
   "message": "ProcessEvent OK"
 }
+
+// Errors before anything is invoked (ok:false), for a class_name lookup:
+//   "No instance found for class: X"          -- nothing usable (the UI's Self-Test matches this opening)
+//   "Instance lookup for class X was cut short (...) -- nothing was invoked"
+//                                             -- cancelled or shutting down; NOT "no instance"
+//   "Function not found: F on OBJ (class C)"  -- names what the class name resolved to
 
 // Response (ProcessEvent error)
 {
@@ -2017,7 +2157,9 @@ Activity card (that one shows *what* crossed the pipe; this shows what it *cost*
 for malformed requests. `tier`: 1 = engine invoke (clean), 2 = raw-write
 fallback (game may snap back). Codes (§8): 0 OK, -1 not-init, -2 no controller,
 -3 no pawn, -4 reflection, -5 invoke-timeout, -6 empty marker, -7 map mismatch,
--8 no hit, -9 no cursor, -10 write failed.
+-8 no hit, -9 no cursor, -10 write failed, -16 refused: the stored marker or the
+current pose (TP facing) came from a parent-relative read, nothing moved
+`[TELEPORT-RECALL-PARENTREL]`.
 
 ```jsonc
 { "cmd": "teleport_get_pose" }
@@ -2041,6 +2183,7 @@ fallback (game may snap back). Codes (§8): 0 OK, -1 not-init, -2 no controller,
 
 { "cmd": "teleport_recall_marker", "slot": 0, "force": false }
 → { "code":0, "tier":1 }   |   { "code":-7,"map":"Map_B","markerMap":"Map_A" }
+  |   { "code":-16, "tier":0 }   // a marker saved from a parent-relative read; force too
 // Explicit-pose variant (BugItGo): pass x/y/z (+optional pitch/yaw/roll)
 // instead of slot — bypasses the marker store and the map check.
 { "cmd": "teleport_recall_marker", "x":…, "y":…, "z":…, "pitch":…, "yaw":…, "roll":… }
@@ -2060,7 +2203,8 @@ fallback (game may snap back). Codes (§8): 0 OK, -1 not-init, -2 no controller,
 
 // Teleport along the pawn's facing by `distance` uu (negative = backward).
 // horizontal=true keeps Z (ground-plane); false = full 3D forward (incl. pitch).
-// Returns the resulting pose. Undoable via teleport_recall_last.
+// Returns the resulting pose. Undoable via teleport_recall_last. Code -16 when
+// the current pose came from a parent-relative read (nothing moved).
 { "cmd": "teleport_relative", "distance":100.0, "horizontal":true }
 → { "code":0, "tier":1, "x":…,"y":…,"z":…, "pitch":…,"yaw":…,"roll":… }
 

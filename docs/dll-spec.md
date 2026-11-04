@@ -10,7 +10,7 @@
 > what is reproduced here. Bullet points and counts are kept in sync with
 > the build shown in `build_number.txt`. The headers are ground truth; this doc trails them.
 >
-> For the JSON pipe protocol (**104** commands — derive it, never hand-edit:
+> For the JSON pipe protocol (**105** commands — derive it, never hand-edit:
 `grep -c 'constexpr const char* CMD' dll/src/Renge.h`), see [pipe-protocol.md](pipe-protocol.md).
 > For drill-down phase / Find Refs / OptionalProperty layout details, see
 > [technical-notes.md](technical-notes.md).
@@ -559,6 +559,11 @@ extern "C" {
     __declspec(dllexport) int32_t   UE5_GetClassPropsSize(uintptr_t classAddr);
 
     // === UFunction Invocation (3) ===
+    // The first live object of className or a subclass (one a Debug Camera controller is or owns only
+    // when no other is live), else that class's own default object; a name no class has is matched as
+    // part of a class name. 0 = nothing usable, or a lookup cut short. The same resolver
+    // (Aura::ResolveUserInstance) as the pipe's invoke_function class_name and the mailbox's
+    // FIND_INSTANCE. [FINDINSTANCE-SUBSTRING-USERFACING]
     __declspec(dllexport) uintptr_t UE5_FindInstanceOfClass(const char* className);
     __declspec(dllexport) uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName);
     __declspec(dllexport) int32_t   UE5_CallProcessEvent(uintptr_t instance, uintptr_t func,
@@ -574,6 +579,11 @@ extern "C" {
     // While an earlier toggle is queued or being dispatched, a Set sends
     // nothing: -5 for the same direction, -6 for the opposite one.
     // [W3-DEBUGCAM-QUEUED] [DBGCAM-OFF-OVER-QUEUED-ON]
+    // -17 = an ON not sent: no CheatManager is live, and ToggleDebugCamera does
+    // nothing on its class default object (4.20+; undefined behaviour on
+    // 4.18/4.19). With no live CheatManager the read answers 0 or 1, never -1
+    // (1 when a Debug Camera controller is already active); an OFF there
+    // switches the controller back by hand. [DEBUGCAM-FORCEON-CDO]
     __declspec(dllexport) int32_t   UE5_GetDebugCameraState();
     __declspec(dllexport) int32_t   UE5_SetDebugCamera(int32_t enable);
 
@@ -672,7 +682,7 @@ private:
 // PIPE_BUF_SIZE = 65536
 ```
 
-For the JSON protocol (104 commands, including `find_refs_to_uobject`), see
+For the JSON protocol (105 commands, including `find_refs_to_uobject`), see
 [pipe-protocol.md](pipe-protocol.md). Command name constants live in `Renge.h`
 (legacy alias: `PipeProtocol`).
 

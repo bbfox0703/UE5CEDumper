@@ -31,6 +31,42 @@ internal static class DebugCameraText
                             "queued OFF does not turn the camera off on most engines: " +
                             "press Force OFF again once the game responds.");
 
+    internal const string KeyOnTemplate = "str.DbgCam.OnTemplate";
+
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] A Force's status, plus the DLL's warning when the toggle ran on the
+    /// CheatManager's class default object: there is no live CheatManager, so the toggle does nothing there. Only a DLL
+    /// from builds 3676-3681 sends it; a newer one refuses that ON (<see cref="NoLiveCheatManagerText"/>).</summary>
+    internal static string WithTemplateNote(string status, bool? onTemplate)
+        => onTemplate == true ? status + " " + OnTemplateText : status;
+
+    internal static string OnTemplateText => Say(KeyOnTemplate,
+        "⚠ The toggle targets the CheatManager's class default object: there is no live CheatManager (usual in a " +
+        "Shipping build), and a toggle there does nothing.");
+
+    internal const string KeyNoLiveCheatManager = "str.DbgCam.NoLiveCheatManager";
+
+    /// <summary>[DEBUGCAM-FORCEON-CDO] A Force ON the DLL did not send (<see cref="Constants.DebugCameraNoLiveCheatManagerResult"/>):
+    /// no CheatManager is live, and ToggleDebugCamera does nothing on its class default object.</summary>
+    internal static string NoLiveCheatManagerText => Say(KeyNoLiveCheatManager,
+        "⛔ Force ON was not sent — there is no live CheatManager, and ToggleDebugCamera does nothing on its class " +
+        "default object. UE 5 leaves it out of Shipping builds by default; elsewhere, enter gameplay first. The camera " +
+        "stays OFF.");
+
+    internal const string KeyForceFailed = "str.DbgCam.ForceFailed";
+
+    /// <summary>[DEBUGCAM-FORCEON-CDO] A Force answered -1. It no longer means "no live CheatManager" (that is
+    /// <see cref="NoLiveCheatManagerText"/>): the state did not read, or the toggle failed.</summary>
+    internal static string ForceFailed(bool wantOn) => AobMakerStatus.Say(KeyForceFailed,
+        "Force {0} failed: the Debug Camera state could not be read, or the toggle failed (see the DLL log).",
+        wantOn ? "ON" : "OFF");
+
+    internal const string KeyStateUnknown = "str.DbgCam.StateUnknown";
+
+    /// <summary>[DEBUGCAM-FORCEON-CDO] ↻ read -1: a read that failed, never the no-live-CheatManager case (that read
+    /// lands on the class default object and answers 0 or 1), so never "enter gameplay".</summary>
+    internal static string StateUnknownText => Say(KeyStateUnknown,
+        "Debug Camera state unknown — the DLL could not read it (see the DLL log).");
+
     internal const string KeyBlockedOn = "str.DbgCam.BlockedOn";
     internal const string KeyBlockedOff = "str.DbgCam.BlockedOff";
 

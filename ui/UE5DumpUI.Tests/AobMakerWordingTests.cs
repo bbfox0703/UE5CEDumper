@@ -163,6 +163,10 @@ public class AobMakerWordingTests
              .GoneObjectStatus(new UE5DumpUI.Models.InstanceWalkResult { IsNoHeader = true })!);
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyStale, UE5DumpUI.ViewModels.LiveWalkerViewModel
              .GoneObjectStatus(new UE5DumpUI.Models.InstanceWalkResult { IsStale = true })!);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyContainerFieldGone,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.ContainerFieldGoneText("F", "O"), "F", "O");
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyContainerOwnerReplaced,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.ContainerOwnerReplacedText("N", "W", "F"), "N", "W", "F");
 
         // [CEXML-DEFINITION-VIEW-AS-DATA] the definition notice, the refusal, and the button labels it names
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyDefinitionView,
@@ -171,6 +175,34 @@ public class AobMakerWordingTests
              UE5DumpUI.ViewModels.LiveWalkerViewModel.DefinitionNoDataText("A"), "A");
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFunctionsLoading,
              UE5DumpUI.ViewModels.LiveWalkerViewModel.FunctionsLoadingText("A"), "A");
+        // [LEAD-LW-NULLROW-HEX] [LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST] [CEXPORT-ENUMNAMES-NOTE] [LEAD-DT-EXPORT-64ROWS]
+        // [CEXPORT-NESTED-TRUNC-NOTE] the 2026-11-02 pass's words
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyNoRowAddress,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.NoRowAddressText("A"), "A");
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyDataTableNotRestored,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.DataTableNotRestoredText);
+        Same(CeXmlExportService.KeyEnumNamesUnavailable, CeXmlExportService.EnumNamesUnavailableNote);
+        Same(UE5DumpUI.Helpers.FlyText.KeyNoclipNotApplied, UE5DumpUI.Helpers.FlyText.ModeWord(true, 1));
+        Same(UE5DumpUI.Helpers.FlyText.KeyCollisionNotRestored, UE5DumpUI.Helpers.FlyText.ModeWord(false, 0));
+        Same(UE5DumpUI.Helpers.FlyText.KeyCollisionOn, UE5DumpUI.Helpers.FlyText.CollisionClause(1));
+        Same(UE5DumpUI.Helpers.FlyText.KeyCollisionOff, UE5DumpUI.Helpers.FlyText.CollisionClause(0));
+        // [SOLIDE-RELATED-STOPS] Detect Stealth Meter whose search stopped short
+        Same(UE5DumpUI.Helpers.StealthText.KeyStopsLead,
+             UE5DumpUI.Helpers.StealthText.StopsClause(new UE5DumpUI.Models.RelatedObjectsStops { Cancelled = true }),
+             UE5DumpUI.Core.PartialResultNotice.RelatedStopCauses(
+                 new UE5DumpUI.Models.RelatedObjectsStops { Cancelled = true })[0]);
+        Same(ValueTargetCheck.KeyNonFinite,
+             ValueTargetCheck.NonFiniteError(UE5DumpUI.Models.ValueScanDataType.Float, "1e400")!, "1e400");
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyTablePageCut,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.TablePageCutText("E"), "E");
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyTableCutEntry,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.TableCutEntryText("R", 5000, 64), "R", 5000, 64);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyNestedOnce,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.NestedOnceText("E"), "E");
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyNestedMany,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.NestedManyText("E", 3), "E", 3);
+        Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyNestedMore,
+             UE5DumpUI.ViewModels.LiveWalkerViewModel.NestedMoreText(3), 3);
         // ...and the Functions row buttons that refusal names.
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFuncGenScriptLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.FuncGenScriptLabel);
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyFuncPipeInvokeLabel, UE5DumpUI.ViewModels.LiveWalkerViewModel.FuncPipeInvokeLabel);
@@ -188,6 +220,38 @@ public class AobMakerWordingTests
         Same(ClipboardConvenience.KeyNotCopied, ClipboardConvenience.NotCopiedText("7FF6"), "7FF6");
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyBugItNotCopied,
              UE5DumpUI.ViewModels.TeleportViewModel.BugItNotCopiedText("BugItGo 1 2 3"), "BugItGo 1 2 3");
+        // [TELEPORT-BUGITGO-PARENTREL] Copy as BugItGo refusing a parent-relative read
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyBugItParentRelative,
+             UE5DumpUI.ViewModels.TeleportViewModel.BugItParentRelativeText);
+        // [FINDINSTANCE-SUBSTRING-USERFACING] the object a Console run's class name resolved to
+        Same(InvokePickText.KeyObject, InvokePickText.ObjectText("CheatManager_0", "CheatManager"),
+             "CheatManager_0", "CheatManager");
+        Same(InvokePickText.KeyClassDefault, InvokePickText.ClassDefaultText("Default__CheatManager", "CheatManager"),
+             "Default__CheatManager", "CheatManager");
+        Same(InvokePickText.KeyDebugCameraOwned, InvokePickText.DebugCameraOwnedText("CheatManager_0", "CheatManager"),
+             "CheatManager_0", "CheatManager");
+        // [INVOKE-NONSTATIC-ON-CDO] a function that is not static ran on a template
+        Same(InvokePickText.KeyTemplateClassDefault, InvokePickText.TemplateClassDefaultText("Default__Actor", "Actor"),
+             "Default__Actor", "Actor");
+        Same(DebugCameraText.KeyOnTemplate, DebugCameraText.OnTemplateText);
+        // [DEBUGCAM-FORCEON-CDO] a Force ON refused for no live CheatManager; -1 is a failure, not that case
+        Same(DebugCameraText.KeyNoLiveCheatManager, DebugCameraText.NoLiveCheatManagerText);
+        Same(DebugCameraText.KeyForceFailed, DebugCameraText.ForceFailed(wantOn: true), "ON");
+        Same(DebugCameraText.KeyStateUnknown, DebugCameraText.StateUnknownText);
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] a Freeze whose push found the plugin unreachable
+        Same(UE5DumpUI.ViewModels.PropertySearchViewModel.KeyFreezeNotReachable,
+             UE5DumpUI.ViewModels.PropertySearchViewModel.FreezeNotReachableText(null),
+             AobMakerUnavailable.Text(null));
+        Same(UE5DumpUI.ViewModels.PropertySearchViewModel.KeyFreezeTimedOut,
+             UE5DumpUI.ViewModels.PropertySearchViewModel.FreezeTimedOutText);
+        Same(UE5DumpUI.ViewModels.PropertySearchViewModel.KeyFreezeNotAdded,
+             UE5DumpUI.ViewModels.PropertySearchViewModel.FreezeNotAddedText("too large."), "too large");
+        // [LISTINSTANCES-KEEPS-TEMPLATES] a Force armed on nothing because only templates of the class exist
+        Same(ForceText.KeyTemplatesOnly, ForceText.TemplatesOnlyNote("CharacterMovementComponent", 3),
+             "CharacterMovementComponent", 3);
+        Same(InvokePickText.KeyTemplateSubobject,
+             InvokePickText.TemplateSubobjectText("CharMoveComp", "CharacterMovementComponent", "Default__Character"),
+             "CharMoveComp", "CharacterMovementComponent", "Default__Character");
 
         // [COORDPICK-TIMEDOUT-TEXT] The no-DLL coordinate picker's push with no reply in time
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordNoDllTimedOut,
@@ -215,8 +279,58 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyTrainerRefusedNoReason,
              UE5DumpUI.ViewModels.TeleportViewModel.TrainerRefusedNoReasonText(1, 9, "E"), "1", "9", "E");
 
+        // [LEAD-PROPSEARCH-TOPTIONAL-LEAVES] Freeze / Force on a Property Search deep row
+        Same(UE5DumpUI.Models.PropertySearchMatch.KeyNestedNoAction,
+             new UE5DumpUI.Models.PropertySearchMatch { PropName = "A.B", IsNested = true }.NestedActionRefusedText,
+             "A.B");
+
+        // [CONSOLE-ROWRUN-SELECTED] a Console run refused while another is in flight
+        Same(ConsoleRunText.KeyStillRunning, ConsoleRunText.StillRunningText("Fly"), "Fly");
+
+        // [TELEPORT-RECALL-PARENTREL] Recall / Force / TP facing / Fill / the library on a parent-relative pose
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyRecallParentRelative,
+             UE5DumpUI.ViewModels.TeleportViewModel.RecallParentRelativeText(false, 2), "2");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyForceParentRelative,
+             UE5DumpUI.ViewModels.TeleportViewModel.RecallParentRelativeText(true, 2), "2");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyMarkerSavedParentRelative,
+             UE5DumpUI.ViewModels.TeleportViewModel.MarkerSavedParentRelativeText(1), "1");
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyRelativeParentRelative,
+             UE5DumpUI.ViewModels.TeleportViewModel.RelativeParentRelativeText);
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyCoordFillParentRelative,
+             UE5DumpUI.ViewModels.TeleportViewModel.CoordFillParentRelativeText);
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyLibParentRelative,
+             UE5DumpUI.ViewModels.TeleportViewModel.LibParentRelativeText);
+        Same(UE5DumpUI.Models.TeleportCodes.KeyParentRelative, UE5DumpUI.Models.TeleportCodes.ParentRelativeText);
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyLastEmpty, UE5DumpUI.ViewModels.TeleportViewModel.LastEmptyText);
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyLastEmptySummary,
+             UE5DumpUI.ViewModels.TeleportViewModel.LastEmptySummaryText);
+
+        // [MAINWINDOW-INVOKE-LIMIT1-CDO] the param dialog opened on a class, with no object
+        Same(InvokePickText.KeyTargetByClass, InvokePickText.TargetByClassText("CheatManager"), "CheatManager");
+        // [MAINWINDOW-NAVIGATE-EXACT-NAME] a Locate with nothing live to search from
+        Same(UE5DumpUI.ViewModels.MainWindowViewModel.KeyNoLiveInstanceToLocate,
+             UE5DumpUI.ViewModels.MainWindowViewModel.NoLiveInstanceToLocateText("PlayerController", "GWorld", new UE5DumpUI.Models.LiveInstanceResult()),
+             "PlayerController", "GWorld");
+        var subclassPick = new UE5DumpUI.Models.LiveInstanceResult
+        {
+            Address = "0x10", Name = "BP_PC_C_0", ClassName = "BP_PC_C", Pick = UE5DumpUI.Models.LiveInstanceResult.PickLive,
+        };
+        var legacyMiss = new UE5DumpUI.Models.LiveInstanceResult { Pick = UE5DumpUI.Models.LiveInstanceResult.PickLegacy };
+        Same(UE5DumpUI.ViewModels.MainWindowViewModel.KeyNavigatedToSubclass,
+             UE5DumpUI.ViewModels.MainWindowViewModel.FunctionNavigateText("PlayerController", "FOV", subclassPick,
+                 picked: false, "function"),
+             "BP_PC_C_0", "BP_PC_C", "PlayerController", "FOV");
+        Same(UE5DumpUI.ViewModels.MainWindowViewModel.KeyLiveLookupLegacy,
+             UE5DumpUI.ViewModels.MainWindowViewModel.PickNote(legacyMiss, "Character").TrimStart(), "Character");
+        Same(UE5DumpUI.ViewModels.MainWindowViewModel.KeyNoLiveInstanceToLocateLegacy,
+             UE5DumpUI.ViewModels.MainWindowViewModel.NoLiveInstanceToLocateText("Character", "GWorld", legacyMiss),
+             "Character", "GWorld");
+        Same(UE5DumpUI.ViewModels.MainWindowViewModel.KeyLocating,
+             UE5DumpUI.ViewModels.MainWindowViewModel.LocateStatusText(subclassPick, "PlayerController", "GWorld"),
+             "BP_PC_C_0", "BP_PC_C", "GWorld");
+
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(78, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(125, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

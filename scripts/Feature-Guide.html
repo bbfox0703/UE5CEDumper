@@ -306,7 +306,10 @@ Reflection metadata:
 The "find every live object of class X" tab.
 
   1. Type a class name (e.g. PlayerController, or a game class like BP_Hero_C).
-  2. It lists every live, non-CDO instance with its address + class.
+  2. It lists every object of that class with its address + class -- class
+     defaults (Default__...) and Blueprint templates included.  By default the
+     lowest GObjects indices come first, which is where a Blueprint's defaults
+     are found; tick "Newest first" to keep just-spawned instances instead.
   3. Double-click / "Live" a row  -&gt; opens it in Live Walker.
 
 Options:
@@ -503,19 +506,23 @@ Discovers UFUNCTION(exec) console commands -- the game's own cheat / debug verbs
      class.
   2. Fire one directly, or export it as an AA script.
 
-Debug Camera (works UE4 + UE5):
+Debug Camera (UE4 + UE5 when a CheatManager is live):
   When ToggleDebugCamera is found, a Debug Camera row appears.  It spawns UE's
   free-fly ADebugCameraController (WASD + mouse), zero memory edits.  Use
   Force On / Force Off (robust -- handles Shipping builds whose DisableDebugCamera
   was stripped), or Copy CE Script for a self-contained CE checkbox.
+  Force On needs a live CheatManager.  UE 5 leaves it out of Shipping builds by
+  default; with none, Force On sends nothing and says so (the CE checkbox
+  unticks itself).
 
 UCheatManager caveat:
-  UE wraps UCheatManager verbs (Fly / Ghost / God / Slomo / Teleport) in
-  #if !UE_BUILD_SHIPPING.  The reflection metadata survives the cook (you can
-  list + invoke them) but the BODY is stripped -- so Result = 0 and nothing
-  happens in a Shipping build.  The panel flags this with an orange footer when
-  the exec's class looks like a CheatManager.  Verify against a game-specific
-  target instead.
+  The cheat verbs (Fly / Ghost / God / Slomo / Teleport) keep their bodies in a
+  Shipping build; what is usually missing is a live CheatManager.  UE 5 compiles
+  its creation out of Shipping, and a UE 4 game creates one only when it runs
+  standalone.  The invoke then lands on the class default object, where a verb
+  does nothing (Result = 0) or faults.  The panel flags this with an orange
+  footer when the exec's class looks like a CheatManager.  Verify against a
+  game-specific target instead.
 
 --------------------------------------------------------------------------------
 <span class="hdr" id="sec-13">13.  LIVE FUNCS (Call Profiler)</span>
@@ -590,8 +597,11 @@ MARKERS (BugItGo-style)
   Stand somewhere, Save on Marker 1 / 2 / 3.  Recall to jump back (rotation
   restored, fall velocity zeroed).  Markers live in the DLL, so they survive a UI
   restart while the game runs.  Recall is refused with a hint if you changed maps;
-  Force overrides.  Copy as BugItGo puts a "BugItGo X Y Z" string on the
-  clipboard; paste one back + Run to teleport there.
+  Force overrides.  A marker saved from a parent-relative read (the warning in its
+  row) is refused by Recall and Force alike: its numbers are not world
+  coordinates.  Copy as BugItGo puts a "BugItGo X Y Z" string on the
+  clipboard; paste one back + Run to teleport there.  On a parent-relative read
+  (the warning chip) it copies nothing: those numbers are not world coordinates.
 
 TELEPORT TO CURSOR
 ~~~~~~~~~~~~~~~~~~
@@ -776,7 +786,9 @@ RECIPE D -- rotate a locked / fixed-view camera
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
   Diagnose first:  Teleport -&gt; Camera POV -&gt; Get POV.  If the camera barely moves
   when you teleport the pawn, the camera is independent.
-    Easiest:  Console -&gt; Debug Camera -&gt; Force On (free-fly WASD camera).
+    Easiest:  Console -&gt; Debug Camera -&gt; Force On (free-fly WASD camera; needs a
+              live CheatManager -- not on a stock UE 5 Shipping game, so use the
+              SpringArm fix below there).
     Common fix:  Instances -&gt; SpringArmComponent -&gt; Live Walker -&gt; edit
                  RelativeRotation.Yaw.  Snaps back?  Flip bUsePawnControlRotation /
                  bInheritYaw, or invoke K2_SetRelativeRotation instead of a raw

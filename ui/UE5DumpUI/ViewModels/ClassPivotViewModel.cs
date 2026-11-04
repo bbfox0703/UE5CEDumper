@@ -277,9 +277,15 @@ public partial class ClassPivotViewModel : ViewModelBase
         _resultFilterMemory = new KeywordSearchMemory(() => (ResultFilter, Results.Count > 0));
     }
 
+    /// <summary>[CLASSPIVOT-DT-STARTUP-LOG] A game is connected: between <see cref="SetEngineState"/> and
+    /// <see cref="ClearOnDisconnect"/>. The window restores the last source before any connection, and the DataTable
+    /// list asked for then fails over a pipe that is not there; the connect lists it instead.</summary>
+    private bool _connected;
+
     public void SetEngineState(EngineState state)
     {
         _engineState = state;
+        _connected = true;
         _currentSessionId = state.GameSessionId;   // PeHash-CreationTime; matches capture-time GameSessionId
         RaiseResultRowActionGates();
         _store.SetActiveGame(state.PeHash);
@@ -297,6 +303,7 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// disk-backed and PRESERVED — a reconnect re-populates via SetEngineState.</summary>
     public void ClearOnDisconnect()
     {
+        _connected = false;
         CancelPendingWork();
         DataTables.Clear();
         _dataTable = null;
@@ -413,7 +420,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         StatusText = "";
         if (IsDataTableSource)
         {
-            if (DataTables.Count == 0) PendingLoad = RefreshDataTablesAsync();
+            if (DataTables.Count == 0 && _connected) PendingLoad = RefreshDataTablesAsync();
         }
         else
         {

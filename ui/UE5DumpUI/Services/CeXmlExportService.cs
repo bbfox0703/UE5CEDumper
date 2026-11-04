@@ -1,4 +1,5 @@
 ﻿using System.Text;
+using System.Runtime.CompilerServices;
 using System.Threading;
 using UE5DumpUI.Core;
 using UE5DumpUI.Helpers;
@@ -442,6 +443,7 @@ public static class CeXmlExportService
         try
         {
             walked = await dump.WalkInstanceBatchAsync(pending, arrayLimit, lean: lean);
+            foreach (var w in walked) NoteWalk(w);
         }
         catch
         {
@@ -657,6 +659,7 @@ public static class CeXmlExportService
         try
         {
             var r = await dump.WalkInstanceAsync(ptrAddr, ptrClassAddr, arrayLimit, lean: lean, ct: ct);
+            NoteWalk(r);
             // [CEXML-DEFINITION-VIEW-AS-DATA] A definition walk is the TYPE's member layout: laid out under the pointer,
             // CE would read the UScriptStruct / UClass object's own memory at instance offsets. The pointer stays a leaf.
             if (r.Fields.Count > 0 && !r.IsDefinition)
@@ -911,6 +914,7 @@ public static class CeXmlExportService
             try
             {
                 walked = await dump.WalkInstanceBatchAsync(todo, arrayLimit, lean: lean, ct: ct);
+                foreach (var w in walked) NoteWalk(w);
             }
             catch (OperationCanceledException) { throw; }
             catch
@@ -1013,6 +1017,7 @@ public static class CeXmlExportService
             walkResult = cached;
         else
             walkResult = await dump.WalkInstanceAsync(dataAddr, classAddr, arrayLimit: arrayLimit, lean: lean, ct: ct);
+        NoteWalk(walkResult);
 
         foreach (var f in walkResult.Fields)
         {
@@ -1175,7 +1180,10 @@ public static class CeXmlExportService
         string? altRowColorOddRgb = null,
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
-        int fabricateArrayCount = 0)
+        int fabricateArrayCount = 0,
+        // [CEXPORT-STRIDE-NOTE] Comment lines the export opens with (an empty one is skipped): what the view model knows
+        // about this game that the exported values cannot show.
+        IReadOnlyList<string>? headerNotes = null)
     {
         // Clean breadcrumbs: remove navigation cycles (e.g., Child->Parent->Child)
         // before generating XML to avoid deeply nested duplicate pointer chains.
@@ -1214,8 +1222,7 @@ public static class CeXmlExportService
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
-        // Best-effort note when the game uses the UE5.7+ UNVERIFIED packed layout (no-op otherwise).
-        sb.Append(PackedLayoutNotice.XmlComment);
+        AppendHeaderNotes(sb, headerNotes);
         sb.AppendLine("  <CheatEntries>");
 
         // Build the nested structure recursively via indentation tracking
@@ -1311,7 +1318,10 @@ public static class CeXmlExportService
         string? altRowColorOddRgb = null,
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
-        int fabricateArrayCount = 0)
+        int fabricateArrayCount = 0,
+        // [CEXPORT-STRIDE-NOTE] Comment lines the export opens with (an empty one is skipped): what the view model knows
+        // about this game that the exported values cannot show.
+        IReadOnlyList<string>? headerNotes = null)
     {
         _nextId = 100;
         _collapsePointerNodes = collapsePointerNodes;
@@ -1346,8 +1356,7 @@ public static class CeXmlExportService
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
-        // Best-effort note when the game uses the UE5.7+ UNVERIFIED packed layout (no-op otherwise).
-        sb.Append(PackedLayoutNotice.XmlComment);
+        AppendHeaderNotes(sb, headerNotes);
         sb.AppendLine("  <CheatEntries>");
 
         var indent = "    ";
@@ -1457,7 +1466,10 @@ public static class CeXmlExportService
         string? altRowColorOddRgb = null,
         bool collapseLeafPointers = false,
         int ceStringLength = 256,
-        int fabricateArrayCount = 0)
+        int fabricateArrayCount = 0,
+        // [CEXPORT-STRIDE-NOTE] Comment lines the export opens with (an empty one is skipped): what the view model knows
+        // about this game that the exported values cannot show.
+        IReadOnlyList<string>? headerNotes = null)
     {
         var cleanedBc = CleanBreadcrumbs(breadcrumbs);
 
@@ -1499,6 +1511,7 @@ public static class CeXmlExportService
         var sb = new StringBuilder();
         sb.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\"?>");
         sb.AppendLine("<CheatTable>");
+        AppendHeaderNotes(sb, headerNotes);
         sb.AppendLine("  <CheatEntries>");
 
         // ---- Outer: AA Script entry ----
@@ -4080,6 +4093,73 @@ public static class CeXmlExportService
     /// </summary>
     private static string CollapseLineBreaks(string s) =>
         s.Replace("\r\n", " ").Replace('\n', ' ').Replace('\r', ' ');
+
+    /// <summary>The comment lines a CE table opens with: the UE5.7+ packed-layout note (no-op otherwise) and
+    /// [CEXPORT-STRIDE-NOTE] the caller's notes. The AOB-wrapped export wrote none before this.</summary>
+    private static void AppendHeaderNotes(StringBuilder sb, IReadOnlyList<string>? notes)
+    {
+        sb.Append(PackedLayoutNotice.XmlComment);
+        sb.Append(XmlCommentLines(notes));
+    }
+
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] Where the walks an export makes report the enum-names latch. The DLL detects
+    /// UEnum::Names lazily, so the export's own struct or pointer walk may be the one whose reply first carries it. An
+    /// AsyncLocal, so it reaches every walk in the resolve's async call tree and no other export's.</summary>
+    private static readonly AsyncLocal<StrongBox<bool>?> s_enumLatchSink = new();
+
+    /// <summary>Watch the walks made until the returned scope is disposed; <paramref name="seen"/> turns true when one
+    /// says the latch is set.</summary>
+    internal static IDisposable WatchEnumNamesLatch(out StrongBox<bool> seen)
+    {
+        var box = seen = new StrongBox<bool>();
+        var outer = s_enumLatchSink.Value;
+        s_enumLatchSink.Value = box;
+        return new LatchScope(() => s_enumLatchSink.Value = outer);
+    }
+
+    private sealed class LatchScope(Action restore) : IDisposable
+    {
+        public void Dispose() => restore();
+    }
+
+    /// <summary>Report one walk to the watching export, if any.</summary>
+    internal static void NoteWalk(InstanceWalkResult r)
+    {
+        if (r.EnumNamesFailed && s_enumLatchSink.Value is { } box) box.Value = true;
+    }
+
+    internal const string KeyEnumNamesUnavailable = "str.Export.EnumNamesUnavailable";
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] What an export says when UEnum::Names was never located on this build.</summary>
+    internal static string EnumNamesUnavailableNote => AobMakerStatus.Say(KeyEnumNamesUnavailable,
+        "Enum member names could not be read on this build (UEnum::Names was not found): enum fields have no dropdown and show as plain numbers");
+
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] A status line's word on the enum note an export wrote, or "".</summary>
+    internal static string EnumNamesStatus(IReadOnlyList<string> notes)
+        => notes.Contains(EnumNamesUnavailableNote) ? " ⚠ " + EnumNamesUnavailableNote : "";
+
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] The note, when <paramref name="namesFailed"/> and an exported field holds an enum
+    /// (a dropdown the latch left empty); "" otherwise. A DataTable goes out through its synthetic RowMap field, so its
+    /// rows' fields are looked at too (review round 2).</summary>
+    internal static string EnumNamesNote(bool namesFailed, IEnumerable<LiveFieldValue> fields)
+        => namesFailed && fields.Any(f => HoldsEnum(f) || f.DataTableRowData?.Any(r => r.Fields.Any(HoldsEnum)) == true)
+            ? EnumNamesUnavailableNote : "";
+
+    private static bool HoldsEnum(LiveFieldValue f)
+        => f.TypeName == "EnumProperty" || !string.IsNullOrEmpty(f.EnumAddr)
+           || f.ArrayInnerType == "EnumProperty" || !string.IsNullOrEmpty(f.ArrayEnumAddr);
+
+    /// <summary>One XML comment line per non-empty note, or "" for none. A comment cannot hold "--".</summary>
+    internal static string XmlCommentLines(IReadOnlyList<string>? notes)
+        => notes == null ? ""
+         : string.Concat(notes.Where(n => !string.IsNullOrEmpty(n)).Select(n => $"<!-- {NoDoubleDash(n)} -->\n"));
+
+    /// <summary>One pass of Replace leaves "--" in a run of three dashes ("---" becomes "- --"), so it repeats until none
+    /// is left.</summary>
+    private static string NoDoubleDash(string s)
+    {
+        while (s.Contains("--")) s = s.Replace("--", "- -");
+        return s;
+    }
 
     /// <summary>
     /// Escape special characters for XML element text content.

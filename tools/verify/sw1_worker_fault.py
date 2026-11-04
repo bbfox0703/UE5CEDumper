@@ -334,7 +334,7 @@ def main() -> int:
               "in a previous process so that the armed scan below is this process's FIRST)"
               % (c_total, c_scanned, c_dur))
     else:
-        with PipeClient().connect() as c:
+        with PipeClient() as c:
             t = time.time()
             ctl = c.request("begin_value_scan", **SCAN)
             wall = time.time() - t
@@ -365,7 +365,7 @@ def main() -> int:
 
     def run_scan():
         try:
-            with PipeClient().connect() as c2:
+            with PipeClient() as c2:
                 box["r"] = c2.request("begin_value_scan", **SCAN)
         except Exception as e:            # noqa: BLE001
             box["err"] = repr(e)

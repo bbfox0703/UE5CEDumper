@@ -61,6 +61,7 @@ struct Job {
     // Last tick's pool hit the cap → `held` is a floor. Also the single definition of
     // "capped" used by the base-prune guard below.
     bool        poolTruncated = false;
+    int32_t     templatesSkipped = 0;   // ForcedFieldInfo::templatesSkipped
 };
 std::vector<Job> s_jobs;
 
@@ -185,25 +186,15 @@ uintptr_t ResolveLocalPC(uintptr_t world) {
         if (pc) return pc;
     } while (false);
 
-    auto rset = Aura::FindInstancesByClass("PlayerController", false, 100);
-    uintptr_t firstNonCdo = 0;
-    for (const auto& r : rset.results) {
-        if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
-        if (!firstNonCdo) firstNonCdo = r.addr;
-        uintptr_t cls = Ubel::GetClass(r.addr);
-        int32_t playerOff = Ubel::FindFieldOffset(cls, "Player", "Player",
-                                                  "Controller", "ObjectProperty");
-        if (playerOff >= 0 && ReadPtrAt(r.addr, playerOff))
-            return r.addr;
-    }
-    return firstNonCdo;
+    // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] By derivation, the local player's controller first.
+    return Aura::ScanForLocalPlayerController().pc;
 }
 
 uintptr_t HopThroughDebugCamera(uintptr_t pc) {
     if (!pc) return pc;
     uintptr_t cls = Ubel::GetClass(pc);
-    std::string clsName = Ubel::GetName(cls);
-    if (clsName.find("DebugCameraController") == std::string::npos) return pc;
+    // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] Derivation: a game's debug camera may be named without the word.
+    if (!Aura::ClassDerivesFromAny(cls, {Grimoire::AURA_DEBUGCAM_CLASS})) return pc;
     int32_t origOff = Ubel::FindFieldOffset(cls, "OriginalControllerRef",
                                             "OriginalController", nullptr, "ObjectProperty");
     uintptr_t orig = ReadPtrAt(pc, origOff);
@@ -348,10 +339,12 @@ void ApplyJobLocked(Job& job, bool restore, bool* drifted) {
     // derives from "Enemy", which is when it SHOULD be.
     auto rset = Aura::FindInstancesDerivedFrom(job.className, Grimoire::SOLIDE_MAX_INSTANCES);
     std::unordered_set<uintptr_t> seen;
+    Aura::TemplateOuterMemo outerMemo;
     for (const auto& r : rset.results) {
-        // Aura already drops CDOs (it has to, before its cap). Kept as the
-        // local invariant: ApplyToInstance must never write a class default.
-        if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
+        // Aura already drops templates (it has to, before its cap). Kept as the
+        // local invariant: ApplyToInstance must never write a template, whose value every
+        // later spawn copies. [LISTINSTANCES-KEEPS-TEMPLATES]
+        if (!r.addr || Aura::TemplateOf(r.addr, outerMemo).kind != Aura::TemplateKind::None) continue;
         uintptr_t cls = r.classAddr ? r.classAddr : Ubel::GetClass(r.addr);
         if (!cls) continue;
         seen.insert(r.addr);
@@ -371,6 +364,7 @@ void ApplyJobLocked(Job& job, bool restore, bool* drifted) {
         // Aura already computed this two lines up and we used to drop it on the floor,
         // leaving "held: 0" and "held: 256 of who-knows-how-many" indistinguishable.
         job.poolTruncated = rset.truncated;
+        job.templatesSkipped = rset.templatesSkipped;
         // Prune per-instance bases for owners no longer in the live pool — bounds the map
         // and avoids restoring a stale base to a GC-reused address. Only when the pool was
         // NOT capped: a capped result is a shifting first-N window, so an absent owner may
@@ -380,9 +374,9 @@ void ApplyJobLocked(Job& job, bool restore, bool* drifted) {
         //
         // Uses Aura's own `truncated` rather than re-deriving "capped" from the result
         // size, so the prune guard and the UI badge can never disagree about whether the
-        // pool was complete. Equivalent on this path by construction: FindInstancesByClass
-        // is called with the default buildHistogram=false, where Aura sets
-        // truncated = (results.size() >= maxResults) — exactly the old test, negated.
+        // pool was complete. Equivalent on this path by construction: FindInstancesDerivedFrom
+        // is called without totalOut, where Aura sets truncated = (results.size() >= maxResults)
+        // — exactly the old test, negated.
         if (!rset.truncated) {
             for (auto it = job.baseByOwner.begin(); it != job.baseByOwner.end(); )
                 it = seen.count(it->first) ? std::next(it) : job.baseByOwner.erase(it);
@@ -535,12 +529,13 @@ int32_t GetState(std::vector<ForcedFieldInfo>& out) {
         fi.sampleOwner = j.sampleOwner;
         fi.sampleOffset= j.sampleOffset;
         fi.poolTruncated = j.poolTruncated;
+        fi.templatesSkipped = j.templatesSkipped;
         out.push_back(std::move(fi));
     }
     return FR_OK;
 }
 
-int32_t FindStealthMeter(std::vector<StealthCandidate>& out, int32_t maxResults) {
+int32_t FindStealthMeter(std::vector<StealthCandidate>& out, int32_t maxResults, Aura::RelatedObjectsStats* stats) {
     out.clear();
     uintptr_t world = DerefWorld();
     if (!world) return FR_ERR_NOT_INIT;
@@ -551,7 +546,7 @@ int32_t FindStealthMeter(std::vector<StealthCandidate>& out, int32_t maxResults)
     if (!pawn) return FR_ERR_NO_TARGET;
 
     // Scan the pawn + its owned components/counterparts for numeric stealth fields.
-    std::vector<Aura::RelatedObject> related = Aura::GetRelatedObjects(pawn);
+    std::vector<Aura::RelatedObject> related = Aura::GetRelatedObjects(pawn, 128, stats);
     std::vector<StealthCandidate> cands;
     std::vector<std::pair<std::string, std::string>> seen; // (className, fieldName) dedupe
     for (const auto& ro : related) {

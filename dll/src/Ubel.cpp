@@ -1361,9 +1361,8 @@ bool ResolvePropertyNameType(uintptr_t fieldAddr, std::string& outName, std::str
         outName = GetName(fieldAddr);                          // UProperty name (OFF_UOBJECT_NAME)
     }
 
-    // Reject non-ASCII / empty names (failed deref landing on garbage).
-    if (outName.empty() || static_cast<unsigned char>(outName[0]) < 0x20
-        || static_cast<unsigned char>(outName[0]) >= 0x7F)
+    // Reject an empty name or one that does not open like a name (a failed deref landing on garbage).
+    if (!Utf8Helpers::IsPlausibleNameStart(outName))
         return false;
     return true;
 }
@@ -1375,7 +1374,7 @@ static std::string ReadSlotObjectName(uintptr_t propAddr, bool (*isKind)(uintptr
     uintptr_t ptr = 0;
     if (!Macht::ReadSafe(propAddr + DynOff::FSTRUCTPROP_STRUCT, ptr) || !ptr || !isKind(ptr)) return "";
     std::string name = GetName(ptr);
-    if (name.empty() || name[0] < 0x20 || name[0] >= 0x7F) return "";
+    if (!Utf8Helpers::IsPlausibleNameStart(name)) return "";
     return name;
 }
 static std::string ReadStructTypeName(uintptr_t propAddr)    { return ReadSlotObjectName(propAddr, IsScriptStructObject); }
@@ -1454,8 +1453,24 @@ uintptr_t ReadPropertyEnum(uintptr_t propAddr, const std::string& typeName) {
     return e;
 }
 
+// [USMAP-ENUM-SIGNEDNESS] An EnumProperty's UnderlyingProp type -- the signedness its size cannot say, which both
+// canonical .usmap writers take from here. FEnumProperty (and UE4's UEnumProperty) declares FNumericProperty*
+// UnderlyingProp right before its UEnum* Enum, so it is read one pointer before the Enum slot. Call it only after
+// that Enum slot validated: that is what proves the family is right here. Only an integer property is accepted, since
+// no enum has any other underlying type; anything else is "" and the export falls back to the size.
+static std::string ReadEnumUnderlyingType(uintptr_t enumPropAddr) {
+    uintptr_t under = 0;
+    if (!Macht::ReadSafe(enumPropAddr + DynOff::FENUMPROP_ENUM - 8, under) || !under) return std::string();
+    std::string tn = GetPropertyTypeNameForMode(under);
+    static const char* const kIntegerTypes[] = { "ByteProperty", "Int8Property", "Int16Property", "UInt16Property",
+                                                 "IntProperty", "UInt32Property", "Int64Property", "UInt64Property" };
+    for (const char* t : kIntegerTypes)
+        if (tn == t) return tn;
+    return std::string();
+}
+
 static bool IsPrintableName(const std::string& n) {
-    return !n.empty() && static_cast<unsigned char>(n[0]) >= 0x20 && static_cast<unsigned char>(n[0]) < 0x7F;
+    return Utf8Helpers::IsPlausibleNameStart(n);
 }
 
 // [SDK-METACLASS] A class-valued property's two classes: PropertyClass, the class of the VALUE
@@ -1531,19 +1546,19 @@ static void ReadSlotClassNames(uintptr_t prop, const std::string& tn, std::strin
     if (IsClassValuedProperty(tn)) ApplyClassValuedNames(prop, objClass, metaClass);   // [SDK-METACLASS]
 }
 
-// Forward declaration -- definition lives further down this file (line ~2441).
+// Forward declaration -- the definition lives further down this file.
 // WalkClassEx calls it at the top to ensure FSTRUCTPROP_STRUCT is calibrated
 // before any caller reads FProperty subclass extension fields.
 static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields);
 
 // Memo for the ENRICHED walk. Separate from s_walkClassCache because the two hold
 // different things: that one holds WalkClass's plain fields, this one holds the same
-// fields plus every structType / objClassName / innerType / enumName / boolFieldMask
-// read on top of them. Four call sites were already commented `// cached` — they were
-// not, and the difference is not academic: WalkClass's Fields is the FLATTENED
-// inheritance chain, so an Actor subclass carries 100-300 FieldInfo × 14 std::string,
-// deep-copied on every call, and snapshot capture / group scan reach this per struct-
-// array ELEMENT from every ParallelGObjectsScan worker at once. (B10)
+// fields plus the type metadata read on top of them. Four call sites were already
+// commented `// cached` — they were not, and the difference is not academic:
+// WalkClass's Fields is the FLATTENED inheritance chain, so an Actor subclass carries
+// 100-300 FieldInfo of a few dozen std::string each, deep-copied on every call, and
+// snapshot capture / group scan reach this per struct-array ELEMENT from every
+// ParallelGObjectsScan worker at once. (B10)
 static std::unordered_map<uintptr_t, ClassInfo> s_walkClassExCache;
 static std::mutex s_walkClassExCacheMutex;
 
@@ -1631,7 +1646,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
             const uintptr_t e = ReadPropertyEnum(prop, ptn);   // [ENUMSLOT-ANY-NAME]
             if (!e) return std::string();
             std::string n = GetName(e);
-            return (!n.empty() && n[0] >= 0x20 && n[0] < 0x7F) ? n : std::string();
+            return (Utf8Helpers::IsPlausibleNameStart(n)) ? n : std::string();
         };
 
         // StructProperty -> UScriptStruct name
@@ -1717,8 +1732,9 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
         else if (tn == "EnumProperty") {
             if (const uintptr_t enumPtr = ReadPropertyEnum(fi.Address, tn)) {   // [ENUMSLOT-ANY-NAME]
                 std::string ename = GetName(enumPtr);
-                if (!ename.empty() && ename[0] >= 0x20 && ename[0] < 0x7F)
+                if (Utf8Helpers::IsPlausibleNameStart(ename))
                     fi.enumName = ename;
+                fi.enumUnderlyingType = ReadEnumUnderlyingType(fi.Address);   // [USMAP-ENUM-SIGNEDNESS]
             }
         }
 
@@ -1726,7 +1742,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
         else if (tn == "ByteProperty") {
             if (const uintptr_t enumPtr = ReadPropertyEnum(fi.Address, tn)) {   // [ENUMSLOT-ANY-NAME]
                 std::string ename = GetName(enumPtr);
-                if (!ename.empty() && ename[0] >= 0x20 && ename[0] < 0x7F)
+                if (Utf8Helpers::IsPlausibleNameStart(ename))
                     fi.enumName = ename;
             }
         }
@@ -2268,7 +2284,7 @@ static void ReadParamSlotNames(uintptr_t prop, ParamField& p) {
     if (!ptr) return;
     if (p.typeName == "InterfaceProperty") p.interfaceClass = ptr;   // [VND584-04]
     std::string name = GetName(ptr);
-    if (name.empty() || name[0] < 0x20 || name[0] >= 0x7F) return;
+    if (!Utf8Helpers::IsPlausibleNameStart(name)) return;
     (p.typeName == "StructProperty" ? p.structType : p.objClass) = std::move(name);
 }
 
@@ -3164,7 +3180,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                 // only ([STRUCTPROBE-ANY-NAME]: this path named and WALKED any named object)
                                 if (Macht::ReadSafe(cur + subclassStart, structPtr) && IsScriptStructObject(structPtr)) {
                                     std::string sn = GetName(structPtr);
-                                    if (!sn.empty() && sn[0] >= 0x20 && sn[0] < 0x7F)
+                                    if (Utf8Helpers::IsPlausibleNameStart(sn))
                                         param.structType = sn;
                                     // Phase B: walk the UScriptStruct to discover sub-fields
                                     ClassInfo structInfo = WalkClass(structPtr);
@@ -3180,7 +3196,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                 uintptr_t classPtr = 0;
                                 if (Macht::ReadSafe(cur + subclassStart, classPtr) && IsClassObject(classPtr)) {
                                     std::string cn = GetName(classPtr);
-                                    if (!cn.empty() && cn[0] >= 0x20 && cn[0] < 0x7F)
+                                    if (Utf8Helpers::IsPlausibleNameStart(cn))
                                         param.objClassName = cn;
                                 }
                             }
@@ -3578,7 +3594,7 @@ OptionalLayoutInfo ResolveOptionalLayout(uintptr_t optionalProp, int32_t optiona
             // [OPTSTRUCT-ANY-NAME] A struct, not the first named object: its MinAlignment decides the layout.
             if (!IsScriptStructObject(c)) continue;
             const std::string n = GetName(c);
-            if (n.empty() || n[0] < 0x20 || n[0] >= 0x7F) continue;
+            if (!Utf8Helpers::IsPlausibleNameStart(n)) continue;
             structAddr = c;
             break;
         }
@@ -4343,6 +4359,15 @@ const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex) {
     uint32_t itemFlags = 0;
     const bool itemOk = Aura::GetItemFlags(objectIndex, itemFlags);
     return DynOff::IsWeakTargetGarbage(g_cachedUEVersion, objectFlags, itemOk, itemFlags) ? " [garbage]" : "";
+}
+
+bool IsDestroyedPick(uintptr_t target, int32_t objectIndex) {
+    if (!target) return false;
+    uint32_t objectFlags = 0;
+    Macht::ReadSafe(target + Grimoire::OFF_UOBJECT_FLAGS, objectFlags);
+    uint32_t itemFlags = 0;
+    const bool itemOk = Aura::GetItemFlags(objectIndex, itemFlags);
+    return DynOff::IsDestroyedObject(g_cachedUEVersion, objectFlags, itemOk, itemFlags);
 }
 
 // [R7-B-04] ONE delegate-binding label: DescribeScriptDelegate's ladder PLUS the [garbage] tag. Five readers render a
@@ -5270,21 +5295,14 @@ ReadArrayResult ReadDelegateArrayElements(
         elem.index = i;
 
         // The payload starts behind the access detector on a checked build.
-        uintptr_t elemAddr = arr.Data + static_cast<int64_t>(i) * stride + pad;
+        const uintptr_t elemStart = arr.Data + static_cast<int64_t>(i) * stride;
+        uintptr_t elemAddr = elemStart + pad;
 
-        // Hex of the FScriptDelegate payload we actually interpret -- not the detector in
-        // front of it, so the hex and the value can never disagree about which bytes were read.
-        std::vector<uint8_t> rawBuf(kSdBase, 0);
-        if (Macht::ReadBytesSafe(elemAddr, rawBuf.data(), kSdBase)) {
-            std::string hex;
-            hex.reserve(kSdBase * 2);
-            for (auto b : rawBuf) {
-                char hx[3];
-                snprintf(hx, sizeof(hx), "%02X", b);
-                hex += hx;
-            }
-            elem.hex = std::move(hex);
-        }
+        // Hex of the whole element the row names, detector and alignment tail included, with a space where the
+        // detector ends.
+        std::vector<uint8_t> rawBuf(static_cast<size_t>(stride), 0);
+        if (Macht::ReadBytesSafe(elemStart, rawBuf.data(), stride))
+            elem.hex = DynOff::DelegateHex(rawBuf.data(), stride, pad);
 
         // Resolve target via FWeakObjectPtr. ⛔ BOTH RETURNS ARE LOAD-BEARING: on a faulted
         // read objIdx/serial stay 0, the weak pointer resolves to null, and the element is
@@ -5422,10 +5440,10 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
             // reaches this loop intact. Publishing the affirmative "(0 bindings)" for it
             // told the UI and the CE exporters that a delegate provably HAS no
             // subscribers, over memory nobody could read. "???" is this file's unread
-            // sentinel and the shape is ReadInterfaceArrayElements:3159-3164 verbatim --
-            // the other 16-byte-element reader, which already gets this right.
+            // value sentinel, as in ReadInterfaceArrayElements; the hex sentinel takes the
+            // element's own shape (DelegateHex), detector included, like a read element's.
             elem.value = "???";
-            elem.hex = "????????????????????????????????";
+            elem.hex = DynOff::DelegateHex(nullptr, stride, pad);
             result.elements.push_back(std::move(elem));
             continue;
         }
@@ -5443,25 +5461,16 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
                                "at 0x%llX — reporting UNREADABLE, not zero bindings",
                        innerCount, static_cast<unsigned long long>(listAddr));
             elem.value = "???";
-            elem.hex = "????????????????????????????????";
+            elem.hex = DynOff::DelegateHex(nullptr, stride, pad);
             result.elements.push_back(std::move(elem));
             continue;
         }
 
-        // Hex: the 16-byte TArray header we actually interpreted, not the detector in
-        // front of it -- so the hex and the value can never disagree about which bytes
-        // were read. Keeps the width equal to the "????..." unread sentinel above.
-        uint8_t headerBuf[16] = {};
-        if (Macht::ReadBytesSafe(listAddr, headerBuf, 16)) {
-            std::string hex;
-            hex.reserve(32);
-            for (int b = 0; b < 16; ++b) {
-                char hx[3];
-                snprintf(hx, sizeof(hx), "%02X", headerBuf[b]);
-                hex += hx;
-            }
-            elem.hex = std::move(hex);
-        }
+        // Hex: the whole element the row names (its address, its size), the detector set off by a space so the
+        // TArray header the value came from still reads as one unit. The unread sentinels above share its shape.
+        std::vector<uint8_t> elemBuf(static_cast<size_t>(stride), 0);
+        if (Macht::ReadBytesSafe(elemAddr, elemBuf.data(), stride))
+            elem.hex = DynOff::DelegateHex(elemBuf.data(), stride, pad);
 
         // Build display: "(N bindings) [Target1::Fn1, Target2::Fn2, ...]"
         std::string display;
@@ -5548,7 +5557,7 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
             // accepted any named object -- and at delta 0 it LATCHED the wrong family for the session.
             if (!IsScriptStructObject(candidate)) continue;
             std::string sname = GetName(candidate);
-            if (sname.empty() || sname[0] < 0x20 || sname[0] >= 0x7F) continue;
+            if (!Utf8Helpers::IsPlausibleNameStart(sname)) continue;
 
             if (delta != 0) {
                 int corrected = DynOff::FSTRUCTPROP_STRUCT + delta;
@@ -7427,7 +7436,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // stopped this probe at delta 0 on any named object, before the struct beyond it.
                 if (!IsScriptStructObject(candidate)) continue;
                 std::string sname = GetName(candidate);
-                if (!sname.empty() && sname[0] >= 0x20 && sname[0] < 0x7F) {
+                if (Utf8Helpers::IsPlausibleNameStart(sname)) {
                     fv.structClassAddr = candidate;
                     fv.structTypeName  = sname;
                     fv.structDataAddr  = instanceAddr + fi.Offset;
@@ -7819,15 +7828,10 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             }
             fv.typedValue = DescribeDelegateBinding(target, targetName, objIdx, serial, funcName);   // [R7-B-04]
 
-            // Hex: FWeakObjectPtr + FName raw bytes
-            int delegateSize = 8 + fnameSize;
-            std::vector<uint8_t> buf(delegateSize, 0);
-            if (Macht::ReadBytesSafe(fieldAddr, buf.data(), delegateSize)) {
-                std::string hex;
-                hex.reserve(delegateSize * 2);
-                for (auto b : buf) { char hx[3]; snprintf(hx, sizeof(hx), "%02X", b); hex += hx; }
-                fv.hexValue = hex;
-            }
+            // Hex: all fi.Size bytes from the field's own offset -- the detector, then the FWeakObjectPtr + FName.
+            std::vector<uint8_t> buf(static_cast<size_t>(fi.Size), 0);
+            if (Macht::ReadBytesSafe(fieldAddr - dPad, buf.data(), fi.Size))
+                fv.hexValue = DynOff::DelegateHex(buf.data(), fi.Size, dPad);
             result.fields.push_back(std::move(fv));
             continue;
         }
@@ -8015,7 +8019,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         || !candidate) continue;
                     if (!Grimoire::IsUserspacePointer(candidate)) continue;
                     std::string sname = GetName(candidate);
-                    if (sname.empty() || sname[0] < 0x20 || sname[0] >= 0x7F)
+                    if (!Utf8Helpers::IsPlausibleNameStart(sname))
                         continue;
                     fv.structClassAddr = candidate;
                     fv.structTypeName  = sname;

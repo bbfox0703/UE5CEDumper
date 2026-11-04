@@ -27,6 +27,10 @@ public sealed class ForcedFieldInfo
     /// GObjects walk on every re-assert tick.
     /// </summary>
     public bool Truncated { get; init; }
+
+    /// <summary>[LISTINSTANCES-KEEPS-TEMPLATES] As <see cref="ForceFieldResult.TemplatesSkipped"/>, on the last
+    /// re-assert tick.</summary>
+    public int TemplatesSkipped { get; init; }
 }
 
 /// <summary>
@@ -44,6 +48,19 @@ public sealed class ForceFieldResult
     /// instances exist unheld. See <see cref="ForcedFieldInfo.Truncated"/>.
     /// </summary>
     public bool Truncated { get; init; }
+
+    /// <summary>[LISTINSTANCES-KEEPS-TEMPLATES] Templates of the class the pool passed over (a class default object,
+    /// its subobjects, a Blueprint component template), never written. With <see cref="Held"/> 0 it says only
+    /// templates exist. 0 from an older DLL.</summary>
+    public int TemplatesSkipped { get; init; }
+}
+
+/// <summary>[SOLIDE-RELATED-STOPS] find_stealth_meter's candidates and why its search of the player's objects
+/// stopped short (null from an older DLL, or when it did not stop).</summary>
+public sealed class StealthMeterResult
+{
+    public IReadOnlyList<StealthCandidate> Candidates { get; init; } = new List<StealthCandidate>();
+    public RelatedObjectsStops? Stops { get; init; }
 }
 
 /// <summary>

@@ -59,7 +59,7 @@ inline std::atomic<bool> g_shutdown{false};
 // process, not a single pipe command, so it ignores the per-command cancel (set
 // when a pipe client drops mid-command) and aborts only on real shutdown —
 // otherwise a client disconnect silently freezes every hold. Notably Solide's
-// only instance source (Aura::FindInstancesByClass) polls Requested() at n=0 and
+// only instance source (Aura::FindInstancesDerivedFrom) polls Requested() at i=0 and
 // would bail to an EMPTY set every re-assert tick while a client is gone. (M4)
 inline thread_local bool t_backgroundWorker = false;
 

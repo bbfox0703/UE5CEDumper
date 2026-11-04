@@ -21,8 +21,8 @@ namespace UE5DumpUI.ViewModels;
 /// 3. UI displays rows sorted by FinalScore descending, filtered by
 ///    name substring, category chip, and (optional) "Show All" toggle
 ///    that bypasses the InterestingThreshold cutoff.
-/// 4. Per-row actions: Open in LiveWalker (with find_instance fallback
-///    to ClassStruct when no live instance exists) and Copy AA Script
+/// 4. Per-row actions: Open in LiveWalker on a live object of the class or a
+///    subclass, else ClassStruct, and Copy AA Script
 ///    (Baked) -- shortcut into the same dialog that LiveWalker's
 ///    AA(Baked) button opens, fetching params on demand.
 ///
@@ -43,7 +43,10 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// without throttling rapid tab switches would stack 2s-blocking
     /// checks. Mirrors <see cref="LiveWalkerViewModel"/>'s pattern.</summary>
     private static readonly TimeSpan AobMakerCheckCooldown = TimeSpan.FromSeconds(5);
-    private DateTime _lastAobMakerCheck = DateTime.MinValue;
+    /// <summary><see cref="Environment.TickCount64"/> at the last check, null before the first: on the wall clock a
+    /// step back made the time since the last check negative, and nothing re-checked until the clock caught up.
+    /// [PROPSEARCH-FREEZE-STALE-AOBMAKER]</summary>
+    private long? _lastAobMakerCheck;
 
     /// <summary>Full unfiltered list of scored rows. Filter operates
     /// against this and rebuilds <see cref="Results"/>.</summary>
@@ -151,7 +154,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     // routes to the right destination panel. Two events:
     //
     // - NavigateToFunction(className, funcName): try to find a live
-    //   non-CDO instance of `className`; on hit, switch to LiveWalker
+    //   object of `className` or a subclass; on hit, switch to LiveWalker
     //   tab + walk to instance + auto-scroll to `funcName` row. On
     //   miss, switch to ClassStruct tab + walk class metadata.
     // - RequestCopyBakedScript(className, funcName, classAddr): fetch full
@@ -171,8 +174,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     public event Action<string>? NavigateToInstanceFinder;
 
     /// <summary>Raised to locate a live instance of the function's class within
-    /// the GWorld object graph. Payload = class name (MainWindow resolves a
-    /// representative instance via find_instance, then runs the path search).</summary>
+    /// the GWorld object graph. Payload = class name (MainWindow asks find_live_instance for
+    /// a live object of it, then runs the path search).</summary>
     public event Action<string>? LocateInGWorld;
 
     /// <summary>Engine-rooted counterpart of <see cref="LocateInGWorld"/> (path search
@@ -415,7 +418,13 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     {
         IsAobMakerAvailable = available;
         OnPropertyChanged(nameof(AobMakerNote));
+        AobMakerProbed?.Invoke(available);
     }
+
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] Every answer <see cref="ApplyAobMakerProbe"/> applies, changed or not,
+    /// for the toolbar chip: the flag raises only on a change, and it starts "up", so the first probe after Cheat
+    /// Engine came up reached nobody else.</summary>
+    public event Action<bool>? AobMakerProbed;
 
     // Filter inputs all funnel into a single ApplyFilter pass. Each
     // partial method fires once per ObservableProperty change.
@@ -444,7 +453,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     public async Task CheckAobMakerAsync()
     {
         if (_aobMaker == null) { IsAobMakerAvailable = false; return; }
-        _lastAobMakerCheck = DateTime.UtcNow;
+        _lastAobMakerCheck = Environment.TickCount64;
         bool ok;
         try
         {
@@ -465,7 +474,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     public void TryCheckAobMaker()
     {
         if (_aobMaker == null) return;
-        if (DateTime.UtcNow - _lastAobMakerCheck < AobMakerCheckCooldown) return;
+        if (_lastAobMakerCheck is long t
+            && Environment.TickCount64 - t < (long)AobMakerCheckCooldown.TotalMilliseconds) return;
         _ = CheckAobMakerAsync();
     }
 
@@ -746,7 +756,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     }
 
     /// <summary>Per-row action: fire navigate event so MainWindow can
-    /// try LiveWalker (with find_instance) or fall back to ClassStruct.</summary>
+    /// try LiveWalker (a live object of the class or a subclass) or fall back to ClassStruct.</summary>
     [RelayCommand]
     private void OpenInLiveWalker(ScoredFunctionRow? row)
     {

@@ -306,6 +306,9 @@ static void PollingThreadBody() {
             // handler had just set via SetError. Pre-clearing leaves errorMsg empty on
             // success and populated on failure -- the only consistent pairing.
             g_invokeMailbox.errorMsg[0] = '\0';
+            // [INVOKE-NONSTATIC-ON-CDO] Same reasoning for the output flags (contract 7): an INVOKE_BY_NAME whose
+            // lookup fails never reaches HandleInvoke, and must not carry the previous invoke's warning.
+            g_invokeMailbox.cmdOutFlags = 0;
 
             LOG_INFO("Mailbox: received cmd=%d", cmd);
 
@@ -532,34 +535,21 @@ static void HandleFindInstance() {
 
     LOG_INFO("Mailbox: FIND_INSTANCE class='%s'", className);
 
-    // Reuse existing logic from UE5_FindInstanceOfClass
-    auto rset = Aura::FindInstancesByClass(className, false, 100);
-
-    // Prefer non-CDO instance
-    uintptr_t found = 0;
-    for (const auto& r : rset.results) {
-        if (r.addr && r.name.find("Default__") == std::string::npos) {
-            found = r.addr;
-            break;
-        }
-    }
-
-    // Fallback: first result even if CDO
-    if (!found && !rset.results.empty() && rset.results[0].addr) {
-        found = rset.results[0].addr;
-        LOG_WARN("Mailbox: FIND_INSTANCE only CDO found for '%s'", className);
-    }
-
-    if (found) {
-        g_invokeMailbox.instanceAddr = found;
-        LOG_INFO("Mailbox: FIND_INSTANCE '%s' -> 0x%llX",
-                 className, (unsigned long long)found);
+    // [FINDINSTANCE-SUBSTRING-USERFACING] The user-facing resolver (Aura.h); its rule is contract 9 (6, + templates in
+    // 7, + destroyed objects in 9).
+    const Aura::UserInstance found = Aura::ResolveUserInstance(className);
+    g_invokeMailbox.instanceAddr = found.obj;
+    char msg[256];
+    if (found.pick == Aura::UserPick::Cancelled) {
+        // This thread is cancel-immune (Tot::MarkCancelImmune), so only a shutdown cuts the walk short.
+        snprintf(msg, sizeof(msg), "Instance lookup for '%s' was cut short: the DLL is shutting down", className);
+        SetError(-2, msg);
+    } else if (found.obj) {
+        LOG_INFO("Mailbox: FIND_INSTANCE '%s' -> 0x%llX (%s)", className, (unsigned long long)found.obj,
+                 Aura::UserPickWire(found.pick));
         SetDone(0);
     } else {
-        g_invokeMailbox.instanceAddr = 0;
-        char msg[256];
-        snprintf(msg, sizeof(msg), "No instance of '%s' found (scanned=%d)",
-                 className, rset.scanned);
+        snprintf(msg, sizeof(msg), "No instance of '%s' found (scanned=%d)", className, found.scanned);
         SetError(-2, msg);
     }
 }
@@ -784,6 +774,17 @@ static void HandleInvoke() {
         }
     }
 
+    // [INVOKE-NONSTATIC-ON-CDO] After the last refusal, before the call (which may destroy the object): a function that
+    // is not static on a template may do nothing there. Warned through cmdOutFlags (contract 7), never refused.
+    {
+        const Aura::TemplateInfo tpl = Aura::TemplateOf(instanceAddr);
+        if (WarnNonStaticOnTemplate(tpl.kind != Aura::TemplateKind::None, flagsResolved, fi.functionFlags)) {
+            g_invokeMailbox.cmdOutFlags |= INV_OUT_NONSTATIC_ON_TEMPLATE;
+            LOG_WARN("Mailbox: INVOKE '%s' is not static and 0x%llX is a %s -- it may do nothing there",
+                     fi.name.c_str(), (unsigned long long)instanceAddr, Aura::TemplateKindWire(tpl.kind));
+        }
+    }
+
     int32_t result;
     if (isStaticNative) {
         LOG_INFO("Mailbox: INVOKE -> static-native fast path "
@@ -868,19 +869,16 @@ static void HandleListFunctions() {
 
         LOG_INFO("Mailbox: LIST_FUNCTIONS finding instance of '%s'...", className);
 
-        auto rset = Aura::FindInstancesByClass(className, false, 100);
-        for (const auto& r : rset.results) {
-            if (r.addr && r.name.find("Default__") == std::string::npos) {
-                instanceAddr = r.addr;
-                break;
-            }
-        }
-        if (!instanceAddr && !rset.results.empty() && rset.results[0].addr) {
-            instanceAddr = rset.results[0].addr;
-        }
+        // [FINDINSTANCE-SUBSTRING-USERFACING] FIND_INSTANCE's resolver. The list is the picked object's class's own
+        // functions, so a base-class name lists the subclass the pick landed on.
+        const Aura::UserInstance found = Aura::ResolveUserInstance(className);
+        instanceAddr = found.obj;
         if (!instanceAddr) {
             char msg[256];
-            snprintf(msg, sizeof(msg), "No instance of '%s' found", className);
+            if (found.pick == Aura::UserPick::Cancelled)
+                snprintf(msg, sizeof(msg), "Instance lookup for '%s' was cut short: the DLL is shutting down", className);
+            else
+                snprintf(msg, sizeof(msg), "No instance of '%s' found", className);
             SetError(-2, msg);
             return;
         }
@@ -959,7 +957,7 @@ static void HandleListFunctions() {
     SetDone(0);
 }
 
-// Enumerate all live (non-CDO) instances of a class for the property-freeze
+// Enumerate all live instances of a class -- never a template -- for the property-freeze
 // helper. Paginated identically to LIST_FUNCTIONS so the CE Lua side can pull
 // multi-page result sets through the single-slot mailbox.
 //
@@ -1012,24 +1010,24 @@ static void HandleListInstances() {
 
     // Caps live in Mimic.h beside the page geometry they have to agree with.
     const int cap = derived ? LIST_INSTANCES_MAX_DERIVED : LIST_INSTANCES_MAX_EXACT;
+    // [LISTINSTANCES-KEEPS-TEMPLATES] Both walks skip templates (TemplateOf) INSIDE the walk, before the cap: they are
+    // built at class load and sit at the low indices a walk reaches first, so filtering only afterwards could return
+    // a page of nothing but templates.
     Aura::SearchResultSet rset = derived
         ? Aura::FindInstancesDerivedFrom(className, cap)
-        : Aura::FindInstancesByClass(className, /*exactMatch=*/true, /*maxResults=*/cap);
+        : Aura::FindInstancesByClass(className, /*exactMatch=*/true, /*maxResults=*/cap, /*newestFirst=*/false,
+                                     /*nameFilter=*/"", /*excludeClasses=*/{}, /*buildHistogram=*/false, /*skipTemplates=*/true);
 
-    // CDO filter: the class default object (Default__BP_Foo_C) is the
-    // template, not a live instance. Freezing its property would touch the
-    // template state — never what the user wants.
-    //
-    // The derived walk already drops CDOs INSIDE its loop (it has to — a base like
-    // AActor has thousands of them at the low GObjects indices, and filtering after
-    // the cap would return a page of nothing but templates). This second pass is
-    // therefore a no-op there and the real filter on the exact path; both are kept
-    // so neither path depends on the other's behaviour.
+    // Every entry published here is an object the freeze helper WRITES to, and never restores: a template among them
+    // -- a class default object, one of its default subobjects, a Blueprint component template -- would pass the
+    // frozen value to every later spawn. The walks already passed them over; this states the rule where the pool is
+    // published, so it does not rest on either walk alone.
     struct LiveEntry { uint64_t obj; uint64_t cls; };
     std::vector<LiveEntry> live;
     live.reserve(rset.results.size());
+    Aura::TemplateOuterMemo outerMemo;
     for (const auto& r : rset.results) {
-        if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
+        if (!r.addr || Aura::TemplateOf(r.addr, outerMemo).kind != Aura::TemplateKind::None) continue;
         live.push_back({ static_cast<uint64_t>(r.addr), static_cast<uint64_t>(r.classAddr) });
     }
 
@@ -1111,8 +1109,9 @@ static void HandleListInstances() {
 
 // CMD_SET_DEBUG_CAMERA: robust Debug Camera force on/off, shared with the UI
 // pipe (set_debug_camera). instanceAddr carries the request: 0=OFF, 1=ON,
-// 2=query (read state, no change). result gets the resulting state (1/0/-1), or
-// -5 when the toggle is QUEUED (errorMsg says what to do, which depends on the direction).
+// 2=query (read state, no change). result gets the resulting state (1/0/-1), -5 when the toggle is QUEUED (errorMsg
+// says what to do, which depends on the direction), -6 when an opposite toggle is still queued, or -17 for an ON
+// with no live CheatManager.
 // Delegates entirely to the Frieren exports, which own the toggle +
 // controller-swap fallback.
 static void HandleSetDebugCamera() {
@@ -1120,9 +1119,21 @@ static void HandleSetDebugCamera() {
     int32_t state = (req == 2)
         ? UE5_GetDebugCameraState()
         : UE5_SetDebugCamera(req != 0 ? 1 : 0);
+    // [DEBUGCAM-FORCEON-CDO] No toggle reaches the CheatManager's class default object any more (an ON there is -17),
+    // so this command leaves cmdOutFlags as the dispatcher cleared it; builds 3676-3681 set the template bit here.
     if (state == -1) {
+        // -1 is a state that did not read or a toggle that failed (-4 faulted inside it). Never the no-live-CheatManager
+        // case: its read lands on the class default object and answers 0 or 1, and an ON there answers -17.
         strncpy(g_invokeMailbox.errorMsg,
-                "Debug Camera: no live CheatManager / unreadable state",
+                "Debug Camera: unreadable state, or the toggle failed (see the DLL log)",
+                sizeof(g_invokeMailbox.errorMsg) - 1);
+        g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
+    } else if (state == DBGCAM_ERR_NO_LIVE_CHEATMANAGER) {
+        // [DEBUGCAM-FORCEON-CDO] A new negative code, only for an ON: every [ENABLE] reports it (Mimic.h, WHAT IS NOT
+        // A CHANGE AT ALL).
+        strncpy(g_invokeMailbox.errorMsg,
+                "Debug Camera: ON not sent -- no live CheatManager (UE 5 leaves it out of Shipping by default); "
+                "ToggleDebugCamera does nothing on its class default object",
                 sizeof(g_invokeMailbox.errorMsg) - 1);
         g_invokeMailbox.errorMsg[sizeof(g_invokeMailbox.errorMsg) - 1] = '\0';
     } else if (state == Stark::kInvokeTimedOutStillQueued) {

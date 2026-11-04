@@ -230,7 +230,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public ObservableCollection<string> FilterHistory => _filterMemory.History;
 
     /// <summary>Raised by the per-row "Live" action so MainWindow can open the
-    /// function in Live Walker (find a live non-CDO instance, else Class Struct).
+    /// function in Live Walker (a live object of the class or a subclass, else Class Struct).
     /// Payload = (className, funcName). Mirrors InterestingFunctionsViewModel.</summary>
     public event Action<string, string>? NavigateToFunction;
 
@@ -1692,8 +1692,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         ResultsView.Update(Results, rows, () => SelectedResult = null, FilterText);
     }
 
-    /// <summary>Per-row "Live" action: open this function on a live instance of its
-    /// class in Live Walker (MainWindow does the find_instance → walk handoff).</summary>
+    /// <summary>Per-row "Live" action: open this function on a live object of its class or a
+    /// subclass in Live Walker (MainWindow does the lookup → walk handoff).</summary>
     [RelayCommand]
     private void OpenInLiveWalker(PeProfileEntry? row)
     {

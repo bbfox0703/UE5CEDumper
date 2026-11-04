@@ -39,6 +39,11 @@ internal static class CeMailboxLayout
     // InvokeScriptTests.ParamsDataBytes_MatchesMimicH reads Mimic.h's declaration back.
     public const int    ParamsDataBytes = 1024;
 
+    // cmdOutFlags (contract 3+) and the template-warning bit published in it (Mimic.h InvokeOutFlag, contract 7+, which
+    // says which commands set it). [INVOKE-NONSTATIC-ON-CDO]
+    public const string OffOutFlags = "0x72C";
+    public const int    InvOutNonStaticOnTemplate = 0x2;
+
     // Auto-start readiness values written to OffInitState (must match Mimic.h
     // InitState). Unlike every other field here this one is NOT part of a
     // command round-trip — the DLL publishes it once during start-up so a CE Lua
@@ -89,7 +94,7 @@ internal static class CeMailboxLayout
     // the DLL publishes. The DLL answers with a RANGE, so the two failure
     // directions can be told apart: too-old script => regenerate the .CT, too-old
     // DLL => update the DLL. Today the second case is silent corruption.
-    public const int ContractVersion = 5;
+    public const int ContractVersion = 9;
 
     /// <summary>Exported symbol carrying the contract. Deliberately NOT a field of
     /// the mailbox struct: reading the layout version out of the struct whose layout

@@ -236,6 +236,121 @@ public class DumpServiceTests
         Assert.Equal("0xC100", lastReq!["expect_class_addr"]?.GetValue<string>());
     }
 
+    // [LEAD-CONSOLE-PIN-EXPECT-CLASS] The reply names the class the DLL read at the address it used, so a caller that
+    // keeps the address can send that class back with it.
+    [Fact]
+    public async Task InvokeFunctionAsync_ReadsTheClassOfTheObjectItUsed()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["result"] = 0, ["instance_addr"] = "0x1000", ["instance_class_addr"] = "0xC100",
+        });
+
+        var r = await CreateService().InvokeFunctionAsync("DoThing", className: "Foo",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal("0xC100", r.InstanceClassAddr);
+    }
+
+    // [FINDINSTANCE-SUBSTRING-USERFACING] The reply says how the class name was resolved and names the object, so the
+    // Console can show it and decline to pin a class-default or Debug-Camera-owned pick.
+    [Fact]
+    public async Task InvokeFunctionAsync_ReadsHowTheObjectWasPickedAndItsNames()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["result"] = 0, ["instance_addr"] = "0x1000", ["instance_pick"] = "class_default",
+            ["instance_name"] = "Default__CheatManager", ["instance_class_name"] = "CheatManager",
+        });
+
+        var r = await CreateService().InvokeFunctionAsync("God", className: "CheatManager",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal("class_default", r.InstancePick);
+        Assert.Equal("Default__CheatManager", r.InstanceName);
+        Assert.Equal("CheatManager", r.InstanceClassName);
+    }
+
+    // [INVOKE-NONSTATIC-ON-CDO] The reply says whether the object is a template and whether the call ran a function that
+    // is not static there; absent keys (an older DLL) stay null, so the UI keeps its older note.
+    [Fact]
+    public async Task InvokeFunctionAsync_ReadsTheTemplateVerdict()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["result"] = 0, ["instance_addr"] = "0x1000", ["instance_template"] = "template",
+            ["template_owner_name"] = "Default__Character", ["nonstatic_on_template"] = true,
+        });
+
+        var r = await CreateService().InvokeFunctionAsync("Jump", className: "CharacterMovementComponent",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal("template", r.InstanceTemplate);
+        Assert.Equal("Default__Character", r.TemplateOwnerName);
+        Assert.True(r.NonStaticOnTemplate);
+    }
+
+    [Fact]
+    public async Task SetDebugCameraDetailedAsync_ReadsTheStateAndTheTemplateVerdict()
+    {
+        // [INVOKE-NONSTATIC-ON-CDO] set_debug_camera says when its toggle ran on the CheatManager's class default object.
+        _pipe.SetHandler(_ => new JsonObject { ["ok"] = true, ["state"] = 0, ["nonstatic_on_template"] = true });
+
+        var r = await CreateService().SetDebugCameraDetailedAsync(true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(0, r.State);
+        Assert.True(r.NonStaticOnTemplate);
+    }
+
+    [Fact]
+    public async Task SetDebugCameraDetailedAsync_control_an_older_dll_sends_no_verdict()
+    {
+        _pipe.SetHandler(_ => new JsonObject { ["ok"] = true, ["state"] = 1 });
+
+        var r = await CreateService().SetDebugCameraDetailedAsync(true, TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, r.State);
+        Assert.Null(r.NonStaticOnTemplate);
+    }
+
+    [Fact]
+    public async Task InvokeFunctionAsync_control_an_older_dll_sends_no_template_verdict()
+    {
+        _pipe.SetHandler(_ => new JsonObject { ["ok"] = true, ["result"] = 0, ["instance_addr"] = "0x1000" });
+
+        var r = await CreateService().InvokeFunctionAsync("Jump", className: "X",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Null(r.InstanceTemplate);
+        Assert.Null(r.NonStaticOnTemplate);
+    }
+
+    [Fact]
+    public async Task InvokeFunctionAsync_control_an_older_dll_sends_no_pick()
+    {
+        _pipe.SetHandler(_ => new JsonObject { ["ok"] = true, ["result"] = 0, ["instance_addr"] = "0x1000" });
+
+        var r = await CreateService().InvokeFunctionAsync("God", className: "CheatManager",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal("", r.InstancePick);
+        Assert.Equal("", r.InstanceName);
+        Assert.Equal("", r.InstanceClassName);
+    }
+
+    [Fact]
+    public void Fern_InvokeReply_NamesTheClassItReadAtTheAddress()
+    {
+        var s = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
+        int start = s.IndexOf("cmd == Renge::CMD_INVOKE_FUNCTION", StringComparison.Ordinal);
+        Assert.True(start > 0);
+        int reply = s.IndexOf("data[\"instance_addr\"] = Renge::AddrToStr(instanceAddr);", start, StringComparison.Ordinal);
+        Assert.True(reply > start);
+        int next = s.IndexOf("cmd == Renge::CMD_", reply, StringComparison.Ordinal);
+        int cls = s.IndexOf("data[\"instance_class_addr\"] = Renge::AddrToStr(classAddr);", reply, StringComparison.Ordinal);
+        Assert.True(cls > reply && (next < 0 || cls < next), "the invoke reply must carry the class read at the address");
+    }
+
     [Fact]
     public async Task InvokeFunctionAsync_NoExpectClassAddr_OmitsTheKey()
     {
@@ -1098,6 +1213,26 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task WalkClassAsync_CarriesTheEnumUnderlyingType()
+    {
+        // [USMAP-ENUM-SIGNEDNESS] enum_underlying is a new, additive wire key.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true,
+            ["class"] = new JsonObject { ["name"] = "C", ["fields"] = new JsonArray
+            {
+                new JsonObject { ["name"] = "Space", ["type"] = "EnumProperty", ["enum_name"] = "ESpace", ["enum_underlying"] = "Int8Property" },
+                new JsonObject { ["name"] = "Old", ["type"] = "EnumProperty", ["enum_name"] = "EOld" },
+            } },
+        });
+
+        var model = await CreateService().WalkClassAsync("0x1", TestContext.Current.CancellationToken);
+
+        Assert.Equal("Int8Property", model.Fields[0].EnumUnderlyingType);
+        Assert.Equal("", model.Fields[1].EnumUnderlyingType);   // an older DLL sends none
+    }
+
+    [Fact]
     public async Task WalkClassAsync_CarriesEachContainerObjClass()
     {
         // [SDK-CONTAINER-OBJCLASS] key_obj_class / value_obj_class / elem_obj_class are new, additive wire keys.
@@ -1721,6 +1856,116 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task WalkInstanceAsync_ParsesEnumNamesFailed()
+    {
+        // [CEXPORT-ENUMNAMES-NOTE] Additive: UEnum::Names was never located, so the enum fields carry no entries.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["addr"] = "0x100", ["enum_names_failed"] = true, ["fields"] = new JsonArray(),
+        });
+
+        var r = await CreateService().WalkInstanceAsync("0x100", ct: TestContext.Current.CancellationToken);
+
+        Assert.True(r.EnumNamesFailed);
+    }
+
+    [Fact]
+    public void Fern_WalkReply_SaysWhenEnumNamesWereNeverFound()
+    {
+        // Both walk_instance and walk_instance_batch go through the one encoder, lean or not.
+        var s = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
+        int start = s.IndexOf("auto EncodeInstanceWalkToJson = ", StringComparison.Ordinal);
+        Assert.True(start > 0);
+        int end = s.IndexOf("return data;", start, StringComparison.Ordinal);
+        int flag = s.IndexOf("data[\"enum_names_failed\"] = true;", start, StringComparison.Ordinal);
+        int latch = s.IndexOf("DynOff::bUEnumNamesFailed.load(", start, StringComparison.Ordinal);
+        Assert.True(flag > start && flag < end, "the walk encoder must carry the latch");
+        Assert.True(latch > start && latch < flag);
+        // Review round 1: the statement that guards the emit names no lean condition, and it is not inside the
+        // encoder's `if (!lean) {` block -- the export's resolver walks lean, and it learns the latch from them too.
+        int guard = s.LastIndexOf("if (", flag, StringComparison.Ordinal);
+        Assert.DoesNotContain("lean", s[guard..flag]);
+        int leanGate = s.IndexOf("if (!lean) {", start, StringComparison.Ordinal);
+        int leanGateEnd = s.IndexOf("}", leanGate, StringComparison.Ordinal);
+        Assert.False(flag > leanGate && flag < leanGateEnd);
+    }
+
+    [Fact]
+    public async Task FindStealthMeterDetailedAsync_ReadsTheSearchsStops()
+    {
+        // [SOLIDE-RELATED-STOPS] The same stops object get_related_objects carries.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["code"] = 0, ["candidates"] = new JsonArray(),
+            ["stops"] = new JsonObject { ["owned_cap_hit"] = true, ["max_owned"] = 128 },
+        });
+
+        var r = await ((UE5DumpUI.Core.IDumpService)CreateService()).FindStealthMeterDetailedAsync(
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.NotNull(r.Stops);
+        Assert.True(r.Stops!.OwnedCapHit);
+        Assert.Equal(128, r.Stops.MaxOwned);
+    }
+
+    [Fact]
+    public void Ubel_NameGuards_GoThroughOneUtf8AwareCheck()
+    {
+        // [UBEL-ASCII-FIRSTCHAR] Thirteen guards in Ubel.cpp tested a name's first byte against printable ASCII, so a
+        // name opening with a CJK character was dropped. They go through Utf8Helpers::IsPlausibleNameStart (unit-tested
+        // in utf8_helpers_test); no raw first-byte test of a name may be left.
+        var s = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Ubel.cpp"));
+        Assert.Contains("IsPlausibleNameStart(", s);
+        // Review round 2: Wirbel::StructInner kept the same ASCII-only test, "mirroring" Ubel's probe, where a pin over
+        // Ubel.cpp alone could not see it. Every DLL source is held to it.
+        var src = Path.GetDirectoryName(NumericInputCoercionTests.RepoFile("dll/src/Ubel.cpp"))!;
+        var left = new List<string>();
+        foreach (var file in Directory.EnumerateFiles(src, "*.*").Where(f => f.EndsWith(".cpp") || f.EndsWith(".h")))
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+                         File.ReadAllText(file), @"\w+\[0\]\)?\s*(<|>=)\s*0x(20|7F)\b"))
+                left.Add($"{Path.GetFileName(file)}: {m.Value}");
+        Assert.True(left.Count == 0, "raw first-byte name checks left: " + string.Join(" | ", left));
+    }
+
+    [Fact]
+    public async Task WalkDataTableRowsAsync_CarriesTheFailedLatch()
+    {
+        // Review round 2 of [CEXPORT-ENUMNAMES-NOTE]: a DataTable's rows are read by their own command, whose reply did
+        // not say the latch was set -- and the table's own walk can run before the row walk that trips detection.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true, ["row_count"] = 0, ["rows"] = new JsonArray(), ["enum_names_failed"] = true,
+        });
+
+        var r = await CreateService().WalkDataTableRowsAsync("0x1", ct: TestContext.Current.CancellationToken);
+
+        Assert.True(r.EnumNamesFailed);
+        var fern = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
+        int h = fern.IndexOf("if (cmd == Renge::CMD_WALK_DATATABLE_ROWS)", StringComparison.Ordinal);
+        int end = fern.IndexOf("return Renge::MakeResponse(id, data)", h, StringComparison.Ordinal);
+        int latch = fern.IndexOf("data[\"enum_names_failed\"]", h, StringComparison.Ordinal);
+        Assert.True(h > 0 && latch > h && latch < end, "walk_datatable_rows must say when enum names were never found");
+
+        // ...and Live Walker latches it from every DataTable reading: one helper reads the rows, and no raw call is left.
+        var vm = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs"));
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(vm, @"_dump\.WalkDataTableRowsAsync\("));
+        Assert.Contains("_enumNamesFailed |= dt.EnumNamesFailed", vm);
+    }
+
+    [Fact]
+    public void Fern_SendsAnEnumsAddress_EvenWithNoEntries()
+    {
+        // Review round 1 of [CEXPORT-ENUMNAMES-NOTE]: enum_addr went out only beside a non-empty entry list, so under
+        // the latch a TEnumAsByte field arrived as a plain ByteProperty and an export could not tell it held an enum.
+        // Every reader of enum_addr also requires entries before it builds a dropdown.
+        var s = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
+        Assert.DoesNotContain("if (fv.enumAddr != 0 && !fv.enumEntries.empty())", s);
+        Assert.DoesNotContain("if (fv.arrayEnumAddr != 0 && !fv.arrayEnumEntries.empty())", s);
+        Assert.Contains("fj[\"enum_addr\"] = Renge::AddrToStr(fv.enumAddr);", s);
+        Assert.Contains("fj[\"enum_addr\"] = Renge::AddrToStr(fv.arrayEnumAddr);", s);
+    }
+
+    [Fact]
     public async Task WalkInstanceAsync_ParsesEnumArrayElements()
     {
         _pipe.SetHandler(_ => new JsonObject
@@ -2231,6 +2476,184 @@ public class DumpServiceTests
     [InlineData("pe_profile_start", false)]
     public void TheTraceReadersRunOnTheBulkLane(string cmd, bool bulk)
         => Assert.Equal(bulk, LaneRoutingPipeClient.IsBulk(cmd));
+
+    // ---- [MAINWINDOW-NAVIGATE-EXACT-NAME] find_live_instance ----
+
+    [Fact]
+    public async Task FindLiveInstance_SendsTheClass_AndReadsTheObject()
+    {
+        var pipe = new MockPipeClient();
+        JsonObject? sent = null;
+        pipe.SetHandler(req =>
+        {
+            sent = req;
+            return new JsonObject
+            {
+                ["ok"] = true, ["pick"] = "live", ["scanned"] = 24530, ["addr"] = "0x2A0", ["name"] = "BP_PC_C_0",
+                ["class"] = "BP_PC_C", ["class_addr"] = "0x1F0",
+            };
+        });
+        var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
+
+        var r = await dump.FindLiveInstanceAsync("PlayerController", TestContext.Current.CancellationToken);
+
+        Assert.Equal("find_live_instance", sent!["cmd"]!.GetValue<string>());
+        Assert.Equal("PlayerController", sent["class_name"]!.GetValue<string>());
+        Assert.True(r.Found);
+        Assert.Equal("0x2A0", r.Address);
+        Assert.Equal("BP_PC_C", r.ClassName);          // a subclass of the class asked for
+        Assert.Equal("live", r.Pick);
+        Assert.Equal(24530, r.Scanned);
+    }
+
+    [Fact]
+    public async Task FindLiveInstance_WithNothingLive_IsNotFound()
+    {
+        var pipe = new MockPipeClient();
+        pipe.SetHandler(_ => new JsonObject { ["ok"] = true, ["pick"] = "none", ["scanned"] = 100 });
+        var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
+
+        var r = await dump.FindLiveInstanceAsync("CheatManager", TestContext.Current.CancellationToken);
+
+        Assert.False(r.Found);
+        Assert.Equal("none", r.Pick);
+    }
+
+    [Fact]
+    public async Task FindLiveInstance_OnADllThatPredatesIt_FallsBackToTheExactNameLookup()
+    {
+        // Review 1: a proxy DLL left in a game folder outlives a UI upgrade. It answers "Unknown command", and every
+        // navigate and Locate then did nothing at all, with Detect Stats reporting "0 confirmed" as a result.
+        var pipe = new MockPipeClient();
+        var cmds = new List<string>();
+        pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]!.GetValue<string>();
+            cmds.Add(cmd);
+            return cmd == "find_live_instance"
+                ? new JsonObject { ["ok"] = false, ["error"] = "Unknown command: find_live_instance" }
+                : new JsonObject
+                {
+                    ["ok"] = true,
+                    ["instances"] = new JsonArray
+                    {
+                        new JsonObject { ["addr"] = "0x100", ["name"] = "Default__PlayerController", ["class"] = "PlayerController" },
+                        new JsonObject { ["addr"] = "0x200", ["name"] = "PlayerController_0", ["class"] = "PlayerController" },
+                    },
+                };
+        });
+        var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
+
+        var r = await dump.FindLiveInstanceAsync("PlayerController", TestContext.Current.CancellationToken);
+
+        Assert.Equal(new[] { "find_live_instance", "find_instances" }, cmds);
+        Assert.True(r.Found);
+        Assert.Equal("0x200", r.Address);
+        Assert.Equal("legacy", r.Pick);
+    }
+
+    /// <summary>A pipe that answers find_live_instance "Unknown command", like a DLL older than it, and records every
+    /// find_instances request.</summary>
+    private static (MockPipeClient Pipe, List<JsonObject> Sent) OldDllPipe(bool anyInstance)
+    {
+        var pipe = new MockPipeClient();
+        var sent = new List<JsonObject>();
+        pipe.SetHandler(req =>
+        {
+            sent.Add(req);
+            if (req["cmd"]!.GetValue<string>() == "find_live_instance")
+                return new JsonObject { ["ok"] = false, ["error"] = "Unknown command: find_live_instance" };
+            var list = new JsonArray();
+            if (anyInstance)
+                list.Add(new JsonObject { ["addr"] = "0x200", ["name"] = "PlayerController_0", ["class"] = "PlayerController" });
+            return new JsonObject { ["ok"] = true, ["instances"] = list };
+        });
+        return (pipe, sent);
+    }
+
+    [Fact]
+    public async Task FindLiveInstance_OnAnOldDll_AsksTheOldLookupExactly_AndAMissIsStillMarkedLegacy()
+    {
+        // Review 2: the legacy answer has the old limits (an exact class name, no subclass), and a MISS said "none" --
+        // so the line claimed "no live instance of X or of a subclass" though no subclass had been looked for.
+        var (pipe, sent) = OldDllPipe(anyInstance: false);
+        var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
+
+        var r = await dump.FindLiveInstanceAsync("Character", TestContext.Current.CancellationToken);
+
+        var old = Assert.Single(sent, s => s["cmd"]!.GetValue<string>() == "find_instances");
+        Assert.True(old["exact_match"]!.GetValue<bool>());
+        Assert.Equal(5, old["limit"]!.GetValue<int>());
+        Assert.False(r.Found);
+        Assert.Equal("legacy", r.Pick);
+    }
+
+    [Fact]
+    public async Task FindLiveInstance_OnAnOldDll_IsAskedOncePerConnection()
+    {
+        // Review 2: every call paid a failing round trip and a warning -- 30 of each in one Detect Stats run.
+        var (pipe, sent) = OldDllPipe(anyInstance: true);
+        var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
+        var ct = TestContext.Current.CancellationToken;
+
+        await dump.FindLiveInstanceAsync("PlayerController", ct);
+        await dump.FindLiveInstanceAsync("PlayerController", ct);
+        Assert.Equal(new[] { "find_live_instance", "find_instances", "find_instances" },
+                     sent.Select(s => s["cmd"]!.GetValue<string>()));
+
+        await pipe.ConnectAsync(ct);   // a new connection may be a newer DLL
+        sent.Clear();
+        await dump.FindLiveInstanceAsync("PlayerController", ct);
+        Assert.Equal("find_live_instance", sent[0]["cmd"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task FindLiveInstance_AnOldDllsAnswer_ThatArrivesAfterAReconnect_DoesNotMarkTheNewConnection()
+    {
+        // Review 3: the "Unknown command" reply's continuation can run after the connection dropped and a newer DLL
+        // connected -- and set the flag for a connection that has the command.
+        var pipe = new MockPipeClient();
+        var cmds = new List<string>();
+        bool reconnectDuringRequest = true;
+        pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]!.GetValue<string>();
+            cmds.Add(cmd);
+            if (cmd != "find_live_instance") return new JsonObject { ["ok"] = true, ["instances"] = new JsonArray() };
+            if (reconnectDuringRequest)
+            {
+                reconnectDuringRequest = false;
+                pipe.ConnectAsync(TestContext.Current.CancellationToken);   // the game swapped while this request was out
+                return new JsonObject { ["ok"] = false, ["error"] = "Unknown command: find_live_instance" };
+            }
+            return new JsonObject { ["ok"] = true, ["pick"] = "none", ["scanned"] = 1 };
+        });
+        var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
+        var ct = TestContext.Current.CancellationToken;
+
+        await dump.FindLiveInstanceAsync("A", ct);
+        cmds.Clear();
+        await dump.FindLiveInstanceAsync("A", ct);
+
+        Assert.Equal("find_live_instance", cmds[0]);
+    }
+
+    [Fact]
+    public async Task FindLiveInstance_AnotherError_IsStillAnError()
+    {
+        var pipe = new MockPipeClient();
+        pipe.SetHandler(_ => new JsonObject { ["ok"] = false, ["error"] = "Instance lookup for class X was cut short" });
+        var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => dump.FindLiveInstanceAsync("X", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public void FindLiveInstance_RunsOnTheBulkLane()
+        // The resolver walk invoke_function runs, which is on the bulk lane: it walks every object, and keeps the
+        // interactive lane (Live Walker) answering meanwhile.
+        => Assert.True(LaneRoutingPipeClient.IsBulk("find_live_instance"));
 
     // ---- [LIVEFUNCS-STEP3] native stack snapshots (docs/live-funcs-step3-items.md, S3-U1) ----
     // The replies are parsed from JSON text, as the pipe delivers them, so every number reads the way it will on the wire.

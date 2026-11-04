@@ -62,6 +62,12 @@ public static class CsxExportService
         // about how much of a string a user sees; 0 or less falls back to the default, as
         // CeXmlExportService.EmitStringLeaf does.
         int ceStringLength = Constants.DefaultCeStringLength,
+        // [CEXPORT-NESTED-TRUNC-NOTE] When given, filled with the fields of every struct and pointer target walked
+        // below `fields`.
+        List<LiveFieldValue>? resolvedFieldsOut = null,
+        // [CEXPORT-STRIDE-NOTE] Comment lines the export opens with (an empty one is skipped): what the view model knows
+        // about this game that the exported values cannot show.
+        IReadOnlyList<string>? headerNotes = null,
         CancellationToken ct = default)
     {
         _csxStringLength = ceStringLength > 0 ? ceStringLength : Constants.DefaultCeStringLength;
@@ -93,11 +99,18 @@ public static class CsxExportService
                 await ResolveContainerPointerInstancesAsync(dump, innerFields, resolvedInstances, drilldownDepth, arrayLimit, visited, ct);
         }
 
+        // [CEXPORT-NESTED-TRUNC-NOTE] What was walked below the given fields, for the caller's limit warning: a
+        // container the Array Limit cut in there is part-built in the CSX too.
+        if (resolvedFieldsOut != null)
+            foreach (var walked in resolvedStructs.Values.Concat(resolvedInstances.Values))
+                resolvedFieldsOut.AddRange(walked);
+
         var sb = new StringBuilder();
         sb.AppendLine();
         // Embed a best-effort note when the game uses the UE5.7+ UNVERIFIED packed layout.
         if (PackedLayoutNotice.IsActive)
             sb.Append(PackedLayoutNotice.XmlComment);
+        sb.Append(CeXmlExportService.XmlCommentLines(headerNotes));   // [CEXPORT-STRIDE-NOTE]
         sb.AppendLine("<Structures>");
         sb.Append("  <Structure Name=\"").Append(EscapeXml(structName))
           .AppendLine("\" AutoFill=\"0\" AutoCreate=\"1\" DefaultHex=\"0\" AutoDestroy=\"0\" DoNotSaveLocal=\"0\" RLECompression=\"1\" AutoCreateStructsize=\"4096\">");
@@ -527,6 +540,7 @@ public static class CsxExportService
             try
             {
                 var result = await dump.WalkInstanceAsync(field.PtrAddress, field.PtrClassAddr, arrayLimit, ct: ct);
+                CeXmlExportService.NoteWalk(result);   // [CEXPORT-ENUMNAMES-NOTE]
                 if (result.Fields.Count > 0 && !result.IsDefinition)
                 {
                     resolved[field.PtrAddress] = result.Fields;
@@ -862,9 +876,10 @@ public static class CsxExportService
 
         foreach (var elem in arrField.ArrayElements!)
         {
-            // Build descriptive name: prefer enum name, then short value, then bare index
+            // Build descriptive name: prefer enum name, then the value, then bare index. [CSX-LONG-ELEMENT-LABEL] A value
+            // past 20 characters keeps its start and says it was cut; it used to be dropped, leaving a bare "[2]".
             var label = !string.IsNullOrEmpty(elem.EnumName) ? elem.EnumName
-                : !string.IsNullOrEmpty(elem.Value) && elem.Value.Length <= 20 ? elem.Value
+                : !string.IsNullOrEmpty(elem.Value) ? ShortLabel(elem.Value)
                 : null;
             var name = label != null ? $"[{elem.Index}] {label}" : $"[{elem.Index}]";
 
@@ -878,6 +893,16 @@ public static class CsxExportService
         }
 
         return fields;
+    }
+
+    /// <summary>[CSX-LONG-ELEMENT-LABEL] An element label of at most 20 characters, cut with "…" past that, never between
+    /// the two halves of a surrogate pair.</summary>
+    private static string ShortLabel(string value)
+    {
+        const int max = 20;
+        if (value.Length <= max) return value;
+        int cut = char.IsHighSurrogate(value[max - 1]) ? max - 1 : max;
+        return value[..cut] + "…";
     }
 
     /// <summary>

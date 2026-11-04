@@ -1,4 +1,5 @@
 using UE5DumpUI.Core;
+using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
 using UE5DumpUI.ViewModels;
 using Xunit;
@@ -39,6 +40,9 @@ public class ConsoleViewModelTests
         /// pinned address was reused vs. a fresh null resolution.</summary>
         public List<string?> InstanceAddrHistory { get; } = new();
 
+        /// <summary>[LEAD-CONSOLE-PIN-EXPECT-CLASS] Every expectClassAddr passed, in call order.</summary>
+        public List<string?> ExpectClassHistory { get; } = new();
+
         /// <summary>Optional per-call result override; when set it takes
         /// precedence over <see cref="NextInvokeResult"/> for one call each.
         /// Used by the self-heal test to fail the pinned attempt + its retry
@@ -60,16 +64,44 @@ public class ConsoleViewModelTests
         public List<bool> SetDebugCameraCalls { get; } = new();
         public int GetDebugCameraStateCallCount { get; private set; }
 
-        public override Task<int> GetDebugCameraStateAsync(CancellationToken ct = default)
-        {
-            GetDebugCameraStateCallCount++;
-            return Task.FromResult(NextDebugCameraState);
-        }
-
         public override Task<int> SetDebugCameraAsync(bool enable, CancellationToken ct = default)
         {
             SetDebugCameraCalls.Add(enable);
             return Task.FromResult(SetDebugCameraResult ?? (enable ? 1 : 0));
+        }
+
+        /// <summary>[INVOKE-NONSTATIC-ON-CDO] The DLL's verdict on a Force; null = an older DLL.</summary>
+        public bool? SetDebugCameraOnTemplate { get; set; }
+
+        /// <summary>[CONSOLE-ROWRUN-SELECTED] When set, every Force waits on it after it is recorded: a Force in
+        /// flight.</summary>
+        public TaskCompletionSource? ForceGate { get; set; }
+
+        /// <summary>When set, the next Force throws it (after it is recorded): a pipe that broke mid-Force.</summary>
+        public Exception? ForceThrow { get; set; }
+
+        /// <summary>When set, every state query waits on it: a Refresh in flight.</summary>
+        public TaskCompletionSource? QueryGate { get; set; }
+
+        public override async Task<int> GetDebugCameraStateAsync(CancellationToken ct = default)
+        {
+            GetDebugCameraStateCallCount++;
+            if (QueryGate is { } gate)
+                await gate.Task;
+            return NextDebugCameraState;
+        }
+
+        public override async Task<DebugCameraSetResult> SetDebugCameraDetailedAsync(bool enable, CancellationToken ct = default)
+        {
+            var state = await SetDebugCameraAsync(enable, ct);
+            if (ForceThrow is { } boom)
+            {
+                ForceThrow = null;
+                throw boom;
+            }
+            if (ForceGate is { } gate)
+                await gate.Task;
+            return new(state, SetDebugCameraOnTemplate);
         }
 
         public override Task<AllFunctionsResult> ListAllFunctionsAsync(
@@ -78,7 +110,11 @@ public class ConsoleViewModelTests
             return Task.FromResult(NextListResult);
         }
 
-        public override Task<InvokeFunctionResult> InvokeFunctionAsync(
+        /// <summary>[CONSOLE-ROWRUN-SELECTED] When set, every invoke waits on it: a run held in flight, as one waiting on
+        /// a busy game thread is.</summary>
+        public TaskCompletionSource? InvokeGate { get; set; }
+
+        public override async Task<InvokeFunctionResult> InvokeFunctionAsync(
             string funcName, string? instanceAddr = null, string? className = null,
             int parmsSize = 0, string? paramsHex = null, bool directCall = false,
             IReadOnlyList<InvokeStringParam>? stringParams = null, string? expectClassAddr = null,
@@ -90,12 +126,15 @@ public class ConsoleViewModelTests
             LastInvokeParmsSize = parmsSize;
             LastInvokeInstanceAddr = instanceAddr;
             InstanceAddrHistory.Add(instanceAddr);
+            ExpectClassHistory.Add(expectClassAddr);
+            if (InvokeGate is { } gate)
+                await gate.Task;
             if (InvokeThrowQueue is { Count: > 0 } && InvokeThrowQueue.Dequeue() is { } boom)
                 throw boom;
             var result = (InvokeResultQueue is { Count: > 0 })
                 ? InvokeResultQueue.Dequeue()
                 : NextInvokeResult;
-            return Task.FromResult(result);
+            return result;
         }
     }
 
@@ -420,6 +459,251 @@ public class ConsoleViewModelTests
         Assert.Equal("Fly", vm.History[0].FuncName);
     }
 
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] A row's Run button runs ITS row. A click on a button inside a DataGrid cell
+    /// does not select the row (measured on build 3676: "Pick an exec command from the list first." with nothing
+    /// selected), so a button that ran the selection ran whatever row was selected before -- another command.</summary>
+    [Fact]
+    public async Task RunRow_runs_its_own_row_not_the_selected_one()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() }
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        var fly = vm.Results[2];
+        var god = vm.Results[3];
+        Assert.Equal("God", god.FuncName);
+        vm.SelectedResult = fly;
+
+        await vm.RunRowCommand.ExecuteAsync(god);
+
+        Assert.Equal(1, fake.InvokeCallCount);
+        Assert.Equal("God", fake.LastInvokeFunc);
+        Assert.Same(god, vm.SelectedResult);   // the selection follows the row that ran
+    }
+
+    [Fact]
+    public async Task RunRow_with_nothing_selected_still_runs_its_row()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() }
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.Null(vm.SelectedResult);
+
+        await vm.RunRowCommand.ExecuteAsync(vm.Results[2]);
+
+        Assert.Equal(1, fake.InvokeCallCount);
+        Assert.Equal("Fly", fake.LastInvokeFunc);
+    }
+
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] review: the row's Run button no longer shares Run Selected's command, so
+    /// nothing disabled it while a toolbar run was in flight. A second invoke sent while the first waits on a busy game
+    /// thread could run the command twice (a timed-out invoke stays queued), so every run path refuses while one is
+    /// in flight.</summary>
+    [Fact]
+    public async Task RunRow_while_a_run_is_in_flight_sends_nothing()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() }
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        var fly = vm.Results[2];
+        var god = vm.Results[3];
+        fake.InvokeGate = new TaskCompletionSource();
+        vm.SelectedResult = fly;
+
+        var first = vm.RunSelectedCommand.ExecuteAsync(null);
+        Assert.True(vm.IsRunning);
+        // Not awaited before the asserts: a second invoke that WAS sent waits on the same gate, and would hang here.
+        var second = vm.RunRowCommand.ExecuteAsync(god);
+        try
+        {
+            Assert.Equal(1, fake.InvokeCallCount);
+            Assert.Equal("Fly", fake.LastInvokeFunc);
+            Assert.Contains("God", vm.StatusText);
+            Assert.Contains("still running", vm.StatusText);
+        }
+        finally
+        {
+            fake.InvokeGate.SetResult();
+            await Task.WhenAll(first, second);
+        }
+        Assert.False(vm.IsRunning);
+        Assert.Single(vm.History);
+    }
+
+    [Fact]
+    public async Task Typed_run_and_replay_while_a_run_is_in_flight_send_nothing()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() }
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        await vm.RunRowCommand.ExecuteAsync(vm.Results[3]);   // God, completes: a history entry to replay
+        Assert.Single(vm.History);
+        fake.InvokeGate = new TaskCompletionSource();
+
+        var first = vm.RunRowCommand.ExecuteAsync(vm.Results[2]);   // Fly, held in flight
+        vm.CommandInput = "god";
+        // Not awaited before the assert, for the reason in the test above.
+        var typed = vm.RunCommandTextCommand.ExecuteAsync(null);
+        var replay = vm.ReplayHistoryCommand.ExecuteAsync(vm.History[0]);
+        try
+        {
+            Assert.Equal(2, fake.InvokeCallCount);
+        }
+        finally
+        {
+            fake.InvokeGate.SetResult();
+            await Task.WhenAll(first, typed, replay);
+        }
+        Assert.Equal(2, vm.History.Count);
+    }
+
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] review 2: a refused row Run leaves the selection on the row that is running,
+    /// and the refusal does not call the running command "another" -- it can be the same one, reached through a second
+    /// path, and "run it again" was then the advice that sends it twice.</summary>
+    [Fact]
+    public async Task RunRow_refused_while_a_run_is_in_flight_leaves_the_selection()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() }
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        var fly = vm.Results[2];
+        fake.InvokeGate = new TaskCompletionSource();
+        vm.SelectedResult = fly;
+
+        var first = vm.RunSelectedCommand.ExecuteAsync(null);
+        var second = vm.RunRowCommand.ExecuteAsync(vm.Results[3]);   // God, refused: the selection must stay on Fly
+        try
+        {
+            Assert.Equal(1, fake.InvokeCallCount);
+            Assert.Same(fly, vm.SelectedResult);
+            Assert.DoesNotContain("another", vm.StatusText);
+            Assert.DoesNotContain("again", vm.StatusText);
+        }
+        finally
+        {
+            fake.InvokeGate.SetResult();
+            await Task.WhenAll(first, second);
+        }
+    }
+
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] review 2: the Debug Camera Force and a run of ToggleDebugCamera each queue a
+    /// toggle on a busy game thread, and two cancel out. Neither is sent while the other is in flight.</summary>
+    [Fact]
+    public async Task Force_while_a_run_is_in_flight_sends_nothing()
+    {
+        var fake = new FakeDumpService { InvokeGate = new TaskCompletionSource() };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+        var toggle = vm.Results.First(r => r.FuncName == "ToggleDebugCamera");
+
+        var run = vm.RunRowCommand.ExecuteAsync(toggle);
+        var force = vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+        try
+        {
+            Assert.Empty(fake.SetDebugCameraCalls);
+            Assert.Contains("still running", vm.StatusText);
+        }
+        finally
+        {
+            fake.InvokeGate.SetResult();
+            await Task.WhenAll(run, force);
+        }
+    }
+
+    [Fact]
+    public async Task Run_while_a_Force_is_in_flight_sends_nothing()
+    {
+        var fake = new FakeDumpService { ForceGate = new TaskCompletionSource() };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+        var toggle = vm.Results.First(r => r.FuncName == "ToggleDebugCamera");
+
+        var force = vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+        Assert.Single(fake.SetDebugCameraCalls);
+        var run = vm.RunRowCommand.ExecuteAsync(toggle);
+        try
+        {
+            Assert.Equal(0, fake.InvokeCallCount);
+            Assert.Contains("still running", vm.StatusText);
+        }
+        finally
+        {
+            fake.ForceGate.SetResult();
+            await Task.WhenAll(force, run);
+        }
+    }
+
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] review 3: the Force's in-flight flag is cleared when it finishes, whether it
+    /// answered or threw -- left set, it would refuse every later run.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_run_after_a_finished_Force_is_sent(bool forceThrows)
+    {
+        var fake = new FakeDumpService();
+        if (forceThrows) fake.ForceThrow = new InvalidOperationException("pipe broke");
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+        Assert.Single(fake.SetDebugCameraCalls);
+
+        await vm.RunRowCommand.ExecuteAsync(vm.Results.First(r => r.FuncName == "Fly"));
+
+        Assert.Equal(1, fake.InvokeCallCount);
+    }
+
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] review 3: a Refresh is a state query and toggles nothing, so a run is not
+    /// refused while one is in flight -- the reason the Force has its own flag rather than IsDebugCameraBusy.</summary>
+    [Fact]
+    public async Task A_run_during_a_Refresh_is_sent()
+    {
+        var fake = new FakeDumpService { QueryGate = new TaskCompletionSource() };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+
+        var refresh = vm.RefreshDebugCameraStateCommand.ExecuteAsync(null);
+        Assert.True(vm.IsDebugCameraBusy);
+        var run = vm.RunRowCommand.ExecuteAsync(vm.Results.First(r => r.FuncName == "Fly"));
+        try
+        {
+            Assert.Equal(1, fake.InvokeCallCount);
+        }
+        finally
+        {
+            fake.QueryGate.SetResult();
+            await Task.WhenAll(refresh, run);
+        }
+    }
+
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] The row's Run button hands the command its own row, as the row's Live and
+    /// AA(B) buttons already do; the toolbar's Run Selected keeps running the selection.</summary>
+    [Fact]
+    public void Row_run_button_passes_its_row()
+    {
+        var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/ConsolePanel.axaml"));
+        int at = axaml.IndexOf("Content=\"{StaticResource str.Con.RunRow}\"", StringComparison.Ordinal);
+        Assert.True(at >= 0, "the row's Run button is missing from ConsolePanel.axaml");
+        int start = axaml.LastIndexOf("<Button", at, StringComparison.Ordinal);
+        int end = axaml.IndexOf("/>", at, StringComparison.Ordinal);
+        var tag = axaml[start..end];
+        Assert.Contains(".RunRowCommand}\"", tag);
+        Assert.Contains("CommandParameter=\"{Binding}\"", tag);
+    }
+
     [Fact]
     public async Task RunSelected_with_params_raises_RequestParameterInvoke_and_skips_pipe()
     {
@@ -627,6 +911,320 @@ public class ConsoleViewModelTests
         Assert.Null(fake.InstanceAddrHistory[0]);
         Assert.Equal("0x1A2B3C", fake.InstanceAddrHistory[1]);
         Assert.Equal("0x1A2B3C", fake.LastInvokeInstanceAddr);
+    }
+
+    // [FINDINSTANCE-SUBSTRING-USERFACING] A class name resolves to the class's own default object when nothing of it is
+    // live, and to the Debug Camera's object when that is the only live one. Pinning either kept every later run of the
+    // class on it -- after a CheatManager spawned, after the Debug Camera was destroyed. Those picks re-resolve instead.
+
+    private async Task<(FakeDumpService fake, ConsoleViewModel vm)> RunFlyThenGod(string pick)
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            NextInvokeResult = new InvokeFunctionResult
+            {
+                Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstancePick = pick,
+                InstanceName = pick == "class_default" ? "Default__CheatManager" : "CheatManager_0",
+                InstanceClassName = "CheatManager",
+            },
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[2];   // Fly
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[3];   // God, the same class
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        return (fake, vm);
+    }
+
+    [Theory]
+    [InlineData("class_default")]
+    [InlineData("debug_camera_owned")]
+    public async Task A_class_default_or_debug_camera_pick_is_not_pinned(string pick)
+    {
+        var (fake, _) = await RunFlyThenGod(pick);
+
+        Assert.Equal(2, fake.InvokeCallCount);
+        Assert.Null(fake.InstanceAddrHistory[0]);
+        Assert.Null(fake.InstanceAddrHistory[1]);   // re-resolved, not pinned
+    }
+
+    [Theory]
+    [InlineData("live")]
+    [InlineData("")]   // an older DLL, which never says: pinned, as before
+    public async Task A_live_pick_is_pinned_control(string pick)
+    {
+        var (fake, _) = await RunFlyThenGod(pick);
+
+        Assert.Equal("0x1A2B3C", fake.InstanceAddrHistory[1]);
+    }
+
+    [Fact]
+    public async Task A_class_default_pick_says_so_in_the_status()
+    {
+        var (_, vm) = await RunFlyThenGod("class_default");
+
+        Assert.Contains("⚠", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("Default__CheatManager", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains(InvokePickText.ClassDefaultText("Default__CheatManager", "CheatManager"), vm.StatusText,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_live_pick_names_the_object_in_the_status()
+    {
+        var (_, vm) = await RunFlyThenGod("live");
+
+        Assert.Contains(InvokePickText.ObjectText("CheatManager_0", "CheatManager"), vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("⚠", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    // [INVOKE-NONSTATIC-ON-CDO] The note follows the DLL's verdict when it sends one: a static function on a class
+    // default object is the normal case and says nothing alarming; a template part of a class default object is
+    // reported, and never pinned.
+
+    private async Task<(FakeDumpService fake, ConsoleViewModel vm)> RunFlyThenGodWith(InvokeFunctionResult result)
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            NextInvokeResult = result,
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[2];   // Fly
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[3];   // God, the same class
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        return (fake, vm);
+    }
+
+    [Fact]
+    public async Task A_class_default_pick_running_a_static_function_does_not_warn()
+    {
+        var (_, vm) = await RunFlyThenGodWith(new InvokeFunctionResult
+        {
+            Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstancePick = "class_default",
+            InstanceName = "Default__CheatManager", InstanceClassName = "CheatManager",
+            InstanceTemplate = "class_default", NonStaticOnTemplate = false,
+        });
+
+        Assert.DoesNotContain("⚠", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains(InvokePickText.ObjectText("Default__CheatManager", "CheatManager"), vm.StatusText,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_class_default_pick_running_a_nonstatic_function_warns_control()
+    {
+        var (_, vm) = await RunFlyThenGodWith(new InvokeFunctionResult
+        {
+            Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstancePick = "class_default",
+            InstanceName = "Default__CheatManager", InstanceClassName = "CheatManager",
+            InstanceTemplate = "class_default", NonStaticOnTemplate = true,
+        });
+
+        Assert.Contains(InvokePickText.ClassDefaultText("Default__CheatManager", "CheatManager"), vm.StatusText,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_live_pick_on_a_template_subobject_warns_and_is_not_pinned()
+    {
+        var (fake, vm) = await RunFlyThenGodWith(new InvokeFunctionResult
+        {
+            Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstancePick = "live",
+            InstanceName = "CharMoveComp", InstanceClassName = "CharacterMovementComponent",
+            InstanceTemplate = "template", TemplateOwnerName = "Default__Character", NonStaticOnTemplate = true,
+        });
+
+        Assert.Contains(InvokePickText.TemplateSubobjectText("CharMoveComp", "CharacterMovementComponent",
+            "Default__Character"), vm.StatusText, StringComparison.Ordinal);
+        Assert.Null(fake.InstanceAddrHistory[1]);   // a template re-resolves; a live object spawned later is found
+    }
+
+    [Fact]
+    public async Task A_live_pick_from_a_contract7_dll_is_pinned_control()
+    {
+        // Review of bfdd4116: a new DLL always sends instance_template "" for a live object; `template is null` would have
+        // pinned nothing against it, and only an older DLL's null was tested.
+        var (fake, _) = await RunFlyThenGodWith(new InvokeFunctionResult
+        {
+            Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstancePick = "live",
+            InstanceName = "CheatManager_0", InstanceClassName = "CheatManager",
+            InstanceTemplate = "", NonStaticOnTemplate = false,
+        });
+
+        Assert.Equal("0x1A2B3C", fake.InstanceAddrHistory[1]);
+    }
+
+    [Fact]
+    public async Task A_pin_whose_run_comes_back_as_a_template_is_dropped()
+    {
+        // Review of bfdd4116: a pin is made only from a live object, but a pinned run answering "template" kept it.
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            InvokeResultQueue = new Queue<InvokeFunctionResult>(new[]
+            {
+                new InvokeFunctionResult { Result = 0, InstanceAddr = "0x1A2B3C", InstancePick = "live",
+                    InstanceName = "CheatManager_0", InstanceClassName = "CheatManager", InstanceTemplate = "",
+                    NonStaticOnTemplate = false },
+                new InvokeFunctionResult { Result = 0, InstanceAddr = "0x1A2B3C", InstancePick = "address",
+                    InstanceName = "CheatManager_0", InstanceClassName = "CheatManager", InstanceTemplate = "template",
+                    TemplateOwnerName = "Default__X", NonStaticOnTemplate = true },
+                new InvokeFunctionResult { Result = 0, InstanceAddr = "0x9999", InstancePick = "live",
+                    InstanceName = "CheatManager_1", InstanceClassName = "CheatManager", InstanceTemplate = "",
+                    NonStaticOnTemplate = false },
+            }),
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[2];   // Fly
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.Equal("0x1A2B3C", fake.InstanceAddrHistory[1]);   // pinned
+        Assert.Null(fake.InstanceAddrHistory[2]);                 // dropped: it came back a template
+    }
+
+    [Fact]
+    public void InvokePickText_note_follows_the_verdict_for_every_pick()
+    {
+        static InvokeFunctionResult R(string pick, string tpl, bool warn) => new()
+        {
+            InstancePick = pick, InstanceName = "X_0", InstanceClassName = "X", InstanceTemplate = tpl,
+            NonStaticOnTemplate = warn,
+        };
+        Assert.Equal(" " + InvokePickText.DebugCameraOwnedText("X_0", "X"),
+                     InvokePickText.Note(R("debug_camera_owned", "", false)));
+        Assert.Equal(" " + InvokePickText.TemplateClassDefaultText("X_0", "X"),
+                     InvokePickText.Note(R("address", "class_default", true)));   // a CDO given by address
+        Assert.Equal(" " + InvokePickText.ObjectText("X_0", "X"), InvokePickText.Note(R("live", "", false)));
+    }
+
+    [Fact]
+    public void InvokePickText_template_warning_for_the_param_dialog()
+    {
+        static InvokeFunctionResult R(string? tpl, bool? warn, string owner = "") => new()
+        {
+            InstanceName = "X_0", InstanceClassName = "X", InstanceTemplate = tpl, NonStaticOnTemplate = warn,
+            TemplateOwnerName = owner,
+        };
+        Assert.Equal(InvokePickText.TemplateClassDefaultText("X_0", "X"), InvokePickText.TemplateWarning(R("class_default", true)));
+        Assert.Equal(InvokePickText.TemplateSubobjectText("X_0", "X", "Default__Y"),
+                     InvokePickText.TemplateWarning(R("template", true, "Default__Y")));
+        Assert.Equal("", InvokePickText.TemplateWarning(R("class_default", false)));   // a static function there
+        Assert.Equal("", InvokePickText.TemplateWarning(R(null, null)));                // an older DLL
+        Assert.Equal("", InvokePickText.TemplateWarning(R("", false)));                 // a live object
+    }
+
+    [Theory]
+    [InlineData("", true)]
+    [InlineData("live", true)]
+    [InlineData("address", true)]
+    [InlineData("class_default", false)]
+    [InlineData("debug_camera_owned", false)]
+    [InlineData("partial_name", false)]
+    [InlineData("partial_name_default", false)]
+    public void InvokePickText_pins_only_a_live_or_given_object(string pick, bool pinnable)
+    {
+        Assert.Equal(pinnable, InvokePickText.IsPinnable(pick));
+    }
+
+    [Fact]
+    public void InvokePickText_note_for_each_pick()
+    {
+        Assert.Equal("", InvokePickText.Note("", "X_0", "X"));                       // an older DLL: nothing to say
+        Assert.Equal("", InvokePickText.Note("live", "", ""));                        // nor without a name
+        Assert.Equal(" " + InvokePickText.ObjectText("X_0", "X"), InvokePickText.Note("live", "X_0", "X"));
+        Assert.Equal(" " + InvokePickText.ObjectText("X_0", "X"), InvokePickText.Note("partial_name", "X_0", "X"));
+        Assert.Equal(" " + InvokePickText.ClassDefaultText("Default__X", "X"),
+                     InvokePickText.Note("class_default", "Default__X", "X"));
+        // Review of fbedfa9a: a partial-name pick that is a default object is one too, with no live object of its class.
+        Assert.Equal(" " + InvokePickText.ClassDefaultText("Default__X", "X"),
+                     InvokePickText.Note("partial_name_default", "Default__X", "X"));
+        Assert.Equal(" " + InvokePickText.DebugCameraOwnedText("X_0", "X"),
+                     InvokePickText.Note("debug_camera_owned", "X_0", "X"));
+    }
+
+    // [LEAD-CONSOLE-PIN-EXPECT-CLASS] The pin is an address, and the DLL looks the function up by name on whatever
+    // object sits there: a pinned object freed and its memory reused by an object of another class with a same-named
+    // function ran that one. The pin now keeps the class the DLL read at the address, and a pinned run sends it.
+
+    [Fact]
+    public async Task APinnedRun_SendsTheClassThePinnedObjectHad()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            NextInvokeResult = new InvokeFunctionResult
+            {
+                Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstanceClassAddr = "0xC0DE",
+            },
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        vm.SelectedResult = vm.Results[2];   // Fly: resolves, pins
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[3];   // God: pinned
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.Equal(new string?[] { null, "0x1A2B3C" }, fake.InstanceAddrHistory);
+        Assert.Equal(new string?[] { null, "0xC0DE" }, fake.ExpectClassHistory);   // was { null, null }
+    }
+
+    [Fact]
+    public async Task APinnedRun_WhoseObjectHasAnotherClassNow_ReResolvesWithNoPin()
+    {
+        // The DLL refuses with ok:false, which DumpService throws: the [CONSOLE-PIN-THROWS] retry re-resolves by name,
+        // and nothing was dispatched on the refused call.
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            NextInvokeResult = new InvokeFunctionResult
+            {
+                Result = 0, Message = "ProcessEvent OK", InstanceAddr = "0x1A2B3C", InstanceClassAddr = "0xC0DE",
+            },
+            InvokeThrowQueue = new Queue<Exception?>(new Exception?[]
+            {
+                null,
+                new InvalidOperationException("Not invoked: the object at 0x1A2B3C is no longer the UCheatManager"),
+            }),
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        vm.SelectedResult = vm.Results[2];   // Fly: pins
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[3];   // God: the pinned call is refused, then re-resolved
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.Equal(new string?[] { null, "0x1A2B3C", null }, fake.InstanceAddrHistory);
+        Assert.Equal(new string?[] { null, "0xC0DE", null }, fake.ExpectClassHistory);
+    }
+
+    [Fact]
+    public async Task APinnedRun_AgainstADllThatSendsNoClass_SendsNone_AsBefore()
+    {
+        var fake = new FakeDumpService
+        {
+            NextListResult = new AllFunctionsResult { Functions = BuildSampleEntries() },
+            NextInvokeResult = new InvokeFunctionResult { Result = 0, Message = "OK", InstanceAddr = "0x1A2B3C" },
+        };
+        var vm = CreateVm(fake);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        vm.SelectedResult = vm.Results[2];
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+        vm.SelectedResult = vm.Results[3];
+        await vm.RunSelectedCommand.ExecuteAsync(null);
+
+        Assert.Equal("0x1A2B3C", fake.InstanceAddrHistory[1]);
+        Assert.Null(fake.ExpectClassHistory[1]);
     }
 
     [Fact]
@@ -1005,6 +1603,38 @@ public class ConsoleViewModelTests
 
         Assert.Equal("Unknown", vm.DebugCameraState);
         Assert.Contains("unknown", vm.StatusText);
+        // [DEBUGCAM-FORCEON-CDO] -1 is a failed read, never the no-live-CheatManager case, so no advice to enter
+        // gameplay.
+        Assert.Equal(DebugCameraText.StateUnknownText, vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ForceOn_whose_toggle_ran_on_the_class_default_object_says_so()
+    {
+        // [INVOKE-NONSTATIC-ON-CDO] With no live CheatManager (a Shipping build) the toggle runs on its class default
+        // object and does nothing; the line used to say only "the game may re-drive the camera". Only a DLL from builds
+        // 3676-3681 answers this way: a newer one refuses that ON with -17 ([DEBUGCAM-FORCEON-CDO]).
+        var fake = new FakeDumpService { SetDebugCameraResult = 0, SetDebugCameraOnTemplate = true };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+
+        Assert.Contains(DebugCameraText.OnTemplateText, vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(null)]   // an older DLL
+    public async Task ForceOn_control_no_template_note_without_the_verdict(bool? onTemplate)
+    {
+        var fake = new FakeDumpService { SetDebugCameraResult = 0, SetDebugCameraOnTemplate = onTemplate };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain(DebugCameraText.OnTemplateText, vm.StatusText, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -1060,7 +1690,28 @@ public class ConsoleViewModelTests
         await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
 
         Assert.Equal("Unknown", vm.DebugCameraState);
-        Assert.Contains("no live CheatManager", vm.StatusText);
+        // [DEBUGCAM-FORCEON-CDO] -1 is a read or a toggle that failed; "no live CheatManager" is -17's, and it never
+        // came back as -1 (that read lands on the class default object and answers 0 or 1).
+        Assert.Contains(DebugCameraText.ForceFailed(wantOn: true), vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("no live CheatManager", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ForceOn_refused_for_no_live_CheatManager_says_so_and_the_badge_stays_OFF()
+    {
+        // [DEBUGCAM-FORCEON-CDO] -17: the DLL sent nothing -- no CheatManager is live, and the toggle does nothing on its
+        // class default object. It read the camera OFF, so the badge says OFF; read as an unknown code, the line said
+        // "the game may re-drive the camera" under an Unknown badge.
+        var fake = new FakeDumpService { SetDebugCameraResult = Constants.DebugCameraNoLiveCheatManagerResult };
+        var vm = CreateVm(fake);
+        vm.SeedForTests(DebugCamEntries());
+
+        await vm.ForceDebugCameraOnCommand.ExecuteAsync(null);
+
+        Assert.Equal(new[] { true }, fake.SetDebugCameraCalls);
+        Assert.Contains(DebugCameraText.NoLiveCheatManagerText, vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("re-drive", vm.StatusText, StringComparison.Ordinal);
+        Assert.Equal("OFF", vm.DebugCameraState);
     }
 
     [Fact]

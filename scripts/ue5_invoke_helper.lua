@@ -17,10 +17,11 @@
   findTableFile and call invokeUFunction(...).
 
   Public API (re-declaration-safe, syntax-highlighted):
-    ok, err = invokeUFunction(className, funcName, parmsSize, params)
+    ok, err, warn = invokeUFunction(className, funcName, parmsSize, params)   -- warn: 'template' (contract 7+ DLL)
     value   = readUFunctionReturn(offset, valueType)
     freed   = freeInvokeStringBuffers() -- free FString INPUT-param buffers (UNSAFE unless read-only)
-    state   = setDebugCamera(enable)   -- robust force on/off (1=on,0=off,-1=err,-5=queued)
+    state, warn = setDebugCamera(enable)   -- robust force on/off (1=on,0=off,-1=err,-5=queued,-6=not sent,
+                                           -- -17=ON refused: no live CheatManager); warn: builds 3676-3681 only
     state   = getDebugCameraState()    -- 1=on, 0=off, -1=unknown
     ok, why = getOffsetsVerdict()      -- were the DynOff offsets MEASURED? why = the reason when not
 
@@ -51,7 +52,10 @@
     end
     if not ok or state ~= 1 then
       -- -6: NOT SENT, an earlier OFF is still queued -- tick again once the game responds. [DBGCAM-OFF-OVER-QUEUED-ON]
+      -- -17: NOT SENT, no CheatManager is live (UE 5 leaves it out of Shipping by default), and the toggle does nothing on its class
+      -- default object. An OFF is never refused, so [DISABLE] never sees it. [DEBUGCAM-FORCEON-CDO]
       local why = (ok and state == -6) and 'not sent -- an earlier OFF is still queued; tick again once the game responds'
+                  or (ok and state == -17) and 'not sent -- there is no live CheatManager (UE 5 leaves it out of Shipping by default)'
                   or ok and ('returned state ' .. tostring(state)) or ('error: ' .. tostring(state))
       showMessage('[Debug Camera] could not enable -- ' .. why)
       -- DEFERRED, and armed only AFTER the message: an immediate memrec.Active = false inside
@@ -88,7 +92,7 @@
     {$asm}
 
   Constants exposed:
-    UE5_INVOKE_HELPER_VERSION  = '1.5'  (a newer copy re-loaded into a session replaces the resident one)
+    UE5_INVOKE_HELPER_VERSION  = '1.6'  (a newer copy re-loaded into a session replaces the resident one)
     UE5_INVOKE_PARAMS_OFFSET   = 0x328  (params_data offset within mailbox)
 ]]
 
@@ -102,7 +106,7 @@
 -- of it: R7-S3's latch release never reached a table opened before the update. The public functions below are
 -- therefore gated on VERSION: redefined only when this chunk is NEWER than the resident one, so an update takes
 -- effect while a same/older re-load stays a no-op that preserves state (the shared flags keep their own nil-init).
-local THIS_HELPER_VERSION = '1.5'   -- 1.4: this gate [R7-X5], and R7-S3's latch release on a reset mailbox; 1.5: 'asset'
+local THIS_HELPER_VERSION = '1.6'   -- 1.4: this gate [R7-X5], and R7-S3's latch release on a reset mailbox; 1.5: 'asset'; 1.6: invokeUFunction's third return, the template warning [INVOKE-NONSTATIC-ON-CDO]
 -- Compare dotted versions: true iff a < b. nil (nothing resident) is the oldest.
 local function versionLess(a, b)
   if not a then return true end
@@ -162,6 +166,11 @@ local OFF_CLASS     = 0x028  -- char[256]: class name
 local OFF_FUNC      = 0x128  -- char[256]: function name
 local OFF_ERR       = 0x228  -- char[256]: error message
 local OFF_PARAMS    = 0x328  -- uint8[1024]: inline params buffer
+local OFF_OUT_FLAGS = 0x72C  -- uint32: cmdOutFlags (contract 3+; past the end of a contract 1-2 mailbox)
+-- [INVOKE-NONSTATIC-ON-CDO] The invoke family's warning bit in cmdOutFlags, published from this contract on. This
+-- helper still CLAIMS contract 1, so it reads the word only when the DLL's own number says it is published.
+local INV_OUT_NONSTATIC_ON_TEMPLATE = 2
+local MAILBOX_CONTRACT_INVOKE_OUT = 7
 
 local CMD_INVOKE_BY_NAME = 4
 local STATUS_DONE        = 1
@@ -217,7 +226,7 @@ local function checkContract()
       'the DLL is older than this script (script %d, DLL speaks %d) -- update UE5Dumper.dll',
       UE5_SCRIPT_CONTRACT, cur)
   end
-  return true
+  return true, cur   -- the DLL's own contract, for outputs newer than this helper's claim
 end
 
 local function findMailbox()
@@ -235,7 +244,7 @@ local function findMailbox()
   -- a write lands on whatever now occupies those offsets.
   local ok, why = checkContract()
   if not ok then error('[ue5_invoke] ' .. why) end
-  return mb
+  return mb, why   -- on success checkContract's second value is the DLL's contract
 end
 
 local function writeMbStr(mb, off, str)
@@ -597,8 +606,11 @@ if not invokeUFunction or _invokeOutdated then
   --- Uses CMD_INVOKE_BY_NAME -- the DLL handles findInstance +
   --- findFunction in one mailbox round-trip.
   ---
-  --- @param className string  e.g. 'PlayerCharacter' (must match a
-  ---                          live, non-CDO instance's UClass name)
+  --- @param className string  e.g. 'PlayerCharacter'. The DLL takes a live
+  ---                          object of the class so named or of a subclass,
+  ---                          else that class's own default object; a name no
+  ---                          class has (as here, for BP_PlayerCharacter_C) is
+  ---                          matched as part of a class name
   --- @param funcName  string  e.g. 'AddMoney'
   --- @param parmsSize number  Total params buffer size in bytes: where the
   ---                          function's parameter chain ends, which the
@@ -613,6 +625,11 @@ if not invokeUFunction or _invokeOutdated then
   ---                          See writeBakedParams for supported types.
   --- @return boolean ok       True on success
   --- @return string|nil err   Error message on failure (nil on success)
+  --- @return string|nil warn  'template' when the DLL (contract 7+) reports that the function is not static and
+  ---                          the object is a class default object or another template, where it may do
+  ---                          nothing; set once the call reached dispatch, whether or not it then succeeded,
+  ---                          but nil when this helper's own wait ran out first (ok is false then). nil
+  ---                          otherwise, and always nil from an older DLL. [INVOKE-NONSTATIC-ON-CDO]
   function invokeUFunction(className, funcName, parmsSize, params)
     -- Input validation BEFORE the busy check so bad args from a
     -- concurrent caller surface as the real validation error
@@ -663,7 +680,7 @@ if not invokeUFunction or _invokeOutdated then
     -- wrapper ensures the flag is ALWAYS cleared, even if any
     -- write/read throws (e.g. mailbox address turned invalid).
     _ue5_invoke_busy = true
-    local pok, ok_or_err, err_or_nil = pcall(function()
+    local pok, ok_or_err, err_or_nil, warn_or_nil = pcall(function()
       -- Reclaim the PREVIOUS invoke's FString buffers before this one allocates more.
       -- The mailbox is synchronous, so by the time a NEW invoke starts (we are past the
       -- busy check, so the prior call finished) its ProcessEvent has long returned and
@@ -683,7 +700,7 @@ if not invokeUFunction or _invokeOutdated then
       end
       _ue5_invoke_str_bufs = {}
 
-      local ok_mb, mb = pcall(findMailbox)
+      local ok_mb, mb, dllContract = pcall(findMailbox)
       if not ok_mb then
         return false, tostring(mb)
       end
@@ -718,14 +735,22 @@ if not invokeUFunction or _invokeOutdated then
         return false, err_w
       end
 
+      -- [INVOKE-NONSTATIC-ON-CDO] Read only after the DLL finished, and only from a DLL that publishes the bit: below
+      -- contract 7 the word is another command's, or past the end of the mailbox.
+      local warn = nil
+      if (tonumber(dllContract) or 0) >= MAILBOX_CONTRACT_INVOKE_OUT then
+        local outFlags = readInteger(mb + OFF_OUT_FLAGS) or 0
+        if outFlags % (2 * INV_OUT_NONSTATIC_ON_TEMPLATE) >= INV_OUT_NONSTATIC_ON_TEMPLATE then warn = 'template' end
+      end
+
       local result = readInteger(mb + OFF_RESULT, true)   -- signed: rc is int32
       if result ~= 0 then
         return false, string.format(
           '%s::%s -> result=%d (%s)',
-          className, funcName, result, readErrMsg(mb))
+          className, funcName, result, readErrMsg(mb)), warn
       end
 
-      return true
+      return true, nil, warn
     end)
     -- Released only when the mailbox is ours again. A timeout sets
     -- _ue5_invoke_stale_mb above and the guard stays up until the DLL publishes
@@ -739,8 +764,8 @@ if not invokeUFunction or _invokeOutdated then
       -- captured the message as ok_or_err.
       return false, tostring(ok_or_err)
     end
-    -- Soft return path: inner function returned (ok, err)
-    return ok_or_err, err_or_nil
+    -- Soft return path: inner function returned (ok, err, warn)
+    return ok_or_err, err_or_nil, warn_or_nil
   end
 
   registerLuaFunctionHighlight('invokeUFunction')
@@ -888,8 +913,8 @@ local function simpleMailboxCall(cmd, prepare)
 
   _ue5_invoke_busy = true
   local latched = false
-  local pok, res, mb_out = pcall(function()
-    local mb = findMailbox()
+  local pok, res, mb_out, cur_out = pcall(function()
+    local mb, cur = findMailbox()
     if prepare then prepare(mb) end
     writeByte(mb + OFF_ERR, 0)            -- the DLL only writes errorMsg on a failure (audit #5 AA18)
     writeInteger(mb + OFF_STATUS, 0)      -- clear status
@@ -902,13 +927,13 @@ local function simpleMailboxCall(cmd, prepare)
       latched = true
       error(err_w)
     end
-    return readInteger(mb + OFF_RESULT, true), mb   -- signed: result codes are negative
+    return readInteger(mb + OFF_RESULT, true), mb, cur   -- signed: result codes are negative
   end)
   if not latched then
     _ue5_invoke_busy = false
   end
   if not pok then error(tostring(res)) end
-  return res, mb_out
+  return res, mb_out, cur_out   -- the result, the mailbox, and the DLL's own contract
 end
 
 -- ============================================================
@@ -919,7 +944,7 @@ end
 -- return the export's int result (observed: state=nil). The DLL handler
 -- (CMD_SET_DEBUG_CAMERA=7) owns the whole toggle + controller-swap
 -- fallback, so the UI (pipe) and CE Lua (here) share one implementation.
--- Returns the resulting state: 1 = ON, 0 = OFF, -1 = error/unknown, -5 = the toggle
+-- Every state code is listed in setDebugCamera's @return below. -5 = the toggle
 -- is QUEUED: the game thread did not answer in time. A queued ON will run when the game
 -- thread is free, so do not re-send it [W3-DEBUGCAM-QUEUED]. A queued OFF does NOT turn
 -- the camera off on stock UE 4.18-5.7, so the camera stays on: untick / Force OFF again
@@ -931,12 +956,18 @@ if not setDebugCamera or _invokeOutdated then
   -- req: 0 = OFF, 1 = ON, 2 = query (read state, no change).
   -- Reuses the file-local mailbox helpers + the shared AA19 guard.
   local function dbgCamMailbox(req)
-    -- The state only: simpleMailboxCall also hands back the mailbox address, and this one's caller
-    -- (setDebugCamera) returns straight through to CE Lua, which expects a single number.
-    local state = simpleMailboxCall(CMD_SET_DEBUG_CAMERA, function(mb)
+    -- The state, then [INVOKE-NONSTATIC-ON-CDO] 'template' when the DLL (contract 7+) says the toggle targets the
+    -- CheatManager's class default object -- no live CheatManager, where it does nothing. A caller that takes one
+    -- value still gets the state. A query fires nothing, so it never reads the word.
+    local state, mb, cur = simpleMailboxCall(CMD_SET_DEBUG_CAMERA, function(mb)
       writeQword(mb + OFF_INSTANCE, req)   -- 0x010: request (0/1/2)
     end)
-    return state
+    local warn = nil
+    if req ~= 2 and (tonumber(cur) or 0) >= MAILBOX_CONTRACT_INVOKE_OUT then
+      local outFlags = readInteger(mb + OFF_OUT_FLAGS) or 0
+      if outFlags % (2 * INV_OUT_NONSTATIC_ON_TEMPLATE) >= INV_OUT_NONSTATIC_ON_TEMPLATE then warn = 'template' end
+    end
+    return state, warn
   end
 
   --- Force Debug Camera ON (enable ~= 0) or OFF. Idempotent.
@@ -944,7 +975,12 @@ if not setDebugCamera or _invokeOutdated then
   --- @return number state  1=ON, 0=OFF, -1=error, -5=toggle queued (an ON will run: do not re-send;
   ---                       an OFF leaves the camera on, stock UE 4.18-5.7: send it again once the game responds),
   ---                       -6=not sent (an earlier toggle of the other direction is still queued: send it again once
-  ---                       the game responds)
+  ---                       the game responds), -17=an ON not sent: no CheatManager is live, and the toggle does
+  ---                       nothing on its class default object [DEBUGCAM-FORCEON-CDO]
+  --- @return string|nil warn  'template' when the toggle this call sent targets the CheatManager's class default
+  ---                       object (no live CheatManager), where it does nothing -- only a DLL from builds 3676-3681
+  ---                       sends that toggle; a newer one answers -17. nil for a re-send answered by a toggle already
+  ---                       queued, nil otherwise, and nil from an older DLL
   function setDebugCamera(enable)
     return dbgCamMailbox((enable and enable ~= 0) and 1 or 0)
   end

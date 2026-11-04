@@ -23,6 +23,9 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
 
     private EngineState? _engineState;
 
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] A walk said UEnum::Names was never located (the DLL's process-wide latch).</summary>
+    private bool _enumNamesFailed;
+
     // Monotonic guard for the field walk: a fast instance selection must not be
     // clobbered by a slower walk_instance for a previously-selected instance
     // (which would render A's fields under B and desync the CE XML export).
@@ -294,6 +297,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         HasContainerMatches = false;
         StatusText = "";
         LookupStatusText = "";
+        _enumNamesFailed = false;   // [CEXPORT-ENUMNAMES-NOTE] the DLL's latch is the previous process's
     }
 
     /// <summary>
@@ -830,6 +834,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
 
             Fields.Clear();
             _fieldsAreDefinition = result.IsDefinition;
+            _enumNamesFailed |= result.EnumNamesFailed;   // [CEXPORT-ENUMNAMES-NOTE] a process-wide latch
             foreach (var f in result.Fields)
             {
                 // [CEXML-DEFINITION-VIEW-AS-DATA] A definition's offsets are a type's layout, not addresses in the type
@@ -897,20 +902,34 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             StatusText = "Resolving struct fields...";
             // lean: this resolve feeds GenerateInstanceXml (a CE XML export), which
             // reads structure only — see the LEAN contract in Fern.cpp / §10.6.
-            var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
-                _dump, fields, arrayLimit: arrayLimit, lean: true);
+            // [CEXPORT-ENUMNAMES-NOTE] The resolve's own walks may be the first to meet an enum, and so the latch.
+            Dictionary<string, List<LiveFieldValue>> resolvedStructs;
+            using (CeXmlExportService.WatchEnumNamesLatch(out var latchSeen))
+            {
+                resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
+                    _dump, fields, arrayLimit: arrayLimit, lean: true);
+                _enumNamesFailed |= latchSeen.Value;
+            }
 
             // Compute root address in user-selected format
             var rootAddress = AddressHelper.FormatAddress(
                 inst.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
 
             StatusText = "Generating CE XML...";
+            // [CEXPORT-ENUMNAMES-NOTE] Over every field the export emits, as ExportStatus is.
+            var notes = new[]
+            {
+                _engineState?.StrideExportNote ?? "",   // [CEXPORT-STRIDE-NOTE]
+                CeXmlExportService.EnumNamesNote(_enumNamesFailed,
+                    fields.Concat(resolvedStructs.Values.SelectMany(v => v))),
+            };
             var xml = CeXmlExportService.GenerateInstanceXml(
                 rootAddress, inst.Name, inst.ClassName,
                 fields, resolvedStructs,
                 collapsePointerNodes: CollapsePointerNodes,
                 maxDropDownEntries: DropDownLimit,
-                ceStringLength: CeStringLength);
+                ceStringLength: CeStringLength,
+                headerNotes: notes);
             // [W5-INSTEXPORT-TRUNC] Read HERE, before the clipboard await: the flag is [ThreadStatic] ("read right after
             // the synchronous Generate* call"), and after an await this method may resume on another thread.
             bool truncated = CeXmlExportService.LastExportTruncated;
@@ -931,7 +950,8 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             // [R7-S11] ...over every field the export emitted: the top level AND the containers the resolved structs
             // carry, which are walked at the same Array Limit.
             StatusText = ExportStatus(truncated, fields.Concat(resolvedStructs.Values.SelectMany(v => v)).ToList(),
-                                      arrayLimit);
+                                      arrayLimit)
+                       + CeXmlExportService.EnumNamesStatus(notes);
             _log.Info($"CE XML copied to clipboard for instance {inst.Name} ({resolvedStructs.Count} structs resolved)"
                       + (truncated ? " — TRUNCATED at the size guard" : ""));
         }

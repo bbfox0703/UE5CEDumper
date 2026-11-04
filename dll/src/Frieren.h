@@ -104,7 +104,9 @@ __declspec(dllexport) uintptr_t UE5_GetFieldPropertyClass(uintptr_t fieldAddr);
 __declspec(dllexport) int32_t   UE5_GetClassPropsSize(uintptr_t classAddr);
 
 // === UFunction Invocation ===
-// Find first non-CDO instance of a class by name. Returns UObject* address or 0.
+// An object of the class named `className`: the first live one of it or a subclass (one a Debug Camera controller is
+// or owns only when no other is live), else that class's own default object; a name no class has is matched as part
+// of a class name. Returns the UObject* address, or 0 when nothing is usable or the lookup was cut short.
 __declspec(dllexport) uintptr_t UE5_FindInstanceOfClass(const char* className);
 
 // Find a UFunction by name on a UClass. Returns UFunction* address or 0.
@@ -170,16 +172,24 @@ __declspec(dllexport) int       UE5_GetProcessEventOffset();
 
 // === Debug Camera (robust force on/off; shared by UI pipe + CE Lua) ===
 // Read the live Debug Camera state. 1 = ON (a DebugCameraController is
-// possessing the player), 0 = OFF, -1 = unknown / no live CheatManager.
+// possessing the player), 0 = OFF, -1 = unknown (the reflection read failed).
 // Two-hop reflection read of DebugCameraController.OriginalControllerRef.
+// With no live CheatManager (the Debug Camera's own never counts) the read lands on
+// its class default object and answers 0 or 1, never -1: OFF, unless a Debug Camera
+// controller is already active, which reads ON.
 __declspec(dllexport) int32_t   UE5_GetDebugCameraState();
 
 // Force Debug Camera ON (enable!=0) or OFF (enable==0). Idempotent — no-op if
 // already in the desired state. Fires ToggleDebugCamera only when needed; if a
 // disable can't take (Shipping builds that strip DisableDebugCamera), switches
 // the local player's controller back to the original PlayerController by hand.
-// Returns the resulting state (1/0) or -1 on error. All offsets resolved live
-// from reflection (UE4/UE5 version-agnostic).
+// Returns the resulting state (1/0) or -1 when the state did not read or the toggle
+// failed. All offsets resolved live from reflection (UE4/UE5 version-agnostic).
+// -17 = an ON NOT SENT: no CheatManager is live (UE 5 compiles it out of Shipping by
+// default), and ToggleDebugCamera does nothing on its class default object (4.20+;
+// undefined behaviour on 4.18/4.19). An OFF
+// there sends no toggle either; it switches the controller back by hand.
+// [DEBUGCAM-FORCEON-CDO]
 // -5 = the toggle TIMED OUT on the game thread and stays QUEUED. A queued ON will still
 // run, so it is not re-sent. A queued OFF drains on the original controller's
 // CheatManager, which on stock UE 4.18-5.7 leaves the camera on, so the OFF is sent
@@ -205,8 +215,9 @@ __declspec(dllexport) int32_t   UE5_TeleportToCursor(double zOffset,
 __declspec(dllexport) int32_t   UE5_TeleportGetMarker(int32_t slot, double* outPose6,
                                     char* outMapName, int32_t mapNameCap);
 __declspec(dllexport) int32_t   UE5_TeleportClearMarker(int32_t slot);
-// Recall the system "last" pose (auto-saved before every recall/force/BugItGo/
-// cursor jump) — one-way restore so a bad teleport can be undone.
+// Recall the system "last" pose (auto-saved before a jump; a pose that is not
+// world coordinates leaves the previous one) — one-way restore so a bad teleport
+// can be undone.
 __declspec(dllexport) int32_t   UE5_TeleportRecallLast();
 __declspec(dllexport) int32_t   UE5_TeleportGetLast(double* outPose6,
                                     char* outMapName, int32_t mapNameCap);

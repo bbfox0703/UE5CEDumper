@@ -616,12 +616,23 @@ public class LiveWalkerForwardNavTests
 
         public void UngateWalk(string addr) => _walkGates.Remove(addr);
 
+        /// <summary>How many walks each address has had.</summary>
+        public readonly Dictionary<string, int> Walks = new();
+
         public override Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
             int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
             CancellationToken ct = default)
-            => _walkGates.TryGetValue(addr, out var gate)
+            => (Walks[addr] = Walks.GetValueOrDefault(addr) + 1) > 0 && _walkGates.TryGetValue(addr, out var gate)
                 ? gate.Task
-                : base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
+                : classAddr == null && _classlessWalks.TryGetValue(addr, out var classless)
+                    ? Task.FromResult(classless)
+                    : base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
+
+        private readonly Dictionary<string, InstanceWalkResult> _classlessWalks = new();
+
+        /// <summary>What a walk of <paramref name="addr"/> with no class answers: an inline struct's bytes read as a
+        /// UObject, as the DLL reads them, find none of the struct's fields.</summary>
+        public void RegisterClasslessWalk(string addr, InstanceWalkResult result) => _classlessWalks[addr] = result;
 
         public OwnerStub()
         {
@@ -722,6 +733,310 @@ public class LiveWalkerForwardNavTests
         await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single(f => f.Name == container));
         AssertShowsTheOwner(vm);   // the drill: the baseline every other render is held to
         return vm;
+    }
+
+    // ── A container view re-entered after its container moved ── [LEAD-LW-BACK-CACHED-ELEMENTS]
+    //
+    // Back, Forward and a crumb jump render a container view from the crumb's held reading, made at the drill or the
+    // last refresh inside the view. A container that reallocated since then kept showing element addresses in the
+    // freed allocation until Refresh. The owner is re-read once on re-entry; the view is re-rendered only when the
+    // container's data address or count moved, so an unchanged view keeps the scroll it came back to.
+
+    /// <summary>The owner's Gear array moved to a new allocation, now holding <see cref="Other"/>.</summary>
+    private static void ReallocateGear(OwnerStub dump)
+    {
+        var gear = OwnerStub.GearField();
+        dump.RegisterStruct(Owner, new InstanceWalkResult
+        {
+            Address = Owner, Name = "Owner_0", ClassName = "BP_Owner_C", ClassAddr = OwnerCls,
+            Fields = new List<LiveFieldValue>
+            {
+                new()
+                {
+                    Name = gear.Name, TypeName = gear.TypeName, Offset = gear.Offset, Size = gear.Size,
+                    ArrayInnerType = "ObjectProperty", ArrayCount = 1, ArrayElemSize = 8, ArrayDataAddr = "0x58000",
+                    ArrayElements = new()
+                    {
+                        new() { Index = 0, PtrAddress = Other, PtrName = "Other_0", PtrClassName = "BP_Other_C" },
+                    },
+                },
+            },
+        });
+    }
+
+    private static void AssertGearShowsTheMovedAllocation(LiveWalkerViewModel vm)
+    {
+        Assert.StartsWith("Array<", vm.CurrentClassName);
+        var row = vm.Fields.Single();
+        Assert.Equal("0x58000", row.FieldAddress);
+        Assert.Equal(Other, row.PtrAddress);
+    }
+
+    [Fact]
+    public async Task Back_IntoAContainerThatMoved_ShowsItsNewAllocation()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        ReallocateGear(dump);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
+
+        AssertGearShowsTheMovedAllocation(vm);
+        AssertShowsTheOwner(vm);
+    }
+
+    [Fact]
+    public async Task Forward_IntoAContainerThatMoved_ShowsItsNewAllocation()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.GoBackCommand.ExecuteAsync(null);   // to the owner: the view goes onto Forward holding the 0x50000 reading
+        ReallocateGear(dump);
+
+        await vm.GoForwardCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
+
+        AssertGearShowsTheMovedAllocation(vm);
+    }
+
+    [Fact]
+    public async Task ACrumbJump_IntoAContainerThatMoved_ShowsItsNewAllocation()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        ReallocateGear(dump);
+
+        await vm.NavigateToBreadcrumbCommand.ExecuteAsync(vm.Breadcrumbs[1]);
+        await vm.ReentryRecheck;
+
+        AssertGearShowsTheMovedAllocation(vm);
+    }
+
+    [Fact]
+    public void ContainerChanged_ReadsEachKindsOwnAddressAndCount()
+    {
+        LiveFieldValue Map(string data, int n) => new() { MapKeyType = "IntProperty", MapDataAddr = data, MapCount = n };
+        LiveFieldValue Set(string data, int n) => new() { SetElemType = "IntProperty", SetDataAddr = data, SetCount = n };
+        LiveFieldValue Arr(string data, int n) => new() { ArrayInnerType = "IntProperty", ArrayDataAddr = data, ArrayCount = n };
+
+        Assert.False(LiveWalkerViewModel.ContainerChanged(Map("0x60000", 1), Map("0x60000", 1)));
+        Assert.True(LiveWalkerViewModel.ContainerChanged(Map("0x60000", 1), Map("0x68000", 1)));
+        Assert.True(LiveWalkerViewModel.ContainerChanged(Map("0x60000", 1), Map("0x60000", 2)));
+        Assert.False(LiveWalkerViewModel.ContainerChanged(Set("0x70000", 3), Set("0x70000", 3)));
+        Assert.True(LiveWalkerViewModel.ContainerChanged(Set("0x70000", 3), Set("0x78000", 3)));
+        Assert.True(LiveWalkerViewModel.ContainerChanged(Arr("0x50000", 1), Arr("0x50000", 0)));
+        Assert.False(LiveWalkerViewModel.ContainerChanged(Arr("0x50000", 1), Arr("0x50000", 1)));
+    }
+
+    [Fact]
+    public void ContainerChanged_SeesAPointerSlotRepointedInPlace_ButNotAScalarThatChanged()
+    {
+        LiveFieldValue Map(string valuePtr) => new()
+        {
+            MapKeyType = "IntProperty", MapDataAddr = "0x60000", MapCount = 1,
+            MapElements = new() { new() { Index = 0, Key = "7", ValuePtrAddress = valuePtr } },
+        };
+        LiveFieldValue Set(string keyPtr) => new()
+        {
+            SetElemType = "ObjectProperty", SetDataAddr = "0x70000", SetCount = 1,
+            SetElements = new() { new() { Index = 0, KeyPtrAddress = keyPtr } },
+        };
+        LiveFieldValue Floats(string v) => new()
+        {
+            ArrayInnerType = "FloatProperty", ArrayDataAddr = "0x50000", ArrayCount = 1,
+            ArrayElements = new() { new() { Index = 0, Value = v } },
+        };
+
+        Assert.True(LiveWalkerViewModel.ContainerChanged(Map("0x20000"), Map("0x30000")));
+        Assert.False(LiveWalkerViewModel.ContainerChanged(Map("0x20000"), Map("0x20000")));
+        Assert.True(LiveWalkerViewModel.ContainerChanged(Set("0x20000"), Set("0x30000")));
+        Assert.False(LiveWalkerViewModel.ContainerChanged(Floats("1.5"), Floats("2.5")));   // display, not an address
+    }
+
+    // Review round 2: the re-check ran inside the navigation, so Back / Forward / a crumb jump stayed disabled for the
+    // whole owner walk (up to the refresh timeout), and it re-rendered through RefreshAsync, which cleared the
+    // navigation's own status line. It now runs after the navigation returns (ReentryRecheck), and renders the reading
+    // it took.
+
+    [Fact]
+    public async Task Back_IntoAContainerView_ReturnsBeforeTheOwnerReRead()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        var gate = dump.GateWalk(Owner);
+
+        var back = vm.GoBackCommand.ExecuteAsync(null);
+        await Task.WhenAny(back, Task.Delay(2000, TestContext.Current.CancellationToken));
+
+        Assert.True(back.IsCompleted, "Back waited for the owner re-read");
+        Assert.False(vm.IsLoading);
+        Assert.StartsWith("Array<", vm.CurrentClassName);   // the held view is up already
+        dump.UngateWalk(Owner);
+        gate.SetResult(OwnerStub.Obj(Owner, "Owner_0", "BP_Owner_C", OwnerCls));
+        await vm.ReentryRecheck;
+    }
+
+    [Fact]
+    public async Task BackOutOfAReRoot_IntoAContainerThatMoved_ShowsItsNewAllocation_AndKeepsItsStatus()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);   // the Go box re-roots, keeping the spine for Back
+        ReallocateGear(dump);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
+
+        AssertGearShowsTheMovedAllocation(vm);
+        Assert.Contains("Returned to the previous view", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task AnInSessionBookmarkOfAContainerThatMoved_ShowsItsNewAllocation()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        var slot = vm.BookmarkSlots[0];
+        vm.IsBookmarkSaveMode = true;
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);   // in save mode, a slot click saves
+        await vm.NavigateToAddressCommand.ExecuteAsync(Other);
+        ReallocateGear(dump);
+
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+        await vm.ReentryRecheck;
+
+        AssertGearShowsTheMovedAllocation(vm);
+    }
+
+    // Review round 2 (MED): when the owner was gone, or no longer had the field, the re-check returned without a word,
+    // and the held rows stayed on screen and editable, their addresses in memory the game may have freed. Refresh
+    // inside the view already said so for a gone owner; the re-entry now does too, and both say so for a missing field.
+
+    [Fact]
+    public async Task Back_IntoAContainerWhoseOwnerIsGone_DropsTheRows_AndSaysWhy()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        dump.RegisterStruct(Owner, new InstanceWalkResult { Address = Owner, IsStale = true });
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
+
+        Assert.Empty(vm.Fields);
+        Assert.Equal(LiveWalkerViewModel.GoneObjectStatus(new InstanceWalkResult { IsStale = true }), vm.StatusText);
+    }
+
+    // Review round 2: the re-check matched the field by name and offset only, so another object now at the owner's
+    // address -- another instance of the class (the bookmark-recycle case), or another class with a same-named field --
+    // had its container rendered as this one's. The crumb knows its owner's class and, for a UObject owner, its name.
+
+    private static void PutAnotherOwnerAt(OwnerStub dump, string name, string cls, string clsAddr)
+    {
+        var gear = OwnerStub.GearField();
+        dump.RegisterStruct(Owner, new InstanceWalkResult
+        {
+            Address = Owner, Name = name, ClassName = cls, ClassAddr = clsAddr,
+            Fields = new List<LiveFieldValue>
+            {
+                new()
+                {
+                    Name = gear.Name, TypeName = gear.TypeName, Offset = gear.Offset, Size = gear.Size,
+                    ArrayInnerType = "ObjectProperty", ArrayCount = 1, ArrayElemSize = 8, ArrayDataAddr = "0x5C000",
+                    ArrayElements = new() { new() { Index = 0, PtrAddress = Other, PtrName = "Other_0" } },
+                },
+            },
+        });
+    }
+
+    [Theory]
+    [InlineData("Owner_7", "BP_Owner_C", OwnerCls)]     // another instance of the class
+    [InlineData("Other_9", "BP_Other_C", OtherCls)]     // another class with a same-named field
+    public async Task Back_IntoAContainerWhoseOwnerAddressHoldsAnotherObject_DropsTheRows(string name, string cls,
+                                                                                       string clsAddr)
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        PutAnotherOwnerAt(dump, name, cls, clsAddr);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
+
+        Assert.Empty(vm.Fields);
+        Assert.Contains(name, vm.StatusText);
+    }
+
+    // Review round 2: a pointer array rewritten in place -- same allocation, same count, slot [0] now another object --
+    // kept its old target, though the re-check had just read the new one; drilling [0] then walked the old, perhaps
+    // freed, object.
+    [Fact]
+    public async Task Back_IntoAPointerArrayRewrittenInPlace_ShowsTheNewTarget()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        var gear = OwnerStub.GearField();
+        dump.RegisterStruct(Owner, new InstanceWalkResult
+        {
+            Address = Owner, Name = "Owner_0", ClassName = "BP_Owner_C", ClassAddr = OwnerCls,
+            Fields = new List<LiveFieldValue>
+            {
+                new()
+                {
+                    Name = gear.Name, TypeName = gear.TypeName, Offset = gear.Offset, Size = gear.Size,
+                    ArrayInnerType = "ObjectProperty", ArrayCount = 1, ArrayElemSize = 8, ArrayDataAddr = "0x50000",
+                    ArrayElements = new() { new() { Index = 0, PtrAddress = Other, PtrName = "Other_0" } },
+                },
+            },
+        });
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
+
+        Assert.Equal(Other, vm.Fields.Single().PtrAddress);
+    }
+
+    [Fact]
+    public async Task Back_IntoAContainerWhoseOwnerNoLongerHasIt_DropsTheRows_AndSaysWhy()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        dump.RegisterStruct(Owner, OwnerStub.Obj(Owner, "Owner_0", "BP_Owner_C", OwnerCls));   // no Gear any more
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
+
+        Assert.Empty(vm.Fields);
+        Assert.Contains("Gear", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Back_IntoAContainerThatDidNotMove_ReadsTheOwnerOnce_AndKeepsTheView()
+    {
+        var (dump, vm, _) = OwnerWalker();
+        await OnOwnersContainer(vm, "Gear");
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // → [0]
+        var before = dump.Walks.GetValueOrDefault(Owner);
+        var resets = 0;
+        vm.Fields.CollectionChanged += (_, e) =>
+        {
+            if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset) resets++;
+        };
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+        await vm.ReentryRecheck;
+
+        Assert.True(dump.Walks.GetValueOrDefault(Owner) <= before + 1);   // at most the re-check: no refresh's walk
+        Assert.Equal(1, resets);                                           // the held render only
+        var row = vm.Fields.Single();
+        Assert.Equal("0x50000", row.FieldAddress);
+        Assert.Equal(Elem, row.PtrAddress);
     }
 
     [Fact]
@@ -1361,6 +1676,296 @@ public class LiveWalkerForwardNavTests
         await vm.FindReferencesCommand.ExecuteAsync(null);
 
         Assert.Equal($"References to {structViewName} (none found)", vm.ReferencesHeader);
+    }
+
+    // [LEAD-LW-SYNTH-CONTAINER-STRUCT-OWNER] A container crumb rebuilt from a bookmark file or a Locate spine has no
+    // ContainerField, and is re-hydrated by walking its owner. It walked the owner with the CONTAINER crumb's class,
+    // which a container crumb never has: an inline-struct owner's bytes were read as a UObject, the field was not found,
+    // and the view fell through to a plain walk of that address. Refresh walks with the owner crumb's class.
+
+    private const string Holder = "0x80000", StatsAddr = "0x80020", StatsCls = "0xC800";
+
+    private static OwnerStub StructOwnerStub()
+    {
+        var dump = new OwnerStub();
+        dump.RegisterStruct(Holder, new InstanceWalkResult
+        {
+            Address = Holder, Name = "Holder_0", ClassName = "BP_Holder_C", ClassAddr = "0xC700",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Stats", TypeName = "StructProperty", Offset = 0x20, Size = 0x50,
+                        StructTypeName = "FPlayerStats", StructClassAddr = StatsCls, StructDataAddr = StatsAddr },
+            },
+        });
+        dump.RegisterStruct(StatsAddr, new InstanceWalkResult
+        {
+            Address = StatsAddr, Name = "FPlayerStats", ClassName = "FPlayerStats", ClassAddr = StatsCls,
+            Fields = new List<LiveFieldValue> { OwnerStub.GearField() },
+        });
+        dump.RegisterClasslessWalk(StatsAddr, new InstanceWalkResult   // the struct's bytes read as a UObject
+        {
+            Address = StatsAddr, Name = "None", ClassName = "", ClassAddr = "",
+            Fields = new List<LiveFieldValue> { new() { Name = "Unknown_0", TypeName = "IntProperty", Offset = 0x8, Size = 4 } },
+        });
+        return dump;
+    }
+
+    /// <summary>A bookmark FILE's spine: Holder, its inline Stats struct, and Stats' Gear array, saved addresses.</summary>
+    private static async Task LoadStructOwnedGearBookmark(LiveWalkerViewModel vm)
+    {
+        var slot = vm.BookmarkSlots[0];
+        slot.SavedClassName = "Array<ObjectProperty>";
+        slot.SavedAddress = StatsAddr;
+        slot.SavedBreadcrumbs = new List<BreadcrumbItem>
+        {
+            new() { Address = Holder, Label = "Holder_0", FieldName = Holder, IsPointerDeref = true },
+            new() { Address = StatsAddr, Label = "Stats", FieldName = "Stats", FieldOffset = 0x20, ClassAddr = StatsCls },
+            new() { Address = StatsAddr, Label = "Gear", FieldName = "Gear", FieldOffset = 0x40, IsContainerView = true },
+        };
+        slot.IsOccupied = true;
+        await vm.LoadBookmarkCommand.ExecuteAsync(slot);
+    }
+
+    [Fact]
+    public async Task ABookmarkedContainerInAnInlineStruct_RestoresTheContainersElements()
+    {
+        var dump = StructOwnerStub();
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+
+        await LoadStructOwnedGearBookmark(vm);
+
+        Assert.Equal(new[] { "[0]" }, vm.Fields.Select(f => f.Name).ToArray());   // was the struct read as a UObject
+        Assert.Equal(StatsCls, vm.Breadcrumbs[^1].OwnerClassAddr);
+    }
+
+    [Fact]
+    public async Task BackIntoABookmarkedContainerInAnInlineStruct_ShowsTheContainersElements()
+    {
+        var dump = StructOwnerStub();
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        await LoadStructOwnedGearBookmark(vm);
+        await vm.NavigateToFieldCommand.ExecuteAsync(vm.Fields.Single());   // [0] -> Elem_0
+        Assert.Equal(Elem, vm.CurrentAddress);
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.Equal(new[] { "[0]" }, vm.Fields.Select(f => f.Name).ToArray());
+    }
+
+    // [LEAD-DT-EXPORT-64ROWS] Copy CE Field on a container view exports the elements selected, by choice fewer than the
+    // total: the export's limit warning reported that as the container being cut short.
+
+    [Fact]
+    public async Task CopyCeField_OfOneSelectedElement_DoesNotCallTheContainerCutShort()
+    {
+        const string Big = "0x90000";
+        var (dump, vm, platform) = OwnerWalker();
+        dump.RegisterStruct(Big, new InstanceWalkResult
+        {
+            Address = Big, Name = "Big_0", ClassName = "BP_Big_C", ClassAddr = "0xC900",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Items", TypeName = "ArrayProperty", Offset = 0x40, Size = 0x10,
+                        ArrayInnerType = "IntProperty", ArrayCount = 300, ArrayElemSize = 4, ArrayDataAddr = "0x91000",
+                        ArrayElements = new() { new() { Index = 0, Value = "1" }, new() { Index = 1, Value = "2" } } },
+            },
+        });
+        vm.ArrayLimit = 2;
+        await vm.NavigateToAddressCommand.ExecuteAsync(Big);
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single());
+        vm.SelectedField = vm.Fields.Single(f => f.Name == "[1]");
+
+        await vm.ExportCeFieldXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.StartsWith("Copied:", vm.StatusText);
+        Assert.DoesNotContain("Container element limit", vm.StatusText);   // was "Items (Array: 300 total, 1 loaded)"
+    }
+
+    [Fact]
+    public async Task CopyCeField_OfEveryLoadedElement_StillCallsTheContainerCutShort()
+    {
+        // Review round 1 of [LEAD-DT-EXPORT-64ROWS]: a selection of every loaded row is not a choice to leave the rest
+        // out -- the rest were never read. Ctrl+A in a view of 2 of 300 lost the warning the export used to give.
+        const string Big = "0x90000";
+        var (dump, vm, platform) = OwnerWalker();
+        dump.RegisterStruct(Big, new InstanceWalkResult
+        {
+            Address = Big, Name = "Big_0", ClassName = "BP_Big_C", ClassAddr = "0xC900",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Items", TypeName = "ArrayProperty", Offset = 0x40, Size = 0x10,
+                        ArrayInnerType = "IntProperty", ArrayCount = 300, ArrayElemSize = 4, ArrayDataAddr = "0x91000",
+                        ArrayElements = new() { new() { Index = 0, Value = "1" }, new() { Index = 1, Value = "2" } } },
+            },
+        });
+        vm.ArrayLimit = 2;
+        await vm.NavigateToAddressCommand.ExecuteAsync(Big);
+        await vm.NavigateToContainerCommand.ExecuteAsync(vm.Fields.Single());
+        vm.UpdateSelectedFields(vm.Fields.ToList());   // Ctrl+A
+
+        await vm.ExportCeFieldXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("Items (Array: 300 total, 2 loaded)", vm.StatusText);
+    }
+
+    // [CEXPORT-NESTED-TRUNC-NOTE] A container the export cut at the Array Limit inside a struct it walked.
+
+    private static OwnerStub NestedArrayStub()
+    {
+        var dump = StructOwnerStub();
+        dump.RegisterStruct(StatsAddr, new InstanceWalkResult
+        {
+            Address = StatsAddr, Name = "FPlayerStats", ClassName = "FPlayerStats", ClassAddr = StatsCls,
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Slots", TypeName = "ArrayProperty", Offset = 0x0, Size = 0x10,
+                        ArrayInnerType = "IntProperty", ArrayCount = 300, ArrayElemSize = 4, ArrayDataAddr = "0x92000",
+                        ArrayElements = new() { new() { Index = 0, Value = "1" }, new() { Index = 1, Value = "2" } } },
+            },
+        });
+        return dump;
+    }
+
+    [Fact]
+    public async Task CopyCeXml_SaysANestedContainerWasCutAtTheArrayLimit()
+    {
+        var dump = NestedArrayStub();
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), platform) { ArrayLimit = 2 };
+        await vm.NavigateToAddressCommand.ExecuteAsync(Holder);
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("Slots (Array: 300 total, 2 loaded, nested)", vm.StatusText);   // was no warning at all
+    }
+
+    [Fact]
+    public async Task CopyCeField_SaysANestedContainerWasCutAtTheArrayLimit()
+    {
+        var dump = NestedArrayStub();
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), platform) { ArrayLimit = 2 };
+        await vm.NavigateToAddressCommand.ExecuteAsync(Holder);
+        vm.SelectedField = vm.Fields.Single(f => f.Name == "Stats");
+
+        await vm.ExportCeFieldXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("Slots (Array: 300 total, 2 loaded, nested)", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task PushToCeStructureDissect_SaysANestedContainerWasCutAtTheArrayLimit()
+    {
+        var dump = NestedArrayStub();
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()),
+                                         bridge) { ArrayLimit = 2 };
+        vm.ApplyAobMakerProbe(true);
+        await vm.NavigateToAddressCommand.ExecuteAsync(Holder);
+
+        await vm.PushCsxToCeCommand.ExecuteAsync(null);
+
+        Assert.Single(bridge.AaScripts);
+        Assert.Contains("Slots (Array: 300 total, 2 loaded, nested)", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task ExportCsx_SaysANestedContainerWasCutAtTheArrayLimit()
+    {
+        // Review round 1: Export CSX (to a file) passed the walked fields too, and no test held that wiring.
+        var dump = NestedArrayStub();
+        var file = Path.Combine(Path.GetTempPath(), $"UE5DumpNestedCsx_{Guid.NewGuid():N}.csx");
+        var platform = new MockPlatformService(Path.GetTempPath()) { NextSavePath = file };
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), platform) { ArrayLimit = 2 };
+        await vm.NavigateToAddressCommand.ExecuteAsync(Holder);
+        try
+        {
+            await vm.ExportCsx77Command.ExecuteAsync(null);
+
+            Assert.True(File.Exists(file));
+            Assert.Contains("Slots (Array: 300 total, 2 loaded, nested)", vm.StatusText);
+        }
+        finally { File.Delete(file); }
+    }
+
+    [Fact]
+    public async Task CopyCeXml_SaysAContainerWasCutInAPointerTargetItWalked()
+    {
+        // Review round 1: the pointer-target half of the nested scan (the resolver's resolvedInstances) had no test.
+        const string Ptr = "0x93000";
+        var dump = NestedArrayStub();
+        dump.RegisterStruct("0x94000", new InstanceWalkResult
+        {
+            Address = "0x94000", Name = "Holder2_0", ClassName = "BP_Holder2_C", ClassAddr = "0xCA00",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Target", TypeName = "ObjectProperty", Offset = 0x28, Size = 8,
+                        PtrAddress = Ptr, PtrName = "Pointee_0", PtrClassName = "BP_Pointee_C", PtrClassAddr = "0xCB00" },
+            },
+        });
+        dump.RegisterStruct(Ptr, new InstanceWalkResult
+        {
+            Address = Ptr, Name = "Pointee_0", ClassName = "BP_Pointee_C", ClassAddr = "0xCB00",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Bag", TypeName = "ArrayProperty", Offset = 0x30, Size = 0x10,
+                        ArrayInnerType = "IntProperty", ArrayCount = 300, ArrayElemSize = 4, ArrayDataAddr = "0x95000",
+                        ArrayElements = new() { new() { Index = 0, Value = "1" }, new() { Index = 1, Value = "2" } } },
+            },
+        });
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), platform) { ArrayLimit = 2, CsxDrilldownDepth = 1 };
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x94000");
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("Bag (Array: 300 total, 2 loaded, nested)", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task Csx_HandsBackTheFieldsItWalked_SoTheCallerCanSayWhatWasCut()
+    {
+        var dump = NestedArrayStub();
+        var walked = new List<LiveFieldValue>();
+        var ct = TestContext.Current.CancellationToken;
+        var holderFields = (await dump.WalkInstanceAsync(Holder, ct: ct)).Fields;
+
+        await UE5DumpUI.Services.CsxExportService.GenerateCsxAsync(dump, "Holder", holderFields, arrayLimit: 2,
+            resolvedFieldsOut: walked, ct: ct);
+
+        Assert.Contains(walked, f => f.Name == "Slots" && f.ArrayCount == 300);
+    }
+
+    [Fact]
+    public async Task ARefreshThatKeepsTheRows_CountsTheMatchesOnTheRowsShown()
+    {
+        // [LEAD-LW-INPLACE-SEARCHCOUNT] A refresh of the same object with the same layout copies the values onto the
+        // rows shown and keeps their type label. The match count came from the fresh rows and the highlights from the
+        // kept ones, so a guessed row whose label gained its "?" counted a match nothing showed.
+        const string Obj = "0x96000";
+        var (dump, vm, _) = OwnerWalker();
+        InstanceWalkResult Walk(string type) => new()
+        {
+            Address = Obj, Name = "Obj_0", ClassName = "BP_Obj_C", ClassAddr = "0xCD00",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "?0x10_int", TypeName = type, Offset = 0x10, Size = 4, IsGuessed = true, TypedValue = "7" },
+            },
+        };
+        dump.RegisterStruct(Obj, Walk("IntProperty"));
+        await vm.NavigateToAddressCommand.ExecuteAsync(Obj);
+        vm.SearchText = "Property?";
+        Assert.Equal(0, vm.SearchMatchCount);
+
+        dump.RegisterStruct(Obj, Walk("IntProperty?"));
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(vm.Fields.Count(f => f.IsSearchMatch), vm.SearchMatchCount);   // was 1 counted, 0 highlighted
     }
 
     [Fact]

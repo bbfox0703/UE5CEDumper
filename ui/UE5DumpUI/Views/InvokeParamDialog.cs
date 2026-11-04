@@ -13,12 +13,13 @@ using UE5DumpUI.Services;
 namespace UE5DumpUI.Views;
 
 /// <summary>
-/// Two entry-points for this dialog (each opened by a different LiveWalker
-/// button on a UFunction row):
+/// The two ways this dialog opens; a caller picks one by whether a live call is what the user asked for:
 /// <list type="bullet">
 /// <item><see cref="PipeInvoke"/> -- shows FIRE + Copy AA Script + Cancel.
 ///     User can either test the call live in-app via the pipe, or bake the
-///     current form values into a redistributable AA Script.</item>
+///     current form values into a redistributable AA Script. FIRE runs on the
+///     object the dialog was given, or -- given none -- on whatever object the DLL
+///     resolves the class name to at that FIRE.</item>
 /// <item><see cref="CopyBakedScript"/> -- shows Copy AA Script + Cancel
 ///     only. FIRE is hidden so a user opening the dialog from the
 ///     "Copy AA Script (Baked)" button can't accidentally invoke the
@@ -58,9 +59,9 @@ public sealed class InvokeParamDialog : Window
     private readonly string _className;
     private readonly string _funcName;
     private readonly string _instanceAddr;
-    /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The class the function list was read from, sent with every FIRE:
-    /// the dialog stays open across FIREs, and the DLL refuses when the object at <see cref="_instanceAddr"/> is of
-    /// another class by then (freed, its slot reused). Null = no check.</summary>
+    /// <summary>[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The class the function list was read from, sent with a FIRE that
+    /// targets <see cref="_instanceAddr"/>: the dialog stays open across FIREs, and the DLL refuses when the object there
+    /// is of another class by then (freed, its slot reused). Null = no check; a FIRE by class name sends none.</summary>
     private readonly string? _expectClassAddr;
     private readonly IDumpService _dump;
     private readonly IAobMakerBridge? _aobMaker;
@@ -161,6 +162,21 @@ public sealed class InvokeParamDialog : Window
         };
         DockPanel.SetDock(header, Dock.Top);
         root.Children.Add(header);
+
+        // [MAINWINDOW-INVOKE-LIMIT1-CDO] Opened on a class with no object: say where each FIRE will land before the first.
+        if (ShowsTargetByClassLine(mode, instanceAddr))
+        {
+            var target = new TextBlock
+            {
+                Text = UE5DumpUI.Helpers.InvokePickText.TargetByClassText(className),
+                Foreground = new SolidColorBrush(Color.Parse("#9CDCFE")),
+                FontSize = 11,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8),
+            };
+            DockPanel.SetDock(target, Dock.Top);
+            root.Children.Add(target);
+        }
 
         // Bottom panel: buttons + result (fixed at bottom)
         var bottomPanel = new StackPanel { Margin = new Thickness(0, 8, 0, 0) };
@@ -689,13 +705,15 @@ public sealed class InvokeParamDialog : Window
             }
 
             // Execute via pipe
+            var target = FireTarget(_instanceAddr, _className, _expectClassAddr);
             var result = await _dump.InvokeFunctionAsync(
                 _funcName,
-                instanceAddr: _instanceAddr,
+                instanceAddr: target.InstanceAddr,
+                className: target.ClassName,
                 parmsSize: _parmsSize,
                 paramsHex: paramsHex,
                 stringParams: stringParams.Count > 0 ? stringParams : null,
-                expectClassAddr: _expectClassAddr);
+                expectClassAddr: target.ExpectClassAddr);
 
             // Display results
             ShowResult(result);
@@ -712,22 +730,60 @@ public sealed class InvokeParamDialog : Window
         }
     }
 
-    private void ShowResult(InvokeFunctionResult result)
+    /// <summary>[MAINWINDOW-INVOKE-LIMIT1-CDO] Whether the dialog says, before the first FIRE, that each FIRE lands on
+    /// whatever object the class name resolves to: only a dialog that can FIRE and was given no object.</summary>
+    internal static bool ShowsTargetByClassLine(InvokeDialogMode mode, string instanceAddr)
+        => mode == InvokeDialogMode.PipeInvoke && string.IsNullOrEmpty(instanceAddr);
+
+    /// <summary>[MAINWINDOW-INVOKE-LIMIT1-CDO] What a FIRE sends. A dialog opened on a class, with no object known, sends
+    /// the class name, and the DLL resolves it at each FIRE with Aura::ResolveUserInstance -- the resolver behind the
+    /// Console's Run, though not the Console's per-class pin, which this dialog neither reads nor sets. It sends no class
+    /// check then: the DLL applies expect_class_addr to the object it picks too, and as an equality test it would refuse
+    /// a subclass object (a Blueprint's _C) or a partial-name pick the resolver legitimately chose; with no kept address
+    /// there is nothing for it to protect. One opened on an object sends that address and its class check.</summary>
+    internal static (string? InstanceAddr, string? ClassName, string? ExpectClassAddr) FireTarget(
+        string instanceAddr, string className, string? expectClassAddr)
+        => string.IsNullOrEmpty(instanceAddr) ? (null, className, null) : (instanceAddr, null, expectClassAddr);
+
+    /// <summary>[MAINWINDOW-INVOKE-LIMIT1-CDO] The header lines for a FIRE sent by class name: the outcome names the object
+    /// the DLL picked, with the Console's note (the class-default, template and Debug Camera warnings fold into it, so
+    /// no separate warning line repeats them). A FIRE sent to an address keeps the lines below.</summary>
+    internal static List<string> HeaderLines(InvokeFunctionResult result, int fireCount, bool byClassName)
     {
-        _resultLabel.IsVisible = true;
+        if (!byClassName) return HeaderLines(result, fireCount);
+        var lines = HeaderLines(result, fireCount);
+        return new List<string> { lines[0] + UE5DumpUI.Helpers.InvokePickText.Note(result) };
+    }
 
+    /// <summary>The lines above the post-call buffer: the outcome, then the DLL's template warning when it raised one
+    /// -- on a failure too, where it is the likely reason. [INVOKE-NONSTATIC-ON-CDO]</summary>
+    internal static List<string> HeaderLines(InvokeFunctionResult result, int fireCount)
+    {
         var lines = new List<string>();
-
         if (result.Success)
         {
-            lines.Add($"[#{_fireCount}] ProcessEvent OK  (result={result.Result})");
+            lines.Add($"[#{fireCount}] ProcessEvent OK  (result={result.Result})");
         }
         else
         {
             var errorDetail = !string.IsNullOrEmpty(result.Error)
                 ? result.Error
                 : $"error code {result.Result}";
-            lines.Add($"[#{_fireCount}] INVOKE FAILED: {errorDetail}");
+            lines.Add($"[#{fireCount}] INVOKE FAILED: {errorDetail}");
+        }
+        var warning = UE5DumpUI.Helpers.InvokePickText.TemplateWarning(result);
+        if (warning.Length > 0) lines.Add(warning);
+        return lines;
+    }
+
+    private void ShowResult(InvokeFunctionResult result)
+    {
+        _resultLabel.IsVisible = true;
+
+        var lines = HeaderLines(result, _fireCount, byClassName: string.IsNullOrEmpty(_instanceAddr));
+
+        if (!result.Success)
+        {
             _resultLabel.Foreground = new SolidColorBrush(Color.Parse("#F44747"));
             _resultLabel.Text = string.Join("\n", lines);
             return;

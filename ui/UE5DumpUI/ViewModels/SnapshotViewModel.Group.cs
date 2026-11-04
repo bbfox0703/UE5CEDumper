@@ -199,6 +199,15 @@ public partial class SnapshotViewModel
     private async Task RunGroupMatchAsync()
     {
         if (!CanRunGroupMatch) return;
+        // [VALUESCAN-NONFINITE-TARGET] As Value Search refuses it live, so the two cannot answer differently.
+        foreach (var g in GroupInputs)
+        {
+            if (Services.ValueTargetCheck.NonFiniteTargetError(g.DataType, g.ScanType, g.Value, g.Value2) is { } nonFinite)
+            {
+                SetError(nonFinite);
+                return;
+            }
+        }
         _groupCts?.Cancel();
         _groupCts?.Dispose();
         var cts = _groupCts = new CancellationTokenSource();

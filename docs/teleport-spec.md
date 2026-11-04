@@ -139,7 +139,7 @@ Deliverables for the user:
 | Class walk incl. inherited fields | `Ubel::WalkClassEx` | Field offsets by name on engine base classes. UFunction param walking too (a `UFunction` is a `UStruct`; its children are the param properties). |
 | Function lookup | `UE5_FindFunctionByName(classAddr, name)` | Find `K2_SetActorLocation`, `K2_TeleportTo`, etc. |
 | Game-thread invoke | `UE5_CallProcessEvent(instance, ufunc, paramsPtr)` (Stark queue) | ALL invokes in this feature. **Never** use the static-native direct path (`UE5_CallProcessEventDirect`) for traces or actor mutation — traces read the physics scene, actor moves mutate world state; both must run on the game thread. |
-| Instance finder | `Aura::FindInstancesByClass` | Fallback PlayerController resolution; CheatManager detection (Tier 0). |
+| Instance finder | `Aura::ScanForLocalPlayerController` / `Aura::FindLiveOrDefaultOf` + `Aura::TemplateOf` | Fallback PlayerController resolution (by derivation); CheatManager detection (Tier 0: a template is not live -- `DbgCam_ReadState`, `[DEBUGCAM-FORCEON-CDO]`). |
 | Object name reader | existing Frieren export used by the UI/CE for object names (via `Serie`) | Map-name capture for markers. |
 | Mailbox | `Mimic.cpp/.h`, `g_invokeMailbox` | CE Lua entry point. New `CMD_TELEPORT=8` handler delegates to the same exports the pipe uses. |
 | Pipe | `Fern.cpp` + `Renge.h` | 6 new request/response commands (§7). |
@@ -180,9 +180,13 @@ UWorld* world = deref(g_cachedGWorld)
                                     already resolves on the LocalPlayer class)
 ```
 
-**Fallback** (any hop unresolvable): `Aura::FindInstancesByClass` with
-contains-match `"PlayerController"`, skip CDOs, prefer the instance whose
-`Player` (ObjectProperty on AController) is non-null — that's the local one.
+**Fallback** (any hop unresolvable): `Aura::ScanForLocalPlayerController` — every
+live object DERIVED from `APlayerController` (never a class-name substring, never a
+template), ranked by its `Player` (ObjectProperty on APlayerController): a
+`ULocalPlayer` first — that's the local one — then any other UPlayer (a listen
+server's remote connection), then none. An inactive Debug Camera controller (no
+Player) is never taken; an active one holds the LocalPlayer, as the chain gives it,
+and §5.6's hop applies. `[FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS]`
 Log which path won (`source: "chain" | "scan"`).
 
 ### 5.2 Pawn, Root, Pose
@@ -263,8 +267,9 @@ properties via Ubel (offsets + types + `ParmsSize`), then:
 
 When the Debug Camera feature (this project's own) is ON, the LocalPlayer's
 `PlayerController` **is the DebugCameraController** — its `Pawn` is null or a
-spectator. Before erroring with `-3`: if the resolved PC's class name contains
-`"DebugCameraController"`, follow `OriginalControllerRef` (reuse
+spectator. Before erroring with `-3`: if the resolved PC's class derives from
+`ADebugCameraController` (`Aura::ClassDerivesFromAny`; a game's subclass may be
+named without the word, `[FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS]`), follow `OriginalControllerRef` (reuse
 `DbgCam_ReadState` plumbing) to the real PC and continue. This makes
 "fly somewhere with debug camera → save marker" work naturally.
 
@@ -417,8 +422,9 @@ usual; pose numbers are JSON doubles):
 // teleport_clear_marker
 { "cmd": "teleport_clear_marker", "slot": 0 } → { "code":0 }
 
-// teleport_recall_last — one-way undo of the most recent jump (recall the
-// system "last" pose). EmptyMarker (-6) when nothing has been auto-saved yet.
+// teleport_recall_last — one-way undo: recall the system "last" pose, auto-saved
+// before a jump (a jump whose pose was not world coordinates leaves the previous
+// one). EmptyMarker (-6) when nothing has been auto-saved yet.
 { "cmd": "teleport_recall_last" } → { "code":0, "tier":1 }
 ```
 
@@ -452,31 +458,49 @@ Op codes (`Grimoire.h` + mirrored in the C# constants file):
 |---|---|---|---|
 | 0 | GET_POSE | — | pose block |
 | 1 | SAVE | — | pose block (the saved pose) |
-| 2 | RECALL | — | — |
-| 3 | RECALL_FORCE | — | — |
+| 2 | RECALL | — | `[177]` tier (`result=-7` map mismatch; `result=-16` refused, nothing moved, when the marker came from a parent-relative read) |
+| 3 | RECALL_FORCE | — | `[177]` tier (skips only the map check: `result=-16` for a parent-relative marker, as RECALL) |
 | 4 | CURSOR | `[0..7]` double zOffset, `[8]` u8 traceChannel, `[9]` u8 fallbackToCenter | `[0..23]` 3×double hit point |
 | 5 | GET_MARKER | — | pose block (`result=-6` if slot empty) |
 | 6 | CLEAR_MARKER | — | — |
 | 7 | RECALL_LAST | — (slot ignored) | `[177]` tier (recall the system auto-saved "last" pose) |
 | 8 | GET_LAST | — | pose block (`result=-6` if nothing auto-saved yet) |
 | 9 | BUGIT_SAVE | — (slot ignored) | pose block (stores the pose in the BugIt slot) |
-| 10 | BUGIT_GO | — | `[177]` tier (`result=-6` no-op if no BugIt stored yet) |
+| 10 | BUGIT_GO | — | `[177]` tier (`result=-6` no-op if no BugIt stored yet; `result=-16` refused, nothing moved, when the stored BugIt came from a parent-relative read) |
 
 The **BugIt slot** (op 9/10) is a single user-triggered pose (UE BugIt/BugItGo
 semantics) the DLL holds between hotkey presses: BUGIT_SAVE stores the current
 pose (and returns it so the Lua can also clipboard a `BugItGo X Y Z` string),
-BUGIT_GO teleports to it (restores rotation; auto-saves "last" first like every
-jump; no-op when nothing stored). Mailbox-only (CE Lua path) — the UI's own
+BUGIT_GO teleports to it (restores rotation; auto-saves "last" first as the other
+jumps do; no-op when nothing stored). A BugIt taken from the parent-relative
+fallback (an attached pawn whose world-space read failed; pose flags bit0) is
+stored and reported, but BUGIT_GO **refuses** it with `-16` before the "last"
+auto-save, so nothing moves `[TELEPORT-BUGITGO-PARENTREL]`: those numbers are
+the pawn's offset from its parent, and driven in as world coordinates they land
+somewhere unrelated. A BugIt taken while the world-space read works replaces
+it. Mailbox-only (CE Lua path) — the UI's own
 BugItGo flow stays textbox-based via `teleport_recall_marker`, so there is no
 pipe command / C export for this slot.
 
 The **"last" slot** (op 7/8) is a system-managed extra marker the DLL writes
-automatically right before *every* jump (RECALL / RECALL_FORCE / CURSOR and the
-pipe BugItGo explicit-pose path), so a teleport that lands the pawn somewhere
+automatically right before a jump (RECALL / RECALL_FORCE / CURSOR / RELATIVE /
+BUGIT_GO and the explicit-pose path), so a teleport that lands the pawn somewhere
 bad can be undone. RECALL_LAST is a **one-way restore** — it never overwrites the
 slot, so repeated calls always return to the same pre-teleport spot. The user
 can never save into it (no SAVE op for "last"); the map check is skipped (the
-pose is always from moments ago on the current map).
+pose is normally from moments ago on the current map). A pose before the jump
+that is not world coordinates — unreadable, or the parent-relative fallback —
+leaves the previous one, so the slot can be older than the most recent jump and
+never holds relative numbers `[TELEPORT-RECALL-PARENTREL]`.
+
+**Marker RECALL / RECALL_FORCE and RELATIVE** refuse a parent-relative pose the
+same way BUGIT_GO does, with `-16` before the "last" auto-save: a marker saved
+from the fallback (Force overrides only the map check, which can be wrong;
+nothing makes relative numbers world coordinates), and a TP-facing step whose
+start pose came from it. A parent-relative marker on another map answers `-16`,
+not `-7`, so Force is not offered for a refusal it could not get past. A
+RELATIVE whose landing re-read falls back is reported as an unknown landing
+`[TELEPORT-RECALL-PARENTREL]`.
 
 Pose block layout in `paramsData` (offsets relative to 0x328):
 
@@ -494,9 +518,9 @@ Pose block layout in `paramsData` (offsets relative to 0x328):
 ⚠ Op 4 (CURSOR) reads its inputs **before** writing outputs into the same
 buffer.
 
-Handler `HandleTeleport()` in `Mimic.cpp` is a thin switch that delegates to
-the `UE5_Teleport*` exports (identical to `HandleSetDebugCamera`'s style),
-then copies results into `paramsData`. Document the new command in
+Handler `HandleTeleport()` in `Mimic.cpp` is a thin switch that calls the
+`Wirbel::` functions directly (not the `UE5_Teleport*` exports), then copies
+results into `paramsData`. Document the new command in
 `Mimic.h`'s `Cmd` enum comment block.
 
 ### Error / result codes (shared across exports, pipe, mailbox)
@@ -514,6 +538,10 @@ then copies results into `paramsData`. Document the new command in
 | -8 | Trace found no blocking hit | "Nothing under cursor/center within range" |
 | -9 | Mouse position unavailable and center fallback disabled | "No cursor — enable center fallback" |
 | -10 | Tier 2 raw-write fallback also failed | "Write failed (protected memory?)" |
+| -16 | Jump refused: the stored pose (a BugIt, a marker) or the current pose (TP facing) came from a parent-relative read, not world coordinates; nothing moved. Mailbox `BUGIT_GO`, `RECALL`, `RECALL_FORCE` and `RELATIVE`; the pipe's `teleport_recall_marker` (slot) and `teleport_relative`; `UE5_TeleportRecallMarker` / `UE5_TeleportRelative` | "Save (or BugIt) again — for TP facing, try again — while the game responds (focus it / Keep Foreground), or off the vehicle or mount" |
+
+-11 to -15 are not Wirbel codes: the mailbox publishes its own codes there, in the
+same `result` field (`Mimic.h`, `Mimic.cpp`).
 
 -----
 
@@ -1034,7 +1062,8 @@ Reuses the existing `Wirbel::RecallExplicit` (no new core): force-teleport to an
 exact world X/Y/Z, **no map check**, optional rotation restore. Already exposed on
 the pipe via `teleport_recall_marker` (x/y/z variant). New surfaces only add a CE
 mailbox op + export + a dedicated UI section (X/Y/Z + optional Pitch/Yaw/Roll +
-"Fill from current"). Also undoable via Recall last.
+"Fill from current", which refuses a parent-relative read: the boxes cannot
+carry the flag `[TELEPORT-RECALL-PARENTREL]`). Also undoable via Recall last.
 
 ### 16.3 Force mouse cursor (`Wirbel::SetMouseCursor` / `GetMouseCursor`)
 

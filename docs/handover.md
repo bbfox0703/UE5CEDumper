@@ -175,7 +175,7 @@ installed with `fixture_census.py` (§3) before planning around one.
 | `Gg2game` | exe | GalGun Double Peace |
 | `Avowed` | 2457220 | the name resolves to the launcher shim `Avowed.exe`: front and screenshot with it, never `open_application` it (§3); in-game clicks need `Avowed-win64-shipping` |
 | `Gwt` | 1475810 | Ghostwire: Tokyo. No Start-menu entry: launch with `-applaunch`, then request the running exe. The root `GWT.exe` is a bootstrap; both requests resolved to `Snowfall\Binaries\Win64\GWT.exe` |
-| `Ffrs-win64-shipping` | 4474710 | FINAL FANTASY RESONANCE DEMO; the exe, requested while it runs |
+| `Ffrs-win64-shipping` | 3259780 | FINAL FANTASY RESONANCE (the full release; the DEMO, 4474710, has the same exe name); the exe, requested while it runs |
 | `Dragon quest xi s` | 1295510 | the exe |
 | `Isdefense-win64-shipping` | 448370 | IS Defense; the exe |
 | `Extinction` | 570710 | the exe |
@@ -564,6 +564,9 @@ preconditions and a few refuse to run in the wrong state rather than degrading i
   reading them off a screenshot is how a quoted string gets silently paraphrased. Collect into a
   table and `f:write(table.concat(L,'\n'))` to the scratchpad, then `cat` it — the transcript is
   then byte-exact, and a Lua `error()` even carries its own `:line`, which pins WHICH branch spoke.
+  A record's `showMessage` is caught the same way, and no modal opens over the game: replace the global with a
+  function that appends to the table, set `getAddressList()[i].Active = true` inside `pcall`, then put the original
+  back (measured 2026-11-03 on the Teleport BugIt / BugItGo records).
 * ⚠ **A record you cannot see may still exist.** `scripts/UE5CEDumper.CT`'s real tick target,
   `Inject DLL + Start Pipe Server`, is a HIDDEN CHILD of `init` (`moHideChildren="1"`). Ticking
   `init` un-hides it **without activating it**. `getAddressList()` indexes hidden records

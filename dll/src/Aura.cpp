@@ -1703,8 +1703,14 @@ SearchResultSet SearchByName(const std::string& query, int maxResults, bool inst
     return rset;
 }
 
-SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch, int maxResults, bool newestFirst, const std::string& nameFilter, const std::vector<std::string>& excludeClasses, bool buildHistogram) {
+// TemplateOf with a per-walk memo of the outer-chain half; defined beside TemplateOf.
+static TemplateInfo TemplateOfImpl(uintptr_t obj, std::unordered_map<uintptr_t, uintptr_t>* outerMemo,
+                                   const std::string* knownName = nullptr);
+
+SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch, int maxResults, bool newestFirst, const std::string& nameFilter, const std::vector<std::string>& excludeClasses, bool buildHistogram, bool skipTemplates) {
     SearchResultSet rset;
+    std::unordered_map<uintptr_t, uintptr_t> outerMemo;   // TemplateOfImpl's, for skipTemplates
+    int templatesSkipped = 0;
 
     // Convert queries to lowercase for case-insensitive comparison
     std::string lowerQuery = className;
@@ -1792,6 +1798,14 @@ SearchResultSet FindInstancesByClass(const std::string& className, bool exactMat
             if (lowerObjName.find(lowerName) == std::string::npos) continue;
         }
 
+        // [LISTINSTANCES-KEEPS-TEMPLATES] A caller that WRITES to the pool asks for no template: not a match at all, so
+        // it neither takes a cap slot nor reaches the histogram. Templates are built at class load and sit at the low
+        // indices this walk reaches first.
+        if (skipTemplates && TemplateOfImpl(obj, &outerMemo, &objName).kind != TemplateKind::None) {
+            ++templatesSkipped;
+            continue;
+        }
+
         // This row satisfies the class+name query. Tally it PRE-exclude (full pool)
         // so the picker can still surface — and untick — an excluded/past-cap class.
         if (buildHistogram) ++histMap[clsName];
@@ -1838,10 +1852,11 @@ SearchResultSet FindInstancesByClass(const std::string& className, bool exactMat
         rset.classDistinct = static_cast<int>(rset.classHistogram.size());
     }
 
-    Sein::Info("PIPE:find", "FindInstancesByClass class='%s' name='%s': %d found%s, scanned=%d, nonNull=%d, named=%d, distinct=%d, excluded=%d",
+    rset.templatesSkipped = templatesSkipped;
+    Sein::Info("PIPE:find", "FindInstancesByClass class='%s' name='%s': %d found%s, scanned=%d, nonNull=%d, named=%d, distinct=%d, excluded=%d, templates=%d",
                  className.c_str(), nameFilter.c_str(), (int)rset.results.size(),
                  rset.truncated ? " (capped)" : "", rset.scanned, rset.nonNull, rset.named,
-                 rset.classDistinct, (int)excludeSet.size());
+                 rset.classDistinct, (int)excludeSet.size(), templatesSkipped);
     return rset;
 }
 
@@ -1881,6 +1896,9 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
     // per-CLASS one, which is what makes "AActor and everything under it"
     // affordable at all.
     std::unordered_map<uintptr_t, bool> derivedCache;
+    std::unordered_map<uintptr_t, uintptr_t> outerMemo;   // TemplateOfImpl's
+    int templatesSkipped = 0;
+    const auto t0 = std::chrono::steady_clock::now();
 
     int32_t count = GetCount();
     rset.scanned = count;
@@ -1928,13 +1946,21 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
         if (objName.empty()) continue;
         rset.named++;
 
-        // CDO skip, and it has to happen HERE — before the cap. A base like
+        // Template skip, and it has to happen HERE — before the cap. A base like
         // AActor is the ancestor of thousands of classes, EVERY one of which
-        // contributes a Default__ object, and CDOs are constructed at
+        // contributes a Default__ object, and templates are constructed at
         // class-load time so they sit at the LOW GObjects indices this walk
         // reaches first. A caller that filtered afterwards would be handed
-        // maxResults class-default rows and not one live instance.
-        if (objName.rfind("Default__", 0) == 0) continue;
+        // maxResults templates and not one live instance.
+        // [LISTINSTANCES-KEEPS-TEMPLATES] Every template, not only the Default__ object: its default subobjects
+        // and a Blueprint's component templates too (TemplateOf). A pool that is written to must hold none: what
+        // a template holds, every later spawn copies. With an outer filter the pool is one object's children, and
+        // a template's outer is a package, a class or a class default object: the name alone keeps a level's
+        // actors off the flags word, which TemplateOf reads at a fixed offset no probe confirms.
+        const bool isTemplate = outerFilter
+            ? objName.rfind("Default__", 0) == 0
+            : TemplateOfImpl(obj, &outerMemo, &objName).kind != TemplateKind::None;
+        if (isTemplate) { ++templatesSkipped; continue; }
 
         ++matchTotal;
         if (static_cast<int>(rset.results.size()) >= maxResults) continue;   // count, don't append
@@ -1951,17 +1977,319 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
     }
 
     if (totalOut) *totalOut = matchTotal;
+    rset.templatesSkipped = templatesSkipped;
     // ONE source for "is this a page or the whole set". When an exact total was asked
     // for, derive the flag from it — a second flag computed by a different code path is
     // audit #4's own named root cause, and this handler's caller publishes `truncated`.
     rset.truncated = totalOut ? (matchTotal > maxResults)
                              : (static_cast<int>(rset.results.size()) >= maxResults);
 
-    Sein::Info("PIPE:find", "FindInstancesDerivedFrom base='%s': %d live instance(s)%s over %d distinct class(es), scanned=%d, nonNull=%d",
+    // templates= makes a misread flags word diagnosable (every candidate passed over); ms= is the walk's cost.
+    const long long ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             std::chrono::steady_clock::now() - t0).count();
+    Sein::Info("PIPE:find", "FindInstancesDerivedFrom base='%s': %d live instance(s)%s over %d distinct class(es), "
+                 "templates=%d, scanned=%d, nonNull=%d, ms=%lld",
                  baseClassName.c_str(), (int)rset.results.size(),
                  rset.truncated ? " (capped)" : "",
-                 (int)derivedCache.size(), rset.scanned, rset.nonNull);
+                 (int)derivedCache.size(), templatesSkipped, rset.scanned, rset.nonNull, ms);
     return rset;
+}
+
+// [FINDINSTANCE-SUBSTRING-USERFACING] One walk for the class lookups below -- two copies of such a walk drifted before
+// (Mimic's "reuse existing logic" twin). Their differences are the InstanceWalk fields. The one about an object that a
+// class named `skipOuterOf` is, or owns, decides the most: a STATE read must never take it, so it is dropped there; a
+// user's invoke takes it before a class-default object, which has no owner to act through, so it ranks last among
+// the live ones.
+namespace {
+struct InstanceWalk {
+    const char* who;           // the log line's name
+    std::string skipOuterOf;   // "" = none
+    bool keepSkipped;          // rank a skipped object last instead of dropping it
+    bool partialFallback;      // a name no deriving object answers to is matched as part of a class name
+    bool preferExact = false;  // a live object of the named class itself before a subclass's met first
+    bool skipGarbage = false;  // pass over a destroyed object GC has not collected yet
+};
+}
+
+static std::string LowerAscii(std::string s) {
+    for (auto& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return s;
+}
+
+static UserInstance WalkForInstance(const std::string& className, const InstanceWalk& how) {
+    // [SEETHRU-PROBE-SUBSTRING] One walk, derivation-gated -- the contract is in Aura.h. The CDO fallback is picked up
+    // DURING the walk rather than by a second scan: a function library has no live instance, so the walk always runs
+    // to the end for one, and a second pass would double the cost.
+    UserInstance r;
+    if (className.empty()) return r;
+    const std::string lowerQuery = LowerAscii(className);
+    const std::string lowerSkip  = LowerAscii(how.skipOuterOf);
+
+    // Per distinct UClass, one super-chain walk (bounded like ClassChainMatchesLower): does it derive from the query,
+    // and was a class named `skipOuterOf` met strictly BEFORE the query's own level -- an object that IS such a class,
+    // reached through a base (PlayerController, Actor). Naming that class itself meets the query first.
+    // `exact`: the class IS the query, not a subclass of it.
+    struct Verdict { bool derives = false; bool viaSkip = false; bool exact = false; };
+    std::unordered_map<uintptr_t, Verdict> verdicts;
+    auto verdictOf = [&](uintptr_t cls) {
+        auto it = verdicts.find(cls);
+        if (it != verdicts.end()) return it->second;
+        Verdict v;
+        bool metSkip = false;
+        uintptr_t c = cls;
+        for (int guard = 0; c && guard < 64; ++guard) {
+            const std::string n = LowerAscii(Ubel::GetName(c));
+            if (n == lowerQuery) { v.derives = true; v.viaSkip = metSkip; v.exact = guard == 0; break; }
+            if (!lowerSkip.empty() && n == lowerSkip) metSkip = true;
+            uintptr_t super = 0;
+            if (!Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super) || !super || super == c)
+                break;
+            c = super;
+        }
+        verdicts.emplace(cls, v);
+        return v;
+    };
+    std::unordered_map<uintptr_t, bool> skipClasses;   // per UClass: derives from `skipOuterOf`
+    auto isSkipClass = [&](uintptr_t cls) {
+        auto sk = skipClasses.find(cls);
+        return sk != skipClasses.end() ? sk->second
+                                       : skipClasses.emplace(cls, ClassChainMatchesLower(cls, lowerSkip)).first->second;
+    };
+    // Owned, the UObject way: some object up the OUTER chain is of a class deriving from `skipOuterOf`. The whole
+    // chain, not the immediate outer: a CheatManager's extension sits two hops below the Debug Camera controller.
+    auto ownedBySkip = [&](uintptr_t obj) {
+        uintptr_t o = obj;
+        for (int hop = 0; hop < Grimoire::AURA_USERPICK_MAX_OUTER_HOPS; ++hop) {
+            uintptr_t outer = 0, outerCls = 0;
+            if (!Macht::ReadSafe(o + DynOff::UOBJECT_OUTER, outer) || !outer || outer == o) return false;
+            if (!Macht::ReadSafe(outer + Grimoire::OFF_UOBJECT_CLASS, outerCls) || !outerCls) return false;
+            if (isSkipClass(outerCls)) return true;
+            o = outer;
+        }
+        return false;
+    };
+    // Owned, the actor way: an actor the controller spawned (its HUD, its PlayerCameraManager, its spectator pawn) has
+    // the LEVEL as its outer, and the controller as its AActor::Owner -- a reflected object property, found per class
+    // by name. -1 = the class has none.
+    std::unordered_map<uintptr_t, int32_t> ownerOffsets;
+    auto ownerOffsetOf = [&](uintptr_t cls) {
+        auto it = ownerOffsets.find(cls);
+        if (it != ownerOffsets.end()) return it->second;
+        FieldInfo f{};
+        const int32_t off = Ubel::FindField(cls, Grimoire::AURA_USERPICK_OWNER_PROPERTY, nullptr, nullptr, nullptr, f)
+                            && f.TypeName == "ObjectProperty" ? f.Offset : -1;
+        ownerOffsets.emplace(cls, off);
+        return off;
+    };
+    auto actorOwnedBySkip = [&](uintptr_t obj, uintptr_t cls) {
+        uintptr_t o = obj, c = cls;
+        for (int hop = 0; hop < Grimoire::AURA_USERPICK_MAX_OUTER_HOPS; ++hop) {
+            const int32_t off = ownerOffsetOf(c);
+            if (off < 0) return false;
+            uintptr_t owner = 0, ownerCls = 0;
+            if (!Macht::ReadSafe(o + static_cast<uintptr_t>(off), owner) || !owner || owner == o) return false;
+            if (!Macht::ReadSafe(owner + Grimoire::OFF_UOBJECT_CLASS, ownerCls) || !ownerCls) return false;
+            if (isSkipClass(ownerCls)) return true;
+            o = owner;
+            c = ownerCls;
+        }
+        return false;
+    };
+    std::unordered_map<uintptr_t, bool> partialClasses;   // per UClass: its own name contains the query
+
+    uintptr_t cdo = 0, cdoCls = 0, skipped = 0, skippedCls = 0;
+    uintptr_t subLive = 0, subLiveCls = 0;   // preferExact: the first live object of a subclass, held for the end
+    // For the closing line: a pick that says "nothing" while destroyed objects were passed over, or a misread garbage
+    // flag that passed over live ones, must show in the log -- one number, not a line per object. Once a subclass's
+    // object is held, only objects of the class itself are looked at, so the count stops for the rest.
+    int32_t garbagePassed = 0;
+    bool exactPassed = false;   // an object of the class itself was passed over (a Debug Camera's, or destroyed)
+    auto destroyedNote = [&] {
+        return garbagePassed ? " (passed over " + std::to_string(garbagePassed) + " destroyed)" : std::string();
+    };
+    uintptr_t partialFirst = 0, partialFirstCls = 0, partialLive = 0, partialLiveCls = 0;
+    // "A class has that name" is approximated by "an object of that class or a subclass exists": a loaded class with
+    // no instance and no default object in GObjects falls to the partial-name match.
+    bool namedSeen = false;
+    const int32_t count = GetCount();
+    r.scanned = count;
+    for (int32_t i = 0; i < count; ++i) {
+        if ((i & 0xFFF) == 0 && Tot::Requested()) {
+            Sein::Warn("PIPE:find", "%s '%s': aborted at %d/%d -- returning nothing", how.who, className.c_str(), i,
+                       count);
+            r.pick = UserPick::Cancelled;   // obj stays 0: a live instance may sit past where it stopped
+            return r;
+        }
+        const uintptr_t obj = GetByIndex(i);
+        if (!obj) continue;
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        const Verdict v = verdictOf(cls);
+        // preferExact: once a subclass's live object is held, only an object of the class itself can still change the
+        // pick -- so the rest of a large derived population costs one cached verdict each, not a name and a template walk.
+        if (how.preferExact && subLive && !v.exact) continue;
+        if (!v.derives) {
+            if (!how.partialFallback || namedSeen) continue;
+            auto pc = partialClasses.find(cls);
+            const bool partial = pc != partialClasses.end() ? pc->second
+                : partialClasses.emplace(cls, LowerAscii(Ubel::GetName(cls)).find(lowerQuery) != std::string::npos)
+                      .first->second;
+            if (!partial) continue;
+        }
+
+        uint32_t nameIdx = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx)) continue;
+        const std::string objName = Serie::GetString(nameIdx);
+        if (objName.empty()) continue;
+        // [INVOKE-NONSTATIC-ON-CDO] A TEMPLATE is never "live": a class-default object, and an archetype -- a CDO's
+        // default subobject, which every component-class lookup used to land on (measured), or a Blueprint's component
+        // template. TemplateOf decides, so the pick and the invoke's template verdict never disagree on one object.
+        const TemplateInfo tpl = TemplateOf(obj);
+        const bool isCdo = tpl.kind == TemplateKind::ClassDefault;
+        const bool isTemplate = tpl.kind != TemplateKind::None;
+
+        if (!v.derives) {   // the partial-name rule the user-facing lookups always had: the first non-template, else the first
+            // [INVOKE-PICK-GARBAGE] A destroyed object is no pick here either, not even the last resort.
+            if (how.skipGarbage && Ubel::IsDestroyedPick(obj, i)) { ++garbagePassed; continue; }
+            if (!partialFirst) { partialFirst = obj; partialFirstCls = cls; }
+            if (!isTemplate && !partialLive) { partialLive = obj; partialLiveCls = cls; }
+            continue;
+        }
+        namedSeen = true;
+        if (isTemplate) {
+            // A subclass's CDO derives too, and so does another class's default subobject; only the named class's own
+            // default object may stand in.
+            if (isCdo && !cdo && LowerAscii(Ubel::GetName(cls)) == lowerQuery) { cdo = obj; cdoCls = cls; }
+            continue;
+        }
+        // [MAINWINDOW-NAVIGATE-EXACT-NAME] [INVOKE-PICK-GARBAGE] A destroyed object stays in GObjects until the next
+        // garbage collection, and a low index makes it the first met: it is never a pick.
+        if (how.skipGarbage && Ubel::IsDestroyedPick(obj, i)) {
+            ++garbagePassed;
+            exactPassed |= v.exact;
+            continue;
+        }
+        if (!lowerSkip.empty() && (v.viaSkip || ownedBySkip(obj) || actorOwnedBySkip(obj, cls))) {
+            Sein::Info("PIPE:find", "%s '%s': passed over 0x%llX (%s) -- it is or belongs to a %s", how.who,
+                       className.c_str(), static_cast<unsigned long long>(obj), objName.c_str(),
+                       how.skipOuterOf.c_str());
+            if (how.keepSkipped && !skipped) { skipped = obj; skippedCls = cls; }
+            exactPassed |= v.exact;
+            continue;
+        }
+        // [MAINWINDOW-NAVIGATE-EXACT-NAME] A function's row names the class that DECLARES it, and Live Walker lists an
+        // object's own class's functions: an object of that class itself shows the function, a subclass's does not.
+        if (how.preferExact && !v.exact) {
+            if (!subLive) { subLive = obj; subLiveCls = cls; }
+            continue;
+        }
+        Sein::Info("PIPE:find", "%s '%s' -> 0x%llX (%s, class %s)%s", how.who, className.c_str(),
+                   static_cast<unsigned long long>(obj), objName.c_str(), Ubel::GetName(cls).c_str(),
+                   destroyedNote().c_str());
+        r.obj = obj; r.cls = cls; r.pick = UserPick::Live;
+        return r;
+    }
+
+    if (subLive) {
+        Sein::Info("PIPE:find", "%s '%s' -> 0x%llX (%s, class %s): %s%s", how.who, className.c_str(),
+                   static_cast<unsigned long long>(subLive), Ubel::GetName(subLive).c_str(),
+                   Ubel::GetName(subLiveCls).c_str(),
+                   exactPassed ? "an object of the class itself was passed over (a Debug Camera's, or destroyed)"
+                               : "no object of the class itself is live",
+                   destroyedNote().c_str());
+        r.obj = subLive; r.cls = subLiveCls; r.pick = UserPick::Live;
+        return r;
+    }
+    if (skipped) {
+        r.obj = skipped; r.cls = skippedCls; r.pick = UserPick::DebugCameraOwned;
+        Sein::Warn("PIPE:find", "%s '%s' -> 0x%llX (%s): only objects of or owned by a %s were live%s", how.who,
+                   className.c_str(), static_cast<unsigned long long>(skipped), Ubel::GetName(skipped).c_str(),
+                   how.skipOuterOf.c_str(), destroyedNote().c_str());
+    } else if (cdo) {
+        r.obj = cdo; r.cls = cdoCls; r.pick = UserPick::ClassDefault;
+        Sein::Warn("PIPE:find", "%s '%s' -> only its CDO: 0x%llX%s", how.who, className.c_str(),
+                   static_cast<unsigned long long>(cdo), destroyedNote().c_str());
+    } else if (namedSeen) {
+        Sein::Warn("PIPE:find", "%s '%s' -> objects of a subclass exist, but none live and no default object of its own%s",
+                   how.who, className.c_str(), destroyedNote().c_str());
+    } else if (partialLive || partialFirst) {
+        r.obj = partialLive ? partialLive : partialFirst;
+        r.cls = partialLive ? partialLiveCls : partialFirstCls;
+        r.pick = partialLive ? UserPick::PartialLive : UserPick::PartialDefault;
+        Sein::Warn("PIPE:find", "%s '%s' -> no class of that name has objects; matched as part of a class name: 0x%llX "
+                   "(%s, class %s)%s", how.who, className.c_str(), static_cast<unsigned long long>(r.obj),
+                   Ubel::GetName(r.obj).c_str(), Ubel::GetName(r.cls).c_str(), destroyedNote().c_str());
+    } else {
+        Sein::Warn("PIPE:find", "%s '%s' -> not found (scanned=%d)%s", how.who, className.c_str(), count,
+                   destroyedNote().c_str());
+    }
+    return r;
+}
+
+// `knownName`: the object's name when the caller already decoded it, so a walk does not decode it twice.
+static bool IsClassDefaultObject(uintptr_t o, uint32_t flags, const std::string* knownName = nullptr) {
+    if ((flags & Grimoire::RF_CLASS_DEFAULT_OBJECT) != 0) return true;
+    if (knownName) return knownName->rfind("Default__", 0) == 0;
+    uint32_t nameIdx = 0;
+    return Macht::ReadSafe(o + Grimoire::OFF_UOBJECT_NAME, nameIdx)
+        && Serie::GetString(nameIdx).rfind("Default__", 0) == 0;
+}
+
+// The class-default object that `outer` is, or sits under, within the hop bound counted from the object below it;
+// 0 for none. Depends only on `outer`, which is what lets a walk memoize it per first outer.
+static uintptr_t ClassDefaultAtOrAbove(uintptr_t outer) {
+    uintptr_t o = outer;
+    for (int hop = 0; hop < Grimoire::AURA_USERPICK_MAX_OUTER_HOPS; ++hop) {
+        uint32_t flags = 0;
+        Macht::ReadSafe(o + Grimoire::OFF_UOBJECT_FLAGS, flags);
+        if (IsClassDefaultObject(o, flags)) return o;
+        uintptr_t next = 0;
+        if (!Macht::ReadSafe(o + DynOff::UOBJECT_OUTER, next) || !next || next == o) break;
+        o = next;
+    }
+    return 0;
+}
+
+// [LISTINSTANCES-KEEPS-TEMPLATES] `outerMemo`: first outer -> ClassDefaultAtOrAbove(it), for one walk. A pool walk asks
+// for every candidate, and candidates share their outers (a level's actors, an actor's components), so the outer
+// chain is read once per distinct first outer instead of once per object. Same verdict with or without it. The memo
+// stops at the first outer: a deeper one would have to carry the hop budget to keep the verdict identical, and
+// siblings already share their first outer.
+static TemplateInfo TemplateOfImpl(uintptr_t obj, std::unordered_map<uintptr_t, uintptr_t>* outerMemo,
+                                   const std::string* knownName) {
+    TemplateInfo t;
+    if (!obj) return t;
+    uint32_t flags = 0;
+    Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_FLAGS, flags);
+    if (IsClassDefaultObject(obj, flags, knownName)) { t.kind = TemplateKind::ClassDefault; t.owner = obj; return t; }
+    // A class-default object up the outer chain makes it one of that object's subobjects, flag or not.
+    uintptr_t firstOuter = 0;
+    if (!Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, firstOuter) || firstOuter == obj) firstOuter = 0;
+    if (firstOuter) {
+        uintptr_t owner = 0;
+        bool known = false;
+        if (outerMemo) {
+            const auto hit = outerMemo->find(firstOuter);
+            if (hit != outerMemo->end()) { owner = hit->second; known = true; }
+        }
+        if (!known) {
+            owner = ClassDefaultAtOrAbove(firstOuter);
+            if (outerMemo) outerMemo->emplace(firstOuter, owner);
+        }
+        if (owner) { t.kind = TemplateKind::Template; t.owner = owner; return t; }
+    }
+    // An archetype with no class-default object above it: a Blueprint's component template, outered to its class.
+    if ((flags & Grimoire::RF_ARCHETYPE_OBJECT) != 0) { t.kind = TemplateKind::Template; t.owner = firstOuter; }
+    return t;
+}
+
+TemplateInfo TemplateOf(uintptr_t obj) {
+    return TemplateOfImpl(obj, nullptr);
+}
+
+TemplateInfo TemplateOf(uintptr_t obj, TemplateOuterMemo& outerMemo) {
+    return TemplateOfImpl(obj, &outerMemo);
 }
 
 uintptr_t FindLiveOrDefaultOf(const std::string& className) {
@@ -1969,79 +2297,51 @@ uintptr_t FindLiveOrDefaultOf(const std::string& className) {
 }
 
 uintptr_t FindLiveOrDefaultOf(const std::string& className, const std::string& skipOuterOf) {
-    // [SEETHRU-PROBE-SUBSTRING] One walk, derivation-gated -- the contract is in Aura.h. The CDO fallback is picked up
-    // DURING the walk rather than by a second scan: a function library has no live instance, so the walk always runs
-    // to the end for one, and a second pass would double what the substring scan it replaces cost.
-    if (className.empty()) return 0;
-    std::string lowerQuery = className;
-    for (auto& c : lowerQuery) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    std::string lowerSkip = skipOuterOf;
-    for (auto& c : lowerSkip) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return WalkForInstance(className, InstanceWalk{ "FindLiveOrDefaultOf", skipOuterOf, false, false,
+                                                    /*preferExact=*/false, /*skipGarbage=*/true }).obj;
+}
 
-    std::unordered_map<uintptr_t, bool> derivedCache;   // per UClass, as in FindInstancesDerivedFrom
-    std::unordered_map<uintptr_t, bool> skipCache;      // per outer UClass
-    uintptr_t cdo = 0;
-    const int32_t count = GetCount();
-    for (int32_t i = 0; i < count; ++i) {
-        if ((i & 0xFFF) == 0 && Tot::Requested()) {
-            Sein::Warn("PIPE:find", "FindLiveOrDefaultOf '%s': aborted at %d/%d -- returning nothing",
-                       className.c_str(), i, count);
-            return 0;
-        }
-        const uintptr_t obj = GetByIndex(i);
-        if (!obj) continue;
-        uintptr_t cls = 0;
-        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+UserInstance ResolveUserInstance(const std::string& className) {
+    return WalkForInstance(className, InstanceWalk{ "ResolveUserInstance", Grimoire::AURA_USERPICK_DCC_CLASS, true, true,
+                                                    /*preferExact=*/false, /*skipGarbage=*/true });
+}
 
-        bool isDerived;
-        auto it = derivedCache.find(cls);
-        if (it != derivedCache.end()) {
-            isDerived = it->second;
-        } else {
-            isDerived = ClassChainMatchesLower(cls, lowerQuery);
-            derivedCache.emplace(cls, isDerived);
-        }
-        if (!isDerived) continue;
+UserInstance FindLiveInstanceOf(const std::string& className) {
+    return WalkForInstance(className, InstanceWalk{ "FindLiveInstanceOf", Grimoire::AURA_USERPICK_DCC_CLASS, true,
+                                                    /*partialFallback=*/false, /*preferExact=*/true,
+                                                    /*skipGarbage=*/true });
+}
 
-        uint32_t nameIdx = 0;
-        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx)) continue;
-        const std::string objName = Serie::GetString(nameIdx);
-        if (objName.empty()) continue;
-
-        if (objName.rfind("Default__", 0) == 0) {
-            // A subclass's CDO derives too; only the named class's own default object may stand in.
-            if (!cdo) {
-                std::string clsName = Ubel::GetName(cls);
-                for (auto& c : clsName) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                if (clsName == lowerQuery) cdo = obj;
-            }
+LocalPcScan ScanForLocalPlayerController() {
+    LocalPcScan out;
+    // The walk passes over templates itself ([LISTINSTANCES-KEEPS-TEMPLATES]); the loop passes over garbage.
+    const SearchResultSet rset =
+        FindInstancesDerivedFrom(Grimoire::AURA_LOCALPC_BASE_CLASS, Grimoire::AURA_LOCALPC_SCAN_MAX);
+    // A lower-ranked controller met before the cut may be outranked past it, and a cancel means the client is gone or
+    // the DLL is shutting down: nothing waits for the answer.
+    if (rset.aborted) { out.pick = LocalPcPick::Cancelled; return out; }
+    uintptr_t other = 0, none = 0;
+    for (const auto& r : rset.results) {
+        if (!r.addr) continue;
+        // A destroyed controller keeps its Player until GC: UEngine::LoadMap destroys the old PC and nulls
+        // LocalPlayer.PlayerController -- the moment every chain fails and lands here -- but not the PC's Player.
+        if (Ubel::IsDestroyedPick(r.addr, r.index)) continue;
+        // Exact only: a fuzzy arm would read AController::PlayerState, which every server-side controller has set.
+        const int32_t off = Ubel::FindFieldOffset(r.classAddr, Grimoire::AURA_LOCALPC_PLAYER_PROPERTY);
+        uintptr_t player = 0;
+        if (off >= 0) Macht::ReadSafe(r.addr + static_cast<uintptr_t>(off), player);
+        if (player) {
+            if (ClassDerivesFromAny(Ubel::GetClass(player), {Grimoire::AURA_LOCALPC_LOCAL_PLAYER_CLASS}))
+                return { r.addr, LocalPcPick::LocalPlayer };
+            if (!other) other = r.addr;
             continue;
         }
-        if (!lowerSkip.empty()) {
-            uintptr_t outer = 0, outerCls = 0;
-            if (Macht::ReadSafe(obj + DynOff::UOBJECT_OUTER, outer) && outer &&
-                Macht::ReadSafe(outer + Grimoire::OFF_UOBJECT_CLASS, outerCls) && outerCls) {
-                auto sk = skipCache.find(outerCls);
-                const bool skip = sk != skipCache.end()
-                    ? sk->second : skipCache.emplace(outerCls, ClassChainMatchesLower(outerCls, lowerSkip)).first->second;
-                if (skip) {
-                    Sein::Info("PIPE:find", "FindLiveOrDefaultOf '%s': skipped 0x%llX (%s) -- its outer is a %s",
-                               className.c_str(), static_cast<unsigned long long>(obj), objName.c_str(),
-                               skipOuterOf.c_str());
-                    continue;
-                }
-            }
-        }
-        Sein::Info("PIPE:find", "FindLiveOrDefaultOf '%s' -> 0x%llX (%s, class %s)", className.c_str(),
-                   static_cast<unsigned long long>(obj), objName.c_str(), Ubel::GetName(cls).c_str());
-        return obj;
+        // A debug camera with no Player is inactive: pawnless, with nothing to hop back to.
+        if (!none && !ClassDerivesFromAny(r.classAddr, {Grimoire::AURA_DEBUGCAM_CLASS})) none = r.addr;
     }
-    if (cdo)
-        Sein::Warn("PIPE:find", "FindLiveOrDefaultOf '%s' -> only its CDO: 0x%llX", className.c_str(),
-                   static_cast<unsigned long long>(cdo));
-    else
-        Sein::Warn("PIPE:find", "FindLiveOrDefaultOf '%s' -> not found (scanned=%d)", className.c_str(), count);
-    return cdo;
+    if (other) return { other, LocalPcPick::OtherPlayer };
+    if (none)  return { none,  LocalPcPick::NoPlayer };
+    return out;
 }
 
 uintptr_t FindClassByPath(const std::string& classPath) {
@@ -5216,8 +5516,10 @@ PropertySearchResult SearchProperties(
                 match.fieldAddr      = lf.leafFieldAddr;  // leaf FProperty* (xref key)
                 match.boolFieldMask  = lf.boolMask;
                 match.isNested       = true;
-                // No preview source — previewClassAddr stays 0 so Phase 2 skips
-                // these rows (the swap makes classAddr 0 → no instance found).
+                // No preview source: previewClassAddr 0 keeps this row from asking for its class's
+                // instance. That alone does not keep it from a preview -- a direct match of the same class
+                // puts the class in the map -- so ResolvePropertyPreviews also skips isNested rows
+                // ([A4-CDOSCOPE-NESTED-PREVIEW]).
                 match.previewClassAddr      = 0;
                 match.previewPropertiesSize = 0;
 
@@ -5270,15 +5572,17 @@ PropertySearchResult SearchProperties(
         // showed the Blueprint default forever (Health = 100 while the player is at 37).
         // `obj != cls` only excluded the UClass itself, never its CDO. (audit #5 A5)
         //
-        // Same `Default__` test Solide.cpp (`ResolveLocalPC`, `ApplyJobLocked`), Wirbel.cpp and Edel.cpp (`ResolveLocalPC`) already
-        // apply — a name compare rather than RF_ClassDefaultObject because the flags word is
-        // one more unverified offset, and CLAUDE.md's rule is that UObject offsets are probed,
-        // not assumed. The name is only resolved for objects whose class we actually want,
-        // which is a handful out of the pool.
+        // [LISTINSTANCES-KEEPS-TEMPLATES] The rule the Force / Freeze pools apply (TemplateOf): a class default object,
+        // one of its default subobjects or a Blueprint component template is never a live sample. Before, only a
+        // Default__ name was passed over, so a component row previewed a class default's subobject as live while its
+        // Force held nothing. Tested only for objects whose class we actually want, a handful out of the pool.
+        // TemplateOf reads ObjectFlags at a fixed +0x08 (stable 4.12-5.8, measured on 4.27 / 5.4 / 5.8), the one
+        // UObject field here no probe confirms; a misread passes a live object over, which only costs the preview.
         std::unordered_map<uintptr_t, uintptr_t> instanceMap;
         // Classes for which the CDO is all that exists. Used only after the sweep, so a live
         // instance appearing later always wins — the whole point of the finding.
         std::unordered_map<uintptr_t, uintptr_t> cdoOnlyMap;
+        std::unordered_map<uintptr_t, uintptr_t> previewOuterMemo;   // TemplateOfImpl's
 
         // Live instances of a SUBCLASS of a preview class. [CDOSCOPE-2026-08-20]
         //
@@ -5341,13 +5645,13 @@ PropertySearchResult SearchProperties(
                 if (derivedMap.count(anc) == 0) { wantsDerived = true; break; }
             if (!wantsExact && !wantsDerived) continue;
 
-            uint32_t nameIdx = 0;
-            if (Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx) &&
-                Serie::GetString(nameIdx).find("Default__") != std::string::npos) {
+            const TemplateKind tk = TemplateOfImpl(obj, &previewOuterMemo).kind;
+            if (tk != TemplateKind::None) {
                 // Only the row's OWN class default is offered as the last-resort sample. A
                 // subclass CDO is another class's default, which would be a worse answer than
-                // the row's own and is not what the actions would touch either.
-                if (exact) cdoOnlyMap.emplace(cls, obj);   // first CDO wins; live still preferred
+                // the row's own and is not what the actions would touch either; nor is any other template.
+                if (exact && tk == TemplateKind::ClassDefault)
+                    cdoOnlyMap.emplace(cls, obj);   // first CDO wins; live still preferred
                 continue;
             }
 

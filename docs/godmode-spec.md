@@ -171,7 +171,7 @@ Deliverables for the user:
 |---|---|---|---|
 | Cached GWorld | `extern uintptr_t g_cachedGWorld;` (Frieren.cpp, global) | `Wirbel::DerefWorld` ([Wirbel.cpp:77](../dll/src/Wirbel.cpp)) | root of the resolution chain (deref once for `UWorld*`) |
 | Reflection field lookup | `Ubel::FindField` / `Ubel::FindFieldOffset` / `Ubel::GetClass` ([Ubel.h](../dll/src/Ubel.h)) | `Wirbel::ResolveLocalPC`/`ResolvePawn` ([Wirbel.cpp:290,357](../dll/src/Wirbel.cpp)) | resolve `OwningGameInstance`→`LocalPlayers[0]`→`PlayerController`→`Pawn`, and the `bCanBeDamaged` `BoolProperty` |
-| Instance scan fallback | `Aura::FindInstancesByClass` / `UE5_FindInstanceOfClass` | `Wirbel::ResolveLocalPC` fallback ([Wirbel.cpp:318](../dll/src/Wirbel.cpp)) | local PlayerController when the chain breaks |
+| Instance scan fallback | `Aura::ScanForLocalPlayerController` | — | local PlayerController when a module's `ResolveLocalPC` chain breaks (the shared Aura scan: by derivation, the local player first) |
 | DebugCameraController hop | `Ubel` + `Macht` reads | `Wirbel::HopThroughDebugCamera` ([Wirbel.cpp:341](../dll/src/Wirbel.cpp)) | target the gameplay pawn when the project's Debug Camera is ON |
 | **FBoolProperty bit resolver** | `Ubel::FindField` + `DynOff::FBOOLPROP_FIELDSIZE`/`UBOOLPROP_FIELDSIZE` ([Grimoire.h:118,125](../dll/src/Grimoire.h)) | **`Wirbel::ResolveCursorBit` ([Wirbel.cpp:1091](../dll/src/Wirbel.cpp)) — the exact template** | read `[FieldSize,ByteOffset,ByteMask,FieldMask]`, compute `byteAddr`+`mask` |
 | SEH read / write | `Macht::ReadSafe` / `Macht::WriteBytes` ([Macht.h:28,49](../dll/src/Macht.h)) | `Wirbel::SetMouseCursor` ([Wirbel.cpp:1548-1552](../dll/src/Wirbel.cpp)) | read-modify-write the single bitfield byte |

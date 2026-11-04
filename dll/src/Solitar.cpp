@@ -94,8 +94,9 @@ uintptr_t ReadPtrAt(uintptr_t obj, int32_t off) {
 
 // ---- resolution chain (docs/godmode-spec.md §4-5.2) ----
 
-// Resolve the LOCAL PlayerController: engine chain first, instance-scan fallback
-// (prefer the PC whose UPlayer* Player field is non-null).
+// Resolve the LOCAL PlayerController: engine chain first, then the shared
+// instance-scan fallback (Aura::ScanForLocalPlayerController: the local player's
+// controller first).
 uintptr_t ResolveLocalPC(uintptr_t world) {
     do {
         if (!world) break;
@@ -120,18 +121,8 @@ uintptr_t ResolveLocalPC(uintptr_t world) {
         if (pc) return pc;
     } while (false);
 
-    auto rset = Aura::FindInstancesByClass("PlayerController", false, 100);
-    uintptr_t firstNonCdo = 0;
-    for (const auto& r : rset.results) {
-        if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
-        if (!firstNonCdo) firstNonCdo = r.addr;
-        uintptr_t cls = Ubel::GetClass(r.addr);
-        int32_t playerOff = Ubel::FindFieldOffset(cls, "Player", "Player",
-                                                  "Controller", "ObjectProperty");
-        if (playerOff >= 0 && ReadPtrAt(r.addr, playerOff))
-            return r.addr;
-    }
-    return firstNonCdo;
+    // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] By derivation, the local player's controller first.
+    return Aura::ScanForLocalPlayerController().pc;
 }
 
 // When the project's Debug Camera is ON the LocalPlayer's controller IS the
@@ -140,8 +131,8 @@ uintptr_t ResolveLocalPC(uintptr_t world) {
 uintptr_t HopThroughDebugCamera(uintptr_t pc) {
     if (!pc) return pc;
     uintptr_t cls = Ubel::GetClass(pc);
-    std::string clsName = Ubel::GetName(cls);
-    if (clsName.find("DebugCameraController") == std::string::npos) return pc;
+    // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] Derivation: a game's debug camera may be named without the word.
+    if (!Aura::ClassDerivesFromAny(cls, {Grimoire::AURA_DEBUGCAM_CLASS})) return pc;
     int32_t origOff = Ubel::FindFieldOffset(cls, "OriginalControllerRef",
                                             "OriginalController", nullptr, "ObjectProperty");
     uintptr_t orig = ReadPtrAt(pc, origOff);

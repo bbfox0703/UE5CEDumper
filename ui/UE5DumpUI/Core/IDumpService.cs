@@ -117,6 +117,16 @@ public interface IDumpService
     // carries a full-pool class histogram (ClassHistogram / ClassDistinct) that
     // includes excluded classes so the picker can still untick them.
     Task<FindInstancesResult> FindInstancesAsync(string className, bool exactMatch = false, int limit = 500, bool newestFirst = false, string nameFilter = "", IReadOnlyList<string>? excludeClasses = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// [MAINWINDOW-NAVIGATE-EXACT-NAME] One live object of <paramref name="className"/> or of a class derived from it,
+    /// never a template, or none: the object to open in Live Walker or to search a path from. Not
+    /// <see cref="FindInstancesAsync"/>: its class gate is a name test, so a class whose live objects are all of a
+    /// subclass answered none, and it lists templates, which a <c>Default__</c> name skip does not all catch.
+    /// </summary>
+    Task<LiveInstanceResult> FindLiveInstanceAsync(string className, CancellationToken ct = default)
+        => throw new NotSupportedException("This service has no live-instance lookup.");
+
     Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default);
 
     /// <summary>
@@ -527,7 +537,8 @@ public interface IDumpService
     /// <param name="expectClassAddr">[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The class the caller's function list was
     ///     read from. The DLL invokes nothing when the object at <paramref name="instanceAddr"/> is now of another
     ///     class: a dialog that stays open keeps its address while the game frees the object and reuses the slot.
-    ///     Null = no check.</param>
+    ///     Null = no check. The DLL also applies it to an object picked by <paramref name="className"/>, and it is class
+    ///     equality, not derivation: a caller sending a class name should not send it.</param>
     Task<InvokeFunctionResult> InvokeFunctionAsync(
         string funcName,
         string? instanceAddr = null,
@@ -542,7 +553,7 @@ public interface IDumpService
     /// <summary>
     /// Read the live Debug Camera state (DLL-side two-hop reflection read of
     /// DebugCameraController.OriginalControllerRef). 1 = ON, 0 = OFF,
-    /// -1 = unknown / no live CheatManager.
+    /// -1 = unknown (the read failed). With no live CheatManager (the Debug Camera's own never counts) the read lands on its class default object and answers 0 or 1, never -1: OFF, unless a Debug Camera controller is already active, which reads ON.
     /// </summary>
     Task<int> GetDebugCameraStateAsync(CancellationToken ct = default);
 
@@ -555,8 +566,16 @@ public interface IDumpService
     /// when the toggle is QUEUED. A queued ON will still run, so never re-send it [W3-DEBUGCAM-QUEUED];
     /// a queued OFF does not turn the camera off on stock UE 4.18-5.7, so the camera stays on until a
     /// Force OFF (or a CE untick) sent again once the game responds. [DEBUGCAM-QUEUED-OFF-NOESCALATE]
+    /// <see cref="Constants.DebugCameraToggleBlockedResult"/>: not sent, an opposite toggle is still queued.
+    /// <see cref="Constants.DebugCameraNoLiveCheatManagerResult"/>: an ON not sent, because no CheatManager is live.
+    /// [DEBUGCAM-FORCEON-CDO]
     /// </summary>
     Task<int> SetDebugCameraAsync(bool enable, CancellationToken ct = default);
+
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] <see cref="SetDebugCameraAsync"/>, plus the DLL's warning that the toggle ran on
+    /// the CheatManager's class default object (no live CheatManager), where it does nothing. Only a DLL from builds
+    /// 3676-3681 sends it; a newer one refuses that ON with -17 ([DEBUGCAM-FORCEON-CDO]).</summary>
+    Task<DebugCameraSetResult> SetDebugCameraDetailedAsync(bool enable, CancellationToken ct = default);
 
     // === God Mode (Solitar: force AActor.bCanBeDamaged) ===
 
@@ -721,6 +740,11 @@ public interface IDumpService
     /// </summary>
     Task<IReadOnlyList<StealthCandidate>> FindStealthMeterAsync(int max = 8, CancellationToken ct = default);
 
+    /// <summary>[SOLIDE-RELATED-STOPS] <see cref="FindStealthMeterAsync"/> plus why the search of the player's objects
+    /// stopped short. The default serves fakes with a search that claims to have finished.</summary>
+    async Task<StealthMeterResult> FindStealthMeterDetailedAsync(int max = 8, CancellationToken ct = default)
+        => new StealthMeterResult { Candidates = await FindStealthMeterAsync(max, ct) };
+
     // === Teleport (Wirbel: marker save/recall + cursor teleport) ===
     // docs/teleport-spec.md §7. Model Code/Codes carry the DLL's Wirbel
     // result code (0 = OK, negatives mapped by TeleportCodes).
@@ -732,7 +756,8 @@ public interface IDumpService
     Task<TeleportPose> TeleportSaveMarkerAsync(int slot, CancellationToken ct = default);
 
     /// <summary>Recall to marker slot 0..2. Refused on map mismatch unless
-    /// <paramref name="force"/>.</summary>
+    /// <paramref name="force"/>, and refused (-16) for a marker saved from a
+    /// parent-relative read, force or not. [TELEPORT-RECALL-PARENTREL]</summary>
     Task<TeleportResult> TeleportRecallMarkerAsync(int slot, bool force, CancellationToken ct = default);
 
     /// <summary>Recall to an explicit pose (BugItGo interop). Bypasses the
@@ -748,16 +773,18 @@ public interface IDumpService
 
     /// <summary>Read all marker slots. The response also carries the system
     /// "last" slot as a sentinel entry with <see cref="TeleportMarker.Slot"/> ==
-    /// -1 (the pose auto-saved before the most recent jump).</summary>
+    /// -1 (the pose auto-saved before a jump; one whose pose was not world
+    /// coordinates leaves the previous one).</summary>
     Task<List<TeleportMarker>> TeleportGetMarkersAsync(CancellationToken ct = default);
 
     /// <summary>Clear marker slot 0..2.</summary>
     Task<int> TeleportClearMarkerAsync(int slot, CancellationToken ct = default);
 
     /// <summary>Recall the system "last" pose — the position auto-saved DLL-side
-    /// right before the most recent recall / force / BugItGo / cursor teleport,
-    /// so a teleport that went wrong can be undone. One-way restore (the slot is
-    /// never overwritten by this call); map check is skipped.</summary>
+    /// right before a jump, so a teleport that went wrong can be undone. A jump
+    /// whose pose was not world coordinates leaves the previous one. One-way
+    /// restore (the slot is never overwritten by this call); map check is
+    /// skipped.</summary>
     Task<TeleportResult> TeleportRecallLastAsync(CancellationToken ct = default);
 
     /// <summary>Read the camera POV (read-only): the on-screen camera's world
@@ -770,7 +797,9 @@ public interface IDumpService
     /// unreal units (negative = backward). <paramref name="horizontal"/> keeps Z
     /// (ground-plane move); when false the full 3D forward (including pitch) is
     /// used. Returns the resulting pose so the caller can show the landed
-    /// X/Y/Z/Pitch/Yaw. The pre-jump pose is auto-saved (RecallLast undoes it).</summary>
+    /// X/Y/Z/Pitch/Yaw. The pre-jump pose is auto-saved (RecallLast undoes it).
+    /// Code -16 when the current pose came from a parent-relative read: there is
+    /// no world position to step from, and nothing moves. [TELEPORT-RECALL-PARENTREL]</summary>
     Task<TeleportPose> TeleportRelativeAsync(double distance, bool horizontal,
         CancellationToken ct = default);
 

@@ -15,10 +15,11 @@ namespace UE5DumpUI.Services;
 /// <c>vendor/RE-UE4SS/UE4SS/src/USMapGenerator/Generator.cpp</c> and
 /// <c>vendor/Dumper-7/Dumper/Generator/Private/Generators/MappingGenerator.cpp</c>. Both emit v4.
 /// Read them before touching this format again.</para>
-/// <para>⚠ Two places still differ, and knowingly.
-/// (1) Both canonical writers write an enum's REAL underlying property. This one derives it from the enum's size
-/// (1/2/4/8 -> Byte/UInt16/Int/Int64), which is the width a consumer deserializes but not its signedness. The exact
-/// fix is a DLL-side underlying-type key on walk_class. [A4-USMAP-ENUM-UNDERLYING]
+/// <para>Two places used to differ, and both are fixed.
+/// (1) FIXED: both canonical writers write an enum's REAL underlying property, and so does this one now, from the
+/// walker's enum_underlying. Only when that is missing (an older DLL, a read that did not validate) or its width
+/// disagrees with the enum's size does it fall back to the size (1/2/4/8 -> Byte/UInt16/Int/Int64), which is the
+/// width a consumer deserializes but not its signedness. [A4-USMAP-ENUM-UNDERLYING] [USMAP-ENUM-SIGNEDNESS]
 /// (2) FIXED: a container's TEnumAsByte inner (Array / Optional, Set, Map key and value) now takes the canonical
 /// [26][0][enumName] too. The walker publishes each inner's own UEnum (inner_enum / elem_enum / key_enum /
 /// value_enum), and an EnumProperty inner carries its real enum name instead of "None". [A4-USMAP-CONTAINER-ENUM]</para>
@@ -329,17 +330,29 @@ public static class UsmapExportService
         var exported = new HashSet<string>(StringComparer.Ordinal);
         foreach (var c in classInfos)
             if (!string.IsNullOrEmpty(c.Name)) exported.Add(c.Name);
+        // [LEAD-USMAP-UDS-SHADOW] A reader finds a super BY NAME, and keeps one struct per name, case-insensitively
+        // (CUE4Parse: the last one wins). A super named like the struct itself, or shared by two structs, cannot be
+        // reached: UE 5 names every AnimBlueprint's constant-data struct alike, and a child AnimBP's derives from its
+        // parent's -- a by-name self-cycle on which CUE4Parse's super walk never ends.
+        var nameCounts = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var c in classInfos)
+            if (!string.IsNullOrEmpty(c.Name)) nameCounts[c.Name] = nameCounts.GetValueOrDefault(c.Name) + 1;
 
         w.Write((uint)classInfos.Count);
         foreach (var ci in classInfos)
         {
             w.Write(nameTable.IndexOf(ci.Name));            // int32: struct name index
 
-            // Super struct index: -1 if none
-            bool superReachable = !string.IsNullOrEmpty(ci.SuperName)
+            // Super struct index: -1 if none, and for a super no reader can reach by its name, which keeps the
+            // whole chain below exactly as for a super missing from the file.
+            bool superAmbiguous = !string.IsNullOrEmpty(ci.SuperName)
+                                  && (string.Equals(ci.SuperName, ci.Name, StringComparison.OrdinalIgnoreCase)
+                                      || nameCounts.GetValueOrDefault(ci.SuperName) > 1);
+            bool superReachable = !superAmbiguous
+                                  && !string.IsNullOrEmpty(ci.SuperName)
                                   && nameTable.Contains(ci.SuperName)
                                   && exported.Contains(ci.SuperName);
-            if (!string.IsNullOrEmpty(ci.SuperName) && nameTable.Contains(ci.SuperName))
+            if (!superAmbiguous && !string.IsNullOrEmpty(ci.SuperName) && nameTable.Contains(ci.SuperName))
                 w.Write(nameTable.IndexOf(ci.SuperName));
             else
                 w.Write(-1);                                // int32: super index (-1 = none)
@@ -419,7 +432,7 @@ public static class UsmapExportService
                 // type is the enum's REAL width -- unversioned cooked data serializes an enum UPROPERTY as an
                 // integer of its own size, and CUE4Parse takes that size from here. A hardcoded Byte made a
                 // `: uint32` enum read 1 byte of 4 and misalign every later property of its object.
-                WriteInnerPropertyType(w, EnumUnderlyingTypeFor(f.Size));
+                WriteInnerPropertyType(w, EnumUnderlyingTypeFor(f.EnumUnderlyingType, f.Size));
                 w.Write(nameTable.IndexOf(
                     !string.IsNullOrEmpty(f.EnumName) ? f.EnumName : "None"));
                 break;
@@ -465,16 +478,31 @@ public static class UsmapExportService
         w.Write((byte)MapPropertyType(innerTypeName));
     }
 
+    /// <summary>[USMAP-ENUM-SIGNEDNESS] An EnumProperty's underlying integer type: the UnderlyingProp type the DLL
+    /// read (<c>enum_underlying</c>), which carries the signedness, when its width agrees with the field's size.
+    /// The width is what a consumer deserializes, and the size is measured on every field, so a type name read
+    /// through one pointer that disagrees with it -- or none, from an older DLL -- gives way to the size.</summary>
+    internal static string EnumUnderlyingTypeFor(string underlyingType, int size) =>
+        IntegerWidthOf(underlyingType) is int width && width == size ? underlyingType : EnumUnderlyingTypeFor(size);
+
     /// <summary>[A4-USMAP-ENUM-UNDERLYING] An EnumProperty's underlying integer type, from its element size:
-    /// 1 / 2 / 4 / 8 -> Byte / UInt16 / Int / Int64. The width is what a consumer deserializes; the signedness
-    /// needs a DLL-side underlying-type key. Anything else is Byte -- never the unmapped 0xFF, which no reader
-    /// can skip.</summary>
+    /// 1 / 2 / 4 / 8 -> Byte / UInt16 / Int / Int64. That is the width a consumer deserializes, never the
+    /// signedness. Anything else is Byte -- never the unmapped 0xFF, which no reader can skip.</summary>
     internal static string EnumUnderlyingTypeFor(int size) => size switch
     {
         2 => "UInt16Property",
         4 => "IntProperty",
         8 => "Int64Property",
         _ => "ByteProperty",
+    };
+
+    private static int? IntegerWidthOf(string typeName) => typeName switch
+    {
+        "ByteProperty" or "Int8Property" => 1,
+        "Int16Property" or "UInt16Property" => 2,
+        "IntProperty" or "UInt32Property" => 4,
+        "Int64Property" or "UInt64Property" => 8,
+        _ => null,
     };
 
     private static void WriteInnerPropertyTypeFromField(

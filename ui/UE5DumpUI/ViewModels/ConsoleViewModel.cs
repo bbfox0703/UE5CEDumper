@@ -28,8 +28,8 @@ namespace UE5DumpUI.ViewModels;
 /// hide most hits.
 ///
 /// Run uses the existing <see cref="IDumpService.InvokeFunctionAsync"/>
-/// path with classname-only resolution (DLL finds the first non-CDO
-/// instance). Works without a ParamBuffer for no-arg exec commands —
+/// path with classname-only resolution (the DLL takes a live object of the
+/// class or a subclass, else its default object). Works without a ParamBuffer for no-arg exec commands —
 /// the common case. For exec commands with parameters, the Run path
 /// raises <see cref="RequestParameterInvoke"/> so MainWindow can open
 /// the standard InvokeParamDialog flow.
@@ -53,24 +53,35 @@ public partial class ConsoleViewModel : ViewModelBase
     /// <c>DebugCameraControllerRef</c> member (null → Enable, set →
     /// Disable); <c>god</c>/<c>slomo</c>/set-then-reset commands mutate
     /// the owning object. Such commands MUST land on the <b>same</b>
-    /// UObject on every invoke. Plain classname resolution
-    /// (<c>UE5_FindInstanceOfClass</c>) re-scans GObjects and returns
-    /// "the first non-CDO instance" each call — but the very first invoke
-    /// can mutate the object graph (e.g. EnableDebugCamera spawns an
-    /// <c>ADebugCameraController</c>), so a later call may resolve a
-    /// <i>different</i> instance whose toggle state is fresh → it silently
-    /// re-runs Enable instead of Disable. The classic symptom is
-    /// "Debug Camera turns on but won't turn off".
+    /// UObject on every invoke. Plain classname resolution (the DLL's
+    /// <c>Aura::ResolveUserInstance</c>) re-scans GObjects each call — but the
+    /// very first invoke can mutate the object graph (e.g. EnableDebugCamera
+    /// spawns an <c>ADebugCameraController</c> with a CheatManager of its own),
+    /// and objects of the class spawned or destroyed between runs can change
+    /// which one a fresh scan meets first. A stateful toggle that lands on a
+    /// <i>different</i> instance silently re-runs Enable instead of Disable.
+    /// The classic symptom is "Debug Camera turns on but won't turn off" (the
+    /// resolver now ranks the Debug Camera's own objects last, but the pin
+    /// still guards the rest).
     ///
     /// Fix: pin the address the DLL actually used (echoed back as
     /// <c>instance_addr</c>) per class and reuse it on the next invoke of
-    /// any exec on that class. Cleared on <see cref="LoadAsync"/> (a
+    /// any exec on that class -- except a pick
+    /// <see cref="Helpers.InvokePickText.IsPinnable"/> declines. Cleared on <see cref="LoadAsync"/> (a
     /// re-discover is treated as a fresh session — e.g. after reconnecting
     /// to a different game process) and self-heals on invoke failure
     /// (stale pin → drop + re-resolve, see <see cref="RunEntryAsync"/>).
+    ///
+    /// [LEAD-CONSOLE-PIN-EXPECT-CLASS] A pin keeps the class the DLL read at the address too, and a pinned invoke
+    /// sends it as <c>expect_class_addr</c>: the DLL finds the function by name on whatever object is there, so an
+    /// object freed and its memory reused by another class with a same-named function would run that one. The DLL's
+    /// refusal throws, and the stale-pin re-resolve below takes it. A same-class reuse still passes.
     /// </summary>
-    private readonly Dictionary<string, string> _stickyInstance =
+    private readonly Dictionary<string, Pin> _stickyInstance =
         new(StringComparer.Ordinal);
+
+    /// <summary>A pinned instance: its address, and the class read there (empty from a DLL that does not send it).</summary>
+    private readonly record struct Pin(string Addr, string ClassAddr);
 
     /// <summary>Cap on history entries — keeps the tail readable + the
     /// AOT-trimmed binary's ObservableCollection bounded. Old entries
@@ -119,6 +130,10 @@ public partial class ConsoleViewModel : ViewModelBase
     /// captured at Load. Null when the game ships no such command.</summary>
     private AllFunctionEntry? _debugCamEntry;
 
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] A Debug Camera Force is in flight. Not <see cref="IsDebugCameraBusy"/>, which
+    /// a state query sets too, and a query toggles nothing.</summary>
+    private bool _forcingDebugCamera;
+
     /// <summary>
     /// Raised when the user activates an exec command that has parameters
     /// (NumParms &gt; 0). MainWindow handler fetches full FunctionInfoModel
@@ -136,8 +151,8 @@ public partial class ConsoleViewModel : ViewModelBase
     public event Action<string, string, string>? RequestParameterInvoke;
 
     /// <summary>Per-row "Live" action — same contract as Interesting
-    /// Funcs. MainWindow tries find_instance → LiveWalker → ClassStruct
-    /// fallback.</summary>
+    /// Funcs. MainWindow looks for a live object of the class or a subclass → LiveWalker
+    /// → ClassStruct fallback.</summary>
     public event Action<string, string>? NavigateToFunction;
 
     /// <summary>Per-row "AA(B)" action — same contract as Interesting
@@ -147,7 +162,7 @@ public partial class ConsoleViewModel : ViewModelBase
     public event Action<string, string, string>? RequestCopyBakedScript;
 
     /// <summary>"Copy CE Script" on the Debug Camera row — MainWindow builds
-    /// the [ENABLE]/[DISABLE] setDebugCamera memory-record script via
+    /// the [ENABLE]/[DISABLE] Debug Camera memory-record script via
     /// <see cref="Services.DebugCameraScriptGenerator"/> and ships it to
     /// AOBMaker / clipboard. No args: the script is self-contained.</summary>
     public event Action? RequestDebugCameraCeScript;
@@ -383,6 +398,17 @@ public partial class ConsoleViewModel : ViewModelBase
         await RunEntryAsync(row);
     }
 
+    /// <summary>[CONSOLE-ROWRUN-SELECTED] A row's own Run button runs that row. A click on a button inside a DataGrid
+    /// cell does not select the row, so running the selection ran whatever row was selected before, or nothing. The
+    /// selection follows a row that runs (or opens its parameter dialog), so the grid shows which one it was; a refused
+    /// row leaves it on the row that is still running.</summary>
+    [RelayCommand]
+    private async Task RunRowAsync(AllFunctionEntry? entry)
+    {
+        if (entry == null) return;
+        await RunEntryAsync(entry, onStart: () => SelectedResult = entry);
+    }
+
     /// <summary>
     /// Run the command typed in the textbox. Resolves against the
     /// discovered exec list by exact funcName match (case-insensitive).
@@ -445,17 +471,29 @@ public partial class ConsoleViewModel : ViewModelBase
     /// <summary>
     /// Core run path — chosen entry → either direct invoke (no-arg) or
     /// param dialog (has args). Records the outcome in
-    /// <see cref="History"/>.
+    /// <see cref="History"/>. <paramref name="onStart"/> runs only when the entry does run (or opens its dialog).
     /// </summary>
-    private async Task RunEntryAsync(AllFunctionEntry entry)
+    private async Task RunEntryAsync(AllFunctionEntry entry, Action? onStart = null)
     {
         if (entry.NumParms > 0)
         {
             StatusText = $"{entry.FuncName} takes {entry.NumParms} param(s) — " +
                          $"opening param dialog.";
+            onStart?.Invoke();
             RequestParameterInvoke?.Invoke(entry.ClassName, entry.FuncName, entry.ClassAddr);
             return;
         }
+
+        // [CONSOLE-ROWRUN-SELECTED] One run at a time, whichever path started it, the Debug Camera Force included: a
+        // second invoke sent while the first waits on a busy game thread can run twice, since a timed-out invoke stays
+        // queued, and a Force and a ToggleDebugCamera run each queue a toggle that cancels the other. Not every button
+        // that reaches here is disabled while a run is in flight, so the refusal lives here.
+        if (IsRunning || _forcingDebugCamera)
+        {
+            StatusText = ConsoleRunText.StillRunningText(entry.FuncName);
+            return;
+        }
+        onStart?.Invoke();
 
         try
         {
@@ -467,7 +505,8 @@ public partial class ConsoleViewModel : ViewModelBase
             // this class so stateful toggles (ToggleDebugCamera, god, slomo…)
             // hit the SAME UObject on every invoke. See _stickyInstance for
             // the full "can't turn Debug Camera off" rationale.
-            _stickyInstance.TryGetValue(entry.ClassName, out var pinnedAddr);
+            _stickyInstance.TryGetValue(entry.ClassName, out var pin);
+            var pinnedAddr = pin.Addr;
             bool usedPin = !string.IsNullOrEmpty(pinnedAddr);
 
             bool reResolved = false;
@@ -480,7 +519,8 @@ public partial class ConsoleViewModel : ViewModelBase
                     className: entry.ClassName,
                     parmsSize: 0,
                     paramsHex: null,
-                    directCall: false);
+                    directCall: false,
+                    expectClassAddr: usedPin && pin.ClassAddr.Length > 0 ? pin.ClassAddr : null);
             }
             catch (Exception ex) when (usedPin && ex is not OperationCanceledException)
             {
@@ -545,9 +585,13 @@ public partial class ConsoleViewModel : ViewModelBase
             }
 
             // Remember the resolved instance so the next toggle lands on the
-            // same object. The DLL echoes the address it actually used.
-            if (result.Success && !string.IsNullOrEmpty(result.InstanceAddr))
-                _stickyInstance[entry.ClassName] = result.InstanceAddr;
+            // same object. The DLL echoes the address it actually used, and how it picked it: a pick or template
+            // InvokePickText.IsPinnable declines re-resolves next time instead. [FINDINSTANCE-SUBSTRING-USERFACING]
+            if (result.Success && !string.IsNullOrEmpty(result.InstanceAddr)
+                && InvokePickText.IsPinnable(result.InstancePick, result.InstanceTemplate))
+                _stickyInstance[entry.ClassName] = new Pin(result.InstanceAddr, result.InstanceClassAddr);
+            else if (usedPin && !string.IsNullOrEmpty(result.InstanceTemplate))
+                _stickyInstance.Remove(entry.ClassName);   // the pinned address now holds a template: re-resolve next time
 
             var resultText = result.Success
                 ? (string.IsNullOrEmpty(result.Message) ? "OK" : result.Message)
@@ -565,11 +609,11 @@ public partial class ConsoleViewModel : ViewModelBase
             // Surface which instance the call landed on, and whether it was a
             // pinned reuse / a self-heal re-resolve, so the user can tell a
             // toggle is hitting one stable object across on/off cycles.
-            var pinNote = !string.IsNullOrEmpty(result.InstanceAddr)
+            var pinNote = (!string.IsNullOrEmpty(result.InstanceAddr)
                 ? (reResolved ? $" (re-resolved {result.InstanceAddr})"
                    : usedPin  ? $" (pinned {result.InstanceAddr})"
                               : $" (instance {result.InstanceAddr})")
-                : "";
+                : "") + InvokePickText.Note(result);
 
             StatusText = result.Success
                 ? $"✓ {entry.FuncName}: {resultText}{pinNote}"
@@ -577,7 +621,8 @@ public partial class ConsoleViewModel : ViewModelBase
 
             _log.Info($"Console.Run: {entry.ClassName}::{entry.FuncName} → " +
                       $"success={result.Success}, code={result.Result}, " +
-                      $"instance={result.InstanceAddr}, usedPin={usedPin}, " +
+                      $"instance={result.InstanceAddr} ({result.InstanceName}, pick={result.InstancePick}), " +
+                      $"usedPin={usedPin}, " +
                       $"reResolved={reResolved}");
         }
         catch (Exception ex)
@@ -609,8 +654,8 @@ public partial class ConsoleViewModel : ViewModelBase
         }
     }
 
-    /// <summary>Per-row "Live" — try find_instance + open in LiveWalker;
-    /// MainWindow falls back to ClassStruct on CDO-only classes.</summary>
+    /// <summary>Per-row "Live" — find a live object of the class or a subclass and open it
+    /// in LiveWalker; MainWindow falls back to ClassStruct when nothing of it is live.</summary>
     [RelayCommand]
     private void OpenInLiveWalker(AllFunctionEntry? row)
     {
@@ -715,7 +760,7 @@ public partial class ConsoleViewModel : ViewModelBase
     }
 
     /// <summary>Map the DLL's Debug Camera result (1=on, 0=off, -1=unknown,
-    /// -5=toggle queued) onto the badge. A queued toggle's badge depends on its
+    /// -5=toggle queued, -6=not sent, -17=ON refused) onto the badge. A queued toggle's badge depends on its
     /// direction, so a Force OFF says <paramref name="forcingOff"/>.</summary>
     private void ApplyDebugCameraState(int state, bool forcingOff = false)
     {
@@ -736,7 +781,13 @@ public partial class ConsoleViewModel : ViewModelBase
             else SetDebugCameraState(true);
             return;
         }
-        SetDebugCameraState(state switch { 1 => true, 0 => false, _ => (bool?)null });
+        // [DEBUGCAM-FORCEON-CDO] A refused ON read the camera OFF first ("already ON" answers before it).
+        SetDebugCameraState(state switch
+        {
+            1 => true,
+            0 or Constants.DebugCameraNoLiveCheatManagerResult => false,
+            _ => (bool?)null,
+        });
     }
 
     /// <summary>↻ — re-read and display the live Debug Camera state. The
@@ -756,8 +807,8 @@ public partial class ConsoleViewModel : ViewModelBase
             {
                 1 => "Debug Camera is ON.",
                 0 => "Debug Camera is OFF.",
-                _ => "Debug Camera state unknown (no live CheatManager — " +
-                     "enter gameplay so a PlayerController spawns, then ↻).",
+                // [DEBUGCAM-FORCEON-CDO] -1 is a read that failed, never the no-live-CheatManager case.
+                _ => DebugCameraText.StateUnknownText,
             };
         }
         catch (Exception ex)
@@ -780,7 +831,7 @@ public partial class ConsoleViewModel : ViewModelBase
     private Task ForceDebugCameraOffAsync() => ForceDebugCameraAsync(wantOn: false);
 
     /// <summary>"Copy CE Script" — hand off to MainWindow to generate the
-    /// setDebugCamera [ENABLE]/[DISABLE] memory record and deliver it to
+    /// Debug Camera [ENABLE]/[DISABLE] memory record and deliver it to
     /// AOBMaker / clipboard.</summary>
     [RelayCommand]
     private void CopyDebugCameraScript() => RequestDebugCameraCeScript?.Invoke();
@@ -796,25 +847,35 @@ public partial class ConsoleViewModel : ViewModelBase
     {
         if (_debugCamEntry == null) return;
         var want = wantOn ? "ON" : "OFF";
+        // [CONSOLE-ROWRUN-SELECTED] Not while a Console run is in flight: it may be a ToggleDebugCamera queued on a busy
+        // game thread, and this would queue a second toggle that undoes it.
+        if (IsRunning)
+        {
+            StatusText = ConsoleRunText.ForceStillRunningText(want);
+            return;
+        }
         try
         {
             ClearError();
             IsDebugCameraBusy = true;
-            var state = await _dump.SetDebugCameraAsync(wantOn);
+            _forcingDebugCamera = true;
+            var set = await _dump.SetDebugCameraDetailedAsync(wantOn);
+            var state = set.State;
             ApplyDebugCameraState(state, forcingOff: !wantOn);
-            StatusText = state switch
+            StatusText = DebugCameraText.WithTemplateNote(state switch
             {
                 1 when wantOn  => "✓ Debug Camera forced ON.",
                 0 when !wantOn => "✓ Debug Camera forced OFF.",
-                -1 => $"Force {want}: no live CheatManager / unreadable state " +
-                      "(enter gameplay first).",
+                // [DEBUGCAM-FORCEON-CDO] -1 is a failure; no live CheatManager is -17, and only an ON gets it.
+                -1 => DebugCameraText.ForceFailed(wantOn),
+                Constants.DebugCameraNoLiveCheatManagerResult => DebugCameraText.NoLiveCheatManagerText,
                 // [W3-DEBUGCAM-QUEUED] Not a failure. [DEBUGCAM-QUEUED-OFF-NOESCALATE] But only a queued ON will still
                 // take; a queued OFF does not turn the camera off -- DebugCameraText says why.
                 Constants.DebugCameraToggleQueuedResult => DebugCameraText.Queued(wantOn),
                 Constants.DebugCameraToggleBlockedResult => DebugCameraText.Blocked(wantOn),
                 _  => $"⚠ Force {want}: state is now {(state == 1 ? "ON" : "OFF")} " +
                       "— the game may re-drive the camera.",
-            };
+            }, set.NonStaticOnTemplate);
         }
         catch (Exception ex)
         {
@@ -825,6 +886,7 @@ public partial class ConsoleViewModel : ViewModelBase
         finally
         {
             IsDebugCameraBusy = false;
+            _forcingDebugCamera = false;
         }
     }
 }

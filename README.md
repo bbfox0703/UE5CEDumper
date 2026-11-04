@@ -36,7 +36,7 @@ A quick look at what you can *do* with it — the full table-maker feature list 
 - **Value Search** — CE-style First Scan / Next Scan over every UE property (numbers, strings, vectors, arrays / maps / sets), so you cheat without knowing offsets. A **Group** mode finds the object holding *several* values at once (e.g. `Str + Def + Dex + Int`), and an opt-in **Deep** mode reaches into nested containers.
 - **Teleport** — 3 save/recall markers (BugItGo-style), **teleport-to-cursor** for top-down / 2.5D games, custom global hotkeys, and a read-only **camera POV** readout.¹
 - **Player tuning** — **Super Jump / Move Speed / Gravity** sliders, **God Mode**, and **Time Dilation** (global or player-only slow-mo / freeze / fast-forward) — all reflection-forced and held against per-tick overwrites, so they survive respawns. Hotkeys or CE on/off records.
-- **Debug Camera** — force the free-fly debug camera on/off, even on Shipping builds that normally get stuck.
+- **Debug Camera** — force the free-fly debug camera on/off, even on Shipping builds that normally get stuck (needs a live CheatManager; UE 5 Shipping builds have none by default, and Force On then says so).
 - **Console** — discover and one-click invoke the `fly` / `god` / `ghost` / game-specific exec commands many games leave in.
 - **Live function profiler** — record *one* in-game action (open a shop, dash) and see exactly which UFunctions fired, ranked with baseline-diff + noise filters. Behaviour-first, when name search can't.
 - **One-click CE export** — pointer-chain XML, Structure Dissect (CSX), SDK headers, AA scripts, multi-row `.CT` batches.
@@ -58,12 +58,12 @@ Games grouped by UE version range. Per-game detail — layout quirks, proxy note
 | **4.25 – 4.27** | ✅ | ✅ | ✅ | FF7 Rebirth, DQ I&II / III HD-2D Remake, Stellar Blade (劍星), Tower of Mask, Hogwarts Legacy, Romancing SaGa 2 RotS, Ghostwire: Tokyo, TimeSplitters Rewind, The Artisan of Glimmith, Barn Finders, MOBILE SUIT GUNDAM SEED Battle Destiny Remastered, Persona 3 Reload |
 | **5.0 – 5.2** | ✅ | ✅ | ✅ | Squirrel With A Gun, Caravan Sandwitch, Meltopia, Retro Rewind Demo |
 | **5.3 – 5.4** | ✅ | ✅ | ✅ | Satisfactory (v1.1.3.1), Colossal, Avowed, Echoes of Aincrad Demo, MindsEye, DragonSword Awakening, The Outer Worlds 2 |
-| **5.5 – 5.7** | ✅ | ✅ | ✅ | Titan Quest II, EverSpace 2, Lushfoil Photography Sim, Manor Lords, Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT: CARRIER QUALIFICATION Demo, Solarpunk, Pionero Capital Demo, Satisfactory (v1.2.3.1), Star Trek Voyager – Across the Unknown, The Adventures of Elliot, FINAL FANTASY RESONANCE DEMO |
+| **5.5 – 5.7** | ✅ | ✅ | ✅ | Titan Quest II, EverSpace 2, Lushfoil Photography Sim, Manor Lords, Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT: CARRIER QUALIFICATION Demo, Solarpunk, Pionero Capital Demo, Satisfactory (v1.2.3.1), Star Trek Voyager – Across the Unknown, The Adventures of Elliot, FINAL FANTASY RESONANCE |
 | **5.8** | ✅ | ✅ | ✅ | Ski-E-O Demo, Unknown Operations: The Habitus Demo |
 
 *UE 4.11 is the supported floor; 4.10 and older are reported as unsupported.*
 
-*The Adventures of Elliot and FINAL FANTASY RESONANCE DEMO hide their engine version; since build 3647 the tool reads 5.6 from their structure (builds before it showed 5.4).*
+*The Adventures of Elliot and FINAL FANTASY RESONANCE hide their engine version; since build 3647 the tool reads 5.6 from their structure (builds before it showed 5.4).*
 
 ---
 
@@ -114,7 +114,7 @@ To build from source: `bootstrap.cmd` shows what the machine needs, then `build.
 * **Games that pause in the background** make anything that calls into the game time out. The UI shows a "game thread stalled" banner when that happens, and the experimental **Keep Foreground** toggle works around it.
 * **Large arrays, maps and sets** are read up to the **Array Limit** slider in the Live Walker.
 
-Per-game notes are in [docs/test-games.md](docs/test-games.md).
+Per-game notes are in [docs/test-games.md](docs/test-games.md). Issues and limitations that last across releases are in [docs/known-issues.md](docs/known-issues.md).
 
 ---
 

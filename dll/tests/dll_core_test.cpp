@@ -1107,6 +1107,32 @@ int main() {
         for (const auto& e : mc0.elements) emptyKept = emptyKept && e.value == "(0 bindings)";
         check("D3 ⭐ control: a readable EMPTY delegate still says \"(0 bindings)\"",
               emptyKept, mc0.elements.empty() ? "(none)" : mc0.elements[0].value.c_str());
+
+        // [D4B-DELEGATEPAD-2026-09-09] element bytes. A row names its element's address and size, so the hex holds the
+        // whole element: on a checked build the 8-byte access detector, a space, then the TArray header the value came
+        // from. Element [1]'s detector carries a marker, which a payload-only hex never shows.
+        check("D4b hex control: a Shipping element's hex is its 16-byte header, unchanged",
+              mc0.elements.size() == 2 && mc0.elements[1].hex == std::string(32, '0'),
+              mc0.elements.size() == 2 ? mc0.elements[1].hex.c_str() : "-");
+        alignas(16) uint8_t paddedMc[24 * 2] = {};
+        const uint64_t detector = 0x1122334455667788ull;
+        memcpy(paddedMc + 24, &detector, sizeof(detector));
+        FakeTArrayField liveMcP{ reinterpret_cast<uintptr_t>(paddedMc), 2, 2 };
+        auto mcP = Ubel::ReadMulticastDelegateArrayElements(
+            reinterpret_cast<uintptr_t>(&liveMcP), 0, 24, 0, 8);
+        check("D4b hex: a checked element still reads its header past the detector",
+              mcP.elements.size() == 2 && mcP.elements[1].value == "(0 bindings)",
+              mcP.elements.size() == 2 ? mcP.elements[1].value.c_str() : "-");
+        check("D4b hex ⭐: ...and its hex is the whole 24-byte element, detector first",
+              mcP.elements.size() == 2
+              && mcP.elements[1].hex == "8877665544332211 " + std::string(32, '0'),
+              mcP.elements.size() == 2 ? mcP.elements[1].hex.c_str() : "-");
+        FakeTArrayField deadP{ 0x1000, 2, 2 };
+        auto mcD = Ubel::ReadMulticastDelegateArrayElements(reinterpret_cast<uintptr_t>(&deadP), 0, 24, 0, 8);
+        check("D4b hex: an unread checked element keeps the element's shape in '?'",
+              mcD.elements.size() == 2 && mcD.elements[0].value == "???"
+              && mcD.elements[0].hex == std::string(16, '?') + " " + std::string(32, '?'),
+              mcD.elements.empty() ? "(none)" : mcD.elements[0].hex.c_str());
     }
 
 
@@ -1570,11 +1596,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, DBGCAM58, USERPICK, LOCALPC, UFIELDNEXT, UPROPNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, DBGCAM58, USERPICK, LOCALPC, UFIELDNEXT, UPROPNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL, UE4WIDE and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -3474,6 +3500,93 @@ int main() {
         DynOff::bUseFProperty = savedFPropCE;
     }
 
+    // -- ENUMUNDERLYING-2026-11-03 -- an EnumProperty's UnderlyingProp type reaches FieldInfo, gated ---------------
+    //
+    // ⛔ POOL-FAKING (own pool, after CONTAINERENUM). [USMAP-ENUM-SIGNEDNESS] The .usmap took an enum's underlying type
+    // from its SIZE alone, so a `: int8` enum was written unsigned and a `: uint32` one signed. Both canonical writers
+    // write the UnderlyingProp's own type. It sits one pointer before the Enum slot, and is read only when that Enum
+    // slot validated (the family is right there) and only when it names an integer property.
+    {
+        blk("ENUMUNDERLYING - WalkClassEx publishes an EnumProperty's underlying integer type, and refuses a bad read");
+
+        static uint8_t euEntry[12][0x40] = {};
+        const char* euNames[12] = { "", "EnumProperty", "Int8Property", "UInt32Property", "StructProperty", "Signed",
+                                    "Wide", "Wrong", "NoEnum", "ESigned", "Enum", "" };
+        static uintptr_t euChunk[13] = {};
+        for (int i = 1; i <= 10; ++i) {
+            memcpy(euEntry[i] + 0x10, euNames[i], strlen(euNames[i]) + 1);
+            euChunk[i] = reinterpret_cast<uintptr_t>(euEntry[i]);
+        }
+        static uintptr_t euChunks[2] = { reinterpret_cast<uintptr_t>(euChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(euChunks), 0x10);
+
+        const bool savedFPropEU = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t euFC[5][0x20] = {};
+        auto fclass = [&](int nameIdx) { put32(euFC[nameIdx], DynOff::FFIELDCLASS_NAME, nameIdx); return A(euFC[nameIdx]); };
+
+        // One UEnum, of class Enum.
+        static uint8_t euEnum[0x40] = {}, euEnumCls[0x40] = {};
+        put32(euEnum, Grimoire::OFF_UOBJECT_NAME, 9);
+        put32(euEnumCls, Grimoire::OFF_UOBJECT_NAME, 10);
+        putP(euEnum, Grimoire::OFF_UOBJECT_CLASS, A(euEnumCls));
+
+        // The UnderlyingProps: two integer properties and a StructProperty, which no enum can have.
+        static uint8_t euI8[0x100] = {}, euU32[0x100] = {}, euStruct[0x100] = {};
+        putP(euI8, DynOff::FFIELD_CLASS, fclass(2));
+        putP(euU32, DynOff::FFIELD_CLASS, fclass(3));
+        putP(euStruct, DynOff::FFIELD_CLASS, fclass(4));
+
+        // Four EnumProperties, chained through FFIELD_NEXT.
+        static uint8_t euP[4][0x100] = {};
+        auto prop = [&](int i, int nameIdx, int32_t off, int32_t size, uintptr_t enumObj, uintptr_t under, uint8_t* next) {
+            putP(euP[i], DynOff::FFIELD_CLASS, fclass(1));
+            put32(euP[i], DynOff::FFIELD_NAME, nameIdx);
+            put32(euP[i], DynOff::FPROPERTY_OFFSET, off);
+            put32(euP[i], DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(euP[i], DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(euP[i], DynOff::FENUMPROP_ENUM, enumObj);
+            putP(euP[i], DynOff::FENUMPROP_ENUM - 8, under);
+            putP(euP[i], DynOff::FFIELD_NEXT, reinterpret_cast<uintptr_t>(next));
+        };
+        prop(0, 5, 0x40, 1, A(euEnum), A(euI8),     euP[1]);   // Signed: an int8 enum
+        prop(1, 6, 0x44, 4, A(euEnum), A(euU32),    euP[2]);   // Wide:   a uint32 enum
+        prop(2, 7, 0x48, 1, A(euEnum), A(euStruct), euP[3]);   // Wrong:  the slot names no integer property
+        prop(3, 8, 0x4C, 1, 0,         A(euI8),     nullptr);  // NoEnum: the Enum slot did not validate
+
+        static uint8_t euCls[0x100] = {};
+        put32(euCls, DynOff::USTRUCT_PROPSSIZE, 0x50);
+        putP(euCls, DynOff::USTRUCT_CHILDPROPS, A(euP[0]));
+
+        const auto& euInfo = Ubel::WalkClassEx(A(euCls));
+        auto find = [&](const char* n) -> const FieldInfo* {
+            for (const auto& f : euInfo.Fields) if (f.Name == n) return &f;
+            return nullptr;
+        };
+        const auto* sg = find("Signed");
+        const auto* wd = find("Wide");
+        const auto* wr = find("Wrong");
+        const auto* ne = find("NoEnum");
+        check("ENUMUNDERLYING control: the fake class produced its four EnumProperties, the first three with their enum",
+              sg && wd && wr && ne && sg->enumName == "ESigned" && wd->enumName == "ESigned" && wr->enumName == "ESigned",
+              std::to_string(euInfo.Fields.size()).c_str());
+        check("ENUMUNDERLYING ⭐: an int8 enum publishes Int8Property, the signedness its size cannot say",
+              sg && sg->enumUnderlyingType == "Int8Property", sg ? sg->enumUnderlyingType.c_str() : "(no field)");
+        check("ENUMUNDERLYING ⭐: a uint32 enum publishes UInt32Property",
+              wd && wd->enumUnderlyingType == "UInt32Property", wd ? wd->enumUnderlyingType.c_str() : "(no field)");
+        check("ENUMUNDERLYING: a slot naming no integer property publishes nothing",
+              wr && wr->enumUnderlyingType.empty(), wr ? wr->enumUnderlyingType.c_str() : "(no field)");
+        check("ENUMUNDERLYING: with no valid Enum slot the underlying slot is not trusted either",
+              ne && ne->enumName.empty() && ne->enumUnderlyingType.empty(),
+              ne ? ne->enumUnderlyingType.c_str() : "(no field)");
+
+        DynOff::bUseFProperty = savedFPropEU;
+    }
+
     // -- METACLASS-2026-09-27 -- a ClassProperty's MetaClass reaches FieldInfo, validated ---------------------------
     //
     // ⛔ POOL-FAKING (own pool, after CONTAINERENUM). [SDK-METACLASS] walk_class published a ClassProperty's
@@ -3830,6 +3943,8 @@ int main() {
             alignas(8) static uint8_t cpData[2 * 32] = {};
             const uint32_t marker = 0x5A5A5A5A;
             memcpy(cpData + 32 + 8 + 16, &marker, 4);
+            const uint32_t detector = 0xC3C3C3C3;   // [D4B-DELEGATEPAD-2026-09-09] the hex opens on the detector
+            memcpy(cpData + 32, &detector, 4);
             alignas(8) static uint8_t cpInst[0x20] = {};
             *reinterpret_cast<uintptr_t*>(cpInst + 0x10) = reinterpret_cast<uintptr_t>(cpData);   // Data
             *reinterpret_cast<int32_t*>(cpInst + 0x18) = 2;                                       // Num
@@ -3837,9 +3952,15 @@ int main() {
             const auto rr = Ubel::ReadDelegateArrayElements(reinterpret_cast<uintptr_t>(cpInst), 0x10, 32, 0, 2);
             check("DELEGATEARRAYPAD ⭐: a case-preserving checked array's 32-byte elements are read, not refused",
                   rr.ok && rr.elements.size() == 2, rr.error.c_str());
-            check("DELEGATEARRAYPAD ⭐: ...at the engine's stride, so element [1]'s hex ends in its own FName's bytes",
-                  rr.elements.size() == 2 && rr.elements[1].hex.size() == 40 &&
-                  rr.elements[1].hex.compare(32, 8, "5A5A5A5A") == 0,
+            // [D4B-DELEGATEPAD-2026-09-09] The hex is the whole 32-byte element: detector, a space, the 20-byte payload
+            // (the FName's last 4 bytes at hex 17 + 32), then the 4-byte alignment tail.
+            check("DELEGATEARRAYPAD ⭐: ...at the engine's stride, so element [1]'s hex carries its own FName's bytes",
+                  rr.elements.size() == 2 && rr.elements[1].hex.size() == 65 &&
+                  rr.elements[1].hex.compare(49, 8, "5A5A5A5A") == 0,
+                  rr.elements.size() == 2 ? rr.elements[1].hex.c_str() : "-");
+            check("DELEGATEARRAYPAD ⭐: ...opening on its own detector and ending on its alignment tail",
+                  rr.elements.size() == 2 && rr.elements[1].hex.compare(0, 17, "C3C3C3C300000000 ") == 0 &&
+                  rr.elements[1].hex.size() == 65 && rr.elements[1].hex.compare(57, 8, "00000000") == 0,
                   rr.elements.size() == 2 ? rr.elements[1].hex.c_str() : "-");
         }
         DynOff::bCasePreservingName = false;
@@ -3972,6 +4093,21 @@ int main() {
         check("FINDREFSPAD control: ...while its invocation-list elements stay unpadded (8 + 8, the pair at +0)",
               wm != ma.weakLikeArrays.end() && wm->elemStride == 16 && wm->elemWeakOffset == 0,
               wm == ma.weakLikeArrays.end() ? "no entry" : std::to_string(wm->elemStride).c_str());
+
+        // [D4B-DELEGATEPAD-2026-09-09] element bytes: the walk's row for that checked DelegateProperty names offset 0x30
+        // and size 24, so its hex is those 24 bytes -- the detector, a space, then the weak pair and FName it read.
+        static uint8_t frInstA[0x100] = {};
+        memset(frInstA + 0x30, 0xAB, 8);   // the detector
+        const auto walkA = Ubel::WalkInstance(reinterpret_cast<uintptr_t>(frInstA),
+                                              reinterpret_cast<uintptr_t>(frClsA), 64, 2, false);
+        const auto delRow = std::find_if(walkA.fields.begin(), walkA.fields.end(),
+                                         [](const auto& f) { return f.name == "Del"; });
+        check("FINDREFSPAD hex: the checked DelegateProperty is read, not refused",
+              delRow != walkA.fields.end() && delRow->typedValue.rfind("(delegate", 0) != 0,
+              delRow == walkA.fields.end() ? "no row" : delRow->typedValue.c_str());
+        check("FINDREFSPAD hex ⭐: ...and its hex is all 24 of its bytes, detector first",
+              delRow != walkA.fields.end() && delRow->hexValue == "ABABABABABABABAB " + std::string(32, '0'),
+              delRow == walkA.fields.end() ? "no row" : delRow->hexValue.c_str());
 
         // Class B, a 12-byte FName on a checked build: a TArray<FScriptDelegate> whose elements are 32 bytes.
         static uint8_t frArr[0x100] = {}, frInner[0x100] = {}, frClsB[0x100] = {};
@@ -4511,8 +4647,8 @@ int main() {
     // -- SEETHRU-PROBE-SUBSTRING-2026-09-23 -- the probe asks a CLASS found by path; internal lookups gate on derivation --
     //
     // ⛔ POOL-FAKING, like OFFSETS: own object pool AND own name pool, last. [SEETHRU-PROBE-SUBSTRING] See-through's
-    // producer probe resolved "Actor" through UE5_FindInstanceOfClass -- a class-name SUBSTRING match that falls back to
-    // the FIRST matching CDO -- and on DumperTest Shipping 5.4 that was Default__ActorChannel, a UChannel with no
+    // producer probe resolved "Actor" through UE5_FindInstanceOfClass -- then a class-name SUBSTRING match that fell back
+    // to the FIRST matching CDO -- and on DumperTest Shipping 5.4 that was Default__ActorChannel, a UChannel with no
     // SetActorHiddenInGame, so See-through ON refused (-3) on a build that has it. Phase A is that pool: the first object
     // whose class name contains "actor" is ActorChannel's CDO, and nothing live matches. The CheatManager rows are the same
     // trap in the stock engine: UCheatManagerExtension (Engine) and GAS's UAbilitySystemCheatManagerExtension.
@@ -4774,6 +4910,699 @@ int main() {
         g_cachedUEVersion           = svVerD;
     }
 
+    // -- USERPICK-2026-11-03 -- the USER-facing "an instance of class X" lookup picks by derivation ---------------------
+    //
+    // ⛔ POOL-FAKING, like PROBECLASS / DBGCAM58: own object pool AND own name pool. [FINDINSTANCE-SUBSTRING-USERFACING]
+    // The C ABI export, the pipe's invoke_function class_name and the mailbox's FIND_INSTANCE matched a class-name
+    // SUBSTRING and took the first non-CDO match, else the first match -- so "CheatManager" landed on a cheat EXTENSION
+    // (GAS's included) or on the Debug Camera's own CheatManager, whichever sat lower in GObjects. Every wrong object
+    // here sits BELOW the right one.
+    {
+        blk("USERPICK - the user-facing class lookup picks by derivation, ranks the Debug Camera's objects last");
+        ResetCancel();
+
+        enum : int32_t { nClass = 1, nEngine, nPackage, nObject, nChannel, nActorChannel, nActor, nController,
+                         nPlayerController, nDcc, nBPDcc, nBPPc, nCheatMgr, nCheatExt, nAbilityExt, nBPCheats, nKsl,
+                         nGameModeBase, nGameMode, nBPGameMode, nBPChar, nCdoActorChannel, nCdoCheatExt, nCdoCheatMgr,
+                         nCdoActor, nCdoKsl, nCdoGameMode, nCdoBPChar, nAbility0, nCheatMgr0, nBPDcc0, nBPPc0,
+                         nBPCheats0, nAbility1, nBPGameMode0, nBPChar0, nHud, nDcHud, nObjProp, nOwner, nDcHud0, nHud0,
+                         nCmc, nCdoCmc, nCharMoveComp, nNames };
+        const char* upNames[nNames] = { "", "Class", "/Script/Engine", "Package", "Object", "Channel", "ActorChannel",
+            "Actor", "Controller", "PlayerController", "DebugCameraController", "BP_DebugCamera_C",
+            "BP_ThirdPersonPlayerController_C", "CheatManager", "CheatManagerExtension",
+            "AbilitySystemCheatManagerExtension", "BP_Cheats_C", "KismetSystemLibrary", "GameModeBase", "GameMode",
+            "BP_GameMode_C", "BP_PlayerCharacter_C", "Default__ActorChannel", "Default__CheatManagerExtension",
+            "Default__CheatManager", "Default__Actor", "Default__KismetSystemLibrary", "Default__GameMode",
+            "Default__BP_PlayerCharacter_C", "AbilitySystemCheatManagerExtension_0", "CheatManager_0",
+            "BP_DebugCamera_C_0", "BP_ThirdPersonPlayerController_C_0", "BP_Cheats_C_0",
+            "AbilitySystemCheatManagerExtension_1", "BP_GameMode_C_0", "BP_PlayerCharacter_C_0", "HUD", "DebugCameraHUD",
+            "ObjectProperty", "Owner", "DebugCameraHUD_0", "HUD_0", "CharacterMovementComponent",
+            "Default__CharacterMovementComponent", "CharMoveComp" };
+        static uint8_t upEntry[nNames][0x40] = {};
+        static uintptr_t upChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(upEntry[i] + 0x10, upNames[i], strlen(upNames[i]) + 1);
+            upChunk[i] = reinterpret_cast<uintptr_t>(upEntry[i]);
+        }
+        static uintptr_t upChunks[2] = { reinterpret_cast<uintptr_t>(upChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(upChunks), 0x10);
+        check("USERPICK setup: the name pool resolves the longest name",
+              Serie::GetString(nAbility1) == "AbilitySystemCheatManagerExtension_1", Serie::GetString(nAbility1).c_str());
+
+        const bool     svCpnU   = DynOff::bCasePreservingName;
+        const bool     svFPropU = DynOff::bUseFProperty;
+        const uint32_t svVerU   = g_cachedUEVersion;
+        DynOff::bCasePreservingName = false;
+        DynOff::bUseFProperty       = true;
+        g_cachedUEVersion           = 508;
+
+        enum { bMeta, bPkgCls, bPkg, bObject, bChannel, bActorChannel, bActor, bController, bPlayerController, bDcc,
+               bBPDcc, bBPPc, bCheatMgr, bCheatExt, bAbilityExt, bBPCheats, bKsl, bGameModeBase, bGameMode, bBPGameMode,
+               bBPChar, bCdoActorChannel, bCdoCheatExt, bCdoCheatMgr, bCdoActor, bCdoKsl, bCdoGameMode, bCdoBPChar,
+               bAbility0, bCm0, bDcc0, bPc0, bCheats0, bAbility1, bGm0, bChar0, bHud, bDcHud, bDcHud0, bHud0,
+               bCmc, bCdoCmc, bTplMove, bLiveMove, bScsMove, bTplMove2, bLiveMove2, bLevel, bAct1, bAct2, bAct3,
+               bPcExact, kBlobs };
+        alignas(16) static uint8_t upB[kBlobs][0x200] = {};
+        auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(upB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto obj = [&](int b, int cls, int32_t name, int outer) {
+            memset(upB[b], 0, sizeof(upB[b]));
+            putP(upB[b], Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            put32(upB[b], Grimoire::OFF_UOBJECT_NAME, name);
+            putP(upB[b], DynOff::UOBJECT_OUTER, A(outer));
+        };
+        auto klass = [&](int b, int32_t name, int super) {
+            obj(b, bMeta, name, bPkg);
+            putP(upB[b], DynOff::USTRUCT_SUPER, A(super));
+        };
+        obj(bMeta, bMeta, nClass, -1);
+        obj(bPkgCls, bMeta, nPackage, -1);
+        obj(bPkg, bPkgCls, nEngine, -1);
+        klass(bObject, nObject, -1);
+        klass(bChannel, nChannel, bObject);
+        klass(bActorChannel, nActorChannel, bChannel);
+        klass(bActor, nActor, bObject);
+        klass(bController, nController, bActor);
+        klass(bPlayerController, nPlayerController, bController);
+        klass(bDcc, nDcc, bPlayerController);            // ADebugCameraController : APlayerController
+        klass(bBPDcc, nBPDcc, bDcc);
+        klass(bBPPc, nBPPc, bPlayerController);
+        klass(bCheatMgr, nCheatMgr, bObject);
+        klass(bCheatExt, nCheatExt, bObject);
+        klass(bAbilityExt, nAbilityExt, bCheatExt);      // GAS's: "CheatManager" in its name, not a UCheatManager
+        klass(bBPCheats, nBPCheats, bCheatMgr);          // a game's CheatManager with no "CheatManager" in its name
+        klass(bKsl, nKsl, bObject);
+        klass(bGameModeBase, nGameModeBase, bActor);
+        klass(bGameMode, nGameMode, bGameModeBase);
+        klass(bBPGameMode, nBPGameMode, bGameModeBase);  // "GameMode" in its name, NOT a GameMode
+        klass(bBPChar, nBPChar, bActor);
+        obj(bCdoActorChannel, bActorChannel, nCdoActorChannel, bPkg);
+        obj(bCdoCheatExt, bCheatExt, nCdoCheatExt, bPkg);
+        obj(bCdoCheatMgr, bCheatMgr, nCdoCheatMgr, bPkg);
+        obj(bCdoActor, bActor, nCdoActor, bPkg);
+        obj(bCdoKsl, bKsl, nCdoKsl, bPkg);
+        obj(bCdoGameMode, bGameMode, nCdoGameMode, bPkg);
+        obj(bCdoBPChar, bBPChar, nCdoBPChar, bPkg);
+        obj(bDcc0, bBPDcc, nBPDcc0, -1);
+        obj(bCm0, bCheatMgr, nCheatMgr0, bDcc0);         // the Debug Camera's own CheatManager...
+        obj(bAbility0, bAbilityExt, nAbility0, bCm0);    // ...and its extension, two outer hops below the DCC
+        obj(bPc0, bBPPc, nBPPc0, -1);
+        obj(bCheats0, bBPCheats, nBPCheats0, bPc0);      // the player's CheatManager...
+        obj(bAbility1, bAbilityExt, nAbility1, bCheats0);   // ...and its extension
+        obj(bGm0, bBPGameMode, nBPGameMode0, -1);
+        obj(bChar0, bBPChar, nBPChar0, -1);
+        // Review of fbedfa9a: an actor the DCC spawns has the LEVEL as its outer and the DCC as its AActor::Owner.
+        // Actor gets a reflected `Owner` ObjectProperty; the DCC's HUD sits below the player's.
+        constexpr int32_t kOwnerOff = 0x100;
+        static uint8_t upObjPropFC[0x20] = {}, upOwnerProp[0x100] = {};
+        put32(upObjPropFC, DynOff::FFIELDCLASS_NAME, nObjProp);
+        putP(upOwnerProp, DynOff::FFIELD_CLASS, reinterpret_cast<uintptr_t>(upObjPropFC));
+        put32(upOwnerProp, DynOff::FFIELD_NAME, nOwner);
+        put32(upOwnerProp, DynOff::FPROPERTY_OFFSET, kOwnerOff);
+        put32(upOwnerProp, DynOff::FPROPERTY_ELEMSIZE, 8);
+        put32(upOwnerProp, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+        putP(upB[bActor], DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(upOwnerProp));
+        put32(upB[bActor], DynOff::USTRUCT_PROPSSIZE, kOwnerOff + 8);
+        klass(bHud, nHud, bActor);
+        klass(bDcHud, nDcHud, bHud);
+        obj(bDcHud0, bDcHud, nDcHud0, -1);
+        putP(upB[bDcHud0], kOwnerOff, A(bDcc0));          // the DCC's HUD: owned by the DCC, outer the level
+        obj(bHud0, bHud, nHud0, -1);
+        putP(upB[bHud0], kOwnerOff, A(bPc0));             // the player's HUD
+        // [INVOKE-NONSTATIC-ON-CDO] A class-default object's DEFAULT SUBOBJECT: its own name, the CDO as its outer,
+        // RF_ArchetypeObject in its flags -- the shape measured on DumperTest 5.4 (0x40021), where every component-class
+        // lookup landed on one. The live pawn's component of the same name sits higher.
+        klass(bCmc, nCmc, bObject);
+        obj(bCdoCmc, bCmc, nCdoCmc, bPkg);
+        put32(upB[bCdoCmc], Grimoire::OFF_UOBJECT_FLAGS, 0x31);
+        obj(bTplMove, bCmc, nCharMoveComp, bCdoBPChar);
+        put32(upB[bTplMove], Grimoire::OFF_UOBJECT_FLAGS, 0x40021);
+        obj(bLiveMove, bCmc, nCharMoveComp, bChar0);
+        // [LISTINSTANCES-KEEPS-TEMPLATES] A Blueprint's component template: RF_ArchetypeObject, outered to the CLASS (no
+        // class-default object above it).
+        obj(bScsMove, bCmc, nCharMoveComp, bBPChar);
+        put32(upB[bScsMove], Grimoire::OFF_UOBJECT_FLAGS, 0x20);
+        // Review 1: a second template under the same class default (flags 0, so only the memoized outer can tell) and
+        // a second live component under the same pawn -- both are memo HITS on their first outer.
+        obj(bTplMove2, bCmc, nCharMoveComp, bCdoBPChar);
+        obj(bLiveMove2, bCmc, nCharMoveComp, bChar0);
+        // A level and three actors outered to it (walk_world's shape); the third carries stray flag bits.
+        obj(bLevel, bObject, nBPChar0, -1);
+        obj(bAct1, bBPChar, nBPChar0, bLevel);
+        obj(bAct2, bBPChar, nBPChar0, bLevel);
+        obj(bAct3, bBPChar, nBPChar0, bLevel);
+        put32(upB[bAct3], Grimoire::OFF_UOBJECT_FLAGS, 0x30);
+
+        FakePool upPool;
+        upPool.Build(128);
+        auto slot = [&](int i, int b) {
+            const uintptr_t o = A(b);
+            memcpy(upPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        };
+        auto nm = [](uintptr_t o) { return o ? Ubel::GetName(o) : std::string("(0)"); };
+        auto is = [&](const Aura::UserInstance& r, int b, Aura::UserPick p) { return r.obj == A(b) && r.pick == p; };
+
+        // Phase A -- class-default objects only, each wrong one first.
+        const int phaseA[] = { bCdoActorChannel, bCdoCheatExt, bCdoCheatMgr, bCdoActor, bCdoKsl, bCdoGameMode, bCdoBPChar };
+        for (int i = 0; i < 7; ++i) slot(i, phaseA[i]);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+
+        auto r = Aura::ResolveUserInstance("CheatManager");
+        check("USERPICK ⭐: nothing live -- CheatManager's OWN default object, not the extension's met first",
+              is(r, bCdoCheatMgr, Aura::UserPick::ClassDefault), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("Actor");
+        check("USERPICK ⭐: ...and Actor's, not ActorChannel's", is(r, bCdoActor, Aura::UserPick::ClassDefault),
+              nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("KismetSystemLibrary");
+        check("USERPICK control: a function library answers with its own default object, as it always did",
+              is(r, bCdoKsl, Aura::UserPick::ClassDefault), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("Cheat");
+        check("USERPICK ⭐: a name no class has is still matched as part of a class name, and says so",
+              is(r, bCdoCheatExt, Aura::UserPick::PartialDefault), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("NoSuchClass_Xyz");
+        check("USERPICK control: an unknown name resolves to nothing",
+              r.obj == 0 && r.pick == Aura::UserPick::None, nm(r.obj).c_str());
+
+        // Phase B -- live objects; the Debug Camera's, a cheat extension and a GameMode look-alike sit lowest.
+        const int phaseB[] = { bAbility0, bCm0, bDcc0, bPc0, bCheats0, bAbility1, bGm0, bChar0, bDcHud0, bHud0 };
+        for (int i = 0; i < 10; ++i) slot(7 + i, phaseB[i]);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+
+        r = Aura::ResolveUserInstance("CheatManager");
+        check("USERPICK ⭐: the player's CheatManager (a game subclass without the word) -- not the DCC's, not GAS's",
+              is(r, bCheats0, Aura::UserPick::Live), nm(r.obj).c_str());
+        check("USERPICK control: the internal unfiltered pick is the DCC's -- the case the rank exists for",
+              Aura::FindLiveOrDefaultOf("CheatManager") == A(bCm0), nm(Aura::FindLiveOrDefaultOf("CheatManager")).c_str());
+        check("USERPICK control: set_debug_camera's filtered pick agrees with the user's",
+              Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController") == A(bCheats0));
+        check("USERPICK control: the name is compared case-insensitively",
+              Aura::ResolveUserInstance("cheatmanager").obj == r.obj);
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK ⭐: PlayerController is the player's, never the DCC that derivation alone would take first",
+              is(r, bPc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        check("USERPICK control: ...which is what derivation alone takes",
+              Aura::FindLiveOrDefaultOf("PlayerController") == A(bDcc0));
+        r = Aura::ResolveUserInstance("DebugCameraController");
+        check("USERPICK ⭐: naming the Debug Camera controller itself is not ranked down",
+              is(r, bDcc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("AbilitySystemCheatManagerExtension");
+        check("USERPICK ⭐: an extension two outer hops below the DCC is ranked down too -- the player's wins",
+              is(r, bAbility1, Aura::UserPick::Live), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("Actor");
+        check("USERPICK ⭐: Actor is a live actor, and not the DCC", is(r, bPc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("GameMode");
+        check("USERPICK ⭐: a name some class HAS never takes an unrelated class that merely contains it",
+              is(r, bCdoGameMode, Aura::UserPick::ClassDefault), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("PlayerCharacter");
+        check("USERPICK control: a partial name lands where it always did", r.obj == A(bChar0), nm(r.obj).c_str());
+        check("USERPICK ⭐: ...and says it was matched as part of a class name", r.pick == Aura::UserPick::PartialLive);
+        r = Aura::ResolveUserInstance("HUD");
+        check("USERPICK ⭐: an actor the DCC OWNS (AActor::Owner; its outer is the level) is ranked last too",
+              is(r, bHud0, Aura::UserPick::Live), nm(r.obj).c_str());
+        check("USERPICK control: ...and the unfiltered internal pick is the DCC's HUD, the lower one",
+              Aura::FindLiveOrDefaultOf("HUD") == A(bDcHud0));
+
+        // Phase B2 -- [MAINWINDOW-NAVIGATE-EXACT-NAME] the navigation pick (find_live_instance): an object of the named
+        // class ITSELF before a subclass's met first, never a destroyed one, and no partial-name fallback. A plain
+        // PlayerController sits far above the game's subclass.
+        obj(bPcExact, bPlayerController, nPlayerController, -1);
+        slot(40, bPcExact);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        r = Aura::FindLiveInstanceOf("PlayerController");
+        check("USERPICK ⭐ NAVPICK: an object of the class itself, over the game's subclass met first",
+              is(r, bPcExact, Aura::UserPick::Live), nm(r.obj).c_str());
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK NAVPICK control: ...where an invoke's pick takes the first live one, the subclass's",
+              is(r, bPc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        put32(upB[bPcExact], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);   // UE5 RF_MirroredGarbage: destroyed, not collected
+        r = Aura::FindLiveInstanceOf("PlayerController");
+        check("USERPICK ⭐ NAVPICK: a destroyed object is passed over -- the subclass's live one answers",
+              is(r, bPc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        r = Aura::FindLiveInstanceOf("Actor");
+        check("USERPICK ⭐ NAVPICK: with nothing of the class itself, the first live subclass object, not the DCC",
+              is(r, bPc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        r = Aura::FindLiveInstanceOf("PlayerCharacter");
+        check("USERPICK ⭐ NAVPICK: no partial-name fallback -- a name no class has answers nothing",
+              r.obj == 0 && r.pick == Aura::UserPick::None, nm(r.obj).c_str());
+        r = Aura::FindLiveInstanceOf("KismetSystemLibrary");
+        check("USERPICK NAVPICK control: a class with nothing live gives no object to open",
+              r.pick != Aura::UserPick::Live && r.pick != Aura::UserPick::DebugCameraOwned, nm(r.obj).c_str());
+        r = Aura::FindLiveInstanceOf("HUD");
+        check("USERPICK NAVPICK control: an exact-class object over a subclass one the DCC owns",
+              is(r, bHud0, Aura::UserPick::Live), nm(r.obj).c_str());
+        // Review 2: "exact first" must not outrank "the Debug Camera's last". The DCC's own CheatManager is of the class
+        // itself and sits below the player's, which is of a game subclass.
+        r = Aura::FindLiveInstanceOf("CheatManager");
+        check("USERPICK ⭐ NAVPICK: the DCC's own exact-class object ranks below the player's subclass object",
+              is(r, bCheats0, Aura::UserPick::Live), nm(r.obj).c_str());
+        // Review 2: a destroyed SUBCLASS object (a BP_PlayerController_C destroyed in play, not yet collected) is passed
+        // over too -- not held as the subclass pick, nor as the Debug Camera's.
+        slot(40, -1);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);
+        r = Aura::FindLiveInstanceOf("PlayerController");
+        check("USERPICK ⭐ NAVPICK: a destroyed subclass object is passed over -- the DCC, said to be its",
+              is(r, bDcc0, Aura::UserPick::DebugCameraOwned), nm(r.obj).c_str());
+        put32(upB[bDcc0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);
+        r = Aura::FindLiveInstanceOf("PlayerController");
+        check("USERPICK ⭐ NAVPICK: ...and a destroyed DCC is not held either -- nothing to open",
+              r.obj == 0 && r.pick != Aura::UserPick::Live && r.pick != Aura::UserPick::DebugCameraOwned,
+              nm(r.obj).c_str());
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        put32(upB[bDcc0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        put32(upB[bPcExact], Grimoire::OFF_UOBJECT_FLAGS, 0);
+
+        // Phase B3 -- [INVOKE-PICK-GARBAGE] an invoke, and an internal state read, never take a destroyed object either:
+        // an actor destroyed in play is marked garbage and stays in GObjects until the next collection (about a minute on
+        // a stock engine) -- an early, low-index one is met first. Up to review 1's checks, each ⭐ one failed before
+        // [INVOKE-PICK-GARBAGE]: the pick landed on the destroyed object.
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);   // UE5 RF_MirroredGarbage
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK ⭐ GARBAGE: an invoke passes over the destroyed player controller -- the DCC, said to be its",
+              is(r, bDcc0, Aura::UserPick::DebugCameraOwned), nm(r.obj).c_str());
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        put32(upB[bCheats0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);
+        check("USERPICK ⭐ GARBAGE: set_debug_camera's state read passes over a destroyed CheatManager -- the CDO stands in",
+              Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController") == A(bCdoCheatMgr),
+              nm(Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController")).c_str());
+        put32(upB[bCheats0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        put32(upB[bChar0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);
+        r = Aura::ResolveUserInstance("PlayerCharacter");
+        check("USERPICK ⭐ GARBAGE: a partial name passes over a destroyed object too -- the first match stands in",
+              is(r, bCdoBPChar, Aura::UserPick::PartialDefault), nm(r.obj).c_str());
+        put32(upB[bChar0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        // Review 1: ...and not as the first match either, when no template sits below it. The player's controller is
+        // the only object of the only class whose name holds "ThirdPersonPlayer".
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);
+        r = Aura::ResolveUserInstance("ThirdPersonPlayer");
+        check("USERPICK ⭐ GARBAGE: a destroyed object is not a partial name's first match either -- nothing answers",
+              r.obj == 0 && r.pick == Aura::UserPick::None, nm(r.obj).c_str());
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+
+        // Review 1: through the ITEM flags, which the walk reads by its own index. On UE 5.0-5.3 and UE4 a garbage
+        // collection first marks every non-root object Unreachable (item bit 28) and clears it from the reachable ones;
+        // a pick made in between must still take a live object. Bit 28 is no destroyed object; PendingKill (bit 29) is.
+        uint8_t* pcItem = upPool.chunks[0].data() + static_cast<size_t>(10) * FakePool::kItemSize;   // bPc0's slot
+        auto putItemFlags = [&](uint32_t f) { memcpy(pcItem + 0x08, &f, sizeof(f)); };
+        g_cachedUEVersion = 503;
+        putItemFlags(1u << 28);
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK ⭐ GARBAGE: mid-collection (Unreachable only, UE 5.3) is no destroyed object -- the live one answers",
+              is(r, bPc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        r = Aura::FindLiveInstanceOf("PlayerController");
+        check("USERPICK ⭐ GARBAGE: ...and the navigation pick takes it too",
+              is(r, bPc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        putItemFlags(1u << 29);
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0x20000000);   // 5.0-5.3: RF_PendingKill with item PendingKill
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK GARBAGE control: a UE 5.3 PendingKill object, read through its item, is passed over",
+              is(r, bDcc0, Aura::UserPick::DebugCameraOwned), nm(r.obj).c_str());
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        g_cachedUEVersion = 427;   // UE4 keeps PendingKill in the item only
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK GARBAGE control: a UE4 PendingKill item is passed over", is(r, bDcc0, Aura::UserPick::DebugCameraOwned),
+              nm(r.obj).c_str());
+        putItemFlags(1u << 28);
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK ⭐ GARBAGE: mid-collection on UE4 too -- the live one answers", is(r, bPc0, Aura::UserPick::Live),
+              nm(r.obj).c_str());
+        putItemFlags(0);
+        g_cachedUEVersion = 508;
+
+        // Phase C -- only the Debug Camera's objects are live.
+        slot(10, -1);   // the player's controller
+        slot(11, -1);   // its CheatManager
+        slot(12, -1);   // its extension
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+
+        r = Aura::ResolveUserInstance("CheatManager");
+        check("USERPICK ⭐: with only the DCC's CheatManager live, an invoke takes it over the default object",
+              is(r, bCm0, Aura::UserPick::DebugCameraOwned), nm(r.obj).c_str());
+        check("USERPICK control: set_debug_camera's STATE read still never takes it -- the CDO stands in (DBGCAM58)",
+              Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController") == A(bCdoCheatMgr));
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK ⭐: with no player controller live, the DCC itself, and the pick says so",
+              is(r, bDcc0, Aura::UserPick::DebugCameraOwned), nm(r.obj).c_str());
+        r = Aura::FindLiveInstanceOf("CheatManager");
+        check("USERPICK ⭐ NAVPICK: with only the DCC's CheatManager live, the navigation pick takes it, and says so",
+              is(r, bCm0, Aura::UserPick::DebugCameraOwned), nm(r.obj).c_str());
+
+        // Phase E -- a template sits below the live object of its class. [INVOKE-NONSTATIC-ON-CDO]
+        slot(17, bCdoCmc);
+        slot(18, bTplMove);
+        slot(19, bLiveMove);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        r = Aura::ResolveUserInstance("CharacterMovementComponent");
+        check("USERPICK ⭐: a component lookup takes the live pawn's component, not the class default object's template",
+              is(r, bLiveMove, Aura::UserPick::Live), nm(r.obj).c_str());
+        check("USERPICK ⭐: ...and so does the internal pick", Aura::FindLiveOrDefaultOf("CharacterMovementComponent") ==
+              A(bLiveMove));
+        r = Aura::ResolveUserInstance("MovementComp");
+        check("USERPICK ⭐: a partial name skips the template too", is(r, bLiveMove, Aura::UserPick::PartialLive),
+              nm(r.obj).c_str());
+        slot(19, -1);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        r = Aura::ResolveUserInstance("CharacterMovementComponent");
+        check("USERPICK ⭐: with only templates, the class's OWN default object stands in -- never another's template",
+              is(r, bCdoCmc, Aura::UserPick::ClassDefault), nm(r.obj).c_str());
+        check("USERPICK ⭐: TemplateOf -- the class default object, its subobject (owned by it), a live object",
+              Aura::TemplateOf(A(bCdoCmc)).kind == Aura::TemplateKind::ClassDefault
+              && Aura::TemplateOf(A(bTplMove)).kind == Aura::TemplateKind::Template
+              && Aura::TemplateOf(A(bTplMove)).owner == A(bCdoBPChar)
+              && Aura::TemplateOf(A(bLiveMove)).kind == Aura::TemplateKind::None);
+        put32(upB[bTplMove], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        check("USERPICK ⭐: with no flags read, a Default__ outer still makes it a template, owned by that outer",
+              Aura::TemplateOf(A(bTplMove)).kind == Aura::TemplateKind::Template
+              && Aura::TemplateOf(A(bTplMove)).owner == A(bCdoBPChar));
+        // Review of 69f4fc42: the lookup and TemplateOf must agree -- one reply said `live` and `template` together.
+        r = Aura::ResolveUserInstance("CharacterMovementComponent");
+        check("USERPICK ⭐: ...and the lookup passes it over too -- the class's own default object stands in",
+              is(r, bCdoCmc, Aura::UserPick::ClassDefault), nm(r.obj).c_str());
+        put32(upB[bTplMove], Grimoire::OFF_UOBJECT_FLAGS, 0x40021);
+
+        // Phase F -- the WRITE pools hold no template. [LISTINSTANCES-KEEPS-TEMPLATES] Freeze (CMD_LIST_INSTANCES) and
+        // Force (Solide) write into every object these walks return; a template written there reaches every later spawn,
+        // and the freeze helper never restores. Templates are built at class load, so they sit below the live object and
+        // fill a cap first. Order: the CDO, its default subobject, a Blueprint component template, then the live one.
+        slot(19, bScsMove);
+        slot(20, bLiveMove);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        check("LISTPOOL setup: the Blueprint component template is a template, owned by its class",
+              Aura::TemplateOf(A(bScsMove)).kind == Aura::TemplateKind::Template
+              && Aura::TemplateOf(A(bScsMove)).owner == A(bBPChar));
+        auto addrs = [&](const Aura::SearchResultSet& s) {
+            std::string out;
+            for (const auto& e : s.results) out += nm(e.addr) + "@" + std::to_string(e.index) + " ";
+            return out;
+        };
+        auto rs = Aura::FindInstancesDerivedFrom("CharacterMovementComponent", 10);
+        check("LISTPOOL ⭐ F1: the derived pool holds the live component only",
+              rs.results.size() == 1 && rs.results[0].addr == A(bLiveMove), addrs(rs).c_str());
+        int32_t total = -1;
+        rs = Aura::FindInstancesDerivedFrom("CharacterMovementComponent", 1, 0, &total);
+        check("LISTPOOL ⭐ F2: templates do not fill the cap -- one slot holds the live one, and it is not capped",
+              rs.results.size() == 1 && rs.results[0].addr == A(bLiveMove) && !rs.truncated, addrs(rs).c_str());
+        check("LISTPOOL ⭐ F3: the total counts live objects only", total == 1, std::to_string(total).c_str());
+        put32(upB[bTplMove], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        rs = Aura::FindInstancesDerivedFrom("CharacterMovementComponent", 10);
+        check("LISTPOOL ⭐ F4: with no flags read, a Default__ outer still keeps the subobject out (TemplateOf's rule)",
+              rs.results.size() == 1 && rs.results[0].addr == A(bLiveMove), addrs(rs).c_str());
+        put32(upB[bTplMove], Grimoire::OFF_UOBJECT_FLAGS, 0x40021);
+        rs = Aura::FindInstancesByClass("CharacterMovementComponent", true, 1, false, "", {}, false, /*skipTemplates=*/true);
+        check("LISTPOOL ⭐ F5: the exact pool asked to skip templates takes the live component",
+              rs.results.size() == 1 && rs.results[0].addr == A(bLiveMove), addrs(rs).c_str());
+        rs = Aura::FindInstancesByClass("CharacterMovementComponent", true, 10, false, "", {}, /*buildHistogram=*/true);
+        check("LISTPOOL control F6: the Instance Finder's exact read still lists every template, in index order",
+              rs.results.size() == 4 && rs.results[0].addr == A(bCdoCmc) && rs.results[1].addr == A(bTplMove)
+              && rs.results[2].addr == A(bScsMove) && rs.results[3].addr == A(bLiveMove)
+              && rs.classHistogram.size() == 1 && rs.classHistogram[0].second == 4, addrs(rs).c_str());
+        // Review 1: memo hits in both directions, and the count of templates passed over.
+        slot(21, bTplMove2);
+        slot(22, bLiveMove2);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        rs = Aura::FindInstancesDerivedFrom("CharacterMovementComponent", 10);
+        check("LISTPOOL ⭐ F8: a memo hit keeps the second live component and drops the second template",
+              rs.results.size() == 2 && rs.results[0].addr == A(bLiveMove) && rs.results[1].addr == A(bLiveMove2),
+              addrs(rs).c_str());
+        check("LISTPOOL ⭐ F9: the walk counts the templates it passed over", rs.templatesSkipped == 4,
+              std::to_string(rs.templatesSkipped).c_str());
+        rs = Aura::FindInstancesByClass("CharacterMovementComponent", true, 10, false, "", {}, false, /*skipTemplates=*/true);
+        check("LISTPOOL ⭐ F10: the exact pool agrees, and counts them too",
+              rs.results.size() == 2 && rs.results[0].addr == A(bLiveMove) && rs.results[1].addr == A(bLiveMove2)
+              && rs.templatesSkipped == 4, addrs(rs).c_str());
+        bool agree = true;
+        for (int b : { bCdoCmc, bTplMove, bScsMove, bLiveMove, bTplMove2, bLiveMove2 }) {
+            const bool live = b == bLiveMove || b == bLiveMove2;
+            agree = agree && ((Aura::TemplateOf(A(b)).kind == Aura::TemplateKind::None) == live);
+        }
+        check("LISTPOOL control F11: TemplateOf agrees with the walks on every slot", agree);
+        slot(21, bLevel);
+        slot(22, bAct1);
+        slot(23, bAct2);
+        slot(24, bAct3);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        int32_t levelTotal = -1;
+        rs = Aura::FindActorsInLevel(A(bLevel), 10, &levelTotal);
+        check("LISTPOOL ⭐ F12: walk_world's level list keeps every actor outered to the level -- by name, not the "
+              "flags word (one actor carries stray bits)",
+              rs.results.size() == 3 && levelTotal == 3 && rs.results[0].addr == A(bAct1)
+              && rs.results[2].addr == A(bAct3), addrs(rs).c_str());
+        for (int i = 21; i <= 24; ++i) slot(i, -1);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        rs = Aura::FindInstancesDerivedFrom("Actor", 10);
+        check("LISTPOOL control F7: a derived pool whose only templates are class defaults keeps every live member",
+              rs.results.size() == 5 && rs.results[0].addr == A(bDcc0) && rs.results[1].addr == A(bGm0)
+              && rs.results[2].addr == A(bChar0) && rs.results[3].addr == A(bDcHud0) && rs.results[4].addr == A(bHud0),
+              addrs(rs).c_str());
+        slot(19, -1);
+        slot(20, -1);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+
+        // Phase D -- a walk cut short is not "not found", and the old 100-match cap is gone.
+        Tot::g_perCommand.store(true);
+        r = Aura::ResolveUserInstance("Actor");
+        ResetCancel();
+        check("USERPICK ⭐: a cancelled walk answers Cancelled and nothing", r.obj == 0 && r.pick == Aura::UserPick::Cancelled,
+              nm(r.obj).c_str());
+        for (int i = 0; i < 128; ++i) slot(i, -1);
+        for (int i = 0; i < 101; ++i) slot(i, bCdoBPChar);
+        slot(101, bChar0);
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        r = Aura::ResolveUserInstance("PlayerCharacter");
+        check("USERPICK ⭐: a live match past 101 default objects is still found",
+              is(r, bChar0, Aura::UserPick::PartialLive), nm(r.obj).c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpnU;
+        DynOff::bUseFProperty       = svFPropU;
+        g_cachedUEVersion           = svVerU;
+    }
+
+    // -- LOCALPC-2026-11-03 -- the internal local-PlayerController fallback picks by derivation ------------------------
+    //
+    // ⛔ POOL-FAKING, like USERPICK: own object pool AND own name pool. [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] Seven
+    // modules fell back, when their GWorld chain gave no controller, to the first object whose CLASS NAME contains
+    // "PlayerController" and whose fuzzy 'Player' field was set, else the first such object at all: a widget named after
+    // the word won with its OwningPlayer, a game PC named without it was missed, and an active Debug Camera never was.
+    // Every wrong object here sits BELOW the right one.
+    {
+        blk("LOCALPC - the local PlayerController fallback picks by derivation, the local player first");
+        ResetCancel();
+
+        enum : int32_t { lClass = 1, lEngine, lPackage, lObject, lActor, lController, lPlayerController, lDcc, lFreeCam,
+                         lPcMain, lWidget, lPlayer, lLocalPlayer, lNetConn, lWorldSettings, lBPWS, lPcgWS, lObjProp,
+                         lPlayerProp, lOwningPlayer, lCdoPcMain, lWidget0, lFreeCam0, lPcMain0, lPcMain1, lLocalPlayer0,
+                         lNetConn0, lPcg0, lWS0, lPcMain2, lViewer, lPlayerState, lNames };
+        const char* lpNames[lNames] = { "", "Class", "/Script/Engine", "Package", "Object", "Actor", "Controller",
+            "PlayerController", "DebugCameraController", "BP_FreeCam_C", "BP_PC_Main_C", "WBP_PlayerControllerHint_C",
+            "Player", "LocalPlayer", "NetConnection", "WorldSettings", "BP_WS_C", "PCGRemoveActorsFromWorldSettings",
+            "ObjectProperty", "Player", "OwningPlayer", "Default__BP_PC_Main_C", "WBP_PlayerControllerHint_C_0",
+            "BP_FreeCam_C_0", "BP_PC_Main_C_0", "BP_PC_Main_C_1", "LocalPlayer_0", "NetConnection_0",
+            "PCGRemoveActorsFromWorldSettings_0", "BP_WS_C_0", "BP_PC_Main_C_2", "BP_Viewer_C", "PlayerState" };
+        static uint8_t lpEntry[lNames][0x40] = {};
+        static uintptr_t lpChunk[lNames + 1] = {};
+        for (int i = 1; i < lNames; ++i) {
+            memcpy(lpEntry[i] + 0x10, lpNames[i], strlen(lpNames[i]) + 1);
+            lpChunk[i] = reinterpret_cast<uintptr_t>(lpEntry[i]);
+        }
+        static uintptr_t lpChunks[2] = { reinterpret_cast<uintptr_t>(lpChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(lpChunks), 0x10);
+        check("LOCALPC setup: the name pool resolves the longest name",
+              Serie::GetString(lPcg0) == "PCGRemoveActorsFromWorldSettings_0", Serie::GetString(lPcg0).c_str());
+
+        const bool     svCpnL   = DynOff::bCasePreservingName;
+        const bool     svFPropL = DynOff::bUseFProperty;
+        const uint32_t svVerL   = g_cachedUEVersion;
+        DynOff::bCasePreservingName = false;
+        DynOff::bUseFProperty       = true;
+        g_cachedUEVersion           = 508;
+
+        enum { cMeta, cPkgCls, cPkg, cObject, cActor, cController, cPlayerController, cDcc, cFreeCam, cPcMain, cWidget,
+               cPlayer, cLocalPlayer, cNetConn, cWorldSettings, cBPWS, cPcgWS, oCdoPcMain, oWidget0, oFreeCam0, oPcMain0,
+               oPcMain1, oLocalPlayer0, oNetConn0, oPcg0, oWS0, oTplPc, cViewer, oPcMain2, kLBlobs };
+        alignas(16) static uint8_t lpB[kLBlobs][0x200] = {};
+        auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(lpB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto obj = [&](int b, int cls, int32_t name, int outer) {
+            memset(lpB[b], 0, sizeof(lpB[b]));
+            putP(lpB[b], Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            put32(lpB[b], Grimoire::OFF_UOBJECT_NAME, name);
+            putP(lpB[b], DynOff::UOBJECT_OUTER, A(outer));
+        };
+        auto klass = [&](int b, int32_t name, int super) {
+            obj(b, cMeta, name, cPkg);
+            putP(lpB[b], DynOff::USTRUCT_SUPER, A(super));
+        };
+        obj(cMeta, cMeta, lClass, -1);
+        obj(cPkgCls, cMeta, lPackage, -1);
+        obj(cPkg, cPkgCls, lEngine, -1);
+        klass(cObject, lObject, -1);
+        klass(cActor, lActor, cObject);
+        klass(cController, lController, cActor);
+        klass(cPlayerController, lPlayerController, cController);
+        klass(cDcc, lDcc, cPlayerController);          // ADebugCameraController : APlayerController
+        klass(cFreeCam, lFreeCam, cDcc);               // a game's debug camera, named without the word
+        klass(cPcMain, lPcMain, cPlayerController);    // a game's PlayerController, named without the word
+        klass(cWidget, lWidget, cObject);              // the word in its name, no PlayerController
+        klass(cPlayer, lPlayer, cObject);
+        klass(cLocalPlayer, lLocalPlayer, cPlayer);
+        klass(cNetConn, lNetConn, cPlayer);            // a listen server's remote player
+        klass(cWorldSettings, lWorldSettings, cActor);
+        klass(cBPWS, lBPWS, cWorldSettings);
+        klass(cPcgWS, lPcgWS, cObject);                // PCG's node settings: the word in its name, no AWorldSettings
+        klass(cViewer, lViewer, cLocalPlayer);         // a game's ULocalPlayer, named without the word
+        // APlayerController::Player and the widget's OwningPlayer, both reflected ObjectProperties at 0x100.
+        constexpr int32_t kPlayerOff = 0x100;
+        static uint8_t lpObjPropFC[0x20] = {}, lpPlayerProp[0x100] = {}, lpOwningProp[0x100] = {};
+        put32(lpObjPropFC, DynOff::FFIELDCLASS_NAME, lObjProp);
+        auto prop = [&](uint8_t* p, int32_t name, int owner) {
+            putP(p, DynOff::FFIELD_CLASS, reinterpret_cast<uintptr_t>(lpObjPropFC));
+            put32(p, DynOff::FFIELD_NAME, name);
+            put32(p, DynOff::FPROPERTY_OFFSET, kPlayerOff);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, 8);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(lpB[owner], DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(p));
+            put32(lpB[owner], DynOff::USTRUCT_PROPSSIZE, kPlayerOff + 8);
+        };
+        prop(lpPlayerProp, lPlayerProp, cPlayerController);
+        prop(lpOwningProp, lOwningPlayer, cWidget);
+        obj(oCdoPcMain, cPcMain, lCdoPcMain, cPkg);
+        put32(lpB[oCdoPcMain], Grimoire::OFF_UOBJECT_FLAGS, 0x31);
+        obj(oLocalPlayer0, cViewer, lLocalPlayer0, -1);
+        obj(oNetConn0, cNetConn, lNetConn0, -1);
+        obj(oWidget0, cWidget, lWidget0, -1);
+        putP(lpB[oWidget0], kPlayerOff, A(oLocalPlayer0));       // the widget's OwningPlayer is the local player
+        obj(oFreeCam0, cFreeCam, lFreeCam0, -1);                  // an INACTIVE debug camera: no Player
+        obj(oPcMain0, cPcMain, lPcMain0, -1);
+        putP(lpB[oPcMain0], kPlayerOff, A(oNetConn0));            // a remote player's PC
+        obj(oPcMain2, cPcMain, lPcMain2, -1);                     // a game PC with no Player
+        obj(oPcMain1, cPcMain, lPcMain1, -1);
+        putP(lpB[oPcMain1], kPlayerOff, A(oLocalPlayer0));        // the local player's PC
+        obj(oPcg0, cPcgWS, lPcg0, -1);
+        obj(oWS0, cBPWS, lWS0, -1);
+        obj(oTplPc, cPcMain, lPcMain0, oCdoPcMain);               // a class default object's subobject: a template
+        put32(lpB[oTplPc], Grimoire::OFF_UOBJECT_FLAGS, 0x40021);
+
+        FakePool lpPool;
+        lpPool.Build(64);
+        auto slot = [&](int i, int b) {
+            const uintptr_t o = A(b);
+            memcpy(lpPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        };
+        auto nm = [](uintptr_t o) { return o ? Ubel::GetName(o) : std::string("(0)"); };
+        auto is = [&](const Aura::LocalPcScan& s, int b, Aura::LocalPcPick p) { return s.pc == A(b) && s.pick == p; };
+        // Every wrong object sits below the right one; a second game PC with no Player sits below the remote one.
+        const int order[] = { oCdoPcMain, oWidget0, oFreeCam0, oPcMain2, oPcMain0, oPcMain1, oLocalPlayer0, oNetConn0,
+                              oPcg0, oWS0 };
+        for (int i = 0; i < 10; ++i) slot(i, order[i]);
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+
+        auto sub = Aura::FindInstancesByClass("PlayerController", false, 100);
+        check("LOCALPC control: the old substring walk's first row is the widget -- the trap",
+              !sub.results.empty() && sub.results[0].addr == A(oWidget0),
+              sub.results.empty() ? "(none)" : nm(sub.results[0].addr).c_str());
+        check("LOCALPC setup: the local player is a game subclass named without the word",
+              Ubel::GetName(Ubel::GetClass(A(oLocalPlayer0))).find("LocalPlayer") == std::string::npos);
+
+        auto s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: the local player's game PC (named without the word) wins over the widget and a remote PC",
+              is(s, oPcMain1, Aura::LocalPcPick::LocalPlayer), nm(s.pc).c_str());
+        slot(5, -1);
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+        s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: with no local PC, a remote player's PC ranks above a PC with no Player below it",
+              is(s, oPcMain0, Aura::LocalPcPick::OtherPlayer), nm(s.pc).c_str());
+        putP(lpB[oPcMain0], kPlayerOff, 0);
+        s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: with no Player anywhere, the first PC with none -- never the inactive debug camera below it",
+              is(s, oPcMain2, Aura::LocalPcPick::NoPlayer), nm(s.pc).c_str());
+        // Debug Camera ON: UPlayer::SwitchController moved the local player to the debug camera and nulled the old PC's.
+        putP(lpB[oFreeCam0], kPlayerOff, A(oLocalPlayer0));
+        slot(5, oPcMain1);
+        putP(lpB[oPcMain1], kPlayerOff, 0);
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+        s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: Debug Camera on -- the active debug camera holds the local player and is taken, as the chain does",
+              is(s, oFreeCam0, Aura::LocalPcPick::LocalPlayer), nm(s.pc).c_str());
+        check("LOCALPC ⭐: ...and it is recognised as a debug camera by derivation, with no word in its name",
+              s.pc && Aura::ClassDerivesFromAny(Ubel::GetClass(s.pc), {Grimoire::AURA_USERPICK_DCC_CLASS}));
+        // Review 1: UEngine::LoadMap destroys the old PC and nulls LocalPlayer.PlayerController, but the destroyed PC keeps
+        // Player = the local player until garbage collection -- exactly when every chain fails and falls back here.
+        putP(lpB[oFreeCam0], kPlayerOff, 0);
+        putP(lpB[oPcMain1], kPlayerOff, A(oLocalPlayer0));
+        putP(lpB[oPcMain0], kPlayerOff, A(oLocalPlayer0));
+        put32(lpB[oPcMain0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);   // UE5 garbage
+        s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: a destroyed PC still holding the local player loses to the live one above it",
+              is(s, oPcMain1, Aura::LocalPcPick::LocalPlayer), nm(s.pc).c_str());
+        slot(5, -1);
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+        s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: ...and on its own it is never taken -- a live PC with no Player is",
+              is(s, oPcMain2, Aura::LocalPcPick::NoPlayer), nm(s.pc).c_str());
+        put32(lpB[oPcMain0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        putP(lpB[oPcMain0], kPlayerOff, 0);
+        slot(5, oPcMain1);
+        // [INVOKE-PICK-GARBAGE] Review 1: on UE 5.0-5.3 and UE4 a garbage collection first marks every non-root object
+        // Unreachable (item bit 28) and clears it from the reachable ones; the local player's PC is no destroyed one then.
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+        uint8_t* lpcItem = lpPool.chunks[0].data() + static_cast<size_t>(5) * FakePool::kItemSize;   // oPcMain1's slot
+        auto putLpcItemFlags = [&](uint32_t f) { memcpy(lpcItem + 0x08, &f, sizeof(f)); };
+        for (unsigned ver : { 503u, 427u }) {
+            g_cachedUEVersion = ver;
+            putLpcItemFlags(1u << 28);
+            s = Aura::ScanForLocalPlayerController();
+            check(ver >= 500 ? "LOCALPC ⭐: mid-collection (Unreachable only, UE 5.3), the local player's PC is still taken"
+                             : "LOCALPC ⭐: mid-collection on UE4 too",
+                  is(s, oPcMain1, Aura::LocalPcPick::LocalPlayer), nm(s.pc).c_str());
+            putLpcItemFlags(ver >= 500 ? (1u << 21) : (1u << 29));   // Garbage / PendingKill: destroyed
+            s = Aura::ScanForLocalPlayerController();
+            check(ver >= 500 ? "LOCALPC control: a UE 5.3 Garbage item is passed over"
+                             : "LOCALPC control: a UE4 PendingKill item is passed over",
+                  is(s, oPcMain2, Aura::LocalPcPick::NoPlayer), nm(s.pc).c_str());
+        }
+        putLpcItemFlags(0);
+        g_cachedUEVersion = 508;
+        // Review 1: the Player lookup is exact. Rename the reflected member: with no 'Player' field, a fuzzy arm would read
+        // a PlayerState-like member -- set only on the inactive debug camera here -- and take it as a Player.
+        put32(lpPlayerProp, DynOff::FFIELD_NAME, lPlayerState);
+        DynOff::g_propertyFamilyEpoch.fetch_add(1);   // the class walks above cached the member's old name
+        putP(lpB[oPcMain1], kPlayerOff, 0);
+        putP(lpB[oFreeCam0], kPlayerOff, A(oNetConn0));
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+        s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: with no 'Player' member, nothing reads as a Player -- not PlayerState -- and the debug camera stays out",
+              is(s, oPcMain2, Aura::LocalPcPick::NoPlayer), nm(s.pc).c_str());
+        put32(lpPlayerProp, DynOff::FFIELD_NAME, lPlayerProp);
+        DynOff::g_propertyFamilyEpoch.fetch_add(1);
+        putP(lpB[oFreeCam0], kPlayerOff, 0);
+        Tot::g_perCommand.store(true);
+        s = Aura::ScanForLocalPlayerController();
+        ResetCancel();
+        check("LOCALPC ⭐: a cancel pending at the first slot answers Cancelled and nothing",
+              s.pc == 0 && s.pick == Aura::LocalPcPick::Cancelled, nm(s.pc).c_str());
+        for (int i = 0; i < 10; ++i) slot(i, -1);
+        slot(0, oCdoPcMain);
+        slot(1, oTplPc);
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+        s = Aura::ScanForLocalPlayerController();
+        check("LOCALPC ⭐: with only templates, nothing", s.pc == 0 && s.pick == Aura::LocalPcPick::None, nm(s.pc).c_str());
+        slot(0, oPcg0);
+        slot(1, oWS0);
+        Aura::InitWithExtendedLayout(lpPool.Addr(), FakePool::kItemSize);
+        auto ws = Aura::FindInstancesDerivedFrom(Grimoire::TIME_WORLDSETTINGS_CLASS, Grimoire::TIME_WORLDSETTINGS_SCAN_MAX);
+        check("LOCALPC control: Hemmung's WorldSettings walk takes the game's, not PCG's node settings below it",
+              !ws.results.empty() && ws.results[0].addr == A(oWS0),
+              ws.results.empty() ? "(none)" : nm(ws.results[0].addr).c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpnL;
+        DynOff::bUseFProperty       = svFPropL;
+        g_cachedUEVersion           = svVerL;
+    }
+
     // -- WALKIFACEGUARD-2026-10-27 -- WalkInterfaceFunctions asks only a class for its interfaces ------------------------
     //
     // [VND584-04] Live Walker asks walk_functions for interface functions on every view, and a struct view's address is
@@ -4943,6 +5772,77 @@ int main() {
         DynOff::UFIELD_NEXT         = svNextU;
         DynOff::USTRUCT_CHILDREN    = svChildU;
         g_cachedUEVersion           = svVerU;
+    }
+
+    // -- UPROPNEXT-2026-11-03 -- the UProperty-mode Next probe never takes OuterPrivate ---------------------------------
+    //
+    // ⛔ POOL-FAKING (own pool and names, like UFIELDNEXT above). [UE4-USTRUCT-GIVEUP-STATS] review round 2: on a
+    // case-preserving layout OuterPrivate sits at 0x28, a Next candidate, and an Inner property's Outer chain -- the
+    // Inner, its ArrayProperty, the Function that declares that -- is two UField hops. With the Inner sampled first and
+    // its own Next null, the probe took 0x28. UField::Next always lies past OuterPrivate.
+    {
+        blk("UPROPNEXT - the UProperty-mode Next probe never takes OuterPrivate (case-preserving layout)");
+        ResetCancel();
+
+        enum : int32_t { nClass = 1, nFunction, nArrayProp, nIntProp, nScriptStruct, nNames };
+        const char* npNames[nNames] = { "", "Class", "Function", "ArrayProperty", "IntProperty", "ScriptStruct" };
+        static uint8_t npEntry[nNames][0x40] = {};
+        static uintptr_t npChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(npEntry[i] + 0x10, npNames[i], strlen(npNames[i]) + 1);
+            npChunk[i] = reinterpret_cast<uintptr_t>(npEntry[i]);
+        }
+        static uintptr_t npChunks[2] = { reinterpret_cast<uintptr_t>(npChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(npChunks), 0x10);
+
+        const bool svCpnN   = DynOff::bCasePreservingName;
+        const int  svOuterN = DynOff::UOBJECT_OUTER;
+        const int  svNextN  = DynOff::UFIELD_NEXT;
+        DynOff::bCasePreservingName = true;
+        DynOff::UOBJECT_OUTER       = 0x28;
+        DynOff::UFIELD_NEXT         = 0x30;   // DetectUPropertyMode's case-preserving guess, and the real Next here
+
+        enum { cClass, cFunction, cArray, cInt, cStruct, oInner, oArr, oFn, oP1, oP2, oP3, oStruct, kN };
+        alignas(16) static uint8_t npB[kN][0x100] = {};
+        auto A    = [&](int b) { return reinterpret_cast<uintptr_t>(npB[b]); };
+        auto putP = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)  { memcpy(b + off, &v, sizeof(v)); };
+        const int metaName[5] = { nClass, nFunction, nArrayProp, nIntProp, nScriptStruct };
+        for (int m = cClass; m <= cStruct; ++m) {
+            putP(npB[m], Grimoire::OFF_UOBJECT_CLASS, A(cClass));
+            put32(npB[m], Grimoire::OFF_UOBJECT_NAME, metaName[m]);
+        }
+        auto obj = [&](int b, int cls, int outer) {
+            putP(npB[b], Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            putP(npB[b], 0x28, outer >= 0 ? A(outer) : 0);   // OuterPrivate
+        };
+        obj(oFn, cFunction, cClass);    // a Function's Outer is its Class, which ends any UField chain
+        obj(oArr, cArray, oFn);         // a parameter of that Function
+        obj(oInner, cInt, oArr);        // the parameter's Inner; its own Next stays null
+        obj(oStruct, cStruct, -1);
+        obj(oP1, cInt, oStruct); obj(oP2, cInt, oStruct); obj(oP3, cInt, oStruct);
+        putP(npB[oP1], 0x30, A(oP2));
+        putP(npB[oP2], 0x30, A(oP3));
+
+        // The Inner first, so it is the first property the probe samples.
+        const int order[] = { oInner, oArr, oP1, oP2, oP3, oFn, oStruct };
+        constexpr int kOrder = static_cast<int>(sizeof(order) / sizeof(order[0]));
+        FakePool npPool;
+        npPool.Build(kOrder);
+        for (int i = 0; i < kOrder; ++i) {
+            const uintptr_t o = A(order[i]);
+            memcpy(npPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        }
+        Aura::InitWithExtendedLayout(npPool.Addr(), FakePool::kItemSize);
+
+        const int probed = Genau::ProbeUFieldNextUProperty();
+        check("UPROPNEXT ⭐: the probe measures Next 0x30 past an Inner whose Outer chain is two UField hops at 0x28",
+              probed == 0x30, std::to_string(probed).c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpnN;
+        DynOff::UOBJECT_OUTER       = svOuterN;
+        DynOff::UFIELD_NEXT         = svNextN;
     }
 
     // -- [UE-OVERRIDE-411] review: an override is held to the UFunction tail the game has ------------------
@@ -6659,9 +7559,9 @@ int main() {
             check("USTRUCT-GIVEUP ⭐: a 4.18 give-up ships 30/38/40/48", gu418 && head() == "30/38/40/48", head().c_str());
             giveUpAt(415);
             check("USTRUCT-GIVEUP ⭐: a 4.15 give-up ships 30/38/40/48", head() == "30/38/40/48", head().c_str());
-            // The head follows the run's UField::Next, not a constant. Case-preserving names are the one 0x30 a give-up
-            // can see: the UObject repeats its ComparisonIndex as DisplayIndex. (A STATS build's 0x30 it cannot see --
-            // DynOff::UPropertyUStructHeadFor says what that costs.)
+            // The head follows the run's UField::Next, not a constant. Case-preserving names give the guess 0x30: the
+            // UObject repeats its ComparisonIndex as DisplayIndex. (A STATS build's 0x30 is measured on the property
+            // chains instead -- the USTRUCT-GIVEUP-STATS cases below.)
             put32(upGuid, Grimoire::OFF_UOBJECT_NAME + 4, 4);   // DisplayIndex == ComparisonIndex ("A")
             const bool cpn415 = giveUpAt(415);
             check("USTRUCT-GIVEUP setup: a case-preserving 4.15 gives up with UField::Next 0x30",
@@ -6700,6 +7600,49 @@ int main() {
             check("USTRUCT-GIVEUP ⭐: a 4.23 childprops-probe-failed give-up ships 40/48/50/58",
                   cp423 && head() == "40/48/50/58", head().c_str());
             putP(upGuid, 0x48, A(upProp[0]));
+
+            // [UE4-USTRUCT-GIVEUP-STATS] A STATS build (Development / DebugGame) carries a TStatId after OuterPrivate, so
+            // UField::Next sits at 0x30 with an 8-byte FName (4.15 Development PDB: head 38/40/48/50, not 30/38/40/48).
+            // A give-up has no Children to measure Next on, but it has the property UObjects themselves -- this pool
+            // holds them, each with a real Outer and a TStatId that points at memory no UObject lives in.
+            {
+                static uint8_t statData[0x40] = {};
+                auto statsLayout = [&](int nextOff) {
+                    layout(4, nextOff, nextOff + 0x0C, nextOff + 0x1C);   // still no Guid / Vector
+                    for (auto& pr : upProp) {
+                        putP(pr, 0x20, A(upGuid));                        // OuterPrivate
+                        if (nextOff == 0x30) putP(pr, 0x28, A(statData)); // the TStatId
+                    }
+                };
+                FakePool stPool;
+                stPool.Build(6);
+                const uintptr_t stObjs[6] = { A(upZero), A(upGuid), A(upProp[0]), A(upProp[1]), A(upProp[2]),
+                                              A(upProp[3]) };
+                for (int i = 0; i < 6; ++i)
+                    memcpy(stPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &stObjs[i],
+                           sizeof(uintptr_t));
+                Aura::InitWithExtendedLayout(stPool.Addr(), FakePool::kItemSize);
+
+                statsLayout(0x30);
+                const bool st415 = giveUpAt(415);
+                check("USTRUCT-GIVEUP-STATS setup: a STATS 4.15 with its properties pooled still takes the give-up",
+                      st415 && !DynOff::bCasePreservingName, DynOff::g_offsetsFallbackReason);
+                check("USTRUCT-GIVEUP-STATS ⭐: ...measures UField::Next at 0x30 on the property chain",
+                      DynOff::UFIELD_NEXT == 0x30, std::to_string(DynOff::UFIELD_NEXT).c_str());
+                check("USTRUCT-GIVEUP-STATS ⭐: ...and ships the PDB's head 38/40/48/50", head() == "38/40/48/50",
+                      head().c_str());
+                giveUpAt(423);
+                check("USTRUCT-GIVEUP-STATS ⭐: a STATS 4.23 give-up ships 48/50/58/60", head() == "48/50/58/60",
+                      head().c_str());
+
+                // Control: a Shipping layout, the same properties pooled, keeps Next 0x28 and the version's head.
+                statsLayout(0x28);
+                const bool sh415 = giveUpAt(415);
+                check("USTRUCT-GIVEUP-STATS control: a Shipping 4.15 give-up measures Next 0x28, ships 30/38/40/48",
+                      sh415 && DynOff::UFIELD_NEXT == 0x28 && head() == "30/38/40/48", head().c_str());
+
+                Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+            }
         }
 
         // Review wf_b99fb861-680 (F5), pinned after the review of build 3594 found it untested: a 4.18-4.24 title

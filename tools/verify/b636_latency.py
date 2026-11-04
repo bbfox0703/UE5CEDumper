@@ -82,7 +82,7 @@ def invoke(m, base, inst, func, params, timeout=6.0):
 
 def main():
     fails = []
-    with PipeClient().connect() as c:
+    with PipeClient() as c:
         say("DLL build %s" % c.assert_build())
         fns = c.request("list_all_functions", limit=20000, game_only=False)["functions"]
 

@@ -47,6 +47,7 @@
 #include "../src/Methode.h"    // NarrowForAnsiLoad (header-inline, pure) -- the CE-plugin inject path, [PATH-METHODE-NO8DOT3]
 #include "../src/Flamme.h"     // ShouldPublishAtomicWrite (constexpr, pure) — hint-cache publish gate
 #include "../src/Lager.h"      // MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY])
+#include "../src/Wirbel.h"     // BugItGoRefusal (constexpr, pure) -- [TELEPORT-BUGITGO-PARENTREL]
 
 #include <Windows.h>
 
@@ -1304,9 +1305,11 @@ static void Test_Mimic_CommandNumbering() {
     // The published compatibility RANGE. A script checks MIN <= its baked
     // version <= CONTRACT before its first write.
     EXPECT("contract range is sane", Mimic::MAILBOX_CONTRACT_MIN <= Mimic::MAILBOX_CONTRACT);
-    // 5 since [W5-OFFSETS-MAILBOX] (batch L45) added CMD_OFFSETS_VERDICT. ADDITIVE -- a new Cmd, so MIN stays 1 and
-    // every saved .CT is still accepted. (4 was 76f93b94, [W2-TPREL-TRANSPORTS]: the parent-relative pose flag.)
-    EXPECT("contract is 5",          Mimic::MAILBOX_CONTRACT     == 5);
+    // 9 since [INVOKE-PICK-GARBAGE]: FIND_INSTANCE never hands over a destroyed object -- a meaning change an older
+    // script relied on only by accident, so MIN stays 1. (8 was [LISTINSTANCES-KEEPS-TEMPLATES], no template listed;
+    // 7 [INVOKE-NONSTATIC-ON-CDO], the invoke template warning; 6 [FINDINSTANCE-SUBSTRING-USERFACING], the derivation
+    // pick; 5 [W5-OFFSETS-MAILBOX]; 4 [W2-TPREL-TRANSPORTS].)
+    EXPECT("contract is 9",          Mimic::MAILBOX_CONTRACT     == 9);
     EXPECT("contract min is 1",      Mimic::MAILBOX_CONTRACT_MIN == 1);
 
     // g_mailboxContract is a SEPARATE exported symbol, read before anything is
@@ -1341,6 +1344,57 @@ static void Test_Mimic_InitFastPath() {
            && !Mimic::InitFastPathOk(false, false, false) && !Mimic::InitFastPathOk(true, false, true)
            && !Mimic::InitFastPathOk(false, true, true) && !Mimic::InitFastPathOk(false, false, true));
     static_assert(Mimic::InitFastPathOk(true, true, false), "InitFastPathOk must be constexpr-evaluable");
+}
+
+// [TELEPORT-BUGITGO-PARENTREL] BugItGo drove a BugIt taken from the parent-relative fallback (an attached pawn whose
+// world-space read failed) into the pawn as world coordinates; BugItSave reported the flag and nothing read it.
+static void Test_Wirbel_BugItGoRefusal() {
+    EXPECT("BUGITGO-PARENTREL: the refusal code is -16, clear of the mailbox's own -11..-15",
+           Wirbel::TP_ERR_PARENT_RELATIVE == -16);
+    EXPECT("BUGITGO-PARENTREL: a stored parent-relative BugIt is refused",
+           Wirbel::BugItGoRefusal(true, true) == Wirbel::TP_ERR_PARENT_RELATIVE);
+    EXPECT("BUGITGO-PARENTREL control: a stored world-space BugIt goes",
+           Wirbel::BugItGoRefusal(true, false) == Wirbel::TP_OK);
+    EXPECT("BUGITGO-PARENTREL control: an empty slot is -6 either way -- emptiness wins",
+           Wirbel::BugItGoRefusal(false, false) == Wirbel::TP_ERR_EMPTY_MARKER
+           && Wirbel::BugItGoRefusal(false, true) == Wirbel::TP_ERR_EMPTY_MARKER);
+    static_assert(Wirbel::BugItGoRefusal(true, false) == Wirbel::TP_OK, "BugItGoRefusal must be constexpr-evaluable");
+}
+
+// [TELEPORT-RECALL-PARENTREL] Marker Recall and Force drove a marker saved from the parent-relative fallback into the
+// pawn as world coordinates. Force overrides the map check, which can be wrong; nothing makes relative numbers world
+// coordinates, so Force refuses them too.
+static void Test_Wirbel_RecallMarkerRefusal() {
+    using Wirbel::RecallMarkerRefusal;
+    EXPECT("RECALL-PARENTREL: Recall refuses a parent-relative marker",
+           RecallMarkerRefusal(true, true, false, true) == Wirbel::TP_ERR_PARENT_RELATIVE);
+    EXPECT("RECALL-PARENTREL: Force refuses it too",
+           RecallMarkerRefusal(true, true, true, true) == Wirbel::TP_ERR_PARENT_RELATIVE);
+    EXPECT("RECALL-PARENTREL: on another map it is -16, not -7 -- Force could not get past it, so it is not offered",
+           RecallMarkerRefusal(true, true, false, false) == Wirbel::TP_ERR_PARENT_RELATIVE
+           && RecallMarkerRefusal(true, true, true, false) == Wirbel::TP_ERR_PARENT_RELATIVE);
+    EXPECT("RECALL-PARENTREL control: a world-space marker on another map is -7, and Force gets past it",
+           RecallMarkerRefusal(true, false, false, false) == Wirbel::TP_ERR_MAP_MISMATCH
+           && RecallMarkerRefusal(true, false, true, false) == Wirbel::TP_OK);
+    EXPECT("RECALL-PARENTREL control: a world-space marker on this map goes",
+           RecallMarkerRefusal(true, false, false, true) == Wirbel::TP_OK);
+    EXPECT("RECALL-PARENTREL control: an empty slot is -6 whatever else holds -- emptiness wins",
+           RecallMarkerRefusal(false, true, true, false) == Wirbel::TP_ERR_EMPTY_MARKER
+           && RecallMarkerRefusal(false, false, false, true) == Wirbel::TP_ERR_EMPTY_MARKER);
+    static_assert(RecallMarkerRefusal(true, false, false, true) == Wirbel::TP_OK,
+                  "RecallMarkerRefusal must be constexpr-evaluable");
+}
+
+// [TELEPORT-RECALL-PARENTREL] The undo slot took a parent-relative pose, so Recall last drove relative numbers into the
+// pawn as world coordinates. It keeps its previous pose instead, as it already did for a pose it could not read.
+static void Test_Wirbel_StoresUndoPoint() {
+    EXPECT("RECALL-PARENTREL: a parent-relative pose does not become the undo point",
+           !Wirbel::StoresUndoPoint(true, true));
+    EXPECT("RECALL-PARENTREL control: a world-space pose does",
+           Wirbel::StoresUndoPoint(true, false));
+    EXPECT("RECALL-PARENTREL control: an unreadable pose never did",
+           !Wirbel::StoresUndoPoint(false, false) && !Wirbel::StoresUndoPoint(false, true));
+    static_assert(Wirbel::StoresUndoPoint(true, false), "StoresUndoPoint must be constexpr-evaluable");
 }
 
 static void Test_Mimic_InvokeRouting() {
@@ -7740,6 +7794,25 @@ static void Test_WeakTargetGarbage() {
     EXPECT("R7-B-01 control: 5.1 RF_PendingKill while the readable item says no -> live",
            !DynOff::IsWeakTargetGarbage(501, 0x20000000u, true, 0));
     EXPECT("R7-B-01 control: unknown version ignores 0x20000000", !DynOff::IsWeakTargetGarbage(0, 0x20000000u, true, 1u << 29));
+
+    // [INVOKE-PICK-GARBAGE] The PICK predicate: the same destroyed bits, never Unreachable, which a collection on UE4 and
+    // 5.0-5.3 sets on every non-root object before clearing it from the reachable ones.
+    EXPECT("INVOKE-PICK-GARBAGE: UE 5.3 item Unreachable alone -> not destroyed",
+           !DynOff::IsDestroyedObject(503, 0, true, 1u << 28));
+    EXPECT("INVOKE-PICK-GARBAGE: UE4 item Unreachable alone -> not destroyed",
+           !DynOff::IsDestroyedObject(427, 0, true, 1u << 28));
+    EXPECT("INVOKE-PICK-GARBAGE: UE5 RF_MirroredGarbage -> destroyed", DynOff::IsDestroyedObject(508, 0x40000000u, true, 0));
+    EXPECT("INVOKE-PICK-GARBAGE: UE5 item Garbage -> destroyed", DynOff::IsDestroyedObject(504, 0, true, 1u << 21));
+    EXPECT("INVOKE-PICK-GARBAGE: UE4 item PendingKill -> destroyed", DynOff::IsDestroyedObject(427, 0, true, 1u << 29));
+    EXPECT("INVOKE-PICK-GARBAGE: 5.3 RF_PendingKill + item PendingKill -> destroyed",
+           DynOff::IsDestroyedObject(503, 0x20000000u, true, 1u << 29));
+    EXPECT("INVOKE-PICK-GARBAGE: Unreachable beside a destroyed bit -> destroyed",
+           DynOff::IsDestroyedObject(427, 0, true, (1u << 28) | (1u << 29)));
+    EXPECT("INVOKE-PICK-GARBAGE control: clean flags -> not destroyed", !DynOff::IsDestroyedObject(504, 1u, true, 0));
+    EXPECT("INVOKE-PICK-GARBAGE control: 5.8 0x20000000 is no PendingKill -> not destroyed",
+           !DynOff::IsDestroyedObject(508, 0x20000000u, true, 1u << 29));
+    EXPECT("INVOKE-PICK-GARBAGE control: unknown version, the object flag only",
+           DynOff::IsDestroyedObject(0, 0x40000000u, true, 0) && !DynOff::IsDestroyedObject(0, 0, true, 1u << 29));
 }
 
 static void Test_ProcessEventVTableSlot() {
@@ -8098,8 +8171,8 @@ static void Test_UPropertyUStructHeadFor() {
            is(UPropertyUStructHeadFor(0x28, 422), 0x40, 0x48, 0x50, 0x58)
            && is(UPropertyUStructHeadFor(0x28, 424), 0x40, 0x48, 0x50, 0x58));
     // A STATS build's UObject is 8 longer (TStatId), and so its UField::Next: the head follows Next, not the version --
-    // GIVEN that Next. A give-up has no measured one and passes 0x28 on such a build (DynOff::UPropertyUStructHeadFor),
-    // so these two hold for the arithmetic, not for a STATS build that gives up.
+    // GIVEN that Next. A give-up measures it on the property chains first ([UE4-USTRUCT-GIVEUP-STATS], pinned in
+    // dll_core_test's USTRUCT-GIVEUP-STATS cases); these two pin the arithmetic it then applies.
     EXPECT("USTRUCT-GIVEUP: given a measured Next 0x30 at 4.15, UE415_Flyinh's Development PDB head 38/40/48/50",
            is(UPropertyUStructHeadFor(0x30, 415), 0x38, 0x40, 0x48, 0x50));
     EXPECT("USTRUCT-GIVEUP: given a measured Next 0x30 at 4.23, UE423_Flying's Development PDB head 48/50/58/60",
@@ -8431,6 +8504,85 @@ static void Test_Renge_InvokeTargetIsExpected() {
     const std::string unnamed = Renge::InvokeTargetRefusalText("0x1000", "");
     EXPECT("refusal: an unreadable expected name leaves no blank", unnamed.find("the  ") == std::string::npos
                                                                 && unnamed.find(" ()") == std::string::npos);
+}
+
+// [INVOKE-NONSTATIC-ON-CDO] A user-facing invoke WARNS -- never refuses -- when a function that is not static runs on a
+// template (a class-default object or one of its default subobjects). A static function there is the normal case
+// (a function library), and a live object is never a template.
+static void Test_Mimic_WarnNonStaticOnTemplate() {
+    std::printf("Test_Mimic_WarnNonStaticOnTemplate\n");
+    using namespace Mimic;
+    EXPECT("NONSTATIC-CDO: a native, non-static function on a template warns",
+           WarnNonStaticOnTemplate(true, true, FUNC_FLAG_NATIVE));
+    EXPECT("NONSTATIC-CDO: a Blueprint (no flags) function on a template warns", WarnNonStaticOnTemplate(true, true, 0));
+    EXPECT("NONSTATIC-CDO: an object that is not a UFunction warns -- static-ness unknown",
+           WarnNonStaticOnTemplate(true, false, FUNC_FLAG_STATIC));
+    EXPECT("NONSTATIC-CDO control: a static function on a template (KismetSystemLibrary) does not warn",
+           !WarnNonStaticOnTemplate(true, true, FUNC_FLAG_NATIVE | FUNC_FLAG_STATIC)
+           && !WarnNonStaticOnTemplate(true, true, FUNC_FLAG_STATIC));
+    EXPECT("NONSTATIC-CDO control: a live object never warns",
+           !WarnNonStaticOnTemplate(false, true, 0) && !WarnNonStaticOnTemplate(false, false, 0));
+    EXPECT("NONSTATIC-CDO control: the mailbox bit is not the one an older DLL leaves behind",
+           static_cast<uint32_t>(INV_OUT_NONSTATIC_ON_TEMPLATE) == 0x2u && MAILBOX_CONTRACT_INVOKE_OUT == 7);
+    EXPECT("NONSTATIC-CDO: the template kinds' pipe names",
+           std::string(Aura::TemplateKindWire(Aura::TemplateKind::ClassDefault)) == "class_default"
+           && std::string(Aura::TemplateKindWire(Aura::TemplateKind::Template)) == "template");
+    EXPECT("NONSTATIC-CDO control: a live object's name is empty",
+           std::string(Aura::TemplateKindWire(Aura::TemplateKind::None)).empty());
+    static_assert(!WarnNonStaticOnTemplate(false, true, 0), "WarnNonStaticOnTemplate must be constexpr-evaluable");
+}
+
+// [DEBUGCAM-FORCEON-CDO] A Debug Camera Force whose CheatManager is a template (its class default object: none is
+// live) sends no ToggleDebugCamera there. ON is refused with its own code; OFF goes straight to the swap-back.
+static void Test_Mimic_DebugCameraForceStep() {
+    std::printf("Test_Mimic_DebugCameraForceStep\n");
+    using namespace Mimic;
+    EXPECT("DBGCAM-CDO: an ON whose CheatManager is a template is refused",
+           DebugCameraForceStep(true, true) == DbgCamForceStep::RefuseNoLiveCheatManager);
+    EXPECT("DBGCAM-CDO: an OFF there sends no toggle, only the swap-back",
+           DebugCameraForceStep(false, true) == DbgCamForceStep::SwapBackOnly);
+    EXPECT("DBGCAM-CDO control: a live CheatManager toggles both ways",
+           DebugCameraForceStep(true, false) == DbgCamForceStep::Toggle
+           && DebugCameraForceStep(false, false) == DbgCamForceStep::Toggle);
+    EXPECT("DBGCAM-CDO: the refusal's code is its own", DBGCAM_ERR_NO_LIVE_CHEATMANAGER == -17
+           && DBGCAM_ERR_NO_LIVE_CHEATMANAGER != -1
+           && DBGCAM_ERR_NO_LIVE_CHEATMANAGER != Stark::kInvokeTimedOutStillQueued
+           && DBGCAM_ERR_NO_LIVE_CHEATMANAGER != Stark::kToggleBlockedByQueued
+           && (DBGCAM_ERR_NO_LIVE_CHEATMANAGER < MB_ERR_INVOKE_NOT_OWNED || DBGCAM_ERR_NO_LIVE_CHEATMANAGER > MB_ERR_INVOKE_UNRESOLVED)
+           && DBGCAM_ERR_NO_LIVE_CHEATMANAGER != Wirbel::TP_ERR_PARENT_RELATIVE);
+    static_assert(DebugCameraForceStep(true, false) == DbgCamForceStep::Toggle,
+                  "DebugCameraForceStep must be constexpr-evaluable");
+}
+
+// [FINDINSTANCE-SUBSTRING-USERFACING] invoke_function names the object a class name resolved to, and a cut-short
+// lookup is never reported as an absent class. The UI's Self-Test matches the two openings, so they are pinned too.
+static void Test_UserPick_WireAndTexts() {
+    std::printf("Test_UserPick_WireAndTexts\n");
+    EXPECT("USERPICK wire: live",                 std::string(Aura::UserPickWire(Aura::UserPick::Live)) == "live");
+    EXPECT("USERPICK wire: debug_camera_owned",
+           std::string(Aura::UserPickWire(Aura::UserPick::DebugCameraOwned)) == "debug_camera_owned");
+    EXPECT("USERPICK wire: class_default",
+           std::string(Aura::UserPickWire(Aura::UserPick::ClassDefault)) == "class_default");
+    EXPECT("USERPICK wire: partial_name",         std::string(Aura::UserPickWire(Aura::UserPick::PartialLive)) == "partial_name");
+    EXPECT("USERPICK wire: partial_name_default",
+           std::string(Aura::UserPickWire(Aura::UserPick::PartialDefault)) == "partial_name_default");
+    EXPECT("USERPICK wire control: None and Cancelled never reach a reply",
+           std::string(Aura::UserPickWire(Aura::UserPick::None)).empty()
+           && std::string(Aura::UserPickWire(Aura::UserPick::Cancelled)).empty());
+    EXPECT("USERPICK wire control: the address pick is the pipe's own word", std::string(Renge::INVOKE_PICK_ADDRESS) == "address");
+
+    EXPECT("USERPICK text control: not-found keeps the opening Self-Test matches",
+           Renge::InstanceNotFoundText("Foo") == "No instance found for class: Foo");
+    const std::string cut = Renge::InstanceLookupCancelledText("Foo");
+    EXPECT("USERPICK text: a cut-short lookup is not reported as an absent class",
+           cut.find("No instance found") == std::string::npos && cut.find("Foo") != std::string::npos);
+    const std::string nf = Renge::FunctionNotFoundText("God", "AbilitySystemCheatManagerExtension_0",
+                                                       "AbilitySystemCheatManagerExtension");
+    EXPECT("USERPICK text control: function-not-found keeps the opening Self-Test matches",
+           nf.rfind("Function not found: God", 0) == 0);
+    EXPECT("USERPICK text: function-not-found names the object and the class it looked on",
+           nf.find("AbilitySystemCheatManagerExtension_0") != std::string::npos
+           && nf.find("(class AbilitySystemCheatManagerExtension)") != std::string::npos);
 }
 
 // B46 — HexToBytes could not fail, so write_mem could not report a bad pattern.
@@ -8813,6 +8965,32 @@ static void Test_Delegate_AccessDetectorPad() {
            DynOff::DelegatePadFromElementSize(24, 12) == 8);
     EXPECT("pad: ...and 20 is no build's size", DynOff::DelegatePadFromElementSize(20, 12) < 0);
     EXPECT("pad: a 4-byte-FName Shipping FScriptDelegate is 12 -> 0", DynOff::DelegatePadFromElementSize(12, 12) == 0);
+}
+
+static void Test_Delegate_Hex() {
+    // [D4B-DELEGATEPAD-2026-09-09] A delegate row names the value's own address and size, so its hex holds all of those
+    // bytes -- the detector included, set off by a space -- rather than only the payload 8 bytes in. The bytes are the
+    // bound OnActorHit measured on DumperTest Development: {State=0, Data=0x1D5F5BF5C40, Num=1, Max=4}.
+    const uint8_t mcd[24] = { 0, 0, 0, 0, 0, 0, 0, 0,
+                              0x40, 0x5C, 0xBF, 0xF5, 0xD5, 0x01, 0x00, 0x00,
+                              0x01, 0, 0, 0, 0x04, 0, 0, 0 };
+    EXPECT_EQ_STR("hex: a checked multicast shows its detector, then its TArray header",
+                  DynOff::DelegateHex(mcd, 24, 8), "0000000000000000 405CBFF5D50100000100000004000000");
+    EXPECT_EQ_STR("hex: an unread checked value keeps the same shape in '?'",
+                  DynOff::DelegateHex(nullptr, 24, 8), "???????????????? ????????????????????????????????");
+    // A case-preserving checked FScriptDelegate: detector, weak pair, 12-byte FName, then 4 bytes of alignment tail.
+    uint8_t sd[32] = {};
+    sd[0] = 0xAA; sd[31] = 0xBB;
+    const std::string sdHex = DynOff::DelegateHex(sd, 32, 8);
+    EXPECT("hex: a padded 32-byte element shows all 32 bytes and one space", sdHex.size() == 65);
+    EXPECT("hex: ...opening on the detector's first byte", sdHex.compare(0, 2, "AA") == 0);
+    EXPECT("hex: ...and closing on the alignment tail's last", sdHex.size() == 65 && sdHex.compare(63, 2, "BB") == 0);
+    // ⭐ The control: a Shipping value has no detector, and its hex is what it always was.
+    EXPECT_EQ_STR("hex control: a Shipping multicast is its 16-byte header, no space",
+                  DynOff::DelegateHex(mcd + 8, 16, 0), "405CBFF5D50100000100000004000000");
+    EXPECT_EQ_STR("hex control: an unread Shipping value is 32 '?'",
+                  DynOff::DelegateHex(nullptr, 16, 0), "????????????????????????????????");
+    EXPECT_EQ_STR("hex: no size, no hex", DynOff::DelegateHex(mcd, 0, 0), "");
 }
 
 static void Test_Aura_IsBoundInvocationListHeader() {
@@ -10726,12 +10904,12 @@ static void Test_Lager_SummarizeWindow() {
         m.push_back(LgTyped(base + 0x8000000ull, base + 0xA000000ull, base + 0x8000000ull, Lager::kMemImage)); // 32 MB module
         m.push_back(LgTyped(base + 0xA000000ull, base + 0xB000000ull, base + 0xA000000ull, Lager::kMemMapped));// 16 MB view
         m.push_back(LgFree(base + 0xB000000ull, 0x7FF000000000ull));
-        const Lager::WindowSummary s = Lager::SummarizeWindow(m, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
-        EXPECT_EQ_U64("heap bytes are totalled as private", s.privateBytes, 0x8000000ull);
-        EXPECT_EQ_U64("module bytes as image", s.imageBytes, 0x2000000ull);
-        EXPECT_EQ_U64("view bytes as mapped", s.mappedBytes, 0x1000000ull);
+        const Lager::WindowSummary typed = Lager::SummarizeWindow(m, kFfrsPe, kLgAppMin, kLgAppMax, kLgGran);
+        EXPECT_EQ_U64("heap bytes are totalled as private", typed.privateBytes, 0x8000000ull);
+        EXPECT_EQ_U64("module bytes as image", typed.imageBytes, 0x2000000ull);
+        EXPECT_EQ_U64("view bytes as mapped", typed.mappedBytes, 0x1000000ull);
         EXPECT("the largest occupant is the heap allocation",
-               s.largestTakenType == Lager::kMemPrivate && s.largestTakenBase == base);
+               typed.largestTakenType == Lager::kMemPrivate && typed.largestTakenBase == base);
         EXPECT("free is not typed", Lager::MemTypeName(0) == std::string("other"));
     }
 }
@@ -11300,6 +11478,12 @@ int main() {
     RUN(Test_Mimic_MailboxLayout);
     RUN(Test_Mimic_ListInstancesGeometry);
     RUN(Test_Mimic_CommandNumbering);
+    RUN(Test_Wirbel_BugItGoRefusal);
+    RUN(Test_Wirbel_RecallMarkerRefusal);
+    RUN(Test_Wirbel_StoresUndoPoint);
+    RUN(Test_UserPick_WireAndTexts);
+    RUN(Test_Mimic_WarnNonStaticOnTemplate);
+    RUN(Test_Mimic_DebugCameraForceStep);
     RUN(Test_Mimic_InvokeRouting);
     RUN(Test_Mimic_InvokeSlab);
     RUN(Test_Mimic_InitFastPath);
@@ -11522,6 +11706,7 @@ int main() {
     RUN(Test_Ubel_DescribeUnreadableField);   // [UNREADVAL-2026-09-09] hex, not decimal
     RUN(Test_Ubel_DescribeScriptDelegate);
     RUN(Test_Delegate_AccessDetectorPad);
+    RUN(Test_Delegate_Hex);   // [D4B-DELEGATEPAD-2026-09-09] element bytes
     RUN(Test_Aura_IsBoundInvocationListHeader);
     RUN(Test_Stark_ClassifyGameThreadLiveness);
     RUN(Test_Stark_LivenessPreservesTheGateContract);

@@ -68,6 +68,13 @@ class PipeClient:
 
     # -- lifecycle ------------------------------------------------------------
     def connect(self, retries: int = 10, delay: float = 1.0) -> "PipeClient":
+        # [RIG-PIPE-DOUBLE-CONNECT] Already open: a second handle would take a pipe instance the UI may need. A handle
+        # closed behind the client's back is reopened instead of handed back.
+        if self._f is not None and not self._f.closed:
+            return self
+        # A new connection starts with no bytes of the last one: a partial line left there would be glued to this
+        # connection's first reply, which then fails to parse and is dropped.
+        self._buf.clear()
         last = None
         for _ in range(retries):
             try:
@@ -183,7 +190,63 @@ class PipeClient:
         return reply
 
 
+def selftest() -> int:
+    """[RIG-PIPE-DOUBLE-CONNECT] `with PipeClient() as c:` connects, and a second `c.connect()` must not open again:
+    it opened a second handle while the first was still held, which needs a second pipe instance at the same moment.
+    The DLL serves three and the UI holds two, so with the UI up the rig failed after ten retries. A handle closed
+    behind the client's back is reopened, not handed back, and the reopened connection starts with no bytes of the old
+    one -- while a connect() on an open client keeps them, since they belong to the live connection. No pipe is
+    opened -- `open` is replaced for the duration."""
+    opened = []
+
+    class FakeHandle:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    def fake_open(*args, **kwargs):
+        opened.append(args[0])
+        return FakeHandle()
+
+    g = globals()
+    had, saved = "open" in g, g.get("open")
+    g["open"] = fake_open
+    try:
+        c = PipeClient()
+        with c:
+            c._buf.extend(b'{"id":3,"partial')   # the live connection's own unread bytes
+            c.connect()
+            twice = len(opened)
+            kept = len(c._buf)
+        c.connect()
+        again = len(opened)
+        c._f.close()   # closed directly, not through close(), so the attribute still holds it
+        c._buf.extend(b'{"id":7,"partial')   # what a timed-out read leaves behind
+        c.connect()
+        reopened = len(opened)
+        leftover = len(c._buf)
+        c.close()
+    finally:
+        if had:
+            g["open"] = saved
+        else:
+            del g["open"]
+    bad = 0
+    for label, got, want in (("connect inside `with`", twice, 1), ("bytes kept by a connect on an open client", kept, 16),
+                             ("connect after close", again, 2),
+                             ("connect after the handle was closed directly", reopened, 3),
+                             ("bytes a reopened connection inherits", leftover, 0)):
+        ok = got == want
+        bad += not ok
+        print(f"{'OK ' if ok else 'BAD'}  {label}: {got}, want {want}")
+    print("RESULT:", "PASS" if bad == 0 else f"FAIL ({bad})")
+    return 0 if bad == 0 else 1
+
+
 def main() -> int:
+    if sys.argv[1:] == ["--selftest"]:
+        return selftest()
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("cmd")
     ap.add_argument("--args", default="{}", help="JSON object of extra request fields")

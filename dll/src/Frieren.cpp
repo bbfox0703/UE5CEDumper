@@ -178,27 +178,25 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
     // stock 5.3 title with a CMC to 504. The rule and its measurements are DynOff::CmcMarkerVersion. Best-effort and
     // bounded: one CMC answers it.
     bool cmcProp = false, cmcFunc = false;
+    // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The ENGINE class, by path: a marker of the engine's version must never
+    // read a game subclass's own property, and guessing the class from the first object whose class name contains
+    // the word is the [SEETHRU-PROBE-SUBSTRING] shape.
     auto probeCmc = [&](bool& prop, bool& func) -> bool {
-        auto cmcSet = Aura::FindInstancesByClass("CharacterMovementComponent", false, 3);
-        for (const auto& r : cmcSet.results) {
-            if (!r.addr) continue;
-            uintptr_t cls = Ubel::GetClass(r.addr);
-            if (!cls) continue;
-            prop = Ubel::FindFieldOffset(cls, "GravityDirection", "GravityDirection",
-                                         nullptr, "StructProperty") >= 0;
-            FunctionInfo fn;
-            func = Ubel::ResolveFunctionInChain(
-                cls, "SetGravityDirection",
-                [](uintptr_t c) { return Ubel::WalkFunctions(c); },
-                [](uintptr_t c, uintptr_t& super) {
-                    return Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
-                },
-                fn);
-            cmcProp = prop;
-            cmcFunc = func;
-            return true;
-        }
-        return false;
+        const uintptr_t cls = Aura::FindClassByPath(Grimoire::VERSION_CMC_CLASS_PATH);
+        if (!cls) return false;
+        prop = Ubel::FindFieldOffset(cls, "GravityDirection", "GravityDirection",
+                                     nullptr, "StructProperty") >= 0;
+        FunctionInfo fn;
+        func = Ubel::ResolveFunctionInChain(
+            cls, "SetGravityDirection",
+            [](uintptr_t c) { return Ubel::WalkFunctions(c); },
+            [](uintptr_t c, uintptr_t& super) {
+                return Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
+            },
+            fn);
+        cmcProp = prop;
+        cmcFunc = func;
+        return true;
     };
 
     // [VER-MARKERS-PAST-504] The 5.5 and 5.6 rungs' probes, the classes they sample and how many are
@@ -1155,36 +1153,14 @@ int32_t UE5_GetClassPropsSize(uintptr_t classAddr) {
 
 // === UFunction Invocation ===
 
-// ⚠ A class-name SUBSTRING match (Aura::FindInstancesByClass, exactMatch=false) that falls back to the FIRST matching
-// CDO -- not "an instance of this class". Kept as-is because it is USER-facing: the C ABI, the pipe's
-// `invoke_function class_name`, and the mailbox's FIND_INSTANCE twin in Mimic.cpp. ⛔ Internal callers use
-// Aura::FindLiveOrDefaultOf (derivation-gated) or Aura::FindClassByPath: "Actor" through THIS answered
-// Default__ActorChannel on UE 5.4 Shipping and See-through refused a build that can hide. [SEETHRU-PROBE-SUBSTRING]
+// The user-facing "an instance of class X": Aura::ResolveUserInstance, the resolver every user-facing class lookup
+// shares (its rule is in Aura.h; it logs the pick under PIPE:find). It used
+// to match a class-name SUBSTRING and take the first non-CDO match, else the first match, so "CheatManager" landed on a
+// cheat extension or the Debug Camera's own CheatManager. [FINDINSTANCE-SUBSTRING-USERFACING] Internal callers keep
+// Aura::FindLiveOrDefaultOf or Aura::FindClassByPath: a state read must never take the Debug Camera's object at all.
 uintptr_t UE5_FindInstanceOfClass(const char* className) {
     if (!className || !className[0]) return 0;
-
-    auto rset = Aura::FindInstancesByClass(className, false, 100);
-
-    // Prefer non-CDO instance
-    for (const auto& r : rset.results) {
-        if (r.addr && r.name.find("Default__") == std::string::npos) {
-            LOG_INFO("UE5_FindInstanceOfClass: '%s' -> 0x%llX (%s)",
-                     className, (unsigned long long)r.addr, r.name.c_str());
-            return r.addr;
-        }
-    }
-
-    // Fallback: return first result even if CDO
-    if (!rset.results.empty() && rset.results[0].addr) {
-        LOG_WARN("UE5_FindInstanceOfClass: '%s' -> only CDO: 0x%llX (%s)",
-                 className, (unsigned long long)rset.results[0].addr,
-                 rset.results[0].name.c_str());
-        return rset.results[0].addr;
-    }
-
-    LOG_WARN("UE5_FindInstanceOfClass: '%s' -> not found (scanned=%d)",
-             className, rset.scanned);
-    return 0;
+    return Aura::ResolveUserInstance(className).obj;   // 0 = nothing usable, or a lookup cut short
 }
 
 // Adapters for Ubel::ResolveFunctionInChain — the live-memory half the header's
@@ -1298,10 +1274,11 @@ static bool DbgCam_WritePtr(uintptr_t obj, int off, uintptr_t val) {
 // Returns 1=ON, 0=OFF, -1=unknown. Outputs the CheatManager + DCC for reuse.
 static int DbgCam_ReadState(uintptr_t& outCm, uintptr_t& outDcc) {
     outCm = 0; outDcc = 0;
-    // Derivation-gated, never the class-name substring UE5_FindInstanceOfClass matches: the stock engine has
-    // UCheatManagerExtension (4.27+) and GAS's UAbilitySystemCheatManagerExtension, which contain "CheatManager" and
-    // are no UCheatManager -- a live extension at a lower GObjects index, or the extension's CDO when no CheatManager
-    // is live, was taken over the real one. Same for UDebugCameraControllerSettings (4.23+) in the DCC fallback
+    // Derivation-gated, never a class-name substring: the stock engine has UCheatManagerExtension (4.27+) and GAS's
+    // UAbilitySystemCheatManagerExtension, which contain "CheatManager" and are no UCheatManager -- a live extension at
+    // a lower GObjects index, or the extension's CDO when no CheatManager is live, was taken over the real one.
+    // FindLiveOrDefaultOf, not the user-facing ResolveUserInstance: a STATE read must never take the Debug Camera's
+    // own CheatManager, where an invoke takes it when nothing else is live. Same for UDebugCameraControllerSettings (4.23+) in the DCC fallback
     // below: when its CDO sat first, it has no OriginalControllerRef, so the state read -1 and a Force ON refused
     // (read from the code; L83's 5.4 fixture met the DCC's own CDO first). [SEETHRU-PROBE-SUBSTRING]
     // [DBGCAM-58-REENABLE] Never the Debug Camera's own: its DCC carries a CheatManager too (AddCheats forces one in
@@ -1321,7 +1298,7 @@ static int DbgCam_ReadState(uintptr_t& outCm, uintptr_t& outDcc) {
     }
     // Fallback: DebugCameraControllerRef can be null even with the camera live —
     // some titles don't populate it (DQIII HD-2D), or there are several
-    // CheatManagers and FindInstanceOfClass picked the wrong one. Find the DCC by
+    // CheatManagers and the one above is not the one that spawned it. Find the DCC by
     // instance scan; its OriginalControllerRef is the authoritative active flag.
     if (!dcc) {
         dcc = Aura::FindLiveOrDefaultOf("DebugCameraController");
@@ -1386,9 +1363,9 @@ static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintp
 // [DBGCAM-OFF-OVER-QUEUED-ON] The toggle a Set left queued, until it has run, and the one a Set is dispatching now.
 // A toggle not yet run flips whatever the state reads, so no answer read before it runs is true: an OFF read "already
 // OFF" and reported a clean OFF that a queued ON then undid. Both directions: a queued OFF changes nothing on stock UE
-// 4.18-5.7 but does turn the camera off on 5.8. The pipe and the mailbox both call Set; the lock covers the check, the
-// read and the marking, never the invoke wait, which a CE untick behind another Set would otherwise sit through past
-// its own deadline.
+// 4.18-5.7 but does turn the camera off on 5.8. The pipe and the mailbox both call Set; everything a Set does runs under
+// the lock except a game-thread wait (the invoke), which a CE untick behind another Set would otherwise sit through
+// past its own deadline.
 static std::mutex s_dbgCamMutex;
 static Stark::QueuedInvoke s_dbgCamQueued;
 static bool s_dbgCamQueuedWant = false;
@@ -1418,6 +1395,25 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
             LOG_INFO("UE5_SetDebugCamera: already %s — no-op", want ? "ON" : "OFF");
             return state;
         }
+        // [DEBUGCAM-FORCEON-CDO] A template here is the class default object (FindLiveOrDefaultOf's only fallback), and
+        // 0 is no CheatManager at all: either way none is live, and ToggleDebugCamera does nothing on the default
+        // object (4.18/4.19: worse). Decided before the marking, so no toggle on a template is ever dispatched or left
+        // queued.
+        const bool noLiveCheatManager = !cm || Aura::TemplateOf(cm).kind != Aura::TemplateKind::None;
+        const auto step = Mimic::DebugCameraForceStep(want, noLiveCheatManager);
+        if (step == Mimic::DbgCamForceStep::RefuseNoLiveCheatManager) {
+            LOG_WARN("UE5_SetDebugCamera(1): no live CheatManager -- ToggleDebugCamera does nothing on its class "
+                     "default object 0x%llX; not sent", (unsigned long long)cm);
+            return Mimic::DBGCAM_ERR_NO_LIVE_CHEATMANAGER;
+        }
+        if (step == Mimic::DbgCamForceStep::SwapBackOnly) {
+            // The camera reads ON ("already OFF" answered above), its CheatManager is gone: switch back by hand, the
+            // end a no-op toggle reached through the escalation below. No game-thread call, so under the lock.
+            if (dcc && DbgCam_SwapControllerBack(dcc))
+                state = DbgCam_ReadState(cm, dcc);
+            LOG_INFO("UE5_SetDebugCamera(0): no live CheatManager -- swap-back only -> state=%d", state);
+            return state;
+        }
         s_dbgCamInFlight = want ? 1 : 0;
     }
     // Every exit from here clears the in-flight mark, and keeps a toggle the dispatch left queued.
@@ -1445,7 +1441,8 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
     if (r != 0) {
         LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera ProcessEvent r=%d", r);
         // [W3-DEBUGCAM-QUEUED] A TIMED-OUT toggle (-5) stays queued and still runs: pass it through, so no caller reads
-        // "nothing happened" and sends a second toggle that drains after it. Every other failure ran nothing: -1.
+        // "nothing happened" and sends a second toggle that drains after it. Every other failure answers -1: -4
+        // entered the toggle and faulted inside it, the rest ran nothing.
         return Stark::StatefulToggleFailure(r);
     }
 

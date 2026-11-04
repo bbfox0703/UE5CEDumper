@@ -7,13 +7,13 @@ namespace UE5DumpUI.Services;
 ///
 /// Unlike <see cref="BakedScriptGenerator"/> (a one-shot invoke whose
 /// <c>[DISABLE]</c> is a nop), this is a STATEFUL checkbox: ticking runs
-/// <c>[ENABLE]</c> → <c>setDebugCamera(1)</c> (camera ON), unticking runs
-/// <c>[DISABLE]</c> → <c>setDebugCamera(0)</c> (camera OFF). Both blocks load
-/// <c>ue5_invoke_helper.lua</c> (embedded in the .CT) and call the shared
-/// <c>setDebugCamera</c> wrapper, which forwards to the <c>UE5_SetDebugCamera</c>
-/// DLL export — so the whole toggle + controller-swap fallback (for Shipping
-/// builds that strip <c>DisableDebugCamera</c>) runs DLL-side, identical to the
-/// Console panel's Force On / Force Off.
+/// <c>[ENABLE]</c> → request 1 (camera ON), unticking runs
+/// <c>[DISABLE]</c> → request 0 (camera OFF). Both blocks are
+/// self-contained: they send CMD_SET_DEBUG_CAMERA through the DLL's mailbox
+/// directly (no <c>ue5_invoke_helper.lua</c>), so the whole toggle +
+/// controller-swap fallback (for Shipping builds that strip
+/// <c>DisableDebugCamera</c>) runs DLL-side, identical to the Console panel's
+/// Force On / Force Off.
 /// </summary>
 public static class DebugCameraScriptGenerator
 {
@@ -28,7 +28,9 @@ public static class DebugCameraScriptGenerator
 
     // Mimic mailbox layout (must match dll/src/Mimic.h MailboxData):
     //   0x00 cmd (write LAST to trigger), 0x04 status (poll == 1), 0x08 result,
-    //   0x10 instanceAddr (here: the request 0=OFF / 1=ON). CMD_SET_DEBUG_CAMERA=7.
+    //   0x10 instanceAddr (here: the request 0=OFF / 1=ON), 0x72C cmdOutFlags (the template warning, read on an ON
+    //   that did not take or is queued; only a DLL from builds 3676-3681 sets it, a newer one answers -17 instead).
+    //   CMD_SET_DEBUG_CAMERA=7.
     private static void EmitBlock(StringBuilder sb, string header, bool enable)
     {
         var label = enable ? "ON" : "OFF";
@@ -86,7 +88,7 @@ public static class DebugCameraScriptGenerator
         // Shared wait: real-time deadline, status-specific diagnosis, and the untick
         // that stops a timed-out row claiming to be active.
         CeLuaHygiene.AppendMailboxWait(sb, "DebugCamera", bail);
-        Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=ON, 0=OFF, -1=error, -5=queued, -6=not sent");
+        Line(sb, $"local state = readInteger(mb + {CeMailboxLayout.OffResult}, true)   -- 1=ON, 0=OFF, -1=error, -5=queued, -6=not sent, -17=no live CheatManager");
         Line(sb, $"dbg('[DebugCamera] {label} -> state=' .. tostring(state))");
         // Test against the REQUEST, not against -1. `UE5_SetDebugCamera` re-reads the
         // state after firing ToggleDebugCamera and returns whatever it finds
@@ -106,8 +108,15 @@ public static class DebugCameraScriptGenerator
         {
             // [DBGCAM-QUEUEDON-UNDO-TEXT] The reason not to tick again is only that the toggle is already queued: what a
             // second one does when it drains depends on the engine (DebugCameraText says why).
+            // [INVOKE-NONSTATIC-ON-CDO] A queued toggle on the CheatManager's class default object will run there and do
+            // nothing; the DLL (contract 7) says so in cmdOutFlags when this tick queued it (a re-tick answered by the
+            // toggle already queued sends nothing, and carries no bit).
+            int qbit = CeMailboxLayout.InvOutNonStaticOnTemplate;
+            Line(sb, $"  local _tplWarn = (readInteger(mb + {CeMailboxLayout.OffOutFlags}) or 0) % {2 * qbit} >= {qbit}");
             Line(sb, $"  showMessage('[DebugCamera] {label} queued -- the game thread is busy; the toggle will run " +
-                      "when it is free. Do not tick again: the toggle is already queued.')");
+                      "when it is free. Do not tick again: the toggle is already queued.' .. (_tplWarn and ' It targets " +
+                      "the CheatManager class default object, though: there is no live CheatManager (usual in a Shipping " +
+                      "build), so it will do nothing.' or ''))");
         }
         else
         {
@@ -134,11 +143,30 @@ public static class DebugCameraScriptGenerator
                       "on. The record stays ticked: untick it again once the game responds.')");
             Line(sb, $"  error('[DebugCamera] {label} not sent; an earlier ON is still queued')");
         }
+        // [DEBUGCAM-FORCEON-CDO] -17: an ON the DLL did not send -- no CheatManager is live, and the toggle does nothing on
+        // its class default object. Nothing was applied: say so and untick without [DISABLE], which would send an OFF.
+        // [DISABLE] has no branch: an OFF is never refused. A record generated before this branch reports -17 through
+        // the failure below and keeps its window open; records since 2026-10-28 untick the same way, records from
+        // 2026-08-21 to 10-28 untick through [DISABLE] (a harmless OFF), and older ones stay ticked.
+        if (enable)
+        {
+            Line(sb, $"elseif state == {Constants.DebugCameraNoLiveCheatManagerResult} then");
+            Line(sb, $"  showMessage('[DebugCamera] {label} not sent -- there is no live CheatManager (UE 5 leaves it " +
+                      "out of Shipping builds by default), and the toggle does nothing on its class default object.')");
+            Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
+        }
         Line(sb, $"elseif state ~= {req} then");
         if (enable)
         {
+            // [INVOKE-NONSTATIC-ON-CDO] A DLL from builds 3676-3681 (contract 7, which this record claims) says when the
+            // toggle ran on the CheatManager's class default object -- no live CheatManager, where it does nothing. A newer
+            // DLL refuses that ON (-17, above), so without the bit this is a read that failed or a toggle that did not take.
+            int bit = CeMailboxLayout.InvOutNonStaticOnTemplate;
+            Line(sb, $"  local _tplWarn = (readInteger(mb + {CeMailboxLayout.OffOutFlags}) or 0) % {2 * bit} >= {bit}");
             Line(sb, $"  showMessage('[DebugCamera] {label} failed (state=' .. tostring(state) .. ') " +
-                      "-- no live CheatManager, or the game refused the toggle.')");
+                      "-- ' .. (_tplWarn and 'the toggle ran on the CheatManager class default object: there is no " +
+                      "live CheatManager (usual in a Shipping build).' or 'the state could not be read, or the game " +
+                      "refused the toggle.'))");
             // Nothing was applied on this branch, so the record must not stay ticked -- nor send the OFF [DISABLE] would.
             Line(sb, CeLuaHygiene.DeferredUntickWithoutDisableLua("  "));
         }

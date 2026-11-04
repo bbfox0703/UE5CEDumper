@@ -7,6 +7,183 @@ namespace UE5DumpUI.Tests;
 
 public class InvokeParamDialogTests
 {
+    // --- [INVOKE-NONSTATIC-ON-CDO] the header lines carry the DLL's template warning ---
+
+    [Theory]
+    [InlineData(0, "")]
+    [InlineData(-4, "ProcessEvent error code -4 (exception during call)")]
+    public void HeaderLines_carry_the_template_warning_on_success_and_on_failure(int result, string error)
+    {
+        var r = new InvokeFunctionResult
+        {
+            Result = result, Error = error, InstanceName = "Default__Actor", InstanceClassName = "Actor",
+            InstanceTemplate = "class_default", NonStaticOnTemplate = true,
+        };
+
+        var lines = InvokeParamDialog.HeaderLines(r, 3);
+
+        Assert.Equal(2, lines.Count);
+        Assert.StartsWith("[#3] ", lines[0], System.StringComparison.Ordinal);
+        Assert.Equal(UE5DumpUI.Helpers.InvokePickText.TemplateClassDefaultText("Default__Actor", "Actor"), lines[1]);
+    }
+
+    [Theory]
+    [InlineData(null)]    // an older DLL
+    [InlineData(false)]   // a static function on a template, or a live object
+    public void HeaderLines_control_no_warning_without_the_verdict(bool? warn)
+    {
+        var r = new InvokeFunctionResult
+        {
+            Result = 0, InstanceName = "Default__KismetSystemLibrary", InstanceClassName = "KismetSystemLibrary",
+            InstanceTemplate = warn is null ? null : "class_default", NonStaticOnTemplate = warn,
+        };
+
+        Assert.Single(InvokeParamDialog.HeaderLines(r, 1));
+    }
+
+    // --- [MAINWINDOW-INVOKE-LIMIT1-CDO] a dialog opened on a class, with no object ---
+    // Three MainWindow handlers looked up "a live instance" by exact class name with limit 1: that one row is normally
+    // the class default object, which they skip, so the dialog opened with no address and its FIRE sent neither
+    // instance_addr nor class_name -- the DLL answered "Either instance_addr or class_name is required". The dialog now
+    // sends the class name, and the DLL resolves it at each FIRE with the resolver behind the Console's Run (not the
+    // Console's per-class pin).
+
+    [Fact]
+    public void FireTarget_without_an_address_sends_the_class_name()
+    {
+        var t = InvokeParamDialog.FireTarget("", "CheatManager", null);
+        Assert.Null(t.InstanceAddr);
+        Assert.Equal("CheatManager", t.ClassName);
+        Assert.Null(t.ExpectClassAddr);
+    }
+
+    [Fact]
+    public void FireTarget_without_an_address_drops_the_class_check()
+    {
+        // The DLL applies expect_class_addr to the object it picks too, as an equality test: sent with a class name it
+        // would refuse every subclass object the resolver may take (a Blueprint's _C), so it must not be sent.
+        Assert.Null(InvokeParamDialog.FireTarget("", "PlayerController", "0x7FF6CC00").ExpectClassAddr);
+    }
+
+    [Fact]
+    public void FireTarget_control_with_an_address_is_unchanged()
+    {
+        Assert.Equal(("0x1000", (string?)null, "0xC0"), InvokeParamDialog.FireTarget("0x1000", "Actor", "0xC0"));
+    }
+
+    [Fact]
+    public void HeaderLines_name_the_object_a_class_name_fire_landed_on()
+    {
+        var r = new InvokeFunctionResult
+        {
+            Result = 0, InstancePick = "live", InstanceName = "CheatManager_0", InstanceClassName = "CheatManager",
+            InstanceTemplate = "", NonStaticOnTemplate = false,
+        };
+
+        var lines = InvokeParamDialog.HeaderLines(r, 1, byClassName: true);
+
+        Assert.Single(lines);
+        Assert.EndsWith(" " + UE5DumpUI.Helpers.InvokePickText.ObjectText("CheatManager_0", "CheatManager"), lines[0],
+            System.StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(0, "")]
+    [InlineData(-4, "ProcessEvent error code -4 (exception during call)")]
+    public void HeaderLines_a_class_name_fire_on_the_class_default_says_no_live_one_exists_once(int result, string error)
+    {
+        var r = new InvokeFunctionResult
+        {
+            Result = result, Error = error, InstancePick = "class_default", InstanceName = "Default__CheatManager",
+            InstanceClassName = "CheatManager", InstanceTemplate = "class_default", NonStaticOnTemplate = true,
+        };
+
+        var lines = InvokeParamDialog.HeaderLines(r, 2, byClassName: true);
+
+        Assert.Single(lines);
+        Assert.Contains(UE5DumpUI.Helpers.InvokePickText.ClassDefaultText("Default__CheatManager", "CheatManager"),
+            lines[0], System.StringComparison.Ordinal);
+        Assert.DoesNotContain(UE5DumpUI.Helpers.InvokePickText.TemplateClassDefaultText("Default__CheatManager", "CheatManager"),
+            lines);
+    }
+
+    private static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+    {
+        int c = l.IndexOf("//", System.StringComparison.Ordinal);
+        return c >= 0 ? l[..c] : l;
+    }));
+
+    /// <summary>The handler a `+=` subscribes, up to the `};` that closes its lambda at the same indent.</summary>
+    private static string Handler(string src, string subscription)
+    {
+        int at = src.IndexOf(subscription, System.StringComparison.Ordinal);
+        Assert.True(at >= 0, subscription + " not found");
+        int lineStart = src.LastIndexOf('\n', at) + 1;
+        string indent = src[lineStart..at];
+        int end = src.IndexOf("\n" + indent + "};", at, System.StringComparison.Ordinal);
+        Assert.True(end > at, subscription + ": end of the handler not found");
+        return src[at..end];
+    }
+
+    [Fact]
+    public void MainWindow_invoke_handlers_look_up_no_object_by_exact_class_name()
+    {
+        var src = CodeOnly(System.IO.File.ReadAllText(
+            NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs")));
+        foreach (var sub in new[] { "Console.RequestParameterInvoke +=", "Console.RequestCopyBakedScript +=",
+                                    "InterestingFunctions.RequestCopyBakedScript +=" })
+        {
+            var body = Handler(src, sub);
+            Assert.Contains("new Views.InvokeParamDialog(", body, System.StringComparison.Ordinal);
+            Assert.DoesNotContain("FindInstancesAsync(", body, System.StringComparison.Ordinal);
+        }
+        var consoleDialog = Handler(src, "Console.RequestParameterInvoke +=");
+        Assert.DoesNotContain("expectClassAddr:", consoleDialog, System.StringComparison.Ordinal);
+        // Review 1: the dialog that can FIRE is given no address, so FIRE goes by class name (a ban on text alone let
+        // a swapped variable or a helper lookup through).
+        Assert.Contains("\"\", _dump, _engineState?.UEVersion ?? 0", consoleDialog, System.StringComparison.Ordinal);
+        Assert.Contains("mode: Views.InvokeDialogMode.PipeInvoke", consoleDialog, System.StringComparison.Ordinal);
+        Assert.DoesNotContain("exactMatch: true, limit: 1)", src, System.StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Fire_sends_what_FireTarget_returns_and_names_the_object_by_class()
+    {
+        var src = CodeOnly(System.IO.File.ReadAllText(
+            NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/InvokeParamDialog.cs")));
+        Assert.Contains("FireTarget(_instanceAddr, _className, _expectClassAddr)", src, System.StringComparison.Ordinal);
+        Assert.Contains("className: target.ClassName", src, System.StringComparison.Ordinal);
+        Assert.Contains("expectClassAddr: target.ExpectClassAddr", src, System.StringComparison.Ordinal);
+        Assert.Contains("HeaderLines(result, _fireCount, byClassName: string.IsNullOrEmpty(_instanceAddr))", src,
+            System.StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(InvokeDialogMode.PipeInvoke, "", true)]
+    [InlineData(InvokeDialogMode.PipeInvoke, "0x1000", false)]        // FIRE goes to that address
+    [InlineData(InvokeDialogMode.CopyBakedScript, "", false)]        // no FIRE at all
+    [InlineData(InvokeDialogMode.CopyBakedScript, "0x1000", false)]
+    public void The_target_by_class_line_shows_only_where_FIRE_goes_by_class_name(InvokeDialogMode mode, string addr,
+                                                                                 bool shown)
+    {
+        // Review 1 of [MAINWINDOW-INVOKE-LIMIT1-CDO]: nothing pinned the pre-FIRE line.
+        Assert.Equal(shown, InvokeParamDialog.ShowsTargetByClassLine(mode, addr));
+    }
+
+    [Fact]
+    public void The_dialog_builds_the_target_by_class_line_from_the_predicate()
+    {
+        var src = CodeOnly(System.IO.File.ReadAllText(
+            NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/InvokeParamDialog.cs")));
+        int ctor = src.IndexOf("public InvokeParamDialog(", System.StringComparison.Ordinal);
+        Assert.True(ctor > 0, "the constructor moved -- re-point this pin");
+        int gate = src.IndexOf("if (ShowsTargetByClassLine(mode, instanceAddr))", ctor, System.StringComparison.Ordinal);
+        int line = src.IndexOf("InvokePickText.TargetByClassText(className)", ctor, System.StringComparison.Ordinal);
+        int nextMember = src.IndexOf("\n    private ", ctor, System.StringComparison.Ordinal);
+        Assert.True(gate > ctor && line > gate && (nextMember < 0 || line < nextMember),
+            "the constructor shows the line under the predicate");
+    }
+
     // --- HexToBytes ---
 
     [Fact]

@@ -116,8 +116,9 @@ public static class BakedScriptGenerator
     /// baked parameter values.
     /// </summary>
     /// <param name="className">UClass name (e.g. "PlayerCharacter"). The
-    ///     helper's CMD_INVOKE_BY_NAME path will <c>findInstance</c> live
-    ///     non-CDO objects matching this name.</param>
+    ///     helper's CMD_INVOKE_BY_NAME path takes a live object of the class
+    ///     so named or of a subclass, else its own default object; a name no
+    ///     class has is matched as part of a class name.</param>
     /// <param name="funcName">UFunction name (e.g. "AddMoney").</param>
     /// <param name="parmsSize">Total size of the function's params buffer
     ///     in bytes. The helper zero-fills this range before writing baked
@@ -335,9 +336,20 @@ public static class BakedScriptGenerator
         Line(sb, verifyReturn
             ? "-- Invoke (verify mode -- prints decoded return value on success)"
             : "-- Invoke (silent on success -- only prints/showMessage on error)");
+        // [INVOKE-NONSTATIC-ON-CDO] The helper's third return: the DLL (contract 7+) says the function is not static and
+        // the object was a class default object or another template, once the call reached dispatch, whether or not
+        // it then succeeded (nil when the helper's own wait ran out first). An older embedded helper returns two
+        // values, so `warn` is nil there and the record
+        // behaves as it did.
         Line(sb,
-            $"local ok, err = invokeUFunction('{EscapeLua(className)}', " +
+            $"local ok, err, warn = invokeUFunction('{EscapeLua(className)}', " +
             $"'{EscapeLua(funcName)}', {parmsSize}, PARAMS)");
+        Line(sb, "if ok and warn then");
+        Line(sb, $"  print('[Invoke] WARNING: {EscapeLua(className)}::{EscapeLua(funcName)} ran on a class default " +
+                 "object or another template, not a live object -- a function that is not static may have done nothing.')");
+        Line(sb, "end");
+        Line(sb, "if not ok and warn then err = tostring(err) .. '\\n\\nThe object was a class default object or another " +
+                 "template, not a live object: a function that is not static can fail there.' end");
 
         if (verifyReturn)
         {
@@ -479,7 +491,8 @@ public static class BakedScriptGenerator
         {
             // Close on success ONLY when DEBUG is off -- if the user set UE5_DEBUG=1
             // they want the window (and any dbg output) to stay readable.
-            Line(sb, "  if ok and DEBUG == 0 then");
+            // A warned success is not clean: the window stays open on the warning. [INVOKE-NONSTATIC-ON-CDO]
+            Line(sb, "  if ok and not warn and DEBUG == 0 then");
             Line(sb, "    synchronize(function() getLuaEngine().Close() end)");
             Line(sb, "  end");
         }

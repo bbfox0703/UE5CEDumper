@@ -96,7 +96,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "recall_last",  DisplayName = "Recall last",
             Hint = "Undo the last teleport — return to the position from just before it." });
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "bugit",        DisplayName = "Copy BugItGo",
-            Hint = "Copy the current position as a 'BugItGo X Y Z' string to the clipboard." });
+            Hint = "Copy the current position as a 'BugItGo X Y Z' string to the clipboard (never a parent-relative read)." });
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "bugitgo",      DisplayName = "Run BugItGo",
             Hint = "Teleport to the coordinates in the BugItGo field (filled by Copy BugItGo, or pasted)." });
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "debugcam_on",  DisplayName = "Debug cam ON",
@@ -235,23 +235,30 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// <summary>Push the latest engine state (GWorld AOB / module) for trainer bake.</summary>
     public void SetEngineState(Models.EngineState state) => _engineState = state;
 
-    /// <summary>[R7-S12] Publish a probe the toolbar ⟳ ran on the shared bridge: set the flag and repaint the note even
-    /// when the flag is unchanged -- the same repaint <see cref="CheckAobMakerAsync"/> does after its own probe.</summary>
+    /// <summary>[R7-S12] Publish what a probe or a push on the shared bridge learned -- this panel's own, or the toolbar
+    /// ⟳'s: set the flag and repaint the note even when the flag is unchanged, since the reason behind "not reachable"
+    /// may have moved (absent -> busy).</summary>
     public void ApplyAobMakerProbe(bool available)
     {
         IsAobMakerAvailable = available;
         OnPropertyChanged(nameof(AobMakerNote));
+        AobMakerProbed?.Invoke(available);
     }
+
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] Every answer <see cref="ApplyAobMakerProbe"/> applies, changed or not,
+    /// for the toolbar chip: the flag raises only on a change, so a probe that confirmed it reached nobody else.</summary>
+    public event Action<bool>? AobMakerProbed;
 
     /// <summary>Probe AOBMaker availability (the delivery channel for trainer export).</summary>
     public async Task CheckAobMakerAsync()
     {
         if (_aobMaker == null) return;
-        try { IsAobMakerAvailable = await _aobMaker.CheckAvailabilityAsync(); }
-        catch { IsAobMakerAvailable = false; }
+        bool ok;
+        try { ok = await _aobMaker.CheckAvailabilityAsync(); }
+        catch { ok = false; }
         // [W1-PIPEBUSY-STATUS] The note also depends on WHY it failed, which can change (absent -> busy) while
-        // IsAobMakerAvailable stays false and so raises nothing.
-        OnPropertyChanged(nameof(AobMakerNote));
+        // IsAobMakerAvailable stays false and so raises nothing: ApplyAobMakerProbe repaints it regardless.
+        ApplyAobMakerProbe(ok);
     }
 
     internal const string KeyTrainerPushed = "str.TP.Trainer.Pushed";
@@ -271,6 +278,76 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         => AobMakerStatus.Say(KeyBugItNotCopied,
             "BugIt: {0} (filled the Run field; not copied, so do not paste: the clipboard still holds what was there before).",
             bugItGo);
+
+    internal const string KeyBugItParentRelative = "str.TP.BugItParentRelative";
+    /// <summary>[TELEPORT-BUGITGO-PARENTREL] A "BugItGo X Y Z" string claims world coordinates to whatever reads it --
+    /// the Run field, the game's own console -- and cannot carry the parent-relative flag a marker keeps, so Copy as
+    /// BugItGo refuses such a read instead of handing it on.</summary>
+    internal static string BugItParentRelativeText => AobMakerStatus.Say(KeyBugItParentRelative,
+        "⚠ BugIt: not copied, and the Run field was emptied. The pose came from a PARENT-RELATIVE read (an attached " +
+        "pawn whose world position could not be read), so these numbers are not world coordinates, and BugItGo would " +
+        "drive the pawn there as if they were. Copy again while the game is responding (focus it, or turn on Keep " +
+        "Foreground), or once off the vehicle or mount.");
+
+    internal const string KeyRecallParentRelative = "str.TP.RecallParentRelative";
+    internal const string KeyForceParentRelative = "str.TP.ForceParentRelative";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] Recall and Force of a marker saved from a parent-relative read: the DLL
+    /// refuses both (-16). Force overrides only the map check; nothing makes relative numbers world coordinates.</summary>
+    internal static string RecallParentRelativeText(bool force, int markerNumber) => force
+        ? AobMakerStatus.Say(KeyForceParentRelative,
+            "⚠ Force {0}: refused — the marker was saved from a PARENT-RELATIVE read (an attached pawn whose world " +
+            "position could not be read), so it is not world coordinates, and Force cannot change that. Nothing moved. " +
+            "Save it again while the game is responding (focus it, or turn on Keep Foreground), or once off the " +
+            "vehicle or mount.", markerNumber)
+        : AobMakerStatus.Say(KeyRecallParentRelative,
+            "⚠ Recall {0}: refused — the marker was saved from a PARENT-RELATIVE read (an attached pawn whose world " +
+            "position could not be read), so it is not world coordinates; Force refuses it too. Nothing moved. Save it " +
+            "again while the game is responding (focus it, or turn on Keep Foreground), or once off the vehicle or " +
+            "mount.", markerNumber);
+
+    internal const string KeyMarkerSavedParentRelative = "str.TP.MarkerSavedParentRelative";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] The producer-side half: the save says Recall and Force will refuse the
+    /// marker, so the refusal is not the first the user hears of it.</summary>
+    internal static string MarkerSavedParentRelativeText(int markerNumber) => AobMakerStatus.Say(
+        KeyMarkerSavedParentRelative,
+        "Marker {0} saved — ⚠ from a PARENT-RELATIVE read: these are not world coordinates, so Recall and Force will " +
+        "refuse it. Save it again while the game is responding, or once off the vehicle or mount.", markerNumber);
+
+    internal const string KeyRelativeParentRelative = "str.TP.RelParentRelative";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] TP facing direction steps from the current pose; a parent-relative one has
+    /// no world position to step from, and the DLL refuses (-16).</summary>
+    internal static string RelativeParentRelativeText => AobMakerStatus.Say(KeyRelativeParentRelative,
+        "⚠ TP facing: refused — the current position came from a PARENT-RELATIVE read (an attached pawn whose world " +
+        "position could not be read), so there is no world position to step from. Nothing moved. Try again while the " +
+        "game is responding (focus it, or turn on Keep Foreground), or once off the vehicle or mount.");
+
+    internal const string KeyCoordFillParentRelative = "str.TP.CoordFillParentRelative";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] Whatever reads the coordinate boxes takes them for world coordinates, and
+    /// they cannot carry the flag, so Fill from current pos refuses such a read.</summary>
+    internal static string CoordFillParentRelativeText => AobMakerStatus.Say(KeyCoordFillParentRelative,
+        "⚠ Not filled: the current pose came from a PARENT-RELATIVE read (an attached pawn whose world position could " +
+        "not be read), so these numbers are not world coordinates. Fill again while the game is responding (focus it, " +
+        "or turn on Keep Foreground), or once off the vehicle or mount.");
+
+    internal const string KeyLibParentRelative = "str.TP.LibParentRelative";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] A library entry has no field for the flag, and its CSV and CE exports claim
+    /// world coordinates, so Save current pos and Update from current refuse such a read.</summary>
+    internal static string LibParentRelativeText => AobMakerStatus.Say(KeyLibParentRelative,
+        "⚠ The library was not changed: the current pose came from a PARENT-RELATIVE read (an attached pawn whose " +
+        "world position could not be read), so these numbers are not world coordinates. Try again while the game is " +
+        "responding (focus it, or turn on Keep Foreground), or once off the vehicle or mount.");
+
+    internal const string KeyLastEmpty = "str.TP.LastEmpty";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] Recall last on an empty slot. A jump whose position could not be read in
+    /// world coordinates saves no undo point, so "every jump auto-saves it" is not true.</summary>
+    internal static string LastEmptyText => AobMakerStatus.Say(KeyLastEmpty,
+        "No last position yet — it is auto-saved just before a jump, unless the position then could not be read in " +
+        "world coordinates (a parent-relative read on a vehicle or mount).");
+
+    internal const string KeyLastEmptySummary = "str.TP.LastEmptySummary";
+    /// <summary>[TELEPORT-RECALL-PARENTREL] The Last Position row before any undo point is stored.</summary>
+    internal static string LastEmptySummaryText => AobMakerStatus.Say(KeyLastEmptySummary,
+        "(none yet — auto-saved just before a jump)");
 
     internal const string KeyCoordNoDllNotAdded = "str.TP.LibNoDllNotAdded";
     /// <summary>[COORDPICK-OVERSIZE-REASON] A no-DLL picker push refused with a reason says it; the reason's own closing
@@ -396,7 +473,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                         : TrainerNotReachedText(ok, entries.Count, e.Description, AobMakerUnavailable.Text(_aobMaker));
                 break;
             }
-            IsAobMakerAvailable = _aobMaker.IsAvailable;
+            ApplyAobMakerProbe(_aobMaker.IsAvailable);
             StatusText = stopped ?? TrainerPushedText(ok);
             _log.Info($"Standalone trainer export: {ok}/{entries.Count} entries pushed to CE");
         }
@@ -950,7 +1027,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     public bool HasHotkeyWarning => !string.IsNullOrEmpty(HotkeyWarning);
 
-    // ── System "last" position (auto-saved before every jump) ──────────
+    // ── System "last" position (auto-saved before a jump) ──────────
     /// <summary>True once the DLL has auto-saved a pre-teleport pose (enables
     /// the Recall-last button). System-managed — the user never saves this.</summary>
     [ObservableProperty]
@@ -958,8 +1035,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private bool _lastValid;
 
     /// <summary>Human summary of the last auto-saved pose, e.g. "(12.0, 3.0,
-    /// 80.0)  World1", or a placeholder before the first teleport.</summary>
-    [ObservableProperty] private string _lastSummary = "(saved automatically before each teleport)";
+    /// 80.0)  World1", or a placeholder until an undo point is stored (a jump whose
+    /// position was not world coordinates stores none).</summary>
+    [ObservableProperty] private string _lastSummary = LastEmptySummaryText;
 
     /// <summary>Recall-last is live only when connected, idle, and a pose has
     /// actually been auto-saved.</summary>
@@ -1475,10 +1553,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             }
             ApplyPose(p);
             UpdateMarkerRow(slot, p);
-            // [W2-MARKER-PARENTREL] The save the pose card warns against now says so where it happens.
+            // [W2-MARKER-PARENTREL] The save the pose card warns against now says so where it happens, and
+            // ([TELEPORT-RECALL-PARENTREL]) that Recall and Force will refuse it.
             StatusText = p.ParentRelative
-                ? $"Marker {slot + 1} saved — ⚠ from a PARENT-RELATIVE read: these are not world coordinates, "
-                  + "and recalling it drives the pawn there as if they were."
+                ? MarkerSavedParentRelativeText(slot + 1)
                 : $"Marker {slot + 1} saved.";
         }
         catch (Exception ex)
@@ -1507,6 +1585,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             {
                 StatusText = $"Marker {slot + 1} saved on '{r.MarkerMap}', you're on " +
                              $"'{r.CurrentMap}' — press Force to recall anyway.";
+                return;
+            }
+            if (r.Code == TeleportCodes.ParentRelative)   // [TELEPORT-RECALL-PARENTREL] Force too: no override exists
+            {
+                StatusText = RecallParentRelativeText(force, slot + 1);
                 return;
             }
             if (r.Code != TeleportCodes.Ok)
@@ -1560,8 +1643,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             var r = await _dump.TeleportRecallLastAsync();
             if (r.Code == TeleportCodes.EmptyMarker)
             {
-                StatusText = "No last position yet — recall/force/BugItGo/cursor " +
-                             "auto-saves it before each jump.";
+                StatusText = LastEmptyText;
                 return;
             }
             if (r.Code != TeleportCodes.Ok)
@@ -1623,6 +1705,15 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 return;
             }
             ApplyPoseAndMovement(p);
+            if (p.ParentRelative)
+            {
+                // [TELEPORT-BUGITGO-PARENTREL] The string cannot carry the flag, and whatever reads it takes it for
+                // world coordinates. The Run field is emptied too, not left holding an older string that the
+                // `bugitgo` hotkey would then fire.
+                BugItGoInput = "";
+                StatusText = BugItParentRelativeText;
+                return;
+            }
             string s = string.Format(CultureInfo.InvariantCulture,
                 "BugItGo {0:0.000} {1:0.000} {2:0.000}", p.X, p.Y, p.Z);
             // Paste straight into the Run field so the user can fire BugItGo
@@ -1680,13 +1771,15 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     // ── Debug Camera (deterministic force on/off, shared with Console) ──
 
-    /// <summary>Map the DLL result (1=on, 0=off, -1=unknown, -5=toggle queued) onto the badge. A queued toggle's badge
-    /// depends on its direction, so a Force OFF says <paramref name="forcingOff"/>.</summary>
+    /// <summary>Map the DLL result (1=on, 0=off, -1=unknown, -5=toggle queued, -6=not sent, -17=ON refused) onto the
+    /// badge. A queued toggle's badge depends on its direction, so a Force OFF says <paramref name="forcingOff"/>.</summary>
     private void ApplyDebugCameraState(int state, bool forcingOff = false)
         => (DebugCameraState, DebugCameraBadgeColor) = state switch
         {
             1  => ("ON",      "#4EC9B0"),   // green — active
             0  => ("OFF",     "#999999"),   // grey — inactive
+            // [DEBUGCAM-FORCEON-CDO] A refused ON read the camera OFF first ("already ON" answers before it).
+            Constants.DebugCameraNoLiveCheatManagerResult => ("OFF", "#999999"),
             // [DEBUGCAM-QUEUED-OFF-NOESCALATE] A queued OFF is no OFF on its way: the DLL queues it only after reading
             // the camera ON, the toggle has not run, and on stock UE 4.18-5.7 it leaves the camera on.
             Constants.DebugCameraToggleQueuedResult when forcingOff => ("ON", "#4EC9B0"),
@@ -1720,8 +1813,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             {
                 1 => "Debug Camera is ON.",
                 0 => "Debug Camera is OFF.",
-                _ => "Debug Camera state unknown — enter gameplay so a PlayerController " +
-                     "spawns, then ↻.",
+                // [DEBUGCAM-FORCEON-CDO] -1 is a read that failed, never the no-live-CheatManager case.
+                _ => DebugCameraText.StateUnknownText,
             };
         }
         catch (Exception ex)
@@ -1745,21 +1838,23 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             IsBusy = true;
             ClearError();
-            var state = await _dump.SetDebugCameraAsync(wantOn);
+            var set = await _dump.SetDebugCameraDetailedAsync(wantOn);
+            var state = set.State;
             ApplyDebugCameraState(state, forcingOff: !wantOn);
-            StatusText = state switch
+            StatusText = DebugCameraText.WithTemplateNote(state switch
             {
                 1 when wantOn  => "✓ Debug Camera forced ON.",
                 0 when !wantOn => "✓ Debug Camera forced OFF.",
-                -1 => $"Force {want}: no live CheatManager / unreadable state " +
-                      "(enter gameplay first).",
+                // [DEBUGCAM-FORCEON-CDO] -1 is a failure; no live CheatManager is -17, and only an ON gets it.
+                -1 => DebugCameraText.ForceFailed(wantOn),
+                Constants.DebugCameraNoLiveCheatManagerResult => DebugCameraText.NoLiveCheatManagerText,
                 // [W3-DEBUGCAM-QUEUED] Not a failure. [DEBUGCAM-QUEUED-OFF-NOESCALATE] But only a queued ON will still
                 // take; a queued OFF does not turn the camera off -- DebugCameraText says why.
                 Constants.DebugCameraToggleQueuedResult => DebugCameraText.Queued(wantOn),
                 Constants.DebugCameraToggleBlockedResult => DebugCameraText.Blocked(wantOn),
                 _  => $"⚠ Force {want}: state is now {(state == 1 ? "ON" : "OFF")} " +
                       "— the game may re-drive the camera.",
-            };
+            }, set.NonStaticOnTemplate);
         }
         catch (Exception ex)
         {
@@ -1966,7 +2061,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             IsBusy = true;
             ClearError();
-            var cands = await _dump.FindStealthMeterAsync();
+            var found = await _dump.FindStealthMeterDetailedAsync();
+            var cands = found.Candidates;
+            // [SOLIDE-RELATED-STOPS] Said after whichever line below: a meter past where the search stopped is missed.
+            var stopped = Helpers.StealthText.StopsClause(found.Stops);
             // [EXPOFF-ROUND3-PAUSED] While a hold is armed, the held meter is what Reset and the experimental teardown
             // release, so Detect only reads: overwritten, they released the newly found field or none while Solide
             // went on forcing the meter.
@@ -1974,7 +2072,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             {
                 var now = cands.FirstOrDefault(c => c.ClassName == held.ClassName && c.FieldName == held.FieldName);
                 if (now != null) StealthFieldText = $"{held.ClassName}::{held.FieldName} = {now.Current:0.###} (held)";
-                StatusText = Res.Format("str.TP.StDetectWhileHolding", held.FieldName, cands.Count);
+                StatusText = Res.Format("str.TP.StDetectWhileHolding", held.FieldName, cands.Count) + stopped;
                 return;
             }
             if (cands.Count == 0)
@@ -1984,7 +2082,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 (StealthState, StealthBadgeColor) = ("Not found", "#C9A04E");
                 StatusText = "No stealth/visibility meter auto-found on the player pawn. " +
                              "Search Property Search (e.g. 'visib', 'detect', 'noise', 'aware') " +
-                             "and Force → a numeric field to 0 instead.";
+                             "and Force → a numeric field to 0 instead." + stopped;
                 return;
             }
             var top = cands[0];
@@ -1992,7 +2090,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             StealthFieldText = $"{top.ClassName}::{top.FieldName} = {top.Current:0.###}";
             (StealthState, StealthBadgeColor) = ("Ready", "#888888");
             StatusText = $"Found {cands.Count} candidate(s). Top: {top.FieldName} (score {top.Score}). " +
-                         "Verify it, then Hold @0.";
+                         "Verify it, then Hold @0." + stopped;
         }
         catch (Exception ex)
         {
@@ -2033,7 +2131,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             if (r.Held == 0)
             {
                 (StealthState, StealthBadgeColor) = (StealthArmedState, "#E0A050");
-                StatusText = Res.Format("str.TP.StArmed", c.FieldName, c.ClassName);
+                StatusText = Res.Format("str.TP.StArmed", c.FieldName, c.ClassName)
+                    // [LISTINSTANCES-KEEPS-TEMPLATES] Property Search's note, when only templates of the class exist.
+                    + ForceText.TemplatesOnlySuffix(c.ClassName, r.TemplatesSkipped);
                 return;
             }
             (StealthState, StealthBadgeColor) = (StealthHoldingState, "#4EC9B0");
@@ -2980,12 +3080,37 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             _flyKnown = true;
             return;
         }
+        // [FLY-REPORTS-WISH] With the collision the DLL read on the pawn, not the one the checkbox asked for.
         FlyCurrentText = st.Active
             ? string.Format(CultureInfo.InvariantCulture,
-                "Flying at {0:0} uu/s (MovementMode = {1}).", st.Speed, st.CurrentMode)
+                "Flying at {0:0} uu/s (MovementMode = {1}{2}).", st.Speed, st.CurrentMode,
+                Helpers.FlyText.CollisionClause(st.Collision))
             : string.Format(CultureInfo.InvariantCulture,
-                "Ready (MovementMode = {0}). Toggle Fly ON to take off.", st.CurrentMode);
+                "Ready (MovementMode = {0}{1}). Toggle Fly ON to take off.", st.CurrentMode,
+                Helpers.FlyText.CollisionClause(st.Collision));
         ApplyFlyState(st.Active ? 1 : 0);
+    }
+
+    /// <summary>[FLY-REPORTS-WISH] review round 2: the step between re-reads while the observed collision catches up.</summary>
+    internal TimeSpan FlySettleStep { get; set; } = TimeSpan.FromMilliseconds(100);
+
+    /// <summary>How many steps the card waits at most: about a second at the default step.</summary>
+    private const int FlySettleSteps = 10;
+
+    /// <summary>
+    /// [FLY-REPORTS-WISH] review round 2: a reply to the request that changes noclip is read before the Fly worker's next
+    /// tick applies it on the game thread, so its collision is the one from before (measured on DumperTest Development:
+    /// the reply said colliding, the pawn read not colliding 103 ms later). Re-read while Fly is on and the reading
+    /// disagrees with the request; what is left after the window is what the card reports.
+    /// </summary>
+    private async Task<FlyStatus> SettleFlyCollisionAsync(FlyStatus st, bool noclipAsked)
+    {
+        for (int i = 0; i < FlySettleSteps && st.Active && !Helpers.FlyText.CollisionAgrees(noclipAsked, st.Collision); i++)
+        {
+            await Task.Delay(FlySettleStep);
+            st = await _dump.FlyGetStateAsync();
+        }
+        return st;
     }
 
     /// <summary>Enable Fly: force MOVE_Flying and start the DLL worker (keyboard
@@ -2999,7 +3124,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var st = await _dump.FlySetAsync(enable: true, speed: FlySpeed, preset: FlyPresetIndex, noclip: FlyNoclip);
-            ApplyFlyReadout(st);
+            // Whether it engaged is the enable reply's; the collision is read once the worker has had its tick.
+            var seen = await SettleFlyCollisionAsync(st, FlyNoclip);
+            ApplyFlyReadout(seen);
             // ⛔ REPORT THE EFFECT, NOT THE ATTEMPT. HasCmc says a CharacterMovement was
             // RESOLVED — it says nothing about whether the MovementMode write landed, and
             // that write is the only reason the pawn flies. The DLL now leaves Active false
@@ -3008,7 +3135,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             StatusText = !st.HasCmc
                 ? "Fly could not engage (no CharacterMovement on this pawn)."
                 : st.Active
-                    ? $"✈ Fly ON ({(FlyNoclip ? "noclip" : "collision")}) — {FlyPresets[Math.Clamp(FlyPresetIndex, 0, FlyPresets.Count - 1)]}."
+                    ? $"✈ Fly ON ({Helpers.FlyText.ModeWord(FlyNoclip, seen.Collision)}) — {FlyPresets[Math.Clamp(FlyPresetIndex, 0, FlyPresets.Count - 1)]}."
                     : $"Fly did NOT engage (code {st.State}) — the pawn is still in MovementMode {st.CurrentMode}.";
         }
         catch (Exception ex)
@@ -3106,6 +3233,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         try
         {
             var st = await _dump.FlySetAsync(enable: null, speed: speed, preset: preset, noclip: noclip);
+            if (noclip is bool asked) st = await SettleFlyCollisionAsync(st, asked);   // the worker applies it next tick
             ApplyFlyReadout(st);
         }
         catch (Exception ex)
@@ -3642,6 +3770,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             IsBusy = true;
             ClearError();
             var p = await _dump.TeleportRelativeAsync(RelativeDistance, RelativeHorizontal);
+            if (p.Code == TeleportCodes.ParentRelative)   // [TELEPORT-RECALL-PARENTREL]
+            {
+                StatusText = RelativeParentRelativeText;
+                return;
+            }
             if (p.Code != TeleportCodes.Ok)
             {
                 StatusText = $"TP facing: {TeleportCodes.Describe(p.Code)}";
@@ -3715,6 +3848,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 return;
             }
             ApplyPoseAndMovement(p);
+            if (p.ParentRelative)   // [TELEPORT-RECALL-PARENTREL] the boxes cannot carry the flag
+            {
+                StatusText = CoordFillParentRelativeText;
+                return;
+            }
             CoordX = p.X; CoordY = p.Y; CoordZ = p.Z;
             CoordPitch = p.Pitch; CoordYaw = p.Yaw; CoordRoll = p.Roll;
             StatusText = "Filled coordinates from the current pose.";
@@ -4126,6 +4264,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 return;
             }
             ApplyPoseAndMovement(p);
+            if (p.ParentRelative)   // [TELEPORT-RECALL-PARENTREL] an entry cannot carry the flag
+            {
+                CoordStatus = LibParentRelativeText;
+                return;
+            }
             var entry = FromPose(p, NextCoordLabel(p.Map));
             if (!AddCoordEntry(entry)) return;
             CoordStatus = $"Saved '{entry.Label}' ({CoordPrecision.Text(entry.X)}, " +
@@ -4326,6 +4469,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 return;
             }
             ApplyPoseAndMovement(p);
+            if (p.ParentRelative)   // [TELEPORT-RECALL-PARENTREL] an entry cannot carry the flag
+            {
+                CoordStatus = LibParentRelativeText;
+                return;
+            }
             var e = row.Entry;
             e.Map = p.Map ?? "";
             e.X = CoordPrecision.Round(p.X);
@@ -4891,7 +5039,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 CoordLibraryScriptGenerator.NoDllRecordDescription, script,
                 autoActivate: false, group: CeGroupTrainer);
             bool sent = pushed.Created;
-            IsAobMakerAvailable = _aobMaker.IsAvailable;
+            // Gated on the bridge, not on this panel's flag, so the flag may already say "down": a plain set raised
+            // nothing then, and the toolbar chip kept what it had. [PROPSEARCH-FREEZE-STALE-AOBMAKER]
+            ApplyAobMakerProbe(_aobMaker.IsAvailable);
 
             CoordStatus = sent
                 ? $"Pushed the no-DLL picker ({_coordAll.Count} entries) to Cheat Engine. " +
@@ -5604,7 +5754,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                     LastValid = m.Valid;
                     LastSummary = m.Valid
                         ? MarkerSummary(m.X, m.Y, m.Z, m.Map, m.ParentRelative)
-                        : "(saved automatically before each teleport)";
+                        : LastEmptySummaryText;
                     continue;
                 }
                 if (m.Slot < 0 || m.Slot >= Markers.Count) continue;
@@ -5626,7 +5776,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         // Raw doubles kept alongside the formatted display strings: the coordinate
         // library's per-row distance needs numbers, and this poll is already running.
-        _liveX = p.X; _liveY = p.Y; _liveZ = p.Z; _hasLivePose = true;
+        // [TELEPORT-RECALL-PARENTREL] A parent-relative read is not a world position: no distance is measured from it.
+        _liveX = p.X; _liveY = p.Y; _liveZ = p.Z; _hasLivePose = !p.ParentRelative;
 
         PoseX = p.X.ToString("0.000", CultureInfo.InvariantCulture);
         PoseY = p.Y.ToString("0.000", CultureInfo.InvariantCulture);
@@ -5743,7 +5894,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>A marker row's summary. [W2-MARKER-PARENTREL] A parent-relative save says so in the row: its
-    /// numbers are not world coordinates, and recalling it drives the pawn there as if they were.</summary>
+    /// numbers are not world coordinates, so Recall and Force refuse it. [TELEPORT-RECALL-PARENTREL]</summary>
     internal static string MarkerSummary(double x, double y, double z, string map, bool parentRelative)
         => string.Format(CultureInfo.InvariantCulture, "({0:0.0}, {1:0.0}, {2:0.0})  {3}", x, y, z, map)
            + (parentRelative ? "  ⚠ parent-relative (not world)" : "");

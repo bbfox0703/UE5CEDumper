@@ -96,6 +96,7 @@ public class StubDumpService : IDumpService
             LevelAddr = "0x4500", LevelName = "PersistentLevel", LevelOffset = 0x30,
         });
     public virtual Task<FindInstancesResult> FindInstancesAsync(string className, bool exactMatch = false, int limit = 500, bool newestFirst = false, string nameFilter = "", IReadOnlyList<string>? excludeClasses = null, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<LiveInstanceResult> FindLiveInstanceAsync(string className, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<PackedConstsResult> SetPackedConstsAsync(int alignBits = 0, ulong ptrMaskBits = 0, bool force = false, int serialOff = -1, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<ArrayElementsResult> ReadArrayElementsAsync(string addr, int fieldOffset, string innerAddr, string innerType, int elemSize, int offset = 0, int limit = 64, CancellationToken ct = default) => throw new NotImplementedException();
@@ -138,6 +139,10 @@ public class StubDumpService : IDumpService
     public virtual Task<InvokeFunctionResult> InvokeFunctionAsync(string funcName, string? instanceAddr = null, string? className = null, int parmsSize = 0, string? paramsHex = null, bool directCall = false, IReadOnlyList<InvokeStringParam>? stringParams = null, string? expectClassAddr = null, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<int> GetDebugCameraStateAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<int> SetDebugCameraAsync(bool enable, CancellationToken ct = default) => throw new NotImplementedException();
+    /// <summary>Wraps <see cref="SetDebugCameraAsync"/> with no template verdict, as an older DLL answers, so a fake that
+    /// overrides only that method keeps working.</summary>
+    public virtual async Task<DebugCameraSetResult> SetDebugCameraDetailedAsync(bool enable, CancellationToken ct = default)
+        => new(await SetDebugCameraAsync(enable, ct), null);
     public virtual Task<int> GetGodModeAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<int> SetGodModeAsync(bool enable, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<int> GetForegroundLockAsync(CancellationToken ct = default) => throw new NotImplementedException();
@@ -160,6 +165,9 @@ public class StubDumpService : IDumpService
     public virtual Task<int> ResetAllFieldsAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<IReadOnlyList<ForcedFieldInfo>> GetForcedFieldsAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<IReadOnlyList<StealthCandidate>> FindStealthMeterAsync(int max = 8, CancellationToken ct = default) => throw new NotImplementedException();
+    // As the interface's default: the candidates, a search that claims to have finished. [SOLIDE-RELATED-STOPS]
+    public virtual async Task<StealthMeterResult> FindStealthMeterDetailedAsync(int max = 8, CancellationToken ct = default)
+        => new StealthMeterResult { Candidates = await FindStealthMeterAsync(max, ct) };
     public virtual Task<DataTableWalkResult> WalkDataTableRowsAsync(string addr, int offset = 0, int limit = 64, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<TeleportPose> TeleportGetPoseAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<TeleportPose> TeleportSaveMarkerAsync(int slot, CancellationToken ct = default) => throw new NotImplementedException();
@@ -877,6 +885,33 @@ public class CsxExportServiceTests
         Assert.Contains("Name=\"ItemAttribute\"", csx);
         Assert.Contains("Description=\"BaseValue\"", csx);
         Assert.Contains("Description=\"CurrentValue\"", csx);
+    }
+
+    [Fact]
+    public async Task GenerateCsx_ALongStringElement_KeepsTheStartOfItsText()
+    {
+        // [CSX-LONG-ELEMENT-LABEL] A label was kept only up to 20 characters, and a longer one was dropped whole, so
+        // Arr_Str's 22-character element exported as a bare "[2]". It now keeps its first 20 characters and says it
+        // was cut; one of 20 or fewer is kept as it was.
+        var fields = new List<LiveFieldValue>
+        {
+            new() { Name = "Arr_Str", TypeName = "ArrayProperty", Offset = 0x50, Size = 16,
+                     ArrayCount = 3, ArrayInnerType = "StrProperty", ArrayElemSize = 16, ArrayDataAddr = "0x5000",
+                     ArrayElements = new List<ArrayElementValue>
+                     {
+                         new() { Index = 0, Value = "Hello world!" },
+                         new() { Index = 1, Value = "Exactly twenty chars" },
+                         new() { Index = 2, Value = "Twenty-two characters!" },
+                     }
+            }
+        };
+
+        var csx = await CsxExportService.GenerateCsxAsync(_dump, "TestStruct", fields, drilldownDepth: 1,
+                                                          ct: TestContext.Current.CancellationToken);
+
+        Assert.Contains("Description=\"[0] Hello world!\"", csx);
+        Assert.Contains("Description=\"[1] Exactly twenty chars\"", csx);
+        Assert.Contains("Description=\"[2] Twenty-two character…\"", csx);   // was "[2]"
     }
 
     [Fact]

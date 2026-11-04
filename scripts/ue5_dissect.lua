@@ -181,7 +181,8 @@ local TYPE_MAP = {
     InterfaceProperty     = { vt = vtPointer, size = 8 },
     WeakObjectProperty    = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
 
-    -- Delegates: ONE 8-byte row each, whatever `size` says (addFieldsToStruct gives them no
+    -- Delegates (unicast and multicast; the sparse one below is a single byte): ONE 8-byte
+    -- row each, whatever `size` says (addFieldsToStruct gives them no
     -- Bytesize). A DelegateProperty row is its bound object's FWeakObjectPtr, so 8 hex bytes
     -- like Weak; a multicast row is its InvocationList.Data pointer. UE 5.3+ puts an 8-byte
     -- access detector in front of a delegate payload in a CHECKED build (Debug/Development/
@@ -191,12 +192,10 @@ local TYPE_MAP = {
     DelegateProperty                  = { vt = vtQword,   size = 8, dm = "dtHexadecimal" },
     MulticastInlineDelegateProperty   = { vt = vtPointer, size = 16 },
     MulticastDelegateProperty         = { vt = vtPointer, size = 16 },
-    -- ⛔ KNOWN WRONG, and NOT what this 2026-09-09 change is about: an FSparseDelegate is
-    -- ONE byte (bIsBound), not 16, so this row has always overrun into the next fields.
-    -- Left as-is deliberately -- correcting it changes the rendered width of every sparse
-    -- delegate on every title, which is a display change needing CE in front of a human,
-    -- not a side effect of a layout fix. Filed, not fixed.
-    MulticastSparseDelegateProperty   = { vt = vtPointer, size = 16 },
+    -- An FSparseDelegate is ONE byte, bIsBound: its bindings live outside the object, in the
+    -- engine's sparse-delegate storage. A 16-byte pointer row here overran the fields after
+    -- it. The CSX export takes the engine's ElementSize, 1. [DISSECT-SPARSE-DELEGATE-WIDTH]
+    MulticastSparseDelegateProperty   = { vt = vtByte,    size = 1 },
 }
 
 -- Fallback for unknown property types

@@ -20,15 +20,15 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
     private readonly IAobMakerBridge? _aobMaker;
+
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] The app's shared "is the plugin reachable" flag. Freeze follows it
+    /// and this panel probes through it: a flag of its own went stale whenever someone else learned the news
+    /// (measured on build 3682, the toolbar ⟳ said "connected" over a disabled Freeze), and a disabled button cannot
+    /// reach the probe its click would run. Probing through it also keeps one cooldown, and one probe in flight, for
+    /// every panel that follows it.</summary>
+    private readonly AobMakerStatus _aobStatus;
     private readonly IPlatformService? _platform;
     private readonly IExperimentalGate? _experimentalGate;
-
-    /// <summary>
-    /// Cooldown for live AOBMaker availability re-checks so rapid grid
-    /// interactions don't flood the pipe. Mirrors LiveWalkerViewModel.
-    /// </summary>
-    private DateTime _lastAobMakerCheck = DateTime.MinValue;
-    private static readonly TimeSpan AobMakerCheckCooldown = TimeSpan.FromSeconds(5);
 
     [ObservableProperty] private bool _isAobMakerAvailable;
 
@@ -203,11 +203,24 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     public PropertySearchViewModel(IDumpService dump, ILoggingService log,
                                    IAobMakerBridge? aobMaker = null,
                                    IPlatformService? platform = null,
-                                   IExperimentalGate? experimentalGate = null)
+                                   IExperimentalGate? experimentalGate = null,
+                                   AobMakerStatus? aobStatus = null)
     {
         _dump = dump;
         _log = log;
         _aobMaker = aobMaker;
+        if (aobStatus == null)
+        {
+            // Built without the app's status (tests): one of its own, seeded from the bridge's cached value so the
+            // first paint of the panel isn't always "unavailable".
+            aobStatus = new AobMakerStatus(aobMaker);
+            aobStatus.Apply(aobMaker?.IsAvailable ?? false);
+        }
+        _aobStatus = aobStatus;
+        _aobStatus.PropertyChanged += OnSharedAobMakerChanged;
+        // From the status, not the bridge: this panel follows the status's CHANGES, so a different start would stay
+        // wrong until it changed again. The pipe probe itself happens lazily in RefreshAobMakerAvailabilityAsync.
+        _isAobMakerAvailable = _aobStatus.IsAvailable;
         _platform = platform;
         _experimentalGate = experimentalGate;
         _resultFilterMemory = new KeywordSearchMemory(() => (ResultFilter, Results.Count > 0));
@@ -219,10 +232,6 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
                 (await _dump.DetectNoiseClassesAsync(names))
                     .Select(n => (n.ClassName, n.IsNoise, n.Reason)).ToList(),
         };
-        // Seed the availability flag from the bridge's cached value so the
-        // first paint of the panel isn't always "unavailable" — the actual
-        // pipe probe happens lazily in RefreshAobMakerAvailabilityAsync.
-        _isAobMakerAvailable = aobMaker?.IsAvailable ?? false;
     }
 
     /// <summary>[R7-D-08] The re-read <see cref="OnConnected"/> started. A test seam: production code never awaits
@@ -256,28 +265,26 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
 
     /// <summary>
     /// Re-probe AOBMaker pipe so the Freeze button enablement reflects the
-    /// current state. Called on tab activation + before each Freeze click;
-    /// cooldown prevents pipe spam on rapid interactions.
+    /// current state. Through the shared status: its cooldown prevents pipe spam on rapid interactions, and a probe
+    /// already waiting on the pipe answers this caller too, rather than the answer from before it.
     /// </summary>
     public async Task RefreshAobMakerAvailabilityAsync()
+        => IsAobMakerAvailable = await _aobStatus.RefreshAsync();
+
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] Take what a push learned, and tell the shared status. Its change
+    /// comes back through <see cref="OnSharedAobMakerChanged"/> with the same value, which raises nothing.</summary>
+    private void PublishAobMaker(bool available)
     {
-        if (_aobMaker == null)
-        {
-            IsAobMakerAvailable = false;
-            return;
-        }
-        var now = DateTime.UtcNow;
-        if (now - _lastAobMakerCheck < AobMakerCheckCooldown)
-            return;
-        _lastAobMakerCheck = now;
-        try
-        {
-            IsAobMakerAvailable = await _aobMaker.CheckAvailabilityAsync();
-        }
-        catch
-        {
-            IsAobMakerAvailable = false;
-        }
+        IsAobMakerAvailable = available;
+        _aobStatus.Apply(available);
+    }
+
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] Follow what any other probe or push learned. Not gated by the
+    /// cooldown: the news is free, only a probe costs a pipe connect.</summary>
+    private void OnSharedAobMakerChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(AobMakerStatus.IsAvailable))
+            IsAobMakerAvailable = _aobStatus.IsAvailable;
     }
 
     /// <summary>
@@ -296,7 +303,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task CopyFreezeScriptAsync(PropertySearchMatch? match)
     {
-        if (match == null) return;
+        if (match == null || RefuseNested(match)) return;
         if (_aobMaker == null)
         {
             StatusText = "Freeze unavailable — no AOBMaker bridge wired";
@@ -328,7 +335,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         await RefreshAobMakerAvailabilityAsync();
         if (!IsAobMakerAvailable)
         {
-            StatusText = "AOBMaker plugin not reachable — script not sent";
+            StatusText = FreezeNotReachableText(_aobMaker);   // why, as the push's own failure line says it
             return;
         }
 
@@ -348,26 +355,56 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         var script = FreezeScriptGenerator.Generate(p);
         var description = $"Freeze: {p.ClassName}::{p.PropertyName} = {literal}";
 
-        bool sent;
+        SymbolScriptResult pushed;
         try
         {
-            sent = await _aobMaker.CreateAAScriptAsync(description, script, autoActivate: false);
+            pushed = await _aobMaker.CreateAAScriptDetailedAsync(description, script, autoActivate: false);
         }
         catch (Exception ex)
         {
-            sent = false;
             StatusText = $"Freeze send error: {ex.Message}";
             return;
         }
         finally
         {
-            IsAobMakerAvailable = _aobMaker?.IsAvailable ?? false;
+            PublishAobMaker(_aobMaker?.IsAvailable ?? false);
         }
 
-        StatusText = sent
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] The detailed call, so the line can say which failure it was: a dead pipe
+        // (inside the cooldown, or with Cheat Engine closed while the value dialog was open) read as a rejection, and
+        // no reply read as "not sent" although the plugin may have made the record after the wait gave up.
+        StatusText = pushed.Created
             ? $"Freeze script created in CE: {description}"
-            : "Freeze script not sent — AOBMaker rejected the request";
+            : pushed.TimedOut
+                ? FreezeTimedOutText
+            : pushed.Message is { } why
+                ? FreezeNotAddedText(why)
+            : IsAobMakerAvailable   // a reply arrived; only a connect that failed leaves the bridge unavailable
+                ? "Freeze script not sent — AOBMaker rejected the request"
+                : FreezeNotReachableText(_aobMaker);
     }
+
+    internal const string KeyFreezeNotReachable = "str.PropertySearch.FreezeNotReachable";
+
+    /// <summary>A Freeze whose push found the plugin unreachable, with the reason the bridge recorded.</summary>
+    internal static string FreezeNotReachableText(IAobMakerBridge? bridge)
+        => AobMakerStatus.Say(KeyFreezeNotReachable, "Freeze script not sent: {0}", AobMakerUnavailable.Text(bridge));
+
+    internal const string KeyFreezeTimedOut = "str.PropertySearch.FreezeTimedOut";
+
+    /// <summary>No reply is not "nothing was added": the plugin may have made the record after the wait gave up
+    /// (AOBMaker reply section 3 rule 8), and a second press would add a second one. The bridge reports a pipe that
+    /// broke after the request the same way, so the line names both causes.</summary>
+    internal static string FreezeTimedOutText => AobMakerStatus.Say(KeyFreezeTimedOut,
+        "⚠ No reply from Cheat Engine for the Freeze script (it timed out, or the pipe closed): it may still have been "
+        + "added. Check Cheat Engine's address list before sending it again.");
+
+    internal const string KeyFreezeNotAdded = "str.PropertySearch.FreezeNotAdded";
+
+    /// <summary>A refusal that carried its reason says it; the reason's own closing period is dropped, as the sentence
+    /// adds one.</summary>
+    internal static string FreezeNotAddedText(string why) => AobMakerStatus.Say(KeyFreezeNotAdded,
+        "⚠ The Freeze script was not added to Cheat Engine: {0}.", why.TrimEnd('.'));
 
     /// <summary>
     /// Map one search-result row + the dialog's validated literal onto the generator's
@@ -468,7 +505,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task ForceNull(PropertySearchMatch? m)
     {
-        if (m == null) return;
+        if (m == null || RefuseNested(m)) return;
         if (ForceNullConfirm != null && !await ForceNullConfirm(m)) return;
         await ApplyForceAsync(m, "object_null");
     }
@@ -476,7 +513,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task ForceNumeric(PropertySearchMatch? m)
     {
-        if (m == null) return;
+        if (m == null || RefuseNested(m)) return;
         if (ForceValuePrompt == null) { StatusText = "Force value prompt not wired"; return; }
         ForceValuePromptResult r;
         try { r = await ForceValuePrompt(m); }
@@ -488,6 +525,16 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             return;
         }
         await ApplyForceAsync(m, "numeric", value: r.Value);
+    }
+
+    /// <summary>[LEAD-PROPSEARCH-TOPTIONAL-LEAVES] A nested (deep) row hides Copy Offset, Freeze and Force; the commands
+    /// refuse it as well, so no route copies an element's offset as a class's, writes at its offset -- inside a
+    /// TOptional&lt;FStruct&gt;, the optional's storage whether or not it is set -- or arms a hold on its dotted name.</summary>
+    private bool RefuseNested(PropertySearchMatch m)
+    {
+        if (m.ShowScalarActions) return false;
+        StatusText = m.NestedActionRefusedText;
+        return true;
     }
 
     /// <summary>Force <paramref name="m"/>'s field to a value and hold it
@@ -508,7 +555,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     /// </para></summary>
     private async Task ApplyForceAsync(PropertySearchMatch? m, string kind, double value = 0, bool on = false)
     {
-        if (m == null || string.IsNullOrEmpty(m.ClassName) || string.IsNullOrEmpty(m.PropName)) return;
+        if (m == null || RefuseNested(m) || string.IsNullOrEmpty(m.ClassName) || string.IsNullOrEmpty(m.PropName)) return;
         try
         {
             var r = await _dump.ForceFieldAsync(m.ClassName, m.PropName, kind, value, on);
@@ -527,7 +574,10 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
                 // (audit #5 Z11)
                 StatusText = $"⏳ Force {m.PropName} = ARMED but holding nothing yet — no live instance of "
                            + $"{m.ClassName} or any subclass exists right now. It will apply automatically "
-                           + $"as soon as one spawns; use \"Forced fields\" below to release it.";
+                           + $"as soon as one spawns; use \"Forced fields\" below to release it."
+                           // [LISTINSTANCES-KEEPS-TEMPLATES] ...unless only templates of the class exist, which
+                           // a spawn may never follow (a GameplayEffect's component subobjects).
+                           + Helpers.ForceText.TemplatesOnlySuffix(m.ClassName, r.TemplatesSkipped);
             else
             {
                 var what = kind == "bool" ? (on ? "ON" : "OFF")
@@ -612,6 +662,10 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             StatusText = "Enter a property name or type filter";
             return;
         }
+
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] Fresh rows are where Freeze appears, so the plugin is asked again now.
+        // Not awaited: with Cheat Engine absent the connect waits up to 2 s, and the search must not.
+        _ = RefreshAobMakerAvailabilityAsync();
 
         try
         {
@@ -767,7 +821,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task CopyOffsetAsync(PropertySearchMatch? match)
     {
-        if (match == null) return;
+        if (match == null || RefuseNested(match)) return;
         if (_platform is null || !await _platform.CopyToClipboardAsync(match.OffsetHex))
             _log.Warn($"Copy Offset did nothing — the clipboard refused the write ({match.OffsetHex}).");
     }
@@ -889,6 +943,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         _disposed = true;
         if (_experimentalGate != null)
             _experimentalGate.Changed -= OnExperimentalGateChanged;
+        _aobStatus.PropertyChanged -= OnSharedAobMakerChanged;
         _xrefBatchCts?.Cancel();
         _xrefBatchCts?.Dispose();
         _resultFilterDebounce?.Dispose();

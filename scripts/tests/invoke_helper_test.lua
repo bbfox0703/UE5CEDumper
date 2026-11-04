@@ -732,6 +732,22 @@ do
   contains(table.concat(PRINTS, '\n'), 'not sent', 'and the message says the ON was not sent')
 end
 
+case('DEBUGCAM-FORCEON-CDO: the [ENABLE] sample unticks and says why when the ON was refused (-17)')
+do
+  resetWorld()
+  local sent = 0
+  DLL = function() sent = sent + 1; I32[MB + OFF_RESULT] = -17; I32[MB + OFF_STATUS] = 1 end   -- no live CheatManager
+  local blocks = extractSampleBlocks(HELPER)
+  local ok, err, st = runEnableLikeCe(blocks[1], blocks[2])
+  check(ok, 'the sample runs', err)
+  eq(st.fActive, false, 'nothing was applied, so the record is unticked')
+  eq(sent, 1, 'the untick sent no OFF')
+  eq(st.disables, 0, 'the untick did not run [DISABLE]')
+  local msg = table.concat(PRINTS, '\n')
+  contains(msg, 'no live CheatManager', 'and the message names the refusal')
+  check(not msg:find('returned state', 1, true), 'not the generic fallback', msg)
+end
+
 case('DEBUGCAM-QUEUED-OFF-NOESCALATE: a completed OFF (state 0) unticks cleanly and quietly -- the control')
 do
   resetWorld()

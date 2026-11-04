@@ -74,7 +74,8 @@ constexpr int32_t kInvokeTimedOutStillQueued = -5;
 /// [W3-DEBUGCAM-QUEUED] What a STATEFUL toggle export returns when its queued call did not return 0. A timed-out call
 /// passes through as kInvokeTimedOutStillQueued: the toggle stays queued and runs when the game thread next drains, so
 /// the caller reports it as queued, never as a failure that ran nothing. What that means for the user is the toggle's
-/// own (UE5_SetDebugCamera's doc in Frieren.h). Every other failure ran nothing: -1.
+/// own (UE5_SetDebugCamera's doc in Frieren.h). Every other failure answers -1: -4 entered the call and faulted inside
+/// it, the rest ran nothing.
 constexpr int32_t StatefulToggleFailure(int32_t callResult) {
     return callResult == kInvokeTimedOutStillQueued ? kInvokeTimedOutStillQueued : -1;
 }

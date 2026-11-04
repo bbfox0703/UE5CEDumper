@@ -27,6 +27,388 @@ builds ≤696 in
 
 -----
 
+## 2026-11-04 (build 3686) — A pick never refuses a live object while a collection runs; mailbox contract 9 `[INVOKE-PICK-GARBAGE]`
+
+- Review 1 of build 3685's fix. Telling a destroyed object apart now uses its destroyed flags alone. On UE4 and UE
+  5.0-5.3 a garbage collection first marks every object it may free, and live ones are marked too until it clears them,
+  so the old test could pass over every live object while one ran. This covers an invoke by class name, the Console's
+  Run, the CE invoke helper, Navigate / Locate, the internal state reads and the local-PlayerController fallback.
+- A destroyed object is no longer a partial class name's last-resort match either. The DLL log says how many destroyed
+  objects a lookup passed over.
+- **Mailbox contract 9** (MIN stays 1): CE's FIND_INSTANCE, and the INVOKE_BY_NAME and LIST_FUNCTIONS lookups through it,
+  never hand over a destroyed object. A table generated now refuses an older DLL; an older table works unchanged with
+  this DLL. The freeze helper bakes 9 and stays version 1.7.
+- **Checked live on build 3686** (DumperTest Shipping): `invoke_pick_garbage_live.py` 8/8. The destroyed actor stayed in
+  GObjects, flagged garbage, from the destroy until after the last lookup. The by-name invoke, find_live_instance and the
+  mailbox all took the next live actor, and the DLL log said "passed over 1 destroyed".
+- Tests: dll_core_test 1,464; dll_helpers_test 3,746; C# 7,433 total, 0 failed, 1 skipped; Lua 11/11; 37 gates; six
+  mutations, each killed. AOT UI 61,664,256 bytes.
+
+## 2026-11-04 (build 3685) — An invoke by class name never takes a destroyed object `[INVOKE-PICK-GARBAGE]`
+
+- An actor destroyed in play stays in the object list until the next garbage collection (about a minute on a stock
+  engine), and an invoke by class name could land on it if it sat first. An invoke by class name and the DLL's internal
+  state reads (the Debug Camera's CheatManager among them) now pass over it, as Navigate already did. With only
+  destroyed objects of a class left, an invoke falls back as it does with none live.
+- **Checked live on build 3685** (DumperTest Shipping): `invoke_pick_garbage_live.py` 6/6. A destroyed StaticMeshActor
+  stayed in GObjects, flagged garbage. The by-name invoke, find_live_instance and the mailbox's FIND_INSTANCE took the
+  next one, while the old exact-name lookup still listed the destroyed one first.
+- AOT UI 61,663,744 bytes.
+
+## 2026-11-04 (build 3684) — Navigate and Locate open a live object of the class or a subclass, never a template `[MAINWINDOW-NAVIGATE-EXACT-NAME]`
+
+- **"Live" and "Locate in GWorld / GameEngine"** (Interesting Funcs, Interesting Props, Live Funcs, Console, Detect
+  Stats, the Xref dialog) and Detect Stats' live check now ask the DLL for **a live object of the class or of a
+  subclass**: a class whose objects are all of a Blueprint or game subclass (`Character` in a third-person game) opens
+  that object instead of falling back to the class view, and a class default object's subobject (a template) is never
+  opened or searched from. An object of the class itself comes first; a destroyed one, not yet collected, is passed
+  over; the Debug Camera's own objects come last, and the line says so.
+- A function opened on a subclass's object is not in Live Walker's list (it shows a class's own functions): the line
+  now says the function is inherited, instead of "not in this class". Every Locate names the object it searches from.
+- A DLL older than this UI (a proxy left in a game folder) still answers, with the old exact-name lookup, and the line
+  says how to replace it.
+- New pipe command `find_live_instance` (105 commands).
+- **Checked live on build 3684** (DumperTest Shipping, AOT UI): `live_instance_lookup_live.py` 7/7; the navigate,
+  Locate and inherited-function lines as recorded in the row.
+- Three review rounds (1 MED + 3 LOW + 8 INFO, 7 LOW + 8 INFO, 5 LOW + 5 INFO), all fixed but one INFO kept on purpose,
+  each round mutation-checked.
+- Tests: C# 7,433 total, 0 failed, 1 skipped; headless 70; dll_core_test 1,451; 37 gates. AOT UI 61,663,744 bytes.
+
+## 2026-11-04 (build 3683) — Property Search's status line wraps on a row of its own; Freeze lights up when AOBMaker connects `[PROPSEARCH-STATUS-CLIPPED]` `[PROPSEARCH-FREEZE-STALE-AOBMAKER]`
+
+- **Property Search's status line has a row of its own** under the search bar and wraps there, so a long status --
+  a capped Force count, a hold armed on nothing, the templates-only note -- is read whole instead of ending in "..."
+  with the rest in a tooltip.
+- **Freeze follows what the app knows about the AOBMaker plugin.** It used to stay grey after the plugin connected
+  until the tab was switched; now the toolbar ⟳, any panel's probe and a fresh Search all update it, and what
+  Property Search learns updates the toolbar's DLL dot. A Freeze clicked while a probe is still waiting on the pipe
+  waits for its answer instead of opening the value dialog over a pipe that is gone.
+- **The toolbar's DLL dot hears every probe answer** of Live Walker, the System tab, Interesting Functions and
+  Teleport, not only a change of their own flag: Interesting Functions' first probe after Cheat Engine came up never
+  reached it, and a "down" confirmed while the dot said "up" left it saying connected.
+- **A failed Freeze says which failure it was**: no reply (the record may still have been added -- check before
+  sending it again), a refusal with the plugin's reason, a rejection, or an unreachable plugin with why.
+- The availability cooldowns run on a monotonic clock; a clock set back no longer stops the re-checks.
+- **Checked live on build 3683** (DumperTest Shipping, AOT UI): the status rows and the Freeze / DLL-dot transitions
+  as recorded in the two rows.
+- Three review rounds (2 LOW + 5 INFO, 2 LOW + 3 INFO, 6 INFO), all fixed and mutation-checked.
+- Tests: C# 7,387 total, 0 failed, 1 skipped; headless 70; 37 gates. AOT UI 61,645,312 bytes.
+
+## 2026-11-03 (build 3682) — Debug Camera Force ON with no live CheatManager is refused; Freeze and Force never write a template; the param dialog FIRE by class name; the local-PlayerController fallback by derivation `[DEBUGCAM-FORCEON-CDO]` `[LISTINSTANCES-KEEPS-TEMPLATES]` `[MAINWINDOW-INVOKE-LIMIT1-CDO]` `[FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS]`
+
+- **Debug Camera Force ON with no live CheatManager** (every UE 5 Shipping build by default) is no longer sent: the
+  Console row, the Teleport card, the hotkey and the CE record say there is no live CheatManager and the badge stays
+  OFF. The DLL answers -17 at once (pipe, mailbox, C ABI), with no game-thread call. Force OFF there switches the
+  controller back by hand. A failed Force or refresh (-1) no longer claims "no live CheatManager".
+- **Freeze and Force hold live objects only.** A class default object's subobjects and a Blueprint's component
+  templates are no longer frozen or forced -- whatever a template holds, every later spawn copies, and the freeze
+  helper never restores. Counts and the "capped" flag count live objects. Mailbox contract 8 (MIN 1): a newly
+  generated freeze record refuses an older DLL. A Force armed on nothing because only templates of the class exist
+  says so. The Property Search preview no longer shows a template's value as live.
+- **The param dialog opened from the Console** now FIREs: it sends the class name, and the DLL picks a live object
+  at each FIRE (the line above the arguments says so; the result names the object).
+- **When a game's world chain breaks** (menus, travel), teleport, god mode, movement, time, current target, the
+  stealth meter and fly find the local PlayerController by class derivation, the local player's first, never a
+  destroyed one; a debug camera subclass named without the word is hopped like the stock one.
+- **Checked live on build 3682** (DumperTest Shipping 5.4, UE427_3rdPerson Shipping 4.27, DumperTest58 Development 5.8):
+  `dbgcam_cdo_refusal.py --stall` 14/14 (plus controls on the two fixtures with a live CheatManager);
+  `listinstances_templates_live.py` 10/10 on all three; `localpc_fallback_live.py all` 39/39 on all three;
+  `localpc_dbgcam_live.py` 12/12 (the active debug camera picked and hopped); UI and CE checks as in the rows.
+- Tests: C# 7,358 total, 0 failed, 1 skipped; dll_core_test 1,440; dll_helpers_test 3,736; 37 gates. AOT UI
+  61,639,168 bytes.
+
+## 2026-11-03 (build 3681) — The coordinate library measures no distance from a parent-relative pose; the empty undo slot's texts `[TELEPORT-RECALL-PARENTREL]`
+
+- **The library's Dist column** no longer measures from a position that is not world coordinates: on a
+  parent-relative read it shows "—".
+- **An empty Last Position** reads "(none yet — auto-saved just before a jump)", and Recall last there says the slot
+  is saved before a jump unless that position could not be read in world coordinates. Both used to say every jump
+  saves it.
+- **Checked live on DumperTest Shipping, build 3681:** a fresh launch showed the new placeholder; with the pawn
+  attached and its world read failing, the Dist column showed "—" (0 and 1,432 when healthy); a jump in that state
+  left the undo slot empty before, after and after the game resumed.
+- Tests: C# 7,332 total, 0 failed, 1 skipped; 37 gates. AOT UI 61,632,512 bytes.
+
+## 2026-11-03 (build 3680) — Recall, Force and TP facing refuse a position that is not world coordinates; the undo slot keeps the previous one `[TELEPORT-RECALL-PARENTREL]`
+
+When the pawn rides a vehicle or mount and its world position cannot be read, the dumper falls back to its position
+relative to that parent (the ⚠ parent-relative chip). Those numbers are not world coordinates, and teleporting to
+them sends the pawn somewhere unrelated, often under the map.
+
+- **Recall and Force refuse a marker saved from such a read.** Force overrides only the "saved on another map"
+  check, which can be wrong; nothing makes relative numbers world coordinates. Nothing moves, and the marker save
+  already says Recall and Force will refuse it.
+- **TP facing direction refuses to step from such a read**: there is no world position to step from.
+- **Recall last never returns to such a read.** The undo slot keeps its previous position instead (the
+  maintainer's option B); the jump itself still runs.
+- **Fill from current pos, Save current pos and Update from current** refuse such a read: the coordinate boxes and a
+  library entry cannot carry the flag, and they are sent on as world coordinates.
+- **CE:** the Recall marker and TP facing records name the refusal; a record generated earlier shows "failed (code
+  -16)".
+- **Checked live on DumperTest Shipping, build 3680:**
+  - **DLL** (`recall_parentrel_check.py`, 9/9): Recall, Force and TP facing answered -16 and the undo slot did not
+    change; a jump made while the position read was parent-relative left the undo slot at its previous world
+    position.
+  - **UI:** each refusal showed its sentence; the library stayed at 5 entries; the Last Position row did not change.
+  - **CE:** the Recall marker and TP facing records showed their refusals.
+- Tests: dll_core_test 1,413 checks and dll_helpers_test 3,732, 0 failures; C# 7,330 total, 0 failed, 1 skipped;
+  37 gates. AOT UI 61,630,976 bytes.
+
+## 2026-11-03 (no build change) — The publish build's two test-target warnings `[BUILD-WARN-C4456-C4819]`
+
+- `dll_helpers_test`: C4456, an inner `s` in the Lager window test hid the outer one; renamed.
+- The three `owncopy_*` fixtures for `dll_core_test` were the only C++ targets built without `/utf-8`. They include
+  `Mimic.h`, whose comments are UTF-8, so a zh-TW (code page 950) machine warned C4819. They now take `/utf-8` like
+  every other target.
+- Test targets only: the DLL, the proxies and the UI are unchanged.
+
+## 2026-11-03 (build 3679) — A refused Console run keeps the selection; the Debug Camera Force and a run never overlap `[CONSOLE-ROWRUN-SELECTED]`
+
+- **A refused row Run leaves the selection** on the row that is still running.
+- **The refusal reads "⏳ … was not sent — a Console command is still running. Wait for its result first."** It no
+  longer calls the running command "another": it can be the same command, started a second way. And it no longer
+  says to run it again.
+- **The Debug Camera Force On / Off and a Console run no longer overlap.** Each refuses while the other is in flight:
+  both queue a toggle on a busy game thread, and two toggles cancel out.
+- **Correction to build 3678's entry:** "one command at a time" holds only while the first call is in flight, up to
+  the 5 s dispatch timeout. After that the command can still be queued (the status line says so), and a second run
+  is sent behind it. In 3678 the Force and a run could also still overlap; 3679 closes that.
+- **Checked live on DumperTest58 Development, build 3679, with its game thread suspended:**
+  - During a ToggleDebugCamera run, another row's Run said it was not sent, and the selection stayed on
+    ToggleDebugCamera. Force On was refused the same way.
+  - During a Force OFF, the ToggleDebugCamera row's Run was refused, and Recent invocations gained nothing.
+  - Each time, one toggle drained once the thread resumed.
+- Tests: C# 7,314 total, 0 failed, 1 skipped; 37 gates. AOT UI 61,621,248 bytes.
+
+## 2026-11-03 (build 3678) — The Console sends one command at a time `[CONSOLE-ROWRUN-SELECTED]` `[RIG-PIPE-DOUBLE-CONNECT]`
+
+- **No Console run is sent while another is still running.** A row's Run button or a history replay used to send a
+  second command while the first was still waiting on a busy game thread. A command that times out stays queued and
+  still runs, so the second one could run it twice. Now the Console says "⏳ … was not sent" and sends nothing.
+- **Checked live on DumperTest58 Development, build 3678, with its game thread suspended:** Run Selected on
+  ToggleDebugCamera, then the row's Run a second later, said it was not sent. The first answered -5 (still queued)
+  after the 5 s timeout, Recent invocations held one entry, and once the thread resumed the camera was ON: one toggle,
+  not two.
+- **Tools:** a pipe rig that reuses its client after its handle was closed now reopens it instead of reading the
+  dead handle, and ten more rigs stopped opening the pipe twice.
+- Tests: C# 7,311 total, 0 failed, 1 skipped; 37 gates. AOT UI 61,620,224 bytes.
+
+## 2026-11-03 (build 3677) — A Console row's Run button runs its own row `[CONSOLE-ROWRUN-SELECTED]` `[RIG-PIPE-DOUBLE-CONNECT]`
+
+- **A Console row's Run button runs that row.** It used to run the row that was *selected*, and clicking the button
+  does not select its row. So with nothing selected it only said "Pick an exec command from the list first.", and with
+  another row selected it ran that other command. Present since build 731. Now it runs its own row and selects it;
+  the toolbar's Run Selected is unchanged.
+- **Checked live on DumperTest58 Development, build 3677:** with nothing selected, the ToggleDebugCamera row's Run
+  ran it on the live CheatManager. With `PlayerController::Camera` selected, the same button ran ToggleDebugCamera
+  again (pinned), and Camera's parameter dialog did not open.
+- **Tools:** the pipe rigs no longer open a second pipe handle, which left no pipe instance free while the UI was
+  connected. `pipe_client.py --selftest` is now a gate (37).
+- Tests: C# 7,309 total, 0 failed, 1 skipped; 37 gates. AOT UI 61,619,712 bytes.
+
+## 2026-11-03 (build 3676) — A function that is not static, run on a class default object or another template, is warned about; class lookups never take a template; mailbox contract 7 `[INVOKE-NONSTATIC-ON-CDO]` `[OPEN-CENSUS-2026-10-28]`
+
+- **Warn, never refuse.** When an invoke runs a function that is not static on a class default object, one of its
+  default subobjects, or another template (such as a Blueprint's component template), it still runs, and you are
+  told. A game's own commands often work there, so nothing is blocked.
+  - **Live Walker / param dialog:** a ⚠ line under the result names the object and what it is a template of.
+  - **Console:** the status says so, and the Console no longer reuses ("pins") such an object.
+  - **Debug Camera Force On / Off:** says when the toggle targets the CheatManager's class default object, which
+    happens when there is no live CheatManager (usual in a Shipping build).
+  - **CE records** (INV, AA(Baked), and scripts using the invoke helper): print the warning even with `UE5_DEBUG`
+    off, and keep the Lua Engine window open. The Debug Camera record adds it to the message of an ON that did not
+    take or is queued.
+- **"An instance of class X" never lands on a template.** A component class used to resolve to a component of some
+  class default object; it now takes the live component.
+- **Mailbox contract 7** (minimum still 1): every saved .CT keeps working. `ue5_invoke_helper.lua` 1.6 reads the
+  warning only from a DLL that publishes it.
+- **Checked live, build 3676:**
+  - **The pipe and the mailbox** (`invoke_template_live.py`): all 15 checks pass on DumperTest Shipping (5.4),
+    DumperTest58 Development (5.8) and UE427_3rdPerson Shipping (4.27). On 3675 every component class had landed
+    on a default subobject; on 3676 each lands on the live one.
+  - **The param dialog:** `K2_GetActorLocation` on `Default__Actor` showed the warning. `GetMaxAcceleration` on the
+    pawn's live movement component returned 1500 with no warning; on a template's it returned 2048 with the warning.
+    A static function on `Default__KismetSystemLibrary` showed none.
+  - **CE:** the INV and AA(Baked) records for a class with no live object printed the warning and stayed open; the
+    INV record for a live object printed nothing and closed.
+  - **Console and Debug Camera** (DumperTest58 Development, a live CheatManager): ToggleDebugCamera named its
+    CheatManager, then ran pinned on it; Force On / Off carried no note.
+  - **BugItGo's UI and CE halves, from build 3675** (DumperTest Shipping, a parent-relative pose staged with l78):
+    Copy as BugItGo refused, emptied the Run field and left the clipboard alone. The CE BugIt record warned that
+    BugItGo will refuse the pose; the BugItGo record refused it, and the pawn did not move.
+- Tests: dll_core_test 1,413 checks and dll_helpers_test 3,723, 0 failures; C# 7,306 total, 0 failed, 1 skipped;
+  36 gates. AOT UI 61,614,592 bytes.
+
+## 2026-11-03 (build 3675) — BugItGo refuses a parent-relative BugIt; "an instance of class X" picks by derivation; mailbox contract 6 `[TELEPORT-BUGITGO-PARENTREL]` `[FINDINSTANCE-SUBSTRING-USERFACING]` `[OPEN-CENSUS-2026-10-28]`
+
+- **BugItGo no longer drives a vehicle-relative pose in as world coordinates.**
+  - A BugIt taken while the pawn is attached and its world position cannot be read stores numbers relative to the
+    parent (vehicle, mount, platform). The CE BugItGo record now refuses it: nothing moves, and the "last" slot is not
+    touched. The record says why. The BugIt record also warns that BugItGo will refuse that pose.
+  - The UI's own pair: **Copy as BugItGo** copies nothing on such a read and empties the Run field, since a
+    `BugItGo X Y Z` string cannot carry the flag.
+  - Marker Recall and Recall last still accept such a pose; that is filed as `[TELEPORT-RECALL-PARENTREL]`.
+- **"An instance of class X" picks the right object.** The Console's exec runs, CE scripts (FIND_INSTANCE,
+  invokeUFunction) and the C ABI lookup used to take the first object whose class NAME merely contained the text. Now:
+  - the first live object of that class or a subclass;
+  - an object the Debug Camera controller is or owns, only when no other is live;
+  - else the class's own default object;
+  - and a name no class has is still matched as part of a class name, as before.
+  So "CheatManager" no longer lands on a cheat extension or on the Debug Camera's own CheatManager, and "Actor" no
+  longer lands on an ActorChannel.
+- **The Console says which object it used** (name and class), warns when it is a class default object or the Debug
+  Camera's, and keeps reusing ("pins") only a live object.
+- **Mailbox contract 6** (minimum still 1): every saved .CT keeps working. A script generated now refuses an older DLL
+  that would still guess.
+- **Checked live on DumperTest Shipping, build 3674 against 3675:**
+  - **BugItGo.** On 3674 it moved the pawn 1,461.7 uu to the parent-relative numbers read as world coordinates. On
+    3675 it answered -16 and the pawn moved 0.0 uu.
+  - **Class lookup.** On 3674, "Actor" took `Default__ActorChannel` ("Function not found") and the mailbox's
+    "CheatManager" took `Default__CheatManagerExtension`. On 3675 those are a live `DirectionalLight` and
+    `Default__CheatManager`, and all 12 checks pass.
+
+## 2026-11-03 (build 3674) — The .usmap writes an enum's real underlying type, signedness included `[USMAP-ENUM-SIGNEDNESS]` `[OPEN-CENSUS-2026-10-28]`
+
+The .usmap took an enum property's underlying integer type from its size alone, so the width was right but the sign
+could be wrong: a `: int8` enum came out as a byte, and a `: uint32` one as a signed int. Both canonical .usmap writers
+use the property's own underlying type.
+
+- **The DLL reads it.** `walk_class` (and `walk_class_batch`, and Dump All, which share its encoder) sends an enum
+  property's underlying type as `enum_underlying`. It is read only after the enum itself was read and checked, and only
+  when it names an integer type.
+- **The .usmap uses it** when its width agrees with the field's size. Otherwise (an older DLL, a read that did not
+  check out, a width that disagrees) it falls back to the size, as before.
+- **Checked live on 3674** (DumperTest Shipping, UE 5.4, `tools/verify/enum_underlying_pipe_check.py`): 7,696 classes
+  and structs, 3,558 enum fields. Every one carries a type whose width equals its size: 3,326 Byte, 221 Int, 7 UInt32,
+  4 Int8. The 11 UInt32 and Int8 fields are the ones the old guess got wrong. Their declarations in the engine source
+  agree: `EPanningMethod : int8`, `ENetObjectCountLimiterMode : uint32`.
+- Also checked live on 3673, recorded in the census rows: the Fly card's collision readout, Value Search refusing `inf`
+  but not a value left in a hidden box, and Detect Stealth Meter's found path.
+
+## 2026-11-03 (build 3673) — Review round 2 of the census pass: all 34 findings fixed `[FLY-REPORTS-WISH]` `[LEAD-LW-BACK-CACHED-ELEMENTS]` `[LEAD-BOOKMARK-SAMECLASS-RECYCLE]` `[VALUESCAN-NONFINITE-TARGET]` `[LOG-RESUME-LIVE-ROLLED]` `[UE4-USTRUCT-GIVEUP-STATS]` `[LEAD-PROPSEARCH-TOPTIONAL-LEAVES]` `[CEXPORT-ENUMNAMES-NOTE]` `[LEAD-DT-EXPORT-64ROWS]` `[LEAD-SECOND-UI-CRASHLOG]` `[SOLIDE-RELATED-STOPS]` `[UBEL-ASCII-FIRSTCHAR]` `[D4B-DELEGATEPAD-2026-09-09]` `[OPEN-CENSUS-2026-10-28]`
+
+A second adversarial review, six reviewers over the census pass's later fixes and round 1's follow-ups, found 34 issues:
+2 MED, 16 LOW, 16 INFO. Each was checked against the code, and every one is fixed, with a red test first where
+behaviour changed.
+
+- **The Fly card waits for the collision it asked for.** `fly_set` answers before the Fly worker applies noclip, so
+  every Fly ON with noclip said "noclip asked, collision still on". Measured on 3672, DumperTest Development: the pawn
+  stopped colliding 103 ms after the reply. The card now re-reads for up to about a second, and it reports
+  "noclip off, collision still off" in the other direction.
+- **Live Walker: re-entering a container view.**
+  - Back / Forward / a crumb jump no longer wait for the owner re-read, and no longer wipe the navigation's own status
+    line.
+  - An owner that is gone, is another object, or lost the field drops the rows and says why, instead of leaving them
+    editable. Refresh inside the view does the same.
+  - A pointer slot rewritten in place shows its new target.
+- **Bookmarks.** A container view whose owner's address holds another object is caught. A bookmarked struct is checked
+  through the object holding it: an inline struct of a recycled owner reads stale, and a DataTable row whose bytes
+  changed does not.
+- **Value Search.** The non-finite check reads only the boxes the scan type sends, so a leftover hidden value no longer
+  blocks a scan. It also refuses C99 spellings the DLL reads as infinite (`inf`, `nan(ind)`).
+- **Property Search.** Copy Offset refuses a deep row, as Freeze and Force do, and the refusal now says the real reason.
+- **UE4 offset give-up.** The Next probe no longer mistakes OuterPrivate (a case-preserving 0x28) for UField::Next.
+- **Exports.**
+  - A DataTable's row enums are covered by the enum-names note: `walk_datatable_rows` carries `enum_names_failed`.
+  - The note says enum fields show as plain numbers, not that their dropdowns are empty.
+  - The AOB fallback note no longer hides the limit warning.
+- **Others.**
+  - Log compression holds a game folder's newest rolled UI mirror log like its slot.
+  - The UI's single-instance mutex is taken inside Main's crash.log catch. A mutex an elevated instance holds now reads
+    as "another instance".
+  - Wirbel's struct probe accepts a CJK name, as Ubel does.
+  - Stealth Meter's stop line comes from en.axaml.
+  - `pipe-protocol.md` documents `stops`, `fly_set` and `fly_get_state`.
+- **Checked live on 3672** (DLL side, `tools/verify/census_pass2_pipe_checks.py`): a delegate row's hex holds the whole
+  value, with no space on DumperTest Shipping and the 8-byte detector, then a space, on Development;
+  `find_stealth_meter` carries `stops`; the Fly collision reads 1, then 0 with noclip, then 1.
+
+## 2026-11-02 (build 3672) — The census pass's second half: delegate hex, a STATS UE4 give-up, bookmarks, the pipe reader `[D4B-DELEGATEPAD-2026-09-09]` `[UE4-USTRUCT-GIVEUP-STATS]` `[LEAD-PROPSEARCH-TOPTIONAL-LEAVES]` `[LEAD-BOOKMARK-SAMECLASS-RECYCLE]` `[TRACE-UI-READ-SPEED]` `[LEAD-LW-BACK-CACHED-ELEMENTS]` `[LEAD-USMAP-UDS-SHADOW]` `[UBEL-ASCII-FIRSTCHAR]` `[VALUESCAN-NONFINITE-TARGET]` `[CSX-LONG-ELEMENT-LABEL]` `[LEAD-KEYWORD-DROPDOWN-FIRST-CLICK]` `[SOLIDE-RELATED-STOPS]` `[FLY-REPORTS-WISH]` `[LOG-RESUME-LIVE-ROLLED]` `[LEAD-LW-INPLACE-SEARCHCOUNT]` `[OPEN-CENSUS-2026-10-28]`
+
+The census fix pass went on through the remaining open items, one red and one green commit each.
+
+- **A delegate row's hex holds the whole value.** On a checked build that means the 8-byte access detector, a space,
+  then the payload; Shipping's hex is unchanged.
+- **A STATS UE4 give-up** (Development / DebugGame 4.11–4.24) measures UField::Next on the property chains before it
+  ships the UStruct head. Development UE423_Flying measured live on 3671: Next 0x30, head 48/50/58/60.
+- **Live Walker.**
+  - Back / Forward / a crumb jump into a container view re-read the owner and re-render when the container moved.
+  - A bookmark on its saved address is not claimed by another instance of its class.
+  - Property Search's Freeze and Force refuse a deep row themselves.
+- **Opening a large Live Funcs trace.** The pipe's reply reader now reads 64 KB at a time, not 1 KB. Offline, the read
+  loop went from about 60 to about 600 MB/s.
+- **.usmap.** A super that a name-keyed reader cannot reach is written as none, with the whole chain kept. That covers
+  UE 5's same-named AnimBlueprintGeneratedConstantData pair, and CUE4Parse keeps one struct per name.
+- **Earlier in the pass, built here for the first time:**
+  - CJK-first names pass the DLL's name guards.
+  - Value Search refuses non-finite targets.
+  - CSX keeps a long element label's start.
+  - The keyword dropdown's first click reaches its button.
+  - Detect Stealth Meter says when its search stopped short.
+  - The Fly card reports the collision it observed.
+  - Log compression treats a live rolled log as live.
+  - An in-place refresh counts its search matches.
+- **Chased, no code change.**
+  - `walk_class` against `walk_class_batch`: 1000 of 1000 classes agree on UE 4.23 Shipping and Development; the old
+    zero was a misreading of the reply's shape.
+  - The G12/G3 log contradiction was a deliberately staged `-dirty` build (working-lessons 1.ap).
+  - A second DLL copy's auto-start was re-derived; its fix is the maintainer's call.
+
+## 2026-11-02 (build 3671) — Eleven census fixes: exports say what they left out, rows without an address stay put, a pinned Console run checks its object `[LEAD-LW-NULLROW-HEX]` `[LEAD-CONSOLE-PIN-EXPECT-CLASS]` `[LEAD-LW-SYNTH-CONTAINER-STRUCT-OWNER]` `[LEAD-BOOKMARK-DT-ROWVIEW-NOT-LAST]` `[DISSECT-SPARSE-DELEGATE-WIDTH]` `[LEAD-DT-EXPORT-64ROWS]` `[CEXPORT-NESTED-TRUNC-NOTE]` `[CEXPORT-STRIDE-NOTE]` `[CEXPORT-ENUMNAMES-NOTE]` `[CLASSPIVOT-DT-STARTUP-LOG]` `[LEAD-SECOND-UI-CRASHLOG]` `[OPEN-CENSUS-2026-10-28]`
+
+The maintainer asked for the census's open bugs to be fixed one after another. Each item is a red test commit and a
+green fix commit, and each census row names them.
+
+- **Live Walker: HEX and +CE on a row with no address of its own do nothing, and say why.** A DataTable row whose row
+  pointer reads null moved CE's hex view to 0 and added a record at 0x0. Addr, HEX, +CE and +CE Field (flat) now share
+  one check.
+- **The Console's pinned run checks the object is still the one it pinned.** The invoke reply names the class read at
+  the address (`instance_class_addr`, a new optional reply key). A pinned run sends it back as `expect_class_addr`, so
+  an object freed and its memory reused by another class is re-resolved instead of run.
+- **Bookmarks.**
+  - A bookmark file whose Array / Map / Set sits in an inline struct restores the container's elements, on load and
+    on Back. Before, the struct's bytes were read as a UObject.
+  - A bookmark saved below a DataTable row view restores that view's rows too, guarded by the row struct the next
+    crumb was drilled into. If the table changed, the load says so, and Back says the view did not restore.
+- **CE Structure Dissect (`ue5_dissect.lua`) draws a sparse delegate as its one bIsBound byte**, not a 16-byte pointer
+  over the fields after it.
+- **Exports say what they left out.**
+  - Copy CE XML and CSX name a table cut to its first page: "Only the first page of a table's rows is read: RowMap
+    (DataTable: 100 rows, 64 exported)".
+  - They also name a container cut at the Array Limit inside a struct or pointer target the export walked. One cut met
+    in many objects is said once, "in N objects", and past five the rest are counted.
+  - Copy CE Field of rows you selected reports nothing as cut, unless you selected every loaded row.
+  - When the object-array stride is a guess, each CE table and CSX opens with the badge's words as a comment. The
+    AOB-wrapped export now also carries the packed-layout note it lacked.
+  - When UEnum::Names was never found on a build, an export holding an enum field says why its dropdowns are empty.
+    Walk replies carry `enum_names_failed`, and `enum_addr` goes out even with no entries.
+- **Class Pivot left on the DataTable source no longer logs an error at start-up**, before any connection.
+- **A second UI launch no longer overwrites crash.log.** It raises the first window and exits before Avalonia starts.
+- **Review round 1.** One adversarial round over the first nine fixes found 25 issues: none HIGH or MED, all LOW or INFO,
+  each confirmed by a refuter. Every one is fixed. The two that changed behaviour:
+  - Select-all with Copy CE Field had lost the cut warning.
+  - The enum note never fired for TEnumAsByte, and missed a latch that the export's own walk set.
+- **Checked live on 3671.**
+  - DumperTest Shipping, UE 5.4, through the pipe (`tools/verify/census_pass_pipe_checks.py`):
+    - an invoke by name answers `instance_class_addr` equal to the object's class, and the pinned run with it ran;
+    - 11 enum fields carry `enum_addr` with their entries, and there is no latch;
+    - DumperTestTable_Big has 100 rows, and one page returns 64.
+  - DumperTest Shipping, in the UI:
+    - Copy CE XML of DumperTestTable_Big ends "...RowMap (DataTable: 100 rows, 64 exported)";
+    - in its rows view, Copy CE Field of one row says nothing, and Ctrl+A gives the warning;
+    - a Console run of AISystem::AIIgnorePlayers, then a pinned rerun, sent `expect_class_addr` = the reply's
+      `instance_class_addr` and answered "ProcessEvent OK";
+    - Class Pivot switched to DataTable before Connect logged nothing, and the connect listed both tables.
+  - `tools/verify/second_instance_crashlog.py` (no game): the second launch exited 1 in 0.2 s, with crash.log's bytes
+    and timestamp unchanged.
+- **Not checked live.**
+  - These have no fixture: a null DataTable row, an inline-struct-owned container in a bookmark file, a bookmark below a
+    row view, a guessed stride, a build whose UEnum::Names is not found, a CJK-first name.
+  - The dissect's sparse row was checked only on CE's own Lua 5.3, not drawn in CE.
+  - Push to CE Structure Dissect carries no header note into CE: its parser drops every XML comment.
+- Tests: dll_core_test 1,363 checks and dll_helpers_test 3,692, 0 failures; C# 7,154 total, 0 failed, 1 skipped;
+  headless UI 69; dissect_test.lua 426; 36 gates. AOT UI 61,506,560 bytes.
+
 ## 2026-10-29 (build 3670) — Review round 5 of the container-view fix `[LW-CONTAINER-VIEW-CLASSNAME-ACTIONS]`
 
 - **A DataTable rows view keeps one crumb field however you reached it.** Since 3669 the RowMap field a drill hands

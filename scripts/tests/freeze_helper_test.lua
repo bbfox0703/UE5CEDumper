@@ -209,13 +209,15 @@ local function installMailbox(opts)
   LAST_SCOPE = nil   -- reset here, not in resetWorld(): this local is declared later
   SYMBOLS['g_invokeMailbox']   = MB
   SYMBOLS['g_mailboxContract'] = CONTRACT_MB
-  -- Contract block: magic, current, minimum. The helper bakes UE5_SCRIPT_CONTRACT=5
+  -- Contract block: magic, current, minimum. The helper bakes UE5_SCRIPT_CONTRACT=9
   -- (3 = the LI_IN_DERIVED scope flag + LI_OUT_TRUNCATED; 4 = the teleport pose flags byte; 5 =
-  -- CMD_OFFSETS_VERDICT -- this helper sends none of those, it bakes whatever every emitted script
-  -- bakes). Left BEHIND the helper, every case expecting a freeze is refused as "the DLL is older than
-  -- this script" -- which is exactly what happened at the 3 -> 4 bump (review 5 of 76f93b94).
+  -- CMD_OFFSETS_VERDICT; 6 = FIND_INSTANCE's derivation pick; 7 = the invoke template warning; 8 = LIST_INSTANCES
+  -- lists no template; 9 = FIND_INSTANCE hands over no destroyed object -- this helper uses 3 and 8, and bakes
+  -- whatever every emitted script bakes). Left BEHIND the helper, every case expecting a freeze is
+  -- refused as "the DLL is older than this script" -- which is exactly what happened at the 3 -> 4 bump
+  -- (review 5 of 76f93b94).
   MEM[CONTRACT_MB + 0x00] = 1127564629
-  MEM[CONTRACT_MB + 0x04] = opts.contractCur or 5
+  MEM[CONTRACT_MB + 0x04] = opts.contractCur or 9
   MEM[CONTRACT_MB + 0x08] = opts.contractMin or 1
 
   MAILBOX_ON_WRITE = function(addr, value)
@@ -866,6 +868,21 @@ do
   eq(ok, false, 'refused')
   check(type(err) == 'string' and err:find('update UE5Dumper.dll', 1, true) ~= nil,
         'SCOPE: and it says which side to update', tostring(err))
+end
+
+case('TEMPLATES: a contract-7 DLL, which still lists templates, is REFUSED')
+do
+  -- [LISTINSTANCES-KEEPS-TEMPLATES] A contract-7 DLL's LIST_INSTANCES lists a class default object's default
+  -- subobjects and Blueprint component templates as instances; a freeze written into one reaches every later spawn,
+  -- and this helper never restores. Refused before anything is written, as SCOPE refuses a contract-2 DLL.
+  resetWorld()
+  installMailbox{ pages = { { 0x2000 } }, contractCur = 7 }
+  local h = freezeProperty{ className = 'CharacterMovementComponent', propOffset = 0x20, valueType = 'int32', value = 1 }
+  local ok, err = h.start()
+  eq(ok, false, 'refused')
+  check(type(err) == 'string' and err:find('update UE5Dumper.dll', 1, true) ~= nil,
+        'TEMPLATES: and it says which side to update', tostring(err))
+  eq(#WRITES, 0, 'nothing was written')
 end
 
 -- ============================================================

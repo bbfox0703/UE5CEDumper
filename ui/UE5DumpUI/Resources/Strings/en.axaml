@@ -268,12 +268,26 @@
     <sys:String x:Key="str.LiveWalker.MatchNext">▼</sys:String>
     <!-- [AOBM-LIVEWALKER-HEX-SILENT] What the HEX status line calls a pointer field's target ({0} = the field). -->
     <sys:String x:Key="str.LiveWalker.PtrTargetLabel">{0} target</sys:String>
+    <!-- [MAINWINDOW-NAVIGATE-EXACT-NAME] {0} = the class, {1} = GWorld or GameEngine -->
+    <sys:String x:Key="str.LiveWalker.NoLiveInstanceToLocate">No live instance of {0} or of a subclass to locate in {1}.</sys:String>
+    <!-- [MAINWINDOW-NAVIGATE-EXACT-NAME] the same, when an injected DLL older than find_live_instance answered by exact name -->
+    <sys:String x:Key="str.LiveWalker.NoLiveInstanceToLocateLegacy">No live object of class {0} itself to locate in {1}: the injected DLL predates find_live_instance, so no subclass object was looked for, and what it finds may be a template (a default object's subobject). Close the game, then Update All on the Proxy Deploy tab, or inject the current DLL into a freshly started game.</sys:String>
+    <!-- [MAINWINDOW-NAVIGATE-EXACT-NAME] {0} = the object, {1} = its class, {2} = the class the function's row names, {3} = the function -->
+    <sys:String x:Key="str.Main.NavigatedToSubclass">Opened {0} ({1}, a subclass of {2}): {3} is declared on {2}, and Live Walker lists {1}'s own functions, not those it inherits from {2}.</sys:String>
+    <!-- [MAINWINDOW-NAVIGATE-EXACT-NAME] {0} = the class; an injected DLL older than find_live_instance answered -->
+    <sys:String x:Key="str.Main.LiveLookupLegacy">⚠ {0} was looked up by its exact class name only: the injected DLL predates find_live_instance, so no subclass object was looked for, and the object may be a template (a default object's subobject). Close the game, then Update All on the Proxy Deploy tab, or inject the current DLL into a freshly started game.</sys:String>
+    <!-- [MAINWINDOW-NAVIGATE-EXACT-NAME] a Locate's top bar: {0} = the object, {1} = its class, {2} = GWorld or GameEngine -->
+    <sys:String x:Key="str.Main.Locating">Locating {0} ({1}) in {2}.</sys:String>
     <!-- [WALK-NULLCLASS-SILENT] The header names no readable class: freed, or never an object (Go takes any address). -->
     <sys:String x:Key="str.LiveWalker.NoHeader">⚠ No UObject header at this address — freed, or not an object. Re-open it from 🌍 GWorld or the finder.</sys:String>
     <!-- [P1-WALK-UNREADABLE] The DLL could not read the object's header at all. -->
     <sys:String x:Key="str.LiveWalker.Unreadable">⚠ This object is no longer readable (freed?) — re-open it from 🌍 GWorld or the finder.</sys:String>
     <!-- The DLL judged the class pointer recycled: the instance was freed and its slot reused. -->
     <sys:String x:Key="str.LiveWalker.Stale">⚠ This object appears to have been freed/recycled — re-open it from 🌍 GWorld or the finder.</sys:String>
+    <!-- [LEAD-LW-BACK-CACHED-ELEMENTS] A container view whose owner, read again, no longer has the field. {0} = field, {1} = owner. -->
+    <sys:String x:Key="str.LiveWalker.ContainerFieldGone">⚠ {0} is no longer on {1}, so its element rows were dropped — re-open it from 🌍 GWorld or the finder.</sys:String>
+    <!-- [LEAD-BOOKMARK-SAMECLASS-RECYCLE] A container view whose owner's address holds another object. {0} = now, {1} = was, {2} = field. -->
+    <sys:String x:Key="str.LiveWalker.ContainerOwnerReplaced">⚠ {0} now sits where {1} was, so {2}'s element rows were dropped — re-open it from 🌍 GWorld or the finder.</sys:String>
     <sys:String x:Key="str.LiveWalker.DefinitionView">ℹ This is a type definition (its member layout), not a live object: its rows have no address and no value, so they cannot be edited, frozen or exported as data.</sys:String>
     <sys:String x:Key="str.Walk.DefinitionNoData">⚠ {0}: nothing done — this is a type definition (its member layout), not a live object, so there is no data at these offsets.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.MatchPrev">Jump to the previous matching field (wraps to the last match)</sys:String>
@@ -1004,6 +1018,11 @@
     <sys:String x:Key="str.PropertySearch.TypeHint">Type filter (start typing — e.g. opt, weak)</sys:String>
     <sys:String x:Key="str.PropertySearch.ResultFilterLabel">Filter results:</sys:String>
     <sys:String x:Key="str.PropertySearch.ResultFilterHint">Refine current results (no re-query)</sys:String>
+    <!-- [PROPSEARCH-FREEZE-STALE-AOBMAKER] {0} = why the plugin is unreachable (str.AobMaker.Unavailable.*) -->
+    <sys:String x:Key="str.PropertySearch.FreezeNotReachable">Freeze script not sent: {0}</sys:String>
+    <sys:String x:Key="str.PropertySearch.FreezeTimedOut">⚠ No reply from Cheat Engine for the Freeze script (it timed out, or the pipe closed): it may still have been added. Check Cheat Engine's address list before sending it again.</sys:String>
+    <!-- {0} = the plugin's reason, its closing period dropped -->
+    <sys:String x:Key="str.PropertySearch.FreezeNotAdded">⚠ The Freeze script was not added to Cheat Engine: {0}.</sys:String>
     <sys:String x:Key="str.PropertySearch.Search">Search</sys:String>
     <sys:String x:Key="str.PropertySearch.GameOnly">Game classes only</sys:String>
     <sys:String x:Key="str.PropertySearch.Deep">Deep (structs/containers)</sys:String>
@@ -1016,6 +1035,8 @@
     <sys:String x:Key="str.PropertySearch.ForceOff">Force OFF</sys:String>
     <sys:String x:Key="str.PropertySearch.ForceNull">Force → null</sys:String>
     <sys:String x:Key="str.PropertySearch.ForceValue">Force value…</sys:String>
+    <!-- [LEAD-PROPSEARCH-TOPTIONAL-LEAVES] Copy Offset / Freeze / Force on a deep (nested) row. {0} = the dotted path. -->
+    <sys:String x:Key="str.PropertySearch.NestedNoAction">Not done: {0} is a nested field. Copy Offset, Freeze and Force act on a class's own fields: past a container its offset is the element's, and inside an optional it may hold no value. List the class's instances with finder, then drill the path in Live Walker.</sys:String>
     <sys:String x:Key="str.PropertySearch.ForcedHeader">Forced fields:</sys:String>
     <sys:String x:Key="str.PropertySearch.ForcedClearAll">Clear all</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.ForcedClearAll">Release every forced-field hold (best-effort restore each numeric field's captured base; a pointer forced to null is not put back).</sys:String>
@@ -1089,7 +1110,7 @@
     <sys:String x:Key="str.Tip.IF.GameplayActions">Opt-in (default off). Fold an extra keyword pack into scoring for character-control + world-interaction + shop verbs the default buckets skip — Dash / Dodge / Roll / Slide / Climb / Interact / Use / Open / Buy / Sell / Shop / Vendor / Merchant / Trade / Purchase. Lets a plain OpenShop() / Dash() / Interact() clear the threshold and show up (tip: combine with a name filter like "shop" or "buy"). Re-scores the loaded set in place — no reload needed. Noisier by design; turn off to return to the cheat-value default.</sys:String>
     <sys:String x:Key="str.Tip.IF.CallableOnly">Filter (default off): show only functions flagged BlueprintCallable or Exec. Gameplay/control/shop entry points are almost always one of these two, and both flags survive cooking — so this hides native getters/setters/engine plumbing noise. Pairs well with "Gameplay Actions" + "Show All" to browse callable action functions. Pure display filter — doesn't change scores.</sys:String>
     <sys:String x:Key="str.Tip.IF.Props">List the properties this function reads/writes. Blueprint functions: an exact bytecode scan. Native (C++) functions: a heuristic recovered from the machine code, shown with a Conf column (no analysis is possible only when this build cannot locate the function's native code).</sys:String>
-    <sys:String x:Key="str.Tip.IF.OpenLive">Try to open this function in Live Walker. If the class has no live (non-CDO) instance, falls back to the Class Struct tab. Auto-expands the Functions section and selects the target row.</sys:String>
+    <sys:String x:Key="str.Tip.IF.OpenLive">Try to open this function in Live Walker, on a live object of its class or a subclass. If none is live, falls back to the Class Struct tab. Auto-expands the Functions section and selects the target row — when the object opened is of a subclass, an inherited function is not in its list, and the status line says so.</sys:String>
     <sys:String x:Key="str.Tip.IF.LocateGWorld">Locate in GWorld: find a live instance of this function's class, then show the shortest pointer path from GWorld down to it in Live Walker (stops at the parent that points to it)</sys:String>
     <sys:String x:Key="str.Tip.IF.LocateGameEngine">Locate in GameEngine: find a live instance of this function's class, then show the shortest pointer path from the live UGameEngine down to it in Live Walker (stops at the parent that points to it). Reaches engine-layer objects the GWorld graph can't — for most world actors, use Locate in GWorld.</sys:String>
     <sys:String x:Key="str.Tip.IF.CopyAaScript">Open the Copy AA Script (Baked) dialog for this function. Output requires ue5_invoke_helper.lua embedded in your CE table (Tools -&gt; Export CE Helper Lua File...).</sys:String>
@@ -1428,7 +1449,7 @@
     <sys:String x:Key="str.Tip.LF.Reused">Another function used this address during the recording (the game freed one and loaded another in its place). The calls and the count at this address are both functions'; the name is the one read last.</sys:String>
     <sys:String x:Key="str.Tip.LF.Unloaded">The game unloaded this function after it fired (a closed UI, content streamed out). The name is the one it had at its first call; its address is no longer valid, so it cannot be ticked for the trace or opened in the disassembler.</sys:String>
     <sys:String x:Key="str.Tip.CT.Unloaded">The game unloaded this function after it fired (a closed UI, content streamed out): it was gone when this trace was read, which can be after Stop. The name is the one it had at its first call.</sys:String>
-    <sys:String x:Key="str.Tip.LF.OpenLive">Open this function in Live Walker on a live instance of its class (falls back to Class Struct if the class has no live instance). From there you can invoke it.</sys:String>
+    <sys:String x:Key="str.Tip.LF.OpenLive">Open this function in Live Walker on a live object of its class or a subclass (falls back to Class Struct when none is live). From there you can invoke it — unless the object is of a subclass that inherits the function: Live Walker lists a class's own functions, and the status line says so.</sys:String>
     <sys:String x:Key="str.Tip.LF.CopyName">Copy this function's name to the clipboard.</sys:String>
     <sys:String x:Key="str.Tip.LF.SetBaseline">Capture the CURRENT results as a baseline (an idle reference). With no baseline yet, record idle, then Set Baseline: Start → stand still a few seconds → Stop → Set Baseline. Then record the ACTION (open shop) and the list flips to a diff — functions that DIDN'T fire while idle ("NEW") rank to the top, so the action's function stops drowning under per-frame Tick/Update noise.</sys:String>
     <sys:String x:Key="str.Tip.LF.Diff">Show the "Δ vs base" column and rank new/increased functions first (needs a baseline). Turn off to rank by raw call count again.</sys:String>
@@ -1447,6 +1468,8 @@
     <sys:String x:Key="str.Con.Run">Run</sys:String>
     <sys:String x:Key="str.Con.RunSelected">Run Selected</sys:String>
     <sys:String x:Key="str.Con.RunRow">Run</sys:String>
+    <!-- [CONSOLE-ROWRUN-SELECTED] a run refused while another is in flight -->
+    <sys:String x:Key="str.Con.StillRunning">⏳ {0} was not sent — a Console command is still running. Wait for its result first.</sys:String>
     <sys:String x:Key="str.Con.OpenLive">Live</sys:String>
     <sys:String x:Key="str.Con.CopyAaScript">AA(B)</sys:String>
     <sys:String x:Key="str.Con.HistoryHeader">Recent invocations</sys:String>
@@ -1456,6 +1479,15 @@
          INSTANCE, not a missing body: docs/lessons-learned.md (the UCheatManager
          entry) measured the bodies intact in a Shipping EXE. -->
     <sys:String x:Key="str.Con.CheatManagerHint">⚠ On a Shipping build there is usually no live CheatManager, only its default object, so the engine's cheat commands report success (Result=0) but have no effect in game. Exec commands the game defines itself usually still work — use one of those to check that invoking works.</sys:String>
+    <!-- [FINDINSTANCE-SUBSTRING-USERFACING] the object a class name resolved to, after a Console run -->
+    <sys:String x:Key="str.Invoke.Pick.Object">on {0} ({1})</sys:String>
+    <sys:String x:Key="str.Invoke.Pick.ClassDefault">⚠ the object is {0}, the class default object: no live {1} exists, so an engine cheat command has no effect there (a command that does not use its owner may still work)</sys:String>
+    <sys:String x:Key="str.Invoke.Pick.DebugCameraOwned">⚠ the object is {0} ({1}), which belongs to the Debug Camera: no other live one exists</sys:String>
+    <!-- [INVOKE-NONSTATIC-ON-CDO] a function that is not static ran on a template -->
+    <sys:String x:Key="str.Invoke.Template.ClassDefault">⚠ {0} is the class default object of {1} (a template), not a live object: a function that is not static may do nothing there, or fail; one that does not use its object may still work</sys:String>
+    <sys:String x:Key="str.Invoke.Template.Subobject">⚠ {0} ({1}) is a template, part of {2}, not a live object: a function that is not static may do nothing there, or fail; one that does not use its object may still work</sys:String>
+    <!-- [MAINWINDOW-INVOKE-LIMIT1-CDO] the param dialog opened on a class, with no object -->
+    <sys:String x:Key="str.Invoke.Dialog.TargetByClass">Runs on a live {0} (or a subclass), found again at each FIRE; with none live, on its class default object.</sys:String>
     <sys:String x:Key="str.Tip.Con.Load">Scan every UFunction and surface those marked with UFUNCTION(exec) (FUNC_Exec=0x200). Many games leave these intact in cooked Shipping — they're the cheat surface the developer already curated.</sys:String>
     <sys:String x:Key="str.Tip.Con.GameOnly">When OFF (default), engine-side UCheatManager exec commands are included — usually what you want. Flip ON to see only game-specific exec commands.</sys:String>
     <sys:String x:Key="str.Tip.Con.ClearFilter">Clear the command-name filter and show the full list again.</sys:String>
@@ -1464,7 +1496,7 @@
     <sys:String x:Key="str.Tip.Con.RunCommand">Resolve the typed command against the loaded list and invoke. Match is case-insensitive exact funcName; first match wins if multiple classes implement the same name.</sys:String>
     <sys:String x:Key="str.Tip.Con.RunSelected">Invoke the currently selected row. Same code path as Run on a row.</sys:String>
     <sys:String x:Key="str.Tip.Con.RunRow">Invoke this exec command. No-arg commands run directly via pipe; commands with parameters open the InvokeParamDialog.</sys:String>
-    <sys:String x:Key="str.Tip.Con.OpenLive">Try to open the implementing class in Live Walker. Falls back to Class Struct on CDO-only classes (UCheatManager subclasses often have no live instance until a PlayerController spawns).</sys:String>
+    <sys:String x:Key="str.Tip.Con.OpenLive">Try to open a live object of the implementing class or a subclass in Live Walker. Falls back to Class Struct when none is live (a CheatManager is often not live until a PlayerController spawns). On a subclass's object the command is inherited, so it is not in Live Walker's list, and the status line says so.</sys:String>
     <sys:String x:Key="str.Tip.Con.CopyAaScript">Open the Copy AA Script (Baked) dialog for this exec command — useful when you want to bake the invoke into a CE Auto Assembler script for table sharing.</sys:String>
     <sys:String x:Key="str.Tip.Con.Replay">Re-run this command. Requires the discovery list to still be loaded (re-launch wipes the cache).</sys:String>
 
@@ -1484,7 +1516,7 @@
     <sys:String x:Key="str.Con.Col.Params">Params</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.State">Live Debug Camera state, read from the CheatManager's DebugCameraControllerRef member — the exact field ToggleDebugCamera branches on. ON = a DebugCameraController is active (next plain toggle would turn it OFF). Press ↻ to re-read.</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.Refresh">Re-read the live Debug Camera state from the CheatManager instance.</sys:String>
-    <sys:String x:Key="str.Tip.Con.DbgCam.ForceOn">Ensure Debug Camera is ON: read current state, and fire ToggleDebugCamera only if it is currently OFF. Idempotent — does nothing if already ON.</sys:String>
+    <sys:String x:Key="str.Tip.Con.DbgCam.ForceOn">Ensure Debug Camera is ON: read current state, and fire ToggleDebugCamera only if it is currently OFF. Idempotent — does nothing if already ON. Needs a live CheatManager: with none (UE 5 leaves it out of Shipping builds by default) nothing is sent, and the status says so.</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.ForceOff">Ensure Debug Camera is OFF: read current state, and fire ToggleDebugCamera only if it is currently ON. This is the reliable "turn it off" — plain Run just flips whatever state it's in.</sys:String>
     <!-- [DEBUGCAM-QUEUED-OFF-NOESCALATE] Force ON / OFF that timed out and stays queued (Console and Teleport cards).
          A queued OFF does not turn the camera off on stock UE 4.18-5.7, so it must not promise to run. -->
@@ -1493,6 +1525,14 @@
     <!-- [DBGCAM-OFF-OVER-QUEUED-ON] The DLL's -6: this Force was NOT sent, because an earlier one of the other direction is still queued. -->
     <sys:String x:Key="str.DbgCam.BlockedOn">⏳ Force ON was not sent — an earlier Force OFF is still queued (the game thread is busy). Press Force ON again once the game responds.</sys:String>
     <sys:String x:Key="str.DbgCam.BlockedOff">⏳ Force OFF was not sent — an earlier Force ON is still queued (the game thread is busy) and will turn the camera on. Press Force OFF again once the game responds.</sys:String>
+    <!-- [INVOKE-NONSTATIC-ON-CDO] a Force whose toggle targets the CheatManager's class default object. Only a DLL
+         from builds 3676-3681 says so: a newer one refuses that ON (str.DbgCam.NoLiveCheatManager). -->
+    <sys:String x:Key="str.DbgCam.OnTemplate">⚠ The toggle targets the CheatManager's class default object: there is no live CheatManager (usual in a Shipping build), and a toggle there does nothing.</sys:String>
+    <!-- [DEBUGCAM-FORCEON-CDO] the DLL's -17: a Force ON not sent, because no CheatManager is live; -1 is a failure,
+         never that case, and a state that reads -1 is a read that failed. -->
+    <sys:String x:Key="str.DbgCam.NoLiveCheatManager">⛔ Force ON was not sent — there is no live CheatManager, and ToggleDebugCamera does nothing on its class default object. UE 5 leaves it out of Shipping builds by default; elsewhere, enter gameplay first. The camera stays OFF.</sys:String>
+    <sys:String x:Key="str.DbgCam.ForceFailed">Force {0} failed: the Debug Camera state could not be read, or the toggle failed (see the DLL log).</sys:String>
+    <sys:String x:Key="str.DbgCam.StateUnknown">Debug Camera state unknown — the DLL could not read it (see the DLL log).</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.CopyCe">Generate a stateful CE memory-record AA Script (tick = camera ON, untick = camera OFF) — the same robust DLL path as Force On/Off. Self-contained: talks to the DLL mailbox directly, so NO ue5_invoke_helper.lua embed is needed (just UE5Dumper.dll injected). Ships to AOBMaker if connected, else the clipboard.</sys:String>
 
     <!-- Teleport panel (BugIt-style: marker save/recall + cursor teleport) -->
@@ -1534,8 +1574,20 @@
     <sys:String x:Key="str.TP.BugHint">Paste 'BugItGo X Y Z', 'X Y Z', or a ?BugLoc=(...)?BugRot=(...) string</sys:String>
     <!-- Copy as BugItGo fills the Run field whatever the clipboard does: a refused copy keeps that half and drops the claim. -->
     <sys:String x:Key="str.TP.BugItNotCopied">BugIt: {0} (filled the Run field; not copied, so do not paste: the clipboard still holds what was there before).</sys:String>
+    <!-- [TELEPORT-BUGITGO-PARENTREL] Copy as BugItGo on a parent-relative read -->
+    <sys:String x:Key="str.TP.BugItParentRelative">⚠ BugIt: not copied, and the Run field was emptied. The pose came from a PARENT-RELATIVE read (an attached pawn whose world position could not be read), so these numbers are not world coordinates, and BugItGo would drive the pawn there as if they were. Copy again while the game is responding (focus it, or turn on Keep Foreground), or once off the vehicle or mount.</sys:String>
     <sys:String x:Key="str.TP.LastHeader">Last Position (auto-saved)</sys:String>
-    <sys:String x:Key="str.TP.LastHint">The dumper records where you were just before every Recall / Force / BugItGo / cursor teleport, so you can undo a jump that went wrong. This slot is managed by the system — you can't save into it, only recall it.</sys:String>
+    <!-- [TELEPORT-RECALL-PARENTREL] Recall / Force / TP facing / Fill / the library on a parent-relative pose -->
+    <sys:String x:Key="str.TP.RecallParentRelative">⚠ Recall {0}: refused — the marker was saved from a PARENT-RELATIVE read (an attached pawn whose world position could not be read), so it is not world coordinates; Force refuses it too. Nothing moved. Save it again while the game is responding (focus it, or turn on Keep Foreground), or once off the vehicle or mount.</sys:String>
+    <sys:String x:Key="str.TP.ForceParentRelative">⚠ Force {0}: refused — the marker was saved from a PARENT-RELATIVE read (an attached pawn whose world position could not be read), so it is not world coordinates, and Force cannot change that. Nothing moved. Save it again while the game is responding (focus it, or turn on Keep Foreground), or once off the vehicle or mount.</sys:String>
+    <sys:String x:Key="str.TP.MarkerSavedParentRelative">Marker {0} saved — ⚠ from a PARENT-RELATIVE read: these are not world coordinates, so Recall and Force will refuse it. Save it again while the game is responding, or once off the vehicle or mount.</sys:String>
+    <sys:String x:Key="str.TP.RelParentRelative">⚠ TP facing: refused — the current position came from a PARENT-RELATIVE read (an attached pawn whose world position could not be read), so there is no world position to step from. Nothing moved. Try again while the game is responding (focus it, or turn on Keep Foreground), or once off the vehicle or mount.</sys:String>
+    <sys:String x:Key="str.TP.CoordFillParentRelative">⚠ Not filled: the current pose came from a PARENT-RELATIVE read (an attached pawn whose world position could not be read), so these numbers are not world coordinates. Fill again while the game is responding (focus it, or turn on Keep Foreground), or once off the vehicle or mount.</sys:String>
+    <sys:String x:Key="str.TP.LibParentRelative">⚠ The library was not changed: the current pose came from a PARENT-RELATIVE read (an attached pawn whose world position could not be read), so these numbers are not world coordinates. Try again while the game is responding (focus it, or turn on Keep Foreground), or once off the vehicle or mount.</sys:String>
+    <sys:String x:Key="str.TP.LastEmpty">No last position yet — it is auto-saved just before a jump, unless the position then could not be read in world coordinates (a parent-relative read on a vehicle or mount).</sys:String>
+    <sys:String x:Key="str.TP.LastEmptySummary">(none yet — auto-saved just before a jump)</sys:String>
+    <sys:String x:Key="str.TP.CodeParentRelative">Refused: the position came from a parent-relative read (an attached pawn), not world coordinates — nothing moved.</sys:String>
+    <sys:String x:Key="str.TP.LastHint">The dumper records where you were just before a jump (Recall, Force, BugItGo, cursor, TP facing, TP to coordinates, a library entry), so you can undo a jump that went wrong. When that position cannot be read in world coordinates (a parent-relative read on a vehicle or mount), the slot keeps the previous one. This slot is managed by the system — you can't save into it, only recall it.</sys:String>
     <sys:String x:Key="str.TP.RecallLast">Recall last</sys:String>
     <sys:String x:Key="str.TP.HkHeader">Hotkey Settings</sys:String>
     <sys:String x:Key="str.TP.HkHint">Global hotkeys for markers (Save / Recall / Recall-last), BugItGo, Debug camera, and the God Mode / Super Jump / Move Speed / Gravity toggles + teleport / cursor actions (fire while the game is focused). Click Set, then press the combo — hold Ctrl/Alt/Shift then a key (e.g. Ctrl+F7), or a single key (e.g. F7). Click Cancel or press Esc to abort. Keyboard only for now (mouse extra-buttons / gamepad not yet supported). Saved automatically. A combo marked ⚠ is held by another app — free it and reconnect, or bind a different one.</sys:String>
@@ -1555,7 +1607,7 @@
     <sys:String x:Key="str.TP.Warning">⚠ Single-player only. Online games will rubber-band or may flag teleports.</sys:String>
     <sys:String x:Key="str.TP.BestEffort">ℹ Best-effort: the pawn is resolved by reflection and moved via the engine's own functions where available, with memory-write fallbacks. Works on most games, but some drive the character or the camera from separate internal systems — so on certain titles the character may not move, or it teleports but the camera (POV) doesn't follow.</sys:String>
     <sys:String x:Key="str.Tip.TP.Refresh">Read the current pawn's world location and control rotation (DLL resolves the local PlayerController → Pawn → RootComponent via reflection).</sys:String>
-    <sys:String x:Key="str.Tip.TP.ParentRelative">These numbers are NOT world coordinates. The pawn is attached (vehicle / mount / moving platform) and the world-space read failed, so the DLL fell back to the raw RelativeLocation, which is relative to the parent. Do not save them as a marker or a library entry.</sys:String>
+    <sys:String x:Key="str.Tip.TP.ParentRelative">These numbers are NOT world coordinates. The pawn is attached (vehicle / mount / moving platform) and the world-space read failed, so the DLL fell back to the raw RelativeLocation, which is relative to the parent. Nothing takes them for world coordinates: Recall and Force refuse a marker saved from them, TP facing direction refuses to step from them, Fill from current pos and the coordinate library will not store them, Copy as BugItGo will not copy them, the CE BugItGo record refuses a BugIt stored from them, and the Last Position slot keeps its previous pose.</sys:String>
     <sys:String x:Key="str.Tip.TP.Auto">Re-read the pose every 0.5s, and the camera POV too (POV is skipped silently on games where it isn't available). Off by default; stops automatically on disconnect.</sys:String>
     <sys:String x:Key="str.Tip.TP.Locate">Find this pawn (the object whose Current Pose is shown) in the Live Walker and select it — switches to Live Walker, walks the GWorld → … → pawn path, and lands on it. Reads a fresh pose first to get the live pawn address. World-Partition / streaming pawns resolve via the level back-reference (Live Walker shows 'via level'); a just-spawned, unreferenced pawn may be unreachable.</sys:String>
     <sys:String x:Key="str.Tip.TP.LocateGameEngine">Locate in GameEngine: find this pawn via the live UGameEngine graph instead of GWorld. NOTE: a pawn is a world actor and usually lives BELOW GWorld, so this is typically unreachable — use the 🌍 Locate in GWorld button for pawns. Provided only for parity.</sys:String>
@@ -1569,8 +1621,8 @@
     <sys:String x:Key="str.Tip.TP.LocateCamRot">Locate the camera's cached POV Rotation in GWorld: land on APlayerCameraManager.CameraCachePrivate.POV.Rotation. Reads a fresh POV first. Unavailable when the cached-POV layout isn't reflected.</sys:String>
     <sys:String x:Key="str.Tip.TP.Velocity">Live velocity (cm/s) and acceleration (cm/s²) read straight from the pawn's CharacterMovement (no invoke). Enable Auto to watch them change while moving. Shown as — with a note on pawns that have no CharacterMovement (vehicles / custom movement frameworks).</sys:String>
     <sys:String x:Key="str.Tip.TP.Save">Save the current pose into this marker slot. Markers live in the DLL — they survive a UI restart as long as the game process lives.</sys:String>
-    <sys:String x:Key="str.Tip.TP.Recall">Teleport back to this marker (invokes K2_SetActorLocation with bTeleport=true, then restores rotation and zeroes velocity). Refused if you've changed maps — use Force.</sys:String>
-    <sys:String x:Key="str.Tip.TP.Force">Recall even if the marker was saved on a different map. May land you in an unloaded area — use with care.</sys:String>
+    <sys:String x:Key="str.Tip.TP.Recall">Teleport back to this marker (invokes K2_SetActorLocation with bTeleport=true, then restores rotation and zeroes velocity). Refused if you've changed maps — use Force. Also refused, with or without Force, for a marker saved from a parent-relative read (⚠ in its row).</sys:String>
+    <sys:String x:Key="str.Tip.TP.Force">Recall even if the marker was saved on a different map. May land you in an unloaded area — use with care. A marker saved from a parent-relative read (⚠ in its row) is refused either way: Force overrides only the map check.</sys:String>
     <sys:String x:Key="str.Tip.TP.Clear">Forget this marker.</sys:String>
     <sys:String x:Key="str.Tip.TP.HkClear">Clear this row's hotkey binding.</sys:String>
     <sys:String x:Key="str.Tip.TP.ToCursor">Teleport the pawn to the world position under the mouse cursor (or screen center if no cursor). Uses K2_TeleportTo so the pawn lands beside geometry, not inside it.</sys:String>
@@ -1578,22 +1630,22 @@
     <sys:String x:Key="str.Tip.TP.Channel">ETraceTypeQuery byte. 0 = Visibility (default engine mapping). Games can remap channels — change this if cursor hits land on the wrong surface.</sys:String>
     <sys:String x:Key="str.Tip.TP.FallbackCenter">When the game has no cursor (HD-2D-style), trace from the screen center instead.</sys:String>
     <sys:String x:Key="str.Tip.TP.CursorHotkey">Bind a system-wide hotkey for cursor teleport so you can keep the game focused (the cursor stays in the game). Auto-picks the first free combo, trying Ctrl+F8 down to Ctrl+F5, then Alt+F8 down to Alt+F5. The chosen combo shows beside this box.</sys:String>
-    <sys:String x:Key="str.Tip.TP.CopyBugItGo">Read the current pose, copy a 'BugItGo X Y Z' string to the clipboard, and paste it into the Run field so you can fire BugItGo immediately. (BugIt itself can't return data to the dumper — it writes to the game's own log/clipboard — so this reads the pose directly.)</sys:String>
+    <sys:String x:Key="str.Tip.TP.CopyBugItGo">Read the current pose, copy a 'BugItGo X Y Z' string to the clipboard, and paste it into the Run field so you can fire BugItGo immediately. (BugIt itself can't return data to the dumper — it writes to the game's own log/clipboard — so this reads the pose directly.) On a parent-relative read (the ⚠ chip) it copies nothing and empties the Run field: those numbers are not world coordinates.</sys:String>
     <sys:String x:Key="str.Tip.TP.RunBugItGo">Parse the pasted string and teleport there. Works without any CheatManager — feeds X/Y/Z into the same recall path as markers.</sys:String>
-    <sys:String x:Key="str.Tip.TP.RecallLast">Undo the most recent teleport: jump back to the pose auto-saved just before your last Recall / Force / BugItGo / cursor teleport. One-way — recalling it doesn't change the saved spot, so you can press it repeatedly. The system writes this slot; you can't save into it.</sys:String>
+    <sys:String x:Key="str.Tip.TP.RecallLast">Undo the most recent teleport: jump back to the pose auto-saved just before your last jump (or an earlier one, when that position could not be read in world coordinates). One-way — recalling it doesn't change the saved spot, so you can press it repeatedly. The system writes this slot; you can't save into it.</sys:String>
     <sys:String x:Key="str.Tip.TP.HkSet">Click, then press the key combo you want for this action. Hold modifiers (Ctrl/Alt/Shift) then a key, or press a single key. Esc cancels. The combo is registered system-wide so it works while the game is focused.</sys:String>
     <sys:String x:Key="str.Tip.TP.AddActions">Ship 17 teleport records (momentary: Save 1-3, Recall 1-3, Recall last, BugIt, BugItGo, Cursor, Get POV, Get current coords, TP facing direction, TP to coordinates, Cursor ON, Cursor OFF, Clear all), 4 movement toggles (Move Speed, Gravity and Super Jump baked at the current slider %, Gravity Direction at the current vector), 2 time toggles (World, Player) and, while Experimental features is on, 4 Fly toggles (the WASD / Numpad / Arrows presets and Noclip) into the open Cheat Engine table via AOBMaker. Teleport records fire once and auto-untick; the toggles stay on while ticked (the DLL holds the value). The directional/coordinate/movement records bake the current field values. Requires the AOBMaker plugin connected.</sys:String>
     <sys:String x:Key="str.Tip.TP.SaveCt">Backup: save a Cheat Engine .CT file with the same records (17 teleport, 4 movement, 2 time and, while Experimental features is on, 4 Fly), for when AOBMaker isn't connected. Import via CE File → Open.</sys:String>
     <!-- Teleport: Debug Camera (free-look) -->
     <sys:String x:Key="str.TP.DcHeader">Debug Camera (free-look)</sys:String>
-    <sys:String x:Key="str.TP.DcHint">Detach the view into a free-fly debug camera (UCheatManager::ToggleDebugCamera). Turning it back OFF is handled even on Shipping builds that stripped the disable path — the DLL switches the local player's controller back. Needs a live PlayerController, so enter gameplay first. Available only on games that kept ToggleDebugCamera.</sys:String>
+    <sys:String x:Key="str.TP.DcHint">Detach the view into a free-fly debug camera (UCheatManager::ToggleDebugCamera). Turning it back OFF is handled even on Shipping builds that stripped the disable path — the DLL switches the local player's controller back. Needs a live CheatManager, so enter gameplay first; UE 5 leaves it out of Shipping builds by default, and Force ON then says so. Available only on games that kept ToggleDebugCamera.</sys:String>
     <sys:String x:Key="str.TP.DcState">State:</sys:String>
     <sys:String x:Key="str.TP.DcOn">Force ON</sys:String>
     <sys:String x:Key="str.TP.DcOff">Force OFF</sys:String>
     <sys:String x:Key="str.TP.DcRefresh">↻</sys:String>
-    <sys:String x:Key="str.Tip.TP.DcOn">Deterministically enable the debug camera (reads state first, only toggles if needed). Idempotent — pressing again when it's already ON does nothing.</sys:String>
+    <sys:String x:Key="str.Tip.TP.DcOn">Deterministically enable the debug camera (reads state first, only toggles if needed). Idempotent — pressing again when it's already ON does nothing. Needs a live CheatManager: with none (UE 5 leaves it out of Shipping builds by default) nothing is sent, and the status says so.</sys:String>
     <sys:String x:Key="str.Tip.TP.DcOff">Deterministically disable the debug camera and return control to the player. On builds that stripped the disable path, the DLL swaps the local player's controller back to the original PlayerController.</sys:String>
-    <sys:String x:Key="str.Tip.TP.DcRefresh">Re-read the live debug-camera state (1=ON / 0=OFF / unknown if no live CheatManager).</sys:String>
+    <sys:String x:Key="str.Tip.TP.DcRefresh">Re-read the live debug-camera state (ON / OFF; with no live CheatManager it reads OFF unless a debug camera controller is already active; unknown only when the read fails).</sys:String>
 
     <!-- God Mode (Solitar — force AActor.bCanBeDamaged) -->
     <sys:String x:Key="str.TP.GmHeader">God Mode</sys:String>
@@ -1624,6 +1676,8 @@
     <sys:String x:Key="str.TP.StReleased">Released the stealth-meter hold.</sys:String>
     <sys:String x:Key="str.TP.StNothingToRelease">No stealth meter is known to this card, so Reset sent nothing. Detect the meter first, then Reset.</sys:String>
     <sys:String x:Key="str.TP.StNothingHeld">Nothing is held, so Reset sent nothing.</sys:String>
+    <!-- [LISTINSTANCES-KEEPS-TEMPLATES] appended to a Force / Hold armed on nothing when the DLL passed over templates -->
+    <sys:String x:Key="str.Force.TemplatesOnly">Only templates of {0} exist right now ({1}: class default objects and their subobjects), and a Force never writes a template, since every later spawn copies it. To change one anyway, edit its address from the Instance Finder.</sys:String>
     <sys:String x:Key="str.TP.StArmed">⏳ Hold @0 on {0} is ARMED but holding nothing yet — no live instance of {1} or any subclass exists right now. It applies as soon as one spawns; Reset releases it.</sys:String>
     <sys:String x:Key="str.TP.StRearmRefused">Hold @0 refused (DLL error {0}). The earlier hold on {1} stays armed; Reset releases it.</sys:String>
     <sys:String x:Key="str.TP.FgHeader">Keep Foreground</sys:String>
@@ -1773,7 +1827,7 @@
     <sys:String x:Key="str.TP.RelGo">Teleport forward</sys:String>
     <sys:String x:Key="str.TP.RelDist">Distance (uu):</sys:String>
     <sys:String x:Key="str.TP.RelHoriz">Horizontal only (keep Z)</sys:String>
-    <sys:String x:Key="str.Tip.TP.RelGo">Step the pawn along the direction it is facing by the distance below (negative distance = backward). The facing comes from the actor's forward vector (GetActorForwardVector), falling back to the control rotation. Undo with Recall last.</sys:String>
+    <sys:String x:Key="str.Tip.TP.RelGo">Step the pawn along the direction it is facing by the distance below (negative distance = backward). The facing comes from the actor's forward vector (GetActorForwardVector), falling back to the control rotation. Undo with Recall last. Refused when the current pose is a parent-relative read: there is no world position to step from.</sys:String>
     <sys:String x:Key="str.Tip.TP.RelDist">How far to move along the facing direction, in unreal units (1 uu ≈ 1 cm). Negative values step backward.</sys:String>
     <sys:String x:Key="str.Tip.TP.RelHoriz">On: move on the ground plane (yaw only, keep your current height) — the natural "walk toward that compass bearing". Off: follow the full view direction including pitch, so looking up/down moves you up/down (fly / noclip feel).</sys:String>
 
@@ -1784,7 +1838,7 @@
     <sys:String x:Key="str.TP.CoordFill">Fill from current pos</sys:String>
     <sys:String x:Key="str.TP.CoordSetRot">Also set rotation</sys:String>
     <sys:String x:Key="str.Tip.TP.CoordGo">Force-teleport the pawn to the exact world X/Y/Z below. No map check, so you can jump anywhere on the current level. Undo with Recall last.</sys:String>
-    <sys:String x:Key="str.Tip.TP.CoordFill">Read the current pose and fill the X/Y/Z (and Pitch/Yaw/Roll) boxes with it — a quick way to nudge from where you are.</sys:String>
+    <sys:String x:Key="str.Tip.TP.CoordFill">Read the current pose and fill the X/Y/Z (and Pitch/Yaw/Roll) boxes with it — a quick way to nudge from where you are. Refused on a parent-relative read: those numbers are not world coordinates.</sys:String>
     <sys:String x:Key="str.Tip.TP.CoordSetRot">When ticked, also restore the Pitch/Yaw/Roll below after the jump. Leave off to keep your current facing.</sys:String>
 
     <!-- Coordinate Library (P1) — docs/teleport-coord-library-spec.md -->
@@ -1814,12 +1868,12 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.TP.LibApplyEdit">Apply</sys:String>
     <sys:String x:Key="str.TP.LibEditNoQuote">A label or group you change cannot contain a double quote ("). Nothing was changed.</sys:String>
     <sys:String x:Key="str.TP.LibUpdateCoords">Update coords from current</sys:String>
-    <sys:String x:Key="str.Tip.TP.LibSaveCurrent">Read the live pose and add it to the library, labelled after the current map.</sys:String>
+    <sys:String x:Key="str.Tip.TP.LibSaveCurrent">Read the live pose and add it to the library, labelled after the current map. Refused on a parent-relative read: those numbers are not world coordinates.</sys:String>
     <sys:String x:Key="str.Tip.TP.LibAddFields">Add whatever is currently typed in the "Teleport to Coordinates" boxes above as a new library entry.</sys:String>
     <sys:String x:Key="str.Tip.TP.LibGo">Teleport to the selected entry. Refused when the entry was saved on a different map — the tool cannot LOAD another map, it can only move you within the one the game has open.</sys:String>
     <sys:String x:Key="str.Tip.TP.LibForceGo">Teleport ignoring the map check. Only useful if the map name changed but the level is the same; jumping to another map's coordinates puts you outside the world.</sys:String>
     <sys:String x:Key="str.Tip.TP.LibCurrentMapOnly">Hide entries saved on other maps. On by default — coordinates from different maps are often numerically close, so mixing them is how you end up under the floor.</sys:String>
-    <sys:String x:Key="str.Tip.TP.LibUpdateCoords">Overwrite the selected entry's coordinates (and map) with the live pose, keeping its label and group.</sys:String>
+    <sys:String x:Key="str.Tip.TP.LibUpdateCoords">Overwrite the selected entry's coordinates (and map) with the live pose, keeping its label and group. Refused on a parent-relative read: those numbers are not world coordinates.</sys:String>
     <sys:String x:Key="str.Tip.TP.LibClear">Delete every entry for this game, and its file. Asks first, and writes a .preclear.bak you can restore by hand.</sys:String>
 
     <sys:String x:Key="str.TP.LibExportCsv">Export CSV</sys:String>
@@ -2004,6 +2058,20 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.LiveWalker.FuncCopyBaked">AA(Baked)</sys:String>
     <sys:String x:Key="str.LiveWalker.FunctionsLoading">⚠ {0}: nothing done — this object's functions are still loading, and the rows shown are the previous object's.</sys:String>
     <sys:String x:Key="str.LiveWalker.NoRowAddress">⚠ {0}: nothing done — no address was read for this row, and none is worked out from its offset.</sys:String>
+    <sys:String x:Key="str.TP.FlyNoclipNotApplied">noclip asked, collision still on</sys:String>
+    <sys:String x:Key="str.TP.FlyCollisionNotRestored">noclip off, collision still off</sys:String>
+    <!-- [SOLIDE-RELATED-STOPS] Detect Stealth Meter whose search of the player's objects stopped short. {0} = the causes. -->
+    <sys:String x:Key="str.TP.StealthStopsLead"> ⚠ Not every object the player owns was searched, so a meter may have been missed: {0}.</sys:String>
+    <sys:String x:Key="str.TP.FlyCollisionOn">, collision on</sys:String>
+    <sys:String x:Key="str.TP.FlyCollisionOff">, collision off</sys:String>
+    <sys:String x:Key="str.ValueSearch.NonFiniteTarget">⚠ "{0}" is not a finite number: a scan target must be one.</sys:String>
+    <sys:String x:Key="str.Export.EnumNamesUnavailable">Enum member names could not be read on this build (UEnum::Names was not found): enum fields have no dropdown and show as plain numbers</sys:String>
+    <sys:String x:Key="str.LiveWalker.TablePageCut">⚠ Only the first page of a table's rows is read: {0}</sys:String>
+    <sys:String x:Key="str.LiveWalker.TableCutEntry">{0} (DataTable: {1:N0} rows, {2:N0} exported</sys:String>
+    <sys:String x:Key="str.LiveWalker.NestedOnce">{0}, nested)</sys:String>
+    <sys:String x:Key="str.LiveWalker.NestedMany">{0}, nested, in {1} objects)</sys:String>
+    <sys:String x:Key="str.LiveWalker.NestedMore">and {0} more nested</sys:String>
+    <sys:String x:Key="str.LiveWalker.DataTableNotRestored">⚠ This DataTable view did not restore: the DataTable at its saved address is gone or has changed. The grid shows what is at that address now.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.FuncCopyBaked">AA(Baked) = &quot;baked&quot; CE AA (Auto-Assembler) script: the param values you enter are inlined at generation time, so enabling the memory-record fires the call once with those fixed values — no runtime form. ~5x smaller than INV and redistributable. Requires ue5_invoke_helper.lua embedded in your .CT via Table -&gt; Add File... (Tools -&gt; Export CE Helper Lua File... to obtain it). Tick &quot;Verify return value&quot; in the dialog for a full before/after dump, or set UE5_DEBUG=1 to print the decoded return value.</sys:String>
 
     <sys:String x:Key="str.LiveWalker.GuessWhat">Guess?</sys:String>

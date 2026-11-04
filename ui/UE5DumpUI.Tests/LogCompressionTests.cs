@@ -155,6 +155,48 @@ public class LogCompressionPolicyTests
         Assert.Equal(1, plan.SkippedTooFresh);
     }
 
+    // [LOG-RESUME-LIVE-ROLLED] A session that rolls a category past 8 MB writes the highest-numbered
+    // `{prefix}-0_NNN.log`, which IsLiveLog does not name; once it was quiet an hour, the sweep tried it and reported
+    // a failure. In our own folder the newest rolled file of each category is the live one; an older one is finished.
+
+    [Fact]
+    public void Plan_OurNewestRolledFileOfACategory_IsLive()
+    {
+        var plan = LogCompressionPolicy.Plan(new[]
+        {
+            F("view-0.log",     9_000_000, 9_000_000, 3, true),   // live: ours, the slot name
+            F("view-0_001.log", 9_000_000, 9_000_000, 3, true),   // finished: compress
+            F("view-0_002.log", 9_000_000, 9_000_000, 2, true),   // live: the newest rolled view file
+            F("pipe-0_001.log", 9_000_000, 9_000_000, 2, true),   // live: the newest rolled pipe file
+        }, Now, Hour, Min, LiveAge);
+
+        Assert.Equal(new[] { @"C:\Logs\view-0_001.log" }, plan.ToCompress);
+        Assert.Equal(3, plan.SkippedLive);
+    }
+
+    // Review round 2: the UI writes a game's folder too while connected -- its mirror sinks, ui-{cat}-0.log, roll to
+    // ui-{cat}-0_NNN.log the same way -- and the DLL never writes a -0_NNN name (Sein archives as {cat}-{stamp}.log).
+    // So in a game's folder the newest rolled file of a category is that folder's slot, held to the -0.log slot's idle
+    // rule (LiveAge), and an older one is finished.
+
+    private static LogFileEntry G(string folder, string name, int hoursAgo) =>
+        new($@"C:\Logs\{folder}\{name}", name, 9_000_000, 9_000_000, Now.AddHours(-hoursAgo), false);
+
+    [Fact]
+    public void Plan_AGameFoldersNewestRolledFile_IsHeldLikeItsSlot()
+    {
+        var plan = LogCompressionPolicy.Plan(new[]
+        {
+            G("Game", "ui-pipe-0_001.log", 48),        // finished: compress
+            G("Game", "ui-pipe-0_002.log", 2),         // the mirror's live one, quiet an hour: kept
+            G("Other", "ui-pipe-0_001.log", 48),       // another folder's newest, quiet two days: kept
+            G("Old", "ui-view-0_003.log", 24 * 8),     // quiet past the slot's rule: compress
+        }, Now, Hour, Min, LiveAge);
+
+        Assert.Equal(new[] { @"C:\Logs\Game\ui-pipe-0_001.log", @"C:\Logs\Old\ui-view-0_003.log" }, plan.ToCompress);
+        Assert.Equal(2, plan.SkippedLive);
+    }
+
     [Fact]
     public void Plan_EmptyInputIsEmpty()
     {

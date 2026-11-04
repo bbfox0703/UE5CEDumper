@@ -1,0 +1,60 @@
+using System.Globalization;
+using UE5DumpUI.Helpers;
+using UE5DumpUI.Models;
+
+namespace UE5DumpUI.Services;
+
+/// <summary>
+/// [VALUESCAN-NONFINITE-TARGET] What a numeric scan target must be before either matcher sees it. Infinity, NaN or a
+/// number past double's range (1e400) gave different answers live and in the snapshot search: the DLL's stod throws
+/// on "1e400" and its float leaves take an infinity that GroupMatch refuses, while .NET reads "1e400" as +Infinity.
+/// Nonsense input on both sides, so it is refused where it is typed.
+/// </summary>
+public static class ValueTargetCheck
+{
+    internal const string KeyNonFinite = "str.ValueSearch.NonFiniteTarget";
+
+    /// <summary>The refusal for the first value of <paramref name="values"/> a numeric scan of
+    /// <paramref name="dataType"/> cannot take, or null when every one is fine. Only a value that reads as a number
+    /// and is not a finite one is refused; anything else is the matchers' to judge, as before.</summary>
+    public static string? NonFiniteError(ValueScanDataType dataType, params string?[] values)
+    {
+        if (!IsNumeric(dataType)) return null;
+        foreach (var v in values)
+        {
+            if (string.IsNullOrWhiteSpace(v)) continue;
+            var t = v.Trim();
+            if (t is "∞" or "+∞" or "-∞"
+                || C99NonFinite.IsMatch(t)
+                || (double.TryParse(t, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture,
+                                    out var d) && !double.IsFinite(d)))
+                return AobMakerStatus.Say(KeyNonFinite,
+                    "⚠ \"{0}\" is not a finite number: a scan target must be one.", t);
+        }
+        return null;
+    }
+
+    /// <summary>The refusal for a scan target as its scan type sends it: Value only when the type takes one (a
+    /// prev-value type compares with the previous round), Value2 only for Between. A box the type hides is never sent,
+    /// so a value left in it must not block the scan, nor be named to a user who cannot see it.</summary>
+    public static string? NonFiniteTargetError(ValueScanDataType dataType, ValueScanType scanType, string? value,
+                                               string? value2)
+    {
+        bool prevValue = scanType is ValueScanType.Changed or ValueScanType.Unchanged
+                                  or ValueScanType.Increased or ValueScanType.Decreased;
+        return NonFiniteError(dataType, prevValue ? null : value, scanType == ValueScanType.Between ? value2 : null);
+    }
+
+    /// <summary>What the DLL's std::stod (the strtod family) reads as non-finite and .NET's invariant parse does not:
+    /// C99's inf / infinity / nan / nan(chars), any case, signed or not. Without it "inf" reached the live matcher as
+    /// +inf while the snapshot store refused it as no number -- two answers to one input.</summary>
+    private static readonly System.Text.RegularExpressions.Regex C99NonFinite = new(
+        @"^[+-]?(inf(inity)?|nan(\([0-9A-Za-z_]*\))?)$",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    private static bool IsNumeric(ValueScanDataType dt) => dt is
+        ValueScanDataType.Int8 or ValueScanDataType.Int16 or ValueScanDataType.Int32 or ValueScanDataType.Int64 or
+        ValueScanDataType.UInt8 or ValueScanDataType.UInt16 or ValueScanDataType.UInt32 or ValueScanDataType.UInt64 or
+        ValueScanDataType.Float or ValueScanDataType.Double or
+        ValueScanDataType.NumericNoByte or ValueScanDataType.NumericAll;
+}

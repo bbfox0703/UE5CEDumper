@@ -237,12 +237,103 @@ public class AobMakerStatusTests
         Assert.Contains(nameof(AobMakerStatus.DllTip), raised);
     }
 
+    // ---- [PROPSEARCH-FREEZE-STALE-AOBMAKER] RefreshAsync: the answer a caller about to act on it should use ----
+
+    [Fact]
+    public async Task Refresh_joins_the_probe_in_flight_instead_of_trusting_the_answer_from_before_it()
+    {
+        // The cooldown starts when a probe STARTS, so inside it the flag still says what was true before the probe.
+        var gate = new TaskCompletionSource<bool>();
+        var bridge = new BridgeWithoutAttachQuery { CheckGate = gate.Task };
+        var status = new AobMakerStatus(bridge);
+        status.Apply(true);                                  // what was true before Cheat Engine closed
+
+        status.TryProbe();                                   // a tab switch: its probe waits on the pipe
+        var answer = status.RefreshAsync();
+        Assert.False(answer.IsCompleted);
+        gate.SetResult(false);
+
+        Assert.False(await answer);
+        Assert.False(status.IsAvailable);
+        Assert.Equal(1, bridge.CheckCalls);
+    }
+
+    [Fact]
+    public async Task Refresh_inside_the_cooldown_answers_the_current_flag_without_a_connect()
+    {
+        var bridge = new BridgeWithoutAttachQuery();
+        var status = new AobMakerStatus(bridge);
+        Assert.True(await status.RefreshAsync());
+        status.Apply(false);                                 // a push since then found the pipe gone
+
+        Assert.False(await status.RefreshAsync());
+        Assert.Equal(1, bridge.CheckCalls);
+    }
+
+    [Fact]
+    public async Task A_direct_probe_during_one_in_flight_joins_it()
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 2, INFO 3: one probe in flight, whoever asks.
+        var gate = new TaskCompletionSource<bool>();
+        var bridge = new BridgeWithoutAttachQuery { CheckGate = gate.Task };
+        var status = new AobMakerStatus(bridge);
+
+        status.TryProbe();
+        var direct = status.ProbeAsync();
+        gate.SetResult(true);
+
+        Assert.True(await direct);
+        Assert.Equal(1, bridge.CheckCalls);
+    }
+
+    /// <summary>The non-comment lines of a source file.</summary>
+    private static string[] CodeLines(string relative)
+        => File.ReadAllLines(NumericInputCoercionTests.RepoFile(relative))
+               .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)).ToArray();
+
+    [Fact]
+    public void The_cooldown_runs_on_a_clock_that_never_steps_back()
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 2, INFO 4. On the wall clock, a step back (NTP, or by hand) makes
+        // "time since the last probe" negative, and no refresh probes again until the clock catches up.
+        var code = string.Join("\n", CodeLines("ui/UE5DumpUI/Helpers/AobMakerStatus.cs"));
+        Assert.DoesNotContain("DateTime", code, StringComparison.Ordinal);
+        Assert.Contains("Environment.TickCount64", code, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs")]
+    [InlineData("ui/UE5DumpUI/ViewModels/InterestingFunctionsViewModel.cs")]
+    public void The_flag_keeping_panels_probe_cooldowns_never_step_back_either(string file)
+    {
+        // Review 3, F-B: the same wall-clock cooldown, on two panels whose probes now feed the toolbar chip.
+        var lines = CodeLines(file).Where(l => l.Contains("_lastAobMakerCheck", StringComparison.Ordinal)).ToArray();
+        Assert.NotEmpty(lines);
+        Assert.All(lines, l => Assert.DoesNotContain("DateTime", l, StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Refresh_without_a_bridge_says_unavailable()
+    {
+        var status = new AobMakerStatus(null);
+        status.Apply(true);
+        Assert.False(await status.RefreshAsync());
+        Assert.False(status.IsAvailable);
+    }
+
     private sealed class BridgeWithoutAttachQuery : IAobMakerBridge
     {
         public bool ThrowOnCheck { get; init; }
+        /// <summary>When set, a probe waits for this answer: the 2 s pipe connect with Cheat Engine absent.</summary>
+        public Task<bool>? CheckGate { get; init; }
+        public int CheckCalls { get; private set; }
         public bool IsAvailable => true;
         public Task<bool> CheckAvailabilityAsync(CancellationToken ct = default)
-            => ThrowOnCheck ? throw new IOException("pipe broke") : Task.FromResult(true);
+        {
+            CheckCalls++;
+            if (ThrowOnCheck) throw new IOException("pipe broke");
+            return CheckGate ?? Task.FromResult(true);
+        }
         public Task<bool> NavigateHexViewAsync(string hexAddress, CancellationToken ct = default) => Task.FromResult(true);
         public Task<bool> NavigateDisassemblerAsync(string hexAddress, CancellationToken ct = default) => Task.FromResult(true);
         public Task<bool> CreateAAScriptAsync(string description, string script, bool autoActivate = true,

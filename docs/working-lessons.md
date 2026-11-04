@@ -911,6 +911,17 @@ frames). What to do:
   unfocused game raises it, and it goes again once the game ticks -- so a coordinate measured on one side of it
   lands on the wrong control on the other. Re-screenshot after any suspend, resume or focus change (§2.5d).
 
+### 1.ap A log line the code "cannot produce" — read the build stamp first; `-dirty` means the commit is not what ran
+
+`[LEAD-G12G3-LOG-CONTRADICTION]` sat in the register for ten weeks as "a contradiction I cannot explain from the
+code": `Found 'Guid'`, `Found 'Vector'`, then `Cannot find Guid or Vector struct`, on a guard with nothing between the
+calls and the test. The call site was checked byte-identical between the log's commit and HEAD, and a cross-process
+interleave was proposed. The log's own first line said `build: 1.0.0.3338 e4685592-dirty`. The tree had been edited
+on purpose: commit `457e5113`, five minutes later, had staged `guidStruct = vectorStruct = 0;` as a positive control,
+and its message quotes the very lines. **Before reasoning from a commit's code about a log, read the stamp.** A
+`-dirty` build ran code no commit holds, so look for the experiment first: the commits around its timestamp, then
+the session that ran it.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
@@ -3862,8 +3873,9 @@ other machine does not keep following the old one.
    release whose body is a generated commit list.
 3. Replace that body with prepared notes in the format of v3397 (`gh release view v3397 --json body`;
    v3546 is the same format with more items): an intro line, `## About this release`, an optional
-   `## New`, `## Fixed`, a compare link, the fall-back-to-the-previous-release line, the `## Setup`
-   block and the unsigned-exe notes.
+   `## New`, `## Fixed`, `## Known issues` (one link), an optional `## After updating`, a compare link, the
+   fall-back-to-the-previous-release line, the `## Setup` block and the unsigned-exe notes. v3686 is the first
+   in the 2026-11-04 shape.
 4. Leave it a draft. The maintainer checks the build and publishes.
 
 *Why.* The notes are for users, not a changelog, and the maintainer publishes only after trying the
@@ -3876,8 +3888,13 @@ English. **One item is one sentence, two at most, and one wherever it can be** (
 2026-10-27): what changed, with no sub-bullets, no how-it-works and no measurements; a reader who
 wants the detail has the compare link. A thing the user must do or must not do goes in a
 one-line `> ⚠` or `> ℹ️` note under the list. The v3615 draft was first written with sub-bullets and
-ran to 8,300 characters; the maintainer had it cut to 3,700. Aim for 20–30
-user-facing items and leave small fixes out, but do not pad: a release with twelve has twelve. Two
+ran to 8,300 characters; the maintainer had it cut to 3,700. **`## Fixed` (2026-11-04):** one sentence for each fix
+whose RECORDED severity is MED or higher; every LOW fix together is the one line "Minor bug fixes.", and every UI / UX
+tweak or fix the one line "UI tweaks and fixes.". A defect that never reached a published release (it came and went
+between two tags, review rounds included) is not a fix for the notes, whatever its severity. **`## Known issues`** is
+one line linking [known-issues.md](known-issues.md), which holds what lasts across releases; a one-time step after
+updating (redeploy the proxy, push a CE record again) goes under `## After updating`, and a design decision or a
+setting a user chooses to change is not an issue. Do not pad: a release with twelve items has twelve. Two
 kinds of work get one line each, never an item per change: Wiki work ("Updated the Wiki.") and bulk
 hint or tooltip corrections. Copy the `## Setup` block from the last PUBLISHED release, which the
 maintainer may have edited after publishing, not from a local draft. An `@` before a word becomes a user mention in

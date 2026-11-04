@@ -761,7 +761,7 @@ public class InvokeScriptTests
         Assert.Contains("t == 'fstring'", content);
         Assert.Contains("t == 'fstringn'", content);
         Assert.Contains("t == 'fstruct'", content);               // by-value struct param support
-        Assert.Contains("THIS_HELPER_VERSION = '1.5'", content);   // [R7-X5] the version gate; 1.5 ([ASSETPTR-BAKED-TOKEN]) replaces a resident 1.4
+        Assert.Contains("THIS_HELPER_VERSION = '1.6'", content);   // [R7-X5] the version gate; 1.6 ([INVOKE-NONSTATIC-ON-CDO]) replaces a resident 1.5
         Assert.Contains("t == 'asset'", content);
     }
 
@@ -2004,7 +2004,8 @@ public class InvokeScriptTests
         Assert.Contains("dll-too-old", lua);
 
         Assert.Equal(16, CeMailboxLayout.CmdOffsetsVerdict);
-        Assert.Equal(5, CeMailboxLayout.ContractVersion);   // baked into every emitted script
+        Assert.True(CeMailboxLayout.ContractVersion >= 5,   // baked into every emitted script
+            "a script that sends CMD_OFFSETS_VERDICT must claim contract 5 -- an older DLL answers it 'Unknown command'");
     }
 
     [Fact]
@@ -2687,8 +2688,9 @@ public class InvokeScriptTests
         Assert.Contains("SCHLACHT_ACTOR_CLASS_PATH = \"/Script/Engine.Actor\"", grimoire, StringComparison.Ordinal);
         Assert.Contains("SCHLACHT_KSL_CLASS_PATH   = \"/Script/Engine.KismetSystemLibrary\"", grimoire, StringComparison.Ordinal);
 
-        // No internal caller left on the substring lookup. Frieren keeps exactly ONE occurrence: the definition, which
-        // stays substring because the C ABI, the pipe's invoke_function and the mailbox's FIND_INSTANCE twin are user-facing.
+        // No internal caller left on the user-facing lookup. Frieren keeps exactly ONE occurrence: the definition, which
+        // ranks the Debug Camera's objects last where an internal state read must never take them
+        // (UserFacingClassLookups_AllResolveThroughOneDerivationResolver pins what it resolves through).
         Assert.Equal(0, Count(schlacht, "UE5_FindInstanceOfClass("));
         Assert.Equal(0, Count(CodeOnly(DllSource("Wirbel.cpp")), "UE5_FindInstanceOfClass("));
         var frieren = CodeOnly(DllSource("Frieren.cpp"));
@@ -2697,6 +2699,609 @@ public class InvokeScriptTests
         Assert.Contains("uintptr_t cm = Aura::FindLiveOrDefaultOf(\"CheatManager\", \"DebugCameraController\");", frieren,
                         StringComparison.Ordinal);
         Assert.Contains("dcc = Aura::FindLiveOrDefaultOf(\"DebugCameraController\");", frieren, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void UserFacingClassLookups_AllResolveThroughOneDerivationResolver()
+    {
+        // [FINDINSTANCE-SUBSTRING-USERFACING] The C ABI export, the pipe's invoke_function class_name and the mailbox's
+        // FIND_INSTANCE / LIST_FUNCTIONS each matched a class-name SUBSTRING and took the first non-CDO match, else the
+        // first match. dll_core_test's USERPICK block pins Aura::ResolveUserInstance; no test target compiles Frieren,
+        // Fern or Mimic, so this pins that all three USE it. Comments are stripped: the fix's comments name the old call.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found -- re-point this pin");
+            return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
+        }
+
+        var frieren = Body(CodeOnly(DllSource("Frieren.cpp")), "uintptr_t UE5_FindInstanceOfClass(const char* className) {");
+        Assert.Contains("Aura::ResolveUserInstance(", frieren, StringComparison.Ordinal);
+        Assert.DoesNotContain("FindInstancesByClass(", frieren, StringComparison.Ordinal);
+
+        var mimic = CodeOnly(DllSource("Mimic.cpp"));
+        foreach (var handler in new[] { "static void HandleFindInstance() {", "static void HandleListFunctions() {" })
+        {
+            var body = Body(mimic, handler);
+            Assert.Contains("Aura::ResolveUserInstance(", body, StringComparison.Ordinal);
+            Assert.DoesNotContain("FindInstancesByClass(", body, StringComparison.Ordinal);
+        }
+
+        var fern = CodeOnly(DllSource("Fern.cpp"));
+        int start = fern.IndexOf("cmd == Renge::CMD_INVOKE_FUNCTION", StringComparison.Ordinal);
+        int next = fern.IndexOf("cmd == Renge::CMD_", start + 1, StringComparison.Ordinal);
+        Assert.True(start > 0 && next > start, "invoke_function's block not found -- re-point this pin");
+        var invoke = fern[start..next];
+        Assert.Contains("Aura::ResolveUserInstance(className)", invoke, StringComparison.Ordinal);
+        Assert.DoesNotContain("UE5_FindInstanceOfClass(", invoke, StringComparison.Ordinal);
+        Assert.Contains("Renge::InstanceNotFoundText(", invoke, StringComparison.Ordinal);
+        Assert.Contains("Renge::InstanceLookupCancelledText(", invoke, StringComparison.Ordinal);
+        Assert.Contains("Renge::FunctionNotFoundText(", invoke, StringComparison.Ordinal);
+        foreach (var key in new[] { "instance_pick", "instance_name", "instance_class_name" })
+            Assert.Contains($"data[\"{key}\"]", invoke, StringComparison.Ordinal);
+
+        Assert.True(CeMailboxLayout.ContractVersion >= 6,
+            "a script generated now relies on FIND_INSTANCE's derivation pick, so it must refuse a contract-5 DLL that "
+            + "would still take the first class whose name merely contains the one it sent");
+    }
+
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] Run a no-parameter INV record's [ENABLE] on CE's own Lua VM against a fake
+    /// mailbox that answers FIND_INSTANCE, FIND_FUNCTION and then INVOKE with <paramref name="result"/> and
+    /// <paramref name="outFlags"/> in cmdOutFlags. Returns OK / DIALOGS / WARNED / CLOSED / ACTIVE.</summary>
+    private static Dictionary<string, string> RunInvoke(int result, int outFlags)
+    {
+        var s = InvokeScriptGenerator.Generate("Actor", "K2_GetActorLocation", new FunctionInfoModel { Name = "K2_GetActorLocation" });
+        int from = s.IndexOf("{$lua}\n", StringComparison.Ordinal) + "{$lua}\n".Length;
+        string enable = s[from..s.IndexOf("{$asm}", from, StringComparison.Ordinal)];
+        static string I(int v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string lua = $$"""
+            UE5_DEBUG = 0
+            local MB, CV = 0x100000, 0x200000
+            MEM = {}
+            MEM[CV + {{CeMailboxLayout.OffContractMagic}}] = {{CeMailboxLayout.ContractMagic}}
+            MEM[CV + {{CeMailboxLayout.OffContractCur}}] = {{CeMailboxLayout.ContractVersion}}
+            MEM[CV + {{CeMailboxLayout.OffContractMin}}] = 1
+            DIALOGS, WARNED, CLOSED, TIMERS = 0, false, false, {}
+            local T = 0
+            function getTickCount() T = T + 50 return T end
+            function sleep() end
+            function processMessages() end
+            function processMessagesPaintOnly() end
+            function reinitializeSymbolhandler() end
+            function getAddressSafe(n)
+              if n == 'g_invokeMailbox' or n == 'UE5Dumper.g_invokeMailbox' then return MB end
+              if n == '{{CeMailboxLayout.ContractSymbol}}' or n == 'UE5Dumper.{{CeMailboxLayout.ContractSymbol}}' then return CV end
+              return nil
+            end
+            function readInteger(a) return MEM[a] or 0 end
+            function readQword(a) return MEM[a] or 0 end
+            function readString() return '' end
+            function writeQword(a, v) MEM[a] = v end
+            function writeByte(a, v) MEM[a] = v end
+            function writeBytes() end
+            function writeString() end
+            local function finish(res)
+              MEM[MB + {{CeMailboxLayout.OffResult}}] = res
+              MEM[MB + {{CeMailboxLayout.OffStatus}}] = {{CeMailboxLayout.StatusDone}}
+              MEM[MB + {{CeMailboxLayout.OffCmd}}] = 0
+            end
+            function writeInteger(a, v)
+              MEM[a] = v
+              if a ~= MB + {{CeMailboxLayout.OffCmd}} then return end
+              if v == 2 then MEM[MB + {{CeMailboxLayout.OffInstanceAddr}}] = 0x5000 finish(0)
+              elseif v == 3 then MEM[MB + {{CeMailboxLayout.OffUfuncAddr}}] = 0x6000 finish(0)
+              elseif v == 1 then MEM[MB + {{CeMailboxLayout.OffOutFlags}}] = {{I(outFlags)}} finish({{I(result)}}) end
+            end
+            function print(m) if tostring(m):find('WARNING', 1, true) then WARNED = true end end
+            function showMessage() DIALOGS = DIALOGS + 1 end
+            function createTimer() local t = { destroy = function() end } TIMERS[#TIMERS + 1] = t return t end
+            function synchronize(f) f() end
+            function getLuaEngine() return { Close = function() CLOSED = true end } end
+            local memrec = { Active = true, ID = 1 }
+            local chunk = assert(load('local syntaxcheck,memrec=...\n' .. [==[
+            {{enable}}
+            ]==]))
+            local ok, err = pcall(chunk, false, memrec)
+            for _, t in ipairs(TIMERS) do if t.OnTimer then t.OnTimer(t) end end
+            io.write('OK=' .. tostring(ok) .. '|' .. tostring(err) .. '\n')
+            io.write('DIALOGS=' .. DIALOGS .. '\n')
+            io.write('WARNED=' .. tostring(WARNED) .. '\n')
+            io.write('CLOSED=' .. tostring(CLOSED) .. '\n')
+            io.write('ACTIVE=' .. tostring(memrec.Active) .. '\n')
+            """;
+        var (exit, output) = CeLua53Host.Run(lua);
+        Assert.True(exit == 0, output);
+        return output.Replace("\r\n", "\n").Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                     .Where(l => l.Contains('='))
+                     .ToDictionary(l => l[..l.IndexOf('=')], l => l[(l.IndexOf('=') + 1)..]);
+    }
+
+    [Fact]
+    public void InvokeRecord_a_warned_success_prints_the_warning_and_keeps_its_window_open()
+    {
+        var r = RunInvoke(0, CeMailboxLayout.InvOutNonStaticOnTemplate);
+
+        Assert.Equal("true|nil", r["OK"]);
+        Assert.Equal("true", r["WARNED"]);
+        Assert.Equal("0", r["DIALOGS"]);       // a print, not a dialog: the call may well have worked
+        Assert.Equal("false", r["CLOSED"]);
+        Assert.Equal("false", r["ACTIVE"]);    // the momentary record still unticks
+    }
+
+    [Theory]
+    [InlineData(0)]   // nothing set
+    [InlineData(1)]   // LI_OUT_TRUNCATED left behind by an older DLL's LIST_INSTANCES: not this warning
+    public void InvokeRecord_control_a_clean_success_closes_its_window(int outFlags)
+    {
+        var r = RunInvoke(0, outFlags);
+
+        Assert.Equal("true|nil", r["OK"]);
+        Assert.Equal("false", r["WARNED"]);
+        Assert.Equal("true", r["CLOSED"]);
+    }
+
+    /// <summary>[INVOKE-NONSTATIC-ON-CDO] Load the embedded invoke helper on CE's Lua VM and call invokeUFunction once
+    /// against a fake mailbox whose DLL speaks contract <paramref name="cur"/> and answers CMD_INVOKE_BY_NAME with
+    /// <paramref name="result"/> and <paramref name="outFlags"/>. Returns "ok|err|warn".</summary>
+    private static string RunHelper(int cur, int result, long outFlags)
+    {
+        static string I(long v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string lua = $$"""
+            local MB, CV = 0x100000, 0x200000
+            MEM = {}
+            MEM[CV + 0x00] = {{CeMailboxLayout.ContractMagic}}
+            MEM[CV + 0x04] = {{I(cur)}}
+            MEM[CV + 0x08] = 1
+            MEM[MB + 0x72C] = {{I(outFlags)}}
+            local T = 0
+            function getTickCount() T = T + 50 return T end
+            function sleep() end
+            function processMessages() end
+            function processMessagesPaintOnly() end
+            function registerLuaFunctionHighlight() end
+            function getAddressSafe(n)
+              if n == 'g_invokeMailbox' then return MB end
+              if n == 'g_mailboxContract' then return CV end
+              return nil
+            end
+            function readInteger(a, signed) return MEM[a] or 0 end
+            function readBytes() return 0 end
+            function readString() return '' end
+            function writeByte(a, v) MEM[a] = v end
+            function writeBytes() end
+            function writeString() end
+            function writeQword(a, v) MEM[a] = v end
+            function deAlloc() end
+            function writeInteger(a, v)
+              MEM[a] = v
+              if a == MB and v == 4 then
+                MEM[MB + 0x08] = {{I(result)}}
+                MEM[MB + 0x04] = 1
+                MEM[MB] = 0
+              end
+            end
+            local chunk = assert(load([==[
+            {{HelperLuaResource.Read()}}
+            ]==]))
+            chunk()
+            local ok, err, warn = invokeUFunction('Actor', 'K2_GetActorLocation', 0, {})
+            io.write('R=' .. tostring(ok) .. '|' .. tostring(err ~= nil) .. '|' .. tostring(warn) .. '\n')
+            """;
+        var (exit, output) = CeLua53Host.Run(lua);
+        Assert.True(exit == 0, output);
+        var line = output.Replace("\r\n", "\n").Split('\n').First(l => l.StartsWith("R=", StringComparison.Ordinal));
+        return line[2..];
+    }
+
+    [Theory]
+    [InlineData(7, 0, 2L, "true|false|template")]        // a warned success: the third return says so
+    [InlineData(7, -4, 2L, "false|true|template")]       // a warned failure: the reason travels with the error
+    [InlineData(7, 0, 0L, "true|false|nil")]             // control: a clean success
+    [InlineData(7, 0, 1L, "true|false|nil")]             // control: an older LIST_INSTANCES' bit is not this one
+    [InlineData(6, 0, 0xFFFFFFFFL, "true|false|nil")]    // control: below contract 7 the word is never read
+    public void InvokeHelper_returns_the_template_warning_only_from_a_contract7_dll(int cur, int result, long outFlags,
+                                                                                    string expected)
+    {
+        Assert.Equal(expected, RunHelper(cur, result, outFlags));
+    }
+
+    /// <summary>Review of ef20e198: the helper's public setDebugCamera dropped the bit CMD_SET_DEBUG_CAMERA now publishes.
+    /// Runs the embedded helper and calls setDebugCamera(1) against a fake DLL answering <paramref name="state"/>.</summary>
+    private static string RunHelperDebugCamera(int cur, int state, long outFlags, bool query = false)
+    {
+        static string I(long v) => v.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        string call = query ? "getDebugCameraState()" : "setDebugCamera(1)";
+        string lua = $$"""
+            local MB, CV = 0x100000, 0x200000
+            MEM = {}
+            MEM[CV + 0x00] = {{CeMailboxLayout.ContractMagic}}
+            MEM[CV + 0x04] = {{I(cur)}}
+            MEM[CV + 0x08] = 1
+            local T = 0
+            function getTickCount() T = T + 50 return T end
+            function sleep() end
+            function processMessages() end
+            function processMessagesPaintOnly() end
+            function registerLuaFunctionHighlight() end
+            function getAddressSafe(n)
+              if n == 'g_invokeMailbox' then return MB end
+              if n == 'g_mailboxContract' then return CV end
+              return nil
+            end
+            function readInteger(a) return MEM[a] or 0 end
+            function readString() return '' end
+            function writeByte(a, v) MEM[a] = v end
+            function writeQword(a, v) MEM[a] = v end
+            function writeInteger(a, v)
+              MEM[a] = v
+              if a == MB and v == 7 then
+                MEM[MB + 0x08] = {{I(state)}}
+                MEM[MB + 0x72C] = {{I(outFlags)}}
+                MEM[MB + 0x04] = 1
+                MEM[MB] = 0
+              end
+            end
+            local chunk = assert(load([==[
+            {{HelperLuaResource.Read()}}
+            ]==]))
+            chunk()
+            local s, warn = {{call}}
+            io.write('R=' .. tostring(s) .. '|' .. tostring(warn) .. '\n')
+            """;
+        var (exit, output) = CeLua53Host.Run(lua);
+        Assert.True(exit == 0, output);
+        return output.Replace("\r\n", "\n").Split('\n').First(l => l.StartsWith("R=", StringComparison.Ordinal))[2..];
+    }
+
+    [Theory]
+    [InlineData(7, 0, 2L, false, "0|template")]      // the toggle ran on the CheatManager's class default object (builds 3676-3681)
+    [InlineData(7, -17, 0L, false, "-17|nil")]       // control [DEBUGCAM-FORCEON-CDO]: a refused ON passes through, no warning
+    [InlineData(7, 1, 0L, false, "1|nil")]           // control: a clean ON
+    [InlineData(6, 0, 0xFFFFFFFFL, false, "0|nil")]  // control: below contract 7 the word is never read
+    [InlineData(7, 1, 2L, true, "1|nil")]            // control: a query fires nothing and says nothing
+    public void InvokeHelper_setDebugCamera_returns_the_template_warning(int cur, int state, long outFlags, bool query,
+                                                                         string expected)
+    {
+        Assert.Equal(expected, RunHelperDebugCamera(cur, state, outFlags, query));
+    }
+
+    [Fact]
+    public void DebugCameraRecord_a_queued_ON_names_the_class_default_object_too()
+    {
+        // Review of ef20e198: only the failed-ON branch read the bit; a queued ON on the class default object will run
+        // there and do nothing, and the record said only "queued -- do not tick again". Kept for a DLL from builds
+        // 3676-3681: a newer one never queues that toggle ([DEBUGCAM-FORCEON-CDO]).
+        var s = DebugCameraScriptGenerator.Generate();
+        int queued = s.IndexOf("queued -- the game thread is busy; the toggle will run", StringComparison.Ordinal);
+        Assert.True(queued > 0, "the queued-ON message moved -- re-point this pin");
+        int lineStart = s.LastIndexOf('\n', queued);
+        int read = s.LastIndexOf($"readInteger(mb + {CeMailboxLayout.OffOutFlags})", queued, StringComparison.Ordinal);
+        Assert.True(read > s.LastIndexOf("if state == ", queued, StringComparison.Ordinal),
+            "the queued-ON branch reads cmdOutFlags itself");
+        Assert.Contains("_tplWarn", s[lineStart..s.IndexOf('\n', queued)], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void NonStaticOnTemplate_IsDecidedOnceInTheDllAndPublishedOnBothLanes()
+    {
+        // [INVOKE-NONSTATIC-ON-CDO] Warn, never refuse. The DLL decides from the flags it read itself (never the caller's
+        // direct_call claim) and publishes the verdict on the pipe and, for CE, in cmdOutFlags. No test target compiles
+        // Fern or Mimic, so this pins their source; dll_helpers_test pins the rule and dll_core_test TemplateOf.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found -- re-point this pin");
+            return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
+        }
+
+        var fern = CodeOnly(DllSource("Fern.cpp"));
+        int start = fern.IndexOf("cmd == Renge::CMD_INVOKE_FUNCTION", StringComparison.Ordinal);
+        var invoke = fern[start..fern.IndexOf("cmd == Renge::CMD_", start + 1, StringComparison.Ordinal)];
+        Assert.Contains("Aura::TemplateOf(instanceAddr)", invoke, StringComparison.Ordinal);
+        Assert.Matches(@"Mimic::WarnNonStaticOnTemplate\([^;]*resolved,\s*fi\.functionFlags\)", invoke);
+        Assert.DoesNotMatch(@"WarnNonStaticOnTemplate\([^;]*directCall", invoke);
+        foreach (var key in new[] { "instance_template", "template_owner_name", "nonstatic_on_template" })
+            Assert.Contains($"data[\"{key}\"]", invoke, StringComparison.Ordinal);
+
+        var mimic = CodeOnly(DllSource("Mimic.cpp"));
+        var handle = Body(mimic, "static void HandleInvoke() {");
+        int prep = handle.IndexOf("PrepareObjectParams(", StringComparison.Ordinal);
+        int verdict = handle.IndexOf("Aura::TemplateOf(instanceAddr)", StringComparison.Ordinal);
+        int bit = handle.IndexOf("INV_OUT_NONSTATIC_ON_TEMPLATE", StringComparison.Ordinal);
+        int call = handle.IndexOf("UE5_CallProcessEventDirect(", StringComparison.Ordinal);
+        Assert.True(prep >= 0 && verdict > prep && bit > verdict && call > bit,
+            "the verdict is taken after the last refusal and published before the call");
+        int clearErr = mimic.IndexOf("g_invokeMailbox.errorMsg[0] = '\\0';", StringComparison.Ordinal);
+        int clearOut = mimic.IndexOf("g_invokeMailbox.cmdOutFlags = 0;", StringComparison.Ordinal);
+        Assert.True(clearErr >= 0 && clearOut > clearErr && clearOut - clearErr < 600,
+            "the dispatcher clears cmdOutFlags before every command, beside errorMsg");
+
+        var mimicH = DllSource("Mimic.h");
+        Assert.Matches(@"INV_OUT_NONSTATIC_ON_TEMPLATE\s*=\s*0x2\b", mimicH);
+        Assert.Equal(2, CeMailboxLayout.InvOutNonStaticOnTemplate);
+        Assert.Equal("0x72C", CeMailboxLayout.OffOutFlags);
+        Assert.True(CeMailboxLayout.ContractVersion >= 7,
+            "a script that reads the invoke warning must claim contract 7: an older DLL never writes the bit");
+
+        // CE: the INV script reads the bit and keeps its window open on a warned success; the baked record takes the
+        // helper's third return.
+        var inv = InvokeScriptGenerator.Generate("Actor", "K2_GetActorLocation", new FunctionInfoModel { Name = "K2_GetActorLocation" });
+        Assert.Contains($"readInteger(mb + {CeMailboxLayout.OffOutFlags})", inv, StringComparison.Ordinal);
+        Assert.Contains("if result == 0 and not _tplWarn and DEBUG == 0 then", inv, StringComparison.Ordinal);
+        var baked = BakedScriptGenerator.Generate("Actor", "K2_GetActorLocation", 24, new List<BakedParamValue>());
+        Assert.Contains("local ok, err, warn = invokeUFunction(", baked, StringComparison.Ordinal);
+        Assert.Contains("if ok and not warn and DEBUG == 0 then", baked, StringComparison.Ordinal);
+        var helper = HelperLuaResource.Read();
+        Assert.Contains("local THIS_HELPER_VERSION = '1.6'", helper, StringComparison.Ordinal);
+        Assert.Contains("local MAILBOX_CONTRACT_INVOKE_OUT = 7", helper, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SetDebugCamera_refuses_a_toggle_on_a_template_before_one_is_marked_in_flight()
+    {
+        // [DEBUGCAM-FORCEON-CDO] With no live CheatManager the state read lands on its class default object, where
+        // ToggleDebugCamera does nothing (4.20+: GetOuterAPlayerController() is null on a CDO) or worse (4.18/4.19: a raw
+        // cast of the package). A Force ON there is refused before anything is marked in flight, so nothing is queued and
+        // no later -5 / -6 can be about a toggle on a template; a Force OFF only swaps the controller back.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found -- re-point this pin");
+            return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
+        }
+
+        var set = Body(CodeOnly(DllSource("Frieren.cpp")), "int32_t UE5_SetDebugCamera(int32_t enable) {");
+        var step = System.Text.RegularExpressions.Regex.Match(set,
+            @"const bool noLiveCheatManager = !cm \|\| Aura::TemplateOf\(cm\)\.kind != Aura::TemplateKind::None;\s*"
+            + @"const auto step = Mimic::DebugCameraForceStep\(want, noLiveCheatManager\);");
+        Assert.True(step.Success,
+            "the step is decided from the request and whether a CheatManager is live (none found counts as none live)");
+        int read = set.IndexOf("DbgCam_ReadState(", StringComparison.Ordinal);
+        int already = set.IndexOf("already %s", StringComparison.Ordinal);
+        Assert.True(read > 0 && already > read && step.Index > already,
+            "decided after the state read and the 'already' answer, which stay as they are");
+        int refuse = set.IndexOf("return Mimic::DBGCAM_ERR_NO_LIVE_CHEATMANAGER;", step.Index, StringComparison.Ordinal);
+        int swapOnly = set.IndexOf("== Mimic::DbgCamForceStep::SwapBackOnly", step.Index, StringComparison.Ordinal);
+        int mark = set.IndexOf("s_dbgCamInFlight = want ? 1 : 0;", StringComparison.Ordinal);
+        Assert.True(refuse > step.Index && mark > refuse, "a refused ON returns before anything is marked in flight");
+        Assert.True(swapOnly > step.Index && mark > swapOnly, "an OFF with no live CheatManager never reaches the marking");
+        var swapBranch = set[swapOnly..mark];
+        Assert.Contains("DbgCam_SwapControllerBack(dcc)", swapBranch, StringComparison.Ordinal);
+        Assert.Contains("return state;", swapBranch, StringComparison.Ordinal);
+        Assert.DoesNotContain("CallProcessEventRouted", swapBranch, StringComparison.Ordinal);
+        int fire = set.IndexOf("CallProcessEventRouted(cm, ufunc", StringComparison.Ordinal);
+        Assert.True(fire > mark, "the toggle is sent only past the marking, which a template never reaches");
+        // Review 1: each step value is tied to its own branch -- an OFF refused, swapped guards or a conditional return
+        // passed the index checks above.
+        Assert.Matches(@"if \(step == Mimic::DbgCamForceStep::RefuseNoLiveCheatManager\) \{[^{}]*"
+            + @"return Mimic::DBGCAM_ERR_NO_LIVE_CHEATMANAGER;\s*\}", set);
+        Assert.Matches(@"if \(step == Mimic::DbgCamForceStep::SwapBackOnly\) \{[^{}]*DbgCam_SwapControllerBack\(dcc\)"
+            + @"[^{}]*return state;\s*\}\s*s_dbgCamInFlight = want \? 1 : 0;", set);
+        Assert.DoesNotContain("DBGCAM_ERR_NO_LIVE_CHEATMANAGER", swapBranch, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void SetDebugCamera_publishes_no_template_warning()
+    {
+        // [DEBUGCAM-FORCEON-CDO] No toggle can reach a template any more, so the DLL's "the toggle ran on the class
+        // default object" verdict ([INVOKE-NONSTATIC-ON-CDO]) is gone on every lane. The UI and CE readers stay, for a
+        // DLL from builds 3676-3681.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found -- re-point this pin");
+            return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
+        }
+
+        var frieren = CodeOnly(DllSource("Frieren.cpp"));
+        var set = Body(frieren, "int32_t UE5_SetDebugCamera(int32_t enable) {");
+        Assert.DoesNotContain("WarnNonStaticOnTemplate", set, StringComparison.Ordinal);
+        Assert.DoesNotContain("t_dbgCamFiredOnTemplate", frieren, StringComparison.Ordinal);
+        Assert.DoesNotContain("DebugCameraFiredOnTemplate", frieren, StringComparison.Ordinal);
+
+        var fern = CodeOnly(DllSource("Fern.cpp"));
+        int start = fern.IndexOf("cmd == Renge::CMD_SET_DEBUG_CAMERA", StringComparison.Ordinal);
+        var handler = fern[start..fern.IndexOf("cmd == Renge::CMD_", start + 1, StringComparison.Ordinal)];
+        Assert.DoesNotContain("nonstatic_on_template", handler, StringComparison.Ordinal);
+        Assert.DoesNotContain("DebugCameraFiredOnTemplate", fern, StringComparison.Ordinal);
+
+        var mimic = CodeOnly(DllSource("Mimic.cpp"));
+        var dbg = Body(mimic, "static void HandleSetDebugCamera() {");
+        Assert.DoesNotContain("INV_OUT_NONSTATIC_ON_TEMPLATE", dbg, StringComparison.Ordinal);
+        Assert.DoesNotContain("DebugCameraFiredOnTemplate", mimic, StringComparison.Ordinal);
+        int refused = dbg.IndexOf("state == DBGCAM_ERR_NO_LIVE_CHEATMANAGER", StringComparison.Ordinal);
+        Assert.True(refused > 0, "the refusal has its own errorMsg");
+        Assert.Contains("no live CheatManager", dbg[refused..dbg.IndexOf("} else", refused, StringComparison.Ordinal)],
+            StringComparison.Ordinal);
+        int minus1 = dbg.IndexOf("state == -1", StringComparison.Ordinal);
+        Assert.True(minus1 > 0, "the -1 errorMsg is still there");
+        Assert.DoesNotContain("no live CheatManager",
+            dbg[minus1..dbg.IndexOf("} else", minus1, StringComparison.Ordinal)], StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void InternalClassLookups_NeverMatchAClassNameSubstring()
+    {
+        // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The DLL's own fallbacks looked a class up by a NAME SUBSTRING: a
+        // widget named after "PlayerController" won the local-controller scan with its OwningPlayer, a game PC or
+        // AWorldSettings subclass named without the word was missed, and a Debug Camera subclass named without the word
+        // was never hopped through. None of these modules reach a C++ test target, so their source is pinned here;
+        // dll_core_test's LOCALPC block pins Aura::ScanForLocalPlayerController itself.
+        static string Lf(string s) => s.Replace("\r\n", "\n");
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found -- re-point this pin");
+            return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
+        }
+
+        // (1) Every FindInstancesByClass call outside Aura passes an exact match -- except the Instance Finder's own,
+        // which forwards the client's choice.
+        const string finder = "FindInstancesByClass(className, exactMatch, limit, newestFirst, nameFilter, excludeClasses, "
+                              + "/*buildHistogram=*/true)";
+        foreach (var path in Directory.GetFiles(Path.GetDirectoryName(NumericInputCoercionTests.RepoFile("dll/src/Aura.cpp"))!, "*.cpp"))
+        {
+            if (Path.GetFileName(path) == "Aura.cpp") continue;
+            var src = CodeOnly(Lf(File.ReadAllText(path)));
+            for (int at = src.IndexOf("FindInstancesByClass(", StringComparison.Ordinal); at >= 0;
+                 at = src.IndexOf("FindInstancesByClass(", at + 1, StringComparison.Ordinal))
+            {
+                var call = src[at..src.IndexOf(';', at)];
+                Assert.True(call.Contains("/*exactMatch=*/true", StringComparison.Ordinal) || call.StartsWith(finder, StringComparison.Ordinal),
+                    Path.GetFileName(path) + ": " + call);
+            }
+        }
+
+        // (2) The seven local-controller fallbacks share Aura's derivation scan, and every Debug Camera hop tests
+        // derivation.
+        foreach (var file in new[] { "Dunste.cpp", "Edel.cpp", "Hemmung.cpp", "Laufen.cpp", "Solide.cpp", "Solitar.cpp", "Wirbel.cpp" })
+        {
+            var src = CodeOnly(Lf(DllSource(file)));
+            var resolve = Body(src, "uintptr_t ResolveLocalPC(uintptr_t world");
+            Assert.True(resolve.Contains("Aura::ScanForLocalPlayerController()", StringComparison.Ordinal), file + ": " + resolve);
+            var hop = Body(src, "uintptr_t HopThroughDebugCamera(uintptr_t pc) {");
+            Assert.True(hop.Contains("Aura::ClassDerivesFromAny(", StringComparison.Ordinal)
+                        && !hop.Contains(".find(\"DebugCameraController\")", StringComparison.Ordinal), file + ": " + hop);
+        }
+        // Review 1: every caller still hops the controller ResolveLocalPC returns -- the scan can now return an active
+        // debug camera, which is pawnless. Wirbel's POV alone keeps it: it wants the on-screen view.
+        foreach (var file in new[] { "Dunste.cpp", "Edel.cpp", "Hemmung.cpp", "Laufen.cpp", "Solide.cpp", "Solitar.cpp", "Wirbel.cpp" })
+        {
+            var src = CodeOnly(Lf(DllSource(file)));
+            int povFrom = src.IndexOf("int32_t GetPovImpl(Pov& out) {", StringComparison.Ordinal);
+            int povTo = povFrom >= 0 ? src.IndexOf("\n}\n", povFrom, StringComparison.Ordinal) : -1;
+            int calls = 0;
+            foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(src,
+                         @"(?<var>[\w.]+) = ResolveLocalPC\("))
+            {
+                if (povFrom >= 0 && m.Index > povFrom && m.Index < povTo) continue;
+                var v = m.Groups["var"].Value;
+                var after = src.Substring(m.Index, Math.Min(400, src.Length - m.Index));
+                Assert.True(after.Contains($"{v} = HopThroughDebugCamera({v})", StringComparison.Ordinal),
+                    file + ": " + after);
+                ++calls;
+            }
+            Assert.True(calls > 0, file + ": no ResolveLocalPC caller found -- re-point this pin");
+        }
+        var dunste = Body(CodeOnly(Lf(DllSource("Dunste.cpp"))), "uintptr_t ResolveLocalPC(uintptr_t world");
+        int gate = dunste.IndexOf("if (!allowScan) return 0;", StringComparison.Ordinal);
+        Assert.True(gate > 0 && gate < dunste.IndexOf("Aura::ScanForLocalPlayerController()", StringComparison.Ordinal),
+            "the fly worker's ticks still never scan");
+
+        // (3) Hemmung's world-dilation fallback: AWorldSettings by derivation, never a class-default stand-in (the
+        // re-assert worker would write TimeDilation into the template the next level's settings are built from).
+        var ws = Body(CodeOnly(Lf(DllSource("Hemmung.cpp"))), "uintptr_t ResolveWorldSettings(uintptr_t world) {");
+        Assert.Contains("Aura::FindInstancesDerivedFrom(Grimoire::TIME_WORLDSETTINGS_CLASS", ws, StringComparison.Ordinal);
+        Assert.DoesNotContain("FindLiveOrDefaultOf", ws, StringComparison.Ordinal);
+
+        // (4) The version ladder's CharacterMovementComponent rung reads the ENGINE class by path.
+        var frieren = CodeOnly(Lf(DllSource("Frieren.cpp")));
+        Assert.Contains("Aura::FindClassByPath(Grimoire::VERSION_CMC_CLASS_PATH)", frieren, StringComparison.Ordinal);
+        Assert.Contains("\"/Script/Engine.CharacterMovementComponent\"", DllSource("Grimoire.h"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void WritePools_never_hold_a_template()
+    {
+        // [LISTINSTANCES-KEEPS-TEMPLATES] Freeze (CMD_LIST_INSTANCES) and Force (Solide) write into every object their
+        // pool lists. A template there -- a class default object, one of its default subobjects, a Blueprint component
+        // template -- passes its value to every later spawn, and the freeze helper never restores. Mimic.cpp and
+        // Solide.cpp reach no C++ test target, so their source is pinned here; dll_core_test pins the walkers.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found -- re-point this pin");
+            return src[at..src.IndexOf("\n}\n", at, StringComparison.Ordinal)];
+        }
+
+        // A working copy may hold CRLF (git config is per machine); Body looks for "\n}\n".
+        static string Lf(string s) => s.Replace("\r\n", "\n");
+        var list = Body(CodeOnly(Lf(DllSource("Mimic.cpp"))), "static void HandleListInstances() {");
+        Assert.Contains("Aura::FindInstancesDerivedFrom(className, cap)", list, StringComparison.Ordinal);
+        Assert.Contains("/*buildHistogram=*/false, /*skipTemplates=*/true)", list, StringComparison.Ordinal);
+        Assert.Contains("Aura::TemplateOf(r.addr, outerMemo).kind != Aura::TemplateKind::None", list, StringComparison.Ordinal);
+        Assert.DoesNotContain("find(\"Default__\")", list, StringComparison.Ordinal);
+
+        var solide = Body(CodeOnly(Lf(DllSource("Solide.cpp"))), "void ApplyJobLocked(");
+        Assert.Contains("Aura::FindInstancesDerivedFrom(", solide, StringComparison.Ordinal);
+        Assert.Contains("Aura::TemplateOf(r.addr, outerMemo).kind != Aura::TemplateKind::None", solide, StringComparison.Ordinal);
+        Assert.DoesNotContain("FindInstancesByClass(", solide, StringComparison.Ordinal);
+        Assert.DoesNotContain("find(\"Default__\")", solide, StringComparison.Ordinal);
+
+        // The Property Search preview samples what Force / Freeze would hold [CDOSCOPE-2026-08-20], so it skips the
+        // same templates; only the row's own class default stands in, and is marked as such.
+        var aura = CodeOnly(Lf(DllSource("Aura.cpp")));
+        int from = aura.IndexOf("std::unordered_map<uintptr_t, uintptr_t> cdoOnlyMap;", StringComparison.Ordinal);
+        int to = aura.IndexOf("ChoosePreviewSource(", Math.Max(from, 0), StringComparison.Ordinal);
+        Assert.True(from > 0 && to > from, "the preview sweep moved -- re-point this pin");
+        var sweep = aura[from..to];
+        Assert.Contains("TemplateOfImpl(obj, &previewOuterMemo)", sweep, StringComparison.Ordinal);
+        // Review 1: only the row's OWN class default stands in -- not a subclass's, not another template.
+        Assert.Contains("exact && tk == TemplateKind::ClassDefault", sweep, StringComparison.Ordinal);
+        Assert.DoesNotContain("find(\"Default__\")", sweep, StringComparison.Ordinal);
+
+        // A meaning change of CMD_LIST_INSTANCES: a script generated now refuses a DLL that still lists templates.
+        Assert.True(CeMailboxLayout.ContractVersion >= 8,
+            "a script that relies on a template-free LIST_INSTANCES must claim contract 8: an older DLL still lists templates");
+        // [INVOKE-PICK-GARBAGE] And of CMD_FIND_INSTANCE / CMD_INVOKE_BY_NAME: a script generated now refuses a DLL
+        // that would still hand it a destroyed object.
+        Assert.True(CeMailboxLayout.ContractVersion >= 9,
+            "a script that relies on FIND_INSTANCE passing over destroyed objects must claim contract 9");
+
+        // Review 1: the Force reply and the forced-fields list say how many templates the pool passed over, so a hold
+        // armed on nothing can say why; the walks' post-filters share a memo, as the walks do.
+        var fern = CodeOnly(Lf(DllSource("Fern.cpp")));
+        Assert.Contains("data[\"templates_skipped\"]", fern, StringComparison.Ordinal);
+        Assert.Contains("j[\"templates_skipped\"]", fern, StringComparison.Ordinal);
+        Assert.Contains("Aura::TemplateOf(r.addr, outerMemo)", list, StringComparison.Ordinal);
+        Assert.Contains("Aura::TemplateOf(r.addr, outerMemo)", solide, StringComparison.Ordinal);
+        var dumpSvc = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Services/DumpService.cs"));
+        Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(dumpSvc, @"TemplatesSkipped\s*=\s*\w+\[""templates_skipped""\]").Count);
+    }
+
+    [Fact]
+    public void DebugCamera_refusal_code_is_registered_and_mirrored()
+    {
+        // [DEBUGCAM-FORCEON-CDO] -17 reaches CE in CMD_SET_DEBUG_CAMERA's `result`, the field CMD_TELEPORT's -16 and the
+        // invoke family's -12..-15 share: the registry note must move on, or the next code collides.
+        var mimicH = DllSource("Mimic.h").Replace("\r\n", "\n");
+        var m = System.Text.RegularExpressions.Regex.Match(mimicH, @"DBGCAM_ERR_NO_LIVE_CHEATMANAGER\s*=\s*(-\d+)");
+        Assert.True(m.Success, "Mimic::DBGCAM_ERR_NO_LIVE_CHEATMANAGER not found");
+        Assert.Equal(UE5DumpUI.Constants.DebugCameraNoLiveCheatManagerResult,
+            int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture));
+        Assert.Contains("-17 is taken", mimicH, StringComparison.Ordinal);
+        Assert.Contains("The next mailbox-wide code takes -18.", mimicH, StringComparison.Ordinal);
+        Assert.DoesNotContain("The next mailbox-wide code takes -17.", mimicH, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -3104,6 +3709,111 @@ public class InvokeScriptTests
         int n = 0;
         for (int i = s.IndexOf(what, StringComparison.Ordinal); i >= 0; i = s.IndexOf(what, i + what.Length, StringComparison.Ordinal)) n++;
         return n;
+    }
+
+    [Fact]
+    public void BugItGo_RefusesAParentRelativeBugItBeforeTheUndoPoint()
+    {
+        // [TELEPORT-BUGITGO-PARENTREL] BugItSave recorded the parent-relative flag and BugItGo never read it, so a BugIt
+        // taken on a vehicle or mount was driven into the pawn as world coordinates. Wirbel.cpp reaches no test target,
+        // so this pins its source (dll_helpers_test pins BugItGoRefusal itself). Comments are stripped: the fix's own
+        // comments name the calls.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found");
+            int end = src.IndexOf("\n}\n", at, StringComparison.Ordinal);
+            return src[at..end];
+        }
+        var wirbel = CodeOnly(DllSource("Wirbel.cpp"));
+
+        var go = Body(wirbel, "int32_t BugItGo(uint8_t* tierOut) {");
+        int refusal = go.IndexOf("BugItGoRefusal(s_bugItMarker.Valid, s_bugItMarker.ParentRelative)", StringComparison.Ordinal);
+        int undo = go.IndexOf("SaveLastImpl();", StringComparison.Ordinal);
+        int jump = go.IndexOf("RecallTo(", StringComparison.Ordinal);
+        Assert.True(refusal >= 0, "BugItGo must ask BugItGoRefusal with the stored slot's own parent-relative flag");
+        Assert.True(undo > refusal && jump > undo,
+            "the refusal must come before the undo point and the jump: a refused jump moves neither the pawn nor 'last'");
+        Assert.Contains("LOG_WARN(\"Teleport: BugItGo refused", go, StringComparison.Ordinal);
+
+        var save = Body(wirbel, "int32_t BugItSave(Pose& out,");
+        Assert.Contains("LOG_WARN(\"Teleport: BugIt stored from a PARENT-RELATIVE read", save, StringComparison.Ordinal);
+
+        Assert.Matches(@"TP_ERR_PARENT_RELATIVE\s*=\s*-16\s*,", DllSource("Wirbel.h"));
+        Assert.Equal(-16, TeleportCodes.ParentRelative);
+        // Control: the mailbox handler still passes BugItGo's code straight through, with no field of its own.
+        Assert.Contains("rc = Wirbel::BugItGo(&tier);", DllSource("Mimic.cpp"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Recall_Force_Facing_AndTheUndoPoint_RefuseAParentRelativePose()
+    {
+        // [TELEPORT-RECALL-PARENTREL] Marker Recall and Force, TP facing direction and the undo slot each used a pose read
+        // from the parent-relative fallback as world coordinates. Wirbel.cpp reaches no test target, so this pins its
+        // source; dll_helpers_test pins RecallMarkerRefusal and StoresUndoPoint themselves.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static string Body(string src, string signature)
+        {
+            int at = src.IndexOf(signature, StringComparison.Ordinal);
+            Assert.True(at >= 0, signature + " not found");
+            int end = src.IndexOf("\n}\n", at, StringComparison.Ordinal);
+            return src[at..end];
+        }
+        var wirbel = CodeOnly(DllSource("Wirbel.cpp"));
+
+        // Recall and Force: one refusal, outside the map check Force skips, before the undo point and the jump.
+        var recall = Body(wirbel, "int32_t RecallMarker(int32_t slot, bool force, uint8_t* tierOut) {");
+        int refusal = recall.IndexOf("RecallMarkerRefusal(m.Valid, m.ParentRelative, force, sameMap)", StringComparison.Ordinal);
+        int returned = recall.IndexOf("if (refusal != TP_OK) return refusal;", StringComparison.Ordinal);
+        int undo = recall.IndexOf("SaveLastImpl();", StringComparison.Ordinal);
+        int jump = recall.IndexOf("RecallTo(", StringComparison.Ordinal);
+        Assert.True(refusal >= 0, "RecallMarker must ask RecallMarkerRefusal with the marker's own flag, the force bit "
+                                  + "and the map it compared");
+        // Review of 83615671: asking is not refusing -- the answer must be returned, before the undo point and the jump.
+        Assert.True(returned > refusal && undo > returned && jump > undo,
+            "the refusal must be RETURNED before the undo point and the jump");
+        // ...and the map argument must be the real comparison, which Force alone may skip.
+        Assert.Contains("const bool sameMap = force || IEquals(std::string(cur), m.MapName);", recall, StringComparison.Ordinal);
+        Assert.Contains("if (!force) CopyMapName(DerefWorld(), cur, sizeof(cur));", recall, StringComparison.Ordinal);
+        Assert.DoesNotContain("TP_ERR_MAP_MISMATCH;", recall);   // the map check's answer is RecallMarkerRefusal's now
+        Assert.Contains("LOG_WARN(\"Teleport: recall %d refused -- the marker came from a PARENT-RELATIVE read", recall,
+            StringComparison.Ordinal);
+
+        // The undo point keeps its previous pose rather than take a parent-relative one.
+        // Review of 83615671: the guard's arguments and its place are pinned, not just the call's name.
+        var last = Body(wirbel, "void SaveLastImpl() {");
+        int guard = last.IndexOf("if (!StoresUndoPoint(readOk, m.ParentRelative)) {", StringComparison.Ordinal);
+        int exit = guard >= 0 ? last.IndexOf("return;", guard, StringComparison.Ordinal) : -1;
+        int store = last.IndexOf("s_lastMarker = m;", StringComparison.Ordinal);
+        Assert.True(guard >= 0, "SaveLastImpl must ask StoresUndoPoint with the read's own result and flag");
+        // Review 2: asking is not refusing here either -- the guard must leave before the slot is written.
+        Assert.True(exit > guard && store > exit, "the guard must return before the slot is written");
+
+        // TP facing direction: the start pose is read WITH its flag and refused before the undo point; a parent-relative
+        // landing re-read is reported as an unknown landing, never as numbers.
+        var rel = Body(wirbel, "int32_t TeleportRelative(double distance, bool horizontalOnly, Pose& outNewPose,");
+        int startRead = rel.IndexOf("GetPoseImpl(cur, nullptr, 0, nullptr, nullptr, &startParentRelative)", StringComparison.Ordinal);
+        int startRefusal = rel.IndexOf("if (startParentRelative)", StringComparison.Ordinal);
+        int relUndo = rel.IndexOf("SaveLastImpl();", StringComparison.Ordinal);
+        Assert.True(startRead >= 0, "TeleportRelative must read its start pose with the parent-relative flag");
+        Assert.True(startRefusal > startRead && relUndo > startRefusal,
+            "a parent-relative start must be refused before the undo point and the jump");
+        Assert.Contains("return TP_ERR_PARENT_RELATIVE;", rel, StringComparison.Ordinal);
+        Assert.Contains("&landingParentRelative", rel, StringComparison.Ordinal);
+        Assert.Contains("!landingParentRelative", rel, StringComparison.Ordinal);
+
+        // Control: the transports still pass Wirbel's code straight through.
+        var mimic = DllSource("Mimic.cpp");
+        Assert.Contains("rc = Wirbel::RecallMarker(slot, op == TP_OP_RECALL_FORCE, &tier);", mimic, StringComparison.Ordinal);
     }
 
     [Fact]

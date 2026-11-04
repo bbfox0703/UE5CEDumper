@@ -59,7 +59,8 @@ uintptr_t ReadPtrAt(uintptr_t obj, int32_t off) {
 
 // Resolve the LOCAL PlayerController: engine chain first
 // (GWorld → OwningGameInstance → LocalPlayers[0] → PlayerController), then an
-// instance-scan fallback preferring the PC whose UPlayer* Player field is set.
+// the shared instance-scan fallback (Aura::ScanForLocalPlayerController: the
+// local player's controller first).
 // A faithful read-only copy of Wirbel::ResolveLocalPC.
 uintptr_t ResolveLocalPC(uintptr_t world) {
     do {
@@ -88,24 +89,16 @@ uintptr_t ResolveLocalPC(uintptr_t world) {
         }
     } while (false);
 
-    auto rset = Aura::FindInstancesByClass("PlayerController", false, 100);
-    uintptr_t firstNonCdo = 0;
-    for (const auto& r : rset.results) {
-        if (!r.addr || r.name.find("Default__") != std::string::npos) continue;
-        if (!firstNonCdo) firstNonCdo = r.addr;
-        uintptr_t cls = Ubel::GetClass(r.addr);
-        int32_t playerOff = Ubel::FindFieldOffset(cls, "Player", "Player",
-                                                  "Controller", "ObjectProperty");
-        if (playerOff >= 0 && ReadPtrAt(r.addr, playerOff)) {
-            LOG_INFO("Edel: local PC 0x%llX via instance scan (Player set)",
-                     (unsigned long long)r.addr);
-            return r.addr;
-        }
-    }
-    if (firstNonCdo)
-        LOG_WARN("Edel: PC 0x%llX via instance scan WITHOUT Player check",
-                 (unsigned long long)firstNonCdo);
-    return firstNonCdo;
+    // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] By derivation, the local player's controller first.
+    const Aura::LocalPcScan s = Aura::ScanForLocalPlayerController();
+    if (s.pick == Aura::LocalPcPick::LocalPlayer)
+        LOG_INFO("Edel: local PC 0x%llX via instance scan (Player set)", (unsigned long long)s.pc);
+    else if (s.pick == Aura::LocalPcPick::OtherPlayer)
+        LOG_WARN("Edel: PC 0x%llX via instance scan (a remote Player; no local one found)",
+                 (unsigned long long)s.pc);
+    else if (s.pick == Aura::LocalPcPick::NoPlayer)
+        LOG_WARN("Edel: PC 0x%llX via instance scan WITHOUT a Player", (unsigned long long)s.pc);
+    return s.pc;
 }
 
 // When the Debug Camera is active the LocalPlayer's controller IS the
@@ -113,8 +106,8 @@ uintptr_t ResolveLocalPC(uintptr_t world) {
 uintptr_t HopThroughDebugCamera(uintptr_t pc) {
     if (!pc) return pc;
     uintptr_t cls = Ubel::GetClass(pc);
-    std::string clsName = Ubel::GetName(cls);
-    if (clsName.find("DebugCameraController") == std::string::npos) return pc;
+    // [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] Derivation: a game's debug camera may be named without the word.
+    if (!Aura::ClassDerivesFromAny(cls, {Grimoire::AURA_DEBUGCAM_CLASS})) return pc;
     int32_t origOff = Ubel::FindFieldOffset(cls, "OriginalControllerRef",
                                             "OriginalController", nullptr, "ObjectProperty");
     uintptr_t orig = ReadPtrAt(pc, origOff);

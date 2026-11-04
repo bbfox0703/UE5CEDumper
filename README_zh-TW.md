@@ -34,7 +34,7 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 - **Value Search（數值搜尋）** — Cheat-Engine 風格的 First Scan / Next Scan，掃描每個 UE 屬性（數字、字串、向量、array / map / set），不需知道 offset 就能找到目標。**Group 模式**能找出同時持有多個數值的物件（例如 `Str + Def + Dex + Int`），另有可選的 **Deep** 模式深入巢狀容器。
 - **Teleport（傳送）** — 3 個 marker 存檔 / 召回（BugItGo 風格）、俯視 / 2.5D 遊戲的**傳送到游標**、可自設全域熱鍵，以及唯讀的**相機 POV** 讀值。¹
 - **角色調整（Player tuning）** — **Super Jump / Move Speed / Gravity** 滑桿、**God Mode（無敵）**、**Time Dilation（全域或僅玩家的慢動作 / 凍結 / 快轉）** — 全部以反射強制設定並對抗每 tick 覆寫，因此重生後仍維持。可綁熱鍵或匯出成 CE 開 / 關記錄。
-- **Debug Camera（除錯相機）** — 強制開 / 關自由飛行除錯相機，即使在通常會卡住的 Shipping build 也能可靠開關。
+- **Debug Camera（除錯相機）** — 強制開 / 關自由飛行除錯相機，即使在通常會卡住的 Shipping build 也能可靠開關（需要執行中的 CheatManager；UE 5 的 Shipping build 預設沒有，此時 Force On 會直接說明）。
 - **Console（主控台）** — 發現並一鍵呼叫許多遊戲保留的 `fly` / `god` / `ghost` / 遊戲特定 exec 指令。
 - **即時函式剖析器（Live Funcs）** — 錄下*一個*遊戲內動作（開商店、衝刺），就能看到實際觸發了哪些 UFunction，附 baseline 差異 + 雜訊過濾。名稱搜尋找不到時，用「行為」找。
 - **一鍵 CE 匯出** — 指標鏈 XML、Structure Dissect (CSX)、SDK headers、AA 腳本、多列 `.CT` 批次。
@@ -56,12 +56,12 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 | **4.25 – 4.27** | ✅ | ✅ | ✅ | Final Fantasy VII Rebirth, 勇者鬥惡龍 I&II / III HD-2D 重製版, 劍星 (Stellar Blade), Tower of Mask, 霍格華茲的傳承, 復活邪神 2 七英雄的復仇, Ghostwire: Tokyo, TimeSplitters Rewind, The Artisan of Glimmith, Barn Finders, 機動戰士 GUNDAM SEED 激鬥命運 復刻版, 女神異聞錄３ Reload (Persona 3 Reload) |
 | **5.0 – 5.2** | ✅ | ✅ | ✅ | Squirrel With A Gun, Caravan Sandwitch, Meltopia, Retro Rewind Demo |
 | **5.3 – 5.4** | ✅ | ✅ | ✅ | Satisfactory (v1.1.3.1 滿意工廠), Colossal, Avowed, 艾恩葛朗特 迴盪新聲 Demo (Echoes of Aincrad), MindsEye, DragonSword Awakening, 天外世界 2 (The Outer Worlds 2) |
-| **5.5 – 5.7** | ✅ | ✅ | ✅ | 泰坦任務 2, EverSpace 2, Lushfoil Photography Sim, 莊園領主 (Manor Lords), Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT: CARRIER QUALIFICATION Demo, Solarpunk (太陽龐克), Pionero Capital Demo, Satisfactory (滿意工廠 v1.2.3.1), Star Trek Voyager – Across the Unknown, 冒險家艾略特的千年奇譚 (The Adventures of Elliot), FINAL FANTASY RESONANCE DEMO |
+| **5.5 – 5.7** | ✅ | ✅ | ✅ | 泰坦任務 2, EverSpace 2, Lushfoil Photography Sim, 莊園領主 (Manor Lords), Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT: CARRIER QUALIFICATION Demo, Solarpunk (太陽龐克), Pionero Capital Demo, Satisfactory (滿意工廠 v1.2.3.1), Star Trek Voyager – Across the Unknown, 冒險家艾略特的千年奇譚 (The Adventures of Elliot), FINAL FANTASY RESONANCE |
 | **5.8** | ✅ | ✅ | ✅ | Ski-E-O Demo, Unknown Operations: The Habitus Demo |
 
 *UE 4.11 是支援下限；4.10 以下會直接顯示為不支援。*
 
-*冒險家艾略特的千年奇譚與 FINAL FANTASY RESONANCE DEMO 隱藏了引擎版本；從 build 3647 起，工具會依其結構判讀為 5.6（之前的版本顯示 5.4）。*
+*冒險家艾略特的千年奇譚與 FINAL FANTASY RESONANCE 隱藏了引擎版本；從 build 3647 起，工具會依其結構判讀為 5.6（之前的版本顯示 5.4）。*
 
 ---
 
@@ -112,7 +112,7 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 * **切到背景就暫停的遊戲**會讓需要呼叫遊戲的操作逾時。此時 UI 會顯示「game thread stalled」提示，實驗性的 **Keep Foreground** 開關可繞過它。
 * **大型 Array / Map / Set** 的讀取數量受 Live Walker 的 **Array Limit** 滑桿限制。
 
-各遊戲的註記收錄於 [docs/test-games.md](docs/test-games.md)。
+各遊戲的註記收錄於 [docs/test-games.md](docs/test-games.md)。跨版本仍存在的已知問題與限制收錄於 [docs/known-issues.md](docs/known-issues.md)（英文）。
 
 ---
 

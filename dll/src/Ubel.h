@@ -59,6 +59,9 @@ struct FieldInfo {
     std::string elemType;        // SetProperty -> element FProperty type name
     std::string elemStructType;  // SetProperty element struct name (if StructProperty)
     std::string enumName;        // EnumProperty/ByteProperty -> UEnum name
+    // [USMAP-ENUM-SIGNEDNESS] An EnumProperty's UnderlyingProp type (e.g. Int8Property): the signedness its size
+    // cannot say. Empty when the Enum slot did not validate or the slot names no integer property.
+    std::string enumUnderlyingType;
     // [A4-USMAP-CONTAINER-ENUM] A container inner's UEnum: a TEnumAsByte inner's FBYTEPROP_ENUM, or an EnumProperty
     // inner's FENUMPROP_ENUM. Each its OWN field -- enumName above is the field's own enum, never an inner's.
     std::string innerEnumName;   // ArrayProperty / OptionalProperty inner
@@ -1720,6 +1723,10 @@ inline const char* UnresolvedWeakLabel(int32_t objIdx, int32_t serial) {
 // stays resolvable until the next GC (~61 s by default); the readers keep resolving it, because the object
 // is really there, and append this tag to the text they DISPLAY. Never to ptrName, which navigation uses.
 const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex);
+
+// [INVOKE-PICK-GARBAGE] Is this object destroyed (DynOff::IsDestroyedObject), for a walk that PICKS one -- not the
+// display tag above, which also names a target that a collection in progress has marked Unreachable.
+bool IsDestroyedPick(uintptr_t target, int32_t objectIndex);
 
 // [R7-B-04] A delegate binding's display text: DescribeScriptDelegate + WeakTargetGarbageTag. Every reader that renders
 // a binding goes through this one function.

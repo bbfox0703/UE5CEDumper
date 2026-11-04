@@ -156,8 +156,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// Engine holds the single-instance server) to reinstall the plugin.</summary>
     public string AobMakerOfflineText => "\u25CB " + Helpers.AobMakerUnavailable.Text(_aobMaker);
 
-    /// <summary>[R7-S7] Any setter of the flag -- the toolbar ⟳ sets it directly -- repaints the line and the buttons that
-    /// read it. A change hook alone misses false -> false with a new reason; <see cref="ApplyAobMakerProbe"/> covers it.</summary>
+    /// <summary>[R7-S7] Any setter of the flag repaints the line and the buttons that read it. A change hook alone misses
+    /// false -> false with a new reason; <see cref="ApplyAobMakerProbe"/> covers it.</summary>
     partial void OnIsAobMakerAvailableChanged(bool value) => NotifyAobMakerProperties();
 
     /// <summary>[R7-S7] Publish what a probe or a push on the SHARED bridge learned: set the flag AND repaint, even when
@@ -166,7 +166,12 @@ public partial class PointerPanelViewModel : ViewModelBase
     {
         IsAobMakerAvailable = available;
         NotifyAobMakerProperties();
+        AobMakerProbed?.Invoke(available);
     }
+
+    /// <summary>[PROPSEARCH-FREEZE-STALE-AOBMAKER] Every answer <see cref="ApplyAobMakerProbe"/> applies, changed or not,
+    /// for the toolbar chip: the flag raises only on a change, so a probe that confirmed it reached nobody else.</summary>
+    public event Action<bool>? AobMakerProbed;
 
     // --- Extra Scan state ---
     [ObservableProperty] private bool _isScanning;
@@ -742,12 +747,10 @@ public partial class PointerPanelViewModel : ViewModelBase
     public async Task CheckAobMakerAsync()
     {
         if (_aobMaker == null) return;
-        try
-        {
-            IsAobMakerAvailable = await _aobMaker.CheckAvailabilityAsync();
-            NotifyAobMakerProperties();
-        }
-        catch { IsAobMakerAvailable = false; OnPropertyChanged(nameof(AobMakerOfflineText)); }
+        bool ok;
+        try { ok = await _aobMaker.CheckAvailabilityAsync(); }
+        catch { ok = false; }
+        ApplyAobMakerProbe(ok);
     }
 
     /// <summary>Hide the stale pointer block + all HasData-gated badges/actions on

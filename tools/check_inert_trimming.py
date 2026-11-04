@@ -94,9 +94,10 @@ def main(argv=None):
     if hits:
         print('CHECK FAILED: TextTrimming that can never fire, with no readable tail.')
         print('A horizontal StackPanel gives each child its DESIRED width, so trimming is')
-        print('inert -- the text is hard-cut with no ellipsis. Make it the fill child of a')
-        print('DockPanel (see PropertySearchPanel.axaml), or add ToolTip.Tip so the cut')
-        print('tail stays readable. See this file\'s docstring for what is NOT a hit.')
+        print('inert -- the text is hard-cut with no ellipsis. Give it a row of its own with')
+        print('TextWrapping="Wrap" (see PropertySearchPanel.axaml), make it the fill child of a')
+        print('DockPanel, or add ToolTip.Tip so the cut tail stays readable. See this file\'s')
+        print('docstring for what is NOT a hit.')
         for f, ln, t in hits:
             print(f'  {f}:{ln}  {t}')
         return 1

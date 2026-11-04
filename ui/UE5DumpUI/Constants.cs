@@ -95,6 +95,25 @@ public static class Constants
     // [W3-CONSOLE-REINVOKE]
     public const int InvokeDispatchTimeoutResult = -5;
 
+    // invoke_function's `instance_pick`: how the DLL chose the object for a class name (Aura::UserPickWire, plus
+    // "address" when the caller sent one). [FINDINSTANCE-SUBSTRING-USERFACING]
+    public const string InvokePickLive = "live";
+    public const string InvokePickAddress = "address";
+    public const string InvokePickDebugCameraOwned = "debug_camera_owned";
+    public const string InvokePickClassDefault = "class_default";
+    public const string InvokePickPartialName = "partial_name";
+    public const string InvokePickPartialNameDefault = "partial_name_default";
+
+    // find_live_instance's `pick` when it has nothing to open, and the UI's own mark for the exact-name answer a DLL
+    // older than the command gives. [MAINWINDOW-NAVIGATE-EXACT-NAME]
+    public const string LiveLookupPickNone = "none";
+    public const string LiveLookupPickLegacy = "legacy";
+
+    // invoke_function's `instance_template` (Aura::TemplateKindWire): a class-default object, or another template.
+    // [INVOKE-NONSTATIC-ON-CDO]
+    public const string InvokeTemplateClassDefault = "class_default";
+    public const string InvokeTemplateSubobject = "template";
+
     // set_debug_camera's `state` -5: the ToggleDebugCamera call TIMED OUT on the game thread and STAYS QUEUED. The two
     // directions differ. A queued ON will run: not a failure, so say "queued, do not press again", because a second
     // Force ON queues a second toggle [W3-DEBUGCAM-QUEUED]. A queued OFF does not turn the camera off on stock UE
@@ -107,6 +126,11 @@ public static class Constants
     // toggle of the other direction is still queued and the state the DLL would read predates it. Not a queued toggle of
     // the caller's own direction, so it is never read as -5: send it again once the game responds.
     public const int DebugCameraToggleBlockedResult = -6;
+
+    // [DEBUGCAM-FORCEON-CDO] set_debug_camera's `state` -17 (Mimic::DBGCAM_ERR_NO_LIVE_CHEATMANAGER): a Force ON NOT SENT,
+    // because no CheatManager is live and ToggleDebugCamera does nothing on its class default object. The DLL read the
+    // camera OFF ("already ON" answers first), so the badge reads OFF, not Unknown.
+    public const int DebugCameraNoLiveCheatManagerResult = -17;
 
     // ── Movement result codes (Laufen) ──────────────────────────────────────
     // set_gravity_direction's `state` carries Laufen::MoveResult (dll/src/Laufen.h). -4, MR_ERR_REFLECT,

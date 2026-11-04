@@ -80,6 +80,38 @@ public class PropertySearchForceTests
     }
 
     [Fact]
+    public async Task Force_on_a_nested_row_sends_nothing_and_asks_nothing()
+    {
+        // [LEAD-PROPSEARCH-TOPTIONAL-LEAVES] A deep row names a dotted path, not a field of its class: the row hides the
+        // Force menu, and each command refuses too -- before the value prompt or the null confirm.
+        var dump = new RecordingDump();
+        int asked = 0;
+        var vm = new PropertySearchViewModel(dump, new NoopLog())
+        {
+            ForceValuePrompt = _ => { asked++; return Task.FromResult(ForceValuePromptResult.Accept(1)); },
+            ForceNullConfirm = _ => { asked++; return Task.FromResult(true); },
+        };
+        PropertySearchMatch Nested(string type)
+        {
+            var m = NewMatch(type, "Upgrade.Value");
+            m.IsNested = true;
+            return m;
+        }
+
+        await vm.ForceBoolOnCommand.ExecuteAsync(Nested("BoolProperty"));
+        Assert.Contains("Upgrade.Value", vm.StatusText);
+        vm.StatusText = "";
+        await vm.ForceNullCommand.ExecuteAsync(Nested("ObjectProperty"));
+        Assert.Contains("Upgrade.Value", vm.StatusText);
+        vm.StatusText = "";
+        await vm.ForceNumericCommand.ExecuteAsync(Nested("FloatProperty"));
+        Assert.Contains("Live Walker", vm.StatusText);
+
+        Assert.Equal(0, dump.ForceCalls);
+        Assert.Equal(0, asked);
+    }
+
+    [Fact]
     public async Task ForceNumeric_prompt_cancel_does_not_send()
     {
         var dump = new RecordingDump();
@@ -149,6 +181,33 @@ public class PropertySearchForceTests
         // The user needs to know it will fire later, and how to undo it.
         Assert.Contains("spawns", vm.StatusText);
         Assert.Contains("release", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>[LISTINSTANCES-KEEPS-TEMPLATES] review 1: a hold armed on nothing because every object of the class is
+    /// a template says so -- "it applies as soon as one spawns" alone sent the user waiting for a spawn that a
+    /// GameplayEffect's component subobjects, say, never get.</summary>
+    [Fact]
+    public async Task Force_zero_held_because_only_templates_exist_says_so()
+    {
+        var dump = new RecordingDump { NextForce = new() { Held = 0, Code = 0, Resolved = false, TemplatesSkipped = 3 } };
+        var vm = new PropertySearchViewModel(dump, new NoopLog());
+        var match = NewMatch("BoolProperty", "bInvincible");
+
+        await vm.ForceBoolOnCommand.ExecuteAsync(match);
+
+        Assert.Contains("ARMED", vm.StatusText);
+        Assert.Contains(UE5DumpUI.Helpers.ForceText.TemplatesOnlyNote(match.ClassName, 3), vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Force_zero_held_with_no_template_passed_over_has_no_templates_note()
+    {
+        var dump = new RecordingDump { NextForce = new() { Held = 0, Code = 0, Resolved = false, TemplatesSkipped = 0 } };
+        var vm = new PropertySearchViewModel(dump, new NoopLog());
+
+        await vm.ForceBoolOnCommand.ExecuteAsync(NewMatch("BoolProperty", "bInvincible"));
+
+        Assert.DoesNotContain("Only templates", vm.StatusText, StringComparison.Ordinal);
     }
 
     /// <summary>The genuinely-futile case still reports as an error, unchanged: a

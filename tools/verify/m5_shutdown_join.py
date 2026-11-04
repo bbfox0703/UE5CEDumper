@@ -202,7 +202,7 @@ def control():
     """Show the detector can REPORT a hang. Without this, run()'s PASS is unfalsifiable."""
     say("CONTROL: suspending the game's main thread so WM_CLOSE cannot be processed.")
     say("Expect HANG. A clean exit here means the detector is broken.")
-    with PipeClient().connect() as c:
+    with PipeClient() as c:
         pid = c.request("get_pointers")["pid"]
     hwnd = game_hwnd(pid)
     tid = main_tid(pid)

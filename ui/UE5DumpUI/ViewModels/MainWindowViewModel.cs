@@ -604,7 +604,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // exponent is not a change -- so without this Copy CE Field fabricated nothing until the slider moved.
         LiveWalker.FabricateArrayCount = FabricateArrayCount;
         InstanceFinder = new InstanceFinderViewModel(dump, log, platform, AobMakerShared);
-        PropertySearch = new PropertySearchViewModel(dump, log, aobMaker, platform, experimentalGate);
+        PropertySearch = new PropertySearchViewModel(dump, log, aobMaker, platform, experimentalGate, AobMakerShared);
         GameClassFilter = new GameClassFilterViewModel(dump, log, platform);
         InterestingFunctions = new InterestingFunctionsViewModel(dump, log, aobMaker, platform);
         LiveFuncs = new LiveFuncsViewModel(dump, log, platform, AobMakerShared, experimentalGate);
@@ -809,14 +809,32 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 IsAobMakerAvailable = Pointers.IsAobMakerAvailable;
         };
 
-        // Mirror the per-tab AOBMaker availability (LiveWalker + Pointers each
-        // probe on their own tab activation) into the always-visible top-toolbar
-        // chip so its state stays correct from any tab without a manual refresh.
+        // Mirror what each panel that keeps an AOBMaker flag of its own learns (it probes on its own tab activation)
+        // into the always-visible top-toolbar chip, and through the chip into AobMakerShared, so the chip and every
+        // panel that follows the shared status stay correct from any tab without a manual refresh.
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] AobMakerProbed carries every answer a panel applies, its probes' and its
+        // pushes', changed or not: a flag raises only on a change, so an answer that confirmed it reached no one. The
+        // change mirrors below still take a flag a panel sets some other way. A panel left out leaves the chip and the
+        // shared status stale: two were, until that row's review 1.
         IsAobMakerAvailable = _aobMaker?.IsAvailable ?? false;
+        LiveWalker.AobMakerProbed += ok => IsAobMakerAvailable = ok;
+        Pointers.AobMakerProbed += ok => IsAobMakerAvailable = ok;
+        InterestingFunctions.AobMakerProbed += ok => IsAobMakerAvailable = ok;
+        Teleport.AobMakerProbed += ok => IsAobMakerAvailable = ok;
         LiveWalker.PropertyChanged += (_, e) =>
         {
             if (e.PropertyName == nameof(LiveWalkerViewModel.IsAobMakerAvailable))
                 IsAobMakerAvailable = LiveWalker.IsAobMakerAvailable;
+        };
+        InterestingFunctions.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(InterestingFunctionsViewModel.IsAobMakerAvailable))
+                IsAobMakerAvailable = InterestingFunctions.IsAobMakerAvailable;
+        };
+        Teleport.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(TeleportViewModel.IsAobMakerAvailable))
+                IsAobMakerAvailable = Teleport.IsAobMakerAvailable;
         };
 
         // Wire Pointers Extra Scan -> refresh all panels after rescan results applied
@@ -1281,11 +1299,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
         };
 
-        // Wire InterestingFunctions -> Live Walker (with find_instance fallback to ClassStruct).
+        // Wire InterestingFunctions -> Live Walker (with a fallback to ClassStruct).
         // The Finder gives us (className, funcName), but Live Walker is instance-based:
-        //   1. Try FindInstancesAsync(className, exactMatch=true) -- pick the first non-CDO live instance.
+        //   1. Ask for a live object of the class or a subclass (LiveInstanceAsync).
         //   2. On hit: switch to Live Walker tab + navigate to that instance + auto-scroll to funcName.
-        //   3. On miss (CDO-only class, or class not yet instantiated): switch to ClassStruct tab so
+        //   3. On miss (nothing of it is live): switch to ClassStruct tab so
         //      the user at least sees the function in the class metadata, with a status hint.
         InterestingFunctions.NavigateToFunction += async (className, funcName) =>
         {
@@ -1293,17 +1311,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 if (string.IsNullOrEmpty(className)) return;
 
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                // Skip CDO entries (their name typically starts with "Default__"); pick the first
-                // real instance so Live Walker has something to walk.
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var live = await LiveInstanceAsync(className);
+                var liveAddr = live.Found ? live.Address : null;
 
                 if (!string.IsNullOrEmpty(liveAddr))
                 {
@@ -1315,27 +1324,26 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     // await the first click after a class change finds an
                     // empty function list and reports "function not selected".
                     var picked = await LiveWalker.TrySelectFunctionByNameAsync(funcName);
-                    StatusText = picked
-                        ? $"Navigated to {className}::{funcName} (live instance {liveAddr})"
-                        : $"Navigated to {className} @ {liveAddr}; function '{funcName}' not in this class";
+                    StatusText = FunctionNavigateText(className, funcName, live, picked, "function");
                     _log.Info($"InterestingFunctions -> LiveWalker: {className}::{funcName} @ {liveAddr}" +
                               (picked ? "" : " (function not selected)"));
                 }
                 else
                 {
                     SelectedTabIndex = (int)MainTabIndex.ClassStruct; // ClassStruct fallback
-                    // Look up the class address via ListClasses since Find Instances came back empty.
+                    // Look up the class address via ListClasses: nothing of the class is live.
                     var classes = await _dump.ListClassesAsync(gameOnly: false);
                     var match = classes.FindClassAddr(className);
                     if (match.Found)
                     {
                         await ShowClassInClassStructAsync(match.Addr);
-                        StatusText = $"No live instance of {className}; showing class metadata";
+                        StatusText = $"No live instance of {className}; showing class metadata" + PickNote(live, className);
                         _log.Info($"InterestingFunctions -> ClassStruct fallback: {className}::{funcName}");
                     }
                     else
                     {
-                        StatusText = $"No live instance of {className}, and the class {match.MissReason}";
+                        StatusText = $"No live instance of {className}, and the class {match.MissReason}"
+                                     + PickNote(live, className);
                         _log.Warn($"InterestingFunctions navigate: {className} {match.MissReason}");
                     }
                 }
@@ -1350,7 +1358,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         LiveFuncs.NavigateToCallTrace += () => SelectedTabIndex = (int)MainTabIndex.CallTrace;
 
         // Wire Live Funcs (PE profiler) -> Live Walker, same instance-based handoff
-        // as the Interesting Functions finder: find a live non-CDO instance of the
+        // as the Interesting Functions finder: find a live object of the
         // class, open it in Live Walker, and auto-select the discovered function.
         LiveFuncs.NavigateToFunction += async (className, funcName) =>
         {
@@ -1358,24 +1366,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 if (string.IsNullOrEmpty(className)) return;
 
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var live = await LiveInstanceAsync(className);
+                var liveAddr = live.Found ? live.Address : null;
 
                 if (!string.IsNullOrEmpty(liveAddr))
                 {
                     SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                     await LiveWalker.NavigateToAddressCommand.ExecuteAsync(liveAddr);
                     var picked = await LiveWalker.TrySelectFunctionByNameAsync(funcName);
-                    StatusText = picked
-                        ? $"Navigated to {className}::{funcName} (live instance {liveAddr})"
-                        : $"Navigated to {className} @ {liveAddr}; function '{funcName}' not in this class";
+                    StatusText = FunctionNavigateText(className, funcName, live, picked, "function");
                     _log.Info($"LiveFuncs -> LiveWalker: {className}::{funcName} @ {liveAddr}" +
                               (picked ? "" : " (function not selected)"));
                 }
@@ -1387,11 +1386,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     if (match.Found)
                     {
                         await ShowClassInClassStructAsync(match.Addr);
-                        StatusText = $"No live instance of {className}; showing class metadata";
+                        StatusText = $"No live instance of {className}; showing class metadata" + PickNote(live, className);
                     }
                     else
                     {
-                        StatusText = $"No live instance of {className}, and the class {match.MissReason}";
+                        StatusText = $"No live instance of {className}, and the class {match.MissReason}"
+                                     + PickNote(live, className);
                     }
                 }
             }
@@ -1415,8 +1415,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
         };
 
-        // Wire InterestingFunctions -> "Locate in GWorld": resolve a live (non-CDO)
-        // instance of the function's class (same find_instance path as
+        // Wire InterestingFunctions -> "Locate in GWorld": resolve a live
+        // object of the function's class (same lookup as
         // NavigateToFunction above), then run the GWorld path search in parent mode
         // (stop before drilling into the instance). A function isn't itself a world
         // object, so the meaningful target is "where do instances of this class live".
@@ -1425,21 +1425,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 if (string.IsNullOrEmpty(className)) return;
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var live = await LiveInstanceAsync(className);
+                var liveAddr = live.Found ? live.Address : null;
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = $"No live (non-CDO) instance of {className} to locate in GWorld.";
+                    StatusText = "";
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, LocateRootGWorld, live);
                     return;
                 }
+                StatusText = LocateStatusText(live, className, LocateRootGWorld);
                 await LiveWalker.LocateInGWorldAsync(liveAddr, 0, null, stopAtParent: true);
             }
             catch (Exception ex)
@@ -1450,7 +1445,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         // Xref dialog (code-behind, no per-instance DI): give it the app's AOBMaker
         // bridge for "Disassemble in CE", and handle its "Locate class" request by
-        // resolving a live (non-CDO) instance + navigating to Live Walker — same
+        // resolving a live object + navigating to Live Walker — same
         // class-name path as the Interesting Functions locate just above.
         Views.PropertyXrefDialog.SharedAobMaker = aobMaker;
         Views.FunctionPropsDialog.SharedAobMaker = aobMaker;   // [AOBM-FUNC-DISASM]
@@ -1459,21 +1454,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 if (string.IsNullOrEmpty(className)) return;
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var live = await LiveInstanceAsync(className);
+                var liveAddr = live.Found ? live.Address : null;
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = $"No live (non-CDO) instance of {className} to locate in GWorld.";
+                    StatusText = "";
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, LocateRootGWorld, live);
                     return;
                 }
+                StatusText = LocateStatusText(live, className, LocateRootGWorld);
                 await LiveWalker.LocateInGWorldAsync(liveAddr, 0, null, stopAtParent: true);
             }
             catch (Exception ex)
@@ -1488,21 +1478,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 if (string.IsNullOrEmpty(className)) return;
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var live = await LiveInstanceAsync(className);
+                var liveAddr = live.Found ? live.Address : null;
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = $"No live (non-CDO) instance of {className} to locate in GameEngine.";
+                    StatusText = "";
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, LocateRootGameEngine, live);
                     return;
                 }
+                StatusText = LocateStatusText(live, className, LocateRootGameEngine);
                 await LiveWalker.LocateInGameEngineAsync(liveAddr, 0, null, stopAtParent: true);
             }
             catch (Exception ex)
@@ -1512,7 +1497,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         };
 
         // Wire InterestingProperties -> Live Walker. Same pattern as
-        // InterestingFunctions: try find_instance for a non-CDO live address,
+        // InterestingFunctions: ask for a live object of the class,
         // fall back to ClassStruct when none. We don't scroll to the
         // specific property row in round 1 (LiveWalker has no public
         // ScrollToField yet) — the property name is left in the status
@@ -1523,15 +1508,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 if (string.IsNullOrEmpty(className)) return;
 
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var live = await LiveInstanceAsync(className);
+                var liveAddr = live.Found ? live.Address : null;
 
                 if (!string.IsNullOrEmpty(liveAddr))
                 {
@@ -1540,7 +1518,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     // Pre-fill the search box so the user lands with the
                     // property highlighted instead of having to scroll.
                     LiveWalker.SearchText = propName;
-                    StatusText = $"Navigated to {className} (live instance {liveAddr}); searching {propName}";
+                    StatusText = $"Navigated to {className} (live instance {liveAddr}); searching {propName}"
+                        + PickNote(live, className);
                     _log.Info($"InterestingProperties -> LiveWalker: {className}.{propName} @ {liveAddr}");
                 }
                 else
@@ -1551,12 +1530,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     if (match.Found)
                     {
                         await ShowClassInClassStructAsync(match.Addr);
-                        StatusText = $"No live instance of {className}; showing class metadata (look for {propName})";
+                        StatusText = $"No live instance of {className}; showing class metadata (look for {propName})"
+                                     + PickNote(live, className);
                         _log.Info($"InterestingProperties -> ClassStruct fallback: {className}.{propName}");
                     }
                     else
                     {
-                        StatusText = $"No live instance of {className}, and the class {match.MissReason}";
+                        StatusText = $"No live instance of {className}, and the class {match.MissReason}"
+                                     + PickNote(live, className);
                         _log.Warn($"InterestingProperties navigate: {className} {match.MissReason}");
                     }
                 }
@@ -1575,21 +1556,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 if (string.IsNullOrEmpty(className)) return;
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var live = await LiveInstanceAsync(className);
+                var liveAddr = live.Found ? live.Address : null;
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = $"No live (non-CDO) instance of {className} to locate in GWorld.";
+                    StatusText = "";
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, LocateRootGWorld, live);
                     return;
                 }
+                StatusText = LocateStatusText(live, className, LocateRootGWorld);
                 await LiveWalker.LocateInGWorldAsync(liveAddr, 0, null, stopAtParent: true);
             }
             catch (Exception ex)
@@ -1602,21 +1578,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 if (string.IsNullOrEmpty(className)) return;
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var live = await LiveInstanceAsync(className);
+                var liveAddr = live.Found ? live.Address : null;
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = $"No live (non-CDO) instance of {className} to locate in GameEngine.";
+                    StatusText = "";
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, LocateRootGameEngine, live);
                     return;
                 }
+                StatusText = LocateStatusText(live, className, LocateRootGameEngine);
                 await LiveWalker.LocateInGameEngineAsync(liveAddr, 0, null, stopAtParent: true);
             }
             catch (Exception ex)
@@ -1645,21 +1616,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             try
             {
                 if (string.IsNullOrEmpty(className)) return;
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var live = await LiveInstanceAsync(className);
+                var liveAddr = live.Found ? live.Address : null;
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = $"No live (non-CDO) instance of {className} to locate in GWorld.";
+                    StatusText = "";
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, LocateRootGWorld, live);
                     return;
                 }
+                StatusText = LocateStatusText(live, className, LocateRootGWorld);
                 await LiveWalker.LocateInGWorldAsync(liveAddr, 0, null, stopAtParent: true);
             }
             catch (Exception ex)
@@ -1825,19 +1791,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     return;
                 }
 
-                // Find a live instance so the script's invokeUFunction has a target. The
-                // helper uses CMD_INVOKE_BY_NAME which finds an instance itself, but
-                // running it now lets us surface a clear error if the class is CDO-only.
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 1);
-                string instanceAddr = "";
-                foreach (var inst in instances.Instances)
-                {
-                    if (!inst.Name.StartsWith("Default__", StringComparison.Ordinal))
-                    {
-                        instanceAddr = inst.Address;
-                        break;
-                    }
-                }
+                // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the script names the class and the DLL resolves
+                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here normally
+                // found the class default object first.
+                const string instanceAddr = "";
 
                 // Fast path: TRULY trivial functions only (no inputs AND no return).
                 // Functions like KismetSystemLibrary::GetGameName have no inputs
@@ -1928,24 +1885,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             {
                 if (string.IsNullOrEmpty(className)) return;
 
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 5);
-                string? liveAddr = null;
-                foreach (var inst in instances.Instances)
-                {
-                    if (string.IsNullOrEmpty(inst.Address)) continue;
-                    if (inst.Name.StartsWith("Default__", StringComparison.Ordinal)) continue;
-                    liveAddr = inst.Address;
-                    break;
-                }
+                var live = await LiveInstanceAsync(className);
+                var liveAddr = live.Found ? live.Address : null;
 
                 if (!string.IsNullOrEmpty(liveAddr))
                 {
                     SelectedTabIndex = (int)MainTabIndex.LiveWalker; // Live Walker
                     await LiveWalker.NavigateToAddressCommand.ExecuteAsync(liveAddr);
                     var picked = await LiveWalker.TrySelectFunctionByNameAsync(funcName);
-                    StatusText = picked
-                        ? $"Navigated to {className}::{funcName} (live instance {liveAddr})"
-                        : $"Navigated to {className} @ {liveAddr}; exec '{funcName}' not in this class";
+                    StatusText = FunctionNavigateText(className, funcName, live, picked, "exec");
                     _log.Info($"Console -> LiveWalker: {className}::{funcName} @ {liveAddr}" +
                               (picked ? "" : " (function not selected)"));
                 }
@@ -1958,12 +1906,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     {
                         await ShowClassInClassStructAsync(match.Addr);
                         StatusText = $"No live instance of {className}; showing class metadata " +
-                                     $"(exec '{funcName}' — UCheatManager subclasses often need an active PlayerController)";
+                                     $"(exec '{funcName}' — UCheatManager subclasses often need an active PlayerController)"
+                                     + PickNote(live, className);
                         _log.Info($"Console -> ClassStruct fallback: {className}::{funcName}");
                     }
                     else
                     {
-                        StatusText = $"No live instance of {className}, and the class {match.MissReason}";
+                        StatusText = $"No live instance of {className}, and the class {match.MissReason}"
+                                     + PickNote(live, className);
                         _log.Warn($"Console navigate: {className} {match.MissReason}");
                     }
                 }
@@ -1995,17 +1945,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     return;
                 }
 
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 1);
-                string instanceAddr = "", instanceClassAddr = "";
-                foreach (var inst in instances.Instances)
-                {
-                    if (!inst.Name.StartsWith("Default__", StringComparison.Ordinal))
-                    {
-                        instanceAddr = inst.Address;
-                        instanceClassAddr = inst.ClassAddress;
-                        break;
-                    }
-                }
+                // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the dialog sends the class name, and the DLL
+                // picks the object at each FIRE with Aura::ResolveUserInstance (its contract is in Aura.h). An exact-name
+                // lookup here normally found the class default object first and left FIRE with nothing to send.
 
                 if (Avalonia.Application.Current?.ApplicationLifetime is not
                     Avalonia.Controls.ApplicationLifetimes.IClassicDesktopStyleApplicationLifetime desktop
@@ -2015,12 +1957,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 var inputParams = funcMatch.InputParams.ToList();
                 var dialog = new Views.InvokeParamDialog(
                     className, funcName, inputParams, funcMatch.Parameters.ToList(), funcMatch.ParmsSize,
-                    instanceAddr, _dump, _engineState?.UEVersion ?? 0,
+                    "", _dump, _engineState?.UEVersion ?? 0,
                     aobMaker: _aobMaker, platform: _platform,
-                    mode: Views.InvokeDialogMode.PipeInvoke,
-                    // [LW-CONTAINER-VIEW-CLASSNAME-ACTIONS] The dialog keeps this address across FIREs: each is refused
-                    // if the object there is of another class by then.
-                    expectClassAddr: instanceClassAddr);
+                    mode: Views.InvokeDialogMode.PipeInvoke);
                 var result = await dialog.ShowDialog<string?>(owner);
                 StatusText = result == "ok"
                     ? $"exec {className}::{funcName} dialog closed"
@@ -2055,16 +1994,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     return;
                 }
 
-                var instances = await _dump.FindInstancesAsync(className, exactMatch: true, limit: 1);
-                string instanceAddr = "";
-                foreach (var inst in instances.Instances)
-                {
-                    if (!inst.Name.StartsWith("Default__", StringComparison.Ordinal))
-                    {
-                        instanceAddr = inst.Address;
-                        break;
-                    }
-                }
+                // [MAINWINDOW-INVOKE-LIMIT1-CDO] No object is looked up: the script names the class and the DLL resolves
+                // it when the record runs (INVOKE_BY_NAME), so it bakes no address. An exact-name lookup here normally
+                // found the class default object first.
+                const string instanceAddr = "";
 
                 var inputParams = funcMatch.InputParams.ToList();
                 var hasReturn = funcMatch.Parameters.Any(p => p.IsReturn);
@@ -2129,10 +2062,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
         };
 
-        // Console -> RequestDebugCameraCeScript builds the stateful
-        // setDebugCamera [ENABLE]/[DISABLE] memory-record script and ships it
-        // to AOBMaker (a CE AA-script record) or the clipboard. Self-contained:
-        // no class/func resolution needed — the helper resolves the export.
+        // Console -> RequestDebugCameraCeScript builds the stateful Debug Camera
+        // [ENABLE]/[DISABLE] memory-record script and ships it to AOBMaker (a CE
+        // AA-script record) or the clipboard. Self-contained: no class/func
+        // resolution and no helper -- the record writes CMD_SET_DEBUG_CAMERA to the
+        // DLL's mailbox itself.
         Console.RequestDebugCameraCeScript += async () =>
         {
             try
@@ -3272,12 +3206,95 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] A live object of <paramref name="className"/> or of a class derived
+    /// from it -- never a template -- or none (<see cref="LiveInstanceResult.Found"/> false): the object a navigate
+    /// opens in Live Walker and a Locate searches a path from. One DLL answer for every such handler: an exact-name
+    /// lookup that skipped names starting <c>Default__</c> answered none for a class whose live objects are all of a
+    /// subclass, and handed over a class default object's default subobject, which is not named so.</summary>
+    private async Task<LiveInstanceResult> LiveInstanceAsync(string className)
+    {
+        var found = await _dump.FindLiveInstanceAsync(className);
+        if (found.Found)
+            _log.Info($"Live instance of {className}: {found.Name} ({found.ClassName}) @ {found.Address}, pick {found.Pick}");
+        return found;
+    }
+
+    internal const string KeyNavigatedToSubclass = "str.Main.NavigatedToSubclass";
+    internal const string KeyLiveLookupLegacy = "str.Main.LiveLookupLegacy";
+
+    /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] A function navigate's line. A function's row names the class that
+    /// DECLARES it; the object opened may be of a subclass when nothing of that class itself is live, and Live Walker
+    /// lists an object's own class's functions, not those it inherits -- so a function it could not select there is
+    /// inherited, not "not in this class". <paramref name="what"/> is the word the line uses for the member.</summary>
+    internal static string FunctionNavigateText(string className, string funcName, LiveInstanceResult live, bool picked,
+                                                string what)
+    {
+        string line;
+        if (picked)
+            line = $"Navigated to {className}::{funcName} (live instance {live.Address})";
+        else if (!string.IsNullOrEmpty(live.ClassName)
+                 && !string.Equals(live.ClassName, className, StringComparison.OrdinalIgnoreCase))
+            line = Helpers.AobMakerStatus.Say(KeyNavigatedToSubclass,
+                "Opened {0} ({1}, a subclass of {2}): {3} is declared on {2}, and Live Walker lists {1}'s own functions, "
+                + "not those it inherits from {2}.", live.Name, live.ClassName, className, funcName);
+        else
+            line = $"Navigated to {className} @ {live.Address}; {what} '{funcName}' not in this class";
+        return line + PickNote(live, className);
+    }
+
+    /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] "" unless the pick needs a word, then a sentence with a leading space,
+    /// to append: the Debug Camera controller's own object (the lookup answers one only when nothing else of the class
+    /// is live), in the Console's own words -- one sentence for one fact, at the cost of naming the object's class
+    /// rather than the one asked for; or the old exact-name lookup an injected DLL older than find_live_instance
+    /// answers with, which looks for no subclass and can hand over a template.</summary>
+    internal static string PickNote(LiveInstanceResult live, string className) => live.Pick switch
+    {
+        LiveInstanceResult.PickDebugCameraOwned when live.Found =>
+            " " + Helpers.InvokePickText.DebugCameraOwnedText(live.Name, live.ClassName),
+        LiveInstanceResult.PickLegacy => " " + Helpers.AobMakerStatus.Say(KeyLiveLookupLegacy,
+            "⚠ {0} was looked up by its exact class name only: the injected DLL predates find_live_instance, so no "
+            + "subclass object was looked for, and the object may be a template (a default object's subobject). "
+            + LegacyRemedy, className),
+        _ => "",
+    };
+
+    /// <summary>What replaces an injected DLL older than this UI -- the System tab's stale-DLL badge's own advice. A
+    /// fallback core only: en.axaml carries the whole sentence.</summary>
+    private const string LegacyRemedy = "Close the game, then Update All on the Proxy Deploy tab, or inject the "
+                                      + "current DLL into a freshly started game.";
+
+    internal const string KeyLocating = "str.Main.Locating";
+
+    /// <summary>Where a Locate's path search starts, as its lines name it.</summary>
+    private const string LocateRootGWorld = "GWorld", LocateRootGameEngine = "GameEngine";
+
+    /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] A Locate's top-bar line, written on every Locate: the object it searches
+    /// from, and the pick's note. Written only when there was a note, the previous Locate's warning stayed under the
+    /// next one's object. <paramref name="root"/> is where the path search starts.</summary>
+    internal static string LocateStatusText(LiveInstanceResult live, string className, string root) =>
+        Helpers.AobMakerStatus.Say(KeyLocating, "Locating {0} ({1}) in {2}.", live.Name, live.ClassName, root)
+        + PickNote(live, className);
+
+    internal const string KeyNoLiveInstanceToLocate = "str.LiveWalker.NoLiveInstanceToLocate";
+    internal const string KeyNoLiveInstanceToLocateLegacy = "str.LiveWalker.NoLiveInstanceToLocateLegacy";
+
+    /// <summary>A Locate with nothing live to search from. <paramref name="root"/> is where the path search would have
+    /// started. An older DLL's exact-name miss says only what it looked for.</summary>
+    internal static string NoLiveInstanceToLocateText(string className, string root, LiveInstanceResult live) =>
+        live.Pick == LiveInstanceResult.PickLegacy
+            ? Helpers.AobMakerStatus.Say(KeyNoLiveInstanceToLocateLegacy,
+                "No live object of class {0} itself to locate in {1}: the injected DLL predates find_live_instance, so "
+                + "no subclass object was looked for, and what it finds may be a template (a default object's "
+                + "subobject). " + LegacyRemedy, className, root)
+            : Helpers.AobMakerStatus.Say(KeyNoLiveInstanceToLocate,
+                "No live instance of {0} or of a subclass to locate in {1}.", className, root);
+
     /// <summary>
     /// Top-toolbar "&#x27F3;" button: re-probe whether Cheat Engine is running with
     /// the AOBMaker plugin loaded and update the always-visible status chip. Navigation
     /// and Add-to-CE actions already re-probe on use, so this is purely for at-a-glance
-    /// feedback. Propagates the result to the Live Walker and Pointers panels so all
-    /// three indicators (and their button enablement) agree.
+    /// feedback. Propagates the result to the panels whose buttons read it, so the chip and
+    /// those buttons agree.
     /// </summary>
     [RelayCommand]
     private async Task RefreshAobMakerAsync()

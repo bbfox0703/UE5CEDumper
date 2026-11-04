@@ -205,6 +205,10 @@ found). Use **Force On / Force Off** (robust — handles Shipping builds whose
 `DisableDebugCamera` is stripped by switching the player's controller back), or
 **Copy CE Script** for a self-contained CE checkbox (tick = on, untick = off).
 Caveat: this is a *separate* camera; game logic keeps running underneath.
+It also needs a live CheatManager. UE 5 compiles the CheatManager out of Shipping
+builds by default (a UE 4 game creates one only when it runs standalone, unless it
+overrides `AGameModeBase::AllowCheats`); without one,
+Force On sends nothing and says so (the CE checkbox unticks itself): use approach 2 or 3.
 
 **2. Rotate the SpringArm / SceneComponent (most common real fix).**
 Instances → find `SpringArmComponent` → open it in **Live Walker** → look at
@@ -270,8 +274,13 @@ invoking the engine's own functions, so it's clean across UE4 and UE5.
 on Marker 1/2/3. Later click **Recall** to jump back (rotation restored, fall
 velocity zeroed). Markers live in the DLL, so they survive a UI restart as long
 as the game keeps running. Recall is refused with a hint if you've changed maps
-— click **Force** to override (you may land in an unloaded area). Markers store
-coordinates only, so dying / respawning never breaks them.
+— click **Force** to override (you may land in an unloaded area). A marker saved
+from a parent-relative read (⚠ in its row: an attached pawn whose world position
+could not be read) is refused by Recall and Force alike, since those numbers are
+not world coordinates — save it again while the game is responding. Markers store
+coordinates only, so dying / respawning never breaks them. **Recall last** undoes
+the most recent jump; when the position before a jump could not be read in world
+coordinates, it keeps the previous one.
 
 **Teleport to the cursor (2.5D / 45° games).** For top-down ARPGs (Titan
 Quest-likes) click **Teleport to cursor** — the pawn jumps to whatever's under
@@ -281,7 +290,10 @@ hits land on the wrong surface, bump the **Channel** number (games remap trace
 channels); **Z offset** lifts you off the ground so you don't spawn inside it.
 
 **BugItGo interop.** **Copy as BugItGo** puts a `BugItGo X Y Z` string on the
-clipboard (handy for sharing a spot). Paste any `BugItGo X Y Z`, bare `X Y Z`,
+clipboard (handy for sharing a spot). On a parent-relative read (the ⚠ chip: an
+attached pawn whose world position could not be read) it copies nothing and empties
+the box, because those numbers are not world coordinates; the CE BugItGo record
+refuses a BugIt stored from one for the same reason. Paste any `BugItGo X Y Z`, bare `X Y Z`,
 or a full `?BugLoc=(…)?BugRot=(…)` string into the box and click **Run** to
 teleport there — no CheatManager needed. (Note: invoking the game's own `BugIt`
 from the Console tab returns nothing on purpose — it writes to the game's log /

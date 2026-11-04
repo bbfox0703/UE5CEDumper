@@ -15,8 +15,7 @@ WHY THIS EXISTS
 WHAT IS IN THE HASH (matches the rule in dll/src/Mimic.h)
   1. Every `MailboxData` field: name, type and declared offset comment
   2. Every `Cmd` value
-  3. Every per-command op enum value (TeleportOp / FlyOp / ProtectOp / QueryPtrOp /
-     TimeOp / ForegroundOp)
+  3. Every per-command op and flag enum value (the CONTRACT_ENUMS tuple below names them)
   4. `Status` and `InitState` values
   It deliberately ignores comments, blank lines and prose, so documentation edits do not
   trip it — only the values a generated script actually depends on.
@@ -38,8 +37,10 @@ WHAT ELSE MIRRORS THE LAYOUT (audit #5 AA36)
       just the sum of the preceding field sizes) rather than read from the `// 0xNNN:`
       comments — which also validates those comments, since the Lua copies were made
       from them;
-    * `CMD_* / STATUS_* / INIT_* / LI_*` are compared against the enum member of the
-      same name, and `ENTRY_SIZE_* / MAX_PAGES` against their `constexpr` originals;
+    * enum-shaped literals (`CMD_*`, `STATUS_*`, the flag prefixes -- LUA_LAYOUT_PREFIXES
+      below) are compared against the enum member of the same name, and constant-shaped
+      ones (`ENTRY_SIZE_*`, `MAX_PAGES`, `MAILBOX_CONTRACT_*`) against their `constexpr`
+      originals;
     * each mirror's own `UE5_SCRIPT_CONTRACT` must fall inside [MIN, MAILBOX_CONTRACT],
       which is the very range its runtime `checkContract()` asserts against the DLL.
 
@@ -52,8 +53,10 @@ WHEN IT FIRES, YOU HAVE EXACTLY TWO CHOICES
   * The change is ADDITIVE (a new Cmd, a new op at an unused number, a new knobId):
     bump MAILBOX_CONTRACT and CeMailboxLayout.ContractVersion. Leave the MIN alone —
     old scripts never referenced the new thing, so they stay valid.
-  * The change BREAKS older scripts (a moved field, a renumbered op, changed semantics):
+  * The change BREAKS older scripts (a moved field, a renumbered op, a meaning an older script relied on):
     bump MAILBOX_CONTRACT, CeMailboxLayout.ContractVersion **and** MAILBOX_CONTRACT_MIN.
+    A meaning change whose old behaviour a script could only have relied on by ACCIDENT is the first kind
+    (Mimic.h's "WHAT IS NOT", version 6), and the bump entry says which accidents end.
   Then update GOLDEN below to the printed hash.
 
 Usage:
@@ -110,8 +113,34 @@ import sys
 # send it or read its output, and no field moved -- so MAILBOX_CONTRACT_MIN stays at 1 and every saved .CT keeps
 # working. The command answers "were the DynOff offsets measured?", which CE Lua could not ask before while
 # ue5_dissect.lua built structures from those offsets.
-GOLDEN_VERSION = 5
-GOLDEN_HASH = "f6738c50c61a4d9b4677c58a16121b3a3ac95d3f99518a1508edc4ec6794470a"
+# NOTE on version 6 ([FINDINSTANCE-SUBSTRING-USERFACING]): the version moved and the HASH did not, as for versions 2
+# and 4. CMD_FIND_INSTANCE's className now picks by derivation (the first live object of the class or a subclass, the
+# Debug Camera's last, else the class's own default object) where it matched a class-name substring -- a change of
+# MEANING, which no field, offset or enum value this script hashes can show. MAILBOX_CONTRACT_MIN stays 1: the old
+# picks a script could have relied on were accidents (an unrelated class reached through a name some class has; the
+# Debug Camera's own CheatManager), and moving MIN would refuse every saved .CT. A script that relied on one now gets a
+# different answer -- for the Debug Camera case a silent result 0 -- and Mimic.h's version-6 entry says which. The bump
+# is there so a script generated now refuses a DLL that would still guess.
+# NOTE on version 7 ([INVOKE-NONSTATIC-ON-CDO]): like version 5 this one moved the HASH as well as the version, and
+# correctly so -- the new `InvokeOutFlag` enum (INV_OUT_NONSTATIC_ON_TEMPLATE = 0x2, published in cmdOutFlags by the
+# invoke family and CMD_SET_DEBUG_CAMERA, when a function that is not static runs on a class default object or another
+# archetype) is layout. ADDITIVE: cmdOutFlags was an unused output for those commands, the bit is not the 0x1 an older
+# DLL can leave behind, and the dispatcher now clears the word before every command. The same bump carries
+# FIND_INSTANCE passing over templates (an accident ended, as in version 6). MAILBOX_CONTRACT_MIN stays 1.
+# 2026-11-03 ([DEBUGCAM-FORCEON-CDO], still version 7, hash unchanged): CMD_SET_DEBUG_CAMERA refuses an ON on the
+# CheatManager's class default object with -17 instead of sending a toggle there, so it no longer sets the bit. The
+# bit's meaning did not move, and -17 is a new negative code only an ON gets, which every [ENABLE] reports -- Mimic.h's
+# "not a change at all" case.
+# NOTE on version 8 ([LISTINSTANCES-KEEPS-TEMPLATES]): a MEANING-only bump, so the hash is unchanged. CMD_LIST_INSTANCES
+# never lists a template (a class default object's default subobjects, a Blueprint's component templates), and its
+# total and LI_OUT_TRUNCATED count live objects only. A script that relied on freezing a template did so by accident
+# (the command says "live"); MAILBOX_CONTRACT_MIN stays 1, and the bump makes a new script refuse a contract-7 DLL.
+# NOTE on version 9 ([INVOKE-PICK-GARBAGE]): a MEANING-only bump, so the hash is unchanged. CMD_FIND_INSTANCE -- and
+# INVOKE_BY_NAME and LIST_FUNCTIONS' class-name branch through it -- never picks a destroyed object (an actor destroyed
+# in play stays in GObjects until the next collection), at any step of its rule. Taking one was an accident (the
+# command says "live"); MAILBOX_CONTRACT_MIN stays 1, and the bump makes a new script refuse a contract-8 DLL.
+GOLDEN_VERSION = 9
+GOLDEN_HASH = "e47d01698e530071c5de8cc11f7d5a2b341ea2f2569da1c2468cced81acc3ee7"
 
 MIMIC_H = os.path.join("dll", "src", "Mimic.h")
 LAYOUT_CS = os.path.join("ui", "UE5DumpUI", "Services", "CeMailboxLayout.cs")
@@ -119,7 +148,7 @@ LAYOUT_CS = os.path.join("ui", "UE5DumpUI", "Services", "CeMailboxLayout.cs")
 # Enums whose VALUES a generated script depends on.
 CONTRACT_ENUMS = ("Cmd", "TeleportOp", "FlyOp", "ForegroundOp",
                   "QueryPtrOp", "TimeOp", "ProtectOp", "ListInstancesFlag",
-                  "Status", "InitState")
+                  "InvokeOutFlag", "Status", "InitState")
 
 # ---------------------------------------------------------------------------
 # Hand-copied layout mirrors outside Mimic.h / CeMailboxLayout.cs (AA36)
@@ -136,7 +165,7 @@ LUA_MIRRORS = (
 
 # A constant in a mirrored file whose NAME matches one of these is layout surface and
 # must be registered below. Anything else in those files is ordinary script state.
-LUA_LAYOUT_PREFIXES = ("OFF_", "CMD_", "STATUS_", "INIT_", "LI_",
+LUA_LAYOUT_PREFIXES = ("OFF_", "CMD_", "STATUS_", "INIT_", "LI_", "INV_OUT_",
                        "ENTRY_SIZE_", "MAILBOX_", "MAX_PAGES")
 
 # Lua constant name -> the MailboxData field whose offset it copies.
@@ -175,6 +204,7 @@ LUA_ENUM_ALIASES = {
         ("InitState", ("INIT_IDLE", "INIT_RUNNING", "INIT_READY",
                        "INIT_FAILED", "INIT_SKIPPED")),
         ("ListInstancesFlag", ("LI_IN_DERIVED", "LI_OUT_TRUNCATED")),
+        ("InvokeOutFlag", ("INV_OUT_NONSTATIC_ON_TEMPLATE",)),
     )
     for name in names
 }
@@ -184,6 +214,7 @@ LUA_CONSTEXPR_ALIASES = {
     "ENTRY_SIZE_EXACT": "LIST_INSTANCES_ENTRY_EXACT",
     "ENTRY_SIZE_DERIVED": "LIST_INSTANCES_ENTRY_DERIVED",
     "MAX_PAGES": "LIST_INSTANCES_MAX_PAGES",
+    "MAILBOX_CONTRACT_INVOKE_OUT": "MAILBOX_CONTRACT_INVOKE_OUT",
 }
 
 # Sizes of the scalar types MailboxData is built from. Absent type -> hard failure,
@@ -443,7 +474,7 @@ def main():
                   "  you just moved. Decide which kind of change this is:\n"
                   "    additive (new Cmd / new op at an unused number / new knobId)\n"
                   "      -> bump MAILBOX_CONTRACT + CeMailboxLayout.ContractVersion only\n"
-                  "    breaking (moved field / renumbered op / changed meaning)\n"
+                  "    breaking (moved field / renumbered op / a meaning an older script relied on)\n"
                   "      -> ALSO bump MAILBOX_CONTRACT_MIN\n"
                   "  then re-run with --update and paste the new golden pair.")
         else:

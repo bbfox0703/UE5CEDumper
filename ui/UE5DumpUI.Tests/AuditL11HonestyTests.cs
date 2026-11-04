@@ -853,6 +853,139 @@ public class AuditL11HonestyTests
             LiveWalkerViewModel.DataTableFieldPreview(DataTable(total: 12, fetched: 12)));
     }
 
+    // [LEAD-DT-EXPORT-64ROWS] Copy CE XML / CSX of a table export the rows the RowMap field carries, the same fixed
+    // page, and the export's limit warning checked only Array / Map / Set: a 5,000-row table exported 64 rows and
+    // said nothing. The page is not the Array Limit, so the warning does not name the slider for it.
+
+    [Fact]
+    public void LeadDtExport64_TheExportWarning_NamesATableCutToItsPage()
+    {
+        var rowMap = LiveWalkerViewModel.SyntheticRowMapField(DataTable(total: 5000, fetched: 64), "0x1000");
+
+        var warn = LiveWalkerViewModel.BuildContainerLimitWarning(new[] { rowMap }, arrayLimit: 128);
+
+        Assert.NotNull(warn);
+        Assert.Contains("RowMap (DataTable: 5,000 rows, 64 exported)", warn);
+        Assert.DoesNotContain("128", warn);   // a table's page is not the Array Limit
+    }
+
+    [Fact]
+    public void LeadDtExport64_TheAobFallbackNote_DoesNotReplaceTheLimitWarning()
+    {
+        // Review round 2: with Use AOB Symbol on and the export re-anchored below GWorld, Copy CE XML and Copy CE Field
+        // kept "AOB skipped (no GWorld path)" and threw the limit warning away -- a table cut to its page, or a
+        // container cut at the Array Limit, then said nothing. The two are about different things; both are said.
+        var line = LiveWalkerViewModel.ExportStatusExtra("AOB skipped (no GWorld path)", "⚠ RowMap cut");
+        Assert.Contains("AOB skipped", line);
+        Assert.Contains("RowMap cut", line);
+        Assert.Equal(" ⚠ RowMap cut", LiveWalkerViewModel.ExportStatusExtra(null, "⚠ RowMap cut"));
+        Assert.Equal("", LiveWalkerViewModel.ExportStatusExtra(null, null));
+    }
+
+    [Fact]
+    public void LeadDtExport64_AWholeTable_AddsNoWarning()
+    {
+        var rowMap = LiveWalkerViewModel.SyntheticRowMapField(DataTable(total: 12, fetched: 12), "0x1000");
+
+        Assert.Null(LiveWalkerViewModel.BuildContainerLimitWarning(new[] { rowMap }, arrayLimit: 128));
+    }
+
+    [Fact]
+    public void LeadDtExport64_ATableBesideAClippedArray_NamesBoth()
+    {
+        var rowMap = LiveWalkerViewModel.SyntheticRowMapField(DataTable(total: 5000, fetched: 64), "0x1000");
+        var arr = new LiveFieldValue
+        {
+            Name = "Items", TypeName = "ArrayProperty", ArrayInnerType = "IntProperty", ArrayCount = 300,
+            ArrayElements = Enumerable.Range(0, 128).Select(i => new ArrayElementValue { Index = i }).ToList(),
+        };
+
+        var warn = LiveWalkerViewModel.BuildContainerLimitWarning(new[] { arr, rowMap }, arrayLimit: 128);
+
+        Assert.Contains("Container element limit (128): Items (Array: 300 total, 128 loaded)", warn);
+        Assert.Contains("RowMap (DataTable: 5,000 rows, 64 exported)", warn);
+    }
+
+    [Fact]
+    public void LeadDtExport64_ElementsTheUserChose_AreNotACut()
+    {
+        // Copy CE Field on a container view exports the rows or elements selected: fewer than the total by choice.
+        var rowMap = LiveWalkerViewModel.SyntheticRowMapField(DataTable(total: 5000, fetched: 64), "0x1000");
+        var chosenRows = LiveWalkerViewModel.FilterContainerToElement(rowMap,
+            new[] { new LiveFieldValue { Name = "[3] Row_3" } });
+        var arr = new LiveFieldValue
+        {
+            Name = "Items", TypeName = "ArrayProperty", ArrayInnerType = "IntProperty", ArrayCount = 300,
+            ArrayElements = Enumerable.Range(0, 128).Select(i => new ArrayElementValue { Index = i }).ToList(),
+        };
+        var chosenElems = LiveWalkerViewModel.FilterContainerToElement(arr,
+            new[] { new LiveFieldValue { Name = "[7]" } });
+
+        Assert.Null(LiveWalkerViewModel.BuildContainerLimitWarning(new[] { chosenRows }, 128, elementsChosen: true));
+        Assert.Null(LiveWalkerViewModel.BuildContainerLimitWarning(new[] { chosenElems }, 128, elementsChosen: true));
+        // Control: the same subsets, read as whole containers, would be reported.
+        Assert.NotNull(LiveWalkerViewModel.BuildContainerLimitWarning(new[] { chosenRows }, 128));
+    }
+
+    // [CEXPORT-NESTED-TRUNC-NOTE] The warning scanned only the fields the export started from; a container cut at the
+    // Array Limit inside a struct or pointer target the export walked was not reported.
+
+    private static LiveFieldValue ClippedArray(string name) => new()
+    {
+        Name = name, TypeName = "ArrayProperty", ArrayInnerType = "IntProperty", ArrayCount = 300,
+        ArrayElements = Enumerable.Range(0, 128).Select(i => new ArrayElementValue { Index = i }).ToList(),
+    };
+
+    [Fact]
+    public void NestedTrunc_AContainerCutInsideAWalkedStruct_IsReported()
+    {
+        var top = new[] { new LiveFieldValue { Name = "HP", TypeName = "FloatProperty" } };
+
+        var warn = LiveWalkerViewModel.BuildContainerLimitWarning(top, 128, nested: new[] { ClippedArray("Slots") });
+
+        Assert.NotNull(warn);
+        Assert.Contains("Slots (Array: 300 total, 128 loaded, nested)", warn);
+    }
+
+    [Fact]
+    public void NestedTrunc_ChosenElements_StillReportACutInsideThem()
+    {
+        // The selection decides how many elements are exported, not how much of each one's own containers is.
+        var warn = LiveWalkerViewModel.BuildContainerLimitWarning(new[] { ClippedArray("Items") }, 128,
+            elementsChosen: true, nested: new[] { ClippedArray("Slots") });
+
+        Assert.NotNull(warn);
+        Assert.DoesNotContain("Items", warn);
+        Assert.Contains("Slots (Array: 300 total, 128 loaded, nested)", warn);
+    }
+
+    [Fact]
+    public void NestedTrunc_TheSameCutInManyWalkedObjects_IsSaidOnce()
+    {
+        // Review round 1: the resolver walks each element of a struct array apart, so 128 FSlot elements each holding a
+        // cut Items array put "Items (...)" into the status line 128 times.
+        var nested = Enumerable.Range(0, 128).Select(_ => ClippedArray("Items")).ToArray();
+
+        var warn = LiveWalkerViewModel.BuildContainerLimitWarning(Array.Empty<LiveFieldValue>(), 128, nested: nested);
+
+        Assert.NotNull(warn);
+        Assert.Contains("Items (Array: 300 total, 128 loaded, nested, in 128 objects)", warn);
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(warn!, "Items \\("));
+    }
+
+    [Fact]
+    public void NestedTrunc_ManyDifferentCuts_AreCappedAndCounted()
+    {
+        var nested = Enumerable.Range(0, 8).Select(i => ClippedArray($"A{i}")).ToArray();
+
+        var warn = LiveWalkerViewModel.BuildContainerLimitWarning(Array.Empty<LiveFieldValue>(), 128, nested: nested);
+
+        Assert.NotNull(warn);
+        Assert.Contains("A4 (Array", warn);
+        Assert.DoesNotContain("A5 (Array", warn);
+        Assert.Contains("and 3 more nested", warn);
+    }
+
     [Fact]
     public void V8_ContainerTruncation_FixedCapStatusLine_DoesNotMentionTheSlider()
     {

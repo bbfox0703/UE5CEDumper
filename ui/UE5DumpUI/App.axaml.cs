@@ -29,18 +29,24 @@ public class App : Application
     private WindowsLogCompressionService? _logCompression;
     private DispatcherFaultGuard? _faultGuard;
 
+    /// <summary>[LEAD-SECOND-UI-CRASHLOG] The platform service Program.Main made, holding the single-instance mutex it
+    /// took before Avalonia started. Null when the app is started some other way (the previewer), which then checks
+    /// here, as before.</summary>
+    internal static WindowsPlatformService? StartupPlatform { get; set; }
+
     public override void Initialize()
     {
         AvaloniaXamlLoader.Load(this);
+        Styles.Add(Helpers.KeywordBoxStyle.Create());   // [LEAD-KEYWORD-DROPDOWN-FIRST-CLICK]
     }
 
     public override void OnFrameworkInitializationCompleted()
     {
         if (ApplicationLifetime is IClassicDesktopStyleApplicationLifetime desktop)
         {
-            // Single instance check
-            _platform = new WindowsPlatformService();
-            if (!_platform.TryAcquireSingleInstance())
+            // Single instance check: made in Program.Main when it started us ([LEAD-SECOND-UI-CRASHLOG]).
+            _platform = StartupPlatform ?? new WindowsPlatformService();
+            if (StartupPlatform == null && !_platform.TryAcquireSingleInstance())
             {
                 // Another instance is running. Raise ITS window before exiting — this
                 // runs before the logger exists, so a silent Shutdown(1) gives the user

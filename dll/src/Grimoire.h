@@ -115,6 +115,39 @@ constexpr int32_t SANITY_MAX_SPARSE_BITS = 0x100000;
 /// with kMaxElementsCeiling (0x2000000), which was deliberately split from it.
 constexpr int32_t SANITY_MAX_UOBJECTS = 0x800000;
 
+// The engine's debug camera controller (ADebugCameraController : APlayerController). Tested by derivation: a game's
+// subclass may be named without the word, and UDebugCameraControllerSettings has it without being one.
+constexpr const char* AURA_DEBUGCAM_CLASS = "DebugCameraController";
+
+// --- User-facing "an instance of class X" (Aura::ResolveUserInstance) --- [FINDINSTANCE-SUBSTRING-USERFACING]
+// A Debug Camera controller owns objects of the classes users ask for -- its own CheatManager (AddCheats forces one
+// in non-Shipping builds), that CheatManager's extensions -- and is itself a PlayerController. A user's invoke on
+// "CheatManager" means the player's, so such an object is taken only when no other live one exists.
+constexpr const char* AURA_USERPICK_DCC_CLASS = AURA_DEBUGCAM_CLASS;
+// How far up an object's outer chain the Debug Camera test looks. Real chains are a handful of hops (extension ->
+// CheatManager -> controller -> level -> world -> package); a longer one is a corrupt or cyclic chain, not ownership.
+constexpr int AURA_USERPICK_MAX_OUTER_HOPS = 16;
+
+// --- Internal local-PlayerController scan (Aura::ScanForLocalPlayerController) --- [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS]
+// The base every candidate derives from, the APlayerController member that names its UPlayer (matched exactly), the
+// class a local one derives from, and the walk's cap.
+constexpr const char* AURA_LOCALPC_BASE_CLASS         = "PlayerController";
+constexpr const char* AURA_LOCALPC_PLAYER_PROPERTY    = "Player";
+constexpr const char* AURA_LOCALPC_LOCAL_PLAYER_CLASS = "LocalPlayer";
+constexpr int         AURA_LOCALPC_SCAN_MAX           = 100;
+// The reflected AActor::Owner (an ObjectProperty). An actor the Debug Camera controller spawns -- its HUD, its
+// PlayerCameraManager, its spectator pawn -- has the level as its outer and the controller as this. The same hop bound
+// applies to the owner chain.
+constexpr const char* AURA_USERPICK_OWNER_PROPERTY = "Owner";
+
+// UObject::ObjectFlags (at OFF_UOBJECT_FLAGS) bits a TEMPLATE carries, rather than a world object: the same values from
+// UE 4.12 to 5.8 (RE-UE4SS Flags412 / Flags415; UE 5.8 ObjectMacros.h). RF_ArchetypeObject propagates to a class-default
+// object's default subobjects (RF_PropagateToSubObjects), and a Blueprint's component templates carry it too. Measured on
+// DumperTest 5.4 Shipping: class-default objects 0x31, their default subobjects 0x40021, a live component neither bit --
+// and every component-class lookup had landed on such a subobject. [INVOKE-NONSTATIC-ON-CDO]
+constexpr uint32_t RF_CLASS_DEFAULT_OBJECT = 0x10;
+constexpr uint32_t RF_ARCHETYPE_OBJECT     = 0x20;
+
 // --- UObject offsets ---
 // UObjectBase layout: VTable(8) + Flags(4) + Index(4) + Class*(8) + FName(?) + Outer*(8)
 // Most offsets are stable, but Outer shifts when CasePreservingName is active (the
@@ -180,10 +213,11 @@ inline int USTRUCT_SCRIPT     = 0x60;
 // Genau measures Children and derives the rest from it, so this is only what a run that cannot measure ships. An unknown
 // version gets the 4.22-4.24 head: Super and Children where 4.25's default already put them, so it is never further off
 // than that default was.
-// ⚠ The head follows the UField::Next it is GIVEN, and a give-up has no measured one: only DetectUPropertyMode's guess,
-// 0x30 for case-preserving names and 0x28 otherwise. A STATS build's TStatId (Development, DebugGame) moves Next to 0x30
-// as well, and nothing on the give-up path can see it, so such a build that gives up ships this head 8 short. The STATS
-// figures above hold for a measured Next; a give-up is version-correct on Shipping builds only.
+// ⚠ The head follows the UField::Next it is GIVEN. DetectUPropertyMode only guesses Next from the FName width (0x30 for
+// case-preserving names, 0x28 otherwise), and a STATS build's TStatId (Development, DebugGame) moves it 8 further on --
+// a give-up on the guess shipped this head 8 short (4.15 Development: 30/38/40/48 against the PDB's 38/40/48/50). So
+// Genau measures Next on the property UObjects' own chains before applying the head ([UE4-USTRUCT-GIVEUP-STATS],
+// ProbeUFieldNextUProperty); only when no property chains does a give-up still ship the guess's head.
 struct UStructHead {
     int super;
     int children;
@@ -978,14 +1012,23 @@ StructuralVersion ApplyVersionLadder(unsigned ueVersion, const StructuralVersion
 // (0x20000000 = RF_HasPlaceholderType, later RF_MigratingAsset; item bit 29 unused, RefCounted from 5.7),
 // so this is 500-503 only, and the two must agree when the item flags read: a 5.4+ title whose version
 // was under-detected would otherwise tag its placeholder or ref-counted objects.
-constexpr bool IsWeakTargetGarbage(unsigned ueVersion, uint32_t objectFlags, bool itemFlagsOk, uint32_t itemFlags) {
+// [INVOKE-PICK-GARBAGE] Split in two: IsDestroyedObject is the destroyed bits alone, for a walk that PICKS an
+// object. A collection on UE4 and 5.0-5.3 first marks every non-root object Unreachable (item 1<<28) and clears it
+// from the reachable ones, so a pick that counted Unreachable could pass over every live object while one runs;
+// only the bits that stay set until the object is gone may refuse a pick.
+constexpr bool IsDestroyedObject(unsigned ueVersion, uint32_t objectFlags, bool itemFlagsOk, uint32_t itemFlags) {
     if ((ueVersion == 0 || ueVersion >= 500) && (objectFlags & 0x40000000u)) return true;
     if (ueVersion >= 500 && ueVersion <= 503 && (objectFlags & 0x20000000u)
         && (!itemFlagsOk || (itemFlags & (1u << 29)))) return true;
     if (!itemFlagsOk || ueVersion == 0) return false;
-    const uint32_t refused = ueVersion >= 500 ? ((1u << 21) | (1u << 28))    // Garbage | Unreachable
-                                              : ((1u << 29) | (1u << 28));   // PendingKill | Unreachable
-    return (itemFlags & refused) != 0;
+    const uint32_t destroyed = ueVersion >= 500 ? (1u << 21)    // Garbage
+                                                : (1u << 29);   // PendingKill
+    return (itemFlags & destroyed) != 0;
+}
+
+constexpr bool IsWeakTargetGarbage(unsigned ueVersion, uint32_t objectFlags, bool itemFlagsOk, uint32_t itemFlags) {
+    return IsDestroyedObject(ueVersion, objectFlags, itemFlagsOk, itemFlags)
+        || (itemFlagsOk && ueVersion != 0 && (itemFlags & (1u << 28)) != 0);   // Unreachable
 }
 
 // [VND583-02] UField::Next in FProperty mode (4.25+). It used to keep its 0x28 default:
@@ -1455,6 +1498,23 @@ inline int32_t DelegatePadFromElementSize(int32_t elementSize, int32_t baseSize)
     if (elementSize == DelegatePaddedSize(baseSize)) return kDelegateDetectorPad;
     return -1;
 }
+/// [D4B-DELEGATEPAD-2026-09-09] The hex a delegate value's row shows: all `size` bytes from the address the row names,
+/// with a space where a checked build's access detector ends. A payload-only hex left the row's address and size
+/// describing bytes its hex did not hold, and never showed the detector -- the first thing to look at when a delegate
+/// reads oddly. Shipping (pad 0) is the bare dump it always was. `bytes == nullptr` is an unread value: the same
+/// shape in '?'.
+inline std::string DelegateHex(const uint8_t* bytes, int32_t size, int32_t pad) {
+    static constexpr char kDigits[] = "0123456789ABCDEF";
+    std::string hex;
+    if (size <= 0) return hex;
+    hex.reserve(static_cast<size_t>(size) * 2 + 1);
+    for (int32_t i = 0; i < size; ++i) {
+        if (i == pad && pad > 0) hex += ' ';
+        if (bytes) { hex += kDigits[bytes[i] >> 4]; hex += kDigits[bytes[i] & 0x0F]; }
+        else       hex += "??";
+    }
+    return hex;
+}
 inline bool bUseFProperty        = true;   // true = FField/FProperty (UE4.25+), false = UProperty (UE4 <4.25)
 inline bool bTaggedFFieldVariant = false;  // UE5.3+: FFieldVariant is 0x08 tagged ptr (LSB=1 → UObject)
 // TWO flags, deliberately. They used to be one, which reported a run as
@@ -1770,6 +1830,9 @@ constexpr double MOVE_MULT_MAX            = 10.0;    // 1000% — UI slider ceil
 
 // --- Time dilation (Hemmung) — global slow-mo / freeze-time / speed-up ---
 constexpr int    TIME_REASSERT_MS         = 250;     // re-assert worker tick (write-on-drift)
+// [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The world-dilation fallback's AWorldSettings walk: base class and cap.
+constexpr const char* TIME_WORLDSETTINGS_CLASS    = "WorldSettings";
+constexpr int         TIME_WORLDSETTINGS_SCAN_MAX = 64;
 constexpr double TIME_DILATION_MIN        = 0.0;     // 0 = frozen (near-freeze if the game NaNs on exact 0)
 constexpr double TIME_DILATION_MAX        = 100.0;   // 100x — DLL safety clamp (UI ceilings are lower: world 3x, pawn 10x)
 
@@ -1797,6 +1860,8 @@ constexpr int     SCHLACHT_MAX_EXTRA_ITERS = 16;     // extra trace iterations b
 // substring answered "Actor" with Default__ActorChannel on UE 5.4 Shipping. [SEETHRU-PROBE-SUBSTRING]
 constexpr const char* SCHLACHT_ACTOR_CLASS_PATH = "/Script/Engine.Actor";                // declares SetActorHiddenInGame
 constexpr const char* SCHLACHT_KSL_CLASS_PATH   = "/Script/Engine.KismetSystemLibrary";  // declares LineTraceSingle
+// [FINDINSTANCE-INTERNAL-SUBSTRING-FALLBACKS] The version ladder's CharacterMovementComponent rung reads the engine class.
+constexpr const char* VERSION_CMC_CLASS_PATH    = "/Script/Engine.CharacterMovementComponent";
 } // namespace Grimoire
 
 // ============================================================

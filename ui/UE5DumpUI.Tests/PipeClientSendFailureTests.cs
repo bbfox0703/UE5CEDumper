@@ -58,4 +58,18 @@ public class PipeClientSendFailureTests
         Assert.Equal(PipeClient.SendFailure.TransportError,
             PipeClient.ClassifySendFailure(callerCancelled: false, clientCancelled: false, connected: true));
     }
+
+    [Fact]
+    public void TheReplyReader_ReadsThePipeInLargeBlocks()
+    {
+        // [TRACE-UI-READ-SPEED] A StreamReader built without a buffer size reads the pipe 1 KB at a time, so one 14 MB
+        // pe_trace_get page is ~14,000 async pipe reads. Measured (2026-11-02, a named pipe in-process, 14 MB JSON lines
+        // read with ReadLineAsync + JsonNode.Parse): ~60 MB/s at the default buffer, ~600 MB/s at 64 KB. The pipe's
+        // reader is built in one place and cannot be driven from a test without owning the fixed pipe name, so this pins
+        // its construction.
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Services/PipeClient.cs"));
+        Assert.Contains("new StreamReader(_pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, "
+                        + "bufferSize: PipeReadBufferBytes)", src);
+        Assert.True(PipeClient.PipeReadBufferBytes >= 64 * 1024, PipeClient.PipeReadBufferBytes.ToString());
+    }
 }

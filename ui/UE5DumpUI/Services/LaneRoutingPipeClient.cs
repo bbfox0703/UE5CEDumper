@@ -44,6 +44,8 @@ public sealed class LaneRoutingPipeClient : IPipeClient
         "query_group_slot_leaves",
         "begin_snapshot", "snapshot_chunk",
         "find_instances", "find_by_address", "find_refs_to_uobject", "find_path_from_gworld",
+        // [MAINWINDOW-NAVIGATE-EXACT-NAME] invoke_function's resolver walk, without the invoke.
+        "find_live_instance",
         "search_properties", "search_properties_batch",
         "list_classes", "list_all_functions", "list_enums",
         "search_objects", "detect_noise_classes", "walk_world",
