@@ -104,6 +104,11 @@ public static class Constants
     public const string InvokePickPartialName = "partial_name";
     public const string InvokePickPartialNameDefault = "partial_name_default";
 
+    // find_live_instance's `pick` beside the live and debug_camera_owned ones above: nothing to open, and the UI's mark
+    // for an older DLL's exact-name answer (it never comes from the DLL). [MAINWINDOW-NAVIGATE-EXACT-NAME]
+    public const string LiveLookupPickNone = "none";
+    public const string LiveLookupPickLegacy = "legacy";
+
     // invoke_function's `instance_template` (Aura::TemplateKindWire): a class-default object, or another template.
     // [INVOKE-NONSTATIC-ON-CDO]
     public const string InvokeTemplateClassDefault = "class_default";

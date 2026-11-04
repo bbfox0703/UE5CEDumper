@@ -165,8 +165,9 @@ UserInstance ResolveUserInstance(const std::string& className);
 // [MAINWINDOW-NAVIGATE-EXACT-NAME] The object a UI opens or searches a path from (the pipe's find_live_instance): the
 // same derivation walk, never a template, the Debug Camera's own objects last -- with three differences from an
 // invoke's pick. An object of the named class ITSELF comes before a subclass's met first: a function's row names the
-// class that declares it, and Live Walker lists an object's own class's functions only. A destroyed object GC has not
-// collected yet is passed over. And no partial-name fallback: a name no class answers to is answered by nothing.
+// class that declares it, and Live Walker lists an object's own class's functions, not its superclasses'. A destroyed
+// object GC has not collected yet is passed over. And no partial-name fallback: a name no class answers to is answered
+// by nothing.
 // Live or DebugCameraOwned is an object to open; ClassDefault, None and Cancelled are not.
 UserInstance FindLiveInstanceOf(const std::string& className);
 

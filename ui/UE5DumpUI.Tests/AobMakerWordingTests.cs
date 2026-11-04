@@ -315,21 +315,19 @@ public class AobMakerWordingTests
         {
             Address = "0x10", Name = "BP_PC_C_0", ClassName = "BP_PC_C", Pick = UE5DumpUI.Models.LiveInstanceResult.PickLive,
         };
-        var dccPick = new UE5DumpUI.Models.LiveInstanceResult
-        {
-            Address = "0x20", Name = "BP_DebugCamera_C_0", ClassName = "BP_DebugCamera_C",
-            Pick = UE5DumpUI.Models.LiveInstanceResult.PickDebugCameraOwned,
-        };
+        var legacyMiss = new UE5DumpUI.Models.LiveInstanceResult { Pick = UE5DumpUI.Models.LiveInstanceResult.PickLegacy };
         Same(UE5DumpUI.ViewModels.MainWindowViewModel.KeyNavigatedToSubclass,
              UE5DumpUI.ViewModels.MainWindowViewModel.FunctionNavigateText("PlayerController", "FOV", subclassPick,
                  picked: false, "function"),
              "BP_PC_C_0", "BP_PC_C", "PlayerController", "FOV");
-        Same(UE5DumpUI.ViewModels.MainWindowViewModel.KeyLiveIsDebugCameraOwned,
-             UE5DumpUI.ViewModels.MainWindowViewModel.DebugCameraNote(dccPick, "PlayerController").TrimStart(),
-             "BP_DebugCamera_C_0", "PlayerController");
+        Same(UE5DumpUI.ViewModels.MainWindowViewModel.KeyLiveLookupLegacy,
+             UE5DumpUI.ViewModels.MainWindowViewModel.PickNote(legacyMiss, "Character").TrimStart(), "Character");
+        Same(UE5DumpUI.ViewModels.MainWindowViewModel.KeyNoLiveInstanceToLocateLegacy,
+             UE5DumpUI.ViewModels.MainWindowViewModel.NoLiveInstanceToLocateText("Character", "GWorld", legacyMiss),
+             "Character", "GWorld");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(123, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(124, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

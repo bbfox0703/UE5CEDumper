@@ -21,7 +21,13 @@ public sealed class DumpService : IDumpService
         _pipe = pipe;
         _log = log;
         _codePage = codePage;
+        // A new connection may be a different DLL.
+        _pipe.ConnectionStateChanged += _ => _noLiveLookup = false;
     }
+
+    /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] This connection's DLL answered find_live_instance "Unknown command":
+    /// ask it the old lookup straight away, and warn once, rather than a failing round trip on every call.</summary>
+    private volatile bool _noLiveLookup;
 
     public async Task<EngineState> InitAsync(CancellationToken ct = default)
     {
@@ -820,6 +826,7 @@ public sealed class DumpService : IDumpService
 
     public async Task<LiveInstanceResult> FindLiveInstanceAsync(string className, CancellationToken ct = default)
     {
+        if (_noLiveLookup) return await LegacyLiveInstanceAsync(className, ct);
         var res = await _pipe.SendAsync(new JsonObject
         {
             ["cmd"] = "find_live_instance",
@@ -827,21 +834,14 @@ public sealed class DumpService : IDumpService
         }, ct);
         // [MAINWINDOW-NAVIGATE-EXACT-NAME] A proxy DLL left in a game folder outlives a UI upgrade, and one older than
         // the command answers "Unknown command": every navigate and Locate would then do nothing. Its own lookup still
-        // answers, with the old limits (an exact class name, a Default__ name skip).
+        // answers, with the old limits, and the answer is marked so the line can say them.
         if (res["ok"]?.GetValue<bool>() == false
             && (res["error"]?.GetValue<string>() ?? "").StartsWith("Unknown command", StringComparison.Ordinal))
         {
-            _log.Warn($"find_live_instance: the injected DLL predates it; '{className}' looked up by exact name instead");
-            var old = await FindInstancesAsync(className, exactMatch: true, limit: 5, ct: ct);
-            var hit = old.Instances.FirstOrDefault(i =>
-                !string.IsNullOrEmpty(i.Address) && !i.Name.StartsWith("Default__", StringComparison.Ordinal));
-            return hit == null
-                ? new LiveInstanceResult { Pick = LiveInstanceResult.PickNone }
-                : new LiveInstanceResult
-                {
-                    Address = hit.Address, Name = hit.Name, ClassName = hit.ClassName, ClassAddress = hit.ClassAddress,
-                    Pick = LiveInstanceResult.PickLegacy,
-                };
+            _noLiveLookup = true;
+            _log.Warn("find_live_instance: the injected DLL predates it; live objects are looked up by exact class name "
+                      + "until the next connection");
+            return await LegacyLiveInstanceAsync(className, ct);
         }
         CheckResponse(res);
         return new LiveInstanceResult
@@ -853,6 +853,22 @@ public sealed class DumpService : IDumpService
             Pick = res["pick"]?.GetValue<string>() ?? LiveInstanceResult.PickNone,
             Scanned = res["scanned"]?.GetValue<int>() ?? 0,
         };
+    }
+
+    /// <summary>The lookup the navigate and Locate handlers made before find_live_instance: an exact class name, five
+    /// rows, the first not named Default__. Hit or miss, the answer is marked legacy.</summary>
+    private async Task<LiveInstanceResult> LegacyLiveInstanceAsync(string className, CancellationToken ct)
+    {
+        var old = await FindInstancesAsync(className, exactMatch: true, limit: 5, ct: ct);
+        var hit = old.Instances.FirstOrDefault(i =>
+            !string.IsNullOrEmpty(i.Address) && !i.Name.StartsWith("Default__", StringComparison.Ordinal));
+        return hit == null
+            ? new LiveInstanceResult { Pick = LiveInstanceResult.PickLegacy }
+            : new LiveInstanceResult
+            {
+                Address = hit.Address, Name = hit.Name, ClassName = hit.ClassName, ClassAddress = hit.ClassAddress,
+                Pick = LiveInstanceResult.PickLegacy,
+            };
     }
 
     public async Task<CePointerInfo> GetCePointerInfoAsync(string addr, int fieldOffset = 0, CancellationToken ct = default)

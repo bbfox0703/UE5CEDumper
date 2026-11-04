@@ -21,8 +21,8 @@ namespace UE5DumpUI.ViewModels;
 /// 3. UI displays rows sorted by FinalScore descending, filtered by
 ///    name substring, category chip, and (optional) "Show All" toggle
 ///    that bypasses the InterestingThreshold cutoff.
-/// 4. Per-row actions: Open in LiveWalker (with find_instance fallback
-///    to ClassStruct when no live instance exists) and Copy AA Script
+/// 4. Per-row actions: Open in LiveWalker on a live object of the class or a
+///    subclass, else ClassStruct, and Copy AA Script
 ///    (Baked) -- shortcut into the same dialog that LiveWalker's
 ///    AA(Baked) button opens, fetching params on demand.
 ///
@@ -756,7 +756,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     }
 
     /// <summary>Per-row action: fire navigate event so MainWindow can
-    /// try LiveWalker (with find_instance) or fall back to ClassStruct.</summary>
+    /// try LiveWalker (a live object of the class or a subclass) or fall back to ClassStruct.</summary>
     [RelayCommand]
     private void OpenInLiveWalker(ScoredFunctionRow? row)
     {

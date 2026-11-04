@@ -270,10 +270,12 @@
     <sys:String x:Key="str.LiveWalker.PtrTargetLabel">{0} target</sys:String>
     <!-- [MAINWINDOW-NAVIGATE-EXACT-NAME] {0} = the class, {1} = GWorld or GameEngine -->
     <sys:String x:Key="str.LiveWalker.NoLiveInstanceToLocate">No live instance of {0} or of a subclass to locate in {1}.</sys:String>
+    <!-- [MAINWINDOW-NAVIGATE-EXACT-NAME] the same, when an injected DLL older than find_live_instance answered by exact name -->
+    <sys:String x:Key="str.LiveWalker.NoLiveInstanceToLocateLegacy">No live object of class {0} itself to locate in {1}: the injected DLL predates find_live_instance, so no subclass object was looked for. Refresh the proxy DLL.</sys:String>
     <!-- [MAINWINDOW-NAVIGATE-EXACT-NAME] {0} = the object, {1} = its class, {2} = the class the function's row names, {3} = the function -->
-    <sys:String x:Key="str.Main.NavigatedToSubclass">Opened {0} ({1}, a subclass of {2}): {3} is declared on {2}, and Live Walker lists only {1}'s own functions.</sys:String>
-    <!-- [MAINWINDOW-NAVIGATE-EXACT-NAME] {0} = the object, {1} = the class asked for -->
-    <sys:String x:Key="str.Main.LiveIsDebugCameraOwned">{0} is the Debug Camera's own: nothing else of {1} is live.</sys:String>
+    <sys:String x:Key="str.Main.NavigatedToSubclass">Opened {0} ({1}, a subclass of {2}): {3} is declared on {2}, and Live Walker lists {1}'s own functions, not those it inherits from {2}.</sys:String>
+    <!-- [MAINWINDOW-NAVIGATE-EXACT-NAME] {0} = the class; an injected DLL older than find_live_instance answered -->
+    <sys:String x:Key="str.Main.LiveLookupLegacy">⚠ {0} was looked up by its exact class name only: the injected DLL predates find_live_instance, so no subclass object was looked for. Refresh the proxy DLL.</sys:String>
     <!-- [WALK-NULLCLASS-SILENT] The header names no readable class: freed, or never an object (Go takes any address). -->
     <sys:String x:Key="str.LiveWalker.NoHeader">⚠ No UObject header at this address — freed, or not an object. Re-open it from 🌍 GWorld or the finder.</sys:String>
     <!-- [P1-WALK-UNREADABLE] The DLL could not read the object's header at all. -->
@@ -1445,7 +1447,7 @@
     <sys:String x:Key="str.Tip.LF.Reused">Another function used this address during the recording (the game freed one and loaded another in its place). The calls and the count at this address are both functions'; the name is the one read last.</sys:String>
     <sys:String x:Key="str.Tip.LF.Unloaded">The game unloaded this function after it fired (a closed UI, content streamed out). The name is the one it had at its first call; its address is no longer valid, so it cannot be ticked for the trace or opened in the disassembler.</sys:String>
     <sys:String x:Key="str.Tip.CT.Unloaded">The game unloaded this function after it fired (a closed UI, content streamed out): it was gone when this trace was read, which can be after Stop. The name is the one it had at its first call.</sys:String>
-    <sys:String x:Key="str.Tip.LF.OpenLive">Open this function in Live Walker on a live instance of its class (falls back to Class Struct if the class has no live instance). From there you can invoke it.</sys:String>
+    <sys:String x:Key="str.Tip.LF.OpenLive">Open this function in Live Walker on a live object of its class or a subclass (falls back to Class Struct when none is live). From there you can invoke it -- unless the object is of a subclass that inherits the function: Live Walker lists a class's own functions, and the status line says so.</sys:String>
     <sys:String x:Key="str.Tip.LF.CopyName">Copy this function's name to the clipboard.</sys:String>
     <sys:String x:Key="str.Tip.LF.SetBaseline">Capture the CURRENT results as a baseline (an idle reference). With no baseline yet, record idle, then Set Baseline: Start → stand still a few seconds → Stop → Set Baseline. Then record the ACTION (open shop) and the list flips to a diff — functions that DIDN'T fire while idle ("NEW") rank to the top, so the action's function stops drowning under per-frame Tick/Update noise.</sys:String>
     <sys:String x:Key="str.Tip.LF.Diff">Show the "Δ vs base" column and rank new/increased functions first (needs a baseline). Turn off to rank by raw call count again.</sys:String>
@@ -1492,7 +1494,7 @@
     <sys:String x:Key="str.Tip.Con.RunCommand">Resolve the typed command against the loaded list and invoke. Match is case-insensitive exact funcName; first match wins if multiple classes implement the same name.</sys:String>
     <sys:String x:Key="str.Tip.Con.RunSelected">Invoke the currently selected row. Same code path as Run on a row.</sys:String>
     <sys:String x:Key="str.Tip.Con.RunRow">Invoke this exec command. No-arg commands run directly via pipe; commands with parameters open the InvokeParamDialog.</sys:String>
-    <sys:String x:Key="str.Tip.Con.OpenLive">Try to open the implementing class in Live Walker. Falls back to Class Struct on CDO-only classes (UCheatManager subclasses often have no live instance until a PlayerController spawns).</sys:String>
+    <sys:String x:Key="str.Tip.Con.OpenLive">Try to open a live object of the implementing class or a subclass in Live Walker. Falls back to Class Struct when none is live (a CheatManager is often not live until a PlayerController spawns). On a subclass's object the command is inherited, so it is not in Live Walker's list, and the status line says so.</sys:String>
     <sys:String x:Key="str.Tip.Con.CopyAaScript">Open the Copy AA Script (Baked) dialog for this exec command — useful when you want to bake the invoke into a CE Auto Assembler script for table sharing.</sys:String>
     <sys:String x:Key="str.Tip.Con.Replay">Re-run this command. Requires the discovery list to still be loaded (re-launch wipes the cache).</sys:String>
 

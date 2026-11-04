@@ -1337,7 +1337,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     if (match.Found)
                     {
                         await ShowClassInClassStructAsync(match.Addr);
-                        StatusText = $"No live instance of {className}; showing class metadata";
+                        StatusText = $"No live instance of {className}; showing class metadata" + PickNote(live, className);
                         _log.Info($"InterestingFunctions -> ClassStruct fallback: {className}::{funcName}");
                     }
                     else
@@ -1385,7 +1385,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     if (match.Found)
                     {
                         await ShowClassInClassStructAsync(match.Addr);
-                        StatusText = $"No live instance of {className}; showing class metadata";
+                        StatusText = $"No live instance of {className}; showing class metadata" + PickNote(live, className);
                     }
                     else
                     {
@@ -1428,10 +1428,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GWorld");
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GWorld", live);
                     return;
                 }
-                if (live.Pick == LiveInstanceResult.PickDebugCameraOwned) StatusText = DebugCameraNote(live, className).Trim();
+                if (PickNote(live, className) is { Length: > 0 } note) StatusText = note.Trim();
                 await LiveWalker.LocateInGWorldAsync(liveAddr, 0, null, stopAtParent: true);
             }
             catch (Exception ex)
@@ -1456,10 +1456,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GWorld");
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GWorld", live);
                     return;
                 }
-                if (live.Pick == LiveInstanceResult.PickDebugCameraOwned) StatusText = DebugCameraNote(live, className).Trim();
+                if (PickNote(live, className) is { Length: > 0 } note) StatusText = note.Trim();
                 await LiveWalker.LocateInGWorldAsync(liveAddr, 0, null, stopAtParent: true);
             }
             catch (Exception ex)
@@ -1479,10 +1479,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GameEngine");
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GameEngine", live);
                     return;
                 }
-                if (live.Pick == LiveInstanceResult.PickDebugCameraOwned) StatusText = DebugCameraNote(live, className).Trim();
+                if (PickNote(live, className) is { Length: > 0 } note) StatusText = note.Trim();
                 await LiveWalker.LocateInGameEngineAsync(liveAddr, 0, null, stopAtParent: true);
             }
             catch (Exception ex)
@@ -1514,7 +1514,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     // property highlighted instead of having to scroll.
                     LiveWalker.SearchText = propName;
                     StatusText = $"Navigated to {className} (live instance {liveAddr}); searching {propName}"
-                        + DebugCameraNote(live, className);
+                        + PickNote(live, className);
                     _log.Info($"InterestingProperties -> LiveWalker: {className}.{propName} @ {liveAddr}");
                 }
                 else
@@ -1525,7 +1525,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     if (match.Found)
                     {
                         await ShowClassInClassStructAsync(match.Addr);
-                        StatusText = $"No live instance of {className}; showing class metadata (look for {propName})";
+                        StatusText = $"No live instance of {className}; showing class metadata (look for {propName})"
+                                     + PickNote(live, className);
                         _log.Info($"InterestingProperties -> ClassStruct fallback: {className}.{propName}");
                     }
                     else
@@ -1554,10 +1555,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GWorld");
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GWorld", live);
                     return;
                 }
-                if (live.Pick == LiveInstanceResult.PickDebugCameraOwned) StatusText = DebugCameraNote(live, className).Trim();
+                if (PickNote(live, className) is { Length: > 0 } note) StatusText = note.Trim();
                 await LiveWalker.LocateInGWorldAsync(liveAddr, 0, null, stopAtParent: true);
             }
             catch (Exception ex)
@@ -1575,10 +1576,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GameEngine");
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GameEngine", live);
                     return;
                 }
-                if (live.Pick == LiveInstanceResult.PickDebugCameraOwned) StatusText = DebugCameraNote(live, className).Trim();
+                if (PickNote(live, className) is { Length: > 0 } note) StatusText = note.Trim();
                 await LiveWalker.LocateInGameEngineAsync(liveAddr, 0, null, stopAtParent: true);
             }
             catch (Exception ex)
@@ -1612,10 +1613,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 SelectedTabIndex = (int)MainTabIndex.LiveWalker;
                 if (string.IsNullOrEmpty(liveAddr))
                 {
-                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GWorld");
+                    LiveWalker.StatusText = NoLiveInstanceToLocateText(className, "GWorld", live);
                     return;
                 }
-                if (live.Pick == LiveInstanceResult.PickDebugCameraOwned) StatusText = DebugCameraNote(live, className).Trim();
+                if (PickNote(live, className) is { Length: > 0 } note) StatusText = note.Trim();
                 await LiveWalker.LocateInGWorldAsync(liveAddr, 0, null, stopAtParent: true);
             }
             catch (Exception ex)
@@ -1896,7 +1897,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     {
                         await ShowClassInClassStructAsync(match.Addr);
                         StatusText = $"No live instance of {className}; showing class metadata " +
-                                     $"(exec '{funcName}' — UCheatManager subclasses often need an active PlayerController)";
+                                     $"(exec '{funcName}' — UCheatManager subclasses often need an active PlayerController)"
+                                     + PickNote(live, className);
                         _log.Info($"Console -> ClassStruct fallback: {className}::{funcName}");
                     }
                     else
@@ -3208,12 +3210,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     }
 
     internal const string KeyNavigatedToSubclass = "str.Main.NavigatedToSubclass";
-    internal const string KeyLiveIsDebugCameraOwned = "str.Main.LiveIsDebugCameraOwned";
+    internal const string KeyLiveLookupLegacy = "str.Main.LiveLookupLegacy";
 
     /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] A function navigate's line. A function's row names the class that
     /// DECLARES it; the object opened may be of a subclass when nothing of that class itself is live, and Live Walker
-    /// lists an object's own class's functions only -- so a function it could not select there is inherited, not
-    /// "not in this class". <paramref name="what"/> is "function" or "exec".</summary>
+    /// lists an object's own class's functions, not those it inherits -- so a function it could not select there is
+    /// inherited, not "not in this class". <paramref name="what"/> is the word the line uses for the member.</summary>
     internal static string FunctionNavigateText(string className, string funcName, LiveInstanceResult live, bool picked,
                                                 string what)
     {
@@ -3223,25 +3225,39 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         else if (!string.IsNullOrEmpty(live.ClassName)
                  && !string.Equals(live.ClassName, className, StringComparison.OrdinalIgnoreCase))
             line = Helpers.AobMakerStatus.Say(KeyNavigatedToSubclass,
-                "Opened {0} ({1}, a subclass of {2}): {3} is declared on {2}, and Live Walker lists only {1}'s own functions.",
-                live.Name, live.ClassName, className, funcName);
+                "Opened {0} ({1}, a subclass of {2}): {3} is declared on {2}, and Live Walker lists {1}'s own functions, "
+                + "not those it inherits from {2}.", live.Name, live.ClassName, className, funcName);
         else
             line = $"Navigated to {className} @ {live.Address}; {what} '{funcName}' not in this class";
-        return line + DebugCameraNote(live, className);
+        return line + PickNote(live, className);
     }
 
-    /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] "" unless the object is the Debug Camera controller's own, which the
-    /// lookup answers only when nothing else of the class is live: a sentence with a leading space then, to
-    /// append.</summary>
-    internal static string DebugCameraNote(LiveInstanceResult live, string className) =>
-        live.Pick != LiveInstanceResult.PickDebugCameraOwned ? "" : " " + Helpers.AobMakerStatus.Say(
-            KeyLiveIsDebugCameraOwned, "{0} is the Debug Camera's own: nothing else of {1} is live.", live.Name, className);
+    /// <summary>[MAINWINDOW-NAVIGATE-EXACT-NAME] "" unless the pick needs a word, then a sentence with a leading space,
+    /// to append: the Debug Camera controller's own object (the lookup answers one only when nothing else of the class
+    /// is live; the Console's invoke says it in the same words), or the old exact-name lookup an injected DLL older than
+    /// find_live_instance answers with, which looks for no subclass and can hand over a template.</summary>
+    internal static string PickNote(LiveInstanceResult live, string className) => live.Pick switch
+    {
+        LiveInstanceResult.PickDebugCameraOwned when live.Found =>
+            " " + Helpers.InvokePickText.DebugCameraOwnedText(live.Name, live.ClassName),
+        LiveInstanceResult.PickLegacy => " " + Helpers.AobMakerStatus.Say(KeyLiveLookupLegacy,
+            "⚠ {0} was looked up by its exact class name only: the injected DLL predates find_live_instance, so no "
+            + "subclass object was looked for. Refresh the proxy DLL.", className),
+        _ => "",
+    };
 
     internal const string KeyNoLiveInstanceToLocate = "str.LiveWalker.NoLiveInstanceToLocate";
+    internal const string KeyNoLiveInstanceToLocateLegacy = "str.LiveWalker.NoLiveInstanceToLocateLegacy";
 
-    /// <summary>A Locate with nothing live to search from. <paramref name="root"/> is GWorld or GameEngine.</summary>
-    internal static string NoLiveInstanceToLocateText(string className, string root) => Helpers.AobMakerStatus.Say(
-        KeyNoLiveInstanceToLocate, "No live instance of {0} or of a subclass to locate in {1}.", className, root);
+    /// <summary>A Locate with nothing live to search from. <paramref name="root"/> is where the path search would have
+    /// started. An older DLL's exact-name miss says only what it looked for.</summary>
+    internal static string NoLiveInstanceToLocateText(string className, string root, LiveInstanceResult? live = null) =>
+        live?.Pick == LiveInstanceResult.PickLegacy
+            ? Helpers.AobMakerStatus.Say(KeyNoLiveInstanceToLocateLegacy,
+                "No live object of class {0} itself to locate in {1}: the injected DLL predates find_live_instance, so "
+                + "no subclass object was looked for. Refresh the proxy DLL.", className, root)
+            : Helpers.AobMakerStatus.Say(KeyNoLiveInstanceToLocate,
+                "No live instance of {0} or of a subclass to locate in {1}.", className, root);
 
     /// <summary>
     /// Top-toolbar "&#x27F3;" button: re-probe whether Cheat Engine is running with

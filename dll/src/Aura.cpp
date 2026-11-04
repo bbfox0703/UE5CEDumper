@@ -1995,11 +1995,11 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
     return rset;
 }
 
-// [FINDINSTANCE-SUBSTRING-USERFACING] One walk for both class lookups below -- two copies of such a walk drifted
-// before (Mimic's "reuse existing logic" twin). What the two lookups do with an object that a class named
-// `skipOuterOf` is, or owns, is their real difference: a STATE read must never take it, so FindLiveOrDefaultOf drops
-// it; a user's invoke takes it before a class-default object, which has no owner to act through, so
-// ResolveUserInstance ranks it last among the live ones.
+// [FINDINSTANCE-SUBSTRING-USERFACING] One walk for the class lookups below -- two copies of such a walk drifted before
+// (Mimic's "reuse existing logic" twin). Their differences are the InstanceWalk fields. The one about an object that a
+// class named `skipOuterOf` is, or owns, decides the most: a STATE read must never take it, so it is dropped there; a
+// user's invoke takes it before a class-default object, which has no owner to act through, so it ranks last among
+// the live ones.
 namespace {
 struct InstanceWalk {
     const char* who;           // the log line's name
@@ -2099,6 +2099,13 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
 
     uintptr_t cdo = 0, cdoCls = 0, skipped = 0, skippedCls = 0;
     uintptr_t subLive = 0, subLiveCls = 0;   // preferExact: the first live object of a subclass, held for the end
+    // For the closing line: a pick that says "nothing" while destroyed objects were passed over, or a misread garbage
+    // flag that passed over live ones, must show in the log -- one number, not a line per object.
+    int32_t garbagePassed = 0;
+    bool exactPassed = false;   // an object of the class itself was passed over (a Debug Camera's, or destroyed)
+    auto destroyedNote = [&] {
+        return garbagePassed ? " (passed over " + std::to_string(garbagePassed) + " destroyed)" : std::string();
+    };
     uintptr_t partialFirst = 0, partialFirstCls = 0, partialLive = 0, partialLiveCls = 0;
     // "A class has that name" is approximated by "an object of that class or a subclass exists": a loaded class with
     // no instance and no default object in GObjects falls to the partial-name match.
@@ -2118,6 +2125,9 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
         if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
 
         const Verdict v = verdictOf(cls);
+        // preferExact: once a subclass's live object is held, only an object of the class itself can still change the
+        // pick -- so the rest of a large derived population costs one cached verdict each, not a name and a template walk.
+        if (how.preferExact && subLive && !v.exact) continue;
         if (!v.derives) {
             if (!how.partialFallback || namedSeen) continue;
             auto pc = partialClasses.find(cls);
@@ -2152,12 +2162,17 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
         }
         // [MAINWINDOW-NAVIGATE-EXACT-NAME] A destroyed object stays in GObjects until the next garbage collection, and
         // a low index makes it the first met: no object to open, nor to search a path from (it has left its level).
-        if (how.skipGarbage && *Ubel::WeakTargetGarbageTag(obj, i) != '\0') continue;
+        if (how.skipGarbage && *Ubel::WeakTargetGarbageTag(obj, i) != '\0') {
+            ++garbagePassed;
+            exactPassed |= v.exact;
+            continue;
+        }
         if (!lowerSkip.empty() && (v.viaSkip || ownedBySkip(obj) || actorOwnedBySkip(obj, cls))) {
             Sein::Info("PIPE:find", "%s '%s': passed over 0x%llX (%s) -- it is or belongs to a %s", how.who,
                        className.c_str(), static_cast<unsigned long long>(obj), objName.c_str(),
                        how.skipOuterOf.c_str());
             if (how.keepSkipped && !skipped) { skipped = obj; skippedCls = cls; }
+            exactPassed |= v.exact;
             continue;
         }
         // [MAINWINDOW-NAVIGATE-EXACT-NAME] A function's row names the class that DECLARES it, and Live Walker lists an
@@ -2166,31 +2181,35 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
             if (!subLive) { subLive = obj; subLiveCls = cls; }
             continue;
         }
-        Sein::Info("PIPE:find", "%s '%s' -> 0x%llX (%s, class %s)", how.who, className.c_str(),
-                   static_cast<unsigned long long>(obj), objName.c_str(), Ubel::GetName(cls).c_str());
+        Sein::Info("PIPE:find", "%s '%s' -> 0x%llX (%s, class %s)%s", how.who, className.c_str(),
+                   static_cast<unsigned long long>(obj), objName.c_str(), Ubel::GetName(cls).c_str(),
+                   destroyedNote().c_str());
         r.obj = obj; r.cls = cls; r.pick = UserPick::Live;
         return r;
     }
 
     if (subLive) {
-        Sein::Info("PIPE:find", "%s '%s' -> 0x%llX (%s, class %s): no object of the class itself is live", how.who,
-                   className.c_str(), static_cast<unsigned long long>(subLive), Ubel::GetName(subLive).c_str(),
-                   Ubel::GetName(subLiveCls).c_str());
+        Sein::Info("PIPE:find", "%s '%s' -> 0x%llX (%s, class %s): %s%s", how.who, className.c_str(),
+                   static_cast<unsigned long long>(subLive), Ubel::GetName(subLive).c_str(),
+                   Ubel::GetName(subLiveCls).c_str(),
+                   exactPassed ? "an object of the class itself was passed over (a Debug Camera's, or destroyed)"
+                               : "no object of the class itself is live",
+                   destroyedNote().c_str());
         r.obj = subLive; r.cls = subLiveCls; r.pick = UserPick::Live;
         return r;
     }
     if (skipped) {
         r.obj = skipped; r.cls = skippedCls; r.pick = UserPick::DebugCameraOwned;
-        Sein::Warn("PIPE:find", "%s '%s' -> 0x%llX (%s): only objects of or owned by a %s were live", how.who,
+        Sein::Warn("PIPE:find", "%s '%s' -> 0x%llX (%s): only objects of or owned by a %s were live%s", how.who,
                    className.c_str(), static_cast<unsigned long long>(skipped), Ubel::GetName(skipped).c_str(),
-                   how.skipOuterOf.c_str());
+                   how.skipOuterOf.c_str(), destroyedNote().c_str());
     } else if (cdo) {
         r.obj = cdo; r.cls = cdoCls; r.pick = UserPick::ClassDefault;
-        Sein::Warn("PIPE:find", "%s '%s' -> only its CDO: 0x%llX", how.who, className.c_str(),
-                   static_cast<unsigned long long>(cdo));
+        Sein::Warn("PIPE:find", "%s '%s' -> only its CDO: 0x%llX%s", how.who, className.c_str(),
+                   static_cast<unsigned long long>(cdo), destroyedNote().c_str());
     } else if (namedSeen) {
-        Sein::Warn("PIPE:find", "%s '%s' -> objects of a subclass exist, but none live and no default object of its own",
-                   how.who, className.c_str());
+        Sein::Warn("PIPE:find", "%s '%s' -> objects of a subclass exist, but none live and no default object of its own%s",
+                   how.who, className.c_str(), destroyedNote().c_str());
     } else if (partialLive || partialFirst) {
         r.obj = partialLive ? partialLive : partialFirst;
         r.cls = partialLive ? partialLiveCls : partialFirstCls;

@@ -140,15 +140,31 @@ public class LiveInstanceLookupTests
     }
 
     [Fact]
-    public void The_Debug_Camera_s_own_object_is_named_as_such()
+    public void The_Debug_Camera_s_own_object_is_named_as_the_Console_names_it()
     {
+        // Review 2: the note was glued on with no separator, in a third wording of the Console's own sentence.
         var dcc = Pick("CheatManager_1", "CheatManager", UE5DumpUI.Models.LiveInstanceResult.PickDebugCameraOwned);
-        Assert.EndsWith(UE5DumpUI.ViewModels.MainWindowViewModel.DebugCameraNote(dcc, "CheatManager"),
-            UE5DumpUI.ViewModels.MainWindowViewModel.FunctionNavigateText("CheatManager", "Slomo", dcc, true, "exec"),
-            StringComparison.Ordinal);
-        Assert.Contains("Debug Camera", UE5DumpUI.ViewModels.MainWindowViewModel.DebugCameraNote(dcc, "CheatManager"),
-            StringComparison.Ordinal);
-        Assert.Equal("", UE5DumpUI.ViewModels.MainWindowViewModel.DebugCameraNote(Pick("X_0", "X"), "X"));
+        Assert.Equal("Navigated to CheatManager::Slomo (live instance 0x2A0) "
+                     + UE5DumpUI.Helpers.InvokePickText.DebugCameraOwnedText("CheatManager_1", "CheatManager"),
+                     UE5DumpUI.ViewModels.MainWindowViewModel.FunctionNavigateText("CheatManager", "Slomo", dcc, true, "exec"));
+        Assert.Equal("", UE5DumpUI.ViewModels.MainWindowViewModel.PickNote(Pick("X_0", "X"), "X"));
+    }
+
+    [Fact]
+    public void An_older_DLL_s_answer_says_its_limits_hit_or_miss()
+    {
+        // Review 2: its miss said "no live instance of X or of a subclass", and no subclass had been looked for.
+        var hit = Pick("PlayerController_0", "PlayerController", UE5DumpUI.Models.LiveInstanceResult.PickLegacy);
+        var miss = new UE5DumpUI.Models.LiveInstanceResult { Pick = UE5DumpUI.Models.LiveInstanceResult.PickLegacy };
+        Assert.Contains("exact class name only",
+            UE5DumpUI.ViewModels.MainWindowViewModel.PickNote(hit, "PlayerController"), StringComparison.Ordinal);
+        Assert.Contains("exact class name only",
+            UE5DumpUI.ViewModels.MainWindowViewModel.PickNote(miss, "Character"), StringComparison.Ordinal);
+        var legacyLine = UE5DumpUI.ViewModels.MainWindowViewModel.NoLiveInstanceToLocateText("Character", "GWorld", miss);
+        Assert.DoesNotContain("or of a subclass", legacyLine, StringComparison.Ordinal);
+        Assert.Contains("predates find_live_instance", legacyLine, StringComparison.Ordinal);
+        Assert.Contains("or of a subclass", UE5DumpUI.ViewModels.MainWindowViewModel.NoLiveInstanceToLocateText(
+            "Character", "GWorld", new UE5DumpUI.Models.LiveInstanceResult()), StringComparison.Ordinal);
     }
 
     [Fact]

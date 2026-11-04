@@ -1692,8 +1692,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         ResultsView.Update(Results, rows, () => SelectedResult = null, FilterText);
     }
 
-    /// <summary>Per-row "Live" action: open this function on a live instance of its
-    /// class in Live Walker (MainWindow does the find_instance → walk handoff).</summary>
+    /// <summary>Per-row "Live" action: open this function on a live object of its class or a
+    /// subclass in Live Walker (MainWindow does the lookup → walk handoff).</summary>
     [RelayCommand]
     private void OpenInLiveWalker(PeProfileEntry? row)
     {

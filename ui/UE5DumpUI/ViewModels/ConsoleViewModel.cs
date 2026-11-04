@@ -151,8 +151,8 @@ public partial class ConsoleViewModel : ViewModelBase
     public event Action<string, string, string>? RequestParameterInvoke;
 
     /// <summary>Per-row "Live" action — same contract as Interesting
-    /// Funcs. MainWindow tries find_instance → LiveWalker → ClassStruct
-    /// fallback.</summary>
+    /// Funcs. MainWindow looks for a live object of the class or a subclass → LiveWalker
+    /// → ClassStruct fallback.</summary>
     public event Action<string, string>? NavigateToFunction;
 
     /// <summary>Per-row "AA(B)" action — same contract as Interesting

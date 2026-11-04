@@ -6,12 +6,13 @@ namespace UE5DumpUI.Models;
 /// </summary>
 public sealed class LiveInstanceResult
 {
-    public const string PickLive = "live";
+    public const string PickLive = Constants.InvokePickLive;
     /// <summary>The Debug Camera controller's own object: nothing else of the class was live.</summary>
-    public const string PickDebugCameraOwned = "debug_camera_owned";
-    public const string PickNone = "none";
-    /// <summary>A DLL that predates find_live_instance answered through the old exact-name lookup.</summary>
-    public const string PickLegacy = "legacy";
+    public const string PickDebugCameraOwned = Constants.InvokePickDebugCameraOwned;
+    public const string PickNone = Constants.LiveLookupPickNone;
+    /// <summary>A DLL that predates find_live_instance answered, hit or miss, through the old exact-name lookup: no
+    /// subclass was looked for, and a template not named Default__ can come back.</summary>
+    public const string PickLegacy = Constants.LiveLookupPickLegacy;
 
     public string Address { get; init; } = "";
     public string Name { get; init; } = "";

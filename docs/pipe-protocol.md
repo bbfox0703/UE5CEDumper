@@ -1359,7 +1359,7 @@ does (`Aura::ResolveUserInstance`):
 It differs from that resolver in three ways:
 
 * an object of the named class **itself** comes before a subclass's met first, because a function's row names the
-  class that declares it and Live Walker lists an object's own class's functions only;
+  class that declares it and Live Walker lists an object's own class's functions, not its superclasses';
 * a **destroyed** object that garbage collection has not taken yet is passed over (it has left its level, so no
   path search from it can succeed);
 * there is **no partial-name fallback**, and its class-default pick (an invoke's fallback: a static function runs
