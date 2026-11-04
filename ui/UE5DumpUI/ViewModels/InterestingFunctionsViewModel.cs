@@ -43,7 +43,10 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// without throttling rapid tab switches would stack 2s-blocking
     /// checks. Mirrors <see cref="LiveWalkerViewModel"/>'s pattern.</summary>
     private static readonly TimeSpan AobMakerCheckCooldown = TimeSpan.FromSeconds(5);
-    private DateTime _lastAobMakerCheck = DateTime.MinValue;
+    /// <summary><see cref="Environment.TickCount64"/> at the last check, null before the first: on the wall clock a
+    /// step back made the time since the last check negative, and nothing re-checked until the clock caught up.
+    /// [PROPSEARCH-FREEZE-STALE-AOBMAKER]</summary>
+    private long? _lastAobMakerCheck;
 
     /// <summary>Full unfiltered list of scored rows. Filter operates
     /// against this and rebuilds <see cref="Results"/>.</summary>
@@ -450,7 +453,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     public async Task CheckAobMakerAsync()
     {
         if (_aobMaker == null) { IsAobMakerAvailable = false; return; }
-        _lastAobMakerCheck = DateTime.UtcNow;
+        _lastAobMakerCheck = Environment.TickCount64;
         bool ok;
         try
         {
@@ -471,7 +474,8 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     public void TryCheckAobMaker()
     {
         if (_aobMaker == null) return;
-        if (DateTime.UtcNow - _lastAobMakerCheck < AobMakerCheckCooldown) return;
+        if (_lastAobMakerCheck is long t
+            && Environment.TickCount64 - t < (long)AobMakerCheckCooldown.TotalMilliseconds) return;
         _ = CheckAobMakerAsync();
     }
 

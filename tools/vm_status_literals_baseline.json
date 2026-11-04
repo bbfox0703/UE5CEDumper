@@ -12,7 +12,7 @@
   "ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs": 84,
   "ui/UE5DumpUI/ViewModels/ObjectTreeViewModel.cs": 9,
   "ui/UE5DumpUI/ViewModels/PointerPanelViewModel.cs": 1,
-  "ui/UE5DumpUI/ViewModels/PropertySearchViewModel.cs": 28,
+  "ui/UE5DumpUI/ViewModels/PropertySearchViewModel.cs": 27,
   "ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs": 32,
   "ui/UE5DumpUI/ViewModels/RelatedObjectsViewModel.cs": 7,
   "ui/UE5DumpUI/ViewModels/SnapshotViewModel.Group.cs": 4,

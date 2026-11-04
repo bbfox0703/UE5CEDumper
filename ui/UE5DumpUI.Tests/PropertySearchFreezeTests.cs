@@ -268,7 +268,7 @@ public class PropertySearchFreezeTests
         Assert.False(prompted);                              // ...which says the plugin is gone
         Assert.Equal(0, bridge.CreateAaCalls);
         Assert.Equal(2, bridge.CheckCalls);                  // the earlier probe and the Search's: the click made none
-        Assert.Contains("not reachable", vm.StatusText);
+        Assert.Contains(PropertySearchViewModel.FreezeNotReachableText(bridge), vm.StatusText);   // the gate's line
     }
 
     [Fact]

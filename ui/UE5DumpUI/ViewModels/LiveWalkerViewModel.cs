@@ -595,8 +595,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     // are never dropped, and a "N system fields hidden" note shows when anything was skipped.
     [ObservableProperty] private bool _excludeSystemComponents = true;
 
-    // AOBMaker CE Plugin detection cooldown (avoids spamming pipe connect on rapid navigation)
-    private DateTime _lastAobMakerCheck = DateTime.MinValue;
+    // AOBMaker CE Plugin detection cooldown (avoids spamming pipe connect on rapid navigation). Environment.TickCount64
+    // at the last check, null before the first: on the wall clock a step back made the time since the last check
+    // negative, and nothing re-checked until the clock caught up. [PROPSEARCH-FREEZE-STALE-AOBMAKER]
+    private long? _lastAobMakerCheck;
     private static readonly TimeSpan AobMakerCheckCooldown = TimeSpan.FromSeconds(5);
 
     // Auto-refresh
@@ -6355,7 +6357,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     public async Task CheckAobMakerAsync()
     {
         if (_aobMaker == null) return;
-        _lastAobMakerCheck = DateTime.UtcNow;
+        _lastAobMakerCheck = Environment.TickCount64;
         bool ok;
         try
         {
@@ -6375,7 +6377,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     public void TryCheckAobMaker()
     {
         if (_aobMaker == null) return;
-        if (DateTime.UtcNow - _lastAobMakerCheck < AobMakerCheckCooldown) return;
+        if (_lastAobMakerCheck is long t
+            && Environment.TickCount64 - t < (long)AobMakerCheckCooldown.TotalMilliseconds) return;
         _ = CheckAobMakerAsync();
     }
 

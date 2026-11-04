@@ -812,9 +812,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Mirror what each panel that keeps an AOBMaker flag of its own learns (it probes on its own tab activation)
         // into the always-visible top-toolbar chip, and through the chip into AobMakerShared, so the chip and every
         // panel that follows the shared status stay correct from any tab without a manual refresh.
-        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] Two routes, both needed: a flag change (a push sets the flag too), and
-        // every probe answer -- a flag raises only on a change, so a probe that confirmed it reached no one. A panel
-        // left out of these mirrors leaves the chip and the shared status stale: two were, until that row's review 1.
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] AobMakerProbed carries every answer a panel applies, its probes' and its
+        // pushes', changed or not: a flag raises only on a change, so an answer that confirmed it reached no one. The
+        // change mirrors below still take a flag a panel sets some other way. A panel left out leaves the chip and the
+        // shared status stale: two were, until that row's review 1.
         IsAobMakerAvailable = _aobMaker?.IsAvailable ?? false;
         LiveWalker.AobMakerProbed += ok => IsAobMakerAvailable = ok;
         Pointers.AobMakerProbed += ok => IsAobMakerAvailable = ok;

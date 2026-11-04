@@ -242,6 +242,10 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.PropertySearchViewModel.KeyFreezeNotReachable,
              UE5DumpUI.ViewModels.PropertySearchViewModel.FreezeNotReachableText(null),
              AobMakerUnavailable.Text(null));
+        Same(UE5DumpUI.ViewModels.PropertySearchViewModel.KeyFreezeTimedOut,
+             UE5DumpUI.ViewModels.PropertySearchViewModel.FreezeTimedOutText);
+        Same(UE5DumpUI.ViewModels.PropertySearchViewModel.KeyFreezeNotAdded,
+             UE5DumpUI.ViewModels.PropertySearchViewModel.FreezeNotAddedText("too large."), "too large");
         // [LISTINSTANCES-KEEPS-TEMPLATES] a Force armed on nothing because only templates of the class exist
         Same(ForceText.KeyTemplatesOnly, ForceText.TemplatesOnlyNote("CharacterMovementComponent", 3),
              "CharacterMovementComponent", 3);
@@ -305,7 +309,7 @@ public class AobMakerWordingTests
         Same(InvokePickText.KeyTargetByClass, InvokePickText.TargetByClassText("CheatManager"), "CheatManager");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(118, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(120, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     [Fact]

@@ -1010,6 +1010,9 @@
     <sys:String x:Key="str.PropertySearch.ResultFilterHint">Refine current results (no re-query)</sys:String>
     <!-- [PROPSEARCH-FREEZE-STALE-AOBMAKER] {0} = why the plugin is unreachable (str.AobMaker.Unavailable.*) -->
     <sys:String x:Key="str.PropertySearch.FreezeNotReachable">Freeze script not sent: {0}</sys:String>
+    <sys:String x:Key="str.PropertySearch.FreezeTimedOut">⚠ No reply from Cheat Engine for the Freeze script (it timed out, or the pipe closed): it may still have been added. Check Cheat Engine's address list before sending it again.</sys:String>
+    <!-- {0} = the plugin's reason, its closing period dropped -->
+    <sys:String x:Key="str.PropertySearch.FreezeNotAdded">⚠ The Freeze script was not added to Cheat Engine: {0}.</sys:String>
     <sys:String x:Key="str.PropertySearch.Search">Search</sys:String>
     <sys:String x:Key="str.PropertySearch.GameOnly">Game classes only</sys:String>
     <sys:String x:Key="str.PropertySearch.Deep">Deep (structs/containers)</sys:String>

@@ -156,8 +156,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// Engine holds the single-instance server) to reinstall the plugin.</summary>
     public string AobMakerOfflineText => "\u25CB " + Helpers.AobMakerUnavailable.Text(_aobMaker);
 
-    /// <summary>[R7-S7] Any setter of the flag -- the toolbar ⟳ sets it directly -- repaints the line and the buttons that
-    /// read it. A change hook alone misses false -> false with a new reason; <see cref="ApplyAobMakerProbe"/> covers it.</summary>
+    /// <summary>[R7-S7] Any setter of the flag repaints the line and the buttons that read it. A change hook alone misses
+    /// false -> false with a new reason; <see cref="ApplyAobMakerProbe"/> covers it.</summary>
     partial void OnIsAobMakerAvailableChanged(bool value) => NotifyAobMakerProperties();
 
     /// <summary>[R7-S7] Publish what a probe or a push on the SHARED bridge learned: set the flag AND repaint, even when

@@ -335,7 +335,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         await RefreshAobMakerAvailabilityAsync();
         if (!IsAobMakerAvailable)
         {
-            StatusText = "AOBMaker plugin not reachable — script not sent";
+            StatusText = FreezeNotReachableText(_aobMaker);   // why, as the push's own failure line says it
             return;
         }
 
@@ -355,14 +355,13 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         var script = FreezeScriptGenerator.Generate(p);
         var description = $"Freeze: {p.ClassName}::{p.PropertyName} = {literal}";
 
-        bool sent;
+        SymbolScriptResult pushed;
         try
         {
-            sent = await _aobMaker.CreateAAScriptAsync(description, script, autoActivate: false);
+            pushed = await _aobMaker.CreateAAScriptDetailedAsync(description, script, autoActivate: false);
         }
         catch (Exception ex)
         {
-            sent = false;
             StatusText = $"Freeze send error: {ex.Message}";
             return;
         }
@@ -371,11 +370,16 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             PublishAobMaker(_aobMaker?.IsAvailable ?? false);
         }
 
-        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 2: a push that found the pipe gone -- inside the cooldown, or with
-        // Cheat Engine closed while the value dialog was open -- was reported as a rejection.
-        StatusText = sent
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] The detailed call, so the line can say which failure it was: a dead pipe
+        // (inside the cooldown, or with Cheat Engine closed while the value dialog was open) read as a rejection, and
+        // no reply read as "not sent" although the plugin may have made the record after the wait gave up.
+        StatusText = pushed.Created
             ? $"Freeze script created in CE: {description}"
-            : IsAobMakerAvailable
+            : pushed.TimedOut
+                ? FreezeTimedOutText
+            : pushed.Message is { } why
+                ? FreezeNotAddedText(why)
+            : IsAobMakerAvailable   // a reply arrived; only a connect that failed leaves the bridge unavailable
                 ? "Freeze script not sent — AOBMaker rejected the request"
                 : FreezeNotReachableText(_aobMaker);
     }
@@ -385,6 +389,22 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     /// <summary>A Freeze whose push found the plugin unreachable, with the reason the bridge recorded.</summary>
     internal static string FreezeNotReachableText(IAobMakerBridge? bridge)
         => AobMakerStatus.Say(KeyFreezeNotReachable, "Freeze script not sent: {0}", AobMakerUnavailable.Text(bridge));
+
+    internal const string KeyFreezeTimedOut = "str.PropertySearch.FreezeTimedOut";
+
+    /// <summary>No reply is not "nothing was added": the plugin may have made the record after the wait gave up
+    /// (AOBMaker reply section 3 rule 8), and a second press would add a second one. The bridge reports a pipe that
+    /// broke after the request the same way, so the line names both causes.</summary>
+    internal static string FreezeTimedOutText => AobMakerStatus.Say(KeyFreezeTimedOut,
+        "⚠ No reply from Cheat Engine for the Freeze script (it timed out, or the pipe closed): it may still have been "
+        + "added. Check Cheat Engine's address list before sending it again.");
+
+    internal const string KeyFreezeNotAdded = "str.PropertySearch.FreezeNotAdded";
+
+    /// <summary>A refusal that carried its reason says it; the reason's own closing period is dropped, as the sentence
+    /// adds one.</summary>
+    internal static string FreezeNotAddedText(string why) => AobMakerStatus.Say(KeyFreezeNotAdded,
+        "⚠ The Freeze script was not added to Cheat Engine: {0}.", why.TrimEnd('.'));
 
     /// <summary>
     /// Map one search-result row + the dialog's validated literal onto the generator's

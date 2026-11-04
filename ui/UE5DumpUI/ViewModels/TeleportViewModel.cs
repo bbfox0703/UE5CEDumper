@@ -235,8 +235,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// <summary>Push the latest engine state (GWorld AOB / module) for trainer bake.</summary>
     public void SetEngineState(Models.EngineState state) => _engineState = state;
 
-    /// <summary>[R7-S12] Publish a probe the toolbar ⟳ ran on the shared bridge: set the flag and repaint the note even
-    /// when the flag is unchanged -- the same repaint <see cref="CheckAobMakerAsync"/> does after its own probe.</summary>
+    /// <summary>[R7-S12] Publish what a probe or a push on the shared bridge learned -- this panel's own, or the toolbar
+    /// ⟳'s: set the flag and repaint the note even when the flag is unchanged, since the reason behind "not reachable"
+    /// may have moved (absent -> busy).</summary>
     public void ApplyAobMakerProbe(bool available)
     {
         IsAobMakerAvailable = available;
@@ -472,7 +473,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                         : TrainerNotReachedText(ok, entries.Count, e.Description, AobMakerUnavailable.Text(_aobMaker));
                 break;
             }
-            IsAobMakerAvailable = _aobMaker.IsAvailable;
+            ApplyAobMakerProbe(_aobMaker.IsAvailable);
             StatusText = stopped ?? TrainerPushedText(ok);
             _log.Info($"Standalone trainer export: {ok}/{entries.Count} entries pushed to CE");
         }
@@ -5038,7 +5039,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 CoordLibraryScriptGenerator.NoDllRecordDescription, script,
                 autoActivate: false, group: CeGroupTrainer);
             bool sent = pushed.Created;
-            IsAobMakerAvailable = _aobMaker.IsAvailable;
+            // Gated on the bridge, not on this panel's flag, so the flag may already say "down": a plain set raised
+            // nothing then, and the toolbar chip kept what it had. [PROPSEARCH-FREEZE-STALE-AOBMAKER]
+            ApplyAobMakerProbe(_aobMaker.IsAvailable);
 
             CoordStatus = sent
                 ? $"Pushed the no-DLL picker ({_coordAll.Count} entries) to Cheat Engine. " +
