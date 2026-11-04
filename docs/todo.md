@@ -1660,16 +1660,6 @@ commit, red before green where testable.
 | `[VND584-08]` | ✅ **FIXED** (was latent) | S | **FIXED in build 3651** (red `5def7693` / green `347326c7`): `ProbeSoftPathShape` latches the SoftObjectPath struct's PropertiesSize; the payload, the envelope and the AssetName's place come from it (`DynOff::SoftObjectPathPayloadFor` / `SoftPathFNameStrideFor`), sizeof(FName) only as the fallback. dll_core_test SOFTPATH (red: 2 -- env 8). Live no-regression, DumperTest 5.4 Shipping, build 3651: `DetectSoftPath: ... AssetPath, 32 bytes`, envelope +0x08, `Soft_Mesh` reads `/Engine/BasicShapes/Cube.Cube`. Residual, latent: on an outlined-number build `ReadFName` still reads Number at +4, which there belongs to the next field. | `Ubel.cpp`, `Grimoire.h` |
 | `[VND584-09]` | — | — | minhook: **HOLD** unchanged (upstream has nothing after `8af6b4a`); audit #7's triggers stand. `sync_tools.ps1` fixed in `19953711` (it never fetched RE-UE4SS's submodules). | `vendor/minhook` |
 
-⬜ `[RELNOTES-VND584-02-HEX]` (the maintainer, 2026-10-27): the next release's notes say that CE Structure Dissect now
-shows these fields in hex, and where a delegate's row now sits -- items under `## Fixed`, per working-lessons §7.3
-item 1. v3654 said only "a plain 8-byte value", which was true, so there is nothing to retract. Drop this row once
-the notes carry it.
-
-```markdown
-- CE Structure Dissect shows weak, soft and lazy pointer fields and a delegate's bound object in hex, so the object index and serial number read apart, instead of as one decimal number.
-- On a Development or Debug build of a UE 5.3+ game, CE Structure Dissect's delegate and multicast delegate rows show the bound object and the invocation list instead of the 8 bytes in front of them.
-```
-
 ✅ `[CT-DELEGATE-PARAM-PAD]` **FIXED + LIVE-VERIFIED 2026-10-27** (red `71c3dfa5` / green `e467f16d`, rig `2e20ba80`;
 build 3655). Found the same day while placing the dissect's delegate row. Call Trace's parameter decoder
 (`Ubel.cpp` `DecodeSnapElement`) read a `DelegateProperty`'s weak pair at +0 / +4 and applied
