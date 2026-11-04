@@ -89,8 +89,8 @@ TEMPLATE_KINDS = ("class_default", "default_subobject", "archetype", "archetype_
 class Evidence:
     """Every reply as it is read. Stdout is not evidence, and the DLL's own pipe log records requests, not replies."""
 
-    def __init__(self):
-        self.dir = ROOT / "out" / TAG
+    def __init__(self, tag=TAG):
+        self.dir = ROOT / "out" / tag
         self.dir.mkdir(parents=True, exist_ok=True)
         self.stamp = time.strftime("%Y%m%d-%H%M%S")
         self.replies = self.dir / f"{self.stamp}_replies.jsonl"
