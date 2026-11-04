@@ -215,6 +215,25 @@ public class PropertySearchFreezeTests
     }
 
     [Fact]
+    public async Task Freeze_WhenThePushFindsThePipeGone_SaysSo_NotThatAobMakerRejectedIt()
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 2, F2. Inside the cooldown, or with CE closed while the value dialog
+        // was open, the push is what finds the pipe gone -- and the line said the plugin REJECTED the script.
+        var bridge = new RecordingBridge { NextAvailability = true, AvailabilityAfterCreate = false };
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge)
+        {
+            FreezeValuePrompt = _ => Task.FromResult<string?>("1"),
+        };
+
+        await vm.CopyFreezeScriptCommand.ExecuteAsync(NewMatch("FloatProperty"));
+
+        Assert.Equal(1, bridge.CreateAaCalls);
+        Assert.DoesNotContain("rejected", vm.StatusText);
+        Assert.Contains("not sent", vm.StatusText);
+        Assert.False(vm.IsAobMakerAvailable);
+    }
+
+    [Fact]
     public void TheFlagStartsFromTheSharedStatus_NotTheBridgesCache()
     {
         // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 1, INFO 1. The panel follows CHANGES of the shared status, so a

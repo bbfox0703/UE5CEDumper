@@ -214,8 +214,7 @@ public class MainWindowInjectHelperTests
     [Fact]
     public async Task AnotherPanelsProbe_ReachesPropertySearch_AndItsOwnProbeReachesTheToolbar()
     {
-        // The shared status is what every other panel's tab-activation probe publishes to; following it, not a list,
-        // is what stops the next panel from going stale the same way.
+        // The shared status reaches Property Search whoever probes it, and Property Search's own probe reaches it.
         var bridge = new RecordingBridge { NextAvailability = true };
         var vm = BuildVm(aobMaker: bridge);
         await vm.PropertySearch.RefreshAobMakerAvailabilityAsync();   // what Property Search learns, everyone learns
@@ -255,9 +254,49 @@ public class MainWindowInjectHelperTests
         Assert.True(vm.IsAobMakerAvailable);
         Assert.True(vm.PropertySearch.IsAobMakerAvailable);
 
-        await vm.InterestingFunctions.CheckAobMakerAsync();   // its own flag learns "yes" too...
         bridge.NextAvailability = false;
-        await vm.InterestingFunctions.CheckAobMakerAsync();   // ...and then that the plugin is gone
+        await vm.InterestingFunctions.CheckAobMakerAsync();   // its flag starts "up", so this is a change
+        Assert.False(vm.IsAobMakerAvailable);
+        Assert.False(vm.PropertySearch.IsAobMakerAvailable);
+    }
+
+    /// <summary>A flag-keeping panel's own probe, and a way to set its flag without one.</summary>
+    private static (Func<Task> Probe, Action<bool> SetFlag) FlagKeepingPanel(MainWindowViewModel vm, string panel)
+        => panel switch
+        {
+            "LiveWalker" => (() => vm.LiveWalker.CheckAobMakerAsync(), v => vm.LiveWalker.IsAobMakerAvailable = v),
+            "Pointers" => (() => vm.Pointers.CheckAobMakerAsync(), v => vm.Pointers.IsAobMakerAvailable = v),
+            "InterestingFunctions" => (() => vm.InterestingFunctions.CheckAobMakerAsync(),
+                                       v => vm.InterestingFunctions.IsAobMakerAvailable = v),
+            "Teleport" => (() => vm.Teleport.CheckAobMakerAsync(), v => vm.Teleport.IsAobMakerAvailable = v),
+            _ => throw new ArgumentOutOfRangeException(nameof(panel), panel, null),
+        };
+
+    [Theory]
+    [InlineData("LiveWalker")]
+    [InlineData("Pointers")]
+    [InlineData("InterestingFunctions")]
+    [InlineData("Teleport")]
+    public async Task APanelsProbe_ThatConfirmsItsOwnFlag_StillReachesTheToolbar(string panel)
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 2, F1. The chip mirrors a panel's flag on a CHANGE, and a probe
+        // that confirms what the flag already says raises none: Interesting Functions' flag starts "up", so its first
+        // probe after Cheat Engine came up reached nobody, and a "down" confirmed while the chip said "up" left the
+        // chip saying "connected" over a dead pipe.
+        var bridge = new RecordingBridge { NextAvailability = true };
+        var vm = BuildVm(aobMaker: bridge);
+        var (probe, setFlag) = FlagKeepingPanel(vm, panel);
+
+        setFlag(true);                    // the panel already says "up"...
+        vm.IsAobMakerAvailable = false;   // ...while the chip, and the shared status behind it, say "down"
+        await probe();
+        Assert.True(vm.IsAobMakerAvailable);
+        Assert.True(vm.PropertySearch.IsAobMakerAvailable);
+
+        bridge.NextAvailability = false;
+        setFlag(false);
+        vm.IsAobMakerAvailable = true;
+        await probe();
         Assert.False(vm.IsAobMakerAvailable);
         Assert.False(vm.PropertySearch.IsAobMakerAvailable);
     }

@@ -271,6 +271,44 @@ public class AobMakerStatusTests
     }
 
     [Fact]
+    public async Task A_direct_probe_during_one_in_flight_joins_it()
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 2, INFO 3: one probe in flight, whoever asks.
+        var gate = new TaskCompletionSource<bool>();
+        var bridge = new BridgeWithoutAttachQuery { CheckGate = gate.Task };
+        var status = new AobMakerStatus(bridge);
+
+        status.TryProbe();
+        var direct = status.ProbeAsync();
+        gate.SetResult(true);
+
+        Assert.True(await direct);
+        Assert.Equal(1, bridge.CheckCalls);
+    }
+
+    [Fact]
+    public void The_cooldown_runs_on_a_clock_that_never_steps_back()
+    {
+        // [PROPSEARCH-FREEZE-STALE-AOBMAKER] review 2, INFO 4. On the wall clock, a step back (NTP, or by hand) makes
+        // "time since the last probe" negative, and no refresh probes again until the clock catches up.
+        var code = string.Join("\n", File.ReadAllLines(RepoFile("ui/UE5DumpUI/Helpers/AobMakerStatus.cs"))
+                                         .Where(l => !l.TrimStart().StartsWith("//", StringComparison.Ordinal)));
+        Assert.DoesNotContain("DateTime", code, StringComparison.Ordinal);
+        Assert.Contains("Environment.TickCount64", code, StringComparison.Ordinal);
+    }
+
+    private static string RepoFile(string relative)
+    {
+        var dir = AppContext.BaseDirectory;
+        for (var i = 0; i < 8 && dir is not null; i++, dir = Path.GetDirectoryName(dir))
+        {
+            var candidate = Path.Combine(dir, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new FileNotFoundException($"could not locate {relative} from {AppContext.BaseDirectory}");
+    }
+
+    [Fact]
     public async Task Refresh_without_a_bridge_says_unavailable()
     {
         var status = new AobMakerStatus(null);
