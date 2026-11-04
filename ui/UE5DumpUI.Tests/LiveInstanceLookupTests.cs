@@ -76,6 +76,38 @@ public class LiveInstanceLookupTests
         Assert.DoesNotContain("not in this class", body, StringComparison.Ordinal);
     }
 
+    [Theory]
+    [InlineData("InterestingFunctions.LocateInGWorld +=")]
+    [InlineData("InterestingFunctions.LocateInGameEngine +=")]
+    [InlineData("InterestingProperties.LocateInGWorld +=")]
+    [InlineData("InterestingProperties.LocateInGameEngine +=")]
+    [InlineData("DetectStats.LocateInGWorld +=")]
+    [InlineData("_xrefLocateHandler = async")]
+    [InlineData("InterestingProperties.NavigateToProperty +=")]
+    public void A_lookup_whose_pick_needs_a_word_says_it(string subscription)
+    {
+        // Review 2: a Debug Camera's object, or an older DLL's exact-name answer, was said by no handler but the three
+        // function navigates -- and nothing failed when a handler dropped its note.
+        var body = Handler(Source("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"), subscription);
+        Assert.Contains("PickNote(live, className)", body, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("str.Tip.LF.OpenLive")]
+    [InlineData("str.Tip.Con.OpenLive")]
+    [InlineData("str.Tip.IF.OpenLive")]
+    public void Every_Open_in_Live_tooltip_says_a_subclass_object_may_be_opened(string key)
+    {
+        // Review 2: all three function navigates can land on a subclass object now; only one tooltip said so.
+        var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        int at = axaml.IndexOf($"x:Key=\"{key}\">", StringComparison.Ordinal);
+        Assert.True(at > 0, key + " not found");
+        string tip = axaml[at..axaml.IndexOf("</sys:String>", at, StringComparison.Ordinal)];
+        Assert.Contains("subclass", tip, StringComparison.Ordinal);
+        Assert.DoesNotContain("CDO-only", tip, StringComparison.Ordinal);
+        Assert.DoesNotContain("non-CDO", tip, StringComparison.Ordinal);
+    }
+
     private static UE5DumpUI.Models.LiveInstanceResult Pick(string name, string cls, string pick = "live") =>
         new() { Address = "0x2A0", Name = name, ClassName = cls, Pick = pick };
 

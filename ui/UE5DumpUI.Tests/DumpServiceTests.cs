@@ -2552,6 +2552,61 @@ public class DumpServiceTests
         Assert.Equal("legacy", r.Pick);
     }
 
+    /// <summary>A pipe that answers find_live_instance "Unknown command", like a DLL older than it, and records every
+    /// find_instances request.</summary>
+    private static (MockPipeClient Pipe, List<JsonObject> Sent) OldDllPipe(bool anyInstance)
+    {
+        var pipe = new MockPipeClient();
+        var sent = new List<JsonObject>();
+        pipe.SetHandler(req =>
+        {
+            sent.Add(req);
+            if (req["cmd"]!.GetValue<string>() == "find_live_instance")
+                return new JsonObject { ["ok"] = false, ["error"] = "Unknown command: find_live_instance" };
+            var list = new JsonArray();
+            if (anyInstance)
+                list.Add(new JsonObject { ["addr"] = "0x200", ["name"] = "PlayerController_0", ["class"] = "PlayerController" });
+            return new JsonObject { ["ok"] = true, ["instances"] = list };
+        });
+        return (pipe, sent);
+    }
+
+    [Fact]
+    public async Task FindLiveInstance_OnAnOldDll_AsksTheOldLookupExactly_AndAMissIsStillMarkedLegacy()
+    {
+        // Review 2: the legacy answer has the old limits (an exact class name, no subclass), and a MISS said "none" --
+        // so the line claimed "no live instance of X or of a subclass" though no subclass had been looked for.
+        var (pipe, sent) = OldDllPipe(anyInstance: false);
+        var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
+
+        var r = await dump.FindLiveInstanceAsync("Character", TestContext.Current.CancellationToken);
+
+        var old = Assert.Single(sent, s => s["cmd"]!.GetValue<string>() == "find_instances");
+        Assert.True(old["exact_match"]!.GetValue<bool>());
+        Assert.Equal(5, old["limit"]!.GetValue<int>());
+        Assert.False(r.Found);
+        Assert.Equal("legacy", r.Pick);
+    }
+
+    [Fact]
+    public async Task FindLiveInstance_OnAnOldDll_IsAskedOncePerConnection()
+    {
+        // Review 2: every call paid a failing round trip and a warning -- 30 of each in one Detect Stats run.
+        var (pipe, sent) = OldDllPipe(anyInstance: true);
+        var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
+        var ct = TestContext.Current.CancellationToken;
+
+        await dump.FindLiveInstanceAsync("PlayerController", ct);
+        await dump.FindLiveInstanceAsync("PlayerController", ct);
+        Assert.Equal(new[] { "find_live_instance", "find_instances", "find_instances" },
+                     sent.Select(s => s["cmd"]!.GetValue<string>()));
+
+        await pipe.ConnectAsync(ct);   // a new connection may be a newer DLL
+        sent.Clear();
+        await dump.FindLiveInstanceAsync("PlayerController", ct);
+        Assert.Equal("find_live_instance", sent[0]["cmd"]!.GetValue<string>());
+    }
+
     [Fact]
     public async Task FindLiveInstance_AnotherError_IsStillAnError()
     {

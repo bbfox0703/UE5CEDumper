@@ -5149,11 +5149,29 @@ int main() {
         check("USERPICK NAVPICK control: a class with nothing live gives no object to open",
               r.pick != Aura::UserPick::Live && r.pick != Aura::UserPick::DebugCameraOwned, nm(r.obj).c_str());
         r = Aura::FindLiveInstanceOf("HUD");
-        check("USERPICK ⭐ NAVPICK: the Debug Camera's own still ranks last", is(r, bHud0, Aura::UserPick::Live),
-              nm(r.obj).c_str());
-        put32(upB[bPcExact], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        check("USERPICK NAVPICK control: an exact-class object over a subclass one the DCC owns",
+              is(r, bHud0, Aura::UserPick::Live), nm(r.obj).c_str());
+        // Review 2: "exact first" must not outrank "the Debug Camera's last". The DCC's own CheatManager is of the class
+        // itself and sits below the player's, which is of a game subclass.
+        r = Aura::FindLiveInstanceOf("CheatManager");
+        check("USERPICK ⭐ NAVPICK: the DCC's own exact-class object ranks below the player's subclass object",
+              is(r, bCheats0, Aura::UserPick::Live), nm(r.obj).c_str());
+        // Review 2: a destroyed SUBCLASS object (the old level's BP_PlayerController_C after a level change) is passed
+        // over too -- not held as the subclass pick, nor as the Debug Camera's.
         slot(40, -1);
         Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);
+        r = Aura::FindLiveInstanceOf("PlayerController");
+        check("USERPICK ⭐ NAVPICK: a destroyed subclass object is passed over -- the DCC, said to be its",
+              is(r, bDcc0, Aura::UserPick::DebugCameraOwned), nm(r.obj).c_str());
+        put32(upB[bDcc0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);
+        r = Aura::FindLiveInstanceOf("PlayerController");
+        check("USERPICK ⭐ NAVPICK: ...and a destroyed DCC is not held either -- nothing to open",
+              r.obj == 0 && r.pick != Aura::UserPick::Live && r.pick != Aura::UserPick::DebugCameraOwned,
+              nm(r.obj).c_str());
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        put32(upB[bDcc0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        put32(upB[bPcExact], Grimoire::OFF_UOBJECT_FLAGS, 0);
 
         // Phase C -- only the Debug Camera's objects are live.
         slot(10, -1);   // the player's controller
