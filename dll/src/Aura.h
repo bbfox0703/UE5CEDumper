@@ -131,6 +131,9 @@ uintptr_t FindClassByPath(const std::string& classPath);
 // OWN default object, never a subclass's: a function library (KismetSystemLibrary, WidgetBlueprintLibrary)
 // has no live instance, and its CDO is the object a static UFunction is invoked on. A cancelled walk
 // returns 0, not a CDO it met on the way: a live instance may sit past where it stopped.
+// [INVOKE-PICK-GARBAGE] "Live" is never a destroyed object: DestroyActor marks an actor garbage, and it stays in GObjects
+// until the next collection (60 s by default), so after a level change the old level's objects -- low indices, met
+// first -- would answer. Every pick in this family passes over them.
 uintptr_t FindLiveOrDefaultOf(const std::string& className);
 
 // The same pick, skipping a live instance that IS of a class deriving from `skipOuterOf` (reached through a base of
@@ -163,11 +166,10 @@ struct UserInstance {
 UserInstance ResolveUserInstance(const std::string& className);
 
 // [MAINWINDOW-NAVIGATE-EXACT-NAME] The object a UI opens or searches a path from (the pipe's find_live_instance): the
-// same derivation walk, never a template, the Debug Camera's own objects last -- with three differences from an
-// invoke's pick. An object of the named class ITSELF comes before a subclass's met first: a function's row names the
-// class that declares it, and Live Walker lists an object's own class's functions, not its superclasses'. A destroyed
-// object GC has not collected yet is passed over. And no partial-name fallback: a name no class answers to is answered
-// by nothing.
+// same derivation walk, never a template nor a destroyed object, the Debug Camera's own objects last -- with two
+// differences from an invoke's pick. An object of the named class ITSELF comes before a subclass's met first: a
+// function's row names the class that declares it, and Live Walker lists an object's own class's functions, not its
+// superclasses'. And no partial-name fallback: a name no class answers to is answered by nothing.
 // Live or DebugCameraOwned is an object to open; ClassDefault, None and Cancelled are not.
 UserInstance FindLiveInstanceOf(const std::string& className);
 

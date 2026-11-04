@@ -2151,7 +2151,10 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
 
         if (!v.derives) {   // the partial-name rule the user-facing lookups always had: the first non-template, else the first
             if (!partialFirst) { partialFirst = obj; partialFirstCls = cls; }
-            if (!isTemplate && !partialLive) { partialLive = obj; partialLiveCls = cls; }
+            // [INVOKE-PICK-GARBAGE] Its live object is no destroyed one either.
+            if (!isTemplate && !partialLive && !(how.skipGarbage && *Ubel::WeakTargetGarbageTag(obj, i) != '\0')) {
+                partialLive = obj; partialLiveCls = cls;
+            }
             continue;
         }
         namedSeen = true;
@@ -2161,8 +2164,9 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
             if (isCdo && !cdo && LowerAscii(Ubel::GetName(cls)) == lowerQuery) { cdo = obj; cdoCls = cls; }
             continue;
         }
-        // [MAINWINDOW-NAVIGATE-EXACT-NAME] A destroyed object stays in GObjects until the next garbage collection, and
-        // a low index makes it the first met: no object to open, nor to search a path from (it has left its level).
+        // [MAINWINDOW-NAVIGATE-EXACT-NAME] [INVOKE-PICK-GARBAGE] A destroyed object stays in GObjects until the next
+        // garbage collection, and a low index makes it the first met: no object to open, to search a path from (it has
+        // left its level), to invoke on, or to read state from.
         if (how.skipGarbage && *Ubel::WeakTargetGarbageTag(obj, i) != '\0') {
             ++garbagePassed;
             exactPassed |= v.exact;
@@ -2294,12 +2298,13 @@ uintptr_t FindLiveOrDefaultOf(const std::string& className) {
 }
 
 uintptr_t FindLiveOrDefaultOf(const std::string& className, const std::string& skipOuterOf) {
-    return WalkForInstance(className, InstanceWalk{ "FindLiveOrDefaultOf", skipOuterOf, false, false }).obj;
+    return WalkForInstance(className, InstanceWalk{ "FindLiveOrDefaultOf", skipOuterOf, false, false,
+                                                    /*preferExact=*/false, /*skipGarbage=*/true }).obj;
 }
 
 UserInstance ResolveUserInstance(const std::string& className) {
-    return WalkForInstance(className,
-                           InstanceWalk{ "ResolveUserInstance", Grimoire::AURA_USERPICK_DCC_CLASS, true, true });
+    return WalkForInstance(className, InstanceWalk{ "ResolveUserInstance", Grimoire::AURA_USERPICK_DCC_CLASS, true, true,
+                                                    /*preferExact=*/false, /*skipGarbage=*/true });
 }
 
 UserInstance FindLiveInstanceOf(const std::string& className) {

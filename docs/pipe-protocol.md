@@ -1354,14 +1354,14 @@ does (`Aura::ResolveUserInstance`):
   object's own class);
 * **never a template** -- a class default object, one of its default subobjects or a Blueprint component template
   (`TemplateOf`);
+* **never a destroyed** object that garbage collection has not taken yet (`[INVOKE-PICK-GARBAGE]`: it has left its
+  level, so no path search from it, nor an invoke on it, does what was asked);
 * an object a Debug Camera controller is or owns only when nothing else is live (`pick: "debug_camera_owned"`).
 
-It differs from that resolver in three ways:
+It differs from that resolver in two ways:
 
 * an object of the named class **itself** comes before a subclass's met first, because a function's row names the
   class that declares it and Live Walker lists an object's own class's functions, not its superclasses';
-* a **destroyed** object that garbage collection has not taken yet is passed over (it has left its level, so no
-  path search from it can succeed);
 * there is **no partial-name fallback**, and its class-default pick (an invoke's fallback: a static function runs
   on a class default object) answers `none`.
 
@@ -2002,6 +2002,8 @@ state-changing operations but works for simple getters).
                                    // that has instance_addr): "address" (the caller sent one),
                                    // "live", "debug_camera_owned", "class_default", "partial_name",
                                    // "partial_name_default". The Console pins only "live" / "address".
+                                   // A destroyed object GC has not collected yet is never picked
+                                   // (from build 3685). [INVOKE-PICK-GARBAGE]
   "instance_name": "CheatManager_0",       // the object's and its class's names, read before
   "instance_class_name": "CheatManager",   // the call (which may destroy the object)
   "instance_template": "",         // from build 3676: "" (a live object), "class_default", or "template" (a
