@@ -5173,6 +5173,25 @@ int main() {
         put32(upB[bDcc0], Grimoire::OFF_UOBJECT_FLAGS, 0);
         put32(upB[bPcExact], Grimoire::OFF_UOBJECT_FLAGS, 0);
 
+        // Phase B3 -- [INVOKE-PICK-GARBAGE] an invoke, and an internal state read, never take a destroyed object either:
+        // DestroyActor marks it garbage, and it stays in GObjects until the next collection (60 s by default) -- an
+        // early, low-index one is met first. Each check flags the object the pick lands on today.
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);   // UE5 RF_MirroredGarbage
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK ⭐ GARBAGE: an invoke passes over the destroyed player controller -- the DCC, said to be its",
+              is(r, bDcc0, Aura::UserPick::DebugCameraOwned), nm(r.obj).c_str());
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        put32(upB[bCheats0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);
+        check("USERPICK ⭐ GARBAGE: set_debug_camera's state read passes over a destroyed CheatManager -- the CDO stands in",
+              Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController") == A(bCdoCheatMgr),
+              nm(Aura::FindLiveOrDefaultOf("CheatManager", "DebugCameraController")).c_str());
+        put32(upB[bCheats0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        put32(upB[bChar0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);
+        r = Aura::ResolveUserInstance("PlayerCharacter");
+        check("USERPICK ⭐ GARBAGE: a partial name passes over a destroyed object too -- the first match stands in",
+              is(r, bCdoBPChar, Aura::UserPick::PartialDefault), nm(r.obj).c_str());
+        put32(upB[bChar0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+
         // Phase C -- only the Debug Camera's objects are live.
         slot(10, -1);   // the player's controller
         slot(11, -1);   // its CheatManager
