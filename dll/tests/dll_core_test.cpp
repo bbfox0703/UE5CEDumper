@@ -5156,7 +5156,7 @@ int main() {
         r = Aura::FindLiveInstanceOf("CheatManager");
         check("USERPICK ⭐ NAVPICK: the DCC's own exact-class object ranks below the player's subclass object",
               is(r, bCheats0, Aura::UserPick::Live), nm(r.obj).c_str());
-        // Review 2: a destroyed SUBCLASS object (the old level's BP_PlayerController_C after a level change) is passed
+        // Review 2: a destroyed SUBCLASS object (a BP_PlayerController_C destroyed in play, not yet collected) is passed
         // over too -- not held as the subclass pick, nor as the Debug Camera's.
         slot(40, -1);
         Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
@@ -5174,8 +5174,9 @@ int main() {
         put32(upB[bPcExact], Grimoire::OFF_UOBJECT_FLAGS, 0);
 
         // Phase B3 -- [INVOKE-PICK-GARBAGE] an invoke, and an internal state read, never take a destroyed object either:
-        // DestroyActor marks it garbage, and it stays in GObjects until the next collection (60 s by default) -- an
-        // early, low-index one is met first. Each check flags the object the pick lands on today.
+        // an actor destroyed in play is marked garbage and stays in GObjects until the next collection (about a minute on
+        // a stock engine) -- an early, low-index one is met first. Up to review 1's checks, each ⭐ one failed before
+        // [INVOKE-PICK-GARBAGE]: the pick landed on the destroyed object.
         put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);   // UE5 RF_MirroredGarbage
         r = Aura::ResolveUserInstance("PlayerController");
         check("USERPICK ⭐ GARBAGE: an invoke passes over the destroyed player controller -- the DCC, said to be its",

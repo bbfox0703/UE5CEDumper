@@ -1305,10 +1305,11 @@ static void Test_Mimic_CommandNumbering() {
     // The published compatibility RANGE. A script checks MIN <= its baked
     // version <= CONTRACT before its first write.
     EXPECT("contract range is sane", Mimic::MAILBOX_CONTRACT_MIN <= Mimic::MAILBOX_CONTRACT);
-    // 8 since [LISTINSTANCES-KEEPS-TEMPLATES]: LIST_INSTANCES lists no template -- a meaning change an older script
-    // relied on only by accident, so MIN stays 1. (7 was [INVOKE-NONSTATIC-ON-CDO], the invoke template warning;
-    // 6 [FINDINSTANCE-SUBSTRING-USERFACING], the derivation pick; 5 [W5-OFFSETS-MAILBOX]; 4 [W2-TPREL-TRANSPORTS].)
-    EXPECT("contract is 8",          Mimic::MAILBOX_CONTRACT     == 8);
+    // 9 since [INVOKE-PICK-GARBAGE]: FIND_INSTANCE never hands over a destroyed object -- a meaning change an older
+    // script relied on only by accident, so MIN stays 1. (8 was [LISTINSTANCES-KEEPS-TEMPLATES], no template listed;
+    // 7 [INVOKE-NONSTATIC-ON-CDO], the invoke template warning; 6 [FINDINSTANCE-SUBSTRING-USERFACING], the derivation
+    // pick; 5 [W5-OFFSETS-MAILBOX]; 4 [W2-TPREL-TRANSPORTS].)
+    EXPECT("contract is 9",          Mimic::MAILBOX_CONTRACT     == 9);
     EXPECT("contract min is 1",      Mimic::MAILBOX_CONTRACT_MIN == 1);
 
     // g_mailboxContract is a SEPARATE exported symbol, read before anything is
@@ -7793,6 +7794,25 @@ static void Test_WeakTargetGarbage() {
     EXPECT("R7-B-01 control: 5.1 RF_PendingKill while the readable item says no -> live",
            !DynOff::IsWeakTargetGarbage(501, 0x20000000u, true, 0));
     EXPECT("R7-B-01 control: unknown version ignores 0x20000000", !DynOff::IsWeakTargetGarbage(0, 0x20000000u, true, 1u << 29));
+
+    // [INVOKE-PICK-GARBAGE] The PICK predicate: the same destroyed bits, never Unreachable, which a collection on UE4 and
+    // 5.0-5.3 sets on every non-root object before clearing it from the reachable ones.
+    EXPECT("INVOKE-PICK-GARBAGE: UE 5.3 item Unreachable alone -> not destroyed",
+           !DynOff::IsDestroyedObject(503, 0, true, 1u << 28));
+    EXPECT("INVOKE-PICK-GARBAGE: UE4 item Unreachable alone -> not destroyed",
+           !DynOff::IsDestroyedObject(427, 0, true, 1u << 28));
+    EXPECT("INVOKE-PICK-GARBAGE: UE5 RF_MirroredGarbage -> destroyed", DynOff::IsDestroyedObject(508, 0x40000000u, true, 0));
+    EXPECT("INVOKE-PICK-GARBAGE: UE5 item Garbage -> destroyed", DynOff::IsDestroyedObject(504, 0, true, 1u << 21));
+    EXPECT("INVOKE-PICK-GARBAGE: UE4 item PendingKill -> destroyed", DynOff::IsDestroyedObject(427, 0, true, 1u << 29));
+    EXPECT("INVOKE-PICK-GARBAGE: 5.3 RF_PendingKill + item PendingKill -> destroyed",
+           DynOff::IsDestroyedObject(503, 0x20000000u, true, 1u << 29));
+    EXPECT("INVOKE-PICK-GARBAGE: Unreachable beside a destroyed bit -> destroyed",
+           DynOff::IsDestroyedObject(427, 0, true, (1u << 28) | (1u << 29)));
+    EXPECT("INVOKE-PICK-GARBAGE control: clean flags -> not destroyed", !DynOff::IsDestroyedObject(504, 1u, true, 0));
+    EXPECT("INVOKE-PICK-GARBAGE control: 5.8 0x20000000 is no PendingKill -> not destroyed",
+           !DynOff::IsDestroyedObject(508, 0x20000000u, true, 1u << 29));
+    EXPECT("INVOKE-PICK-GARBAGE control: unknown version, the object flag only",
+           DynOff::IsDestroyedObject(0, 0x40000000u, true, 0) && !DynOff::IsDestroyedObject(0, 0, true, 1u << 29));
 }
 
 static void Test_ProcessEventVTableSlot() {

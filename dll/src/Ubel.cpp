@@ -4361,6 +4361,15 @@ const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex) {
     return DynOff::IsWeakTargetGarbage(g_cachedUEVersion, objectFlags, itemOk, itemFlags) ? " [garbage]" : "";
 }
 
+bool IsDestroyedPick(uintptr_t target, int32_t objectIndex) {
+    if (!target) return false;
+    uint32_t objectFlags = 0;
+    Macht::ReadSafe(target + Grimoire::OFF_UOBJECT_FLAGS, objectFlags);
+    uint32_t itemFlags = 0;
+    const bool itemOk = Aura::GetItemFlags(objectIndex, itemFlags);
+    return DynOff::IsDestroyedObject(g_cachedUEVersion, objectFlags, itemOk, itemFlags);
+}
+
 // [R7-B-04] ONE delegate-binding label: DescribeScriptDelegate's ladder PLUS the [garbage] tag. Five readers render a
 // binding, and the tag was appended at four of them by hand -- the sparse-binding element loop was the fifth, the
 // exact "repaired two of them" shape DescribeScriptDelegate's own header warns about. Every site calls this.

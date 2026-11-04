@@ -1355,7 +1355,8 @@ does (`Aura::ResolveUserInstance`):
 * **never a template** -- a class default object, one of its default subobjects or a Blueprint component template
   (`TemplateOf`);
 * **never a destroyed** object that garbage collection has not taken yet (`[INVOKE-PICK-GARBAGE]`: it has left its
-  level, so no path search from it, nor an invoke on it, does what was asked);
+  level, so no path search from it, nor an invoke on it, does what was asked). An object that a collection in progress
+  has only marked Unreachable is not destroyed, and is still picked (from build 3686);
 * an object a Debug Camera controller is or owns only when nothing else is live (`pick: "debug_camera_owned"`).
 
 It differs from that resolver in two ways:
@@ -2003,7 +2004,8 @@ state-changing operations but works for simple getters).
                                    // "live", "debug_camera_owned", "class_default", "partial_name",
                                    // "partial_name_default". The Console pins only "live" / "address".
                                    // A destroyed object GC has not collected yet is never picked
-                                   // (from build 3685). [INVOKE-PICK-GARBAGE]
+                                   // (from build 3685; at every step, a partial name's included,
+                                   // from 3686). [INVOKE-PICK-GARBAGE]
   "instance_name": "CheatManager_0",       // the object's and its class's names, read before
   "instance_class_name": "CheatManager",   // the call (which may destroy the object)
   "instance_template": "",         // from build 3676: "" (a live object), "class_default", or "template" (a

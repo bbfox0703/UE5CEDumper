@@ -3407,10 +3407,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         // === find_live_instance: one live object of a class or a subclass, or none === [MAINWINDOW-NAVIGATE-EXACT-NAME]
-        // Aura::FindLiveInstanceOf: the derivation walk the Console's Run resolves through, never a template, an object
-        // a Debug Camera controller is or owns only when nothing else is live -- plus its own rules (Aura.h). The class
-        // default object it can answer is an invoke's fallback (a static function runs on one) and answers none here:
-        // Live Walker opened on a template, or a path search started from one, is what this exists to stop.
+        // Aura::FindLiveInstanceOf: the derivation walk the Console's Run resolves through, never a template nor a
+        // destroyed object, one a Debug Camera controller is or owns only when nothing else is live -- plus its own
+        // rules (Aura.h). The class default object it can answer is an invoke's fallback (a static function runs on
+        // one) and answers none here: Live Walker opened on a template, or a path search started from one, is what this
+        // exists to stop.
         if (cmd == Renge::CMD_FIND_LIVE_INSTANCE) {
             const std::string className = request.value("class_name", "");
             if (className.empty()) return Renge::MakeError(id, "Missing class_name").dump();

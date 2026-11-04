@@ -1012,14 +1012,23 @@ StructuralVersion ApplyVersionLadder(unsigned ueVersion, const StructuralVersion
 // (0x20000000 = RF_HasPlaceholderType, later RF_MigratingAsset; item bit 29 unused, RefCounted from 5.7),
 // so this is 500-503 only, and the two must agree when the item flags read: a 5.4+ title whose version
 // was under-detected would otherwise tag its placeholder or ref-counted objects.
-constexpr bool IsWeakTargetGarbage(unsigned ueVersion, uint32_t objectFlags, bool itemFlagsOk, uint32_t itemFlags) {
+// [INVOKE-PICK-GARBAGE] Split in two: IsDestroyedObject is the destroyed bits alone, for a walk that PICKS an
+// object. A collection on UE4 and 5.0-5.3 first marks every non-root object Unreachable (item 1<<28) and clears it
+// from the reachable ones, so a pick that counted Unreachable could pass over every live object while one runs;
+// only the bits that stay set until the object is gone may refuse a pick.
+constexpr bool IsDestroyedObject(unsigned ueVersion, uint32_t objectFlags, bool itemFlagsOk, uint32_t itemFlags) {
     if ((ueVersion == 0 || ueVersion >= 500) && (objectFlags & 0x40000000u)) return true;
     if (ueVersion >= 500 && ueVersion <= 503 && (objectFlags & 0x20000000u)
         && (!itemFlagsOk || (itemFlags & (1u << 29)))) return true;
     if (!itemFlagsOk || ueVersion == 0) return false;
-    const uint32_t refused = ueVersion >= 500 ? ((1u << 21) | (1u << 28))    // Garbage | Unreachable
-                                              : ((1u << 29) | (1u << 28));   // PendingKill | Unreachable
-    return (itemFlags & refused) != 0;
+    const uint32_t destroyed = ueVersion >= 500 ? (1u << 21)    // Garbage
+                                                : (1u << 29);   // PendingKill
+    return (itemFlags & destroyed) != 0;
+}
+
+constexpr bool IsWeakTargetGarbage(unsigned ueVersion, uint32_t objectFlags, bool itemFlagsOk, uint32_t itemFlags) {
+    return IsDestroyedObject(ueVersion, objectFlags, itemFlagsOk, itemFlags)
+        || (itemFlagsOk && ueVersion != 0 && (itemFlags & (1u << 28)) != 0);   // Unreachable
 }
 
 // [VND583-02] UField::Next in FProperty mode (4.25+). It used to keep its 0x28 default:

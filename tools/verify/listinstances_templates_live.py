@@ -257,7 +257,7 @@ def read_num(m, addr, ftype):
 
 
 # ------------------------------------------------------------------------------------------------ the checks
-def check_contract(rig, pid, build):
+def check_contract(rig, pid, build, want=CONTRACT_WANT, cid="T7"):
     rd = MA.Reader(pid)
     addr, module = 0, ""
     for path, mbase in MA.modules(pid):
@@ -270,13 +270,13 @@ def check_contract(rig, pid, build):
                 module = path
                 break
     if not addr:
-        rig.verdict("T7", False, "g_mailboxContract is exported by no injected module")
+        rig.verdict(cid, False, "g_mailboxContract is exported by no injected module")
         return
     magic, cur, lo = struct.unpack("<Iii", rig.m.read(addr, 12))
     rig.ev.add("memory", {"read": "g_mailboxContract", "addr": hex(addr), "module": module},
                {"magic": magic, "current": cur, "minimum": lo})
-    rig.verdict("T7", magic == CONTRACT_MAGIC and cur >= CONTRACT_WANT and lo == CONTRACT_MIN_WANT,
-                f"magic={magic:#x} current={cur} min={lo} (want current >= {CONTRACT_WANT}, min {CONTRACT_MIN_WANT})"
+    rig.verdict(cid, magic == CONTRACT_MAGIC and cur >= want and lo == CONTRACT_MIN_WANT,
+                f"magic={magic:#x} current={cur} min={lo} (want current >= {want}, min {CONTRACT_MIN_WANT})"
                 f" build={build} module={pathlib.Path(module).name}", current=cur, minimum=lo, magic=magic)
 
 

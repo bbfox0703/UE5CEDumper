@@ -131,9 +131,10 @@ uintptr_t FindClassByPath(const std::string& classPath);
 // OWN default object, never a subclass's: a function library (KismetSystemLibrary, WidgetBlueprintLibrary)
 // has no live instance, and its CDO is the object a static UFunction is invoked on. A cancelled walk
 // returns 0, not a CDO it met on the way: a live instance may sit past where it stopped.
-// [INVOKE-PICK-GARBAGE] "Live" is never a destroyed object: DestroyActor marks an actor garbage, and it stays in GObjects
-// until the next collection (60 s by default), so after a level change the old level's objects -- low indices, met
-// first -- would answer. Every pick in this family passes over them.
+// [INVOKE-PICK-GARBAGE] "Live" is never a destroyed object: an actor destroyed in play is marked garbage and stays in
+// GObjects until the next collection -- about a minute on a stock engine (gc.TimeBetweenPurgingPendingKillObjects) --
+// and an early, low-index one is met before its live successor. Every pick in this family passes over it, by
+// DynOff::IsDestroyedObject: never on Unreachable alone, which a collection in progress sets on live objects too.
 uintptr_t FindLiveOrDefaultOf(const std::string& className);
 
 // The same pick, skipping a live instance that IS of a class deriving from `skipOuterOf` (reached through a base of

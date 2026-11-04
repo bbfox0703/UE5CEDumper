@@ -29,7 +29,8 @@ enum Cmd : int32_t {
                               //   or a subclass (one a Debug Camera controller is or owns only when no other is
                               //   live), else the class's own default object; a name no class has is matched as
                               //   part of a class name. INVOKE_BY_NAME and LIST_FUNCTIONS' class-name branch
-                              //   resolve through it. [FINDINSTANCE-SUBSTRING-USERFACING]
+                              //   resolve through it. [FINDINSTANCE-SUBSTRING-USERFACING] Never a destroyed
+                              //   object, at any of those steps (contract 9, [INVOKE-PICK-GARBAGE]).
     CMD_FIND_FUNCTION   = 3,  // Find UFunction by name on instance's class
     CMD_INVOKE_BY_NAME  = 4,  // Combined: find instance + find function + invoke
     CMD_LIST_FUNCTIONS  = 5,  // List all UFunctions on an instance's class (paginated)
@@ -771,7 +772,17 @@ namespace Mimic {
 ///   than copied by spawns -- are no longer frozen at all. The fix is DLL-side, so an older script gets the clean
 ///   pool from this DLL with nothing to regenerate; the bump makes a script generated now refuse a contract-7 DLL,
 ///   which would still hand it templates to write.
-constexpr int32_t MAILBOX_CONTRACT = 8;
+/// 9 ([INVOKE-PICK-GARBAGE]): CMD_FIND_INSTANCE -- with CMD_INVOKE_BY_NAME and CMD_LIST_FUNCTIONS' class-name branch,
+///   which resolve through it -- never picks a DESTROYED object (UE5 Garbage, UE 5.0-5.3 RF_PendingKill, UE4 item
+///   PendingKill), at any step: the live pick, the Debug Camera's last resort, and a partial class-name match. An actor
+///   destroyed in play stays in GObjects until the next collection (about a minute on a stock engine), and a low index
+///   made it the first object met: an invoke reached an object that had left its level, and one the engine may free
+///   under it. A MEANING change (item 5); no field moved and no result code changed, so the surface hash does not move.
+///   MAILBOX_CONTRACT_MIN stays at 1, by version 6's rule: the command promises a live object, and a destroyed one was
+///   an accident no script could rely on. The fix is DLL-side, so an older script gets the live object from this DLL
+///   with nothing to regenerate; the bump makes a script generated now refuse a contract-8 DLL, which would still hand
+///   it a destroyed one.
+constexpr int32_t MAILBOX_CONTRACT = 9;
 
 /// Oldest script contract still accepted. Bump ONLY when a change actually
 /// invalidates older scripts — an additive change must not move this.

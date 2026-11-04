@@ -535,7 +535,8 @@ static void HandleFindInstance() {
 
     LOG_INFO("Mailbox: FIND_INSTANCE class='%s'", className);
 
-    // [FINDINSTANCE-SUBSTRING-USERFACING] The user-facing resolver (Aura.h); its rule is contract 7 (6 + templates).
+    // [FINDINSTANCE-SUBSTRING-USERFACING] The user-facing resolver (Aura.h); its rule is contract 9 (6, + templates in
+    // 7, + destroyed objects in 9).
     const Aura::UserInstance found = Aura::ResolveUserInstance(className);
     g_invokeMailbox.instanceAddr = found.obj;
     char msg[256];

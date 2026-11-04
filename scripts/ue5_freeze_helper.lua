@@ -503,9 +503,11 @@ end
 -- depends on: it writes into every address the DLL lists and never restores, so a contract-7 DLL, which still
 -- lists a class default object's subobjects and Blueprint component templates, would pass the frozen value to
 -- every later spawn.
--- ⚠ Baking 8 means this helper REFUSES a contract-7 DLL ("update UE5Dumper.dll"). That is what the pin
+-- 9: CMD_FIND_INSTANCE never hands over a destroyed object ([INVOKE-PICK-GARBAGE]). Not used here; baked for the
+-- same reason as 4. A resident 1.7 that bakes 8 keeps working against a contract-9 DLL, so the version stays.
+-- ⚠ Baking 9 means this helper REFUSES a contract-8 DLL ("update UE5Dumper.dll"). That is what the pin
 -- above encodes: the helper and the generator ship together, so they claim ONE contract.
-local UE5_SCRIPT_CONTRACT = 8
+local UE5_SCRIPT_CONTRACT = 9
 
 -- Returns true, or false + a message. Call BEFORE writing to the mailbox: if the
 -- layout moved, writing first scribbles on whatever now lives at those offsets.

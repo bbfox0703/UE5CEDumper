@@ -135,7 +135,11 @@ import sys
 # never lists a template (a class default object's default subobjects, a Blueprint's component templates), and its
 # total and LI_OUT_TRUNCATED count live objects only. A script that relied on freezing a template did so by accident
 # (the command says "live"); MAILBOX_CONTRACT_MIN stays 1, and the bump makes a new script refuse a contract-7 DLL.
-GOLDEN_VERSION = 8
+# NOTE on version 9 ([INVOKE-PICK-GARBAGE]): a MEANING-only bump, so the hash is unchanged. CMD_FIND_INSTANCE -- and
+# INVOKE_BY_NAME and LIST_FUNCTIONS' class-name branch through it -- never picks a destroyed object (an actor destroyed
+# in play stays in GObjects until the next collection), at any step of its rule. Taking one was an accident (the
+# command says "live"); MAILBOX_CONTRACT_MIN stays 1, and the bump makes a new script refuse a contract-8 DLL.
+GOLDEN_VERSION = 9
 GOLDEN_HASH = "e47d01698e530071c5de8cc11f7d5a2b341ea2f2569da1c2468cced81acc3ee7"
 
 MIMIC_H = os.path.join("dll", "src", "Mimic.h")

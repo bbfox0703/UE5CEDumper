@@ -2150,11 +2150,10 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
         const bool isTemplate = tpl.kind != TemplateKind::None;
 
         if (!v.derives) {   // the partial-name rule the user-facing lookups always had: the first non-template, else the first
+            // [INVOKE-PICK-GARBAGE] A destroyed object is no pick here either, not even the last resort.
+            if (how.skipGarbage && Ubel::IsDestroyedPick(obj, i)) { ++garbagePassed; continue; }
             if (!partialFirst) { partialFirst = obj; partialFirstCls = cls; }
-            // [INVOKE-PICK-GARBAGE] Its live object is no destroyed one either.
-            if (!isTemplate && !partialLive && !(how.skipGarbage && *Ubel::WeakTargetGarbageTag(obj, i) != '\0')) {
-                partialLive = obj; partialLiveCls = cls;
-            }
+            if (!isTemplate && !partialLive) { partialLive = obj; partialLiveCls = cls; }
             continue;
         }
         namedSeen = true;
@@ -2165,9 +2164,8 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
             continue;
         }
         // [MAINWINDOW-NAVIGATE-EXACT-NAME] [INVOKE-PICK-GARBAGE] A destroyed object stays in GObjects until the next
-        // garbage collection, and a low index makes it the first met: no object to open, to search a path from (it has
-        // left its level), to invoke on, or to read state from.
-        if (how.skipGarbage && *Ubel::WeakTargetGarbageTag(obj, i) != '\0') {
+        // garbage collection, and a low index makes it the first met: it is never a pick.
+        if (how.skipGarbage && Ubel::IsDestroyedPick(obj, i)) {
             ++garbagePassed;
             exactPassed |= v.exact;
             continue;
@@ -2220,10 +2218,11 @@ static UserInstance WalkForInstance(const std::string& className, const Instance
         r.cls = partialLive ? partialLiveCls : partialFirstCls;
         r.pick = partialLive ? UserPick::PartialLive : UserPick::PartialDefault;
         Sein::Warn("PIPE:find", "%s '%s' -> no class of that name has objects; matched as part of a class name: 0x%llX "
-                   "(%s, class %s)", how.who, className.c_str(), static_cast<unsigned long long>(r.obj),
-                   Ubel::GetName(r.obj).c_str(), Ubel::GetName(r.cls).c_str());
+                   "(%s, class %s)%s", how.who, className.c_str(), static_cast<unsigned long long>(r.obj),
+                   Ubel::GetName(r.obj).c_str(), Ubel::GetName(r.cls).c_str(), destroyedNote().c_str());
     } else {
-        Sein::Warn("PIPE:find", "%s '%s' -> not found (scanned=%d)", how.who, className.c_str(), count);
+        Sein::Warn("PIPE:find", "%s '%s' -> not found (scanned=%d)%s", how.who, className.c_str(), count,
+                   destroyedNote().c_str());
     }
     return r;
 }
@@ -2326,7 +2325,7 @@ LocalPcScan ScanForLocalPlayerController() {
         if (!r.addr) continue;
         // A destroyed controller keeps its Player until GC: UEngine::LoadMap destroys the old PC and nulls
         // LocalPlayer.PlayerController -- the moment every chain fails and lands here -- but not the PC's Player.
-        if (*Ubel::WeakTargetGarbageTag(r.addr, r.index) != '\0') continue;
+        if (Ubel::IsDestroyedPick(r.addr, r.index)) continue;
         // Exact only: a fuzzy arm would read AController::PlayerState, which every server-side controller has set.
         const int32_t off = Ubel::FindFieldOffset(r.classAddr, Grimoire::AURA_LOCALPC_PLAYER_PROPERTY);
         uintptr_t player = 0;

@@ -1724,6 +1724,10 @@ inline const char* UnresolvedWeakLabel(int32_t objIdx, int32_t serial) {
 // is really there, and append this tag to the text they DISPLAY. Never to ptrName, which navigation uses.
 const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex);
 
+// [INVOKE-PICK-GARBAGE] Is this object destroyed (DynOff::IsDestroyedObject), for a walk that PICKS one -- not the
+// display tag above, which also names a target that a collection in progress has marked Unreachable.
+bool IsDestroyedPick(uintptr_t target, int32_t objectIndex);
+
 // [R7-B-04] A delegate binding's display text: DescribeScriptDelegate + WeakTargetGarbageTag. Every reader that renders
 // a binding goes through this one function.
 std::string DescribeDelegateBinding(uintptr_t target, const std::string& targetName,
