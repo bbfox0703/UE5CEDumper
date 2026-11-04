@@ -175,7 +175,7 @@ installed with `fixture_census.py` (§3) before planning around one.
 | `Gg2game` | exe | GalGun Double Peace |
 | `Avowed` | 2457220 | the name resolves to the launcher shim `Avowed.exe`: front and screenshot with it, never `open_application` it (§3); in-game clicks need `Avowed-win64-shipping` |
 | `Gwt` | 1475810 | Ghostwire: Tokyo. No Start-menu entry: launch with `-applaunch`, then request the running exe. The root `GWT.exe` is a bootstrap; both requests resolved to `Snowfall\Binaries\Win64\GWT.exe` |
-| `Ffrs-win64-shipping` | 4474710 | FINAL FANTASY RESONANCE DEMO; the exe, requested while it runs |
+| `Ffrs-win64-shipping` | 3259780 | FINAL FANTASY RESONANCE (the full release; the DEMO, 4474710, has the same exe name); the exe, requested while it runs |
 | `Dragon quest xi s` | 1295510 | the exe |
 | `Isdefense-win64-shipping` | 448370 | IS Defense; the exe |
 | `Extinction` | 570710 | the exe |
