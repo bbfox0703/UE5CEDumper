@@ -5191,6 +5191,43 @@ int main() {
         check("USERPICK ⭐ GARBAGE: a partial name passes over a destroyed object too -- the first match stands in",
               is(r, bCdoBPChar, Aura::UserPick::PartialDefault), nm(r.obj).c_str());
         put32(upB[bChar0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        // Review 1: ...and not as the first match either, when no template sits below it. The player's controller is
+        // the only object of the only class whose name holds "ThirdPersonPlayer".
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0x40000000);
+        r = Aura::ResolveUserInstance("ThirdPersonPlayer");
+        check("USERPICK ⭐ GARBAGE: a destroyed object is not a partial name's first match either -- nothing answers",
+              r.obj == 0 && r.pick == Aura::UserPick::None, nm(r.obj).c_str());
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+
+        // Review 1: through the ITEM flags, which the walk reads by its own index. On UE 5.0-5.3 and UE4 a garbage
+        // collection first marks every non-root object Unreachable (item bit 28) and clears it from the reachable ones;
+        // a pick made in between must still take a live object. Bit 28 is no destroyed object; PendingKill (bit 29) is.
+        uint8_t* pcItem = upPool.chunks[0].data() + static_cast<size_t>(10) * FakePool::kItemSize;   // bPc0's slot
+        auto putItemFlags = [&](uint32_t f) { memcpy(pcItem + 0x08, &f, sizeof(f)); };
+        g_cachedUEVersion = 503;
+        putItemFlags(1u << 28);
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK ⭐ GARBAGE: mid-collection (Unreachable only, UE 5.3) is no destroyed object -- the live one answers",
+              is(r, bPc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        r = Aura::FindLiveInstanceOf("PlayerController");
+        check("USERPICK ⭐ GARBAGE: ...and the navigation pick takes it too",
+              is(r, bPc0, Aura::UserPick::Live), nm(r.obj).c_str());
+        putItemFlags(1u << 29);
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0x20000000);   // 5.0-5.3: RF_PendingKill with item PendingKill
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK GARBAGE control: a UE 5.3 PendingKill object, read through its item, is passed over",
+              is(r, bDcc0, Aura::UserPick::DebugCameraOwned), nm(r.obj).c_str());
+        put32(upB[bPc0], Grimoire::OFF_UOBJECT_FLAGS, 0);
+        g_cachedUEVersion = 427;   // UE4 keeps PendingKill in the item only
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK GARBAGE control: a UE4 PendingKill item is passed over", is(r, bDcc0, Aura::UserPick::DebugCameraOwned),
+              nm(r.obj).c_str());
+        putItemFlags(1u << 28);
+        r = Aura::ResolveUserInstance("PlayerController");
+        check("USERPICK ⭐ GARBAGE: mid-collection on UE4 too -- the live one answers", is(r, bPc0, Aura::UserPick::Live),
+              nm(r.obj).c_str());
+        putItemFlags(0);
+        g_cachedUEVersion = 508;
 
         // Phase C -- only the Debug Camera's objects are live.
         slot(10, -1);   // the player's controller

@@ -3273,6 +3273,10 @@ public class InvokeScriptTests
         // A meaning change of CMD_LIST_INSTANCES: a script generated now refuses a DLL that still lists templates.
         Assert.True(CeMailboxLayout.ContractVersion >= 8,
             "a script that relies on a template-free LIST_INSTANCES must claim contract 8: an older DLL still lists templates");
+        // [INVOKE-PICK-GARBAGE] And of CMD_FIND_INSTANCE / CMD_INVOKE_BY_NAME: a script generated now refuses a DLL
+        // that would still hand it a destroyed object.
+        Assert.True(CeMailboxLayout.ContractVersion >= 9,
+            "a script that relies on FIND_INSTANCE passing over destroyed objects must claim contract 9");
 
         // Review 1: the Force reply and the forced-fields list say how many templates the pool passed over, so a hold
         // armed on nothing can say why; the walks' post-filters share a memo, as the walks do.
