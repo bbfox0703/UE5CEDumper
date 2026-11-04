@@ -2520,6 +2520,50 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task FindLiveInstance_OnADllThatPredatesIt_FallsBackToTheExactNameLookup()
+    {
+        // Review 1: a proxy DLL left in a game folder outlives a UI upgrade. It answers "Unknown command", and every
+        // navigate and Locate then did nothing at all, with Detect Stats reporting "0 confirmed" as a result.
+        var pipe = new MockPipeClient();
+        var cmds = new List<string>();
+        pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]!.GetValue<string>();
+            cmds.Add(cmd);
+            return cmd == "find_live_instance"
+                ? new JsonObject { ["ok"] = false, ["error"] = "Unknown command: find_live_instance" }
+                : new JsonObject
+                {
+                    ["ok"] = true,
+                    ["instances"] = new JsonArray
+                    {
+                        new JsonObject { ["addr"] = "0x100", ["name"] = "Default__PlayerController", ["class"] = "PlayerController" },
+                        new JsonObject { ["addr"] = "0x200", ["name"] = "PlayerController_0", ["class"] = "PlayerController" },
+                    },
+                };
+        });
+        var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
+
+        var r = await dump.FindLiveInstanceAsync("PlayerController", TestContext.Current.CancellationToken);
+
+        Assert.Equal(new[] { "find_live_instance", "find_instances" }, cmds);
+        Assert.True(r.Found);
+        Assert.Equal("0x200", r.Address);
+        Assert.Equal("legacy", r.Pick);
+    }
+
+    [Fact]
+    public async Task FindLiveInstance_AnotherError_IsStillAnError()
+    {
+        var pipe = new MockPipeClient();
+        pipe.SetHandler(_ => new JsonObject { ["ok"] = false, ["error"] = "Instance lookup for class X was cut short" });
+        var dump = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
+
+        await Assert.ThrowsAsync<InvalidOperationException>(
+            () => dump.FindLiveInstanceAsync("X", TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
     public void FindLiveInstance_RunsOnTheBulkLane()
         // The resolver walk invoke_function runs, which is on the bulk lane: it walks every object, and keeps the
         // interactive lane (Live Walker) answering meanwhile.

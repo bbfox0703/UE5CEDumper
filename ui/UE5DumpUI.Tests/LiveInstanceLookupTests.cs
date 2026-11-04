@@ -59,7 +59,21 @@ public class LiveInstanceLookupTests
         var body = Handler(Source("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"), subscription);
         Assert.DoesNotContain("FindInstancesAsync(", body, StringComparison.Ordinal);
         Assert.DoesNotContain("Default__", body, StringComparison.Ordinal);
-        Assert.Contains("LiveInstanceAddressAsync(className)", body, StringComparison.Ordinal);
+        Assert.Contains("LiveInstanceAsync(className)", body, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("InterestingFunctions.NavigateToFunction +=")]
+    [InlineData("LiveFuncs.NavigateToFunction +=")]
+    [InlineData("Console.NavigateToFunction +=")]
+    public void A_function_navigate_says_what_it_opened_when_the_function_is_not_selected(string subscription)
+    {
+        // Review 1, MED: a function's row names the class that DECLARES it, and the object opened may be of a subclass,
+        // whose Live Walker list holds only its own functions. The line said "'Jump' not in this class" of the class
+        // that declares Jump.
+        var body = Handler(Source("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"), subscription);
+        Assert.Contains("FunctionNavigateText(", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("not in this class", body, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -87,8 +101,12 @@ public class LiveInstanceLookupTests
         Assert.True(at > 0, "the find_live_instance handler was not found");
         int end = fern.IndexOf("\n        if (cmd == Renge::CMD_", at + 1, StringComparison.Ordinal);
         string handler = fern[at..(end > at ? end : fern.Length)];
-        Assert.Contains("Aura::ResolveUserInstance(className)", handler, StringComparison.Ordinal);
-        // Its class-default and partial-name picks are an invoke's fallbacks; a navigation must not open them.
+        // Review 1: its own walk -- an exact-class object first, no destroyed object, no partial-name fallback -- under
+        // its own name in the log, and a cancel that does not say "nothing was invoked".
+        Assert.Contains("Aura::FindLiveInstanceOf(className)", handler, StringComparison.Ordinal);
+        Assert.Contains("Renge::LiveInstanceLookupCancelledText(className)", handler, StringComparison.Ordinal);
+        Assert.DoesNotContain("Renge::InstanceLookupCancelledText(", handler, StringComparison.Ordinal);
+        // The class-default pick is an invoke's fallback; a navigation must not open it.
         Assert.Contains("Aura::UserPick::Live", handler, StringComparison.Ordinal);
         Assert.Contains("Aura::UserPick::DebugCameraOwned", handler, StringComparison.Ordinal);
         Assert.DoesNotContain("UserPick::ClassDefault", handler, StringComparison.Ordinal);
