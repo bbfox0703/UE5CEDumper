@@ -15,6 +15,8 @@ still a wrong line, so this gate keeps en.axaml's own templates from reaching it
 
 and, for each template found: its highest {n} + 1 equals the argument count (TOO FEW throws; an unused argument is a
 lost value), its placeholders have no gap, and no brace is left once "{{", "}}" and the placeholders are taken out.
+A key chosen by a ternary between two templates shares one argument list: each template may use a subset of it
+(LiveFuncs' trace-memory line adds the free memory only in its "over" form), and the two together must use it all.
 A key that is not a literal (or a const naming one) cannot be checked statically: those sites are listed, not failed
 -- the repo's rule is that keys stay full literals, which check_axaml_strings enforces from the other side.
 
@@ -252,13 +254,17 @@ def literal_text(arg: str) -> str | None:
     return "".join(re.findall(r'"((?:[^"\\]|\\.)*)"', arg)).replace('\\"', '"').replace("\\n", "\n")
 
 
-def check(template: str, nargs: int) -> str | None:
+def check(template: str, nargs: int, shared: bool) -> str | None:
+    """`shared`: the key is one of a ternary's two, which share one argument list -- each may use a subset of it (the
+    other alternative uses the rest; main checks that the two together use every argument)."""
     if stray_brace(template):
         return "a stray brace -- string.Format throws on it"
     ph = placeholders(template)
     need = max(ph) + 1 if ph else 0
     if need > nargs:
         return f"TOO FEW arguments: the template needs {need}, the call passes {nargs}"
+    if shared:
+        return None
     if need < nargs:
         return f"an unused argument: the template uses {sorted(ph)}, the call passes {nargs}"
     if ph != set(range(need)):
@@ -296,12 +302,18 @@ def main() -> int:
                     continue
                 nargs = len(args) - fixed
                 fallback = literal_text(args[1]) if fixed == 2 and len(args) >= 2 else None
+                shared = len(keys) > 1
+                if shared and all(k in en for k in keys):
+                    used = set().union(*(placeholders(en[k]) for k in keys))
+                    if used != set(range(nargs)):
+                        findings.append(f"{where} {' / '.join(keys)}: the two templates together use {sorted(used)}, "
+                                        f"the call passes {nargs} argument(s)")
                 for key in keys:
                     if key not in en:
                         findings.append(f"{where} {key}: not in en.axaml")
                         continue
                     checked.append(f"{where} {key} ({nargs} arg(s))")
-                    why = check(en[key], nargs)
+                    why = check(en[key], nargs, shared)
                     if why:
                         findings.append(f"{where} {key}: {why}")
                     if fallback is not None and placeholders(fallback) != placeholders(en[key]):

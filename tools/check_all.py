@@ -138,6 +138,11 @@ GATES = [
      "defined-but-unreferenced (dead), or a view hard-codes a user-visible string. "
      "Run 'py tools/check_axaml_strings.py --list'", False),
 
+    ("check_res_format",
+     ["tools/check_res_format.py"],
+     "an en.axaml template a call formats does not fit the call's arguments (too few, an unused one, a gap) or "
+     "holds a stray brace -- Res.FormatTemplate would degrade that line. Run 'py tools/check_res_format.py --list'", False),
+
     ("check_vm_status_literals",
      ["tools/check_vm_status_literals.py"],
      "a view model's StatusText literal count moved off the baseline -- a NEW literal belongs "
