@@ -27,6 +27,12 @@ builds ≤696 in
 
 -----
 
+## 2026-11-05 (no build change) — Vendor audit #9; `sync_tools.ps1` stops a false FETCH FAILED `[VENDOR-AUDIT9-2026-11-05]`
+
+- **`sync_tools.ps1`** no longer prints `FETCH FAILED` over a reference-clone fetch that succeeded. RE-UE4SS's new commits moved its UEPseudo pin, and git's default on-demand recursion fetched that submodule through its `git@github.com:` URL, which fails without an SSH key. The clone fetch passes `--no-recurse-submodules`; the RE-UE4SS block already syncs the submodules over https (`795ce835`).
+- **Vendor audit #9** read RE-UE4SS (27 commits), UEPseudo (10), Dumper-7 (3), zydis (+13) and Epic's new `5.9` branch. Nothing forces code; three pre-existing gaps are filed as `[VND9-01]`..`[VND9-03]` ([audit-2026-11-05-vendor-delta9.md](audit-2026-11-05-vendor-delta9.md)).
+- Tools and docs only: the DLL, the proxies and the UI are unchanged.
+
 ## 2026-11-04 (build 3686) — A pick never refuses a live object while a collection runs; mailbox contract 9 `[INVOKE-PICK-GARBAGE]`
 
 - Review 1 of build 3685's fix. Telling a destroyed object apart now uses its destroyed flags alone. On UE4 and UE
