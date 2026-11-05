@@ -881,6 +881,9 @@ struct StringResult {
 // buffers, freed by the time this runs. Leaves the engine's allocation alone: nothing here frees it.
 std::vector<StringResult> ReadStringResults(const std::vector<FunctionParam>& params, const uint8_t* buf, size_t size,
                                             const std::vector<int32_t>& ownOffsets);
+// The same for one UFunction, from its own parameter chain.
+std::vector<StringResult> ReadStringResultsFor(uintptr_t func, const uint8_t* buf, size_t size,
+                                               const std::vector<int32_t>& ownOffsets);
 
 // Read an FName at instanceAddr + offset and resolve it to a string
 // via Serie::GetString. Returns "" on failure or "None" for the

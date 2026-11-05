@@ -793,9 +793,31 @@ std::string ReadFStringAt(uintptr_t instanceAddr, int32_t offset) {
     return ReadFString(instanceAddr, offset);
 }
 
-std::vector<StringResult> ReadStringResults(const std::vector<FunctionParam>&, const uint8_t*, size_t,
-                                            const std::vector<int32_t>&) {
-    return {};   // [VND9-03] red: not read yet
+std::vector<StringResult> ReadStringResults(const std::vector<FunctionParam>& params, const uint8_t* buf, size_t size,
+                                            const std::vector<int32_t>& ownOffsets) {
+    std::vector<StringResult> out;
+    if (!buf) return out;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(buf);
+    for (const auto& p : params) {
+        if (!p.isReturn && !p.isOut) continue;
+        const int width = p.typeName == "StrProperty" ? 2
+                        : (p.typeName == "Utf8StrProperty" || p.typeName == "AnsiStrProperty") ? 1 : 0;
+        if (!width || p.offset < 0 || static_cast<size_t>(p.offset) + 16 > size) continue;
+        if (std::find(ownOffsets.begin(), ownOffsets.end(), p.offset) != ownOffsets.end()) continue;
+        int32_t num = 0;
+        std::memcpy(&num, buf + p.offset + 8, sizeof(num));
+        StringResult r;
+        r.offset = p.offset;
+        r.name = p.name;
+        if (num <= 0) {
+            r.read = true;   // no characters: an empty string
+        } else {
+            r.text = width == 2 ? ReadFString(base, p.offset) : ReadFUtf8String(base, p.offset);
+            r.read = !r.text.empty() || num == 1;   // Num 1 is the terminator alone
+        }
+        out.push_back(std::move(r));
+    }
+    return out;
 }
 
 std::string ReadFNameAt(uintptr_t instanceAddr, int32_t offset) {
@@ -2420,6 +2442,34 @@ static bool HasUnexpandedStruct(const std::vector<ParamField>& fields) {
         if (HasUnexpandedStruct(f.sub)) return true;
     }
     return false;
+}
+
+// [VND9-03] ReadStringResults for one UFunction: its own parameter chain, read here because ResolveFunctionInfo reads
+// only the function's tail (flags and sizes), never its parameters.
+std::vector<StringResult> ReadStringResultsFor(uintptr_t func, const uint8_t* buf, size_t size,
+                                               const std::vector<int32_t>& ownOffsets) {
+    std::vector<FieldInfo> fields;
+    uintptr_t first = 0;
+    if (DynOff::bUseFProperty) {
+        if (Macht::ReadSafe(func + DynOff::USTRUCT_CHILDPROPS, first) && first) WalkFFieldChain(first, fields);
+    } else {
+        if (Macht::ReadSafe(func + DynOff::USTRUCT_CHILDREN, first) && first) WalkUPropertyChain(first, fields);
+    }
+    constexpr uint64_t kCpfParm = 0x80, kCpfOut = 0x100, kCpfReturn = 0x400;
+    std::vector<FunctionParam> params;
+    for (const FieldInfo& f : fields) {
+        if (!(f.PropertyFlags & kCpfParm)) continue;   // a Blueprint function's locals follow its parameters
+        FunctionParam p;
+        p.name     = f.Name;
+        p.typeName = f.TypeName;
+        p.size     = f.Size;
+        p.offset   = f.Offset;
+        p.isParm   = true;
+        p.isOut    = (f.PropertyFlags & kCpfOut) != 0;
+        p.isReturn = (f.PropertyFlags & kCpfReturn) != 0;
+        params.push_back(std::move(p));
+    }
+    return ReadStringResults(params, buf, size, ownOffsets);
 }
 
 bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why) {

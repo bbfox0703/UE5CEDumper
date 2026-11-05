@@ -3752,9 +3752,26 @@ public sealed class DumpService : IDumpService
             FuncAddr     = res["func_addr"]?.GetValue<string>() ?? "",
             ParmsSize    = res["parms_size"]?.GetValue<int>() ?? 0,
             ResultHex    = res["result_hex"]?.GetValue<string>() ?? "",
+            StringResults = ParseStringResults(res["str_results"] as JsonArray),   // [VND9-03] additive
             Message      = res["message"]?.GetValue<string>() ?? "",
             Error        = res["error"]?.GetValue<string>() ?? "",
         };
+    }
+
+    /// <summary>[VND9-03] invoke_function's str_results: each returned or out string's text by its offset in the param
+    /// buffer; null where the DLL found the header but the text did not read. Empty when the key is absent.</summary>
+    private static Dictionary<int, string?> ParseStringResults(JsonArray? arr)
+    {
+        var map = new Dictionary<int, string?>();
+        if (arr == null) return map;
+        foreach (var node in arr)
+        {
+            if (node is not JsonObject o || o["off"] is not JsonValue offNode || !offNode.TryGetValue(out int off))
+                continue;
+            var read = o["read"]?.GetValue<bool>() ?? true;
+            map[off] = read ? o["text"]?.GetValue<string>() ?? "" : null;
+        }
+        return map;
     }
 
     public async Task<int> GetDebugCameraStateAsync(CancellationToken ct = default)

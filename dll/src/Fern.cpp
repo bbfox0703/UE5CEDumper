@@ -6938,6 +6938,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // 指標必須是遊戲行程內的有效位址。此 DLL 為注入式，故我們在此配置的 heap
             // buffer 就位於遊戲位址空間（與 paramBuf.data() 可作為 params 同理）。
             std::vector<void*> strAllocs;
+            std::vector<int32_t> ownStrOffsets;   // [VND9-03] the slots filled here, never read back as results
             try {
             if (request.contains("str_params") && request["str_params"].is_array()) {
                 for (const auto& sp : request["str_params"]) {
@@ -6977,6 +6978,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                         dataBuf = cbuf;
                     }
                     strAllocs.push_back(dataBuf);
+                    ownStrOffsets.push_back(off);
                     // Patch FString { Data(+0,8), Num(+8,4), Max(+12,4) } at off.
                     uintptr_t dataPtr = reinterpret_cast<uintptr_t>(dataBuf);
                     memcpy(paramBuf.data() + off,      &dataPtr, sizeof(uintptr_t));
@@ -7055,6 +7057,20 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // Return post-call buffer (may contain out-param values)
             if (bufSize > 0) {
                 data["result_hex"] = Renge::BytesToHex(paramBuf.data(), bufSize);
+            }
+
+            // [VND9-03] Each returned or out string's TEXT: result_hex carries only its { Data, Num, Max } header, whose
+            // Data is in the game's heap, where the UI cannot follow. Only after a call that ran -- on -5 the game
+            // thread still holds a copy of the buffer -- and never a slot filled above, whose buffer is freed. The
+            // engine's allocation is left alone. Additive key: an older UI ignores it.
+            if (callResult == 0 && bufSize > 0) {
+                const auto strs = Ubel::ReadStringResultsFor(ufuncAddr, paramBuf.data(), paramBuf.size(), ownStrOffsets);
+                if (!strs.empty()) {
+                    json arr = json::array();
+                    for (const auto& s : strs)
+                        arr.push_back({ {"off", s.offset}, {"name", s.name}, {"text", s.text}, {"read", s.read} });
+                    data["str_results"] = std::move(arr);
+                }
             }
 
             if (callResult == 0) {
