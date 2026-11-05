@@ -27,6 +27,25 @@ builds ≤696 in
 
 -----
 
+## 2026-11-05 (build 3687) — A soft reference to an actor names the actor; FIRE shows a returned string's text; Dissect knows UE 5.5's narrow strings `[VND9-01]` `[VND9-02]` `[VND9-03]` `[VND9-DOC]`
+
+- **A soft pointer to an object inside an asset keeps its sub-path.** A soft reference to an actor in a level reads
+  `/Game/Map.Map:PersistentLevel.BP_Door_C_3` in the Live Walker, arrays, maps / sets / optionals and previews; it
+  read as the map's own path. The sub-path's width is measured on the engine: an FString through UE 5.5, an
+  FUtf8String from 5.6. Where it cannot be measured on 5.6+, nothing is added rather than text read at the wrong width.
+- **Pipe FIRE shows a returned or out string's text** (`ReturnValue (return) = "42"`), where it printed the string's
+  16 raw header bytes; the CE route already showed the text. New reply key `str_results` (pipe-protocol.md).
+- **CE Structure Dissect** shows a UE 5.5+ `Utf8StrProperty` / `AnsiStrProperty` field as a pointer row, like FString,
+  not as a decimal number.
+- The USMAP writer's header records which writer it follows when an enum did not read, pinned by a test.
+- **Checked live on build 3687** (`tools/verify/vnd9_live.py`): DumperTest Shipping (UE 5.4) 4/4 -- the probe logs
+  `SubPathString StrProperty at +0x10`, Soft_Mesh is unchanged, a synthetic sub-path reads
+  `/Engine/BasicShapes/Cube.Cube:統一` (restored after), FIRE `Conv_IntToString(42)` returns "42". DumperTest56 and
+  DumperTest58 Shipping 2/2 each: `SubPathString Utf8StrProperty at +0x10`, and the same FIRE. Not checked live: a
+  real actor soft reference on 5.6+ (no fixture field holds one), and the Dissect row in CE.
+- Tests: dll_core_test 1476 checks and dll_helpers_test 3746, 0 failures; C# 7441 passed, 0 failed; headless 70;
+  dissect_test.lua 437. AOT UI 61,666,816 bytes.
+
 ## 2026-11-05 (no build change) — Vendor audit #9; `sync_tools.ps1` stops a false FETCH FAILED `[VENDOR-AUDIT9-2026-11-05]`
 
 - **`sync_tools.ps1`** no longer prints `FETCH FAILED` over a reference-clone fetch that succeeded. RE-UE4SS's new commits moved its UEPseudo pin, and git's default on-demand recursion fetched that submodule through its `git@github.com:` URL, which fails without an SSH key. The clone fetch passes `--no-recurse-submodules`; the RE-UE4SS block already syncs the submodules over https (`795ce835`).
