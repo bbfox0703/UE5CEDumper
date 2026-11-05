@@ -1,10 +1,12 @@
 r"""[VND9-01] [VND9-03] live: a soft pointer's sub-path, and Pipe FIRE's returned-string text.
 
-    py tools/verify/vnd9_live.py DumperTest   --expect-sub StrProperty       (shipping, UE 5.4)
-    py tools/verify/vnd9_live.py DumperTest58 --expect-sub Utf8StrProperty   (shipping58, UE 5.8)
+    py tools/verify/vnd9_live.py DumperTest-Win64-Shipping   --expect-sub StrProperty       (shipping, UE 5.4)
+    py tools/verify/vnd9_live.py DumperTest58-Win64-Shipping --expect-sub Utf8StrProperty   (shipping58, UE 5.8)
 
 The fixture is running with dist\UE5Dumper.dll injected, and no UI. The first argument names the folder under
-%LOCALAPPDATA%\UE5CEDumper\Logs\ (the process name), which holds the DLL's log.
+%LOCALAPPDATA%\UE5CEDumper\Logs\ that holds the DLL's log: the PROCESS name, so a Shipping fixture's folder is
+`<Name>-Win64-Shipping`. `DumperTest` alone is the Development flavour's folder, and a stale one answers with an
+old line (measured: the first run read a 2026-11-02 line from it and failed P1 against a correct probe).
 
 WHAT IT CHECKS, and the evidence each check needs:
 
