@@ -459,4 +459,29 @@ public class ProxyDeployPolicyTests
         Assert.True(ProxyDeployService.DetailNamesUnreadable(separate, new[] { "winmm.dll" }));
         Assert.True(ProxyDeployService.DetailNamesUnreadable(separate, new[] { "version.dll", "winmm.dll" }));
     }
+
+    // [I18N-READINESS-2026-11-04] P3. The parse reads the sentence through the WRITER's own template, never anchors of
+    // its own: with two copies, a translation of one would leave the other English, the parse would stop matching, and
+    // the doubled note UNREAD-NOTE-DOUBLED-OTHERNAME removed would come back -- with nothing to say so.
+    [Fact]
+    public void DetailNamesUnreadable_ParsesTheTemplateDescribeUnreadableWrites()
+    {
+        string? path = null;
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null && path == null; dir = dir.Parent)
+        {
+            var c = Path.Combine(dir.FullName, "ui", "UE5DumpUI", "Services", "ProxyDeployService.cs");
+            if (File.Exists(c)) path = c;
+        }
+        Assert.NotNull(path);
+        var code = string.Join('\n', File.ReadAllLines(path!).Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        int copies = 0;
+        for (int i = code.IndexOf("Cannot read ", StringComparison.Ordinal); i >= 0;
+             i = code.IndexOf("Cannot read ", i + 1, StringComparison.Ordinal))
+            copies++;
+        Assert.Equal(1, copies);   // the template, and nothing else
+    }
 }
