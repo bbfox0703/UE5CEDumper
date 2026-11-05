@@ -14,7 +14,8 @@ public static class Res
     /// [I18N-READINESS-2026-11-04] Where a key's text comes from: the running app's merged resource dictionaries. A
     /// unit test has no Avalonia application, so this answered nothing there and every string behind Res read "" --
     /// the assertions that check a sentence is ABSENT then passed while testing nothing. The test assembly replaces it
-    /// once, before any test runs, with en.axaml read as XML (<see cref="StringTable"/>). Null = no such key.
+    /// once, before any test runs, with en.axaml read as XML (the tests' StringTable, which is kept out of this
+    /// assembly: it would put System.Xml.Linq in the AOT image). Null = no such key.
     /// </summary>
     internal static Func<string, string?> Lookup { get; set; } = FromApplication;
 

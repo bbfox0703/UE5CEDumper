@@ -1,6 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
-using UE5DumpUI.Core;
+using UE5DumpUI.Tests;   // StringTable: the unit tests' reader, compiled into this project as a linked file
 using Xunit;
 
 namespace UE5DumpUI.HeadlessTests;

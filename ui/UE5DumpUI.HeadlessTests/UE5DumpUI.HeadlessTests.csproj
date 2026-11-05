@@ -35,6 +35,13 @@
     <ProjectReference Include="..\UE5DumpUI\UE5DumpUI.csproj" />
   </ItemGroup>
 
+  <!-- The unit tests' en.axaml reader, compiled here too so StringTableFidelityTests pins THAT code against Avalonia's
+       loader. It is not in UE5DumpUI: there it put System.Xml.Linq in the AOT image (+3.1 MB) for nothing the app
+       calls. [I18N-READINESS-2026-11-04] -->
+  <ItemGroup>
+    <Compile Include="..\UE5DumpUI.Tests\StringTable.cs" Link="StringTable.cs" />
+  </ItemGroup>
+
   <!-- The same guard as UE5DumpUI.Tests (see the comment there): SkiaSharp / HarfBuzzSharp
        flow in from the UE5DumpUI reference, and Microsoft.Testing.* from xunit.v3. -->
   <Target Name="_FailOnForbiddenTransitivePin" BeforeTargets="CollectPackageReferences">
