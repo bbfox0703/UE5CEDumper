@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-11-05 (build 3692) — A mistyped message template no longer breaks a command; gates freeze the hard-coded UI text `[I18N-READINESS-2026-11-04]`
+
+- **A message template whose placeholders do not fit** (a translator's slip, a stray brace) now shows the template
+  and its values instead of throwing out of the command that was setting the status line. Every template the app
+  formats goes through one place, `Res.FormatTemplate`; en.axaml's own templates all fit (gate `check_res_format`).
+- **The second-language policy is recorded** (working-lessons §6): English stays primary, the layout never changes per
+  language, one English word with different meanings keeps different keys, and with no schedule yet the existing
+  hard-coded text moves only when its file is touched.
+- **Gates keep the hard-coded text from growing:** a new ratchet, `check_ui_literals`, freezes code-behind controls and
+  dialog / error / progress messages (176 sites in 19 files); the status-line ratchet now counts `+=`, ignores the
+  literals a line only compares, and its `--update` refuses to accept growth. 39 gates.
+- Tests: dll_core_test 1487 checks and dll_helpers_test 3754, 0 failures; C# 7473 passed, 0 failed; headless 71.
+  AOT UI 61,676,032 bytes.
+
 ## 2026-11-05 (build 3691) — Groundwork for UI languages: other programs' words, artifacts and parsed sentences each have one fixed source `[I18N-READINESS-2026-11-04]` P3-P5
 
 No visible change: every sentence, export and generated table reads as before. What changed is where the text comes
