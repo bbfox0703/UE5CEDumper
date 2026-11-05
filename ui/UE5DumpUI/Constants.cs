@@ -8,6 +8,26 @@ public static class Constants
     // Named Pipe
     public const string PipeName = "UE5DumpBfx";
 
+    // ── Protocol text: other programs' WORDS, matched by these openings ─────────────────────────────────
+    // ⛔ DO NOT LOCALIZE, and never move these into en.axaml. [I18N-READINESS-2026-11-04] P5
+    // A branch below tells another program's reply apart by its text, because that reply carries no code. The words
+    // are the other side's: translated, the match stops and the branch silently takes its other arm. ProtocolTextTests
+    // pins the DLL's three to the source that sends them. A proxy DLL left in a game folder outlives a UI upgrade, so
+    // even once the DLL sends codes these stay as the fallback for the older one.
+
+    /// <summary>The DLL's reply to a command it does not know (Fern's dispatcher): an older DLL, typically a proxy
+    /// left in a game folder.</summary>
+    public const string DllErrorUnknownCommand = "Unknown command";
+    /// <summary>invoke_function's opening when the class has no such function (Renge::FunctionNotFoundText).</summary>
+    public const string DllErrorFunctionNotFound = "Function not found";
+    /// <summary>invoke_function's opening when a class name resolved to nothing (Renge::InstanceNotFoundText).</summary>
+    public const string DllErrorNoInstanceFound = "No instance found";
+    /// <summary>The AOBMaker plugin's reply to a message type it predates.</summary>
+    public const string AobMakerErrorUnknownType = "Unknown type";
+    /// <summary>Windows' English sharing-violation message: matched only AFTER the HResult check, as its fallback. A
+    /// localized Windows never says it, which is why the HResult comes first.</summary>
+    public const string WindowsIoBeingUsed = "being used";
+
     // Application
     public const string AppName = "UE5DumpUI";
     public const string MutexName = "Global\\UE5DumpUI_SingleInstance";

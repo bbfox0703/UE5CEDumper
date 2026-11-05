@@ -28,6 +28,18 @@ public class ProtocolTextTests
         return c >= 0 ? l[..c] : l;
     }));
 
+    /// <summary>Each DLL opening the UI matches is the start of a string literal the DLL source actually sends: an edit to
+    /// either side that drifts them apart turns the branch off without a word.</summary>
+    [Theory]
+    [InlineData(Constants.DllErrorUnknownCommand, "Fern.cpp", "\"Unknown command: \" + cmd")]
+    [InlineData(Constants.DllErrorFunctionNotFound, "Renge.h", "\"Function not found: \" + funcName")]
+    [InlineData(Constants.DllErrorNoInstanceFound, "Renge.h", "\"No instance found for class: \" + className")]
+    public void The_DLL_sends_the_opening_the_UI_matches(string opening, string dllFile, string dllExpression)
+    {
+        Assert.StartsWith("\"" + opening, dllExpression, StringComparison.Ordinal);
+        Assert.Contains(dllExpression, RepoFile("dll", "src", dllFile), StringComparison.Ordinal);
+    }
+
     [Theory]
     [InlineData("Services/DumpService.cs", "\"Unknown command\"")]
     [InlineData("ViewModels/PointerPanelViewModel.cs", "\"Function not found\"")]

@@ -845,7 +845,7 @@ public sealed class DumpService : IDumpService
         // the command answers "Unknown command": every navigate and Locate would then do nothing. Its own lookup still
         // answers, with the old limits, and the answer is marked so the line can say them.
         if (res["ok"]?.GetValue<bool>() == false
-            && (res["error"]?.GetValue<string>() ?? "").StartsWith("Unknown command", StringComparison.Ordinal))
+            && (res["error"]?.GetValue<string>() ?? "").StartsWith(Constants.DllErrorUnknownCommand, StringComparison.Ordinal))
         {
             if (gen == Volatile.Read(ref _connectionGen))
             {

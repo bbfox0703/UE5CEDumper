@@ -1053,7 +1053,7 @@ public sealed class ProxyDeployService : IProxyDeployService
         UnauthorizedAccessException => true,
         // The direct-copy shape, still reachable on other write paths.
         IOException io => io.HResult == unchecked((int)0x80070020) /* SHARING_VIOLATION */
-                          || io.Message.Contains("being used", StringComparison.OrdinalIgnoreCase),
+                          || io.Message.Contains(Constants.WindowsIoBeingUsed, StringComparison.OrdinalIgnoreCase),
         _ => false,
     };
 
@@ -1411,7 +1411,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                         _log.Info("ProxyDeploy", $"Undeployed {name} from {game.Name}");
                     }
                     catch (IOException ex) when (ex.HResult == unchecked((int)0x80070020) /* SHARING_VIOLATION */
-                                              || ex.Message.Contains("being used", StringComparison.OrdinalIgnoreCase))
+                                              || ex.Message.Contains(Constants.WindowsIoBeingUsed, StringComparison.OrdinalIgnoreCase))
                     {
                         locked.Add(name);
                         _log.Warn("ProxyDeploy", $"Undeploy {name} from {game.Name} failed: file locked");
@@ -1961,7 +1961,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                     }
                 }
                 catch (IOException ex) when (ex.HResult == unchecked((int)0x80070020)
-                                          || ex.Message.Contains("being used", StringComparison.OrdinalIgnoreCase))
+                                          || ex.Message.Contains(Constants.WindowsIoBeingUsed, StringComparison.OrdinalIgnoreCase))
                 {
                     locked.Add(Path.GetFileName(file));
                     _log.Warn("ProxyDeploy", $"Leftover proxy {file} is locked");

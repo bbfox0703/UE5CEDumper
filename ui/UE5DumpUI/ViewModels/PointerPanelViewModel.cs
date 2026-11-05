@@ -2162,8 +2162,8 @@ public partial class PointerPanelViewModel : ViewModelBase
                 paramsHex:    paramsHexClean,
                 directCall:   true);  // bypass GameThreadDispatch (Native|Static)
         }
-        catch (Exception ex) when (ex.Message.Contains("Function not found")
-                                   || ex.Message.Contains("No instance found"))
+        catch (Exception ex) when (ex.Message.Contains(Constants.DllErrorFunctionNotFound, StringComparison.Ordinal)
+                                   || ex.Message.Contains(Constants.DllErrorNoInstanceFound, StringComparison.Ordinal))
         {
             // Not on this game — try next candidate.
             return null;
