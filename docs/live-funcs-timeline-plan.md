@@ -718,7 +718,7 @@ and U14 were built in separate worktrees and merged.
 - **FName casing:** the name pool keeps the casing it saw first, so `SnapProbe_Call`'s `Round` renders `round`
   on DumperTest58. Names are matched without case wherever they are compared to source names (the rig).
 - **A soft pointer to an actor** is its level's asset path plus a sub-path (`:PersistentLevel.<actor>`) held in an
-  FString whose text is on the heap, not in the copy. Decoded without it, the actor's pointer read as its level's;
+  FUtf8String (an FString through UE 5.5) whose text is on the heap, not in the copy. Decoded without it, the actor's pointer read as its level's;
   the value now says the sub-path's length and that its text was not copied, marked Header (ce9e3c1d).
 - **A delegate's label in a copy** goes through the one label function `[R7-B-04]` (b94b7609): B7 had called the
   ladder directly, and the C# pin that guards that rule had failed unnoticed until the suite was run.

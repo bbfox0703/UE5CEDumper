@@ -23,6 +23,14 @@ namespace UE5DumpUI.Services;
 /// (2) FIXED: a container's TEnumAsByte inner (Array / Optional, Set, Map key and value) now takes the canonical
 /// [26][0][enumName] too. The walker publishes each inner's own UEnum (inner_enum / elem_enum / key_enum /
 /// value_enum), and an EnumProperty inner carries its real enum name instead of "None". [A4-USMAP-CONTAINER-ENUM]</para>
+/// <para>(3) Where the two writers now DIFFER, and which one this follows. A top-level EnumProperty whose UEnum did
+/// not read (no EnumName, no enum_underlying) is written [26][size-derived int]["None"], as Dumper-7 writes it;
+/// RE-UE4SS (since 23e089e4, 2026-10) writes the bare integer instead. Both read in step: what a consumer needs at
+/// the top level is the integer's width. A CONTAINER's enum inner stays [26][Byte][name-or-None] on purpose, although
+/// RE-UE4SS's substitution now reaches inners too: UE saves a container's enum element BY NAME
+/// (FEnumProperty::SerializeItem writes an FName, NAME_None when the enum is null; an array of enums is never
+/// bulk-serialized), so an integer there would misalign the reader. Point (1)'s "so does this one now" is about the
+/// top level; an inner's underlying stays Byte (arm 2 below). Do not align either case to RE-UE4SS. [VND9-DOC]</para>
 /// </summary>
 public static class UsmapExportService
 {

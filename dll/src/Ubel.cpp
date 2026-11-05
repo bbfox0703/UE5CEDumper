@@ -377,6 +377,9 @@ static std::string ReadFUtf8String(uintptr_t instanceAddr, int32_t offset) {
 //
 // UE4 / UE5.0: FSoftObjectPath = { FName AssetPathName; FString SubPathString; }
 // UE5.1+:      FSoftObjectPath = { FTopLevelAssetPath { FName PackageName; FName AssetName; }; FString SubPathString; }
+// [VND9-DOC] SubPathString is an FString through 5.5 and an FUtf8String from 5.6 (SoftObjectPath.h). The
+// 16-byte { Data, Num, Max } header is the same, so offsets and sizes hold, but decoding its TEXT as wide on
+// 5.6+ reads UTF-8 bytes as UTF-16: take the width from the reflected type, never from this comment.
 // ============================================================
 // [VND583-14] Measure FSoftObjectPath's shape once, from the reflected ScriptStruct `SoftObjectPath`:
 // its first field is `AssetPath` (a FTopLevelAssetPath, 5.1+) or `AssetPathName` (an FName, 4.x / 5.0).
@@ -2782,8 +2785,10 @@ static SnapValue DecodeSnapElement(const ParamField& f, const uint8_t* p, uint32
         const std::string pkg = fnameAt(off, fsz);
         const std::string asset = top ? fnameAt(off + fsz, fsz) : std::string();
         v.text = (pkg.empty() || pkg == "None") ? "null" : (asset.empty() || asset == "None") ? pkg : pkg + "." + asset;
-        // The sub-path (an actor in a level: ":PersistentLevel.<actor>") is an FString after the FNames; its text is
-        // on the heap, not in the copy. Said, never dropped: without it an actor's pointer reads as its level's.
+        // The sub-path (an actor in a level: ":PersistentLevel.<actor>") is a string after the FNames -- an FString
+        // through 5.5, an FUtf8String from 5.6, the same 16-byte header -- whose text is on the heap, not in the
+        // copy. Said, never dropped: without it an actor's pointer reads as its level's. Num counts code units
+        // (UTF-8 bytes on 5.6+), the same as characters for the ASCII paths a level gives its actors.
         const int subOff = (off + (top ? 2 : 1) * fsz + 7) & ~7;
         const int32_t subNum = subOff + 16 <= f.size ? load32(subOff + 8) : 0;
         if (subNum > 1 && v.text != "null") {

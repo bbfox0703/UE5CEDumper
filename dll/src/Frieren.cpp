@@ -2465,7 +2465,7 @@ int32_t UE5_CallProcessEvent(uintptr_t instance, uintptr_t ufunc, uintptr_t para
 // engine's own value for a picked object comes from
 // KismetSystemLibrary::Conv_ObjectToSoftObjectReference (4.18 to 5.8): building its TSoftObjectPtr assigns the
 // object's weak serial -- most objects carry 0 until something holds a weak pointer to them -- and its path. The soft
-// pointer's FString, when it has one, is the engine's allocation and is never freed: ProcessEvent byte-copies
+// pointer's sub-path string (an FString through 5.5, an FUtf8String from 5.6), when it has one, is the engine's allocation and is never freed: ProcessEvent byte-copies
 // parameters and never destroys the caller's block, so leaking it is the only way nothing frees it twice.
 // extern "C++": this sits inside the file's extern "C" block, and Fern / Mimic link to it by its C++ name.
 extern "C++" {
