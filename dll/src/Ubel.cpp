@@ -793,6 +793,11 @@ std::string ReadFStringAt(uintptr_t instanceAddr, int32_t offset) {
     return ReadFString(instanceAddr, offset);
 }
 
+std::vector<StringResult> ReadStringResults(const std::vector<FunctionParam>&, const uint8_t*, size_t,
+                                            const std::vector<int32_t>&) {
+    return {};   // [VND9-03] red: not read yet
+}
+
 std::string ReadFNameAt(uintptr_t instanceAddr, int32_t offset) {
     if (!instanceAddr) return "";
     return ReadFName(instanceAddr + offset);

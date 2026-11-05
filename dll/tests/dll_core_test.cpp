@@ -6809,6 +6809,65 @@ int main() {
         g_cachedUEVersion         = svVerS;
     }
 
+    // -- [VND9-03] FIRE reads a returned or out string's TEXT from the post-call buffer -------------------------------
+    // Its 16 bytes are { Data, Num, Max } with Data in the engine's heap, which the UI cannot follow, so FIRE showed the
+    // header's raw bytes where the CE route showed the text. Only return / out slots of the three string types are read:
+    // an input slot -- and a const-ref one the caller filled -- points at the caller's own buffer, freed by then.
+    {
+        blk("STRRESULTS - FIRE reads a returned or out string's text, never an input's freed buffer");
+        static const wchar_t kIn[] = L"input";
+        static const wchar_t kRet[] = L"Hello wide";
+        static const char kUtf8[] = "h\xC3\xA9llo";   // UTF-8 for "hello" with an e-acute
+        static const char kEmpty[] = "";
+        static const wchar_t kMine[] = L"mine";
+        alignas(8) static uint8_t sb[0x70] = {};
+        auto hdr = [&](int off, const void* data, int32_t num) {
+            const uintptr_t d = reinterpret_cast<uintptr_t>(data);
+            memcpy(sb + off, &d, sizeof(d));
+            memcpy(sb + off + 8, &num, 4);
+            memcpy(sb + off + 12, &num, 4);
+        };
+        hdr(0x00, kIn, static_cast<int32_t>(wcslen(kIn) + 1));
+        hdr(0x10, kRet, static_cast<int32_t>(wcslen(kRet) + 1));
+        hdr(0x20, kUtf8, static_cast<int32_t>(strlen(kUtf8) + 1));
+        hdr(0x30, kEmpty, 1);                                   // Num 1: the terminator alone, an empty string
+        hdr(0x40, kMine, static_cast<int32_t>(wcslen(kMine) + 1));
+        hdr(0x50, reinterpret_cast<const void*>(uintptr_t{0x10}), 9);   // a Data pointer that does not read
+        const int32_t seven = 7;
+        memcpy(sb + 0x60, &seven, 4);
+        auto P = [](const char* name, const char* type, int32_t off, bool out, bool ret) {
+            FunctionParam p;
+            p.name = name; p.typeName = type; p.offset = off; p.size = 16;
+            p.isOut = out; p.isReturn = ret; p.isParm = true;
+            return p;
+        };
+        const std::vector<FunctionParam> ps = {
+            P("In", "StrProperty", 0x00, false, false),
+            P("ReturnValue", "StrProperty", 0x10, false, true),
+            P("OutUtf8", "Utf8StrProperty", 0x20, true, false),
+            P("OutAnsi", "AnsiStrProperty", 0x30, true, false),
+            P("Label", "StrProperty", 0x40, true, false),          // const FString&: CPF_OutParm too, filled by the caller
+            P("OutBad", "StrProperty", 0x50, true, false),
+            P("Count", "IntProperty", 0x60, true, false),
+        };
+        const auto rs = Ubel::ReadStringResults(ps, sb, sizeof(sb), { 0x40 });
+        check("STRRESULTS ⭐ VND9-03: the return and the three out strings, and nothing else",
+              rs.size() == 4, std::to_string(rs.size()).c_str());
+        if (rs.size() == 4) {
+            check("STRRESULTS ⭐ VND9-03: a returned FString's text",
+                  rs[0].offset == 0x10 && rs[0].name == "ReturnValue" && rs[0].text == "Hello wide" && rs[0].read,
+                  rs[0].text.c_str());
+            check("STRRESULTS ⭐ VND9-03: an out FUtf8String's text, as UTF-8",
+                  rs[1].offset == 0x20 && rs[1].text == kUtf8 && rs[1].read, rs[1].text.c_str());
+            check("STRRESULTS ⭐ VND9-03: an empty out string is read, and empty",
+                  rs[2].offset == 0x30 && rs[2].text.empty() && rs[2].read);
+            check("STRRESULTS ⭐ VND9-03: a string whose text does not read says so",
+                  rs[3].offset == 0x50 && !rs[3].read);
+        }
+        check("STRRESULTS VND9-03 control: a slot past the buffer's end is not read",
+              Ubel::ReadStringResults(ps, sb, 0x18, {}).empty());
+    }
+
     // -- [VND583-13] a compact TSet/TMap build is latched from a 16-byte Set/Map property, and walked header-only --
     // Built like IFACEREAD: its own name pool (the two type names and two field names), one FFieldClass per type,
     // one class blob per case. The sparse 0x50 control runs first, because the latch is process-wide.

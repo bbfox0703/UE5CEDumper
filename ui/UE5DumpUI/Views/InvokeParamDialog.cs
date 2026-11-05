@@ -1176,8 +1176,10 @@ public sealed class InvokeParamDialog : Window
         return true;
     }
 
-    /// <summary>Decode a single param value from the post-call buffer bytes.</summary>
-    internal static string DecodeParamValue(byte[] buf, FunctionParamModel p)
+    /// <summary>Decode a single param value from the post-call buffer bytes. <paramref name="strings"/> is the DLL's
+    /// <c>str_results</c>, the text of each returned or out string by offset ([VND9-03]).</summary>
+    internal static string DecodeParamValue(byte[] buf, FunctionParamModel p,
+                                            IReadOnlyDictionary<int, string?>? strings = null)
     {
         if (p.Offset < 0 || p.Offset >= buf.Length) return "?";
         int available = buf.Length - p.Offset;

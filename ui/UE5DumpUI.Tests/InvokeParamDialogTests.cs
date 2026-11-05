@@ -219,6 +219,45 @@ public class InvokeParamDialogTests
         Assert.Equal(0xAB, bytes[2]);
     }
 
+    // --- [VND9-03] a returned or out string shows its TEXT, from the DLL's str_results ---
+    //
+    // Its 16 bytes in result_hex are { Data, Num, Max } with Data in the game's heap, so the decoder printed them raw
+    // ("A0-3B-...") where the CE route printed the text.
+
+    [Theory]
+    [InlineData("StrProperty")]
+    [InlineData("Utf8StrProperty")]
+    [InlineData("AnsiStrProperty")]
+    public void DecodeParamValue_AReturnedString_ShowsItsTextQuoted(string type)
+    {
+        var buf = new byte[0x20];
+        buf[0x10] = 0xA0; buf[0x11] = 0x3B;   // the first bytes of a heap pointer
+        var p = new FunctionParamModel { Name = "ReturnValue", TypeName = type, Size = 16, Offset = 0x10, IsReturn = true };
+        var strings = new Dictionary<int, string?> { [0x10] = "Say \"hi\"\nnow" };
+        Assert.Equal("\"Say \\\"hi\\\"\\nnow\"", InvokeParamDialog.DecodeParamValue(buf, p, strings));
+    }
+
+    [Fact]
+    public void DecodeParamValue_AStringWhoseTextDidNotRead_SaysSo()
+    {
+        var buf = new byte[0x20];
+        var p = new FunctionParamModel { Name = "Out", TypeName = "StrProperty", Size = 16, Offset = 0x10, IsOut = true };
+        var strings = new Dictionary<int, string?> { [0x10] = null };
+        Assert.Equal("(unreadable)", InvokeParamDialog.DecodeParamValue(buf, p, strings));
+    }
+
+    [Fact]
+    public void DecodeParamValue_AStringWithNoResult_KeepsTheRawBytes()
+    {
+        // CONTROL: an older DLL sends no str_results, and an input string gets none; the bytes stay as they were.
+        var buf = new byte[0x20];
+        buf[0x10] = 0xA0;
+        var p = new FunctionParamModel { Name = "In", TypeName = "StrProperty", Size = 16, Offset = 0x10 };
+        Assert.Equal(BitConverter.ToString(buf, 0x10, 16), InvokeParamDialog.DecodeParamValue(buf, p));
+        Assert.Equal(BitConverter.ToString(buf, 0x10, 16),
+            InvokeParamDialog.DecodeParamValue(buf, p, new Dictionary<int, string?> { [0x00] = "other" }));
+    }
+
     // --- DecodeParamValue ---
 
     [Fact]

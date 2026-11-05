@@ -290,6 +290,34 @@ public class DumpServiceTests
         Assert.True(r.NonStaticOnTemplate);
     }
 
+    // [VND9-03] The reply carries each returned or out string's text by offset; an unread one is null, and an older
+    // DLL's reply (no str_results) leaves the map empty.
+    [Fact]
+    public async Task InvokeFunctionAsync_ReadsTheReturnedStrings()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["result"] = 0, ["instance_addr"] = "0x1000",
+            ["str_results"] = new JsonArray
+            {
+                new JsonObject { ["off"] = 16, ["name"] = "ReturnValue", ["text"] = "Hello", ["read"] = true },
+                new JsonObject { ["off"] = 32, ["name"] = "OutBad", ["text"] = "", ["read"] = false },
+            },
+        });
+
+        var r = await CreateService().InvokeFunctionAsync("GetDisplayName", className: "Actor",
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal("Hello", r.StringResults[16]);
+        Assert.True(r.StringResults.ContainsKey(32));
+        Assert.Null(r.StringResults[32]);
+
+        _pipe.SetHandler(_ => new JsonObject { ["ok"] = true, ["result"] = 0, ["instance_addr"] = "0x1000" });
+        var old = await CreateService().InvokeFunctionAsync("GetDisplayName", className: "Actor",
+            ct: TestContext.Current.CancellationToken);
+        Assert.Empty(old.StringResults);
+    }
+
     [Fact]
     public async Task SetDebugCameraDetailedAsync_ReadsTheStateAndTheTemplateVerdict()
     {
