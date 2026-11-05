@@ -6604,9 +6604,10 @@ int main() {
     {
         blk("SOFTPATH - FSoftObjectPath's shape is read off the SoftObjectPath struct, not the version");
         enum : int32_t { nClass = 1, nScriptStruct, nSoftObjectPath, nAssetPathName, nAssetPath, nNameProp,
-                         nPkg, nAsset, nNames };
+                         nPkg, nAsset, nSubPathString, nStrProp, nUtf8StrProp, nNames };
         const char* spNames[nNames] = { "", "Class", "ScriptStruct", "SoftObjectPath", "AssetPathName", "AssetPath",
-                                        "NameProperty", "/Game/Pkg", "Asset" };
+                                        "NameProperty", "/Game/Pkg", "Asset", "SubPathString", "StrProperty",
+                                        "Utf8StrProperty" };
         static uint8_t spEntry[nNames][0x40] = {};
         static uintptr_t spChunk[nNames + 1] = {};
         for (int i = 1; i < nNames; ++i) {
@@ -6643,6 +6644,8 @@ int main() {
             DynOff::bSoftPathProbed = false;
             DynOff::SOFTPATH_TOPLEVEL_MEASURED = -1;
             DynOff::SOFTPATH_SIZE_MEASURED = 0;
+            DynOff::SOFTPATH_SUBPATH_OFFSET = -1;
+            DynOff::SOFTPATH_SUBPATH_WIDTH = -1;
         };
         FakePool spPool;
         spPool.Build(kSB);
@@ -6713,10 +6716,94 @@ int main() {
             DynOff::SOFTPTR_PATH        = svEnv;
         }
 
+        // [VND9-01] The sub-path names an object INSIDE the asset -- an actor in a level is
+        // "/Game/Map.Map:PersistentLevel.BP_Door_C_3" -- and the live reader dropped it, so a soft reference to the actor
+        // read as one to the map. SubPathString is an FString through 5.5 and an FUtf8String from 5.6 (SoftObjectPath.h):
+        // the width comes from the reflected field when it was measured, the FString rule only where nothing else can be
+        // there, and nothing at all on an unmeasured 5.6+ -- UTF-8 read as UTF-16 is garbage, worse than no sub-path.
+        {
+            static uint8_t spField2[0x100] = {};
+            static uint8_t spFieldClass2[0x20] = {};
+            auto buildSub = [&](int32_t subType, int32_t subOffset) {
+                build(nAssetPath);
+                put32(spB[bStruct], DynOff::USTRUCT_PROPSSIZE, 0x20);
+                memset(spField2, 0, sizeof(spField2));
+                memset(spFieldClass2, 0, sizeof(spFieldClass2));
+                putP(spField, DynOff::FFIELD_NEXT, reinterpret_cast<uintptr_t>(spField2));
+                put32(spFieldClass2, DynOff::FFIELDCLASS_NAME, subType);
+                putP(spField2, DynOff::FFIELD_CLASS, reinterpret_cast<uintptr_t>(spFieldClass2));
+                put32(spField2, DynOff::FFIELD_NAME, nSubPathString);
+                put32(spField2, DynOff::FPROPERTY_OFFSET, subOffset);
+            };
+            static const wchar_t kWide[] = L"PersistentLevel.BP_Door_C_3";
+            static const char kNarrow[] = "PersistentLevel.BP_Door_C_3";
+            const std::string want = "/Game/Pkg.Asset:PersistentLevel.BP_Door_C_3";
+            // { FName PackageName, FName AssetName, { Data, Num, Max } } -- the stock 8-byte FName shape.
+            alignas(8) static uint8_t sp[0x20] = {};
+            auto path = [&](const void* data, int32_t num) {
+                memset(sp, 0, sizeof(sp));
+                put32(sp, 0x00, nPkg);
+                put32(sp, 0x08, nAsset);
+                putP(sp, 0x10, reinterpret_cast<uintptr_t>(data));
+                put32(sp, 0x18, num);
+                put32(sp, 0x1C, num);
+                return reinterpret_cast<uintptr_t>(sp);
+            };
+            const int32_t wideNum = static_cast<int32_t>(wcslen(kWide) + 1);
+            const int32_t narrowNum = static_cast<int32_t>(strlen(kNarrow) + 1);
+
+            g_cachedUEVersion = 505;
+            buildSub(nStrProp, 0x10);
+            std::string got = Ubel::ReadSoftObjectPath(path(kWide, wideNum));
+            check("SOFTPATH ⭐ VND9-01: a 5.5 soft pointer to an actor keeps its sub-path (FString, measured)",
+                  got == want, got.c_str());
+
+            g_cachedUEVersion = 508;
+            buildSub(nUtf8StrProp, 0x10);
+            got = Ubel::ReadSoftObjectPath(path(kNarrow, narrowNum));
+            check("SOFTPATH ⭐ VND9-01: a 5.8 soft pointer to an actor keeps its sub-path (FUtf8String, measured)",
+                  got == want, got.c_str());
+
+            // Unmeasured (the struct names no SubPathString): only the FString rule's own ground.
+            g_cachedUEVersion = 505;
+            build(nAssetPath);
+            put32(spB[bStruct], DynOff::USTRUCT_PROPSSIZE, 0x20);
+            got = Ubel::ReadSoftObjectPath(path(kWide, wideNum));
+            check("SOFTPATH ⭐ VND9-01: unmeasured on 5.5, the sub-path is read as the FString it can only be",
+                  got == want, got.c_str());
+            g_cachedUEVersion = 508;
+            build(nAssetPath);
+            put32(spB[bStruct], DynOff::USTRUCT_PROPSSIZE, 0x20);
+            got = Ubel::ReadSoftObjectPath(path(kNarrow, narrowNum));
+            check("SOFTPATH VND9-01 control: unmeasured on 5.8 the width is not guessed -- no sub-path, not garbage",
+                  got == "/Game/Pkg.Asset", got.c_str());
+
+            // CONTROL: an empty sub-path adds no ':'.
+            buildSub(nUtf8StrProp, 0x10);
+            got = Ubel::ReadSoftObjectPath(path(kNarrow, 0));
+            check("SOFTPATH VND9-01 control: an empty sub-path adds nothing", got == "/Game/Pkg.Asset", got.c_str());
+
+            // UProperty mode (UE4 <= 4.24): no probe runs, one FName, and the sub-path can only be an FString.
+            DynOff::bUseFProperty = false;
+            g_cachedUEVersion = 424;
+            build(nAssetPathName);
+            alignas(8) static uint8_t sp4[0x18] = {};
+            put32(sp4, 0x00, nPkg);
+            putP(sp4, 0x08, reinterpret_cast<uintptr_t>(kWide));
+            put32(sp4, 0x10, wideNum);
+            put32(sp4, 0x14, wideNum);
+            got = Ubel::ReadSoftObjectPath(reinterpret_cast<uintptr_t>(sp4));
+            check("SOFTPATH ⭐ VND9-01: a UE4 UProperty-mode soft pointer keeps its sub-path (FString after one FName)",
+                  got == "/Game/Pkg:PersistentLevel.BP_Door_C_3", got.c_str());
+            DynOff::bUseFProperty = true;
+        }
+
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
         DynOff::bSoftPathProbed = false;
         DynOff::SOFTPATH_TOPLEVEL_MEASURED = -1;
         DynOff::SOFTPATH_SIZE_MEASURED = 0;
+        DynOff::SOFTPATH_SUBPATH_OFFSET = -1;
+        DynOff::SOFTPATH_SUBPATH_WIDTH = -1;
         DynOff::bUseFProperty     = svFPropS;
         DynOff::bOffsetsValidated = svValidS;
         g_cachedUEVersion         = svVerS;

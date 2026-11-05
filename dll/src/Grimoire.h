@@ -703,6 +703,11 @@ inline std::atomic<bool> bSoftPathProbed{false};
 // accepted, latched +0x08. Taken only when it is a size this path shape can have, so a misread PropertiesSize falls
 // back to the rule instead of steering the envelope.
 inline std::atomic<int>  SOFTPATH_SIZE_MEASURED{0};
+// [VND9-01] ...and its SubPathString, measured the same way: the offset in FSoftObjectPath (-1 = unmeasured) and the
+// character width -- 2 for an FString (through 5.5), 1 for an FUtf8String / FAnsiString (5.6+), 0 for a type no reader
+// here decodes, -1 unmeasured.
+inline std::atomic<int>  SOFTPATH_SUBPATH_OFFSET{-1};
+inline std::atomic<int>  SOFTPATH_SUBPATH_WIDTH{-1};
 // [VND584-04] UClass::Interfaces' offset, MEASURED by Ubel's probe (FindClassInterfacesOffset on ActorComponent): 0 = not
 // yet, -1 = both classes found and no offset fit, so nothing here reads a class's interfaces.
 inline std::atomic<int>  UCLASS_INTERFACES{0};
