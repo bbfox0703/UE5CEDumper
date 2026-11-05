@@ -115,6 +115,11 @@ jobs:
           # 2026-09-26). Existing StatusText literals are grandfathered per file; a new one fails.
           & $py tools/check_vm_status_literals.py
           if ($LASTEXITCODE -ne 0) { throw "check_vm_status_literals FAILED ($LASTEXITCODE) - a view model's StatusText literal count moved off tools/vm_status_literals_baseline.json. A NEW literal belongs in en.axaml; after REMOVING one run 'py tools/check_vm_status_literals.py --update'." }
+          # Hard-coded UI text where neither gate above looks -- code-behind controls, dialog / error / progress
+          # messages, ErrorMessage: a per-file RATCHET (working-lessons §6, 2026-11-05: no schedule for a second
+          # language, so the existing text moves only when its file is touched; new text goes to en.axaml).
+          & $py tools/check_ui_literals.py
+          if ($LASTEXITCODE -ne 0) { throw "check_ui_literals FAILED ($LASTEXITCODE) - a file's hard-coded UI text count moved off tools/ui_literals_baseline.json. NEW UI text belongs in en.axaml; after REMOVING some run 'py tools/check_ui_literals.py --update'." }
           # CE Lua <-> DLL mailbox contract. Every generated script bakes a contract version
           # and checks itself against what the DLL publishes - but that is only worth anything
           # if the version actually moves when the contract does. A FORGOTTEN bump is worse

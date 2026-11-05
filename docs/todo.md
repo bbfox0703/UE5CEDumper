@@ -400,7 +400,12 @@ the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVE
 
 ## 🧭 Maintainer request 2026-11-04 — what moving the UI's hard-coded English into en.axaml would take, ahead of UI languages `[I18N-READINESS-2026-11-04]`
 
-> **Status (2026-11-05): P1 and P3-P5 done; the safety nets next. Policy, from the maintainer (working-lessons §6):**
+> **Status (2026-11-05): P1 and P3-P5 done; the safety nets done too** -- `Res.FormatTemplate` degrades a misfit
+> template instead of throwing; gate `check_res_format` (every formatted template fits its call); the status ratchet
+> counts `+=`, ignores logic literals and refuses growth on `--update`; gate `check_ui_literals` (a ratchet over
+> code-behind controls and dialog / error / progress messages, 176 sites in 19 files). **Remaining: P2**, when a panel's
+> strings move.
+> **Policy, from the maintainer (working-lessons §6):**
 > open an architecture a second language can be built on, Traditional Chinese in view; English stays primary and the
 > layout never changes per language; one English word with different meanings keeps different keys; no schedule yet,
 > so strings move when a file is touched, never in a sweep. **Was:** scoped, not started. The question was what problems moving the
