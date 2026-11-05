@@ -482,4 +482,32 @@ public class CeXmlExportDescriptionTests
         // ...and the child link key MUST match it exactly, or CE can't resolve the list.
         Assert.Contains("<DropDownListLink>ShipTypes (200)</DropDownListLink>", xml);
     }
+
+    // [I18N-READINESS-2026-11-04] P3. A container view's crumb Label is display text ("Gear [3 x Item]"), and the export
+    // falls back to parsing its " [" suffix away only for a crumb with no FieldName. Every container-view crumb the
+    // Live Walker builds records its FieldName, so a translated descriptor (other brackets, other words) never reaches
+    // that parse. A new container view that forgot FieldName would.
+    [Fact]
+    public void EveryContainerViewCrumb_RecordsItsFieldName()
+    {
+        string? path = null;
+        for (var dir = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory); dir != null && path == null; dir = dir.Parent)
+        {
+            var c = System.IO.Path.Combine(dir.FullName, "ui", "UE5DumpUI", "ViewModels", "LiveWalkerViewModel.cs");
+            if (System.IO.File.Exists(c)) path = c;
+        }
+        Assert.NotNull(path);
+        var code = System.IO.File.ReadAllText(path!);
+        int views = 0;
+        for (int i = code.IndexOf("IsContainerView = true", System.StringComparison.Ordinal); i >= 0;
+             i = code.IndexOf("IsContainerView = true", i + 1, System.StringComparison.Ordinal))
+        {
+            int start = code.LastIndexOf("BreadcrumbItem", i, System.StringComparison.Ordinal);
+            int end = code.IndexOf('}', i);
+            Assert.True(start >= 0 && end > i, "a container-view crumb this test cannot delimit -- re-point it");
+            Assert.Contains("FieldName =", code[start..end], System.StringComparison.Ordinal);
+            views++;
+        }
+        Assert.True(views >= 5, $"only {views} container-view crumb(s) found -- not the file this test means");
+    }
 }

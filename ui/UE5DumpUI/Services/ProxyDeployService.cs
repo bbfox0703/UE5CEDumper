@@ -2280,10 +2280,17 @@ public sealed class ProxyDeployService : IProxyDeployService
         catch (IOException) { return DllOwner.Unreadable; }               // sharing violation, and the like
     }
 
+    /// <summary>[I18N-READINESS-2026-11-04] P3. The one copy of the unreadable sentence: <see cref="DescribeUnreadable"/>
+    /// writes it and <see cref="DetailNamesUnreadable"/> reads it back, so a translation changes both at once. With
+    /// anchors of its own the parse would stop matching a translated sentence, silently.</summary>
+    internal const string UnreadableTemplate =
+        "Cannot read {0} here (access denied, or held open by another program) — cannot tell whose it is.";
+    internal const string UnreadableNameSeparator = ", ";
+
     /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] The Details text for a proxy-named file that cannot be read.</summary>
     internal static string DescribeUnreadable(IReadOnlyList<string> names) =>
-        $"Cannot read {string.Join(", ", names)} here (access denied, or held open by another program) — cannot "
-        + "tell whose it is.";
+        string.Format(System.Globalization.CultureInfo.InvariantCulture, UnreadableTemplate,
+                      string.Join(UnreadableNameSeparator, names));
 
     /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] The Details text for a game Deploy skipped because a proxy-named file
     /// there cannot be read: it may be one of ours, and a second proxy next to it could make a double.</summary>
@@ -2304,7 +2311,9 @@ public sealed class ProxyDeployService : IProxyDeployService
     internal static bool DetailNamesUnreadable(string? detail, IReadOnlyList<string> names)
     {
         if (string.IsNullOrEmpty(detail)) return false;
-        const string Head = "Cannot read ", Tail = " here (";
+        // The writer's own template, split at its slot: the text before the names, and the text after them.
+        int slot = UnreadableTemplate.IndexOf("{0}", StringComparison.Ordinal);
+        string Head = UnreadableTemplate[..slot], Tail = UnreadableTemplate[(slot + 3)..];
         var said = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         int i = 0;
         while ((i = detail.IndexOf(Head, i, StringComparison.Ordinal)) >= 0)
@@ -2312,7 +2321,7 @@ public sealed class ProxyDeployService : IProxyDeployService
             int start = i + Head.Length;
             int end = detail.IndexOf(Tail, start, StringComparison.Ordinal);
             if (end < 0) break;
-            foreach (var n in detail[start..end].Split(", ")) said.Add(n.Trim());
+            foreach (var n in detail[start..end].Split(UnreadableNameSeparator)) said.Add(n.Trim());
             i = end;
         }
         return names.All(said.Contains);
