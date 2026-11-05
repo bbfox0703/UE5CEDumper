@@ -66,8 +66,9 @@ inline int32_t RequiredAlignment(const std::string& typeName, int32_t elemSize,
     // Containers — outer is TArray = ptr+2 ints, alignment driven by ptr.
     if (typeName == "ArrayProperty" || typeName == "MapProperty" || typeName == "SetProperty") return 8;
 
-    // Heap-backed strings/text contain a pointer.
-    if (typeName == "StrProperty" || typeName == "TextProperty") return 8;
+    // Heap-backed strings/text contain a pointer -- UE 5.5's narrow strings too (FString's template). [VND9-04]
+    if (typeName == "StrProperty" || typeName == "TextProperty"
+        || typeName == "Utf8StrProperty" || typeName == "AnsiStrProperty") return 8;
 
     // A standalone FScriptDelegate is a FWeakObjectPtr + an FName, alignof 4 -- 12, 16 or 20 bytes. On a UE 5.3+
     // checked build the 8-aligned std::atomic<uint64> access detector leads it, which makes it alignof 8 and rounds

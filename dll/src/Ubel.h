@@ -1457,7 +1457,11 @@ inline bool V1cOptionalGate(OptionalLayout layout, const std::string& innerType,
     sentinel = OptionalUnsetSentinel::None;
     if (layout == OptionalLayout::TrailingFlag && innerSize > 0) { flagOffset = innerSize; return true; }
     if (layout == OptionalLayout::Intrusive) {
-        if (innerType == "StrProperty")  { sentinel = OptionalUnsetSentinel::FStringMaxNone; return true; }
+        // [VND9-04] The narrow strings share FString's template, so FString's sentinel.
+        if (innerType == "StrProperty" || innerType == "Utf8StrProperty" || innerType == "AnsiStrProperty") {
+            sentinel = OptionalUnsetSentinel::FStringMaxNone;
+            return true;
+        }
         if (innerType == "NameProperty") { sentinel = OptionalUnsetSentinel::FNameIndexNone; return true; }
         if (innerType == "TextProperty") { sentinel = OptionalUnsetSentinel::FTextNull;      return true; }
     }
