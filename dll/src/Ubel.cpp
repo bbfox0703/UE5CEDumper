@@ -410,8 +410,7 @@ static void ProbeSoftPathShape() {
             else if (name == "SubPathString") {
                 // An FString through 5.5, an FUtf8String from 5.6: the reflected type says which, on any build.
                 subType = GetFieldTypeName(field);
-                subWidth = subType == "StrProperty" ? 2
-                         : (subType == "Utf8StrProperty" || subType == "AnsiStrProperty") ? 1 : 0;
+                subWidth = StringPropertyWidth(subType);
                 int32_t off = 0;
                 if (Macht::ReadSafe(field + DynOff::FPROPERTY_OFFSET, off) && off > 0 && off <= 0x30
                     && (size <= 0 || off + 0x10 <= size))
@@ -793,8 +792,13 @@ std::string ReadFStringAt(uintptr_t instanceAddr, int32_t offset) {
     return ReadFString(instanceAddr, offset);
 }
 
-std::string ReadStringPropertyAt(const std::string&, uintptr_t, int32_t) {
-    return "";   // [VND9-04] red: not decoded yet
+std::string ReadStringPropertyAt(const std::string& typeName, uintptr_t instanceAddr, int32_t offset) {
+    if (!instanceAddr) return "";
+    switch (StringPropertyWidth(typeName)) {
+        case 2:  return ReadFString(instanceAddr, offset);
+        case 1:  return ReadFUtf8String(instanceAddr, offset);
+        default: return "";
+    }
 }
 
 std::vector<StringResult> ReadStringResults(const std::vector<FunctionParam>& params, const uint8_t* buf, size_t size,
@@ -804,9 +808,7 @@ std::vector<StringResult> ReadStringResults(const std::vector<FunctionParam>& pa
     const uintptr_t base = reinterpret_cast<uintptr_t>(buf);
     for (const auto& p : params) {
         if (!p.isReturn && !p.isOut) continue;
-        const int width = p.typeName == "StrProperty" ? 2
-                        : (p.typeName == "Utf8StrProperty" || p.typeName == "AnsiStrProperty") ? 1 : 0;
-        if (!width || p.offset < 0 || static_cast<size_t>(p.offset) + 16 > size) continue;
+        if (!StringPropertyWidth(p.typeName) || p.offset < 0 || static_cast<size_t>(p.offset) + 16 > size) continue;
         if (std::find(ownOffsets.begin(), ownOffsets.end(), p.offset) != ownOffsets.end()) continue;
         int32_t num = 0;
         std::memcpy(&num, buf + p.offset + 8, sizeof(num));
@@ -816,7 +818,7 @@ std::vector<StringResult> ReadStringResults(const std::vector<FunctionParam>& pa
         if (num <= 0) {
             r.read = true;   // no characters: an empty string
         } else {
-            r.text = width == 2 ? ReadFString(base, p.offset) : ReadFUtf8String(base, p.offset);
+            r.text = ReadStringPropertyAt(p.typeName, base, p.offset);
             r.read = !r.text.empty() || num == 1;   // Num 1 is the terminator alone
         }
         out.push_back(std::move(r));
@@ -4879,8 +4881,11 @@ ReadArrayResult ReadStructArrayElements(
             } else if (cf.typeName == "TextProperty") {
                 sf.value = ReadFTextString(elemAddr + cf.offset);
                 if (sf.value.empty()) sf.value = "(empty)";
-            } else if (cf.typeName == "StrProperty") {
-                sf.value = "(str)";
+            } else if (StringPropertyWidth(cf.typeName)) {
+                // [VND9-04] The text, as a top-level string field shows it. This said "(str)" for an FString and,
+                // for UE 5.5's narrow strings, which had no arm, the hex of their Data pointer.
+                sf.value = ReadStringPropertyAt(cf.typeName, elemAddr, cf.offset);
+                if (sf.value.empty()) sf.value = "(empty)";
             } else if (cf.typeName == "ArrayProperty") {
                 sf.value = "(Array)";
             } else if (cf.typeName == "MapProperty") {
@@ -7980,7 +7985,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             //              when unset (Internationalization/Text.h line ~837).
             //              Layout starts with the pointer → check uintptr at
             //              field+0.
-            const bool isStrInner   = (innerTn == "StrProperty");
+            // [VND9-04] Any of the three string properties: one { Data, Num, Max } template, one unset state.
+            const bool isStrInner   = StringPropertyWidth(innerTn) != 0;
             const bool isNameInner  = (innerTn == "NameProperty");
             const bool isTextInner  = (innerTn == "TextProperty");
 
@@ -8074,7 +8080,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         }
                     }
                 } else if (isStrInner) {
-                    std::string s = ReadFString(fieldAddr, 0);
+                    std::string s = ReadStringPropertyAt(innerTn, fieldAddr, 0);   // at the inner type's width
                     if (!s.empty()) fv.strValue = std::move(s);
                 } else if (isNameInner) {
                     std::string n = ReadFName(fieldAddr);
