@@ -868,6 +868,17 @@ int32_t GetIndex(uintptr_t uobjectAddr);
 // resolve rather than reading as "(empty)" (audit #5 U10).
 std::string ReadFStringAt(uintptr_t instanceAddr, int32_t offset);
 
+// [VND9-04] The three string properties share FString's { Data, Num, Max } template and differ only in character
+// width: 2 for StrProperty, 1 for UE 5.5's Utf8StrProperty / AnsiStrProperty, 0 for any other type. A site that
+// knows only "StrProperty" reads a narrow string as a pointer's bytes, or decodes it as UTF-16.
+inline int StringPropertyWidth(const std::string& typeName) {
+    return typeName == "StrProperty" ? 2
+         : (typeName == "Utf8StrProperty" || typeName == "AnsiStrProperty") ? 1 : 0;
+}
+// A string property's text at instanceAddr + offset, decoded at its type's width, as UTF-8; "" for a type that is
+// not a string, or for no text.
+std::string ReadStringPropertyAt(const std::string& typeName, uintptr_t instanceAddr, int32_t offset);
+
 // [VND9-03] A returned or out string's TEXT, read from a post-call parameter buffer. Its 16 bytes are a
 // { Data, Num, Max } header whose Data points at the engine's allocation, which nothing outside the game process can
 // follow -- so the pipe sent only the header, and FIRE showed 16 raw bytes where the CE route shows the text.

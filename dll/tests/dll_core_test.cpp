@@ -2449,12 +2449,13 @@ int main() {
     {
         blk("OPTLAYOUT - TOptional set/unset follows UE's CalcSize layout, and Find Refs agrees");
 
-        static uint8_t olEntry[13][0x40] = {};
-        const char* olNames[13] = { "", "OptionalProperty", "ObjectProperty", "ArrayProperty",
+        static uint8_t olEntry[15][0x40] = {};
+        const char* olNames[15] = { "", "OptionalProperty", "ObjectProperty", "ArrayProperty",
                                     "StrProperty", "Opt", "Inner", "NameProperty", "TextProperty",
-                                    "StructProperty", "MyStruct", "LazyObjectProperty", "ScriptStruct" };
-        static uintptr_t olChunk[14] = {};
-        for (int i = 1; i <= 12; ++i) {
+                                    "StructProperty", "MyStruct", "LazyObjectProperty", "ScriptStruct",
+                                    "Utf8StrProperty", "AnsiStrProperty" };
+        static uintptr_t olChunk[16] = {};
+        for (int i = 1; i <= 14; ++i) {
             memcpy(olEntry[i] + 0x10, olNames[i], strlen(olNames[i]) + 1);
             olChunk[i] = reinterpret_cast<uintptr_t>(olEntry[i]);
         }
@@ -2470,7 +2471,7 @@ int main() {
         DynOff::bCasePreservingName = false;
         g_cachedUEVersion           = 505;
 
-        static uint8_t olFC[12][0x20] = {};
+        static uint8_t olFC[16][0x20] = {};
         auto fclass = [&](int nameIdx) {
             *reinterpret_cast<int32_t*>(olFC[nameIdx] + DynOff::FFIELDCLASS_NAME) = nameIdx;
             return reinterpret_cast<uintptr_t>(olFC[nameIdx]);
@@ -2479,7 +2480,7 @@ int main() {
         auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
 
         // The wrapped value properties: ObjectProperty (8), ArrayProperty (16), StrProperty (16).
-        static uint8_t olInner[8][0x100] = {};
+        static uint8_t olInner[10][0x100] = {};
         auto inner = [&](int k, int typeIdx, int32_t size) {
             putP(olInner[k], DynOff::FFIELD_CLASS, fclass(typeIdx));
             put32(olInner[k], DynOff::FFIELD_NAME, 6);
@@ -2494,7 +2495,7 @@ int main() {
         // keyed by class address). The optional field sits at +0x40 of its object; the object's
         // UClass pointer is at OFF_UOBJECT_CLASS so Find Refs can reach the class.
         constexpr int32_t kField = 0x40;
-        static uint8_t olProp[24][0x100] = {}, olCls[24][0x100] = {}, olObj[24][0x200] = {};
+        static uint8_t olProp[32][0x100] = {}, olCls[32][0x100] = {}, olObj[32][0x200] = {};
         static uint8_t olStale[0x100] = {};                 // a "UObject" a reset optional still points at
         const uintptr_t stale = reinterpret_cast<uintptr_t>(olStale);
         int olNext = 0;
@@ -2636,6 +2637,31 @@ int main() {
         check("OPTLAYOUT: intrusive FText with null TextData reads (unset)", fTu.typedValue == "(unset)", fTu.typedValue.c_str());
         check("OPTLAYOUT: intrusive FText with TextData is SET",
               fTs.typedValue != "(unset)" && !isRefusal(fTs.typedValue), fTs.typedValue.c_str());
+
+        // [VND9-04] UE 5.5's narrow strings: FString's { Data, Num, Max } template, so FString's unset state
+        // (ArrayMax -1 at +12, bHasIntrusiveUnsetOptionalState for every string class), with 1-byte text. The walker
+        // knew StrProperty only, and refused these as "the unset state of an intrusive Utf8StrProperty is not decoded".
+        const uintptr_t innerU8   = inner(8, 13, 16);
+        const uintptr_t innerAnsi = inner(9, 14, 16);
+        static const char kOptU8[]   = "h\xC3\xA9llo";   // UTF-8 for "hello" with an e-acute
+        static const char kOptAnsi[] = "tag";
+        auto narrow = [&](int c, const char* s) {
+            putP(olObj[c], kField, reinterpret_cast<uintptr_t>(s));
+            put32(olObj[c], kField + 8, static_cast<int32_t>(strlen(s) + 1));
+            put32(olObj[c], kField + 12, static_cast<int32_t>(strlen(s) + 1));
+        };
+        const int cU8u = makeCase(16, innerU8);    put32(olObj[cU8u], kField + 12, -1);
+        const int cU8s = makeCase(16, innerU8);    narrow(cU8s, kOptU8);
+        const int cAns = makeCase(16, innerAnsi);  narrow(cAns, kOptAnsi);
+        const auto fU8u = walk("intrusive FUtf8String, unset", cU8u);
+        const auto fU8s = walk("intrusive FUtf8String, set", cU8s);
+        const auto fAns = walk("intrusive FAnsiString, set", cAns);
+        check("OPTLAYOUT ⭐ VND9-04: an intrusive FUtf8String with ArrayMax -1 reads (unset)",
+              fU8u.typedValue == "(unset)", fU8u.typedValue.c_str());
+        check("OPTLAYOUT ⭐ VND9-04: a set FUtf8String optional reads its UTF-8 text, quoted",
+              fU8s.typedValue == std::string("\"") + kOptU8 + "\"", fU8s.typedValue.c_str());
+        check("OPTLAYOUT ⭐ VND9-04: a set FAnsiString optional reads its text, quoted",
+              fAns.typedValue == "\"tag\"", fAns.typedValue.c_str());
 
         // (#8) A struct optional: the struct probe + UScriptStruct::MinAlignment decide the layout.
         static uint8_t olStruct[2][0x100] = {};
@@ -6866,6 +6892,20 @@ int main() {
         }
         check("STRRESULTS VND9-03 control: a slot past the buffer's end is not read",
               Ubel::ReadStringResults(ps, sb, 0x18, {}).empty());
+
+        // [VND9-04] One reader for the three string properties, at each type's width.
+        const uintptr_t sbAddr = reinterpret_cast<uintptr_t>(sb);
+        check("STRPROP ⭐ VND9-04: a StrProperty reads as UTF-16",
+              Ubel::ReadStringPropertyAt("StrProperty", sbAddr, 0x10) == "Hello wide");
+        check("STRPROP ⭐ VND9-04: a Utf8StrProperty reads its UTF-8 bytes",
+              Ubel::ReadStringPropertyAt("Utf8StrProperty", sbAddr, 0x20) == kUtf8);
+        check("STRPROP ⭐ VND9-04: an AnsiStrProperty reads its bytes",
+              Ubel::ReadStringPropertyAt("AnsiStrProperty", sbAddr, 0x20) == kUtf8);
+        check("STRPROP VND9-04 control: a type that is not a string reads nothing",
+              Ubel::ReadStringPropertyAt("IntProperty", sbAddr, 0x10).empty());
+        check("STRPROP VND9-04 control: the widths",
+              Ubel::StringPropertyWidth("StrProperty") == 2 && Ubel::StringPropertyWidth("Utf8StrProperty") == 1
+                && Ubel::StringPropertyWidth("AnsiStrProperty") == 1 && Ubel::StringPropertyWidth("TextProperty") == 0);
     }
 
     // -- [VND583-13] a compact TSet/TMap build is latched from a 16-byte Set/Map property, and walked header-only --

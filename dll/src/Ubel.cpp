@@ -793,6 +793,10 @@ std::string ReadFStringAt(uintptr_t instanceAddr, int32_t offset) {
     return ReadFString(instanceAddr, offset);
 }
 
+std::string ReadStringPropertyAt(const std::string&, uintptr_t, int32_t) {
+    return "";   // [VND9-04] red: not decoded yet
+}
+
 std::vector<StringResult> ReadStringResults(const std::vector<FunctionParam>& params, const uint8_t* buf, size_t size,
                                             const std::vector<int32_t>& ownOffsets) {
     std::vector<StringResult> out;
