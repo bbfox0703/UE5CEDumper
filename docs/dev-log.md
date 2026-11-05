@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-11-05 (build 3690) — Status lines count classes as "classes"; unit tests read the English the app shows `[PARTIAL-UNIT-PLURAL]` `[I18N-READINESS-2026-11-04]`
+
+- **The partial / capped / not-analysed notices read as English.** Find Func's status said "2 of 5 class(s) hit the
+  scan deadline ... a 0 on those classs"; it now says "2 of 5 classes ... those classes", and every such notice agrees
+  with its counts ("1 of 1 row ... is marked partial", "its count is a lower bound") with no "(s)" left.
+- **Unit tests now see the app's real English** (first step of the move toward UI languages). With no Avalonia
+  application a test's `Res.Get` answered "", so a string behind `Res` was blank and "must not say X" checks passed
+  while testing nothing. The test assembly now installs en.axaml, read by a parser the headless suite pins against
+  Avalonia's own loader, all 1914 keys (Avalonia keeps leading / trailing spaces). It exposed one test that pinned a
+  fallback sentence the app never shows. Nothing changes in the app itself.
+- Build 3689 was not shipped: that parser sat in the app and put System.Xml.Linq in the AOT image (+3.1 MB). It
+  lives in the tests now; this build's AOT UI is 61,675,008 bytes (3688: 61,666,816).
+- Tests: dll_core_test 1487 checks and dll_helpers_test 3754, 0 failures; C# 7452 passed, 0 failed; headless 71.
+
 ## 2026-11-05 (build 3688) — UE 5.5's narrow strings in optionals, struct arrays and Value Search; a struct array's FString member shows its text `[VND9-04]`
 
 - **A struct array's string member shows its text** in the Live Walker (`Text = RowStrAlpha`), as a top-level string
