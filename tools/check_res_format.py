@@ -20,8 +20,8 @@ A key chosen by a ternary between two templates shares one argument list: each t
 A key that is not a literal (or a const naming one) cannot be checked statically: those sites are listed, not failed
 -- the repo's rule is that keys stay full literals, which check_axaml_strings enforces from the other side.
 
-A grep-style scan with a small C# lexer (strings, interpolation, comments), no Roslyn: it has to run in CI and on a
-bare checkout.
+A grep-style scan with tools/cs_lex.py's small C# lexer (strings, interpolation, comments), no Roslyn: it has to
+run in CI and on a bare checkout.
 """
 from __future__ import annotations
 
@@ -38,151 +38,8 @@ EN = os.path.join(UI, "Resources", "Strings", "en.axaml")
 SAY_SEAM_FILES = {"CallTraceViewModel.cs", "LiveFuncsViewModel.cs"}
 
 
-# ---------------------------------------------------------------- a small C# lexer
-def is_string_start(t: str, i: int) -> bool:
-    if t[i] == '"':
-        return True
-    if t[i] in "$@":
-        j = i
-        while j < len(t) and t[j] in "$@":
-            j += 1
-        return j < len(t) and t[j] == '"'
-    return False
-
-
-def scan_string(t: str, i: int) -> int:
-    """t[i] starts a string token (with any $ / @ prefix). The index after it."""
-    j = i
-    interp = verbatim = False
-    while t[j] in "$@":
-        interp |= t[j] == "$"
-        verbatim |= t[j] == "@"
-        j += 1
-    if t.startswith('"""', j):                      # raw string literal
-        k = j
-        while k < len(t) and t[k] == '"':
-            k += 1
-        end = t.find('"' * (k - j), k)
-        return end + (k - j) if end >= 0 else len(t)
-    k = j + 1
-    while k < len(t):
-        c = t[k]
-        if verbatim:
-            if c == '"':
-                if t.startswith('""', k):
-                    k += 2
-                    continue
-                return k + 1
-        else:
-            if c == "\\":
-                k += 2
-                continue
-            if c == '"':
-                return k + 1
-            if c == "\n":
-                return k
-        if interp and c == "{":
-            if t.startswith("{{", k):
-                k += 2
-                continue
-            k = scan_balanced(t, k)
-            continue
-        k += 1
-    return k
-
-
-def scan_char(t: str, i: int) -> int:
-    k = i + 1
-    while k < len(t):
-        if t[k] == "\\":
-            k += 2
-            continue
-        if t[k] == "'" or t[k] == "\n":
-            return k + 1
-        k += 1
-    return k
-
-
-def scan_balanced(t: str, i: int) -> int:
-    """t[i] opens a bracket. The index after its match."""
-    depth = 0
-    k = i
-    while k < len(t):
-        if is_string_start(t, k):
-            k = scan_string(t, k)
-            continue
-        if t[k] == "'":
-            k = scan_char(t, k)
-            continue
-        if t[k] in "([{":
-            depth += 1
-        elif t[k] in ")]}":
-            depth -= 1
-            if depth == 0:
-                return k + 1
-        k += 1
-    return k
-
-
-def strip_comments(t: str) -> str:
-    """// and /* */ comments blanked; strings and line numbers kept."""
-    out, k, n = [], 0, len(t)
-    while k < n:
-        if is_string_start(t, k):
-            e = scan_string(t, k)
-        elif t[k] == "'":
-            e = scan_char(t, k)
-        elif t.startswith("//", k):
-            e = t.find("\n", k)
-            e = n if e < 0 else e
-            out.append(" " * (e - k))
-            k = e
-            continue
-        elif t.startswith("/*", k):
-            e = t.find("*/", k + 2)
-            e = n if e < 0 else e + 2
-            out.append(re.sub(r"[^\n]", " ", t[k:e]))
-            k = e
-            continue
-        else:
-            out.append(t[k])
-            k += 1
-            continue
-        out.append(t[k:e])
-        k = e
-    return "".join(out)
-
-
-def split_args(t: str, open_idx: int) -> list[str]:
-    """t[open_idx] == '('. Its top-level arguments."""
-    end = scan_balanced(t, open_idx)
-    inner = t[open_idx + 1:end - 1]
-    args, depth, cur, k = [], 0, [], 0
-    while k < len(inner):
-        if is_string_start(inner, k):
-            e = scan_string(inner, k)
-            cur.append(inner[k:e])
-            k = e
-            continue
-        if inner[k] == "'":
-            e = scan_char(inner, k)
-            cur.append(inner[k:e])
-            k = e
-            continue
-        c = inner[k]
-        if c in "([{":
-            depth += 1
-        elif c in ")]}":
-            depth -= 1
-        if c == "," and depth == 0:
-            args.append("".join(cur).strip())
-            cur = []
-        else:
-            cur.append(c)
-        k += 1
-    if "".join(cur).strip():
-        args.append("".join(cur).strip())
-    return args
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from cs_lex import split_args, strip_comments  # noqa: E402  (the lexer shared with check_ui_literals.py)
 
 
 def cs_files():
