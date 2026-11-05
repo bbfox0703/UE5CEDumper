@@ -12011,7 +12011,8 @@ int main() {
         check("a soft path on a case-preserving build: the asset's FName after a 12-byte one",
               vc.size() == 1 && vc[0].text == "/Game/Maps/Arena.Arena", vc.empty() ? "" : vc[0].text.c_str());
         // Measured on DumperTest58 (2026-10-07): a soft pointer to an actor is its level's asset path plus a sub-path
-        // (":PersistentLevel.<actor>") in an FString whose text is not in the copy. Shown without it, the actor's
+        // (":PersistentLevel.<actor>") in a string (an FUtf8String on 5.6+, an FString before) whose text is not in the
+        // copy. Shown without it, the actor's
         // pointer read as the level's.
         alignas(8) uint8_t s2[0x50] = {};
         memcpy(s2, b + 0x28, 0x30);

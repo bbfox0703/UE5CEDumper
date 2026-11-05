@@ -385,12 +385,16 @@ static std::string ReadFUtf8String(uintptr_t instanceAddr, int32_t offset) {
 // its first field is `AssetPath` (a FTopLevelAssetPath, 5.1+) or `AssetPathName` (an FName, 4.x / 5.0).
 // FProperty mode only -- UProperty mode is UE4, where the answer is always AssetPathName and the version
 // rule gives it. Needs validated offsets; a cancelled walk latches nothing.
+static std::string GetFieldTypeName(uintptr_t ffieldAddr);   // defined with the FField walk below
+
 static void ProbeSoftPathShape() {
     static std::mutex s_mutex;
     std::lock_guard<std::mutex> lk(s_mutex);
     if (DynOff::bSoftPathProbed.load(std::memory_order_relaxed)) return;
     int measured = -1;
     int32_t size = 0;   // [VND584-08] its PropertiesSize, beside its shape
+    int subOffset = -1, subWidth = -1;   // [VND9-01] SubPathString's place and character width
+    std::string subType;
     const bool complete = Aura::ForEach([&](int32_t, uintptr_t obj) -> bool {
         if (ReadFName(obj + Grimoire::OFF_UOBJECT_NAME) != "SoftObjectPath") return true;
         uintptr_t cls = 0;
@@ -401,8 +405,19 @@ static void ProbeSoftPathShape() {
         Macht::ReadSafe(obj + DynOff::USTRUCT_CHILDPROPS, field);
         for (int i = 0; i < 8 && field && Grimoire::IsUserspacePointer(field); ++i) {
             const std::string name = ReadFName(field + DynOff::FFIELD_NAME);
-            if (name == "AssetPath")     { measured = 1; break; }
-            if (name == "AssetPathName") { measured = 0; break; }
+            if (name == "AssetPath")          measured = 1;
+            else if (name == "AssetPathName") measured = 0;
+            else if (name == "SubPathString") {
+                // An FString through 5.5, an FUtf8String from 5.6: the reflected type says which, on any build.
+                subType = GetFieldTypeName(field);
+                subWidth = subType == "StrProperty" ? 2
+                         : (subType == "Utf8StrProperty" || subType == "AnsiStrProperty") ? 1 : 0;
+                int32_t off = 0;
+                if (Macht::ReadSafe(field + DynOff::FPROPERTY_OFFSET, off) && off > 0 && off <= 0x30
+                    && (size <= 0 || off + 0x10 <= size))
+                    subOffset = off;   // otherwise the FName-block rule places it
+            }
+            if (measured >= 0 && subWidth >= 0) break;
             uintptr_t next = 0;
             if (!Macht::ReadSafe(field + DynOff::FFIELD_NEXT, next)) break;
             field = DynOff::StripFFieldTag(next);
@@ -410,15 +425,22 @@ static void ProbeSoftPathShape() {
         return false;   // the first ScriptStruct of that name decides
     });
     if (!complete) return;
+    char sub[96];
+    if (subWidth >= 0)
+        snprintf(sub, sizeof(sub), "SubPathString %s at +0x%X", subType.c_str(), subOffset > 0 ? subOffset : 0);
+    else
+        snprintf(sub, sizeof(sub), "no SubPathString (the version rule decides its width)");
     if (measured >= 0) {
-        LOG_INFO("DetectSoftPath: FSoftObjectPath holds %s, %d bytes (measured on ScriptStruct SoftObjectPath; version "
-                 "rule says %s)", measured ? "FTopLevelAssetPath AssetPath" : "FName AssetPathName", size,
+        LOG_INFO("DetectSoftPath: FSoftObjectPath holds %s, %d bytes, %s (measured on ScriptStruct SoftObjectPath; "
+                 "version rule says %s)", measured ? "FTopLevelAssetPath AssetPath" : "FName AssetPathName", size, sub,
                  g_cachedUEVersion >= 501 ? "AssetPath" : "AssetPathName");
         DynOff::SOFTPATH_SIZE_MEASURED.store(size, std::memory_order_release);
     } else {
-        LOG_WARN("DetectSoftPath: ScriptStruct SoftObjectPath not measured -- the version rule answers (%s)",
-                 g_cachedUEVersion >= 501 ? "AssetPath" : "AssetPathName");
+        LOG_WARN("DetectSoftPath: ScriptStruct SoftObjectPath not measured -- the version rule answers (%s); %s",
+                 g_cachedUEVersion >= 501 ? "AssetPath" : "AssetPathName", sub);
     }
+    DynOff::SOFTPATH_SUBPATH_OFFSET.store(subOffset, std::memory_order_release);
+    DynOff::SOFTPATH_SUBPATH_WIDTH.store(subWidth, std::memory_order_release);
     DynOff::SOFTPATH_TOPLEVEL_MEASURED.store(measured, std::memory_order_release);
     DynOff::bSoftPathProbed.store(true, std::memory_order_release);
 }
@@ -429,6 +451,20 @@ static bool SoftPathIsTopLevel() {
         ProbeSoftPathShape();
     return DynOff::SoftPathIsTopLevelFor(DynOff::SOFTPATH_TOPLEVEL_MEASURED.load(std::memory_order_acquire),
                                          g_cachedUEVersion);
+}
+
+// [VND9-01] The sub-path names an object INSIDE the asset -- an actor in a level reads
+// "/Game/Map.Map:PersistentLevel.BP_Door_C_3" -- so without it a soft reference to the actor read as one to the map.
+// The width is the reflected SubPathString's when measured; unmeasured, the FString rule only where an FString is all
+// there can be, and nothing otherwise: 5.6+'s UTF-8 read as UTF-16 would put garbage where an omission is honest.
+static std::string ReadSoftPathSubPath(uintptr_t pathAddr, bool isTopLevelAssetPath, int fnameSize) {
+    const int width = DynOff::SoftPathSubPathWidthFor(DynOff::SOFTPATH_SUBPATH_WIDTH.load(std::memory_order_acquire),
+                                                      DynOff::bUseFProperty, g_cachedUEVersion);
+    if (width == 0) return "";
+    const int off = DynOff::SoftPathSubPathOffsetFor(DynOff::SOFTPATH_SUBPATH_OFFSET.load(std::memory_order_acquire),
+                                                     fnameSize, isTopLevelAssetPath);
+    const std::string text = width == 2 ? ReadFString(pathAddr, off) : ReadFUtf8String(pathAddr, off);
+    return text.empty() ? std::string() : ":" + text;
 }
 
 static std::string ReadSoftObjectPath(uintptr_t addr) {
@@ -445,9 +481,9 @@ static std::string ReadSoftObjectPath(uintptr_t addr) {
         std::string assetName   = ReadFName(addr + fnameSize);
 
         if (packageName.empty() || packageName == "None") return "";
-        if (assetName.empty() || assetName == "None")
-            return packageName;
-        return packageName + "." + assetName;
+        const std::string assetPath = (assetName.empty() || assetName == "None") ? packageName
+                                                                                 : packageName + "." + assetName;
+        return assetPath + ReadSoftPathSubPath(addr, isTopLevelAssetPath, fnameSize);
     } else {
         // UE4 / UE5.0: FName AssetPathName
         //
@@ -459,7 +495,7 @@ static std::string ReadSoftObjectPath(uintptr_t addr) {
         // non-None PackageName and never arrives here at all.
         std::string assetPathName = ReadFName(addr);
         if (!assetPathName.empty() && assetPathName != "None")
-            return assetPathName;
+            return assetPathName + ReadSoftPathSubPath(addr, isTopLevelAssetPath, fnameSize);
         return "";
     }
 }
