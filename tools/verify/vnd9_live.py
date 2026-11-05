@@ -26,6 +26,12 @@ WHAT IT CHECKS, and the evidence each check needs:
   P4  [VND9-03] FIRE `KismetStringLibrary::Conv_IntToString(42)` (static, on its class default object): the reply's
       `str_results` holds ReturnValue = "42", read. Before the fix the reply had only result_hex, whose 16 bytes
       for the return are a header pointing into the game's heap.
+  P5  [VND9-04] DumperTest only: a struct array's FString member shows its TEXT -- `Arr_StrRows[0]`'s `Text`
+      reads "RowStrAlpha", where it said "(str)". `Note` (an FText) is the control.
+  P6  [VND9-04] DumperTest only, a NO-REGRESSION check: an FString value search still finds a direct field
+      (`PayloadString`), an array element (`Arr_Str[1]`) and a struct-array member (`Arr_StrRows[0].Text`), and a
+      next scan keeps each. These are the four string readers the fix rerouted through the type's own width; no
+      fixture holds a UE 5.5 narrow string, so the narrow arm is unit-tested only.
 
 Exit 0 = every check that applies passed; 1 = a failure; 2 = the fixture is not in the state the checks need.
 """
@@ -155,6 +161,45 @@ def main():
                         fails.append("P3")
             if not m.ok:
                 fails.append("P3-restore")
+
+            say("\n== P5 [VND9-04] a struct array's FString member shows its text ==")
+            w = c.request("walk_instance", addr=inst, array_limit=8)
+            rows = field(w, "Arr_StrRows")
+            sub = {s.get("n"): s.get("v") for s in ((rows or {}).get("elements") or [{}])[0].get("sf") or []}
+            say("   Arr_StrRows[0] = %s" % sub)
+            if sub.get("Text") == "RowStrAlpha" and sub.get("Note") == "RowNoteAlpha":
+                say("   PASS")
+            else:
+                say("   FAIL: expected Text = 'RowStrAlpha' (and the control Note = 'RowNoteAlpha')")
+                fails.append("P5")
+
+            say("\n== P6 [VND9-04] no regression: an FString value search through each reader ==")
+            payload = (field(w, "PayloadString") or {}).get("value") or ""
+            for label, value, want in (("a direct field", payload, "PayloadString"),
+                                       ("an array element", "StrElemBetaBeta", "Arr_Str"),
+                                       ("a struct-array member", "RowStrAlpha", "Arr_StrRows")):
+                if not value:
+                    say("   ABORT: no value for %s" % label)
+                    return 2
+                r = c.request("begin_value_scan", data_type="FString", scan_type="Exact", value=value,
+                              game_only=True, deep=True, max_results=1000)
+                d = r.get("data", r)
+                sid = d.get("session_id")
+
+                def names():
+                    q = c.request("query_candidates", session_id=sid, offset=0, limit=200)
+                    qd = q.get("data", q)
+                    return [x.get("field_name", "") for x in (qd.get("candidates") or qd.get("results") or [])]
+                first = [n for n in names() if want in n]
+                rr = c.request("refine_value_scan", session_id=sid, scan_type="Exact", value=value)
+                kept = [n for n in names() if want in n]
+                c.request("end_value_scan", session_id=sid)
+                say("   %s %r: first %s, next %s" % (label, value, first, kept))
+                if first and kept and (rr.get("ok", True) is not False):
+                    say("   PASS")
+                else:
+                    say("   FAIL: %s not found by the first scan, or dropped by the next" % want)
+                    fails.append("P6")
 
         # ---------------------------------------------------------------- P4
         say("\n== P4 [VND9-03] FIRE's returned string comes back as text ==")
