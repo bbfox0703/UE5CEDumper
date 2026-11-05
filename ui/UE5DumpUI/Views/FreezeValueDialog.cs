@@ -335,7 +335,7 @@ public sealed class FreezeValueDialog : Window
     {
         var key = KeyFor(_purpose, leaf);
         var t = Res.Get(key);
-        return string.IsNullOrEmpty(t) ? key : string.Format(t, args);
+        return string.IsNullOrEmpty(t) ? key : Res.FormatTemplate(t, args);
     }
 
     /// <summary>

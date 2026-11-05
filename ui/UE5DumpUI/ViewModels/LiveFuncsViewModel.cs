@@ -261,7 +261,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private string Say(string key, params object[] args)
     {
         string template = StringLookup(key);
-        return template.Length == 0 ? "" : string.Format(template, args);
+        return template.Length == 0 ? "" : Res.FormatTemplate(template, args);
     }
 
     /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the ASM button reads. Never null:

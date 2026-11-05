@@ -20,6 +20,22 @@ public class ResFormatSafetyTests
         throw new FileNotFoundException(string.Join("/", parts) + " not found above " + AppContext.BaseDirectory);
     }
 
+    [Fact]
+    public void A_template_that_does_not_fit_its_arguments_degrades_instead_of_throwing()
+    {
+        Assert.Equal("Found {2} rows [5, 9]", UE5DumpUI.Core.Res.FormatTemplate("Found {2} rows", 5, 9));
+        Assert.Equal("Bad {0 brace [x]", UE5DumpUI.Core.Res.FormatTemplate("Bad {0 brace", "x"));
+        Assert.Equal("Bad } brace", UE5DumpUI.Core.Res.FormatTemplate("Bad } brace"));
+    }
+
+    [Fact]
+    public void A_template_that_fits_formats_as_string_Format_does()
+    {
+        // CONTROL: the common case is untouched, culture included.
+        Assert.Equal(string.Format("{0:N0} of {1}", 12345, "x"), UE5DumpUI.Core.Res.FormatTemplate("{0:N0} of {1}", 12345, "x"));
+        Assert.Equal("{literal}", UE5DumpUI.Core.Res.FormatTemplate("{{literal}}"));
+    }
+
     [Theory]
     [InlineData("Helpers/AobMakerStatus.cs")]
     [InlineData("ViewModels/CallTraceViewModel.cs")]
