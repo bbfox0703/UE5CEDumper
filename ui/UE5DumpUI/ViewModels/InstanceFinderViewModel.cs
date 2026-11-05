@@ -1171,8 +1171,8 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                        + (reused > 0 ? $" ({reused} reused/cached)." : ".")
                        // Counted per CLASS, not per row: one scan serves every row sharing
                        // a ClassAddress, so a partial verdict stamps all of them.
-                       + PartialResultNotice.BatchPartialClause(partial, classesScanned, "class")
-                       + PartialResultNotice.BatchCapClause(cappedClasses, classesScanned, xrefCap, "class");
+                       + PartialResultNotice.BatchPartialClause(partial, classesScanned, "class", units: "classes")
+                       + PartialResultNotice.BatchCapClause(cappedClasses, classesScanned, xrefCap, "class", units: "classes");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
