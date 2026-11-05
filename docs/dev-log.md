@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-11-05 (build 3691) — Groundwork for UI languages: other programs' words, artifacts and parsed sentences each have one fixed source `[I18N-READINESS-2026-11-04]` P3-P5
+
+No visible change: every sentence, export and generated table reads as before. What changed is where the text comes
+from, so translating the UI later cannot break a branch or a saved table.
+
+- **Other programs' words** (P5): the DLL's "Unknown command" / "Function not found" / "No instance found", the AOBMaker
+  plugin's "Unknown type" and Windows' "being used" live in one do-not-localize block in `Constants.cs`, pinned to the
+  DLL source that sends them.
+- **A sentence the code reads back** (P3): Proxy Deploy's "Cannot read … here" is written and parsed from one template.
+  The Live Walker's container crumbs always record their field name, so the CE XML export never parses a crumb label.
+- **Artifact text** (P4): the CE XML export's enum note is an English constant (the status line keeps its own copy); a
+  generated CT's categories have their own group names apart from the chips' labels; the standalone trainer escapes the
+  record Description it quotes into Lua; trainer Descriptions and CE group names are marked do-not-localize.
+- Tests: dll_core_test 1487 checks and dll_helpers_test 3754, 0 failures; C# 7467 passed, 0 failed; headless 71.
+  AOT UI 61,675,008 bytes.
+
 ## 2026-11-05 (build 3690) — Status lines count classes as "classes"; unit tests read the English the app shows `[PARTIAL-UNIT-PLURAL]` `[I18N-READINESS-2026-11-04]`
 
 - **The partial / capped / not-analysed notices read as English.** Find Func's status said "2 of 5 class(s) hit the
