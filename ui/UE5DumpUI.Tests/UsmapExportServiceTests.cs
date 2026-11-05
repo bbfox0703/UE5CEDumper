@@ -791,6 +791,37 @@ public class UsmapExportServiceTests
         Assert.Equal("EGameMode", p.EnumName);
     }
 
+    // ---- [VND9-DOC] a top-level EnumProperty whose UEnum did not read: the size's integer, named "None" ----
+    //
+    // The walker leaves EnumName and enum_underlying empty when the property's UEnum slot does not validate.
+    // Dumper-7 writes [26][size-derived int]["None"] there and RE-UE4SS (23e089e4) the bare integer; this writer
+    // follows Dumper-7 (the UsmapExportService header, point 3). Nothing pinned that shape before. Writing the bare
+    // integer at the top level turns all three cases red (mutation-checked); the name half is also covered by
+    // NameTable.IndexOf, which answers "None" for any unregistered name.
+
+    [Theory]
+    [InlineData(1, (byte)0)]    // ByteProperty
+    [InlineData(4, (byte)2)]    // IntProperty
+    [InlineData(8, (byte)21)]   // Int64Property
+    public void BuildUsmap_EnumProperty_WithNoEnum_WritesNoneAtTheWidthOfItsSize(int size, byte underlying)
+    {
+        var structs = new List<ClassInfoModel>
+        {
+            new()
+            {
+                Name = "FSpace",
+                Fields = [ new FieldInfoModel { Name = "Space", TypeName = "EnumProperty", EnumName = "", Offset = 0, Size = size } ],
+            },
+        };
+
+        var f = UsmapFile.Parse(UsmapExportService.BuildUsmap(CreateTestEnums(), structs));
+
+        var p = Assert.Single(Assert.Single(f.Structs).Props);
+        Assert.Equal((byte)26, p.Type);
+        Assert.Equal(underlying, p.Underlying);
+        Assert.Equal("None", p.EnumName);
+    }
+
     // ---- [USMAP-ENUM-SIGNEDNESS] the DLL's UnderlyingProp type carries the signedness the size cannot ----
     //
     // Both canonical writers write the UnderlyingProp's own type. From the size alone a `: int8` enum came out

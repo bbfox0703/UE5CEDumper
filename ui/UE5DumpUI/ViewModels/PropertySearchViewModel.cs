@@ -124,10 +124,12 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         "UInt16Property",
         "UInt32Property",
         "UInt64Property",
-        // Strings
+        // Strings -- UE 5.5 added the narrow FUtf8String / FAnsiString [VND9-04]
+        "AnsiStrProperty",
         "NameProperty",
         "StrProperty",
         "TextProperty",
+        "Utf8StrProperty",
         // Pointers
         "ClassProperty",
         "InterfaceProperty",

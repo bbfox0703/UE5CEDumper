@@ -868,6 +868,34 @@ int32_t GetIndex(uintptr_t uobjectAddr);
 // resolve rather than reading as "(empty)" (audit #5 U10).
 std::string ReadFStringAt(uintptr_t instanceAddr, int32_t offset);
 
+// [VND9-04] The three string properties share FString's { Data, Num, Max } template and differ only in character
+// width: 2 for StrProperty, 1 for UE 5.5's Utf8StrProperty / AnsiStrProperty, 0 for any other type. A site that
+// knows only "StrProperty" reads a narrow string as a pointer's bytes, or decodes it as UTF-16.
+inline int StringPropertyWidth(const std::string& typeName) {
+    return typeName == "StrProperty" ? 2
+         : (typeName == "Utf8StrProperty" || typeName == "AnsiStrProperty") ? 1 : 0;
+}
+// A string property's text at instanceAddr + offset, decoded at its type's width, as UTF-8; "" for a type that is
+// not a string, or for no text.
+std::string ReadStringPropertyAt(const std::string& typeName, uintptr_t instanceAddr, int32_t offset);
+
+// [VND9-03] A returned or out string's TEXT, read from a post-call parameter buffer. Its 16 bytes are a
+// { Data, Num, Max } header whose Data points at the engine's allocation, which nothing outside the game process can
+// follow -- so the pipe sent only the header, and FIRE showed 16 raw bytes where the CE route shows the text.
+struct StringResult {
+    int32_t     offset = -1;
+    std::string name;
+    std::string text;
+    bool        read = false;   // false: the header names text that did not read (a bad Data pointer)
+};
+// Only a return or out parameter of a string type, and never a slot in `ownOffsets` -- the caller's own input
+// buffers, freed by the time this runs. Leaves the engine's allocation alone: nothing here frees it.
+std::vector<StringResult> ReadStringResults(const std::vector<FunctionParam>& params, const uint8_t* buf, size_t size,
+                                            const std::vector<int32_t>& ownOffsets);
+// The same for one UFunction, from its own parameter chain.
+std::vector<StringResult> ReadStringResultsFor(uintptr_t func, const uint8_t* buf, size_t size,
+                                               const std::vector<int32_t>& ownOffsets);
+
 // Read an FName at instanceAddr + offset and resolve it to a string
 // via Serie::GetString. Returns "" on failure or "None" for the
 // canonical empty FName. Handles both 8-byte (Index+Number) and
@@ -1429,7 +1457,11 @@ inline bool V1cOptionalGate(OptionalLayout layout, const std::string& innerType,
     sentinel = OptionalUnsetSentinel::None;
     if (layout == OptionalLayout::TrailingFlag && innerSize > 0) { flagOffset = innerSize; return true; }
     if (layout == OptionalLayout::Intrusive) {
-        if (innerType == "StrProperty")  { sentinel = OptionalUnsetSentinel::FStringMaxNone; return true; }
+        // [VND9-04] The narrow strings share FString's template, so FString's sentinel.
+        if (innerType == "StrProperty" || innerType == "Utf8StrProperty" || innerType == "AnsiStrProperty") {
+            sentinel = OptionalUnsetSentinel::FStringMaxNone;
+            return true;
+        }
         if (innerType == "NameProperty") { sentinel = OptionalUnsetSentinel::FNameIndexNone; return true; }
         if (innerType == "TextProperty") { sentinel = OptionalUnsetSentinel::FTextNull;      return true; }
     }

@@ -1841,6 +1841,41 @@ do
 end
 
 -- ============================================================
+-- VND9-02 -- UE 5.5's narrow strings are pointer rows, like FString
+-- ============================================================
+-- FUtf8String and FAnsiString (Utf8StrProperty / AnsiStrProperty, UE 5.5+) come from the same template
+-- as FString (UnrealString.h.inl): a 16-byte { Data, Num, Max } whose first 8 bytes are the character
+-- pointer. Missing from TYPE_MAP they fell to the unknown-type fallback, one dword row the field's
+-- width, so CE showed the pointer's low 4 bytes as a decimal. From UE 5.6 every inline FSoftObjectPath
+-- carries one (SubPathString). RE-UE4SS fixed the same gap in its own Lua type table (8d97f47e).
+case('VND9-02: a Utf8Str / AnsiStr row is a pointer, like a StrProperty row')
+do
+  local gti = dissect._getTypeInfo
+  for _, t in ipairs({ 'Utf8StrProperty', 'AnsiStrProperty' }) do
+    local vt, n, dm = gti(t, 16)
+    eq(vt, vtPointer, 'VND9-02: ' .. t .. ' is a pointer row CE can follow')
+    eq(n, 8, 'VND9-02: ' .. t .. ' row is the 8-byte Data pointer, not the 16-byte field')
+    eq(dm, nil, 'VND9-02: ' .. t .. ' keeps CE\'s pointer display')
+  end
+  -- CONTROL: the wide string it mirrors.
+  local sv, sn = gti('StrProperty', 16)
+  eq(sv, vtPointer, 'VND9-02 control: StrProperty stays a pointer row')
+  eq(sn, 8, 'VND9-02 control: ... 8 bytes')
+
+  resetWorld(); dissect.clearAll(); injectDll()
+  serveWalk({
+    { name = 'Wide',  typeName = 'StrProperty',     offset = 0x30, size = 16 },
+    { name = 'Utf8',  typeName = 'Utf8StrProperty', offset = 0x40, size = 16 },
+    { name = 'Ansi',  typeName = 'AnsiStrProperty', offset = 0x50, size = 16 },
+  })
+  local s = dissect.createFromClass(0xC1A55, 'NarrowStr')
+  for i = 0, 2 do
+    local e = s.Element[i]
+    eq(e.Vartype, vtPointer, 'VND9-02: the ' .. e.Name .. ' row in the structure is a pointer')
+  end
+end
+
+-- ============================================================
 -- VND584-02 follow-up -- "8 hex bytes" needs the DisplayMethod, not just vtQword
 -- ============================================================
 -- vtQword alone is an UNSIGNED DECIMAL row: TStructelement.create leaves fdisplayMethod at

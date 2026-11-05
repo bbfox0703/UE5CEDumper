@@ -4077,6 +4077,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                     tn.find("ClassProperty")  != std::string::npos ||
                     tn == "ArrayProperty" || tn == "MapProperty" || tn == "SetProperty" ||
                     tn == "NameProperty"  || tn == "StrProperty"  || tn == "TextProperty" ||
+                    tn == "Utf8StrProperty" || tn == "AnsiStrProperty" ||   // [VND9-04] FString's template
                     tn == "Int64Property" || tn == "UInt64Property" || tn == "DoubleProperty" ||
                     tn == "DelegateProperty" || tn == "MulticastDelegateProperty" ||
                     tn == "MulticastInlineDelegateProperty" || tn == "MulticastSparseDelegateProperty" ||

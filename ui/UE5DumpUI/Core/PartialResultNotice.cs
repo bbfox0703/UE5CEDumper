@@ -94,12 +94,18 @@ public static class PartialResultNotice
     /// means. AF7 needed a second cause — the disassembler's instruction budget — and
     /// reusing the deadline wording would have named the wrong one, which this class's
     /// own rule ("name the CAUSE before the consequence") exists to prevent.</param>
+    /// <param name="units">The plural of <paramref name="unit"/>, whole; null = unit + "s", right for "row" and
+    /// "function". [PARTIAL-UNIT-PLURAL] It was built from fragments -- "{unit}(s)", "{unit}s" -- so "class" read
+    /// "class(s)" and "classs"; a whole word per number is also the only shape a translation can take.</param>
     public static string BatchPartialClause(int partialUnits, int totalUnits, string unit = "row",
-                                            string cause = "hit the scan deadline")
-        => partialUnits <= 0
-            ? ""
-            : $" ⚠ {partialUnits:N0} of {totalUnits:N0} {unit}(s) {cause} and are marked partial — "
-              + $"a 0 on those {unit}s means \"not found YET\", not \"none\".";
+                                            string cause = "hit the scan deadline", string? units = null)
+    {
+        if (partialUnits <= 0) return "";
+        var plural = units ?? unit + "s";
+        var those = partialUnits == 1 ? "that " + unit : "those " + plural;
+        return $" ⚠ {partialUnits:N0} of {totalUnits:N0} {(totalUnits == 1 ? unit : plural)} {cause} and "
+             + $"{(partialUnits == 1 ? "is" : "are")} marked partial — a 0 on {those} means \"not found YET\", not \"none\".";
+    }
 
     /// <summary>
     /// [W3-XREF-CAP] Roll-up clause for a batch in which <paramref name="cappedUnits"/> units hit the result cap.
@@ -107,11 +113,16 @@ public static class PartialResultNotice
     /// (the same cap is asked for again), so <see cref="BatchPartialClause"/>'s wording fits neither. Empty when
     /// nothing was capped.
     /// </summary>
-    public static string BatchCapClause(int cappedUnits, int totalUnits, int cap, string unit = "row")
-        => cappedUnits <= 0
-            ? ""
-            : $" ⚠ {cappedUnits:N0} of {totalUnits:N0} {unit}(s) reached the {cap:N0}-result cap — "
-              + $"their counts (shown as N+) are lower bounds: only the first {cap:N0} are listed, and more may exist.";
+    public static string BatchCapClause(int cappedUnits, int totalUnits, int cap, string unit = "row",
+                                        string? units = null)
+    {
+        if (cappedUnits <= 0) return "";
+        var plural = units ?? unit + "s";   // [PARTIAL-UNIT-PLURAL] see BatchPartialClause
+        var counts = cappedUnits == 1 ? "its count (shown as N+) is a lower bound"
+                                      : "their counts (shown as N+) are lower bounds";
+        return $" ⚠ {cappedUnits:N0} of {totalUnits:N0} {(totalUnits == 1 ? unit : plural)} reached the {cap:N0}-result "
+             + $"cap — {counts}: only the first {cap:N0} are listed, and more may exist.";
+    }
 
     /// <summary>
     /// [W4-RELATED-STOPS] The Related Objects status clause: each cause the walk stopped for, in its own words.
@@ -156,11 +167,16 @@ public static class PartialResultNotice
     /// [W3-BATCH-METHOD] Roll-up clause for a batch in which <paramref name="notAnalysed"/> units were
     /// never analysed. Empty when none were, so a caller can append it unconditionally.
     /// </summary>
-    public static string BatchNotAnalysedClause(int notAnalysed, int totalUnits, string unit = "function")
-        => notAnalysed <= 0
-            ? ""
-            : $" ⚠ {notAnalysed:N0} of {totalUnits:N0} {unit}(s) were NOT analysed (native code this build "
-              + $"cannot disassemble, or a Blueprint with no readable bytecode) — their \"{NotAnalysedCell}\" is not a 0.";
+    public static string BatchNotAnalysedClause(int notAnalysed, int totalUnits, string unit = "function",
+                                                string? units = null)
+    {
+        if (notAnalysed <= 0) return "";
+        var plural = units ?? unit + "s";   // [PARTIAL-UNIT-PLURAL] see BatchPartialClause
+        var one = notAnalysed == 1;
+        return $" ⚠ {notAnalysed:N0} of {totalUnits:N0} {(totalUnits == 1 ? unit : plural)} {(one ? "was" : "were")} NOT "
+             + "analysed (native code this build cannot disassemble, or a Blueprint with no readable bytecode) — "
+             + $"{(one ? "its" : "their")} \"{NotAnalysedCell}\" is not a 0.";
+    }
 
     /// <summary>
     /// A group scan kept fewer WITNESSES per slot than the slot actually matched.

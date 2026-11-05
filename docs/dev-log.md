@@ -27,6 +27,91 @@ builds ≤696 in
 
 -----
 
+## 2026-11-05 (build 3692) — A mistyped message template no longer breaks a command; gates freeze the hard-coded UI text `[I18N-READINESS-2026-11-04]`
+
+- **A message template whose placeholders do not fit** (a translator's slip, a stray brace) now shows the template
+  and its values instead of throwing out of the command that was setting the status line. Every template the app
+  formats goes through one place, `Res.FormatTemplate`; en.axaml's own templates all fit (gate `check_res_format`).
+- **The second-language policy is recorded** (working-lessons §6): English stays primary, the layout never changes per
+  language, one English word with different meanings keeps different keys, and with no schedule yet the existing
+  hard-coded text moves only when its file is touched.
+- **Gates keep the hard-coded text from growing:** a new ratchet, `check_ui_literals`, freezes code-behind controls and
+  dialog / error / progress messages (176 sites in 19 files); the status-line ratchet now counts `+=`, ignores the
+  literals a line only compares, and its `--update` refuses to accept growth. 39 gates.
+- Tests: dll_core_test 1487 checks and dll_helpers_test 3754, 0 failures; C# 7473 passed, 0 failed; headless 71.
+  AOT UI 61,676,032 bytes.
+
+## 2026-11-05 (build 3691) — Groundwork for UI languages: other programs' words, artifacts and parsed sentences each have one fixed source `[I18N-READINESS-2026-11-04]` P3-P5
+
+No visible change: every sentence, export and generated table reads as before. What changed is where the text comes
+from, so translating the UI later cannot break a branch or a saved table.
+
+- **Other programs' words** (P5): the DLL's "Unknown command" / "Function not found" / "No instance found", the AOBMaker
+  plugin's "Unknown type" and Windows' "being used" live in one do-not-localize block in `Constants.cs`, pinned to the
+  DLL source that sends them.
+- **A sentence the code reads back** (P3): Proxy Deploy's "Cannot read … here" is written and parsed from one template.
+  The Live Walker's container crumbs always record their field name, so the CE XML export never parses a crumb label.
+- **Artifact text** (P4): the CE XML export's enum note is an English constant (the status line keeps its own copy); a
+  generated CT's categories have their own group names apart from the chips' labels; the standalone trainer escapes the
+  record Description it quotes into Lua; trainer Descriptions and CE group names are marked do-not-localize.
+- Tests: dll_core_test 1487 checks and dll_helpers_test 3754, 0 failures; C# 7467 passed, 0 failed; headless 71.
+  AOT UI 61,675,008 bytes.
+
+## 2026-11-05 (build 3690) — Status lines count classes as "classes"; unit tests read the English the app shows `[PARTIAL-UNIT-PLURAL]` `[I18N-READINESS-2026-11-04]`
+
+- **The partial / capped / not-analysed notices read as English.** Find Func's status said "2 of 5 class(s) hit the
+  scan deadline ... a 0 on those classs"; it now says "2 of 5 classes ... those classes", and every such notice agrees
+  with its counts ("1 of 1 row ... is marked partial", "its count is a lower bound") with no "(s)" left.
+- **Unit tests now see the app's real English** (first step of the move toward UI languages). With no Avalonia
+  application a test's `Res.Get` answered "", so a string behind `Res` was blank and "must not say X" checks passed
+  while testing nothing. The test assembly now installs en.axaml, read by a parser the headless suite pins against
+  Avalonia's own loader, all 1914 keys (Avalonia keeps leading / trailing spaces). It exposed one test that pinned a
+  fallback sentence the app never shows. Nothing changes in the app itself.
+- Build 3689 was not shipped: that parser sat in the app and put System.Xml.Linq in the AOT image (+3.1 MB). It
+  lives in the tests now; this build's AOT UI is 61,675,008 bytes (3688: 61,666,816).
+- Tests: dll_core_test 1487 checks and dll_helpers_test 3754, 0 failures; C# 7452 passed, 0 failed; headless 71.
+
+## 2026-11-05 (build 3688) — UE 5.5's narrow strings in optionals, struct arrays and Value Search; a struct array's FString member shows its text `[VND9-04]`
+
+- **A struct array's string member shows its text** in the Live Walker (`Text = RowStrAlpha`), as a top-level string
+  field does; an FString member said `(str)`, and a UE 5.5 `FUtf8String` / `FAnsiString` member showed its pointer's
+  hex.
+- **A `TOptional<FUtf8String>` / `TOptional<FAnsiString>` is read** like a `TOptional<FString>`, set or unset; it was
+  refused as "not decoded".
+- **Value Search's FString type finds UE 5.5's narrow strings too**, decoding each match at its own width (a direct
+  field, a container element, a struct-array member, and the next scan's re-read), and V1c gates their optionals.
+- **Property Search** suggests `Utf8StrProperty` and `AnsiStrProperty` in the type filter.
+- **Checked live on build 3688** (`tools/verify/vnd9_live.py`, DumperTest Shipping 5.4): all six checks, including
+  `Arr_StrRows[0].Text = RowStrAlpha` and an FString value search that finds and keeps a direct field (統一), an
+  array element and a struct-array member. No fixture holds a narrow string, so that half rests on unit tests.
+- Tests: dll_core_test 1487 checks and dll_helpers_test 3754, 0 failures; C# 7443 passed, 0 failed; headless 70.
+  AOT UI 61,666,816 bytes.
+
+## 2026-11-05 (build 3687) — A soft reference to an actor names the actor; FIRE shows a returned string's text; Dissect knows UE 5.5's narrow strings `[VND9-01]` `[VND9-02]` `[VND9-03]` `[VND9-DOC]`
+
+- **A soft pointer to an object inside an asset keeps its sub-path.** A soft reference to an actor in a level reads
+  `/Game/Map.Map:PersistentLevel.BP_Door_C_3` in the Live Walker, arrays, maps / sets / optionals and previews; it
+  read as the map's own path. The sub-path's width is measured on the engine: an FString through UE 5.5, an
+  FUtf8String from 5.6. Where it cannot be measured on 5.6+, nothing is added rather than text read at the wrong width.
+- **Pipe FIRE shows a returned or out string's text** (`ReturnValue (return) = "42"`), where it printed the string's
+  16 raw header bytes; the CE route already showed the text. New reply key `str_results` (pipe-protocol.md).
+- **CE Structure Dissect** shows a UE 5.5+ `Utf8StrProperty` / `AnsiStrProperty` field as a pointer row, like FString,
+  not as a decimal number.
+- The USMAP writer's header records which writer it follows when an enum did not read, pinned by a test.
+- **Checked live on build 3687** (`tools/verify/vnd9_live.py`): DumperTest Shipping (UE 5.4) 4/4 -- the probe logs
+  `SubPathString StrProperty at +0x10`, Soft_Mesh is unchanged, a synthetic sub-path reads
+  `/Engine/BasicShapes/Cube.Cube:統一` (restored after), FIRE `Conv_IntToString(42)` returns "42". DumperTest56 and
+  DumperTest58 Shipping 2/2 each: `SubPathString Utf8StrProperty at +0x10`, and the same FIRE. Not checked live: a
+  real actor soft reference on 5.6+ (no fixture field holds one), and the Dissect row in CE.
+- Tests: dll_core_test 1476 checks and dll_helpers_test 3746, 0 failures; C# 7441 passed, 0 failed; headless 70;
+  dissect_test.lua 437. AOT UI 61,666,816 bytes.
+
+## 2026-11-05 (no build change) — Vendor audit #9; `sync_tools.ps1` stops a false FETCH FAILED `[VENDOR-AUDIT9-2026-11-05]`
+
+- **`sync_tools.ps1`** no longer prints `FETCH FAILED` over a reference-clone fetch that succeeded. RE-UE4SS's new commits moved its UEPseudo pin, and git's default on-demand recursion fetched that submodule through its `git@github.com:` URL, which fails without an SSH key. The clone fetch passes `--no-recurse-submodules`; the RE-UE4SS block already syncs the submodules over https (`795ce835`).
+- **Vendor audit #9** read RE-UE4SS (27 commits), UEPseudo (10), Dumper-7 (3), zydis (+13) and Epic's new `5.9` branch. Nothing forces code; three pre-existing gaps are filed as `[VND9-01]`..`[VND9-03]` ([audit-2026-11-05-vendor-delta9.md](audit-2026-11-05-vendor-delta9.md)).
+- Tools and docs only: the DLL, the proxies and the UI are unchanged.
+
 ## 2026-11-04 (build 3686) — A pick never refuses a live object while a collection runs; mailbox contract 9 `[INVOKE-PICK-GARBAGE]`
 
 - Review 1 of build 3685's fix. Telling a destroyed object apart now uses its destroyed flags alone. On UE4 and UE

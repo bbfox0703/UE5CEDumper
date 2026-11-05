@@ -181,6 +181,6 @@ public sealed partial class AobMakerStatus : ObservableObject
     internal static string Say(string key, string fallback, params object[] args)
     {
         var resolved = Res.Format(key, args);
-        return string.IsNullOrEmpty(resolved) ? string.Format(fallback, args) : resolved;
+        return string.IsNullOrEmpty(resolved) ? Res.FormatTemplate(fallback, args) : resolved;
     }
 }

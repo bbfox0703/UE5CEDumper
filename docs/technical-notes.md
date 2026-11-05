@@ -439,6 +439,7 @@ TSoftObjectPtr<T> / TSoftClassPtr<T>      // Phase G
 +0x10 (<=5.2) / +0x08 (>=5.3) FSoftObjectPath
         UE4 / UE5.0:  FName AssetPathName + FString SubPathString
         UE5.1+:       FName PackageName + FName AssetName + FString SubPathString
+                      (FUtf8String SubPathString from UE5.6: the same 16-byte header, UTF-8 text)
 total: 0x20 (UE5.3+, outlined FName) ... 0x38 (UE5.1-5.2 with CasePreservingName); 0x28 for UE4 and stock UE5.3+
 ```
 

@@ -1117,7 +1117,7 @@ public partial class CallTraceViewModel : ViewModelBase
     private string Say(string key, params object[] args)
     {
         string template = StringLookup(key);
-        return template.Length == 0 ? "" : string.Format(template, args);
+        return template.Length == 0 ? "" : Res.FormatTemplate(template, args);
     }
 
     // ---- the detail's addresses ([LIVEFUNCS-STEP2] U11) ----

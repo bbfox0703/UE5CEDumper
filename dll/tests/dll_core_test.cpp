@@ -2449,12 +2449,13 @@ int main() {
     {
         blk("OPTLAYOUT - TOptional set/unset follows UE's CalcSize layout, and Find Refs agrees");
 
-        static uint8_t olEntry[13][0x40] = {};
-        const char* olNames[13] = { "", "OptionalProperty", "ObjectProperty", "ArrayProperty",
+        static uint8_t olEntry[15][0x40] = {};
+        const char* olNames[15] = { "", "OptionalProperty", "ObjectProperty", "ArrayProperty",
                                     "StrProperty", "Opt", "Inner", "NameProperty", "TextProperty",
-                                    "StructProperty", "MyStruct", "LazyObjectProperty", "ScriptStruct" };
-        static uintptr_t olChunk[14] = {};
-        for (int i = 1; i <= 12; ++i) {
+                                    "StructProperty", "MyStruct", "LazyObjectProperty", "ScriptStruct",
+                                    "Utf8StrProperty", "AnsiStrProperty" };
+        static uintptr_t olChunk[16] = {};
+        for (int i = 1; i <= 14; ++i) {
             memcpy(olEntry[i] + 0x10, olNames[i], strlen(olNames[i]) + 1);
             olChunk[i] = reinterpret_cast<uintptr_t>(olEntry[i]);
         }
@@ -2470,7 +2471,7 @@ int main() {
         DynOff::bCasePreservingName = false;
         g_cachedUEVersion           = 505;
 
-        static uint8_t olFC[12][0x20] = {};
+        static uint8_t olFC[16][0x20] = {};
         auto fclass = [&](int nameIdx) {
             *reinterpret_cast<int32_t*>(olFC[nameIdx] + DynOff::FFIELDCLASS_NAME) = nameIdx;
             return reinterpret_cast<uintptr_t>(olFC[nameIdx]);
@@ -2479,7 +2480,7 @@ int main() {
         auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
 
         // The wrapped value properties: ObjectProperty (8), ArrayProperty (16), StrProperty (16).
-        static uint8_t olInner[8][0x100] = {};
+        static uint8_t olInner[10][0x100] = {};
         auto inner = [&](int k, int typeIdx, int32_t size) {
             putP(olInner[k], DynOff::FFIELD_CLASS, fclass(typeIdx));
             put32(olInner[k], DynOff::FFIELD_NAME, 6);
@@ -2494,7 +2495,7 @@ int main() {
         // keyed by class address). The optional field sits at +0x40 of its object; the object's
         // UClass pointer is at OFF_UOBJECT_CLASS so Find Refs can reach the class.
         constexpr int32_t kField = 0x40;
-        static uint8_t olProp[24][0x100] = {}, olCls[24][0x100] = {}, olObj[24][0x200] = {};
+        static uint8_t olProp[32][0x100] = {}, olCls[32][0x100] = {}, olObj[32][0x200] = {};
         static uint8_t olStale[0x100] = {};                 // a "UObject" a reset optional still points at
         const uintptr_t stale = reinterpret_cast<uintptr_t>(olStale);
         int olNext = 0;
@@ -2636,6 +2637,31 @@ int main() {
         check("OPTLAYOUT: intrusive FText with null TextData reads (unset)", fTu.typedValue == "(unset)", fTu.typedValue.c_str());
         check("OPTLAYOUT: intrusive FText with TextData is SET",
               fTs.typedValue != "(unset)" && !isRefusal(fTs.typedValue), fTs.typedValue.c_str());
+
+        // [VND9-04] UE 5.5's narrow strings: FString's { Data, Num, Max } template, so FString's unset state
+        // (ArrayMax -1 at +12, bHasIntrusiveUnsetOptionalState for every string class), with 1-byte text. The walker
+        // knew StrProperty only, and refused these as "the unset state of an intrusive Utf8StrProperty is not decoded".
+        const uintptr_t innerU8   = inner(8, 13, 16);
+        const uintptr_t innerAnsi = inner(9, 14, 16);
+        static const char kOptU8[]   = "h\xC3\xA9llo";   // UTF-8 for "hello" with an e-acute
+        static const char kOptAnsi[] = "tag";
+        auto narrow = [&](int c, const char* s) {
+            putP(olObj[c], kField, reinterpret_cast<uintptr_t>(s));
+            put32(olObj[c], kField + 8, static_cast<int32_t>(strlen(s) + 1));
+            put32(olObj[c], kField + 12, static_cast<int32_t>(strlen(s) + 1));
+        };
+        const int cU8u = makeCase(16, innerU8);    put32(olObj[cU8u], kField + 12, -1);
+        const int cU8s = makeCase(16, innerU8);    narrow(cU8s, kOptU8);
+        const int cAns = makeCase(16, innerAnsi);  narrow(cAns, kOptAnsi);
+        const auto fU8u = walk("intrusive FUtf8String, unset", cU8u);
+        const auto fU8s = walk("intrusive FUtf8String, set", cU8s);
+        const auto fAns = walk("intrusive FAnsiString, set", cAns);
+        check("OPTLAYOUT ⭐ VND9-04: an intrusive FUtf8String with ArrayMax -1 reads (unset)",
+              fU8u.typedValue == "(unset)", fU8u.typedValue.c_str());
+        check("OPTLAYOUT ⭐ VND9-04: a set FUtf8String optional reads its UTF-8 text, quoted",
+              fU8s.typedValue == std::string("\"") + kOptU8 + "\"", fU8s.typedValue.c_str());
+        check("OPTLAYOUT ⭐ VND9-04: a set FAnsiString optional reads its text, quoted",
+              fAns.typedValue == "\"tag\"", fAns.typedValue.c_str());
 
         // (#8) A struct optional: the struct probe + UScriptStruct::MinAlignment decide the layout.
         static uint8_t olStruct[2][0x100] = {};
@@ -6604,9 +6630,10 @@ int main() {
     {
         blk("SOFTPATH - FSoftObjectPath's shape is read off the SoftObjectPath struct, not the version");
         enum : int32_t { nClass = 1, nScriptStruct, nSoftObjectPath, nAssetPathName, nAssetPath, nNameProp,
-                         nPkg, nAsset, nNames };
+                         nPkg, nAsset, nSubPathString, nStrProp, nUtf8StrProp, nNames };
         const char* spNames[nNames] = { "", "Class", "ScriptStruct", "SoftObjectPath", "AssetPathName", "AssetPath",
-                                        "NameProperty", "/Game/Pkg", "Asset" };
+                                        "NameProperty", "/Game/Pkg", "Asset", "SubPathString", "StrProperty",
+                                        "Utf8StrProperty" };
         static uint8_t spEntry[nNames][0x40] = {};
         static uintptr_t spChunk[nNames + 1] = {};
         for (int i = 1; i < nNames; ++i) {
@@ -6643,6 +6670,8 @@ int main() {
             DynOff::bSoftPathProbed = false;
             DynOff::SOFTPATH_TOPLEVEL_MEASURED = -1;
             DynOff::SOFTPATH_SIZE_MEASURED = 0;
+            DynOff::SOFTPATH_SUBPATH_OFFSET = -1;
+            DynOff::SOFTPATH_SUBPATH_WIDTH = -1;
         };
         FakePool spPool;
         spPool.Build(kSB);
@@ -6713,13 +6742,170 @@ int main() {
             DynOff::SOFTPTR_PATH        = svEnv;
         }
 
+        // [VND9-01] The sub-path names an object INSIDE the asset -- an actor in a level is
+        // "/Game/Map.Map:PersistentLevel.BP_Door_C_3" -- and the live reader dropped it, so a soft reference to the actor
+        // read as one to the map. SubPathString is an FString through 5.5 and an FUtf8String from 5.6 (SoftObjectPath.h):
+        // the width comes from the reflected field when it was measured, the FString rule only where nothing else can be
+        // there, and nothing at all on an unmeasured 5.6+ -- UTF-8 read as UTF-16 is garbage, worse than no sub-path.
+        {
+            static uint8_t spField2[0x100] = {};
+            static uint8_t spFieldClass2[0x20] = {};
+            auto buildSub = [&](int32_t subType, int32_t subOffset) {
+                build(nAssetPath);
+                put32(spB[bStruct], DynOff::USTRUCT_PROPSSIZE, 0x20);
+                memset(spField2, 0, sizeof(spField2));
+                memset(spFieldClass2, 0, sizeof(spFieldClass2));
+                putP(spField, DynOff::FFIELD_NEXT, reinterpret_cast<uintptr_t>(spField2));
+                put32(spFieldClass2, DynOff::FFIELDCLASS_NAME, subType);
+                putP(spField2, DynOff::FFIELD_CLASS, reinterpret_cast<uintptr_t>(spFieldClass2));
+                put32(spField2, DynOff::FFIELD_NAME, nSubPathString);
+                put32(spField2, DynOff::FPROPERTY_OFFSET, subOffset);
+            };
+            static const wchar_t kWide[] = L"PersistentLevel.BP_Door_C_3";
+            static const char kNarrow[] = "PersistentLevel.BP_Door_C_3";
+            const std::string want = "/Game/Pkg.Asset:PersistentLevel.BP_Door_C_3";
+            // { FName PackageName, FName AssetName, { Data, Num, Max } } -- the stock 8-byte FName shape.
+            alignas(8) static uint8_t sp[0x20] = {};
+            auto path = [&](const void* data, int32_t num) {
+                memset(sp, 0, sizeof(sp));
+                put32(sp, 0x00, nPkg);
+                put32(sp, 0x08, nAsset);
+                putP(sp, 0x10, reinterpret_cast<uintptr_t>(data));
+                put32(sp, 0x18, num);
+                put32(sp, 0x1C, num);
+                return reinterpret_cast<uintptr_t>(sp);
+            };
+            const int32_t wideNum = static_cast<int32_t>(wcslen(kWide) + 1);
+            const int32_t narrowNum = static_cast<int32_t>(strlen(kNarrow) + 1);
+
+            g_cachedUEVersion = 505;
+            buildSub(nStrProp, 0x10);
+            std::string got = Ubel::ReadSoftObjectPath(path(kWide, wideNum));
+            check("SOFTPATH ⭐ VND9-01: a 5.5 soft pointer to an actor keeps its sub-path (FString, measured)",
+                  got == want, got.c_str());
+
+            g_cachedUEVersion = 508;
+            buildSub(nUtf8StrProp, 0x10);
+            got = Ubel::ReadSoftObjectPath(path(kNarrow, narrowNum));
+            check("SOFTPATH ⭐ VND9-01: a 5.8 soft pointer to an actor keeps its sub-path (FUtf8String, measured)",
+                  got == want, got.c_str());
+
+            // Unmeasured (the struct names no SubPathString): only the FString rule's own ground.
+            g_cachedUEVersion = 505;
+            build(nAssetPath);
+            put32(spB[bStruct], DynOff::USTRUCT_PROPSSIZE, 0x20);
+            got = Ubel::ReadSoftObjectPath(path(kWide, wideNum));
+            check("SOFTPATH ⭐ VND9-01: unmeasured on 5.5, the sub-path is read as the FString it can only be",
+                  got == want, got.c_str());
+            g_cachedUEVersion = 508;
+            build(nAssetPath);
+            put32(spB[bStruct], DynOff::USTRUCT_PROPSSIZE, 0x20);
+            got = Ubel::ReadSoftObjectPath(path(kNarrow, narrowNum));
+            check("SOFTPATH VND9-01 control: unmeasured on 5.8 the width is not guessed -- no sub-path, not garbage",
+                  got == "/Game/Pkg.Asset", got.c_str());
+
+            // CONTROL: an empty sub-path adds no ':'.
+            buildSub(nUtf8StrProp, 0x10);
+            got = Ubel::ReadSoftObjectPath(path(kNarrow, 0));
+            check("SOFTPATH VND9-01 control: an empty sub-path adds nothing", got == "/Game/Pkg.Asset", got.c_str());
+
+            // UProperty mode (UE4 <= 4.24): no probe runs, one FName, and the sub-path can only be an FString.
+            DynOff::bUseFProperty = false;
+            g_cachedUEVersion = 424;
+            build(nAssetPathName);
+            alignas(8) static uint8_t sp4[0x18] = {};
+            put32(sp4, 0x00, nPkg);
+            putP(sp4, 0x08, reinterpret_cast<uintptr_t>(kWide));
+            put32(sp4, 0x10, wideNum);
+            put32(sp4, 0x14, wideNum);
+            got = Ubel::ReadSoftObjectPath(reinterpret_cast<uintptr_t>(sp4));
+            check("SOFTPATH ⭐ VND9-01: a UE4 UProperty-mode soft pointer keeps its sub-path (FString after one FName)",
+                  got == "/Game/Pkg:PersistentLevel.BP_Door_C_3", got.c_str());
+            DynOff::bUseFProperty = true;
+        }
+
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
         DynOff::bSoftPathProbed = false;
         DynOff::SOFTPATH_TOPLEVEL_MEASURED = -1;
         DynOff::SOFTPATH_SIZE_MEASURED = 0;
+        DynOff::SOFTPATH_SUBPATH_OFFSET = -1;
+        DynOff::SOFTPATH_SUBPATH_WIDTH = -1;
         DynOff::bUseFProperty     = svFPropS;
         DynOff::bOffsetsValidated = svValidS;
         g_cachedUEVersion         = svVerS;
+    }
+
+    // -- [VND9-03] FIRE reads a returned or out string's TEXT from the post-call buffer -------------------------------
+    // Its 16 bytes are { Data, Num, Max } with Data in the engine's heap, which the UI cannot follow, so FIRE showed the
+    // header's raw bytes where the CE route showed the text. Only return / out slots of the three string types are read:
+    // an input slot -- and a const-ref one the caller filled -- points at the caller's own buffer, freed by then.
+    {
+        blk("STRRESULTS - FIRE reads a returned or out string's text, never an input's freed buffer");
+        static const wchar_t kIn[] = L"input";
+        static const wchar_t kRet[] = L"Hello wide";
+        static const char kUtf8[] = "h\xC3\xA9llo";   // UTF-8 for "hello" with an e-acute
+        static const char kEmpty[] = "";
+        static const wchar_t kMine[] = L"mine";
+        alignas(8) static uint8_t sb[0x70] = {};
+        auto hdr = [&](int off, const void* data, int32_t num) {
+            const uintptr_t d = reinterpret_cast<uintptr_t>(data);
+            memcpy(sb + off, &d, sizeof(d));
+            memcpy(sb + off + 8, &num, 4);
+            memcpy(sb + off + 12, &num, 4);
+        };
+        hdr(0x00, kIn, static_cast<int32_t>(wcslen(kIn) + 1));
+        hdr(0x10, kRet, static_cast<int32_t>(wcslen(kRet) + 1));
+        hdr(0x20, kUtf8, static_cast<int32_t>(strlen(kUtf8) + 1));
+        hdr(0x30, kEmpty, 1);                                   // Num 1: the terminator alone, an empty string
+        hdr(0x40, kMine, static_cast<int32_t>(wcslen(kMine) + 1));
+        hdr(0x50, reinterpret_cast<const void*>(uintptr_t{0x10}), 9);   // a Data pointer that does not read
+        const int32_t seven = 7;
+        memcpy(sb + 0x60, &seven, 4);
+        auto P = [](const char* name, const char* type, int32_t off, bool out, bool ret) {
+            FunctionParam p;
+            p.name = name; p.typeName = type; p.offset = off; p.size = 16;
+            p.isOut = out; p.isReturn = ret; p.isParm = true;
+            return p;
+        };
+        const std::vector<FunctionParam> ps = {
+            P("In", "StrProperty", 0x00, false, false),
+            P("ReturnValue", "StrProperty", 0x10, false, true),
+            P("OutUtf8", "Utf8StrProperty", 0x20, true, false),
+            P("OutAnsi", "AnsiStrProperty", 0x30, true, false),
+            P("Label", "StrProperty", 0x40, true, false),          // const FString&: CPF_OutParm too, filled by the caller
+            P("OutBad", "StrProperty", 0x50, true, false),
+            P("Count", "IntProperty", 0x60, true, false),
+        };
+        const auto rs = Ubel::ReadStringResults(ps, sb, sizeof(sb), { 0x40 });
+        check("STRRESULTS ⭐ VND9-03: the return and the three out strings, and nothing else",
+              rs.size() == 4, std::to_string(rs.size()).c_str());
+        if (rs.size() == 4) {
+            check("STRRESULTS ⭐ VND9-03: a returned FString's text",
+                  rs[0].offset == 0x10 && rs[0].name == "ReturnValue" && rs[0].text == "Hello wide" && rs[0].read,
+                  rs[0].text.c_str());
+            check("STRRESULTS ⭐ VND9-03: an out FUtf8String's text, as UTF-8",
+                  rs[1].offset == 0x20 && rs[1].text == kUtf8 && rs[1].read, rs[1].text.c_str());
+            check("STRRESULTS ⭐ VND9-03: an empty out string is read, and empty",
+                  rs[2].offset == 0x30 && rs[2].text.empty() && rs[2].read);
+            check("STRRESULTS ⭐ VND9-03: a string whose text does not read says so",
+                  rs[3].offset == 0x50 && !rs[3].read);
+        }
+        check("STRRESULTS VND9-03 control: a slot past the buffer's end is not read",
+              Ubel::ReadStringResults(ps, sb, 0x18, {}).empty());
+
+        // [VND9-04] One reader for the three string properties, at each type's width.
+        const uintptr_t sbAddr = reinterpret_cast<uintptr_t>(sb);
+        check("STRPROP ⭐ VND9-04: a StrProperty reads as UTF-16",
+              Ubel::ReadStringPropertyAt("StrProperty", sbAddr, 0x10) == "Hello wide");
+        check("STRPROP ⭐ VND9-04: a Utf8StrProperty reads its UTF-8 bytes",
+              Ubel::ReadStringPropertyAt("Utf8StrProperty", sbAddr, 0x20) == kUtf8);
+        check("STRPROP ⭐ VND9-04: an AnsiStrProperty reads its bytes",
+              Ubel::ReadStringPropertyAt("AnsiStrProperty", sbAddr, 0x20) == kUtf8);
+        check("STRPROP VND9-04 control: a type that is not a string reads nothing",
+              Ubel::ReadStringPropertyAt("IntProperty", sbAddr, 0x10).empty());
+        check("STRPROP VND9-04 control: the widths",
+              Ubel::StringPropertyWidth("StrProperty") == 2 && Ubel::StringPropertyWidth("Utf8StrProperty") == 1
+                && Ubel::StringPropertyWidth("AnsiStrProperty") == 1 && Ubel::StringPropertyWidth("TextProperty") == 0);
     }
 
     // -- [VND583-13] a compact TSet/TMap build is latched from a 16-byte Set/Map property, and walked header-only --
@@ -11924,7 +12110,8 @@ int main() {
         check("a soft path on a case-preserving build: the asset's FName after a 12-byte one",
               vc.size() == 1 && vc[0].text == "/Game/Maps/Arena.Arena", vc.empty() ? "" : vc[0].text.c_str());
         // Measured on DumperTest58 (2026-10-07): a soft pointer to an actor is its level's asset path plus a sub-path
-        // (":PersistentLevel.<actor>") in an FString whose text is not in the copy. Shown without it, the actor's
+        // (":PersistentLevel.<actor>") in a string (an FUtf8String on 5.6+, an FString before) whose text is not in the
+        // copy. Shown without it, the actor's
         // pointer read as the level's.
         alignas(8) uint8_t s2[0x50] = {};
         memcpy(s2, b + 0x28, 0x30);

@@ -163,6 +163,10 @@ local TYPE_MAP = {
     ObjectProperty   = { vt = vtPointer, size = 8 },
     ClassProperty    = { vt = vtPointer, size = 8 },
     StrProperty      = { vt = vtPointer, size = 8 },
+    -- UE 5.5+: the narrow strings share FString's { Data, Num, Max } template, so the same row.
+    -- From 5.6 every inline FSoftObjectPath's SubPathString is one.
+    Utf8StrProperty  = { vt = vtPointer, size = 8 },
+    AnsiStrProperty  = { vt = vtPointer, size = 8 },
     TextProperty     = { vt = vtPointer, size = 8 },
     ArrayProperty    = { vt = vtPointer, size = 8 },
     MapProperty      = { vt = vtPointer, size = 8 },

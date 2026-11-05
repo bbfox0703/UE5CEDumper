@@ -2020,6 +2020,14 @@ state-changing operations but works for simple getters).
   "func_addr": "0x7FF123ABC",
   "parms_size": 16,
   "result_hex": "3F80000000000000...",  // post-call buffer (out-params)
+  "str_results": [                // from build 3687, after a call that returned 0 and only when the function has
+                                   // one: each RETURN or OUT parameter of type StrProperty / Utf8StrProperty /
+                                   // AnsiStrProperty, read here because its bytes in result_hex are only a
+                                   // { Data, Num, Max } header pointing into the game's heap. Never a slot sent in
+                                   // str_params (that buffer is freed after the call). read:false = the header names
+                                   // text that did not read. The engine's allocation is never freed. [VND9-03]
+    { "off": 16, "name": "ReturnValue", "text": "42", "read": true }
+  ],
   "message": "ProcessEvent OK"
 }
 

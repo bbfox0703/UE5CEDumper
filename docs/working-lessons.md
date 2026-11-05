@@ -3614,6 +3614,15 @@ architecture or UX changes in these areas.
   header's counts — the Dump Explorer's struct / enum / enumerator labels, 2026-10-06): the new arms follow
   the old ones and move with them if the list is ever swept. A wholly new status sentence still goes to
   en.axaml.
+- **A second UI language: the architecture is opened, not the layout** (maintainer, 2026-11-05,
+  `[I18N-READINESS-2026-11-04]`). The aim is a structure in which a second language CAN be built, with
+  Traditional Chinese the one in view. English stays primary and the program never re-lays itself out per
+  language: a German, Japanese or Arabic translation gets no layout, word-order or right-to-left work, and
+  whether its grammar reads well is the translator's concern, not the code's. **One English word with
+  different meanings keeps different keys** -- `Class` as a UE class, as a column header, as a filter value
+  may need 2-N entries -- so do NOT merge keys because their English text is equal (the audit's
+  "move shared buttons to `str.Common.*`" holds only where the MEANING is the same). No schedule yet: strings
+  move when a file is touched for another reason, never in a sweep, and the gates keep the count from growing.
 - **Hierarchical Copy CE XML direct-push to CE** — DEFERRED, not refused: it needs an unbuilt bulk-tree
   client plus a `CeXmlExportService` Emit-layer refactor (there is no tree model today). Per-row `+CE`
   (PR #251) and flat `+CE Fields` (PR #252) **did** ship.

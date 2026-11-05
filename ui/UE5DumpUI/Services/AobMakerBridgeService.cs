@@ -525,7 +525,8 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
             if (begin == null)
                 return new RecordTreeResult(RecordTreeOutcome.Failed, 0, "no reply to CreateRecordTreeBegin",
                                             Array.Empty<string>());
-            if (begin.Type == TypeError && begin.Message?.Contains("Unknown type", StringComparison.Ordinal) == true)
+            if (begin.Type == TypeError
+                && begin.Message?.Contains(Constants.AobMakerErrorUnknownType, StringComparison.Ordinal) == true)
             {
                 _log?.Info(Constants.LogCatInit, "AOBMaker: this CE plugin has no record tree (Unknown type)");
                 return RecordTreeResult.NotSupported;

@@ -258,7 +258,9 @@ const std::vector<std::string>& PropertyTypeNames(DataType dt) {
     static const std::vector<std::string> kFloat  = { "FloatProperty" };
     static const std::vector<std::string> kDouble = { "DoubleProperty" };
     static const std::vector<std::string> kBool   = { "BoolProperty" };
-    static const std::vector<std::string> kFString = { "StrProperty" };
+    // [VND9-04] UE 5.5's narrow strings too: FString's template at 1-byte width. Every reader of a match decodes at
+    // the property's own width (Ubel::ReadStringPropertyAt), never as UTF-16.
+    static const std::vector<std::string> kFString = { "StrProperty", "Utf8StrProperty", "AnsiStrProperty" };
     static const std::vector<std::string> kFName   = { "NameProperty" };
     static const std::vector<std::string> kFText   = { "TextProperty" };
     // Vector / Rotator / Transform are represented as StructProperty in

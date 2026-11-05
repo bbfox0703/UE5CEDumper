@@ -703,6 +703,24 @@ inline std::atomic<bool> bSoftPathProbed{false};
 // accepted, latched +0x08. Taken only when it is a size this path shape can have, so a misread PropertiesSize falls
 // back to the rule instead of steering the envelope.
 inline std::atomic<int>  SOFTPATH_SIZE_MEASURED{0};
+// [VND9-01] ...and its SubPathString, measured the same way: the offset in FSoftObjectPath (-1 = unmeasured) and the
+// character width -- 2 for an FString (through 5.5), 1 for an FUtf8String / FAnsiString (5.6+), 0 for a type no reader
+// here decodes, -1 unmeasured.
+inline std::atomic<int>  SOFTPATH_SUBPATH_OFFSET{-1};
+inline std::atomic<int>  SOFTPATH_SUBPATH_WIDTH{-1};
+// The sub-path's character width: the measurement when there is one; unmeasured, 2 (FString) only where an FString is
+// all there can be -- UProperty mode (UE4 <= 4.24) or a title below 5.6 -- and 0, read nothing, on 5.6+ or an unknown
+// version, where a wide guess would read UTF-8 bytes as UTF-16.
+constexpr int SoftPathSubPathWidthFor(int measured, bool fpropertyMode, unsigned ueVersion) {
+    return measured >= 0 ? measured
+         : !fpropertyMode ? 2
+         : (ueVersion != 0 && ueVersion < 506) ? 2 : 0;
+}
+// Where SubPathString sits in FSoftObjectPath: measured, else past the FName block padded to 8 -- the rule
+// FSoftObjectPathSizeFor sizes the struct by.
+constexpr int SoftPathSubPathOffsetFor(int measured, int fnameStride, bool isTopLevelAssetPath) {
+    return measured > 0 ? measured : (((isTopLevelAssetPath ? 2 * fnameStride : fnameStride) + 7) & ~7);
+}
 // [VND584-04] UClass::Interfaces' offset, MEASURED by Ubel's probe (FindClassInterfacesOffset on ActorComponent): 0 = not
 // yet, -1 = both classes found and no offset fit, so nothing here reads a class's interfaces.
 inline std::atomic<int>  UCLASS_INTERFACES{0};

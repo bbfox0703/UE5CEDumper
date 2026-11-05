@@ -47,6 +47,11 @@ public sealed class InvokeFunctionResult
     /// <summary>Post-call param buffer as hex (may contain out-param values).</summary>
     public string ResultHex { get; init; } = "";
 
+    /// <summary>[VND9-03] The TEXT of each returned or out string parameter, by its offset in the param buffer: its bytes
+    /// in <see cref="ResultHex"/> are only a { Data, Num, Max } header pointing into the game's heap. Null = the DLL
+    /// found the header but its text did not read. Empty from a DLL that does not send <c>str_results</c>.</summary>
+    public IReadOnlyDictionary<int, string?> StringResults { get; init; } = new Dictionary<int, string?>();
+
     /// <summary>Human-readable status message on success.</summary>
     public string Message { get; init; } = "";
 

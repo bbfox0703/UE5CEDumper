@@ -1,0 +1,21 @@
+{
+  "ui/UE5DumpUI/ViewModels/GameClassFilterViewModel.cs": 1,
+  "ui/UE5DumpUI/ViewModels/InstanceFinderViewModel.cs": 2,
+  "ui/UE5DumpUI/ViewModels/InterestingFunctionsViewModel.cs": 1,
+  "ui/UE5DumpUI/ViewModels/InterestingPropertiesViewModel.cs": 1,
+  "ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs": 9,
+  "ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs": 1,
+  "ui/UE5DumpUI/ViewModels/PointerPanelViewModel.cs": 1,
+  "ui/UE5DumpUI/ViewModels/PropertySearchViewModel.cs": 1,
+  "ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs": 18,
+  "ui/UE5DumpUI/ViewModels/ValueSearchViewModel.cs": 13,
+  "ui/UE5DumpUI/Views/ColorPickerDialog.cs": 4,
+  "ui/UE5DumpUI/Views/FlattenColorDialog.cs": 14,
+  "ui/UE5DumpUI/Views/FreezeValueDialog.cs": 2,
+  "ui/UE5DumpUI/Views/FunctionPropsDialog.cs": 24,
+  "ui/UE5DumpUI/Views/InvokeParamDialog.cs": 29,
+  "ui/UE5DumpUI/Views/ObjectInstancePickerDialog.cs": 15,
+  "ui/UE5DumpUI/Views/ProcessPickerWindow.cs": 10,
+  "ui/UE5DumpUI/Views/PropertySearchPanel.axaml.cs": 1,
+  "ui/UE5DumpUI/Views/PropertyXrefDialog.cs": 29
+}

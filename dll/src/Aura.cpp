@@ -8330,7 +8330,7 @@ ValueScanResult ScanForValue(
             std::string readStr;
             if (isString) {
                 if (dt == Radar::DataType::FString) {
-                    readStr = Ubel::ReadFStringAt(elemAddr, 0);
+                    readStr = Ubel::ReadStringPropertyAt(sf.elemTypeName, elemAddr, 0);   // [VND9-04] its width
                 } else if (dt == Radar::DataType::FName) {
                     readStr = Ubel::ReadFNameAt(elemAddr, 0);
                 } else {
@@ -8429,7 +8429,7 @@ ValueScanResult ScanForValue(
             if (isString) {
                 if (!typeOk) return;
                 std::string readStr;
-                if (dt == Radar::DataType::FString)      readStr = Ubel::ReadFStringAt(lf.leafAddr, 0);
+                if (dt == Radar::DataType::FString)      readStr = Ubel::ReadStringPropertyAt(lf.leafType, lf.leafAddr, 0);
                 else if (dt == Radar::DataType::FName)    readStr = Ubel::ReadFNameAt(lf.leafAddr, 0);
                 else                                          readStr = Ubel::ReadFTextStringAt(lf.leafAddr, 0);
                 if (!Radar::CompareStringPredicate(st, readStr, targetString, caseSensitive)) return;
@@ -8626,7 +8626,7 @@ ValueScanResult ScanForValue(
                 // helpers. Empty resolution returns "" and we still test
                 // it (target may be "" for Exact-empty searches).
                 if (dt == Radar::DataType::FString) {
-                    readStr = Ubel::ReadFStringAt(obj, sf.offset);
+                    readStr = Ubel::ReadStringPropertyAt(sf.typeName, obj, sf.offset);   // [VND9-04] its width
                 } else if (dt == Radar::DataType::FName) {
                     readStr = Ubel::ReadFNameAt(obj, sf.offset);
                 } else {
@@ -9192,8 +9192,8 @@ ValueScanStats RefineCandidates(
             // the candidate quietly; the user can First-Scan again
             // to refresh.
             std::string cur;
-            if (desc.fieldType == "StrProperty") {
-                cur = Ubel::ReadFStringAt(c.addr, 0);
+            if (Ubel::StringPropertyWidth(desc.fieldType)) {
+                cur = Ubel::ReadStringPropertyAt(desc.fieldType, c.addr, 0);   // [VND9-04] its width
             } else if (desc.fieldType == "NameProperty") {
                 cur = Ubel::ReadFNameAt(c.addr, 0);
             } else if (desc.fieldType == "TextProperty") {

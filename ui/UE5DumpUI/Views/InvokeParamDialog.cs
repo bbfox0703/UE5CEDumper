@@ -813,7 +813,7 @@ public sealed class InvokeParamDialog : Window
                     else if (p.TypeName == "StructProperty" && p.StructFields.Count > 0)
                         decoded = DecodeDynamicStructParamValue(bytes, p);
                     else
-                        decoded = DecodeParamValue(bytes, p);
+                        decoded = DecodeParamValue(bytes, p, result.StringResults);
 
                     var tag = p.IsReturn ? " (return)"
                             : p.IsOut ? " (out)"
@@ -1176,12 +1176,20 @@ public sealed class InvokeParamDialog : Window
         return true;
     }
 
-    /// <summary>Decode a single param value from the post-call buffer bytes.</summary>
-    internal static string DecodeParamValue(byte[] buf, FunctionParamModel p)
+    /// <summary>Decode a single param value from the post-call buffer bytes. <paramref name="strings"/> is the DLL's
+    /// <c>str_results</c>, the text of each returned or out string by offset ([VND9-03]).</summary>
+    internal static string DecodeParamValue(byte[] buf, FunctionParamModel p,
+                                            IReadOnlyDictionary<int, string?>? strings = null)
     {
         if (p.Offset < 0 || p.Offset >= buf.Length) return "?";
         int available = buf.Length - p.Offset;
         var span = buf.AsSpan(p.Offset);
+
+        // [VND9-03] A string's 16 bytes here are { Data, Num, Max } with Data in the game's heap; its text, when the
+        // DLL sent it, is the value. An input string gets none (its buffer was freed after the call) and keeps the bytes.
+        if (p.TypeName is "StrProperty" or "Utf8StrProperty" or "AnsiStrProperty"
+            && strings != null && strings.TryGetValue(p.Offset, out var text))
+            return text == null ? "(unreadable)" : QuoteString(text);
 
         return p.TypeName switch
         {
@@ -1227,6 +1235,26 @@ public sealed class InvokeParamDialog : Window
             // of ParamBufferBuilder.WriteBySize on the write side.
             _ => DecodeBySize(buf, p.Offset, available, p.Size),
         };
+    }
+
+    /// <summary>A string value as one line: quoted, with the quote, the backslash and line breaks escaped, so a
+    /// returned text with a newline cannot break the result list's one-param-per-line layout.</summary>
+    private static string QuoteString(string text)
+    {
+        var sb = new System.Text.StringBuilder(text.Length + 2).Append('"');
+        foreach (var c in text)
+        {
+            sb.Append(c switch
+            {
+                '"'  => "\\\"",
+                '\\' => "\\\\",
+                '\n' => "\\n",
+                '\r' => "\\r",
+                '\t' => "\\t",
+                _    => c.ToString(),
+            });
+        }
+        return sb.Append('"').ToString();
     }
 
     /// <summary>

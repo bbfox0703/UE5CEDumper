@@ -377,17 +377,24 @@ static std::string ReadFUtf8String(uintptr_t instanceAddr, int32_t offset) {
 //
 // UE4 / UE5.0: FSoftObjectPath = { FName AssetPathName; FString SubPathString; }
 // UE5.1+:      FSoftObjectPath = { FTopLevelAssetPath { FName PackageName; FName AssetName; }; FString SubPathString; }
+// [VND9-DOC] SubPathString is an FString through 5.5 and an FUtf8String from 5.6 (SoftObjectPath.h). The
+// 16-byte { Data, Num, Max } header is the same, so offsets and sizes hold, but decoding its TEXT as wide on
+// 5.6+ reads UTF-8 bytes as UTF-16: take the width from the reflected type, never from this comment.
 // ============================================================
 // [VND583-14] Measure FSoftObjectPath's shape once, from the reflected ScriptStruct `SoftObjectPath`:
 // its first field is `AssetPath` (a FTopLevelAssetPath, 5.1+) or `AssetPathName` (an FName, 4.x / 5.0).
 // FProperty mode only -- UProperty mode is UE4, where the answer is always AssetPathName and the version
 // rule gives it. Needs validated offsets; a cancelled walk latches nothing.
+static std::string GetFieldTypeName(uintptr_t ffieldAddr);   // defined with the FField walk below
+
 static void ProbeSoftPathShape() {
     static std::mutex s_mutex;
     std::lock_guard<std::mutex> lk(s_mutex);
     if (DynOff::bSoftPathProbed.load(std::memory_order_relaxed)) return;
     int measured = -1;
     int32_t size = 0;   // [VND584-08] its PropertiesSize, beside its shape
+    int subOffset = -1, subWidth = -1;   // [VND9-01] SubPathString's place and character width
+    std::string subType;
     const bool complete = Aura::ForEach([&](int32_t, uintptr_t obj) -> bool {
         if (ReadFName(obj + Grimoire::OFF_UOBJECT_NAME) != "SoftObjectPath") return true;
         uintptr_t cls = 0;
@@ -398,8 +405,18 @@ static void ProbeSoftPathShape() {
         Macht::ReadSafe(obj + DynOff::USTRUCT_CHILDPROPS, field);
         for (int i = 0; i < 8 && field && Grimoire::IsUserspacePointer(field); ++i) {
             const std::string name = ReadFName(field + DynOff::FFIELD_NAME);
-            if (name == "AssetPath")     { measured = 1; break; }
-            if (name == "AssetPathName") { measured = 0; break; }
+            if (name == "AssetPath")          measured = 1;
+            else if (name == "AssetPathName") measured = 0;
+            else if (name == "SubPathString") {
+                // An FString through 5.5, an FUtf8String from 5.6: the reflected type says which, on any build.
+                subType = GetFieldTypeName(field);
+                subWidth = StringPropertyWidth(subType);
+                int32_t off = 0;
+                if (Macht::ReadSafe(field + DynOff::FPROPERTY_OFFSET, off) && off > 0 && off <= 0x30
+                    && (size <= 0 || off + 0x10 <= size))
+                    subOffset = off;   // otherwise the FName-block rule places it
+            }
+            if (measured >= 0 && subWidth >= 0) break;
             uintptr_t next = 0;
             if (!Macht::ReadSafe(field + DynOff::FFIELD_NEXT, next)) break;
             field = DynOff::StripFFieldTag(next);
@@ -407,15 +424,22 @@ static void ProbeSoftPathShape() {
         return false;   // the first ScriptStruct of that name decides
     });
     if (!complete) return;
+    char sub[96];
+    if (subWidth >= 0)
+        snprintf(sub, sizeof(sub), "SubPathString %s at +0x%X", subType.c_str(), subOffset > 0 ? subOffset : 0);
+    else
+        snprintf(sub, sizeof(sub), "no SubPathString (the version rule decides its width)");
     if (measured >= 0) {
-        LOG_INFO("DetectSoftPath: FSoftObjectPath holds %s, %d bytes (measured on ScriptStruct SoftObjectPath; version "
-                 "rule says %s)", measured ? "FTopLevelAssetPath AssetPath" : "FName AssetPathName", size,
+        LOG_INFO("DetectSoftPath: FSoftObjectPath holds %s, %d bytes, %s (measured on ScriptStruct SoftObjectPath; "
+                 "version rule says %s)", measured ? "FTopLevelAssetPath AssetPath" : "FName AssetPathName", size, sub,
                  g_cachedUEVersion >= 501 ? "AssetPath" : "AssetPathName");
         DynOff::SOFTPATH_SIZE_MEASURED.store(size, std::memory_order_release);
     } else {
-        LOG_WARN("DetectSoftPath: ScriptStruct SoftObjectPath not measured -- the version rule answers (%s)",
-                 g_cachedUEVersion >= 501 ? "AssetPath" : "AssetPathName");
+        LOG_WARN("DetectSoftPath: ScriptStruct SoftObjectPath not measured -- the version rule answers (%s); %s",
+                 g_cachedUEVersion >= 501 ? "AssetPath" : "AssetPathName", sub);
     }
+    DynOff::SOFTPATH_SUBPATH_OFFSET.store(subOffset, std::memory_order_release);
+    DynOff::SOFTPATH_SUBPATH_WIDTH.store(subWidth, std::memory_order_release);
     DynOff::SOFTPATH_TOPLEVEL_MEASURED.store(measured, std::memory_order_release);
     DynOff::bSoftPathProbed.store(true, std::memory_order_release);
 }
@@ -426,6 +450,20 @@ static bool SoftPathIsTopLevel() {
         ProbeSoftPathShape();
     return DynOff::SoftPathIsTopLevelFor(DynOff::SOFTPATH_TOPLEVEL_MEASURED.load(std::memory_order_acquire),
                                          g_cachedUEVersion);
+}
+
+// [VND9-01] The sub-path names an object INSIDE the asset -- an actor in a level reads
+// "/Game/Map.Map:PersistentLevel.BP_Door_C_3" -- so without it a soft reference to the actor read as one to the map.
+// The width is the reflected SubPathString's when measured; unmeasured, the FString rule only where an FString is all
+// there can be, and nothing otherwise: 5.6+'s UTF-8 read as UTF-16 would put garbage where an omission is honest.
+static std::string ReadSoftPathSubPath(uintptr_t pathAddr, bool isTopLevelAssetPath, int fnameSize) {
+    const int width = DynOff::SoftPathSubPathWidthFor(DynOff::SOFTPATH_SUBPATH_WIDTH.load(std::memory_order_acquire),
+                                                      DynOff::bUseFProperty, g_cachedUEVersion);
+    if (width == 0) return "";
+    const int off = DynOff::SoftPathSubPathOffsetFor(DynOff::SOFTPATH_SUBPATH_OFFSET.load(std::memory_order_acquire),
+                                                     fnameSize, isTopLevelAssetPath);
+    const std::string text = width == 2 ? ReadFString(pathAddr, off) : ReadFUtf8String(pathAddr, off);
+    return text.empty() ? std::string() : ":" + text;
 }
 
 static std::string ReadSoftObjectPath(uintptr_t addr) {
@@ -442,9 +480,9 @@ static std::string ReadSoftObjectPath(uintptr_t addr) {
         std::string assetName   = ReadFName(addr + fnameSize);
 
         if (packageName.empty() || packageName == "None") return "";
-        if (assetName.empty() || assetName == "None")
-            return packageName;
-        return packageName + "." + assetName;
+        const std::string assetPath = (assetName.empty() || assetName == "None") ? packageName
+                                                                                 : packageName + "." + assetName;
+        return assetPath + ReadSoftPathSubPath(addr, isTopLevelAssetPath, fnameSize);
     } else {
         // UE4 / UE5.0: FName AssetPathName
         //
@@ -456,7 +494,7 @@ static std::string ReadSoftObjectPath(uintptr_t addr) {
         // non-None PackageName and never arrives here at all.
         std::string assetPathName = ReadFName(addr);
         if (!assetPathName.empty() && assetPathName != "None")
-            return assetPathName;
+            return assetPathName + ReadSoftPathSubPath(addr, isTopLevelAssetPath, fnameSize);
         return "";
     }
 }
@@ -752,6 +790,40 @@ int32_t GetIndex(uintptr_t uobjectAddr) {
 std::string ReadFStringAt(uintptr_t instanceAddr, int32_t offset) {
     if (!instanceAddr) return "";
     return ReadFString(instanceAddr, offset);
+}
+
+std::string ReadStringPropertyAt(const std::string& typeName, uintptr_t instanceAddr, int32_t offset) {
+    if (!instanceAddr) return "";
+    switch (StringPropertyWidth(typeName)) {
+        case 2:  return ReadFString(instanceAddr, offset);
+        case 1:  return ReadFUtf8String(instanceAddr, offset);
+        default: return "";
+    }
+}
+
+std::vector<StringResult> ReadStringResults(const std::vector<FunctionParam>& params, const uint8_t* buf, size_t size,
+                                            const std::vector<int32_t>& ownOffsets) {
+    std::vector<StringResult> out;
+    if (!buf) return out;
+    const uintptr_t base = reinterpret_cast<uintptr_t>(buf);
+    for (const auto& p : params) {
+        if (!p.isReturn && !p.isOut) continue;
+        if (!StringPropertyWidth(p.typeName) || p.offset < 0 || static_cast<size_t>(p.offset) + 16 > size) continue;
+        if (std::find(ownOffsets.begin(), ownOffsets.end(), p.offset) != ownOffsets.end()) continue;
+        int32_t num = 0;
+        std::memcpy(&num, buf + p.offset + 8, sizeof(num));
+        StringResult r;
+        r.offset = p.offset;
+        r.name = p.name;
+        if (num <= 0) {
+            r.read = true;   // no characters: an empty string
+        } else {
+            r.text = ReadStringPropertyAt(p.typeName, base, p.offset);
+            r.read = !r.text.empty() || num == 1;   // Num 1 is the terminator alone
+        }
+        out.push_back(std::move(r));
+    }
+    return out;
 }
 
 std::string ReadFNameAt(uintptr_t instanceAddr, int32_t offset) {
@@ -2378,6 +2450,34 @@ static bool HasUnexpandedStruct(const std::vector<ParamField>& fields) {
     return false;
 }
 
+// [VND9-03] ReadStringResults for one UFunction: its own parameter chain, read here because ResolveFunctionInfo reads
+// only the function's tail (flags and sizes), never its parameters.
+std::vector<StringResult> ReadStringResultsFor(uintptr_t func, const uint8_t* buf, size_t size,
+                                               const std::vector<int32_t>& ownOffsets) {
+    std::vector<FieldInfo> fields;
+    uintptr_t first = 0;
+    if (DynOff::bUseFProperty) {
+        if (Macht::ReadSafe(func + DynOff::USTRUCT_CHILDPROPS, first) && first) WalkFFieldChain(first, fields);
+    } else {
+        if (Macht::ReadSafe(func + DynOff::USTRUCT_CHILDREN, first) && first) WalkUPropertyChain(first, fields);
+    }
+    constexpr uint64_t kCpfParm = 0x80, kCpfOut = 0x100, kCpfReturn = 0x400;
+    std::vector<FunctionParam> params;
+    for (const FieldInfo& f : fields) {
+        if (!(f.PropertyFlags & kCpfParm)) continue;   // a Blueprint function's locals follow its parameters
+        FunctionParam p;
+        p.name     = f.Name;
+        p.typeName = f.TypeName;
+        p.size     = f.Size;
+        p.offset   = f.Offset;
+        p.isParm   = true;
+        p.isOut    = (f.PropertyFlags & kCpfOut) != 0;
+        p.isReturn = (f.PropertyFlags & kCpfReturn) != 0;
+        params.push_back(std::move(p));
+    }
+    return ReadStringResults(params, buf, size, ownOffsets);
+}
+
 bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why) {
     out = ParamLayout{};
     why.clear();
@@ -2782,8 +2882,10 @@ static SnapValue DecodeSnapElement(const ParamField& f, const uint8_t* p, uint32
         const std::string pkg = fnameAt(off, fsz);
         const std::string asset = top ? fnameAt(off + fsz, fsz) : std::string();
         v.text = (pkg.empty() || pkg == "None") ? "null" : (asset.empty() || asset == "None") ? pkg : pkg + "." + asset;
-        // The sub-path (an actor in a level: ":PersistentLevel.<actor>") is an FString after the FNames; its text is
-        // on the heap, not in the copy. Said, never dropped: without it an actor's pointer reads as its level's.
+        // The sub-path (an actor in a level: ":PersistentLevel.<actor>") is a string after the FNames -- an FString
+        // through 5.5, an FUtf8String from 5.6, the same 16-byte header -- whose text is on the heap, not in the
+        // copy. Said, never dropped: without it an actor's pointer reads as its level's. Num counts code units
+        // (UTF-8 bytes on 5.6+), the same as characters for the ASCII paths a level gives its actors.
         const int subOff = (off + (top ? 2 : 1) * fsz + 7) & ~7;
         const int32_t subNum = subOff + 16 <= f.size ? load32(subOff + 8) : 0;
         if (subNum > 1 && v.text != "null") {
@@ -4779,8 +4881,11 @@ ReadArrayResult ReadStructArrayElements(
             } else if (cf.typeName == "TextProperty") {
                 sf.value = ReadFTextString(elemAddr + cf.offset);
                 if (sf.value.empty()) sf.value = "(empty)";
-            } else if (cf.typeName == "StrProperty") {
-                sf.value = "(str)";
+            } else if (StringPropertyWidth(cf.typeName)) {
+                // [VND9-04] The text, as a top-level string field shows it. This said "(str)" for an FString and,
+                // for UE 5.5's narrow strings, which had no arm, the hex of their Data pointer.
+                sf.value = ReadStringPropertyAt(cf.typeName, elemAddr, cf.offset);
+                if (sf.value.empty()) sf.value = "(empty)";
             } else if (cf.typeName == "ArrayProperty") {
                 sf.value = "(Array)";
             } else if (cf.typeName == "MapProperty") {
@@ -7880,7 +7985,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             //              when unset (Internationalization/Text.h line ~837).
             //              Layout starts with the pointer → check uintptr at
             //              field+0.
-            const bool isStrInner   = (innerTn == "StrProperty");
+            // [VND9-04] Any of the three string properties: one { Data, Num, Max } template, one unset state.
+            const bool isStrInner   = StringPropertyWidth(innerTn) != 0;
             const bool isNameInner  = (innerTn == "NameProperty");
             const bool isTextInner  = (innerTn == "TextProperty");
 
@@ -7974,7 +8080,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         }
                     }
                 } else if (isStrInner) {
-                    std::string s = ReadFString(fieldAddr, 0);
+                    std::string s = ReadStringPropertyAt(innerTn, fieldAddr, 0);   // at the inner type's width
                     if (!s.empty()) fv.strValue = std::move(s);
                 } else if (isNameInner) {
                     std::string n = ReadFName(fieldAddr);

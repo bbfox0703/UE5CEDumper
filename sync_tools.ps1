@@ -128,7 +128,13 @@ if (-not $SkipClones) {
             # fetch + ff-only, never a merge. A merge commit in a read-only oracle
             # is pure confusion, and 'git pull' on a detached HEAD just errors out.
             $before = (git -C $dir rev-parse --short HEAD 2>$null)
-            git -C $dir fetch --prune origin
+            # --no-recurse-submodules: when the fetched commits move a submodule pin,
+            # git's default (on-demand) also fetches that submodule through the
+            # .gitmodules URL. RE-UE4SS's are git@github.com: URLs, which fail without
+            # an SSH key, so the exit code went non-zero and this printed FETCH FAILED
+            # over a superproject fetch that had succeeded (2026-11-05). The RE-UE4SS
+            # block below syncs those submodules itself, over https.
+            git -C $dir fetch --prune --no-recurse-submodules origin
             if ($LASTEXITCODE -ne 0) {
                 # Without this the HEAD line below reads like a fresh sync.
                 Write-Host "  FETCH FAILED - nothing below is newer than the last successful fetch" -ForegroundColor Red
