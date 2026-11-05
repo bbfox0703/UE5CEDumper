@@ -95,7 +95,7 @@ public static class PartialResultNotice
     /// reusing the deadline wording would have named the wrong one, which this class's
     /// own rule ("name the CAUSE before the consequence") exists to prevent.</param>
     public static string BatchPartialClause(int partialUnits, int totalUnits, string unit = "row",
-                                            string cause = "hit the scan deadline")
+                                            string cause = "hit the scan deadline", string? units = null)
         => partialUnits <= 0
             ? ""
             : $" ⚠ {partialUnits:N0} of {totalUnits:N0} {unit}(s) {cause} and are marked partial — "
@@ -107,7 +107,8 @@ public static class PartialResultNotice
     /// (the same cap is asked for again), so <see cref="BatchPartialClause"/>'s wording fits neither. Empty when
     /// nothing was capped.
     /// </summary>
-    public static string BatchCapClause(int cappedUnits, int totalUnits, int cap, string unit = "row")
+    public static string BatchCapClause(int cappedUnits, int totalUnits, int cap, string unit = "row",
+                                        string? units = null)
         => cappedUnits <= 0
             ? ""
             : $" ⚠ {cappedUnits:N0} of {totalUnits:N0} {unit}(s) reached the {cap:N0}-result cap — "
@@ -156,7 +157,8 @@ public static class PartialResultNotice
     /// [W3-BATCH-METHOD] Roll-up clause for a batch in which <paramref name="notAnalysed"/> units were
     /// never analysed. Empty when none were, so a caller can append it unconditionally.
     /// </summary>
-    public static string BatchNotAnalysedClause(int notAnalysed, int totalUnits, string unit = "function")
+    public static string BatchNotAnalysedClause(int notAnalysed, int totalUnits, string unit = "function",
+                                                string? units = null)
         => notAnalysed <= 0
             ? ""
             : $" ⚠ {notAnalysed:N0} of {totalUnits:N0} {unit}(s) were NOT analysed (native code this build "

@@ -325,6 +325,59 @@ public class PartialResultNoticeTests
     public void IsPartialCell_only_flags_cells_the_deadline_truncated(string? cell, bool expected)
         => Assert.Equal(expected, XrefFormat.IsPartialCell(cell));
 
+    // ---- [PARTIAL-UNIT-PLURAL] a counted noun is passed whole, singular and plural, never built from "s" ----
+    //
+    // The clauses wrote "{unit}(s)" and "{unit}s", so Find Func's "class" read "2 of 5 class(s) ... a 0 on those
+    // classs". The plural is the caller's; the noun agrees with the total, the verb and "that / those" with the count.
+
+    [Fact]
+    public void BatchPartialClause_TakesTheCallersPlural()
+    {
+        var s = PartialResultNotice.BatchPartialClause(2, 5, "class", units: "classes");
+        Assert.Contains("2 of 5 classes hit the scan deadline and are marked partial", s, StringComparison.Ordinal);
+        Assert.Contains("a 0 on those classes means", s, StringComparison.Ordinal);
+        Assert.DoesNotContain("(s)", s, StringComparison.Ordinal);
+        Assert.DoesNotContain("classs", s, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BatchPartialClause_OneOfOne_IsSingular()
+    {
+        var s = PartialResultNotice.BatchPartialClause(1, 1);
+        Assert.Contains("1 of 1 row hit the scan deadline and is marked partial", s, StringComparison.Ordinal);
+        Assert.Contains("a 0 on that row means", s, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BatchPartialClause_DefaultPlural_IsTheUnitPlusS()
+    {
+        // CONTROL: the callers that count rows keep their wording, without the "(s)".
+        var s = PartialResultNotice.BatchPartialClause(3, 40);
+        Assert.Contains("3 of 40 rows hit the scan deadline and are marked partial", s, StringComparison.Ordinal);
+        Assert.Contains("a 0 on those rows means", s, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BatchCapClause_TakesTheCallersPlural_AndAgrees()
+    {
+        var many = PartialResultNotice.BatchCapClause(2, 5, 200, "class", units: "classes");
+        Assert.Contains("2 of 5 classes reached the 200-result cap", many, StringComparison.Ordinal);
+        Assert.Contains("their counts (shown as N+) are lower bounds", many, StringComparison.Ordinal);
+        var one = PartialResultNotice.BatchCapClause(1, 1, 200, "class", units: "classes");
+        Assert.Contains("1 of 1 class reached the 200-result cap", one, StringComparison.Ordinal);
+        Assert.Contains("its count (shown as N+) is a lower bound", one, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void BatchNotAnalysedClause_Agrees()
+    {
+        Assert.Contains("2 of 9 functions were NOT analysed", PartialResultNotice.BatchNotAnalysedClause(2, 9),
+            StringComparison.Ordinal);
+        var one = PartialResultNotice.BatchNotAnalysedClause(1, 9);
+        Assert.Contains("1 of 9 functions was NOT analysed", one, StringComparison.Ordinal);
+        Assert.Contains("its \"n/a\" is not a 0", one, StringComparison.Ordinal);
+    }
+
     [Fact]
     public void BatchPartialClause_is_silent_when_nothing_was_partial()
         => Assert.Equal("", PartialResultNotice.BatchPartialClause(0, 40));
