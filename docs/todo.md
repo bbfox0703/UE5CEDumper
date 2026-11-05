@@ -400,7 +400,10 @@ the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVE
 
 ## 🧭 Maintainer request 2026-11-04 — what moving the UI's hard-coded English into en.axaml would take, ahead of UI languages `[I18N-READINESS-2026-11-04]`
 
-> **Status: scoped, not started. The maintainer decides whether and when.** The question was what problems moving the
+> **Status (2026-11-05): P1 and P3-P5 done; the safety nets next. Policy, from the maintainer (working-lessons §6):**
+> open an architecture a second language can be built on, Traditional Chinese in view; English stays primary and the
+> layout never changes per language; one English word with different meanings keeps different keys; no schedule yet,
+> so strings move when a file is touched, never in a sweep. **Was:** scoped, not started. The question was what problems moving the
 > remaining hard-coded English into `en.axaml` would raise, as preparation for more UI languages later. The ask's ground
 > rules: English stays primary, and another language that overflows the layout or lacks glyphs is out of scope.
 > `[VM-INLINE-STRINGS]` (2026-09-26: the existing view-model status literals stay) stands until the maintainer changes it.
@@ -463,8 +466,9 @@ ratchet's baseline, which understates it by more than 2x.
   URLs, tokens).
 - **Switch the dictionary, and at most `CurrentUICulture`; never `CurrentCulture`.** `SnapshotStore` parses typed values
   with `InvariantCulture` + `AllowThousands`, so a comma-decimal display invites "1,5" being read as 15.
-- **Translator context.** 110 texts are shared by 389 keys ('Class' ×15), and some keys sit in the wrong namespace. Move
-  shared buttons to `str.Common.*`, and edit by `x:Key`, never by value.
+- **Translator context.** 110 texts are shared by 389 keys ('Class' ×15), and some keys sit in the wrong namespace.
+  ⚠ **Maintainer, 2026-11-05: one English word with different meanings keeps different keys** (working-lessons §6) --
+  merge into `str.Common.*` only where the meaning is the same. Edit by `x:Key`, never by value.
 
 ## 🐞 Maintainer report 2026-10-09 — FINAL FANTASY RESONANCE DEMO's logs `[FFRS-2026-10-09]`
 
