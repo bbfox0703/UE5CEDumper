@@ -4129,20 +4129,24 @@ public static class CeXmlExportService
     }
 
     internal const string KeyEnumNamesUnavailable = "str.Export.EnumNamesUnavailable";
-    /// <summary>[CEXPORT-ENUMNAMES-NOTE] What an export says when UEnum::Names was never located on this build.</summary>
-    internal static string EnumNamesUnavailableNote => AobMakerStatus.Say(KeyEnumNamesUnavailable,
-        "Enum member names could not be read on this build (UEnum::Names was not found): enum fields have no dropdown and show as plain numbers");
+    /// <summary>[CEXPORT-ENUMNAMES-NOTE] What an EXPORT says, as an XML comment, when UEnum::Names was never located on
+    /// this build. ⛔ An artifact: English, never from en.axaml -- a table written under one UI language must read the same
+    /// under another. [I18N-READINESS-2026-11-04] P4</summary>
+    internal const string EnumNamesUnavailableExportNote =
+        "Enum member names could not be read on this build (UEnum::Names was not found): enum fields have no dropdown and show as plain numbers";
+    /// <summary>The same fact on the STATUS line, in the UI's words (en.axaml).</summary>
+    internal static string EnumNamesUnavailableNote => AobMakerStatus.Say(KeyEnumNamesUnavailable, EnumNamesUnavailableExportNote);
 
     /// <summary>[CEXPORT-ENUMNAMES-NOTE] A status line's word on the enum note an export wrote, or "".</summary>
     internal static string EnumNamesStatus(IReadOnlyList<string> notes)
-        => notes.Contains(EnumNamesUnavailableNote) ? " ⚠ " + EnumNamesUnavailableNote : "";
+        => notes.Contains(EnumNamesUnavailableExportNote) ? " ⚠ " + EnumNamesUnavailableNote : "";
 
     /// <summary>[CEXPORT-ENUMNAMES-NOTE] The note, when <paramref name="namesFailed"/> and an exported field holds an enum
     /// (a dropdown the latch left empty); "" otherwise. A DataTable goes out through its synthetic RowMap field, so its
     /// rows' fields are looked at too (review round 2).</summary>
     internal static string EnumNamesNote(bool namesFailed, IEnumerable<LiveFieldValue> fields)
         => namesFailed && fields.Any(f => HoldsEnum(f) || f.DataTableRowData?.Any(r => r.Fields.Any(HoldsEnum)) == true)
-            ? EnumNamesUnavailableNote : "";
+            ? EnumNamesUnavailableExportNote : "";
 
     private static bool HoldsEnum(LiveFieldValue f)
         => f.TypeName == "EnumProperty" || !string.IsNullOrEmpty(f.EnumAddr)

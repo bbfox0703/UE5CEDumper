@@ -656,7 +656,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
                 : $"{sr.ClassName}::{sr.PropName} (defined on {sr.DefiningClassName})";
             rows.Add(new CtPropertyRow
             {
-                Category     = PropertyScoringTable.DisplayName(sr.Category),
+                Category     = PropertyScoringTable.CtGroupName(sr.Category),   // the CT's group, not the chip's label
                 Description  = desc,
                 FreezeParams = fp,
             });

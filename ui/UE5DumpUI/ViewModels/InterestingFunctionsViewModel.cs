@@ -857,7 +857,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
 
             rows.Add(new CtFunctionRow
             {
-                Category    = KeywordScoringTable.DisplayName(sr.Category),
+                Category    = KeywordScoringTable.CtGroupName(sr.Category),   // the CT's group, not the chip's label
                 Description = desc,
                 ClassName   = sr.ClassName,
                 FuncName    = sr.FuncName,

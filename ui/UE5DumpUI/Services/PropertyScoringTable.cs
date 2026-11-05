@@ -491,8 +491,13 @@ public static class PropertyScoringTable
         return bonuses;
     }
 
-    /// <summary>Display label for a property category.</summary>
-    public static string DisplayName(PropertyCategory cat) => cat switch
+    /// <summary>Display label for a property category. The UI's word: when the UI is translated, this changes and
+    /// <see cref="CtGroupName"/> does not.</summary>
+    public static string DisplayName(PropertyCategory cat) => CtGroupName(cat);
+
+    /// <summary>[I18N-READINESS-2026-11-04] P4. The group a generated CT files a property category's records under.
+    /// ⛔ DO NOT LOCALIZE: an artifact, so a table saved under one UI language keeps its groups under another.</summary>
+    public static string CtGroupName(PropertyCategory cat) => cat switch
     {
         PropertyCategory.Stats     => "Stats",
         PropertyCategory.Combat    => "Combat",

@@ -25,6 +25,8 @@ public readonly record struct TrainerEntry(string Description, string Script);
 /// </summary>
 public static class StandaloneTrainerScriptGenerator
 {
+    // ⛔ DO NOT LOCALIZE: a CE record's Description is how the emitted Lua finds it (getMemoryRecordByDescription), and
+    // how a saved table names it. [I18N-READINESS-2026-11-04] P4
     public const string SetupDescription = "UE5 Trainer: Setup (tick this first)";
     private const string SaveDescription = "UE5 Trainer: TP Save position";
     private const string RecallDescription = "UE5 Trainer: TP Recall position";
@@ -538,7 +540,7 @@ public static class StandaloneTrainerScriptGenerator
     private static void AppendUntick(StringBuilder sb, string desc)
     {
         Line(sb, "createTimer(50, function()");
-        Line(sb, $"  local mr = getAddressList().getMemoryRecordByDescription('{desc}')");
+        Line(sb, $"  local mr = getAddressList().getMemoryRecordByDescription('{CeLuaHygiene.EscapeLuaString(desc)}')");
         Line(sb, "  if mr then mr.Active = false end");
         Line(sb, "end)");
     }

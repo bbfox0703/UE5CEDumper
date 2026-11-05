@@ -63,6 +63,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     // DLL-mailbox scripts (Teleport / Movement / Fly) and the no-DLL standalone
     // trainer are kept in SEPARATE groups. (Needs an AOBMaker plugin that handles the
     // `group` field; older builds ignore it and land the records at root.)
+    // ⛔ DO NOT LOCALIZE: the plugin finds-or-creates a group BY NAME, so a translated name would start a second
+    // folder in a table the user already has. [I18N-READINESS-2026-11-04] P4
     private const string CeGroupDll = "UE5CEDumper (DLL)";
     private const string CeGroupTrainer = "UE5CEDumper (no-DLL trainer)";
 
