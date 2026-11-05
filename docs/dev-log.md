@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-11-05 (build 3688) — UE 5.5's narrow strings in optionals, struct arrays and Value Search; a struct array's FString member shows its text `[VND9-04]`
+
+- **A struct array's string member shows its text** in the Live Walker (`Text = RowStrAlpha`), as a top-level string
+  field does; an FString member said `(str)`, and a UE 5.5 `FUtf8String` / `FAnsiString` member showed its pointer's
+  hex.
+- **A `TOptional<FUtf8String>` / `TOptional<FAnsiString>` is read** like a `TOptional<FString>`, set or unset; it was
+  refused as "not decoded".
+- **Value Search's FString type finds UE 5.5's narrow strings too**, decoding each match at its own width (a direct
+  field, a container element, a struct-array member, and the next scan's re-read), and V1c gates their optionals.
+- **Property Search** suggests `Utf8StrProperty` and `AnsiStrProperty` in the type filter.
+- **Checked live on build 3688** (`tools/verify/vnd9_live.py`, DumperTest Shipping 5.4): all six checks, including
+  `Arr_StrRows[0].Text = RowStrAlpha` and an FString value search that finds and keeps a direct field (統一), an
+  array element and a struct-array member. No fixture holds a narrow string, so that half rests on unit tests.
+- Tests: dll_core_test 1487 checks and dll_helpers_test 3754, 0 failures; C# 7443 passed, 0 failed; headless 70.
+  AOT UI 61,666,816 bytes.
+
 ## 2026-11-05 (build 3687) — A soft reference to an actor names the actor; FIRE shows a returned string's text; Dissect knows UE 5.5's narrow strings `[VND9-01]` `[VND9-02]` `[VND9-03]` `[VND9-DOC]`
 
 - **A soft pointer to an object inside an asset keeps its sub-path.** A soft reference to an actor in a level reads
