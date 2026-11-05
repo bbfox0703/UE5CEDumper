@@ -2916,6 +2916,29 @@ static void Test_ValueScan_FieldDisplayName() {
 // [A2-TOPTIONAL-VALUESCAN] Value Scan V1c sized the TOptional flag with Radar::OptionalFlagOffset's loose "bigger than
 // T" rule and never gated an intrusive optional: on 5.5+ an unset FString / FName / FText optional was scanned as a
 // value, and its "flag" read from the neighbour's byte. The decision is now the resolved layout's.
+// [VND9-04] UE 5.5's narrow strings in Value Scan. FUtf8String / FAnsiString come from FString's template (one
+// { Data, Num, Max } header, one unset state), so an FString scan takes them, an intrusive optional of one gates on
+// FString's sentinel, and the layout code aligns them like FString. Each knew "StrProperty" only.
+static void Test_ValueScan_NarrowStrings() {
+    using Ubel::OptionalLayout;
+    using Ubel::OptionalUnsetSentinel;
+    const auto& names = Radar::PropertyTypeNames(Radar::DataType::FString);
+    auto has = [&](const char* t) { for (const auto& n : names) if (n == t) return true; return false; };
+    for (const char* t : { "Utf8StrProperty", "AnsiStrProperty" }) {
+        int32_t off = 0;
+        OptionalUnsetSentinel sen = OptionalUnsetSentinel::None;
+        const std::string tn = t;
+        EXPECT(("VND9-04 an FString value scan takes " + tn).c_str(), has(t));
+        EXPECT(("VND9-04 V1C an intrusive " + tn + " optional gates on FString's ArrayMax sentinel").c_str(),
+               Ubel::V1cOptionalGate(OptionalLayout::Intrusive, tn, 16, off, sen)
+               && sen == OptionalUnsetSentinel::FStringMaxNone);
+        EXPECT(("VND9-04 Scharf " + tn + " is 8-aligned, like FString").c_str(),
+               Scharf::RequiredAlignment(tn, 16, false) == 8);
+    }
+    EXPECT("VND9-04 control: an FString value scan still takes StrProperty", has("StrProperty"));
+    EXPECT("VND9-04 control: ...and not TextProperty, which has its own scan type", !has("TextProperty"));
+}
+
 static void Test_ValueScan_V1cOptionalGate() {
     using Ubel::OptionalLayout;
     using Ubel::OptionalUnsetSentinel;
@@ -11537,6 +11560,7 @@ int main() {
     RUN(Test_ValueScan_SessionLifecycle);
     RUN(Test_ValueScan_FieldDisplayName);
     RUN(Test_ValueScan_V1cOptionalGate);
+    RUN(Test_ValueScan_NarrowStrings);
     RUN(Test_ValueScan_OrderedView);
     RUN(Test_IsEnginePackage);
     RUN(Test_CanonicalizeObjectPath);
