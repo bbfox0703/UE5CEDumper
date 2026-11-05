@@ -29,7 +29,7 @@ WHAT IT CHECKS, and the evidence each check needs:
   P5  [VND9-04] DumperTest only: a struct array's FString member shows its TEXT -- `Arr_StrRows[0]`'s `Text`
       reads "RowStrAlpha", where it said "(str)". `Note` (an FText) is the control.
   P6  [VND9-04] DumperTest only, a NO-REGRESSION check: an FString value search still finds a direct field
-      (`PayloadString`), an array element (`Arr_Str[1]`) and a struct-array member (`Arr_StrRows[0].Text`), and a
+      (`Str_Even2_OneNull`, CJK text; `PayloadString` is empty at rest), an array element (`Arr_Str[1]`) and a struct-array member (`Arr_StrRows[0].Text`), and a
       next scan keeps each. These are the four string readers the fix rerouted through the type's own width; no
       fixture holds a UE 5.5 narrow string, so the narrow arm is unit-tested only.
 
@@ -174,8 +174,8 @@ def main():
                 fails.append("P5")
 
             say("\n== P6 [VND9-04] no regression: an FString value search through each reader ==")
-            payload = (field(w, "PayloadString") or {}).get("value") or ""
-            for label, value, want in (("a direct field", payload, "PayloadString"),
+            direct = (field(w, ALIAS_FIELD) or {}).get("value") or ""
+            for label, value, want in (("a direct field", direct, ALIAS_FIELD),
                                        ("an array element", "StrElemBetaBeta", "Arr_Str"),
                                        ("a struct-array member", "RowStrAlpha", "Arr_StrRows")):
                 if not value:
