@@ -152,6 +152,18 @@ public class PropertySearchFilterTests
         vm.Dispose();
     }
 
+    // [VND9-04] UE 5.5's narrow strings: the DLL walks, previews and value-scans them, and "str" suggested only the
+    // wide FString's type.
+    [Theory]
+    [InlineData("Utf8StrProperty")]
+    [InlineData("AnsiStrProperty")]
+    public void TypeFilterSuggestions_IncludeTheUE55NarrowStrings(string typeName)
+    {
+        var vm = new PropertySearchViewModel(new SearchDump(), new NoopLog());
+        Assert.Contains(typeName, vm.PropertyTypeSuggestions);
+        vm.Dispose();
+    }
+
     // ==================================================================
     // Audit #5 Z4 / Z10 — the cap must reach BOTH surfaces, and the advice
     // must name a control the panel actually has.
