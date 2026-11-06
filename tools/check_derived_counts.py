@@ -190,11 +190,16 @@ CHECKS = [
         # sits in is still RIGHT (20 .cpp, Fern and Stark included, reach no test target);
         # only its enumeration had rotted, which is the exact failure this whole gate exists
         # for: a reader cannot tell a stale number from a live one.
+        # Two ways in: a test TU #includes "../src/X.cpp", or dll/CMakeLists.txt lists src/X.cpp as a source of a
+        # test executable (everything after `if(BUILD_DLL_TESTS)`). Counting only the first missed Falsch.cpp, which
+        # reaches dll_helpers_test through CMake alone, and would have blessed a fraction one short.
         derive=lambda r: len({
             m for f in glob.glob(os.path.join(r, "dll", "tests", "*.cpp"))
             for m in re.findall(r"\.\./src/([A-Za-z_]+\.cpp)", read(f))
-        }),
-        derive_cmd="unique ../src/*.cpp includes across dll/tests/*.cpp",
+        } | set(re.findall(r"\$\{CMAKE_CURRENT_SOURCE_DIR\}/src/([A-Za-z_]+\.cpp)",
+                           read(os.path.join(r, "dll", "CMakeLists.txt")).split("if(BUILD_DLL_TESTS)", 1)[-1]))),
+        derive_cmd="unique ../src/*.cpp includes across dll/tests/*.cpp, plus src/*.cpp listed by the test targets in "
+                   "dll/CMakeLists.txt",
         claims=[
             ("CLAUDE.md", r"\*\*(\d+) of the \d+\*\* dll/src \.cpp files"),
         ],

@@ -45,6 +45,7 @@
 // file rotation, directory sweeps — none of which this test is about.
 namespace Sein {
 void Info(const char*, const char*, ...) {}
+void Warn(const char*, const char*, ...) {}
 void Error(const char*, const char*, ...) {}
 }  // namespace Sein
 

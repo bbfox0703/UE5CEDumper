@@ -47,6 +47,7 @@
 #include "../src/Methode.h"    // NarrowForAnsiLoad (header-inline, pure) -- the CE-plugin inject path, [PATH-METHODE-NO8DOT3]
 #include "../src/Flamme.h"     // ShouldPublishAtomicWrite (constexpr, pure) — hint-cache publish gate
 #include "../src/Lager.h"      // MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY])
+#include "../src/Falsch.h"     // MinHook trampoline pre-flight against Zydis ([MH-TRAMPOLINE-PREFLIGHT])
 #include "../src/Wirbel.h"     // BugItGoRefusal (constexpr, pure) -- [TELEPORT-BUGITGO-PARENTREL]
 
 #include <Windows.h>
@@ -11198,7 +11199,7 @@ static void Test_Lager_HolderCandidateReadable() {
     using namespace Lager;
     EXPECT("execute-read code is readable", ProtectIsReadableCode(kPageExecuteRead));
     EXPECT("execute-read-write code is readable", ProtectIsReadableCode(kPageExecuteReadWrite));
-    EXPECT("execute-only code is NOT readable", !ProtectIsReadableCode(kPageExecute));
+    EXPECT("execute-only code is readable (x86-64 has no user-mode execute-only)", ProtectIsReadableCode(kPageExecute));
     EXPECT("a guard page is NOT readable", !ProtectIsReadableCode(kPageExecuteRead | kPageGuard));
     EXPECT("a read-only page is not code", !ProtectIsReadableCode(0x02));
     EXPECT("MinHook calls execute-only executable", ProtectIsExecutable(kPageExecute));
@@ -11206,8 +11207,11 @@ static void Test_Lager_HolderCandidateReadable() {
 
     EXPECT("an ordinary entry point is taken",
            HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead));
-    EXPECT("an execute-only target is refused",
-           !HolderCandidateReadable(kMemCommit, kPageExecute, kMemCommit, kPageExecute, kMemCommit, kPageExecute));
+    EXPECT("an execute-only target is taken",
+           HolderCandidateReadable(kMemCommit, kPageExecute, kMemCommit, kPageExecute, kMemCommit, kPageExecute));
+    EXPECT("a guarded target is refused",
+           !HolderCandidateReadable(kMemCommit, kPageExecuteRead | kPageGuard, kMemCommit, kPageExecuteRead,
+                                    kMemCommit, kPageExecuteRead));
     EXPECT("a target whose next page is not readable is refused",
            !HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, 0x01, kMemCommit, kPageExecuteRead));
     EXPECT("a target whose next page is reserved is refused",
@@ -11219,8 +11223,11 @@ static void Test_Lager_HolderCandidateReadable() {
            HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, 0x02));
     EXPECT("a free page before is fine",
            HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemFree, 0x01));
-    EXPECT("an execute-only page before is refused (MinHook would read it)",
-           !HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, kPageExecute));
+    EXPECT("an execute-only page before is fine (MinHook reads it, and it reads)",
+           HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, kPageExecute));
+    EXPECT("a guarded executable page before is refused (MinHook would read it)",
+           !HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit,
+                                    kPageExecuteRead | kPageGuard));
 }
 
 // buffer.c's boundary rules, each pinned by a map that lands exactly on the boundary -- a review found that moving a
@@ -11440,6 +11447,329 @@ static void Test_Methode_FolderAliasOf() {
         RemoveDirectoryW(odd.c_str());
     } else {
         EXPECT("could create the non-8.3 test folder under %TEMP%", false);
+    }
+}
+
+// ----- Falsch: MinHook trampoline pre-flight ([MH-TRAMPOLINE-PREFLIGHT]) -----------------------------
+// Every case is bytes measured in docs/vendor-pin-reviews.md § minhook. The "Safe" ones decode the same with the
+// pinned and the upstream hde64, so they run on the linked decoder; a case whose hde64 answer differs between revisions
+// pins that revision's answer with FalschFake instead, so the test means the same thing after a bump.
+
+struct FalschOverride { int offset; Falsch::HdeView view; };
+struct FalschFakeCtx { const FalschOverride* rows; size_t count; };
+
+// The linked hde64, except at the offsets a test pins to another revision's measured answer.
+static Falsch::HdeView FalschFake(const uint8_t* code, int offset, void* ctx) {
+    const auto* c = static_cast<const FalschFakeCtx*>(ctx);
+    for (size_t i = 0; i < c->count; ++i)
+        if (c->rows[i].offset == offset) return c->rows[i].view;
+    return Falsch::LinkedHde(code, offset, nullptr);
+}
+
+static Falsch::HdeView FalschView(uint8_t len, uint8_t opcode, uint8_t opcode2, uint8_t modrm, uint8_t immBytes,
+                                  uint64_t imm, uint32_t disp32 = 0) {
+    Falsch::HdeView v;
+    v.len = len;
+    v.opcode = opcode;
+    v.opcode2 = opcode2;
+    v.modrm = modrm;
+    v.modrmReg = static_cast<uint8_t>((modrm >> 3) & 7);
+    v.immBytes = immBytes;
+    v.imm = imm;
+    v.disp32 = disp32;
+    return v;
+}
+
+template <size_t N>
+static Falsch::Report FalschCheck(const uint8_t (&bytes)[N], const FalschOverride* rows = nullptr, size_t count = 0) {
+    FalschFakeCtx ctx{ rows, count };
+    return rows ? Falsch::CheckTrampoline(bytes, N, 0x140001000ULL, &FalschFake, &ctx)
+                : Falsch::CheckTrampoline(bytes, N, 0x140001000ULL);
+}
+
+static void Test_Falsch_SafeTargets() {
+    using Falsch::Verdict;
+    // UObject::ProcessEvent as shipped (UE 5.x): push rbp/rsi/rdi/r12 is copied, the jump back lands on push r13.
+    const uint8_t pe[] = { 0x40, 0x55, 0x56, 0x57, 0x41, 0x54, 0x41, 0x55, 0x41, 0x56, 0x41, 0x57,
+                           0x48, 0x81, 0xEC, 0xF0, 0x00, 0x00, 0x00 };
+    Falsch::Report r = FalschCheck(pe);
+    EXPECT("ProcessEvent prologue is safe", r.verdict == Verdict::Safe);
+    EXPECT_EQ_U64("ProcessEvent prologue copies 4 instructions", r.copied, 4);
+    EXPECT("a safe report carries no reason", r.why.empty());
+
+    // user32!GetForegroundWindow (10.0.26100): one 5-byte store.
+    const uint8_t gfw[] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83, 0xEC, 0x20 };
+    r = FalschCheck(gfw);
+    EXPECT("GetForegroundWindow prologue is safe", r.verdict == Verdict::Safe);
+    EXPECT_EQ_U64("GetForegroundWindow copies 1 instruction", r.copied, 1);
+
+    // user32!ClipCursor: jmp [rip+x] into win32u -- RIP-relative, re-pointed, and the walk ends there.
+    const uint8_t clip[] = { 0xFF, 0x25, 0xBA, 0x23, 0x05, 0x00, 0xCC, 0xCC, 0xCC, 0xCC };
+    r = FalschCheck(clip);
+    EXPECT("an import thunk is safe", r.verdict == Verdict::Safe);
+    EXPECT_EQ_U64("an import thunk copies 1 instruction", r.copied, 1);
+
+    // MSVC CRT entry point (the holder's usual target): sub rsp,28h ; call rel32 -- the call becomes CALL_ABS.
+    const uint8_t crt[] = { 0x48, 0x83, 0xEC, 0x28, 0xE8, 0x10, 0x02, 0x00, 0x00, 0x48, 0x83, 0xC4, 0x28, 0xE9,
+                            0x00, 0x01, 0x00, 0x00 };
+    r = FalschCheck(crt);
+    EXPECT("a CRT entry point is safe", r.verdict == Verdict::Safe);
+    EXPECT_EQ_U64("a CRT entry point copies 2 instructions", r.copied, 2);
+
+    // test rcx,rcx ; jz +10h -- a short Jcc out of the patch becomes JCC_ABS.
+    const uint8_t jcc[] = { 0x48, 0x85, 0xC9, 0x74, 0x10, 0x48, 0x8B, 0x01, 0xC3 };
+    EXPECT("a short Jcc out of the patch is safe", FalschCheck(jcc).verdict == Verdict::Safe);
+
+    // jz rel32 (0F 84): the near Jcc MinHook finds through hs.opcode2.
+    const uint8_t jccNear[] = { 0x0F, 0x84, 0x10, 0x00, 0x00, 0x00, 0xC3 };
+    EXPECT("a near Jcc is safe", FalschCheck(jccNear).verdict == Verdict::Safe);
+
+    // jz +2 into the patch itself: copied unchanged, which is right because no length inside it changes.
+    const uint8_t inner[] = { 0x74, 0x02, 0x66, 0x90, 0x48, 0x89, 0x5C, 0x24, 0x08, 0xC3 };
+    r = FalschCheck(inner);
+    EXPECT("a jump inside the patch is safe", r.verdict == Verdict::Safe);
+    EXPECT_EQ_U64("a jump inside the patch: all 3 instructions copied", r.copied, 3);
+
+    // A function another hook already patched: jmp rel32, the walk ends after it.
+    const uint8_t hooked[] = { 0xE9, 0x00, 0x10, 0x00, 0x00, 0xCC, 0xCC };
+    r = FalschCheck(hooked);
+    EXPECT("an already-hooked target is safe", r.verdict == Verdict::Safe);
+    EXPECT_EQ_U64("an already-hooked target copies 1 instruction", r.copied, 1);
+
+    // RIP-relative with an immediate after the displacement: MinHook re-points the 4 bytes before the immediate.
+    const uint8_t ripImm[] = { 0x48, 0x83, 0x3D, 0x10, 0x00, 0x00, 0x00, 0x7F, 0x74, 0x02, 0xC3 };
+    EXPECT("cmp qword [rip+x], imm8 is safe", FalschCheck(ripImm).verdict == Verdict::Safe);
+
+    // What MinHook only jumps back to is not copied, so Zydis is not asked about it: 06 is no instruction in 64-bit
+    // mode, and the walk is still safe when hde64 does not flag it.
+    const uint8_t resume[] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x06, 0x90, 0x90 };
+    const FalschOverride resumeOk[] = { { 5, FalschView(1, 0x06, 0, 0, 0, 0) } };
+    r = FalschCheck(resume, resumeOk, 1);
+    EXPECT("the jump-back instruction is not checked against Zydis", r.verdict == Verdict::Safe);
+    EXPECT_EQ_U64("the jump-back instruction is not counted as copied", r.copied, 1);
+}
+
+static void Test_Falsch_RefusesAWrongTrampoline() {
+    using Falsch::Verdict;
+    // Upstream hde64 (8af6b4a) on vpmaskmovd: hs.opcode2 = 8C, which trampoline.c reads as a Jcc, dropping the store.
+    const uint8_t vex[] = { 0xC4, 0xE2, 0x79, 0x8C, 0x00, 0x90, 0x90, 0x90 };
+    const FalschOverride vexUp[] = { { 0, FalschView(5, 0xC4, 0x8C, 0x00, 0, 0) } };
+    Falsch::Report r = FalschCheck(vex, vexUp, 1);
+    EXPECT("VEX opcode 8C read as a Jcc is refused", r.verdict == Verdict::Unsafe);
+    EXPECT_EQ_U64("VEX opcode 8C: the verdict names offset 0", r.offset, 0);
+    EXPECT("VEX opcode 8C: the reason is given", !r.why.empty());
+
+    // The same misread one instruction in, after a 4-byte push sequence.
+    const uint8_t vexLater[] = { 0x55, 0x48, 0x89, 0xE5, 0xC4, 0xE2, 0x79, 0x8C, 0x00, 0x90 };
+    const FalschOverride vexLaterUp[] = { { 4, FalschView(5, 0xC4, 0x8C, 0x00, 0, 0) } };
+    r = FalschCheck(vexLater, vexLaterUp, 1);
+    EXPECT("VEX opcode 8C at +4 is refused", r.verdict == Verdict::Unsafe);
+    EXPECT_EQ_U64("VEX opcode 8C at +4: the verdict names offset 4", r.offset, 4);
+
+    // Upstream hde64 on xbegin: accepted, and trampoline.c copies its rel32 unchanged (no C7 case).
+    const uint8_t xbegin[] = { 0xC7, 0xF8, 0x10, 0x00, 0x00, 0x00, 0x90, 0x90 };
+    const FalschOverride xbeginUp[] = { { 0, FalschView(6, 0xC7, 0, 0xF8, 4, 0x10) } };
+    EXPECT("xbegin copied unchanged is refused", FalschCheck(xbegin, xbeginUp, 1).verdict == Verdict::Unsafe);
+
+    // Pinned hde64 (d94c64d) on popcnt: 3 bytes where it is 4 -- a truncated instruction in the trampoline.
+    const uint8_t popcnt[] = { 0xF3, 0x0F, 0xB8, 0xC1, 0x48, 0x89, 0x5C, 0x24, 0x08 };
+    const FalschOverride popcntPin[] = { { 0, FalschView(3, 0x0F, 0xB8, 0xC1, 0, 0) } };
+    r = FalschCheck(popcnt, popcntPin, 1);
+    EXPECT("popcnt measured 3 bytes is refused", r.verdict == Verdict::Unsafe);
+
+    // Pinned hde64 on 67 8B 05 disp32: 3 bytes with no displacement, so trampoline.c writes below its instBuf.
+    const uint8_t eip[] = { 0x67, 0x8B, 0x05, 0x10, 0x20, 0x30, 0x00, 0x90 };
+    const FalschOverride eipPin[] = { { 0, FalschView(3, 0x8B, 0, 0x05, 0, 0) } };
+    EXPECT("67-addressing measured short is refused", FalschCheck(eip, eipPin, 1).verdict == Verdict::Unsafe);
+
+    // A call whose target hde64 computes differently from Zydis.
+    const uint8_t call[] = { 0xE8, 0x20, 0x00, 0x00, 0x00, 0x90 };
+    const FalschOverride callWrong[] = { { 0, FalschView(5, 0xE8, 0, 0, 4, 0x10) } };
+    EXPECT("a call to the wrong target is refused", FalschCheck(call, callWrong, 1).verdict == Verdict::Unsafe);
+
+    // RIP-relative with an imm32 after the displacement, measured as having none: MinHook would re-point the immediate.
+    const uint8_t ripImm[] = { 0x48, 0x81, 0x3D, 0x10, 0x00, 0x00, 0x00, 0x44, 0x33, 0x22, 0x11, 0x90 };
+    const FalschOverride ripNoImm[] = { { 0, FalschView(11, 0x81, 0, 0x3D, 0, 0x11223344, 0x10) } };
+    EXPECT("a displacement re-pointed at the wrong bytes is refused",
+           FalschCheck(ripImm, ripNoImm, 1).verdict == Verdict::Unsafe);
+
+    // Bytes that are no instruction at all, which hde64 accepts: refuse rather than copy garbage.
+    const uint8_t junk[] = { 0x06, 0x90, 0x90, 0x90, 0x90, 0x90 };
+    const FalschOverride junkOk[] = { { 0, FalschView(1, 0x06, 0, 0, 0, 0) } };
+    EXPECT("an undecodable copied byte is refused", FalschCheck(junk, junkOk, 1).verdict == Verdict::Unsafe);
+
+    // A RIP-relative reference MinHook cannot re-point from a trampoline up to 1 GB away (it truncates the
+    // displacement without checking it fits): 48 8B 05 with disp32 = 0x50000000. Same answer from every hde64.
+    const uint8_t farRef[] = { 0x48, 0x8B, 0x05, 0x00, 0x00, 0x00, 0x50, 0xC3 };
+    EXPECT("a RIP-relative reference beyond the trampoline's reach is refused",
+           FalschCheck(farRef).verdict == Verdict::Unsafe);
+
+    // The input stops inside the instruction MinHook would copy.
+    const uint8_t cut[] = { 0x48, 0x89, 0x5C };
+    EXPECT("an instruction cut off by the input is refused", FalschCheck(cut).verdict == Verdict::Unsafe);
+
+    // hde64 flags an error: MinHook refuses by itself, which is safe -- the replay says so instead of "unsafe".
+    const FalschOverride err[] = { { 0, [] { Falsch::HdeView v; v.error = true; v.len = 1; return v; }() } };
+    r = FalschCheck(vex, err, 1);
+    EXPECT("an hde64 error is MinHook's own refusal", r.verdict == Verdict::MinHookRefuses);
+    // ... and so is one on the jump-back instruction, which MinHook decodes before deciding not to copy it.
+    const uint8_t resume[] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0xC4, 0xE2, 0x79, 0x8C, 0x00 };
+    const FalschOverride errAt5[] = { { 5, [] { Falsch::HdeView v; v.error = true; v.len = 1; return v; }() } };
+    r = FalschCheck(resume, errAt5, 1);
+    EXPECT("an hde64 error on the jump-back instruction is MinHook's own refusal", r.verdict == Verdict::MinHookRefuses);
+    EXPECT_EQ_U64("an hde64 error on the jump-back instruction names offset 5", r.offset, 5);
+}
+
+static void Test_Falsch_ReadTarget() {
+    using Falsch::Verdict;
+    SYSTEM_INFO si{};
+    GetSystemInfo(&si);
+    const size_t page = si.dwPageSize;
+    // Three pages: code ends near the end of the middle one, so MinHook's read span runs into the third.
+    auto* base = static_cast<uint8_t*>(VirtualAlloc(nullptr, page * 3, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+    EXPECT("VirtualAlloc for the ReadTarget test", base != nullptr);
+    if (!base) return;
+    const uint8_t gfw[] = { 0x48, 0x89, 0x5C, 0x24, 0x08, 0x57, 0x48, 0x83, 0xEC, 0x20 };
+    uint8_t* near_end = base + 2 * page - 16;
+    std::memset(base, 0xCC, page * 3);
+    std::memcpy(near_end, gfw, sizeof(gfw));
+    std::memcpy(base + page, gfw, sizeof(gfw));
+    DWORD old = 0;
+    VirtualProtect(base, page * 3, PAGE_EXECUTE_READ, &old);
+
+    uint8_t out[Falsch::kSpan];
+    std::string why;
+    EXPECT("readable code across two pages is read", Falsch::ReadTarget(reinterpret_cast<uintptr_t>(near_end), out, why));
+    EXPECT("the bytes read are the target's", std::memcmp(out, gfw, sizeof(gfw)) == 0);
+    EXPECT("VetHookTarget on readable code is safe",
+           Falsch::VetHookTarget(reinterpret_cast<uintptr_t>(near_end)).verdict == Verdict::Safe);
+
+    VirtualProtect(base + 2 * page, page, PAGE_NOACCESS, &old);
+    why.clear();
+    EXPECT("a span that runs into a no-access page is refused",
+           !Falsch::ReadTarget(reinterpret_cast<uintptr_t>(near_end), out, why));
+    EXPECT("a refusal says why", !why.empty());
+    EXPECT("VetHookTarget on an unreadable span is unsafe",
+           Falsch::VetHookTarget(reinterpret_cast<uintptr_t>(near_end)).verdict == Verdict::Unsafe);
+
+    // Execute-only pages read fine on x86-64 (no user-mode execute-only), and the SEH copy proves it per target.
+    VirtualProtect(base + page, page, PAGE_EXECUTE, &old);
+    VirtualProtect(base + 2 * page, page, PAGE_EXECUTE_READ, &old);
+    EXPECT("an execute-only target is read",
+           Falsch::ReadTarget(reinterpret_cast<uintptr_t>(base + page), out, why));
+    EXPECT("an execute-only target's bytes are its own", std::memcmp(out, gfw, sizeof(gfw)) == 0);
+
+    // target - 5 sits in an executable page: MinHook's IsExecutableAddress says yes, then it reads it.
+    VirtualProtect(base, page, PAGE_EXECUTE, &old);
+    VirtualProtect(base + page, page * 2, PAGE_EXECUTE_READ, &old);
+    EXPECT("a target after an execute-only page is read",
+           Falsch::ReadTarget(reinterpret_cast<uintptr_t>(base + page), out, why));
+    VirtualProtect(base, page, PAGE_EXECUTE_READ | PAGE_GUARD, &old);
+    EXPECT("a target after a guarded executable page is refused",
+           !Falsch::ReadTarget(reinterpret_cast<uintptr_t>(base + page), out, why));
+    MEMORY_BASIC_INFORMATION mbi{};
+    VirtualQuery(base, &mbi, sizeof(mbi));
+    EXPECT("... without touching the guard page", (mbi.Protect & PAGE_GUARD) != 0);
+    VirtualProtect(base, page, PAGE_READONLY, &old);
+    EXPECT("a target after a read-only page is read (MinHook does not read it)",
+           Falsch::ReadTarget(reinterpret_cast<uintptr_t>(base + page), out, why));
+
+    // A guard page at the end of the span is refused before anything reads it.
+    VirtualProtect(base + 2 * page, page, PAGE_EXECUTE_READ | PAGE_GUARD, &old);
+    EXPECT("a span that ends in a guard page is refused",
+           !Falsch::ReadTarget(reinterpret_cast<uintptr_t>(near_end), out, why));
+    VirtualQuery(base + 2 * page, &mbi, sizeof(mbi));
+    EXPECT("... and the guard is still armed", (mbi.Protect & PAGE_GUARD) != 0);
+
+    // Above user space VirtualQuery fails, and MinHook's pinned IsExecutableAddress would then read a stale struct.
+    EXPECT("an address above user space is unsafe",
+           Falsch::VetHookTarget(0xFFFF800000001000ULL).verdict == Verdict::Unsafe);
+
+    VirtualFree(base, 0, MEM_RELEASE);
+}
+
+// Review round 1 ([MH-TRAMPOLINE-PREFLIGHT]): every vector here was measured against MinHook's real
+// CreateTrampolineFunction with both hde64 revisions, which answer the same for all of them.
+static void Test_Falsch_ReviewVectors() {
+    using Falsch::Verdict;
+    // A jump inside the patch is copied byte for byte. Back over a Jcc that MinHook rebuilt (2 bytes -> 16), it lands
+    // inside the rebuilt jump's address in the trampoline.
+    const uint8_t backOverJcc[] = { 0x74, 0x10, 0xEB, 0xFC, 0x90, 0x48, 0x89, 0x5C, 0x24, 0x08 };
+    Falsch::Report r = FalschCheck(backOverJcc);
+    EXPECT("a jump back over a rebuilt Jcc is refused", r.verdict == Verdict::Unsafe);
+    EXPECT_EQ_U64("a jump back over a rebuilt Jcc: the verdict names the jump", r.offset, 2);
+    const uint8_t spin[] = { 0x38, 0x01, 0x74, 0x10, 0xEB, 0xFA, 0x90, 0x90 };   // cmp [rcx],al / je out / jmp back
+    EXPECT("a spin loop over a rebuilt Jcc is refused", FalschCheck(spin).verdict == Verdict::Unsafe);
+    // ... and the same shape with nothing rebuilt in between is right, so it stays safe.
+    const uint8_t pauseLoop[] = { 0xF3, 0x90, 0xEB, 0xFC, 0x90, 0x48, 0x89, 0x5C, 0x24, 0x08 };
+    EXPECT("a jump back over nothing rebuilt is safe", FalschCheck(pauseLoop).verdict == Verdict::Safe);
+    // A jump into the middle of a copied instruction lands on other bytes in the trampoline.
+    const uint8_t midInsn[] = { 0xEB, 0x01, 0xB8, 0x48, 0x8B, 0x05, 0x00, 0x90, 0x90 };
+    EXPECT("a jump into the middle of an instruction is refused", FalschCheck(midInsn).verdict == Verdict::Unsafe);
+    const uint8_t midThunk[] = { 0xEB, 0x01, 0xFF, 0x25, 0x10, 0x00, 0x00, 0x00, 0xCC };
+    EXPECT("a jump into the middle of jmp [rip+x] is refused", FalschCheck(midThunk).verdict == Verdict::Unsafe);
+
+    // A RIP-relative read of the bytes the hook overwrites reads the hook's jump once it is enabled.
+    const uint8_t readsSelf[] = { 0x48, 0x8B, 0x05, 0xF9, 0xFF, 0xFF, 0xFF, 0xC3 };
+    EXPECT("a RIP-relative read of the patched bytes is refused", FalschCheck(readsSelf).verdict == Verdict::Unsafe);
+    // LEA only computes the address, which stays right.
+    const uint8_t leaSelf[] = { 0x48, 0x8D, 0x05, 0xF9, 0xFF, 0xFF, 0xFF, 0xC3 };
+    EXPECT("an LEA of the patched bytes is safe", FalschCheck(leaSelf).verdict == Verdict::Safe);
+
+    // Walk termination: jz +1 over a RET into the patch, then a RIP-relative load beyond MinHook's reach -- the walk
+    // must go past the RET (it sits before the jump's target) and reach the load.
+    const uint8_t pastRet[] = { 0x74, 0x01, 0xC3, 0x48, 0x8B, 0x05, 0x00, 0x00, 0x00, 0x50 };
+    r = FalschCheck(pastRet);
+    EXPECT("the walk continues past a RET that an internal jump skips", r.verdict == Verdict::Unsafe);
+    EXPECT_EQ_U64("... and stops at the far load at +3", r.offset, 3);
+    const uint8_t pastRetNear[] = { 0x74, 0x01, 0xC3, 0x48, 0x8B, 0x05, 0x10, 0x00, 0x00, 0x00, 0xC3 };
+    r = FalschCheck(pastRetNear);
+    EXPECT("the same walk with a near load is safe", r.verdict == Verdict::Safe);
+    EXPECT_EQ_U64("the same walk copies 3 instructions", r.copied, 3);
+    const uint8_t fourPushes[] = { 0x55, 0x56, 0x57, 0x53, 0x48, 0x8B, 0x05, 0x00, 0x00, 0x00, 0x50 };
+    r = FalschCheck(fourPushes);
+    EXPECT("a fifth copied instruction is checked too", r.verdict == Verdict::Unsafe);
+    EXPECT_EQ_U64("... at +4", r.offset, 4);
+
+    // Negative displacements: the Jcc target arithmetic and the reach check both take the sign.
+    const uint8_t jccBack[] = { 0x48, 0x85, 0xC9, 0x74, 0xF0, 0x48, 0x8B, 0x01, 0xC3 };
+    EXPECT("a short Jcc backward out of the patch is safe", FalschCheck(jccBack).verdict == Verdict::Safe);
+    const uint8_t jccNear[] = { 0x0F, 0x84, 0x10, 0x01, 0x00, 0x00, 0xC3 };
+    EXPECT("a near Jcc with a 0x110 displacement is safe", FalschCheck(jccNear).verdict == Verdict::Safe);
+    const uint8_t farBack[] = { 0x48, 0x8B, 0x05, 0x00, 0x00, 0x00, 0xB0, 0xC3 };
+    EXPECT("a RIP-relative reference far behind is refused", FalschCheck(farBack).verdict == Verdict::Unsafe);
+
+    // Upstream hde64 on Knights Corner jkzd (VEX 0F 84): trampoline.c takes the condition from hs.opcode C4.
+    const uint8_t jkzd[] = { 0xC4, 0xE1, 0x78, 0x84, 0x10, 0x00, 0x00, 0x00, 0x90 };
+    const FalschOverride jkzdUp[] = { { 0, FalschView(8, 0xC4, 0x84, 0x00, 4, 0x10) } };
+    EXPECT("jkzd read as a Jcc is refused", FalschCheck(jkzd, jkzdUp, 1).verdict == Verdict::Unsafe);
+
+    // MinHook's own refusals, from the linked decoder: a LOCK on a NOP, and a LOOP that leaves the patch.
+    const uint8_t lockNop[] = { 0xF0, 0x90, 0x90, 0x90, 0x90, 0x90 };
+    EXPECT("LOCK NOP is MinHook's own refusal", FalschCheck(lockNop).verdict == Verdict::MinHookRefuses);
+    const uint8_t loopOut[] = { 0xE2, 0x10, 0x90, 0x90, 0x90, 0x90 };
+    EXPECT("a LOOP out of the patch is MinHook's own refusal", FalschCheck(loopOut).verdict == Verdict::MinHookRefuses);
+
+    // A later branch in the bytes read that lands inside the hook's jump: a strlen-shaped loop whose head is +2.
+    const uint8_t loopIntoPatch[] = { 0x33, 0xC0, 0x80, 0x3C, 0x01, 0x00, 0x74, 0x05, 0x48, 0xFF, 0xC0, 0xEB, 0xF5,
+                                      0xC3 };
+    r = FalschCheck(loopIntoPatch);
+    EXPECT("a later branch into +1..+4 is refused", r.verdict == Verdict::Unsafe);
+    EXPECT_EQ_U64("... and the verdict names the branch at +11", r.offset, 11);
+}
+
+// The live user32 exports Grausam hooks, on whatever Windows runs the test. A failure here means the foreground lock
+// would refuse to hook on that Windows build: read the reason before changing anything.
+static void Test_Falsch_GrausamTargetsOnThisWindows() {
+    HMODULE user32 = LoadLibraryW(L"user32.dll");
+    EXPECT("user32 loads", user32 != nullptr);
+    if (!user32) return;
+    for (const char* name : { "GetForegroundWindow", "ClipCursor", "SetCursorPos" }) {
+        const auto p = reinterpret_cast<uintptr_t>(GetProcAddress(user32, name));
+        const Falsch::Report r = Falsch::VetHookTarget(p);
+        if (r.verdict != Falsch::Verdict::Safe)
+            std::printf("    user32!%s: %s at +%d: %s\n", name, Falsch::VerdictName(r.verdict), r.offset, r.why.c_str());
+        EXPECT("a user32 export Grausam hooks is safe", p != 0 && r.verdict == Falsch::Verdict::Safe);
     }
 }
 
@@ -11793,6 +12123,11 @@ int main() {
     RUN(Test_Lager_ChooseHolderTargets);
     RUN(Test_Lager_HolderCandidateReadable);
     RUN(Test_Lager_BufferCBoundaryRules);      // buffer.c's >= / <= / clip boundaries, one map each
+    RUN(Test_Falsch_SafeTargets);
+    RUN(Test_Falsch_RefusesAWrongTrampoline);
+    RUN(Test_Falsch_ReviewVectors);
+    RUN(Test_Falsch_ReadTarget);
+    RUN(Test_Falsch_GrausamTargetsOnThisWindows);
 
     std::printf("------------------------------------------\n");
     std::printf("Pass: %d   Fail: %d\n", g_pass, g_fail);

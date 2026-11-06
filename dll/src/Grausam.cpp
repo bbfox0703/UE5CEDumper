@@ -14,6 +14,7 @@
 
 #include "Grausam.h"
 #include "Sein.h"
+#include "Falsch.h"
 
 #include <windows.h>
 #include <MinHook.h>
@@ -187,6 +188,17 @@ void SubclassAllGameWindows() {
     ::EnumWindows(&SubclassEnumProc, 0);
 }
 
+// [MH-TRAMPOLINE-PREFLIGHT] A user32 export MinHook would trampoline wrongly -- a Windows build whose export opens
+// with an instruction MinHook's decoder misreads -- must cost the feature, not the game. Logs why when it refuses.
+bool VetForHook(FARPROC p, const char* name) {
+    const Falsch::Report r = Falsch::VetHookTarget(reinterpret_cast<uintptr_t>(p));
+    if (r.verdict == Falsch::Verdict::MinHookRefuses)   // MH_CreateHook will fail by itself; say why it will
+        Sein::Warn("Grausam", "%s: %s", name, r.why.c_str());
+    if (r.verdict != Falsch::Verdict::Unsafe) return true;
+    Sein::Error("Grausam", "%s hook refused by the trampoline pre-flight at +%d: %s", name, r.offset, r.why.c_str());
+    return false;
+}
+
 }  // namespace
 
 int SetForegroundLock(bool enable) {
@@ -213,6 +225,7 @@ int SetForegroundLock(bool enable) {
             }
 
             // (1) GetForegroundWindow — the primary illusion (idle/pause defeat).
+            if (!VetForHook(pGfw, "GetForegroundWindow")) return -3;
             MH_STATUS st = MH_CreateHook(reinterpret_cast<LPVOID>(pGfw),
                                          reinterpret_cast<LPVOID>(&HookedGetForegroundWindow),
                                          reinterpret_cast<LPVOID*>(&g_origGetForegroundWindow));
@@ -230,9 +243,9 @@ int SetForegroundLock(bool enable) {
             // (3) ClipCursor + SetCursorPos — cursor-lock neutralization. Best
             // effort: a game that never confines the cursor never triggers them,
             // and a failure to hook them must NOT abort the (primary) lock. Enable
-            // per-target, NOT MH_ALL_HOOKS — other modules (Stark/Solitar/Laufen)
-            // share this MinHook instance and must not be re-enabled here.
-            if (pClip
+            // per-target, NOT MH_ALL_HOOKS — every module that hooks shares this one
+            // MinHook instance, and the holder's hook must never be enabled.
+            if (pClip && VetForHook(pClip, "ClipCursor")
                 && MH_CreateHook(reinterpret_cast<LPVOID>(pClip),
                                  reinterpret_cast<LPVOID>(&HookedClipCursor),
                                  reinterpret_cast<LPVOID*>(&g_origClipCursor)) == MH_OK)
@@ -240,7 +253,7 @@ int SetForegroundLock(bool enable) {
             else
                 Sein::Error("Grausam", "ClipCursor hook unavailable — cursor may stay locked when backgrounded");
 
-            if (pSetP
+            if (pSetP && VetForHook(pSetP, "SetCursorPos")
                 && MH_CreateHook(reinterpret_cast<LPVOID>(pSetP),
                                  reinterpret_cast<LPVOID>(&HookedSetCursorPos),
                                  reinterpret_cast<LPVOID*>(&g_origSetCursorPos)) == MH_OK)

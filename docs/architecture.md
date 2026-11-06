@@ -17,7 +17,7 @@ UE5CEDumper/
 │
 ├── dll/                            ← C++ DLL (injected into game process)
 │   ├── CMakeLists.txt              ← DLL build config (versioning, git hash, deps)
-│   └── src/                        ← 31 .cpp + 41 .h (41st: Lager.h, [MH-PRERESERVE-PROXY]; Frieren-themed; see naming-convention.md)
+│   └── src/                        ← 32 .cpp + 42 .h (newest: Falsch, [MH-TRAMPOLINE-PREFLIGHT]; Frieren-themed; see naming-convention.md)
 │       ├── Heiter.cpp              ← dllmain — DLL_PROCESS_ATTACH, AutoStartThreadProc
 │       ├── Methode.cpp             ← CEPlugin — CE plugin Type 5 main menu
 │       ├── Methode.h               ← CEPlugin pure helpers (NarrowForAnsiLoad), tested by dll_helpers_test
@@ -43,6 +43,7 @@ UE5CEDumper/
 │       ├── Utf8Helpers.h           ← UTF-8 conversion leaf utilities
 │       ├── Stark.cpp / .h          ← GameThreadDispatch — MinHook ProcessEvent hook, game-thread queue
 │       ├── Lager.h                 ← TrampolineDepot — pure model of MinHook's trampoline-block search (buffer.c) + PE layout, for the MH_ERROR_MEMORY_ALLOC map
+│       ├── Falsch.cpp / .h         ← TrampolinePreflight — replays MinHook's trampoline build against Zydis and refuses a hook it would copy wrongly; reads targets the way MinHook will
 │       ├── Wirbel.cpp / .h         ← Teleport — marker save/recall + cursor/POV/coord teleport (BugIt-style), build 1027+
 │       ├── Solitar.cpp / .h        ← GodMode — force AActor::bCanBeDamaged + re-assert worker (build 1251)
 │       ├── Laufen.cpp / .h         ← MovementTuning — CMC float knobs ×multiplier + re-assert worker (build ~1799)

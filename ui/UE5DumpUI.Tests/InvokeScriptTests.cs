@@ -3655,35 +3655,116 @@ public class InvokeScriptTests
     [Fact]
     public void HolderReadabilityGuard_CoversEveryByteMinHookDecodes()
     {
-        // The guard before MH_CreateHook(holder) is the only thing that stops an access violation inside MinHook's
-        // spin lock, on the proxy's auto-start thread, at process start. MinHook reads the target with no SEH, and
+        // The read check before MH_CreateHook(holder) stops an access violation inside MinHook's spin lock, on the
+        // proxy's auto-start thread, at process start. MinHook reads the target with no SEH, and
         // CreateTrampolineFunction decodes PAST the prologue: the last instruction it disassembles can start ~19 bytes
         // in, and hde64 reads ~33 more of it, so a 32-byte probe understates the reach. Lager::kHolderReadSpan names
-        // the span with its derivation; HolderCandidateSafe must query the page of target + span - 1 and probe span
-        // bytes, not 32. No test target compiles Stark.cpp, so pin the body.
+        // the span with its derivation; the check must query the page of target + span - 1 and probe span bytes, not
+        // 32. dll_helpers_test drives Falsch::ReadTarget on real pages (Test_Falsch_ReadTarget); no test target
+        // compiles Stark.cpp, so pin that the holder goes through it, and pin ReadTarget's span.
         var lager = MinHookGlue("Lager.h");
         var m = System.Text.RegularExpressions.Regex.Match(lager, @"kHolderReadSpan\s*=\s*(\d+)");
         Assert.True(m.Success, "Lager::kHolderReadSpan not defined -- the holder read span must be a named constant");
         Assert.True(int.Parse(m.Groups[1].Value) >= 52,
             "kHolderReadSpan must cover MinHook's worst-case decode (final start <= 19 + hde64's ~33) = 52");
 
+        // [MH-TRAMPOLINE-PREFLIGHT] The read is Falsch::ReadTarget's, shared with every hook that gets enabled: one
+        // implementation of "every byte MinHook reads is readable", so the holder's and ProcessEvent's cannot drift.
         var stark = MinHookGlue("Stark.cpp");
-        var safe = MinHookGlueBody(stark, "static bool HolderCandidateSafe(uintptr_t target) {");
+        var holder = MinHookGlueBody(stark, "static bool HolderCandidateSafe(uintptr_t target) {");
+        Assert.Contains("uint8_t probe[Falsch::kSpan]", holder, StringComparison.Ordinal);
+        Assert.Contains("return Falsch::ReadTarget(target, probe, why);", holder, StringComparison.Ordinal);
+        Assert.True(System.Text.RegularExpressions.Regex.IsMatch(MinHookGlue("Falsch.h"), @"constexpr\s+size_t\s+kSpan\s*=\s*64\s*;"),
+            "Falsch::kSpan must stay 64, the span Lager derives");
+        Assert.Contains("static_assert(kSpan == Lager::kHolderReadSpan", MinHookGlue("Falsch.cpp"), StringComparison.Ordinal);
+
+        var safe = MinHookGlueBody(MinHookGlue("Falsch.cpp"),
+            "bool ReadTarget(uintptr_t target, uint8_t (&out)[kSpan], std::string& why) {");
         Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(target), &at", safe, StringComparison.Ordinal);
         Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(target + Lager::kHolderReadSpan - 1), &end", safe,
             StringComparison.Ordinal);
         Assert.Contains("VirtualQuery(reinterpret_cast<LPCVOID>(target - 5), &before", safe, StringComparison.Ordinal);
         Assert.Contains("Lager::HolderCandidateReadable(at.State, at.Protect, end.State, end.Protect, before.State, before.Protect)",
             safe, StringComparison.Ordinal);
-        Assert.Contains("uint8_t probe[Lager::kHolderReadSpan]", safe, StringComparison.Ordinal);
-        Assert.Contains("CopyBytesSEH(reinterpret_cast<const void*>(target), probe, sizeof(probe))", safe,
-            StringComparison.Ordinal);
+        Assert.Contains("CopySEH(reinterpret_cast<const void*>(target), out, sizeof(out))", safe, StringComparison.Ordinal);
         Assert.DoesNotContain("target + 31", safe, StringComparison.Ordinal);   // the understated 32-byte reach
-        Assert.DoesNotContain("uint8_t probe[32]", safe, StringComparison.Ordinal);
 
         // The 4 KB header copy is read under SEH too, so a guarded/no-access header page is refused, not faulted on.
         var readLayout = MinHookGlueBody(stark, "static Lager::ImageLayout ReadMainImageLayout() {");
         Assert.Contains("CopyBytesSEH(base, hdr, sizeof(hdr))", readLayout, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void EveryEnabledHook_IsVettedBeforeMinHookBuildsItsTrampoline()
+    {
+        // [MH-TRAMPOLINE-PREFLIGHT] MinHook's CreateTrampolineFunction trusts its own length decoder, and when that
+        // decoder misreads an instruction it returns MH_OK with a trampoline that runs different code: the game crashes
+        // or misbehaves in the hooked function with nothing logged (docs/vendor-pin-reviews.md § minhook). Falsch's
+        // VetHookTarget replays the build against Zydis first, and a hook it calls Unsafe is not created. The holder
+        // is exempt because it is never enabled, so its trampoline never runs (HeldBlock_* pins that). No test target
+        // compiles Stark.cpp, so pin the source: every other MH_CreateHook* call, in any dll/src file, must be preceded
+        // in the same function by a vet of the same target, and the vet's verdict must stop the create.
+        static string Lexed(string glue)
+        {
+            // MinHookGlue strips // comments; also drop /* */ comments and string / char literals, so neither a log line
+            // naming a call nor a commented-out call counts as code.
+            var s = System.Text.RegularExpressions.Regex.Replace(glue, @"/\*.*?\*/", " ",
+                System.Text.RegularExpressions.RegexOptions.Singleline);
+            s = System.Text.RegularExpressions.Regex.Replace(s, "\"(?:\\\\.|[^\"\\\\\\n])*\"", "\"\"");
+            return System.Text.RegularExpressions.Regex.Replace(s, @"'(?:\\.|[^'\\\n])'", "''");
+        }
+        string? root = null;
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
+        {
+            var c = Path.Combine(dir.FullName, "dll", "src");
+            if (Directory.Exists(c)) { root = c; break; }
+        }
+        Assert.NotNull(root);
+        var files = Directory.GetFiles(root!, "*.cpp", SearchOption.AllDirectories)
+            .Concat(Directory.GetFiles(root!, "*.h", SearchOption.AllDirectories)).ToList();
+        int vetted = 0, holders = 0;
+        foreach (var f in files)
+        {
+            var code = Lexed(MinHookGlue(Path.GetRelativePath(root!, f)));
+            foreach (System.Text.RegularExpressions.Match m in
+                     System.Text.RegularExpressions.Regex.Matches(code, @"\bMH_CreateHook\w*\("))
+            {
+                int i = m.Index;
+                var call = code[i..code.IndexOf(';', i)];
+                if (call.Contains("&HolderDetour", StringComparison.Ordinal)) { holders++; continue; }
+                Assert.True(m.Value == "MH_CreateHook(", Path.GetFileName(f) + ": " + m.Value.TrimEnd('(') +
+                    " builds a trampoline too -- vet its target with Falsch the same way, then widen this pin");
+                var target = System.Text.RegularExpressions.Regex.Match(call, @"^MH_CreateHook\(\s*reinterpret_cast<LPVOID>\((\w+)\)");
+                Assert.True(target.Success, Path.GetFileName(f) + ": cannot read the target of " + call);
+                var name = target.Groups[1].Value;
+                int fnStart = code.LastIndexOf("\n}", i, StringComparison.Ordinal);
+                var before = code[Math.Max(fnStart, 0)..(i + call.Length)];
+                // Either the vet guards the create in the same condition, or an earlier statement returns on refusal.
+                bool inCondition = System.Text.RegularExpressions.Regex.IsMatch(before,
+                    @"VetForHook\(\s*" + name + @"\s*,[^;{}()]*\)\s*&&\s*MH_CreateHook\(\s*reinterpret_cast<LPVOID>\(" + name + @"\)");
+                bool returnsOnRefusal = System.Text.RegularExpressions.Regex.IsMatch(before,
+                    @"if\s*\(\s*!\s*VetForHook\(\s*" + name + @"\s*,[^;{}()]*\)\s*\)\s*return\b") ||
+                    System.Text.RegularExpressions.Regex.IsMatch(before,
+                    @"=\s*Falsch::VetHookTarget\(\s*" + name + @"\s*\);\s*if\s*\(\s*\w+\.verdict\s*==\s*Falsch::Verdict::Unsafe\s*\)\s*\{[^}]*\breturn\b[^}]*\}");
+                Assert.True(inCondition || returnsOnRefusal,
+                    Path.GetFileName(f) + ": MH_CreateHook(" + name + ") is not stopped by a Falsch vet of " + name);
+                vetted++;
+            }
+        }
+        Assert.Equal(1, holders);
+        Assert.True(vetted >= 4, "expected ProcessEvent's and Grausam's three hooks to be vetted -- found " + vetted);
+
+        // Stark refuses before the holder steps aside, so a refused ProcessEvent does not cost the held block.
+        var stark = MinHookGlueBody(Lexed(MinHookGlue("Stark.cpp")), "bool InstallHook(uintptr_t processEventAddr) {");
+        int refuse = stark.IndexOf("if (vet.verdict == Falsch::Verdict::Unsafe) {", StringComparison.Ordinal);
+        int aside = stark.IndexOf("if (s_heldTarget != 0 && s_heldTarget == processEventAddr) {", StringComparison.Ordinal);
+        Assert.True(refuse >= 0 && aside > refuse, "the vet must run before the holder is removed for ProcessEvent");
+        // Grausam's helper must say no exactly when Falsch does.
+        var vetFor = MinHookGlueBody(Lexed(MinHookGlue("Grausam.cpp")), "bool VetForHook(FARPROC p, const char* name) {");
+        Assert.Contains("= Falsch::VetHookTarget(reinterpret_cast<uintptr_t>(p));", vetFor, StringComparison.Ordinal);
+        int pass = vetFor.IndexOf("if (r.verdict != Falsch::Verdict::Unsafe) return true;", StringComparison.Ordinal);
+        Assert.True(pass >= 0 && vetFor.IndexOf("return false;", pass, StringComparison.Ordinal) > pass,
+            "VetForHook must return true for every verdict but Unsafe, and false for Unsafe");
     }
 
     [Fact]

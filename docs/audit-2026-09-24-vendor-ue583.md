@@ -168,6 +168,11 @@ diagnostic prior · `[PS-10]` a pattern-free GWorld tier from the `UGameEngine::
 
 ## MINHOOK — HOLD, bump on a trigger `[MH-1…MH-8]`
 
+> **Superseded 2026-11-06 by [vendor-pin-reviews.md § minhook](vendor-pin-reviews.md#minhook).** That review measured
+> MH-2..MH-5 instead of reading them. MH-3 still holds at `8af6b4a`. The "four targets" below became five when the
+> holder was added. The trigger "first 5 bytes" understates the reach: `trampoline.c` also decodes the instruction at
+> offset ≥ 5.
+
 Only four MinHook targets exist: `UObject::ProcessEvent` (`Stark.cpp:302`) and three user32 exports
 (`Grausam.cpp:216/236/244`); only `hde64` is compiled. Every target starts with instruction forms the
 HDE rewrite does not touch — the trampolines would be byte-identical after a bump (MH-2), and the

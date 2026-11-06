@@ -234,6 +234,7 @@ set(UE5_COMMON_SOURCES
     src/Schlacht.cpp
     src/Linie.cpp
     src/Sense.cpp
+    src/Falsch.cpp
 )
 
 add_library(UE5DumperCommon OBJECT ${UE5_COMMON_SOURCES})
@@ -245,6 +246,9 @@ ue5_apply_common_msvc_flags(UE5DumperCommon)
 # linked statics to consumers; each DLL links the actual Zydis/minhook statics
 # itself (below) so the common objects' references resolve at the final link.
 target_link_libraries(UE5DumperCommon PRIVATE minhook Zydis)
+# Falsch.cpp calls MinHook's own length decoder (hde64), whose header minhook does not export: it replays the
+# trampoline builder with exactly the decoder the builder uses ([MH-TRAMPOLINE-PREFLIGHT]).
+target_include_directories(UE5DumperCommon PRIVATE ${CMAKE_SOURCE_DIR}/vendor/minhook/src)
 
 # ============================================================
 # Main DLL: UE5Dumper.dll (Cheat-Engine-injected build)
@@ -540,11 +544,13 @@ if(BUILD_DLL_TESTS)
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/dll_helpers_test.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Radar.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/Denken.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/Falsch.cpp
     )
 
     target_include_directories(dll_helpers_test PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/vendor/nlohmann
+        ${CMAKE_SOURCE_DIR}/vendor/minhook/src   # Falsch.cpp: hde64.h
     )
 
     if(MSVC)
@@ -567,7 +573,8 @@ if(BUILD_DLL_TESTS)
     # invariant to every line in dll/src. Mimic.cpp is still not compiled here —
     # what the target now covers is Mimic.h's DATA surface, the mailbox layout and
     # command numbering that CE Lua bakes as literals.
-    target_link_libraries(dll_helpers_test PRIVATE Zydis)
+    # minhook: Falsch.cpp's replay calls the linked hde64, so the tests run it against the decoder the DLL ships.
+    target_link_libraries(dll_helpers_test PRIVATE Zydis minhook)
 
     # ---- grausam_window_test: DLL LOW L10, the window re-subclass half -----------------
     #
@@ -598,7 +605,11 @@ if(BUILD_DLL_TESTS)
         target_compile_options(grausam_window_test PRIVATE /utf-8 /W4 /EHsc)
     endif()
 
-    target_link_libraries(grausam_window_test PRIVATE minhook user32)
+    # Grausam.cpp vets every hook through Falsch ([MH-TRAMPOLINE-PREFLIGHT]), so the TU needs Falsch.cpp, its
+    # Zydis and MinHook's hde64 header -- the real pre-flight, not a stub, though this test installs no hook.
+    target_sources(grausam_window_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Falsch.cpp)
+    target_include_directories(grausam_window_test PRIVATE ${CMAKE_SOURCE_DIR}/vendor/minhook/src)
+    target_link_libraries(grausam_window_test PRIVATE minhook Zydis user32)
 
     # ---- sein_retention_test: AB9, the log retention sweep -----------------------------
     #
