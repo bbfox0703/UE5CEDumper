@@ -3673,7 +3673,7 @@ public class InvokeScriptTests
         var stark = MinHookGlue("Stark.cpp");
         var holder = MinHookGlueBody(stark, "static bool HolderCandidateSafe(uintptr_t target) {");
         Assert.Contains("uint8_t probe[Falsch::kSpan]", holder, StringComparison.Ordinal);
-        Assert.Contains("Falsch::ReadTarget(target, probe, why)", holder, StringComparison.Ordinal);
+        Assert.Contains("return Falsch::ReadTarget(target, probe, why);", holder, StringComparison.Ordinal);
         Assert.True(System.Text.RegularExpressions.Regex.IsMatch(MinHookGlue("Falsch.h"), @"constexpr\s+size_t\s+kSpan\s*=\s*64\s*;"),
             "Falsch::kSpan must stay 64, the span Lager derives");
         Assert.Contains("static_assert(kSpan == Lager::kHolderReadSpan", MinHookGlue("Falsch.cpp"), StringComparison.Ordinal);
@@ -3702,54 +3702,69 @@ public class InvokeScriptTests
         // or misbehaves in the hooked function with nothing logged (docs/vendor-pin-reviews.md § minhook). Falsch's
         // VetHookTarget replays the build against Zydis first, and a hook it calls Unsafe is not created. The holder
         // is exempt because it is never enabled, so its trampoline never runs (HeldBlock_* pins that). No test target
-        // compiles Stark.cpp or Grausam.cpp, so pin the source: every other MH_CreateHook must be preceded, in the same
-        // function, by a vet of the same target.
-        var files = new List<string>();
+        // compiles Stark.cpp, so pin the source: every other MH_CreateHook* call, in any dll/src file, must be preceded
+        // in the same function by a vet of the same target, and the vet's verdict must stop the create.
+        static string Lexed(string glue)
+        {
+            // MinHookGlue strips // comments; also drop /* */ comments and string / char literals, so neither a log line
+            // naming a call nor a commented-out call counts as code.
+            var s = System.Text.RegularExpressions.Regex.Replace(glue, @"/\*.*?\*/", " ",
+                System.Text.RegularExpressions.RegexOptions.Singleline);
+            s = System.Text.RegularExpressions.Regex.Replace(s, "\"(?:\\\\.|[^\"\\\\\\n])*\"", "\"\"");
+            return System.Text.RegularExpressions.Regex.Replace(s, @"'(?:\\.|[^'\\\n])'", "''");
+        }
+        string? root = null;
         for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir is not null; dir = dir.Parent)
         {
             var c = Path.Combine(dir.FullName, "dll", "src");
-            if (Directory.Exists(c)) { files.AddRange(Directory.GetFiles(c, "*.cpp")); break; }
+            if (Directory.Exists(c)) { root = c; break; }
         }
-        Assert.NotEmpty(files);
+        Assert.NotNull(root);
+        var files = Directory.GetFiles(root!, "*.cpp", SearchOption.AllDirectories)
+            .Concat(Directory.GetFiles(root!, "*.h", SearchOption.AllDirectories)).ToList();
         int vetted = 0, holders = 0;
         foreach (var f in files)
         {
-            var code = MinHookGlue(Path.GetFileName(f));
-            for (int i = code.IndexOf("MH_CreateHook(", StringComparison.Ordinal); i >= 0;
-                 i = code.IndexOf("MH_CreateHook(", i + 1, StringComparison.Ordinal))
+            var code = Lexed(MinHookGlue(Path.GetRelativePath(root!, f)));
+            foreach (System.Text.RegularExpressions.Match m in
+                     System.Text.RegularExpressions.Regex.Matches(code, @"\bMH_CreateHook\w*\("))
             {
-                // Inside a string literal (a log line naming the call) when an odd number of quotes precede it on the line.
-                int lineStart = code.LastIndexOf('\n', i) + 1;
-                if (code[lineStart..i].Count(ch => ch == '"') % 2 == 1) continue;
-                int close = code.IndexOf(';', i);
-                var call = code[i..close];
+                int i = m.Index;
+                var call = code[i..code.IndexOf(';', i)];
                 if (call.Contains("&HolderDetour", StringComparison.Ordinal)) { holders++; continue; }
-                var target = System.Text.RegularExpressions.Regex.Match(call, @"MH_CreateHook\(\s*reinterpret_cast<LPVOID>\((\w+)\)");
+                Assert.True(m.Value == "MH_CreateHook(", Path.GetFileName(f) + ": " + m.Value.TrimEnd('(') +
+                    " builds a trampoline too -- vet its target with Falsch the same way, then widen this pin");
+                var target = System.Text.RegularExpressions.Regex.Match(call, @"^MH_CreateHook\(\s*reinterpret_cast<LPVOID>\((\w+)\)");
                 Assert.True(target.Success, Path.GetFileName(f) + ": cannot read the target of " + call);
-                int fnStart = code.LastIndexOf("\n}", i, StringComparison.Ordinal);
-                var before = code[Math.Max(fnStart, 0)..i];
                 var name = target.Groups[1].Value;
-                Assert.True(System.Text.RegularExpressions.Regex.IsMatch(before, @"(Falsch::VetHookTarget|VetForHook)\([^;]*\b" + name + @"\b"),
-                    Path.GetFileName(f) + ": MH_CreateHook(" + name + ") is not vetted by Falsch first");
+                int fnStart = code.LastIndexOf("\n}", i, StringComparison.Ordinal);
+                var before = code[Math.Max(fnStart, 0)..(i + call.Length)];
+                // Either the vet guards the create in the same condition, or an earlier statement returns on refusal.
+                bool inCondition = System.Text.RegularExpressions.Regex.IsMatch(before,
+                    @"VetForHook\(\s*" + name + @"\s*,[^;{}()]*\)\s*&&\s*MH_CreateHook\(\s*reinterpret_cast<LPVOID>\(" + name + @"\)");
+                bool returnsOnRefusal = System.Text.RegularExpressions.Regex.IsMatch(before,
+                    @"if\s*\(\s*!\s*VetForHook\(\s*" + name + @"\s*,[^;{}()]*\)\s*\)\s*return\b") ||
+                    System.Text.RegularExpressions.Regex.IsMatch(before,
+                    @"=\s*Falsch::VetHookTarget\(\s*" + name + @"\s*\);\s*if\s*\(\s*\w+\.verdict\s*==\s*Falsch::Verdict::Unsafe\s*\)\s*\{[^}]*\breturn\b[^}]*\}");
+                Assert.True(inCondition || returnsOnRefusal,
+                    Path.GetFileName(f) + ": MH_CreateHook(" + name + ") is not stopped by a Falsch vet of " + name);
                 vetted++;
             }
         }
         Assert.Equal(1, holders);
         Assert.True(vetted >= 4, "expected ProcessEvent's and Grausam's three hooks to be vetted -- found " + vetted);
 
-        // A vet is only a vet if its verdict stops the create.
-        var stark = MinHookGlueBody(MinHookGlue("Stark.cpp"), "bool InstallHook(uintptr_t processEventAddr) {");
-        int vet = stark.IndexOf("Falsch::VetHookTarget(processEventAddr)", StringComparison.Ordinal);
-        int refuse = stark.IndexOf("Falsch::Verdict::Unsafe", Math.Max(vet, 0), StringComparison.Ordinal);
-        int create = stark.IndexOf("MH_CreateHook(", StringComparison.Ordinal);
-        Assert.True(vet >= 0 && refuse > vet && create > refuse, "InstallHook must refuse an Unsafe verdict before MH_CreateHook");
-        // ... and comes before the holder steps aside, so a refused ProcessEvent does not cost the held block.
+        // Stark refuses before the holder steps aside, so a refused ProcessEvent does not cost the held block.
+        var stark = MinHookGlueBody(Lexed(MinHookGlue("Stark.cpp")), "bool InstallHook(uintptr_t processEventAddr) {");
+        int refuse = stark.IndexOf("if (vet.verdict == Falsch::Verdict::Unsafe) {", StringComparison.Ordinal);
         int aside = stark.IndexOf("if (s_heldTarget != 0 && s_heldTarget == processEventAddr) {", StringComparison.Ordinal);
-        Assert.True(aside > refuse, "the vet must run before the holder is removed for ProcessEvent");
-        var grausam = MinHookGlue("Grausam.cpp");
-        var vetFor = MinHookGlueBody(grausam, "bool VetForHook(FARPROC p, const char* name) {");
-        Assert.Contains("Falsch::VetHookTarget(reinterpret_cast<uintptr_t>(p))", vetFor, StringComparison.Ordinal);
-        Assert.Contains("Falsch::Verdict::Unsafe", vetFor, StringComparison.Ordinal);
+        Assert.True(refuse >= 0 && aside > refuse, "the vet must run before the holder is removed for ProcessEvent");
+        // Grausam's helper must say no exactly when Falsch does.
+        var vetFor = MinHookGlueBody(Lexed(MinHookGlue("Grausam.cpp")), "bool VetForHook(FARPROC p, const char* name) {");
+        Assert.Contains("= Falsch::VetHookTarget(reinterpret_cast<uintptr_t>(p));", vetFor, StringComparison.Ordinal);
+        int pass = vetFor.IndexOf("if (r.verdict != Falsch::Verdict::Unsafe) return true;", StringComparison.Ordinal);
+        Assert.True(pass >= 0 && vetFor.IndexOf("return false;", pass, StringComparison.Ordinal) > pass,
+            "VetForHook must return true for every verdict but Unsafe, and false for Unsafe");
     }
 
     [Fact]
