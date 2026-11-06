@@ -27,7 +27,9 @@ each submodule's behind-count, how many upstream commits are **newer than the la
 
 The pin is `a95bb71` (2026-07-27). Its header says version 5.0.0, but `git describe` says `v4.0.0-121` because upstream
 never tagged a v5 (`sync_tools.ps1` prints the header version for this reason). Denken (native UFunction disassembly)
-is the only Zydis user in the DLL.
+and, since 2026-11-06, Falsch (the MinHook trampoline pre-flight, `[MH-TRAMPOLINE-PREFLIGHT]`) are the DLL's Zydis
+users. Falsch reads fields Denken does not: length, encoding, opcode map and opcode, relative operands, the raw
+displacement, and absolute branch targets. A review must therefore check both; the rig's E2E and FALSCH lines do.
 
 ### 2026-11-06 — reviewed up to `fcc63c635889` (origin/master, 2026-11-03): **HOLD**
 
@@ -78,6 +80,14 @@ can rerun it.
   pre-existing ISA except the `0F 18 /4` row.
 - **Compile and test:** `Denken.cpp` compiles against the candidate's headers with the repo's flags and 0 warnings.
   `dll_helpers_test` (Denken cases included), linked against a `/DNDEBUG` candidate build, passes 3754 / 0.
+- **Falsch, the second Zydis user (added the same day, `[MH-TRAMPOLINE-PREFLIGHT]`):** the rig's FALSCH line runs
+  the real `Falsch.cpp` with the vendored hde64 over every `.pdata` start of the same three binaries. Verdict, offset
+  and copied count are byte-identical at `a95bb71` and `fcc63c6`. `Falsch.cpp` compiles against both with 0 warnings.
+  - The Unsafe share is 0.01%: 61 of 508,094 starts on DumperTest58, 67 of 235,374 on UE 4.27, 28 of 124,246 on
+    Nekopara.
+  - Almost all are a branch in the bytes read that lands on +1..+4. One is a real loop: DT58 `0x12C4D60`'s
+    `jz -9` returns to +4, which would crash once the hook is live.
+  - Two are RVA tables behind chained `.pdata` entries.
 
 **Not verified:**
 
@@ -158,6 +168,24 @@ hook whose bytes MinHook would copy wrongly, whichever decoder is linked:
 The bump then becomes a strict improvement: fewer refusals, and the new decoder's mis-relocation class turned into
 a refusal.
 
+**Upstream's two `trampoline.c` gaps are handled here, not reported (maintainer, 2026-11-06):**
+`[MH-UPSTREAM-JCC-OPCODE2]` and `[MH-UPSTREAM-XBEGIN]` (§ "Upstream bugs recorded here"). On the pin neither can
+happen. After a bump Falsch refuses both, and the hook is not created. Patching the vendored `trampoline.c` instead
+would mean a fork, and `xbegin` needs a relocation MinHook does not have. Neither shape occurs at any of the 3.68M
+function entries measured, so refusing costs nothing in practice.
+
+**The pre-flight as built** (`[MH-TRAMPOLINE-PREFLIGHT]`). An adversarial review ran the real `Falsch.cpp` beside
+MinHook's real `CreateTrampolineFunction` with both decoders, over 5.57M function starts and a 59,040-shape
+enumeration. It found 0 false positives on real code, and one class the first version passed: a jump inside the
+patch that MinHook copies byte for byte while an instruction before it grew, or that lands mid-instruction. That
+class appeared 862 times in the enumeration and 0 times in real functions. It is fixed, together with:
+
+- a RIP-relative read of the patched bytes;
+- hde64's displacement value, now compared with Zydis's;
+- a later branch into +1..+4 within the bytes read.
+
+Execute-only pages are now taken: x86-64 reads them, and the SEH copy proves it per target.
+
 **What the bump must also update:**
 
 - `Lager.h`'s `kHolderReadSpan` derivation: the new decoder reads at most 15 bytes per instruction, so the reach is
@@ -197,3 +225,45 @@ a refusal.
 - A new hook target has VEX / EVEX / 0F38 / 0F3A / tzcnt / lzcnt / popcnt in **any instruction MinHook decodes**. That
   includes the first instruction at offset ≥ 5, not just the first 5 bytes, because `trampoline.c` decodes that
   instruction before deciding it only needs a jump back to it.
+
+### Upstream bugs recorded here, not reported upstream
+
+The maintainer chose (2026-11-06) not to file these: maintainers often turn away AI-filed reports, whose quality
+varies. They are kept here so that the next review knows they exist, and checks whether upstream has fixed them, before
+it bumps.
+
+**`[MH-UPSTREAM-JCC-OPCODE2]` — a VEX / EVEX / XOP / REX2 opcode 0x80-0x8F is rebuilt as a conditional jump.**
+
+- **Where:** `src/trampoline.c` lines 216-218 at `8af6b4a`, the test `|| (hs.opcode2 & 0xF0) == 0x80`, which is not
+  limited to `hs.opcode == 0x0F`. Line 243 then takes the condition from `hs.opcode` (`C4` → 4, `62` → 2).
+  `trampoline.c` last changed in `07c7c41` (2025-11-02), which is already in our pin.
+- **Introduced by:** `72fca12` (2026-09-07, "Update and fix Hacker Disassembler Engine"). From that commit, hde64
+  decodes VEX / EVEX / XOP and leaves the map's opcode in `hs.opcode2` (`hde64.c:110` at `72fca12`, `:121` at
+  `8af6b4a`; REX2 map 1 at `:198`). Before it, hde64 rejected those encodings, so the test never saw them.
+- **Observed at:** `8af6b4a` (2026-09-08), upstream's tip on 2026-11-06.
+- **Effect:** MinHook returns MH_OK and the trampoline drops the instruction; both paths of the rebuilt JCC_ABS go on to
+  the next one. An XOP form with an immediate becomes a jump to an unrelated address. Measured:
+  - `C4 E2 79 8C 00` (`vpmaskmovd xmm0,xmm0,[rax]`): trampoline `75 0E FF25 → target+5`;
+  - `8F E8 78 85 C1 30` (XOP `vpmacssww`): `7E 0E FF25 → target+0x36`;
+  - 62 Zydis-valid encodings in all, and one real site, Avowed RVA `0x83EAFEC` (`C4 E2 5D 8C 01`, mid-function).
+- **The fix upstream would need:** `|| (hs.opcode == 0x0F && (hs.opcode2 & 0xF0) == 0x80)`.
+
+**`[MH-UPSTREAM-XBEGIN]` — `xbegin` is copied with its rel32 unrelocated.**
+
+- **Where:** `src/hde/hde64.c` lines 424-426 at `8af6b4a` flag `C7 /7` as `F_RELATIVE`. `trampoline.c` never reads
+  `F_RELATIVE` and has no `C7` case, so the instruction is copied byte for byte and its abort target points into the
+  trampoline.
+- **Introduced by:** `8af6b4a` (2026-09-08). At `72fca12` and at our pin, hde64 rejects `C7 F8` and MinHook refuses.
+- **Observed at:** `8af6b4a`.
+- **Effect:** measured on `C7 F8 10 00 00 00`: trampoline `C7F810000000 FF25 → target+6`. No real site in the
+  corpus.
+- **The fix upstream would need:** a `C7 /7` case in `CreateTrampolineFunction` that rebuilds the abort target. MinHook
+  has no such relocation today.
+
+**How we are protected, and how we would notice a fix.**
+
+- On the pin, neither bug is reachable.
+- After a bump, Falsch refuses both shapes: `Test_Falsch_RefusesAWrongTrampoline` covers VEX `8C` and `xbegin`, and
+  `Test_Falsch_ReviewVectors` covers `jkzd`. The hook is then not created, which is safe.
+- An upstream change to `trampoline.c` moves `check_lager_vendor_sync`'s `GOLDEN_TRAMPOLINE` and fails the gates.
+  `sync_tools.ps1` also shows commits after the reviewed `8af6b4a`. Either one is the cue to re-read these two rows.

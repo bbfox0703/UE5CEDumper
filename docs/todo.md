@@ -420,8 +420,26 @@ chose (2026-11-06): guard on the pin first, then bump.
 - Every hook that gets enabled (ProcessEvent in Stark, Grausam's three user32 exports) calls `Falsch::VetHookTarget`
   first; an Unsafe verdict is logged and the hook is not created. The holder is exempt because it is never enabled.
   `InvokeScriptTests.EveryEnabledHook_IsVettedBeforeMinHookBuildsItsTrampoline` pins it.
-- `check_lager_vendor_sync` also hashes `trampoline.c`'s `CreateTrampolineFunction`, so a minhook bump that changes it
-  fails the gates until Falsch's replay is re-read.
+- `check_lager_vendor_sync` also hashes the MinHook surface Falsch models: `CreateTrampolineFunction`, its defines,
+  the rebuilt-instruction structs, and hde64's `F_ERROR` / `F_IMM*`. A minhook bump that changes any of these fails
+  the gates until Falsch's replay is re-read. The hash is the same at the pin and at `8af6b4a`.
+- Review round 1 (adversarial; the real Falsch beside MinHook's real builder, both decoders, 5.57M function starts):
+  0 false positives on real code. Fixed:
+  - a jump inside the patch landing elsewhere in the trampoline (862 enumerated shapes, 0 in real functions);
+  - a RIP-relative read of the patched bytes;
+  - an unchecked hde64 displacement value;
+  - a later branch into +1..+4;
+  - execute-only pages, which are readable and are now taken;
+  - the wiring pin, which could not see an ignored verdict.
+
+  vendor-pin-reviews.md § minhook has the detail, and the maintainer's decision not to report `trampoline.c`'s gap
+  upstream.
+- Falsch is Zydis's second user. `tools/verify/zydis_bump_diff` replays its verdicts against both Zydis revisions
+  (the FALSCH line).
+- Open, INFO, not taken:
+  - Frieren retries a refused ProcessEvent up to 8 times and logs each refusal.
+  - Falsch vets a copy and MinHook re-reads the live bytes. A patch that lands in between would go unvetted; a
+    re-read and compare before `MH_EnableHook` would narrow that.
 - ⬜ **Live check owed:** a ProcessEvent hook (FIRE) and the foreground lock on a fixture, each logging the
   pre-flight's verdict.
 
