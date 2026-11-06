@@ -443,6 +443,14 @@ lists equal. On 2026-08-22 a session ran four of them all day, and the first ful
 `check_no_local_paths` over a test fixture committed hours earlier. Order matters — `aob_specificity`
 reads the TSV `extract_patterns` writes.
 
+⚠ **A fresh git worktree fails or skips some checks for reasons that have nothing to do with the change** (measured
+2026-11-06, `[PIPE-REJECT-REMOTE]`). Set the worktree up before reading a red result:
+- `build_dll.py` refuses until `build.ps1 -Target DLL` has configured the tree; that run also fills the submodules.
+- `check_lua_suites` fails three suites until `out/slotsym/*.lua.txt` exist. They are gitignored captures
+  (working-lessons §2.8): copy them from the main checkout.
+- The C# run skips 40 tests until `py tools/verify/ce_lua53_host.py --build-only` has built CE's Lua host.
+- `check_processevent_slots` SKIPs without the `vendor/RE-UE4SS` clone.
+
 ### Tests
 
 ```bash
