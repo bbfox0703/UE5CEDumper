@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Would a vendor/zydis bump change anything Denken -- the DLL's only Zydis user -- produces? A differential rig.
+"""Would a vendor/zydis bump change anything the DLL's Zydis users -- Denken and Falsch -- produce? A differential rig.
 
     py tools/verify/zydis_bump_diff/zydis_bump_diff.py <pe file>... [--candidate REV] [--base REV]
                                                        [--all-offsets] [--out DIR]
@@ -21,6 +21,9 @@ WHAT IT DOES
   Then per PE file (read from disk with a minimal loader; never mapped as an image, never executed):
     E2E      Denken::Analyze from every .pdata function start at both revisions; the two output files are compared by
              SHA-256. THIS is the deciding check: it is Denken's output, not a projection of what it might read.
+    FALSCH   Falsch::CheckTrampoline (the MinHook trampoline pre-flight, [MH-TRAMPOLINE-PREFLIGHT]) on every .pdata
+             start at both revisions, with the vendored hde64: verdict, offset and instructions copied, by SHA-256. A
+             change here changes which hooks the DLL creates.
     CODE     per-instruction projection diff over every .pdata range (zdiff code); a row marked dk=1 is a field Denken
              branches on or records.
     ALL      (--all-offsets) the same at every byte offset of every executable section: padding, data-in-code and
@@ -30,7 +33,7 @@ WHAT IT DOES
              difference, so an all-identical E2E is not two copies of one Zydis.
 
 EXIT
-  0  no Denken-visible change: E2E identical on every PE, CODE has no dk=1 row, no compile warning, control differs.
+  0  no visible change: E2E and FALSCH identical on every PE, CODE has no dk=1 row, no compile warning, control differs.
   1  something needs reading: an E2E mismatch, a dk=1 CODE row, a compile warning, or a control that no longer differs
      (the base has moved past the control's commits -- add bytes from the new delta to denken_run.cpp's RunControl).
   2  the rig itself failed (toolchain, git, a file it could not read).
@@ -140,7 +143,25 @@ def build(env, out, tag, rev):
     run(["cl", "/nologo", "/O2", "/MT", "/std:c++latest", "/utf-8", "/W3", "/EHa", "/wd4201", *REPO_DEFS, *ZDEFS,
          f"/I{ROOT / 'dll' / 'src'}", f"/I{HERE}", f"/I{src / 'include'}", f"/I{zinc}",
          str(HERE / "denken_run.cpp"), str(dobj), str(lib), f"/Fe{exe}", f"/Fo{obj}\\"], env, obj)
-    return {"sha": sha, "dll": dll, "exe": exe, "lib_bytes": lib.stat().st_size, "warnings": len(warnings)}
+
+    # Falsch (the MinHook trampoline pre-flight) is Zydis's second user: the real Falsch.cpp, this revision's Zydis and
+    # the vendored hde64 MinHook itself links.
+    hde_src = ROOT / "vendor" / "minhook" / "src" / "hde" / "hde64.c"
+    hobj = obj / "hde64.obj"
+    run(["cl", "/nologo", "/c", "/O2", "/MT", "/W3", str(hde_src), f"/Fo{hobj}"], env, obj)
+    text = run(["cl", "/nologo", "/c", "/O2", "/MT", "/std:c++latest", "/utf-8", "/W4", "/permissive-", "/EHa",
+                "/wd4201", *REPO_DEFS, *ZDEFS, f"/I{ROOT / 'dll' / 'src'}", f"/I{ROOT / 'vendor' / 'minhook' / 'src'}",
+                f"/I{src / 'include'}", f"/I{zinc}", str(ROOT / "dll" / "src" / "Falsch.cpp"),
+                f"/Fo{obj / 'Falsch.obj'}"], env, obj)
+    fwarn = [line for line in text.splitlines() if "warning" in line.lower()]
+    print(f"[{tag}] COMPILE CHECK dll/src/Falsch.cpp: {len(fwarn)} warning(s)" + "".join("\n    " + w for w in fwarn))
+    fexe = out / f"falsch_{tag}.exe"
+    run(["cl", "/nologo", "/O2", "/MT", "/std:c++latest", "/utf-8", "/W3", "/EHa", "/wd4201", *REPO_DEFS, *ZDEFS,
+         f"/I{ROOT / 'dll' / 'src'}", f"/I{HERE}", f"/I{src / 'include'}", f"/I{zinc}",
+         str(HERE / "falsch_run.cpp"), str(obj / "Falsch.obj"), str(hobj), str(lib), f"/Fe{fexe}", f"/Fo{obj}\\"],
+        env, obj)
+    return {"sha": sha, "dll": dll, "exe": exe, "falsch": fexe, "lib_bytes": lib.stat().st_size,
+            "warnings": len(warnings) + len(fwarn)}
 
 
 def sha256(path):
@@ -230,6 +251,14 @@ def main():
             print(f"E2E  {name}: {sb} -> {'IDENTICAL' if same else 'DIFFERENT'} (sha256 {sha256(eb)[:12]})")
             if not same:
                 needs_reading.append(f"an E2E difference on {name} ({eb.name} vs {ec.name})")
+            fb, fc = out / f"falsch_{i}_pin.txt", out / f"falsch_{i}_master.txt"
+            sf = run_exe(b["falsch"], pe, fb)
+            run_exe(c["falsch"], pe, fc)
+            fsame = sha256(fb) == sha256(fc)
+            print(f"FALSCH {name}: {sf} -> {'IDENTICAL' if fsame else 'DIFFERENT'} (sha256 {sha256(fb)[:12]})")
+            if not fsame:
+                needs_reading.append(f"a Falsch verdict difference on {name} ({fb.name} vs {fc.name}): a hook the "
+                                     "pre-flight allows or refuses would change")
             modes = ["code"] + (["all"] if a.all_offsets else [])
             for mode in modes:
                 tsv = out / f"zd_{mode}_{i}.tsv"
