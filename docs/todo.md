@@ -4,7 +4,8 @@ Open work only. **Read this when deciding what to do next.**
 
 > 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
 >
-> ▶ **Current programme:** none active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
+> ▶ **Current programme:** `[MH-TRAMPOLINE-PREFLIGHT]` (started 2026-11-06; the maintainer: guard MinHook's
+> trampoline build on the pin, then bump minhook) -- its section has the steps. Before it, none active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
 > open bugs one after another) ended with build 3686 (dev-log 3671–3686). Census Table A holds 0 HIGH / 0 MED and five
 > LOW or unrated rows -- `[CEFORM-LUAENGINE-VANISH]`, `[DUMPER-SECOND-COPY-AUTOSTART]` (needs the maintainer's call),
 > `[CADENCEBAND-2026-08-22]`, `[W4-DEEPWALK-750MS]`, `[LEAD-PUBLISH-FAILED-BUT-BUILT]` -- which the maintainer judged not
@@ -397,6 +398,35 @@ Open work only. **Read this when deciding what to do next.**
 (leave it) · `[P1-SEETHRU-NOPRODUCER]`'s one-shot warning · `[A2-UFUNC-TAIL-4X]`'s optional margin · D2's "DEADLINE
 HIT" wording for a crashed worker · Detect Player Stats has no cancel (July L18) · `peHash` with `TimeDateStamp` 0 ·
 the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVEFUNCS-STEP3 B1/E1/P1/O1.
+
+## 🧭 Maintainer request 2026-11-06 — guard MinHook's trampoline build, then bump minhook `[MH-TRAMPOLINE-PREFLIGHT]`
+
+**Why.** MinHook's `CreateTrampolineFunction` trusts its own length decoder (hde64). When hde64 misreads an
+instruction without flagging it, MinHook returns MH_OK with a trampoline that runs different code. The game then
+crashes or misbehaves in the hooked function with nothing logged. Both the pinned hde64 and upstream's rewrite have
+such a class; the measurement is [vendor-pin-reviews.md § minhook](vendor-pin-reviews.md#minhook). The maintainer
+chose (2026-11-06): guard on the pin first, then bump.
+
+**Step 2, the guard (this programme):**
+
+- `dll/src/Falsch.{h,cpp}` (TrampolinePreflight) replays the x64 walk over a copy of the target's bytes and checks each
+  instruction MinHook copies against Zydis: the length, the encoding MinHook's classification assumes, the branch
+  target it computes, and where the displacement it re-points sits. An instruction copied unchanged must carry no
+  position-dependent operand. A RIP-relative reference farther than a trampoline up to 1 GB away can re-point is
+  refused too: MinHook truncates the displacement without checking that it fits, at every revision.
+- `Falsch::ReadTarget` is the holder's readability check, now shared by every target. VirtualQuery over the span
+  MinHook reads, then a SEH copy: MinHook reads with no SEH inside its spin lock, and ProcessEvent's address had only a
+  non-zero check. This also covers upstream `7586d1a`, the `IsExecutableAddress` VirtualQuery check, on the pin.
+- Every hook that gets enabled (ProcessEvent in Stark, Grausam's three user32 exports) calls `Falsch::VetHookTarget`
+  first; an Unsafe verdict is logged and the hook is not created. The holder is exempt because it is never enabled.
+  `InvokeScriptTests.EveryEnabledHook_IsVettedBeforeMinHookBuildsItsTrampoline` pins it.
+- `check_lager_vendor_sync` also hashes `trampoline.c`'s `CreateTrampolineFunction`, so a minhook bump that changes it
+  fails the gates until Falsch's replay is re-read.
+- ⬜ **Live check owed:** a ProcessEvent hook (FIRE) and the foreground lock on a fixture, each logging the
+  pre-flight's verdict.
+
+**Step 3, the bump:** waits for the maintainer's go-ahead after step 2 ships. The checklist is in
+vendor-pin-reviews.md § minhook.
 
 ## 🧭 Maintainer request 2026-11-04 — what moving the UI's hard-coded English into en.axaml would take, ahead of UI languages `[I18N-READINESS-2026-11-04]`
 

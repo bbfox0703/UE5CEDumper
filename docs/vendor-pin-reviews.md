@@ -144,7 +144,8 @@ The measured trade, through MinHook's real `CreateTrampolineFunction` with both 
 62-encoding class. VirtualQuery fails only at or above `0x7FFFFFFF0000`, where the pin's `IsExecutableAddress` reads
 a stale stack struct. The holder and user32 targets are validated before MinHook sees them; ProcessEvent was not.
 
-**What was decided (2026-11-06, maintainer):** first add our own guard on the pin, then bump. The guard refuses any
+**What was decided (2026-11-06, maintainer):** first add our own guard on the pin, then bump
+(`[MH-TRAMPOLINE-PREFLIGHT]`, `dll/src/Falsch.h`). The guard refuses any
 hook whose bytes MinHook would copy wrongly, whichever decoder is linked:
 
 1. Read every ProcessEvent and Grausam target the way the holder already is: VirtualQuery plus a SEH probe of the
