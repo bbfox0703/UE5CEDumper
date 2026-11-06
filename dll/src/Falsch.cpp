@@ -47,6 +47,13 @@ namespace {
 // before it and jumps back to the first that does not.
 constexpr int kPatchBytes = 5;
 
+// What trampoline.c writes in place of an instruction it rebuilds (trampoline.h's x64 structs), and the most it lets
+// a trampoline hold before the relay: TRAMPOLINE_MAX_SIZE = MEMORY_SLOT_SIZE - sizeof(JMP_ABS).
+constexpr int kCallAbsBytes = 16;   // CALL_ABS: FF15 00000002, EB 08, 8-byte address
+constexpr int kJmpAbsBytes = 14;    // JMP_ABS:  FF25 00000000, 8-byte address
+constexpr int kJccAbsBytes = 16;    // JCC_ABS:  7x 0E, FF25 00000000, 8-byte address
+constexpr int kTrampolineMax = static_cast<int>(Lager::kMemorySlotSize) - kJmpAbsBytes;
+
 // How CreateTrampolineFunction treats one instruction, decided from hde64's fields in trampoline.c's own order.
 enum class Kind { RipRelative, CallRel, JmpRel, Jcc, Ret, Copy };
 
@@ -102,13 +109,22 @@ Report CheckTrampoline(const uint8_t* code, size_t len, uint64_t address, HdeDec
 
     int pos = 0;
     int copied = 0;
+    int newPos = 0;         // trampoline.c's newPos: where the next copy goes in the trampoline
     uint64_t jmpDest = 0;   // trampoline.c's jmpDest: the furthest internal jump target, 0 while none
+    // Where each copied instruction went, and every jump inside the patch (copied byte for byte), for the check after
+    // the walk. The walk copies at most kPatchBytes instructions, so these never fill.
+    struct Step { int pos; int newPos; };
+    struct Inner { int pos; int newPos; uint64_t dest; };
+    Step steps[kPatchBytes];
+    Inner inner[kPatchBytes];
+    int nSteps = 0, nInner = 0;
+    bool walked = false;
     for (int guard = 0; guard < 32; ++guard) {
         const HdeView h = hde(buf + pos, pos, ctx);
         if (h.error)
             return Fail(Verdict::MinHookRefuses, pos, "hde64 cannot decode the instruction at +%d, so MinHook refuses "
                         "the target by itself", pos);
-        if (pos >= kPatchBytes) break;   // the instruction MinHook jumps back to: decoded, never copied
+        if (pos >= kPatchBytes) { walked = true; break; }   // the instruction MinHook jumps back to: decoded, not copied
 
         ZydisDecodedInstruction z;
         ZydisDecodedOperand ops[ZYDIS_MAX_OPERAND_COUNT];
@@ -134,18 +150,21 @@ Report CheckTrampoline(const uint8_t* code, size_t len, uint64_t address, HdeDec
         const int8_t imm8 = static_cast<int8_t>(static_cast<uint8_t>(h.imm));
 
         bool finished = false;
+        int copySize = h.len;   // trampoline.c's copySize: what lands in the trampoline for this instruction
         switch (Classify(h)) {
         case Kind::RipRelative: {
-            // trampoline.c re-points the 4 bytes at len - immBytes - 4 so they reach the same address from the
-            // trampoline. Right only when that is where the displacement sits, and when the new displacement fits:
-            // the trampoline can be up to MAX_MEMORY_RANGE (+ one block) away, and the result is truncated unchecked.
+            // trampoline.c re-points the 4 bytes at len - immBytes - 4, using hde64's disp32, so they reach the same
+            // address from the trampoline. Right only when that is where the displacement sits, when hde64 read it
+            // right, and when the new displacement fits: the trampoline lands within MAX_MEMORY_RANGE of the target
+            // and the result is truncated unchecked (the bound below adds a block of margin, so it is conservative).
             if (!ipMem || z.raw.disp.size != 32)
                 return Fail(Verdict::Unsafe, pos, "MinHook would re-point a RIP-relative displacement at +%d, but Zydis "
                             "decodes no RIP-relative operand there", pos);
             const int patchAt = h.len - h.immBytes - 4;
-            if (z.raw.disp.offset != patchAt)
-                return Fail(Verdict::Unsafe, pos, "MinHook would re-point bytes +%d..+%d of the instruction at +%d; the "
-                            "displacement is at +%u", patchAt, patchAt + 3, pos, z.raw.disp.offset);
+            if (z.raw.disp.offset != patchAt || h.disp32 != static_cast<uint32_t>(z.raw.disp.value))
+                return Fail(Verdict::Unsafe, pos, "MinHook would re-point bytes +%d..+%d of the instruction at +%d from "
+                            "displacement 0x%X; the displacement is 0x%X at +%u", patchAt, patchAt + 3, pos, h.disp32,
+                            static_cast<uint32_t>(z.raw.disp.value), z.raw.disp.offset);
             const int64_t reach = static_cast<int64_t>(pos) + h.len + static_cast<int64_t>(z.raw.disp.value);
             const int64_t worst = (reach < 0 ? -reach : reach) + static_cast<int64_t>(Lager::kMaxMemoryRange) +
                                   static_cast<int64_t>(Lager::kMemoryBlockSize);
@@ -153,6 +172,14 @@ Report CheckTrampoline(const uint8_t* code, size_t len, uint64_t address, HdeDec
                 return Fail(Verdict::Unsafe, pos, "the RIP-relative reference at +%d is %lld bytes away: from a "
                             "trampoline up to 1 GB off, MinHook's re-pointed displacement can overflow 32 bits", pos,
                             static_cast<long long>(reach));
+            // A memory access (not LEA's address arithmetic) into the bytes the hook overwrites -- target - 5 to
+            // target + 4, which covers the hot-patch path too -- reads the patch once the hook is enabled.
+            if (ipMem->mem.type == ZYDIS_MEMOP_TYPE_MEM) {
+                const int64_t hi = reach + (std::max)(1, static_cast<int>(ipMem->size / 8));
+                if (hi > -kPatchBytes && reach < kPatchBytes)
+                    return Fail(Verdict::Unsafe, pos, "the RIP-relative access at +%d touches +%lld, inside the bytes "
+                                "the hook overwrites", pos, static_cast<long long>(reach));
+            }
             if (h.opcode == 0xFF && h.modrmReg == 4) finished = true;   // jmp [rip+x]: the function goes elsewhere
             break;
         }
@@ -161,6 +188,7 @@ Report CheckTrampoline(const uint8_t* code, size_t len, uint64_t address, HdeDec
             if (!IsLegacyOpcode(z, ZYDIS_OPCODE_MAP_DEFAULT, 0xE8) || !haveTarget || zTarget != dest)
                 return Fail(Verdict::Unsafe, pos, "MinHook would rebuild the instruction at +%d as CALL 0x%llX; Zydis "
                             "decodes %s", pos, static_cast<unsigned long long>(dest), ZydisMnemonicGetString(z.mnemonic));
+            copySize = kCallAbsBytes;
             break;
         }
         case Kind::JmpRel: {
@@ -168,10 +196,13 @@ Report CheckTrampoline(const uint8_t* code, size_t len, uint64_t address, HdeDec
             if (!IsLegacyOpcode(z, ZYDIS_OPCODE_MAP_DEFAULT, h.opcode) || !haveTarget || zTarget != dest)
                 return Fail(Verdict::Unsafe, pos, "MinHook would rebuild the instruction at +%d as JMP 0x%llX; Zydis "
                             "decodes %s", pos, static_cast<unsigned long long>(dest), ZydisMnemonicGetString(z.mnemonic));
-            if (address <= dest && dest < address + kPatchBytes)
+            if (address <= dest && dest < address + kPatchBytes) {
                 jmpDest = (std::max)(jmpDest, dest);   // a jump inside the patch is copied as it is
-            else
+                if (nInner < kPatchBytes) inner[nInner++] = { pos, newPos, dest };
+            } else {
                 finished = jmpDest == 0 || ip >= jmpDest;
+                copySize = kJmpAbsBytes;
+            }
             break;
         }
         case Kind::Jcc: {
@@ -185,11 +216,15 @@ Report CheckTrampoline(const uint8_t* code, size_t len, uint64_t address, HdeDec
                 return Fail(Verdict::Unsafe, pos, "MinHook would rebuild the instruction at +%d as a conditional jump to "
                             "0x%llX; Zydis decodes %s", pos, static_cast<unsigned long long>(dest),
                             ZydisMnemonicGetString(z.mnemonic));
-            if (address <= dest && dest < address + kPatchBytes)
+            if (address <= dest && dest < address + kPatchBytes) {
                 jmpDest = (std::max)(jmpDest, dest);
-            else if ((h.opcode & 0xFC) == 0xE0)
+                if (nInner < kPatchBytes) inner[nInner++] = { pos, newPos, dest };
+            } else if ((h.opcode & 0xFC) == 0xE0) {
                 return Fail(Verdict::MinHookRefuses, pos, "a LOOP / JRCXZ at +%d leaves the patch, which MinHook refuses "
                             "by itself", pos);
+            } else {
+                copySize = kJccAbsBytes;
+            }
             break;
         }
         case Kind::Ret:
@@ -205,10 +240,58 @@ Report CheckTrampoline(const uint8_t* code, size_t len, uint64_t address, HdeDec
                             "own address", ZydisMnemonicGetString(z.mnemonic), pos);
             break;
         }
+        // trampoline.c's own refusals, which are safe: a length change ahead of an internal jump's target, and a
+        // trampoline too long for its slot.
+        if (ip < jmpDest && copySize != h.len)
+            return Fail(Verdict::MinHookRefuses, pos, "the instruction at +%d changes length ahead of an internal jump's "
+                        "target, which MinHook refuses by itself", pos);
+        if (newPos + copySize > kTrampolineMax)
+            return Fail(Verdict::MinHookRefuses, pos, "the trampoline would outgrow its slot at +%d, which MinHook "
+                        "refuses by itself", pos);
+        if (nSteps >= kPatchBytes)
+            return Fail(Verdict::Unsafe, pos, "more instructions before +%d than the patch can hold", kPatchBytes);
+        steps[nSteps++] = { pos, newPos };
+        newPos += copySize;
         ++copied;
         pos += h.len;
-        if (finished) break;
+        if (finished) { walked = true; break; }
     }
+    if (!walked)
+        return Fail(Verdict::Unsafe, pos, "the walk did not end within its bound at +%d", pos);
+
+    // A jump inside the patch is copied byte for byte, so in the trampoline it lands the same distance away as in the
+    // original. That is the same instruction only when the target is one MinHook copied and nothing between the two
+    // changed length -- trampoline.c refuses a length change only AFTER the jump, so a jump back over a rebuilt
+    // instruction, or into the middle of one, would land on something else.
+    for (int k = 0; k < nInner; ++k) {
+        bool same = false;
+        for (int j = 0; j < nSteps; ++j)
+            if (address + static_cast<uint64_t>(steps[j].pos) == inner[k].dest)
+                same = steps[j].newPos - steps[j].pos == inner[k].newPos - inner[k].pos;
+        if (!same)
+            return Fail(Verdict::Unsafe, inner[k].pos, "the jump at +%d into the patch is copied unchanged, but in the "
+                        "trampoline it would not land on the instruction at +%lld", inner[k].pos,
+                        static_cast<long long>(inner[k].dest - address));
+    }
+
+    // Once the hook is enabled, a branch elsewhere in the function that lands on +1..+4 lands inside the hook's jump
+    // and crashes the game. Scan what was read past the patch, linearly, until it stops decoding: a partial look --
+    // a branch beyond these bytes is not seen -- but it is the shape a short loop over the prologue takes.
+    for (size_t at = static_cast<size_t>((std::max)(pos, kPatchBytes)); at < avail;) {
+        ZydisDecodedInstruction z;
+        ZydisDecodedOperand ops[ZYDIS_MAX_OPERAND_COUNT];
+        if (!ZYAN_SUCCESS(ZydisDecoderDecodeFull(&Decoder(), buf + at, avail - at, &z, ops))) break;
+        for (uint8_t i = 0; i < z.operand_count; ++i) {
+            uint64_t t = 0;
+            if (ops[i].type == ZYDIS_OPERAND_TYPE_IMMEDIATE && ops[i].imm.is_relative &&
+                ZYAN_SUCCESS(ZydisCalcAbsoluteAddress(&z, &ops[i], address + at, &t)) && address < t &&
+                t < address + kPatchBytes)
+                return Fail(Verdict::Unsafe, static_cast<int>(at), "the branch at +%d lands on +%lld, inside the bytes "
+                            "the hook overwrites", static_cast<int>(at), static_cast<long long>(t - address));
+        }
+        at += z.length;
+    }
+
     Report r;
     r.copied = copied;
     return r;
@@ -238,11 +321,18 @@ bool ReadTarget(uintptr_t target, uint8_t (&out)[kSpan], std::string& why) {
         return false;
     }
     if (!Lager::HolderCandidateReadable(at.State, at.Protect, end.State, end.Protect, before.State, before.Protect)) {
-        why = "not readable code: a page MinHook reads is uncommitted, guarded or execute-only";
+        why = "not readable code: a page MinHook reads is uncommitted, guarded or not executable";
         return false;
     }
     if (!CopySEH(reinterpret_cast<const void*>(target), out, sizeof(out))) {
         why = "the bytes could not be read (the copy faulted)";
+        return false;
+    }
+    // MinHook reads target - 5 .. target - 1 when IsExecutableAddress calls that page executable (the hot-patch path).
+    uint8_t above[5];
+    if (before.State == Lager::kMemCommit && Lager::ProtectIsExecutable(before.Protect) &&
+        !CopySEH(reinterpret_cast<const void*>(target - 5), above, sizeof(above))) {
+        why = "the 5 bytes before the target could not be read (the copy faulted)";
         return false;
     }
     return true;

@@ -15,11 +15,16 @@
 // and the DLL links it already.
 //
 // The check replays CreateTrampolineFunction's x64 walk over a COPY of the target's bytes: which instructions it
-// copies, how it classifies each one, and where it stops. For every instruction MinHook copies, Zydis must agree on
-// the length, on the encoding MinHook's classification assumes, on the branch target MinHook computes and on where
-// the displacement it re-points sits; an instruction MinHook copies unchanged must carry no position-dependent
-// operand. What MinHook refuses by itself (an hde64 error, a LOOP out of the patch, a trampoline too long) is not
-// modelled: MH_CreateHook reports those, safely.
+// copies, how it classifies each one, what it writes in their place, and where it stops. For every instruction
+// MinHook copies, Zydis must agree on the length, on the encoding MinHook's classification assumes, on the branch
+// target MinHook computes and on the displacement it re-points (where it sits, its value, that it still fits, and
+// that it does not point into the bytes the hook overwrites); an instruction copied unchanged must carry no
+// position-dependent operand, and a jump inside the patch must land on the same instruction in the trampoline. A
+// branch in the bytes read past the patch must not land inside the hook's jump. What trampoline.c refuses by itself
+// is reported as MinHookRefuses, and MH_CreateHook then fails safely.
+//
+// What Safe does not promise: a branch to +1..+4 from beyond the 64 bytes read is not seen; a loop back to +0 re-runs
+// the detour; and a CALL in the patch pushes the trampoline's return address, as MinHook's CALL_ABS always does.
 //
 // The replay mirrors vendor/minhook/src/trampoline.c, and check_lager_vendor_sync hashes that function, so a
 // submodule bump that changes it fails the gates until this model is re-read.

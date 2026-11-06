@@ -449,16 +449,17 @@ inline std::vector<HolderCandidate> ChooseHolderTargets(const ImageLayout& img, 
     return out;
 }
 
-/// MinHook reads a holder target with no SEH, inside its own spin lock: a fault there kills the game, and a caught
-/// one would leave the lock taken for every later MinHook call. So a candidate is used only where every byte
-/// MinHook reads is readable. Its IsExecutableAddress accepts any PAGE_EXECUTE_* page, execute-only PAGE_EXECUTE
-/// included, and a guard page faults on its first read.
+/// MinHook reads a hook target with no SEH, inside its own spin lock: a fault there kills the game, and a caught
+/// one would leave the lock taken for every later MinHook call. So a target is used only where every byte
+/// MinHook reads is readable. Its IsExecutableAddress accepts any PAGE_EXECUTE_* page, and a guard page faults on its
+/// first read. Execute-only PAGE_EXECUTE counts as readable: x86-64 has no user-mode execute-only pages, and a read of
+/// one succeeds (measured 2026-11-06, [MH-TRAMPOLINE-PREFLIGHT]); refusing it would cost a game whose protector maps
+/// code that way its ProcessEvent hook. The SEH copy that follows these rules is the proof for each target.
 inline bool ProtectIsExecutable(uint32_t protect) {
     return (protect & (kPageExecute | kPageExecuteRead | kPageExecuteReadWrite | kPageExecuteWriteCopy)) != 0;
 }
 inline bool ProtectIsReadableCode(uint32_t protect) {
-    return (protect & kPageGuard) == 0 &&
-           (protect & (kPageExecuteRead | kPageExecuteReadWrite | kPageExecuteWriteCopy)) != 0;
+    return (protect & kPageGuard) == 0 && ProtectIsExecutable(protect);
 }
 
 // How far past a hook target MinHook reads, with no SEH of its own. CreateTrampolineFunction decodes the prologue
@@ -473,7 +474,8 @@ constexpr uint64_t kHolderReadSpan = 64;
 
 /// at / end: the pages holding the candidate and the last byte MinHook can decode (target + kHolderReadSpan - 1;
 /// CreateTrampolineFunction decodes forward from the target); before: the page holding target - 5, which MinHook
-/// reads only when its IsExecutableAddress calls it executable (the hot-patch path).
+/// reads only when its IsExecutableAddress calls it executable (the hot-patch path), so an executable guard page
+/// there is refused and Falsch::ReadTarget SEH-probes those 5 bytes when the page is executable.
 inline bool HolderCandidateReadable(uint32_t stateAt, uint32_t protectAt, uint32_t stateEnd, uint32_t protectEnd,
                                     uint32_t stateBefore, uint32_t protectBefore) {
     if (stateAt != kMemCommit || !ProtectIsReadableCode(protectAt)) return false;

@@ -192,6 +192,8 @@ void SubclassAllGameWindows() {
 // with an instruction MinHook's decoder misreads -- must cost the feature, not the game. Logs why when it refuses.
 bool VetForHook(FARPROC p, const char* name) {
     const Falsch::Report r = Falsch::VetHookTarget(reinterpret_cast<uintptr_t>(p));
+    if (r.verdict == Falsch::Verdict::MinHookRefuses)   // MH_CreateHook will fail by itself; say why it will
+        Sein::Warn("Grausam", "%s: %s", name, r.why.c_str());
     if (r.verdict != Falsch::Verdict::Unsafe) return true;
     Sein::Error("Grausam", "%s hook refused by the trampoline pre-flight at +%d: %s", name, r.offset, r.why.c_str());
     return false;
