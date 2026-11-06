@@ -60,7 +60,7 @@ GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
 READ_CONTROL = 0x00020000
 OPEN_EXISTING = 3
-SE_FILE_OBJECT = 1
+SE_KERNEL_OBJECT = 6
 OWNER_SECURITY_INFORMATION = 0x1
 GROUP_SECURITY_INFORMATION = 0x2
 DACL_SECURITY_INFORMATION = 0x4
@@ -194,29 +194,34 @@ def fmt_token(t):
             "NETWORK %(network)s  INTERACTIVE %(interactive)s" % t)
 
 
+_ME = None
+
+
+def say(line):
+    """print(), with this account's SID shown as <user>: the output is meant to be pasted into a
+    public repo, and the SID names this machine's account."""
+    global _ME
+    if _ME is None:
+        _ME = token_facts()["user"]
+    print(line.replace(_ME, "<user>"))
+
+
 def sddl_of(handle):
-    """The handle's security descriptor as SDDL. On a probe pipe with the DEFAULT descriptor the full
-    request (owner, group, DACL, label) failed with err 87 on 2026-11-06, so it falls back to smaller
-    requests, and the line says which parts it carries."""
-    attempts = [(OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
-                 | LABEL_SECURITY_INFORMATION, ""),
-                (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
-                 "  [no label: the request with LABEL failed]"),
-                (DACL_SECURITY_INFORMATION, "  [DACL only: owner/group request failed]")]
-    last = 0
-    for what, note in attempts:
-        psd = ctypes.c_void_p()
-        rc = adv.GetSecurityInfo(handle, SE_FILE_OBJECT, what, None, None, None, None, ctypes.byref(psd))
-        if rc != 0:
-            last = rc
-            continue
-        s = wintypes.LPWSTR()
-        adv.ConvertSecurityDescriptorToStringSecurityDescriptorW(psd, SDDL_REVISION_1, what, ctypes.byref(s), None)
-        out = s.value
-        k32.LocalFree(s)
-        k32.LocalFree(psd)
-        return out + note
-    return "<GetSecurityInfo failed: %s>" % err_text(last)
+    """The handle's owner, group, DACL and label as SDDL. SE_KERNEL_OBJECT, not SE_FILE_OBJECT: on a
+    probe pipe with the DEFAULT descriptor the file-object path failed with err 87 for every request,
+    the DACL alone included, while the kernel-object path read the same handle (2026-11-06)."""
+    what = (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
+            | LABEL_SECURITY_INFORMATION)
+    psd = ctypes.c_void_p()
+    rc = adv.GetSecurityInfo(handle, SE_KERNEL_OBJECT, what, None, None, None, None, ctypes.byref(psd))
+    if rc != 0:
+        return "<GetSecurityInfo failed: %s>" % err_text(rc)
+    s = wintypes.LPWSTR()
+    adv.ConvertSecurityDescriptorToStringSecurityDescriptorW(psd, SDDL_REVISION_1, what, ctypes.byref(s), None)
+    out = s.value
+    k32.LocalFree(s)
+    k32.LocalFree(psd)
+    return out
 
 
 class ProbePipe:
@@ -334,20 +339,20 @@ def client_token(path_of, tag):
 
 
 def show(label, ok, code):
-    print("    %-8s %s" % (label, "OPENED" if ok else "refused, err " + err_text(code)))
+    say("    %-8s %s" % (label, "OPENED" if ok else "refused, err " + err_text(code)))
 
 
 def cmd_matrix():
     facts = token_facts()
-    print("this process: " + fmt_token(facts))
+    say("this process: " + fmt_token(facts))
     candidate = "D:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GA;;;%s)" % facts["user"]
 
     reachable, code = control("ctl")
     if not reachable:
-        print("VERDICT: NOT MEASURABLE -- the SMB loopback did not reach a no-flag, default-security probe "
+        say("VERDICT: NOT MEASURABLE -- the SMB loopback did not reach a no-flag, default-security probe "
               "pipe (err %s). Is LanmanServer running? Every remote 'refused' would be vacuous." % err_text(code))
         return 2
-    print("control: a no-flag, default-security pipe is reachable over \\\\localhost\\pipe\\ -- remote opens "
+    say("control: a no-flag, default-security pipe is reachable over \\\\localhost\\pipe\\ -- remote opens "
           "below are real")
 
     # Which token each kind of client presents to the pipe. A deny-NETWORK ACE can only be judged
@@ -355,12 +360,12 @@ def cmd_matrix():
     remote_tok = None
     for label, path_of, tag in (("local client", local_path, "tokl"), ("remote client", remote_path, "tokr")):
         t, why = client_token(path_of, tag)
-        print("  %-14s as the pipe sees it: %s" % (label, fmt_token(t) if t else why))
+        say("  %-14s as the pipe sees it: %s" % (label, fmt_token(t) if t else why))
         if path_of is remote_path:
             remote_tok = t
     deny_network_exercised = bool(remote_tok) and remote_tok["network"] != "absent"
     if not deny_network_exercised:
-        print("  ⚠ the remote client's token carries no NETWORK SID, so the candidate's deny-NETWORK ACE is NOT "
+        say("  ⚠ the remote client's token carries no NETWORK SID, so the candidate's deny-NETWORK ACE is NOT "
               "exercised here: a remote open under it says nothing about a client from another machine")
 
     cases = [("default SD, no flag (Fern before)", False, None, True, True),
@@ -381,20 +386,20 @@ def cmd_matrix():
             rok, rcode = probe(p, remote_path(p.name))
         finally:
             p.close()
-        print("  %s" % label)
-        print("    SDDL     %s" % sd)
+        say("  %s" % label)
+        say("    SDDL     %s" % sd)
         show("local", lok, lcode)
         show("remote", rok, rcode)
         if want_remote is None:
-            print("    (remote: no expectation -- the deny-NETWORK ACE is not exercised by this client)")
+            say("    (remote: no expectation -- the deny-NETWORK ACE is not exercised by this client)")
         if lok != want_local:
             failed.append(label + ": local " + ("opened" if lok else "refused"))
         if want_remote is not None and rok != want_remote:
             failed.append(label + ": remote " + ("opened" if rok else "refused"))
     if failed:
-        print("VERDICT: FAIL -- " + "; ".join(failed))
+        say("VERDICT: FAIL -- " + "; ".join(failed))
         return 1
-    print("VERDICT: PASS -- every local open succeeded; PIPE_REJECT_REMOTE_CLIENTS refused every remote open"
+    say("VERDICT: PASS -- every local open succeeded; PIPE_REJECT_REMOTE_CLIENTS refused every remote open"
           + ("" if deny_network_exercised else "; deny-NETWORK NOT exercised (see the warning above)"))
     return 0
 
@@ -402,31 +407,31 @@ def cmd_matrix():
 def cmd_live():
     reachable, code = control("ctl")
     if not reachable:
-        print("VERDICT: NOT MEASURABLE -- the SMB loopback did not reach this rig's own no-flag probe pipe "
+        say("VERDICT: NOT MEASURABLE -- the SMB loopback did not reach this rig's own no-flag probe pipe "
               "(err %s); a refused remote open of the DLL's pipe would prove nothing." % err_text(code))
         return 2
-    print("control: a no-flag probe pipe is reachable over \\\\localhost\\pipe\\")
+    say("control: a no-flag probe pipe is reachable over \\\\localhost\\pipe\\")
 
     ok, code, h = open_client(local_path(LIVE_NAME), READ_CONTROL)
     if not ok:
-        print("VERDICT: NOT MEASURABLE -- \\\\.\\pipe\\%s would not open (err %s). Is the DLL injected, and is "
+        say("VERDICT: NOT MEASURABLE -- \\\\.\\pipe\\%s would not open (err %s). Is the DLL injected, and is "
               "the UI disconnected?" % (LIVE_NAME, err_text(code)))
         return 2
-    print("live pipe SDDL: %s" % sddl_of(h))
+    say("live pipe SDDL: %s" % sddl_of(h))
     k32.CloseHandle(h)
 
     lok, lcode = attempt(local_path(LIVE_NAME))
     rok, rcode = attempt(remote_path(LIVE_NAME))
-    print("  \\\\.\\pipe\\%s" % LIVE_NAME)
+    say("  \\\\.\\pipe\\%s" % LIVE_NAME)
     show("local", lok, lcode)
     show("remote", rok, rcode)
     if not lok:
-        print("VERDICT: FAIL -- a local read/write client was refused")
+        say("VERDICT: FAIL -- a local read/write client was refused")
         return 1
     if rok:
-        print("VERDICT: FAIL -- a REMOTE client opened the DLL's pipe (no PIPE_REJECT_REMOTE_CLIENTS?)")
+        say("VERDICT: FAIL -- a REMOTE client opened the DLL's pipe (no PIPE_REJECT_REMOTE_CLIENTS?)")
         return 1
-    print("VERDICT: PASS -- local client opened, remote client refused")
+    say("VERDICT: PASS -- local client opened, remote client refused")
     return 0
 
 
