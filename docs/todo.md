@@ -5,7 +5,8 @@ Open work only. **Read this when deciding what to do next.**
 > 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
 >
 > ▶ **Current programme:** `[MH-TRAMPOLINE-PREFLIGHT]` (started 2026-11-06; the maintainer: guard MinHook's
-> trampoline build on the pin, then bump minhook) -- its section has the steps. Before it, none active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
+> trampoline build on the pin, then bump minhook) -- step 2 shipped in build 3693; step 3, the bump, waits for the
+> maintainer's go-ahead. Its section has the steps. Before it, none active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
 > open bugs one after another) ended with build 3686 (dev-log 3671–3686). Census Table A holds 0 HIGH / 0 MED and five
 > LOW or unrated rows -- `[CEFORM-LUAENGINE-VANISH]`, `[DUMPER-SECOND-COPY-AUTOSTART]` (needs the maintainer's call),
 > `[CADENCEBAND-2026-08-22]`, `[W4-DEEPWALK-750MS]`, `[LEAD-PUBLISH-FAILED-BUT-BUILT]` -- which the maintainer judged not
@@ -440,11 +441,12 @@ chose (2026-11-06): guard on the pin first, then bump.
   - Frieren retries a refused ProcessEvent up to 8 times and logs each refusal.
   - Falsch vets a copy and MinHook re-reads the live bytes. A patch that lands in between would go unvetted; a
     re-read and compare before `MH_EnableHook` would narrow that.
-- ⬜ **Live check owed:** a ProcessEvent hook (FIRE) and the foreground lock on a fixture, each logging the
-  pre-flight's verdict.
+- ✅ **Live, build 3693** (`tools/verify/falsch_live.py`): DumperTest Shipping (UE 5.4) and DumperTest58 Shipping
+  (UE 5.8). ProcessEvent's hook installs through the pre-flight ("4 instruction(s) copied, Zydis agrees"), FIRE
+  `Conv_IntToString(42)` returns "42", and the foreground lock goes on (1) and off (0) with no refusal logged.
 
-**Step 3, the bump:** waits for the maintainer's go-ahead after step 2 ships. The checklist is in
-vendor-pin-reviews.md § minhook.
+**Step 2 shipped in build 3693.** **Step 3, the bump:** waits for the maintainer's go-ahead. The checklist is in
+vendor-pin-reviews.md § minhook; `falsch_live.py` and the gates are the re-checks.
 
 ## 🧭 Maintainer request 2026-11-04 — what moving the UI's hard-coded English into en.axaml would take, ahead of UI languages `[I18N-READINESS-2026-11-04]`
 

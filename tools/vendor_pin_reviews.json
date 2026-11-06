@@ -4,7 +4,7 @@
     "pin": "d94c64d32ea37bc4f5ee47d580709f70c6fb6080",
     "reviewed_upstream": "8af6b4acae5a9388fd742b56fa79ece89d96f823",
     "reviewed_on": "2026-11-06",
-    "verdict": "HOLD until the trampoline pre-flight ships, then bump",
+    "verdict": "HOLD; the trampoline pre-flight shipped in build 3693, bump on the maintainer's go-ahead",
     "record": "docs/vendor-pin-reviews.md#minhook"
   },
   "zydis": {

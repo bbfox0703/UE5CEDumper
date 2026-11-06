@@ -27,6 +27,30 @@ builds ≤696 in
 
 -----
 
+## 2026-11-06 (build 3693) — Every hook the DLL enables is checked against Zydis before MinHook builds it `[MH-TRAMPOLINE-PREFLIGHT]`
+
+- **A hook MinHook would build wrongly is refused instead of crashing the game.** MinHook copies a target's first
+  instructions into a trampoline using its own small decoder. When that decoder misreads an instruction it reports
+  success anyway, and the game crashes or misbehaves the first time the hooked function runs, with nothing logged.
+  Before creating the ProcessEvent hook or the foreground lock's user32 hooks, the DLL now replays MinHook's build
+  against Zydis (new module Falsch). On disagreement it logs the reason and leaves that hook out. Every target the DLL
+  hooks today passes; the log line for the ProcessEvent hook now says how many instructions its trampoline copies.
+- **The hook targets are read the way MinHook will read them first.** ProcessEvent's address used to get only a
+  non-zero check before MinHook read it without SEH. A target whose bytes cannot be read is now refused, not faulted
+  on. Execute-only code pages are accepted: x86-64 reads them.
+- **The minhook and zydis submodules stay pinned, and why is now recorded**
+  ([vendor-pin-reviews.md](vendor-pin-reviews.md)). `sync_tools.ps1` prints how many upstream commits are newer than
+  the last review, so the next audit reads only what is new.
+  - zydis, reviewed to `fcc63c6`: Denken's and Falsch's output is byte-identical against both revisions.
+  - minhook, reviewed to `8af6b4a`: upstream's decoder rewrite fixes real mis-measurements but leaves two
+    `trampoline.c` bugs. They are recorded there with the commit each was seen at, not reported upstream, and Falsch
+    refuses both.
+  - Bumping minhook is the next step, on the maintainer's go-ahead.
+- Tests: dll_core_test 1487 checks, dll_helpers_test 3832, 0 failures; C# 7474 passed, 0 failed; headless 71; 39 gates.
+  Live (`tools/verify/falsch_live.py`): DumperTest Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8), ProcessEvent
+  hook vetted (4 instructions copied), FIRE returns "42", foreground lock on and off. AOT UI 61,676,032 bytes;
+  UE5Dumper.dll 3,576,320 bytes.
+
 ## 2026-11-05 (build 3692) — A mistyped message template no longer breaks a command; gates freeze the hard-coded UI text `[I18N-READINESS-2026-11-04]`
 
 - **A message template whose placeholders do not fit** (a translator's slip, a stray brace) now shows the template
