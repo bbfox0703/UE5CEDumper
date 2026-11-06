@@ -492,6 +492,20 @@ What the bump would add is fewer refusals on targets we do not have yet. Bump wh
 
 The checklist is in vendor-pin-reviews.md § minhook; `falsch_live.py` and the gates are the re-checks.
 
+## 🧭 Maintainer request 2026-11-06 — the DLL's named pipe rejects remote clients `[PIPE-REJECT-REMOTE]`
+
+**Why.** Fern's `AcceptLoop` created `\\.\pipe\UE5DumpBfx` with default security and no
+`PIPE_REJECT_REMOTE_CLIENTS`. A client holding this user's (or an admin's) credentials on another machine could open
+`\\host\pipe\UE5DumpBfx` over SMB and drive the DLL, which writes game memory and invokes UFunctions.
+`[UI-MCP-AUTOMATION-2026-11-06]` names the same gap for a future UI-side server.
+
+**Step 1, shipped in build 3694:** `PIPE_REJECT_REMOTE_CLIENTS` on the pipe mode in Fern's `AcceptLoop`, which every
+proxy flavour links too. No test target compiles Fern.cpp, so
+`InvokeScriptTests.EveryNamedPipeTheDllServes_RejectsRemoteClients` pins the flag on every `CreateNamedPipe` call under
+`dll/src`.
+
+**Step 2, an explicit DACL (this user + SYSTEM, deny NETWORK):** being evaluated; nothing ships without a measurement.
+
 ## 🧭 Maintainer request 2026-11-04 — what moving the UI's hard-coded English into en.axaml would take, ahead of UI languages `[I18N-READINESS-2026-11-04]`
 
 > **Status (2026-11-05): P1 and P3-P5 done; the safety nets done too** -- `Res.FormatTemplate` degrades a misfit
