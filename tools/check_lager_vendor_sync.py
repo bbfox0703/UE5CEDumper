@@ -23,7 +23,11 @@ WHAT IS CHECKED
      equal Lager.h's kMemoryBlockSize / kMaxMemoryRange / kMemorySlotSize.
   2. The comment-stripped, whitespace-normalised bodies of FindPrevFreeRegion, FindNextFreeRegion and GetMemoryBlock
      hash to GOLDEN. A change to any walk moves the hash.
-  3. The same normalisation of trampoline.c's CreateTrampolineFunction hashes to GOLDEN_TRAMPOLINE.
+  3. GOLDEN_TRAMPOLINE: the same normalisation over everything Falsch's replay depends on -- trampoline.c's
+     CreateTrampolineFunction, its HDE_DISASM and TRAMPOLINE_MAX_SIZE defines, trampoline.h's JMP_ABS / CALL_ABS /
+     JCC_ABS (what MinHook writes in place of a rebuilt instruction), and hde64.h's F_ERROR / F_IMM* values (what
+     HdeView reads). hde64.h's other flags are left out on purpose: upstream's decoder rewrite widens F_PREFIX_ANY,
+     which nothing here reads.
 
 WHEN IT FIRES
   Re-read the three walks and the constants against Lager.h, update Lager.h (and its dll_helpers_test cases) to match
@@ -50,6 +54,8 @@ BUFFER_C = ROOT / "vendor" / "minhook" / "src" / "buffer.c"
 BUFFER_H = ROOT / "vendor" / "minhook" / "src" / "buffer.h"
 LAGER_H = ROOT / "dll" / "src" / "Lager.h"
 TRAMPOLINE_C = ROOT / "vendor" / "minhook" / "src" / "trampoline.c"
+TRAMPOLINE_H = ROOT / "vendor" / "minhook" / "src" / "trampoline.h"
+HDE64_H = ROOT / "vendor" / "minhook" / "src" / "hde" / "hde64.h"
 
 # The three x64 walks Lager.h transcribes, by the signature that opens each.
 WALKS = (
@@ -65,7 +71,10 @@ GOLDEN = "35ddbd82648539e49de402510233d3e4bb6e12ac3a0da3d4f0a2a593e4f2b751"
 # The trampoline builder Falsch.cpp replays ([MH-TRAMPOLINE-PREFLIGHT]), hashed the same way. Update ONLY after
 # re-reading Falsch's replay against the new CreateTrampolineFunction.
 TRAMPOLINE_FN = "BOOL CreateTrampolineFunction("
-GOLDEN_TRAMPOLINE = "716c6bf569150600c400b8b0ff506391683e534eb96d9c11ca1c356e8458faa6"
+TRAMPOLINE_STRUCTS = ("typedef struct _JMP_ABS", "typedef struct _CALL_ABS", "typedef struct _JCC_ABS")
+TRAMPOLINE_DEFINES = r"#define\s+(?:HDE_DISASM|TRAMPOLINE_MAX_SIZE)\b[^\n]*"
+HDE_FLAGS = r"#define\s+F_(?:ERROR|IMM8|IMM16|IMM32|IMM64)\s+\S+"
+GOLDEN_TRAMPOLINE = "d367d68f30c54d1fb050fd573647248aaa2d8ccc552361b62fa1827e3a41160b"
 
 
 def strip_comments(text: str) -> str:
@@ -132,8 +141,21 @@ def compute_hash(buffer_c_text: str) -> str:
     return hashlib.sha256("\n".join(bodies).encode("utf-8")).hexdigest()
 
 
-def compute_trampoline_hash(trampoline_c_text: str) -> str:
-    return hashlib.sha256(extract_body(strip_comments(trampoline_c_text), TRAMPOLINE_FN).encode("utf-8")).hexdigest()
+def compute_trampoline_hash(trampoline_c_text: str, trampoline_h_text: str, hde64_h_text: str) -> str:
+    tc = strip_comments(trampoline_c_text)
+    th = strip_comments(trampoline_h_text)
+    hh = strip_comments(hde64_h_text)
+    parts = [extract_body(tc, TRAMPOLINE_FN)]
+    defines = [re.sub(r"\s+", " ", d).strip() for d in re.findall(TRAMPOLINE_DEFINES, tc)]
+    if len(defines) < 2:
+        raise LookupError("trampoline.c's HDE_DISASM / TRAMPOLINE_MAX_SIZE defines")
+    parts += defines
+    parts += [extract_body(th, s) for s in TRAMPOLINE_STRUCTS]
+    flags = [re.sub(r"\s+", " ", f).strip() for f in re.findall(HDE_FLAGS, hh)]
+    if len(flags) != 5:
+        raise LookupError("hde64.h's F_ERROR / F_IMM* defines (found %d of 5)" % len(flags))
+    parts += flags
+    return hashlib.sha256("\n".join(parts).encode("utf-8")).hexdigest()
 
 
 def gather():
@@ -142,6 +164,8 @@ def gather():
     bh = BUFFER_H.read_text(encoding="utf-8", errors="replace")
     lg = LAGER_H.read_text(encoding="utf-8", errors="replace")
     tc = TRAMPOLINE_C.read_text(encoding="utf-8", errors="replace")
+    th = TRAMPOLINE_H.read_text(encoding="utf-8", errors="replace")
+    hh = HDE64_H.read_text(encoding="utf-8", errors="replace")
     return {
         "vendor_block": read_define(bc, "MEMORY_BLOCK_SIZE"),
         "vendor_range": read_define(bc, "MAX_MEMORY_RANGE"),
@@ -150,7 +174,7 @@ def gather():
         "lager_range": read_lager_constant(lg, "kMaxMemoryRange"),
         "lager_slot": read_lager_constant(lg, "kMemorySlotSize"),
         "hash": compute_hash(bc),
-        "trampoline_hash": compute_trampoline_hash(tc),
+        "trampoline_hash": compute_trampoline_hash(tc, th, hh),
     }
 
 
@@ -198,11 +222,24 @@ def selftest(verbose: bool) -> bool:
     tr_a2 = "BOOL CreateTrampolineFunction(PTRAMPOLINE ct)\n{\n    // Jcc\n    if ((hs.opcode2 & 0xF0) == 0x80) { j(); }\n    return TRUE;\n}"
     tr_b = ("BOOL CreateTrampolineFunction(PTRAMPOLINE ct) { if (hs.opcode == 0x0F && (hs.opcode2 & 0xF0) == 0x80) "
             "{ j(); } return TRUE; }")
-    check("trampoline: comments and spacing do not move the hash",
-          compute_trampoline_hash(tr_a) == compute_trampoline_hash(tr_a2))
-    check("trampoline: upstream guarding the Jcc test moves the hash",
-          compute_trampoline_hash(tr_a) != compute_trampoline_hash(tr_b))
-    check("trampoline: a missing builder is a LookupError", _raises(lambda: compute_trampoline_hash("nothing")))
+    defs = "#define HDE_DISASM(code, hs) hde64_disasm(code, hs)\n#define TRAMPOLINE_MAX_SIZE (MEMORY_SLOT_SIZE - sizeof(JMP_ABS))\n"
+    structs = ("typedef struct _JMP_ABS { UINT8 a; UINT64 address; } JMP_ABS;\n"
+               "typedef struct _CALL_ABS { UINT8 a; UINT64 address; } CALL_ABS;\n"
+               "typedef struct _JCC_ABS { UINT8 a; UINT64 address; } JCC_ABS;\n")
+    flags = ("#define F_IMM8 0x00000004\n#define F_IMM16 0x00000008\n#define F_IMM32 0x00000010\n"
+             "#define F_IMM64 0x00000020\n#define F_ERROR 0x00001000\n#define F_PREFIX_ANY 0x7f000000\n")
+    h = lambda c, s=structs, f=flags: compute_trampoline_hash(defs + c, s, f)  # noqa: E731
+    check("trampoline: comments and spacing do not move the hash", h(tr_a) == h(tr_a2))
+    check("trampoline: upstream guarding the Jcc test moves the hash", h(tr_a) != h(tr_b))
+    check("trampoline: a bigger JCC_ABS moves the hash",
+          h(tr_a) != h(tr_a, s=structs.replace("_JCC_ABS { UINT8 a;", "_JCC_ABS { UINT8 a; UINT8 b;")))
+    check("trampoline: a moved F_ERROR moves the hash",
+          h(tr_a) != h(tr_a, f=flags.replace("F_ERROR 0x00001000", "F_ERROR 0x00002000")))
+    check("trampoline: upstream widening F_PREFIX_ANY does not move it",
+          h(tr_a) == h(tr_a, f=flags.replace("0x7f000000", "0xff000000")))
+    check("trampoline: a missing builder is a LookupError", _raises(lambda: compute_trampoline_hash(defs, structs, flags)))
+    check("trampoline: a missing F_IMM define is a LookupError",
+          _raises(lambda: compute_trampoline_hash(defs + tr_a, structs, flags.replace("#define F_IMM64 0x00000020\n", ""))))
     return ok
 
 
@@ -227,7 +264,7 @@ def main() -> int:
         print("selftest: PASS")
         return 0
 
-    if not BUFFER_C.is_file() or not BUFFER_H.is_file() or not TRAMPOLINE_C.is_file():
+    if not all(p.is_file() for p in (BUFFER_C, BUFFER_H, TRAMPOLINE_C, TRAMPOLINE_H, HDE64_H)):
         print("check_lager_vendor_sync: SKIP -- vendor/minhook not initialised (git submodule update --init vendor/minhook)")
         return 0
 
@@ -270,9 +307,9 @@ def main() -> int:
         print("  constant / GOLDEN it names. Run 'py tools/check_lager_vendor_sync.py --list' for the current values.")
         return 1
 
-    print("check_lager_vendor_sync: OK -- Lager.h and Falsch.cpp match vendor/minhook (block 0x%X, range 0x%X, slot %d, "
-          "walks %s, trampoline %s)" % (g["vendor_block"], g["vendor_range"], g["vendor_slot"], g["hash"][:12],
-                                        g["trampoline_hash"][:12]))
+    print("check_lager_vendor_sync: OK -- the MinHook surface Lager.h and Falsch.cpp model is unchanged (block 0x%X, "
+          "range 0x%X, slot %d, walks %s, trampoline %s)" % (g["vendor_block"], g["vendor_range"], g["vendor_slot"],
+                                                            g["hash"][:12], g["trampoline_hash"][:12]))
     return 0
 
 
