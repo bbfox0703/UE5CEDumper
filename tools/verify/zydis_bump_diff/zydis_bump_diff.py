@@ -195,7 +195,9 @@ def main():
         out.mkdir(parents=True, exist_ok=True)
         env = msvc_env()
         env["VSLANG"] = "1033"   # English tool messages: localized ones do not survive a cp950 console
-        print("compiler:", run(["cl"], env, out, check=False).splitlines()[0])
+        banner = subprocess.run([shutil.which("cl", path=env.get("PATH") or env.get("Path")) or "cl"], env=env,
+                                capture_output=True, text=True, errors="replace").stderr.strip().splitlines()
+        print("compiler:", banner[0] if banner else "?")   # cl prints its version on stderr, its usage on stdout
         b = build(env, out, "pin", base)
         c = build(env, out, "master", a.candidate)
         if b["sha"] == c["sha"]:
