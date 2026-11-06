@@ -23,7 +23,10 @@ WHAT `matrix` MEASURES (no game needed)
     explicit DACL              -- the candidate: deny NETWORK, allow SYSTEM + this user
     explicit DACL + flag
   It also prints this token's user / owner / integrity / elevation and the SDDL that nullptr
-  security produces for it, which is what the DACL evaluation in the todo row reasons from.
+  security produces for it, which is what the DACL evaluation in the todo row reasons from, and
+  the token the pipe SEES for a local and for a loopback-SMB client (the server end impersonates
+  each). A deny-NETWORK ACE fires only on a token that carries NETWORK; when the loopback client's
+  does not, the rig says the ACE was not exercised instead of scoring its remote open.
   ⚠ This session's token is the ONLY one it measures. The combinations that differ -- an elevated
   game with a non-elevated client, a game under another account -- need a token this process
   cannot make without a UAC prompt, and the row records them as not measured.
@@ -107,6 +110,28 @@ adv.GetSidSubAuthorityCount.argtypes = [ctypes.c_void_p]
 adv.GetSidSubAuthorityCount.restype = ctypes.POINTER(ctypes.c_ubyte)
 adv.GetSidSubAuthority.argtypes = [ctypes.c_void_p, wintypes.DWORD]
 adv.GetSidSubAuthority.restype = ctypes.POINTER(wintypes.DWORD)
+adv.OpenThreadToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.BOOL, ctypes.POINTER(wintypes.HANDLE)]
+adv.ImpersonateNamedPipeClient.argtypes = [wintypes.HANDLE]
+k32.GetCurrentThread.restype = wintypes.HANDLE
+k32.ConnectNamedPipe.argtypes = [wintypes.HANDLE, ctypes.c_void_p]
+k32.WriteFile.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+                          ctypes.c_void_p]
+k32.ReadFile.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+                         ctypes.c_void_p]
+
+TokenGroups = 2
+SID_NETWORK = "S-1-5-2"
+SID_INTERACTIVE = "S-1-5-4"
+SE_GROUP_USE_FOR_DENY_ONLY = 0x10
+ERROR_PIPE_CONNECTED = 535
+
+
+class SID_AND_ATTRIBUTES(ctypes.Structure):
+    _fields_ = [("Sid", ctypes.c_void_p), ("Attributes", wintypes.DWORD)]
+
+
+class TOKEN_GROUPS_HEAD(ctypes.Structure):
+    _fields_ = [("GroupCount", wintypes.DWORD), ("Groups", SID_AND_ATTRIBUTES * 1)]
 
 
 def err_text(code):
@@ -122,16 +147,14 @@ def sid_str(psid):
     return out
 
 
-def token_facts():
-    """This process's token: the inputs nullptr security and the candidate DACL are built from."""
-    tok = wintypes.HANDLE()
-    if not adv.OpenProcessToken(k32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(tok)):
-        raise OSError(ctypes.get_last_error(), "OpenProcessToken")
-
+def describe_token(tok):
+    """What an access check sees in a token: the user, whether NETWORK / INTERACTIVE are among its
+    groups (a deny-NETWORK ACE fires only on an ENABLED or deny-only NETWORK group), integrity,
+    elevation. The token is the caller's to close."""
     def info(cls):
         need = wintypes.DWORD()
         adv.GetTokenInformation(tok, cls, None, 0, ctypes.byref(need))
-        buf = ctypes.create_string_buffer(max(need.value, 4))
+        buf = ctypes.create_string_buffer(max(need.value, 8))
         if not adv.GetTokenInformation(tok, cls, buf, need, ctypes.byref(need)):
             raise OSError(ctypes.get_last_error(), "GetTokenInformation(%d)" % cls)
         return buf
@@ -142,27 +165,58 @@ def token_facts():
     il_sid = ctypes.c_void_p.from_buffer(info(TokenIntegrityLevel)).value
     n = adv.GetSidSubAuthorityCount(il_sid)[0]
     il = adv.GetSidSubAuthority(il_sid, n - 1)[0]
-    k32.CloseHandle(tok)
-    return {"user": user, "owner": owner, "elevated": elevated, "integrity": "0x%04X" % il}
+    gbuf = info(TokenGroups)
+    head = TOKEN_GROUPS_HEAD.from_buffer(gbuf)
+    arr = (SID_AND_ATTRIBUTES * head.GroupCount).from_buffer(gbuf, TOKEN_GROUPS_HEAD.Groups.offset)
+    groups = {sid_str(g.Sid): g.Attributes for g in arr}
+
+    def group_state(sid):
+        if sid not in groups:
+            return "absent"
+        return "deny-only" if groups[sid] & SE_GROUP_USE_FOR_DENY_ONLY else "present"
+    return {"user": user, "owner": owner, "elevated": elevated, "integrity": "0x%04X" % il,
+            "network": group_state(SID_NETWORK), "interactive": group_state(SID_INTERACTIVE)}
+
+
+def token_facts():
+    """This process's token: the inputs nullptr security and the candidate DACL are built from."""
+    tok = wintypes.HANDLE()
+    if not adv.OpenProcessToken(k32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(tok)):
+        raise OSError(ctypes.get_last_error(), "OpenProcessToken")
+    try:
+        return describe_token(tok)
+    finally:
+        k32.CloseHandle(tok)
+
+
+def fmt_token(t):
+    return ("user %(user)s  owner %(owner)s  integrity %(integrity)s  elevated %(elevated)s  "
+            "NETWORK %(network)s  INTERACTIVE %(interactive)s" % t)
 
 
 def sddl_of(handle):
-    psd = ctypes.c_void_p()
-    rc = adv.GetSecurityInfo(handle, SE_FILE_OBJECT,
-                             OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION
-                             | DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION,
-                             None, None, None, None, ctypes.byref(psd))
-    if rc != 0:
-        return "<GetSecurityInfo failed: %s>" % err_text(rc)
-    s = wintypes.LPWSTR()
-    adv.ConvertSecurityDescriptorToStringSecurityDescriptorW(
-        psd, SDDL_REVISION_1,
-        OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION
-        | DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION, ctypes.byref(s), None)
-    out = s.value
-    k32.LocalFree(s)
-    k32.LocalFree(psd)
-    return out
+    """The handle's security descriptor as SDDL. On a probe pipe with the DEFAULT descriptor the full
+    request (owner, group, DACL, label) failed with err 87 on 2026-11-06, so it falls back to smaller
+    requests, and the line says which parts it carries."""
+    attempts = [(OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
+                 | LABEL_SECURITY_INFORMATION, ""),
+                (OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION,
+                 "  [no label: the request with LABEL failed]"),
+                (DACL_SECURITY_INFORMATION, "  [DACL only: owner/group request failed]")]
+    last = 0
+    for what, note in attempts:
+        psd = ctypes.c_void_p()
+        rc = adv.GetSecurityInfo(handle, SE_FILE_OBJECT, what, None, None, None, None, ctypes.byref(psd))
+        if rc != 0:
+            last = rc
+            continue
+        s = wintypes.LPWSTR()
+        adv.ConvertSecurityDescriptorToStringSecurityDescriptorW(psd, SDDL_REVISION_1, what, ctypes.byref(s), None)
+        out = s.value
+        k32.LocalFree(s)
+        k32.LocalFree(psd)
+        return out + note
+    return "<GetSecurityInfo failed: %s>" % err_text(last)
 
 
 class ProbePipe:
@@ -241,13 +295,51 @@ def control(tag):
         p.close()
 
 
+def client_token(path_of, tag):
+    """The token the PIPE sees for a client that opens it by `path_of(name)`: the server end
+    impersonates the client and reads its thread token. This is what decides whether a
+    deny-NETWORK ACE can fire -- an SMB open is not guaranteed to carry the NETWORK SID."""
+    p = ProbePipe("UE5DumpBfx-probe-%d-%s" % (os.getpid(), tag), reject_remote=False, sddl=None)
+    h = None
+    try:
+        p.listen()
+        srv = p.handles[-1]
+        ok, code, h = open_client(path_of(p.name), GENERIC_READ | GENERIC_WRITE)
+        if not ok:
+            return None, "open refused, err " + err_text(code)
+        n = wintypes.DWORD()
+        if not k32.WriteFile(h, b"x", 1, ctypes.byref(n), None):
+            return None, "client write failed, err " + err_text(ctypes.get_last_error())
+        if not k32.ConnectNamedPipe(srv, None) and ctypes.get_last_error() != ERROR_PIPE_CONNECTED:
+            return None, "ConnectNamedPipe failed, err " + err_text(ctypes.get_last_error())
+        buf = ctypes.create_string_buffer(1)
+        if not k32.ReadFile(srv, buf, 1, ctypes.byref(n), None):
+            return None, "server read failed, err " + err_text(ctypes.get_last_error())
+        if not adv.ImpersonateNamedPipeClient(srv):
+            return None, "ImpersonateNamedPipeClient failed, err " + err_text(ctypes.get_last_error())
+        try:
+            tok = wintypes.HANDLE()
+            if not adv.OpenThreadToken(k32.GetCurrentThread(), TOKEN_QUERY, True, ctypes.byref(tok)):
+                return None, "OpenThreadToken failed, err " + err_text(ctypes.get_last_error())
+        finally:
+            adv.RevertToSelf()
+        try:
+            return describe_token(tok), ""
+        finally:
+            k32.CloseHandle(tok)
+    finally:
+        if h:
+            k32.CloseHandle(h)
+        p.close()
+
+
 def show(label, ok, code):
     print("    %-8s %s" % (label, "OPENED" if ok else "refused, err " + err_text(code)))
 
 
 def cmd_matrix():
     facts = token_facts()
-    print("token: user %(user)s  owner %(owner)s  integrity %(integrity)s  elevated %(elevated)s" % facts)
+    print("this process: " + fmt_token(facts))
     candidate = "D:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GA;;;%s)" % facts["user"]
 
     reachable, code = control("ctl")
@@ -258,9 +350,23 @@ def cmd_matrix():
     print("control: a no-flag, default-security pipe is reachable over \\\\localhost\\pipe\\ -- remote opens "
           "below are real")
 
+    # Which token each kind of client presents to the pipe. A deny-NETWORK ACE can only be judged
+    # on a remote client whose token carries NETWORK; loopback may hand over the caller's own token.
+    remote_tok = None
+    for label, path_of, tag in (("local client", local_path, "tokl"), ("remote client", remote_path, "tokr")):
+        t, why = client_token(path_of, tag)
+        print("  %-14s as the pipe sees it: %s" % (label, fmt_token(t) if t else why))
+        if path_of is remote_path:
+            remote_tok = t
+    deny_network_exercised = bool(remote_tok) and remote_tok["network"] != "absent"
+    if not deny_network_exercised:
+        print("  ⚠ the remote client's token carries no NETWORK SID, so the candidate's deny-NETWORK ACE is NOT "
+              "exercised here: a remote open under it says nothing about a client from another machine")
+
     cases = [("default SD, no flag (Fern before)", False, None, True, True),
              ("default SD + PIPE_REJECT_REMOTE_CLIENTS", True, None, True, False),
-             ("explicit DACL " + candidate, False, candidate, True, False),
+             ("explicit DACL " + candidate, False, candidate, True,
+              None if not deny_network_exercised else False),
              ("explicit DACL + PIPE_REJECT_REMOTE_CLIENTS", True, candidate, True, False)]
     failed = []
     for i, (label, flag, sddl, want_local, want_remote) in enumerate(cases):
@@ -279,14 +385,17 @@ def cmd_matrix():
         print("    SDDL     %s" % sd)
         show("local", lok, lcode)
         show("remote", rok, rcode)
+        if want_remote is None:
+            print("    (remote: no expectation -- the deny-NETWORK ACE is not exercised by this client)")
         if lok != want_local:
             failed.append(label + ": local " + ("opened" if lok else "refused"))
-        if rok != want_remote:
+        if want_remote is not None and rok != want_remote:
             failed.append(label + ": remote " + ("opened" if rok else "refused"))
     if failed:
         print("VERDICT: FAIL -- " + "; ".join(failed))
         return 1
-    print("VERDICT: PASS -- local opens everywhere; remote opens only with neither the flag nor the deny-NETWORK ACE")
+    print("VERDICT: PASS -- every local open succeeded; PIPE_REJECT_REMOTE_CLIENTS refused every remote open"
+          + ("" if deny_network_exercised else "; deny-NETWORK NOT exercised (see the warning above)"))
     return 0
 
 
