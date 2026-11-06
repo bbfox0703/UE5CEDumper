@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-11-06 (no build change) — Two old explanations of the pipe's 3-client limit were wrong `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **`[PIPEBUSY-2026-08-18]` is not why the DLL's pipe takes at most 3 clients.** That tag recorded a logging bug: a
+  full pipe logged an ERROR once a second, 1,826 lines in 31 minutes. It was fixed on 2026-08-19, and the pipe now
+  logs one line when it fills and one when it frees. The 3 is simply "2 UI lanes + 1 spare". Several notes cited the
+  tag as the reason, including a todo line written earlier today; each now carries a correction. Read this entry, not
+  those notes.
+- **multipipe-eval.md §4's warning no longer holds.** It said two commands running at once race on the class caches.
+  Every access is now locked, and nothing is erased. What does grow with heavy commands running at once is the number
+  of scan threads inside the game.
+- **Planned, not built** (todo.md `[PIPE-PER-PROCESS-2026-11-06]`):
+  - A. a pipe per game process, so the UI can tell games apart and list them by EXE name and window title;
+  - B. 6 pipe slots;
+  - C. hardening for a client that stays connected;
+  - D. then the MCP automation idea.
+
 ## 2026-11-06 (build 3694) — The DLL's pipe refuses clients from other machines `[PIPE-REJECT-REMOTE]`
 
 - **Another PC can no longer drive the DLL over the network.** The pipe `\\.\pipe\UE5DumpBfx` accepted remote clients.

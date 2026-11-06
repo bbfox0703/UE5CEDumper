@@ -94,6 +94,9 @@ proxy-mode title you are *supposed* to run it profiler-first once and watch it c
   holds **2**, so one rig client fills the pool and the accept loop then logs
   `CreateNamedPipe failed (err=231)` **every second, forever** — 1,826 lines in 31 min, measured
   (`[PIPEBUSY-2026-08-18]`). Close the UI first, or drive the check through the UI instead.
+  > **Corrected 2026-11-06** (`[PIPE-PER-PROCESS-2026-11-06]`): the every-second logging was fixed on 2026-08-19
+  > (Voll: one line on entry, one on recovery). The rule still stands while the cap is 3, because the UI's 2 lanes and
+  > one rig fill the pool. Stage B of that plan raises the cap to 6 and retires the rule.
 * ⏱ **`list_all_functions` is FAST; a long wait means the RIG, not the DLL.** Measured on Avowed
   (281,501 objects): the DLL logs `EnumerateAllFunctions: 21845 entries from 8780 classes`
   **0.34 s** after the request, and the full round trip is **0.8 s** once the client reads in blocks.

@@ -5558,6 +5558,9 @@ The AOBMaker CE plugin **is installed** (maintainer, 2026-08-18). With Cheat Eng
 
 ### ✅ FIXED 2026-08-19 `[PIPEBUSY-2026-08-18]` / `[CLASSTOTAL-2026-08-18]` — both moved to "Pending live-game verification"
 
+> **2026-11-06:** `[PIPEBUSY-2026-08-18]` is a fixed LOGGING bug. It is not a reason for `kMaxPipeInstances = 3`; see
+> todo.md `[PIPE-PER-PROCESS-2026-11-06]`.
+
 Both honesty defects were fixed 2026-08-19 (PIPEBUSY: at-capacity logs once, not 1 Hz forever;
 CLASSTOTAL: `total_classes` now the real pool count past the row cap). The live-check writeups —
 including the ⚠ "never run a second `pipe_client.py` alongside the UI" caveat, which the PIPEBUSY fix

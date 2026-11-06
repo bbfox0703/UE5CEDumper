@@ -410,6 +410,8 @@ Live Funcs run.
    UI holds **2** lanes (`LaneRoutingPipeClient` opens an interactive `"I"` and a bulk `"B"`).
    Several rigs say so in their own docstrings; `pipebusy_capacity.py` is the one deliberate
    exception and opens all three itself.
+   *Until the cap rises:* `[PIPE-PER-PROCESS-2026-11-06]` Stage B takes it to 6 and retires this
+   rule. `[PIPEBUSY-2026-08-18]` is a fixed logging bug, not this rule's reason.
 5. ⛔ **SHIPPING IS THE FIXTURE. `dev` is a second opinion, not the default.**
    `py tools/verify/launch_dumpertest.py shipping` — maintainer's standing instruction,
    2026-09-09. **A Development build's offsets are a MINORITY shape in real games**: the layouts,
