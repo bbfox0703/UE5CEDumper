@@ -605,7 +605,11 @@ if(BUILD_DLL_TESTS)
         target_compile_options(grausam_window_test PRIVATE /utf-8 /W4 /EHsc)
     endif()
 
-    target_link_libraries(grausam_window_test PRIVATE minhook user32)
+    # Grausam.cpp vets every hook through Falsch ([MH-TRAMPOLINE-PREFLIGHT]), so the TU needs Falsch.cpp, its
+    # Zydis and MinHook's hde64 header -- the real pre-flight, not a stub, though this test installs no hook.
+    target_sources(grausam_window_test PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src/Falsch.cpp)
+    target_include_directories(grausam_window_test PRIVATE ${CMAKE_SOURCE_DIR}/vendor/minhook/src)
+    target_link_libraries(grausam_window_test PRIVATE minhook Zydis user32)
 
     # ---- sein_retention_test: AB9, the log retention sweep -----------------------------
     #

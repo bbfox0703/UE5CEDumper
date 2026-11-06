@@ -461,14 +461,14 @@ inline bool ProtectIsReadableCode(uint32_t protect) {
            (protect & (kPageExecuteRead | kPageExecuteReadWrite | kPageExecuteWriteCopy)) != 0;
 }
 
-// How far past a holder target MinHook reads, with no SEH of its own. CreateTrampolineFunction decodes the prologue
+// How far past a hook target MinHook reads, with no SEH of its own. CreateTrampolineFunction decodes the prologue
 // instruction by instruction until the bytes copied reach sizeof(JMP_REL) == 5; the LAST instruction it disassembles
 // therefore starts at an offset of at most 4 + 15 (the longest x86-64 instruction can precede it) = 19, and hde64
 // then reads up to ~33 bytes of THAT instruction -- up to 16 legacy prefixes, a REX byte, a 1-2 byte opcode, ModRM,
 // SIB, a 4-byte displacement and an 8-byte immediate -- before it caps the reported length at 15. 19 + 33 = 52;
-// rounded up to a tidy 64 for margin. HolderCandidateSafe queries the page of target + kHolderReadSpan - 1 and
-// SEH-probes this many bytes, so a candidate whose decode reach crosses into an unreadable page is refused, not
-// faulted on inside MinHook's spin lock.
+// rounded up to a tidy 64 for margin. Falsch::ReadTarget queries the page of target + kHolderReadSpan - 1 and
+// SEH-probes this many bytes for the holder and for every hook that gets enabled, so a target whose decode reach
+// crosses into an unreadable page is refused, not faulted on inside MinHook's spin lock.
 constexpr uint64_t kHolderReadSpan = 64;
 
 /// at / end: the pages holding the candidate and the last byte MinHook can decode (target + kHolderReadSpan - 1;

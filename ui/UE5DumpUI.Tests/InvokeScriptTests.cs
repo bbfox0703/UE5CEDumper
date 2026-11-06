@@ -3655,12 +3655,13 @@ public class InvokeScriptTests
     [Fact]
     public void HolderReadabilityGuard_CoversEveryByteMinHookDecodes()
     {
-        // The guard before MH_CreateHook(holder) is the only thing that stops an access violation inside MinHook's
-        // spin lock, on the proxy's auto-start thread, at process start. MinHook reads the target with no SEH, and
+        // The read check before MH_CreateHook(holder) stops an access violation inside MinHook's spin lock, on the
+        // proxy's auto-start thread, at process start. MinHook reads the target with no SEH, and
         // CreateTrampolineFunction decodes PAST the prologue: the last instruction it disassembles can start ~19 bytes
         // in, and hde64 reads ~33 more of it, so a 32-byte probe understates the reach. Lager::kHolderReadSpan names
-        // the span with its derivation; HolderCandidateSafe must query the page of target + span - 1 and probe span
-        // bytes, not 32. No test target compiles Stark.cpp, so pin the body.
+        // the span with its derivation; the check must query the page of target + span - 1 and probe span bytes, not
+        // 32. dll_helpers_test drives Falsch::ReadTarget on real pages (Test_Falsch_ReadTarget); no test target
+        // compiles Stark.cpp, so pin that the holder goes through it, and pin ReadTarget's span.
         var lager = MinHookGlue("Lager.h");
         var m = System.Text.RegularExpressions.Regex.Match(lager, @"kHolderReadSpan\s*=\s*(\d+)");
         Assert.True(m.Success, "Lager::kHolderReadSpan not defined -- the holder read span must be a named constant");
@@ -3717,6 +3718,9 @@ public class InvokeScriptTests
             for (int i = code.IndexOf("MH_CreateHook(", StringComparison.Ordinal); i >= 0;
                  i = code.IndexOf("MH_CreateHook(", i + 1, StringComparison.Ordinal))
             {
+                // Inside a string literal (a log line naming the call) when an odd number of quotes precede it on the line.
+                int lineStart = code.LastIndexOf('\n', i) + 1;
+                if (code[lineStart..i].Count(ch => ch == '"') % 2 == 1) continue;
                 int close = code.IndexOf(';', i);
                 var call = code[i..close];
                 if (call.Contains("&HolderDetour", StringComparison.Ordinal)) { holders++; continue; }

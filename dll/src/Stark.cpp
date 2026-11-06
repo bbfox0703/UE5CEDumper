@@ -16,6 +16,7 @@
 #include "Linie.h"   // Live PE profiler — opt-in per-UFunction fire counting
 #include "Routine.h"   // Routine::RunThreadGuarded — a throw out of the PE hook fast-fails the GAME (B14)
 #include "Lager.h"     // MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY])
+#include "Falsch.h"    // MinHook trampoline pre-flight against Zydis ([MH-TRAMPOLINE-PREFLIGHT])
 
 #include <MinHook.h>
 #include <Windows.h>
@@ -500,20 +501,13 @@ static bool EnsureMinHookLocked() {
 static void HolderDetour() {}
 
 // May MinHook read `target`? It reads a hook target with no SEH, inside its spin lock, so a fault there would end
-// the game and a caught one would leave the lock taken for every later MinHook call. It decodes past the prologue,
-// so the guard covers target .. target + kHolderReadSpan - 1 (Lager derives the span). Lager decides from the page
-// protections; the SEH copy then proves the bytes are really there.
+// the game and a caught one would leave the lock taken for every later MinHook call. Falsch::ReadTarget answers it
+// the same way for the holder as for a hook that gets enabled: Lager's page rules over the span MinHook decodes, then
+// a SEH copy. The holder needs only the read, not Falsch's replay -- it is never enabled, so its trampoline never runs.
 static bool HolderCandidateSafe(uintptr_t target) {
-    MEMORY_BASIC_INFORMATION at{}, end{}, before{};
-    if (!VirtualQuery(reinterpret_cast<LPCVOID>(target), &at, sizeof(at)) ||
-        !VirtualQuery(reinterpret_cast<LPCVOID>(target + Lager::kHolderReadSpan - 1), &end, sizeof(end)) ||
-        !VirtualQuery(reinterpret_cast<LPCVOID>(target - 5), &before, sizeof(before))) {
-        return false;
-    }
-    if (!Lager::HolderCandidateReadable(at.State, at.Protect, end.State, end.Protect, before.State, before.Protect))
-        return false;
-    uint8_t probe[Lager::kHolderReadSpan];
-    return CopyBytesSEH(reinterpret_cast<const void*>(target), probe, sizeof(probe));
+    uint8_t probe[Falsch::kSpan];
+    std::string why;
+    return Falsch::ReadTarget(target, probe, why);
 }
 
 // ---- Public API ----
@@ -728,6 +722,18 @@ bool InstallHook(uintptr_t processEventAddr) {
         return true;
     }
 
+    // [MH-TRAMPOLINE-PREFLIGHT] Before MinHook reads the target or builds anything: refuse an address MinHook would
+    // fault reading, or copy into a trampoline that runs different code (Falsch.h says how both happen). Ahead of the
+    // holder's step-aside, so a refused ProcessEvent does not cost the held block.
+    const Falsch::Report vet = Falsch::VetHookTarget(processEventAddr);
+    if (vet.verdict == Falsch::Verdict::Unsafe) {
+        LOG_ERROR("GameThreadDispatch: ProcessEvent hook NOT installed at 0x%llX -- the trampoline pre-flight refused "
+                  "it at +%d: %s", (unsigned long long)processEventAddr, vet.offset, vet.why.c_str());
+        return false;
+    }
+    if (vet.verdict == Falsch::Verdict::MinHookRefuses)
+        LOG_WARN("GameThreadDispatch: ProcessEvent 0x%llX: %s", (unsigned long long)processEventAddr, vet.why.c_str());
+
     if (!EnsureMinHookLocked()) return false;
 
     // [MH-PRERESERVE-PROXY] A real hook outranks the holder. MinHook keys hooks by target, so ProcessEvent at the
@@ -783,8 +789,8 @@ bool InstallHook(uintptr_t processEventAddr) {
     s_hookedAddr = processEventAddr;
     s_hookInstalledMs.store(NowMs(), std::memory_order_relaxed);
     s_hookActive.store(true);
-    LOG_INFO("GameThreadDispatch: ProcessEvent hook installed at 0x%llX",
-             (unsigned long long)processEventAddr);
+    LOG_INFO("GameThreadDispatch: ProcessEvent hook installed at 0x%llX (trampoline pre-flight: %d instruction(s) "
+             "copied, Zydis agrees)", (unsigned long long)processEventAddr, vet.copied);
     // [MH-PRERESERVE-PROXY] Where its trampoline went: the evidence that the held block did its job.
     const uintptr_t peBlock = static_cast<uintptr_t>(Lager::BlockOfSlot(reinterpret_cast<uintptr_t>(s_originalPE)));
     if (s_heldBlock != 0) {
