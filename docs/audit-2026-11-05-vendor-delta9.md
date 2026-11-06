@@ -221,6 +221,11 @@ works.
 
 ## SUBMODULES — HOLD
 
+> **Superseded 2026-11-06 by [vendor-pin-reviews.md](vendor-pin-reviews.md).** The two HOLDs below were argued from
+> the commit list. That review measured them: the real Denken against both zydis revisions over three binaries, and
+> MinHook's real trampoline builder with both decoders over 3.68M function starts. It also found that the minhook
+> bump carries a silent mis-relocation class. Read that page, not this section, before deciding on either pin.
+
 - **zydis (+13): HOLD.** Ten of the 13 commits only add decoding for new ISA extensions (WBNOINVD, IBHF, VEX maps 5 / 7, AVX10.2,
   MOVRS / PREFETCHRST, CMPccXADD-VEX, ACE / BSR0, AMX, USER_MSR / MSR_IMM) that shipped user-mode game code does not
   contain. `daaa71d` widens the ISA-set field, `0f44566` regenerates element-type tables, and `ff4f87e` sets the

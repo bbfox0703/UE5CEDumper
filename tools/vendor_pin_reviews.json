@@ -1,0 +1,17 @@
+{
+  "_about": "The last upstream commit reviewed for each compiled-in submodule, and the verdict. The reasoning, the measurements and what reopens each verdict are in docs/vendor-pin-reviews.md; sync_tools.ps1 reads this file and prints how many upstream commits are newer than reviewed_upstream. Move a SHA only together with a new dated entry in that doc.",
+  "minhook": {
+    "pin": "d94c64d32ea37bc4f5ee47d580709f70c6fb6080",
+    "reviewed_upstream": "8af6b4acae5a9388fd742b56fa79ece89d96f823",
+    "reviewed_on": "2026-11-06",
+    "verdict": "HOLD until the trampoline pre-flight ships, then bump",
+    "record": "docs/vendor-pin-reviews.md#minhook"
+  },
+  "zydis": {
+    "pin": "a95bb71013436547f689fc0b380f48edf663066e",
+    "reviewed_upstream": "fcc63c635889d800c9a08ea72482fa3344327732",
+    "reviewed_on": "2026-11-06",
+    "verdict": "HOLD",
+    "record": "docs/vendor-pin-reviews.md#zydis"
+  }
+}

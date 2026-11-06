@@ -271,6 +271,15 @@ $subs = @(
     @{ Name = "zydis";   Path = "vendor/zydis"   }
 )
 
+# The last upstream commit each pin was reviewed against (docs/vendor-pin-reviews.md). "N behind" alone sent every
+# vendor audit back over commits an earlier one had already measured; "0 after the last review" says there is nothing
+# new to read.
+$reviews = $null
+if (Test-Path "tools/vendor_pin_reviews.json") {
+    try { $reviews = Get-Content "tools/vendor_pin_reviews.json" -Raw | ConvertFrom-Json }
+    catch { Write-Host "  tools/vendor_pin_reviews.json does not parse - review status not shown" -ForegroundColor Red }
+}
+
 foreach ($s in $subs) {
     $p = $s.Path
     if (!(Test-Path "$p/.git")) {
@@ -301,6 +310,25 @@ foreach ($s in $subs) {
     if ($behind -ne "0" -and $behind -ne "?") {
         git -C $p log --oneline "HEAD..$upstream" 2>$null | Select-Object -First 10 | ForEach-Object {
             Write-Host "      $_"
+        }
+    }
+
+    $review = if ($reviews) { $reviews.($s.Name) } else { $null }
+    if ($review -and $upstream) {
+        $seen = $review.reviewed_upstream
+        $short = $seen.Substring(0, 7)
+        git -C $p merge-base --is-ancestor $seen $upstream 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            $after = (git -C $p rev-list --count "$seen..$upstream" 2>$null)
+            $colour = if ($after -eq "0") { "Green" } else { "Yellow" }
+            Write-Host "      $after after the last review ($short, $($review.reviewed_on): $($review.verdict))" -ForegroundColor $colour
+            if ($after -eq "0") {
+                Write-Host "      nothing new upstream since that review - its verdict stands ($($review.record))" -ForegroundColor DarkGray
+            } else {
+                Write-Host "      review only $short..$upstream, then record it in $($review.record)" -ForegroundColor DarkGray
+            }
+        } else {
+            Write-Host "      the reviewed commit $short is not on $upstream (history rewritten, or not fetched) - review the whole delta" -ForegroundColor Red
         }
     }
 }
