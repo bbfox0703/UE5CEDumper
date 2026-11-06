@@ -9,7 +9,7 @@ fixture's folder is `<Name>-Win64-Shipping`.
 WHAT IT CHECKS, and the evidence each check needs:
 
   L1  ProcessEvent: FIRE `KismetStringLibrary::Conv_IntToString(42)` needs the game-thread hook. The reply must hold
-      ReturnValue = "42", and this session's init log must hold "ProcessEvent hook installed at 0x...
+      ReturnValue = "42", and this session's pipe log must hold "ProcessEvent hook installed at 0x...
       (trampoline pre-flight: N instruction(s) copied, Zydis agrees)" -- the line only a vetted install writes -- and
       no "trampoline pre-flight refused".
   L2  Grausam: set_foreground_lock on must answer state 1, the log must say "Foreground lock ENABLED" and must not
@@ -42,13 +42,14 @@ def say(s):
     sys.stdout.flush()
 
 
-def current_log(folder: pathlib.Path) -> pathlib.Path | None:
-    logs = sorted(folder.glob("init*.log"), key=lambda p: p.stat().st_mtime)
-    return logs[-1] if logs else None
+def session_logs(folder: pathlib.Path) -> list[pathlib.Path]:
+    # The live session writes the "-0" file of each category; older sessions are archived under a timestamp. Stark's
+    # GameThreadDispatch lines go to the pipe category and Grausam's to init, so read both.
+    return [p for p in (folder / "pipe-0.log", folder / "init-0.log") if p.is_file()]
 
 
-def read(path: pathlib.Path) -> str:
-    return path.read_text(encoding="utf-8", errors="replace")
+def read(paths: list[pathlib.Path]) -> str:
+    return "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in paths)
 
 
 def main() -> int:
@@ -63,11 +64,11 @@ def main() -> int:
     with PipeClient() as c:
         say("build: %s" % c.assert_build())
         c.ensure_scanned()
-        log = current_log(folder)
-        if not log:
-            say(f"NOT READY: no init log in {folder}")
+        log = session_logs(folder)
+        if len(log) != 2:
+            say(f"NOT READY: no live pipe-0.log / init-0.log in {folder}")
             return 2
-        say(f"log: {log}")
+        say("logs: %s" % ", ".join(str(p) for p in log))
 
         say("\n== L1 ProcessEvent: FIRE through the vetted hook ==")
         r = c.request("invoke_function", class_name="KismetStringLibrary", func_name="Conv_IntToString",
@@ -87,11 +88,13 @@ def main() -> int:
             fails.append("L1")
 
         say("\n== L2 Grausam: the foreground lock's user32 hooks ==")
-        on = c.request("set_foreground_lock", enable=True).get("data", {})
+        r = c.request("set_foreground_lock", enable=True)
+        on = r.get("data", r)
         text = read(log)
         refused = "refused by the trampoline pre-flight" in text
         enabled = "Foreground lock ENABLED" in text
-        off = c.request("set_foreground_lock", enable=False).get("data", {})
+        r = c.request("set_foreground_lock", enable=False)
+        off = r.get("data", r)
         say("   on: state=%s  off: state=%s  ENABLED logged=%s  refused logged=%s"
             % (on.get("state"), off.get("state"), enabled, refused))
         if on.get("state") == 1 and off.get("state") == 0 and enabled and not refused:
