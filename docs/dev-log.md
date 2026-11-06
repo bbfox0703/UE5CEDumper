@@ -27,6 +27,31 @@ builds ≤696 in
 
 -----
 
+## 2026-11-06 (build 3694) — The DLL's pipe refuses clients from other machines `[PIPE-REJECT-REMOTE]`
+
+- **Another PC can no longer drive the DLL over the network.** The pipe `\\.\pipe\UE5DumpBfx` accepted remote clients.
+  Anyone holding this user's (or an administrator's) credentials on another machine could open it through Windows file
+  sharing, then read and write the game's memory and call its functions through the DLL. The pipe now refuses remote
+  clients (`PIPE_REJECT_REMOTE_CLIENTS`). The UI, the Python pipe tools and Cheat Engine all connect locally and see
+  no change. The four proxy DLLs carry the same change.
+- **The pipe's permissions stay the Windows default, by decision.** An explicit "this user only" list was measured and
+  not shipped. Against network clients it adds nothing to the flag. For a game running elevated it would let a
+  non-elevated process in, which the default does not. The measurements and the remaining options are in
+  todo.md `[PIPE-REJECT-REMOTE]`.
+- **New rig, `tools/verify/pipe_remote_probe.py`.** It opens a pipe both locally and through this PC's own
+  file-sharing server, which the pipe treats as a remote client, so the change can be checked without a second
+  machine. Before scoring any refusal, it confirms a control pipe can be reached that way.
+- Tests: the new source pin `EveryNamedPipeTheDllServes_RejectsRemoteClients` (red, then green); C# 7475 passed,
+  0 failed, 1 skipped (`DUMPDIFF_REAL_DIR` unset); dll_core_test 1487 checks and dll_helpers_test 3832, 0 failures;
+  37 gates passed, `check_processevent_slots` skipped (no `vendor/RE-UE4SS` in the worktree), 11/11 Lua suites.
+  Live on DumperTest Shipping (UE 5.4, non-elevated):
+  - `pipe_client.py get_pointers` returned all four globals and 24,530 objects;
+  - the remote open was refused (err 5) while the local open succeeded;
+  - the AOT UI of build 3693 connected (both lanes);
+  - the CE mailbox (`mailbox_poke.py`) passed.
+
+  DLL and proxies only, with no AOT UI publish; UE5Dumper.dll is 3,576,320 bytes.
+
 ## 2026-11-06 (build 3693) — Every hook the DLL enables is checked against Zydis before MinHook builds it `[MH-TRAMPOLINE-PREFLIGHT]`
 
 - **A hook MinHook would build wrongly is refused instead of crashing the game.** MinHook copies a target's first
