@@ -917,7 +917,9 @@ void Fern::AcceptLoop() {
         // PIPE_REJECT_REMOTE_CLIENTS: without it, anyone holding this user's (or an admin's)
         // credentials on ANOTHER machine opens \\host\pipe\UE5DumpBfx over SMB and drives a
         // DLL that writes game memory and invokes UFunctions. A local client is never refused
-        // by it. [PIPE-REJECT-REMOTE]
+        // by it. The security stays the default (nullptr below): an explicit "this user"
+        // DACL was measured and not shipped, because for an elevated game it would let a
+        // non-elevated process in. [PIPE-REJECT-REMOTE]
         HANDLE pipe = CreateNamedPipeW(
             Grimoire::PIPE_NAME,
             PIPE_ACCESS_DUPLEX,

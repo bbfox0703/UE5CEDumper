@@ -504,7 +504,63 @@ proxy flavour links too. No test target compiles Fern.cpp, so
 `InvokeScriptTests.EveryNamedPipeTheDllServes_RejectsRemoteClients` pins the flag on every `CreateNamedPipe` call under
 `dll/src`.
 
-**Step 2, an explicit DACL (this user + SYSTEM, deny NETWORK):** being evaluated; nothing ships without a measurement.
+**Step 2, an explicit DACL (this user + SYSTEM, deny NETWORK): evaluated, NOT shipped.** The pipe keeps the default
+security. `tools/verify/pipe_remote_probe.py matrix`, 2026-11-06, from a non-elevated session. An open of
+`\\localhost\pipe\<name>` goes through this PC's own SMB server, so the pipe sees a remote client and no second machine
+is needed. A control pipe (no flag) opened over that path, so every refusal below is real:
+
+| probe pipe | local open | remote open (SMB loopback) |
+|---|---|---|
+| default security, no flag (Fern before) | opened | **opened** |
+| default security + flag (Fern now) | opened | refused, err 5 |
+| candidate `D:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GA;;;<user>)` | opened | opened |
+| candidate + flag | opened | refused, err 5 |
+
+- **The loopback client did not exercise the deny-NETWORK ACE.** The server end impersonated each client: the
+  loopback one presents the caller's own interactive token (INTERACTIVE present, NETWORK absent). A client from
+  another machine logs on over the network and would carry NETWORK, but nothing here measures that.
+- **What nullptr security gives**, read from a probe pipe and from the live DLL pipe alike, for a non-elevated
+  creator: `O:<user>G:<user>D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;<user>)(A;;FR;;;WD)(A;;FR;;;AN)`: SYSTEM,
+  Administrators and the creator-owner have full control, Everyone and Anonymous may read, and there is no integrity
+  label.
+
+Why it is not shipped:
+
+1. **It adds nothing against SMB clients.** The flag refused the loopback client, whose token carries no NETWORK
+   SID, so it keys on the open arriving through the SMB server, not on the token. Those are the clients deny-NETWORK
+   aims at.
+2. **It would let a non-elevated process into an elevated game.** For an elevated creator, the creator-owner ACE
+   becomes the token owner, which by Windows' default is BUILTIN\Administrators for an elevated administrator. The
+   user's own SID is then absent from the DACL, and a non-elevated UI cannot open the pipe for writing: the UAC
+   boundary holds. An ACE naming the user SID would admit any medium-integrity process of that user to a DLL that
+   writes the elevated game's memory. *Not measured*: an elevated process needs a UAC prompt, which an unattended
+   session cannot answer. The default-owner rule is Windows' documented default.
+3. **It would refuse clients that work today.** An elevated admin UI facing a game that runs under another account
+   is admitted today through the Administrators ACE; the candidate has none. A local client whose token carries
+   NETWORK would be refused too. That includes a process in an SSH session if its token carries NETWORK, which is
+   how `[UI-MCP-AUTOMATION-2026-11-06]` plans to reach the pipe from another machine. *Not measured*: there is no
+   OpenSSH server on this PC.
+4. **The load path does not change anything.** Fern's `AcceptLoop` runs on a thread the DLL starts itself, so the
+   pipe takes the game process's primary token whether CE, `inject.py` or a proxy loaded the DLL. CE Lua never opens
+   the pipe: it uses the C exports and the Mimic mailbox.
+
+If a DACL is wanted later, the one that only tightens keeps SYSTEM, Administrators and the owner (`OW`) and drops the
+Everyone and Anonymous read ACEs. Any open, even one asking only READ_CONTROL, takes one of the three pipe instances:
+the probe's READ_CONTROL open logged `Client connected`. Measure the elevated combinations at a UAC prompt with
+`pipe_remote_probe.py` before shipping it.
+
+**✅ Live, build 3694** (DumperTest Shipping, UE 5.4, injected with `inject.py` from a non-elevated session; DLL
+sha256 `93aeae24…`):
+
+- `pipe_client.py get_pointers`: build 3694, all four globals, 24,530 objects.
+- `pipe_remote_probe.py live`: the control was reachable, the local open succeeded and the remote open was refused
+  (err 5), and the pipe's SDDL is the default above. `get_pointers` worked again afterwards.
+- UE5DumpUI (the AOT build 3693 in `dist\`; PipeClient unchanged): Connect showed "Connected — UE504 (24530
+  objects)" with both lanes, then Disconnect.
+- CE mailbox (`mailbox_poke.py`, CMD_QUERY_PTR x2): PASS, and its GWorld equals the pipe's.
+- `pipe-0.log`: no ERROR lines. The refused remote open left no log line.
+- Not run live: a proxy-loaded DLL (the proxies are built with the flag, but DumperTest carries no proxy), and every
+  elevated combination.
 
 ## 🧭 Maintainer request 2026-11-04 — what moving the UI's hard-coded English into en.axaml would take, ahead of UI languages `[I18N-READINESS-2026-11-04]`
 
