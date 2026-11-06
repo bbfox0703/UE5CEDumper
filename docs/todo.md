@@ -4,9 +4,9 @@ Open work only. **Read this when deciding what to do next.**
 
 > 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
 >
-> ▶ **Current programme:** `[MH-TRAMPOLINE-PREFLIGHT]` (started 2026-11-06; the maintainer: guard MinHook's
-> trampoline build on the pin, then bump minhook) -- step 2 shipped in build 3693; step 3, the bump, waits for the
-> maintainer's go-ahead. Its section has the steps. Before it, none active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
+> ▶ **Current programme:** none active (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
+> shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
+> active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
 > open bugs one after another) ended with build 3686 (dev-log 3671–3686). Census Table A holds 0 HIGH / 0 MED and five
 > LOW or unrated rows -- `[CEFORM-LUAENGINE-VANISH]`, `[DUMPER-SECOND-COPY-AUTOSTART]` (needs the maintainer's call),
 > `[CADENCEBAND-2026-08-22]`, `[W4-DEEPWALK-750MS]`, `[LEAD-PUBLISH-FAILED-BUT-BUILT]` -- which the maintainer judged not
@@ -445,8 +445,16 @@ chose (2026-11-06): guard on the pin first, then bump.
   (UE 5.8). ProcessEvent's hook installs through the pre-flight ("4 instruction(s) copied, Zydis agrees"), FIRE
   `Conv_IntToString(42)` returns "42", and the foreground lock goes on (1) and off (0) with no refusal logged.
 
-**Step 2 shipped in build 3693.** **Step 3, the bump:** waits for the maintainer's go-ahead. The checklist is in
-vendor-pin-reviews.md § minhook; `falsch_live.py` and the gates are the re-checks.
+**Step 2 shipped in build 3693.** **Step 3, the bump: deferred to a trigger (maintainer, 2026-11-06).** It is not
+needed now. On every target we hook, both decoders build identical trampolines, and Falsch makes either decoder safe.
+What the bump would add is fewer refusals on targets we do not have yet. Bump when one of these happens:
+
+  - a log shows `MH_ERROR_UNSUPPORTED_FUNCTION` (MinHook's own decoder refused a target);
+  - Falsch refuses a real target with "hde64 measures the instruction at +N as X bytes, Zydis as Y": the pinned
+    decoder's mis-measurement, which the upstream rewrite fixes;
+  - upstream tags a release containing `72fca12..8af6b4a`.
+
+The checklist is in vendor-pin-reviews.md § minhook; `falsch_live.py` and the gates are the re-checks.
 
 ## 🧭 Maintainer request 2026-11-04 — what moving the UI's hard-coded English into en.axaml would take, ahead of UI languages `[I18N-READINESS-2026-11-04]`
 

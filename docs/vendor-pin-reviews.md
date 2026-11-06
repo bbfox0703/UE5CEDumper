@@ -218,10 +218,20 @@ Execute-only pages are now taken: x86-64 reads them, and the SEH copy proves it 
 - 174 of the 270 logged holds come from `dll_core_test`, which loads `build\dll\VERSION.dll`. Real titles and fixtures
   account for 96.
 
+**Decided after the pre-flight shipped (maintainer, 2026-11-06, build 3693): no bump now; bump on a trigger.**
+On our targets the two decoders build identical trampolines, and with Falsch both are safe, so the bump would only
+reduce refusals on targets we do not have yet. The triggers:
+
+  - a log shows `MH_ERROR_UNSUPPORTED_FUNCTION` (MinHook's own decoder refused a target);
+  - Falsch refuses a real target with "hde64 measures the instruction at +N as X bytes, Zydis as Y": the pinned
+    decoder's mis-measurement, which the upstream rewrite fixes;
+  - upstream tags a release containing `72fca12..8af6b4a`.
+
 **What would reopen it, amending audit #7's triggers:**
 
 - Upstream tags a release containing `72fca12..8af6b4a`.
 - A log shows `MH_ERROR_UNSUPPORTED_FUNCTION`.
+- Falsch refuses a real target because hde64 and Zydis measure an instruction differently.
 - A new hook target has VEX / EVEX / 0F38 / 0F3A / tzcnt / lzcnt / popcnt in **any instruction MinHook decodes**. That
   includes the first instruction at offset ≥ 5, not just the first 5 bytes, because `trampoline.c` decodes that
   instruction before deciding it only needs a jump back to it.
