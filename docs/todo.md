@@ -400,6 +400,44 @@ Open work only. **Read this when deciding what to do next.**
 HIT" wording for a crashed worker · Detect Player Stats has no cancel (July L18) · `peHash` with `TimeDateStamp` 0 ·
 the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVEFUNCS-STEP3 B1/E1/P1/O1.
 
+## 🧭 Idea 2026-11-06 — let an AI or a script drive the UI through a named pipe + MCP `[UI-MCP-AUTOMATION-2026-11-06]`
+
+**Status: an idea, not scheduled (maintainer: "先記進 todo，之後再說").** Nothing is built.
+
+**The maintainer's sketch.** Reverse-engineering and automation features should be reachable without clicking. The
+DLL stays simple.
+
+1. The UI (and the DLL only if needed) opens a named-pipe server, limited to the current user on this machine.
+2. A light MCP server: stdio towards the AI, a named-pipe client towards the UI.
+3. Another machine reaches it through SSH + stdio, which MCP clients can launch.
+
+**First assessment, from a quick scan with no agents:**
+
+- **The DLL already is a pipe server** (`\\.\pipe\UE5DumpBfx`, 105 commands), and `tools/verify/pipe_client.py`
+  drives it with no UI. Most reverse-engineering primitives live there: find objects, walk, read / write memory,
+  invoke, value scan. An MCP wrapper over that pipe needs no DLL or UI change.
+- **UI-only work lives in the C# services:** CT / CE XML / CSX exports, the script generators, the scoring tables,
+  snapshots / Dump Explorer, the AOBMaker bridge, proxy deploy. Only these need a UI-side server.
+- **Suggested order:**
+  - P0: an MCP wrapper over the DLL pipe. Read-only tools first; writes and invokes as separate tools, so the client
+    asks before each. Page or truncate large results.
+  - P1: a UI-side server, command-shaped ("export the CT for class X"), not screen-shaped, added only as uses appear.
+  - Not full UI automation. Every screen action drags in view-model state and the UI thread, and the API would follow
+    every UI change. Avalonia's Windows UI Automation support already lets computer-use drive the screens.
+- **Security:** reject remote clients (`PIPE_REJECT_REMOTE_CLIENTS`) in addition to a current-user ACL. A user ACL
+  alone still lets the same account connect from another machine over SMB. The DLL's own pipe rejects remote clients
+  since build 3694. It keeps the default security by decision: `[PIPE-REJECT-REMOTE]` measured that a "this user"
+  DACL adds nothing against SMB clients and would let a non-elevated process into an elevated game. A UI-side
+  server would face the same choice.
+- **SSH:** the wrapper runs on the target machine and talks to the local pipe, so the pipe never faces the network.
+  Needs Windows OpenSSH Server. An elevated game with a non-elevated UI is a combination to measure.
+- **⚠ Pipe slots — decide before P0.** `Fern::kMaxPipeInstances` is 3. Fern.h calls it "2 UI lanes + 1 slack for
+  reconnect transients", but in practice the third slot is what `tools/verify/*.py` rigs take during development (the
+  maintainer). With the UI connected and a rig running, nothing is left, so an MCP client on the DLL pipe would need:
+  - a higher cap (see the Voll capacity-logging policy and `[PIPEBUSY-2026-08-18]` for what the cap protects); or
+  - to go through the UI as a broker. That also keeps the UI's views in step with what the AI changes; a direct
+    client writes memory the UI does not know about.
+
 ## 🧭 Maintainer request 2026-11-06 — guard MinHook's trampoline build, then bump minhook `[MH-TRAMPOLINE-PREFLIGHT]`
 
 **Why.** MinHook's `CreateTrampolineFunction` trusts its own length decoder (hde64). When hde64 misreads an
@@ -455,6 +493,76 @@ What the bump would add is fewer refusals on targets we do not have yet. Bump wh
   - upstream tags a release containing `72fca12..8af6b4a`.
 
 The checklist is in vendor-pin-reviews.md § minhook; `falsch_live.py` and the gates are the re-checks.
+
+## 🧭 Maintainer request 2026-11-06 — the DLL's named pipe rejects remote clients `[PIPE-REJECT-REMOTE]`
+
+**Why.** Fern's `AcceptLoop` created `\\.\pipe\UE5DumpBfx` with default security and no
+`PIPE_REJECT_REMOTE_CLIENTS`. A client holding this user's (or an admin's) credentials on another machine could open
+`\\host\pipe\UE5DumpBfx` over SMB and drive the DLL, which writes game memory and invokes UFunctions.
+`[UI-MCP-AUTOMATION-2026-11-06]` names the same gap for a future UI-side server.
+
+**Step 1, shipped in build 3694:** `PIPE_REJECT_REMOTE_CLIENTS` on the pipe mode in Fern's `AcceptLoop`, which every
+proxy flavour links too. No test target compiles Fern.cpp, so
+`InvokeScriptTests.EveryNamedPipeTheDllServes_RejectsRemoteClients` pins the flag on every `CreateNamedPipe` call under
+`dll/src`.
+
+**Step 2, an explicit DACL (this user + SYSTEM, deny NETWORK): evaluated, NOT shipped.** The pipe keeps the default
+security. `tools/verify/pipe_remote_probe.py matrix`, 2026-11-06, from a non-elevated session. An open of
+`\\localhost\pipe\<name>` goes through this PC's own SMB server, so the pipe sees a remote client and no second machine
+is needed. A control pipe (no flag) opened over that path, so every refusal below is real:
+
+| probe pipe | local open | remote open (SMB loopback) |
+|---|---|---|
+| default security, no flag (Fern before) | opened | **opened** |
+| default security + flag (Fern now) | opened | refused, err 5 |
+| candidate `D:P(D;;GA;;;NU)(A;;GA;;;SY)(A;;GA;;;<user>)` | opened | opened |
+| candidate + flag | opened | refused, err 5 |
+
+- **The loopback client did not exercise the deny-NETWORK ACE.** The server end impersonated each client: the
+  loopback one presents the caller's own interactive token (INTERACTIVE present, NETWORK absent). A client from
+  another machine logs on over the network and would carry NETWORK, but nothing here measures that.
+- **What nullptr security gives**, read from a probe pipe and from the live DLL pipe alike, for a non-elevated
+  creator: `O:<user>G:<user>D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FA;;;<user>)(A;;FR;;;WD)(A;;FR;;;AN)`: SYSTEM,
+  Administrators and the creator-owner have full control, Everyone and Anonymous may read, and there is no integrity
+  label.
+
+Why it is not shipped:
+
+1. **It adds nothing against SMB clients.** The flag refused the loopback client, whose token carries no NETWORK
+   SID, so it keys on the open arriving through the SMB server, not on the token. Those are the clients deny-NETWORK
+   aims at.
+2. **It would let a non-elevated process into an elevated game.** For an elevated creator, the creator-owner ACE
+   becomes the token owner, which by Windows' default is BUILTIN\Administrators for an elevated administrator. The
+   user's own SID is then absent from the DACL, and a non-elevated UI cannot open the pipe for writing: the UAC
+   boundary holds. An ACE naming the user SID would admit any medium-integrity process of that user to a DLL that
+   writes the elevated game's memory. *Not measured*: an elevated process needs a UAC prompt, which an unattended
+   session cannot answer. The default-owner rule is Windows' documented default.
+3. **It would refuse clients that work today.** An elevated admin UI facing a game that runs under another account
+   is admitted today through the Administrators ACE; the candidate has none. A local client whose token carries
+   NETWORK would be refused too. That includes a process in an SSH session if its token carries NETWORK, which is
+   how `[UI-MCP-AUTOMATION-2026-11-06]` plans to reach the pipe from another machine. *Not measured*: there is no
+   OpenSSH server on this PC.
+4. **The load path does not change anything.** Fern's `AcceptLoop` runs on a thread the DLL starts itself, so the
+   pipe takes the game process's primary token whether CE, `inject.py` or a proxy loaded the DLL. CE Lua never opens
+   the pipe: it uses the C exports and the Mimic mailbox.
+
+If a DACL is wanted later, the one that only tightens keeps SYSTEM, Administrators and the owner (`OW`) and drops the
+Everyone and Anonymous read ACEs. Any open, even one asking only READ_CONTROL, takes one of the three pipe instances:
+the probe's READ_CONTROL open logged `Client connected`. Measure the elevated combinations at a UAC prompt with
+`pipe_remote_probe.py` before shipping it.
+
+**✅ Live, build 3694** (DumperTest Shipping, UE 5.4, injected with `inject.py` from a non-elevated session; DLL
+sha256 `93aeae24…`):
+
+- `pipe_client.py get_pointers`: build 3694, all four globals, 24,530 objects.
+- `pipe_remote_probe.py live`: the control was reachable, the local open succeeded and the remote open was refused
+  (err 5), and the pipe's SDDL is the default above. `get_pointers` worked again afterwards.
+- UE5DumpUI (the AOT build 3693 in `dist\`; PipeClient unchanged): Connect showed "Connected — UE504 (24530
+  objects)" with both lanes, then Disconnect.
+- CE mailbox (`mailbox_poke.py`, CMD_QUERY_PTR x2): PASS, and its GWorld equals the pipe's.
+- `pipe-0.log`: no ERROR lines. The refused remote open left no log line.
+- Not run live: a proxy-loaded DLL (the proxies are built with the flag, but DumperTest carries no proxy), and every
+  elevated combination.
 
 ## 🧭 Maintainer request 2026-11-04 — what moving the UI's hard-coded English into en.axaml would take, ahead of UI languages `[I18N-READINESS-2026-11-04]`
 

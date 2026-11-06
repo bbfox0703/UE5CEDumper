@@ -914,10 +914,16 @@ void Fern::AcceptLoop() {
         // at once). Synchronous handle (no FILE_FLAG_OVERLAPPED) — safe here
         // because each connection is served by exactly ONE thread doing serial
         // read→dispatch→write on its own handle (no same-handle deadlock).
+        // PIPE_REJECT_REMOTE_CLIENTS: without it, anyone holding this user's (or an admin's)
+        // credentials on ANOTHER machine opens \\host\pipe\UE5DumpBfx over SMB and drives a
+        // DLL that writes game memory and invokes UFunctions. A local client is never refused
+        // by it. The security stays the default (nullptr below): an explicit "this user"
+        // DACL was measured and not shipped, because for an elevated game it would let a
+        // non-elevated process in. [PIPE-REJECT-REMOTE]
         HANDLE pipe = CreateNamedPipeW(
             Grimoire::PIPE_NAME,
             PIPE_ACCESS_DUPLEX,
-            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+            PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             kMaxPipeInstances,
             Grimoire::PIPE_BUF_SIZE,
             Grimoire::PIPE_BUF_SIZE,

@@ -3978,4 +3978,62 @@ public class InvokeScriptTests
 
         Assert.Contains("_PDret", script, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void EveryNamedPipeTheDllServes_RejectsRemoteClients()
+    {
+        // [PIPE-REJECT-REMOTE] Without PIPE_REJECT_REMOTE_CLIENTS, a client holding the same user's (or an admin's)
+        // credentials on ANOTHER machine opens \\host\pipe\UE5DumpBfx over SMB and drives the DLL, which writes game
+        // memory and invokes UFunctions. Every client we ship opens the pipe locally, so the flag costs them nothing.
+        // Fern.cpp reaches no test target, so the source is pinned here -- every CreateNamedPipe call under dll/src,
+        // so a pipe server added anywhere else in the DLL must carry the flag too.
+        // Comments and string / char literals are not code: a log line naming the call, a commented-out call, or the
+        // flag's name inside a comment must neither count as a site nor satisfy the pin.
+        static string CodeOnly(string s)
+        {
+            s = string.Join('\n', s.Split('\n').Select(l =>
+            {
+                int c = l.IndexOf("//", StringComparison.Ordinal);
+                return c >= 0 ? l[..c] : l;
+            }));
+            s = System.Text.RegularExpressions.Regex.Replace(s, @"/\*.*?\*/", " ",
+                System.Text.RegularExpressions.RegexOptions.Singleline);
+            s = System.Text.RegularExpressions.Regex.Replace(s, "\"(?:\\\\.|[^\"\\\\\\n])*\"", "\"\"");
+            return System.Text.RegularExpressions.Regex.Replace(s, @"'(?:\\.|[^'\\\n])'", "''");
+        }
+        // The call's arguments, split at its top-level commas.
+        static List<string> Args(string src, int open)
+        {
+            var args = new List<string>();
+            int depth = 0, start = open + 1;
+            for (int i = open; i < src.Length; i++)
+            {
+                char ch = src[i];
+                if (ch == '(') depth++;
+                else if (ch == ')' && --depth == 0) { args.Add(src[start..i].Trim()); return args; }
+                else if (ch == ',' && depth == 1) { args.Add(src[start..i].Trim()); start = i + 1; }
+            }
+            Assert.Fail("unterminated CreateNamedPipe call -- re-point this pin");
+            return args;
+        }
+
+        var dir = Path.GetDirectoryName(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"))!;
+        var call = new System.Text.RegularExpressions.Regex(@"\bCreateNamedPipe[AW]?\s*\(");
+        int sites = 0;
+        foreach (var path in Directory.GetFiles(dir, "*.*", SearchOption.AllDirectories)
+                     .Where(p => p.EndsWith(".cpp", StringComparison.Ordinal) || p.EndsWith(".h", StringComparison.Ordinal)))
+        {
+            var src = CodeOnly(File.ReadAllText(path).Replace("\r\n", "\n"));
+            foreach (System.Text.RegularExpressions.Match m in call.Matches(src))
+            {
+                var args = Args(src, m.Index + m.Length - 1);
+                Assert.True(args.Count == 8, Path.GetFileName(path) + ": expected CreateNamedPipe's 8 arguments, parsed "
+                                             + args.Count + " -- re-point this pin");
+                Assert.True(args[2].Contains("PIPE_REJECT_REMOTE_CLIENTS", StringComparison.Ordinal),
+                    Path.GetFileName(path) + ": the pipe mode lacks PIPE_REJECT_REMOTE_CLIENTS: " + args[2]);
+                sites++;
+            }
+        }
+        Assert.True(sites >= 1, "no CreateNamedPipe call found under dll/src -- re-point this pin");
+    }
 }
