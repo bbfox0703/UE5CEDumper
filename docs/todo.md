@@ -400,6 +400,42 @@ Open work only. **Read this when deciding what to do next.**
 HIT" wording for a crashed worker · Detect Player Stats has no cancel (July L18) · `peHash` with `TimeDateStamp` 0 ·
 the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVEFUNCS-STEP3 B1/E1/P1/O1.
 
+## 🧭 Idea 2026-11-06 — let an AI or a script drive the UI through a named pipe + MCP `[UI-MCP-AUTOMATION-2026-11-06]`
+
+**Status: an idea, not scheduled (maintainer: "先記進 todo，之後再說").** Nothing is built.
+
+**The maintainer's sketch.** Reverse-engineering and automation features should be reachable without clicking. The
+DLL stays simple.
+
+1. The UI (and the DLL only if needed) opens a named-pipe server, limited to the current user on this machine.
+2. A light MCP server: stdio towards the AI, a named-pipe client towards the UI.
+3. Another machine reaches it through SSH + stdio, which MCP clients can launch.
+
+**First assessment, from a quick scan with no agents:**
+
+- **The DLL already is a pipe server** (`\\.\pipe\UE5DumpBfx`, 105 commands), and `tools/verify/pipe_client.py`
+  drives it with no UI. Most reverse-engineering primitives live there: find objects, walk, read / write memory,
+  invoke, value scan. An MCP wrapper over that pipe needs no DLL or UI change.
+- **UI-only work lives in the C# services:** CT / CE XML / CSX exports, the script generators, the scoring tables,
+  snapshots / Dump Explorer, the AOBMaker bridge, proxy deploy. Only these need a UI-side server.
+- **Suggested order:**
+  - P0: an MCP wrapper over the DLL pipe. Read-only tools first; writes and invokes as separate tools, so the client
+    asks before each. Page or truncate large results.
+  - P1: a UI-side server, command-shaped ("export the CT for class X"), not screen-shaped, added only as uses appear.
+  - Not full UI automation. Every screen action drags in view-model state and the UI thread, and the API would follow
+    every UI change. Avalonia's Windows UI Automation support already lets computer-use drive the screens.
+- **Security:** reject remote clients (`PIPE_REJECT_REMOTE_CLIENTS`) in addition to a current-user ACL. A user ACL
+  alone still lets the same account connect from another machine over SMB. The DLL's own pipe had neither; that is
+  being handled separately (the session started 2026-11-06 for "Reject remote clients on the DLL's named pipe").
+- **SSH:** the wrapper runs on the target machine and talks to the local pipe, so the pipe never faces the network.
+  Needs Windows OpenSSH Server. An elevated game with a non-elevated UI is a combination to measure.
+- **⚠ Pipe slots — decide before P0.** `Fern::kMaxPipeInstances` is 3. Fern.h calls it "2 UI lanes + 1 slack for
+  reconnect transients", but in practice the third slot is what `tools/verify/*.py` rigs take during development (the
+  maintainer). With the UI connected and a rig running, nothing is left, so an MCP client on the DLL pipe would need:
+  - a higher cap (see the Voll capacity-logging policy and `[PIPEBUSY-2026-08-18]` for what the cap protects); or
+  - to go through the UI as a broker. That also keeps the UI's views in step with what the AI changes; a direct
+    client writes memory the UI does not know about.
+
 ## 🧭 Maintainer request 2026-11-06 — guard MinHook's trampoline build, then bump minhook `[MH-TRAMPOLINE-PREFLIGHT]`
 
 **Why.** MinHook's `CreateTrampolineFunction` trusts its own length decoder (hde64). When hde64 misreads an
