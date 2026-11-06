@@ -425,8 +425,10 @@ DLL stays simple.
   - Not full UI automation. Every screen action drags in view-model state and the UI thread, and the API would follow
     every UI change. Avalonia's Windows UI Automation support already lets computer-use drive the screens.
 - **Security:** reject remote clients (`PIPE_REJECT_REMOTE_CLIENTS`) in addition to a current-user ACL. A user ACL
-  alone still lets the same account connect from another machine over SMB. The DLL's own pipe had neither; that is
-  being handled separately (the session started 2026-11-06 for "Reject remote clients on the DLL's named pipe").
+  alone still lets the same account connect from another machine over SMB. The DLL's own pipe rejects remote clients
+  since build 3694. It keeps the default security by decision: `[PIPE-REJECT-REMOTE]` measured that a "this user"
+  DACL adds nothing against SMB clients and would let a non-elevated process into an elevated game. A UI-side
+  server would face the same choice.
 - **SSH:** the wrapper runs on the target machine and talks to the local pipe, so the pipe never faces the network.
   Needs Windows OpenSSH Server. An elevated game with a non-elevated UI is a combination to measure.
 - **⚠ Pipe slots — decide before P0.** `Fern::kMaxPipeInstances` is 3. Fern.h calls it "2 UI lanes + 1 slack for

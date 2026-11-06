@@ -8,8 +8,10 @@ WHY THIS RIG EXISTS ([PIPE-REJECT-REMOTE], docs/todo.md)
   admin's) credentials on ANOTHER machine could open \\host\pipe\UE5DumpBfx over SMB and drive the
   DLL. Proving the fix needs a remote client, and this PC has no second machine on hand. It does
   not need one: an open of \\localhost\pipe\<name> goes through this machine's own SMB server
-  (LanmanServer / srv2), and the pipe sees it exactly as it sees a client from another host -- a
-  network logon, the NETWORK SID in its token, and the remote bit PIPE_REJECT_REMOTE_CLIENTS tests.
+  (LanmanServer / srv2), and the pipe treats it as a remote client: PIPE_REJECT_REMOTE_CLIENTS
+  refuses it. Its TOKEN is not a remote one, though: measured 2026-11-06, the loopback client
+  presents the caller's own interactive token (INTERACTIVE, no NETWORK), so it stands in for a
+  remote host on the remote bit but not on a deny-NETWORK ACE -- `matrix` says so when it runs.
 
   ⚠ A REFUSED remote open proves nothing on its own. If the SMB server is stopped, or policy blocks
   loopback, EVERY \\localhost open fails, and "refused" reads like the flag working. Both modes
