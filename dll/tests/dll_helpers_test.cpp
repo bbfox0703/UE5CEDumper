@@ -11199,7 +11199,7 @@ static void Test_Lager_HolderCandidateReadable() {
     using namespace Lager;
     EXPECT("execute-read code is readable", ProtectIsReadableCode(kPageExecuteRead));
     EXPECT("execute-read-write code is readable", ProtectIsReadableCode(kPageExecuteReadWrite));
-    EXPECT("execute-only code is NOT readable", !ProtectIsReadableCode(kPageExecute));
+    EXPECT("execute-only code is readable (x86-64 has no user-mode execute-only)", ProtectIsReadableCode(kPageExecute));
     EXPECT("a guard page is NOT readable", !ProtectIsReadableCode(kPageExecuteRead | kPageGuard));
     EXPECT("a read-only page is not code", !ProtectIsReadableCode(0x02));
     EXPECT("MinHook calls execute-only executable", ProtectIsExecutable(kPageExecute));
@@ -11207,8 +11207,11 @@ static void Test_Lager_HolderCandidateReadable() {
 
     EXPECT("an ordinary entry point is taken",
            HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead));
-    EXPECT("an execute-only target is refused",
-           !HolderCandidateReadable(kMemCommit, kPageExecute, kMemCommit, kPageExecute, kMemCommit, kPageExecute));
+    EXPECT("an execute-only target is taken",
+           HolderCandidateReadable(kMemCommit, kPageExecute, kMemCommit, kPageExecute, kMemCommit, kPageExecute));
+    EXPECT("a guarded target is refused",
+           !HolderCandidateReadable(kMemCommit, kPageExecuteRead | kPageGuard, kMemCommit, kPageExecuteRead,
+                                    kMemCommit, kPageExecuteRead));
     EXPECT("a target whose next page is not readable is refused",
            !HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, 0x01, kMemCommit, kPageExecuteRead));
     EXPECT("a target whose next page is reserved is refused",
@@ -11220,8 +11223,11 @@ static void Test_Lager_HolderCandidateReadable() {
            HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, 0x02));
     EXPECT("a free page before is fine",
            HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemFree, 0x01));
-    EXPECT("an execute-only page before is refused (MinHook would read it)",
-           !HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, kPageExecute));
+    EXPECT("an execute-only page before is fine (MinHook reads it, and it reads)",
+           HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit, kPageExecute));
+    EXPECT("a guarded executable page before is refused (MinHook would read it)",
+           !HolderCandidateReadable(kMemCommit, kPageExecuteRead, kMemCommit, kPageExecuteRead, kMemCommit,
+                                    kPageExecuteRead | kPageGuard));
 }
 
 // buffer.c's boundary rules, each pinned by a map that lands exactly on the boundary -- a review found that moving a
@@ -11646,24 +11652,110 @@ static void Test_Falsch_ReadTarget() {
     EXPECT("VetHookTarget on an unreadable span is unsafe",
            Falsch::VetHookTarget(reinterpret_cast<uintptr_t>(near_end)).verdict == Verdict::Unsafe);
 
+    // Execute-only pages read fine on x86-64 (no user-mode execute-only), and the SEH copy proves it per target.
     VirtualProtect(base + page, page, PAGE_EXECUTE, &old);
-    EXPECT("an execute-only target is refused",
-           !Falsch::ReadTarget(reinterpret_cast<uintptr_t>(base + page), out, why));
+    VirtualProtect(base + 2 * page, page, PAGE_EXECUTE_READ, &old);
+    EXPECT("an execute-only target is read",
+           Falsch::ReadTarget(reinterpret_cast<uintptr_t>(base + page), out, why));
+    EXPECT("an execute-only target's bytes are its own", std::memcmp(out, gfw, sizeof(gfw)) == 0);
 
-    // target - 5 sits in an execute-only page: MinHook's IsExecutableAddress says yes, then it reads it.
+    // target - 5 sits in an executable page: MinHook's IsExecutableAddress says yes, then it reads it.
     VirtualProtect(base, page, PAGE_EXECUTE, &old);
     VirtualProtect(base + page, page * 2, PAGE_EXECUTE_READ, &old);
-    EXPECT("a target after an execute-only page is refused",
+    EXPECT("a target after an execute-only page is read",
+           Falsch::ReadTarget(reinterpret_cast<uintptr_t>(base + page), out, why));
+    VirtualProtect(base, page, PAGE_EXECUTE_READ | PAGE_GUARD, &old);
+    EXPECT("a target after a guarded executable page is refused",
            !Falsch::ReadTarget(reinterpret_cast<uintptr_t>(base + page), out, why));
+    MEMORY_BASIC_INFORMATION mbi{};
+    VirtualQuery(base, &mbi, sizeof(mbi));
+    EXPECT("... without touching the guard page", (mbi.Protect & PAGE_GUARD) != 0);
     VirtualProtect(base, page, PAGE_READONLY, &old);
     EXPECT("a target after a read-only page is read (MinHook does not read it)",
            Falsch::ReadTarget(reinterpret_cast<uintptr_t>(base + page), out, why));
+
+    // A guard page at the end of the span is refused before anything reads it.
+    VirtualProtect(base + 2 * page, page, PAGE_EXECUTE_READ | PAGE_GUARD, &old);
+    EXPECT("a span that ends in a guard page is refused",
+           !Falsch::ReadTarget(reinterpret_cast<uintptr_t>(near_end), out, why));
+    VirtualQuery(base + 2 * page, &mbi, sizeof(mbi));
+    EXPECT("... and the guard is still armed", (mbi.Protect & PAGE_GUARD) != 0);
 
     // Above user space VirtualQuery fails, and MinHook's pinned IsExecutableAddress would then read a stale struct.
     EXPECT("an address above user space is unsafe",
            Falsch::VetHookTarget(0xFFFF800000001000ULL).verdict == Verdict::Unsafe);
 
     VirtualFree(base, 0, MEM_RELEASE);
+}
+
+// Review round 1 ([MH-TRAMPOLINE-PREFLIGHT]): every vector here was measured against MinHook's real
+// CreateTrampolineFunction with both hde64 revisions, which answer the same for all of them.
+static void Test_Falsch_ReviewVectors() {
+    using Falsch::Verdict;
+    // A jump inside the patch is copied byte for byte. Back over a Jcc that MinHook rebuilt (2 bytes -> 16), it lands
+    // inside the rebuilt jump's address in the trampoline.
+    const uint8_t backOverJcc[] = { 0x74, 0x10, 0xEB, 0xFC, 0x90, 0x48, 0x89, 0x5C, 0x24, 0x08 };
+    Falsch::Report r = FalschCheck(backOverJcc);
+    EXPECT("a jump back over a rebuilt Jcc is refused", r.verdict == Verdict::Unsafe);
+    EXPECT_EQ_U64("a jump back over a rebuilt Jcc: the verdict names the jump", r.offset, 2);
+    const uint8_t spin[] = { 0x38, 0x01, 0x74, 0x10, 0xEB, 0xFA, 0x90, 0x90 };   // cmp [rcx],al / je out / jmp back
+    EXPECT("a spin loop over a rebuilt Jcc is refused", FalschCheck(spin).verdict == Verdict::Unsafe);
+    // ... and the same shape with nothing rebuilt in between is right, so it stays safe.
+    const uint8_t pauseLoop[] = { 0xF3, 0x90, 0xEB, 0xFC, 0x90, 0x48, 0x89, 0x5C, 0x24, 0x08 };
+    EXPECT("a jump back over nothing rebuilt is safe", FalschCheck(pauseLoop).verdict == Verdict::Safe);
+    // A jump into the middle of a copied instruction lands on other bytes in the trampoline.
+    const uint8_t midInsn[] = { 0xEB, 0x01, 0xB8, 0x48, 0x8B, 0x05, 0x00, 0x90, 0x90 };
+    EXPECT("a jump into the middle of an instruction is refused", FalschCheck(midInsn).verdict == Verdict::Unsafe);
+    const uint8_t midThunk[] = { 0xEB, 0x01, 0xFF, 0x25, 0x10, 0x00, 0x00, 0x00, 0xCC };
+    EXPECT("a jump into the middle of jmp [rip+x] is refused", FalschCheck(midThunk).verdict == Verdict::Unsafe);
+
+    // A RIP-relative read of the bytes the hook overwrites reads the hook's jump once it is enabled.
+    const uint8_t readsSelf[] = { 0x48, 0x8B, 0x05, 0xF9, 0xFF, 0xFF, 0xFF, 0xC3 };
+    EXPECT("a RIP-relative read of the patched bytes is refused", FalschCheck(readsSelf).verdict == Verdict::Unsafe);
+    // LEA only computes the address, which stays right.
+    const uint8_t leaSelf[] = { 0x48, 0x8D, 0x05, 0xF9, 0xFF, 0xFF, 0xFF, 0xC3 };
+    EXPECT("an LEA of the patched bytes is safe", FalschCheck(leaSelf).verdict == Verdict::Safe);
+
+    // Walk termination: jz +1 over a RET into the patch, then a RIP-relative load beyond MinHook's reach -- the walk
+    // must go past the RET (it sits before the jump's target) and reach the load.
+    const uint8_t pastRet[] = { 0x74, 0x01, 0xC3, 0x48, 0x8B, 0x05, 0x00, 0x00, 0x00, 0x50 };
+    r = FalschCheck(pastRet);
+    EXPECT("the walk continues past a RET that an internal jump skips", r.verdict == Verdict::Unsafe);
+    EXPECT_EQ_U64("... and stops at the far load at +3", r.offset, 3);
+    const uint8_t pastRetNear[] = { 0x74, 0x01, 0xC3, 0x48, 0x8B, 0x05, 0x10, 0x00, 0x00, 0x00, 0xC3 };
+    r = FalschCheck(pastRetNear);
+    EXPECT("the same walk with a near load is safe", r.verdict == Verdict::Safe);
+    EXPECT_EQ_U64("the same walk copies 3 instructions", r.copied, 3);
+    const uint8_t fourPushes[] = { 0x55, 0x56, 0x57, 0x53, 0x48, 0x8B, 0x05, 0x00, 0x00, 0x00, 0x50 };
+    r = FalschCheck(fourPushes);
+    EXPECT("a fifth copied instruction is checked too", r.verdict == Verdict::Unsafe);
+    EXPECT_EQ_U64("... at +4", r.offset, 4);
+
+    // Negative displacements: the Jcc target arithmetic and the reach check both take the sign.
+    const uint8_t jccBack[] = { 0x48, 0x85, 0xC9, 0x74, 0xF0, 0x48, 0x8B, 0x01, 0xC3 };
+    EXPECT("a short Jcc backward out of the patch is safe", FalschCheck(jccBack).verdict == Verdict::Safe);
+    const uint8_t jccNear[] = { 0x0F, 0x84, 0x10, 0x01, 0x00, 0x00, 0xC3 };
+    EXPECT("a near Jcc with a 0x110 displacement is safe", FalschCheck(jccNear).verdict == Verdict::Safe);
+    const uint8_t farBack[] = { 0x48, 0x8B, 0x05, 0x00, 0x00, 0x00, 0xB0, 0xC3 };
+    EXPECT("a RIP-relative reference far behind is refused", FalschCheck(farBack).verdict == Verdict::Unsafe);
+
+    // Upstream hde64 on Knights Corner jkzd (VEX 0F 84): trampoline.c takes the condition from hs.opcode C4.
+    const uint8_t jkzd[] = { 0xC4, 0xE1, 0x78, 0x84, 0x10, 0x00, 0x00, 0x00, 0x90 };
+    const FalschOverride jkzdUp[] = { { 0, FalschView(8, 0xC4, 0x84, 0x00, 4, 0x10) } };
+    EXPECT("jkzd read as a Jcc is refused", FalschCheck(jkzd, jkzdUp, 1).verdict == Verdict::Unsafe);
+
+    // MinHook's own refusals, from the linked decoder: a LOCK on a NOP, and a LOOP that leaves the patch.
+    const uint8_t lockNop[] = { 0xF0, 0x90, 0x90, 0x90, 0x90, 0x90 };
+    EXPECT("LOCK NOP is MinHook's own refusal", FalschCheck(lockNop).verdict == Verdict::MinHookRefuses);
+    const uint8_t loopOut[] = { 0xE2, 0x10, 0x90, 0x90, 0x90, 0x90 };
+    EXPECT("a LOOP out of the patch is MinHook's own refusal", FalschCheck(loopOut).verdict == Verdict::MinHookRefuses);
+
+    // A later branch in the bytes read that lands inside the hook's jump: a strlen-shaped loop whose head is +2.
+    const uint8_t loopIntoPatch[] = { 0x33, 0xC0, 0x80, 0x3C, 0x01, 0x00, 0x74, 0x05, 0x48, 0xFF, 0xC0, 0xEB, 0xF5,
+                                      0xC3 };
+    r = FalschCheck(loopIntoPatch);
+    EXPECT("a later branch into +1..+4 is refused", r.verdict == Verdict::Unsafe);
+    EXPECT_EQ_U64("... and the verdict names the branch at +11", r.offset, 11);
 }
 
 // The live user32 exports Grausam hooks, on whatever Windows runs the test. A failure here means the foreground lock
@@ -12033,6 +12125,7 @@ int main() {
     RUN(Test_Lager_BufferCBoundaryRules);      // buffer.c's >= / <= / clip boundaries, one map each
     RUN(Test_Falsch_SafeTargets);
     RUN(Test_Falsch_RefusesAWrongTrampoline);
+    RUN(Test_Falsch_ReviewVectors);
     RUN(Test_Falsch_ReadTarget);
     RUN(Test_Falsch_GrausamTargetsOnThisWindows);
 
