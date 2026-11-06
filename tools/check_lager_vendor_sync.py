@@ -13,16 +13,22 @@ WHY THIS EXISTS ([MH-PRERESERVE-PROXY])
   Stark.cpp already static_asserts Lager's MEM_*/PAGE_*/PE constants against the Windows SDK; that is the SDK side.
   This is the MinHook side, which no SDK pins.
 
+  [MH-TRAMPOLINE-PREFLIGHT] dll/src/Falsch.cpp replays trampoline.c's CreateTrampolineFunction (its classification
+  order, the 5-byte patch, jmpDest, which instruction is copied and which only jumped back to) to decide whether a hook
+  is safe to create. A bump that changes that function leaves Falsch vetting a builder that no longer exists, and its
+  dll_helpers_test cases still pass against the replay's own copy. So the same gate hashes it.
+
 WHAT IS CHECKED
   1. buffer.c's `#define MEMORY_BLOCK_SIZE` and `#define MAX_MEMORY_RANGE`, and buffer.h's x64 `MEMORY_SLOT_SIZE`,
      equal Lager.h's kMemoryBlockSize / kMaxMemoryRange / kMemorySlotSize.
   2. The comment-stripped, whitespace-normalised bodies of FindPrevFreeRegion, FindNextFreeRegion and GetMemoryBlock
      hash to GOLDEN. A change to any walk moves the hash.
+  3. The same normalisation of trampoline.c's CreateTrampolineFunction hashes to GOLDEN_TRAMPOLINE.
 
 WHEN IT FIRES
   Re-read the three walks and the constants against Lager.h, update Lager.h (and its dll_helpers_test cases) to match
   the new MinHook, then set GOLDEN below to the printed hash. Do NOT just update GOLDEN: the whole point is that the
-  model moved.
+  model moved. For GOLDEN_TRAMPOLINE the model is Falsch.cpp's CheckTrampoline / Classify and its Test_Falsch_* cases.
 
 Usage:
   py tools/check_lager_vendor_sync.py            # the gate
@@ -43,6 +49,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 BUFFER_C = ROOT / "vendor" / "minhook" / "src" / "buffer.c"
 BUFFER_H = ROOT / "vendor" / "minhook" / "src" / "buffer.h"
 LAGER_H = ROOT / "dll" / "src" / "Lager.h"
+TRAMPOLINE_C = ROOT / "vendor" / "minhook" / "src" / "trampoline.c"
 
 # The three x64 walks Lager.h transcribes, by the signature that opens each.
 WALKS = (
@@ -54,6 +61,11 @@ WALKS = (
 # sha256 over the comment-stripped, whitespace-normalised bodies of WALKS, in order. Update ONLY after re-verifying
 # Lager.h against the new MinHook (see "WHEN IT FIRES").
 GOLDEN = "35ddbd82648539e49de402510233d3e4bb6e12ac3a0da3d4f0a2a593e4f2b751"
+
+# The trampoline builder Falsch.cpp replays ([MH-TRAMPOLINE-PREFLIGHT]), hashed the same way. Update ONLY after
+# re-reading Falsch's replay against the new CreateTrampolineFunction.
+TRAMPOLINE_FN = "BOOL CreateTrampolineFunction("
+GOLDEN_TRAMPOLINE = "716c6bf569150600c400b8b0ff506391683e534eb96d9c11ca1c356e8458faa6"
 
 
 def strip_comments(text: str) -> str:
@@ -120,11 +132,16 @@ def compute_hash(buffer_c_text: str) -> str:
     return hashlib.sha256("\n".join(bodies).encode("utf-8")).hexdigest()
 
 
+def compute_trampoline_hash(trampoline_c_text: str) -> str:
+    return hashlib.sha256(extract_body(strip_comments(trampoline_c_text), TRAMPOLINE_FN).encode("utf-8")).hexdigest()
+
+
 def gather():
     """-> dict of the vendored facts and the Lager copies, raising LookupError on a surface that moved shape."""
     bc = BUFFER_C.read_text(encoding="utf-8", errors="replace")
     bh = BUFFER_H.read_text(encoding="utf-8", errors="replace")
     lg = LAGER_H.read_text(encoding="utf-8", errors="replace")
+    tc = TRAMPOLINE_C.read_text(encoding="utf-8", errors="replace")
     return {
         "vendor_block": read_define(bc, "MEMORY_BLOCK_SIZE"),
         "vendor_range": read_define(bc, "MAX_MEMORY_RANGE"),
@@ -133,6 +150,7 @@ def gather():
         "lager_range": read_lager_constant(lg, "kMaxMemoryRange"),
         "lager_slot": read_lager_constant(lg, "kMemorySlotSize"),
         "hash": compute_hash(bc),
+        "trampoline_hash": compute_trampoline_hash(tc),
     }
 
 
@@ -176,6 +194,15 @@ def selftest(verbose: bool) -> bool:
           read_slot_size_x64("#if defined(_M_X64)\n#define MEMORY_SLOT_SIZE 64\n#else\n#define MEMORY_SLOT_SIZE 32\n#endif\n") == 64)
     check("a missing define is a LookupError, not a silent pass",
           _raises(lambda: read_define("nothing here", "MEMORY_BLOCK_SIZE")))
+    tr_a = "BOOL CreateTrampolineFunction(PTRAMPOLINE ct) { if ((hs.opcode2 & 0xF0) == 0x80) { j(); } return TRUE; }"
+    tr_a2 = "BOOL CreateTrampolineFunction(PTRAMPOLINE ct)\n{\n    // Jcc\n    if ((hs.opcode2 & 0xF0) == 0x80) { j(); }\n    return TRUE;\n}"
+    tr_b = ("BOOL CreateTrampolineFunction(PTRAMPOLINE ct) { if (hs.opcode == 0x0F && (hs.opcode2 & 0xF0) == 0x80) "
+            "{ j(); } return TRUE; }")
+    check("trampoline: comments and spacing do not move the hash",
+          compute_trampoline_hash(tr_a) == compute_trampoline_hash(tr_a2))
+    check("trampoline: upstream guarding the Jcc test moves the hash",
+          compute_trampoline_hash(tr_a) != compute_trampoline_hash(tr_b))
+    check("trampoline: a missing builder is a LookupError", _raises(lambda: compute_trampoline_hash("nothing")))
     return ok
 
 
@@ -200,7 +227,7 @@ def main() -> int:
         print("selftest: PASS")
         return 0
 
-    if not BUFFER_C.is_file() or not BUFFER_H.is_file():
+    if not BUFFER_C.is_file() or not BUFFER_H.is_file() or not TRAMPOLINE_C.is_file():
         print("check_lager_vendor_sync: SKIP -- vendor/minhook not initialised (git submodule update --init vendor/minhook)")
         return 0
 
@@ -217,6 +244,8 @@ def main() -> int:
         print("MEMORY_SLOT_SIZE   vendor=%d    Lager=%d" % (g["vendor_slot"], g["lager_slot"]))
         print("walks sha256       %s" % g["hash"])
         print("GOLDEN             %s" % GOLDEN)
+        print("trampoline sha256  %s" % g["trampoline_hash"])
+        print("GOLDEN_TRAMPOLINE  %s" % GOLDEN_TRAMPOLINE)
         return 0
 
     problems = []
@@ -228,6 +257,10 @@ def main() -> int:
         problems.append("MEMORY_SLOT_SIZE: vendor %d != Lager::kMemorySlotSize %d" % (g["vendor_slot"], g["lager_slot"]))
     if g["hash"] != GOLDEN:
         problems.append("the FindPrev/FindNext/GetMemoryBlock walks changed: sha256 %s != GOLDEN %s" % (g["hash"], GOLDEN))
+    if g["trampoline_hash"] != GOLDEN_TRAMPOLINE:
+        problems.append("trampoline.c's CreateTrampolineFunction changed: sha256 %s != GOLDEN_TRAMPOLINE %s -- re-read "
+                        "dll/src/Falsch.cpp's replay (CheckTrampoline / Classify) and its Test_Falsch_* cases against it"
+                        % (g["trampoline_hash"], GOLDEN_TRAMPOLINE))
 
     if problems:
         print("check_lager_vendor_sync: FAILED -- vendor/minhook moved out of sync with dll/src/Lager.h:")
@@ -237,8 +270,9 @@ def main() -> int:
         print("  constant / GOLDEN it names. Run 'py tools/check_lager_vendor_sync.py --list' for the current values.")
         return 1
 
-    print("check_lager_vendor_sync: OK -- Lager.h matches vendor/minhook (block 0x%X, range 0x%X, slot %d, walks %s)"
-          % (g["vendor_block"], g["vendor_range"], g["vendor_slot"], g["hash"][:12]))
+    print("check_lager_vendor_sync: OK -- Lager.h and Falsch.cpp match vendor/minhook (block 0x%X, range 0x%X, slot %d, "
+          "walks %s, trampoline %s)" % (g["vendor_block"], g["vendor_range"], g["vendor_slot"], g["hash"][:12],
+                                        g["trampoline_hash"][:12]))
     return 0
 
 

@@ -243,9 +243,10 @@ GATES = [
     # moved a walk or a constant would leave the model -- and every live "serves/covers" verdict -- silently wrong.
     ("check_lager_vendor_sync",
      ["tools/check_lager_vendor_sync.py"],
-     "vendor/minhook moved out of sync with dll/src/Lager.h: a block/range/slot constant or one of the "
-     "FindPrev/FindNext/GetMemoryBlock walks changed, and Lager.h still models the old MinHook. Re-verify Lager.h "
-     "(and its dll_helpers_test cases), then update the constant / GOLDEN it names. Run "
+     "vendor/minhook moved out of sync with dll/src/Lager.h or dll/src/Falsch.cpp: a block/range/slot constant, "
+     "one of the FindPrev/FindNext/GetMemoryBlock walks, or trampoline.c's CreateTrampolineFunction changed, and "
+     "Lager.h / Falsch's replay still model the old MinHook. Re-verify them (and their dll_helpers_test cases), then "
+     "update the constant / GOLDEN it names. Run "
      "'py tools/check_lager_vendor_sync.py --list'", False),
 
     ("check_ce_untick_placement",
