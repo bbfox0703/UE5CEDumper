@@ -143,12 +143,17 @@ Total commands: **106** — a DERIVED number, regenerate it, never hand-edit:
 // Write raw memory
 { "id": 15, "cmd": "write_mem", "addr": "7FF123456789", "bytes": "3F800000" }
 
-// Subscribe to address for periodic push (Live Watch)
+// Subscribe to address for periodic push (Live Watch). Reply data: { "interval_ms": N } (the interval in force,
+// floor 50). Errors: at most 32 watches per connection and 64 in all.
 { "id": 16, "cmd": "watch", "addr": "7FF123456789", "size": 4, "interval_ms": 500 }
 
-// Unsubscribe
+// Unsubscribe. Reply data: { "stopped": bool } -- false when THIS connection watches nothing there.
 { "id": 17, "cmd": "unwatch", "addr": "7FF123456789" }
 ```
+
+A watch is the **connection's that asked** ([PIPE-PER-PROCESS-2026-11-06] Stage C): two connections watching one
+address each get their own, another connection's `unwatch` cannot stop it, and a connection's watches end when it
+disconnects. A second `watch` of the same address on the same connection replaces the first (new size and interval).
 
 ### Search & Enumeration
 
@@ -2176,14 +2181,22 @@ Activity card (that one shows *what* crossed the pipe; this shows what it *cost*
 ## Push Events (DLL → UI, no id)
 
 ```jsonc
-// Live watch periodic push (triggered by "watch" command)
+// Live watch push (triggered by "watch" command)
 {
   "event":     "watch",
   "addr":      "7FF123456789",
   "bytes":     "0000803F",
-  "timestamp": 1234567890
+  "timestamp": 1234567890,   // when it was READ (ms since the epoch)
+  "samples":   3             // how many reads this event stands for (additive)
 }
 ```
+
+**When a watch event arrives** (Stage C): the watch thread only reads memory; the connection's own handler sends the
+latest read of each of its watches **after each command it handles, ahead of that command's reply**. A client
+therefore receives watch events while it is sending commands -- one per watch per command at most, carrying the latest
+read and how many reads it stands for -- and none while it sends nothing. A synchronous pipe could not deliver to an
+idle client before either: the watch thread's write waited behind the client's parked read, and wedged every stop of
+that watch with it.
 
 -----
 

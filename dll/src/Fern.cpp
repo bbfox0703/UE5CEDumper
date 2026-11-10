@@ -694,11 +694,8 @@ void Fern::Stop(bool graceful) {
 
     LOG_INFO("PipeServer: Stop cancels+wake done (%lld ms)", elapsedMs());
 
-    // Stop watches AFTER cancelling connection I/O so a watch-thread WriteFile
-    // can't deadlock its own join on a stuck pipe. This is the ONLY StopAllWatches
-    // call — the duplicate that used to sit before the cancel block was a leftover
-    // from before the Path A refactor, and it is exactly the ordering this comment
-    // says not to use.
+    // Watch threads do no pipe I/O ([PIPE-PER-PROCESS-2026-11-06] Stage C), so each join here is one wake and at most
+    // one read. m_running is already false, so no watch can start after this.
     StopAllWatches();
 
     // Join background scan threads. These joins are UNBOUNDED — the comment here used
@@ -1359,6 +1356,11 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         conn->inFlight.store(false, std::memory_order_relaxed);
         Sense::RecordDispatch(cmd.empty() ? std::string("(unparsed)") : cmd, dispatchUs);
 
+        // This connection's watch samples go out here, on its own thread, ahead of the reply, so a client collects
+        // them while it waits for that reply. The sampling threads never touch the pipe (Kanne.h).
+        SetPhase(*conn, Connection::Phase::Writing);
+        FlushWatchEvents(*conn);
+
         if (!response.empty()) {
             SetPhase(*conn, Connection::Phase::Writing);
             if (!WriteLine(*conn, response)) {
@@ -1376,7 +1378,7 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     // sessions and release what this client process turned on. Only caches and
     // diagnostics wait for the LAST connection.
     SetPhase(*conn, Connection::Phase::StoppingWatches);
-    StopWatchesForConnection(conn.get());
+    StopWatchesForConnection(conn->seq);
 
     SetPhase(*conn, Connection::Phase::Unregistering);
     bool last;
@@ -1446,8 +1448,8 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     LOG_INFO("PipeServer: Client disconnected");
 }
 
-// (PushEvent removed in the Path A multi-connection refactor — watch events now
-// write directly to their owning connection's handle; see StartWatch below.)
+// (PushEvent removed in the Path A multi-connection refactor. Watch events are written by their own connection's
+// handler since [PIPE-PER-PROCESS-2026-11-06] Stage C; see FlushWatchEvents below.)
 
 // ============================================================
 // FillPointerSnapshot — Populate a JSON object with the engine pointer state
@@ -6659,11 +6661,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int interval = request.value("interval_ms", 500);
             if (addrStr.empty()) return Renge::MakeError(id, "Missing addr").dump();
             if (size <= 0 || size > 65536) return Renge::MakeError(id, "Invalid size (1-65536)").dump();
-            if (interval < 50) interval = 50; // Minimum 50ms to prevent CPU spin
+            if (interval < Grimoire::PIPE_WATCH_INTERVAL_MIN_MS) interval = Grimoire::PIPE_WATCH_INTERVAL_MIN_MS;
 
             uintptr_t addr = Renge::StrToAddr(addrStr);
-            StartWatch(conn, addr, size, interval);
-            return Renge::MakeResponse(id).dump();
+            const std::string refused = StartWatch(conn, addr, size, interval);
+            if (!refused.empty()) return Renge::MakeError(id, refused).dump();
+            json data;
+            data["interval_ms"] = interval;   // additive: the interval in force, after the floor
+            return Renge::MakeResponse(id, data).dump();
         }
 
         if (cmd == Renge::CMD_UNWATCH) {
@@ -6671,8 +6676,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (addrStr.empty()) return Renge::MakeError(id, "Missing addr").dump();
 
             uintptr_t addr = Renge::StrToAddr(addrStr);
-            StopWatch(addr);
-            return Renge::MakeResponse(id).dump();
+            json data;
+            data["stopped"] = StopWatch(conn->seq, addr);   // additive: false when this connection watched nothing there
+            return Renge::MakeResponse(id, data).dump();
         }
 
         // === Extra Scan: user-triggered aggressive pointer recovery ===
@@ -8211,60 +8217,91 @@ void Fern::RunRescanBody(bool scanGObjects, bool scanGWorld) {
                  static_cast<unsigned long long>(m_rescan.foundGWorld));
 }
 
-void Fern::StartWatch(const std::shared_ptr<Connection>& conn, uintptr_t addr, uint32_t size, uint32_t interval_ms) {
-    StopWatch(addr); // Stop existing watch on same address
-
-    std::lock_guard<std::mutex> lock(m_watchMutex);
-
+std::string Fern::StartWatch(const std::shared_ptr<Connection>& conn, uintptr_t addr, uint32_t size, uint32_t interval_ms) {
+    const Kanne::WatchKey key{conn->seq, addr};
     auto entry = std::make_unique<WatchEntry>();
-    entry->addr = addr;
-    entry->size = size;
+    entry->addr        = addr;
+    entry->size        = size;
     entry->interval_ms = interval_ms;
-    entry->owner = conn.get();   // event target; valid until this conn's watches
-                                 // are stopped+joined in HandleConnection cleanup
-    entry->active = true;
-
-    WatchEntry* ptr = entry.get();
-    entry->watchThread = std::thread([this, ptr]() {
-      // Fully unguarded before B14's scope correction, and it allocates on every tick:
-      // the buffer, BytesToHex's string, the json object, and dump(). A bad_alloc here
-      // terminated the game.
-      Routine::RunThreadGuarded("PipeServer: watch", [&] {
-        std::vector<uint8_t> buf(ptr->size);
-        while (ptr->active.load() && m_running.load()) {
-            if (Macht::ReadBytesSafe(ptr->addr, buf.data(), ptr->size)) {
-                json data;
-                data["addr"]      = Renge::AddrToStr(ptr->addr);
-                data["bytes"]     = Renge::BytesToHex(buf.data(), buf.size());
-                data["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count();
-
-                // Write the event to the connection that registered this watch
-                // (the interactive lane). WriteLine no-ops if that connection
-                // closed; the watch is stopped on its connection's disconnect.
-                if (ptr->owner)
-                    WriteLine(*ptr->owner, Renge::MakeEvent(Renge::EVT_WATCH, data).dump());
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(ptr->interval_ms));
+    entry->slot        = std::make_shared<Kanne::WatchSlot>();
+    std::unique_ptr<WatchEntry> replaced;
+    {
+        // One lock decides and replaces. The old StopWatch-then-relock let a second watch land in between, and the
+        // assignment then destroyed it while its thread ran.
+        std::lock_guard<std::mutex> lock(m_watchMutex);
+        // StopAllWatches runs after Stop clears m_running, under this lock: a watch past it would be joined by nobody.
+        if (!m_running.load()) return "the pipe server is stopping";
+        auto it = m_watches.find(key);
+        if (it == m_watches.end()) {
+            if (Kanne::CountOwned(m_watches, conn->seq) >= static_cast<size_t>(Grimoire::PIPE_WATCH_MAX_PER_CONNECTION))
+                return "too many watches on this connection (at most "
+                       + std::to_string(Grimoire::PIPE_WATCH_MAX_PER_CONNECTION) + ")";
+            if (m_watches.size() >= static_cast<size_t>(Grimoire::PIPE_WATCH_MAX_TOTAL))
+                return "too many watches in this game (at most " + std::to_string(Grimoire::PIPE_WATCH_MAX_TOTAL) + ")";
         }
-      });
-    });
-
-    m_watches[addr] = std::move(entry);
-    Sein::Info("PIPE:watch", "PipeServer: Watch started on 0x%llX (size=%u, interval=%ums)",
-             static_cast<unsigned long long>(addr), size, interval_ms);
+        // The thread holds the slot and copies of what it reads -- nothing of this entry, this server or the
+        // connection -- so a lost entry or a departed connection can never be read through it.
+        std::shared_ptr<Kanne::WatchSlot> slot = entry->slot;
+        entry->watchThread = std::thread([slot, addr, size, interval_ms]() {
+          // It allocates on every read (the slot's copy of the sample); a bad_alloc out of a thread proc terminates
+          // the game. (B14)
+          Routine::RunThreadGuarded("PipeServer: watch", [&] {
+            std::vector<uint8_t> buf(size);
+            do {
+                if (Macht::ReadBytesSafe(addr, buf.data(), size))
+                    slot->Publish(buf.data(), buf.size(), std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count());
+            } while (slot->WaitInterval(std::chrono::milliseconds(interval_ms)));
+          });
+        });
+        if (it != m_watches.end()) {
+            replaced = std::move(it->second);
+            it->second = std::move(entry);
+        } else {
+            m_watches.emplace(key, std::move(entry));
+        }
+    }
+    if (replaced) JoinWatch(*replaced);
+    Sein::Info("PIPE:watch", "PipeServer: Watch started on 0x%llX (size=%u, interval=%ums, connection #%llu)",
+               static_cast<unsigned long long>(addr), size, interval_ms, static_cast<unsigned long long>(conn->seq));
+    return {};
 }
 
-// Stop + join every watch registered by a given connection. Called in that
-// connection's HandleConnection cleanup BEFORE the Connection is closed/freed,
-// so the watch threads (which hold a raw owner pointer) never outlive it.
-void Fern::StopWatchesForConnection(Connection* owner) {
+void Fern::JoinWatch(WatchEntry& entry) {
+    if (entry.slot) entry.slot->RequestStop();
+    if (entry.watchThread.joinable()) entry.watchThread.join();
+}
+
+void Fern::FlushWatchEvents(Connection& conn) {
+    std::vector<std::pair<uintptr_t, std::shared_ptr<Kanne::WatchSlot>>> mine;
+    {
+        std::lock_guard<std::mutex> lock(m_watchMutex);
+        for (const auto& kv : m_watches)
+            if (kv.first.connSeq == conn.seq) mine.emplace_back(kv.second->addr, kv.second->slot);
+    }
+    Kanne::WatchSlot::Sample s;
+    for (const auto& [addr, slot] : mine) {
+        if (!slot->TakeLatest(s)) continue;
+        json data;
+        data["addr"]      = Renge::AddrToStr(addr);
+        data["bytes"]     = Renge::BytesToHex(s.bytes.data(), s.bytes.size());
+        data["timestamp"] = s.timestampMs;   // when it was read
+        // Additive: how many reads this event stands for. Only the latest is sent, because a sample can go out only
+        // when its client sends a command (Kanne.h).
+        data["samples"]   = s.samples;
+        if (!WriteLine(conn, Renge::MakeEvent(Renge::EVT_WATCH, data).dump())) return;
+    }
+}
+
+// Stop + join every watch a connection registered. Called in that connection's cleanup. Every thread is told to stop
+// before the first join, so they wind down together.
+void Fern::StopWatchesForConnection(uint64_t connSeq) {
     std::vector<std::unique_ptr<WatchEntry>> toJoin;
     {
         std::lock_guard<std::mutex> lock(m_watchMutex);
         for (auto it = m_watches.begin(); it != m_watches.end(); ) {
-            if (it->second->owner == owner) {
-                it->second->active = false;
+            if (it->first.connSeq == connSeq) {
+                it->second->slot->RequestStop();
                 toJoin.push_back(std::move(it->second));
                 it = m_watches.erase(it);
             } else {
@@ -8272,54 +8309,35 @@ void Fern::StopWatchesForConnection(Connection* owner) {
             }
         }
     }
-    for (auto& entry : toJoin) {
-        if (entry && entry->watchThread.joinable()) entry->watchThread.join();
-    }
+    for (auto& entry : toJoin) JoinWatch(*entry);
 }
 
-void Fern::StopWatch(uintptr_t addr) {
-    // Audit fix #4: extract the entry under m_watchMutex but join the thread
-    // OUTSIDE the lock. The watch thread writes events via WriteLine (the
-    // connection's writeMutex); if we held m_watchMutex while joining and
-    // another thread took both locks in the opposite order, we'd deadlock.
-    // Safer to release m_watchMutex before the blocking join.
+bool Fern::StopWatch(uint64_t connSeq, uintptr_t addr) {
+    // Joined outside m_watchMutex: every connection's FlushWatchEvents takes it once per command.
     std::unique_ptr<WatchEntry> entry;
     {
         std::lock_guard<std::mutex> lock(m_watchMutex);
-        auto it = m_watches.find(addr);
-        if (it == m_watches.end()) return;
-        it->second->active = false;
+        auto it = m_watches.find(Kanne::WatchKey{connSeq, addr});
+        if (it == m_watches.end()) return false;
         entry = std::move(it->second);
         m_watches.erase(it);
     }
-
-    if (entry && entry->watchThread.joinable()) {
-        entry->watchThread.join();
-    }
-    Sein::Info("PIPE:watch", "PipeServer: Watch stopped on 0x%llX",
-             static_cast<unsigned long long>(addr));
+    JoinWatch(*entry);
+    Sein::Info("PIPE:watch", "PipeServer: Watch stopped on 0x%llX (connection #%llu)",
+               static_cast<unsigned long long>(addr), static_cast<unsigned long long>(connSeq));
+    return true;
 }
 
 void Fern::StopAllWatches() {
-    // Audit fix #4: same pattern as StopWatch — extract under lock, join
-    // afterwards. Set every entry's active=false first so all watch threads
-    // start exiting in parallel; then drain the map and join each.
     std::vector<std::unique_ptr<WatchEntry>> toJoin;
     {
         std::lock_guard<std::mutex> lock(m_watchMutex);
         toJoin.reserve(m_watches.size());
-        for (auto& [addr, entry] : m_watches) {
-            entry->active = false;
-        }
-        for (auto& [addr, entry] : m_watches) {
-            toJoin.push_back(std::move(entry));
+        for (auto& kv : m_watches) {
+            kv.second->slot->RequestStop();
+            toJoin.push_back(std::move(kv.second));
         }
         m_watches.clear();
     }
-
-    for (auto& entry : toJoin) {
-        if (entry && entry->watchThread.joinable()) {
-            entry->watchThread.join();
-        }
-    }
+    for (auto& entry : toJoin) JoinWatch(*entry);
 }

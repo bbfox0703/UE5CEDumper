@@ -61,6 +61,7 @@ narrative identity resonates with what the module *does*.
 | **Sense.cpp** | 森瑟 | ゼンセ | Second-exam proctor, tea ceremony ("scythe") | #14 | Diagnostics: per-command dispatcher timing + process counters | Measures with a steady hand — the numbers every perf claim is checked against |
 | **Neu.h** | 諾伊 | ノイ | — ("new") | — | `UEnum::Names` layout parse (legacy `TArray` vs UE5.6+ `FNameData`) | The NEW enum container — reads the struct-of-arrays UE 5.6 introduced |
 | **Routine.h** | 路蒂涅 | ルティーネ | Shadow Warrior librarian | — | Periodic-worker scaffolding shared by the six re-assert / hold modules | Scheduled, repeating work — the librarian's rounds (header-only) |
+| **Kanne.h** | 卡妮 | カンネ | Water mage ("watering can") | #26 | WatchSample: a pipe watch's key (connection + address) and the slot its sampling thread leaves samples in, sent by the connection's own handler | Carries the flow from game memory to the pipe without spilling into it — the thread never touches the pipe (header-only, [PIPE-PER-PROCESS-2026-11-06] Stage C) |
 | **Lager.h** | 拉格 | ラーガー | Special Forces trooper ("storage / depot") | — | TrampolineDepot: pure model of MinHook's trampoline-block search + the main image's PE layout ([MH-PRERESERVE-PROXY]) | The depot — knows where MinHook's block of trampolines can be stored, and why it could not (header-only) |
 | **Lugner_Dxgi.cpp / _Dinput8.cpp / _Winmm.cpp** | 琉古納 | リュグナー | Demon master of disguise | #12 | The other three proxy DLLs (dxgi / dinput8 / winmm) | Same deceiver, three more disguises — see `Lugner.cpp` |
 | **BuildStamp.h/.cpp** | — | — | — (generic leaf utility) | — | Build number / git hash / config string baked in at compile time | Kept English by design: a generic leaf utility, per the exception in Rules below |
@@ -230,7 +231,7 @@ Total votes: **12,700,122** | Voting period: 2026-03-08 ~ 2026-03-29
 | 23 | Hero of the South (南方勇者) | — | — |
 | 24 | Sein (贊恩) | — | **Logger** |
 | 25 | Denken (鄧肯) | — | **NativeDisasm** |
-| 26 | Kanne (卡妮) | — | — |
+| 26 | Kanne (卡妮) | — | **WatchSample** |
 | 27 | Land (蘭特) | — | — |
 | 28 | Richter (里希特) | — | — |
 | 29 | Rivale (利瓦雷) | — | — |
@@ -326,7 +327,7 @@ German spelling.
 | Scharf | シャルフ | Scharf | Petals→steel blades ("sharp") | 🟢 WalkerAlignment | — |
 | Denken | デンケン | Denken | Court magician, Macht's student | 🟢 NativeDisasm | — |
 | Land | ラント | Land | Creates flawless clones | ⬜ | Cloning / replication / duplicate detection |
-| Kanne | カンネ | Kanne | Controls water ("watering can") | ⬜ | Flow / streaming / pipelining |
+| Kanne | カンネ | Kanne | Controls water ("watering can") | 🟢 WatchSample | A pipe watch's key and sample slot — the sampling thread only reads memory, the connection's handler sends the samples (`Kanne.h`, header-only, [PIPE-PER-PROCESS-2026-11-06] Stage C) |
 | Lawine | ラヴィーネ | Lawine | Freezes water ("avalanche") | ⬜ | Snapshot/freeze or bulk cascade |
 | Edel | エーデル | Edel | Hypnosis magic ("noble") | 🟢 CurrentTarget | Auto-detect the actor the player is currently targeting: GWorld→PlayerController→Pawn, score the player's outgoing object-ptr fields (`Edel.cpp/.h`, build 1400) |
 | Richter | リヒター | Richter | Staff repair ("judge") | ⬜ | Scoring / judging / recovery-repair |

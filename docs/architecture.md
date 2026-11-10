@@ -58,6 +58,8 @@ UE5CEDumper/
 │       │                              Compare predicates (738/757); lean Candidate pools (V3-A 926);
 │       │                              TSet/TMap scan (V1a 927); GroupSessionManager (1276)
 │       ├── Orden.h                 ← GroupMatch — source-agnostic SDR matcher for multi-value group scan (1276)
+│       ├── Kanne.h                 ← WatchSample — a pipe watch's key (connection + address) and the slot its thread
+│       │                              leaves samples in; the connection's handler sends them ([PIPE-PER-PROCESS] Stage C)
 │       ├── Tot.h                   ← Cancellation — Tot::Requested() (per-command disconnect flag |
 │       │                              sticky shutdown flag) polled by long loops (936)
 │       ├── Mimic.cpp / .h          ← Mailbox — shared memory mailbox for CE Lua invocation (CMD_* 0-15; derive the max from the Cmd enum, contract version lives beside it)

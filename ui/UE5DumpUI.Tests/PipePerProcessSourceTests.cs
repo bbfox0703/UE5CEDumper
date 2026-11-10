@@ -373,8 +373,10 @@ public sealed class PipePerProcessSourceTests
         int reply = code.IndexOf("WriteLine(*conn, response)", StringComparison.Ordinal);
         Assert.True(dispatch >= 0 && flush > dispatch && reply > flush,
             "HandleConnection must send its watch samples after DispatchCommand and before the reply");
+        // The floor is Grimoire's. No ceiling: the red asked for one because a stop had to wait out the interval,
+        // and an interruptible wait removed that reason.
         var watch = CommandBranch(code, "CMD_WATCH");
-        Assert.Matches(@"Grimoire::PIPE_WATCH_INTERVAL_MAX_MS", watch);
+        Assert.Matches(@"Grimoire::PIPE_WATCH_INTERVAL_MIN_MS", watch);
     }
 
     private static string ConnectionCleanupWhole(string code)

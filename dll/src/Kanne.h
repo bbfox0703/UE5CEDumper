@@ -24,7 +24,6 @@
 #include <cstdint>
 #include <functional>
 #include <mutex>
-#include <thread>
 #include <vector>
 
 namespace Kanne {
@@ -46,8 +45,10 @@ struct WatchKeyHash {
 // How many of `connSeq`'s watches `table` (keyed by WatchKey) holds.
 template <class Table>
 size_t CountOwned(const Table& table, uint64_t connSeq) {
-    (void)table; (void)connSeq;
-    return 0;   // RED stub
+    size_t n = 0;
+    for (const auto& kv : table)
+        if (kv.first.connSeq == connSeq) ++n;
+    return n;
 }
 
 // What one sampling thread shares with its connection's handler, and nothing else.
@@ -61,9 +62,9 @@ public:
 
     // The sampling thread waits here between reads. True: read again. False: stop was requested.
     bool WaitInterval(std::chrono::milliseconds interval) {
-        // RED stub: today's uninterruptible sleep (capped so the suite stays fast)
-        std::this_thread::sleep_for((std::min)(interval, std::chrono::milliseconds(1000)));
-        return true;
+        std::unique_lock<std::mutex> lk(mu_);
+        cv_.wait_for(lk, interval, [this] { return stop_; });
+        return !stop_;
     }
 
     void RequestStop() {
@@ -84,8 +85,13 @@ public:
 
     // The latest read not yet sent; false when none came since the last take.
     bool TakeLatest(Sample& out) {
-        (void)out;
-        return false;   // RED stub
+        std::lock_guard<std::mutex> lk(mu_);
+        if (pending_ == 0) return false;
+        out.bytes       = bytes_;
+        out.timestampMs = timestampMs_;
+        out.samples     = pending_;
+        pending_ = 0;
+        return true;
     }
 
 private:

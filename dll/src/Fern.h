@@ -23,6 +23,7 @@
 #include <Windows.h>
 #include "Routine.h"   // Routine::SafeThread — ~std::thread on a joinable thread terminates (B14)
 #include "Voll.h"      // Voll::Holder -- who holds the pipe's connections (Stage C)
+#include "Kanne.h"     // Kanne::WatchKey / WatchSlot -- a watch's key and the samples its thread leaves (Stage C)
 #include <string>
 #include <thread>
 #include <atomic>
@@ -207,19 +208,16 @@ private:
     Routine::SafeThread          m_monitorThread;
     void MonitorLoop();
 
-    // Watch entries — per-connection. A watch's event is written to the
-    // connection that registered it (owner); on that connection's disconnect,
-    // only its watches are stopped (and joined before the Connection is freed,
-    // so `owner` stays valid for the watch thread's lifetime).
+    // Watches, keyed by (connection, address): each client's are its own. A watch's thread reads memory into its
+    // slot and does nothing else; its connection's handler sends the samples (Kanne.h says why).
     struct WatchEntry {
-        uintptr_t           addr;
-        uint32_t            size;
-        uint32_t            interval_ms;
-        Connection*         owner{nullptr};
-        Routine::SafeThread         watchThread;
-        std::atomic<bool>   active{true};
+        uintptr_t                         addr        = 0;
+        uint32_t                          size        = 0;
+        uint32_t                          interval_ms = 0;
+        std::shared_ptr<Kanne::WatchSlot> slot;          // shared with the thread, which holds nothing else of ours
+        Routine::SafeThread               watchThread;
     };
-    std::unordered_map<uintptr_t, std::unique_ptr<WatchEntry>> m_watches;
+    std::unordered_map<Kanne::WatchKey, std::unique_ptr<WatchEntry>, Kanne::WatchKeyHash> m_watches;
     std::mutex m_watchMutex;
 
     // Initial Scan (async trigger_scan for proxy DLL mode)
@@ -254,10 +252,14 @@ private:
     void AcceptLoop();
     void HandleConnection(std::shared_ptr<Connection> conn);
     std::string DispatchCommand(const std::shared_ptr<Connection>& conn, const std::string& jsonLine);
-    void StartWatch(const std::shared_ptr<Connection>& conn, uintptr_t addr, uint32_t size, uint32_t interval_ms);
-    void StopWatch(uintptr_t addr);
-    void StopWatchesForConnection(Connection* owner);
+    // Empty, or why the watch was refused.
+    std::string StartWatch(const std::shared_ptr<Connection>& conn, uintptr_t addr, uint32_t size, uint32_t interval_ms);
+    bool StopWatch(uint64_t connSeq, uintptr_t addr);   // false: this connection watches nothing there
+    void StopWatchesForConnection(uint64_t connSeq);
     void StopAllWatches();
+    static void JoinWatch(WatchEntry& entry);         // stop its thread and join it: one wake, at most one read
+    // Send this connection's samples read since its last command, on its own handler thread.
+    void FlushWatchEvents(Connection& conn);
     void CloseConnOnce(Connection& conn);
     bool WriteLine(Connection& conn, const std::string& line);
     std::string ReadLine(HANDLE pipe);

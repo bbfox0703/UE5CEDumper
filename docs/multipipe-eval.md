@@ -380,8 +380,9 @@ streaming `Utf8JsonReader` and/or smaller chunks (already noted in todo).
   session (registry empty→1) — never per-command — so a light command on one lane can't clear a
   running scan's cancel on the other.
 - Watches are **per-connection**: `WatchEntry.owner` points at the registering `Connection`; the
-  watch thread writes its event to that connection via `WriteLine` (old global `PushEvent` removed).
-  `StopWatchesForConnection(owner)` stops+joins a connection's watches in its cleanup before the
+  watch thread writes its event to that connection via `WriteLine` (old global `PushEvent` removed;
+  since Stage C, 2026-11-10, the watch thread only samples and the connection's own handler writes
+  the events, `Kanne.h`). `StopWatchesForConnection(owner)` stops+joins a connection's watches in its cleanup before the
   `Connection` is freed. Sessions (`Radar::*::DropAll`) dropped only on the last disconnect
   (until [PIPE-PER-PROCESS-2026-11-06] Stage C, 2026-11-10: a session is its connection's, and each
   connection's cleanup drops its own with `DropOwner`).

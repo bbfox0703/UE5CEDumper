@@ -62,6 +62,13 @@ constexpr const char*    PIPE_SLOT_FREED_TEXT    = "slot freed";
 // cost when nothing survives is zero — the loop exits on the first wait.
 constexpr int            PIPE_STOP_CANCEL_REASSERT_MS = 100;
 
+// `watch` ([PIPE-PER-PROCESS-2026-11-06] Stage C). The floor keeps a watch from spinning its thread. Each watch is a
+// thread in the game, outside the GObjects walk's worker budget, so the count is capped: per connection, so one client
+// cannot take every watch, and in all.
+constexpr int            PIPE_WATCH_INTERVAL_MIN_MS    = 50;
+constexpr int            PIPE_WATCH_MAX_PER_CONNECTION = 32;
+constexpr int            PIPE_WATCH_MAX_TOTAL          = 64;
+
 // --- Userspace pointer plausibility ---
 // A candidate x64 pointer is "plausible userspace" iff it sits in the canonical
 // low-half range [0x10000, 0x00007FFFFFFFFFFF]: above the first 64KB (never a valid
