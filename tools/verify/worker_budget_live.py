@@ -116,18 +116,31 @@ def main() -> int:
 
     import os
     cores = os.cpu_count() or 1
-    budget = a.budget if a.budget is not None else max(1, min(16, cores - 2 if cores >= 3 else 1)) - 1
     with PipeClient(pid=a.pid, timeout=120) as c:
         p = c.request("get_pointers")
-    gworld = p.get("gworld") or p.get("gworld_addr")
+        gworld = p.get("gworld") or p.get("gworld_addr")
+        if gworld and str(gworld) not in ("0x0", "0"):
+            c.request("find_refs_to_uobject", addr=str(gworld), max_results=1)   # warm-up: the DLL logs its pick
     module = str(p.get("module_name", "")).rsplit(".", 1)[0]
     if not gworld or str(gworld) in ("0x0", "0"):
         print("worker_budget: NOT MEASURABLE -- no GWorld in get_pointers")
         return 2
     print(f"game pid {a.pid} ({module}), build {p.get('build_number')}, objects {p.get('object_count')}, GWorld {gworld}")
-    print(f"cores {cores}: one walk spawns up to {budget} workers beyond its own thread")
 
     logs = sorted((LOGROOT / module).glob("*-0.log")) if module else []
+    # The DLL states its pick from the CPU's shape ([PIPE-PER-PROCESS-2026-11-06]: performance cores less 2); a DLL
+    # from before that used logical processors less 2, capped at 16.
+    stated = None
+    for f in logs:
+        for m in re.finditer(r"a GObjects walk uses up to (\d+) threads", f.read_text(encoding="utf-8", errors="replace")):
+            stated = int(m.group(1))
+    if a.budget is not None:
+        budget, source = a.budget, "--budget"
+    elif stated is not None:
+        budget, source = stated - 1, "the DLL's log"
+    else:
+        budget, source = max(1, min(16, cores - 2 if cores >= 3 else 1)) - 1, "the old rule (no statement in the log)"
+    print(f"one walk spawns up to {budget} workers beyond its own thread (from {source})")
     sizes = {f: f.stat().st_size for f in logs}
 
     samples, stop = [], threading.Event()
