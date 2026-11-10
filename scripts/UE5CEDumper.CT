@@ -908,7 +908,7 @@ function ue5_inject()
         elseif state == INIT_FAILED then
             -- Real failure: init ran but the pipe server did not come up.
             ue5_logError("DLL init finished but the Pipe Server FAILED to start.")
-            showMessage("UE5 Dumper Error:\n\nThe DLL loaded and initialised, but the Pipe Server failed to start.\n\nMost likely another copy of UE5Dumper in this game already serves its pipe, \\\\.\\pipe\\UE5DumpBfx_(game PID).\nCheck the DLL log:\n  %LOCALAPPDATA%\\UE5CEDumper\\Logs")
+            showMessage("UE5 Dumper Error:\n\nThe DLL loaded and initialised, but the Pipe Server failed to start.\n\nMost likely the scan was stopped part-way (the record was unticked while it ran), or the record was ticked again before the previous stop had finished.\nCheck the DLL log:\n  %LOCALAPPDATA%\\UE5CEDumper\\Logs")
             return false
         elseif not sawProgress then
             -- The symbol resolved but the field never once left IDLE. That is NOT a

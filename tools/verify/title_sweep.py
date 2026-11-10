@@ -204,8 +204,17 @@ def main():
         # nothing: opening it took a pipe instance and showed the DLL a client that left at once.
         deadline = time.time() + 120
         while time.time() < deadline:
-            if list_dumper_pipes()[0]:
+            pids, legacy = list_dumper_pipes()
+            if pids:
                 break
+            if legacy:
+                # Only the legacy name: the DLL in this game predates the per-process pipe, so the deployed proxy is
+                # stale -- the verdict assert_build() gave before the name changed, which it can no longer reach.
+                say("*** STALE BUILD *** only the legacy pipe \\\\.\\pipe\\UE5DumpBfx is up: the proxy in this game "
+                    "predates the per-process pipe. Refresh it: py tools/verify/proxy_refresh.py refresh "
+                    f"\"{exe.stem}\"")
+                result["stale_build"] = "legacy pipe only: the deployed proxy predates [PIPE-PER-PROCESS-2026-11-06]"
+                return 1
             time.sleep(3)
         else:
             tail = (LOGROOT / exe.stem / "init-0.log")

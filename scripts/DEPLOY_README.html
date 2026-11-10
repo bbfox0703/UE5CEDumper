@@ -152,6 +152,11 @@ They work with Option B and C as well, once Cheat Engine has the game open. See 
   <li>No crash, no duplicate data — the first instance wins.</li>
 </ul>
 
+<p>If that <code>version.dll</code> is from an <strong>older build</strong>, it serves the old shared pipe,
+<code>\\.\pipe\UE5DumpBfx</code>, which the UI no longer connects to. The injected copy then starts its own pipe, and
+Connect lists the old one with a warning. Close the game and click <strong>Update All</strong> on the Proxy Deploy tab
+(or remove the old proxy) before you start it again.</p>
+
 <p>Best practice: use one method at a time. Remove <code>version.dll</code> from the game folder when using CE injection.</p>
 
 <hr>
