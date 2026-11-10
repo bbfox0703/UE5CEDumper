@@ -73,6 +73,17 @@ def section_seethrough(pid):
         with client(pid) as c:
             return c.request("seethrough_get_state")
 
+    def settle(done, timeout=3.0):
+        # A one-shot reader is a connection of THIS process, which owns what an earlier connection of it turned on:
+        # if it registers before that connection's teardown has run, the claim is kept until the reader leaves too.
+        # So ask again until the state settles, instead of reading the first answer as the verdict.
+        deadline = time.time() + timeout
+        s = state()
+        while not done(s) and time.time() < deadline:
+            time.sleep(0.2)
+            s = state()
+        return s
+
     res, err = ce(1)
     if not check("CE's record turns See-through on", res == 1, f"result={res} {err}"):
         return
@@ -86,7 +97,7 @@ def section_seethrough(pid):
     with client(pid) as y:
         r = y.request("seethrough_set", enable=True)
         check("a pipe client adds its own claim", r.get("claims") == 2, f"claims={r.get('claims')}")
-    s = state()
+    s = settle(lambda s: s.get("claims") == 1)
     check("that client left: its claim went, CE's stayed", s.get("active") is True and s.get("claims") == 1
           and s.get("ce_claimed") is True, f"active={s.get('active')} claims={s.get('claims')}")
 
@@ -116,8 +127,7 @@ def section_seethrough(pid):
               and s.get("claims") == 1, f"active={s.get('active')} claims={s.get('claims')}")
     finally:
         b.close()
-    time.sleep(0.5)
-    s = state()
+    s = settle(lambda s: s.get("active") is False)
     check("...until B, its last connection, leaves", s.get("active") is False, f"active={s.get('active')}")
 
 
