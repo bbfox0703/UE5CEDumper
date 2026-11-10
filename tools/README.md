@@ -10,7 +10,7 @@ the end-to-end workflow these tools fit into (the Avowed playbook).
 ## `verify/` — drive the injected DLL over its pipe, with no UI
 
 [`verify/pipe_client.py`](verify/pipe_client.py) speaks the named-pipe protocol
-(`\\.\pipe\UE5DumpBfx`) directly, so a verification-register row can be closed without an Avalonia
+(`\\.\pipe\UE5DumpBfx_<pid>`, the game's own; `--pid` or `UE5DUMP_PID` picks one when several run) directly, so a verification-register row can be closed without an Avalonia
 session. This is the rig [working-lessons.md §2.6](../docs/working-lessons.md) describes: the UI is
 a **client**, not the subject, so driving the DLL directly is *stronger* evidence for a DLL-side
 claim — and correspondingly proves nothing about the panel's own bindings, which must be stated

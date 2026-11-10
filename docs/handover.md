@@ -311,7 +311,7 @@ py -c "import subprocess,pathlib; subprocess.Popen([str(pathlib.Path('dist/UE5Du
 py tools/verify/front_window.py front UE5DumpUI
 ```
 
-Then click **Connect** (top-left) to attach to an injected game; the header goes
+Then click **Connect** (top-left) to attach to an injected game (one game connects at once; several open a list; only an old DLL's pipe is refused with a message); the header goes
 `Disconnected` → `Connected — UE504 (25,189 objects)`. ⚠ **The moment it connects it takes 2 of the
 3 pipe slots**, so no `pipe_client.py` rig can run until you press **Disconnect** or close it.
 ⚠ It is a **single-instance** app (Mutex) — a second launch silently does nothing.
@@ -523,7 +523,8 @@ they are long and self-critical. Read the docstring before running one; several 
 preconditions and a few refuse to run in the wrong state rather than degrading into a silent no-op.
 ⚠⚠ **`--help` is not safe across all of them.** Several parse `sys.argv` by hand, so
 `py tools/verify/seethrough_arms.py --help` skips argparse entirely and immediately dials the pipe
-(`PipeError: could not open \\.\pipe\UE5DumpBfx`). **Read the file, do not probe it.**
+(`PipeError: could not open a UE5Dumper pipe`). **Read the file, do not probe it.**
+⭐ **Which game a rig drives** ([PIPE-PER-PROCESS-2026-11-06]): each game serves `\\.\pipe\UE5DumpBfx_<pid>`. `pipe_client` dials `--pid` / `PipeClient(pid=)`, else `UE5DUMP_PID`, else the only game listed; with several it takes the lowest pid and warns. Only the legacy `\\.\pipe\UE5DumpBfx` up means a stale proxy: refresh it.
 
 -----
 

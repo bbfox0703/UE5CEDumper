@@ -813,7 +813,7 @@ build the pre-fix DLL for `Genau RIP decode` in a **fresh** `git worktree` (⚠ 
 Staging steps that touch outside files are in §4 — **ask first**.
 
 ### ▶ GROUP 1 — DumperTest-Development, headless pipe · ~5 h · A · closes 12+
-One launch, a Python client on `\\.\pipe\UE5DumpBfx`, no UI. Neither package carries a proxy DLL, so
+One launch, a Python client on the game's `\\.\pipe\UE5DumpBfx_<pid>`, no UI. Neither package carries a proxy DLL, so
 `inject-ue.ps1 -ProcessId` scans directly — **no `trigger_scan`**.
 `F9` · `W2/W3` · `D2` · `A3` · `Z1` · `G11` · `G8/G9` · `U3/U17` (1/2/3/5) · `AB3/AB5` (1-3) ·
 `A6` (1/3/5) · `G2` Tier-1 · `G3` partial · `A12` (5-6) · `A11` (6) · `B19`.

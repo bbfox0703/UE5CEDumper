@@ -190,7 +190,7 @@ Only internal constants reference Frieren terms:
 // Grimoire — 魔導書 — Application constants and magic strings
 public static class Constants  // class name stays English for IDE discoverability
 {
-    public const string PipeName = @"\\.\pipe\UE5DumpBfx";  // unchanged
+    public const string PipeNamePrefix = "UE5DumpBfx_";  // + the game's pid
     // ...
 }
 ```

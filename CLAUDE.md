@@ -201,7 +201,7 @@ derive them, never hand-edit** (`tools/check_derived_counts.py` pins the ones wr
 |      +-- Schlacht (SeeThrough)    hide occluders in the view
 |      +-- Linie    (LivePEProfiler) which UFunctions actually fired
 +----------------------+-------------------------------+
-                       | \\.\pipe\UE5DumpBfx  (newline-delimited JSON)
+                       | \\.\pipe\UE5DumpBfx_<pid>  (one per game; newline-delimited JSON)
 +----------------------v-------------------------------+
 |  UE5DumpUI  (Avalonia + ReactiveUI, standalone exe)
 |
@@ -245,7 +245,7 @@ line, trim a row, do not grow.
 | [docs/todo.md](docs/todo.md) | **What's next** — open work only, with effort/risk tags. |
 | [docs/verification-register.md](docs/verification-register.md) | **What is shipped but not yet proven on a running game** — one row per check, each naming its acceptance test. ⛔ Read its charter before proposing to delete a row. |
 | [docs/dev-log.md](docs/dev-log.md) | **What shipped** — append-only, newest-first milestone history per build number. Read when investigating when or why X was added. |
-| [docs/architecture.md](docs/architecture.md) | Directory structure (**32 .cpp + 42 .h** DLL files, **260** test files, and what each does), git submodules, build environment, component interaction + startup sequence, log layout + retention. |
+| [docs/architecture.md](docs/architecture.md) | Directory structure (**32 .cpp + 42 .h** DLL files, **261** test files, and what each does), git submodules, build environment, component interaction + startup sequence, log layout + retention. |
 | [docs/dll-spec.md](docs/dll-spec.md) | C++ DLL interface — C ABI exports (**63** — derive it, never hand-edit), the public headers, DynOff runtime offset tables, the CE Lua inject-only bridge. ⚠ The headers are ground truth; this doc trails them. |
 | [docs/working-lessons.md](docs/working-lessons.md) | ⭐ **How to work here.** Long — read the section the task needs: §1 before a verification claim, §2 before an audit, §3 before an Avalonia / CE / SQLite / build change, §4 for UE and CE facts, §6 before proposing an architecture or UX change (settled decisions), §8 before writing a code comment. Write new lessons here. |
 | [docs/naming-convention.md](docs/naming-convention.md) | Frieren-themed C++ file / namespace mapping (Macht/Genau/Aura/Serie/Ubel/Frieren/Fern/...) |

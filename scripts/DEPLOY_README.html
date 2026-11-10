@@ -147,7 +147,7 @@ They work with Option B and C as well, once Cheat Engine has the game open. See 
 <p>If you accidentally have <code>version.dll</code> in the game folder <strong>and</strong> try to inject <code>UE5Dumper.dll</code> via CE:</p>
 
 <ul>
-  <li>The second instance detects that the pipe <code>\\.\pipe\UE5DumpBfx</code> already exists.</li>
+  <li>The second instance detects that the game's pipe, <code>\\.\pipe\UE5DumpBfx_&lt;pid&gt;</code>, already exists (the first instance serves it).</li>
   <li>It <strong>skips</strong> auto-start to prevent conflicts.</li>
   <li>No crash, no duplicate data — the first instance wins.</li>
 </ul>

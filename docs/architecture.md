@@ -92,7 +92,7 @@ UE5CEDumper/
 │
 ├── ui/                             ← C# Avalonia UI App
 │   ├── UE5DumpUI.sln
-│   ├── UE5DumpUI.Tests/            ← xUnit test project (260 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
+│   ├── UE5DumpUI.Tests/            ← xUnit test project (261 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
 │   ├── UE5DumpUI.HeadlessTests/    ← real Avalonia controls on the headless platform (Avalonia.Headless, same version as the app); its OWN process because a headless session replaces the global UI Dispatcher the view-model tests must not share
 │   └── UE5DumpUI/
 │       ├── UE5DumpUI.csproj        ← .NET 10 windows, Avalonia 12.1.0, Native AOT
@@ -245,7 +245,7 @@ Game Process
         ├── Grausam / Schlacht      — keep-foreground lock · see-through occluders (experimental)
         ├── Denken (NativeDisasm)   — Zydis x64 native-UFunction → property xref
         ├── Flamme (HintCache)      — scan hint caching for repeat scans
-        └── Fern (PipeServer)       — ~87 JSON commands on \\.\pipe\UE5DumpBfx
+        └── Fern (PipeServer)       — ~87 JSON commands on \\.\pipe\UE5DumpBfx_<pid> (one pipe per game process)
                                         ↕ Named pipe (JSON newline-delimited)
 CE Lua (UE5CEDumper.CT)               UE5DumpUI.exe (Avalonia)
   ├── injectDLL()                      ├── PipeClient       — async connect/send/recv
@@ -264,8 +264,8 @@ CE Lua (UE5CEDumper.CT)               UE5DumpUI.exe (Avalonia)
 2. `DLL_PROCESS_ATTACH` (Heiter.cpp) → spawns `AutoStartThreadProc` (1 second delay)
 3. `AutoStartThreadProc` → checks `g_isCEPlugin` (suppresses if loaded into CE.exe)
 4. `UE5_Init()`: `Genau::FindGObjects()` → `Genau::FindGNames()` → `Genau::DetectVersion()` → `Serie::Init()` → `Aura::Init()` → `Genau::ValidateAndFixOffsets()`
-5. `Fern::PipeServer::Start()` → listens on `\\.\pipe\UE5DumpBfx`
-6. User launches `UE5DumpUI.exe` → `PipeClient` connects → UI populated
+5. `Fern::PipeServer::Start()` → listens on `\\.\pipe\UE5DumpBfx_<pid>`, this game process's own name (`Voll::OwnPipeName`, [PIPE-PER-PROCESS-2026-11-06])
+6. User launches `UE5DumpUI.exe` → Connect lists `\\.\pipe\`: one game connects at once, several open a list, the legacy name alone (an old DLL) is refused → `PipeClient` connects → UI populated
 
 ### Logging
 

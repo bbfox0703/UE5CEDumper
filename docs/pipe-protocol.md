@@ -1,6 +1,6 @@
 # Pipe Protocol — JSON IPC Specification
 
-Named pipe: `\\.\pipe\UE5DumpBfx`
+Named pipe: `\\.\pipe\UE5DumpBfx_<pid>`, one per game process (the pid is the game's, in decimal). The fixed `\\.\pipe\UE5DumpBfx` of older builds is no longer served, and the UI refuses it ([PIPE-PER-PROCESS-2026-11-06]).
 Format: JSON, newline-delimited (one message per `\n`)
 Direction: bidirectional — Request/Response + async push Events
 Total commands: **105** — a DERIVED number, regenerate it, never hand-edit:

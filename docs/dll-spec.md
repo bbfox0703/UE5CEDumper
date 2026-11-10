@@ -678,7 +678,7 @@ private:
 };
 
 // Pipe constants (from Grimoire.h)
-// PIPE_NAME    = L"\\\\.\\pipe\\UE5DumpBfx"
+// PIPE_NAME_PREFIX = L"\\\\.\\pipe\\UE5DumpBfx_"   -- Voll::PipeNameForPid appends the decimal pid
 // PIPE_BUF_SIZE = 65536
 ```
 

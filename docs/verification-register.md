@@ -492,7 +492,7 @@ expected.
 *Added 2026-09-05 with the four rows below. The batch is unusual in that its highest-value row
 (A2 / EVERSPACE 2) is also its cheapest, and one row is gated on a game that may not be installed.*
 
-**One game at a time, sequential, never parallel.** Injecting a second title while the first holds `\\.\pipe\UE5DumpBfx` is how a session measures the wrong process.
+**One game at a time, sequential, never parallel.** Injecting a second title while the first runs is how a session measures the wrong process: each game has its own `\\.\pipe\UE5DumpBfx_<pid>`, but a rig given no `--pid` drives the first game it lists.
 
 #### ⭐ MACHINE FACTS — measured on the verification PC 2026-09-05, and they differ from this plan
 
@@ -8596,7 +8596,7 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
 > takes half a minute on packaged `DumperTest` — use it as the acceptance test for whatever fix ships:
 >
 > 1. Launch `DumperTest.exe`, `scripts\inject-ue.ps1 -ProcessId <the -Win64-Shipping pid>`.
-> 2. Connect a `NamedPipeClientStream` to `UE5DumpBfx` and send any command.
+> 2. Connect a `NamedPipeClientStream` to the game's `UE5DumpBfx_<pid>` and send any command.
 > 3. **Close the game with `CloseMainWindow()`** — `WM_CLOSE` → `ExitProcess` → `DLL_PROCESS_DETACH`.
 >    **Not `Stop-Process -Force`**: `TerminateProcess` skips DETACH entirely, so a forced kill exits
 >    fast and "proves" the bug is gone.

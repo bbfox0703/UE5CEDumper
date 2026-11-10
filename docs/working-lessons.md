@@ -1455,7 +1455,7 @@ a batch ended with the ▾ menu open, the next batch's click "on the item" lande
 Learned 2026-08-16 closing the AB4 batch, which had been the top-ranked unverified item.
 
 **The UI is a client, not the subject.** Every DLL-side batch on the verification register can be
-driven by a ~50-line Python client speaking the pipe protocol directly: open the `UE5DumpBfx` named
+driven by a ~50-line Python client speaking the pipe protocol directly: open the game's `UE5DumpBfx_<pid>` named
 pipe as `'r+b', buffering=0`, write `{"id":N,"cmd":...}` + `\n`, read newline-delimited replies and
 match on `id` (async events interleave, so a blind readline will hand you the wrong message). AB4's
 seven steps went from "needs a UI session and a human" to a few minutes of scripted scans. It is also

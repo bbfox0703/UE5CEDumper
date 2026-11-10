@@ -46,7 +46,7 @@ See "Rules" section in [CLAUDE.md](../CLAUDE.md) for language, i18n, logging, pl
 // Services/PipeClient.cs
 public class PipeClient : IDisposable
 {
-    private const string PipeName = "UE5DumpBfx";
+    // The game's own pipe: Constants.PipeNamePrefix + pid (Core/PipeTargets) [PIPE-PER-PROCESS-2026-11-06]
     private NamedPipeClientStream? _pipe;
     private StreamReader? _reader;
     private StreamWriter? _writer;
