@@ -709,7 +709,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             // platform is passed only so the leftover-proxy rows can offer "Open folder".
             ProxyDeploy = new ProxyDeployViewModel(proxyDeploy, log, platform);
             // Auto-connect the pipe after a successful in-UI DLL injection: to that game's own pipe, by pid.
-            ProxyDeploy.RequestConnectAsync = pid => ConnectToAsync(pid);
+            // Through ConnectCommand, so the toolbar's Connect stays disabled while the post-inject retry runs.
+            ProxyDeploy.RequestConnectAsync = pid => ConnectCommand.ExecuteAsync(pid);
             // Lets the post-inject retry ASK whether it worked instead of assuming.
             ProxyDeploy.IsConnectedProbe = () => IsConnected;
             ProxyDeploy.SetConnectErrorSuppression = v => SuppressConnectErrors = v;
@@ -2144,8 +2145,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// The legacy-only refusal uses it: a list holding one entry nobody can pick would explain nothing.</summary>
     public Func<string, string, Task>? ShowNoticeAsync { get; set; }
 
+    /// <summary>The toolbar's Connect (no pid) and the post-inject connect (the injected game's pid) both run as this
+    /// command, so the Connect button stays disabled while either is in flight.</summary>
     [RelayCommand]
-    private Task ConnectAsync() => ConnectToAsync(null);
+    private Task ConnectAsync(int? pid) => ConnectToAsync(pid);
 
     /// <summary>Connect to a game's pipe. <paramref name="pid"/> names the game (one the UI just injected, or one
     /// already running the DLL); null looks under \\.\pipe\ and connects at once to a lone game, lets the user choose
@@ -2161,10 +2164,25 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (!SuppressConnectErrors) StatusText = "Connecting...";
             LiveWalker.ClearAllBookmarks();
 
-            if (await ResolvePipeTargetAsync(pid) is not int targetPid)
+            if (await ResolvePipeTargetAsync(pid) is not { } target)
                 return;   // refused, cancelled: the status line already says which
+            int targetPid = target.Pid;
 
-            await _pipeClient.ConnectAsync(PipeTargets.NameFor(targetPid));
+            // Already connected: to this game it is a refresh, to another game a switch. A live PipeClient keeps its
+            // connection, so without the disconnect the first game would answer for the second and fail the pid check
+            // below as though it had taken the second game's name.
+            if (_pipeClient.IsConnected && _engineState?.ProcessId != targetPid)
+                await DisconnectAsync();
+
+            try
+            {
+                await _pipeClient.ConnectAsync(PipeTargets.NameFor(targetPid));
+            }
+            catch (TimeoutException) when (target.UnlistedBesideLegacy)
+            {
+                // The game's pipe never came, and an old DLL serves the legacy name somewhere: perhaps in this game.
+                throw new InvalidOperationException(Res.Format("str.Connect.PidUnlistedBesideLegacy", targetPid));
+            }
 
             var state = await _dump.InitAsync();
             // The pid the DLL reports is the process that answered. A process that created this game's pipe name
@@ -2222,35 +2240,31 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>[PIPE-PER-PROCESS-2026-11-06] Which game to dial, or null when Connect stops here (refused, cancelled).
     /// Throws with the reason when there is nothing to connect to, so the caller reports it like any connect failure.
-    /// </summary>
-    private async Task<int?> ResolvePipeTargetAsync(int? pid)
+    /// <c>UnlistedBesideLegacy</c>: a named game whose pipe is not listed while the legacy pipe is, which explains the
+    /// failure if its pipe never comes.</summary>
+    private async Task<(int Pid, bool UnlistedBesideLegacy)?> ResolvePipeTargetAsync(int? pid)
     {
         // Listing \\.\pipe\ opens no pipe, but it is still I/O: off the UI thread.
         var names = await Task.Run(() => _platform.ListNamedPipes());
         if (names is null)
         {
-            if (pid is int direct) return direct;   // a named game needs no listing
+            if (pid is int direct) return (direct, false);   // a named game needs no listing
             throw new InvalidOperationException(Res.Get("str.Connect.ListFailed"));
         }
         var scan = PipeTargets.Scan(names);
 
         if (pid is int p)
         {
-            // A game the UI just injected may not have opened its pipe yet, so it is dialled even when unlisted and the
-            // connect waits for it. A game already running an OLD DLL never opens it, and the legacy pipe says so. Not
-            // during the post-inject retry, which owns the message and expects early attempts to miss.
-            if (!scan.Pids.Contains(p) && scan.LegacyPresent && !SuppressConnectErrors)
-            {
-                await RefuseLegacyAsync();
-                return null;
-            }
-            return p;
+            // Dialled even when unlisted: a DLL still scanning opens its pipe late, and the connect waits for it. The
+            // legacy pipe is no reason to refuse, since it may be another game's; it only explains a pipe that never
+            // comes.
+            return (p, !scan.Pids.Contains(p) && scan.LegacyPresent);
         }
 
         switch (PipeTargets.Decide(scan))
         {
             case ConnectPlan.ConnectOne:
-                return scan.Pids[0];
+                return (scan.Pids[0], false);
             case ConnectPlan.LegacyOnly:
                 await RefuseLegacyAsync();
                 return null;
@@ -2277,7 +2291,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             StatusText = Res.Get("str.Connect.Cancelled");
             return null;
         }
-        return c;
+        return (c, false);
     }
 
     /// <summary>Only an old DLL's pipe is there: say so and why, connect to nothing. Deliberately not the game list,

@@ -10,6 +10,7 @@
     <sys:String x:Key="str.Connect.NoPipe">No game is running UE5Dumper: no \\.\pipe\UE5DumpBfx_&lt;pid&gt; was found. Start a game with a proxy deployed, or inject into a running game (Proxy Deploy tab).</sys:String>
     <sys:String x:Key="str.Connect.ListFailed">Could not list the named pipes (\\.\pipe\) to find the games running UE5Dumper. Try Connect again.</sys:String>
     <sys:String x:Key="str.Connect.WrongPid">\\.\pipe\{0} was answered by PID {1}, not by the game, PID {2}: another process created that game's pipe name first. Disconnected. Close that process, then connect again.</sys:String>
+    <sys:String x:Key="str.Connect.PidUnlistedBesideLegacy">PID {0} serves no \\.\pipe\UE5DumpBfx_{0}, and a game is running an old UE5Dumper DLL (the old shared pipe, \\.\pipe\UE5DumpBfx, is up). If that is this game, close it, click Update All on the Proxy Deploy tab, and start it again.</sys:String>
     <sys:String x:Key="str.Connect.Cancelled">Connect cancelled</sys:String>
     <sys:String x:Key="str.Connect.LegacyStatus">Not connected — a game runs an old UE5Dumper DLL (see the message)</sys:String>
     <sys:String x:Key="str.Connect.LegacyTitle">Old UE5Dumper DLL</sys:String>
