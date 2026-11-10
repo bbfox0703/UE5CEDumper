@@ -40,9 +40,9 @@ correct anyway, because the next thing it does is `Dunste::GetStatus(st)` and it
 `st`. That is this repo's actual rule — *report the EFFECT, not the ATTEMPT* — and a checker
 keyed on "the status was discarded" flags the file that follows it best.
 
-⚠ THE FOURTH is `Fern.cpp`'s last-client teardown calling `Schlacht::SetEnabled(false)`:
-there is no client left to make a claim to, and its own comment already says it is a cheap
-no-op when see-through was never enabled.
+⚠ THE FOURTH was `Fern.cpp`'s last-client teardown calling `Schlacht::SetEnabled(false)`. Since
+[PIPE-PER-PROCESS-2026-11-06] Stage C a departing client calls `Schlacht::Release`, which turns
+See-through off only when that client held the last claim; the population is unchanged.
 
 ⚠ WHAT THIS SCRIPT IS NOT. It does not judge, it does not have a baseline, and it is not
 wired into `check_all.py`. Re-run it after adding a gameplay module to see whether the

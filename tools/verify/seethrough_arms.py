@@ -29,8 +29,9 @@ ANTI-VACUITY, enforced rather than documented:
     fire cannot certify anything when it stays quiet.
 
 The UI must be DISCONNECTED from a DLL that predates [PIPE-PER-PROCESS-2026-11-06] Stage B: it holds 2 of its 3 pipe slots (6 since).
-The DLL disables See-through when the pipe client disconnects, so `run` does
-everything in one connection. Splitting it across invocations measures the
+The DLL disables See-through when the client process that turned it on
+disconnects (unless CE's record also holds it), so `run` does everything in one
+connection. Splitting it across invocations measures the
 disabled state and calls it a pass.
 """
 from __future__ import annotations

@@ -739,7 +739,7 @@ void Fern::Stop(bool graceful) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         for (;;) {
             drained = m_connCv.wait_for(lock, std::chrono::milliseconds(Grimoire::PIPE_STOP_CANCEL_REASSERT_MS),
-                                        [this] { return m_conns.empty(); });
+                                        [this] { return m_conns.empty() && m_tearingDown == 0; });
             if (drained || std::chrono::steady_clock::now() >= deadline) break;
             int acc = 0, nf = 0;
             cancelLiveConns(acc, nf);   // safe: lock is held again after wait_for returns
@@ -796,8 +796,13 @@ void Fern::Stop(bool graceful) {
     // No handler thread is running now — free every remaining value-scan session.
     Radar::SessionManager::Instance().DropAll();
     Radar::GroupSessionManager::Instance().DropAll();
-    JoinArmWorker();  // [LIVEFUNCS-STEP2] before the table and the trace it reads go
-    Linie::Reset();   // drop any live PE-profile recording + free the table
+    {
+        // A recording whose owner's teardown never ran (the drain timed out) goes here.
+        std::lock_guard<std::mutex> profileLock(m_profileMu);
+        JoinArmWorker();  // [LIVEFUNCS-STEP2] before the table and the trace it reads go
+        Linie::Reset();   // drop any live PE-profile recording + free the table
+        m_profileOwner = 0;
+    }
     Ubel::ClearNameCache();   // same reason as the last-connection teardown (D5/F3)
 
     m_clientConnected = false;
@@ -823,6 +828,37 @@ void Fern::ReevaluatePerCommandCancel() {
     m_cancelOwners.clear();
     Tot::ResetPerCommand();
     LOG_INFO("PipeServer: per-command cancel cleared — no connection that raised it is still live");
+}
+
+bool Fern::OwnerStillConnected(uint64_t owner) {
+    std::lock_guard<std::mutex> lock(m_connMutex);
+    for (const auto& c : m_conns)
+        if (c && c->ownerKey == owner) return true;
+    return false;
+}
+
+void Fern::ReleaseOwnedBy(uint64_t owner) {
+    if (owner == 0) return;   // names no owner: a connection that never got its key
+    // Schlacht asks whether the owner is still connected under its own lock, so a client process that reconnects and
+    // turns See-through on in between keeps it. It logs what it did.
+    Schlacht::Release(owner, [this](uint64_t key) { return OwnerStillConnected(key); });
+    bool freed = false;
+    {
+        std::lock_guard<std::mutex> profileLock(m_profileMu);
+        if (m_profileOwner == owner && !OwnerStillConnected(owner)) {
+            JoinArmWorker();  // [LIVEFUNCS-STEP2] before the table and the trace it reads go
+            Linie::Reset();   // the recording and its trace, up to 512 MB of the game's memory
+            m_profileOwner = 0;
+            freed = true;
+        }
+    }
+    if (freed) {
+        if (owner >> 63)
+            LOG_INFO("PipeServer: connection #%llu left -- its LiveFuncs recording is freed",
+                     (unsigned long long)(owner & ~(1ull << 63)));
+        else
+            LOG_INFO("PipeServer: client pid %llu left -- its LiveFuncs recording is freed", (unsigned long long)owner);
+    }
 }
 
 void Fern::MonitorLoop() {
@@ -1110,6 +1146,7 @@ void Fern::AcceptLoop() {
             // Assign the id HERE, under the lock — never on the connection thread,
             // or two accepts race to the same value (audit #5 F2).
             conn->seq = ++m_connSeq;
+            conn->ownerKey = Voll::ClientOwnerKey(conn->clientPid, conn->seq);
             m_conns.push_back(conn);
             connCount = m_conns.size();
             m_clientConnected = true;
@@ -1335,9 +1372,9 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
 
     // Connection cleanup. Stop THIS connection's watches first (joins their
     // threads while the handle is still valid + owner pointer alive), then
-    // unregister and close our own handle. Drop value-scan sessions only when
-    // this was the LAST connection (sessions are bulk-lane-only; the UI's two
-    // lanes disconnect together on close).
+    // unregister and close our own handle, then release what this client process
+    // turned on. Drop value-scan sessions only when this was the LAST connection
+    // (sessions are bulk-lane-only; the UI's two lanes disconnect together on close).
     SetPhase(*conn, Connection::Phase::StoppingWatches);
     StopWatchesForConnection(conn.get());
 
@@ -1345,6 +1382,9 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     bool last;
     {
         std::lock_guard<std::mutex> lock(m_connMutex);
+        // Counted in before the erase and out after the release below: Stop's drain sees the registry empty the
+        // moment this erase lands, and must also wait for what this teardown still does.
+        ++m_tearingDown;
         auto it = std::find(m_conns.begin(), m_conns.end(), conn);
         if (it != m_conns.end()) m_conns.erase(it);
         last = m_conns.empty();
@@ -1363,16 +1403,16 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     if (HANDLE th = conn->servingThread.exchange(nullptr, std::memory_order_acq_rel))
         CloseHandle(th);
 
+    // What this client process turned on goes with its last connection, and nothing else does. The last client to
+    // leave used to turn See-through off for everyone, CE's record included (it then showed ticked over a feature that
+    // was off), and to drop the LiveFuncs recording whoever had started it; a client that left while another stayed
+    // connected left both running for nobody. [PIPE-PER-PROCESS-2026-11-06] Stage C
+    ReleaseOwnedBy(conn->ownerKey);
+
     if (last) {
         Radar::SessionManager::Instance().DropAll();
         Radar::GroupSessionManager::Instance().DropAll();
-        JoinArmWorker();  // [LIVEFUNCS-STEP2] before the table and the trace it reads go
-        Linie::Reset();   // last client gone — drop any live PE-profile recording
-        Sense::Reset();   // ...and restart diagnostics so the next session's numbers are its own
-        // Un-hide any see-through occluders + stop its worker — the header contract is
-        // "un-hidden on disable / disconnect", and there's no UI left to toggle it.
-        // Cheap no-op when see-through was never enabled. (M3)
-        Schlacht::SetEnabled(false);
+        Sense::Reset();   // restart diagnostics so the next session's numbers are its own
         // Ubel's per-UObject name cache is keyed by a raw address the engine recycles.
         // This teardown dropped every other per-session resource and left the one that
         // could serve wrong data, so a UI reconnect is now a full reset. (audit #5 F3)
@@ -1392,6 +1432,10 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         Ubel::ClearNameCache();
     }
 
+    {
+        std::lock_guard<std::mutex> lock(m_connMutex);
+        --m_tearingDown;
+    }
     m_connCv.notify_all();
     LOG_INFO("PipeServer: Client disconnected");
 }
@@ -4762,6 +4806,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // ProcessEvent; the user performs an in-game action; Stop freezes the
         // table; Get resolves + ranks by fire count. Pipe-only. ===
         if (cmd == Renge::CMD_PE_PROFILE_START) {
+            // [PIPE-PER-PROCESS-2026-11-06] Stage C: one writer at a time (Fern.h, m_profileMu).
+            std::lock_guard<std::mutex> profileLock(m_profileMu);
             // Force the game-thread PE hook up NOW so we count the game's own
             // calls without first issuing an invoke. hook_active=false means the
             // vtable-offset detection failed on this game → counts will stay 0.
@@ -5009,6 +5055,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             Ubel::SetFunctionCapture(captureSetup);
             Linie::StartRecording(&Ubel::CaptureFunctionIdentity, &Ubel::ReadFunctionKey, arms);
+            m_profileOwner = conn->ownerKey;   // the starter's: it goes when that client process leaves
             // Snapshot choices need their layouts read while their functions are alive (F4); ticks alone need none.
             if (arms && arms->capacity != 0) StartArmWorker(arms);
             const long long startMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -5072,6 +5119,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         if (cmd == Renge::CMD_PE_PROFILE_STOP) {
+            std::lock_guard<std::mutex> profileLock(m_profileMu);   // one writer at a time (Fern.h)
             // [LIVEFUNCS-STEP2] The trace before the table: a name arms its address on the table's read, so arms keep
             // applying until the trace itself has stopped -- no call between the two loses its hint.
             // Waits until no hook is inside a trace write (TR2): after this the ring is fixed and pe_trace_get reads it.
@@ -5772,6 +5820,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         if (cmd == Renge::CMD_PE_TRACE_RELEASE) {
+            std::lock_guard<std::mutex> profileLock(m_profileMu);   // one writer at a time (Fern.h)
             JoinArmWorker();   // [LIVEFUNCS-STEP2] its arms go with the trace
             bool released;
             if (request.contains("gen")) {
@@ -7685,6 +7734,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["hidden_actors"] = addrs;
             }
             data["pierce_count"] = st.pierceCount;   // nearest occluders to hide along the ray
+            // [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds it on. Additive keys.
+            data["claims"]     = st.claims;       // owners that turned it on and have neither left nor turned it off
+            data["ce_claimed"] = st.ceClaimed;    // CE's mailbox record is one of them
             // [P1-SEETHRU-GIVEUP] The leftover-hidden split: still waiting for the game thread, or abandoned after the
             // restore window. hidden_count > 0 with active == false used to mean both. Additive keys.
             data["restore_pending"]   = st.restorePending;
@@ -7697,7 +7749,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int32_t state = -1;
             const bool haveEnable = request.contains("enable");
             if (haveEnable)
-                state = Schlacht::SetEnabled(request.value("enable", false));
+                state = Schlacht::SetEnabled(request.value("enable", false), conn->ownerKey);
             Sein::Info("PIPE:cmd", "seethrough_set: enable=%s count=%d",
                        haveEnable ? (request.value("enable", false) ? "1" : "0") : "-",
                        request.contains("count") ? request.value("count", 1) : -1);

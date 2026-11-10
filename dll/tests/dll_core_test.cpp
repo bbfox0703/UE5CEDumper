@@ -9684,7 +9684,7 @@ int main() {
 
         check("a trace starts again after a free", Linie::StartTrace(cfg(8)) == Linie::TraceStartStatus::Ok);
         Linie::Reset();
-        check("Linie::Reset (the last client left) stops and frees the trace too",
+        check("Linie::Reset (the recording's owner left) stops and frees the trace too",
               !Linie::IsTracing() && !Linie::GetTraceInfo().allocated);
 
         // TR2, made deterministic: the clock is read inside a hook's write, so a clock that blocks holds a writer

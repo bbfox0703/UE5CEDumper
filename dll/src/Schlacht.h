@@ -8,14 +8,17 @@
 // NEAREST blocking hit, and — only if that actor is NOT a Pawn/Character (so
 // enemies / NPCs / the player itself are never touched) — hides it via
 // AActor::SetActorHiddenInGame(true). The previously-hidden actor is restored
-// as the camera moves; everything is un-hidden on disable / disconnect.
+// as the camera moves; everything is un-hidden on disable, or when the last
+// client that turned it on disconnects.
 //
 // Stage 1: NEAREST single occluder (camera→pawn LineTraceSingle). A future
 // Stage 2 can widen to all occluders (LineTraceMulti). Single-player only.
 // Offsets resolved by FName (DynOff), UE4/UE5-agnostic; pawn re-resolved per tick.
 // ============================================================
 #pragma once
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace Schlacht {
@@ -40,14 +43,22 @@ enum class OwnerRelease {
 
 // Records `owner` once. kOwnerNone is never recorded.
 inline void ClaimOwner(std::vector<uint64_t>& owners, uint64_t owner) {
-    (void)owners; (void)owner;   // RED stub
+    if (owner == kOwnerNone) return;
+    for (uint64_t o : owners)
+        if (o == owner) return;
+    owners.push_back(owner);
 }
 
 // A departing owner's release. `stillLive` = another connection of the same client process is still registered, and
 // then its claim is kept.
 inline OwnerRelease ReleaseOwner(std::vector<uint64_t>& owners, uint64_t owner, bool stillLive) {
-    (void)owners; (void)owner; (void)stillLive;
-    return OwnerRelease::TurnOff;   // RED stub: today, any departure turns it off
+    for (size_t i = 0; i < owners.size(); ++i) {
+        if (owners[i] != owner) continue;
+        if (stillLive) return OwnerRelease::StillHeld;
+        owners.erase(owners.begin() + static_cast<std::ptrdiff_t>(i));
+        return owners.empty() ? OwnerRelease::TurnOff : OwnerRelease::StillHeld;
+    }
+    return OwnerRelease::NotHeld;
 }
 
 // Result / status code (0 = OK, negative = why the tick could not act).
@@ -94,11 +105,21 @@ struct SeeThroughStatus {
     // The set already exists (s_state.hiddenActors); this only publishes it. Its
     // size is hiddenCount by construction, so the two cannot drift.
     std::vector<uintptr_t> hiddenActors;
+
+    // Who holds it on ([PIPE-PER-PROCESS-2026-11-06] Stage C): how many owners, and whether CE's record is one.
+    int32_t claims    = 0;
+    bool    ceClaimed = false;
 };
 
-// Enable / disable the see-through worker. Idempotent. enable=false un-hides any
-// actor we hid and stops the worker. Returns 1 (on), 0 (off), or negative on error.
-int32_t SetEnabled(bool enable);
+// Enable / disable the see-through worker. Idempotent. enable=true records `owner`'s claim when it turns on or was
+// already on; a refused enable records nothing. enable=false is an explicit OFF: every claim goes, any actor we hid is
+// un-hidden and the worker stops, and `owner` is not consulted. Returns 1 (on), 0 (off), or negative on error.
+int32_t SetEnabled(bool enable, uint64_t owner);
+
+// A departed owner's release. `stillLive(owner)` is asked under Schlacht's own lock, so a client process that
+// reconnects and turns See-through on in between is not turned off under it. When the last claim goes it turns off,
+// exactly as an explicit OFF would.
+OwnerRelease Release(uint64_t owner, const std::function<bool(uint64_t)>& stillLive);
 
 // How many nearest occluders to hide along the view ray (clamped to
 // [1, SCHLACHT_PIERCE_MAX]). Takes effect on the next tick; safe to call while

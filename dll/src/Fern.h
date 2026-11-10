@@ -90,6 +90,9 @@ private:
         DWORD              clientPid{0};      // GetNamedPipeClientProcessId; 0 when it failed
         std::string        clientExe{"?"};    // the client's exe file name, UTF-8, Voll::kMaxHolderExeBytes at most
         long long          connectedMs{0};    // steady-clock ms at accept
+        // Who owns what this connection turns on: its client process, so the UI's two lanes are one owner
+        // (Voll::ClientOwnerKey). Set with seq, under m_connMutex, before the connection is registered.
+        uint64_t           ownerKey{0};
         std::mutex         writeMutex;
         std::atomic<bool>  inFlight{false};   // true only while inside DispatchCommand
         // What that in-flight command IS, and when it started. Written just before
@@ -160,12 +163,15 @@ private:
     std::vector<std::shared_ptr<Connection>> m_conns;
     HANDLE                  m_listenPipe{INVALID_HANDLE_VALUE};
     std::mutex              m_connMutex;     // guards m_conns + m_listenPipe + m_clientConnected
-                                             // + m_cancelOwners + m_connSeq
+                                             // + m_cancelOwners + m_connSeq + m_tearingDown
     // Which connections raised the per-command cancel. Cleared when none of them is
     // still registered — NOT when the registry merely goes empty, which the two-lane
     // split made unreachable (audit #5 F2).
     std::vector<uint64_t>   m_cancelOwners;
     uint64_t                m_connSeq{0};    // assigned under m_connMutex at accept
+    // Connections already erased from m_conns whose teardown still runs -- releasing what they owned can wait on the
+    // game thread. Stop's drain waits for these too, so its own resets never run beside one.
+    size_t                  m_tearingDown{0};
 
     // The most clients the pipe takes, as the first instance's handle states it (GetNamedPipeInfo): a name an older
     // copy of the DLL created keeps that copy's limit. This build's until the first instance exists.
@@ -178,6 +184,17 @@ private:
     // Clear the per-command cancel once no connection that raised it is still live.
     // MUST be called with m_connMutex ALREADY HELD.
     void ReevaluatePerCommandCancel();
+
+    // [PIPE-PER-PROCESS-2026-11-06] Stage C: what a client process turned on is its own, and goes when the last
+    // connection of that process does. A connection's teardown calls this with its ownerKey. Takes m_profileMu and
+    // m_connMutex (in that order) and Schlacht's lock; call it holding none of them.
+    void ReleaseOwnedBy(uint64_t owner);
+    bool OwnerStillConnected(uint64_t owner);   // takes m_connMutex
+
+    // The LiveFuncs recording: one writer at a time -- starting one joins the old arm worker and installs a new one,
+    // and that pair is not atomic -- and the owner that started it (0: none). Lock order m_profileMu -> m_connMutex.
+    std::mutex              m_profileMu;
+    uint64_t                m_profileOwner{0};
     std::condition_variable m_connCv;        // notified when a connection thread exits
 
     // Disconnect monitor (cooperative cancellation). A bulk-lane scan blocks its

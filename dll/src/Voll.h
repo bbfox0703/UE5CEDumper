@@ -235,8 +235,7 @@ inline std::string HoldersJson(const std::vector<Holder>& holders, size_t budget
 // must not release what that process still uses. A connection whose pid could not be read owns things alone; the top
 // bit keeps that key apart from every pid, which is 32 bits, and from 0, which names no owner.
 constexpr uint64_t ClientOwnerKey(DWORD pid, uint64_t seq) noexcept {
-    (void)pid; (void)seq;
-    return 0;   // RED stub
+    return pid ? static_cast<uint64_t>(pid) : ((1ull << 63) | seq);
 }
 
 // ── Who should own the pipe at startup ──────────────────────────────────────
