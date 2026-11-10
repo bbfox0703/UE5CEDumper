@@ -1,7 +1,7 @@
 """[PIPE-PER-PROCESS-2026-11-06] Stage C, live: what a client turns on is its own, on a running game.
 
-    py stagec_live.py                       # the one injected game; logs under Logs/DumperTest
-    py stagec_live.py --pid 1234 --logdir DumperTest
+    py stagec_live.py                       # the one injected game; its logs under Logs/<exe name>
+    py stagec_live.py --pid 1234
     py stagec_live.py --only seethrough     # one section: seethrough, sessions, watch, scan, persist
 
 Pipe and mailbox only -- no UI and no CE window, so a CE window another session opens cannot get in the way. Run it
@@ -11,8 +11,9 @@ WHAT EACH SECTION SHOWS, and what it read as before Stage C:
   1 seethrough  CE's mailbox record turns See-through on; a one-shot pipe client reads the state and leaves; the next
                 client still finds it on, held by CE (before: the first client's departure, as the last pipe client,
                 turned it off). A pipe client's own claim goes with it while CE's stays. CE's untick turns it off.
-                Then pipe-only: client A turns it on and leaves while B stays connected -- it goes off (before: it
-                stayed on for nobody until B left too).
+                Then pipe-only: client A, ANOTHER PROCESS, turns it on and leaves while B stays connected -- it
+                goes off (before: it stayed on for nobody until B left too). An owner is a client process, so a
+                second connection of A's own process keeps A's claim, as the UI's second lane keeps the first's.
   2 sessions    A begins a value scan; B can neither query nor end A's session (before: both worked); A still can;
                 A's disconnect drops it, and the pipe log says so for A's connection.
   3 watch       A and B watch the same address and each keeps its own; B's unwatch stops nothing of A's (before:
@@ -20,7 +21,9 @@ WHAT EACH SECTION SHOWS, and what it read as before Stage C:
                 for. An unwatch of a 10-minute watch returns at once (before: up to 10 minutes).
   4 scan        two clients send trigger_scan at the same instant: no error reply, and every reply is either the
                 start or "in progress" (before: the loser got "Scan already in progress" as an error, or both
-                started on one std::thread). The log's RunScan starts match the started replies.
+                started on one std::thread). The log's RunScan starts match the started replies. ⚠ On a game
+                already initialized a scan ends in milliseconds, so the two usually run one after the other (two
+                starts); the overlap itself is unit-tested (dll_core_test SINGLEFLIGHT).
   5 persist     set_invoke_timeout with persist answers `persisted` from the write and the cache file holds it; the
                 game's previous value is put back afterwards.
 """
@@ -28,12 +31,13 @@ import argparse
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import threading
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from pipe_client import LOGROOT, PipeClient            # noqa: E402
+from pipe_client import LOGROOT, PipeClient, process_image   # noqa: E402
 import mailbox_poke as mb                               # noqa: E402
 
 CMD_SEETHROUGH = 14   # Mimic.h
@@ -93,15 +97,28 @@ def section_seethrough(pid):
 
     b = client(pid)
     try:
-        with client(pid) as a:
-            r = a.request("seethrough_set", enable=True)
-            check("pipe-only: client A turns it on", r.get("active") is True, f"active={r.get('active')}")
+        # A in another process: an owner is a client process.
+        r = subprocess.run([sys.executable, __file__, "--pid", str(pid), "--child-enable-seethrough"],
+                           capture_output=True, text=True, timeout=120)
+        check("pipe-only: client A (another process) turns it on and leaves", r.returncode == 0,
+              (r.stdout + r.stderr).strip()[-120:])
         time.sleep(0.5)
         s = b.request("seethrough_get_state")
         check("A left while B stays connected: it goes off with A", s.get("active") is False
               and s.get("claims") == 0, f"active={s.get('active')} claims={s.get('claims')}")
+
+        # A second connection of the SAME process keeps the claim: the UI's two lanes are one owner.
+        with client(pid) as a2:
+            a2.request("seethrough_set", enable=True)
+        time.sleep(0.5)
+        s = b.request("seethrough_get_state")
+        check("a connection of B's own process left: B's process still holds it", s.get("active") is True
+              and s.get("claims") == 1, f"active={s.get('active')} claims={s.get('claims')}")
     finally:
         b.close()
+    time.sleep(0.5)
+    s = state()
+    check("...until B, its last connection, leaves", s.get("active") is False, f"active={s.get('active')}")
 
 
 # ---------------------------------------------------------------------------------------------------------------- 2
@@ -209,7 +226,8 @@ def section_scan(pid, logdir):
         time.sleep(0.3)
         after = log_text(logdir).count("RunScan: started")
         check("the log's RunScan starts match the started replies", after - before == started,
-              f"log +{after - before}, replies started={started}")
+              f"log +{after - before}, replies started={started}"
+              + ("" if "in_progress" in shapes else "; one after the other, no overlap this time"))
     finally:
         c1.close()
         c2.close()
@@ -240,11 +258,20 @@ def section_persist(pid):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--pid", type=int, default=None)
-    ap.add_argument("--logdir", default="DumperTest")
+    ap.add_argument("--logdir", default=None, help="default: the game's exe name, as the DLL names its log folder")
     ap.add_argument("--only", choices=["seethrough", "sessions", "watch", "scan", "persist"])
+    ap.add_argument("--child-enable-seethrough", action="store_true", help=argparse.SUPPRESS)
     a = ap.parse_args()
+    if a.child_enable_seethrough:   # section 1's client A, run as its own process
+        with client(a.pid) as c:
+            r = c.request("seethrough_set", enable=True)
+        print(f"child: active={r.get('active')} claims={r.get('claims')}")
+        return 0 if r.get("active") is True else 1
     with client(a.pid) as c:
         pid = a.pid or int(c.pipe.rsplit("_", 1)[-1])
+    if a.logdir is None:
+        a.logdir = pathlib.Path(process_image(pid)).stem
+    with client(pid) as c:
         others = [h for h in (c.request("pipe_clients").get("clients") or []) if not h.get("self")]
         b = c.request("get_pointers").get("build_number")
     print(f"game pid {pid}, DLL build {b}, other clients connected: {len(others)}")
