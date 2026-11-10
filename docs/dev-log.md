@@ -27,6 +27,26 @@ builds ≤696 in
 
 -----
 
+## 2026-11-11 (no build change) — A test run leaves nothing in %TEMP% `[TEST-TEMP-HYGIENE-2026-11-11]`
+
+- **The C# test suite no longer fills %TEMP%.** One run left about 220 folders there (`UE5Dump*_<guid>`,
+  `ue5cd-vmtest-<guid>`, six `ue5-*` folders), and nothing removed them: 2,743 from one day, about 120 MB. A test
+  deleted its folder and ignored the failure, and the delete fails while SQLite's connection pool still holds the
+  database open. Now each run writes its scratch in a folder of its own, `%TEMP%\UE5CEDumper.Tests\<pid>-<time>\`,
+  which goes when the run ends; a run that was killed is cleaned up by the next one, and the first run cleans up what
+  older builds left. No test had to change.
+- The app itself was checked too: it writes one file in %TEMP% (the result of an elevated inject) and deletes it, and
+  its own folders already age out (logs and snapshots after 21 days).
+- Not ours, and left alone: every `dotnet build` (in any repo) leaves two empty folders with random names and a
+  `Microsoft.NET.Workload_*.log` in %TEMP%.
+- The cleanup never goes through a junction (a test makes one to another drive's root): measured, a plain recursive
+  walk went through one and changed the file it pointed at, so the cleanup walks by hand and skips them.
+- A run still gets its own folder when another run's exit removes the shared one at the same moment.
+- Tests: red, then green, three times. C# 7588 passed, 0 failed, 1 skipped; 39 gates. After a full run nothing of
+  ours is left in %TEMP%: the first measured run left it at 2,185 entries before and after, and later runs grew it
+  only by other processes' `dotnet build` leftovers. A run folder left without its owner was removed by the first run
+  10 minutes later.
+
 ## 2026-11-10 (build 3698) — What a client turns on is its own; scans, watches and settings are safe with several clients `[PIPE-PER-PROCESS-2026-11-06]`
 
 Stage C: the pipe is hardened for a client that stays connected (an MCP client, a rig) beside the UI and CE.
