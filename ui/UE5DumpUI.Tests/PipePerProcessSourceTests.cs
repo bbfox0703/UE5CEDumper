@@ -69,15 +69,47 @@ public sealed class PipePerProcessSourceTests
     /// the pipe in the two startup paths goes through Voll::ProbeFoundServer, which reads 231 as "a server is
     /// there".</summary>
     [Theory]
-    [InlineData("Frieren.cpp", 2)]   // UE5_StartPipeServer + its claim watcher
-    [InlineData("Heiter.cpp", 2)]    // the auto-start's probe + its watcher
-    public void EveryStartupProbeReadsBusyAsAServer(string file, int probes)
+    [InlineData("Frieren.cpp")]   // UE5_StartPipeServer
+    [InlineData("Heiter.cpp")]    // the auto-start
+    public void EveryStartupProbeReadsBusyAsAServer(string file)
     {
         var code = CodeOnly(DllSrc(file));
         int opens = Regex.Matches(code, @"\bCreateFileW\s*\(\s*Voll::OwnPipeName\(\)\.c_str\(\)").Count;
         int reads = Regex.Matches(code, @"\bVoll::ProbeFoundServer\s*\(").Count;
-        Assert.True(opens == probes, $"{file}: {opens} probe(s) of Voll::OwnPipeName(), expected {probes}");
+        Assert.True(opens == 1, $"{file}: {opens} open(s) of Voll::OwnPipeName(), expected the one startup probe");
         Assert.True(reads == opens, $"{file}: {opens} probe(s) but {reads} Voll::ProbeFoundServer reading(s)");
+    }
+
+    /// <summary>A deferring watcher asks whether the name is still served every 500 ms for up to five minutes.
+    /// Opening the pipe to ask connects to the server each time, and a server with no other client tears its
+    /// session down for each one; WaitNamedPipeW answers without connecting, and Voll::WaitSaysServed reads its busy
+    /// answer as "still served".</summary>
+    [Theory]
+    [InlineData("Frieren.cpp")]   // WatchForPipeAndClaim
+    [InlineData("Heiter.cpp")]    // the auto-start watcher
+    public void EveryWatcherAsksWithoutConnecting(string file)
+    {
+        var code = CodeOnly(DllSrc(file));
+        int waits = Regex.Matches(code, @"\bWaitNamedPipeW\s*\(\s*Voll::OwnPipeName\(\)\.c_str\(\)\s*,\s*Voll::kWatchWaitMs\s*\)").Count;
+        int reads = Regex.Matches(code, @"\bVoll::WaitSaysServed\s*\(").Count;
+        Assert.True(waits == 1, $"{file}: {waits} WaitNamedPipeW(Voll::OwnPipeName(), Voll::kWatchWaitMs), expected 1");
+        Assert.True(reads == waits, $"{file}: {waits} wait(s) but {reads} Voll::WaitSaysServed reading(s)");
+    }
+
+    /// <summary>After a Stop whose drain timed out, this copy's own connections still hold their instances, so a
+    /// restart's probe reads busy. That busy pipe is this copy's, not another's: UE5_StartPipeServer restarts the
+    /// server rather than deferring to itself.</summary>
+    [Fact]
+    public void ARestartIsNotDeferredToThisCopysOwnConnections()
+    {
+        var code = CodeOnly(DllSrc("Frieren.cpp"));
+        int start = code.IndexOf("bool UE5_StartPipeServer()", StringComparison.Ordinal);
+        Assert.True(start >= 0, "Frieren.cpp: UE5_StartPipeServer not found -- re-point this pin");
+        var body = code[start..];
+        int decide = body.IndexOf("Voll::DecideStart", StringComparison.Ordinal);
+        int straggler = body.IndexOf("s_pipeServer.HasStragglerConnections()", StringComparison.Ordinal);
+        Assert.True(straggler >= 0 && straggler < decide,
+            "UE5_StartPipeServer must ask s_pipeServer.HasStragglerConnections() before Voll::DecideStart defers");
     }
 
     /// <summary>Fern serves this process's name and checks its first instance: another process that created the

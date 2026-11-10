@@ -399,6 +399,17 @@ static void Test_Voll_ProbeFoundServer() {
     EXPECT("ERROR_PATH_NOT_FOUND: no server", !Voll::ProbeFoundServer(false, ERROR_PATH_NOT_FOUND));
 }
 
+static void Test_Voll_WaitSaysServed() {
+    EXPECT("an instance listens: served", Voll::WaitSaysServed(true, 0));
+    // A watcher that read busy as gone would start a second server beside a busy one: the bug the probe fix closed.
+    EXPECT("every instance busy (ERROR_SEM_TIMEOUT): served", Voll::WaitSaysServed(false, ERROR_SEM_TIMEOUT));
+    EXPECT("ERROR_PIPE_BUSY: served", Voll::WaitSaysServed(false, ERROR_PIPE_BUSY));
+    EXPECT("ERROR_ACCESS_DENIED: the name exists", Voll::WaitSaysServed(false, ERROR_ACCESS_DENIED));
+    EXPECT("ERROR_FILE_NOT_FOUND: gone", !Voll::WaitSaysServed(false, ERROR_FILE_NOT_FOUND));
+    EXPECT("ERROR_PATH_NOT_FOUND: gone", !Voll::WaitSaysServed(false, ERROR_PATH_NOT_FOUND));
+    EXPECT("the watchers wait 1 ms, never 0 (NMPWAIT_USE_DEFAULT_WAIT)", Voll::kWatchWaitMs == 1);
+}
+
 static void Test_Voll_ClassifyFirstInstance() {
     using FI = Voll::FirstInstance;
     const DWORD self = 4242, other = 77;
@@ -12158,6 +12169,7 @@ int main() {
     RUN(Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway);
     RUN(Test_Voll_PipeNameForPid);
     RUN(Test_Voll_ProbeFoundServer);
+    RUN(Test_Voll_WaitSaysServed);
     RUN(Test_Voll_ClassifyFirstInstance);
 
     // [MH-PRERESERVE-PROXY] MinHook's trampoline-block search, modelled for the MH_ERROR_MEMORY_ALLOC diagnostic

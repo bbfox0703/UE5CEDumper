@@ -57,6 +57,20 @@ inline bool ProbeFoundServer(bool opened, DWORD lastError) noexcept {
     return opened || lastError == ERROR_PIPE_BUSY || lastError == ERROR_ACCESS_DENIED;
 }
 
+// A deferring watcher only needs to know whether a server still holds this process's name, and asks every
+// kClaimWatchPollMs for up to kClaimWatchMaxTries. Opening the pipe to ask CONNECTS to that server: each probe is a
+// client arriving and leaving, twice a second, and a server with no other client tears its session state down each
+// time. WaitNamedPipeW answers without connecting (measured 2026-11-10: TRUE while an instance listens, and the server
+// saw no client; ERROR_SEM_TIMEOUT while every instance is busy; ERROR_FILE_NOT_FOUND once the name is gone).
+// `waited` = WaitNamedPipeW's result; `lastError` = GetLastError() when it returned FALSE.
+inline bool WaitSaysServed(bool waited, DWORD lastError) noexcept {
+    (void)lastError;
+    return waited;   // red: a busy name reads as gone
+}
+
+// The watchers' WaitNamedPipeW timeout. Not 0: 0 is NMPWAIT_USE_DEFAULT_WAIT, the server's default wait.
+inline constexpr DWORD kWatchWaitMs = 1;
+
 // Who else serves this process's name, checked once on the FIRST instance a server start creates. The startup probe
 // already defers to a server it can see; this catches what a probe cannot: two copies probing in the same moment, and a
 // name another process created.
