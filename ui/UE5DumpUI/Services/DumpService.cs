@@ -112,11 +112,13 @@ public sealed class DumpService : IDumpService
         };
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
+        // What the DLL did with the write ([PIPE-PER-PROCESS-2026-11-06] Stage C); an older DLL echoes the request.
+        var persisted = res["persisted"]?.GetValue<bool>() ?? persist;
         _log.Info(Constants.LogCatInit,
             version == 0
-                ? $"UE version override cleared (persisted={persist}) -- "
+                ? $"UE version override cleared (persisted={persisted}) -- "
                   + DescribeAutoRestore(res["auto_restore"]?.GetValue<string>())
-                : $"UE version override set to {version} (persisted={persist})");
+                : $"UE version override set to {version} (persisted={persisted})");
         // Re-fetch full state so the caller can update all panels with one ApplyState() call.
         return await GetPointersAsync(ct);
     }
@@ -148,10 +150,11 @@ public sealed class DumpService : IDumpService
         };
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
+        var persisted = res["persisted"]?.GetValue<bool>() ?? persist;   // the write, as above
         _log.Info(Constants.LogCatInit,
             timeoutMs == 0
-                ? $"Invoke timeout cleared (persisted={persist})"
-                : $"Invoke timeout set to {timeoutMs}ms (persisted={persist})");
+                ? $"Invoke timeout cleared (persisted={persisted})"
+                : $"Invoke timeout set to {timeoutMs}ms (persisted={persisted})");
         return await GetPointersAsync(ct);
     }
 

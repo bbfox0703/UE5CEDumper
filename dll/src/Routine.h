@@ -191,20 +191,29 @@ public:
     // return is Completed(). `serverRunning` false refuses: a job started after Stop's join would be joined by nobody.
     template <class Reset, class Body>
     Start TryStart(const std::atomic<bool>& serverRunning, Reset&& reset, Body&& body) {
-        // The claim is a compare-and-swap. The old check-then-set let two callers through: both ran their reset, both
-        // joined and replaced one std::thread, and the loser's thread was detached where no Stop would join it.
-        bool idle = false;
-        if (!m_running.compare_exchange_strong(idle, true, std::memory_order_acq_rel)) return Start::AlreadyRunning;
+        // The claim is one test-and-set under m_stateMu. The old check-then-set let two callers through: both ran
+        // their reset, both joined and replaced one std::thread, and the loser's thread was detached where no Stop
+        // would join it. `completed` is cleared in the same step, so Status() never pairs this run's `running` with
+        // the last run's answer.
+        {
+            std::lock_guard<std::mutex> st(m_stateMu);
+            if (m_running.load(std::memory_order_relaxed)) return Start::AlreadyRunning;
+            m_running.store(true, std::memory_order_release);
+            m_completed.store(false, std::memory_order_relaxed);
+        }
         bool launched = false;
         struct Unclaim {   // every way out before the thread exists gives the claim back -- a throw included
-            std::atomic<bool>& running;
-            const bool&        launched;
-            ~Unclaim() { if (!launched) running.store(false, std::memory_order_release); }
-        } unclaim{m_running, launched};
+            SingleFlightJob& job;
+            const bool&      launched;
+            ~Unclaim() {
+                if (launched) return;
+                std::lock_guard<std::mutex> st(job.m_stateMu);
+                job.m_running.store(false, std::memory_order_release);
+            }
+        } unclaim{*this, launched};
         std::lock_guard<std::mutex> lk(m_life);
         if (!serverRunning.load()) return Start::Stopping;
-        if (m_thread.joinable()) m_thread.join();   // the last run stored `running` false as it ended: a brief join
-        m_completed.store(false, std::memory_order_relaxed);
+        if (m_thread.joinable()) m_thread.join();   // the last run cleared `running` as it ended: a brief join
         reset();
         auto token = std::make_shared<std::atomic<bool>>(false);
         m_token = token;
@@ -215,6 +224,7 @@ public:
             Tot::CancelContextScope scope(Tot::CancelContext{token.get(), false});
             bool ok = false;
             RunThreadGuarded(m_tag, [&] { ok = body(); });
+            std::lock_guard<std::mutex> st(m_stateMu);
             m_completed.store(ok, std::memory_order_relaxed);
             m_running.store(false, std::memory_order_release);
         });
@@ -233,10 +243,22 @@ public:
     // The last run's body returned true. Meaningful once Running() is false.
     bool Completed() const { return m_completed.load(std::memory_order_relaxed); }
 
+    // Running and Completed as one answer. Read apart, another client's start between the two paired "not running"
+    // with the new run's cleared answer: a status reply that said "finished, nothing found".
+    struct Snapshot {
+        bool running   = false;
+        bool completed = false;
+    };
+    Snapshot Status() const {
+        std::lock_guard<std::mutex> st(m_stateMu);
+        return Snapshot{m_running.load(std::memory_order_relaxed), m_completed.load(std::memory_order_relaxed)};
+    }
+
 private:
     const char*        m_tag;
     std::atomic<bool>  m_running{false};
     std::atomic<bool>  m_completed{false};
+    mutable std::mutex m_stateMu; // every change of running / completed, and Status()'s read of both
     std::mutex         m_life;    // TryStart's join-and-replace against StopAndJoin
     std::shared_ptr<std::atomic<bool>> m_token;
     SafeThread         m_thread;

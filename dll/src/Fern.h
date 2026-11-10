@@ -75,9 +75,10 @@ private:
                   "CreateNamedPipeW takes 1..254 instances");
 
     // Per-connection state. Each accepted client gets one of these, served by
-    // its own HandleConnection thread on its own handle. writeMutex serializes
-    // the (single) thread's response writes against this connection's own watch
-    // event writes — writes to DIFFERENT connections need no shared lock.
+    // its own HandleConnection thread on its own handle. Every write on a
+    // connection comes from that thread -- replies, and since Stage C its watch
+    // events (Kanne.h) -- so writeMutex orders a write only against CloseConnOnce.
+    // Writes to DIFFERENT connections need no shared lock.
     struct Connection {
         HANDLE             pipe{INVALID_HANDLE_VALUE};
         // Monotonic id, assigned under m_connMutex at accept (audit #5 F2). Needed
@@ -145,7 +146,8 @@ private:
         std::atomic<long long> phaseStartMs{0};
     };
 
-    static const char* PhaseName(Connection::Phase p);
+    static const char* PhaseName(Connection::Phase p);   // a sentence, for Stop's drain diagnostic
+    static const char* PhaseKey(Connection::Phase p);    // a short stable name, for pipe_clients and the holders line
     static void SetPhase(Connection& conn, Connection::Phase p);
 
     Routine::SafeThread        m_acceptThread;
@@ -173,6 +175,22 @@ private:
     // Connections already erased from m_conns whose teardown still runs -- releasing what they owned can wait on the
     // game thread. Stop's drain waits for these too, so its own resets never run beside one.
     size_t                  m_tearingDown{0};
+    // A connection's teardown counted in m_tearingDown for its whole length, a throw included: a count left raised
+    // made every later Stop wait out its full drain (review, 2026-11-10). Constructed with m_connMutex held; released
+    // on every way out, and Stop's drain told.
+    struct TeardownCount {
+        Fern& f;
+        explicit TeardownCount(Fern& fern) : f(fern) { ++f.m_tearingDown; }
+        ~TeardownCount() {
+            {
+                std::lock_guard<std::mutex> lock(f.m_connMutex);
+                --f.m_tearingDown;
+            }
+            f.m_connCv.notify_all();
+        }
+        TeardownCount(const TeardownCount&) = delete;
+        TeardownCount& operator=(const TeardownCount&) = delete;
+    };
 
     // The most clients the pipe takes, as the first instance's handle states it (GetNamedPipeInfo): a name an older
     // copy of the DLL created keeps that copy's limit. This build's until the first instance exists.
@@ -238,9 +256,6 @@ private:
     struct RescanState {
         Routine::SingleFlightJob job{"RunRescan"};
         std::atomic<int>  phase{0};       // 0=idle, 1=GObjects, 2=GWorld, 3=complete
-        // What the running job looks for, for the reply to a second client that asks while it runs.
-        std::atomic<bool> scanningGObjects{false};
-        std::atomic<bool> scanningGWorld{false};
         std::mutex        statusMutex;    // guards statusText and result
         std::string       statusText;
         RescanResult      result;

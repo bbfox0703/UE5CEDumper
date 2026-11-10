@@ -2,7 +2,8 @@
 
 Named pipe: `\\.\pipe\UE5DumpBfx_<pid>`, one per game process (the pid is the game's, in decimal). The fixed `\\.\pipe\UE5DumpBfx` of older builds is no longer served, and the UI refuses it ([PIPE-PER-PROCESS-2026-11-06]).
 Format: JSON, newline-delimited (one message per `\n`)
-Direction: bidirectional — Request/Response + async push Events
+Direction: bidirectional — Request/Response + push Events (a watch's events go out with the watching connection's
+next reply since [PIPE-PER-PROCESS-2026-11-06] Stage C; see Push Events)
 Total commands: **106** — a DERIVED number, regenerate it, never hand-edit:
 `grep -c 'constexpr const char\* CMD' dll/src/Renge.h`. (It read 31 from build ~547 until
 2026-08-05, i.e. it was wrong by a factor of three for most of this project's life.)
@@ -684,7 +685,7 @@ the three `pe_trace_*` commands read it afterwards. The plan and its decisions: 
 { "id": 75, "cmd": "pe_trace_names", "kind": "objs", "gen": 3, "offset": 0, "limit": 2000 }
 
 // Release the ring now (the UI has read it, or turned the experimental features off over it) instead of at the next
-// Start or when the last client leaves. gen
+// Start or when the client process that started the recording leaves (Stage C). gen
 // (optional): free only that recording, and only once it has stopped, so a reader never frees a newer recording.
 // Reply: released (bool).
 { "id": 76, "cmd": "pe_trace_release", "gen": 3 }
@@ -2119,6 +2120,7 @@ disconnected for idling, but who holds the connections can be seen. Read-only, a
 
 `cap_in_force` is the limit the pipe really has (a name an older copy of the DLL created keeps that copy's limit);
 `build_cap` is this build's. `last_cmd` is empty and `last_cmd_age_ms` is -1 before a client's first command.
+`phase` is one of `Reading`, `Dispatching`, `Writing`, `StoppingWatches`, `Unregistering`, `Done`.
 
 **When every connection is taken**, no client can connect to ask, so the DLL writes the same list on its at-capacity
 line in its pipe log, `%LOCALAPPDATA%\UE5CEDumper\Logs\<game>\pipe-0.log`:

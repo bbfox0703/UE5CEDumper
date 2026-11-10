@@ -50,6 +50,7 @@
 #include <condition_variable>   // [LIVEFUNCS-STEP2] the arm-capture worker
 #include <cstdlib>   // malloc/free for by-value FString INPUT-param buffers
 #include <cstring>
+#include <optional>   // TeardownCount, held across the cleanup
 #include <sstream>
 #include <unordered_set>   // widget-base set for pe_profile_get is_widget classification
 #include <vector>
@@ -716,6 +717,7 @@ void Fern::Stop(bool graceful) {
     // handler can't hang shutdown forever.
     bool drained;
     size_t connsLeft;
+    size_t tearingLeft = 0;
     int reasserts = 0;
     {
         std::unique_lock<std::mutex> lock(m_connMutex);
@@ -740,6 +742,10 @@ void Fern::Stop(bool graceful) {
             ++reasserts;
         }
         connsLeft = m_conns.size();
+        tearingLeft = m_tearingDown;
+        if (!drained && tearingLeft != 0)
+            LOG_WARN("PipeServer:   %zu connection(s) already unregistered are still releasing what they owned "
+                     "(See-through, a recording -- possibly waiting on the game thread)", tearingLeft);
         // Name the stragglers while we still hold the registry lock. Without this the
         // timeout says only "N left", which is not enough to act on — the 2026-08-04
         // run burned the full 5 s budget and the log could not say whether the threads
@@ -774,8 +780,8 @@ void Fern::Stop(bool graceful) {
     // first cancel worked" and "the first cancel missed and a later one caught it".
     // Both print `satisfied`; without the count a fix for the missed-window case
     // could not be told from it never having been needed.
-    LOG_INFO("PipeServer: Stop conn drain %s, %zu left (%lld ms, %d cancel re-assert%s)",
-             drained ? "satisfied" : "TIMEOUT", connsLeft, elapsedMs(),
+    LOG_INFO("PipeServer: Stop conn drain %s, %zu left, %zu still tearing down (%lld ms, %d cancel re-assert%s)",
+             drained ? "satisfied" : "TIMEOUT", connsLeft, tearingLeft, elapsedMs(),
              reasserts, reasserts == 1 ? "" : "s");
 
     if (m_acceptThread.joinable()) {
@@ -964,14 +970,16 @@ std::vector<Voll::Holder> Fern::SnapshotHolders(uint64_t selfSeq) {
         h.pid = c->clientPid;
         h.exe = c->clientExe;
         h.connectedMs = now - c->connectedMs;
+        // The flag first: HandleConnection writes the name and start, then raises it (release), so a holder seen in
+        // flight carries that command's name and age, never the previous one's.
+        h.inFlight = c->inFlight.load(std::memory_order_acquire);
         {
             std::lock_guard<std::mutex> dlk(c->diagMutex);
             h.lastCmd = c->cmdName;
         }
         const long long started = c->cmdStartMs.load(std::memory_order_relaxed);
         h.lastCmdAgeMs = started == 0 ? -1 : now - started;
-        h.inFlight = c->inFlight.load(std::memory_order_acquire);
-        h.phase = PhaseName(c->phase.load(std::memory_order_relaxed));
+        h.phase = PhaseKey(c->phase.load(std::memory_order_relaxed));
         h.self = c->seq == selfSeq;
         out.push_back(std::move(h));
     }
@@ -1179,6 +1187,17 @@ const char* Fern::PhaseName(Connection::Phase p) {
     }
 }
 
+const char* Fern::PhaseKey(Connection::Phase p) {
+    switch (p) {
+        case Connection::Phase::Reading:         return "Reading";
+        case Connection::Phase::Dispatching:     return "Dispatching";
+        case Connection::Phase::Writing:         return "Writing";
+        case Connection::Phase::StoppingWatches: return "StoppingWatches";
+        case Connection::Phase::Unregistering:   return "Unregistering";
+        default:                                 return "Done";
+    }
+}
+
 /// Stamp the current phase + when it began, for Stop's drain diagnostic only.
 void Fern::SetPhase(Connection& conn, Connection::Phase p) {
     conn.phase.store(p, std::memory_order_relaxed);
@@ -1216,10 +1235,11 @@ std::string Fern::ReadLine(HANDLE pipe) {
 }
 
 bool Fern::WriteLine(Connection& conn, const std::string& line) {
-    // Per-connection write mutex: serializes this connection's response write
-    // against its own watch-event writes. Writes to OTHER connections use their
-    // own mutex, so the two UI lanes never contend. CloseConnOnce takes the same
-    // mutex, so a write can never run on a just-closed handle.
+    // Per-connection write mutex. Every write on a connection comes from its own
+    // handler thread (replies, and its watch events since Stage C), so what this
+    // orders is a write against CloseConnOnce, which takes the same mutex: a
+    // write can never run on a just-closed handle. Writes to OTHER connections
+    // use their own mutex, so the two UI lanes never contend.
     std::lock_guard<std::mutex> lock(conn.writeMutex);
     if (conn.closed.load(std::memory_order_relaxed) || conn.pipe == INVALID_HANDLE_VALUE)
         return false;
@@ -1369,21 +1389,22 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     }
     conn->inFlight.store(false, std::memory_order_relaxed);
 
-    // Connection cleanup. Stop THIS connection's watches first (joins their
-    // threads while the handle is still valid + owner pointer alive), then
-    // unregister and close our own handle, then drop this connection's scan
-    // sessions and release what this client process turned on. Only caches and
-    // diagnostics wait for the LAST connection.
+    // Connection cleanup. Stop THIS connection's watches first (their threads
+    // hold only their sample slots, so this ends them before the connection
+    // goes), then unregister and close our own handle, then drop this
+    // connection's scan sessions and release what this client process turned
+    // on. Only caches and diagnostics wait for the LAST connection.
     SetPhase(*conn, Connection::Phase::StoppingWatches);
     StopWatchesForConnection(conn->seq);
 
     SetPhase(*conn, Connection::Phase::Unregistering);
     bool last;
+    std::optional<TeardownCount> teardown;
     {
         std::lock_guard<std::mutex> lock(m_connMutex);
-        // Counted in before the erase and out after the release below: Stop's drain sees the registry empty the
-        // moment this erase lands, and must also wait for what this teardown still does.
-        ++m_tearingDown;
+        // Counted in before the erase and out when `teardown` goes, a throw included: Stop's drain sees the registry
+        // empty the moment this erase lands, and must also wait for what this teardown still does.
+        teardown.emplace(*this);
         auto it = std::find(m_conns.begin(), m_conns.end(), conn);
         if (it != m_conns.end()) m_conns.erase(it);
         last = m_conns.empty();
@@ -1437,11 +1458,7 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         Ubel::ClearNameCache();
     }
 
-    {
-        std::lock_guard<std::mutex> lock(m_connMutex);
-        --m_tearingDown;
-    }
-    m_connCv.notify_all();
+    teardown.reset();   // counted out, and Stop's drain told
     LOG_INFO("PipeServer: Client disconnected");
 }
 
@@ -2092,7 +2109,8 @@ void StartArmWorker(std::shared_ptr<Linie::ArmState> arms) {
 
 // Stop's half, after the trace and the table stopped: the worker gets the deadline, the last passes run here, then
 // every arm still unread is sealed raw-only. A worker past the deadline (inside the first enum detection) keeps
-// running with its arms sealed and is joined at the next Start, a release, or the last disconnect.
+// running with its arms sealed and is joined at the next Start, a release, when the client process that started the
+// recording leaves (ReleaseOwnedBy), or at Stop.
 void FinishArms() {
     std::lock_guard<std::mutex> lk(g_armWorkerMu);
     ArmCaptureWorker* w = g_armWorker.get();
@@ -2434,7 +2452,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 } else if (plan.outcome != Flamme::AutoRestore::NotOverridden) {
                     // Nothing to hand back that a launch would start from: the override's version stays
                     // in force, and stays called an override, so no reconnect records it as a detection.
-                    g_cachedAutoPending = Flamme::AutoPendsUntilNextLaunch(plan.outcome, persist);
+                    g_cachedAutoPending = Flamme::AutoPendsUntilNextLaunch(plan.outcome, persisted);
                     Sein::Info("PIPE:cmd", "set_ue_version_override: Auto -- %s; UE %u stays in force %s",
                                Flamme::AutoRestoreName(plan.outcome), g_cachedUEVersion,
                                g_cachedAutoPending ? "until the next launch"
@@ -5171,9 +5189,6 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             return Renge::MakeResponse(id, data).dump();
         }
 
-        // ── get_diagnostics: Sense self-health telemetry ──
-        // Tier 1 (our own dispatch cost) + Tier 2 (Win32 process facts). Read
-        // only; safe to poll. See Sense.h for why this exists.
         // === pipe_clients: who holds this pipe's connections ===
         // [PIPE-PER-PROCESS-2026-11-06] Stage C, the maintainer's policy (2026-11-10): no client is disconnected for
         // idling, but who holds the connections can be seen. The asking connection is marked self.
@@ -5188,6 +5203,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             return Renge::MakeResponse(id, data).dump(-1, ' ', false, json::error_handler_t::replace);
         }
 
+        // ── get_diagnostics: Sense self-health telemetry ──
+        // Tier 1 (our own dispatch cost) + Tier 2 (Win32 process facts). Read
+        // only; safe to poll. See Sense.h for why this exists.
         if (cmd == Renge::CMD_GET_DIAGNOSTICS) {
             int limit = request.value("limit", 25);
             if (limit < 0) limit = 0;
@@ -6726,8 +6744,6 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     m_rescan.result     = RescanResult{};
                     m_rescan.statusText = "Starting...";
                     m_rescan.phase.store(0);
-                    m_rescan.scanningGObjects.store(needGObj);
-                    m_rescan.scanningGWorld.store(needGWld);
                 },
                 [this, needGObj, needGWld] {
                     // Phase 3 on every way out, a throw included, so rescan_status reports the run as over. (B14)
@@ -6739,30 +6755,34 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             json data;
             data["started"] = (started == Start::Started);
-            if (started == Start::AlreadyRunning) {
-                // As trigger_scan: a rescan another client started is in progress, not a failure.
-                data["in_progress"]       = true;
-                data["scanning_gobjects"] = m_rescan.scanningGObjects.load();
-                data["scanning_gworld"]   = m_rescan.scanningGWorld.load();
-            } else {
-                data["scanning_gobjects"] = needGObj;
-                data["scanning_gworld"]   = needGWld;
-            }
+            // As trigger_scan: a rescan another client started is in progress, not a failure. Its targets are this
+            // asker's own: both read the same published pointers, which nothing changes while a rescan runs (apply
+            // refuses, and so does this command during an init). Flags the starter stored would be read before its
+            // reset wrote them.
+            if (started == Start::AlreadyRunning) data["in_progress"] = true;
+            data["scanning_gobjects"] = needGObj;
+            data["scanning_gworld"]   = needGWld;
             return Renge::MakeResponse(id, data).dump();
         }
 
         if (cmd == Renge::CMD_RESCAN_STATUS) {
             json data;
-            const bool running = m_rescan.job.Running();
-            data["running"] = running;
-            data["phase"]   = m_rescan.phase.load();
+            bool running;
+            int phase;
+            RescanResult found;
             {
+                // One snapshot. A start claims `running` and then resets under this lock, so here the flag and the
+                // result belong to the same run: read apart, a start between them answered "finished, nothing found".
                 std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
+                running = m_rescan.job.Running();
+                phase   = m_rescan.phase.load();
                 data["status_text"] = m_rescan.statusText;
+                found   = m_rescan.result;
             }
+            data["running"] = running;
+            data["phase"]   = phase;
             // Include results if scan is complete
-            if (!running && m_rescan.phase.load() == 3) {
-                const RescanResult found = m_rescan.Results();
+            if (!running && phase == 3) {
                 data["found_gobjects"]   = (found.gobjects != 0);
                 data["found_gworld"]     = (found.gworld != 0);
                 data["gobjects_addr"]    = Renge::AddrToStr(found.gobjects);
@@ -6937,7 +6957,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int phase = SP::phase.load(std::memory_order_acquire);
 
             json data;
-            const bool running = m_scan.job.Running();
+            const Routine::SingleFlightJob::Snapshot job = m_scan.job.Status();   // one answer: see Status()
+            const bool running = job.running;
             data["running"]     = running;
             data["phase"]       = phase;
             data["status_text"] = SP::GetStatusText();
@@ -6945,7 +6966,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // When complete, include full pointer snapshot — same shape as
             // get_pointers. Single helper guarantees the two paths can't drift.
             // Completed is UE5_Init's own answer: a scan Stop cancelled is not "scanned".
-            if (!running && m_scan.job.Completed()) {
+            if (!running && job.completed) {
                 data["scanned"] = true;
                 FillPointerSnapshot(data);
             }
@@ -8249,17 +8270,21 @@ std::string Fern::StartWatch(const std::shared_ptr<Connection>& conn, uintptr_t 
         std::lock_guard<std::mutex> lock(m_watchMutex);
         // StopAllWatches runs after Stop clears m_running, under this lock: a watch past it would be joined by nobody.
         if (!m_running.load()) return "the pipe server is stopping";
-        auto it = m_watches.find(key);
-        if (it == m_watches.end()) {
+        if (m_watches.find(key) == m_watches.end()) {
             if (Kanne::CountOwned(m_watches, conn->seq) >= static_cast<size_t>(Grimoire::PIPE_WATCH_MAX_PER_CONNECTION))
                 return "too many watches on this connection (at most "
                        + std::to_string(Grimoire::PIPE_WATCH_MAX_PER_CONNECTION) + ")";
             if (m_watches.size() >= static_cast<size_t>(Grimoire::PIPE_WATCH_MAX_TOTAL))
                 return "too many watches in this game (at most " + std::to_string(Grimoire::PIPE_WATCH_MAX_TOTAL) + ")";
         }
+        // The map slot before the thread: a throw after the thread started (an insert's allocation) would leave
+        // it detached, sampling for the life of the process (review, 2026-11-10). Nobody sees an empty slot: every
+        // reader of m_watches holds this lock.
+        auto [slotIt, fresh] = m_watches.try_emplace(key);
         // The thread holds the slot and copies of what it reads -- nothing of this entry, this server or the
         // connection -- so a lost entry or a departed connection can never be read through it.
         std::shared_ptr<Kanne::WatchSlot> slot = entry->slot;
+        try {
         entry->watchThread = std::thread([slot, addr, size, interval_ms]() {
           // It allocates on every read (the slot's copy of the sample); a bad_alloc out of a thread proc terminates
           // the game. (B14)
@@ -8272,12 +8297,12 @@ std::string Fern::StartWatch(const std::shared_ptr<Connection>& conn, uintptr_t 
             } while (slot->WaitInterval(std::chrono::milliseconds(interval_ms)));
           });
         });
-        if (it != m_watches.end()) {
-            replaced = std::move(it->second);
-            it->second = std::move(entry);
-        } else {
-            m_watches.emplace(key, std::move(entry));
+        } catch (...) {
+            if (fresh) m_watches.erase(slotIt);   // no thread started: give the slot back
+            throw;
         }
+        replaced = std::move(slotIt->second);   // empty for a fresh key
+        slotIt->second = std::move(entry);
     }
     if (replaced) JoinWatch(*replaced);
     Sein::Info("PIPE:watch", "PipeServer: Watch started on 0x%llX (size=%u, interval=%ums, connection #%llu)",

@@ -180,7 +180,7 @@ struct Holder {
     std::string lastCmd;            // its last (or current) command; empty before its first
     long long   lastCmdAgeMs = -1;  // since that command began; -1 before its first
     bool        inFlight = false;   // a command is running now
-    std::string phase;              // Fern's Connection::Phase name
+    std::string phase;              // Fern's Connection::Phase as a short key (Fern::PhaseKey), e.g. "Dispatching"
     bool        self = false;       // the connection asking (pipe_clients)
 };
 
