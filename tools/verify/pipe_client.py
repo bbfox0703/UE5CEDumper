@@ -143,8 +143,41 @@ LOGROOT = pathlib.Path(os.environ.get("LOCALAPPDATA", str(pathlib.Path.home() / 
 
 def latest_holders(text: str, name: str):
     """The latest at-capacity line naming pipe `name` (bare, e.g. UE5DumpBfx_668) in a DLL pipe log, as
-    {"time", "holders": [...], "more", "superseded"}, or None."""
-    return None   # red: not read yet
+    {"time", "holders": [...], "more", "superseded"}, or None. The pipe is matched digit-exact (two processes of one
+    exe share a log folder); a newer line that cannot be read is no answer, not the older line's."""
+    ref = PIPE_ROOT + name
+    latest, saw_full = None, False
+    for line in (text or "").splitlines():
+        at, names = line.lower().find(ref.lower()), False
+        while at >= 0:
+            nxt = at + len(ref)
+            if nxt >= len(line) or not line[nxt].isdigit():
+                names = True
+                break
+            at = line.lower().find(ref.lower(), at + 1)
+        if not names:
+            continue
+        if SLOT_FREED_TEXT in line:
+            if latest is not None:
+                latest["superseded"] = True
+            continue
+        if AT_CAPACITY_TEXT not in line or HOLDERS_TOKEN not in line:
+            continue
+        saw_full = True
+        rest = line.split(HOLDERS_TOKEN, 1)[1]
+        more = 0
+        if HOLDERS_MORE_TOKEN in rest:
+            rest, tail = rest.split(HOLDERS_MORE_TOKEN, 1)
+            more = int(tail.strip()) if tail.strip().isdigit() else 0
+        try:
+            holders = json.loads(rest)
+        except ValueError:
+            latest = None
+            continue
+        time_ = line[1:line.index("]")] if line.startswith("[") and "]" in line else ""
+        latest = {"time": time_, "holders": holders if isinstance(holders, list) else [], "more": more,
+                  "superseded": False}
+    return latest if saw_full else None
 
 
 def _read_pipe_logs() -> list[str]:
@@ -239,6 +272,23 @@ class PipeClient:
             hint = (" -- every connection it takes is in use (other clients hold them all), or the game is not "
                     "responding. A UE5Dumper DLL older than this tree may take only 3 clients at once, and the UI "
                     "holds 2: disconnect the UI or another rig, or refresh the game's DLL and restart the game")
+            # Stage C: who holds them, from the DLL's at-capacity line (no client can connect to ask).
+            name = path[len(PIPE_ROOT):] if path.startswith(PIPE_ROOT) else path
+            seen = None
+            for text in _read_pipe_logs():
+                got = latest_holders(text, name)
+                if got is not None and (seen is None or got["time"] > seen["time"]):
+                    seen = got
+            if seen is not None and not seen["superseded"] and seen["holders"]:
+                me = os.getpid()
+                who = "; ".join(
+                    f"{h.get('exe', '?')} (PID {h.get('pid', 0)}"
+                    + (f", {'running' if h.get('in_flight') else 'last'} {h['last_cmd']}" if h.get("last_cmd") else "")
+                    + (", this process" if h.get("pid") == me else "") + ")"
+                    for h in seen["holders"])
+                if seen["more"]:
+                    who += f"; and {seen['more']} more"
+                hint += f". When the pipe filled ({seen['time']}), its connections were held by: {who}"
         raise PipeError(f"could not open {path or 'a UE5Dumper pipe'}: {last}{hint}")
 
     def close(self) -> None:

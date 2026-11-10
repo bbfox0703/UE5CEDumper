@@ -2,7 +2,7 @@
 
 // ============================================================
 // Fern — 費倫 (芙莉蓮的弟子 — Frieren's Apprentice)
-// PipeServer: Named Pipe JSON IPC server (105 commands)
+// PipeServer: Named Pipe JSON IPC server (106 commands)
 //
 // ⚠ DERIVED, not hand-maintained: `grep -c 'constexpr const char* CMD' dll/src/Renge.h`,
 // asserted by `tools/check_derived_counts.py` in CI. It said "~30" against a real 99 until
@@ -22,6 +22,7 @@
 
 #include <Windows.h>
 #include "Routine.h"   // Routine::SafeThread — ~std::thread on a joinable thread terminates (B14)
+#include "Voll.h"      // Voll::Holder -- who holds the pipe's connections (Stage C)
 #include <string>
 #include <thread>
 #include <atomic>
@@ -83,12 +84,18 @@ private:
         // and a raw pointer cannot answer "is that same connection still live" once
         // the object is gone and the allocator has reused the address.
         uint64_t           seq{0};
+        // Who connected, and when ([PIPE-PER-PROCESS-2026-11-06] Stage C: pipe_clients and the at-capacity line).
+        // Written by the accept thread BEFORE the connection is registered in m_conns and never again, so a reader that
+        // got it from m_conns needs no lock.
+        DWORD              clientPid{0};      // GetNamedPipeClientProcessId; 0 when it failed
+        std::string        clientExe{"?"};    // the client's exe file name, UTF-8, Voll::kMaxHolderExeBytes at most
+        long long          connectedMs{0};    // steady-clock ms at accept
         std::mutex         writeMutex;
         std::atomic<bool>  inFlight{false};   // true only while inside DispatchCommand
         // What that in-flight command IS, and when it started. Written just before
-        // DispatchCommand and read ONLY by Stop's drain-timeout diagnostic, so the hot
-        // path pays one small copy per command and the teardown can finally name the
-        // connection that would not leave. "2 left" is not actionable; "2 left: lane
+        // DispatchCommand (before inFlight goes up) and read by Stop's drain-timeout
+        // diagnostic and by SnapshotHolders, so the hot path pays one small copy per
+        // command and the teardown can finally name the connection that would not leave. "2 left" is not actionable; "2 left: lane
         // busy 4980 ms in 'walk_instance'" is. (2026-08-04: the first Stop ever logged
         // with connections attached timed out at the full 5 s and the log could not say
         // why.)
@@ -159,6 +166,14 @@ private:
     // split made unreachable (audit #5 F2).
     std::vector<uint64_t>   m_cancelOwners;
     uint64_t                m_connSeq{0};    // assigned under m_connMutex at accept
+
+    // The most clients the pipe takes, as the first instance's handle states it (GetNamedPipeInfo): a name an older
+    // copy of the DLL created keeps that copy's limit. This build's until the first instance exists.
+    std::atomic<DWORD>      m_capInForce{kMaxPipeInstances};
+
+    // [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds the connections now, for pipe_clients and the at-capacity log
+    // line. `selfSeq` marks the asking connection (0: none). Takes m_connMutex only to copy the list.
+    std::vector<Voll::Holder> SnapshotHolders(uint64_t selfSeq);
 
     // Clear the per-command cancel once no connection that raised it is still live.
     // MUST be called with m_connMutex ALREADY HELD.

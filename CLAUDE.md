@@ -181,7 +181,7 @@ derive them, never hand-edit** (`tools/check_derived_counts.py` pins the ones wr
 |
 |   -- interfaces ------------------------------------
 |      +-- Frieren  (ExportAPI)     C ABI for CE Lua
-|      +-- Fern     (PipeServer)    JSON over named pipe; the live count is **105** commands
+|      +-- Fern     (PipeServer)    JSON over named pipe; the live count is **106** commands
 |      +-- Mimic    (Mailbox)       shared-memory command channel for CE Lua
 |      +-- Stark    (GameThreadDispatch)  MinHook ProcessEvent hook
 |      +-- Lugner   (Proxy)         version/dinput8/dxgi/winmm forwarders

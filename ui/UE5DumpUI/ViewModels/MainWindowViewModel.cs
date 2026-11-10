@@ -2191,8 +2191,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 // lane complete on its waiting instance and starves the other). [PIPE-PER-PROCESS-2026-11-06]
                 var now = await Task.Run(() => _platform.ListNamedPipes());
                 bool gone = now is not null && !PipeTargets.Scan(now).Pids.Contains(targetPid);
+                if (gone) throw new InvalidOperationException(Res.Format("str.Connect.PipeGone", targetPid));
                 throw new InvalidOperationException(
-                    Res.Format(gone ? "str.Connect.PipeGone" : "str.Connect.Busy", targetPid));
+                    Res.Format("str.Connect.Busy", targetPid) + await HoldersNoteAsync(targetPid));
             }
 
             var state = await _dump.InitAsync();
@@ -2305,6 +2306,23 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
         return (c, false, true);
     }
+
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Stage C: who held a full pipe, from the game DLL's at-capacity log line --
+    /// a client that cannot connect cannot ask. Empty when the game's log, or a current line in it, cannot be read.</summary>
+    private Task<string> HoldersNoteAsync(int pid) => Task.Run(() =>
+    {
+        string image = _platform.DescribeProcess(pid).ImageName;
+        if (string.IsNullOrEmpty(image)) return "";
+        var seen = PipeHolders.ParseLatest(
+            DumperLogTail.Read(_platform.GetLogDirectoryPath(), image, "pipe"), PipeTargets.NameFor(pid));
+        if (seen is null || seen.Superseded || seen.Holders.Count == 0) return "";
+        string list = string.Join("; ", seen.Holders.Select(h =>
+            string.IsNullOrEmpty(h.LastCmd) ? Res.Format("str.Connect.BusyHolderNoCmd", h.Exe, h.Pid)
+            : h.InFlight ? Res.Format("str.Connect.BusyHolderRunning", h.Exe, h.Pid, h.LastCmd)
+            : Res.Format("str.Connect.BusyHolder", h.Exe, h.Pid, h.LastCmd)));
+        if (seen.More > 0) list += Res.Format("str.Connect.BusyHoldersMore", seen.More);
+        return " " + Res.Format("str.Connect.BusyHolders", seen.Time, list);
+    });
 
     /// <summary>Only an old DLL's pipe is there: say so and why, connect to nothing. Deliberately not the game list,
     /// which would hold one row nobody can pick.</summary>

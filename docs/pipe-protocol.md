@@ -3,7 +3,7 @@
 Named pipe: `\\.\pipe\UE5DumpBfx_<pid>`, one per game process (the pid is the game's, in decimal). The fixed `\\.\pipe\UE5DumpBfx` of older builds is no longer served, and the UI refuses it ([PIPE-PER-PROCESS-2026-11-06]).
 Format: JSON, newline-delimited (one message per `\n`)
 Direction: bidirectional — Request/Response + async push Events
-Total commands: **105** — a DERIVED number, regenerate it, never hand-edit:
+Total commands: **106** — a DERIVED number, regenerate it, never hand-edit:
 `grep -c 'constexpr const char\* CMD' dll/src/Renge.h`. (It read 31 from build ~547 until
 2026-08-05, i.e. it was wrong by a factor of three for most of this project's life.)
 
@@ -2084,6 +2084,34 @@ honours the same cooperative cancel as every other bulk command. **The UI replay
 calls** whenever the batch fails *or* returns the wrong number of rows — a short reply would
 otherwise mis-pair results with addresses, which in a CE export is a wrong pointer chain that looks
 perfectly valid.
+
+### pipe_clients
+
+Who holds this game's pipe connections ([PIPE-PER-PROCESS-2026-11-06] Stage C). The maintainer's policy: no client is
+disconnected for idling, but who holds the connections can be seen. Read-only, answers before a scan.
+
+```jsonc
+{ "id": 1, "cmd": "pipe_clients" }
+// → { "pipe": "\\\\.\\pipe\\UE5DumpBfx_668", "cap_in_force": 6, "build_cap": 6,
+//     "clients": [ { "seq": 3, "pid": 4321, "exe": "python.exe", "connected_ms": 5000,
+//                    "last_cmd": "get_pointers", "last_cmd_age_ms": 20, "in_flight": true,
+//                    "phase": "Dispatching", "self": true }, ... ] }
+```
+
+`cap_in_force` is the limit the pipe really has (a name an older copy of the DLL created keeps that copy's limit);
+`build_cap` is this build's. `last_cmd` is empty and `last_cmd_age_ms` is -1 before a client's first command.
+
+**When every connection is taken**, no client can connect to ask, so the DLL writes the same list on its at-capacity
+line in its pipe log, `%LOCALAPPDATA%\UE5CEDumper\Logs\<game>\pipe-0.log`:
+
+```
+PipeServer: all 6 pipe instances in use, waiting for a free slot -- \\.\pipe\UE5DumpBfx_668 holders=[{...},...] more=2
+```
+
+`more=N` counts the holders that did not fit one log line. The next `a pipe slot freed, resuming accept --
+\\.\pipe\UE5DumpBfx_668` line supersedes it. The UI's Connect and `tools/verify/pipe_client.py` read it when a
+connect finds every connection taken; the words are Grimoire.h's `PIPE_AT_CAPACITY_TEXT` / `PIPE_HOLDERS_TOKEN` /
+`PIPE_HOLDERS_MORE_TOKEN` / `PIPE_SLOT_FREED_TEXT`.
 
 ### get_diagnostics / reset_diagnostics
 

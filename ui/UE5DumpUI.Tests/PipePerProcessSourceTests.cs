@@ -132,6 +132,24 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("Grimoire::PIPE_HOLDERS_TOKEN", branch);
     }
 
+    /// <summary>The words of the at-capacity line exist three times -- the DLL that writes them (Grimoire.h), the UI
+    /// and pipe_client.py that read them -- and a reader that drifts from the writer finds nothing, silently.</summary>
+    [Theory]
+    [InlineData("PIPE_AT_CAPACITY_TEXT", Constants.PipeAtCapacityText, "AT_CAPACITY_TEXT")]
+    [InlineData("PIPE_HOLDERS_TOKEN", Constants.PipeHoldersToken, "HOLDERS_TOKEN")]
+    [InlineData("PIPE_HOLDERS_MORE_TOKEN", Constants.PipeHoldersMoreToken, "HOLDERS_MORE_TOKEN")]
+    [InlineData("PIPE_SLOT_FREED_TEXT", Constants.PipeSlotFreedText, "SLOT_FREED_TEXT")]
+    public void TheHoldersLineReadsAsTheDllWritesIt(string grimoire, string ui, string python)
+    {
+        var dll = Regex.Match(DllSrc("Grimoire.h"), $@"\b{grimoire}\s*=\s*""([^""]*)""");
+        Assert.True(dll.Success, $"Grimoire.h: {grimoire} not found");
+        Assert.Equal(dll.Groups[1].Value, ui);
+        var py = Regex.Match(File.ReadAllText(NumericInputCoercionTests.RepoFile("tools/verify/pipe_client.py")),
+                             $@"(?m)^{python}\s*=\s*""([^""]*)""");
+        Assert.True(py.Success, $"pipe_client.py: {python} not found");
+        Assert.Equal(dll.Groups[1].Value, py.Groups[1].Value);
+    }
+
     /// <summary>Stage B: six clients at once -- the UI's two lanes, a rig, an MCP client, and two more for a lane
     /// reconnect whose old instances are still unwinding. Windows takes 1..254 (255 is PIPE_UNLIMITED_INSTANCES).
     /// A name another copy created first keeps that copy's limit (measured 2026-11-10: a second create asking for 6

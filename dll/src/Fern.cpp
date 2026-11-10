@@ -899,6 +899,55 @@ void Fern::MonitorLoop() {
   });
 }
 
+// The exe file name of a client process, UTF-8 and bounded, or "?". Query-limited access is enough, and an elevated
+// client that refuses even that is still listed by its pid.
+static std::string ClientExeName(DWORD pid) {
+    if (pid == 0) return "?";
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) return "?";
+    wchar_t path[MAX_PATH * 2] = {};
+    DWORD len = static_cast<DWORD>(sizeof(path) / sizeof(path[0]));
+    std::string name = "?";
+    if (QueryFullProcessImageNameW(h, 0, path, &len)) name = Utf8Helpers::LeafUtf8(path, len);
+    CloseHandle(h);
+    return Voll::TruncateUtf8(name, Voll::kMaxHolderExeBytes);
+}
+
+static long long SteadyNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+std::vector<Voll::Holder> Fern::SnapshotHolders(uint64_t selfSeq) {
+    // Copy the list under the lock, read each connection outside it: diagMutex is never taken under m_connMutex here.
+    std::vector<std::shared_ptr<Connection>> conns;
+    {
+        std::lock_guard<std::mutex> lock(m_connMutex);
+        conns = m_conns;
+    }
+    const long long now = SteadyNowMs();
+    std::vector<Voll::Holder> out;
+    out.reserve(conns.size());
+    for (const auto& c : conns) {
+        Voll::Holder h;
+        h.seq = c->seq;
+        h.pid = c->clientPid;
+        h.exe = c->clientExe;
+        h.connectedMs = now - c->connectedMs;
+        {
+            std::lock_guard<std::mutex> dlk(c->diagMutex);
+            h.lastCmd = c->cmdName;
+        }
+        const long long started = c->cmdStartMs.load(std::memory_order_relaxed);
+        h.lastCmdAgeMs = started == 0 ? -1 : now - started;
+        h.inFlight = c->inFlight.load(std::memory_order_acquire);
+        h.phase = PhaseName(c->phase.load(std::memory_order_relaxed));
+        h.self = c->seq == selfSeq;
+        out.push_back(std::move(h));
+    }
+    return out;
+}
+
 void Fern::AcceptLoop() {
   // The accept thread allocates (Connection, the registry, log formatting). A throw here
   // is std::terminate — and it also silently ends the server, so the guard reports it. (B14)
@@ -914,8 +963,6 @@ void Fern::AcceptLoop() {
     // name (Voll::ClassifyFirstInstance). Accept-thread-local, like the latch above.
     bool firstInstance = true;
     bool foreignLogged = false;
-    // The limit in force, read from the first instance's handle (GetNamedPipeInfo below); this build's until then.
-    DWORD capInForce = kMaxPipeInstances;
     while (m_running.load()) {
         // Create a new pipe instance (multi-instance: up to kMaxPipeInstances
         // concurrent clients, so the UI's interactive + bulk lanes can connect
@@ -947,9 +994,13 @@ void Fern::AcceptLoop() {
             switch (Voll::OnCreateFailure(err, atCapacity)) {
                 case Voll::AcceptLog::EnterCapacity:
                     // All instances busy — the resource cap doing its job. Say so ONCE;
-                    // the 1 s retry below then waits silently for a slot to free.
-                    LOG_INFO("PipeServer: all %lu pipe instances in use, waiting for a free slot",
-                             (unsigned long)capInForce);
+                    // the 1 s retry below then waits silently for a slot to free. The line
+                    // names who holds them: a client that cannot connect cannot ask, and
+                    // reads it here (the UI, pipe_client.py). [PIPE-PER-PROCESS-2026-11-06]
+                    LOG_INFO("PipeServer: all %lu %s, waiting for a free slot -- %s%s%s",
+                             (unsigned long)m_capInForce.load(), Grimoire::PIPE_AT_CAPACITY_TEXT,
+                             Utf8Helpers::EncodeUtf16(Voll::OwnPipeName().c_str(), Voll::OwnPipeName().size()).c_str(),
+                             Grimoire::PIPE_HOLDERS_TOKEN, Voll::HoldersJson(SnapshotHolders(0)).c_str());
                     break;
                 case Voll::AcceptLog::Error:
                     // A genuinely unexpected failure — always surfaced, never suppressed by
@@ -997,7 +1048,7 @@ void Fern::AcceptLoop() {
             // client will meet rather than what this build asked for. [PIPE-PER-PROCESS-2026-11-06] Stage B
             DWORD inForce = 0;
             if (GetNamedPipeInfo(pipe, nullptr, nullptr, nullptr, &inForce)) {
-                capInForce = inForce;
+                m_capInForce.store(inForce);
                 if (inForce == kMaxPipeInstances) {
                     LOG_INFO("PipeServer: %s takes %lu clients at once", name.c_str(),
                              static_cast<unsigned long>(inForce));
@@ -1012,7 +1063,8 @@ void Fern::AcceptLoop() {
 
         // Got a listener instance. If we had been at capacity, a slot just freed — say so once.
         if (Voll::OnCreateSuccess(atCapacity) == Voll::AcceptLog::RecoverCapacity) {
-            LOG_INFO("PipeServer: a pipe slot freed, resuming accept");
+            LOG_INFO("PipeServer: a pipe %s, resuming accept -- %s", Grimoire::PIPE_SLOT_FREED_TEXT,
+                     Utf8Helpers::EncodeUtf16(Voll::OwnPipeName().c_str(), Voll::OwnPipeName().size()).c_str());
         }
 
         {
@@ -1041,6 +1093,14 @@ void Fern::AcceptLoop() {
         // Hand this connected instance to a Connection served on its own thread.
         auto conn = std::make_shared<Connection>();
         conn->pipe = pipe;
+        // Who connected, before the connection is registered: every reader that finds it in m_conns sees this.
+        // [PIPE-PER-PROCESS-2026-11-06] Stage C
+        {
+            ULONG clientPid = 0;
+            if (GetNamedPipeClientProcessId(pipe, &clientPid)) conn->clientPid = clientPid;
+            conn->clientExe = ClientExeName(conn->clientPid);
+            conn->connectedMs = SteadyNowMs();
+        }
         bool firstConn;
         size_t connCount;
         {
@@ -5054,6 +5114,20 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // ── get_diagnostics: Sense self-health telemetry ──
         // Tier 1 (our own dispatch cost) + Tier 2 (Win32 process facts). Read
         // only; safe to poll. See Sense.h for why this exists.
+        // === pipe_clients: who holds this pipe's connections ===
+        // [PIPE-PER-PROCESS-2026-11-06] Stage C, the maintainer's policy (2026-11-10): no client is disconnected for
+        // idling, but who holds the connections can be seen. The asking connection is marked self.
+        if (cmd == Renge::CMD_PIPE_CLIENTS) {
+            json data;
+            data["pipe"]         = Utf8Helpers::EncodeUtf16(Voll::OwnPipeName().c_str(), Voll::OwnPipeName().size());
+            data["cap_in_force"] = static_cast<uint32_t>(m_capInForce.load());
+            data["build_cap"]    = static_cast<uint32_t>(kMaxPipeInstances);
+            json clients = json::array();
+            for (const auto& h : SnapshotHolders(conn->seq)) clients.push_back(Voll::HolderToJson(h));
+            data["clients"] = clients;
+            return Renge::MakeResponse(id, data).dump(-1, ' ', false, json::error_handler_t::replace);
+        }
+
         if (cmd == Renge::CMD_GET_DIAGNOSTICS) {
             int limit = request.value("limit", 25);
             if (limit < 0) limit = 0;

@@ -45,6 +45,15 @@ constexpr const char*    DUMPER_LEGACY_IDENTITY_EXPORT = "UE5_Init";
 // finds the old name knows a game runs an old DLL and can refuse it with an explanation.
 constexpr const wchar_t* PIPE_NAME_PREFIX = L"\\\\.\\pipe\\UE5DumpBfx_";
 constexpr unsigned long  PIPE_BUF_SIZE    = 65536;
+// [PIPE-PER-PROCESS-2026-11-06] Stage C. The pipe log's at-capacity line and the holders it carries, which a client that
+// cannot connect reads: the UI's Constants.cs and tools/verify/pipe_client.py match these words, and
+// PipePerProcessSourceTests pins the three copies equal. The line reads
+//   all <n> pipe instances in use, waiting for a free slot -- <pipe> holders=[...] more=<k>
+// and the recovery line names the pipe after "slot freed".
+constexpr const char*    PIPE_AT_CAPACITY_TEXT   = "pipe instances in use";
+constexpr const char*    PIPE_HOLDERS_TOKEN      = " holders=";
+constexpr const char*    PIPE_HOLDERS_MORE_TOKEN = " more=";
+constexpr const char*    PIPE_SLOT_FREED_TEXT    = "slot freed";
 // Slice of Fern::Stop's 5 s connection-drain wait. Each slice re-asserts
 // CancelIoEx on the surviving connections, because a single cancel fired before
 // the wait can miss a thread that is BETWEEN two reads and will then park in a

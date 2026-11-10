@@ -192,6 +192,8 @@ constexpr const char* CMD_PE_SNAP_GET              = "pe_snap_get";
 // blames for UI lag but nothing measured), plus Win32 process facts. Pipe-only.
 constexpr const char* CMD_GET_DIAGNOSTICS          = "get_diagnostics";
 constexpr const char* CMD_RESET_DIAGNOSTICS        = "reset_diagnostics";
+// [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds this pipe's connections (client pid, exe, last command, in flight).
+constexpr const char* CMD_PIPE_CLIENTS             = "pipe_clients";
 
 // Event types
 constexpr const char* EVT_WATCH            = "watch";

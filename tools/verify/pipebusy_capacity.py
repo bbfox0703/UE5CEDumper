@@ -33,13 +33,14 @@ WHAT MAKES IT A REAL CHECK RATHER THAN A GREP
     asserted. (It first demanded no such line at all, which assumed every other session
     had one client; a deliberately filled pipe, as the Stage A checks did, is legitimate.)
 """
+import os
 import pathlib
 import re
 import sys
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from pipe_client import PipeClient, pipe_is_busy          # noqa: E402
+from pipe_client import PipeClient, latest_holders, pipe_is_busy   # noqa: E402
 
 LOGROOT = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs"
 AT_CAP = "pipe instances in use"
@@ -99,6 +100,25 @@ def main(logdir="DumperTest", hold=75):
         print(f"  'CreateNamedPipe failed' lines: {spam}   (expect 0; the old bug was ~1/s, "
               f"so {hold}s would have produced ~{hold})")
         ok = (cap == 1 and spam == 0 and full)
+
+        # [PIPE-PER-PROCESS-2026-11-06] Stage C: the at-capacity line names who holds the pipe -- here, this process's n
+        # clients -- and pipe_clients, asked on one of them, lists the same n with that one marked self. A DLL from
+        # before Stage C writes no holders: say so rather than fail the capacity check above.
+        name = clients[0].pipe.rsplit("\\", 1)[-1]
+        seen = latest_holders(txt, name)
+        if seen is None:
+            print("  holders on the line: none (a DLL before Stage C) -- not checked")
+        else:
+            mine = [h for h in seen["holders"] if h.get("pid") == os.getpid()]
+            print(f"  holders on the line: {len(seen['holders'])} listed, {len(mine)} of them this process, "
+                  f"more={seen['more']}   (expect {n}, {n}, 0)")
+            ok = ok and len(seen["holders"]) == n and len(mine) == n and seen["more"] == 0
+            pc = clients[0].request("pipe_clients")
+            listed = pc.get("clients") or []
+            selves = [c for c in listed if c.get("self")]
+            print(f"  pipe_clients: {len(listed)} client(s), {len(selves)} marked self, cap_in_force "
+                  f"{pc.get('cap_in_force')}   (expect {n}, 1, {n})")
+            ok = ok and len(listed) == n and len(selves) == 1 and pc.get("cap_in_force") == n
     finally:
         for c in clients:
             c.close()

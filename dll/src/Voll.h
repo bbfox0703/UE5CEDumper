@@ -191,20 +191,41 @@ inline constexpr size_t kHoldersLineBudget = 3000;
 
 // `s` cut to at most `maxBytes` without splitting a UTF-8 sequence.
 inline std::string TruncateUtf8(const std::string& s, size_t maxBytes) {
-    (void)maxBytes;
-    return s;   // red: no cut yet
+    if (s.size() <= maxBytes) return s;
+    size_t cut = maxBytes;
+    while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) --cut;   // back off continuation bytes
+    return s.substr(0, cut);
 }
 
 inline nlohmann::json HolderToJson(const Holder& h) {
-    (void)h;
-    return nlohmann::json::object();   // red: no fields yet
+    nlohmann::json j;
+    j["seq"]             = h.seq;
+    j["pid"]             = static_cast<uint32_t>(h.pid);
+    j["exe"]             = h.exe;
+    j["connected_ms"]    = h.connectedMs;
+    j["last_cmd"]        = h.lastCmd;
+    j["last_cmd_age_ms"] = h.lastCmdAgeMs;
+    j["in_flight"]       = h.inFlight;
+    j["phase"]           = h.phase;
+    j["self"]            = h.self;
+    return j;
 }
 
 // The holders as one compact JSON array, at most `budget` bytes, then " more=N" when some did not fit. Never throws:
 // invalid UTF-8 in a name is replaced, not thrown on -- on the accept thread, a throw would end the server.
 inline std::string HoldersJson(const std::vector<Holder>& holders, size_t budget = kHoldersLineBudget) {
-    (void)holders; (void)budget;
-    return "[]";   // red: nobody listed yet
+    std::string out = "[";
+    size_t listed = 0, more = 0;
+    for (const auto& h : holders) {
+        const std::string item = HolderToJson(h).dump(-1, ' ', false, nlohmann::json::error_handler_t::replace);
+        if (out.size() + (listed ? 1 : 0) + item.size() + 1 > budget) { ++more; continue; }
+        if (listed) out += ',';
+        out += item;
+        ++listed;
+    }
+    out += ']';
+    if (more) out += std::string(Grimoire::PIPE_HOLDERS_MORE_TOKEN) + std::to_string(more);
+    return out;
 }
 
 // ── Who should own the pipe at startup ──────────────────────────────────────
