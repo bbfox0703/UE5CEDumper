@@ -2358,6 +2358,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                newVersion);
             }
 
+            // What happened to the write, not what was asked: a write the cache lock or the disk refused is not saved.
+            bool persisted = false;
             if (persist) {
                 // Resolve a process name for the JSON record's gameName.
                 wchar_t exeW[MAX_PATH] = {};
@@ -2374,9 +2376,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     WideCharToMultiByte(CP_UTF8, 0, fileName.c_str(), -1,
                                         nameUtf8.data(), sz, nullptr, nullptr);
                 }
-                Flamme::SaveUserOverride(g_cachedPeHash,
-                                         static_cast<uint32_t>(newVersion),
-                                         nameUtf8.c_str());
+                persisted = Flamme::SaveUserOverride(g_cachedPeHash,
+                                                     static_cast<uint32_t>(newVersion),
+                                                     nameUtf8.c_str());
             }
 
             // ⛔ THE SOFT/LAZY ENVELOPES ARE LATCHED AND MUST BE DROPPED WITH THE VERSION, whichever
@@ -2453,7 +2455,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["is_user_override"]  = g_cachedIsUserOverride;
             data["is_low_confidence"] = g_cachedIsLowConfidence;
             data["auto_pending"]      = g_cachedAutoPending;
-            data["persisted"]         = persist;
+            data["persisted"]         = persisted;
             if (newVersion == 0)
                 data["auto_restore"]  = Flamme::AutoRestoreName(autoRestore);
             return Renge::MakeResponse(id, data).dump();
@@ -2477,6 +2479,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     "timeout_ms out of supported range (100..600000 or 0 to clear)").dump();
             }
 
+            bool persisted = false;   // as set_ue_version_override: what happened to the write
             if (persist) {
                 wchar_t exeW[MAX_PATH] = {};
                 GetModuleFileNameW(nullptr, exeW, MAX_PATH);
@@ -2492,7 +2495,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     WideCharToMultiByte(CP_UTF8, 0, fileName.c_str(), -1,
                                         nameUtf8.data(), sz, nullptr, nullptr);
                 }
-                Flamme::SaveInvokeTimeout(g_cachedPeHash, timeoutMs, nameUtf8.c_str());
+                persisted = Flamme::SaveInvokeTimeout(g_cachedPeHash, timeoutMs, nameUtf8.c_str());
             }
 
             // Apply immediately — already-blocked invokes keep their original timeout
@@ -2501,7 +2504,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             json data;
             data["invoke_timeout_ms"] = Stark::GetInvokeTimeoutMs();
-            data["persisted"]         = persist;
+            data["persisted"]         = persisted;
             return Renge::MakeResponse(id, data).dump();
         }
 

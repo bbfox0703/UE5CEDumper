@@ -1768,7 +1768,8 @@ static void Test_Mimic_CommandRequiresInit() {
 // Getting it wrong in the permissive direction publishes a TRUNCATED JSON document
 // over the only copy, and LoadHints then returns empty for every game at once —
 // pattern IDs, ueVersion, the user's version override and the invoke timeout.
-// Nothing compiles Flamme.cpp, so this predicate is the only assertable part.
+// dll_core_test compiles Flamme.cpp (the locked read-modify-write is tested there); this
+// predicate is pure, so it is pinned here as well.
 static void Test_Flamme_AtomicPublishGate() {
     using Flamme::ShouldPublishAtomicWrite;
 
