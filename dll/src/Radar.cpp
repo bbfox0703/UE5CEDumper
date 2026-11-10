@@ -1470,8 +1470,13 @@ void SessionManager::ExpireOldSessions(uint64_t owner) {
 }
 
 size_t SessionManager::DropOwner(uint64_t owner) {
-    (void)owner;
-    return 0;   // RED stub
+    std::lock_guard<std::mutex> lk(mu_);
+    size_t n = 0;
+    for (auto it = sessions_.begin(); it != sessions_.end();) {
+        if (it->second->owner == owner) { it = sessions_.erase(it); ++n; }
+        else ++it;
+    }
+    return n;
 }
 
 // Caller MUST hold mu_. Split out so RefineWith / End can sweep AFTER protecting
@@ -1984,8 +1989,13 @@ void GroupSessionManager::ExpireOldSessions(uint64_t owner) {
 }
 
 size_t GroupSessionManager::DropOwner(uint64_t owner) {
-    (void)owner;
-    return 0;   // RED stub
+    std::lock_guard<std::mutex> lk(mu_);
+    size_t n = 0;
+    for (auto it = sessions_.begin(); it != sessions_.end();) {
+        if (it->second->owner == owner) { it = sessions_.erase(it); ++n; }
+        else ++it;
+    }
+    return n;
 }
 
 // Caller MUST hold mu_ — see SessionManager::ExpireOldSessionsLocked. (audit #5 AB17)

@@ -276,6 +276,8 @@ builds' mailbox CMD_SET_DEBUG_CAMERA published the same thing as `INV_OUT_NONSTA
 
 CE-style First Scan / Next Scan workflow over UPROPERTY fields. Three commands form a session: `begin_value_scan` opens, `refine_value_scan` narrows, `end_value_scan` closes. Sessions auto-expire after 5 min idle.
 
+A session is the **connection's that began it** ([PIPE-PER-PROCESS-2026-11-06] Stage C, value and group scans alike): to any other connection its `session_id` names nothing, and every command on it answers `session_not_found`. The 5-minute idle sweep runs on that connection's own activity and reaps only its sessions; the connection's disconnect drops them; and a connection keeps at most 8 sessions of each kind, a Begin past that dropping its least recently used. Keep a session's commands on one connection (the UI keeps them all on its bulk lane).
+
 ```jsonc
 // First Scan — open a new session, return enriched candidates.
 // data_type: Int8/Int16/Int32/Int64/UInt8/UInt16/UInt32/UInt64/Float/Double/Bool

@@ -382,7 +382,9 @@ streaming `Utf8JsonReader` and/or smaller chunks (already noted in todo).
 - Watches are **per-connection**: `WatchEntry.owner` points at the registering `Connection`; the
   watch thread writes its event to that connection via `WriteLine` (old global `PushEvent` removed).
   `StopWatchesForConnection(owner)` stops+joins a connection's watches in its cleanup before the
-  `Connection` is freed. Sessions (`Radar::*::DropAll`) dropped only on the last disconnect.
+  `Connection` is freed. Sessions (`Radar::*::DropAll`) dropped only on the last disconnect
+  (until [PIPE-PER-PROCESS-2026-11-06] Stage C, 2026-11-10: a session is its connection's, and each
+  connection's cleanup drops its own with `DropOwner`).
 - `Stop()` closes `m_listenPipe` (unblock `ConnectNamedPipe`) and `CancelIoEx`'s each connection
   (unblock `ReadFile`/`WriteFile`; each thread then closes its **own** handle), stops watches, waits
   (bounded 5 s) for the registry to drain, then joins accept/monitor.

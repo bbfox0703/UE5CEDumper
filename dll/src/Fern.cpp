@@ -1372,9 +1372,9 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
 
     // Connection cleanup. Stop THIS connection's watches first (joins their
     // threads while the handle is still valid + owner pointer alive), then
-    // unregister and close our own handle, then release what this client process
-    // turned on. Drop value-scan sessions only when this was the LAST connection
-    // (sessions are bulk-lane-only; the UI's two lanes disconnect together on close).
+    // unregister and close our own handle, then drop this connection's scan
+    // sessions and release what this client process turned on. Only caches and
+    // diagnostics wait for the LAST connection.
     SetPhase(*conn, Connection::Phase::StoppingWatches);
     StopWatchesForConnection(conn.get());
 
@@ -1403,6 +1403,14 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     if (HANDLE th = conn->servingThread.exchange(nullptr, std::memory_order_acq_rel))
         CloseHandle(th);
 
+    // This connection's scan sessions go with it: no other connection can reach them (Radar's owner). Whoever stays
+    // connected keeps theirs. [PIPE-PER-PROCESS-2026-11-06] Stage C
+    const size_t valueSessions = Radar::SessionManager::Instance().DropOwner(conn->seq);
+    const size_t groupSessions = Radar::GroupSessionManager::Instance().DropOwner(conn->seq);
+    if (valueSessions || groupSessions)
+        LOG_INFO("PipeServer: connection #%llu left -- %zu value / %zu group scan session(s) dropped",
+                 (unsigned long long)conn->seq, valueSessions, groupSessions);
+
     // What this client process turned on goes with its last connection, and nothing else does. The last client to
     // leave used to turn See-through off for everyone, CE's record included (it then showed ticked over a feature that
     // was off), and to drop the LiveFuncs recording whoever had started it; a client that left while another stayed
@@ -1410,8 +1418,6 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     ReleaseOwnedBy(conn->ownerKey);
 
     if (last) {
-        Radar::SessionManager::Instance().DropAll();
-        Radar::GroupSessionManager::Instance().DropAll();
         Sense::Reset();   // restart diagnostics so the next session's numbers are its own
         // Ubel's per-UObject name cache is keyed by a raw address the engine recycles.
         // This teardown dropped every other per-session resource and left the one that
@@ -3968,7 +3974,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int totalCount = 0;
             json histogram = json::array();
             int classDistinct = 0;
-            Radar::SessionManager::Instance().ViewWith(conn->seq, sessionId,
+            const bool viewed = Radar::SessionManager::Instance().ViewWith(conn->seq, sessionId,
                 [&](const Radar::Session& sess) {
                     totalCount = static_cast<int>(sess.candidates.size());
                     const int n = (std::min)(pageSize, totalCount);
@@ -3980,6 +3986,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     classDistinct = static_cast<int>(hist.size());
                     histogram = HistogramToJson(hist, kClassHistogramMaxRows);
                 });
+            // A session gone between its Begin and this read (Stop's DropAll) is not answered as an empty one.
+            if (!viewed) return Renge::MakeError(id, "session_not_found").dump();
 
             json data;
             data["session_id"]      = sessionId;
@@ -4340,7 +4348,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int totalCount = 0;
             json histogram = json::array();
             int classDistinct = 0;
-            Radar::GroupSessionManager::Instance().QueryWith(
+            const bool viewed = Radar::GroupSessionManager::Instance().QueryWith(
                 conn->seq, sessionId, "", Radar::SortKey::ScanOrder, false, std::vector<std::string>{},
                 [&](const Radar::GroupSession& sess, const std::vector<uint32_t>& order) {
                     totalCount = static_cast<int>(sess.candidates.size());
@@ -4354,6 +4362,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     classDistinct = static_cast<int>(hist.size());
                     histogram = HistogramToJson(hist, kClassHistogramMaxRows);
                 });
+            // As begin_value_scan: a session gone in between is not answered as an empty one.
+            if (!viewed) return Renge::MakeError(id, "session_not_found").dump();
 
             json data;
             data["session_id"]      = sessionId;

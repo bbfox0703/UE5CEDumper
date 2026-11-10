@@ -17,10 +17,11 @@
 //   end_value_scan     → SessionManager::End drops the session
 //
 // Idle sessions are reaped by an ACTIVITY-TRIGGERED lazy sweep, not a wall clock
-// (audit #5 AB17): every Begin / RefineWith / End sweeps sessions idle past
-// kScanSessionIdleExpiry (a Refine/End protects its OWN session first). The real
-// backstop for a client that goes fully quiet is the last-client-disconnect
-// DropAll (Fern) — a single session left by a connected-but-idle client is bounded
+// (audit #5 AB17): every Begin / RefineWith / End sweeps its OWNER's sessions idle
+// past kScanSessionIdleExpiry (a Refine/End protects its own session first). A
+// session is its connection's (kMaxSessionsPerOwner), so the backstop for a client
+// that goes fully quiet is its own disconnect, when Fern drops that connection's
+// sessions — a session left by a connected-but-idle client is bounded
 // by the connection, not by the 300s (a wall-clock sweep would have to live on
 // Fern's pipe-monitor thread; the read/query path is deliberately NOT swept, being
 // hit on every page). SessionManager holds a global mutex; ownership is via
@@ -865,7 +866,8 @@ std::vector<std::pair<std::string, int>> BuildClassHistogram(
     const std::vector<FieldDescriptor>& descriptors);
 
 // Idle-expiry for a scan session — dropped after this long without a Begin/Refine
-// so a misbehaving client can't leak candidate memory. Shared by both the single
+// so a client that abandons a session without an End does not keep its candidate
+// memory for as long as it stays connected. Shared by both the single
 // (SessionManager) and group (GroupSessionManager) session managers.
 inline constexpr std::chrono::seconds kScanSessionIdleExpiry{300};
 
@@ -885,10 +887,9 @@ inline constexpr size_t kMaxSessionsPerOwner = 8;
 template <class SessionMap>
 size_t ReapIdleOwned(SessionMap& sessions, uint64_t owner,
                      std::chrono::steady_clock::time_point now, std::chrono::steady_clock::duration expiry) {
-    (void)owner;   // RED stub: today's sweep reaps anyone's
     size_t n = 0;
     for (auto it = sessions.begin(); it != sessions.end();) {
-        if (now - it->second->lastUse > expiry) { it = sessions.erase(it); ++n; }
+        if (it->second->owner == owner && now - it->second->lastUse > expiry) { it = sessions.erase(it); ++n; }
         else ++it;
     }
     return n;
@@ -898,8 +899,21 @@ size_t ReapIdleOwned(SessionMap& sessions, uint64_t owner,
 // `cap` remain, and returns how many went.
 template <class SessionMap>
 size_t EvictOwnedBeyond(SessionMap& sessions, uint64_t owner, size_t cap) {
-    (void)sessions; (void)owner; (void)cap;
-    return 0;   // RED stub: no cap
+    size_t n = 0;
+    for (;;) {
+        size_t owned = 0;
+        auto oldest = sessions.end();
+        for (auto it = sessions.begin(); it != sessions.end(); ++it) {
+            if (it->second->owner != owner) continue;
+            ++owned;
+            if (oldest == sessions.end() || it->second->lastUse < oldest->second->lastUse
+                || (it->second->lastUse == oldest->second->lastUse && it->first < oldest->first))
+                oldest = it;
+        }
+        if (owned < cap || oldest == sessions.end()) return n;
+        sessions.erase(oldest);
+        ++n;
+    }
 }
 
 class SessionManager {
@@ -916,8 +930,8 @@ public:
                    std::vector<InstanceRecord>  instances);
 
     // Run `fn(Session&)` under the manager's lock. Returns false if the
-    // session doesn't exist (caller should map to wire error
-    // "session_not_found"). `fn` may mutate the session's candidates
+    // session doesn't exist or another connection began it (caller should map
+    // to wire error "session_not_found"). `fn` may mutate the session's candidates
     // vector (typical Refine behavior is to prune entries that no longer
     // match); the descriptor / instance pools are append-only and should
     // be treated as read-only by the callback.
@@ -1029,8 +1043,8 @@ private:
 
     // mu_ held. A session another connection began is not found: its id names nothing to this one.
     std::unordered_map<uint64_t, std::unique_ptr<Session>>::iterator FindOwnedLocked(uint64_t owner, uint64_t sessionId) {
-        (void)owner;   // RED stub: any connection finds any session
-        return sessions_.find(sessionId);
+        auto it = sessions_.find(sessionId);
+        return (it != sessions_.end() && it->second->owner != owner) ? sessions_.end() : it;
     }
 };
 
@@ -1410,8 +1424,8 @@ private:
     // mu_ held — see SessionManager::FindOwnedLocked.
     std::unordered_map<uint64_t, std::unique_ptr<GroupSession>>::iterator FindOwnedLocked(uint64_t owner,
                                                                                           uint64_t sessionId) {
-        (void)owner;   // RED stub
-        return sessions_.find(sessionId);
+        auto it = sessions_.find(sessionId);
+        return (it != sessions_.end() && it->second->owner != owner) ? sessions_.end() : it;
     }
 };
 
