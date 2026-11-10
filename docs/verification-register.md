@@ -244,6 +244,27 @@ backlog moves here **byte-identical** ([`working-lessons.md`](working-lessons.md
 > larger now. **Never read a count out of this block — derive it**:
 > `grep -c '^### ' docs/pending-verification_zh-TW.md` minus the two `###` under 「怎麼用這份清單」.
 
+### ⬜ A pipe per game process — what its live checks did not reach `[PIPE-PER-PROCESS-2026-11-06]`
+
+Built in build 3695 (2026-11-10), Stage A of todo.md `[PIPE-PER-PROCESS-2026-11-06]`, and proven live on DumperTest
+Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 3695. Not reached:
+
+1. **Another process that created a game's pipe name first.** Fern refuses to serve beside it (ERROR once, retried
+   each second), and the UI disconnects when the pid that answers is not the game's. Unit-tested
+   (`Voll::ClassifyFirstInstance`; `Another_process_answering_for_the_game_is_disconnected`). Acceptance: a stub
+   creates `\\.\pipe\UE5DumpBfx_<pid>` for a game's pid before the DLL is injected; pipe-0.log logs the ERROR and
+   serves nothing until the stub exits, then logs "serving"; the UI never lands on the stub.
+2. **A restart while this copy's own connections from before the stop still hold their instances**
+   (`UE5_StartPipeServer`'s `HasStragglerConnections` branch). It needs a Stop whose 5 s drain times out (a handler
+   inside a long command) and then a CE re-tick. Acceptance: init-0.log logs "restarting the server beside them",
+   pipe-0.log logs the shared-name WARN, and the UI connects.
+3. **A second copy's own log lines.** A second copy of the DLL in one process could not write its logs (the first
+   copy holds the files). Its deferral was proven from the first copy's pipe log instead: 0 new connections in the
+   15 s after an instance freed, against 22 in 10 s from the pre-fix copy. Its "deferring" line was never seen.
+4. **A proxy-loaded game, and an elevated game.** Only injection was driven, non-elevated.
+5. **Cheat Engine itself.** The mailbox was driven by `mailbox_poke.py`; the changed CE texts (the pipe name, the
+   INIT_FAILED reasons) were not displayed in CE.
+
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 
 Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT
@@ -400,7 +421,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`12` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`13` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:

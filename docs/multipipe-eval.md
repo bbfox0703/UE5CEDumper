@@ -685,6 +685,8 @@ i.e. every removed entry was a group). 4,792 leaves gained their parent's label 
 > **2026-11-06:** "the real fix, not built" below is planned. See todo.md `[PIPE-PER-PROCESS-2026-11-06]` Stage A:
 > `UE5DumpBfx_<pid>`, a UI connection list, and a refusal when only an old DLL's pipe exists. It also measured how a
 > second server on the name arises (a startup probe reading `ERROR_PIPE_BUSY` as "no pipe").
+>
+> **2026-11-10: built in build 3695** (dev-log 3695). The hazard below describes builds before it.
 
 Separate from head-of-line blocking, and cheaper to hit: `\.\pipe\UE5DumpBfx` is ONE
 well-known name with `maxInstances = 3`. **Every injected game serves that same name.** A

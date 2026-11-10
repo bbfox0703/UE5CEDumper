@@ -4,7 +4,9 @@ Open work only. **Read this when deciding what to do next.**
 
 > 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
 >
-> ▶ **Current programme:** none active (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
+> ▶ **Current programme:** `[PIPE-PER-PROCESS-2026-11-06]`, one stage at a time (2026-11-10): Stage A shipped in build
+> 3695; Stage B (6 pipe slots + the scan-worker budget) waits for the maintainer's go-ahead. Before it, none active
+> (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
 > active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
 > open bugs one after another) ended with build 3686 (dev-log 3671–3686). Census Table A holds 0 HIGH / 0 MED and five
@@ -85,7 +87,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **12 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **13 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -402,8 +404,10 @@ the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVE
 
 ## 🧭 Maintainer request 2026-11-06 — a pipe per game process, then more pipe slots, then multi-client hardening `[PIPE-PER-PROCESS-2026-11-06]`
 
-**Status: design direction only. Nothing is built** (maintainer, 2026-11-06: plan only, no implementation yet). It
-comes before `[UI-MCP-AUTOMATION-2026-11-06]`, which depends on it. Evidence: a read-only review on 2026-11-06 (three
+**Status: Stage A shipped in build 3695 (2026-11-10; dev-log 3695). Stages B, C and D are design direction only,
+not started** (maintainer, 2026-11-06: one stage at a time, A and B as separate builds). What Stage A's live checks
+did not reach is verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`. It comes before
+`[UI-MCP-AUTOMATION-2026-11-06]`, which depends on it. Evidence: a read-only review on 2026-11-06 (three
 readers plus an adversarial verifier). Windows' named-pipe rules were measured with ctypes on 10.0.26300; the scratch
 is `out/pipecap/`, not committed.
 
@@ -419,7 +423,24 @@ is `out/pipecap/`, not committed.
 bug: a full pipe logged an ERROR once a second. That was fixed 2026-08-19 by Voll. The 3 is only "2 UI lanes + 1
 spare" (Fern.h), and no gate or test pins it.
 
-### Stage A — a pipe name per game process
+### Stage A — a pipe name per game process ✅ build 3695
+
+Built as planned below, with these differences, found while building it:
+
+- **A connect by pid is dialled even when another game serves the legacy pipe.** That pipe may be another game's.
+  Only when the named game's own pipe never comes does the error name the legacy pipe as the likely reason. The
+  no-pid Connect still refuses the legacy pipe alone, with the message and no list.
+- **Connecting to another game while connected switches to it** (disconnect first).
+- **The self-check after Fern's first create:** `GetNamedPipeServerProcessId` on a SERVER handle names the
+  name's first creator, and a successful create reports `ERROR_ALREADY_EXISTS` on a taken name (measured
+  2026-11-10). Another process that created the name first gets no server beside it. Instances already in this
+  process are served, with a WARN.
+- **The deferring watchers ask with `WaitNamedPipeW`**, which does not connect: opening the pipe to ask connected to
+  the serving copy twice a second. A restart with this copy's own straggler connections is not deferred.
+- **The competing-dumper-host banner was retired**: its premise, the shared name, is gone.
+- **CE: no change in behaviour.** Only the text naming the pipe, and the INIT_FAILED reasons, changed.
+
+The plan as written:
 
 - **Name:** `UE5DumpBfx_<pid>`. The new DLL serves no legacy name. The new UI does not serve the old: a protocol break
   by decision.
@@ -511,12 +532,9 @@ for anything that writes or toggles, with a direct read-only client acceptable a
 - Tools take the first pipe and offer `--pid`.
 - CE untouched.
 
-**Left for implementation:** stale code comments.
-
-- Fern.h's cap comment.
-- `LaneRoutingPipeClient.cs`'s "must be bulk because the class caches race".
-- The `firstConn` remarks in Tot / Frieren / Genau / Mimic.
-- Fern.cpp's note that Aura's workers read the global cancel flag; they now adopt the caller's binding.
+**Stale code comments: rewritten in build 3695.** Fern.h's cap comment, `LaneRoutingPipeClient.cs`'s "must be bulk
+because the class caches race", the `firstConn` remarks in Tot / Frieren / Genau / Mimic, and Fern.cpp's note that
+Aura's workers read the global cancel flag.
 
 ## 🧭 Idea 2026-11-06 — let an AI or a script drive the UI through a named pipe + MCP `[UI-MCP-AUTOMATION-2026-11-06]`
 

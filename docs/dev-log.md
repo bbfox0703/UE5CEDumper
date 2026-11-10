@@ -27,6 +27,51 @@ builds ≤696 in
 
 -----
 
+## 2026-11-10 (build 3695) — Each game has its own pipe, and Connect names the game `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **The DLL serves `\\.\pipe\UE5DumpBfx_<pid>`, one pipe per game.** Every game used to serve the same
+  `\\.\pipe\UE5DumpBfx`, and Windows hands a client the oldest listening one, so with two games running the UI, or
+  even one of its two lanes, could reach the wrong game. The old name is no longer served: a protocol break by
+  decision.
+- **Connect in the UI:**
+  - one game: connects at once, as before;
+  - several games: a list showing each game's EXE name, its window title and its PID;
+  - a game running an **old** UE5Dumper DLL (usually a proxy never updated): shown in the list with a warning, and it
+    cannot be connected to. When it is the only one, there is no list: a message says the game runs an old DLL and
+    how to fix it (close it, Update All on the Proxy Deploy tab, start it again);
+  - **Inject into running game** connects to that game by its PID. Connecting to another game while connected
+    switches to it.
+- **The red "more than one process has the dumper loaded" banner is gone.** It warned that the shared name made the
+  game you reached first-come-first-served, which is no longer true. After connecting, the UI checks that the game
+  that answered is the one it asked for.
+- **Python rigs:** `pipe_client.py` takes `--pid` (or `UE5DUMP_PID`); with several games it uses the lowest PID,
+  lists them all and warns; with only an old DLL's pipe it refuses and says why. `tools/verify/legacy_pipe_stub.py`
+  puts up the old name for testing.
+- **A second copy of the DLL in one game** (a stale proxy beside a fresh injection) no longer starts a second server
+  on the same name when every pipe slot is busy, and while it waits it no longer connects to the first copy twice a
+  second.
+- **Cheat Engine:** no change in behaviour. Its messages name the new pipe, and the "pipe server failed" message now
+  gives the real causes (the record unticked during the scan, or ticked again too soon).
+- Tests: red, then green, for the DLL (Voll's name, probe, first instance, watcher), the UI (the connect plan, the
+  list, the refusal, switching games) and `pipe_client --selftest`. C# 7513 passed, 0 failed, 1 skipped
+  (`DUMPDIFF_REAL_DIR` unset); headless 71; dll_helpers_test 3856, dll_core_test 1487, grausam_window_test 22,
+  sein_retention_test 30, 0 failures; 39 gates passed. A review workflow (three reviewers, a skeptic per finding)
+  found five defects in the first version, each fixed red then green. Live, AOT UI on DumperTest Shipping (UE 5.4)
+  and DumperTest58 Shipping (UE 5.8):
+  - Inject into running game connected by PID (`UE5DumpBfx_50208`, both lanes) after 2 s; Connect with one game
+    connected without a list; with no game, "No game is running UE5Dumper";
+  - with the old name up (`legacy_pipe_stub.py`): beside a game, the list showed the warning row, which disabled
+    Connect; alone, the message and no list; neither the UI nor `pipe_client` ever opened it;
+  - two games: the list showed both with EXE names and window titles, and each choice connected to that game
+    (UE504 24,530 objects / UE508 34,570); `pipe_client` with no PID warned and used the lowest, `--pid` and
+    `UE5DUMP_PID` chose;
+  - CE mailbox (`mailbox_poke.py`) 10/10;
+  - a second copy injected while every slot was busy: 0 connections to the first copy in 15 s, against 22 in 10 s
+    from the pre-fix copy.
+
+  Not live: verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`. AOT UI 61,735,424 bytes; UE5Dumper.dll
+  3,579,904 bytes.
+
 ## 2026-11-06 (no build change) — Two old explanations of the pipe's 3-client limit were wrong `[PIPE-PER-PROCESS-2026-11-06]`
 
 - **`[PIPEBUSY-2026-08-18]` is not why the DLL's pipe takes at most 3 clients.** That tag recorded a logging bug: a
