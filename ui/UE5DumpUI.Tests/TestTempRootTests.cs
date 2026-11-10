@@ -155,7 +155,7 @@ public class TestTempRootTests : IDisposable
         var ro = Path.Combine(dead, "ro.txt");
         File.WriteAllText(ro, "x");
         File.SetAttributes(ro, FileAttributes.ReadOnly);
-        Assert.True(MakeJunction(Path.Combine(dead, "link"), target));
+        Assert.True(TestJunction.Make(Path.Combine(dead, "link"), target));
 
         Assert.Single(TestTempRoot.SweepDeadRuns(root, DateTime.UtcNow));
 
@@ -176,7 +176,7 @@ public class TestTempRootTests : IDisposable
         File.WriteAllText(ours, "x");
         File.SetAttributes(ours, FileAttributes.ReadOnly);
         var link = Path.Combine(run, "link");
-        Assert.True(MakeJunction(link, target));
+        Assert.True(TestJunction.Make(link, target));
 
         TestTempRoot.ClearReadOnly(run);
 
@@ -193,31 +193,13 @@ public class TestTempRootTests : IDisposable
         var target = Directory.CreateDirectory(Path.Combine(_sandbox, "elsewhere")).FullName;
         File.WriteAllText(Path.Combine(target, "precious.txt"), "keep");
         var link = Path.Combine(temp, "ue5-qmark");
-        Assert.True(MakeJunction(link, target));
+        Assert.True(TestJunction.Make(link, target));
         Directory.SetLastWriteTimeUtc(link, now - TimeSpan.FromDays(30));
 
         Assert.Empty(TestTempRoot.SweepLegacy(temp, now));
         Assert.True(Directory.Exists(link));
         Assert.True(File.Exists(Path.Combine(target, "precious.txt")));
         Directory.Delete(link);   // unlinks; the target stays
-    }
-
-    // `mklink /J` as VolumeRootTests makes its junction: unprivileged, unlike a symlink.
-    private static bool MakeJunction(string link, string target)
-    {
-        var psi = new System.Diagnostics.ProcessStartInfo("cmd.exe")
-        {
-            Arguments = $"/c mklink /J \"{link}\" \"{target}\"",
-            UseShellExecute = false,
-            CreateNoWindow = true,
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-        };
-        using var p = System.Diagnostics.Process.Start(psi);
-        if (p is null) return false;
-        p.WaitForExit(20_000);
-        return p.HasExited && p.ExitCode == 0
-            && File.GetAttributes(link).HasFlag(FileAttributes.ReparsePoint);
     }
 
     private static string MakeRun(string root, string name, bool ownerFile)
