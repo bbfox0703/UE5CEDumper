@@ -190,12 +190,77 @@ public sealed class PipePerProcessConnectTests
     }
 
     [Fact]
-    public async Task A_named_game_with_only_the_legacy_pipe_up_is_refused()
+    public async Task A_named_game_whose_pipe_never_comes_beside_the_legacy_pipe_is_explained()
     {
-        var rig = new Rig("UE5DumpBfx");   // the game already ran an old DLL: its pipe never appears
+        var rig = new Rig("UE5DumpBfx");   // perhaps this game runs the old DLL: its own pipe never appears
+        rig.Pipe.Listening = new HashSet<string>();
         await rig.Vm.ConnectToAsync(55);
-        Assert.Empty(rig.Pipe.Dialed);
-        Assert.Equal(new[] { Res.Get("str.Connect.LegacyTitle") }, rig.Notices);
+        Assert.Equal(new[] { "UE5DumpBfx_55" }, rig.Pipe.Dialed);   // dialled: the legacy pipe may be another game's
+        Assert.Empty(rig.Notices);
+        Assert.Equal(Res.Format("str.Connect.PidUnlistedBesideLegacy", 55), rig.Vm.ErrorMessage);
+        Assert.False(rig.Vm.IsConnected);
+    }
+
+    [Fact]
+    public async Task A_named_game_beside_another_games_legacy_pipe_is_still_dialled()
+    {
+        // Another game runs an old proxy; the named game runs the current DLL and opens its pipe while it is dialled.
+        var rig = new Rig("UE5DumpBfx");
+        rig.Dump.AnsweringPid = 55;
+        await rig.Vm.ConnectToAsync(55);
+        Assert.Equal(new[] { "UE5DumpBfx_55" }, rig.Pipe.Dialed);
+        Assert.Empty(rig.Notices);
+        Assert.True(rig.Vm.IsConnected);
+    }
+
+    [Fact]
+    public async Task Connecting_to_another_game_while_connected_switches_to_it()
+    {
+        var rig = new Rig("UE5DumpBfx_100", "UE5DumpBfx_200");
+        rig.Dump.AnswerFromConnection(rig.Pipe);
+        rig.Pick = _ => 100;
+        await rig.Vm.ConnectCommand.ExecuteAsync(null);
+        Assert.True(rig.Vm.IsConnected);
+
+        await rig.Vm.ConnectToAsync(200);   // Proxy Deploy: a game that already runs the DLL, picked to inject
+        Assert.Equal(new[] { "UE5DumpBfx_100", "UE5DumpBfx_200" }, rig.Pipe.Dialed);
+        Assert.Equal(1, rig.Pipe.Disconnects);   // the first game, once, before dialling the second
+        Assert.Null(rig.Vm.ErrorMessage);
+        Assert.True(rig.Vm.IsConnected);
+    }
+
+    [Fact]
+    public async Task Connecting_to_the_connected_game_again_keeps_its_connection()
+    {
+        var rig = new Rig("UE5DumpBfx_100");
+        rig.Dump.AnsweringPid = 100;
+        await rig.Vm.ConnectCommand.ExecuteAsync(null);
+        await rig.Vm.ConnectToAsync(100);
+        Assert.Equal(0, rig.Pipe.Disconnects);
+        Assert.True(rig.Vm.IsConnected);
+        Assert.Null(rig.Vm.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task A_connect_by_pid_runs_as_the_Connect_command_which_holds_the_button()
+    {
+        var rig = new Rig();
+        rig.Dump.AnsweringPid = 55;
+        var gate = new TaskCompletionSource();
+        rig.Pipe.Gate = gate.Task;
+        var running = rig.Vm.ConnectCommand.ExecuteAsync(55);
+        Assert.True(rig.Vm.ConnectCommand.IsRunning);
+        Assert.False(((System.Windows.Input.ICommand)rig.Vm.ConnectCommand).CanExecute(null));   // the toolbar button
+        gate.SetResult();
+        await running;
+        Assert.Equal(new[] { "UE5DumpBfx_55" }, rig.Pipe.Dialed);
+    }
+
+    [Fact]
+    public void The_post_inject_connect_is_wired_through_the_Connect_command()
+    {
+        var vm = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"));
+        Assert.Contains("ProxyDeploy.RequestConnectAsync = pid => ConnectCommand.ExecuteAsync(pid);", vm);
     }
 
     [Fact]
@@ -296,16 +361,27 @@ public sealed class PipePerProcessConnectTests
         public List<string> Dialed { get; } = new();
         public int Disconnects { get; private set; }
         public bool IsConnected { get; private set; }
+        /// <summary>When set, only these names answer; any other times out, as NamedPipeClientStream does.</summary>
+        public HashSet<string>? Listening { get; set; }
+        /// <summary>When set, a connect waits for it.</summary>
+        public Task? Gate { get; set; }
         public event Action<bool>? ConnectionStateChanged { add { } remove { } }
         public event Action<JsonObject>? EventReceived { add { } remove { } }
         public event Action<PipeLogEntry>? Activity { add { } remove { } }
         public event Action<bool>? GameThreadStalledChanged { add { } remove { } }
-        public Task ConnectAsync(string pipeName, CancellationToken ct = default)
+        public async Task ConnectAsync(string pipeName, CancellationToken ct = default)
         {
             Dialed.Add(pipeName);
+            if (Gate is not null) await Gate;
+            // As PipeClient: a live connection is kept, whatever name is asked for.
+            if (IsConnected) return;
+            if (Listening is not null && !Listening.Contains(pipeName))
+                throw new TimeoutException("The operation has timed out.");
             IsConnected = true;
-            return Task.CompletedTask;
+            ConnectedTo = pipeName;
         }
+        /// <summary>The game the live connection reached, which may not be the last name asked for.</summary>
+        public string? ConnectedTo { get; private set; }
         public Task DisconnectAsync()
         {
             Disconnects++;
@@ -321,8 +397,12 @@ public sealed class PipePerProcessConnectTests
     /// <see cref="AnsweringPid"/> as the process that answered.</summary>
     private sealed class PidDump : StubDumpService
     {
+        private Func<int>? _answer;
         public int AnsweringPid { get; set; }
+        /// <summary>Answer with the pid of the game the live connection reached, as the DLL does.</summary>
+        public void AnswerFromConnection(RecordingPipe pipe)
+            => _answer = () => PipeTargets.TryParsePid(pipe.ConnectedTo, out int pid) ? pid : 0;
         public override Task<EngineState> InitAsync(CancellationToken ct = default)
-            => Task.FromResult(new EngineState { ProcessId = AnsweringPid, GObjectsAddr = "0x0" });
+            => Task.FromResult(new EngineState { ProcessId = _answer?.Invoke() ?? AnsweringPid, GObjectsAddr = "0x0" });
     }
 }
