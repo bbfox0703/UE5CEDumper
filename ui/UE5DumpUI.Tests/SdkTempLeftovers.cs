@@ -74,7 +74,7 @@ internal static class SdkTempLeftovers
     private sealed record FolderInfo(string Path, DateTime CreatedUtc, bool Deletable);
 
     /// <summary>What <see cref="Sweep"/> would remove; deletes nothing. Never throws.</summary>
-    internal static Plan Find(string temp, string repoRoot, DateTime nowUtc)
+    internal static Plan Find(string temp, string repoRoot, DateTime nowUtc, string? keptLogsFile = null)
     {
         try
         {
@@ -87,7 +87,7 @@ internal static class SdkTempLeftovers
     }
 
     /// <summary>Removes what <see cref="Find"/> names; returns what it removed. Never throws.</summary>
-    internal static Plan Sweep(string temp, string repoRoot, DateTime nowUtc)
+    internal static Plan Sweep(string temp, string repoRoot, DateTime nowUtc, string? keptLogsFile = null)
     {
         var folders = new List<string>();
         var logs = new List<string>();

@@ -258,6 +258,98 @@ public class SdkTempLeftoversTests : IDisposable
         Assert.Empty(plan.Logs);
     }
 
+    // ---- the logs kept for good are remembered, so a run reads only what is new ----------------------------------
+
+    private string Kept => Path.Combine(_sandbox, "kept.txt");
+
+    private HashSet<string> Remembered()
+        => File.Exists(Kept) ? File.ReadAllLines(Kept).ToHashSet(StringComparer.OrdinalIgnoreCase) : new();
+
+    [Fact]
+    public void AnotherReposFinishedLog_IsRemembered_AndNeverReadAgain()
+    {
+        var log = Log(_old, "dotnet build tests/AOBMaker.Core.Tests -v q -nologo");
+
+        SdkTempLeftovers.Sweep(_temp, _repo, _now, Kept);
+        Assert.Contains(Path.GetFileName(log), Remembered());
+
+        // Read again, it would now be ours and go: remembered, it is not read, and stays.
+        File.WriteAllText(log, Lines(_old, OurBuild, ended: true, extra: null));
+        File.SetCreationTimeUtc(log, _old);
+        File.SetLastWriteTimeUtc(log, _old);
+        SdkTempLeftovers.Sweep(_temp, _repo, _now, Kept);
+        Assert.True(File.Exists(log));
+    }
+
+    [Fact]
+    public void ALogThatRecordedWork_IsRemembered()
+    {
+        var log = Log(_old, OurBuild, extraLines: new[] { "ExtractManifestAsync: Extracting manifest" });
+
+        SdkTempLeftovers.Sweep(_temp, _repo, _now, Kept);
+
+        Assert.Contains(Path.GetFileName(log), Remembered());
+    }
+
+    [Fact]
+    public void ALogStillRunning_OrUnderADayOld_IsNotRemembered()
+    {
+        var running = Log(_old, "dotnet build tests/AOBMaker.Core.Tests -v q -nologo", ended: false);
+        var young = Log(_now - TimeSpan.FromHours(1), "dotnet build tests/AOBMaker.Core.Tests -v q -nologo");
+
+        SdkTempLeftovers.Sweep(_temp, _repo, _now, Kept);
+
+        Assert.DoesNotContain(Path.GetFileName(running), Remembered());
+        Assert.DoesNotContain(Path.GetFileName(young), Remembered());
+    }
+
+    [Fact]
+    public void OurLog_IsNotRemembered_ItGoes()
+    {
+        var log = Log(_old, OurBuild);
+
+        SdkTempLeftovers.Sweep(_temp, _repo, _now, Kept);
+
+        Assert.False(File.Exists(log));
+        Assert.DoesNotContain(Path.GetFileName(log), Remembered());
+    }
+
+    [Fact]
+    public void ARememberedLogThatIsGone_IsForgotten_AndALineThatIsNoLogNameIsDropped()
+    {
+        var log = Log(_old, "dotnet build tests/AOBMaker.Core.Tests -v q -nologo");
+        File.WriteAllLines(Kept, new[]
+        {
+            "Microsoft.NET.Workload_9_20261101_120000_000.log",   // no such file any more
+            @"..\..\Windows\win.ini", "", "not a log name",
+        });
+
+        SdkTempLeftovers.Sweep(_temp, _repo, _now, Kept);
+
+        Assert.Equal(new[] { Path.GetFileName(log) }, File.ReadAllLines(Kept));
+    }
+
+    [Fact]
+    public void FindReadsWhatIsRemembered_ButNeverWritesIt()
+    {
+        Log(_old, "dotnet build tests/AOBMaker.Core.Tests -v q -nologo");
+
+        SdkTempLeftovers.Find(_temp, _repo, _now, Kept);
+
+        Assert.False(File.Exists(Kept));
+    }
+
+    [Fact]
+    public void AMemoryThatCannotBeRead_IsNoMemory()
+    {
+        Directory.CreateDirectory(Kept);   // a folder where the file should be
+        var log = Log(_old, OurBuild);
+
+        SdkTempLeftovers.Sweep(_temp, _repo, _now, Kept);
+
+        Assert.False(File.Exists(log));
+    }
+
     // ---- fixtures: the shapes measured in %TEMP% on 2026-11-11 ----------------------------------------------------
 
     private string Log(DateTime createdUtc, string command, bool ended = true, string[]? extraLines = null)
