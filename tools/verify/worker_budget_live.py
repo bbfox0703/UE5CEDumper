@@ -58,7 +58,7 @@ k32.Thread32Next.argtypes = [wintypes.HANDLE, ctypes.POINTER(THREADENTRY32)]
 k32.CloseHandle.argtypes = [wintypes.HANDLE]
 
 
-def thread_count(pid: int) -> int:
+def thread_count_toolhelp(pid: int) -> int:
     snap = k32.CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0)
     if snap == INVALID:
         return -1
@@ -74,6 +74,34 @@ def thread_count(pid: int) -> int:
         return n
     finally:
         k32.CloseHandle(snap)
+
+
+# NtQuerySystemInformation(SystemProcessInformation): one call lists every process with its thread count, far faster
+# than a Toolhelp thread snapshot (measured: 7 Toolhelp samples in 2.4 s). x64 SYSTEM_PROCESS_INFORMATION offsets:
+# NextEntryOffset 0x00, NumberOfThreads 0x04, NumberOfThreadsHighWatermark 0x14, UniqueProcessId 0x50.
+ntdll = ctypes.WinDLL("ntdll")
+ntdll.NtQuerySystemInformation.argtypes = [ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong,
+                                           ctypes.POINTER(ctypes.c_ulong)]
+_spi_buf = ctypes.create_string_buffer(8 * 1024 * 1024)
+
+
+def thread_counts(pid: int) -> tuple[int, int]:
+    """(threads now, the process's thread high-water mark), or (-1, -1)."""
+    ret = ctypes.c_ulong(0)
+    if ntdll.NtQuerySystemInformation(5, _spi_buf, len(_spi_buf), ctypes.byref(ret)) != 0:
+        return -1, -1
+    raw, off = _spi_buf.raw, 0
+    while True:
+        nxt, nthreads = int.from_bytes(raw[off:off + 4], "little"), int.from_bytes(raw[off + 4:off + 8], "little")
+        if int.from_bytes(raw[off + 0x50:off + 0x58], "little") == pid:
+            return nthreads, int.from_bytes(raw[off + 0x14:off + 0x18], "little")
+        if nxt == 0:
+            return -1, -1
+        off += nxt
+
+
+def thread_count(pid: int) -> int:
+    return thread_counts(pid)[0]
 
 
 def main() -> int:
@@ -109,10 +137,13 @@ def main() -> int:
             samples.append(thread_count(a.pid))
             time.sleep(0.01)
 
-    base = min(thread_count(a.pid) for _ in range(20))
+    # The baseline is taken with the clients CONNECTED: each connection has its own DLL thread, which exists whether or
+    # not a walk runs, so it belongs to the baseline, not to what the walks add.
     clients = [PipeClient(pid=a.pid, timeout=300).connect() for _ in range(a.clients)]
     time.sleep(0.5)
-    base = min(base, min(thread_count(a.pid) for _ in range(20)))
+    base = min(thread_count(a.pid) for _ in range(20))
+    # The process's own record of its most threads ever: a peak the sampler cannot miss, when the load raises it.
+    hwm_before = thread_counts(a.pid)[1]
     errors, done = [], [0]
     go = threading.Barrier(a.clients + 1)
 
@@ -150,6 +181,11 @@ def main() -> int:
             pass
     good = [s for s in samples if s >= 0]
     peak = max(good) if good else -1
+    hwm_after = thread_counts(a.pid)[1]
+    if hwm_after > hwm_before:
+        peak = max(peak, hwm_after)   # the load set a new record: that record is the true peak
+    print(f"thread high-water mark: {hwm_before} before, {hwm_after} after"
+          + ("" if hwm_after > hwm_before else " (not raised: the sampled peak stands)"))
     bound = budget + a.clients
     print(f"{done[0]} walks by {a.clients} clients in {elapsed:.1f} s, {len(errors)} error(s); "
           f"{len(good)} thread samples")
