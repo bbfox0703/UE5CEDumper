@@ -914,6 +914,8 @@ void Fern::AcceptLoop() {
     // name (Voll::ClassifyFirstInstance). Accept-thread-local, like the latch above.
     bool firstInstance = true;
     bool foreignLogged = false;
+    // The limit in force, read from the first instance's handle (GetNamedPipeInfo below); this build's until then.
+    DWORD capInForce = kMaxPipeInstances;
     while (m_running.load()) {
         // Create a new pipe instance (multi-instance: up to kMaxPipeInstances
         // concurrent clients, so the UI's interactive + bulk lanes can connect
@@ -947,7 +949,7 @@ void Fern::AcceptLoop() {
                     // All instances busy — the resource cap doing its job. Say so ONCE;
                     // the 1 s retry below then waits silently for a slot to free.
                     LOG_INFO("PipeServer: all %lu pipe instances in use, waiting for a free slot",
-                             (unsigned long)kMaxPipeInstances);
+                             (unsigned long)capInForce);
                     break;
                 case Voll::AcceptLog::Error:
                     // A genuinely unexpected failure — always surfaced, never suppressed by
@@ -990,6 +992,21 @@ void Fern::AcceptLoop() {
                     break;
             }
             if (foreignLogged) LOG_INFO("PipeServer: the other process's instances are gone -- serving %s", name.c_str());
+            // The limit in force is the name's first creator's: a create asking for more on a name another copy made
+            // succeeds and keeps the old limit (measured 2026-11-10). Read it from the handle, so the log says what a
+            // client will meet rather than what this build asked for. [PIPE-PER-PROCESS-2026-11-06] Stage B
+            DWORD inForce = 0;
+            if (GetNamedPipeInfo(pipe, nullptr, nullptr, nullptr, &inForce)) {
+                capInForce = inForce;
+                if (inForce == kMaxPipeInstances) {
+                    LOG_INFO("PipeServer: %s takes %lu clients at once", name.c_str(),
+                             static_cast<unsigned long>(inForce));
+                } else {
+                    LOG_WARN("PipeServer: %s takes %lu clients at once, not this build's %lu: an older copy of "
+                             "UE5Dumper in this process created the name", name.c_str(),
+                             static_cast<unsigned long>(inForce), static_cast<unsigned long>(kMaxPipeInstances));
+                }
+            }
             firstInstance = false;
         }
 

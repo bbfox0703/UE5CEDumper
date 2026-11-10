@@ -2183,6 +2183,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 // The game's pipe never came, and an old DLL serves the legacy name somewhere: perhaps in this game.
                 throw new InvalidOperationException(Res.Format("str.Connect.PidUnlistedBesideLegacy", targetPid));
             }
+            catch (TimeoutException) when (target.Listed)
+            {
+                // Listed, yet no instance came free in time: every connection the game takes is in use. A DLL
+                // from before Stage B takes 3 and this UI uses 2. [PIPE-PER-PROCESS-2026-11-06]
+                throw new InvalidOperationException(Res.Format("str.Connect.Busy", targetPid));
+            }
 
             var state = await _dump.InitAsync();
             // The pid the DLL reports is the process that answered. A process that created this game's pipe name
@@ -2241,14 +2247,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// <summary>[PIPE-PER-PROCESS-2026-11-06] Which game to dial, or null when Connect stops here (refused, cancelled).
     /// Throws with the reason when there is nothing to connect to, so the caller reports it like any connect failure.
     /// <c>UnlistedBesideLegacy</c>: a named game whose pipe is not listed while the legacy pipe is, which explains the
-    /// failure if its pipe never comes.</summary>
-    private async Task<(int Pid, bool UnlistedBesideLegacy)?> ResolvePipeTargetAsync(int? pid)
+    /// failure if its pipe never comes. <c>Listed</c>: the game's pipe was listed, so a connect that times out met
+    /// every instance taken.</summary>
+    private async Task<(int Pid, bool UnlistedBesideLegacy, bool Listed)?> ResolvePipeTargetAsync(int? pid)
     {
         // Listing \\.\pipe\ opens no pipe, but it is still I/O: off the UI thread.
         var names = await Task.Run(() => _platform.ListNamedPipes());
         if (names is null)
         {
-            if (pid is int direct) return (direct, false);   // a named game needs no listing
+            if (pid is int direct) return (direct, false, false);   // a named game needs no listing
             throw new InvalidOperationException(Res.Get("str.Connect.ListFailed"));
         }
         var scan = PipeTargets.Scan(names);
@@ -2258,13 +2265,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             // Dialled even when unlisted: a DLL still scanning opens its pipe late, and the connect waits for it. The
             // legacy pipe is no reason to refuse, since it may be another game's; it only explains a pipe that never
             // comes.
-            return (p, !scan.Pids.Contains(p) && scan.LegacyPresent);
+            return (p, !scan.Pids.Contains(p) && scan.LegacyPresent, scan.Pids.Contains(p));
         }
 
         switch (PipeTargets.Decide(scan))
         {
             case ConnectPlan.ConnectOne:
-                return (scan.Pids[0], false);
+                return (scan.Pids[0], false, true);
             case ConnectPlan.LegacyOnly:
                 await RefuseLegacyAsync();
                 return null;
@@ -2291,7 +2298,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             StatusText = Res.Get("str.Connect.Cancelled");
             return null;
         }
-        return (c, false);
+        return (c, false, true);
     }
 
     /// <summary>Only an old DLL's pipe is there: say so and why, connect to nothing. Deliberately not the game list,

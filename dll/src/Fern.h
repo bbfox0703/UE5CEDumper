@@ -57,11 +57,20 @@ public:
     }
 
 private:
-    // Max concurrent client connections: the UI's 2 lanes (interactive + bulk) + 1,
-    // which a rig (tools/verify/pipe_client.py) or a lane reconnecting while its old
-    // instance unwinds takes. It guards no race: [PIPEBUSY-2026-08-18] was a logging
-    // bug, fixed by Voll. CE uses the Mimic mailbox, not the pipe.
-    static constexpr DWORD kMaxPipeInstances = 3;
+    // Max concurrent client connections ([PIPE-PER-PROCESS-2026-11-06] Stage B, 3 before):
+    // the UI's 2 lanes (interactive + bulk), a rig (tools/verify/pipe_client.py), an MCP
+    // client, and 2 for a two-lane reconnect whose old instances are still unwinding (each
+    // is closed by its own thread after its command returns). The listener is itself an
+    // instance, so this is the most clients at once. Each costs a thread and two
+    // PIPE_BUF_SIZE buffers; the scan workers several heavy commands could spawn at once
+    // are held by Aura's process-wide budget. It guards no race: [PIPEBUSY-2026-08-18] was
+    // a logging bug, fixed by Voll. CE uses the Mimic mailbox, not the pipe.
+    // ⚠ A name another copy of the DLL created first keeps THAT copy's limit (measured
+    // 2026-11-10); the accept loop logs the limit in force.
+    static constexpr DWORD kMaxPipeInstances = 6;
+    // Windows takes 1..254; 255 is PIPE_UNLIMITED_INSTANCES.
+    static_assert(kMaxPipeInstances >= 1 && kMaxPipeInstances < PIPE_UNLIMITED_INSTANCES,
+                  "CreateNamedPipeW takes 1..254 instances");
 
     // Per-connection state. Each accepted client gets one of these, served by
     // its own HandleConnection thread on its own handle. writeMutex serializes

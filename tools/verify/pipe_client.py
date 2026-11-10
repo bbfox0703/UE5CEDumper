@@ -117,8 +117,16 @@ def process_image(pid: int) -> str:
 
 
 def pipe_is_busy(path: str) -> bool:
-    """True when the pipe exists and every instance is taken (ERROR_PIPE_BUSY)."""
-    return False   # red: not told apart yet
+    """True when the pipe exists and every instance is taken (ERROR_PIPE_BUSY). open() reports that as EINVAL
+    (errno 22), like several other failures (measured 2026-11-10); WaitNamedPipeW tells it apart, ERROR_SEM_TIMEOUT
+    (121), without connecting."""
+    if sys.platform != "win32":
+        return False
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.WaitNamedPipeW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong]
+    if k32.WaitNamedPipeW(path, 1):   # 1 ms; 0 would be NMPWAIT_USE_DEFAULT_WAIT
+        return False                  # an instance is free now
+    return ctypes.get_last_error() == 121
 
 
 # Seam for the selftest.
@@ -199,7 +207,12 @@ class PipeClient:
             except OSError as e:  # pipe not up yet, or busy
                 last = e
                 time.sleep(delay)
-        raise PipeError(f"could not open {path or 'a UE5Dumper pipe'}: {last}")
+        # [PIPE-PER-PROCESS-2026-11-06] Stage B: say when every connection was taken, which open() cannot.
+        hint = ""
+        if path is not None and _pipe_is_busy(path):
+            hint = (" -- every connection it takes is in use. A UE5Dumper DLL older than this tree may take only 3 "
+                    "clients at once, and the UI holds 2: disconnect the UI or another rig, or refresh the game's DLL")
+        raise PipeError(f"could not open {path or 'a UE5Dumper pipe'}: {last}{hint}")
 
     def close(self) -> None:
         if self._f:

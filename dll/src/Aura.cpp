@@ -148,16 +148,33 @@ int ScanThreadCount(int32_t workItems) {
 
 // [PIPE-PER-PROCESS-2026-11-06] Stage B: the extra worker threads of every GObjects walk running at once, drawn from
 // one budget for the whole process.
+//
+// Why: the pipe takes 6 clients, so several heavy commands can walk GObjects at once, and each walk spawned
+// ScanThreadCount() - 1 workers with no limit across walks -- k walks put k times that many threads in the game, and
+// ScanThreadCount's "cores - 2" headroom held for one walk only. With the budget, the workers of all walks together
+// never exceed what one walk alone spawns. (Each walk also runs one chunk on its own thread, the connection's.)
+//
+// A walk takes what is free and never waits for more: waiting would hold a connection's command behind another
+// connection's, and a walk on fewer threads finishes anyway. A walk that finds the budget spent runs serially on its
+// own thread, as Value Search's parallel toggle does when it is off. Chosen over a gate allowing one heavy command at a
+// time (maintainer, 2026-11-06): the DLL keeps no list of which commands are heavy, and one would drift.
 class WorkerBudget {
 public:
     explicit WorkerBudget(int capacity) : capacity_(capacity < 0 ? 0 : capacity) {}
     WorkerBudget(const WorkerBudget&) = delete;
     WorkerBudget& operator=(const WorkerBudget&) = delete;
 
+    // Up to `want` workers, as many as are free; 0 when none are. Never blocks.
     int Acquire(int want) noexcept {
         if (want <= 0) return 0;
-        inUse_.fetch_add(want, std::memory_order_acq_rel);
-        return want;   // red: no limit yet
+        int cur = inUse_.load(std::memory_order_acquire);
+        for (;;) {
+            const int free = capacity_ - cur;
+            const int grant = free <= 0 ? 0 : (want < free ? want : free);
+            if (grant == 0) return 0;
+            if (inUse_.compare_exchange_weak(cur, cur + grant, std::memory_order_acq_rel, std::memory_order_acquire))
+                return grant;
+        }
     }
     void Release(int n) noexcept {
         if (n > 0) inUse_.fetch_sub(n, std::memory_order_acq_rel);
@@ -286,6 +303,14 @@ ParallelScanResult<PerThreadT> ParallelGObjectsScan(int32_t count, BodyFn&& body
     // user turns it off, so concurrent cross-thread memory reads can't trip a
     // game's anti-tamper. 0 = no cap (use whatever ScanThreadCount picked).
     if (maxThreads > 0 && nthreads > maxThreads) nthreads = maxThreads;
+    // The workers beyond this thread come from the process-wide budget (WorkerBudget), held until this walk returns.
+    const int wanted = nthreads;
+    WorkerLease lease(ScanWorkerBudget(), nthreads - 1);
+    nthreads = 1 + lease.Granted();
+    if (nthreads < wanted) {
+        LOG_INFO("ParallelGObjectsScan: %d of %d threads -- other walks running now hold the rest of the %d-worker "
+                 "budget", nthreads, wanted, ScanWorkerBudget().Capacity());
+    }
     std::vector<PerThreadT> perThread(static_cast<size_t>(std::max(1, nthreads)));
     std::atomic<bool> deadlineHit{false};
     std::atomic<bool> workerFaulted{false};
