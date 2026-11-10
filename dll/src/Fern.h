@@ -104,7 +104,9 @@ private:
         // busy 4980 ms in 'walk_instance'" is. (2026-08-04: the first Stop ever logged
         // with connections attached timed out at the full 5 s and the log could not say
         // why.)
-        std::mutex         diagMutex;         // guards cmdName only
+        // diagMutex keeps cmdName and cmdStartMs one pair: both are written under it (HandleConnection) and read
+        // under it (SnapshotHolders), so a name never comes with another command's start.
+        std::mutex         diagMutex;
         std::string        cmdName;           // last/current command on this connection
         std::atomic<long long> cmdStartMs{0}; // steady-clock ms when it began
         // Per-connection cooperative cancel. Set by MonitorLoop when THIS connection

@@ -760,8 +760,6 @@ void Fern::Stop(bool graceful) {
                 { std::lock_guard<std::mutex> dlk(c->diagMutex); what = c->cmdName; }
                 Connection::Phase ph = c->phase.load(std::memory_order_relaxed);
                 long long phStart = c->phaseStartMs.load(std::memory_order_relaxed);
-                long long started = c->cmdStartMs.load(std::memory_order_relaxed);
-                (void)started;
                 // Build the age into a NAMED local. The obvious one-liner passes
                 // .c_str() of a temporary through a ternary — legal (the temporary
                 // outlives the full-expression) but not worth making a reader verify.

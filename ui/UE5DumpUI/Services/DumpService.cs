@@ -114,13 +114,15 @@ public sealed class DumpService : IDumpService
         CheckResponse(res);
         // What the DLL did with the write ([PIPE-PER-PROCESS-2026-11-06] Stage C); an older DLL echoes the request.
         var persisted = res["persisted"]?.GetValue<bool>() ?? persist;
+        var autoRestore = res["auto_restore"]?.GetValue<string>();
         _log.Info(Constants.LogCatInit,
             version == 0
                 ? $"UE version override cleared (persisted={persisted}) -- "
-                  + (persisted
-                      ? DescribeAutoRestore(res["auto_restore"]?.GetValue<string>())
-                      // Not written: the override is still on disk, whatever Auto did in memory.
-                      : "the clear was not written to the hint cache, so the next launch applies the override again")
+                  // A refused clear proves only that it was not written: whether an override was saved before is not
+                  // known here. With none in force there was nothing to clear, and the DLL's outcome says so.
+                  + (persisted || autoRestore == "not_overridden"
+                      ? DescribeAutoRestore(autoRestore)
+                      : "the clear was not written to the hint cache: an override saved there earlier still applies at the next launch")
                 : $"UE version override set to {version} (persisted={persisted})");
         // Re-fetch full state so the caller can update all panels with one ApplyState() call.
         return await GetPointersAsync(ct);
