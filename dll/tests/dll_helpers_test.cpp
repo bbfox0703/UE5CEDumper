@@ -410,6 +410,24 @@ static void Test_Voll_WaitSaysServed() {
     EXPECT("the watchers wait 1 ms, never 0 (NMPWAIT_USE_DEFAULT_WAIT)", Voll::kWatchWaitMs == 1);
 }
 
+static void Test_Voll_ExtractCmdName() {
+    // [PIPE-PER-PROCESS-2026-11-06] Stage C. Python's json.dumps writes `"cmd": "x"` with a space; the old exact match
+    // for `"cmd":"` never named a rig's command, so the log, Stop's diagnostic and get_diagnostics were blind to it.
+    EXPECT_EQ_STR("compact JSON (the UI)", Voll::ExtractCmdName(R"({"id":1,"cmd":"get_pointers"})").c_str(),
+                  "get_pointers");
+    EXPECT_EQ_STR("a space after the colon (Python's json.dumps)",
+                  Voll::ExtractCmdName(R"({"id": 1, "cmd": "get_pointers"})").c_str(), "get_pointers");
+    EXPECT_EQ_STR("spaces on both sides", Voll::ExtractCmdName(R"({"cmd" :  "walk_instance"})").c_str(),
+                  "walk_instance");
+    EXPECT_EQ_STR("no cmd: empty", Voll::ExtractCmdName(R"({"id":1})").c_str(), "");
+    EXPECT_EQ_STR("a longer key is not cmd", Voll::ExtractCmdName(R"({"cmdx":"no","cmd":"yes"})").c_str(), "yes");
+    EXPECT_EQ_STR("a non-string value: empty", Voll::ExtractCmdName(R"({"cmd":42})").c_str(), "");
+    EXPECT_EQ_STR("only identifier characters are kept", Voll::ExtractCmdName(R"({"cmd":"a\"b"})").c_str(), "a");
+    const std::string longName(200, 'x');
+    EXPECT("a name is cut at 64 characters",
+           Voll::ExtractCmdName("{\"cmd\":\"" + longName + "\"}").size() == Voll::kMaxCmdNameChars);
+}
+
 static void Test_Voll_ClassifyFirstInstance() {
     using FI = Voll::FirstInstance;
     const DWORD self = 4242, other = 77;
@@ -12170,6 +12188,7 @@ int main() {
     RUN(Test_Voll_PipeNameForPid);
     RUN(Test_Voll_ProbeFoundServer);
     RUN(Test_Voll_WaitSaysServed);
+    RUN(Test_Voll_ExtractCmdName);
     RUN(Test_Voll_ClassifyFirstInstance);
 
     // [MH-PRERESERVE-PROXY] MinHook's trampoline-block search, modelled for the MH_ERROR_MEMORY_ALLOC diagnostic

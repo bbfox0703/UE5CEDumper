@@ -19,6 +19,7 @@
 
 #include <Windows.h>   // DWORD, ERROR_PIPE_BUSY, ERROR_ALREADY_EXISTS, GetCurrentProcessId
 #include <string>
+#include <string_view>
 
 #include "Grimoire.h"  // PIPE_NAME_PREFIX
 
@@ -134,6 +135,19 @@ inline AcceptLog OnCreateSuccess(bool& atCapacity) noexcept {
     return AcceptLog::None;
 }
 
+
+// ── The command a request names ──────────────────────────────────────────────
+// [PIPE-PER-PROCESS-2026-11-06] Stage C. The connection thread names each request for the repeat-suppressed log line,
+// Stop's drain diagnostic, get_diagnostics' per-command timing and pipe_clients' "last command".
+inline constexpr size_t kMaxCmdNameChars = 64;
+
+inline std::string ExtractCmdName(std::string_view line) {
+    const size_t pos = line.find("\"cmd\":\"");   // red: the old exact match, which a space after the colon defeats
+    if (pos == std::string_view::npos) return {};
+    const size_t start = pos + 7;
+    const size_t end = line.find('"', start);
+    return end == std::string_view::npos ? std::string() : std::string(line.substr(start, end - start));
+}
 
 // ── Who should own the pipe at startup ──────────────────────────────────────
 // [RELAUNCHPIPE-2026-08-19]

@@ -96,6 +96,22 @@ public sealed class PipePerProcessSourceTests
         Assert.True(reads == waits, $"{file}: {waits} wait(s) but {reads} Voll::WaitSaysServed reading(s)");
     }
 
+    /// <summary>Stage C: the connection thread names every request through Voll::ExtractCmdName, which tolerates the
+    /// space Python's json.dumps writes after a colon -- the old inline match for `"cmd":"` named no rig's command. And
+    /// the name is written BEFORE inFlight goes up, so whoever sees a command in flight sees its name.</summary>
+    [Fact]
+    public void EveryRequestIsNamedWhateverItsJsonSpacing()
+    {
+        var src = NoComments(DllSrc("Fern.cpp"));
+        Assert.DoesNotContain("""line.find("\"cmd\":\"")""", src);
+        var code = CodeOnly(DllSrc("Fern.cpp"));
+        Assert.Matches(@"\bVoll::ExtractCmdName\s*\(\s*line\s*\)", code);
+        int named = code.IndexOf("conn->cmdName = cmd", StringComparison.Ordinal);
+        int flight = code.IndexOf("conn->inFlight.store(true", StringComparison.Ordinal);
+        Assert.True(named >= 0 && flight >= 0 && named < flight,
+            "HandleConnection must write cmdName before it raises inFlight");
+    }
+
     /// <summary>Stage B: six clients at once -- the UI's two lanes, a rig, an MCP client, and two more for a lane
     /// reconnect whose old instances are still unwinding. Windows takes 1..254 (255 is PIPE_UNLIMITED_INSTANCES).
     /// A name another copy created first keeps that copy's limit (measured 2026-11-10: a second create asking for 6
