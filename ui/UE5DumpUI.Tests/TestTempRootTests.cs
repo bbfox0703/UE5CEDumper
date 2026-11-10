@@ -18,7 +18,11 @@ public class TestTempRootTests : IDisposable
     public void Dispose()
     {
         if (!Directory.Exists(_sandbox)) return;
-        foreach (var f in Directory.EnumerateFiles(_sandbox, "*", SearchOption.AllDirectories))
+        var noJunctions = new EnumerationOptions
+        {
+            RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint,
+        };
+        foreach (var f in Directory.EnumerateFiles(_sandbox, "*", noJunctions))
             File.SetAttributes(f, FileAttributes.Normal);
         Directory.Delete(_sandbox, recursive: true);
     }
@@ -132,6 +136,87 @@ public class TestTempRootTests : IDisposable
         Assert.Empty(TestTempRoot.SweepLegacy(temp, now));
         foreach (var n in notOurs) Assert.True(Directory.Exists(Path.Combine(temp, n)), n);
         Assert.True(File.Exists(file));
+    }
+
+    /// <summary>A sweep never reaches through a junction: VolumeRootTests makes one to another volume's ROOT, and one it
+    /// failed to remove lands in the run's folder. The read-only file fails the first delete, which has unlinked the
+    /// junction by then (measured: Directory.Delete goes on past a file it cannot delete), so the second attempt's walk
+    /// finds it gone; <see cref="TheAttributeWalkNeverEntersAJunction"/> holds that walk with the junction in place.</summary>
+    [Fact]
+    public void ADeadRunHoldingAJunctionGoes_AndWhatTheJunctionPointsAtIsUntouched()
+    {
+        var root = Path.Combine(_sandbox, TestTempRoot.RootName);
+        var target = Directory.CreateDirectory(Path.Combine(_sandbox, "elsewhere")).FullName;
+        var precious = Path.Combine(target, "precious.txt");
+        File.WriteAllText(precious, "keep");
+        File.SetAttributes(precious, FileAttributes.ReadOnly);
+        var dead = MakeRun(root, "dead", ownerFile: true);
+        var ro = Path.Combine(dead, "ro.txt");
+        File.WriteAllText(ro, "x");
+        File.SetAttributes(ro, FileAttributes.ReadOnly);
+        Assert.True(MakeJunction(Path.Combine(dead, "link"), target));
+
+        Assert.Single(TestTempRoot.SweepDeadRuns(root, DateTime.UtcNow));
+
+        Assert.False(Directory.Exists(dead));
+        Assert.True(File.Exists(precious));
+        Assert.True(File.GetAttributes(precious).HasFlag(FileAttributes.ReadOnly));
+    }
+
+    [Fact]
+    public void TheAttributeWalkNeverEntersAJunction()
+    {
+        var target = Directory.CreateDirectory(Path.Combine(_sandbox, "elsewhere")).FullName;
+        var precious = Path.Combine(target, "precious.txt");
+        File.WriteAllText(precious, "keep");
+        File.SetAttributes(precious, FileAttributes.ReadOnly);
+        var run = Directory.CreateDirectory(Path.Combine(_sandbox, "run", "sub")).Parent!.FullName;
+        var ours = Path.Combine(run, "sub", "ro.txt");
+        File.WriteAllText(ours, "x");
+        File.SetAttributes(ours, FileAttributes.ReadOnly);
+        var link = Path.Combine(run, "link");
+        Assert.True(MakeJunction(link, target));
+
+        TestTempRoot.ClearReadOnly(run);
+
+        Assert.False(File.GetAttributes(ours).HasFlag(FileAttributes.ReadOnly));
+        Assert.True(File.GetAttributes(precious).HasFlag(FileAttributes.ReadOnly));
+        Directory.Delete(link);   // unlinks; the target stays
+    }
+
+    [Fact]
+    public void ALegacyNamedJunctionIsNeverTouched()
+    {
+        var now = DateTime.UtcNow;
+        var temp = Directory.CreateDirectory(Path.Combine(_sandbox, "temp")).FullName;
+        var target = Directory.CreateDirectory(Path.Combine(_sandbox, "elsewhere")).FullName;
+        File.WriteAllText(Path.Combine(target, "precious.txt"), "keep");
+        var link = Path.Combine(temp, "ue5-qmark");
+        Assert.True(MakeJunction(link, target));
+        Directory.SetLastWriteTimeUtc(link, now - TimeSpan.FromDays(30));
+
+        Assert.Empty(TestTempRoot.SweepLegacy(temp, now));
+        Assert.True(Directory.Exists(link));
+        Assert.True(File.Exists(Path.Combine(target, "precious.txt")));
+        Directory.Delete(link);   // unlinks; the target stays
+    }
+
+    // `mklink /J` as VolumeRootTests makes its junction: unprivileged, unlike a symlink.
+    private static bool MakeJunction(string link, string target)
+    {
+        var psi = new System.Diagnostics.ProcessStartInfo("cmd.exe")
+        {
+            Arguments = $"/c mklink /J \"{link}\" \"{target}\"",
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+        using var p = System.Diagnostics.Process.Start(psi);
+        if (p is null) return false;
+        p.WaitForExit(20_000);
+        return p.HasExited && p.ExitCode == 0
+            && File.GetAttributes(link).HasFlag(FileAttributes.ReparsePoint);
     }
 
     private static string MakeRun(string root, string name, bool ownerFile)
