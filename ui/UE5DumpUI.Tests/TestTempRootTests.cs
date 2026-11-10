@@ -79,6 +79,12 @@ public class TestTempRootTests : IDisposable
     public void ARootThatDoesNotExistIsNothingToSweep()
         => Assert.Empty(TestTempRoot.SweepDeadRuns(Path.Combine(_sandbox, "absent"), DateTime.UtcNow));
 
+    /// <summary>A sweep is housekeeping: a folder gone from under it (another run's exit removes the shared root once
+    /// it is empty) must not stop this run from taking a folder of its own.</summary>
+    [Fact]
+    public void ASweepWhoseFolderIsGoneThrowsNothing()
+        => Assert.Empty(TestTempRoot.SweepLegacy(Path.Combine(_sandbox, "absent"), DateTime.UtcNow));
+
     /// <summary>Every name an older build of the suite left straight in %TEMP% (counted there on 2026-11-11).</summary>
     public static TheoryData<string> LegacyNames => new()
     {
