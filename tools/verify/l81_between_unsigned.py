@@ -16,7 +16,7 @@ the row's "small value" nor "near 32767", so there are two arms:
             the actor); restored and re-read afterwards.
 
 Pre-fix, the Between bounds were encoded per width and a width that could not hold one bound was
-dropped, so the field was never a candidate. Run with the UI closed (2 of 3 pipe slots).
+dropped, so the field was never a candidate. Run with the UI closed when the DLL predates [PIPE-PER-PROCESS-2026-11-06] Stage B (the UI holds 2 of its 3 pipe slots; 6 since).
 """
 import os
 import struct

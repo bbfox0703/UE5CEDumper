@@ -19,7 +19,7 @@ MEM_DECOMMIT keeps the address RESERVED, so nothing else can be placed there, an
 `release` frees the reservation afterwards.
 
 `make` needs the pipe (find_instances + walk_instance + read_mem), so it runs BEFORE the UI connects: the UI
-holds 2 of the 3 pipe instances. `free` is out of process (VirtualFreeEx + VirtualQuery) and never opens the
+holds 2 of the 3 pipe instances a DLL from before [PIPE-PER-PROCESS-2026-11-06] Stage B takes (6 since). `free` is out of process (VirtualFreeEx + VirtualQuery) and never opens the
 pipe, so it is safe while the UI is connected. The game never reads the page, so releasing it cannot fault it.
 """
 import argparse

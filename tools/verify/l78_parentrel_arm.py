@@ -27,7 +27,8 @@ RelativeLocation.
   * restore -- `set_invoke_timeout {timeout_ms:0}` (back to the default) and print the hint cache's sha256 and any
                invokeTimeoutMs it holds, so a persisted timeout cannot slip through.
 State (pawn, parent, suspended tid) lives in out/l78_state.json, so the verbs can run as separate steps around CE.
-Keep the UI CLOSED while this runs: it would take two of the three pipe slots. It never teleports.
+Keep the UI CLOSED while this runs against a DLL from before [PIPE-PER-PROCESS-2026-11-06] Stage B: it would take two of its three pipe slots
+(6 since). It never teleports.
 """
 from __future__ import annotations
 

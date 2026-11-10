@@ -322,7 +322,8 @@ class PipeClient:
 def selftest() -> int:
     """[RIG-PIPE-DOUBLE-CONNECT] `with PipeClient() as c:` connects, and a second `c.connect()` must not open again:
     it opened a second handle while the first was still held, which needs a second pipe instance at the same moment.
-    The DLL serves three and the UI holds two, so with the UI up the rig failed after ten retries. A handle closed
+    The DLL served three then (six since [PIPE-PER-PROCESS-2026-11-06] Stage B) and the UI holds two, so with the UI up the rig failed after ten
+    retries. A handle closed
     behind the client's back is reopened, not handed back, and the reopened connection starts with no bytes of the old
     one -- while a connect() on an open client keeps them, since they belong to the live connection. No pipe is
     opened -- `open` is replaced for the duration."""

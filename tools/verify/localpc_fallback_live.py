@@ -21,7 +21,8 @@ PREREQUISITES
     DumperTest`; in the level, the character possessed (not a menu). Another fixture: --process <image prefix>.
   * dist\build_number.txt names the DLL under test, built from the row's green commit or later (assert_build refuses
     any other DLL answering the pipe).
-  * The UI must NOT be connected (it holds two of the DLL's three pipe instances). No Cheat Engine.
+  * The UI must NOT be connected to a DLL from before [PIPE-PER-PROCESS-2026-11-06] Stage B (it holds two of that DLL's three pipe
+    instances; 6 since). No Cheat Engine.
   * One injected game at a time; kill the game when the row is done (handover section 4).
 
 WHAT IT WRITES: LocalPlayer.PlayerController and PersistentLevel.WorldSettings, each to 0, and nothing else in game

@@ -500,7 +500,7 @@ The plan as written:
 
 ### Stage C — before any long-lived client (MCP), at any n
 
-An MCP client sitting in today's third slot already triggers every item:
+An MCP client in a spare slot (one of 6 since Stage B) triggers every item:
 
 - **Teardown on the last disconnect** (Fern's `last` block: `Radar` DropAll, `Linie::Reset`, see-through off, the name
   cache) runs unlocked while new clients are being accepted. It also ends what other owners turned on: **closing the
@@ -568,10 +568,9 @@ DLL stays simple.
   server would face the same choice.
 - **SSH:** the wrapper runs on the target machine and talks to the local pipe, so the pipe never faces the network.
   Needs Windows OpenSSH Server. An elevated game with a non-elevated UI is a combination to measure.
-- **⚠ Pipe slots.** `Fern::kMaxPipeInstances` is 3. Fern.h calls it "2 UI lanes + 1 slack for reconnect transients",
-  but in practice the third slot is what `tools/verify/*.py` rigs take during development (the maintainer). With the
-  UI connected and a rig running, nothing is left. `[PIPE-PER-PROCESS-2026-11-06]` decides it: Stage B raises the cap
-  to 6, and Stage C hardens the pipe for a long-lived client.
+- **Pipe slots: settled by `[PIPE-PER-PROCESS-2026-11-06]` Stage B (build 3696): 6 clients.** It was 3, and in
+  practice the third was what `tools/verify/*.py` rigs took during development (the maintainer), so with the UI
+  connected and a rig running nothing was left for MCP. Stage C still hardens the pipe for a long-lived client.
   - *Corrected 2026-11-06:* this bullet first cited `[PIPEBUSY-2026-08-18]` for "what the cap protects". That was
     wrong: the tag is a fixed logging bug, not a reason for 3.
   - Routing MCP through the UI as a broker remains an option. It keeps the UI's views in step with what the AI

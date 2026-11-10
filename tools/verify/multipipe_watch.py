@@ -16,7 +16,8 @@ registered it. So the question "does a busy bulk lane starve the interactive lan
 is answered by two raw connections, and answered ON BOTH SIDES: we count what actually arrived,
 rather than looking at a panel that could equally be showing a stale cache.
 
-⚠ Fern::kMaxPipeInstances = 3 and the UI takes 2. **Do not run this with the UI connected.**
+⚠ The UI takes 2 pipe slots, and a DLL from before [PIPE-PER-PROCESS-2026-11-06] Stage B takes 3 clients (6 since). **Against such a DLL, do
+not run this with the UI connected.**
 
 THE CONTROLS, because a push count on its own proves very little:
   * **`TickCount` is the mover** (1 Hz) and **`FrozenInt` is the still one** (424242, written once).

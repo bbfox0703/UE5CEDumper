@@ -90,7 +90,8 @@ proxy-mode title you are *supposed* to run it profiler-first once and watch it c
 
 ### ⚠ MORE TRAPS
 
-* ⛔ **Never run `pipe_client.py` while the UI is connected.** `kMaxPipeInstances = 3` and the UI
+* ✅ *Retired by [PIPE-PER-PROCESS-2026-11-06] Stage B (6 clients): applies only to a DLL from before it.* ⛔ **Never run
+  `pipe_client.py` while the UI is connected.** `kMaxPipeInstances = 3` and the UI
   holds **2**, so one rig client fills the pool and the accept loop then logs
   `CreateNamedPipe failed (err=231)` **every second, forever** — 1,826 lines in 31 min, measured
   (`[PIPEBUSY-2026-08-18]`). Close the UI first, or drive the check through the UI instead.

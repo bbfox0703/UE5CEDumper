@@ -24,7 +24,7 @@ WHY THIS RIG IS SHAPED THE WAY IT IS
              and `run` proves nothing. It also asserts IsHungAppWindow, so the hang is
              witnessed by the OS rather than inferred from a timeout alone.
     run      hold active + TWO live pipe connections (the UI holds two; kMaxPipeInstances
-             is 3), post WM_CLOSE, require exit well inside the deadline, and require no
+             was 3, and is 6 since [PIPE-PER-PROCESS-2026-11-06] Stage B), post WM_CLOSE, require exit well inside the deadline, and require no
              new minidump.
 
   ⚠ It MUST be a posted WM_CLOSE, never `taskkill /F`: with /F the DLL's shutdown path

@@ -15,7 +15,7 @@ the game from outside is exactly the transient fault dll_core_test manufactures 
           memoized {P, PropertiesSize 0} forever and answered the empty class again.
 
 ⚠ MEM_RESERVE, not a committed zero page: a committed page is "readable, PropertiesSize 0", a
-different path that is legitimately memoized as empty. Run with the UI closed (2 of 3 pipe slots).
+different path that is legitimately memoized as empty. Run with the UI closed when the DLL predates [PIPE-PER-PROCESS-2026-11-06] Stage B (the UI holds 2 of its 3 pipe slots; 6 since).
 P is released at the end; do not reuse the address (it stays memoized as the copied class).
 """
 import argparse

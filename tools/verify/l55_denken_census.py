@@ -13,7 +13,7 @@ mapped props -- and identical (N mapped, U unmapped, I instrs, C calls) tuples i
 Addresses differ under ASLR; nothing else may.
 
 ⚠ Each run needs a FRESH process: Denken caches per function, and a warm cache answers from the
-previous DLL's analysis. Run with the UI closed (it holds 2 of the 3 pipe slots).
+previous DLL's analysis. Run with the UI closed when the DLL predates [PIPE-PER-PROCESS-2026-11-06] Stage B (the UI holds 2 of its 3 pipe slots; 6 since).
 """
 import argparse
 import json

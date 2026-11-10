@@ -38,7 +38,7 @@ WHAT `live` MEASURES (DumperTest launched and injected; the UI must NOT be conne
   The control above, then the real pipe: its security descriptor as SDDL, a local read/write open
   (expect success), and a remote read/write open (expect refusal). Each open takes one of the
   DLL's pipe slots for an instant and closes it without sending a byte, exactly as a client that
-  connects and leaves; Fern.h's kMaxPipeInstances is why the UI must not hold two of them.
+  connects and leaves; against a DLL from before [PIPE-PER-PROCESS-2026-11-06] Stage B (3 clients) the UI must not hold two of them.
 
 Exit codes: 0 every expectation held; 1 an expectation failed (the verdict line says which);
 2 nothing measurable (no SMB loopback, or no pipe to probe).

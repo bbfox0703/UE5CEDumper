@@ -5,7 +5,7 @@ r"""S6 of the FIX PASS LOW live plan: the three DumperTest58 (UE 5.8) TOptional 
     py tools/verify/s6_optionals.py l84            [A2-TOPTIONAL-STRUCT-DESCENT]  Find Refs / Address Finder vs a RESET struct
     py tools/verify/s6_optionals.py l86 [--spawn N --edges K]   [A2-SENTINEL-OVERREAD]  FName scan vs page-edge optionals
 
-UI CLOSED (the UI holds two of the three pipe slots). Run the SAME phase on the red (staged) DLL and on HEAD's DLL;
+UI CLOSED when the DLL predates [PIPE-PER-PROCESS-2026-11-06] Stage B (the UI holds two of its three pipe slots; 6 since). Run the SAME phase on the red (staged) DLL and on HEAD's DLL;
 the phase prints what it measured and a one-word reading, and exits 0 either way unless the FIXTURE is wrong
 (a missing actor, an optional that is not the shape the row needs) -- the red/green verdict is the caller's,
 from the two outputs side by side.

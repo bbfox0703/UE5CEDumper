@@ -6,6 +6,9 @@
 1. **After every verified row, update BOTH records in the same commit:** the row's closure record in `docs/todo.md` (the backlog table) AND the row's status in the session table below. One row per commit, then push.
 2. **Rows unreachable on this machine get a fixture change when one would make them reachable** — `tools/ue-sample/` DumperTest (5.4), DumperTest56, DumperTest58. See *Fixture changes* below.
 
+⚠ **Pipe slots ([PIPE-PER-PROCESS-2026-11-06] Stage B, build 3696).** The DLL takes 6 pipe clients, so the recipes' "the UI holds 2 of the 3
+pipe slots / keep the UI disconnected" preconditions apply only to a DLL from before it.
+
 ⚠ **What the recipes are, and are not.** They are the read-only output of an 8-agent survey run at HEAD `b87915ea` (`git log` for the tree state); **no recipe was live-run by the survey**. Every `file:line` was read at that HEAD and drifts with the code. The survey's synthesis stage already corrected several of its own scouts (listed below). Treat a recipe as a starting point to re-check, not as evidence. Where a recipe and the row's text in `todo.md` disagree, the discrepancy is recorded in the recipe; re-read the source before trusting either.
 
 -----
