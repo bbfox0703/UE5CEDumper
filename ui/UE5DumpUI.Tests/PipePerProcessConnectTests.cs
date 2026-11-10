@@ -204,12 +204,27 @@ public sealed class PipePerProcessConnectTests
     [Fact]
     public async Task A_listed_game_whose_every_connection_is_taken_says_so()
     {
-        // Stage B: a DLL from before 3696 takes 3 clients and the UI uses 2, so a rig or a second UI fills it.
+        // Stage B: a DLL from before it takes 3 clients and the UI uses 2, so one rig fills it. Still listed when the
+        // connect times out: every connection is taken, or the game is not responding.
         var rig = new Rig("UE5DumpBfx_100");
         rig.Pipe.Busy = new HashSet<string> { "UE5DumpBfx_100" };
         await rig.Vm.ConnectCommand.ExecuteAsync(null);
         Assert.Equal(new[] { "UE5DumpBfx_100" }, rig.Pipe.Dialed);
         Assert.Equal(Res.Format("str.Connect.Busy", 100), rig.Vm.ErrorMessage);
+        Assert.False(rig.Vm.IsConnected);
+    }
+
+    [Fact]
+    public async Task A_game_that_exits_between_the_listing_and_the_dial_is_reported_gone_not_busy()
+    {
+        // The picker can stay open as long as the user likes; the game can exit meanwhile. .NET retries a missing pipe
+        // until its timeout, so the connect times out exactly as it does on a busy one.
+        var rig = new Rig("UE5DumpBfx_100", "UE5DumpBfx_200");
+        rig.Pick = _ => 200;
+        rig.Pipe.Listening = new HashSet<string>();
+        rig.Pipe.OnDial = _ => rig.Platform.Pipes = new[] { "UE5DumpBfx_100" };   // 200 exited
+        await rig.Vm.ConnectCommand.ExecuteAsync(null);
+        Assert.Equal(Res.Format("str.Connect.PipeGone", 200), rig.Vm.ErrorMessage);
         Assert.False(rig.Vm.IsConnected);
     }
 
@@ -380,6 +395,8 @@ public sealed class PipePerProcessConnectTests
         /// <summary>Names whose every instance is taken: listed, yet a connect times out, as NamedPipeClientStream's
         /// does while it waits for a free instance.</summary>
         public HashSet<string>? Busy { get; set; }
+        /// <summary>Called with the name on every dial, before the connect resolves: the world changing meanwhile.</summary>
+        public Action<string>? OnDial { get; set; }
         public event Action<bool>? ConnectionStateChanged { add { } remove { } }
         public event Action<JsonObject>? EventReceived { add { } remove { } }
         public event Action<PipeLogEntry>? Activity { add { } remove { } }
@@ -387,6 +404,7 @@ public sealed class PipePerProcessConnectTests
         public async Task ConnectAsync(string pipeName, CancellationToken ct = default)
         {
             Dialed.Add(pipeName);
+            OnDial?.Invoke(pipeName);
             if (Gate is not null) await Gate;
             // As PipeClient: a live connection is kept, whatever name is asked for.
             if (IsConnected) return;
