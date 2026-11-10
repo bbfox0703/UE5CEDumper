@@ -77,8 +77,8 @@ private:
     // Per-connection state. Each accepted client gets one of these, served by
     // its own HandleConnection thread on its own handle. Every write on a
     // connection comes from that thread -- replies, and since Stage C its watch
-    // events (Kanne.h) -- so writeMutex orders a write only against CloseConnOnce.
-    // Writes to DIFFERENT connections need no shared lock.
+    // events (Kanne.h) -- and so does CloseConnOnce, so writeMutex is uncontended
+    // today. Writes to DIFFERENT connections need no shared lock.
     struct Connection {
         HANDLE             pipe{INVALID_HANDLE_VALUE};
         // Monotonic id, assigned under m_connMutex at accept (audit #5 F2). Needed
@@ -137,7 +137,7 @@ private:
         enum class Phase : uint8_t {
             Reading,          // inside ReadLine's blocking ReadFile
             Dispatching,      // inside DispatchCommand
-            Writing,          // inside WriteLine (WriteFile, or waiting on writeMutex)
+            Writing,          // inside WriteLine (WriteFile to a client that may have stopped reading)
             StoppingWatches,  // cleanup: joining this connection's watch threads
             Unregistering,    // cleanup: erasing from m_conns / closing the handle
             Done,

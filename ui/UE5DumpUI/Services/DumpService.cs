@@ -117,7 +117,10 @@ public sealed class DumpService : IDumpService
         _log.Info(Constants.LogCatInit,
             version == 0
                 ? $"UE version override cleared (persisted={persisted}) -- "
-                  + DescribeAutoRestore(res["auto_restore"]?.GetValue<string>())
+                  + (persisted
+                      ? DescribeAutoRestore(res["auto_restore"]?.GetValue<string>())
+                      // Not written: the override is still on disk, whatever Auto did in memory.
+                      : "the clear was not written to the hint cache, so the next launch applies the override again")
                 : $"UE version override set to {version} (persisted={persisted})");
         // Re-fetch full state so the caller can update all panels with one ApplyState() call.
         return await GetPointersAsync(ct);

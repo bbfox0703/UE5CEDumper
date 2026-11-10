@@ -973,12 +973,15 @@ std::vector<Voll::Holder> Fern::SnapshotHolders(uint64_t selfSeq) {
         // The flag first: HandleConnection writes the name and start, then raises it (release), so a holder seen in
         // flight carries that command's name and age, never the previous one's.
         h.inFlight = c->inFlight.load(std::memory_order_acquire);
+        long long started;
         {
             std::lock_guard<std::mutex> dlk(c->diagMutex);
             h.lastCmd = c->cmdName;
+            started = c->cmdStartMs.load(std::memory_order_relaxed);
         }
-        const long long started = c->cmdStartMs.load(std::memory_order_relaxed);
-        h.lastCmdAgeMs = started == 0 ? -1 : now - started;
+        // `now` was read before the loop, so a command begun since is clamped to 0 rather than going negative (or -1,
+        // which means "no command yet").
+        h.lastCmdAgeMs = started == 0 ? -1 : (std::max)(0LL, now - started);
         h.phase = PhaseKey(c->phase.load(std::memory_order_relaxed));
         h.self = c->seq == selfSeq;
         out.push_back(std::move(h));
@@ -1180,7 +1183,7 @@ const char* Fern::PhaseName(Connection::Phase p) {
     switch (p) {
         case Connection::Phase::Reading:         return "parked in ReadFile (waiting for the next command)";
         case Connection::Phase::Dispatching:     return "INSIDE a command (cancel cannot reach it until it returns)";
-        case Connection::Phase::Writing:         return "in WriteLine — WriteFile to a client that may have stopped reading, or waiting on writeMutex";
+        case Connection::Phase::Writing:         return "in WriteLine — WriteFile to a client that may have stopped reading";
         case Connection::Phase::StoppingWatches: return "in cleanup, JOINING its watch threads (an I/O cancel on this thread does nothing)";
         case Connection::Phase::Unregistering:   return "in cleanup, unregistering — should be about to leave";
         default:                                 return "done";
@@ -1236,10 +1239,11 @@ std::string Fern::ReadLine(HANDLE pipe) {
 
 bool Fern::WriteLine(Connection& conn, const std::string& line) {
     // Per-connection write mutex. Every write on a connection comes from its own
-    // handler thread (replies, and its watch events since Stage C), so what this
-    // orders is a write against CloseConnOnce, which takes the same mutex: a
-    // write can never run on a just-closed handle. Writes to OTHER connections
-    // use their own mutex, so the two UI lanes never contend.
+    // handler thread (replies, and its watch events since Stage C), and so does
+    // CloseConnOnce, the mutex's other taker: it is uncontended today, and keeps a
+    // write off a just-closed handle should either ever move to another thread.
+    // Writes to OTHER connections use their own mutex, so the two UI lanes never
+    // contend.
     std::lock_guard<std::mutex> lock(conn.writeMutex);
     if (conn.closed.load(std::memory_order_relaxed) || conn.pipe == INVALID_HANDLE_VALUE)
         return false;
@@ -1251,8 +1255,9 @@ bool Fern::WriteLine(Connection& conn, const std::string& line) {
     //
     // Safe because the pipe is PIPE_TYPE_BYTE | PIPE_READMODE_BYTE (AcceptLoop's
     // CreateNamedPipeW): there are no message boundaries to split, the reader
-    // frames on '\n' itself, and both writes happen under the SAME writeMutex, so
-    // no other response or watch event can interleave between them.
+    // frames on '\n' itself, and every line on a connection -- replies and watch
+    // events alike -- is written by its own handler thread, one line at a time, so
+    // nothing can come between a payload and its '\n'.
     //
     // Short writes are now treated as failures. A blocking byte-mode pipe writes
     // everything or errors, so this only fires on a genuinely broken connection —
@@ -1351,16 +1356,18 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         // nothing measured. See Sense.h.
         // Record WHICH command, and when, BEFORE raising inFlight: a reader that sees the
         // command in flight (Stop's drain diagnostic, pipe_clients) must see its name,
-        // not the previous command's. `cmd` is already parsed above for the
-        // repeat-suppression, so this costs one small string copy per command.
+        // not the previous command's. The name and its start are one pair, written under
+        // diagMutex and read under it, so neither comes with the other command's. `cmd` is
+        // already parsed above for the repeat-suppression, so this costs one small string
+        // copy per command.
         {
             std::lock_guard<std::mutex> dlk(conn->diagMutex);
             conn->cmdName = cmd;
+            conn->cmdStartMs.store(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count(),
+                std::memory_order_relaxed);
         }
-        conn->cmdStartMs.store(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count(),
-            std::memory_order_relaxed);
         conn->inFlight.store(true, std::memory_order_release);
         SetPhase(*conn, Connection::Phase::Dispatching);
         // QPC, not GetTickCount64: its ~15.6 ms granularity floored every sub-tick
@@ -6954,10 +6961,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // ── scan_status: Poll scan progress (pairs with trigger_scan) ────────
         if (cmd == Renge::CMD_SCAN_STATUS) {
             namespace SP = ScanProgress;
-            int phase = SP::phase.load(std::memory_order_acquire);
-
             json data;
             const Routine::SingleFlightJob::Snapshot job = m_scan.job.Status();   // one answer: see Status()
+            // The phase AFTER the snapshot: UE5_Init stores phase 7 before the job ends, so once the snapshot says "not
+            // running, completed" this reads 7 -- the UI's completion test reads it. Read first, a poll stalled between
+            // the two reported a finished scan at phase 6.
+            int phase = SP::phase.load(std::memory_order_acquire);
             const bool running = job.running;
             data["running"]     = running;
             data["phase"]       = phase;
