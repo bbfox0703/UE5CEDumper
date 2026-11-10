@@ -141,12 +141,28 @@ inline AcceptLog OnCreateSuccess(bool& atCapacity) noexcept {
 // Stop's drain diagnostic, get_diagnostics' per-command timing and pipe_clients' "last command".
 inline constexpr size_t kMaxCmdNameChars = 64;
 
+// Python's json.dumps writes `"cmd": "x"` with a space, which an exact match for `"cmd":"` never names; whitespace is
+// allowed on both sides of the colon. Only identifier characters are kept, at most kMaxCmdNameChars, so the name is
+// safe to log and to put in JSON whatever the client sent. A cheap scan, not a parse: DispatchCommand parses the line.
 inline std::string ExtractCmdName(std::string_view line) {
-    const size_t pos = line.find("\"cmd\":\"");   // red: the old exact match, which a space after the colon defeats
-    if (pos == std::string_view::npos) return {};
-    const size_t start = pos + 7;
-    const size_t end = line.find('"', start);
-    return end == std::string_view::npos ? std::string() : std::string(line.substr(start, end - start));
+    auto isSpace = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+    const size_t key = line.find("\"cmd\"");
+    if (key == std::string_view::npos) return {};
+    size_t i = key + 5;
+    while (i < line.size() && isSpace(line[i])) ++i;
+    if (i >= line.size() || line[i] != ':') return {};
+    ++i;
+    while (i < line.size() && isSpace(line[i])) ++i;
+    if (i >= line.size() || line[i] != '"') return {};
+    ++i;
+    std::string name;
+    while (i < line.size() && name.size() < kMaxCmdNameChars) {
+        const char c = line[i++];
+        const bool ident = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+        if (!ident) break;
+        name.push_back(c);
+    }
+    return name;
 }
 
 // ── Who should own the pipe at startup ──────────────────────────────────────

@@ -1216,14 +1216,9 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         std::string line = ReadLine(pipe);
         if (line.empty()) { flushRepeat(); break; } // Disconnected / I/O cancelled
 
-        // Extract command name for dedup (fast: find "cmd":" in JSON)
-        std::string cmd;
-        auto pos = line.find("\"cmd\":\"");
-        if (pos != std::string::npos) {
-            auto start = pos + 7;
-            auto end = line.find('"', start);
-            if (end != std::string::npos) cmd = line.substr(start, end - start);
-        }
+        // The command's name, for the repeat-suppressed log, the diagnostics and pipe_clients. Whatever the client's JSON
+        // spacing (Voll::ExtractCmdName).
+        const std::string cmd = Voll::ExtractCmdName(line);
 
         if (cmd == lastCmd && !cmd.empty()) {
             ++repeatCount;
@@ -1243,11 +1238,10 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         // unavailable to any other command — i.e. precisely the head-of-line
         // blocking docs/multipipe-eval.md blames for UI lag, which until now
         // nothing measured. See Sense.h.
-        conn->inFlight.store(true, std::memory_order_relaxed);
-        SetPhase(*conn, Connection::Phase::Dispatching);
-        // Record WHICH command, for Stop's drain-timeout diagnostic only. `cmd` is
-        // already parsed above for the repeat-suppression, so this costs one small
-        // string copy per command and nothing on any read path.
+        // Record WHICH command, and when, BEFORE raising inFlight: a reader that sees the
+        // command in flight (Stop's drain diagnostic, pipe_clients) must see its name,
+        // not the previous command's. `cmd` is already parsed above for the
+        // repeat-suppression, so this costs one small string copy per command.
         {
             std::lock_guard<std::mutex> dlk(conn->diagMutex);
             conn->cmdName = cmd;
@@ -1256,6 +1250,8 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
             std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count(),
             std::memory_order_relaxed);
+        conn->inFlight.store(true, std::memory_order_release);
+        SetPhase(*conn, Connection::Phase::Dispatching);
         // QPC, not GetTickCount64: its ~15.6 ms granularity floored every sub-tick
         // dispatch to 0, so a live run of 1397 walk_instance calls reported
         // "0 ms total, max 15 ms" — an artefact of which calls straddled a tick,
