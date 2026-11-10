@@ -432,6 +432,23 @@ public sealed class PipePerProcessSourceTests
         Assert.Matches(@"\bg_initInProgress\b", rescan);
     }
 
+    /// <summary>Stage C: the hint cache is changed under one lock. Four writers each read the file, changed one record
+    /// and published the whole file, so two at once dropped one change -- while the reply to `persist` said it was
+    /// saved. One read-modify-write (UpdateCacheRecord) under a named mutex, which a second copy of the DLL and a second
+    /// game share; the reader takes it too, so its open handle cannot make a writer's rename fail.</summary>
+    [Fact]
+    public void TheHintCacheIsChangedUnderOneLock()
+    {
+        var code = CodeOnly(DllSrc("Flamme.cpp"));
+        var writes = Regex.Matches(code, @"\bWriteJsonAtomic\s*\(").Count;
+        Assert.True(writes == 2, $"Flamme.cpp: {writes} WriteJsonAtomic( occurrence(s); expected the definition and the one call in UpdateCacheRecord");
+        Assert.Matches(@"\bWriteJsonAtomic\s*\(", FunctionBody(code, "UpdateCacheRecord("));
+        Assert.Matches(@"\bCacheLock\s+\w+\s*\(", FunctionBody(code, "ScanHints LoadHints("));
+        Assert.Matches(@"\bCreateMutexW\s*\(", code);
+        // The reply says what happened to the write, not what was asked.
+        Assert.DoesNotMatch(@"data\[""persisted""\]\s*=\s*persist\s*;", NoComments(DllSrc("Fern.cpp")));
+    }
+
     /// <summary>A connection erases itself from m_conns and only then releases what it owns, so Stop's drain --
     /// which waited for m_conns to empty -- could finish, and run its own resets, while that release still ran. The
     /// drain waits for the teardowns too.</summary>

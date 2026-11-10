@@ -1478,6 +1478,71 @@ int main() {
         Tot::ResetShutdown();
     }
 
+    // -- HINTCACHELOCK -- [PIPE-PER-PROCESS-2026-11-06] Stage C: the hint cache is changed under one lock. On a temp
+    // file, never the user's real cache (GetCacheFilePath), so only UpdateCacheRecord is called, never a public Save*.
+    {
+        blk("HINTCACHELOCK - two writers at once both keep their change");
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / ("flamme_lock_" + std::to_string(GetCurrentProcessId()));
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        const fs::path file = dir / "UE5CEDumper.TEST.json";
+        auto readRec = [&]() {
+            std::ifstream ifs(file);
+            nlohmann::json root = nlohmann::json::parse(ifs, nullptr, false);
+            return (root.is_object() && root.contains("games") && root["games"].contains("HASH"))
+                ? root["games"]["HASH"] : nlohmann::json::object();
+        };
+
+        // A is inside its read-modify-write, waiting; B arrives. Unlocked, B publishes its read, then A publishes its
+        // own, and B's change is gone though B published.
+        std::atomic<bool> aInside{false}, bInside{false};
+        bool aOk = false, bOk = false;
+        std::thread a([&] {
+            aOk = Flamme::UpdateCacheRecord(file, "HASH", true, [&](nlohmann::json&, nlohmann::json& rec) {
+                rec["a"] = 1;
+                aInside = true;
+                for (int i = 0; i < 60 && !bInside; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }, "A");
+        });
+        while (!aInside) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::thread b([&] {
+            bOk = Flamme::UpdateCacheRecord(file, "HASH", true, [&](nlohmann::json&, nlohmann::json& rec) {
+                bInside = true;
+                rec["b"] = 1;
+            }, "B");
+        });
+        a.join();
+        b.join();
+        const nlohmann::json rec = readRec();
+        check("HINTCACHELOCK: both writers published", aOk && bOk);
+        check("HINTCACHELOCK: the first writer's change survives", rec.contains("a"));
+        check("HINTCACHELOCK: the second writer's change survives", rec.contains("b"));
+
+        // Many writers, each its own fields: every one lands.
+        std::vector<std::thread> ws;
+        for (int t = 0; t < 8; ++t) {
+            ws.emplace_back([&, t] {
+                for (int k = 0; k < 25; ++k)
+                    Flamme::UpdateCacheRecord(file, "HASH", true, [&](nlohmann::json&, nlohmann::json& r) {
+                        r["w" + std::to_string(t) + "_" + std::to_string(k)] = k;
+                    }, "stress");
+            });
+        }
+        for (auto& w : ws) w.join();
+        const nlohmann::json all = readRec();
+        int present = 0;
+        for (int t = 0; t < 8; ++t)
+            for (int k = 0; k < 25; ++k)
+                if (all.contains("w" + std::to_string(t) + "_" + std::to_string(k))) ++present;
+        check("HINTCACHELOCK: 8 writers x 25 changes all land", present == 200, std::to_string(present).c_str());
+
+        check("HINTCACHELOCK: no record and not creating -> nothing written",
+              !Flamme::UpdateCacheRecord(file, "OTHER", false, [](nlohmann::json&, nlohmann::json&) {}, "none"));
+        fs::remove_all(dir, ec);
+    }
+
     // -- BOOLLAYOUT-2026-09-11 -- the bool layout probe, and the struct preview's mask -------
     //
     // [A3-BOOL-NATIVE-NOWRITE] / [A2-STRUCT-PREVIEW-BOOLMASK], the B05 review follow-up. B05's

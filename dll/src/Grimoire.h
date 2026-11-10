@@ -69,6 +69,12 @@ constexpr int            PIPE_WATCH_INTERVAL_MIN_MS    = 50;
 constexpr int            PIPE_WATCH_MAX_PER_CONNECTION = 32;
 constexpr int            PIPE_WATCH_MAX_TOTAL          = 64;
 
+// How long a hint-cache writer waits for another to finish before it gives up on its write (logged, the previous
+// cache kept). A write is a few milliseconds; the wait covers an AV scanner holding the file.
+constexpr unsigned long  HINTCACHE_LOCK_WAIT_MS        = 2000;
+// The cache lock's name: this prefix + the cache file's name, so a test on a temp file never contends with a game.
+constexpr const wchar_t* HINTCACHE_LOCK_PREFIX         = L"Local\\UE5CEDumper.HintCache.";
+
 // --- Userspace pointer plausibility ---
 // A candidate x64 pointer is "plausible userspace" iff it sits in the canonical
 // low-half range [0x10000, 0x00007FFFFFFFFFFF]: above the first 64KB (never a valid

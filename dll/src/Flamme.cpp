@@ -18,6 +18,7 @@
 #include <iomanip>
 #include <sstream>
 #include <atomic>
+#include <functional>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -217,6 +218,75 @@ static bool WriteJsonAtomic(const fs::path& path, const std::string& text,
 
     SweepOrphanTemps(path);
     return true;
+}
+
+// ============================================================
+// The cache's lock ([PIPE-PER-PROCESS-2026-11-06] Stage C)
+// ============================================================
+// Every writer reads the file, changes one game's record and publishes the whole file. Two at once -- two pipe
+// clients setting an override and an invoke timeout, or one of them beside a scan -- each published its own read,
+// so the later rename dropped the earlier change while its reply said persisted; both also staged through the one
+// .tmp.<pid>, so one could delete the other's staged file. A NAMED mutex rather than a std::mutex: a second copy of
+// the DLL in this process shares the staging name, and a second injected game shares the file. A crashed holder
+// (WAIT_ABANDONED) left a whole file -- the publish is a rename -- so its lock is taken as held.
+class CacheLock {
+public:
+    explicit CacheLock(const fs::path& path, unsigned long waitMs = Grimoire::HINTCACHE_LOCK_WAIT_MS) {
+        (void)path; (void)waitMs;   // RED stub: no lock
+    }
+    ~CacheLock() {}
+    CacheLock(const CacheLock&) = delete;
+    CacheLock& operator=(const CacheLock&) = delete;
+    bool Held() const { return m_held; }
+
+private:
+    HANDLE m_mutex = nullptr;
+    bool   m_held  = true;   // RED stub
+};
+
+/// Read the cache, let `mutate` change the root and this game's record, publish -- all under CacheLock, so no other
+/// writer's change is lost between the read and the rename. `createIfMissing` false: no file, or no record for this
+/// game, means nothing to change. Returns whether the file was published; every failure is logged.
+static bool UpdateCacheRecord(const fs::path& path, const char* peHash, bool createIfMissing,
+                              const std::function<void(json& root, json& rec)>& mutate, const char* who) {
+    CacheLock lock(path);
+    if (!lock.Held()) {
+        LOG_WARN("HintCache: %s: another writer held the cache for %lu ms -- not written, the previous cache kept",
+                 who, Grimoire::HINTCACHE_LOCK_WAIT_MS);
+        return false;
+    }
+    json root;
+    if (fs::exists(path)) {
+        std::ifstream ifs(path);
+        if (ifs.is_open()) {
+            root = json::parse(ifs, nullptr, /*allow_exceptions=*/false);
+            ifs.close();
+        }
+    } else if (!createIfMissing) {
+        return false;   // nothing written yet -> nothing to fix
+    }
+    if (!root.is_object()) {
+        if (!createIfMissing) return false;
+        root = json::object();
+    }
+    if (createIfMissing) {
+        fs::create_directories(path.parent_path());
+        if (!root.contains("version")) root["version"] = 1;
+        if (!root.contains("games") || !root["games"].is_object()) root["games"] = json::object();
+    }
+    auto gamesIt = root.find("games");
+    if (gamesIt == root.end() || !gamesIt->is_object()) return false;
+    json rec = gamesIt->contains(peHash) ? (*gamesIt)[peHash] : json::object();
+    if (!rec.is_object()) {
+        if (!createIfMissing) return false;
+        rec = json::object();
+    } else if (!createIfMissing && !gamesIt->contains(peHash)) {
+        return false;
+    }
+    mutate(root, rec);
+    root["games"][peHash] = rec;
+    // Atomic write: staged temp, verified, then renamed. (FL1/FL2)
+    return WriteJsonAtomic(path, root.dump(2), who);
 }
 
 static std::string GetUtcTimestamp() {
