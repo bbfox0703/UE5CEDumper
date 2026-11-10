@@ -35,6 +35,9 @@
 #include <vector>
 #include <atomic>
 #include <thread>
+#include <stdexcept>
+#include <mutex>
+#include <condition_variable>
 
 namespace Sein {
 void Info(const char*, const char*, ...) {}
@@ -77,6 +80,9 @@ uint32_t g_cachedUEVersion = 0;
 #include "../src/Genau.cpp"      // NOLINT
 #undef LOG_CAT
 #include "../src/Linie.cpp"      // NOLINT -- the profiler table: RecordCall's accumulation behind IsPerFrame
+#undef LOG_CAT
+#define LOG_CAT "TEST"
+#include "../src/Routine.h"      // SingleFlightJob: its guard logs through the Sein stubs above
 
 // ── harness ──────────────────────────────────────────────────────────
 
@@ -1378,6 +1384,98 @@ int main() {
         auto alone = Aura::ParallelGObjectsScan<int>(kCount, [&](int&, int32_t, int32_t, std::atomic<bool>&) {});
         check("BUDGET control: a walk on its own gets the whole share again", alone.nthreads == cap + 1,
               std::to_string(alone.nthreads).c_str());
+    }
+
+    // -- SINGLEFLIGHT -- [PIPE-PER-PROCESS-2026-11-06] Stage C: trigger_scan / rescan start one job at a time, and
+    // only Stop cancels it. Here, not in dll_helpers_test, because RunThreadGuarded logs through Sein, whose stubs
+    // this target defines.
+    {
+        using Job = Routine::SingleFlightJob;
+        Tot::ResetPerCommand();
+        Tot::ResetShutdown();
+        std::atomic<bool> serving{true};
+        auto waitIdle = [](const Job& j) {
+            for (int i = 0; i < 400 && j.Running(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            return !j.Running();
+        };
+
+        // T1: a second start arriving while the first is between its check and its thread is refused. The first start's
+        // reset is exactly that window -- today's handler cleared the name cache in it -- so the second call is made there.
+        {
+            Job job("test");
+            Job::Start inner = Job::Start::Started;
+            const Job::Start outer = job.TryStart(serving,
+                [&] { inner = job.TryStart(serving, [] {}, [] { return true; }); },
+                [] { return true; });
+            check("single flight: the first start starts", outer == Job::Start::Started);
+            check("single flight: a start inside its window is told a job is already running",
+                   inner == Job::Start::AlreadyRunning);
+            check("single flight: the job ends", waitIdle(job));
+            job.StopAndJoin();
+        }
+
+        // T2: the job owns its cancel. Another client's death (the global per-command cancel) reaches neither the job nor a
+        // worker it spawns the way Aura does; Stop's StopAndJoin does.
+        {
+            Job job("test");
+            std::mutex m;
+            std::condition_variable cv;
+            int phase = 0;
+            bool sawForeign = true, workerSawForeign = true, sawStop = false;
+            job.TryStart(serving, [] {}, [&] {
+                std::unique_lock<std::mutex> lk(m);
+                cv.wait(lk, [&] { return phase >= 1; });
+                sawForeign = Tot::Requested();
+                const Tot::CancelContext ctx = Tot::CaptureCancelContext();
+                std::thread worker([&] { Tot::CancelContextScope s(ctx); workerSawForeign = Tot::Requested(); });
+                worker.join();
+                phase = 2;
+                cv.notify_all();
+                cv.wait(lk, [&] { return phase >= 3; });
+                sawStop = Tot::Requested();
+                return true;
+            });
+            Tot::RequestPerCommand();   // a client with a command in flight died
+            { std::lock_guard<std::mutex> lk(m); phase = 1; }
+            cv.notify_all();
+            { std::unique_lock<std::mutex> lk(m); cv.wait(lk, [&] { return phase >= 2; }); }
+            Tot::ResetPerCommand();
+            std::thread stopper([&] { job.StopAndJoin(); });
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));   // Stop has raised the job's token and is joining
+            { std::lock_guard<std::mutex> lk(m); phase = 3; }
+            cv.notify_all();
+            stopper.join();
+            check("own cancel: another client's death does not cancel the job", !sawForeign);
+            check("own cancel: ...nor a worker the job spawns", !workerSawForeign);
+            check("own cancel: Stop does", sawStop);
+            check("own cancel: and Stop joined it", !job.Running());
+        }
+
+        // T3: Completed() is the body's own answer -- a scan that failed or was cancelled is not "scanned".
+        {
+            Job job("test");
+            job.TryStart(serving, [] {}, [] { return false; });
+            waitIdle(job);
+            check("completed: a body that returns false has not completed", !job.Completed());
+            job.TryStart(serving, [] {}, [] { return true; });
+            waitIdle(job);
+            check("completed: one that returns true has", job.Completed());
+            job.TryStart(serving, [] {}, []() -> bool { throw std::runtime_error("boom"); });
+            check("completed: a body that throws ends the job", waitIdle(job));
+            check("completed: ...without completing", !job.Completed());
+            job.StopAndJoin();
+        }
+
+        // T4: once the server is stopping, nothing starts.
+        {
+            Job job("test");
+            std::atomic<bool> stopped{false};
+            bool ran = false;
+            check("stopping: refused", job.TryStart(stopped, [&] { ran = true; }, [] { return true; }) == Job::Start::Stopping);
+            check("stopping: nothing ran and nothing runs", !ran && !job.Running());
+        }
+        Tot::ResetPerCommand();
+        Tot::ResetShutdown();
     }
 
     // -- BOOLLAYOUT-2026-09-11 -- the bool layout probe, and the struct preview's mask -------

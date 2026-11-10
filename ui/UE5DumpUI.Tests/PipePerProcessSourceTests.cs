@@ -387,6 +387,51 @@ public sealed class PipePerProcessSourceTests
         return code[start..end];
     }
 
+    /// <summary>Stage C: trigger_scan and rescan start one job at a time. The old start read `running`, cleared caches
+    /// and reset results, then set it: two clients both passed, raced join/assign on one thread (the loser's thread
+    /// detached and Stop never joined it), and rescan's second reset wiped the first's results. The job also ran
+    /// unbound, so ANY client dying with a command in flight cancelled it.</summary>
+    [Theory]
+    [InlineData("CMD_TRIGGER_SCAN", "m_scan")]
+    [InlineData("CMD_RESCAN", "m_rescan")]
+    public void AScanJobStartsOnceAndOwnsItsCancel(string renge, string state)
+    {
+        var code = CodeOnly(DllSrc("Fern.cpp"));
+        var branch = CommandBranch(code, renge);
+        Assert.Matches($@"\b{state}\.job\.TryStart\s*\(\s*m_running\s*,", branch);
+        Assert.DoesNotMatch($@"\b{state}\.running\b", branch);
+        // The maintainer's choice (2026-11-10): a scan another client started is in progress, not a failure.
+        Assert.Contains("data[\"in_progress\"]", NoComments(DllSrc("Fern.cpp")));
+        Assert.Matches(@"Start::AlreadyRunning", branch);
+    }
+
+    /// <summary>Stop cancels each job through its own token and joins it -- and no longer clears `running` first,
+    /// which let a connection still dispatching during Stop start a job and join the same thread beside Stop.</summary>
+    [Fact]
+    public void StopCancelsAndJoinsEachJob()
+    {
+        var code = CodeOnly(DllSrc("Fern.cpp"));
+        Assert.Matches(@"\bm_scan\.job\.StopAndJoin\s*\(\s*\)", code);
+        Assert.Matches(@"\bm_rescan\.job\.StopAndJoin\s*\(\s*\)", code);
+        Assert.DoesNotMatch(@"\bm_(?:re)?scan\.running\.store\s*\(", code);
+    }
+
+    /// <summary>apply_rescan read each result twice from fields a running rescan writes, and could publish 0 and call
+    /// Aura::Init(0). It takes one copy, under the lock the writer holds. And a rescan refuses while a scan is still
+    /// publishing the pointers it would decide from.</summary>
+    [Fact]
+    public void RescanResultsAreReadOnceUnderTheirLock()
+    {
+        var code = CodeOnly(DllSrc("Fern.cpp"));
+        var apply = CommandBranch(code, "CMD_APPLY_RESCAN");
+        Assert.Single(Regex.Matches(apply, @"\bm_rescan\.Results\s*\(\s*\)"));
+        Assert.DoesNotMatch(@"\bm_rescan\.found", apply);
+        Assert.DoesNotMatch(@"\bm_rescan\.found", CommandBranch(code, "CMD_RESCAN_STATUS"));
+        var rescan = CommandBranch(code, "CMD_RESCAN");
+        Assert.Matches(@"\bm_scan\.job\.Running\s*\(\s*\)", rescan);
+        Assert.Matches(@"\bg_initInProgress\b", rescan);
+    }
+
     /// <summary>A connection erases itself from m_conns and only then releases what it owns, so Stop's drain --
     /// which waited for m_conns to empty -- could finish, and run its own resets, while that release still ran. The
     /// drain waits for the teardowns too.</summary>
