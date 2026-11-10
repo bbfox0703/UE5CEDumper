@@ -201,8 +201,8 @@ public sealed class PipePerProcessSourceTests
     {
         int start = code.IndexOf("SetPhase(*conn, Connection::Phase::Unregistering)", StringComparison.Ordinal);
         Assert.True(start >= 0, "Fern.cpp: the Unregistering phase is gone -- re-point this pin");
-        int end = code.IndexOf("m_connCv.notify_all()", start, StringComparison.Ordinal);
-        Assert.True(end > start, "Fern.cpp: no notify after the cleanup -- re-point this pin");
+        int end = CleanupEnd(code, start);
+        Assert.True(end > start, "Fern.cpp: no end to the cleanup -- re-point this pin");
         return code[start..end];
     }
 
@@ -383,8 +383,15 @@ public sealed class PipePerProcessSourceTests
     {
         int start = code.IndexOf("SetPhase(*conn, Connection::Phase::StoppingWatches)", StringComparison.Ordinal);
         Assert.True(start >= 0, "Fern.cpp: the StoppingWatches phase is gone -- re-point this pin");
-        int end = code.IndexOf("m_connCv.notify_all()", start, StringComparison.Ordinal);
-        return code[start..end];
+        return code[start..CleanupEnd(code, start)];
+    }
+
+    /// <summary>Where a connection's cleanup ends: its teardown count's release, or (before that guard) the notify.</summary>
+    private static int CleanupEnd(string code, int start)
+    {
+        int reset = code.IndexOf("teardown.reset()", start, StringComparison.Ordinal);
+        int notify = code.IndexOf("m_connCv.notify_all()", start, StringComparison.Ordinal);
+        return reset >= 0 && (notify < 0 || reset < notify) ? reset : notify;
     }
 
     /// <summary>Stage C: trigger_scan and rescan start one job at a time. The old start read `running`, cleared caches
@@ -458,10 +465,75 @@ public sealed class PipePerProcessSourceTests
         var code = CodeOnly(DllSrc("Fern.cpp"));
         Assert.Matches(@"return\s+m_conns\.empty\(\)\s*&&\s*m_tearingDown\s*==\s*0\s*;", code);
         var cleanup = ConnectionCleanup(code);
-        int up = cleanup.IndexOf("++m_tearingDown", StringComparison.Ordinal);
-        int down = cleanup.IndexOf("--m_tearingDown", StringComparison.Ordinal);
+        int up = cleanup.IndexOf("teardown.emplace(*this)", StringComparison.Ordinal);
+        int erase = cleanup.IndexOf("m_conns.erase(", StringComparison.Ordinal);
         int release = cleanup.IndexOf("ReleaseOwnedBy(", StringComparison.Ordinal);
-        Assert.True(up >= 0 && release > up && down > release,
-            "the cleanup must count itself in before it erases, and out after ReleaseOwnedBy");
+        Assert.True(up >= 0 && erase > up && release > erase,
+            "the cleanup must count itself in (TeardownCount) before it erases, and release what it owned after");
+        // Review finding (2026-11-10): a bare decrement at the end was skipped by a throw in between, and every later
+        // Stop then waited out its full drain. The count goes out in TeardownCount's destructor, on every way out.
+        Assert.DoesNotMatch(@"--m_tearingDown", cleanup);
+        var guard = FunctionBody(CodeOnly(DllSrc("Fern.h")), "~TeardownCount(");
+        Assert.Matches(@"--\s*\w+\.m_tearingDown", guard);
+        Assert.Matches(@"\bm_connCv\.notify_all\s*\(", guard);
+    }
+
+    /// <summary>A Stop whose drain times out while a teardown is still releasing used to log "0 left" and name no
+    /// one. It says how many teardowns it waited for.</summary>
+    [Fact]
+    public void AStopThatTimesOutSaysWhatItWaitedFor()
+        => Assert.Matches(@"\btearingLeft\s*=\s*m_tearingDown\b", CodeOnly(DllSrc("Fern.cpp")));
+
+    /// <summary>pipe_clients read a holder's command name, then its start time, then whether it was in flight: a
+    /// command starting in between was reported running under the previous command's name and age. The flag is read
+    /// first, as the writer raises it last. And `phase` is a short stable key, not Stop's diagnostic sentence.</summary>
+    [Fact]
+    public void AHolderIsReadInTheOrderItIsWritten()
+    {
+        var body = FunctionBody(CodeOnly(DllSrc("Fern.cpp")), "Fern::SnapshotHolders(");
+        int flag = body.IndexOf("inFlight.load(", StringComparison.Ordinal);
+        int name = body.IndexOf("diagMutex", StringComparison.Ordinal);
+        int start = body.IndexOf("cmdStartMs.load(", StringComparison.Ordinal);
+        Assert.True(flag >= 0 && name > flag && start > flag, "SnapshotHolders must read inFlight before the name and time");
+        Assert.Matches(@"\bPhaseKey\s*\(", body);
+        Assert.DoesNotMatch(@"\bPhaseName\s*\(", body);
+    }
+
+    /// <summary>scan_status and rescan_status read `running` and then the result in separate steps: another client's
+    /// start in between reset the result, and the reply said "finished, nothing found". Each reads one snapshot.
+    /// rescan's "in progress" reply echoed flags the starter had not written yet.</summary>
+    [Fact]
+    public void AScanStatusIsOneSnapshot()
+    {
+        var code = CodeOnly(DllSrc("Fern.cpp"));
+        var scan = CommandBranch(code, "CMD_SCAN_STATUS");
+        Assert.Matches(@"\bm_scan\.job\.Status\s*\(\s*\)", scan);
+        Assert.DoesNotMatch(@"\bm_scan\.job\.(?:Running|Completed)\s*\(", scan);
+        var rescan = CommandBranch(code, "CMD_RESCAN_STATUS");
+        int locked = rescan.IndexOf("m_rescan.statusMutex", StringComparison.Ordinal);
+        int running = rescan.IndexOf("m_rescan.job.Running()", StringComparison.Ordinal);
+        Assert.True(locked >= 0 && running > locked, "rescan_status must read running under the lock the reset takes");
+        Assert.DoesNotMatch(@"\bscanningG(?:Objects|World)\b", code);
+    }
+
+    /// <summary>A watch whose map insert threw left its thread detached, sampling until the process ended. The slot
+    /// goes into the map before the thread starts.</summary>
+    [Fact]
+    public void AWatchIsInTheMapBeforeItsThreadStarts()
+    {
+        var start = FunctionBody(CodeOnly(DllSrc("Fern.cpp")), "Fern::StartWatch(");
+        int slot = start.IndexOf("try_emplace(", StringComparison.Ordinal);
+        int thread = start.IndexOf("std::thread(", StringComparison.Ordinal);
+        Assert.True(slot >= 0 && thread > slot, "StartWatch must take its map slot before it starts the thread");
+    }
+
+    /// <summary>`persisted` reports the write, so what follows from it must too: Auto's pending state, and the UI's
+    /// log line.</summary>
+    [Fact]
+    public void WhatFollowsFromPersistedFollowsTheWrite()
+    {
+        Assert.Matches(@"AutoPendsUntilNextLaunch\s*\(\s*plan\.outcome\s*,\s*persisted\s*\)", CodeOnly(DllSrc("Fern.cpp")));
+        var ui = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Services/DumpService.cs"));
+        Assert.DoesNotContain("persisted={persist}", ui);
     }
 }

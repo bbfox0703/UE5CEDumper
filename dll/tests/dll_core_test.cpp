@@ -1432,6 +1432,10 @@ int main() {
                 phase = 2;
                 cv.notify_all();
                 cv.wait(lk, [&] { return phase >= 3; });
+                // Stop raises the token from another thread; wait for it rather than guess how long that takes.
+                lk.unlock();
+                for (int i = 0; i < 5000 && !Tot::Requested(); ++i)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
                 sawStop = Tot::Requested();
                 return true;
             });
@@ -1441,7 +1445,6 @@ int main() {
             { std::unique_lock<std::mutex> lk(m); cv.wait(lk, [&] { return phase >= 2; }); }
             Tot::ResetPerCommand();
             std::thread stopper([&] { job.StopAndJoin(); });
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));   // Stop has raised the job's token and is joining
             { std::lock_guard<std::mutex> lk(m); phase = 3; }
             cv.notify_all();
             stopper.join();
