@@ -698,20 +698,17 @@ void Fern::Stop(bool graceful) {
     // one read. m_running is already false, so no watch can start after this.
     StopAllWatches();
 
-    // Join background scan threads. These joins are UNBOUNDED — the comment here used
+    // Join the background scan jobs. These joins are UNBOUNDED — the comment here used
     // to claim RunScan/RunRescan were "bounded AOB scans", but RunRescan runs Genau's
-    // Extra Scan, a full .data sweep. What actually bounds them is Tot::RequestShutdown()
-    // above plus the cancel polls Genau's loops now carry; without those, and since
-    // UE5_Shutdown runs on the CE Lua caller's thread, CE's UI froze for the remainder
-    // of the sweep. (B18)
-    m_rescan.running.store(false);
-    if (m_rescan.scanThread.joinable()) {
-        m_rescan.scanThread.join();
-    }
-    m_scan.running.store(false);
-    if (m_scan.scanThread.joinable()) {
-        m_scan.scanThread.join();
-    }
+    // Extra Scan, a full .data sweep. What actually bounds them is each job's own cancel
+    // token, raised by StopAndJoin, and Tot::RequestShutdown() above, read by the cancel
+    // polls Genau's loops carry; without those, and since UE5_Shutdown runs on the CE Lua
+    // caller's thread, CE's UI froze for the remainder of the sweep. (B18)
+    // No `running` is cleared first any more: that let a connection still dispatching
+    // start a job and join the same thread beside this one. m_running is already false,
+    // so no job starts now. [PIPE-PER-PROCESS-2026-11-06] Stage C
+    m_rescan.job.StopAndJoin();
+    m_scan.job.StopAndJoin();
     LOG_INFO("PipeServer: Stop watches+scan joins done (%lld ms)", elapsedMs());
 
     // Wait for every connection thread to self-unregister (they are detached;
@@ -6684,10 +6681,6 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // === Extra Scan: user-triggered aggressive pointer recovery ===
 
         if (cmd == Renge::CMD_RESCAN) {
-            if (m_rescan.running.load()) {
-                return Renge::MakeError(id, "Rescan already in progress").dump();
-            }
-
             extern uintptr_t g_cachedGObjects;
             extern uintptr_t g_cachedGNames;
             extern uintptr_t g_cachedGWorld;
@@ -6705,6 +6698,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                             "not exist in this binary").dump();
             }
 
+            // What to look for is decided from the published pointers, which a scan still running has not finished
+            // publishing. [PIPE-PER-PROCESS-2026-11-06] Stage C
+            extern std::atomic<bool> g_initInProgress;
+            if (m_scan.job.Running() || g_initInProgress.load(std::memory_order_acquire)) {
+                return Renge::MakeError(id, "A scan is still running -- wait for it to finish").dump();
+            }
+
             bool needGObj = (g_cachedGObjects == 0);
             bool needGWld = (g_cachedGWorld == 0) && (g_cachedGObjects != 0) && (g_cachedGNames != 0);
 
@@ -6716,49 +6716,63 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeResponse(id, data).dump();
             }
 
-            // Reset state
-            m_rescan.foundGObjects = 0;
-            m_rescan.foundGWorld   = 0;
-            m_rescan.gobjectsMethod = "not_found";
-            m_rescan.gworldMethod   = "not_found";
-            m_rescan.phase.store(0);
-            {
-                std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
-                m_rescan.statusText = "Starting...";
-            }
-            m_rescan.running.store(true);
-
-            if (m_rescan.scanThread.joinable()) m_rescan.scanThread.join();
-            m_rescan.scanThread = std::thread(&Fern::RunRescan, this, needGObj, needGWld);
+            using Start = Routine::SingleFlightJob::Start;
+            const Start started = m_rescan.job.TryStart(m_running,
+                [&] {   // only the client that starts the job resets it
+                    std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
+                    m_rescan.result     = RescanResult{};
+                    m_rescan.statusText = "Starting...";
+                    m_rescan.phase.store(0);
+                    m_rescan.scanningGObjects.store(needGObj);
+                    m_rescan.scanningGWorld.store(needGWld);
+                },
+                [this, needGObj, needGWld] {
+                    // Phase 3 on every way out, a throw included, so rescan_status reports the run as over. (B14)
+                    struct Done { std::atomic<int>& phase; ~Done() { phase.store(3); } } done{m_rescan.phase};
+                    RunRescanBody(needGObj, needGWld);
+                    return true;
+                });
+            if (started == Start::Stopping) return Renge::MakeError(id, "the pipe server is stopping").dump();
 
             json data;
-            data["scanning_gobjects"] = needGObj;
-            data["scanning_gworld"]   = needGWld;
+            data["started"] = (started == Start::Started);
+            if (started == Start::AlreadyRunning) {
+                // As trigger_scan: a rescan another client started is in progress, not a failure.
+                data["in_progress"]       = true;
+                data["scanning_gobjects"] = m_rescan.scanningGObjects.load();
+                data["scanning_gworld"]   = m_rescan.scanningGWorld.load();
+            } else {
+                data["scanning_gobjects"] = needGObj;
+                data["scanning_gworld"]   = needGWld;
+            }
             return Renge::MakeResponse(id, data).dump();
         }
 
         if (cmd == Renge::CMD_RESCAN_STATUS) {
             json data;
-            data["running"] = m_rescan.running.load();
+            const bool running = m_rescan.job.Running();
+            data["running"] = running;
             data["phase"]   = m_rescan.phase.load();
             {
                 std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
                 data["status_text"] = m_rescan.statusText;
             }
             // Include results if scan is complete
-            if (!m_rescan.running.load() && m_rescan.phase.load() == 3) {
-                data["found_gobjects"]   = (m_rescan.foundGObjects != 0);
-                data["found_gworld"]     = (m_rescan.foundGWorld != 0);
-                data["gobjects_addr"]    = Renge::AddrToStr(m_rescan.foundGObjects);
-                data["gworld_addr"]      = Renge::AddrToStr(m_rescan.foundGWorld);
-                data["gobjects_method"]  = m_rescan.gobjectsMethod;
-                data["gworld_method"]    = m_rescan.gworldMethod;
+            if (!running && m_rescan.phase.load() == 3) {
+                const RescanResult found = m_rescan.Results();
+                data["found_gobjects"]   = (found.gobjects != 0);
+                data["found_gworld"]     = (found.gworld != 0);
+                data["gobjects_addr"]    = Renge::AddrToStr(found.gobjects);
+                data["gworld_addr"]      = Renge::AddrToStr(found.gworld);
+                data["gobjects_method"]  = found.gobjectsMethod;
+                data["gworld_method"]    = found.gworldMethod;
+                data["cancelled"]        = found.cancelled;   // additive: cut short by Stop, so "not found" is unknown
             }
             return Renge::MakeResponse(id, data).dump();
         }
 
         if (cmd == Renge::CMD_APPLY_RESCAN) {
-            if (m_rescan.running.load()) {
+            if (m_rescan.job.Running()) {
                 return Renge::MakeError(id, "Rescan still running").dump();
             }
 
@@ -6789,18 +6803,23 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             bool applied = false;
 
-            if (m_rescan.foundGObjects && g_cachedGObjects == 0) {
-                g_cachedGObjects = m_rescan.foundGObjects;
-                g_cachedGObjectsMethod = m_rescan.gobjectsMethod;
+            // One copy, read under the lock the job writes them under. Each field used to be read twice, from fields
+            // a new run's reset clears, so the publish below could see a pointer and then publish 0 -- and call
+            // Aura::Init(0). [PIPE-PER-PROCESS-2026-11-06] Stage C
+            const RescanResult found = m_rescan.Results();
+
+            if (found.gobjects && g_cachedGObjects == 0) {
+                g_cachedGObjects = found.gobjects;
+                g_cachedGObjectsMethod = found.gobjectsMethod;
                 Aura::Init(g_cachedGObjects);
                 Sein::Info("PIPE:cmd", "apply_rescan: Applied GObjects=0x%llX (%s)",
                          (unsigned long long)g_cachedGObjects, g_cachedGObjectsMethod);
                 applied = true;
             }
 
-            if (m_rescan.foundGWorld && g_cachedGWorld == 0) {
-                g_cachedGWorld = m_rescan.foundGWorld;
-                g_cachedGWorldMethod = m_rescan.gworldMethod;
+            if (found.gworld && g_cachedGWorld == 0) {
+                g_cachedGWorld = found.gworld;
+                g_cachedGWorldMethod = found.gworldMethod;
                 Sein::Info("PIPE:cmd", "apply_rescan: Applied GWorld=0x%llX (%s)",
                          (unsigned long long)g_cachedGWorld, g_cachedGWorldMethod);
                 applied = true;
@@ -6891,29 +6910,21 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // Async: starts a background thread, returns immediately.
         // Also safe to call in CE/manual inject mode — UE5_Init is idempotent.
         if (cmd == Renge::CMD_TRIGGER_SCAN) {
-            if (m_scan.running.load()) {
-                return Renge::MakeError(id, "Scan already in progress").dump();
-            }
-
-            Sein::Info("PIPE:cmd", "trigger_scan: Starting async engine scan...");
-
-            // Re-scan = game state may have changed; drop stale cached names.
-            Ubel::ClearNameCache();
-
-            // Reset state and launch background thread
-            m_scan.completed = false;
-            m_scan.phase.store(0);
-            {
-                std::lock_guard<std::mutex> lock(m_scan.statusMutex);
-                m_scan.statusText = "Starting...";
-            }
-            m_scan.running.store(true);
-
-            if (m_scan.scanThread.joinable()) m_scan.scanThread.join();
-            m_scan.scanThread = std::thread(&Fern::RunScan, this);
+            using Start = Routine::SingleFlightJob::Start;
+            const Start started = m_scan.job.TryStart(m_running,
+                [] {   // only the client that starts the job runs this
+                    Sein::Info("PIPE:cmd", "trigger_scan: Starting async engine scan...");
+                    // Re-scan = game state may have changed; drop stale cached names.
+                    Ubel::ClearNameCache();
+                },
+                [this] { return RunScan(); });
+            if (started == Start::Stopping) return Renge::MakeError(id, "the pipe server is stopping").dump();
 
             json data;
-            data["started"] = true;
+            data["started"] = (started == Start::Started);
+            // [PIPE-PER-PROCESS-2026-11-06] Stage C, the maintainer's choice (2026-11-10): a scan another client started
+            // is a scan in progress, not a failure. Its result is the process's, and scan_status reports it to all.
+            if (started == Start::AlreadyRunning) data["in_progress"] = true;
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -6923,13 +6934,15 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int phase = SP::phase.load(std::memory_order_acquire);
 
             json data;
-            data["running"]     = m_scan.running.load();
+            const bool running = m_scan.job.Running();
+            data["running"]     = running;
             data["phase"]       = phase;
             data["status_text"] = SP::GetStatusText();
 
             // When complete, include full pointer snapshot — same shape as
             // get_pointers. Single helper guarantees the two paths can't drift.
-            if (!m_scan.running.load() && m_scan.completed) {
+            // Completed is UE5_Init's own answer: a scan Stop cancelled is not "scanned".
+            if (!running && m_scan.job.Completed()) {
                 data["scanned"] = true;
                 FillPointerSnapshot(data);
             }
@@ -8143,28 +8156,19 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 // ============================================================
 // RunScan — Background thread for initial scan (trigger_scan)
 // ============================================================
-void Fern::RunScan() {
+bool Fern::RunScan() {
+    // The job runs this guarded -- UE5_Init allocates heavily against a live game, and a throw must still end the job,
+    // or the UI waits on a scan that is never coming (B14) -- and bound to its own cancel token.
     Sein::Info("PIPE:scan", "RunScan: started");
-    // UE5_Init allocates heavily against a live game. The flags below MUST still be
-    // cleared if it throws, or the UI waits on a scan that is never coming. (B14)
-    Routine::RunThreadGuarded("RunScan", [] { UE5_Init(); });
-    m_scan.completed = true;
-    m_scan.running.store(false);
-    Sein::Info("PIPE:scan", "RunScan: finished");
+    const bool ok = UE5_Init();
+    Sein::Info("PIPE:scan", "RunScan: finished (%s)", ok ? "initialized" : "not initialized: cancelled");
+    return ok;
 }
 
 // ============================================================
-// RunRescan — Background thread for aggressive pointer recovery
+// RunRescanBody — the Extra Scan job's work: aggressive pointer recovery
 // ============================================================
-void Fern::RunRescan(bool scanGObjects, bool scanGWorld) {
-    // Guarded, and the `running` flag is cleared in BOTH outcomes: Genau's Extra Scan
-    // allocates against a live process, and a throw here used to terminate the game AND
-    // (had it not) would have left the UI waiting on a rescan that never finishes. (B14)
-    Routine::RunThreadGuarded("RunRescan", [&] { RunRescanBody(scanGObjects, scanGWorld); });
-    m_rescan.phase.store(3);
-    m_rescan.running.store(false);
-}
-
+// Runs guarded (Genau's Extra Scan allocates against a live process, B14) and bound to the job's own cancel token.
 void Fern::RunRescanBody(bool scanGObjects, bool scanGWorld) {
     Sein::Info("PIPE:rescan", "RunRescan: started (GObjects=%d, GWorld=%d)",
                  scanGObjects, scanGWorld);
@@ -8178,8 +8182,11 @@ void Fern::RunRescanBody(bool scanGObjects, bool scanGWorld) {
 
         uintptr_t result = Genau::ExtraScanGObjects();
         if (result) {
-            m_rescan.foundGObjects = result;
-            m_rescan.gobjectsMethod = "data_heuristic";
+            {
+                std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
+                m_rescan.result.gobjects       = result;
+                m_rescan.result.gobjectsMethod = "data_heuristic";
+            }
             Sein::Info("PIPE:rescan", "RunRescan: GObjects found at 0x%llX",
                          static_cast<unsigned long long>(result));
         } else {
@@ -8196,8 +8203,11 @@ void Fern::RunRescanBody(bool scanGObjects, bool scanGWorld) {
 
         uintptr_t result = Genau::ExtraScanGWorld();
         if (result) {
-            m_rescan.foundGWorld = result;
-            m_rescan.gworldMethod = "instance_scan";
+            {
+                std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
+                m_rescan.result.gworld       = result;
+                m_rescan.result.gworldMethod = "instance_scan";
+            }
             Sein::Info("PIPE:rescan", "RunRescan: GWorld found at 0x%llX",
                          static_cast<unsigned long long>(result));
         } else {
@@ -8205,16 +8215,21 @@ void Fern::RunRescanBody(bool scanGObjects, bool scanGWorld) {
         }
     }
 
-    m_rescan.phase.store(3);
+    // Bound to the job's own token, Requested() here means Stop or shutdown -- never another client's cancel. A sweep
+    // cut short by it found nothing because it stopped looking, which "not found" would misreport.
+    const bool cancelled = Tot::Requested();
+    RescanResult summary;
     {
         std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
-        m_rescan.statusText = "Complete";
+        m_rescan.result.cancelled = cancelled;
+        m_rescan.statusText = cancelled ? "Cancelled" : "Complete";
+        summary = m_rescan.result;
     }
-    m_rescan.running.store(false);
+    m_rescan.phase.store(3);
 
-    Sein::Info("PIPE:rescan", "RunRescan: finished (foundGObj=0x%llX, foundGWld=0x%llX)",
-                 static_cast<unsigned long long>(m_rescan.foundGObjects),
-                 static_cast<unsigned long long>(m_rescan.foundGWorld));
+    Sein::Info("PIPE:rescan", "RunRescan: finished (foundGObj=0x%llX, foundGWld=0x%llX%s)",
+                 static_cast<unsigned long long>(summary.gobjects),
+                 static_cast<unsigned long long>(summary.gworld), cancelled ? ", cancelled" : "");
 }
 
 std::string Fern::StartWatch(const std::shared_ptr<Connection>& conn, uintptr_t addr, uint32_t size, uint32_t interval_ms) {

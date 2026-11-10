@@ -229,6 +229,18 @@ disconnects. A second `watch` of the same address on the same connection replace
 { "id": 28, "cmd": "scan_status" }
 ```
 
+`trigger_scan` and `rescan` each start **one background job at a time** ([PIPE-PER-PROCESS-2026-11-06] Stage C):
+- The reply carries `started`. When another client's job is already running, it is `ok` with `"started": false,
+  "in_progress": true` (and `rescan` echoes what that job looks for in `scanning_gobjects` / `scanning_gworld`) --
+  not an error: the job's result is the process's, and `scan_status` / `rescan_status` report it to every client.
+- The job keeps running when the client that started it disconnects, and another client's death no longer cancels
+  it; only Stop / shutdown does.
+- `scan_status` sets `scanned: true` only when the scan initialized the engine; a scan Stop cancelled is not scanned.
+- `rescan` refuses while a scan or an init is still running, since what it looks for is decided from the pointers that
+  scan has not finished publishing.
+- `rescan_status` adds `cancelled` (additive) once the run is over: true when Stop cut the sweep short, so its
+  "not found" is unknown rather than a result.
+
 ### CE Export
 
 ```jsonc

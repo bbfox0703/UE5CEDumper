@@ -191,24 +191,42 @@ public:
     // return is Completed(). `serverRunning` false refuses: a job started after Stop's join would be joined by nobody.
     template <class Reset, class Body>
     Start TryStart(const std::atomic<bool>& serverRunning, Reset&& reset, Body&& body) {
-        // RED stub: today's check-then-set
-        if (m_running.load()) return Start::AlreadyRunning;
+        // The claim is a compare-and-swap. The old check-then-set let two callers through: both ran their reset, both
+        // joined and replaced one std::thread, and the loser's thread was detached where no Stop would join it.
+        bool idle = false;
+        if (!m_running.compare_exchange_strong(idle, true, std::memory_order_acq_rel)) return Start::AlreadyRunning;
+        bool launched = false;
+        struct Unclaim {   // every way out before the thread exists gives the claim back -- a throw included
+            std::atomic<bool>& running;
+            const bool&        launched;
+            ~Unclaim() { if (!launched) running.store(false, std::memory_order_release); }
+        } unclaim{m_running, launched};
+        std::lock_guard<std::mutex> lk(m_life);
         if (!serverRunning.load()) return Start::Stopping;
+        if (m_thread.joinable()) m_thread.join();   // the last run stored `running` false as it ended: a brief join
+        m_completed.store(false, std::memory_order_relaxed);
         reset();
-        m_running.store(true);
-        if (m_thread.joinable()) m_thread.join();
-        m_thread = std::thread([this, body = std::forward<Body>(body)]() mutable {
+        auto token = std::make_shared<std::atomic<bool>>(false);
+        m_token = token;
+        m_thread = std::thread([this, token, body = std::forward<Body>(body)]() mutable {
+            // Bound to the job's own token, which this thread co-owns, so Tot::Requested() here -- and in any worker
+            // it spawns with the captured context and joins -- answers this token or shutdown, never the per-command
+            // cancel another client's death raises.
+            Tot::CancelContextScope scope(Tot::CancelContext{token.get(), false});
             bool ok = false;
             RunThreadGuarded(m_tag, [&] { ok = body(); });
-            m_completed.store(ok);
-            m_running.store(false);
+            m_completed.store(ok, std::memory_order_relaxed);
+            m_running.store(false, std::memory_order_release);
         });
+        launched = true;
         return Start::Started;
     }
 
     // Cancel the running job (its own token; never another client's) and join it.
     void StopAndJoin() {
-        if (m_thread.joinable()) m_thread.join();   // RED stub: no token to raise
+        std::lock_guard<std::mutex> lk(m_life);
+        if (m_token) m_token->store(true, std::memory_order_relaxed);
+        if (m_thread.joinable()) m_thread.join();
     }
 
     bool Running() const { return m_running.load(std::memory_order_acquire); }

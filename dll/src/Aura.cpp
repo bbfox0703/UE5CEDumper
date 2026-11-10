@@ -304,7 +304,7 @@ void ParallelIndexRanges(int32_t count, int nthreads, BodyFn&& body) {
     // game (>= 8192 objects), i.e. for exactly the scans that matter.
     // ⭐ Safe to pass the raw pointer: this function JOINS the pool below, so the caller's
     // binding strictly outlives every worker. See Tot::CancelContextScope's warning for
-    // why the same trick is NOT valid for Fern::RunScan / RunRescan.
+    // why the same trick is NOT valid for a thread that outlives its starter.
     const Tot::CancelContext cancelCtx = Tot::CaptureCancelContext();
     for (int t = 1; t < nthreads; ++t) {
         const int64_t b = static_cast<int64_t>(t) * chunk;

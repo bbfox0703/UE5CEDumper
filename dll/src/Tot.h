@@ -93,7 +93,8 @@ inline void MarkCancelImmune() { t_cancelImmune = true; }
 //     (Aura.cpp `ParallelGObjectsScan`) -- and the watcher's ONLY job is to turn a client disconnect into
 //     deadlineHit for the parallel path, which is the default path for every real game
 //     (ScanThreadCount, Aura.cpp, goes parallel at >= 8192 objects);
-//   * Fern::RunScan / RunRescan (Fern.cpp) and Frieren's UE5_AutoStart;
+//   * Frieren's UE5_AutoStart (Fern's scan jobs bind their own token since
+//     [PIPE-PER-PROCESS-2026-11-06] Stage C: Routine::SingleFlightJob);
 //   * the CE remote thread entering the Frieren C-ABI exports.
 // Binding those to &conn->cancel is NOT the fix either: the connection can be erased
 // while such a thread still runs, so the pointer would dangle in exactly the disconnect
@@ -125,10 +126,10 @@ inline CancelContext CaptureCancelContext() { return CancelContext{t_connCancel,
 /// ⛔ ONLY safe when the spawning thread OUTLIVES the worker -- i.e. it joins it. That
 /// holds for Aura::ParallelIndexRanges (it joins its pool, Aura.cpp) and for the
 /// ParallelGObjectsScan cancelWatcher, which is why those may adopt a raw
-/// `std::atomic<bool>*`. It does NOT hold for Fern::RunScan / RunRescan, which outlive
-/// the command that started them -- binding those to a connection would be a
-/// use-after-free in exactly the disconnect case the binding exists for. Give those an
-/// owning token before propagating anything into them.
+/// `std::atomic<bool>*`. It does NOT hold for Fern's scan jobs, which outlive the
+/// command that started them -- binding those to a connection would be a use-after-free
+/// in exactly the disconnect case the binding exists for. They bind an owning token
+/// instead: Routine::SingleFlightJob's thread co-owns its token for the whole bound region.
 struct CancelContextScope {
     CancelContext prev;
     explicit CancelContextScope(const CancelContext& c)

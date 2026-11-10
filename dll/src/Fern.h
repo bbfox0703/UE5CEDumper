@@ -220,33 +220,36 @@ private:
     std::unordered_map<Kanne::WatchKey, std::unique_ptr<WatchEntry>, Kanne::WatchKeyHash> m_watches;
     std::mutex m_watchMutex;
 
-    // Initial Scan (async trigger_scan for proxy DLL mode)
+    // Initial Scan (async trigger_scan for proxy DLL mode). Its progress is Frieren's ScanProgress.
     struct ScanState {
-        std::atomic<bool> running{false};
-        std::atomic<int>  phase{0};       // 0=idle, 1..6=scanning, 7=complete
-        std::string       statusText;
-        std::mutex        statusMutex;
-        Routine::SafeThread       scanThread;
-        bool              completed = false;
+        Routine::SingleFlightJob job{"RunScan"};
     };
     ScanState m_scan;
-    void RunScan();
+    bool RunScan();   // the job's body: UE5_Init's own answer
 
     // Extra Scan (user-triggered background rescan for missing pointers)
+    struct RescanResult {
+        uintptr_t   gobjects       = 0;
+        uintptr_t   gworld         = 0;
+        const char* gobjectsMethod = "not_found";
+        const char* gworldMethod   = "not_found";
+        bool        cancelled      = false;   // Stop or shutdown cut the sweep short: "not found" would be a guess
+    };
     struct RescanState {
-        std::atomic<bool> running{false};
+        Routine::SingleFlightJob job{"RunRescan"};
         std::atomic<int>  phase{0};       // 0=idle, 1=GObjects, 2=GWorld, 3=complete
+        // What the running job looks for, for the reply to a second client that asks while it runs.
+        std::atomic<bool> scanningGObjects{false};
+        std::atomic<bool> scanningGWorld{false};
+        std::mutex        statusMutex;    // guards statusText and result
         std::string       statusText;
-        std::mutex        statusMutex;
-        uintptr_t         foundGObjects = 0;
-        uintptr_t         foundGWorld   = 0;
-        const char*       gobjectsMethod = "not_found";
-        const char*       gworldMethod   = "not_found";
-        Routine::SafeThread       scanThread;
+        RescanResult      result;
+        RescanResult Results() {
+            std::lock_guard<std::mutex> lock(statusMutex);
+            return result;
+        }
     };
     RescanState m_rescan;
-    void RunRescan(bool scanGObjects, bool scanGWorld);
-    // The actual work; RunRescan is the guarded wrapper that always clears `running`.
     void RunRescanBody(bool scanGObjects, bool scanGWorld);
 
     void AcceptLoop();
