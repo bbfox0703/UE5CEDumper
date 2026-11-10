@@ -267,8 +267,9 @@ void ParallelIndexRanges(int32_t count, int nthreads, BodyFn&& body) {
 
 // Result of a ParallelGObjectsScan run. `perThread` is exposed so callers can
 // fold their own per-thread stat fields (counters, sets) after the run;
-// `deadlineHit` is the post-join load of the shared flag; `nthreads` is what
-// ScanThreadCount picked (for logging).
+// `deadlineHit` is the post-join load of the shared flag; `nthreads` is how many
+// threads the walk ran on: ScanThreadCount's pick, less what the process-wide
+// WorkerBudget could not lend (for logging).
 template <typename PerThreadT>
 struct ParallelScanResult {
     std::vector<PerThreadT> perThread;
@@ -285,8 +286,9 @@ struct ParallelScanResult {
     bool incomplete() const { return deadlineHit || workerFaulted; }
 };
 
-// Run a parallel GObjects walk: spawn ScanThreadCount(count) workers over
-// contiguous ascending index ranges, each writing into its own PerThreadT.
+// Run a parallel GObjects walk: up to ScanThreadCount(count) threads (this one,
+// plus workers leased from the process-wide WorkerBudget) over contiguous
+// ascending index ranges, each writing into its own PerThreadT.
 // `body(tr, beginIdx, endIdx, deadlineHit)` is the per-thread loop — it owns the
 // per-object work, the per-thread local maxResults cap, and the deadline check
 // (call deadlineHit.store(true) to signal siblings to stop). This factors out

@@ -2,7 +2,7 @@
 
     py pipebusy_capacity.py
 
-WAS: with all `kMaxPipeInstances = 3` instances in use, the accept loop's
+WAS: with all `kMaxPipeInstances` instances in use (3 then), the accept loop's
 `CreateNamedPipe` fails `ERROR_PIPE_BUSY` (231) every second and used to
 `LOG_ERROR("PipeServer: CreateNamedPipe failed …")` each time -- **1,826 ERROR lines
 in ~31.5 min measured on one Avowed session**, evicting real diagnostics as the 8 MB
@@ -12,9 +12,13 @@ NOW: `Voll` (header-only policy) special-cases `ERROR_PIPE_BUSY` -- ONE info on 
 transition INTO at-capacity, silence while it holds, ONE info on recovery. Any other
 errno still ERRORs every time.
 
-⚠ The register otherwise forbids running `pipe_client.py` beside the UI. **This rig
-needs no UI**: it opens three raw connections itself, which fills the pool exactly the
-same way and keeps the forbidden combination off the table entirely.
+**This rig needs no UI**: it opens as many connections as the DLL takes, which fills the
+pool exactly as a UI plus rigs would. How many is DERIVED, not assumed
+([PIPE-PER-PROCESS-2026-11-06] Stage B raised 3 to 6, and a game with an older DLL keeps
+its own): the DLL's log states the limit in force ("takes N clients at once", or the
+start line's `maxInstances=N` before that line existed), and the rig then MEASURES it --
+with N connected, one more open must find every instance taken (WaitNamedPipeW, which
+does not connect).
 
 WHAT MAKES IT A REAL CHECK RATHER THAN A GREP
   * the at-capacity line must appear **exactly once**, not merely "at least once" --
@@ -33,7 +37,7 @@ import sys
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from pipe_client import PipeClient                        # noqa: E402
+from pipe_client import PipeClient, pipe_is_busy          # noqa: E402
 
 LOGROOT = pathlib.Path.home() / "AppData/Local/UE5CEDumper/Logs"
 AT_CAP = "pipe instances in use"
@@ -43,6 +47,12 @@ OLD_SPAM = "CreateNamedPipe failed"
 
 def count(txt, needle):
     return sum(1 for l in txt.splitlines() if needle in l)
+
+
+def limit_in_force(txt):
+    """The most clients the DLL says its pipe takes, from its latest statement, or None when it states none."""
+    stated = list(re.finditer(r"takes (\d+) clients at once", txt)) or list(re.finditer(r"maxInstances=(\d+)", txt))
+    return int(stated[-1].group(1)) if stated else None
 
 
 def main(logdir="DumperTest", hold=75):
@@ -56,13 +66,23 @@ def main(logdir="DumperTest", hold=75):
     print(f"baseline in pipe-0.log: at-capacity={base_cap} freed={base_freed} "
           f"CreateNamedPipe-failed={base_spam}")
 
+    n = limit_in_force(before)
+    if n is None:
+        print(f"pipebusy: FAILED -- {log} states no pipe limit; is the DLL injected?")
+        return 1
+    print(f"the DLL states its pipe takes {n} clients at once")
+
     clients = []
     try:
-        for i in range(3):
+        for i in range(n):
             c = PipeClient(timeout=60.0).connect()
             r = c.request("get_pointers")
             clients.append(c)
-            print(f"  client {i+1}/3 connected (build {r.get('build_number')})")
+            print(f"  client {i+1}/{n} connected (build {r.get('build_number')})")
+        # The measurement behind the stated number: with n connected, one more open finds every instance taken.
+        time.sleep(1.5)   # the accept loop retries its next create once a second
+        full = pipe_is_busy(clients[0].pipe)
+        print(f"  open #{n + 1}: every instance taken = {full}   (expect True)")
         print(f"  pool is full; holding {hold}s ...")
         time.sleep(hold)
 
@@ -76,7 +96,7 @@ def main(logdir="DumperTest", hold=75):
         print(f"  at-capacity lines : {cap}   (expect EXACTLY 1)")
         print(f"  'CreateNamedPipe failed' lines: {spam}   (expect 0; the old bug was ~1/s, "
               f"so {hold}s would have produced ~{hold})")
-        ok = (cap == 1 and spam == 0)
+        ok = (cap == 1 and spam == 0 and full)
     finally:
         for c in clients:
             c.close()
