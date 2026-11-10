@@ -731,6 +731,32 @@ public class DumpServiceTests
         Assert.Contains(_log.Messages, m => m.Contains("override cleared") && m.Contains(expected));
     }
 
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Stage C: `persisted` is the write's answer. When the clear was not
+    /// written, the override is still on disk and the next launch applies it again -- whatever Auto restored in memory,
+    /// the log must not promise that "Auto applies at the next launch".</summary>
+    [Theory]
+    [InlineData("no_detection")]
+    [InlineData("stale_detection")]
+    [InlineData("too_old")]
+    [InlineData("restored")]
+    public async Task SetUeVersionOverrideAsync_Auto_ARefusedWriteIsNotLoggedAsAppliedNextLaunch(string outcome)
+    {
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "set_ue_version_override")
+                return new JsonObject { ["ok"] = true, ["auto_restore"] = outcome, ["persisted"] = false };
+            return new JsonObject { ["ok"] = true, ["gobjects"] = "0x1", ["gnames"] = "0x2" };
+        });
+
+        await CreateService().SetUeVersionOverrideAsync(0, persist: true, TestContext.Current.CancellationToken);
+
+        var line = Assert.Single(_log.Messages, m => m.Contains("override cleared"));
+        Assert.Contains("persisted=False", line);
+        Assert.DoesNotContain("Auto applies at the next launch", line);
+        Assert.Contains("next launch applies the override again", line);
+    }
+
     [Fact]
     public void DescribeAutoRestore_NamesEveryOutcomeTheDllSends()
     {

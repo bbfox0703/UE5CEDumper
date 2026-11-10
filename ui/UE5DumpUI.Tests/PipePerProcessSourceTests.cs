@@ -495,6 +495,11 @@ public sealed class PipePerProcessSourceTests
         int name = body.IndexOf("diagMutex", StringComparison.Ordinal);
         int start = body.IndexOf("cmdStartMs.load(", StringComparison.Ordinal);
         Assert.True(flag >= 0 && name > flag && start > flag, "SnapshotHolders must read inFlight before the name and time");
+        // Verification of the fix: the name and its start time were still two steps, so a command just begun could
+        // carry the previous command's age. Both are written and read under diagMutex.
+        var code = CodeOnly(DllSrc("Fern.cpp"));
+        Assert.Matches(@"std::lock_guard<std::mutex>\s+dlk\s*\(\s*conn->diagMutex\s*\)\s*;\s*conn->cmdName\s*=\s*cmd\s*;\s*conn->cmdStartMs\.store\(", code);
+        Assert.Matches(@"std::lock_guard<std::mutex>\s+dlk\s*\(\s*c->diagMutex\s*\)\s*;\s*h\.lastCmd\s*=\s*c->cmdName\s*;\s*started\s*=\s*c->cmdStartMs\.load\(", body);
         Assert.Matches(@"\bPhaseKey\s*\(", body);
         Assert.DoesNotMatch(@"\bPhaseName\s*\(", body);
     }
@@ -510,10 +515,26 @@ public sealed class PipePerProcessSourceTests
         Assert.Matches(@"\bm_scan\.job\.Status\s*\(\s*\)", scan);
         Assert.DoesNotMatch(@"\bm_scan\.job\.(?:Running|Completed)\s*\(", scan);
         var rescan = CommandBranch(code, "CMD_RESCAN_STATUS");
-        int locked = rescan.IndexOf("m_rescan.statusMutex", StringComparison.Ordinal);
-        int running = rescan.IndexOf("m_rescan.job.Running()", StringComparison.Ordinal);
-        Assert.True(locked >= 0 && running > locked, "rescan_status must read running under the lock the reset takes");
+        int locked = rescan.IndexOf("lock(m_rescan.statusMutex)", StringComparison.Ordinal);
+        Assert.True(locked >= 0, "rescan_status must take m_rescan.statusMutex");
+        int open = rescan.LastIndexOf('{', locked);
+        int depth = 0, close = open;
+        for (; close < rescan.Length; close++)
+        {
+            if (rescan[close] == '{') depth++;
+            else if (rescan[close] == '}' && --depth == 0) break;
+        }
+        var inside = rescan[open..(close + 1)];
+        var outside = rescan[..open] + rescan[(close + 1)..];
+        foreach (var read in new[] { "m_rescan.job.Running()", "m_rescan.phase.load()", "m_rescan.result" })
+            Assert.True(inside.Contains(read, StringComparison.Ordinal), $"rescan_status must read {read} under the lock");
+        Assert.DoesNotMatch(@"\bm_rescan\.(?:job\.Running|Results)\s*\(", outside);
         Assert.DoesNotMatch(@"\bscanningG(?:Objects|World)\b", code);
+        // scan_status: the phase the UI's completion test reads comes after the snapshot. ScanProgress' phase 7 is
+        // stored before the job ends, so a phase read after "not running, completed" is 7.
+        int snapshot = scan.IndexOf("m_scan.job.Status()", StringComparison.Ordinal);
+        int phase = scan.IndexOf("SP::phase.load(", StringComparison.Ordinal);
+        Assert.True(snapshot >= 0 && phase > snapshot, "scan_status must read the phase after the job's snapshot");
     }
 
     /// <summary>A watch whose map insert threw left its thread detached, sampling until the process ended. The slot
