@@ -35,9 +35,9 @@ namespace Voll {
 // A pipe leaves \\.\pipe\ the moment its server process dies, a killed one included, even while a client still holds
 // its handle (measured 2026-11-06). A listed name is therefore always a live server, and a reused pid cannot be
 // mistaken for a dead game's.
+// Plain decimal, no padding: the UI and the rigs parse the digits after the prefix.
 inline std::wstring PipeNameForPid(DWORD pid) {
-    (void)pid;
-    return std::wstring(Grimoire::PIPE_NAME);   // red: the legacy name, until the green commit
+    return std::wstring(Grimoire::PIPE_NAME_PREFIX) + std::to_wstring(pid);
 }
 
 // This process's pipe. The pid never changes, so the name is built once.
@@ -48,21 +48,40 @@ inline const std::wstring& OwnPipeName() {
 
 // A startup probe opens this process's pipe as a client to learn whether a server is already there. `opened` = the
 // CreateFileW succeeded; `lastError` = GetLastError() when it did not.
+//
+// ERROR_PIPE_BUSY means a server IS there with every instance taken. The old probes read it as "no pipe" and started
+// a second server on the same name. With the name per process, that second server would be a second copy of the DLL
+// in this process (a stale proxy beside a fresh injection), and a client would reach either copy. ERROR_ACCESS_DENIED
+// also means the name exists; only "not found" means there is no server.
 inline bool ProbeFoundServer(bool opened, DWORD lastError) noexcept {
-    (void)lastError;
-    return opened;   // red: the old reading, which took ERROR_PIPE_BUSY for "no pipe"
+    return opened || lastError == ERROR_PIPE_BUSY || lastError == ERROR_ACCESS_DENIED;
 }
 
-// Who else serves this process's name, checked once on the FIRST instance a server start creates.
+// Who else serves this process's name, checked once on the FIRST instance a server start creates. The startup probe
+// already defers to a server it can see; this catches what a probe cannot: two copies probing in the same moment, and a
+// name another process created.
+//
+// Not FILE_FLAG_FIRST_PIPE_INSTANCE: it refuses a legitimate restart while this server's own connections from before
+// the restart still hold their instances.
 enum class FirstInstance {
     Sole,             // the name was free
-    SharedInProcess,  // the name already had instances, created by this process
-    ForeignCreator,   // another process created the name first
+    SharedInProcess,  // the name already had instances, created by this process: another copy of the DLL, or this
+                      // server's own connections from before a restart. Serve, and say so in the log.
+    ForeignCreator,   // another process created the name first: a client could reach it instead. Do not serve.
 };
 
+// `createError` = GetLastError() read right after a SUCCESSFUL CreateNamedPipeW. It is ERROR_ALREADY_EXISTS when the
+// name already had an instance, in this process or another (measured 2026-11-10: 0 on a fresh name, 183 on a second
+// instance from either). `creatorPid` = GetNamedPipeServerProcessId on the new SERVER handle, which names the process
+// that created the name's FIRST instance, not this one (measured: a second process's server handle reported the first
+// process), or 0 when the call failed.
+//
+// A process that creates the name AFTER us is not caught here: the name is ours from then on, and the UI checks the pid
+// `get_pointers` reports after it connects.
 inline FirstInstance ClassifyFirstInstance(DWORD createError, DWORD creatorPid, DWORD selfPid) noexcept {
-    (void)createError; (void)creatorPid; (void)selfPid;
-    return FirstInstance::Sole;   // red: no self-check yet
+    if (creatorPid != 0 && creatorPid != selfPid) return FirstInstance::ForeignCreator;
+    if (createError == ERROR_ALREADY_EXISTS) return FirstInstance::SharedInProcess;
+    return FirstInstance::Sole;
 }
 
 // What the accept loop should log for a given CreateNamedPipe outcome.
@@ -116,6 +135,10 @@ inline AcceptLog OnCreateSuccess(bool& atCapacity) noexcept {
 //
 // Splitting the decision out here (Scharf pattern, same reason as the accept policy above)
 // is what makes it testable — no test target compiles Frieren.cpp either.
+//
+// [PIPE-PER-PROCESS-2026-11-06] The name now carries the pid, so a relaunched title's new process has a name of its
+// own and never meets the dying one's server. The holder a probe finds can only be this process (a second copy of the
+// DLL) or a process that created this process's name. The decision is unchanged.
 // How long a deferring instance keeps watching, and how often it looks. Shared by BOTH
 // watchers — Frieren's (claims the pipe) and Heiter's (re-runs the whole auto-start) — so the
 // two cannot drift apart.
@@ -136,11 +159,12 @@ enum class StartAction {
 // `pipeExists` = CreateFileW(OPEN_EXISTING) succeeded. `holderPid` = the server end's owner
 // from GetNamedPipeServerProcessId, or 0 when that could not be determined.
 //
-// ⚠ An UNKNOWN holder defers rather than starts. Competing would be the worse error: two
-// servers on one name means a client lands on whichever instance Windows hands it, so a
-// connection could reach the wrong game's DLL and answer questions about the wrong process.
-// Deferring merely delays us, and the watcher makes that delay temporary — which is the whole
-// difference between this and the behaviour it replaces.
+// ⚠ An UNKNOWN holder defers rather than starts. ProbeFoundServer reports a busy pipe as found
+// with holder 0, and that holder is another copy of the DLL in this process. Competing would be
+// the worse error: two servers on one name means a client lands on whichever instance Windows
+// hands it, so a connection could reach the other copy (an older build, typically) and report
+// its answers as this one's. Deferring merely delays us, and the watcher makes that delay
+// temporary — which is the whole difference between this and the behaviour it replaces.
 inline StartAction DecideStart(bool pipeExists, DWORD holderPid, DWORD selfPid) {
     if (!pipeExists) return StartAction::StartNow;
     if (holderPid != 0 && holderPid == selfPid) return StartAction::AlreadyOurs;

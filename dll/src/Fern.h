@@ -44,6 +44,9 @@ public:
     // graceful=false — reached from ~Fern() at process exit: do the minimum.
     void Stop(bool graceful = true);
     bool IsClientConnected() const { return m_clientConnected.load(); }
+    // This copy of the DLL serves the pipe. A startup probe cannot tell this server from another copy's when every
+    // instance is busy, so UE5_StartPipeServer asks here first. [PIPE-PER-PROCESS-2026-11-06]
+    bool IsRunning() const { return m_running.load(); }
 
 private:
     // Max concurrent client connections. 2 UI lanes (interactive + bulk) + 1

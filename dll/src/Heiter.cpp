@@ -217,14 +217,19 @@ static void AutoStartBody()
     // instances: the second logged `skipping auto-start` and never recovered when the first
     // exited. (The OCTOPATH report hit the sibling copy in Frieren's UE5_StartPipeServer, which
     // the proxy path calls directly — same bug, different entry point.)
+    // [PIPE-PER-PROCESS-2026-11-06] The name is this process's own, so the holder is a second copy
+    // of the DLL here (a stale proxy beside a fresh injection), or a process that created this
+    // process's name. A busy pipe counts as held, with the holder unknown.
     HANDLE testPipe = CreateFileW(
-        Grimoire::PIPE_NAME,
+        Voll::OwnPipeName().c_str(),
         GENERIC_READ, 0, nullptr,
         OPEN_EXISTING, 0, nullptr);
 
-    const bool pipeExists = (testPipe != INVALID_HANDLE_VALUE);
+    const bool opened = (testPipe != INVALID_HANDLE_VALUE);
+    const DWORD probeErr = opened ? 0 : GetLastError();
+    const bool pipeExists = Voll::ProbeFoundServer(opened, probeErr);
     DWORD holderPid = 0;
-    if (pipeExists) {
+    if (opened) {
         ULONG pid = 0;
         if (GetNamedPipeServerProcessId(testPipe, &pid)) holderPid = static_cast<DWORD>(pid);
         CloseHandle(testPipe);
@@ -232,8 +237,9 @@ static void AutoStartBody()
 
     if (Voll::DecideStart(pipeExists, holderPid, GetCurrentProcessId())
             == Voll::StartAction::DeferAndWatch) {
-        LOG_WARN("DllMain AutoStart: pipe is held by PID %lu — deferring auto-start, and watching "
-                 "for it to free", static_cast<unsigned long>(holderPid));
+        LOG_WARN("DllMain AutoStart: pipe is held by PID %lu (0: every instance busy, holder "
+                 "unknown) — deferring auto-start, and watching for it to free",
+                 static_cast<unsigned long>(holderPid));
         // SKIPPED, not FAILED: a pipe server IS up (owned by the other instance), so a CE Lua
         // poller should proceed to connect rather than report an error. It stays SKIPPED only
         // until the watcher below actually runs the auto-start.
@@ -248,12 +254,14 @@ static void AutoStartBody()
                 if (Tot::ShutdownRequested()) return;
                 Sleep(Voll::kClaimWatchPollMs);
 
-                HANDLE probe = CreateFileW(Grimoire::PIPE_NAME, GENERIC_READ, 0, nullptr,
+                HANDLE probe = CreateFileW(Voll::OwnPipeName().c_str(), GENERIC_READ, 0, nullptr,
                                            OPEN_EXISTING, 0, nullptr);
-                if (probe != INVALID_HANDLE_VALUE) { CloseHandle(probe); continue; }
-                // ERROR_PIPE_BUSY means the holder is alive with every instance in use — still
-                // theirs. Only "not found" means the pipe is really gone.
-                if (GetLastError() == ERROR_PIPE_BUSY) continue;
+                const bool opened = probe != INVALID_HANDLE_VALUE;
+                const DWORD err = opened ? 0 : GetLastError();
+                if (opened) CloseHandle(probe);
+                // A busy pipe is the holder alive with every instance in use — still theirs.
+                // Only "not found" means the pipe is really gone.
+                if (Voll::ProbeFoundServer(opened, err)) continue;
 
                 LOG_WARN("AutoStartWatcher: pipe freed by PID %lu after %d ms — running the "
                          "auto-start that was deferred",

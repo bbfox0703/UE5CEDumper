@@ -405,7 +405,7 @@ static void Test_Voll_ClassifyFirstInstance() {
     EXPECT("a fresh name: sole", Voll::ClassifyFirstInstance(0, self, self) == FI::Sole);
     EXPECT("instances already there, all ours: shared in this process",
            Voll::ClassifyFirstInstance(ERROR_ALREADY_EXISTS, self, self) == FI::SharedInProcess);
-    // GetNamedPipeServerProcessId on a SERVER handle names the name's first creator (measured 2026-11-06).
+    // GetNamedPipeServerProcessId on a SERVER handle names the name's first creator (measured 2026-11-10).
     EXPECT("another process created the name first: foreign",
            Voll::ClassifyFirstInstance(ERROR_ALREADY_EXISTS, other, self) == FI::ForeignCreator);
     EXPECT("a foreign creator wins even without ERROR_ALREADY_EXISTS",

@@ -2724,12 +2724,14 @@ static void WatchForPipeAndClaim(DWORD holderPid) {
             }
             Sleep(Voll::kClaimWatchPollMs);
 
-            HANDLE probe = CreateFileW(Grimoire::PIPE_NAME, GENERIC_READ, 0, nullptr,
+            HANDLE probe = CreateFileW(Voll::OwnPipeName().c_str(), GENERIC_READ, 0, nullptr,
                                        OPEN_EXISTING, 0, nullptr);
-            if (probe != INVALID_HANDLE_VALUE) { CloseHandle(probe); continue; }
-            // ERROR_PIPE_BUSY means the holder is alive with every instance in use — still
-            // theirs. Only "not found" means the pipe is actually gone.
-            if (GetLastError() == ERROR_PIPE_BUSY) continue;
+            const bool opened = probe != INVALID_HANDLE_VALUE;
+            const DWORD err = opened ? 0 : GetLastError();
+            if (opened) CloseHandle(probe);
+            // A busy pipe is the holder alive with every instance in use — still theirs. Only
+            // "not found" means the pipe is actually gone.
+            if (Voll::ProbeFoundServer(opened, err)) continue;
 
             const bool ok = s_pipeServer.Start();
             LOG_WARN("PipeClaimWatcher: pipe freed by PID %lu after %d ms — claimed it: %s",
@@ -2745,17 +2747,31 @@ static void WatchForPipeAndClaim(DWORD holderPid) {
 }
 
 bool UE5_StartPipeServer() {
+    // This copy already serves (CE Lua can call the export by hand after auto-start ran). Asked
+    // first because the probe below cannot tell this server from another copy's when every
+    // instance is busy. [PIPE-PER-PROCESS-2026-11-06]
+    if (s_pipeServer.IsRunning()) {
+        LOG_INFO("UE5_StartPipeServer: this copy already serves the pipe — nothing to do");
+        return true;
+    }
+
     // Who, if anyone, already owns the pipe? The old guard asked only whether it EXISTED and
     // skipped for good on a yes — which on a self-relaunching title meant deferring to the
     // process that was in the middle of dying, and never serving again. [RELAUNCHPIPE-2026-08-19]
+    // The name is this process's own, so a holder is a second copy of the DLL here, or a
+    // process that created this process's name.
     HANDLE testPipe = CreateFileW(
-        Grimoire::PIPE_NAME,
+        Voll::OwnPipeName().c_str(),
         GENERIC_READ, 0, nullptr,
         OPEN_EXISTING, 0, nullptr);
 
-    const bool exists = (testPipe != INVALID_HANDLE_VALUE);
+    const bool opened = (testPipe != INVALID_HANDLE_VALUE);
+    const DWORD probeErr = opened ? 0 : GetLastError();
+    // ERROR_PIPE_BUSY is a server with every instance taken, not "no pipe": the holder stays
+    // unknown (0), and an unknown holder defers.
+    const bool exists = Voll::ProbeFoundServer(opened, probeErr);
     DWORD holderPid = 0;
-    if (exists) {
+    if (opened) {
         ULONG pid = 0;
         if (GetNamedPipeServerProcessId(testPipe, &pid)) holderPid = static_cast<DWORD>(pid);
         CloseHandle(testPipe);
@@ -2766,18 +2782,20 @@ bool UE5_StartPipeServer() {
             return s_pipeServer.Start();
 
         case Voll::StartAction::AlreadyOurs:
-            LOG_INFO("UE5_StartPipeServer: this process already serves the pipe — nothing to do");
+            LOG_INFO("UE5_StartPipeServer: another copy of UE5Dumper in this process already serves "
+                     "the pipe — nothing to do");
             return true;
 
         case Voll::StartAction::DeferAndWatch:
         default:
             // ⚠ Still returns TRUE, deliberately. Both callers map this straight onto
-            // g_invokeMailbox.initState, so a false here would publish INIT_FAILED for the
-            // perfectly ordinary case of a second game running — a worse and much more visible
+            // g_invokeMailbox.initState, so a false here would publish INIT_FAILED while a pipe
+            // server IS up in this process (another copy's) — a worse and much more visible
             // regression than the one being fixed. What changes is that the deferral is no
             // longer permanent: the watcher claims the pipe as soon as the holder lets go.
-            LOG_WARN("UE5_StartPipeServer: pipe is held by PID %lu — deferring, and watching for "
-                     "it to free (this process has no server until then)",
+            LOG_WARN("UE5_StartPipeServer: pipe is held by PID %lu (0: every instance busy, holder "
+                     "unknown) — deferring, and watching for it to free (this copy has no server "
+                     "until then)",
                      static_cast<unsigned long>(holderPid));
             {
                 bool expected = false;

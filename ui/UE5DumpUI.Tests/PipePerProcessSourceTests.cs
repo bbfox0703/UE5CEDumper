@@ -49,8 +49,8 @@ public sealed class PipePerProcessSourceTests
             .Select(p => (Path.GetFileName(p), File.ReadAllText(p).Replace("\r\n", "\n")));
     }
 
-    /// <summary>The protocol break is the decision: no build from 3695 on serves the legacy name, so a UI that finds
-    /// it knows the game runs an old DLL. Any string in the DLL's code that names the pipe names the per-process form.
+    /// <summary>The protocol break is the decision: the DLL no longer serves the legacy name, so a UI that finds it
+    /// knows a game runs an old DLL. Any string in the DLL's code that names the pipe names the per-process form.
     /// A message to the user counts too: telling them to connect to the old name would be wrong.</summary>
     [Fact]
     public void TheDllNamesNoLegacyPipe()

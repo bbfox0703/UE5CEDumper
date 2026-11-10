@@ -524,7 +524,8 @@ bool Fern::Start() {
     m_monitorThread = std::thread(&Fern::MonitorLoop, this);
 
     LOG_INFO("PipeServer: Started on %s (maxInstances=%lu)",
-             Utf8Helpers::EncodeUtf16(Grimoire::PIPE_NAME, wcslen(Grimoire::PIPE_NAME)).c_str(), kMaxPipeInstances);
+             Utf8Helpers::EncodeUtf16(Voll::OwnPipeName().c_str(), Voll::OwnPipeName().size()).c_str(),
+             kMaxPipeInstances);
     return true;
 }
 
@@ -675,11 +676,11 @@ void Fern::Stop(bool graceful) {
     // guard fail and the instance was never closed by anyone.
     //
     // Outside the lock on purpose: the connect can block briefly, and AcceptLoop
-    // needs m_connMutex to finish. Gated on listenerParked so we do not poke a
-    // DIFFERENT process's server — the pipe name is machine-global, so a second
-    // instrumented game would otherwise see a phantom connect.
+    // needs m_connMutex to finish. Gated on listenerParked so we do not poke a server
+    // that is not ours: the name is this process's, but a second copy of the DLL in
+    // this process can serve it too, and would see a phantom connect.
     if (listenerParked) {
-        HANDLE poke = CreateFileW(Grimoire::PIPE_NAME, GENERIC_READ, 0, nullptr,
+        HANDLE poke = CreateFileW(Voll::OwnPipeName().c_str(), GENERIC_READ, 0, nullptr,
                                   OPEN_EXISTING, 0, nullptr);
         if (poke != INVALID_HANDLE_VALUE) {
             CloseHandle(poke);
@@ -908,6 +909,10 @@ void Fern::AcceptLoop() {
     // hour that evict real diagnostics ([PIPEBUSY-2026-08-18]). Genuinely unexpected error
     // codes still LOG_ERROR every time, independent of this latch.
     bool atCapacity = false;
+    // [PIPE-PER-PROCESS-2026-11-06] The first instance of each Start is checked for who else serves this process's
+    // name (Voll::ClassifyFirstInstance). Accept-thread-local, like the latch above.
+    bool firstInstance = true;
+    bool foreignLogged = false;
     while (m_running.load()) {
         // Create a new pipe instance (multi-instance: up to kMaxPipeInstances
         // concurrent clients, so the UI's interactive + bulk lanes can connect
@@ -915,13 +920,13 @@ void Fern::AcceptLoop() {
         // because each connection is served by exactly ONE thread doing serial
         // read→dispatch→write on its own handle (no same-handle deadlock).
         // PIPE_REJECT_REMOTE_CLIENTS: without it, anyone holding this user's (or an admin's)
-        // credentials on ANOTHER machine opens \\host\pipe\UE5DumpBfx over SMB and drives a
+        // credentials on ANOTHER machine opens \\host\pipe\UE5DumpBfx_<pid> over SMB and drives a
         // DLL that writes game memory and invokes UFunctions. A local client is never refused
         // by it. The security stays the default (nullptr below): an explicit "this user"
         // DACL was measured and not shipped, because for an elevated game it would let a
         // non-elevated process in. [PIPE-REJECT-REMOTE]
         HANDLE pipe = CreateNamedPipeW(
-            Grimoire::PIPE_NAME,
+            Voll::OwnPipeName().c_str(),
             PIPE_ACCESS_DUPLEX,
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             kMaxPipeInstances,
@@ -930,9 +935,12 @@ void Fern::AcceptLoop() {
             0,                          // Default timeout
             nullptr                     // Default security
         );
+        // Read at once, on success too: a successful create reports ERROR_ALREADY_EXISTS when the name already had
+        // an instance, which the first-instance check below needs.
+        const DWORD createErr = GetLastError();
 
         if (pipe == INVALID_HANDLE_VALUE) {
-            DWORD err = GetLastError();
+            DWORD err = createErr;
             switch (Voll::OnCreateFailure(err, atCapacity)) {
                 case Voll::AcceptLog::EnterCapacity:
                     // All instances busy — the resource cap doing its job. Say so ONCE;
@@ -950,6 +958,38 @@ void Fern::AcceptLoop() {
             }
             std::this_thread::sleep_for(std::chrono::seconds(1));
             continue;
+        }
+
+        // [PIPE-PER-PROCESS-2026-11-06] Who else serves this process's name? The startup probe defers to a server it
+        // can see; this catches two copies of the DLL probing in the same moment, and a name another process created.
+        if (firstInstance) {
+            ULONG creator = 0;
+            if (!GetNamedPipeServerProcessId(pipe, &creator)) creator = 0;
+            const std::string name =
+                Utf8Helpers::EncodeUtf16(Voll::OwnPipeName().c_str(), Voll::OwnPipeName().size());
+            switch (Voll::ClassifyFirstInstance(createErr, static_cast<DWORD>(creator), GetCurrentProcessId())) {
+                case Voll::FirstInstance::ForeignCreator:
+                    // A client is handed the oldest listening instance, which is the other process's: serving
+                    // beside it would split this game's clients between the two. Wait for its instances to go.
+                    if (!foreignLogged) {
+                        LOG_ERROR("PipeServer: PID %lu created %s before this process did -- not serving it until "
+                                  "that process's instances are gone (a client could reach it instead of this game)",
+                                  static_cast<unsigned long>(creator), name.c_str());
+                        foreignLogged = true;
+                    }
+                    CloseHandle(pipe);
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                    continue;
+                case Voll::FirstInstance::SharedInProcess:
+                    LOG_WARN("PipeServer: %s already had instances in this process when this server started: a second "
+                             "copy of UE5Dumper serves it, or this server's connections from before a restart are "
+                             "still closing. A client can reach either.", name.c_str());
+                    break;
+                default:
+                    break;
+            }
+            if (foreignLogged) LOG_INFO("PipeServer: the other process's instances are gone -- serving %s", name.c_str());
+            firstInstance = false;
         }
 
         // Got a listener instance. If we had been at capacity, a slot just freed — say so once.
@@ -1432,9 +1472,9 @@ static void FillPointerSnapshot(json& data) {
     // keyed the confirmed-working proxy, the teleport library and its log folder on a name no file has. The UI
     // derives CE's own (ANSI) view of the name itself for anything it hands to Cheat Engine.
     data["module_name"] = Utf8Helpers::LeafUtf8(moduleNameW, wcslen(moduleNameW));
-    // The ONLY unambiguous answer to "which process is this pipe talking to". The pipe name
-    // is a single global, so two injected games both serve it and a connecting client lands on
-    // whichever instance is free -- the UI cannot otherwise tell it attached to the wrong game.
+    // Which process answered. The pipe name carries the pid [PIPE-PER-PROCESS-2026-11-06], and
+    // the UI compares the two after it connects: a process that created another game's name
+    // first would otherwise answer for it unnoticed.
     data["pid"] = static_cast<uint32_t>(GetCurrentProcessId());
 
     // load_mode: how the dumper got into this process, from THIS module's own file
