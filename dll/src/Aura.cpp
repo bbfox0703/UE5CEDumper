@@ -137,6 +137,16 @@ namespace {
 // headroom (-2) for the game's own threads + our pipe/UI thread so we don't
 // saturate every core and stall the host. Clamped to [1, 16]; tiny arrays
 // stay single-threaded (thread spawn cost would dominate).
+// Threads one GObjects walk may use, from the CPU's shape. `coreClasses`: one EfficiencyClass per PHYSICAL core
+// (empty when the topology could not be read); `logical`: logical processors.
+int ThreadsForCpu(const std::vector<uint8_t>& coreClasses, unsigned logical) {
+    (void)coreClasses;
+    int n = (logical >= 3) ? static_cast<int>(logical) - 2 : 1;   // red: the old rule, logical processors less 2
+    if (n < 1)  n = 1;
+    if (n > 16) n = 16;
+    return n;
+}
+
 int ScanThreadCount(int32_t workItems) {
     if (workItems < 8192) return 1;
     unsigned hc = std::thread::hardware_concurrency();

@@ -1290,6 +1290,42 @@ int main() {
         check("D2 * control: a clean run reports COMPLETE", !clean.incomplete());
     }
 
+    {   blk("[PIPE-PER-PROCESS-2026-11-06] C -- a walk's threads follow the CPU: performance cores less 2");
+        // The maintainer, 2026-11-10: logical processors less 2 used every physical core of a 16C32T PC, put 14
+        // threads on an 8-core 9800X3D's SMT siblings, and counted Intel's E-cores as cores. The game and background
+        // programs run meanwhile, and threads beyond the cores only switch context more often.
+        auto cores = [](int n, uint8_t cls) { return std::vector<uint8_t>(static_cast<size_t>(n), cls); };
+        auto hybrid = [](int p, int e) {
+            std::vector<uint8_t> v(static_cast<size_t>(p), uint8_t{1});
+            v.insert(v.end(), static_cast<size_t>(e), uint8_t{0});
+            return v;
+        };
+        auto t = [](int got) { return std::to_string(got); };
+        int g;
+        g = Aura::ThreadsForCpu(cores(16, 0), 32);
+        check("CPU: 16C32T -> 14 (16 physical cores less 2)", g == 14, t(g).c_str());
+        g = Aura::ThreadsForCpu(cores(8, 0), 16);
+        check("CPU * : 9800X3D 8C16T -> 6, not 14 on the SMT siblings", g == 6, t(g).c_str());
+        g = Aura::ThreadsForCpu(hybrid(8, 12), 28);
+        check("CPU * : Intel 8P+12E -> 6: E-cores are not counted", g == 6, t(g).c_str());
+        g = Aura::ThreadsForCpu(cores(8, 1), 16);
+        check("CPU: the same Intel with its E-cores disabled -> 6", g == 6, t(g).c_str());
+        g = Aura::ThreadsForCpu(cores(4, 0), 8);
+        check("CPU: 4C8T -> 2", g == 2, t(g).c_str());
+        g = Aura::ThreadsForCpu(cores(2, 0), 4);
+        check("CPU: 2C4T -> 1, never 0", g == 1, t(g).c_str());
+        g = Aura::ThreadsForCpu(cores(1, 0), 1);
+        check("CPU: 1 core -> 1", g == 1, t(g).c_str());
+        g = Aura::ThreadsForCpu(cores(32, 0), 64);
+        check("CPU: 32C64T -> 16, the cap", g == 16, t(g).c_str());
+        g = Aura::ThreadsForCpu({}, 32);
+        check("CPU: topology unread, 32 logical -> 14 (assumes 2-way SMT)", g == 14, t(g).c_str());
+        g = Aura::ThreadsForCpu({}, 1);
+        check("CPU: topology unread, 1 logical -> 1", g == 1, t(g).c_str());
+        g = Aura::ThreadsForCpu(cores(8, 0), 4);
+        check("CPU: never more than logical processors less 2", g == 2, t(g).c_str());
+    }
+
     {   blk("[PIPE-PER-PROCESS-2026-11-06] B -- one worker budget for every GObjects walk in the process");
         // With 6 pipe connections, several heavy commands can walk GObjects at once, and each spawned
         // ScanThreadCount() - 1 workers: k walks put k times that many threads in the game.
