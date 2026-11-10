@@ -526,8 +526,10 @@ public sealed class PipePerProcessSourceTests
         }
         var inside = rescan[open..(close + 1)];
         var outside = rescan[..open] + rescan[(close + 1)..];
+        int lockAt = locked - open;   // the lock statement, within `inside`
         foreach (var read in new[] { "m_rescan.job.Running()", "m_rescan.phase.load()", "m_rescan.result" })
-            Assert.True(inside.Contains(read, StringComparison.Ordinal), $"rescan_status must read {read} under the lock");
+            Assert.True(inside.IndexOf(read, StringComparison.Ordinal) > lockAt,
+                $"rescan_status must read {read} under the lock, after it is taken");
         Assert.DoesNotMatch(@"\bm_rescan\.(?:job\.Running|Results)\s*\(", outside);
         Assert.DoesNotMatch(@"\bscanningG(?:Objects|World)\b", code);
         // scan_status: the phase the UI's completion test reads comes after the snapshot. ScanProgress' phase 7 is

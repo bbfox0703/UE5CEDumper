@@ -731,15 +731,17 @@ public class DumpServiceTests
         Assert.Contains(_log.Messages, m => m.Contains("override cleared") && m.Contains(expected));
     }
 
-    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Stage C: `persisted` is the write's answer. When the clear was not
-    /// written, the override is still on disk and the next launch applies it again -- whatever Auto restored in memory,
-    /// the log must not promise that "Auto applies at the next launch".</summary>
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Stage C: `persisted` is the write's answer. A refused clear proves only
+    /// that the clear was not written -- an override saved earlier still applies at the next launch, and whether one was
+    /// saved is not known here -- so the log says that, and never promises "Auto applies at the next launch". When no
+    /// override was in force there was nothing to clear, and the log keeps saying so.</summary>
     [Theory]
-    [InlineData("no_detection")]
-    [InlineData("stale_detection")]
-    [InlineData("too_old")]
-    [InlineData("restored")]
-    public async Task SetUeVersionOverrideAsync_Auto_ARefusedWriteIsNotLoggedAsAppliedNextLaunch(string outcome)
+    [InlineData("no_detection", "an override saved there earlier still applies at the next launch")]
+    [InlineData("stale_detection", "an override saved there earlier still applies at the next launch")]
+    [InlineData("too_old", "an override saved there earlier still applies at the next launch")]
+    [InlineData("restored", "an override saved there earlier still applies at the next launch")]
+    [InlineData("not_overridden", "no override was in force")]
+    public async Task SetUeVersionOverrideAsync_Auto_ARefusedWriteIsLoggedAsWhatItProves(string outcome, string expected)
     {
         _pipe.SetHandler(req =>
         {
@@ -754,7 +756,7 @@ public class DumpServiceTests
         var line = Assert.Single(_log.Messages, m => m.Contains("override cleared"));
         Assert.Contains("persisted=False", line);
         Assert.DoesNotContain("Auto applies at the next launch", line);
-        Assert.Contains("next launch applies the override again", line);
+        Assert.Contains(expected, line);
     }
 
     [Fact]
