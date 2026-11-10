@@ -1,11 +1,12 @@
 r"""Who can open the DLL's named pipe: local vs remote clients, default vs explicit DACL.
 
     py tools/verify/pipe_remote_probe.py matrix     # probe pipes only -- no game, no DLL
-    py tools/verify/pipe_remote_probe.py live       # the injected DLL's \\.\pipe\UE5DumpBfx
+    py tools/verify/pipe_remote_probe.py live       # the injected DLL's \\.\pipe\UE5DumpBfx_<pid>
+    py tools/verify/pipe_remote_probe.py live --pid N   # that game's, when several run
 
 WHY THIS RIG EXISTS ([PIPE-REJECT-REMOTE], docs/todo.md)
   Fern created its pipe without PIPE_REJECT_REMOTE_CLIENTS, so a client holding this user's (or an
-  admin's) credentials on ANOTHER machine could open \\host\pipe\UE5DumpBfx over SMB and drive the
+  admin's) credentials on ANOTHER machine could open \\host\pipe\UE5DumpBfx_<pid> over SMB and drive the
   DLL. Proving the fix needs a remote client, and this PC has no second machine on hand. It does
   not need one: an open of \\localhost\pipe\<name> goes through this machine's own SMB server
   (LanmanServer / srv2), and the pipe treats it as a remote client: PIPE_REJECT_REMOTE_CLIENTS
@@ -50,7 +51,8 @@ from ctypes import wintypes
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-LIVE_NAME = "UE5DumpBfx"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from pipe_client import PIPE_ROOT, PipeError, resolve_pipe  # noqa: E402
 
 PIPE_ACCESS_DUPLEX = 0x00000003
 PIPE_TYPE_BYTE = 0x00000000
@@ -406,7 +408,7 @@ def cmd_matrix():
     return 0
 
 
-def cmd_live():
+def cmd_live(live_name):
     reachable, code = control("ctl")
     if not reachable:
         say("VERDICT: NOT MEASURABLE -- the SMB loopback did not reach this rig's own no-flag probe pipe "
@@ -414,17 +416,17 @@ def cmd_live():
         return 2
     say("control: a no-flag probe pipe is reachable over \\\\localhost\\pipe\\")
 
-    ok, code, h = open_client(local_path(LIVE_NAME), READ_CONTROL)
+    ok, code, h = open_client(local_path(live_name), READ_CONTROL)
     if not ok:
         say("VERDICT: NOT MEASURABLE -- \\\\.\\pipe\\%s would not open (err %s). Is the DLL injected, and is "
-              "the UI disconnected?" % (LIVE_NAME, err_text(code)))
+              "the UI disconnected?" % (live_name, err_text(code)))
         return 2
     say("live pipe SDDL: %s" % sddl_of(h))
     k32.CloseHandle(h)
 
-    lok, lcode = attempt(local_path(LIVE_NAME))
-    rok, rcode = attempt(remote_path(LIVE_NAME))
-    say("  \\\\.\\pipe\\%s" % LIVE_NAME)
+    lok, lcode = attempt(local_path(live_name))
+    rok, rcode = attempt(remote_path(live_name))
+    say("  \\\\.\\pipe\\%s" % live_name)
     show("local", lok, lcode)
     show("remote", rok, rcode)
     if not lok:
@@ -440,8 +442,18 @@ def cmd_live():
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("mode", choices=["matrix", "live"])
+    ap.add_argument("--pid", type=int, default=None,
+                    help="live: the game whose pipe to probe; default as pipe_client chooses")
     a = ap.parse_args()
-    return cmd_matrix() if a.mode == "matrix" else cmd_live()
+    if a.mode == "matrix":
+        return cmd_matrix()
+    # [PIPE-PER-PROCESS-2026-11-06] The game's own pipe, UE5DumpBfx_<pid>, chosen as every pipe rig chooses it.
+    try:
+        live_name = resolve_pipe(a.pid)[len(PIPE_ROOT):]
+    except PipeError as e:
+        say("VERDICT: NOT MEASURABLE -- %s" % e)
+        return 2
+    return cmd_live(live_name)
 
 
 if __name__ == "__main__":

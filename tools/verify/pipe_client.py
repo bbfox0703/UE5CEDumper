@@ -78,7 +78,15 @@ def pipe_path(pid: int) -> str:
 
 
 def parse_pid(name: str) -> int | None:
-    return None   # red: parses nothing
+    """The pid in a per-process pipe name, or None for any other name. Exact: the prefix (without case, as Windows
+    compares pipe names), then only ASCII digits, a positive pid. A rig's own "UE5DumpBfx-probe-..." pipe is no game."""
+    if not name.lower().startswith(PIPE_PREFIX.lower()):
+        return None
+    digits = name[len(PIPE_PREFIX):]
+    if not digits or not all("0" <= ch <= "9" for ch in digits):
+        return None
+    pid = int(digits)
+    return pid if 0 < pid <= 0xFFFFFFFF else None
 
 
 def list_dumper_pipes() -> tuple[list[int], bool]:
@@ -109,7 +117,40 @@ def process_image(pid: int) -> str:
 
 
 def resolve_pipe(pid: int | None = None, *, warn=None) -> str:
-    return PIPE_ROOT + LEGACY_PIPE   # red: the legacy name, whoever was asked for
+    """Which game's pipe to dial: `pid`, else $UE5DUMP_PID, else the one game listed. Several games: the lowest pid,
+    with every game printed and a warning (to `warn`, stderr by default). Raises PipeError when no game serves a
+    pipe, and says so when only the legacy pipe is there."""
+    if pid is None and _environ.get(PID_ENV, "").strip():
+        try:
+            pid = int(_environ[PID_ENV])
+        except ValueError:
+            raise PipeError(f"{PID_ENV}={_environ[PID_ENV]!r} is not a pid")
+    if pid is not None:
+        return pipe_path(pid)
+    pids, legacy = list_dumper_pipes()
+    if not pids:
+        if legacy:
+            raise PipeError(
+                f"only the legacy pipe {PIPE_ROOT}{LEGACY_PIPE} is up: a game runs an OLD UE5Dumper DLL, which this "
+                f"client does not drive. Refresh its proxy (py tools/verify/proxy_refresh.py refresh \"<title>\") or "
+                f"inject the current DLL into a freshly started game.")
+        raise PipeError(f"no {PIPE_ROOT}{PIPE_PREFIX}<pid>: no game is running UE5Dumper (or its pipe is not up yet)")
+    if len(pids) > 1 or legacy:
+        out = warn if warn is not None else sys.stderr
+        print(f"# WARNING: {len(pids)} game(s) serve a UE5Dumper pipe"
+              + (", and an old DLL serves the legacy one" if legacy else "") + ":", file=out)
+        for p in pids:
+            print(f"#   {pipe_name(p)}  {process_image(p)}", file=out)
+        print(f"# using the first, PID {pids[0]}. Pass --pid, or set {PID_ENV}, to choose.", file=out)
+    return pipe_path(pids[0])
+
+
+class StaleBuildError(PipeError):
+    """The DLL answering the pipe is not the build we just produced (§2.6 trap 1)."""
+
+
+class TruncatedError(PipeError):
+    """The reply hit a cap, so it is a sample and cannot support an absence claim (§2.6 trap 3)."""
 
 
 class PipeClient:

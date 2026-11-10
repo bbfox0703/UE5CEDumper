@@ -41,7 +41,7 @@ import threading
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from pipe_client import PipeClient, PIPE            # noqa: E402
+from pipe_client import PipeClient                  # noqa: E402
 
 ENVELOPE_FULL = ("id", "ok", "game_thread_stalled")
 ENVELOPE_UNARMED = ("id", "ok")

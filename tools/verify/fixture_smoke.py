@@ -132,7 +132,7 @@ def main():
 
     rep = {"flavour": a.flavour, "pid": pid, "dll": a.dll, "class": cls}
     try:
-        with PipeClient(timeout=120) as c:
+        with PipeClient(timeout=120, pid=pid) as c:
             rep["build"] = c.assert_build()
             for cmd in ("get_pointers", "get_offsets", "get_object_count"):
                 rep[cmd] = c.request(cmd)

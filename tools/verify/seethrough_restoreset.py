@@ -181,7 +181,7 @@ def main():
 
     # ---- arm (a): disable DURING MOTION -------------------------------
     pid, h = relaunch()
-    with PipeClient() as c:
+    with PipeClient(pid=pid) as c:
         off, mask, cls = resolve_field(c)
         say("DLL build %s   pid %d   witness %s.bHidden +%d mask 0x%02X"
             % (c.assert_build(), pid, cls, off, mask))
@@ -198,7 +198,7 @@ def main():
 
     # ---- arm (b): disable while the game thread is SUSPENDED ----------
     pid, h = relaunch()
-    with PipeClient() as c:
+    with PipeClient(pid=pid) as c:
         def while_stalled(cc, _addrs):
             out = subprocess.run([sys.executable, str(root / "suspend.py"),
                                   "threads", "DumperTest"],
@@ -228,7 +228,7 @@ def main():
     pid, h = relaunch()
     say("")
     say("=== arm (c) yank the connection ===")
-    c2 = PipeClient().connect()
+    c2 = PipeClient(pid=pid).connect()
     c2.request("seethrough_set", enable=False)
     time.sleep(0.4)
     c2.request("seethrough_set", enable=True, count=PIERCE)

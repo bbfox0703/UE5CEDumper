@@ -64,7 +64,7 @@ def main():
         return 2
     P = None
     try:
-        with PipeClient() as c:
+        with PipeClient(pid=a.pid) as c:
             print("build", c.assert_build())
             c.ensure_scanned()
             inst = next((i for i in (c.request("find_instances", class_name="DumperTestActor",
