@@ -74,33 +74,45 @@ internal static class TestTempRoot
         }
     }
 
-    /// <summary>Deletes every run folder under <paramref name="root"/> whose owner is gone; returns those deleted.</summary>
+    /// <summary>Deletes every run folder under <paramref name="root"/> whose owner is gone; returns those deleted.
+    /// Never throws: the sweeps are housekeeping, and one that threw would stop Install before TMP / TEMP move.</summary>
     internal static List<string> SweepDeadRuns(string root, DateTime nowUtc)
     {
         var deleted = new List<string>();
-        if (!Directory.Exists(root)) return deleted;
-        foreach (var dir in Directory.EnumerateDirectories(root))
-            if (OwnerGone(dir, nowUtc) && TryDelete(dir)) deleted.Add(dir);
+        try
+        {
+            foreach (var dir in Directory.EnumerateDirectories(root))
+                if (OwnerGone(dir, nowUtc) && TryDelete(dir)) deleted.Add(dir);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            // Absent, or gone from under the walk: another run's exit removes the root once it is empty.
+        }
         return deleted;
     }
 
     /// <summary>Deletes, in <paramref name="temp"/>, every folder an older build of the suite left there and that has
-    /// not changed for <see cref="LegacyMinAge"/>; returns those deleted.</summary>
+    /// not changed for <see cref="LegacyMinAge"/>; returns those deleted. Never throws, as SweepDeadRuns.</summary>
     internal static List<string> SweepLegacy(string temp, DateTime nowUtc)
     {
         var deleted = new List<string>();
-        foreach (var dir in Directory.EnumerateDirectories(temp))
+        try
         {
-            if (!LegacyName.IsMatch(Path.GetFileName(dir))) continue;
-            if (nowUtc - Directory.GetLastWriteTimeUtc(dir) < LegacyMinAge) continue;
-            if (TryDelete(dir)) deleted.Add(dir);
+            foreach (var dir in Directory.EnumerateDirectories(temp))
+            {
+                if (!LegacyName.IsMatch(Path.GetFileName(dir))) continue;
+                if (nowUtc - Directory.GetLastWriteTimeUtc(dir) < LegacyMinAge) continue;
+                if (TryDelete(dir)) deleted.Add(dir);
+            }
         }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return deleted;
     }
 
     private static bool OwnerGone(string dir, DateTime nowUtc)
     {
         var owner = Path.Combine(dir, OwnerFileName);
+        // A folder deleted between the listing and here reads as created in 1601: TryDelete then finds nothing to do.
         if (!File.Exists(owner)) return nowUtc - Directory.GetCreationTimeUtc(dir) >= OwnerlessMinAge;
         try
         {

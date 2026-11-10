@@ -2973,8 +2973,9 @@ hour.
 **How to apply:** a new test needs nothing for this; `Path.GetTempPath()` is already the run's folder. Do not make a
 swallowed delete "work" with retries: the run's folder already goes. A sweep never enters a reparse point:
 VolumeRootTests makes a junction to another volume's ROOT, and one it fails to remove lands in the run's folder.
-`Directory.Delete(recursive: true)` unlinks a junction without entering it (documented); a walk of our own checks
-`ReparsePoint` itself. What is **not** ours in %TEMP%: every `dotnet build` leaves two empty folders with random 8.3
+`Directory.Delete(recursive: true)` unlinks a junction without entering it (documented), but a walk with
+`SearchOption.AllDirectories` goes straight through one (measured: it cleared the read-only flag of the file a junction
+pointed at), so a walk of our own checks `ReparsePoint` itself, as `TestTempRoot.ClearReadOnly` does. What is **not** ours in %TEMP%: every `dotnet build` leaves two empty folders with random 8.3
 names and a `Microsoft.NET.Workload_*.log` (measured with TEMP pointed at an empty folder; neither
 `DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE` nor the telemetry opt-out stops them). That is the SDK, in every repo that
 builds with dotnet, and the sweep leaves it alone.
