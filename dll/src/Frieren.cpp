@@ -2724,14 +2724,12 @@ static void WatchForPipeAndClaim(DWORD holderPid) {
             }
             Sleep(Voll::kClaimWatchPollMs);
 
-            HANDLE probe = CreateFileW(Voll::OwnPipeName().c_str(), GENERIC_READ, 0, nullptr,
-                                       OPEN_EXISTING, 0, nullptr);
-            const bool opened = probe != INVALID_HANDLE_VALUE;
-            const DWORD err = opened ? 0 : GetLastError();
-            if (opened) CloseHandle(probe);
-            // A busy pipe is the holder alive with every instance in use — still theirs. Only
-            // "not found" means the pipe is actually gone.
-            if (Voll::ProbeFoundServer(opened, err)) continue;
+            // Asked without connecting (Voll::WaitSaysServed): an open would be a client arriving
+            // at the holder's server and leaving, twice a second. A busy pipe is the holder alive
+            // with every instance in use — still theirs. Only "not found" means it is gone.
+            const BOOL waited = WaitNamedPipeW(Voll::OwnPipeName().c_str(), Voll::kWatchWaitMs);
+            const DWORD err = waited ? 0 : GetLastError();
+            if (Voll::WaitSaysServed(waited != FALSE, err)) continue;
 
             const bool ok = s_pipeServer.Start();
             LOG_WARN("PipeClaimWatcher: pipe freed by PID %lu after %d ms — claimed it: %s",
@@ -2775,6 +2773,16 @@ bool UE5_StartPipeServer() {
         ULONG pid = 0;
         if (GetNamedPipeServerProcessId(testPipe, &pid)) holderPid = static_cast<DWORD>(pid);
         CloseHandle(testPipe);
+    }
+
+    // A restart after a Stop whose drain timed out (CE untick, then re-tick): this copy's own
+    // connections still hold their instances, so the probe reads busy. Deferring would defer to
+    // ourselves and publish READY with nobody listening. Fern serves the name again beside them,
+    // and its first-instance check logs the shared name.
+    if (!opened && probeErr == ERROR_PIPE_BUSY && s_pipeServer.HasStragglerConnections()) {
+        LOG_WARN("UE5_StartPipeServer: every instance is busy with this copy's connections from "
+                 "before its last stop — restarting the server beside them");
+        return s_pipeServer.Start();
     }
 
     switch (Voll::DecideStart(exists, holderPid, GetCurrentProcessId())) {

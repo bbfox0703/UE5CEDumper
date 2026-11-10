@@ -64,8 +64,8 @@ inline bool ProbeFoundServer(bool opened, DWORD lastError) noexcept {
 // saw no client; ERROR_SEM_TIMEOUT while every instance is busy; ERROR_FILE_NOT_FOUND once the name is gone).
 // `waited` = WaitNamedPipeW's result; `lastError` = GetLastError() when it returned FALSE.
 inline bool WaitSaysServed(bool waited, DWORD lastError) noexcept {
-    (void)lastError;
-    return waited;   // red: a busy name reads as gone
+    return waited || lastError == ERROR_SEM_TIMEOUT || lastError == ERROR_PIPE_BUSY
+                  || lastError == ERROR_ACCESS_DENIED;
 }
 
 // The watchers' WaitNamedPipeW timeout. Not 0: 0 is NMPWAIT_USE_DEFAULT_WAIT, the server's default wait.

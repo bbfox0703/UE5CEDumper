@@ -254,14 +254,13 @@ static void AutoStartBody()
                 if (Tot::ShutdownRequested()) return;
                 Sleep(Voll::kClaimWatchPollMs);
 
-                HANDLE probe = CreateFileW(Voll::OwnPipeName().c_str(), GENERIC_READ, 0, nullptr,
-                                           OPEN_EXISTING, 0, nullptr);
-                const bool opened = probe != INVALID_HANDLE_VALUE;
-                const DWORD err = opened ? 0 : GetLastError();
-                if (opened) CloseHandle(probe);
-                // A busy pipe is the holder alive with every instance in use — still theirs.
-                // Only "not found" means the pipe is really gone.
-                if (Voll::ProbeFoundServer(opened, err)) continue;
+                // Asked without connecting (Voll::WaitSaysServed): an open would be a client
+                // arriving at the holder's server and leaving, twice a second. A busy pipe is the
+                // holder alive with every instance in use — still theirs. Only "not found" means
+                // the pipe is really gone.
+                const BOOL waited = WaitNamedPipeW(Voll::OwnPipeName().c_str(), Voll::kWatchWaitMs);
+                const DWORD err = waited ? 0 : GetLastError();
+                if (Voll::WaitSaysServed(waited != FALSE, err)) continue;
 
                 LOG_WARN("AutoStartWatcher: pipe freed by PID %lu after %d ms — running the "
                          "auto-start that was deferred",
