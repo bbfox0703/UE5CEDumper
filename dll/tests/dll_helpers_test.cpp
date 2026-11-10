@@ -368,6 +368,53 @@ static void Test_Voll_DecideStart() {
            Voll::DecideStart(true, 0, self) == SA::DeferAndWatch);
 }
 
+// ----- Voll: a pipe name per game process -------------------------------------
+// [PIPE-PER-PROCESS-2026-11-06] Two games serving one name let a client reach the wrong one; the pid in the name
+// keeps each game's server its own.
+
+static void Test_Voll_PipeNameForPid() {
+    EXPECT("the name is the prefix and the decimal pid",
+           Voll::PipeNameForPid(1234) == std::wstring(L"\\\\.\\pipe\\UE5DumpBfx_1234"));
+    EXPECT("no padding: the UI and the rigs parse plain digits",
+           Voll::PipeNameForPid(7) == std::wstring(L"\\\\.\\pipe\\UE5DumpBfx_7"));
+    EXPECT("the largest pid still fits",
+           Voll::PipeNameForPid(0xFFFFFFFFu) == std::wstring(L"\\\\.\\pipe\\UE5DumpBfx_4294967295"));
+    EXPECT("two processes never share a name", Voll::PipeNameForPid(100) != Voll::PipeNameForPid(101));
+    // The protocol break is the point: a client that still dials the old name must find nothing from a new DLL.
+    EXPECT("no process serves the legacy name",
+           Voll::PipeNameForPid(GetCurrentProcessId()) != std::wstring(L"\\\\.\\pipe\\UE5DumpBfx"));
+    EXPECT("this process's name is its own pid's",
+           Voll::OwnPipeName() == Voll::PipeNameForPid(GetCurrentProcessId()));
+}
+
+static void Test_Voll_ProbeFoundServer() {
+    EXPECT("an open succeeded: a server is there", Voll::ProbeFoundServer(true, 0));
+    // The bug the per-process name would otherwise keep: every instance taken reads as "no pipe", so a second copy
+    // of the DLL in this process started its own server on the same name.
+    EXPECT("ERROR_PIPE_BUSY: a server is there, every instance taken",
+           Voll::ProbeFoundServer(false, ERROR_PIPE_BUSY));
+    EXPECT("ERROR_ACCESS_DENIED: the name exists, the open was refused",
+           Voll::ProbeFoundServer(false, ERROR_ACCESS_DENIED));
+    EXPECT("ERROR_FILE_NOT_FOUND: no server", !Voll::ProbeFoundServer(false, ERROR_FILE_NOT_FOUND));
+    EXPECT("ERROR_PATH_NOT_FOUND: no server", !Voll::ProbeFoundServer(false, ERROR_PATH_NOT_FOUND));
+}
+
+static void Test_Voll_ClassifyFirstInstance() {
+    using FI = Voll::FirstInstance;
+    const DWORD self = 4242, other = 77;
+    EXPECT("a fresh name: sole", Voll::ClassifyFirstInstance(0, self, self) == FI::Sole);
+    EXPECT("instances already there, all ours: shared in this process",
+           Voll::ClassifyFirstInstance(ERROR_ALREADY_EXISTS, self, self) == FI::SharedInProcess);
+    // GetNamedPipeServerProcessId on a SERVER handle names the name's first creator (measured 2026-11-06).
+    EXPECT("another process created the name first: foreign",
+           Voll::ClassifyFirstInstance(ERROR_ALREADY_EXISTS, other, self) == FI::ForeignCreator);
+    EXPECT("a foreign creator wins even without ERROR_ALREADY_EXISTS",
+           Voll::ClassifyFirstInstance(0, other, self) == FI::ForeignCreator);
+    EXPECT("creator unknown, name taken: shared, not foreign",
+           Voll::ClassifyFirstInstance(ERROR_ALREADY_EXISTS, 0, self) == FI::SharedInProcess);
+    EXPECT("creator unknown, name fresh: sole", Voll::ClassifyFirstInstance(0, 0, self) == FI::Sole);
+}
+
 static void Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway() {
     using SA = Voll::StartAction;
     // Guard the guard: "holderPid == selfPid" must be a real comparison, not a stand-in for
@@ -12109,6 +12156,9 @@ int main() {
     // [RELAUNCHPIPE-2026-08-19] a held pipe must be watched, not surrendered
     RUN(Test_Voll_DecideStart);
     RUN(Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway);
+    RUN(Test_Voll_PipeNameForPid);
+    RUN(Test_Voll_ProbeFoundServer);
+    RUN(Test_Voll_ClassifyFirstInstance);
 
     // [MH-PRERESERVE-PROXY] MinHook's trampoline-block search, modelled for the MH_ERROR_MEMORY_ALLOC diagnostic
     RUN(Test_Lager_SearchWindowMirrorsGetMemoryBlock);

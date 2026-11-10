@@ -17,9 +17,53 @@
 
 #pragma once
 
-#include <Windows.h>   // DWORD, ERROR_PIPE_BUSY
+#include <Windows.h>   // DWORD, ERROR_PIPE_BUSY, ERROR_ALREADY_EXISTS, GetCurrentProcessId
+#include <string>
+
+#include "Grimoire.h"  // PIPE_NAME_PREFIX
 
 namespace Voll {
+
+// ── The pipe's name: one per game process ───────────────────────────────────
+// [PIPE-PER-PROCESS-2026-11-06]
+//
+// Every injected game used to serve the same \\.\pipe\UE5DumpBfx. Windows hands a client the OLDEST listening instance
+// of a name, across processes (measured 2026-11-06), so with two games serving it a client -- even one of the UI's two
+// lanes -- could reach the other game: a scan started in one game while its progress was read from another. With the
+// pid in the name each game's server is its own, and a client names the game it wants.
+//
+// A pipe leaves \\.\pipe\ the moment its server process dies, a killed one included, even while a client still holds
+// its handle (measured 2026-11-06). A listed name is therefore always a live server, and a reused pid cannot be
+// mistaken for a dead game's.
+inline std::wstring PipeNameForPid(DWORD pid) {
+    (void)pid;
+    return std::wstring(Grimoire::PIPE_NAME);   // red: the legacy name, until the green commit
+}
+
+// This process's pipe. The pid never changes, so the name is built once.
+inline const std::wstring& OwnPipeName() {
+    static const std::wstring name = PipeNameForPid(GetCurrentProcessId());
+    return name;
+}
+
+// A startup probe opens this process's pipe as a client to learn whether a server is already there. `opened` = the
+// CreateFileW succeeded; `lastError` = GetLastError() when it did not.
+inline bool ProbeFoundServer(bool opened, DWORD lastError) noexcept {
+    (void)lastError;
+    return opened;   // red: the old reading, which took ERROR_PIPE_BUSY for "no pipe"
+}
+
+// Who else serves this process's name, checked once on the FIRST instance a server start creates.
+enum class FirstInstance {
+    Sole,             // the name was free
+    SharedInProcess,  // the name already had instances, created by this process
+    ForeignCreator,   // another process created the name first
+};
+
+inline FirstInstance ClassifyFirstInstance(DWORD createError, DWORD creatorPid, DWORD selfPid) noexcept {
+    (void)createError; (void)creatorPid; (void)selfPid;
+    return FirstInstance::Sole;   // red: no self-check yet
+}
 
 // What the accept loop should log for a given CreateNamedPipe outcome.
 enum class AcceptLog {

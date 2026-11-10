@@ -40,8 +40,11 @@ constexpr const char*    DUMPER_IDENTITY_EXPORT = "g_mailboxContract";
 constexpr const char*    DUMPER_LEGACY_IDENTITY_EXPORT = "UE5_Init";
 
 // --- Named Pipe ---
-constexpr const wchar_t* PIPE_NAME        = L"\\\\.\\pipe\\UE5DumpBfx";
-constexpr const char*    PIPE_NAME_NARROW  = "\\\\.\\pipe\\UE5DumpBfx";
+// [PIPE-PER-PROCESS-2026-11-06] Each game process serves \\.\pipe\UE5DumpBfx_<its pid>; Voll::PipeNameForPid builds
+// the name. The old fixed name, \\.\pipe\UE5DumpBfx, is served by no build from 3695 on: a protocol break by decision,
+// so the UI can tell an old DLL apart and refuse it with an explanation.
+constexpr const wchar_t* PIPE_NAME_PREFIX = L"\\\\.\\pipe\\UE5DumpBfx_";
+constexpr const wchar_t* PIPE_NAME        = L"\\\\.\\pipe\\UE5DumpBfx";   // red: still served until the green commit
 constexpr unsigned long  PIPE_BUF_SIZE    = 65536;
 // Slice of Fern::Stop's 5 s connection-drain wait. Each slice re-asserts
 // CancelIoEx on the surviving connections, because a single cancel fired before
