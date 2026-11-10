@@ -88,65 +88,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// the banner's IsVisible.</summary>
     [ObservableProperty] private bool _gameThreadStalled;
 
-    /// <summary>Filled in when MORE THAN ONE running process currently hosts our dumper DLL.
-    /// Empty otherwise, and bound directly to the banner's IsVisible via
-    /// <see cref="HasMultipleDumperHosts"/>.
-    ///
-    /// The pipe name is a single global, so every injected game serves the SAME name and a
-    /// connecting client lands on whichever instance happens to be free. There is no way to
-    /// ask for a particular game. That produces two bad outcomes the user cannot otherwise
-    /// distinguish: a connect that fails because the instances are taken, and — far worse — a
-    /// connect that SUCCEEDS against the wrong game and quietly shows its data. Naming the
-    /// process we actually reached is the cheapest honest answer until the pipe is
-    /// per-process.</summary>
-    [ObservableProperty] private string _multipleDumperHostsWarning = "";
-
-    public bool HasMultipleDumperHosts => !string.IsNullOrEmpty(MultipleDumperHostsWarning);
-
-    partial void OnMultipleDumperHostsWarningChanged(string value)
-        => OnPropertyChanged(nameof(HasMultipleDumperHosts));
-
-    /// <summary>Warn when more than one running process currently hosts our dumper DLL.
-    ///
-    /// Fire-and-forget: it enumerates processes, which is slow enough that blocking the connect
-    /// path on it would be felt, and a late warning is still useful. Failures are swallowed —
-    /// this is advisory, and an enumeration that hits access-denied must never break a
-    /// connection that otherwise worked.</summary>
-    private async Task CheckForCompetingDumperHostsAsync(EngineState state)
-    {
-        if (_proxyDeployForChecks == null) return;
-        // Process enumeration is slow, so this can land after the user has disconnected
-        // and reconnected — or after the disconnect that just cleared the banner. Publish
-        // only into the session we were started for. Same shape as ScheduleProxyConfirmation.
-        int epoch = _sessionEpoch;
-        try
-        {
-            var procs = await _proxyDeployForChecks.ListGameProcessesAsync();
-            if (epoch != _sessionEpoch) return;
-            var hosts = procs.Where(p => p.DumperLoaded).ToList();
-            // Exclude the process we actually reached (by PID, or by module name when
-            // the DLL reports no PID) so the connected game is never listed among its
-            // own competitors. Null => 0/1 hosts, nothing to warn about (X9).
-            var banner = Helpers.CompetingHostBanner.Build(hosts, state.ProcessId, state.ModuleName);
-            if (banner is not { } b) { MultipleDumperHostsWarning = ""; return; }
-
-            MultipleDumperHostsWarning =
-                $"{hosts.Count} processes have the dumper DLL loaded. You are connected to "
-                + $"{b.ConnectedLabel} — also loaded: {string.Join(", ", b.Others)}. "
-                + "The pipe name is shared, so which game you reach is first-come-first-served. "
-                + "Close the ones you are not using.";
-            _log.Warn(Constants.LogCatInit, MultipleDumperHostsWarning);
-        }
-        catch (Exception ex)
-        {
-            _log.Warn(Constants.LogCatInit, $"Competing-dumper-host check failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>Kept so the post-connect ambiguity check can enumerate processes. Null when the
-    /// host did not supply one (tests), in which case the check simply never runs.</summary>
-    private readonly IProxyDeployService? _proxyDeployForChecks;
-
     /// <summary>Global stale-DLL badge shown in the always-visible top bar:
     /// only while connected AND the DLL build differs from / pre-dates the UI's.
     /// Mirrors the per-tab Diagnostics badge (PointerPanelViewModel) but is
@@ -763,8 +704,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Gate the handoff menu items to the experimental flag (and pivot existence).
         UpdatePivotHandoffEnabled();
 
-        _proxyDeployForChecks = proxyDeploy;
-
         if (proxyDeploy != null)
         {
             // platform is passed only so the leftover-proxy rows can offer "Open folder".
@@ -866,7 +805,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 _ = CheckCeAttachAsync();   // [AOBM-ATTACH-CHECK]
 
                 StatusText = $"Connected — UE{state.UEVersion} ({state.ObjectCount} objects)";
-                _ = CheckForCompetingDumperHostsAsync(state);
 
                 // Re-load objects if tree was empty
                 if (ObjectTree.ObjectCount == 0 && state.ObjectCount > 0)
@@ -2139,10 +2077,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     _proxyConfirmTimer = null;
                     LiveFuncs.ResetOnDisconnect();   // clear stuck "recording" UI state (L16)
                     CallTrace.ClearOnDisconnect();   // [LIVEFUNCS-TIMELINE-2026-10-04] the next process numbers traces from 1
-                    // The banner names a PID. Left standing it pins a dead one for the
-                    // rest of the session and keeps warning about a conflict that ended
-                    // when the game closed. (B9)
-                    MultipleDumperHostsWarning = "";
                     ResetPanelsOnDisconnect();   // clear stale process-scoped rows (X5)
                 }
             });
@@ -3023,18 +2957,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // confirmed-working — but only after the session proves stable (guards a
         // proxy that loads + connects then crashes the game seconds into play).
         ScheduleProxyConfirmation(state);
-
-        // Warn when more than one process has the dumper loaded. This is where every
-        // other post-connect action lives, and both ConnectAsync and the proxy
-        // TriggerScanAsync funnel through here — the check used to run ONLY from the
-        // Pointers.RescanApplied lambda, i.e. only after a UE-override apply or an Extra
-        // Scan, so an ordinary Connect never raised it. The pipe name is shared, so
-        // Connect lands on whichever server is free: the tree fills with the WRONG
-        // GAME'S data and nothing else on screen reveals it. ADDED here rather than
-        // moved — RescanApplied is a duplicated hand-rolled fan-out that never reaches
-        // this method, so moving the call would delete the one path that already worked.
-        // The check is idempotent. (B9)
-        _ = CheckForCompetingDumperHostsAsync(state);
 
         StatusText = $"Connected — UE{state.UEVersion} ({state.ObjectCount} objects)";
 

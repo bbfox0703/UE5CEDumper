@@ -425,17 +425,6 @@
                  TextWrapping="Wrap"/>
     </Border>
 
-    <!-- More than one process hosts the dumper DLL. Red, not amber: unlike the paused-thread
-         banner this can mean you are looking at the WRONG GAME'S data, which nothing else on
-         screen would reveal. -->
-    <Border DockPanel.Dock="Top" IsVisible="{Binding HasMultipleDumperHosts}"
-            Background="#3A2226" BorderBrush="#E05252" BorderThickness="0,0,0,1"
-            Padding="10,5">
-      <TextBlock Text="{Binding MultipleDumperHostsWarning}"
-                 Foreground="#E88" FontSize="12" FontWeight="SemiBold"
-                 TextWrapping="Wrap"/>
-    </Border>
-
     <!-- Main Content: Left Tree + Right Tabs -->
     <Grid x:Name="ContentGrid">
       <Grid.ColumnDefinitions>
