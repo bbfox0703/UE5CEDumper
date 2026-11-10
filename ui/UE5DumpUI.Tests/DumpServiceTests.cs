@@ -22,7 +22,7 @@ public sealed class MockPipeClient : IPipeClient
 
     public void SetHandler(Func<JsonObject, JsonObject> handler) => _handler = handler;
 
-    public Task ConnectAsync(CancellationToken ct = default)
+    public Task ConnectAsync(string pipeName, CancellationToken ct = default)
     {
         IsConnected = true;
         ConnectionStateChanged?.Invoke(true);
@@ -2629,7 +2629,7 @@ public class DumpServiceTests
         Assert.Equal(new[] { "find_live_instance", "find_instances", "find_instances" },
                      sent.Select(s => s["cmd"]!.GetValue<string>()));
 
-        await pipe.ConnectAsync(ct);   // a new connection may be a newer DLL
+        await pipe.ConnectAsync("UE5DumpBfx_1", ct);   // a new connection may be a newer DLL
         sent.Clear();
         await dump.FindLiveInstanceAsync("PlayerController", ct);
         Assert.Equal("find_live_instance", sent[0]["cmd"]!.GetValue<string>());
@@ -2651,7 +2651,7 @@ public class DumpServiceTests
             if (reconnectDuringRequest)
             {
                 reconnectDuringRequest = false;
-                pipe.ConnectAsync(TestContext.Current.CancellationToken);   // the game swapped while this request was out
+                pipe.ConnectAsync("UE5DumpBfx_1", TestContext.Current.CancellationToken);   // the game swapped while this request was out
                 return new JsonObject { ["ok"] = false, ["error"] = "Unknown command: find_live_instance" };
             }
             return new JsonObject { ["ok"] = true, ["pick"] = "none", ["scanned"] = 1 };

@@ -769,8 +769,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         {
             // platform is passed only so the leftover-proxy rows can offer "Open folder".
             ProxyDeploy = new ProxyDeployViewModel(proxyDeploy, log, platform);
-            // Auto-connect the pipe after a successful in-UI DLL injection.
-            ProxyDeploy.RequestConnectAsync = () => ConnectCommand.ExecuteAsync(null);
+            // Auto-connect the pipe after a successful in-UI DLL injection: to that game's own pipe, by pid.
+            ProxyDeploy.RequestConnectAsync = pid => ConnectToAsync(pid);
             // Lets the post-inject retry ASK whether it worked instead of assuming.
             ProxyDeploy.IsConnectedProbe = () => IsConnected;
             ProxyDeploy.SetConnectErrorSuppression = v => SuppressConnectErrors = v;
@@ -2201,8 +2201,22 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         GC.SuppressFinalize(this);
     }
 
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Lets the user pick the game when several serve UE5Dumper's pipe: takes
+    /// the rows to show (a legacy row included, which cannot be picked) and returns the chosen pid, or null on cancel.
+    /// Set by MainWindow; while unset, a choice is treated as cancelled.</summary>
+    public Func<IReadOnlyList<PipeTarget>, Task<int?>>? PickPipeTargetAsync { get; set; }
+
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Shows a message the user must read (title, text). Set by MainWindow.
+    /// The legacy-only refusal uses it: a list holding one entry nobody can pick would explain nothing.</summary>
+    public Func<string, string, Task>? ShowNoticeAsync { get; set; }
+
     [RelayCommand]
-    private async Task ConnectAsync()
+    private Task ConnectAsync() => ConnectToAsync(null);
+
+    /// <summary>Connect to a game's pipe. <paramref name="pid"/> names the game (one the UI just injected, or one
+    /// already running the DLL); null looks under \\.\pipe\ and connects at once to a lone game, lets the user choose
+    /// among several, and refuses when only an old DLL's pipe is there.</summary>
+    public async Task ConnectToAsync(int? pid)
     {
         try
         {
@@ -2213,7 +2227,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (!SuppressConnectErrors) StatusText = "Connecting...";
             LiveWalker.ClearAllBookmarks();
 
-            await _pipeClient.ConnectAsync();
+            if (await ResolvePipeTargetAsync(pid) is not int targetPid)
+                return;   // refused, cancelled: the status line already says which
+
+            await _pipeClient.ConnectAsync(PipeTargets.NameFor(targetPid));
 
             var state = await _dump.InitAsync();
             _engineState = state;
@@ -2259,6 +2276,26 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             SetError(ex);
             _log.Error(Constants.LogCatInit, "Connection failed", ex);
         }
+    }
+
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Which game to dial, or null when Connect stops here (refused, cancelled).
+    /// Throws with the reason when there is nothing to connect to, so the caller reports it like any connect failure.
+    /// </summary>
+    private async Task<int?> ResolvePipeTargetAsync(int? pid)
+    {
+        await Task.CompletedTask;
+        return pid ?? 0;   // red: no listing, no plan
+    }
+
+    /// <summary>Only an old DLL's pipe is there: say so and why, connect to nothing. Deliberately not the game list,
+    /// which would hold one row nobody can pick.</summary>
+    private async Task RefuseLegacyAsync()
+    {
+        _log.Warn(Constants.LogCatInit,
+            $"[PIPE-PER-PROCESS] Only the legacy pipe {Constants.LegacyPipeName} is there: a game runs an old UE5Dumper DLL. Not connecting.");
+        StatusText = Res.Get("str.Connect.LegacyStatus");
+        if (ShowNoticeAsync is not null)
+            await ShowNoticeAsync(Res.Get("str.Connect.LegacyTitle"), Res.Get("str.Connect.LegacyMessage"));
     }
 
     /// <summary>Set while something is deliberately retrying <c>ConnectCommand</c> and owns

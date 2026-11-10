@@ -145,6 +145,21 @@ public interface IPlatformService
     IReadOnlyList<GameProcessInfo> GetRunningProcesses() => Array.Empty<GameProcessInfo>();
 
     /// <summary>
+    /// [PIPE-PER-PROCESS-2026-11-06] The names under \\.\pipe\, bare (no path), for Connect to find each game's
+    /// UE5Dumper pipe. <c>null</c> when the listing itself failed, which Connect reports rather than reading as "no
+    /// game". Listing does not open a pipe, so it takes no instance and no server sees a client. Default empty for
+    /// non-Windows implementations and test doubles. Never throws.
+    /// </summary>
+    IReadOnlyList<string>? ListNamedPipes() => Array.Empty<string>();
+
+    /// <summary>
+    /// [PIPE-PER-PROCESS-2026-11-06] What the connection list shows for a game: its exe's file name and, when the
+    /// process has one, its main window's title (<c>null</c> otherwise). ("", null) when the process cannot be read
+    /// or has exited. Default ("", null) for non-Windows implementations and test doubles. Never throws.
+    /// </summary>
+    (string ImageName, string? WindowTitle) DescribeProcess(int pid) => ("", null);
+
+    /// <summary>
     /// Inject a DLL into a running process via CreateRemoteThread + LoadLibraryW.
     /// x64 targets only (rejects Wow64). Default reports unsupported for non-Windows
     /// implementations and test doubles.

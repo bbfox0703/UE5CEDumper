@@ -6,7 +6,13 @@
 public static class Constants
 {
     // Named Pipe
-    public const string PipeName = "UE5DumpBfx";
+    // [PIPE-PER-PROCESS-2026-11-06] Each game process serves \\.\pipe\UE5DumpBfx_<its pid> (Core/PipeTargets builds and
+    // parses the name), so the UI names the game it connects to: with one shared name a client landed on whichever game
+    // listened first, and the two lanes could reach different games.
+    public const string PipeNamePrefix = "UE5DumpBfx_";
+    /// <summary>The one name every DLL served before the per-process name. A game whose DLL predates it (typically a
+    /// proxy left in its folder) still serves this; the UI never connects to it and says why.</summary>
+    public const string LegacyPipeName = "UE5DumpBfx";
 
     // ── Protocol text: other programs' WORDS, matched by these openings ─────────────────────────────────
     // ⛔ DO NOT LOCALIZE, and never move these into en.axaml. [I18N-READINESS-2026-11-04] P5

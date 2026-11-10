@@ -112,7 +112,7 @@ public sealed class PipeClient : IPipeClient
         _laneTag = laneTag;
     }
 
-    public async Task ConnectAsync(CancellationToken ct = default)
+    public async Task ConnectAsync(string pipeName, CancellationToken ct = default)
     {
         if (IsConnected) return;
 
@@ -126,10 +126,10 @@ public sealed class PipeClient : IPipeClient
         _cts.Dispose();
         _cts = new CancellationTokenSource();
 
-        _pipe = new NamedPipeClientStream(".", Constants.PipeName,
+        _pipe = new NamedPipeClientStream(".", Constants.LegacyPipeName,   // red: the name is ignored
             PipeDirection.InOut, PipeOptions.Asynchronous);
 
-        _log.Info(Constants.LogCatPipe, $"Connecting to pipe: {Constants.PipeName}...");
+        _log.Info(Constants.LogCatPipe, $"Connecting to pipe: {pipeName}...");
         await _pipe.ConnectAsync(Constants.PipeConnectTimeoutMs, ct);
 
         _reader = new StreamReader(_pipe, Encoding.UTF8, detectEncodingFromByteOrderMarks: true, bufferSize: PipeReadBufferBytes);

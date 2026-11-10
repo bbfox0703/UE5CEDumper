@@ -62,7 +62,8 @@ public class StubDumpService : IDumpService
     }
 
     // Unused stubs — throw NotImplementedException to catch unexpected calls
-    public Task<EngineState> InitAsync(CancellationToken ct = default) => throw new NotImplementedException();
+    // virtual: the connect tests ([PIPE-PER-PROCESS-2026-11-06]) answer it with the pid that answered.
+    public virtual Task<EngineState> InitAsync(CancellationToken ct = default) => throw new NotImplementedException();
     // virtual: DumpExplorer's cross-game match gate reads the live identity through this,
     // so its tests must be able to supply one. Non-overriding stubs keep throwing.
     public virtual Task<EngineState> GetPointersAsync(CancellationToken ct = default) => throw new NotImplementedException();

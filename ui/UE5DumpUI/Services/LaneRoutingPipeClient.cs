@@ -106,18 +106,20 @@ public sealed class LaneRoutingPipeClient : IPipeClient
     public event Action<PipeLogEntry>? Activity;
     public event Action<bool>? GameThreadStalledChanged;
 
-    public async Task ConnectAsync(CancellationToken ct = default)
+    public async Task ConnectAsync(string pipeName, CancellationToken ct = default)
     {
         // Connect both lanes; on partial failure, tear the other down so we
-        // never run half-connected.
+        // never run half-connected. Both dial the one game's own name
+        // [PIPE-PER-PROCESS-2026-11-06]: with a shared name the two lanes could
+        // land in different games.
         // Reset the combined stall level so the first observation after a
         // (re)connect always raises, even if the game was already paused before
         // this connection (mirrors the per-lane reset PipeClient used to do).
         _stalled.Reset();
         try
         {
-            await _interactive.ConnectAsync(ct).ConfigureAwait(false);
-            await _bulk.ConnectAsync(ct).ConfigureAwait(false);
+            await _interactive.ConnectAsync(pipeName, ct).ConfigureAwait(false);
+            await _bulk.ConnectAsync(pipeName, ct).ConfigureAwait(false);
         }
         catch
         {
