@@ -162,7 +162,8 @@ inline AutoRestorePlan PlanAutoRestore(bool overrideInForce, const ScanHints& h,
 }
 
 /// Whether the override's version holds until the next launch: Auto found nothing to hand back, and the clear was
-/// persisted. Unpersisted, the override is still on disk and the next launch applies it again, so nothing is pending.
+/// persisted. Unpersisted, nothing was cleared on disk -- an override saved there earlier still applies at the next
+/// launch, and if none was saved the next launch detects -- so nothing is pending.
 constexpr bool AutoPendsUntilNextLaunch(AutoRestore outcome, bool persisted) {
     return persisted && (outcome == AutoRestore::NoDetection || outcome == AutoRestore::StaleDetection
                          || outcome == AutoRestore::TooOld);

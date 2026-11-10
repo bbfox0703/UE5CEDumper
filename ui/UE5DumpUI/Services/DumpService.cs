@@ -119,10 +119,11 @@ public sealed class DumpService : IDumpService
             version == 0
                 ? $"UE version override cleared (persisted={persisted}) -- "
                   // A refused clear proves only that it was not written: whether an override was saved before is not
-                  // known here. With none in force there was nothing to clear, and the DLL's outcome says so.
-                  + (persisted || autoRestore == "not_overridden"
+                  // known here, even when none was in force in this session (an earlier Auto may have failed to write).
+                  + (persisted
                       ? DescribeAutoRestore(autoRestore)
-                      : "the clear was not written to the hint cache: an override saved there earlier still applies at the next launch")
+                      : (autoRestore == "not_overridden" ? DescribeAutoRestore(autoRestore) + "; " : "")
+                        + "the clear was not written to the hint cache: an override saved there earlier still applies at the next launch")
                 : $"UE version override set to {version} (persisted={persisted})");
         // Re-fetch full state so the caller can update all panels with one ApplyState() call.
         return await GetPointersAsync(ct);
