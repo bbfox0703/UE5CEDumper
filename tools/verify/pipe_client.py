@@ -210,8 +210,9 @@ class PipeClient:
         # [PIPE-PER-PROCESS-2026-11-06] Stage B: say when every connection was taken, which open() cannot.
         hint = ""
         if path is not None and _pipe_is_busy(path):
-            hint = (" -- every connection it takes is in use. A UE5Dumper DLL older than this tree may take only 3 "
-                    "clients at once, and the UI holds 2: disconnect the UI or another rig, or refresh the game's DLL")
+            hint = (" -- every connection it takes is in use (other clients hold them all), or the game is not "
+                    "responding. A UE5Dumper DLL older than this tree may take only 3 clients at once, and the UI "
+                    "holds 2: disconnect the UI or another rig, or refresh the game's DLL and restart the game")
         raise PipeError(f"could not open {path or 'a UE5Dumper pipe'}: {last}{hint}")
 
     def close(self) -> None:

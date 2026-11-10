@@ -2185,9 +2185,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
             catch (TimeoutException) when (target.Listed)
             {
-                // Listed, yet no instance came free in time: every connection the game takes is in use. A DLL
-                // from before Stage B takes 3 and this UI uses 2. [PIPE-PER-PROCESS-2026-11-06]
-                throw new InvalidOperationException(Res.Format("str.Connect.Busy", targetPid));
+                // Listed before the dial, yet no instance came free in time. The listing may be old (the picker can
+                // stay open), and .NET retries a missing pipe until its timeout too: list again before saying why.
+                // Still there: every connection is taken, or the game is not responding (a suspended game lets one
+                // lane complete on its waiting instance and starves the other). [PIPE-PER-PROCESS-2026-11-06]
+                var now = await Task.Run(() => _platform.ListNamedPipes());
+                bool gone = now is not null && !PipeTargets.Scan(now).Pids.Contains(targetPid);
+                throw new InvalidOperationException(
+                    Res.Format(gone ? "str.Connect.PipeGone" : "str.Connect.Busy", targetPid));
             }
 
             var state = await _dump.InitAsync();
