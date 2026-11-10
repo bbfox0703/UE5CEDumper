@@ -5,8 +5,8 @@ Open work only. **Read this when deciding what to do next.**
 > 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
 >
 > ▶ **Current programme:** `[PIPE-PER-PROCESS-2026-11-06]`, one stage at a time (2026-11-10): Stage A shipped in build
-> 3695, Stage B (6 pipe slots + the scan-worker budget) in build 3696; Stage C (hardening for a long-lived client)
-> waits for the maintainer's go-ahead. Before it, none active
+> 3695, Stage B (6 pipe slots + the scan-worker budget) in build 3696, Stage C (hardening for a long-lived client) in
+> build 3698; Stage D (MCP) waits for the maintainer's go-ahead. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
 > active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
@@ -515,7 +515,31 @@ The plan as written:
   - clients handle 231, because a game with an older proxy keeps cap 3 until refreshed.
 - **Retire** handover §4's "never run `pipe_client.py` while the UI is connected" here.
 
-### Stage C — before any long-lived client (MCP), at any n
+### Stage C — before any long-lived client (MCP), at any n ✅ build 3698
+
+Built (dev-log 3698), with the maintainer's choices of 2026-11-10: a walk's threads follow the CPU (performance
+cores less 2); no client is disconnected for idling, but who holds the pipe can be seen; the watch thread does no pipe
+I/O; a second `trigger_scan` / `rescan` is answered "in progress", not an error. How it came out:
+
+- **Threads per walk** (`Aura::ThreadsForCpu`): the physical cores of the highest efficiency class less 2, in 1..16
+  and under logical processors less 2 (2-way SMT assumed without a topology). This 16C32T PC: 16 before, 14 now.
+- **Who holds the pipe:** `pipe_clients` (106 commands), and the holders on the at-capacity log line, which the UI's
+  full-pipe message and `pipe_client.py`'s error read.
+- **Owner-scoped teardown:** an owner is a client PROCESS (the UI's two lanes are one) or CE's record. See-through
+  goes off with the last claim, the LiveFuncs recording with the process that started it; an explicit OFF still
+  turns it off for everyone. Only caches and diagnostics wait for the last client. Stop's drain waits for teardowns.
+- **Scan sessions per connection** (another connection's id names nothing; owner-scoped idle sweep; 8 per kind per
+  connection; dropped on disconnect).
+- **Watches per connection; the watch thread does no pipe I/O** (`Kanne.h`): the handler sends the latest sample
+  after each command, with `samples`. A stop is one wake: a 10-minute watch unwatches in about 1 ms (measured).
+- **`trigger_scan` / `rescan`** run as one `Routine::SingleFlightJob` each: a claim nobody can share, a cancel token
+  of their own (another client's death no longer cancels them; Stop does), `in_progress` for a second asker.
+- **Flamme** changes its cache under a named lock in one read-modify-write; `persisted` reports the write.
+- **The adversarial review** (5 lenses, every finding refuted or confirmed by a second agent): 23 LOW confirmed, all
+  fixed, among them an exception-safe teardown count, one-snapshot status replies and a watch slot taken before its
+  thread.
+
+The plan as written:
 
 An MCP client in a spare slot (one of 6 since Stage B) triggers every item:
 

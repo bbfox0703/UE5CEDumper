@@ -276,6 +276,26 @@ Stage B, build 3696 (6 clients, the scan-worker budget) -- dev-log 3696. Not rea
    Acceptance: suspend every thread of an injected game (`suspend.py`), Connect; the message appears, and connecting
    works after resuming.
 
+Stage C, build 3698 (hardening for a long-lived client) -- dev-log 3698; `tools/verify/stagec_live.py` passes on
+DumperTest Shipping, pipe and mailbox only. Not reached:
+
+9. **Cheat Engine's own See-through record.** The record was driven through the mailbox (`mailbox_poke.py`, as
+   `stagec_live.py` does), not ticked in CE. Acceptance: tick the pushed See-through record in CE, connect and close
+   the UI; the record's See-through stays on (`seethrough_get_state` `ce_claimed: true`), and its untick turns it off.
+10. **The UI against a job another client started.** `trigger_scan` and Extra Scan answer `in_progress` to a second
+    asker; the UI was not driven against one. Acceptance: start a scan from `pipe_client.py` on a game still loading
+    (proxy, scan deferred), click Start Scan in the UI; it shows the scan's progress, not "Scan failed".
+11. **The hint-cache lock across processes.** Two writers in one process are tested (dll_core_test HINTCACHELOCK); two
+    games, or a stale proxy beside an injection, writing at once were not. Acceptance: two injected games each
+    `set_invoke_timeout ... persist` at the same moment; both records hold their value.
+12. **A Stop whose teardown waits on the game thread.** Acceptance: See-through on, game paused (`suspend.py`), the
+    UI closes and CE unticks the DLL at once; pipe-0.log's drain line counts the teardown ("still tearing down") and
+    names it, and nothing hangs past the drain budget.
+13. **Another CPU shape.** Only this 16C32T PC was measured (16 threads per walk before, 14 now); hybrid P/E cores,
+    E-cores disabled and a CPU without SMT are unit-tested (dll_core_test CPU). Acceptance: the init log's thread pick
+    on such a PC matches `Aura::ThreadsForCpu` for its topology.
+14. **A long-lived client.** No MCP client exists yet (Stage D); the rigs open connections for seconds.
+
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 
 Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT

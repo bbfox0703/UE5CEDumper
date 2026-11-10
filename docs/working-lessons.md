@@ -2684,6 +2684,19 @@ asymmetry**: Mimic.cpp's `ChainListFuncs` is a byte-identical twin that does *no
 per-declaration `extern "C"` and never opens a block. Fixed with `extern "C++" { … }` around the two
 adapters; negative-controlled in both directions.
 
+### 3.8e A publish stopped part-way: shut the build servers down before the next one
+
+Measured 2026-11-10 (build 3698): a `build.ps1 -Mode Publish` stopped during its test step (to fold in a
+last fix) left five `dotnet.exe` MSBuild / compiler servers running. The next publish built and
+published the AOT UI and passed the C# suite, then its headless step failed **49 of 71** with
+`No precompiled XAML found for avares://UE5DumpUI/Resources/Strings/en.axaml`. Run alone right after,
+the headless tests passed 71/71, and the published AOT exe loaded its strings and connected. The
+cause was not pinned down; the servers are the one thing the two runs did not share. ⇒ After stopping
+a publish, run `dotnet build-server shutdown` before the next one, and read a headless "no precompiled
+XAML" right after a stopped build as that, not as a broken view -- then re-run the headless tests alone
+and launch the AOT exe before handing `dist\` over. A stopped publish also consumes its build number
+(it bumps first); do not reuse it.
+
 ### 3.9 Two injected hosts at once: the second one silently never scans
 
 "One game at a time" is written down as a **resource** rule. It is also a **correctness** rule, and

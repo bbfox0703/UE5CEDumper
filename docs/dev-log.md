@@ -27,6 +27,53 @@ builds ≤696 in
 
 -----
 
+## 2026-11-10 (build 3698) — What a client turns on is its own; scans, watches and settings are safe with several clients `[PIPE-PER-PROCESS-2026-11-06]`
+
+Stage C: the pipe is hardened for a client that stays connected (an MCP client, a rig) beside the UI and CE.
+
+- **Closing the UI no longer turns off See-through that Cheat Engine turned on.** What a client turns on now belongs
+  to that client: See-through goes off when the last program holding it leaves or anyone turns it off, and a Live
+  Funcs recording (with its trace, up to 512 MB) is freed when the program that started it leaves -- also when other
+  clients stay connected, which used to leave both running for nobody. The UI's two connections count as one program.
+- **Value Search and Group Scan sessions are private to the connection that began them.** Another client can no
+  longer end or refine yours, and its scans no longer expire your idle session while you are still connected. A
+  connection's sessions are dropped when it disconnects (at most 8 of each kind per connection).
+- **Watches are per connection, and stopping one is instant.** A watch on an address another client also watches is
+  its own. The watching thread only reads memory; the connection sends the latest reading with its next reply (and how
+  many readings it stands for), so a client that sends nothing no longer stalls every stop of its watch -- a
+  10-minute watch now stops in about 1 ms.
+- **Start Scan and Extra Scan run once, whoever asks.** A second request while one runs is answered "in progress"
+  instead of "failed"; the scan keeps running if the client that started it disconnects, and another client crashing
+  no longer cancels it (only stopping the DLL does). A scan stopped that way is not reported as scanned, and an Extra
+  Scan cut short says so instead of "not found".
+- **See who holds the pipe.** New command `pipe_clients` (106 in all) lists each connected program, its last command
+  and whether it is busy; when every connection is taken, the DLL's log line names them and the UI's Connect message
+  and `pipe_client.py` quote it. No client is disconnected for idling (the maintainer's choice).
+- **Heavy walks use the CPU's performance cores less 2** (this 16-core / 32-thread PC: 14 threads per walk, was 16;
+  an 8-core 9800X3D: 6; Intel E-cores are not counted).
+- **Settings saved per game cannot overwrite each other.** The per-game hint cache is changed under one lock across
+  every injected game, and "saved" in the reply (and the UI's log) means the write happened.
+- Tests: red, then green, for every item and for every review finding. An adversarial review (5 lenses, each finding
+  checked by a second agent) confirmed 23 LOW findings and two verification rounds found 8 more, all fixed -- among them
+  a teardown count that a throw could leave raised (every later Stop then waited 5 s), status replies read in two steps,
+  and a watch thread that a failed insert could leave running. C# 7560 passed, 0 failed, 1 skipped; headless 71;
+  dll_helpers_test 3929, dll_core_test 1532, utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30, 0
+  failures; 39 gates passed. ⚠ In `build.ps1 -Mode Publish` the headless step failed 49 of 71 with "No precompiled XAML
+  found" right after the stopped 3697 publish (its MSBuild servers were still up); run alone it passed 71/71, and the
+  AOT UI loads its strings and connects. Live, AOT build on DumperTest Shipping (UE 5.4):
+  - `stagec_live.py` 29/29: CE's See-through survives a pipe client leaving and goes with the last claim; another
+    process's claim goes with it while a client stays; sessions and watches are their connection's; an unwatch of a
+    10-minute watch took 1 ms; two simultaneous `trigger_scan` gave one start and one "in progress", one RunScan in the
+    log; `persisted` matched the cache file;
+  - `pipebusy_capacity.py` PASS: 6 clients, the at-capacity line listed all 6 holders (phase `Reading`), `pipe_clients`
+    listed 6 with one marked self;
+  - `worker_budget_live.py` PASS: 14 threads per walk (13 workers), 32 walks by 4 clients, +14 threads, 0 errors;
+  - the UI connected; `pipe_clients` showed its two connections under one PID.
+
+  Build 3697 was taken by a publish stopped part-way to take the last review fixes; nothing from it was handed over.
+  Not live: verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`, items 9-14. AOT UI 61,767,680 bytes;
+  UE5Dumper.dll 3,625,984 bytes.
+
 ## 2026-11-10 (build 3696) — The DLL takes 6 pipe clients, and heavy commands share one thread budget `[PIPE-PER-PROCESS-2026-11-06]`
 
 - **6 clients at once instead of 3.** The UI uses 2, so a rig, an MCP client and a reconnect now fit beside it. The
