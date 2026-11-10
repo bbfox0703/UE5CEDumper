@@ -26,10 +26,12 @@ WHAT MAKES IT A REAL CHECK RATHER THAN A GREP
   * `CreateNamedPipe failed` must appear **zero** times while at capacity;
   * releasing one client must produce **exactly one** recovery line -- proving the
     latch resets rather than sticking;
-  * and the non-regression half is free: every single-client session logged earlier
-    tonight must contain NO at-capacity line at all. That is checked over the other
-    game log folders, so "it only fires when actually at capacity" is measured across
-    many sessions rather than asserted.
+  * and the non-regression half is free: across the other game log folders, an
+    at-capacity line may appear ONLY when the session really was full -- the last
+    "Client connected (conns=K)" before it had K equal to the limit in force then. So "it
+    only fires when actually at capacity" is measured across many sessions rather than
+    asserted. (It first demanded no such line at all, which assumed every other session
+    had one client; a deliberately filled pipe, as the Stage A checks did, is legitimate.)
 """
 import pathlib
 import re
@@ -111,16 +113,30 @@ def main(logdir="DumperTest", hold=75):
     print(f"  recovery lines: {freed}   (expect EXACTLY 1)")
     ok = ok and (freed == 1)
 
-    print("\n--- step 3 (NON-REGRESSION): single-client sessions must never say it ---")
+    print("\n--- step 3 (NON-REGRESSION): an at-capacity line only when the session was full ---")
     bad = []
-    checked = 0
+    checked = full_lines = 0
     for d in sorted(LOGROOT.iterdir()):
         p = d / "pipe-0.log"
         if not p.is_dir() and p.is_file() and d.name != logdir:
             checked += 1
-            if AT_CAP in p.read_text(encoding="utf-8", errors="replace"):
-                bad.append(d.name)
-    print(f"  other log folders checked: {checked}   with an at-capacity line: {len(bad)} {bad}")
+            limit = conns = None
+            for line in p.read_text(encoding="utf-8", errors="replace").splitlines():
+                m = re.search(r"maxInstances=(\d+)|takes (\d+) clients at once", line)
+                if m:
+                    limit = int(m.group(1) or m.group(2))
+                m = re.search(r"Client connected \(conns=(\d+)\)", line)
+                if m:
+                    conns = int(m.group(1))
+                if AT_CAP in line:
+                    if limit is not None and conns == limit:
+                        full_lines += 1
+                    else:
+                        bad.append(f"{d.name}: conns={conns} limit={limit}: {line.strip()[:90]}")
+    print(f"  other log folders checked: {checked}; at-capacity lines in full sessions: {full_lines}; "
+          f"anywhere else: {len(bad)}")
+    for b in bad[:5]:
+        print("   " + b)
     ok = ok and not bad
 
     print(f"\nPIPEBUSY: {'PASS' if ok else 'FAIL'}")
