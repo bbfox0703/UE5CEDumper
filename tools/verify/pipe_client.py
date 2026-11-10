@@ -1,10 +1,17 @@
 """Drive the injected UE5Dumper DLL over its named pipe, from Python, with no UI.
 
 This is the rig `docs/working-lessons.md` §2.6 describes: the UI is a *client*, not the subject,
-so every DLL-side row on the verification register can be driven straight over
-`\\\\.\\pipe\\UE5DumpBfx`. It is also STRONGER evidence for a DLL-side claim than a UI session,
+so every DLL-side row on the verification register can be driven straight over the game's pipe.
+It is also STRONGER evidence for a DLL-side claim than a UI session,
 because it removes Avalonia as a variable -- and correspondingly proves nothing about the panel's
 own bindings, which must be said explicitly when a result is recorded.
+
+Which game ([PIPE-PER-PROCESS-2026-11-06]). Each game serves `\\\\.\\pipe\\UE5DumpBfx_<pid>`. The
+client dials, in this order: the `pid=` it was given (`--pid` on this script's command line), then
+the `UE5DUMP_PID` environment variable (it reaches every rig and the children they start), then the
+only game listed under `\\\\.\\pipe\\`. With several games it takes the lowest pid, prints them all
+and warns. When only the legacy `\\\\.\\pipe\\UE5DumpBfx` is there, a game runs an old DLL (a proxy
+never refreshed): it refuses and says so. A rig that already knows the game's pid passes it.
 
 The three traps from §2.6 are enforced here rather than left to the caller, because each one
 produces a *confident wrong answer* rather than an error:
@@ -29,36 +36,88 @@ Usage as a library:
 Usage from the shell:
 
     py tools/verify/pipe_client.py get_pointers
+    py tools/verify/pipe_client.py get_pointers --pid 12345
     py tools/verify/pipe_client.py find_instances --args '{"class_name":"DumperTestActor"}'
 """
 
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
+import os
 import pathlib
 import sys
 import time
 
-PIPE = r"\\.\pipe\UE5DumpBfx"
+# [PIPE-PER-PROCESS-2026-11-06] Each game serves \\.\pipe\UE5DumpBfx_<pid>; the legacy name is what every DLL served
+# before, and an old DLL (a stale proxy) still does.
+PIPE_PREFIX = "UE5DumpBfx_"
+LEGACY_PIPE = "UE5DumpBfx"
+PID_ENV = "UE5DUMP_PID"
+PIPE_ROOT = "\\\\.\\pipe\\"
 DIST_BUILD = pathlib.Path(__file__).resolve().parents[2] / "dist" / "build_number.txt"
+
+# Seams for the selftest: the listing of \\.\pipe\ and the environment.
+_listdir = os.listdir
+_environ = os.environ
 
 
 class PipeError(RuntimeError):
     pass
 
 
-class StaleBuildError(PipeError):
-    """The DLL answering the pipe is not the build we just produced (§2.6 trap 1)."""
+def pipe_name(pid: int) -> str:
+    """The pipe a game process serves, bare (no \\\\.\\pipe\\ path)."""
+    return PIPE_PREFIX + str(int(pid))
 
 
-class TruncatedError(PipeError):
-    """The reply hit a cap, so it is a sample and cannot support an absence claim (§2.6 trap 3)."""
+def pipe_path(pid: int) -> str:
+    """The full path a client opens for game `pid`."""
+    return PIPE_ROOT + pipe_name(pid)
+
+
+def parse_pid(name: str) -> int | None:
+    return None   # red: parses nothing
+
+
+def list_dumper_pipes() -> tuple[list[int], bool]:
+    """The game pids serving a pipe (ascending), and whether the legacy pipe is there. Listing opens no pipe."""
+    names = _listdir("//./pipe/")
+    pids = sorted({p for p in (parse_pid(n) for n in names) if p is not None})
+    legacy = any(n.lower() == LEGACY_PIPE.lower() for n in names)
+    return pids, legacy
+
+
+def process_image(pid: int) -> str:
+    """The exe file name of `pid`, or "?" when it cannot be read: for the several-games warning only."""
+    if sys.platform != "win32":
+        return "?"
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = ctypes.c_void_p
+    h = k32.OpenProcess(0x1000, False, int(pid))   # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return "?"
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = ctypes.c_ulong(len(buf))
+        if not k32.QueryFullProcessImageNameW(ctypes.c_void_p(h), 0, buf, ctypes.byref(size)):
+            return "?"
+        return os.path.basename(buf.value) or "?"
+    finally:
+        k32.CloseHandle(ctypes.c_void_p(h))
+
+
+def resolve_pipe(pid: int | None = None, *, warn=None) -> str:
+    return PIPE_ROOT + LEGACY_PIPE   # red: the legacy name, whoever was asked for
 
 
 class PipeClient:
-    def __init__(self, pipe: str = PIPE, timeout: float = 120.0):
+    def __init__(self, pipe: str | None = None, timeout: float = 120.0, pid: int | None = None):
+        # `pipe`: a full path, used as given. Otherwise the game is chosen at connect time (resolve_pipe): `pid`, then
+        # $UE5DUMP_PID, then the listing -- so a game whose DLL is still scanning is found once its pipe appears.
         self.pipe = pipe
+        self.pid = pid
         self.timeout = timeout
         self._f = None
         self._id = 0
@@ -76,14 +135,21 @@ class PipeClient:
         # connection's first reply, which then fails to parse and is dropped.
         self._buf.clear()
         last = None
+        path = self.pipe
         for _ in range(retries):
             try:
-                self._f = open(self.pipe, "r+b", buffering=0)
+                if path is None:
+                    path = resolve_pipe(self.pid)   # warns once, on the attempt that finds the games
+                self._f = open(path, "r+b", buffering=0)
+                self.pipe = path   # which game this client reached; a reconnect dials the same one
                 return self
+            except PipeError as e:  # no game's pipe listed yet
+                last = e
+                time.sleep(delay)
             except OSError as e:  # pipe not up yet, or busy
                 last = e
                 time.sleep(delay)
-        raise PipeError(f"could not open {self.pipe}: {last}")
+        raise PipeError(f"could not open {path or 'a UE5Dumper pipe'}: {last}")
 
     def close(self) -> None:
         if self._f:
@@ -213,7 +279,14 @@ def selftest() -> int:
     had, saved = "open" in g, g.get("open")
     g["open"] = fake_open
     try:
-        c = PipeClient()
+        # [PIPE-PER-PROCESS-2026-11-06] A client given a pid dials that game's pipe, and keeps dialling it.
+        by_pid = PipeClient(pid=7)
+        by_pid.connect()
+        dialled = opened[-1] if opened else None
+        by_pid.close()
+        opened.clear()
+
+        c = PipeClient(pipe=pipe_path(1))   # an explicit path: no listing of \\.\pipe\ in a selftest
         with c:
             c._buf.extend(b'{"id":3,"partial')   # the live connection's own unread bytes
             c.connect()
@@ -233,7 +306,8 @@ def selftest() -> int:
         else:
             del g["open"]
     bad = 0
-    for label, got, want in (("connect inside `with`", twice, 1), ("bytes kept by a connect on an open client", kept, 16),
+    for label, got, want in (("a client given a pid dials its game", dialled, pipe_path(7)),
+                             ("connect inside `with`", twice, 1), ("bytes kept by a connect on an open client", kept, 16),
                              ("connect after close", again, 2),
                              ("connect after the handle was closed directly", reopened, 3),
                              ("bytes a reopened connection inherits", leftover, 0)):
@@ -244,18 +318,77 @@ def selftest() -> int:
     return 0 if bad == 0 else 1
 
 
+def selftest_resolve() -> int:
+    """[PIPE-PER-PROCESS-2026-11-06] Which game a client dials, from a fake \\\\.\\pipe\\ listing and environment: no
+    pipe is opened and no game needs to run."""
+    import io
+    g = globals()
+    saved = g["_listdir"], g["_environ"], g["process_image"]
+    bad = 0
+
+    def case(label, listing, env, pid, want, want_warn=None):
+        nonlocal bad
+        g["_listdir"] = lambda _root: list(listing)
+        g["_environ"] = dict(env)
+        g["process_image"] = lambda p: f"game{p}.exe"
+        warn = io.StringIO()
+        try:
+            got = resolve_pipe(pid, warn=warn)
+        except PipeError as e:
+            got = "PipeError: " + str(e)
+        ok = (got.startswith(want) if want.startswith("PipeError") else got == want)
+        if want_warn is not None:
+            ok = ok and ((want_warn in warn.getvalue()) if want_warn else warn.getvalue() == "")
+        bad += not ok
+        print(f"{'OK ' if ok else 'BAD'}  {label}: {got!r}" + (f" warn={warn.getvalue()!r}" if not ok else ""))
+
+    root = "\\\\.\\pipe\\"
+    try:
+        case("one game: its pipe, no warning", ["UE5DumpBfx_4242", "AOBMakerCEBridge"], {}, None,
+             root + "UE5DumpBfx_4242", "")
+        case("several games: the lowest pid, and every game named",
+             ["UE5DumpBfx_300", "UE5DumpBfx_100"], {}, None, root + "UE5DumpBfx_100", "UE5DumpBfx_300  game300.exe")
+        case("a game beside the legacy pipe: the game, with a warning",
+             ["UE5DumpBfx", "UE5DumpBfx_7"], {}, None, root + "UE5DumpBfx_7", "old DLL")
+        case("the legacy pipe alone: refused, and why", ["UE5DumpBfx"], {}, None, "PipeError: only the legacy pipe")
+        case("no game", ["AOBMakerCEBridge", "UE5DumpBfx-probe-1-ab"], {}, None, "PipeError: no ")
+        case("a pid given: its pipe, listed or not", [], {}, 55, root + "UE5DumpBfx_55", "")
+        case("the environment names the game", ["UE5DumpBfx_1", "UE5DumpBfx_2"], {PID_ENV: "2"}, None,
+             root + "UE5DumpBfx_2", "")
+        case("a pid given beats the environment", [], {PID_ENV: "2"}, 9, root + "UE5DumpBfx_9", "")
+        case("a bad environment value is refused", [], {PID_ENV: "abc"}, None, "PipeError: UE5DUMP_PID=")
+        case("names are compared without case", ["ue5dumpbfx_12"], {}, None, root + "UE5DumpBfx_12", "")
+    finally:
+        g["_listdir"], g["_environ"], g["process_image"] = saved
+
+    for name, want in (("UE5DumpBfx_1234", 1234), ("UE5DumpBfx", None), ("UE5DumpBfx_", None), ("UE5DumpBfx_0", None),
+                       ("UE5DumpBfx_12a", None), ("UE5DumpBfx_-5", None), ("UE5DumpBfx-probe-1-ab", None),
+                       ("UE5DumpBfx_99999999999", None), ("xUE5DumpBfx_12", None)):
+        got = parse_pid(name)
+        ok = got == want
+        bad += not ok
+        print(f"{'OK ' if ok else 'BAD'}  parse_pid({name!r}) = {got}, want {want}")
+    return bad
+
+
 def main() -> int:
     if sys.argv[1:] == ["--selftest"]:
-        return selftest()
+        resolve_bad = selftest_resolve()
+        rc = selftest()
+        if resolve_bad:
+            print(f"RESULT: FAIL ({resolve_bad} resolution case(s))")
+        return 1 if (rc or resolve_bad) else 0
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("cmd")
     ap.add_argument("--args", default="{}", help="JSON object of extra request fields")
     ap.add_argument("--no-guards", action="store_true",
                     help="skip the build/scan guards (they are the point -- only for probing)")
     ap.add_argument("--timeout", type=float, default=120.0)
+    ap.add_argument("--pid", type=int, default=None,
+                    help="the game to drive (its pipe is UE5DumpBfx_<pid>); default $UE5DUMP_PID, else the only game")
     a = ap.parse_args()
 
-    with PipeClient(timeout=a.timeout) as c:
+    with PipeClient(timeout=a.timeout, pid=a.pid) as c:
         if not a.no_guards:
             print(f"# build: {c.assert_build()}", file=sys.stderr)
         r = c.request(a.cmd, **json.loads(a.args))
