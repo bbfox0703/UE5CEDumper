@@ -324,6 +324,67 @@ public sealed class PipePerProcessSourceTests
     public void EverySessionCommandRidesTheBulkLane(string cmd)
         => Assert.True(UE5DumpUI.Services.LaneRoutingPipeClient.IsBulk(cmd), $"{cmd} is not on the bulk lane");
 
+    /// <summary>The body of a member function definition, braces matched.</summary>
+    private static string FunctionBody(string code, string signatureStart)
+    {
+        int def = code.IndexOf(signatureStart, StringComparison.Ordinal);
+        Assert.True(def >= 0, $"Fern.cpp: {signatureStart} not found -- re-point this pin");
+        int open = code.IndexOf('{', def);
+        int depth = 0, close = open;
+        for (; close < code.Length; close++)
+        {
+            if (code[close] == '{') depth++;
+            else if (code[close] == '}' && --depth == 0) break;
+        }
+        return code[open..(close + 1)];
+    }
+
+    /// <summary>Stage C: a watch is its connection's. Watches were keyed by address alone, so another client's
+    /// unwatch stopped this one's and its watch replaced it -- and a replace racing a re-watch freed an entry whose
+    /// thread still ran.</summary>
+    [Fact]
+    public void AWatchIsItsConnections()
+    {
+        Assert.Matches(@"std::unordered_map<\s*Kanne::WatchKey\s*,", CodeOnly(DllSrc("Fern.h")));
+        var code = CodeOnly(DllSrc("Fern.cpp"));
+        Assert.Matches(@"\bStopWatch\s*\(\s*conn->seq\s*,", CommandBranch(code, "CMD_UNWATCH"));
+        Assert.Matches(@"\bStopWatchesForConnection\s*\(\s*conn->seq\s*\)", ConnectionCleanupWhole(code));
+        var start = FunctionBody(code, "Fern::StartWatch(");
+        Assert.DoesNotMatch(@"\bStopWatch\s*\(", start);            // no stop-then-relock: one lock replaces
+        Assert.Matches(@"\bm_running\b", start);                     // a watch after StopAllWatches is refused
+        Assert.Matches(@"Grimoire::PIPE_WATCH_MAX_PER_CONNECTION", start);
+        Assert.Matches(@"Grimoire::PIPE_WATCH_MAX_TOTAL", start);
+    }
+
+    /// <summary>Stage C (the maintainer's choice, 2026-11-10): the watch thread does no pipe I/O. It reads memory
+    /// and leaves the latest sample in its Kanne::WatchSlot; the owner's handler sends it after each command, on its
+    /// own thread, so no join can wait behind a write blocked by the owner's parked read, and an interval cannot make
+    /// a join wait (the old sleep could not be interrupted).</summary>
+    [Fact]
+    public void AWatchThreadNeverTouchesThePipe()
+    {
+        var code = CodeOnly(DllSrc("Fern.cpp"));
+        var start = FunctionBody(code, "Fern::StartWatch(");
+        Assert.DoesNotMatch(@"\bWriteLine\s*\(", start);
+        Assert.DoesNotMatch(@"\bsleep_for\s*\(", start);
+        Assert.Matches(@"\bWaitInterval\s*\(", start);
+        int dispatch = code.IndexOf("std::string response = DispatchCommand(conn, line);", StringComparison.Ordinal);
+        int flush = code.IndexOf("FlushWatchEvents(*conn)", StringComparison.Ordinal);
+        int reply = code.IndexOf("WriteLine(*conn, response)", StringComparison.Ordinal);
+        Assert.True(dispatch >= 0 && flush > dispatch && reply > flush,
+            "HandleConnection must send its watch samples after DispatchCommand and before the reply");
+        var watch = CommandBranch(code, "CMD_WATCH");
+        Assert.Matches(@"Grimoire::PIPE_WATCH_INTERVAL_MAX_MS", watch);
+    }
+
+    private static string ConnectionCleanupWhole(string code)
+    {
+        int start = code.IndexOf("SetPhase(*conn, Connection::Phase::StoppingWatches)", StringComparison.Ordinal);
+        Assert.True(start >= 0, "Fern.cpp: the StoppingWatches phase is gone -- re-point this pin");
+        int end = code.IndexOf("m_connCv.notify_all()", start, StringComparison.Ordinal);
+        return code[start..end];
+    }
+
     /// <summary>A connection erases itself from m_conns and only then releases what it owns, so Stop's drain --
     /// which waited for m_conns to empty -- could finish, and run its own resets, while that release still ran. The
     /// drain waits for the teardowns too.</summary>

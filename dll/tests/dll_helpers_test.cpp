@@ -50,6 +50,7 @@
 #include "../src/Falsch.h"     // MinHook trampoline pre-flight against Zydis ([MH-TRAMPOLINE-PREFLIGHT])
 #include "../src/Wirbel.h"     // BugItGoRefusal (constexpr, pure) -- [TELEPORT-BUGITGO-PARENTREL]
 #include "../src/Schlacht.h"   // See-through's owners: ClaimOwner / ReleaseOwner (header-inline, pure)
+#include "../src/Kanne.h"      // Watch samples: WatchKey, WatchSlot (header-only, std-only)
 
 #include <Windows.h>
 
@@ -556,6 +557,51 @@ static void Test_Schlacht_Owners() {
         EXPECT("two clients hold it, one leaves: the other still holds it",
                Schlacht::ReleaseOwner(o, rig, false) == R::StillHeld && o.size() == 1 && o[0] == ui);
     }
+}
+
+// [PIPE-PER-PROCESS-2026-11-06] Stage C: a watch is its connection's, and its thread never touches the pipe.
+static void Test_Kanne_WatchKeyAndSlot() {
+    using Kanne::WatchKey;
+    struct Dummy { int v; };
+    std::unordered_map<WatchKey, Dummy, Kanne::WatchKeyHash> table;
+    table[WatchKey{1, 0x1000}] = Dummy{1};
+    table[WatchKey{2, 0x1000}] = Dummy{2};
+    table[WatchKey{1, 0x2000}] = Dummy{3};
+    EXPECT("two connections watching one address are two watches", table.size() == 3);
+    EXPECT("connection 2's key does not find connection 1's watch",
+           table.find(WatchKey{2, 0x2000}) == table.end() && table.at(WatchKey{1, 0x1000}).v == 1);
+    EXPECT("CountOwned counts one connection's watches", Kanne::CountOwned(table, 1) == 2
+                                                         && Kanne::CountOwned(table, 2) == 1
+                                                         && Kanne::CountOwned(table, 3) == 0);
+
+    Kanne::WatchSlot slot;
+    Kanne::WatchSlot::Sample s;
+    EXPECT("nothing read yet: nothing to send", !slot.TakeLatest(s));
+    const uint8_t a[2] = {1, 2}, b[2] = {3, 4}, c[2] = {5, 6};
+    slot.Publish(a, 2, 100);
+    slot.Publish(b, 2, 200);
+    slot.Publish(c, 2, 300);
+    EXPECT("the handler sends the latest read", slot.TakeLatest(s) && s.bytes.size() == 2 && s.bytes[0] == 5
+                                                && s.timestampMs == 300);
+    EXPECT("...and says how many reads it stands for", s.samples == 3);
+    EXPECT("...once", !slot.TakeLatest(s));
+
+    Kanne::WatchSlot quick;
+    const auto t0 = std::chrono::steady_clock::now();
+    EXPECT("an interval wait not stopped says read again", quick.WaitInterval(std::chrono::milliseconds(30)));
+    EXPECT("...after the interval", std::chrono::steady_clock::now() - t0 >= std::chrono::milliseconds(25));
+
+    // A stop wakes a thread waiting out a ten-minute interval: its join takes as long as the wake, not the interval.
+    Kanne::WatchSlot longSlot;
+    bool readAgain = true;
+    std::thread waiter([&] { readAgain = longSlot.WaitInterval(std::chrono::milliseconds(600000)); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const auto t1 = std::chrono::steady_clock::now();
+    longSlot.RequestStop();
+    waiter.join();
+    const auto joinedIn = std::chrono::steady_clock::now() - t1;
+    EXPECT("a stop wakes a ten-minute interval at once", joinedIn < std::chrono::milliseconds(500));
+    EXPECT("...and the woken thread stops reading", !readAgain);
 }
 
 static void Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway() {
@@ -12395,6 +12441,7 @@ int main() {
     RUN(Test_Schlacht_Owners);
     RUN(Test_Radar_SessionsAreTheirConnections);
     RUN(Test_Radar_IdleSweepIsPerOwner);
+    RUN(Test_Kanne_WatchKeyAndSlot);
 
     // [MH-PRERESERVE-PROXY] MinHook's trampoline-block search, modelled for the MH_ERROR_MEMORY_ALLOC diagnostic
     RUN(Test_Lager_SearchWindowMirrorsGetMemoryBlock);
