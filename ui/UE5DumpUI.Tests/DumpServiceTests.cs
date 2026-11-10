@@ -733,8 +733,9 @@ public class DumpServiceTests
 
     /// <summary>[PIPE-PER-PROCESS-2026-11-06] Stage C: `persisted` is the write's answer. A refused clear proves only
     /// that the clear was not written -- an override saved earlier still applies at the next launch, and whether one was
-    /// saved is not known here -- so the log says that, and never promises "Auto applies at the next launch". When no
-    /// override was in force there was nothing to clear, and the log keeps saying so.</summary>
+    /// saved is not known here -- so the log says that, and never promises "Auto applies at the next launch". Even with
+    /// no override in force in this session one may be on disk (an Auto whose write failed, then a refused pick), so
+    /// not_overridden says both.</summary>
     [Theory]
     [InlineData("no_detection", "an override saved there earlier still applies at the next launch")]
     [InlineData("stale_detection", "an override saved there earlier still applies at the next launch")]
@@ -757,6 +758,7 @@ public class DumpServiceTests
         Assert.Contains("persisted=False", line);
         Assert.DoesNotContain("Auto applies at the next launch", line);
         Assert.Contains(expected, line);
+        Assert.Contains("an override saved there earlier still applies at the next launch", line);
     }
 
     [Fact]
