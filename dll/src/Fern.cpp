@@ -3953,7 +3953,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 parallel, batchRead, deep, nativeC, nativeAlign, newestFirst, deadlineMs,
                 autoSkipNoise);
 
-            uint64_t sessionId = Radar::SessionManager::Instance().Begin(
+            uint64_t sessionId = Radar::SessionManager::Instance().Begin(conn->seq,
                 dt, std::move(scanResult.candidates),
                 std::move(scanResult.descriptors), std::move(scanResult.instances));
 
@@ -3968,7 +3968,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int totalCount = 0;
             json histogram = json::array();
             int classDistinct = 0;
-            Radar::SessionManager::Instance().ViewWith(sessionId,
+            Radar::SessionManager::Instance().ViewWith(conn->seq, sessionId,
                 [&](const Radar::Session& sess) {
                     totalCount = static_cast<int>(sess.candidates.size());
                     const int n = (std::min)(pageSize, totalCount);
@@ -4035,7 +4035,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             Aura::ValueScanStats stats;
             bool parseFailed = false;
             bool scanTypeInvalid = false;
-            bool found = Radar::SessionManager::Instance().RefineWith(sessionId,
+            bool found = Radar::SessionManager::Instance().RefineWith(conn->seq, sessionId,
                 [&](Radar::Session& sess) {
                     const Radar::DataType dt = sess.dt;
                     auto& cs = sess.candidates;
@@ -4158,7 +4158,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (sessionId == 0) {
                 return Renge::MakeError(id, "Missing or zero session_id").dump();
             }
-            bool ended = Radar::SessionManager::Instance().End(sessionId);
+            bool ended = Radar::SessionManager::Instance().End(conn->seq, sessionId);
             json data;
             data["session_id"] = sessionId;
             data["ended"]      = ended;
@@ -4197,7 +4197,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int filteredCount = 0;
             std::string dtName;
             bool found = Radar::SessionManager::Instance().QueryWith(
-                sessionId, filter, sortKey, sortDesc, excludeClasses,
+                conn->seq, sessionId, filter, sortKey, sortDesc, excludeClasses,
                 [&](const Radar::Session& sess, const std::vector<uint32_t>& order) {
                     totalCount    = static_cast<int>(sess.candidates.size());
                     filteredCount = static_cast<int>(order.size());
@@ -4328,7 +4328,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (perSlotCap > 4096) perSlotCap = 4096;
             auto scanResult = Aura::ScanForValueGroup(slots, gameOnly, maxResults, deep, crossObject, nativeC, newestFirst, deadlineMs, autoSkipNoise, perSlotCap);
 
-            uint64_t sessionId = Radar::GroupSessionManager::Instance().Begin(
+            uint64_t sessionId = Radar::GroupSessionManager::Instance().Begin(conn->seq,
                 std::move(slots), std::move(scanResult.candidates),
                 std::move(scanResult.descriptors), std::move(scanResult.instances),
                 scanResult.perSlotCapHit, perSlotCap);
@@ -4341,7 +4341,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json histogram = json::array();
             int classDistinct = 0;
             Radar::GroupSessionManager::Instance().QueryWith(
-                sessionId, "", Radar::SortKey::ScanOrder, false, std::vector<std::string>{},
+                conn->seq, sessionId, "", Radar::SortKey::ScanOrder, false, std::vector<std::string>{},
                 [&](const Radar::GroupSession& sess, const std::vector<uint32_t>& order) {
                     totalCount = static_cast<int>(sess.candidates.size());
                     const int n = (std::min)(pageSize, static_cast<int>(order.size()));
@@ -4406,7 +4406,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // pool and never re-runs Orden::MatchGroup, so it cannot recompute this.
             bool perSlotCapHit = false;
             int  perSlotCapEff = 0;
-            bool found = Radar::GroupSessionManager::Instance().RefineWith(sessionId,
+            bool found = Radar::GroupSessionManager::Instance().RefineWith(conn->seq, sessionId,
                 [&](Radar::GroupSession& sess) {
                     if (valuesJson.size() != sess.slots.size()) { countMismatch = true; return; }
                     // Re-target each slot from the new (value, scan_type). The dt is
@@ -4504,7 +4504,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (sessionId == 0) {
                 return Renge::MakeError(id, "Missing or zero session_id").dump();
             }
-            bool ended = Radar::GroupSessionManager::Instance().End(sessionId);
+            bool ended = Radar::GroupSessionManager::Instance().End(conn->seq, sessionId);
             json data;
             data["session_id"] = sessionId;
             data["ended"]      = ended;
@@ -4538,7 +4538,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             bool perSlotCapHit = false;   // carried from Begin (audit #5 AE13)
             int  perSlotCapEff = 0;
             bool found = Radar::GroupSessionManager::Instance().QueryWith(
-                sessionId, filter, sortKey, sortDesc, excludeClasses,
+                conn->seq, sessionId, filter, sortKey, sortDesc, excludeClasses,
                 [&](const Radar::GroupSession& sess, const std::vector<uint32_t>& order) {
                     totalCount    = static_cast<int>(sess.candidates.size());
                     filteredCount = static_cast<int>(order.size());
@@ -4619,7 +4619,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int  total = 0;
             bool candidateFound = false, slotFound = false, staleHint = false;
             const bool sessionFound = Radar::GroupSessionManager::Instance().WithSession(
-                sessionId, [&](const Radar::GroupSession& sess) {
+                conn->seq, sessionId, [&](const Radar::GroupSession& sess) {
                     const Radar::GroupCandidate* chosen = nullptr;
                     const Radar::GroupCandidate* firstByAddr = nullptr;
                     int sharingAddr = 0;   // how many candidates this UObject owns

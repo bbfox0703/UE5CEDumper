@@ -276,6 +276,54 @@ public sealed class PipePerProcessSourceTests
             Assert.Matches(@"std::lock_guard<std::mutex>\s+\w+\s*\(\s*m_profileMu\s*\)", CommandBranch(code, renge));
     }
 
+    /// <summary>Stage C: a scan session is the connection's that began it. Every use of a session names the
+    /// connection asking, a departing connection drops its own sessions whoever stays, and the last connection drops
+    /// none of anyone's -- its DropAll used to wipe a session a new client had just begun.</summary>
+    [Fact]
+    public void AScanSessionIsItsConnections()
+    {
+        var code = CodeOnly(DllSrc("Fern.cpp"));
+        var uses = Regex.Matches(code, @"\bRadar::(?:Group)?SessionManager::Instance\(\)\.(\w+)\(\s*([^,)]*)");
+        var unnamed = uses.Where(m => m.Groups[1].Value is not ("DropAll")
+                                      && m.Groups[2].Value.Trim() != "conn->seq")
+                          .Select(m => m.Value).ToList();
+        Assert.True(uses.Count >= 11, $"Fern.cpp: only {uses.Count} session-manager call(s) found -- re-point this pin");
+        Assert.True(unnamed.Count == 0, "session calls that do not name their connection:\n" + string.Join('\n', unnamed));
+
+        var cleanup = ConnectionCleanup(code);
+        Assert.Matches(@"\bRadar::SessionManager::Instance\(\)\.DropOwner\(\s*conn->seq\s*\)", cleanup);
+        Assert.Matches(@"\bRadar::GroupSessionManager::Instance\(\)\.DropOwner\(\s*conn->seq\s*\)", cleanup);
+        Assert.DoesNotMatch(@"\bDropAll\s*\(", cleanup);
+    }
+
+    /// <summary>A Begin read its new session back without checking the read: had the session gone in between, it
+    /// answered ok with total 0 and a dead id.</summary>
+    [Theory]
+    [InlineData("CMD_BEGIN_VALUE_SCAN", "SessionManager", "ViewWith")]
+    [InlineData("CMD_BEGIN_GROUP_SCAN", "GroupSessionManager", "QueryWith")]
+    public void ABeginNeverAnswersWithADeadSession(string renge, string manager, string read)
+    {
+        var branch = CommandBranch(CodeOnly(DllSrc("Fern.cpp")), renge);
+        var m = Regex.Match(branch, $@"\bbool\s+(\w+)\s*=\s*Radar::{manager}::Instance\(\)\.{read}\(");
+        Assert.True(m.Success, $"{renge}: the read-back of the new session must keep its result");
+        Assert.Matches($@"if\s*\(\s*!\s*{m.Groups[1].Value}\s*\)", branch);
+    }
+
+    /// <summary>A session is reachable only from the connection that began it, so all of a session's commands ride
+    /// the UI's one bulk lane: one moved to the interactive lane would answer session_not_found every time.</summary>
+    [Theory]
+    [InlineData("begin_value_scan")]
+    [InlineData("refine_value_scan")]
+    [InlineData("end_value_scan")]
+    [InlineData("query_candidates")]
+    [InlineData("begin_group_scan")]
+    [InlineData("refine_group_scan")]
+    [InlineData("end_group_scan")]
+    [InlineData("query_group_candidates")]
+    [InlineData("query_group_slot_leaves")]
+    public void EverySessionCommandRidesTheBulkLane(string cmd)
+        => Assert.True(UE5DumpUI.Services.LaneRoutingPipeClient.IsBulk(cmd), $"{cmd} is not on the bulk lane");
+
     /// <summary>A connection erases itself from m_conns and only then releases what it owns, so Stop's drain --
     /// which waited for m_conns to empty -- could finish, and run its own resets, while that release still ran. The
     /// drain waits for the teardowns too.</summary>

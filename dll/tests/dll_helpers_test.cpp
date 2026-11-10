@@ -3019,11 +3019,12 @@ static void Test_ValueScan_SessionLifecycle() {
     instances[0].instanceAddr = 0x4000;
     instances[0].instanceName = "Actor_0";
 
-    uint64_t sid = mgr.Begin(DataType::Int32, std::move(seed),
+    const uint64_t owner = 0xA0;   // this test's connection
+    uint64_t sid = mgr.Begin(owner, DataType::Int32, std::move(seed),
                              std::move(descriptors), std::move(instances));
     EXPECT("Begin returns non-zero session id", sid != 0);
 
-    bool viewed = mgr.ViewWith(sid, [&](const Session& sess) {
+    bool viewed = mgr.ViewWith(owner, sid, [&](const Session& sess) {
         EXPECT("ViewWith sees correct dataType", sess.dt == DataType::Int32);
         EXPECT("ViewWith sees 2 candidates",     sess.candidates.size() == 2);
         EXPECT("ViewWith preserves descriptor pool", sess.descriptors.size() == 1);
@@ -3034,24 +3035,24 @@ static void Test_ValueScan_SessionLifecycle() {
     EXPECT("ViewWith returns true for live session", viewed);
 
     // RefineWith may mutate the candidates vector.
-    bool refined = mgr.RefineWith(sid, [](Session& sess) {
+    bool refined = mgr.RefineWith(owner, sid, [](Session& sess) {
         sess.candidates.pop_back();  // drop one
     });
     EXPECT("RefineWith returns true for live session", refined);
 
     size_t remaining = 0;
-    mgr.ViewWith(sid, [&](const Session& sess) {
+    mgr.ViewWith(owner, sid, [&](const Session& sess) {
         remaining = sess.candidates.size();
     });
     EXPECT("Refine pruned candidate count", remaining == 1);
 
-    EXPECT("End returns true on first call",  mgr.End(sid));
-    EXPECT("End returns false on second call",!mgr.End(sid));
+    EXPECT("End returns true on first call",  mgr.End(owner, sid));
+    EXPECT("End returns false on second call",!mgr.End(owner, sid));
 
     // Lookups on a missing session id return false WITHOUT invoking
     // the callback -- caller maps to wire error "session_not_found".
     bool callbackRan = false;
-    bool missingOk = mgr.RefineWith(sid, [&](Session&) {
+    bool missingOk = mgr.RefineWith(owner, sid, [&](Session&) {
         callbackRan = true;
     });
     EXPECT("RefineWith on missing returns false", !missingOk);
@@ -3955,23 +3956,108 @@ static void Test_Radar_GroupSessionCarriesPerSlotCap() {
     pool[0].slotMatches.resize(2);
     for (auto& sl : pool[0].slotMatches) sl.resize(1);
 
-    uint64_t hitId = mgr.Begin({}, pool, {}, {}, /*perSlotCapHit=*/true, /*perSlotCap=*/256);
+    const uint64_t owner = 0xA1;   // this test's connection
+    uint64_t hitId = mgr.Begin(owner, {}, pool, {}, {}, /*perSlotCapHit=*/true, /*perSlotCap=*/256);
     bool sawHit = false; int sawCap = -1;
     EXPECT("session: the capped session is retrievable",
-           mgr.WithSession(hitId, [&](const GroupSession& s) {
+           mgr.WithSession(owner, hitId, [&](const GroupSession& s) {
                sawHit = s.perSlotCapHit; sawCap = s.perSlotCap;
            }));
     EXPECT("session: a Begin-time cap hit survives into the session", sawHit);
     EXPECT("session: and so does the EFFECTIVE cap the DLL clamped to", sawCap == 256);
 
     // Control: an uncapped scan must not report one, or every session would warn.
-    uint64_t cleanId = mgr.Begin({}, pool, {}, {}, /*perSlotCapHit=*/false, /*perSlotCap=*/256);
+    uint64_t cleanId = mgr.Begin(owner, {}, pool, {}, {}, /*perSlotCapHit=*/false, /*perSlotCap=*/256);
     bool cleanHit = true;
-    mgr.WithSession(cleanId, [&](const GroupSession& s) { cleanHit = s.perSlotCapHit; });
+    mgr.WithSession(owner, cleanId, [&](const GroupSession& s) { cleanHit = s.perSlotCapHit; });
     EXPECT("session: an uncapped scan reports no truncation", !cleanHit);
 
-    mgr.End(hitId);
-    mgr.End(cleanId);
+    mgr.End(owner, hitId);
+    mgr.End(owner, cleanId);
+}
+
+// [PIPE-PER-PROCESS-2026-11-06] Stage C: a scan session is the connection's that began it.
+static void Test_Radar_SessionsAreTheirConnections() {
+    using namespace Radar;
+    const uint64_t A = 0xA101, B = 0xA102;   // two connections, unique to this test
+    {
+        auto& mgr = SessionManager::Instance();
+        const uint64_t sid = mgr.Begin(A, DataType::Int32, std::vector<Candidate>(2), {}, {});
+        bool called = false;
+        EXPECT("value: another connection cannot view it",
+               !mgr.ViewWith(B, sid, [&](const Session&) { called = true; }) && !called);
+        EXPECT("value: ...nor refine it", !mgr.RefineWith(B, sid, [&](Session&) { called = true; }) && !called);
+        EXPECT("value: ...nor query it",
+               !mgr.QueryWith(B, sid, "", SortKey::ScanOrder, false, {},
+                              [&](const Session&, const std::vector<uint32_t>&) { called = true; }) && !called);
+        EXPECT("value: ...nor end it", !mgr.End(B, sid));
+        EXPECT("value: its owner still can", mgr.ViewWith(A, sid, [](const Session&) {}));
+        const uint64_t sidB = mgr.Begin(B, DataType::Int32, std::vector<Candidate>(1), {}, {});
+        EXPECT("value: DropOwner drops the owner's sessions and says how many", mgr.DropOwner(A) == 1);
+        EXPECT("value: ...and only the owner's",
+               !mgr.ViewWith(A, sid, [](const Session&) {}) && mgr.ViewWith(B, sidB, [](const Session&) {}));
+        mgr.DropOwner(B);
+
+        std::vector<uint64_t> ids;
+        for (size_t i = 0; i <= kMaxSessionsPerOwner; ++i)
+            ids.push_back(mgr.Begin(A, DataType::Int32, std::vector<Candidate>(1), {}, {}));
+        const uint64_t other = mgr.Begin(B, DataType::Int32, std::vector<Candidate>(1), {}, {});
+        EXPECT("value: one Begin past the cap drops the owner's least recently used",
+               !mgr.ViewWith(A, ids.front(), [](const Session&) {}) && mgr.ViewWith(A, ids.back(), [](const Session&) {}));
+        EXPECT("value: ...leaving the cap", mgr.DropOwner(A) == kMaxSessionsPerOwner);
+        EXPECT("value: ...and another owner's untouched", mgr.ViewWith(B, other, [](const Session&) {}));
+        mgr.DropOwner(B);
+    }
+    {
+        auto& mgr = GroupSessionManager::Instance();
+        const uint64_t sid = mgr.Begin(A, {}, std::vector<GroupCandidate>(1), {}, {}, false, 256);
+        bool called = false;
+        EXPECT("group: another connection cannot read it",
+               !mgr.WithSession(B, sid, [&](const GroupSession&) { called = true; }) && !called);
+        EXPECT("group: ...nor refine it", !mgr.RefineWith(B, sid, [&](GroupSession&) { called = true; }) && !called);
+        EXPECT("group: ...nor query it",
+               !mgr.QueryWith(B, sid, "", SortKey::ScanOrder, false, {},
+                              [&](const GroupSession&, const std::vector<uint32_t>&) { called = true; }) && !called);
+        EXPECT("group: ...nor end it", !mgr.End(B, sid));
+        EXPECT("group: its owner still can", mgr.WithSession(A, sid, [](const GroupSession&) {}));
+        EXPECT("group: DropOwner drops the owner's sessions", mgr.DropOwner(A) == 1);
+        EXPECT("group: ...so its id is gone", !mgr.WithSession(A, sid, [](const GroupSession&) {}));
+    }
+}
+
+// [PIPE-PER-PROCESS-2026-11-06] Stage C: the idle sweep reaps only the sweeping owner's sessions -- with the clock passed
+// in, the case AB17 called untestable.
+static void Test_Radar_IdleSweepIsPerOwner() {
+    using namespace Radar;
+    using clock = std::chrono::steady_clock;
+    const uint64_t A = 0xA201, B = 0xA202;
+    const clock::time_point t0 = clock::now();
+    const auto expiry = std::chrono::duration_cast<clock::duration>(kScanSessionIdleExpiry);
+    const auto later = t0 + expiry + std::chrono::seconds(1);
+    std::unordered_map<uint64_t, std::unique_ptr<Session>> m;
+    auto add = [&](uint64_t id, uint64_t owner, clock::time_point used) {
+        auto s = std::make_unique<Session>();
+        s->id = id; s->owner = owner; s->lastUse = used;
+        m.emplace(id, std::move(s));
+    };
+    add(1, A, t0);       // A's, idle
+    add(2, B, t0);       // B's, idle
+    add(3, A, later);    // A's, just used (the refined one)
+    EXPECT("another owner's activity reaps only its own idle session", ReapIdleOwned(m, B, later, expiry) == 1);
+    EXPECT("...so A's idle session survives B's sweep (A is still connected)", m.count(1) == 1 && m.count(2) == 0);
+    EXPECT("A's own activity reaps A's idle session", ReapIdleOwned(m, A, later, expiry) == 1 && m.count(1) == 0);
+    EXPECT("...and never the one just used", m.count(3) == 1);
+
+    std::unordered_map<uint64_t, std::unique_ptr<GroupSession>> g;
+    for (uint64_t id = 10; id < 14; ++id) {
+        auto s = std::make_unique<GroupSession>();
+        s->id = id; s->owner = (id == 13) ? B : A; s->lastUse = t0;   // 10..12 A's, tied on time; 13 B's
+        g.emplace(id, std::move(s));
+    }
+    EXPECT("the cap makes room by dropping the owner's oldest (lower id on a tie)",
+           EvictOwnedBeyond(g, A, 3) == 1 && g.count(10) == 0 && g.count(11) == 1 && g.count(12) == 1);
+    EXPECT("...and never another owner's", g.count(13) == 1);
+    EXPECT("under the cap nothing goes", EvictOwnedBeyond(g, A, 3) == 0);
 }
 
 // The grid must order by the leaf the ROW SHOWS — audit #5 AB6.
@@ -12307,6 +12393,8 @@ int main() {
     RUN(Test_Voll_ClassifyFirstInstance);
     RUN(Test_Voll_ClientOwnerKey);
     RUN(Test_Schlacht_Owners);
+    RUN(Test_Radar_SessionsAreTheirConnections);
+    RUN(Test_Radar_IdleSweepIsPerOwner);
 
     // [MH-PRERESERVE-PROXY] MinHook's trampoline-block search, modelled for the MH_ERROR_MEMORY_ALLOC diagnostic
     RUN(Test_Lager_SearchWindowMirrorsGetMemoryBlock);
