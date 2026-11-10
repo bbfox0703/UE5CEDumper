@@ -2233,6 +2233,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             await _pipeClient.ConnectAsync(PipeTargets.NameFor(targetPid));
 
             var state = await _dump.InitAsync();
+            // The pid the DLL reports is the process that answered. A process that created this game's pipe name
+            // before the game did would otherwise answer for it unnoticed.
+            if (state.ProcessId != 0 && state.ProcessId != targetPid)
+            {
+                await _pipeClient.DisconnectAsync();
+                throw new InvalidOperationException(Res.Format("str.Connect.WrongPid",
+                    PipeTargets.NameFor(targetPid), state.ProcessId, targetPid));
+            }
             _engineState = state;
             IsConnected = true;
 
@@ -2283,8 +2291,59 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// </summary>
     private async Task<int?> ResolvePipeTargetAsync(int? pid)
     {
-        await Task.CompletedTask;
-        return pid ?? 0;   // red: no listing, no plan
+        // Listing \\.\pipe\ opens no pipe, but it is still I/O: off the UI thread.
+        var names = await Task.Run(() => _platform.ListNamedPipes());
+        if (names is null)
+        {
+            if (pid is int direct) return direct;   // a named game needs no listing
+            throw new InvalidOperationException(Res.Get("str.Connect.ListFailed"));
+        }
+        var scan = PipeTargets.Scan(names);
+
+        if (pid is int p)
+        {
+            // A game the UI just injected may not have opened its pipe yet, so it is dialled even when unlisted and the
+            // connect waits for it. A game already running an OLD DLL never opens it, and the legacy pipe says so. Not
+            // during the post-inject retry, which owns the message and expects early attempts to miss.
+            if (!scan.Pids.Contains(p) && scan.LegacyPresent && !SuppressConnectErrors)
+            {
+                await RefuseLegacyAsync();
+                return null;
+            }
+            return p;
+        }
+
+        switch (PipeTargets.Decide(scan))
+        {
+            case ConnectPlan.ConnectOne:
+                return scan.Pids[0];
+            case ConnectPlan.LegacyOnly:
+                await RefuseLegacyAsync();
+                return null;
+            case ConnectPlan.NoPipe:
+                throw new InvalidOperationException(Res.Get("str.Connect.NoPipe"));
+        }
+
+        // Choose: each game with its exe name and window title, the legacy row last.
+        var rows = await Task.Run(() =>
+        {
+            var list = new List<PipeTarget>();
+            foreach (int id in scan.Pids)
+            {
+                var (image, title) = _platform.DescribeProcess(id);
+                list.Add(new PipeTarget(id, image, title));
+            }
+            if (scan.LegacyPresent) list.Add(new PipeTarget(0, "", null, IsLegacy: true));
+            return list;
+        });
+        int? chosen = PickPipeTargetAsync is null ? null : await PickPipeTargetAsync(rows);
+        // Only a listed game can be the answer: the legacy row has no pid to dial.
+        if (chosen is not int c || !scan.Pids.Contains(c))
+        {
+            StatusText = Res.Get("str.Connect.Cancelled");
+            return null;
+        }
+        return c;
     }
 
     /// <summary>Only an old DLL's pipe is there: say so and why, connect to nothing. Deliberately not the game list,

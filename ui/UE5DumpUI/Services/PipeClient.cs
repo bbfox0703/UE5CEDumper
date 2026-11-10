@@ -126,7 +126,7 @@ public sealed class PipeClient : IPipeClient
         _cts.Dispose();
         _cts = new CancellationTokenSource();
 
-        _pipe = new NamedPipeClientStream(".", Constants.LegacyPipeName,   // red: the name is ignored
+        _pipe = new NamedPipeClientStream(".", pipeName,
             PipeDirection.InOut, PipeOptions.Asynchronous);
 
         _log.Info(Constants.LogCatPipe, $"Connecting to pipe: {pipeName}...");

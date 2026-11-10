@@ -592,6 +592,48 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
     // proxy. Classic [DllImport] on blittable signatures — AOT-safe, no
     // LibraryImport. x64 targets only (the DLL is 64-bit).
 
+    public IReadOnlyList<string>? ListNamedPipes()
+    {
+        // Enumerating \\.\pipe\ lists names without opening any pipe (no instance is taken, no server sees a client).
+        try
+        {
+            var names = new List<string>();
+            foreach (var path in Directory.EnumerateFiles(@"\\.\pipe\"))
+            {
+                var name = Path.GetFileName(path);
+                if (!string.IsNullOrEmpty(name)) names.Add(name);
+            }
+            return names;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException
+                                       or NotSupportedException)
+        {
+            return null;
+        }
+    }
+
+    public (string ImageName, string? WindowTitle) DescribeProcess(int pid)
+    {
+        try
+        {
+            using var p = Process.GetProcessById(pid);
+            string image;
+            // The module path needs query access an elevated game may refuse; the process name does not, and is the
+            // file name without ".exe".
+            try { image = Path.GetFileName(p.MainModule?.FileName ?? "") ?? ""; }
+            catch { image = ""; }
+            if (string.IsNullOrEmpty(image)) image = p.ProcessName + ".exe";
+            string? title = null;
+            try { title = p.MainWindowTitle; }
+            catch { title = null; }
+            return (image, string.IsNullOrWhiteSpace(title) ? null : title);
+        }
+        catch
+        {
+            return ("", null);   // exited, or not readable at all
+        }
+    }
+
     public IReadOnlyList<GameProcessInfo> GetRunningProcesses()
     {
         var list = new List<GameProcessInfo>();
