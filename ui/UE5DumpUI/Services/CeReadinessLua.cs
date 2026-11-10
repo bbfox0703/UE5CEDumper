@@ -98,7 +98,7 @@ public static class CeReadinessLua
     /// <summary>Pipe server did not come up — almost always another owner.</summary>
     public static string PipeFailedMessage =>
         "'[UE5CEDumper] The DLL initialised but the Pipe Server FAILED to start.\\n\\n' ..\n" +
-        "    'Most likely another process already owns \\\\\\\\.\\\\pipe\\\\UE5DumpBfx.\\n' ..\n" +
+        "    'Most likely another copy of UE5Dumper in this game already serves its pipe, \\\\\\\\.\\\\pipe\\\\UE5DumpBfx_(game PID).\\n' ..\n" +
         "    'Check the DLL log:\\n  %LOCALAPPDATA%\\\\UE5CEDumper\\\\Logs'";
 
     /// <summary>Ran out of time still IDLE/RUNNING — a timeout is an ERROR, never a

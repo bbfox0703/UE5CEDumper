@@ -49,8 +49,10 @@ public:
     bool IsRunning() const { return m_running.load(); }
 
 private:
-    // Max concurrent client connections. 2 UI lanes (interactive + bulk) + 1
-    // slack for reconnect transients. CE uses the Mimic mailbox, not the pipe.
+    // Max concurrent client connections: the UI's 2 lanes (interactive + bulk) + 1,
+    // which a rig (tools/verify/pipe_client.py) or a lane reconnecting while its old
+    // instance unwinds takes. It guards no race: [PIPEBUSY-2026-08-18] was a logging
+    // bug, fixed by Voll. CE uses the Mimic mailbox, not the pipe.
     static constexpr DWORD kMaxPipeInstances = 3;
 
     // Per-connection state. Each accepted client gets one of these, served by

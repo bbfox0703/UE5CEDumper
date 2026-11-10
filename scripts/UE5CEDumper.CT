@@ -767,7 +767,7 @@ function ue5_inject()
             local msg = "UE5CEDumper is already loaded and serving in this process as '"
                      .. (modName or "?") .. "'.\n\n"
                      .. "No injection needed — just launch UE5DumpUI.exe and click Connect.\n"
-                     .. "Pipe: \\\\.\\pipe\\UE5DumpBfx"
+                     .. "Pipe: \\\\.\\pipe\\UE5DumpBfx_(game PID)"
             showMessage(msg)
             -- [A3-B30-STALE-FLAG] This record owns nothing. The flag is ONE global in CE's Lua state and
             -- outlives a File > Open, which frees the records WITHOUT running [DISABLE] -- so a record from the
@@ -908,7 +908,7 @@ function ue5_inject()
         elseif state == INIT_FAILED then
             -- Real failure: init ran but the pipe server did not come up.
             ue5_logError("DLL init finished but the Pipe Server FAILED to start.")
-            showMessage("UE5 Dumper Error:\n\nThe DLL loaded and initialised, but the Pipe Server failed to start.\n\nMost likely another process already owns \\\\.\\pipe\\UE5DumpBfx.\nCheck the DLL log:\n  %LOCALAPPDATA%\\UE5CEDumper\\Logs")
+            showMessage("UE5 Dumper Error:\n\nThe DLL loaded and initialised, but the Pipe Server failed to start.\n\nMost likely another copy of UE5Dumper in this game already serves its pipe, \\\\.\\pipe\\UE5DumpBfx_(game PID).\nCheck the DLL log:\n  %LOCALAPPDATA%\\UE5CEDumper\\Logs")
             return false
         elseif not sawProgress then
             -- The symbol resolved but the field never once left IDLE. That is NOT a
@@ -931,7 +931,7 @@ function ue5_inject()
     end
 
     ue5_log("=========================================")
-    ue5_log("Pipe: \\\\.\\pipe\\UE5DumpBfx")
+    ue5_log("Pipe: \\\\.\\pipe\\UE5DumpBfx_(game PID)")
     ue5_log("Launch UE5DumpUI.exe and click Connect.")
     ue5_log("DLL log: %%LOCALAPPDATA%%\\UE5CEDumper\\Logs")
     ue5_log("=========================================")
@@ -1098,7 +1098,7 @@ ue5_shutdown()
     </CheatEntry>
     <CheatEntry>
       <ID>25</ID>
-      <Description>"   Pipe: \\.\pipe\UE5DumpBfx"</Description>
+      <Description>"   Pipe: \\.\pipe\UE5DumpBfx_(game PID)"</Description>
       <Color>569CD6</Color>
       <GroupHeader>1</GroupHeader>
     </CheatEntry>

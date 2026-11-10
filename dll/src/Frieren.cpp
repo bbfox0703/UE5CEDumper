@@ -700,8 +700,8 @@ bool UE5_Init() {
     // (MA1) The same argument now covers a PER-COMMAND cancel — a pipe client dropping
     // mid-scan — which this guard could not see, because it tests g_shutdown only.
     // ⚠ Do NOT "simplify" the added term to Tot::Requested(). g_perCommand stays latched
-    // until Fern::AcceptLoop's firstConn calls ResetPerCommand, so a stale flag from an
-    // EARLIER disconnect would make the auto-start UE5_Init refuse the latch on a scan that
+    // until Fern::ReevaluatePerCommandCancel finds no connection that raised it still
+    // registered, so a flag from an EARLIER disconnect can still be set here and would make the auto-start UE5_Init refuse the latch on a scan that
     // completed perfectly — permanently disabling the DLL for that process. The note above
     // about ResetShutdown protecting against a false positive has no g_perCommand
     // equivalent; that asymmetry is the trap. `ptrs.bScanCancelled` says "THIS run actually
@@ -997,9 +997,9 @@ static bool AutoStartWork() {
     Tot::ResetShutdown();
     // (G2) Same argument, other flag — and it is now load-bearing rather than tidy.
     // Tot::Requested() is ALSO true for g_perCommand, the mid-command client-disconnect
-    // latch, which Tot deliberately keeps set until a fresh session connects into an
-    // empty registry (Fern AcceptLoop firstConn) so an orphaned scan keeps aborting.
-    // That reset therefore runs AFTER this scan, exactly like ResetShutdown's. Genau's
+    // latch, which Tot deliberately keeps set until no connection that raised it is
+    // still registered (Fern::ReevaluatePerCommandCancel), so an orphaned scan keeps
+    // aborting. That reset can therefore run AFTER this scan, exactly like ResetShutdown's. Genau's
     // recovery sweeps now honour Tot::Requested(), so without this line a stale latch
     // from a previous session's UI disconnect would abort a healthy game's GObjects/
     // GNames recovery at offset 0 — a scan that never ran, reported as one that found

@@ -17,10 +17,9 @@ namespace UE5DumpUI.Services;
 /// lane (and the synchronous-pipe single-handle deadlock can't occur).
 ///
 /// Reconnect policy: if EITHER lane drops unexpectedly, BOTH are torn down so a
-/// reconnect re-establishes both together — this matters because the DLL resets
-/// its per-command cancel flag only when its connection registry goes empty
-/// (first-connection-of-a-session), so a half-reconnect could leave a stale
-/// cancel set. See §9.3 / §9.7.
+/// reconnect re-establishes both together, and the app only ever sees one
+/// connection state. (The DLL's per-command cancel no longer needs it: it clears
+/// once no connection that raised it is registered, audit #5 F2.)
 /// </summary>
 public sealed class LaneRoutingPipeClient : IPipeClient
 {
@@ -29,11 +28,10 @@ public sealed class LaneRoutingPipeClient : IPipeClient
     private readonly ILoggingService _log;
 
     // Commands routed to the BULK lane. Everything else goes interactive.
-    // MUST-bulk (build the Aura class-metadata caches → must never run
-    // concurrently with another such command, which a single serial bulk lane
-    // guarantees): find_by_address, find_path_from_gworld, find_refs_to_uobject,
-    // begin/refine value+group scan, snapshot_chunk. SHOULD-bulk (long; keep off
-    // the interactive lane so Live Walker stays responsive): the rest below.
+    // Long and heavy: kept off the interactive lane so Live Walker stays
+    // responsive. Not a race guard: the Aura class-metadata caches some of them
+    // build take their mutex on every access, so two of them may run at once
+    // ([PIPE-PER-PROCESS-2026-11-06] Stage B).
     private static readonly HashSet<string> BulkCommands = new(StringComparer.Ordinal)
     {
         "begin_value_scan", "refine_value_scan", "end_value_scan", "query_candidates",

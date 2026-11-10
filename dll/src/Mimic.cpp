@@ -251,9 +251,10 @@ static void PollingThreadBody() {
     LOG_INFO("Mailbox: polling thread started (poll=%ums)", kPollIntervalMs);
 
     // This thread serves CE, not the pipe. Fern's disconnect monitor LATCHES the
-    // per-command cancel when a UI client dies mid-command, and in a CE-only session
-    // nothing ever clears it (only Fern::Start / AcceptLoop firstConn do). Without this
-    // line every object lookup below would then bail at n==0 —
+    // per-command cancel when a UI client dies mid-command, and it stays set until that
+    // connection has unregistered (Fern::ReevaluatePerCommandCancel) — and a pipe client's
+    // death is no reason to cancel CE's work at all. Without this line every object
+    // lookup below would bail at n==0 while it is set —
     // FIND_INSTANCE / LIST_INSTANCES / INVOKE_BY_NAME plus the class-scan fallback
     // resolvers in Wirbel/Solitar/Laufen/Hemmung — and still report scanned=<full pool>.
     // NOT MarkBackgroundWorker(): that also refuses (-8) the off-game-thread invoke

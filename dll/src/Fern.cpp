@@ -884,10 +884,11 @@ void Fern::MonitorLoop() {
                     // The connection that actually broke. Its handler thread is bound to
                     // this flag, so it -- and only it -- aborts promptly.
                     c->cancel.store(true, std::memory_order_relaxed);
-                    // And the global, STILL, for every thread no connection owns: Aura's
-                    // parallel workers and cancelWatcher, RunScan/RunRescan, the CE remote
-                    // thread. Dropping this would silently make them uncancellable, which
-                    // is the failure Tot.h's t_connCancel note documents at length.
+                    // And the global, STILL, for every thread no connection owns. (A worker
+                    // a handler spawns and joins adopts the handler's binding, Tot::
+                    // CancelContextScope, and follows the connection instead.) Dropping this
+                    // would silently make the unbound ones uncancellable, which is the
+                    // failure Tot.h's t_connCancel note documents at length.
                     // ⚠ A bound thread never reads g_perCommand, so setting it here does
                     // NOT reinstate the cross-connection truncation this change fixes.
                     Tot::RequestPerCommand();

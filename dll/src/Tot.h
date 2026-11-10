@@ -22,9 +22,10 @@
 //
 // Long loops poll Requested() every N iterations (cheap relaxed atomic load)
 // and bail with an empty / partial result. Per-command cancellation is reset
-// when a fresh session connects into an empty connection registry (Fern
-// AcceptLoop firstConn), NOT per-command — a light command on one lane must not
-// clear a running scan's cancel on another lane; shutdown is sticky. Background
+// once no connection that raised it is still registered (Fern::
+// ReevaluatePerCommandCancel, by PerCommandStillOwed below), NOT per-command — a
+// light command on one lane must not clear a running scan's cancel on another
+// lane; shutdown is sticky. Background
 // re-assert workers opt out of the per-command cancel via MarkBackgroundWorker()
 // (they live for the game process, not a single pipe command). (M4)
 //
@@ -38,10 +39,11 @@
 namespace Tot {
 
 // Set when the connected client disconnects mid-command (Fern monitor).
-// Cleared by ResetPerCommand() when a fresh session connects into an empty
-// registry (Fern AcceptLoop firstConn) — kept latched until then so an orphaned
-// in-flight scan on the dropped connection keeps aborting (do NOT clear it at
-// disconnect: the orphaned scan must still see the cancel until it unwinds).
+// Cleared by ResetPerCommand() once no connection that raised it is still
+// registered (Fern::ReevaluatePerCommandCancel) — kept latched until then so an
+// orphaned in-flight scan on the dropped connection keeps aborting (do NOT clear
+// it at disconnect: the orphaned scan must still see the cancel until it unwinds,
+// and a connection unregisters only after its handler returned).
 inline std::atomic<bool> g_perCommand{false};
 
 // Sticky: set at the TOP of UE5_Shutdown() (and by Fern::Stop()) so in-flight
