@@ -13,6 +13,13 @@ public static class Constants
     /// <summary>The one name every DLL served before the per-process name. A game whose DLL predates it (typically a
     /// proxy left in its folder) still serves this; the UI never connects to it and says why.</summary>
     public const string LegacyPipeName = "UE5DumpBfx";
+    // [PIPE-PER-PROCESS-2026-11-06] Stage C. The DLL's at-capacity pipe-log line and the holders it carries, read when
+    // every connection is taken: Grimoire.h's PIPE_AT_CAPACITY_TEXT / PIPE_HOLDERS_TOKEN / PIPE_HOLDERS_MORE_TOKEN /
+    // PIPE_SLOT_FREED_TEXT, pinned equal by PipePerProcessSourceTests.
+    public const string PipeAtCapacityText = "pipe instances in use";
+    public const string PipeHoldersToken = " holders=";
+    public const string PipeHoldersMoreToken = " more=";
+    public const string PipeSlotFreedText = "slot freed";
 
     // ── Protocol text: other programs' WORDS, matched by these openings ─────────────────────────────────
     // ⛔ DO NOT LOCALIZE, and never move these into en.axaml. [I18N-READINESS-2026-11-04] P5

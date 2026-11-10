@@ -112,6 +112,26 @@ public sealed class PipePerProcessSourceTests
             "HandleConnection must write cmdName before it raises inFlight");
     }
 
+    /// <summary>Stage C, the maintainer's policy: no client is disconnected for idling, but who holds the connections
+    /// can be seen. The accept thread reads the client's pid BEFORE the connection is registered (so every reader
+    /// that finds it in m_conns sees it), pipe_clients answers, and the at-capacity line -- what a client that
+    /// cannot connect reads from the log -- carries the holders.</summary>
+    [Fact]
+    public void WhoHoldsThePipeIsRecordedAndShown()
+    {
+        var code = CodeOnly(DllSrc("Fern.cpp"));
+        int id = code.IndexOf("GetNamedPipeClientProcessId(", StringComparison.Ordinal);
+        int reg = code.IndexOf("m_conns.push_back(conn)", StringComparison.Ordinal);
+        Assert.True(id >= 0 && reg >= 0 && id < reg, "AcceptLoop must read the client's pid before registering it");
+        Assert.Matches(@"\bcmd\s*==\s*Renge::CMD_PIPE_CLIENTS\b", code);
+        int enter = code.IndexOf("case Voll::AcceptLog::EnterCapacity:", StringComparison.Ordinal);
+        Assert.True(enter >= 0, "Fern.cpp: the EnterCapacity case is gone -- re-point this pin");
+        int end = code.IndexOf("break;", enter, StringComparison.Ordinal);
+        var branch = code[enter..end];
+        Assert.Contains("SnapshotHolders(", branch);
+        Assert.Contains("Grimoire::PIPE_HOLDERS_TOKEN", branch);
+    }
+
     /// <summary>Stage B: six clients at once -- the UI's two lanes, a rig, an MCP client, and two more for a lane
     /// reconnect whose old instances are still unwinding. Windows takes 1..254 (255 is PIPE_UNLIMITED_INSTANCES).
     /// A name another copy created first keeps that copy's limit (measured 2026-11-10: a second create asking for 6

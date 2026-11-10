@@ -72,6 +72,85 @@ public sealed class PipePerProcessConnectTests
     public void The_plan_follows_the_listing(int[] pids, bool legacy, ConnectPlan plan)
         => Assert.Equal(plan, PipeTargets.Decide(new PipeScan(pids, legacy)));
 
+    // ── Who holds a full pipe (Stage C): the DLL's at-capacity line ─────────────────────────────────────────────
+
+    private const string FullLine668 =
+        "[2026-11-10 20:47:40.123] [INFO] [PIPE:svr] PipeServer: all 6 pipe instances in use, waiting for a free slot -- "
+        + "\\\\.\\pipe\\UE5DumpBfx_668 holders=[{\"seq\":3,\"pid\":4321,\"exe\":\"python.exe\",\"last_cmd\":\"get_pointers\","
+        + "\"in_flight\":false},{\"seq\":4,\"pid\":77,\"exe\":\"UE5DumpUI.exe\",\"last_cmd\":\"\",\"in_flight\":true}]";
+
+    [Fact]
+    public void The_latest_full_line_for_the_pipe_names_its_holders()
+    {
+        var text = "[2026-11-10 20:00:00.000] [INFO] [PIPE:svr] PipeServer: all 6 pipe instances in use, waiting for a "
+                   + "free slot -- \\\\.\\pipe\\UE5DumpBfx_668 holders=[{\"pid\":1,\"exe\":\"old.exe\",\"last_cmd\":\"\","
+                   + "\"in_flight\":false}]\n"
+                   + "[2026-11-10 20:01:00.000] [INFO] [PIPE:svr] PipeServer: a pipe slot freed, resuming accept -- "
+                   + "\\\\.\\pipe\\UE5DumpBfx_668\n"
+                   + FullLine668 + "\n";
+        var seen = PipeHolders.ParseLatest(text, "UE5DumpBfx_668");
+        Assert.NotNull(seen);
+        Assert.Equal("2026-11-10 20:47:40.123", seen!.Time);
+        Assert.Equal(new[] { new PipeHolder(4321, "python.exe", "get_pointers", false),
+                             new PipeHolder(77, "UE5DumpUI.exe", "", true) }, seen.Holders);
+        Assert.Equal(0, seen.More);
+        Assert.False(seen.Superseded);
+    }
+
+    [Fact]
+    public void A_full_line_freed_since_is_marked_superseded()
+    {
+        var text = FullLine668 + "\n[2026-11-10 20:48:00.000] [INFO] [PIPE:svr] PipeServer: a pipe slot freed, resuming "
+                   + "accept -- \\\\.\\pipe\\UE5DumpBfx_668\n";
+        Assert.True(PipeHolders.ParseLatest(text, "UE5DumpBfx_668")!.Superseded);
+    }
+
+    [Fact]
+    public void Another_pipe_and_a_pid_that_merely_starts_the_same_are_not_read()
+    {
+        Assert.Null(PipeHolders.ParseLatest(FullLine668, "UE5DumpBfx_66"));
+        Assert.Null(PipeHolders.ParseLatest(FullLine668, "UE5DumpBfx_6680"));
+        Assert.NotNull(PipeHolders.ParseLatest(FullLine668, "UE5DumpBfx_668"));
+    }
+
+    [Fact]
+    public void Holders_that_did_not_fit_are_counted_and_a_broken_line_is_no_answer()
+    {
+        var withMore = FullLine668 + " more=3";
+        Assert.Equal(3, PipeHolders.ParseLatest(withMore, "UE5DumpBfx_668")!.More);
+        Assert.Null(PipeHolders.ParseLatest(FullLine668[..^20], "UE5DumpBfx_668"));   // cut mid-JSON
+        Assert.Null(PipeHolders.ParseLatest("", "UE5DumpBfx_668"));
+        Assert.Null(PipeHolders.ParseLatest(null, "UE5DumpBfx_668"));
+    }
+
+    [Fact]
+    public async Task A_full_pipe_names_who_holds_it_from_the_dlls_log()
+    {
+        var logRoot = Path.Combine(Path.GetTempPath(), "UE5DumpHolders_" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(logRoot, "Game"));
+        try
+        {
+            File.WriteAllText(Path.Combine(logRoot, "Game", "pipe-0.log"),
+                FullLine668.Replace("UE5DumpBfx_668", "UE5DumpBfx_100") + "\n");
+            var rig = new Rig("UE5DumpBfx_100");
+            rig.Platform.LogRoot = logRoot;
+            rig.Platform.Processes[100] = ("Game.exe", "Game");
+            rig.Pipe.Busy = new HashSet<string> { "UE5DumpBfx_100" };
+            await rig.Vm.ConnectCommand.ExecuteAsync(null);
+            var msg = rig.Vm.ErrorMessage ?? "";
+            Assert.StartsWith(Res.Format("str.Connect.Busy", 100), msg);
+            Assert.Contains("20:47:40", msg);
+            Assert.Contains("python.exe", msg);
+            Assert.Contains("4321", msg);
+            Assert.Contains("get_pointers", msg);
+            Assert.Contains("UE5DumpUI.exe", msg);
+        }
+        finally
+        {
+            Directory.Delete(logRoot, recursive: true);
+        }
+    }
+
     // ── The main window's Connect ───────────────────────────────────────────────────────────────────────────────
 
     private sealed class Rig
@@ -366,6 +445,8 @@ public sealed class PipePerProcessConnectTests
     private sealed class PipePlatform : IPlatformService
     {
         public IReadOnlyList<string>? Pipes { get; set; } = Array.Empty<string>();
+        /// <summary>The Logs root GetLogDirectoryPath answers: where the DLLs' per-game log folders are.</summary>
+        public string LogRoot { get; set; } = Path.Combine(Path.GetTempPath(), "UE5DumpNoLogs_" + Guid.NewGuid().ToString("N"));
         public Dictionary<int, (string, string?)> Processes { get; } = new();
         public IReadOnlyList<string>? ListNamedPipes() => Pipes;
         public (string ImageName, string? WindowTitle) DescribeProcess(int pid)
@@ -374,7 +455,7 @@ public sealed class PipePerProcessConnectTests
         public bool TryAcquireSingleInstance() => true;
         public void ReleaseSingleInstance() { }
         public string GetAppDataPath() => Path.GetTempPath();
-        public string GetLogDirectoryPath() => Path.GetTempPath();
+        public string GetLogDirectoryPath() => LogRoot;
         public Task<bool> CopyToClipboardAsync(string text) => Task.FromResult(true);
         public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
         public string GetMachineName() => "TEST";

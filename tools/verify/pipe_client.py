@@ -132,6 +132,32 @@ def pipe_is_busy(path: str) -> bool:
 # Seam for the selftest.
 _pipe_is_busy = pipe_is_busy
 
+# [PIPE-PER-PROCESS-2026-11-06] Stage C: when every connection is taken, the DLL writes who holds them on its at-capacity
+# pipe-log line (Grimoire.h PIPE_AT_CAPACITY_TEXT / PIPE_HOLDERS_TOKEN / PIPE_HOLDERS_MORE_TOKEN / PIPE_SLOT_FREED_TEXT).
+AT_CAPACITY_TEXT = "pipe instances in use"
+HOLDERS_TOKEN = " holders="
+HOLDERS_MORE_TOKEN = " more="
+SLOT_FREED_TEXT = "slot freed"
+LOGROOT = pathlib.Path(os.environ.get("LOCALAPPDATA", str(pathlib.Path.home() / "AppData/Local"))) / "UE5CEDumper/Logs"
+
+
+def latest_holders(text: str, name: str):
+    """The latest at-capacity line naming pipe `name` (bare, e.g. UE5DumpBfx_668) in a DLL pipe log, as
+    {"time", "holders": [...], "more", "superseded"}, or None."""
+    return None   # red: not read yet
+
+
+def _read_pipe_logs() -> list[str]:
+    """The text of every game's pipe-0.log (a selftest seam). Two processes of one exe share a folder, so a reader
+    filters by pipe name, never by folder."""
+    texts = []
+    for p in LOGROOT.glob("*/pipe-0.log"):
+        try:
+            texts.append(p.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            pass
+    return texts
+
 
 def resolve_pipe(pid: int | None = None, *, warn=None) -> str:
     """Which game's pipe to dial: `pid`, else $UE5DUMP_PID, else the one game listed. Several games: the lowest pid,
@@ -376,15 +402,21 @@ def selftest() -> int:
     def busy_open(*_a, **_k):
         raise OSError(22, "Invalid argument")
 
+    bsl = "\\"
+    full5 = ("[2026-11-10 20:47:40.123] [INFO] [PIPE:svr] PipeServer: all 6 pipe instances in use, waiting for a free "
+             f"slot -- {bsl * 2}.{bsl}pipe{bsl}UE5DumpBfx_5 holders=[{{\"seq\":3,\"pid\":4321,\"exe\":\"python.exe\","
+             "\"last_cmd\":\"get_pointers\",\"in_flight\":false}]")
+
     def failure_text(busy):
-        g["open"], g["_pipe_is_busy"] = busy_open, (lambda _p: busy)
+        saved_logs = g["_read_pipe_logs"]
+        g["open"], g["_pipe_is_busy"], g["_read_pipe_logs"] = busy_open, (lambda _p: busy), (lambda: [full5])
         try:
             PipeClient(pipe=pipe_path(5)).connect(retries=1, delay=0.0)
             return "connected?!"
         except PipeError as e:
             return str(e)
         finally:
-            g["open"], g["_pipe_is_busy"] = fake_open, pipe_is_busy
+            g["open"], g["_pipe_is_busy"], g["_read_pipe_logs"] = fake_open, pipe_is_busy, saved_logs
 
     g["open"] = fake_open
     busy_text, other_text = failure_text(True), failure_text(False)
@@ -394,6 +426,8 @@ def selftest() -> int:
         del g["open"]
 
     for label, got, want in (("a busy pipe: the error says every connection is in use", "in use" in busy_text, True),
+                             ("a busy pipe: and who holds it, from the DLL's log",
+                              "python.exe (PID 4321" in busy_text and "get_pointers" in busy_text, True),
                              ("any other failure: it does not", "in use" in other_text, False),
                              ("a client given a pid dials its game", dialled, pipe_path(7)),
                              ("connect inside `with`", twice, 1), ("bytes kept by a connect on an open client", kept, 16),
@@ -449,6 +483,26 @@ def selftest_resolve() -> int:
         case("names are compared without case", ["ue5dumpbfx_12"], {}, None, root + "UE5DumpBfx_12", "")
     finally:
         g["_listdir"], g["_environ"], g["process_image"] = saved
+
+    # Stage C: who holds a full pipe, read from the DLL's at-capacity line.
+    bs = "\\"
+    full = ("[2026-11-10 20:47:40.123] [INFO] [PIPE:svr] PipeServer: all 6 pipe instances in use, waiting for a free "
+            f"slot -- {bs * 2}.{bs}pipe{bs}UE5DumpBfx_668 holders=[{{\"seq\":3,\"pid\":4321,\"exe\":\"python.exe\","
+            "\"last_cmd\":\"get_pointers\",\"in_flight\":false}]")
+    freed = ("[2026-11-10 20:48:00.000] [INFO] [PIPE:svr] PipeServer: a pipe slot freed, resuming accept -- "
+             f"{bs * 2}.{bs}pipe{bs}UE5DumpBfx_668")
+    got = latest_holders(full, "UE5DumpBfx_668")
+    for label, ok in (
+            ("holders: the latest full line is read",
+             got is not None and got["time"] == "2026-11-10 20:47:40.123" and got["holders"][0]["pid"] == 4321
+             and got["more"] == 0 and not got["superseded"]),
+            ("holders: freed since -> superseded", (latest_holders(full + "\n" + freed, "UE5DumpBfx_668") or {})
+             .get("superseded") is True),
+            ("holders: another pipe is not read", latest_holders(full, "UE5DumpBfx_66") is None),
+            ("holders: 'more=N' is counted", (latest_holders(full + " more=2", "UE5DumpBfx_668") or {}).get("more") == 2),
+            ("holders: a line cut mid-JSON is no answer", latest_holders(full[:-10], "UE5DumpBfx_668") is None)):
+        bad += not ok
+        print(f"{'OK ' if ok else 'BAD'}  {label}")
 
     for name, want in (("UE5DumpBfx_1234", 1234), ("UE5DumpBfx", None), ("UE5DumpBfx_", None), ("UE5DumpBfx_0", None),
                        ("UE5DumpBfx_12a", None), ("UE5DumpBfx_-5", None), ("UE5DumpBfx-probe-1-ab", None),

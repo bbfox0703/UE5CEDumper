@@ -428,6 +428,59 @@ static void Test_Voll_ExtractCmdName() {
            Voll::ExtractCmdName("{\"cmd\":\"" + longName + "\"}").size() == Voll::kMaxCmdNameChars);
 }
 
+static void Test_Voll_Holders() {
+    // [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds the pipe's connections, for pipe_clients and the at-capacity
+    // log line a client that cannot connect reads.
+    EXPECT("TruncateUtf8: ASCII under the limit is kept", Voll::TruncateUtf8("game.exe", 64) == "game.exe");
+    EXPECT("TruncateUtf8: ASCII over the limit is cut", Voll::TruncateUtf8(std::string(100, 'a'), 64).size() == 64);
+    const std::string jp = "\xE3\x82\xB2\xE3\x83\xBC\xE3\x83\xA0.exe";   // a 3-byte character first
+    EXPECT("TruncateUtf8 * : a cut never splits a UTF-8 sequence", Voll::TruncateUtf8(jp, 4) == "\xE3\x82\xB2");
+
+    Voll::Holder h;
+    h.seq = 3; h.pid = 1234; h.exe = "python.exe"; h.connectedMs = 5000; h.lastCmd = "get_pointers";
+    h.lastCmdAgeMs = 20; h.inFlight = true; h.phase = "Dispatching"; h.self = true;
+    const nlohmann::json j = Voll::HolderToJson(h);
+    EXPECT("holder: pid", j.value("pid", 0) == 1234);
+    EXPECT("holder: exe", j.value("exe", std::string()) == "python.exe");
+    EXPECT("holder: last command", j.value("last_cmd", std::string()) == "get_pointers");
+    EXPECT("holder: in flight", j.value("in_flight", false));
+    EXPECT("holder: self", j.value("self", false));
+    EXPECT("holder: ages", j.value("connected_ms", 0LL) == 5000 && j.value("last_cmd_age_ms", 0LL) == 20);
+    EXPECT("holder: seq and phase", j.value("seq", 0ULL) == 3 && j.value("phase", std::string()) == "Dispatching");
+
+    Voll::Holder h2 = h;
+    h2.pid = 99; h2.exe = "UE5DumpUI.exe"; h2.self = false; h2.inFlight = false;
+    const std::string two = Voll::HoldersJson({h, h2});
+    const nlohmann::json parsed = nlohmann::json::parse(two, nullptr, false);
+    EXPECT("HoldersJson * : a JSON array of every holder", parsed.is_array() && parsed.size() == 2);
+
+    Voll::Holder bad;
+    bad.exe = "\xFF\xFE.exe";
+    bool threw = false;
+    std::string badText;
+    try { badText = Voll::HoldersJson({bad}); } catch (...) { threw = true; }
+    EXPECT("HoldersJson * : invalid UTF-8 in a name does not throw (the accept thread would end)",
+           !threw && badText.find("\"pid\"") != std::string::npos);
+
+    std::vector<Voll::Holder> six(6);
+    for (auto& x : six) {
+        x.pid = 4294967295u; x.exe = std::string(Voll::kMaxHolderExeBytes, 'x');
+        x.lastCmd = std::string(Voll::kMaxCmdNameChars, 'y'); x.phase = "StoppingWatches";
+        x.connectedMs = 9223372036854775807LL; x.lastCmdAgeMs = 9223372036854775807LL; x.seq = ~0ULL;
+    }
+    const std::string full = Voll::HoldersJson(six);
+    const nlohmann::json fullParsed = nlohmann::json::parse(full, nullptr, false);
+    EXPECT("HoldersJson * : six holders with the longest fields fit one log line",
+           full.size() <= Voll::kHoldersLineBudget && full.find(" more=") == std::string::npos &&
+           fullParsed.is_array() && fullParsed.size() == 6);
+    const std::string cut = Voll::HoldersJson(six, 400);
+    const size_t more = cut.find(" more=");
+    const nlohmann::json cutParsed =
+        nlohmann::json::parse(more == std::string::npos ? cut : cut.substr(0, more), nullptr, false);
+    EXPECT("HoldersJson * : past the budget, holders are dropped and counted",
+           more != std::string::npos && cutParsed.is_array() && cutParsed.size() >= 1 && cutParsed.size() < 6);
+}
+
 static void Test_Voll_ClassifyFirstInstance() {
     using FI = Voll::FirstInstance;
     const DWORD self = 4242, other = 77;
@@ -12189,6 +12242,7 @@ int main() {
     RUN(Test_Voll_ProbeFoundServer);
     RUN(Test_Voll_WaitSaysServed);
     RUN(Test_Voll_ExtractCmdName);
+    RUN(Test_Voll_Holders);
     RUN(Test_Voll_ClassifyFirstInstance);
 
     // [MH-PRERESERVE-PROXY] MinHook's trampoline-block search, modelled for the MH_ERROR_MEMORY_ALLOC diagnostic

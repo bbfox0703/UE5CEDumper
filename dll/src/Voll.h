@@ -20,6 +20,8 @@
 #include <Windows.h>   // DWORD, ERROR_PIPE_BUSY, ERROR_ALREADY_EXISTS, GetCurrentProcessId
 #include <string>
 #include <string_view>
+#include <vector>
+#include <json.hpp>    // the holders list (pipe_clients, the at-capacity line)
 
 #include "Grimoire.h"  // PIPE_NAME_PREFIX
 
@@ -163,6 +165,46 @@ inline std::string ExtractCmdName(std::string_view line) {
         name.push_back(c);
     }
     return name;
+}
+
+// ── Who holds the pipe's connections ────────────────────────────────────────
+// [PIPE-PER-PROCESS-2026-11-06] Stage C, the maintainer's policy (2026-11-10): no client is ever disconnected for being
+// idle, but who holds the connections can be seen -- the pipe_clients command, and, when every connection is taken
+// (no client can connect to ask), the at-capacity log line, which a client that cannot connect reads from the DLL's
+// pipe log.
+struct Holder {
+    uint64_t    seq = 0;
+    DWORD       pid = 0;            // the client process; 0 when it could not be read
+    std::string exe;                // its exe file name, UTF-8, at most kMaxHolderExeBytes; "?" when unread
+    long long   connectedMs = 0;    // how long ago it connected
+    std::string lastCmd;            // its last (or current) command; empty before its first
+    long long   lastCmdAgeMs = -1;  // since that command began; -1 before its first
+    bool        inFlight = false;   // a command is running now
+    std::string phase;              // Fern's Connection::Phase name
+    bool        self = false;       // the connection asking (pipe_clients)
+};
+
+inline constexpr size_t kMaxHolderExeBytes = 64;
+// The holders on one log line stay under this many bytes: Sein formats a line into 4096, and a longer one is cut
+// silently. Holders past it are dropped and counted (" more=N").
+inline constexpr size_t kHoldersLineBudget = 3000;
+
+// `s` cut to at most `maxBytes` without splitting a UTF-8 sequence.
+inline std::string TruncateUtf8(const std::string& s, size_t maxBytes) {
+    (void)maxBytes;
+    return s;   // red: no cut yet
+}
+
+inline nlohmann::json HolderToJson(const Holder& h) {
+    (void)h;
+    return nlohmann::json::object();   // red: no fields yet
+}
+
+// The holders as one compact JSON array, at most `budget` bytes, then " more=N" when some did not fit. Never throws:
+// invalid UTF-8 in a name is replaced, not thrown on -- on the accept thread, a throw would end the server.
+inline std::string HoldersJson(const std::vector<Holder>& holders, size_t budget = kHoldersLineBudget) {
+    (void)holders; (void)budget;
+    return "[]";   // red: nobody listed yet
 }
 
 // ── Who should own the pipe at startup ──────────────────────────────────────
