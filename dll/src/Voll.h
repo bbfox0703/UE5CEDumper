@@ -228,6 +228,17 @@ inline std::string HoldersJson(const std::vector<Holder>& holders, size_t budget
     return out;
 }
 
+// ── Who owns what a pipe client turns on ────────────────────────────────────
+// [PIPE-PER-PROCESS-2026-11-06] Stage C
+//
+// The client's PROCESS, not its connection: the UI holds two lanes, and a lane that reconnects while its sibling stays
+// must not release what that process still uses. A connection whose pid could not be read owns things alone; the top
+// bit keeps that key apart from every pid, which is 32 bits, and from 0, which names no owner.
+constexpr uint64_t ClientOwnerKey(DWORD pid, uint64_t seq) noexcept {
+    (void)pid; (void)seq;
+    return 0;   // RED stub
+}
+
 // ── Who should own the pipe at startup ──────────────────────────────────────
 // [RELAUNCHPIPE-2026-08-19]
 //

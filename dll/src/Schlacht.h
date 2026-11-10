@@ -20,6 +20,36 @@
 
 namespace Schlacht {
 
+// ── Who holds See-through ([PIPE-PER-PROCESS-2026-11-06] Stage C) ─────────────
+// One switch, two kinds of client turn it on: a pipe client (the UI's card, a rig, MCP) and CE's mailbox record. The
+// last pipe client to disconnect used to turn it off for everyone -- a ticked CE record then showed on while it was
+// off, and its untick did nothing -- and while another pipe client stayed connected, a departed client's See-through
+// stayed on with nobody left to turn it off. Each enable now records who asked; a departing client process releases
+// only its own claim, and See-through goes off with the last claim. An explicit OFF from anyone still turns it off and
+// drops every claim: that is a user's untick or a card's OFF, which means "off", not "I no longer need it".
+//
+// An owner is a client process (Voll::ClientOwnerKey) or CE (kOwnerCe).
+constexpr uint64_t kOwnerNone = 0;      // names no owner: an explicit OFF, and a claim that records nothing
+constexpr uint64_t kOwnerCe   = ~0ull;  // the CE mailbox record
+
+enum class OwnerRelease {
+    NotHeld,     // the owner never claimed it: nothing changes
+    StillHeld,   // it stays on: the owner is still connected, or another owner holds it
+    TurnOff,     // the last claim went: turn it off
+};
+
+// Records `owner` once. kOwnerNone is never recorded.
+inline void ClaimOwner(std::vector<uint64_t>& owners, uint64_t owner) {
+    (void)owners; (void)owner;   // RED stub
+}
+
+// A departing owner's release. `stillLive` = another connection of the same client process is still registered, and
+// then its claim is kept.
+inline OwnerRelease ReleaseOwner(std::vector<uint64_t>& owners, uint64_t owner, bool stillLive) {
+    (void)owners; (void)owner; (void)stillLive;
+    return OwnerRelease::TurnOff;   // RED stub: today, any departure turns it off
+}
+
 // Result / status code (0 = OK, negative = why the tick could not act).
 enum SeeThroughResult {
     STR_OK             =  0,

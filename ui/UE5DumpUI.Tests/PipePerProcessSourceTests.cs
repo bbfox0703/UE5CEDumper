@@ -194,4 +194,101 @@ public sealed class PipePerProcessSourceTests
         // The Stop wake-poke must dial this process's name: dialling anything else wakes nobody, and Stop waits.
         Assert.DoesNotMatch(@"\bGrimoire::PIPE_NAME\b", code);
     }
+
+    /// <summary>The cleanup a connection runs after its handler returns: from its unregistering to the notify that
+    /// lets Stop's drain see it gone.</summary>
+    private static string ConnectionCleanup(string code)
+    {
+        int start = code.IndexOf("SetPhase(*conn, Connection::Phase::Unregistering)", StringComparison.Ordinal);
+        Assert.True(start >= 0, "Fern.cpp: the Unregistering phase is gone -- re-point this pin");
+        int end = code.IndexOf("m_connCv.notify_all()", start, StringComparison.Ordinal);
+        Assert.True(end > start, "Fern.cpp: no notify after the cleanup -- re-point this pin");
+        return code[start..end];
+    }
+
+    /// <summary>The body of `if (cmd == Renge::CMD_X) {` up to the next command's `if (cmd == ...)`.</summary>
+    private static string CommandBranch(string code, string renge)
+    {
+        var m = Regex.Match(code, $@"\bif\s*\(\s*cmd\s*==\s*Renge::{renge}\s*\)");
+        Assert.True(m.Success, $"Fern.cpp: no branch for Renge::{renge} -- re-point this pin");
+        var next = Regex.Match(code[(m.Index + m.Length)..], @"\bif\s*\(\s*cmd\s*==\s*Renge::CMD_");
+        return next.Success ? code.Substring(m.Index, m.Length + next.Index) : code[m.Index..];
+    }
+
+    /// <summary>Stage C: what a client turns on is that client's. The last pipe client to leave used to turn
+    /// See-through off for everyone -- CE's record included, which then showed ticked over a feature that was off --
+    /// and to drop the LiveFuncs recording whoever started it, while a client that left with another still connected
+    /// left both running for nobody. A departing client process now releases what it owns; only caches and
+    /// diagnostics wait for the last client.</summary>
+    [Fact]
+    public void ADepartingClientReleasesOnlyWhatItTurnedOn()
+    {
+        var code = CodeOnly(DllSrc("Fern.cpp"));
+        var cleanup = ConnectionCleanup(code);
+        Assert.Matches(@"\bReleaseOwnedBy\s*\(\s*conn->ownerKey\s*\)", cleanup);
+        Assert.DoesNotMatch(@"\bSchlacht::SetEnabled\s*\(", cleanup);
+        Assert.DoesNotMatch(@"\bLinie::Reset\s*\(", cleanup);
+        Assert.DoesNotMatch(@"\bJoinArmWorker\s*\(", cleanup);
+
+        int def = code.IndexOf("void Fern::ReleaseOwnedBy(", StringComparison.Ordinal);
+        Assert.True(def >= 0, "Fern.cpp: Fern::ReleaseOwnedBy is not defined");
+        int open = code.IndexOf('{', def);
+        int depth = 0, close = open;
+        for (; close < code.Length; close++)
+        {
+            if (code[close] == '{') depth++;
+            else if (code[close] == '}' && --depth == 0) break;
+        }
+        var body = code[open..close];
+        Assert.Matches(@"\bSchlacht::Release\s*\(\s*owner\s*,", body);
+        // The profile goes only when this client started it, decided under the lock every profile command takes.
+        int lk = body.IndexOf("m_profileMu", StringComparison.Ordinal);
+        int own = Regex.Match(body, @"\bm_profileOwner\s*==\s*owner\b|\bowner\s*==\s*m_profileOwner\b").Index;
+        int reset = body.IndexOf("Linie::Reset()", StringComparison.Ordinal);
+        Assert.True(lk >= 0 && own > lk && reset > own,
+            "ReleaseOwnedBy must take m_profileMu, check m_profileOwner == owner, then Linie::Reset");
+    }
+
+    /// <summary>The owner key is the client process, read before the connection is registered; CE is one more
+    /// owner; and both places that turn See-through on say who asked.</summary>
+    [Fact]
+    public void EveryEnableNamesItsOwner()
+    {
+        var code = CodeOnly(DllSrc("Fern.cpp"));
+        int key = code.IndexOf("conn->ownerKey = Voll::ClientOwnerKey(", StringComparison.Ordinal);
+        int reg = code.IndexOf("m_conns.push_back(conn)", StringComparison.Ordinal);
+        Assert.True(key >= 0 && reg >= 0 && key < reg, "AcceptLoop must set conn->ownerKey before registering it");
+        Assert.Matches(@"\bSchlacht::SetEnabled\s*\([^;]*,\s*conn->ownerKey\s*\)", CommandBranch(code, "CMD_SEE_THROUGH_SET"));
+        Assert.Matches(@"\bSchlacht::SetEnabled\s*\([^;]*,\s*Schlacht::kOwnerCe\s*\)", CodeOnly(DllSrc("Mimic.cpp")));
+    }
+
+    /// <summary>Starting a recording joins the old arm worker and installs a new one, and the pair is not atomic:
+    /// two clients starting at once destroyed a worker whose thread still ran. Every command that starts, stops or
+    /// frees the recording takes m_profileMu, and a start records who owns it.</summary>
+    [Fact]
+    public void TheRecordingHasOneOwnerAndOneWriterAtATime()
+    {
+        var code = CodeOnly(DllSrc("Fern.cpp"));
+        var start = CommandBranch(code, "CMD_PE_PROFILE_START");
+        Assert.Matches(@"std::lock_guard<std::mutex>\s+\w+\s*\(\s*m_profileMu\s*\)", start);
+        Assert.Matches(@"\bm_profileOwner\s*=\s*conn->ownerKey\s*;", start);
+        foreach (var renge in new[] { "CMD_PE_PROFILE_STOP", "CMD_PE_TRACE_RELEASE" })
+            Assert.Matches(@"std::lock_guard<std::mutex>\s+\w+\s*\(\s*m_profileMu\s*\)", CommandBranch(code, renge));
+    }
+
+    /// <summary>A connection erases itself from m_conns and only then releases what it owns, so Stop's drain --
+    /// which waited for m_conns to empty -- could finish, and run its own resets, while that release still ran. The
+    /// drain waits for the teardowns too.</summary>
+    [Fact]
+    public void StopWaitsForTheTeardownsNotJustTheRegistry()
+    {
+        var code = CodeOnly(DllSrc("Fern.cpp"));
+        Assert.Matches(@"return\s+m_conns\.empty\(\)\s*&&\s*m_tearingDown\s*==\s*0\s*;", code);
+        var cleanup = ConnectionCleanup(code);
+        int up = cleanup.IndexOf("++m_tearingDown", StringComparison.Ordinal);
+        int down = cleanup.IndexOf("--m_tearingDown", StringComparison.Ordinal);
+        int release = cleanup.IndexOf("ReleaseOwnedBy(", StringComparison.Ordinal);
+        Assert.True(up >= 0 && release > up && down > release,
+            "the cleanup must count itself in before it erases, and out after ReleaseOwnedBy");
+    }
 }

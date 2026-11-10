@@ -49,6 +49,7 @@
 #include "../src/Lager.h"      // MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY])
 #include "../src/Falsch.h"     // MinHook trampoline pre-flight against Zydis ([MH-TRAMPOLINE-PREFLIGHT])
 #include "../src/Wirbel.h"     // BugItGoRefusal (constexpr, pure) -- [TELEPORT-BUGITGO-PARENTREL]
+#include "../src/Schlacht.h"   // See-through's owners: ClaimOwner / ReleaseOwner (header-inline, pure)
 
 #include <Windows.h>
 
@@ -495,6 +496,66 @@ static void Test_Voll_ClassifyFirstInstance() {
     EXPECT("creator unknown, name taken: shared, not foreign",
            Voll::ClassifyFirstInstance(ERROR_ALREADY_EXISTS, 0, self) == FI::SharedInProcess);
     EXPECT("creator unknown, name fresh: sole", Voll::ClassifyFirstInstance(0, 0, self) == FI::Sole);
+}
+
+// [PIPE-PER-PROCESS-2026-11-06] Stage C: an owner is a client PROCESS.
+static void Test_Voll_ClientOwnerKey() {
+    EXPECT("two lanes of one process are one owner", Voll::ClientOwnerKey(4242, 1) == Voll::ClientOwnerKey(4242, 2));
+    EXPECT("two processes are two owners", Voll::ClientOwnerKey(4242, 1) != Voll::ClientOwnerKey(77, 1));
+    EXPECT("a pid is its own key", Voll::ClientOwnerKey(4242, 9) == 4242u);
+    EXPECT("pid unread: each connection owns alone", Voll::ClientOwnerKey(0, 5) != Voll::ClientOwnerKey(0, 6));
+    EXPECT("pid unread never collides with a pid", Voll::ClientOwnerKey(0, 4242) != Voll::ClientOwnerKey(4242, 1));
+    EXPECT("never names no owner", Voll::ClientOwnerKey(0, 0) != Schlacht::kOwnerNone);
+    EXPECT("never CE", Voll::ClientOwnerKey(0xFFFFFFFFu, 3) != Schlacht::kOwnerCe
+                      && Voll::ClientOwnerKey(0, 3) != Schlacht::kOwnerCe);
+}
+
+// [PIPE-PER-PROCESS-2026-11-06] Stage C: a departing client releases only its own claim on See-through.
+static void Test_Schlacht_Owners() {
+    using R = Schlacht::OwnerRelease;
+    const uint64_t ui = Voll::ClientOwnerKey(4242, 1), rig = Voll::ClientOwnerKey(77, 2), ce = Schlacht::kOwnerCe;
+    {
+        std::vector<uint64_t> o;
+        Schlacht::ClaimOwner(o, ce);
+        Schlacht::ClaimOwner(o, ui);
+        EXPECT("CE and the UI hold it, the UI leaves: CE still holds it",
+               Schlacht::ReleaseOwner(o, ui, false) == R::StillHeld && o.size() == 1 && o[0] == ce);
+    }
+    {
+        std::vector<uint64_t> o;
+        Schlacht::ClaimOwner(o, ui);
+        EXPECT("only the UI holds it, the UI leaves: off", Schlacht::ReleaseOwner(o, ui, false) == R::TurnOff && o.empty());
+    }
+    {
+        std::vector<uint64_t> o;
+        Schlacht::ClaimOwner(o, ce);
+        EXPECT("a client that never claimed leaves: nothing changes (it used to turn CE's off)",
+               Schlacht::ReleaseOwner(o, rig, false) == R::NotHeld && o.size() == 1);
+        std::vector<uint64_t> none;
+        EXPECT("nobody holds it, a client leaves: nothing to do", Schlacht::ReleaseOwner(none, rig, false) == R::NotHeld);
+    }
+    {
+        std::vector<uint64_t> o;
+        Schlacht::ClaimOwner(o, ui);
+        EXPECT("one lane leaves while the other stays: the process keeps its claim",
+               Schlacht::ReleaseOwner(o, ui, true) == R::StillHeld && o.size() == 1);
+        EXPECT("then the last lane leaves: off", Schlacht::ReleaseOwner(o, ui, false) == R::TurnOff && o.empty());
+    }
+    {
+        std::vector<uint64_t> o;
+        Schlacht::ClaimOwner(o, ui);
+        Schlacht::ClaimOwner(o, ui);
+        EXPECT("claiming twice keeps one claim", o.size() == 1);
+        Schlacht::ClaimOwner(o, Schlacht::kOwnerNone);
+        EXPECT("kOwnerNone is never recorded", o.size() == 1);
+    }
+    {
+        std::vector<uint64_t> o;
+        Schlacht::ClaimOwner(o, ui);
+        Schlacht::ClaimOwner(o, rig);
+        EXPECT("two clients hold it, one leaves: the other still holds it",
+               Schlacht::ReleaseOwner(o, rig, false) == R::StillHeld && o.size() == 1 && o[0] == ui);
+    }
 }
 
 static void Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway() {
@@ -12244,6 +12305,8 @@ int main() {
     RUN(Test_Voll_ExtractCmdName);
     RUN(Test_Voll_Holders);
     RUN(Test_Voll_ClassifyFirstInstance);
+    RUN(Test_Voll_ClientOwnerKey);
+    RUN(Test_Schlacht_Owners);
 
     // [MH-PRERESERVE-PROXY] MinHook's trampoline-block search, modelled for the MH_ERROR_MEMORY_ALLOC diagnostic
     RUN(Test_Lager_SearchWindowMirrorsGetMemoryBlock);
