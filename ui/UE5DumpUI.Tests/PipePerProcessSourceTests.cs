@@ -96,6 +96,20 @@ public sealed class PipePerProcessSourceTests
         Assert.True(reads == waits, $"{file}: {waits} wait(s) but {reads} Voll::WaitSaysServed reading(s)");
     }
 
+    /// <summary>Stage B: six clients at once -- the UI's two lanes, a rig, an MCP client, and two more for a lane
+    /// reconnect whose old instances are still unwinding. Windows takes 1..254 (255 is PIPE_UNLIMITED_INSTANCES).
+    /// A name another copy created first keeps that copy's limit (measured 2026-11-10: a second create asking for 6
+    /// succeeds and GetNamedPipeInfo still reports 3), so the log states the limit in force, read from the
+    /// handle.</summary>
+    [Fact]
+    public void TheDllTakesSixClientsAndLogsTheLimitInForce()
+    {
+        var h = CodeOnly(DllSrc("Fern.h"));
+        Assert.Matches(@"\bstatic\s+constexpr\s+DWORD\s+kMaxPipeInstances\s*=\s*6\s*;", h);
+        Assert.Matches(@"\bstatic_assert\s*\(\s*kMaxPipeInstances\s*>=\s*1\s*&&\s*kMaxPipeInstances\s*<\s*PIPE_UNLIMITED_INSTANCES\b", h);
+        Assert.Matches(@"\bGetNamedPipeInfo\s*\(\s*pipe\s*,", CodeOnly(DllSrc("Fern.cpp")));
+    }
+
     /// <summary>After a Stop whose drain timed out, this copy's own connections still hold their instances, so a
     /// restart's probe reads busy. That busy pipe is this copy's, not another's: UE5_StartPipeServer restarts the
     /// server rather than deferring to itself.</summary>

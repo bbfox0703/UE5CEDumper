@@ -146,6 +146,50 @@ int ScanThreadCount(int32_t workItems) {
     return n;
 }
 
+// [PIPE-PER-PROCESS-2026-11-06] Stage B: the extra worker threads of every GObjects walk running at once, drawn from
+// one budget for the whole process.
+class WorkerBudget {
+public:
+    explicit WorkerBudget(int capacity) : capacity_(capacity < 0 ? 0 : capacity) {}
+    WorkerBudget(const WorkerBudget&) = delete;
+    WorkerBudget& operator=(const WorkerBudget&) = delete;
+
+    int Acquire(int want) noexcept {
+        if (want <= 0) return 0;
+        inUse_.fetch_add(want, std::memory_order_acq_rel);
+        return want;   // red: no limit yet
+    }
+    void Release(int n) noexcept {
+        if (n > 0) inUse_.fetch_sub(n, std::memory_order_acq_rel);
+    }
+    int InUse() const noexcept { return inUse_.load(std::memory_order_acquire); }
+    int Capacity() const noexcept { return capacity_; }
+
+private:
+    const int capacity_;
+    std::atomic<int> inUse_{0};
+};
+
+// A share of a WorkerBudget, returned when the walk that took it ends.
+class WorkerLease {
+public:
+    WorkerLease(WorkerBudget& budget, int want) : budget_(budget), granted_(budget.Acquire(want)) {}
+    ~WorkerLease() { budget_.Release(granted_); }
+    WorkerLease(const WorkerLease&) = delete;
+    WorkerLease& operator=(const WorkerLease&) = delete;
+    int Granted() const noexcept { return granted_; }
+
+private:
+    WorkerBudget& budget_;
+    const int     granted_;
+};
+
+// The process's budget: what one walk alone may spawn beyond its own thread.
+WorkerBudget& ScanWorkerBudget() {
+    static WorkerBudget budget(ScanThreadCount(INT32_MAX) - 1);
+    return budget;
+}
+
 // Partition [0, count) into `nthreads` contiguous ascending ranges and run
 // body(tid, beginIdx, endIdx) on each. Chunk 0 runs inline on the calling
 // thread; the rest run on spawned std::threads which are joined before

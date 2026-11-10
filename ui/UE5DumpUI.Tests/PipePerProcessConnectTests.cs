@@ -202,6 +202,18 @@ public sealed class PipePerProcessConnectTests
     }
 
     [Fact]
+    public async Task A_listed_game_whose_every_connection_is_taken_says_so()
+    {
+        // Stage B: a DLL from before 3696 takes 3 clients and the UI uses 2, so a rig or a second UI fills it.
+        var rig = new Rig("UE5DumpBfx_100");
+        rig.Pipe.Busy = new HashSet<string> { "UE5DumpBfx_100" };
+        await rig.Vm.ConnectCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { "UE5DumpBfx_100" }, rig.Pipe.Dialed);
+        Assert.Equal(Res.Format("str.Connect.Busy", 100), rig.Vm.ErrorMessage);
+        Assert.False(rig.Vm.IsConnected);
+    }
+
+    [Fact]
     public async Task A_named_game_beside_another_games_legacy_pipe_is_still_dialled()
     {
         // Another game runs an old proxy; the named game runs the current DLL and opens its pipe while it is dialled.
@@ -365,6 +377,9 @@ public sealed class PipePerProcessConnectTests
         public HashSet<string>? Listening { get; set; }
         /// <summary>When set, a connect waits for it.</summary>
         public Task? Gate { get; set; }
+        /// <summary>Names whose every instance is taken: listed, yet a connect times out, as NamedPipeClientStream's
+        /// does while it waits for a free instance.</summary>
+        public HashSet<string>? Busy { get; set; }
         public event Action<bool>? ConnectionStateChanged { add { } remove { } }
         public event Action<JsonObject>? EventReceived { add { } remove { } }
         public event Action<PipeLogEntry>? Activity { add { } remove { } }
@@ -375,7 +390,7 @@ public sealed class PipePerProcessConnectTests
             if (Gate is not null) await Gate;
             // As PipeClient: a live connection is kept, whatever name is asked for.
             if (IsConnected) return;
-            if (Listening is not null && !Listening.Contains(pipeName))
+            if ((Listening is not null && !Listening.Contains(pipeName)) || (Busy?.Contains(pipeName) ?? false))
                 throw new TimeoutException("The operation has timed out.");
             IsConnected = true;
             ConnectedTo = pipeName;

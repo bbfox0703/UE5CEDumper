@@ -1290,6 +1290,60 @@ int main() {
         check("D2 * control: a clean run reports COMPLETE", !clean.incomplete());
     }
 
+    {   blk("[PIPE-PER-PROCESS-2026-11-06] B -- one worker budget for every GObjects walk in the process");
+        // With 6 pipe connections, several heavy commands can walk GObjects at once, and each spawned
+        // ScanThreadCount() - 1 workers: k walks put k times that many threads in the game.
+        Aura::WorkerBudget b(3);
+        check("BUDGET: a walk takes what it asks for while there is room", b.Acquire(2) == 2);
+        check("BUDGET * : and only what is left after that", b.Acquire(5) == 1);
+        check("BUDGET * : a spent budget grants nothing (the walk runs on its own thread)", b.Acquire(4) == 0);
+        check("BUDGET: in use = capacity", b.InUse() == 3, std::to_string(b.InUse()).c_str());
+        b.Release(2);
+        check("BUDGET: released workers can be taken again", b.Acquire(4) == 2);
+        b.Release(3);
+        check("BUDGET: all returned", b.InUse() == 0, std::to_string(b.InUse()).c_str());
+        check("BUDGET: asking for none takes none", b.Acquire(0) == 0 && b.InUse() == 0);
+        Aura::WorkerBudget zero(0);
+        check("BUDGET: a 0 budget (a PC with 1-3 cores) grants nothing", zero.Acquire(3) == 0);
+        Aura::WorkerBudget neg(-2);
+        check("BUDGET: a negative capacity is 0", neg.Capacity() == 0 && neg.Acquire(1) == 0);
+        {
+            Aura::WorkerLease lease(b, 2);
+            check("BUDGET: a lease holds its share", lease.Granted() == 2 && b.InUse() == 2);
+        }
+        check("BUDGET: and returns it when the walk ends", b.InUse() == 0);
+
+        auto& pb = Aura::ScanWorkerBudget();
+        const int cap = pb.Capacity();
+        check("BUDGET: the process budget is what one walk alone spawns beyond its own thread",
+              cap == Aura::ScanThreadCount(1 << 20) - 1, std::to_string(cap).c_str());
+
+        // Two walks at once. A holds its workers until released; B runs meanwhile.
+        ResetCancel();
+        std::atomic<bool> releaseA{false};
+        int aThreads = 0;
+        std::thread walkA([&] {
+            auto r = Aura::ParallelGObjectsScan<int>(kCount, [&](int&, int32_t, int32_t, std::atomic<bool>&) {
+                while (!releaseA.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            });
+            aThreads = r.nthreads;
+        });
+        for (int i = 0; i < 5000 && pb.InUse() < cap; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        auto walkB = Aura::ParallelGObjectsScan<int>(kCount, [&](int&, int32_t, int32_t, std::atomic<bool>&) {});
+        releaseA = true;
+        walkA.join();
+        printf("    (this PC: budget %d workers; walk A ran on %d threads, walk B on %d)\n",
+               cap, aThreads, walkB.nthreads);
+        check("BUDGET: the first walk got its whole share", aThreads == cap + 1, std::to_string(aThreads).c_str());
+        check("BUDGET * : while it holds the budget, a second walk runs on its own thread",
+              walkB.nthreads == 1, std::to_string(walkB.nthreads).c_str());
+        check("BUDGET: every worker is back after both", pb.InUse() == 0, std::to_string(pb.InUse()).c_str());
+        auto alone = Aura::ParallelGObjectsScan<int>(kCount, [&](int&, int32_t, int32_t, std::atomic<bool>&) {});
+        check("BUDGET control: a walk on its own gets the whole share again", alone.nthreads == cap + 1,
+              std::to_string(alone.nthreads).c_str());
+    }
+
     // -- BOOLLAYOUT-2026-09-11 -- the bool layout probe, and the struct preview's mask -------
     //
     // [A3-BOOL-NATIVE-NOWRITE] / [A2-STRUCT-PREVIEW-BOOLMASK], the B05 review follow-up. B05's

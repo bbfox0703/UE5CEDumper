@@ -116,6 +116,15 @@ def process_image(pid: int) -> str:
         k32.CloseHandle(ctypes.c_void_p(h))
 
 
+def pipe_is_busy(path: str) -> bool:
+    """True when the pipe exists and every instance is taken (ERROR_PIPE_BUSY)."""
+    return False   # red: not told apart yet
+
+
+# Seam for the selftest.
+_pipe_is_busy = pipe_is_busy
+
+
 def resolve_pipe(pid: int | None = None, *, warn=None) -> str:
     """Which game's pipe to dial: `pid`, else $UE5DUMP_PID, else the one game listed. Several games: the lowest pid,
     with every game printed and a warning (to `warn`, stderr by default). Raises PipeError when no game serves a
@@ -347,7 +356,31 @@ def selftest() -> int:
         else:
             del g["open"]
     bad = 0
-    for label, got, want in (("a client given a pid dials its game", dialled, pipe_path(7)),
+    # [PIPE-PER-PROCESS-2026-11-06] Stage B: a pipe whose every instance is taken. open() reports it as EINVAL, like
+    # other failures; the error must say the connections are all in use, and must not say so when they are not.
+    def busy_open(*_a, **_k):
+        raise OSError(22, "Invalid argument")
+
+    def failure_text(busy):
+        g["open"], g["_pipe_is_busy"] = busy_open, (lambda _p: busy)
+        try:
+            PipeClient(pipe=pipe_path(5)).connect(retries=1, delay=0.0)
+            return "connected?!"
+        except PipeError as e:
+            return str(e)
+        finally:
+            g["open"], g["_pipe_is_busy"] = fake_open, pipe_is_busy
+
+    g["open"] = fake_open
+    busy_text, other_text = failure_text(True), failure_text(False)
+    if had:
+        g["open"] = saved
+    else:
+        del g["open"]
+
+    for label, got, want in (("a busy pipe: the error says every connection is in use", "in use" in busy_text, True),
+                             ("any other failure: it does not", "in use" in other_text, False),
+                             ("a client given a pid dials its game", dialled, pipe_path(7)),
                              ("connect inside `with`", twice, 1), ("bytes kept by a connect on an open client", kept, 16),
                              ("connect after close", again, 2),
                              ("connect after the handle was closed directly", reopened, 3),
