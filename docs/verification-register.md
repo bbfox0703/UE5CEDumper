@@ -244,7 +244,7 @@ backlog moves here **byte-identical** ([`working-lessons.md`](working-lessons.md
 > larger now. **Never read a count out of this block — derive it**:
 > `grep -c '^### ' docs/pending-verification_zh-TW.md` minus the two `###` under 「怎麼用這份清單」.
 
-### ⬜ A pipe per game process — what its live checks did not reach `[PIPE-PER-PROCESS-2026-11-06]`
+### ⬜ A pipe per game process, 6 clients, the worker budget — what their live checks did not reach `[PIPE-PER-PROCESS-2026-11-06]`
 
 Built in build 3695 (2026-11-10), Stage A of todo.md `[PIPE-PER-PROCESS-2026-11-06]`, and proven live on DumperTest
 Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 3695. Not reached:
@@ -264,6 +264,17 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
 4. **A proxy-loaded game, and an elevated game.** Only injection was driven, non-elevated.
 5. **Cheat Engine itself.** The mailbox was driven by `mailbox_poke.py`; the changed CE texts (the pipe name, the
    INIT_FAILED reasons) were not displayed in CE.
+
+Stage B, build 3696 (6 clients, the scan-worker budget) -- dev-log 3696. Not reached:
+
+6. **A name an older copy created, with its lower limit.** A 3696 copy whose first instance joins a name a 3695 copy
+   made logs a WARN with the limit in force (3). Acceptance: such a pair in one process; pipe-0.log logs "takes 3
+   clients at once, not this build's 6", and the at-capacity line quotes 3.
+7. **The UI's "pipe is gone" message.** Unit-tested (the game exits while the list is open). Acceptance: open the
+   game list with two games, close one, pick it; the error says its pipe is gone.
+8. **A game that is not responding.** The full-pipe message names it as a cause; a suspended game was not driven.
+   Acceptance: suspend every thread of an injected game (`suspend.py`), Connect; the message appears, and connecting
+   works after resuming.
 
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 

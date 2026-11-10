@@ -5,7 +5,8 @@ Open work only. **Read this when deciding what to do next.**
 > 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
 >
 > ▶ **Current programme:** `[PIPE-PER-PROCESS-2026-11-06]`, one stage at a time (2026-11-10): Stage A shipped in build
-> 3695; Stage B (6 pipe slots + the scan-worker budget) waits for the maintainer's go-ahead. Before it, none active
+> 3695, Stage B (6 pipe slots + the scan-worker budget) in build 3696; Stage C (hardening for a long-lived client)
+> waits for the maintainer's go-ahead. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
 > active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
@@ -404,9 +405,9 @@ the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVE
 
 ## 🧭 Maintainer request 2026-11-06 — a pipe per game process, then more pipe slots, then multi-client hardening `[PIPE-PER-PROCESS-2026-11-06]`
 
-**Status: Stage A shipped in build 3695 (2026-11-10; dev-log 3695). Stages B, C and D are design direction only,
-not started** (maintainer, 2026-11-06: one stage at a time, A and B as separate builds). What Stage A's live checks
-did not reach is verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`. It comes before
+**Status: Stage A shipped in build 3695, Stage B in build 3696 (2026-11-10; dev-log). Stages C and D are design
+direction only, not started** (maintainer, 2026-11-06: one stage at a time, A and B as separate builds). What the
+live checks did not reach is verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`. It comes before
 `[UI-MCP-AUTOMATION-2026-11-06]`, which depends on it. Evidence: a read-only review on 2026-11-06 (three
 readers plus an adversarial verifier). Windows' named-pipe rules were measured with ctypes on 10.0.26300; the scratch
 is `out/pipecap/`, not committed.
@@ -476,7 +477,23 @@ The plan as written:
 - **CE: no change.** The Mimic mailbox is an exported variable inside the game process (`g_invokeMailbox`), so it is
   already per process.
 
-### Stage B — more slots: `kMaxPipeInstances` 3 → 6
+### Stage B — more slots: `kMaxPipeInstances` 3 → 6 ✅ build 3696
+
+Built as planned below (dev-log 3696). How it came out:
+
+- **The worker budget** (`Aura::WorkerBudget`) holds what one walk alone spawns beyond its own thread
+  (`ScanThreadCount() - 1`). A walk takes what is free when it starts and never waits; a walk that finds it spent runs
+  on its own thread. A lease does not grow when another walk returns its workers (the chunks are fixed at the start),
+  and a walk starved that way can reach its deadline sooner: the review weighed it and kept it, since a cut walk still
+  reports `deadline_hit`. Measured on DumperTest, 3 clients x 160 walks: +16 threads and 1.4 s, against +48 and 8.7 s
+  on build 3695.
+- **The limit in force is read from the handle** (`GetNamedPipeInfo`): a name an older copy created keeps its lower
+  limit (measured 2026-11-10), and the log says which.
+- **"Clients handle 231":** the UI lists again when a connect times out, and says either that every connection is
+  taken (or the game is not responding) or that the pipe is gone. `pipe_client.py` asks `WaitNamedPipeW`, because
+  Python's `open()` reports a full pipe as EINVAL.
+
+The plan as written:
 
 - **Why 6:** the UI's 2 lanes, a rig, MCP, and 2 more for a two-lane UI reconnect whose old instances are still
   unwinding. Each instance is closed by its own thread after its command returns.

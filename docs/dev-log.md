@@ -27,6 +27,40 @@ builds ≤696 in
 
 -----
 
+## 2026-11-10 (build 3696) — The DLL takes 6 pipe clients, and heavy commands share one thread budget `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **6 clients at once instead of 3.** The UI uses 2, so a rig, an MCP client and a reconnect now fit beside it. The
+  old rule "never run `pipe_client.py` while the UI is connected" is retired; it still holds for a game whose DLL
+  predates this build (3 clients) until its proxy is refreshed and the game restarted. The DLL's log states the limit
+  in force ("takes 6 clients at once").
+- **Heavy commands running at once share one worker budget.** Each full object walk (value scan, find references,
+  property xrefs, snapshots) used to start up to 15 threads on this PC, with no limit across walks: three at once put
+  48 threads in the game. Now the walks running at the same moment share what one walk alone may use; a walk that finds
+  it taken runs on its own thread, and the log says so. Measured on DumperTest, 480 walks from 3 clients at once:
+  - this build: +16 threads at peak, 1.4 s;
+  - build 3695: +48 threads, 8.7 s — the extra threads made the whole load six times slower.
+- **A full pipe is named as such.** When every connection is taken, the UI says so (and that the game may instead not
+  be responding) instead of "The operation has timed out". When the game exited after the list was read, it says the
+  pipe is gone. `pipe_client.py` says the same; Python's `open()` reports a full pipe as "Invalid argument".
+- **Rigs:** `pipebusy_capacity.py` reads the limit from the DLL's log and measures it (the 7th open finds every
+  connection taken). The new `worker_budget_live.py` counts the game's threads while several walks run.
+- Tests: red, then green, for the budget (dll_core_test: grants only what is free, a second walk runs on its own
+  thread while the first holds the budget), the 6-client source pin, the UI's full-pipe and gone-pipe messages, and
+  `pipe_client --selftest`. C# 7515 passed, 0 failed, 1 skipped; headless 71; dll_helpers_test 3856, dll_core_test
+  1503, grausam_window_test 22, sein_retention_test 30, 0 failures; 39 gates passed. A review workflow found the UI
+  reading any timeout as a full pipe, and wording that named an impossible "second copy of this UI"; both fixed, red
+  then green. Live, AOT UI on DumperTest Shipping (UE 5.4):
+  - the DLL logged "takes 6 clients at once"; `pipebusy_capacity.py` PASS: 6 connected, the 7th found every
+    connection taken, one at-capacity line and one recovery line;
+  - with the UI connected, `pipe_client.py` and the CE mailbox (10/10) worked beside it;
+  - with every connection held, a 7th `pipe_client` and the UI's Connect both said every connection is in use; after
+    release, Connect connected;
+  - `worker_budget_live.py`: 3 and 4 clients both +16 threads (bound 18 / 19), 438-453 of 480 walks cut by the
+    budget; the build 3695 control +48 threads.
+
+  Not live: verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`, items 6-8. AOT UI 61,739,008 bytes;
+  UE5Dumper.dll 3,581,440 bytes.
+
 ## 2026-11-10 (build 3695) — Each game has its own pipe, and Connect names the game `[PIPE-PER-PROCESS-2026-11-06]`
 
 - **The DLL serves `\\.\pipe\UE5DumpBfx_<pid>`, one pipe per game.** Every game used to serve the same
