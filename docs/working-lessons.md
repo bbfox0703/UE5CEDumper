@@ -2954,6 +2954,31 @@ times the room headless: under 0.7 of it in Inter), and know what that bound is:
 of the app's beside the tree, a guard against a wording that grows rather than a margin. Measure a wording in Inter
 before shortening it to please a headless test, and against the app's row, not the harness's.
 
+### 3.xe A test's swallowed delete left ~220 folders in %TEMP% per run: the run's TEMP is now its own
+
+`UE5DumpUI.Tests` classes made `%TEMP%\UE5Dump<Class>_<guid>\` and deleted it in `Dispose` inside an empty `catch`. The
+delete failed whenever the folder held a SQLite `.db`: Microsoft.Data.Sqlite pools connections, and a pooled connection
+keeps its file open after the code closed it. Measured 2026-11-11: 2,743 such folders in %TEMP% from one day (about
+120 MB); one run with TEMP pointed at an empty folder left 219 (13 GUID-named families and 6 fixed parent folders). The
+C++ tests, the headless suite and the gates, run the same way, left nothing.
+
+**The fix moves TEMP, not the tests** (`TestTempRoot`, [TEST-TEMP-HYGIENE-2026-11-11]). A module initializer points the
+process's TMP and TEMP at `%TEMP%\UE5CEDumper.Tests\<pid>-<utc time>\`, which `Path.GetTempPath()` reads on every call,
+so every test, library and child process writes there. The folder goes at process exit, after
+`SqliteConnection.ClearAllPools()` (measured: without it one `.db` stays held, and so does the folder). A run that could
+not clean up is deleted by the next run: its `.owner` file is held open with no sharing for the life of the process, so
+the OS lets go of it when the owner dies. The names older builds left straight in %TEMP% are swept once unchanged for an
+hour.
+
+**How to apply:** a new test needs nothing for this; `Path.GetTempPath()` is already the run's folder. Do not make a
+swallowed delete "work" with retries: the run's folder already goes. A sweep never enters a reparse point:
+VolumeRootTests makes a junction to another volume's ROOT, and one it fails to remove lands in the run's folder.
+`Directory.Delete(recursive: true)` unlinks a junction without entering it (documented); a walk of our own checks
+`ReparsePoint` itself. What is **not** ours in %TEMP%: every `dotnet build` leaves two empty folders with random 8.3
+names and a `Microsoft.NET.Workload_*.log` (measured with TEMP pointed at an empty folder; neither
+`DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE` nor the telemetry opt-out stops them). That is the SDK, in every repo that
+builds with dotnet, and the sweep leaves it alone.
+
 -----
 
 -----
