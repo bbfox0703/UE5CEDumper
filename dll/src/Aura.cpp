@@ -133,26 +133,71 @@ void Aura::SetDecryptFunc(DecryptFunc func) {
 // (discrete's own docs: Memory-Scanning-Internals.md §16, not in this repo).
 namespace {
 
-// Worker thread count for a GObjects walk of `workItems` objects. Leaves
-// headroom (-2) for the game's own threads + our pipe/UI thread so we don't
-// saturate every core and stall the host. Clamped to [1, 16]; tiny arrays
-// stay single-threaded (thread spawn cost would dominate).
 // Threads one GObjects walk may use, from the CPU's shape. `coreClasses`: one EfficiencyClass per PHYSICAL core
 // (empty when the topology could not be read); `logical`: logical processors.
+//
+// [PIPE-PER-PROCESS-2026-11-06] The maintainer's rule (2026-11-10): the physical PERFORMANCE cores less 2, at least 1,
+// at most 16. Logical processors less 2 -- the rule before -- took every physical core of a 16C32T PC, put 14 threads
+// on an 8-core 9800X3D (8 of them SMT siblings), and counted a hybrid CPU's E-cores as full cores. The game's own
+// threads and background programs run meanwhile; threads beyond the cores only switch context more often.
+//   * Performance cores: those with the highest EfficiencyClass. A CPU without hybrid cores reports one class for all;
+//     an Intel with its E-cores disabled has only P-cores left.
+//   * Less 2: the game's main and render threads keep a core each.
+//   * Never more than logical processors less 2: a sanity bound for a topology that reads oddly.
+//   * Topology unread: 2-way SMT assumed, so half the logical processors.
 int ThreadsForCpu(const std::vector<uint8_t>& coreClasses, unsigned logical) {
-    (void)coreClasses;
-    int n = (logical >= 3) ? static_cast<int>(logical) - 2 : 1;   // red: the old rule, logical processors less 2
-    if (n < 1)  n = 1;
+    int pcores = 0;
+    if (!coreClasses.empty()) {
+        const uint8_t top = *std::max_element(coreClasses.begin(), coreClasses.end());
+        pcores = static_cast<int>(std::count(coreClasses.begin(), coreClasses.end(), top));
+    } else {
+        pcores = static_cast<int>(logical / 2);
+    }
+    int n = pcores - 2;
+    const int logicalBound = static_cast<int>(logical) - 2;
+    if (n > logicalBound) n = logicalBound;
     if (n > 16) n = 16;
+    if (n < 1)  n = 1;
     return n;
 }
 
+// One EfficiencyClass per physical core (RelationProcessorCore), across every processor group; empty on failure.
+std::vector<uint8_t> CpuCoreClasses() {
+    std::vector<uint8_t> classes;
+    DWORD len = 0;
+    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &len);
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || len == 0) return classes;
+    std::vector<uint8_t> buf(len);
+    auto* first = reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buf.data());
+    if (!GetLogicalProcessorInformationEx(RelationProcessorCore, first, &len)) return classes;
+    for (DWORD off = 0; off + sizeof(LOGICAL_PROCESSOR_RELATIONSHIP) + sizeof(DWORD) <= len;) {
+        auto* e = reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buf.data() + off);
+        if (e->Size == 0) break;
+        if (e->Relationship == RelationProcessorCore) classes.push_back(e->Processor.EfficiencyClass);
+        off += e->Size;
+    }
+    return classes;
+}
+
+// Threads for a GObjects walk of `workItems` objects: ThreadsForCpu for this machine. Tiny arrays stay
+// single-threaded (thread spawn cost would dominate).
 int ScanThreadCount(int32_t workItems) {
     if (workItems < 8192) return 1;
-    unsigned hc = std::thread::hardware_concurrency();
-    int n = (hc >= 3) ? static_cast<int>(hc) - 2 : 1;
-    if (n < 1)  n = 1;
-    if (n > 16) n = 16;
+    // The CPU does not change under a running game: read it once.
+    static const int n = [] {
+        const std::vector<uint8_t> classes = CpuCoreClasses();
+        const unsigned logical = std::thread::hardware_concurrency();
+        const int threads = ThreadsForCpu(classes, logical);
+        int pcores = 0;
+        if (!classes.empty()) {
+            const uint8_t top = *std::max_element(classes.begin(), classes.end());
+            pcores = static_cast<int>(std::count(classes.begin(), classes.end(), top));
+        }
+        LOG_INFO("Aura: a GObjects walk uses up to %d threads -- %d performance of %zu physical cores, %u logical "
+                 "processors%s; 2 cores kept for the game", threads, pcores, classes.size(), logical,
+                 classes.empty() ? " (topology unread: half the logical processors assumed)" : "");
+        return threads;
+    }();
     return n;
 }
 
