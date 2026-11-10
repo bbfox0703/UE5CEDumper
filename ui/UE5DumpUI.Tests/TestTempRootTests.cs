@@ -18,12 +18,7 @@ public class TestTempRootTests : IDisposable
     public void Dispose()
     {
         if (!Directory.Exists(_sandbox)) return;
-        var noJunctions = new EnumerationOptions
-        {
-            RecurseSubdirectories = true, AttributesToSkip = FileAttributes.ReparsePoint,
-        };
-        foreach (var f in Directory.EnumerateFiles(_sandbox, "*", noJunctions))
-            File.SetAttributes(f, FileAttributes.Normal);
+        TestTempRoot.ClearReadOnly(_sandbox);
         Directory.Delete(_sandbox, recursive: true);
     }
 

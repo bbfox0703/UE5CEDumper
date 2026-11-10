@@ -113,6 +113,15 @@ internal static class TestTempRoot
 
     private static bool TryDelete(string dir)
     {
+        // Never a reparse point itself: a junction named like ours points at something that is not ours.
+        try
+        {
+            if (File.GetAttributes(dir).HasFlag(FileAttributes.ReparsePoint)) return false;
+        }
+        catch (FileNotFoundException) { return true; }
+        catch (DirectoryNotFoundException) { return true; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+
         for (var attempt = 0; attempt < 2; attempt++)
         {
             try
@@ -132,10 +141,17 @@ internal static class TestTempRoot
         return false;
     }
 
+    /// <summary>Clears read-only on every file under <paramref name="dir"/> and never enters a reparse point: a junction
+    /// in a run's folder may point at another volume's ROOT (VolumeRootTests makes one). Measured: a walk with
+    /// SearchOption.AllDirectories goes through a junction and changes the files it points at.</summary>
     internal static void ClearReadOnly(string dir)
     {
-        foreach (var f in Directory.EnumerateFiles(dir, "*", SearchOption.AllDirectories))
-            File.SetAttributes(f, FileAttributes.Normal);
+        foreach (var f in Directory.EnumerateFiles(dir))
+            if (!File.GetAttributes(f).HasFlag(FileAttributes.ReparsePoint))
+                File.SetAttributes(f, FileAttributes.Normal);
+        foreach (var d in Directory.EnumerateDirectories(dir))
+            if (!File.GetAttributes(d).HasFlag(FileAttributes.ReparsePoint))
+                ClearReadOnly(d);
     }
 
     private static void RemoveRun(string root, string run)
