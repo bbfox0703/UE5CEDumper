@@ -1,21 +1,28 @@
-"""Inject UE5Dumper.dll into a live process -- the PowerShell-free injector.
+"""Inject UE5Dumper.dll into a live process -- through UE5DumpUI.exe, never from python.exe itself.
 
     py inject.py --pid 62288                       # inject dist/UE5Dumper.dll
     py inject.py --name DumperTest                 # resolve the PID by image name
     py inject.py --pid 62288 --dll D:/tmp/old.dll  # inject a specific build
+    py inject.py --name DumperTest --exe <checkout>/dist/UE5DumpUI.exe   # a worktree has no dist of its own
     py inject.py --list                            # candidate PIDs, nothing else
 
-Exists because `dist/inject-ue.ps1` is the only injector that shipped and this
-machine's maintainer does not run ad-hoc PowerShell (the AV's ATD quarantined six
-files over a single .ps1 run). Same mechanism as the .ps1 -- VirtualAllocEx the
-wide path, CreateRemoteThread on LoadLibraryW -- so a difference in outcome
-between the two is a real difference, not a porting artefact.
+WHO INJECTS. [AV-INJECT-2026-11-11] The remote thread is started by `UE5DumpUI.exe --inject-elevated <pid> <dll>
+<result file>`, the mode the UI launches through UAC for an elevated game. Started plainly, as here, it runs at this
+process's integrity, shows nothing and asks nothing. The AV's behavioural layer flagged python.exe doing
+CreateRemoteThread(LoadLibraryW) from a terminal, and an AV exception follows the image of the process that acts,
+not the script it runs (working-lessons.md 3.8, item 6). So python.exe only finds the target, runs the stale-module
+guard below and reads the result. The injector is the one the UI uses, so a difference in outcome between the two is
+a real difference. This rig never elevates it: an elevated game needs this whole run elevated.
 
-FAILS LOUDLY at every step. A silent injector is worthless here: several register
-rows assert that a scan produced NOTHING, and "nothing" is exactly what a failed
-injection also produces (working-lessons.md 1.10a). Every Win32 call checks its
-return and raises with GetLastError; a LoadLibraryW that returns NULL in the
-target is reported as a failure, not as a successful injection.
+THE CONTRACT (Program.cs RunElevatedInject, pinned from both ends by InjectElevatedContractTests): exit 0 with the
+result file reading `OK <hex>` (the HMODULE's low 32 bits, upper-case, no 0x); exit 1 with the error text; exit 2 for
+a bad pid. The file is UTF-8, and some texts carry an em dash. The exe waits 10 s for the remote LoadLibraryW and
+passes the DLL path to the target verbatim, so the path given to it is absolute.
+
+FAILS LOUDLY at every step. A silent injector is worthless here: several register rows assert that a scan produced
+NOTHING, and "nothing" is exactly what a failed injection also produces (working-lessons.md 1.10a). A LoadLibraryW
+that returns NULL in the target, an injector that leaves no result, and one that does not finish in time are each a
+failure, not a successful injection.
 """
 import argparse
 import ctypes
@@ -23,48 +30,19 @@ import ctypes.wintypes as w
 import os
 import subprocess
 import sys
+import tempfile
 
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
-
-PROCESS_ALL_ACCESS = 0x1F0FFF
-MEM_COMMIT_RESERVE = 0x3000
-MEM_RELEASE = 0x8000
-PAGE_READWRITE = 0x04
-WAIT_OBJECT_0 = 0x0
-INFINITE_ISH_MS = 30000
-
-k32.OpenProcess.argtypes = [w.DWORD, w.BOOL, w.DWORD]
-k32.OpenProcess.restype = w.HANDLE
-k32.VirtualAllocEx.argtypes = [w.HANDLE, w.LPVOID, ctypes.c_size_t, w.DWORD, w.DWORD]
-k32.VirtualAllocEx.restype = w.LPVOID
-k32.VirtualFreeEx.argtypes = [w.HANDLE, w.LPVOID, ctypes.c_size_t, w.DWORD]
-k32.VirtualFreeEx.restype = w.BOOL
-k32.WriteProcessMemory.argtypes = [w.HANDLE, w.LPVOID, w.LPCVOID,
-                                   ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t)]
-k32.WriteProcessMemory.restype = w.BOOL
-k32.GetModuleHandleW.argtypes = [w.LPCWSTR]
-k32.GetModuleHandleW.restype = w.HMODULE
-k32.GetProcAddress.argtypes = [w.HMODULE, w.LPCSTR]
-k32.GetProcAddress.restype = w.LPVOID
-k32.CreateRemoteThread.argtypes = [w.HANDLE, w.LPVOID, ctypes.c_size_t, w.LPVOID,
-                                   w.LPVOID, w.DWORD, w.LPVOID]
-k32.CreateRemoteThread.restype = w.HANDLE
-k32.WaitForSingleObject.argtypes = [w.HANDLE, w.DWORD]
-k32.WaitForSingleObject.restype = w.DWORD
-k32.GetExitCodeThread.argtypes = [w.HANDLE, ctypes.POINTER(w.DWORD)]
-k32.GetExitCodeThread.restype = w.BOOL
-k32.IsWow64Process.argtypes = [w.HANDLE, ctypes.POINTER(w.BOOL)]
-k32.IsWow64Process.restype = w.BOOL
 k32.CloseHandle.argtypes = [w.HANDLE]
 k32.CloseHandle.restype = w.BOOL
+
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# The exe's own wait for the remote LoadLibraryW is 10 s; the rest is its start-up.
+EXE_TIMEOUT_S = 60
 
 
 class InjectError(RuntimeError):
     pass
-
-
-def _win_fail(what):
-    raise InjectError(f"{what} failed (Win32 {ctypes.get_last_error()})")
 
 
 def processes():
@@ -149,7 +127,8 @@ def already_ours(pid):
     ⭐ THE GUARD ITSELF STAYS. The case it was written for is real and still matters: a
     STALE `UE5Dumper.dll` mapped from CE's install folder makes `LoadLibraryW` a silent
     refcount bump on the old binary (`[STALEDLL-2026-08-18]`). Only the *ownership* test
-    was missing.
+    was missing. The injector exe does not check this itself (the UI checks it before
+    calling it), so it stays here.
     """
     try:
         from b29_product_name import product_name
@@ -169,63 +148,48 @@ def already_ours(pid):
     return hits
 
 
-def inject(pid, dll_path):
-    dll_path = os.path.abspath(dll_path)
+def default_exe():
+    return os.path.join(REPO_ROOT, "dist", "UE5DumpUI.exe")
+
+
+def inject(pid, dll_path, exe_path):
+    """Has UE5DumpUI.exe load `dll_path` into `pid`; returns the HMODULE's low 32 bits."""
+    dll_path = os.path.abspath(dll_path)       # the exe hands it to the target verbatim
     if not os.path.isfile(dll_path):
         raise InjectError(f"DLL not found: {dll_path}")
+    exe_path = os.path.abspath(exe_path)
+    if not os.path.isfile(exe_path):
+        raise InjectError(f"injector not found: {exe_path} -- publish dist (build.ps1), or pass --exe "
+                          f"(a worktree has no dist; name the main checkout's)")
 
-    h = k32.OpenProcess(PROCESS_ALL_ACCESS, False, pid)
-    if not h:
-        _win_fail(f"OpenProcess({pid}) -- if the target is elevated, so must this be")
-    remote = None
-    thread = None
+    fd, result_path = tempfile.mkstemp(prefix="ue5inject_", suffix=".txt")
+    os.close(fd)                               # empty until the exe writes it
     try:
-        wow64 = w.BOOL(False)
-        if k32.IsWow64Process(h, ctypes.byref(wow64)) and wow64.value:
-            raise InjectError(f"PID {pid} is 32-bit; UE5Dumper.dll is x64-only")
-
-        buf = (dll_path + "\0").encode("utf-16-le")
-        remote = k32.VirtualAllocEx(h, None, len(buf), MEM_COMMIT_RESERVE, PAGE_READWRITE)
-        if not remote:
-            _win_fail("VirtualAllocEx")
-
-        written = ctypes.c_size_t(0)
-        if not k32.WriteProcessMemory(h, remote, buf, len(buf), ctypes.byref(written)):
-            _win_fail("WriteProcessMemory")
-        if written.value != len(buf):
-            raise InjectError(f"short write: {written.value} of {len(buf)} bytes")
-
-        kern = k32.GetModuleHandleW("kernel32.dll")
-        if not kern:
-            _win_fail("GetModuleHandleW(kernel32)")
-        load = k32.GetProcAddress(kern, b"LoadLibraryW")
-        if not load:
-            _win_fail("GetProcAddress(LoadLibraryW)")
-
-        thread = k32.CreateRemoteThread(h, None, 0, load, remote, 0, None)
-        if not thread:
-            _win_fail("CreateRemoteThread")
-
-        rc = k32.WaitForSingleObject(thread, INFINITE_ISH_MS)
-        if rc != WAIT_OBJECT_0:
-            raise InjectError(f"remote LoadLibraryW did not finish (WaitForSingleObject={rc}); "
-                              f"the DLL may still be initialising -- do NOT read this as success")
-
-        code = w.DWORD(0)
-        if not k32.GetExitCodeThread(thread, ctypes.byref(code)):
-            _win_fail("GetExitCodeThread")
-        # LoadLibraryW returns HMODULE; the thread exit code truncates it to 32 bits.
-        # Zero means LoadLibraryW itself failed inside the target.
-        if code.value == 0:
-            raise InjectError("LoadLibraryW returned NULL in the target -- the DLL did NOT load "
-                              "(bad bitness, missing dependency, or DllMain returned FALSE)")
-        return code.value
+        try:
+            proc = subprocess.run([exe_path, "--inject-elevated", str(pid), dll_path, result_path],
+                                  timeout=EXE_TIMEOUT_S)
+        except subprocess.TimeoutExpired:
+            raise InjectError(f"UE5DumpUI.exe did not finish within {EXE_TIMEOUT_S} s; the DLL may still be "
+                              f"initialising -- do NOT read this as success") from None
+        with open(result_path, encoding="utf-8-sig", errors="replace") as f:
+            text = f.read().strip()
     finally:
-        if thread:
-            k32.CloseHandle(thread)
-        if remote:
-            k32.VirtualFreeEx(h, remote, 0, MEM_RELEASE)
-        k32.CloseHandle(h)
+        try:
+            os.remove(result_path)
+        except OSError:
+            pass
+
+    if proc.returncode == 0 and text.startswith("OK "):
+        try:
+            return int(text[3:], 16)
+        except ValueError:
+            raise InjectError(f"UE5DumpUI.exe reported success with an unreadable handle: {text!r}") from None
+    if text and not text.startswith("OK "):
+        # Its own words: "LoadLibraryW returned NULL ...", "OpenProcess failed (Win32 5). The game may be ...".
+        raise InjectError(f"{text} (UE5DumpUI.exe exit {proc.returncode})")
+    raise InjectError(f"UE5DumpUI.exe exited {proc.returncode} with "
+                      f"{'the result ' + repr(text) if text else 'no result'} -- the DLL may have loaded "
+                      f"anyway: check with --modules before injecting again")
 
 
 def main(argv=None):
@@ -235,6 +199,8 @@ def main(argv=None):
     ap.add_argument("--name")
     ap.add_argument("--dll", default=None,
                     help="default: dist/UE5Dumper.dll relative to the repo root")
+    ap.add_argument("--exe", default=None,
+                    help="the injector, UE5DumpUI.exe; default: dist/UE5DumpUI.exe relative to the repo root")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--allow-stale", action="store_true",
                     help="inject even though a build of ours is already mapped (this is a "
@@ -263,10 +229,8 @@ def main(argv=None):
             print(f"{size:>12,}  {n:<28} {path}")
         return 0
 
-    dll = a.dll
-    if dll is None:
-        root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        dll = os.path.join(root, "dist", "UE5Dumper.dll")
+    dll = a.dll if a.dll is not None else os.path.join(REPO_ROOT, "dist", "UE5Dumper.dll")
+    exe = a.exe if a.exe is not None else default_exe()
 
     print(f"target : {name} (pid {pid})")
 
@@ -292,7 +256,8 @@ def main(argv=None):
         print("   (--allow-stale given; continuing -- this is a refcount bump, NOT a load)")
     print(f"dll    : {dll}  ({os.path.getsize(dll):,} bytes)"
           if os.path.isfile(dll) else f"dll    : {dll}  (MISSING)")
-    hmod = inject(pid, dll)
+    print(f"via    : {exe}")
+    hmod = inject(pid, dll, exe)
     print(f"loaded : HMODULE(low32)=0x{hmod:08X}  -- LoadLibraryW returned non-NULL")
     return 0
 
