@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-11-11 (build 3703) — `MCP-Setup.html` ships in every release: how to set up the MCP server `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **New in the release folder: `MCP-Setup.html`** (the maintainer: the setup document ships with the publish). How to
+  register `UE5DumpUI.exe --mcp` in Claude Code and Claude Desktop, let the reading tools run without a prompt, use
+  it beside the UI and against a game running as administrator, and start it from another machine over SSH with key
+  authentication; then a troubleshooting table. `README.html` lists it.
+- **The Windows 11 OpenSSH server commands in it are the maintainer's, for reference only:** they may not work on a
+  given machine (another SSH server, a policy, a firewall), and setting up an SSH server is outside this project.
+- No change to the app or the DLL. Tests pin the copy step, the guide against the server's switch, name, allow rule
+  and tools, and the disclaimer ahead of the commands. C# 7812 passed, 0 failed, 1 skipped; headless 71;
+  dll_helpers_test 3929, dll_core_test 1548, utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30,
+  0 failures; 39 gates passed; `dist\MCP-Setup.html` byte-identical to its source. AOT UI 62,125,056 bytes (sha256
+  ddbcff42d219504c...); UE5Dumper.dll 3,631,104 bytes.
+
 ## 2026-11-11 (build 3702) — The MCP server says when a game runs as administrator; it works in Claude Code, over SSH and elevated `[PIPE-PER-PROCESS-2026-11-06]`
 
 - **A game running as administrator is named as such.** A server that is not elevated sees the game listed but is
