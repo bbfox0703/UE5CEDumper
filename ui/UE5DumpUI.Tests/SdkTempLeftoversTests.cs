@@ -139,6 +139,7 @@ public class SdkTempLeftoversTests : IDisposable
     [InlineData("dotnet build D:\\Other\\Other.sln -bl -o ui/App")]
     [InlineData("dotnet test tests/Other --blame-crash -- ui/App/App.csproj")]
     [InlineData("dotnet build D:\\Other\\Other.sln -o -- ui/App/App.csproj")]
+    [InlineData("dotnet build D:\\Other\\Other.sln --unknown-switch extra ui/App/App.csproj")]
     // One quoted argument with escaped quotes inside, as Windows reads it: never split into a word that is our path.
     [InlineData("dotnet build D:\\Github\\Other\\Other.sln \"-p:Note=\\\" ui\\App\\App.csproj \\\"\"")]
     // Under this checkout, but another repository's clone that git here does not track.
