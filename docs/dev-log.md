@@ -27,6 +27,31 @@ builds ≤696 in
 
 -----
 
+## 2026-11-11 (build 3702) — The MCP server says when a game runs as administrator; it works in Claude Code, over SSH and elevated `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **A game running as administrator is named as such.** A server that is not elevated sees the game listed but is
+  refused its pipe by Windows (UAC); it answered "Internal error in read_status: Access to the path is denied." It now
+  says the game runs elevated and what to do: start the AI client elevated, or the game normally. Red, then green.
+- **The UI's project runs the trim and AOT analyzers on every build** (no change to the exe): IL2026 / IL3050 now fail
+  the first compile and the test build instead of the publish. A planted generic `JsonArray.Add("x")` failed a plain
+  build; taken out, the build was clean.
+- **Measured live** (verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`), build 3701's AOT exe on DumperTest
+  Shipping (UE 5.4):
+  - **Claude Code itself** (item 15, closed): registered with `claude mcp add --scope local`, from a copy of the exe
+    outside `dist\` (a running server would stop the next publish replacing it). A desktop session loaded the
+    server (handshake 2025-11-25), offered its 35 tools, and called six of them on the game. With the allow rule
+    `mcp__ue5cedumper__read_*` and `--permission-mode default`, the reads ran without a prompt and `scan_start` was
+    denied; in auto mode, `scan_start` ran too -- why D2's write tools must carry `requiresUserInteraction`.
+  - **SSH and an elevated game** (item 18, closed): an elevated server against an elevated game 31/31; a server
+    started over SSH (an administrator's SSH session runs at High integrity) 26/26 against the elevated game and 31/31
+    against a normal one. The temporary SSH key was removed afterwards.
+- New in todo.md: `[UI-CONNECT-ELEVATED-GAME]` (MED, not measured in the UI) -- the UI's inject-elevated flow
+  auto-connects from a non-elevated UI and would meet the same refusal, shown as raw text.
+- Tests: C# 7809 passed, 0 failed, 1 skipped; headless 71; dll_helpers_test 3929, dll_core_test 1548,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30, 0 failures; 39 gates passed;
+  `mcp_client.py probe` 15/15 on this build. AOT UI 62,125,056 bytes (sha256 df435701e4e9414b...); UE5Dumper.dll
+  3,631,104 bytes.
+
 ## 2026-11-11 (build 3701) — `UE5DumpUI.exe --mcp`: an AI can read a running game, beside the UI and without disturbing it `[PIPE-PER-PROCESS-2026-11-06]`
 
 Stage D1. The maintainer chose the route on 2026-11-11 (todo.md, Stage D): the server goes straight to the game's
