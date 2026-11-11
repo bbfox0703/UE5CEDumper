@@ -303,14 +303,20 @@ a call the suspended game could not answer, and another client's value-scan sess
 The DLL log showed the server's walks on 7 of 14 threads ("a background walk takes at most half of what is free").
 Not reached:
 
-15. **A real MCP client.** ◐ **Half reached 2026-11-11:** registered with `claude mcp add --scope local ue5cedumper
-    -- <copy>\UE5DumpUI.exe --mcp` (a copy outside `dist\`: every Claude Code session keeps its servers running, and a
-    running exe in `dist\` would refuse the next publish). Claude Code 2.1.163's health check (`claude mcp list`)
-    started the build 3701 AOT exe and showed `✓ Connected`; the server's log: "initialize from claude-code: asked
-    2025-11-25, answered 2025-11-25", then stdin closed and it exited. A headless session (`claude -p`) could not run:
-    the CLI's own sign-in had lapsed (401), which only the user can renew. Still open: a session lists the tools and
-    calls `read_status` and `read_search_objects` on DumperTest; with `mcp__ue5cedumper__read_*` allowed (settings or
-    `--allowedTools`) those run without a prompt, and `scan_start` still prompts (in `-p` mode: is denied).
+15. **A real MCP client.** ✅ **Reached 2026-11-11, but for the allow rule.** Registered with `claude mcp add --scope
+    local ue5cedumper -- <copy>\UE5DumpUI.exe --mcp` (a copy outside `dist\`: every Claude Code session keeps its
+    servers running, and a running exe in `dist\` would refuse the next publish). The build 3701 AOT exe:
+    - `claude mcp list` (CLI 2.1.163) showed `✓ Connected`, and the CLI's `/mcp` showed "connected · 35 tools";
+    - a Claude Code desktop session started in the repository loaded it at start (its server log: "initialize from
+      claude-code: asked 2025-11-25, answered 2025-11-25"), offered the 35 tools, and called `read_games`,
+      `read_status`, `read_search_objects`, `read_find_live_instance`, `read_instance` (with `name_filter`) and
+      `scan_start` on DumperTest Shipping: all answered (2-44 ms each in the server log); the server dialled the
+      game's pipe only at the first call; `scan_start` answered `already_scanned`.
+
+    Still open: the allow rule. `mcp__ue5cedumper__read_*` (settings, or `--allowedTools`) lets the `read_*` tools run
+    without a prompt while `scan_start` still prompts, or in `-p` mode is denied. A headless `claude -p` run would
+    measure it, but this machine's CLI answered 401 (its sign-in had lapsed), even with the desktop app's own
+    variables taken out of its environment.
 16. **A large game.** Timeouts and reply sizes were met on a 24,530-object fixture only. Acceptance: on a game of
     300,000+ objects, `read_list_classes`, `read_find_instances`, `read_list_functions` (with a `name_filter`) and
     `read_value_scan_begin` answer within their timeouts, and a reply over the cap comes back cut with its note.
