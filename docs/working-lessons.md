@@ -2964,8 +2964,9 @@ C++ tests, the headless suite and the gates, run the same way, left nothing.
 
 **The fix moves TEMP, not the tests** (`TestTempRoot`, [TEST-TEMP-HYGIENE-2026-11-11]). A module initializer points the
 process's TMP and TEMP at `%TEMP%\UE5CEDumper.Tests\<pid>-<utc time>\`, which `Path.GetTempPath()` reads on every call,
-so every test, library and child process writes there. The folder goes at process exit, after
-`SqliteConnection.ClearAllPools()` (measured: without it one `.db` stays held, and so does the folder). A run that could
+so every test, library and child process writes there. The folder goes when the test session ends (an assembly
+fixture, `TestRunEnd`; never at process exit, see 3.xf), after `SqliteConnection.ClearAllPools()` (measured: without it
+one `.db` stays held, and so does the folder). A run that could
 not clean up is deleted by the next run: its `.owner` file is held open with no sharing for the life of the process, so
 the OS lets go of it when the owner dies. The names older builds left straight in %TEMP% are swept once unchanged for an
 hour; a fixed parent they shared (`ue5-qmark`, ...) loses only its hour-old children, since an older checkout's run may
@@ -2998,12 +2999,31 @@ repository's (three on this machine hold `ui\<x>.sln`), an option's value (`-o u
 and a `dotnet run` program argument are not the project, a clone under `vendor/` is someone else's, and an option the
 parser does not know stops the reading rather than guessing whether it takes a value (`--blame-crash` once ate the
 next option's name): three rounds of adversarial review found each of these. Never infer that a folder is ours from
-what is missing -- someone else's log
-(another cleanup removes logs and leaves folders; `dotnet --info` writes none) -- nor from the count alone: another
-cleanup can take one of our folders and a stranger in the same second restores the count. The composition seen while
-the group was young is the proof, and a group first seen old stays. When the SDK stops writing the log (dotnet/sdk
-main no longer does, 2026-11-10), nothing is attributable and nothing goes; the fix then is a private TMP/TEMP for the
-dotnet processes this repository's tools start.
+what is missing -- someone else's log (another cleanup removes logs and leaves folders; `dotnet --info` writes none)
+-- nor from the count alone: another cleanup can take one of our folders and a stranger in the same second restores
+the count. The composition seen while the group was young is the proof, and a group first seen old stays. When the SDK
+stops writing the log (dotnet/sdk main no longer does, 2026-11-10), nothing is attributable and nothing goes; the fix
+then is a private TMP/TEMP for the dotnet processes this repository's tools start -- which build.ps1 already does
+(`Use-DotnetTemp`: each dotnet call gets `%TEMP%\UE5CEDumper.Tests\b<pid>\`, held by an owner file and removed at the
+end with `[System.IO.Directory]::Delete`, never Windows PowerShell 5.1's junction-following `Remove-Item -Recurse`).
+What the sweep still has to clean is a session's own `dotnet build` / `dotnet test`.
+
+### 3.xf A green test run that ends "Foreground threads were left running", exit 1: the watchdog counts process exit
+
+xunit.v3's Microsoft.Testing.Platform bridge (`TestPlatformTestFramework.RunAsync`) starts a watchdog once the test
+session ends. If the process is still alive about a second later it prints `Waiting 10 seconds for foreground threads
+to exit...`, and ten seconds after that `[FATAL ERROR] Foreground threads were left running, forcing process exit`,
+and exits 1 -- whatever keeps the process alive. It enumerates no threads; the wording is the author's guess. A
+`ProcessExit` handler counts: `TestTempRoot` deleted the run's folder there, and while another session held the SSD at
+100% I/O that took longer, so `build.ps1 -Mode Publish` (build 3699) ended FAILED with every test passing. Measured
+2026-11-11: 2 of 17 runs failed that way, both in the same ten minutes of peak I/O; a 15-s delay in the handler
+reproduces it every time (17 passed, exit 1). The removal now runs in an xunit.v3 assembly fixture (`TestRunEnd`),
+inside the session, where the same delay only makes the run 15 s longer (exit 0).
+
+**How to apply:** do no slow work in a test process's `ProcessExit`; end-of-run work goes in an assembly fixture's
+`Dispose`. When the message comes with every test green, look for what runs at exit before hunting a stray `Thread`.
+To see what lingers, raise `shutdownForegroundThreadWaitSeconds` in xunit.runner.json and take `dotnet-stack report -p
+<pid>` during the wait.
 
 -----
 

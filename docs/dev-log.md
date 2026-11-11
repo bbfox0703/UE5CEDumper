@@ -27,6 +27,23 @@ builds ≤696 in
 
 -----
 
+## 2026-11-11 (build 3700) — build.ps1 leaves nothing in %TEMP%; a green test run no longer ends red on a busy disk `[TEST-TEMP-HYGIENE-2026-11-11]`
+
+- **A build no longer leaves the SDK's folders and logs in %TEMP%.** Every dotnet call build.ps1 makes (restore,
+  publish, both test suites, clean) now runs with TMP/TEMP in a folder of that build's,
+  `%TEMP%\UE5CEDumper.Tests\b<pid>\`, removed when the build ends. A build stopped part-way leaves it, and the next
+  test run removes it. The C++ steps and the shell that started the build keep their own TEMP. Measured on this build:
+  no workload log and no random-named folder of this repository's appeared in %TEMP% while it ran, and its private
+  folder was gone at the end.
+- **A test run whose tests all pass no longer fails at the very end when the disk is busy.** The test run's own folder
+  was removed as the process exited; while another session held the SSD at 100% I/O that took longer than xunit allows
+  once a run is over (about 11 s), and xunit then ended the run with "Foreground threads were left running" and exit
+  code 1 -- build 3699's publish ended FAILED that way with every test passing (2 of 17 runs, both in the same ten
+  minutes). The folder now goes before the run ends.
+- No change to the app or the DLL. C# 7,692 passed, 0 failed, 1 skipped; headless 71; 39 gates. AOT UI 61,767,680
+  bytes (sha A83A90F63BFAB7FB…), UE5Dumper.dll 3,625,984 bytes. Build 3699 was taken by the publish described above;
+  nothing from it was handed over.
+
 ## 2026-11-11 (no build change) — This repository's `dotnet build` leftovers leave %TEMP% after a day; nobody else's do `[TEST-TEMP-HYGIENE-2026-11-11]`
 
 - **Every `dotnet build` leaves an empty random-named folder, a `Microsoft.NET.Workload_*.log` and a second folder in
