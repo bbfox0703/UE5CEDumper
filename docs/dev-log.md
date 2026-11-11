@@ -27,6 +27,19 @@ builds ≤696 in
 
 -----
 
+## 2026-11-11 (no build change) — Joining a pending debug-camera toggle, proven on DumperTest Development `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **What.** `tools/verify/mcp_client.py dbgcam`, a new rig mode for verification-register item 26, which Shipping
+  could not reach (no live CheatManager). With the game thread frozen: the AI's ON queued and the UI's joined; the
+  UI's ON queued and the AI's refused; the UI's ON sent while the AI's toggle was still dispatching.
+- **Measured** on DumperTest Development (UE 5.4), DLL and AOT exe 3706: 26/26. The joined toggle survived the AI
+  session's end and turned the camera on, held by the UI. The negative control (nobody joined) dropped the toggle, and
+  the camera stayed off.
+- **Found:** Frieren's "join while still dispatching" path is reached by no shipped client. The pipe and the CE
+  mailbox both change the camera under the hold's lock, so a second request waits 3.5 s and then joins the queued
+  toggle. Only a direct `UE5_SetDebugCamera` export call reaches that path. The register row says so.
+- **Not changed:** the shipped UI and DLL.
+
 ## 2026-11-11 (build 3706) — The MCP server writes memory and calls game functions; `write_mem` writes data only; the game-thread queue knows who sent what `[PIPE-PER-PROCESS-2026-11-06]`
 
 Stage D2-3, to the maintainer's decisions of 2026-11-11 (todo.md, "D2-3 decisions"). Two independent four- and

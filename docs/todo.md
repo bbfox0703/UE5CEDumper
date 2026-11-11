@@ -10,7 +10,7 @@ Open work only. **Read this when deciding what to do next.**
 > build 3701; D2 (writes) started 2026-11-11, in three builds: D2-1 (the DLL records who holds what) shipped in build
 > 3704, D2-2 (the MCP write tools for the toggles, force field and teleport) in build 3705, D2-3 (`write_memory`,
 > `write_invoke`, `write_mem` data only, the invoke queue's owners) in build 3706: Stage D2 is complete; what its live
-> checks did not reach is verification-register.md items 19-20 and 22-27; nothing further in Stage D is queued** --
+> checks did not reach is verification-register.md items 19-20, 23-25 and 27; nothing further in Stage D is queued** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
@@ -646,7 +646,7 @@ write commands, the UI's use of the same state, and the client-side safety knobs
   marker slots; the undo point is kept). D2-3 `write_mem` (executable pages refused) and `invoke_function` (never
   resent after -5; a debug-camera toggle goes through the guarded command). **D2-1 shipped in build 3704, D2-2 in
   build 3705 and D2-3 in build 3706** (dev-log); what their live checks did not reach is verification-register.md
-  `[PIPE-PER-PROCESS-2026-11-06]` items 19-20 and 22-27.
+  `[PIPE-PER-PROCESS-2026-11-06]` items 19-20, 23-25 and 27.
 - **D2-3 decisions (maintainer, 2026-11-11, each the recommended option)**, from a read-only survey of `write_mem`,
   the invoke path and the UI's use of both:
   - **`write_mem`, for every client:** refuse executable, read-only, guard and uncommitted pages, and write without

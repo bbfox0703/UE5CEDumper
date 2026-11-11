@@ -404,7 +404,8 @@ force-field job and See-through. Not reached:
     record (refused naming "a Cheat Engine record"); and the UI's experimental opt-in ticked off in a running UI makes
     the next `write_fly` refuse.
 24. **The other write tools.** Not driven live: `write_gravity_direction` (it would send the fixture's pawn off the
-    map), `write_debug_camera` (DumperTest Shipping has no live CheatManager), `write_mouse_cursor`,
+    map), `write_debug_camera` (its queue and its refusal were driven in item 26, on Development; the AI holding the
+    camera and its exit releasing it were not), `write_mouse_cursor`,
     `write_foreground_lock`, `write_force_field_reset`, a numeric `write_force_field` value read back from the
     instances, and a DLL older than 3705 refused. Each is unit-tested (`McpToolsTests`). Acceptance: on a game where
     each can be held, the tool changes it, `read_holds` names the server, and its exit releases it.
@@ -420,11 +421,20 @@ log: "1 queued invoke(s) of it dropped, never run"). Not reached:
     Run or an Invoke dialog FIRE left queued (-5, game paused) refuses the AI's `write_invoke`, naming the UE5DumpUI
     window; the same with a CE record's invoke ("a Cheat Engine record"); and the Live Walker's field edit of a
     read-only or code address shows the refusal ("Not written: ... is in executable memory").
-26. **Joining a pending debug-camera toggle.** Source-pinned only (`APendingDebugCameraOn_IsItsSendersAlone`): DumperTest
-    Shipping has no live CheatManager. Acceptance, on a game with one (a Development build): the AI's
-    `write_debug_camera` ON left queued (game paused), the UI's Force ON answered "queued", the AI session ended: the
-    camera turns on when the game resumes and stays on, held by the UE5DumpUI window (`get_holds`); and the reverse
-    (the UI's queued ON, the AI's ON refused naming the window).
+26. ✅ **CLOSED 2026-11-11, on DumperTest DEVELOPMENT only** (UE 5.4; Shipping has no live CheatManager), DLL and AOT
+    exe 3706, `mcp_client.py dbgcam` 26/26, the game thread frozen by `suspend.py suspend-tid`. The UI's side was
+    `pipe_client.py` sending the window's request byte for byte (`DumpService.SetDebugCameraDetailedAsync`); the
+    window's own button was not clicked. (A) The AI's ON queued, the UI's ON answered -5 and became the pending ON's
+    holder (`get_holds`), the queued toggle counted under the UI; the AI session ended and nothing was dropped; on
+    resume the camera came on, held by the UI. (B) The UI's ON queued: the AI's `write_debug_camera` refused, naming the
+    UI's pid. (C) The UI's ON sent while the AI's toggle was still being dispatched waited 3.5 s on the hold lock, then
+    joined the queued toggle as in (A). The DLL log shows "an earlier ON is still queued -- nothing sent" for both
+    joins, and no drop. Negative control: the AI's ON queued, nobody joined, the session ended: "1 queued invoke(s) of
+    it dropped, never run", and the camera stayed off.
+    **Not reachable by any shipped client:** Frieren's join while a toggle is still being dispatched, and the retag
+    when that dispatch returns. The pipe and the CE mailbox both change the camera under the hold's lock, so a second
+    request waits for the first to finish. Only a direct call to the `UE5_SetDebugCamera` export reaches that path, and
+    no shipped script makes one. It stays source-pinned (`APendingDebugCameraOn_IsItsSendersAlone`).
 27. **Parameters a fixture function does not exercise.** Live: two ints and a return. Unit-tested only: structs (by
     field and by the engine's known layout), strings and out strings, object parameters checked for liveness,
     interface functions, the FText and container refusals, the deny list beyond the debug camera. Acceptance: on a
