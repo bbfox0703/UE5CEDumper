@@ -30,8 +30,9 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         Stage D2-3, register item 26: a pending debug-camera toggle and who holds it. Needs a live CheatManager --
         DumperTest Development (launch_dumpertest.py dev), not Shipping. With the game thread frozen: (A) the AI's ON
         queued, the UI stand-in joins it (-5), the AI session ends: the toggle is not dropped, the camera comes on, the
-        UI's; (B) the UI's ON queued: the AI's write_debug_camera is refused naming the UI; (C) the UI joins while the
-        AI's toggle is still being dispatched: the same as (A). Turns the camera off again after each.
+        UI's; (B) the UI's ON queued: the AI's write_debug_camera is refused naming the UI; (C) the UI's ON sent while
+        the AI's toggle is still being dispatched waits for the hold lock, then joins as in (A). Turns the camera off
+        again after each.
 
     --ssh HOST   start the server as `ssh -T HOST <exe> --mcp`, the way an MCP client on another machine would; --exe
                  is then the path on HOST. ssh's own prompts (a password) go to this console, never to the protocol:
@@ -986,12 +987,18 @@ def run_dbgcam(exe: str, pid: int | None, game_name: str) -> int:
         ck.check(wait_cam(1) == 1 and camera_hold().get("holder", {}).get("you"), "B: the camera comes on, the UI's")
         camera_off("B")
 
-        # C. The UI joins while the AI's toggle is still being dispatched (the AI's call still waiting).
+        # C. The UI's ON sent while the AI's toggle is still being dispatched. Every pipe command that changes a hold
+        # runs under that hold's lock (Mimic's too), so it waits for the AI's dispatch to time out and then joins the
+        # QUEUED toggle, as in A. Frieren's "being dispatched" join is reached only by a caller that takes no hold lock
+        # (the UE5_SetDebugCamera export called directly): not from here.
         with _FrozenGameThread(game_name):
             rid = ai.request_async("tools/call", {"name": "write_debug_camera", "arguments": {**base, "enable": True}})
             time.sleep(1.5)
+            t0 = time.monotonic()
             j = ui.request("set_debug_camera", enable=True)
-            ck.check(j.get("state") == -5, "C: the UI's ON joins the AI's toggle still being dispatched (-5)", j)
+            waited = time.monotonic() - t0
+            ck.check(waited >= 2.0, f"C: the UI's ON waits for the AI's dispatch (the hold lock): {waited:.1f} s")
+            ck.check(j.get("state") == -5, "C: then joins the AI's queued toggle (-5)", j)
             res = ai.wait(rid, timeout=60).get("result", {})
             d, _ = payload(res)
             ck.check(not res.get("isError") and d.get("state") == -5, "C: the AI's toggle then answers queued", d)
