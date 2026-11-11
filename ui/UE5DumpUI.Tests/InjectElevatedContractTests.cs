@@ -69,20 +69,58 @@ public sealed class InjectElevatedContractTests
         Assert.Contains("dll_path = os.path.abspath(dll_path)", py);   // the exe hands the path over verbatim
     }
 
+    /// <summary>Python source with its docstrings and comments removed, so prose about an API does not count and a call
+    /// to it under any binding name does.</summary>
+    private static string PythonCodeOnly(string py)
+    {
+        string noDocs = Regex.Replace(py, "\"\"\"[\\s\\S]*?\"\"\"", "\"\"\"\"\"\"");
+        return Regex.Replace(noDocs, "#.*$", "", RegexOptions.Multiline);
+    }
+
+    private static readonly string[] InjectionApis =
+    [
+        "CreateRemoteThread", "CreateRemoteThreadEx", "WriteProcessMemory", "VirtualAllocEx", "NtCreateThreadEx",
+        "RtlCreateUserThread", "NtWriteVirtualMemory", "QueueUserAPC", "SetThreadContext", "OpenProcess",
+    ];
+
     [Fact]
     public void InjectPy_NeverInjectsFromPythonItself_AndNeverElevates()
     {
         // The hand-off is the point: python.exe must not be the process that writes into the target or starts a
-        // thread in it. Elevation is never automatic (handover.md section 4): an elevated game needs the run elevated.
+        // thread in it, under any binding name or through what it imports. Elevation is never automatic (handover.md
+        // section 4): an elevated game needs the whole run elevated.
         string py = InjectPy();
-        foreach (string api in new[]
-                 {
-                     "CreateRemoteThread", "WriteProcessMemory", "VirtualAllocEx", "NtCreateThreadEx",
-                     "QueueUserAPC", "OpenProcess",
-                 })
-            Assert.DoesNotMatch(new Regex(@"\bk32\." + api + @"\b"), py);
+        string code = PythonCodeOnly(py);
+        string helper = PythonCodeOnly(File.ReadAllText(NumericInputCoercionTests.RepoFile("tools/verify/b29_product_name.py")));
+        foreach (string api in InjectionApis)
+        {
+            Assert.DoesNotMatch(new Regex(@"\b" + api + @"\b"), code);
+            Assert.DoesNotMatch(new Regex(@"\b" + api + @"\b"), helper);
+        }
+        var imports = Regex.Matches(code, @"^\s*(?:import|from)\s+([\w.]+)", RegexOptions.Multiline)
+            .Select(m => m.Groups[1].Value).ToHashSet();
+        Assert.Subset(
+            new HashSet<string> { "argparse", "ctypes", "ctypes.wintypes", "os", "subprocess", "sys", "tempfile",
+                                  "b29_product_name" },
+            imports);
         Assert.DoesNotContain("runas", py, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("ShellExecute", py, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void ARemoteThreadThatTimedOut_KeepsItsPathBuffer()
+    {
+        // The thread may still run (a game held at a breakpoint) and read the path then: freeing it would hand
+        // LoadLibraryW a released page in the game.
+        string svc = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Services/WindowsPlatformService.cs"));
+        int start = svc.IndexOf("public InjectResult InjectDll(int pid, string dllPath)", StringComparison.Ordinal);
+        Assert.True(start > 0);
+        string body = svc[start..svc.IndexOf("\n    }", start, StringComparison.Ordinal)];
+        int timedOut = body.IndexOf("if (wait != WAIT_OBJECT_0)", StringComparison.Ordinal);
+        Assert.True(timedOut > 0);
+        Assert.Contains("threadMayStillRun = true;", body[timedOut..]);
+        Assert.Contains("if (!threadMayStillRun) VirtualFreeEx(hProc, remote, UIntPtr.Zero, MEM_RELEASE);", body);
+        Assert.Single(Regex.Matches(body, @"VirtualFreeEx\("));
     }
 
     [Fact]

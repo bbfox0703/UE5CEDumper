@@ -742,6 +742,11 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
             IntPtr remote = VirtualAllocEx(hProc, IntPtr.Zero, size, MEM_COMMIT_RESERVE, PAGE_READWRITE);
             if (remote == IntPtr.Zero)
                 return InjectResult.Failure($"VirtualAllocEx failed (Win32 {Marshal.GetLastWin32Error()}).");
+            // [AV-INJECT-2026-11-11] A remote thread that has not finished (a game held at a debugger breakpoint, or
+            // just slow) still reads the path from this buffer when it runs: freeing it then hands LoadLibraryW a
+            // released page in the game. So a timed-out thread keeps the buffer -- a few hundred bytes, as a killed
+            // injector leaves too.
+            bool threadMayStillRun = false;
             try
             {
                 if (!WriteProcessMemory(hProc, remote, pathBytes, size, out _))
@@ -759,7 +764,10 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
                 {
                     uint wait = WaitForSingleObject(hThread, InjectTimeoutMs);
                     if (wait != WAIT_OBJECT_0)
-                        return InjectResult.Failure($"Remote thread did not finish in {InjectTimeoutMs / 1000}s (wait 0x{wait:X8}).");
+                    {
+                        threadMayStillRun = true;
+                        return InjectResult.Failure($"Remote thread did not finish in {InjectTimeoutMs / 1000}s (wait 0x{wait:X8}). It may still load the DLL.");
+                    }
                     if (!GetExitCodeThread(hThread, out uint exitCode))
                         return InjectResult.Failure($"GetExitCodeThread failed (Win32 {Marshal.GetLastWin32Error()}).");
                     if (exitCode == 0)
@@ -770,7 +778,10 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
                 }
                 finally { CloseHandle(hThread); }
             }
-            finally { VirtualFreeEx(hProc, remote, UIntPtr.Zero, MEM_RELEASE); }
+            finally
+            {
+                if (!threadMayStillRun) VirtualFreeEx(hProc, remote, UIntPtr.Zero, MEM_RELEASE);
+            }
         }
         finally { CloseHandle(hProc); }
     }

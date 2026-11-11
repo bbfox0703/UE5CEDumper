@@ -3,7 +3,8 @@
     py inject.py --pid 62288                       # inject dist/UE5Dumper.dll
     py inject.py --name DumperTest                 # resolve the PID by image name
     py inject.py --pid 62288 --dll D:/tmp/old.dll  # inject a specific build
-    py inject.py --name DumperTest --exe <checkout>/dist/UE5DumpUI.exe   # a worktree has no dist of its own
+    py inject.py --name DumperTest --dll build/dll/UE5Dumper.dll    # in a worktree: its own build; the main
+                                                                    # checkout's dist/UE5DumpUI.exe injects it
     py inject.py --list                            # candidate PIDs, nothing else
 
 WHO INJECTS. [AV-INJECT-2026-11-11] The remote thread is started by `UE5DumpUI.exe --inject-elevated <pid> <dll>
@@ -16,8 +17,10 @@ a real difference. This rig never elevates it: an elevated game needs this whole
 
 THE CONTRACT (Program.cs RunElevatedInject, pinned from both ends by InjectElevatedContractTests): exit 0 with the
 result file reading `OK <hex>` (the HMODULE's low 32 bits, upper-case, no 0x); exit 1 with the error text; exit 2 for
-a bad pid. The file is UTF-8, and some texts carry an em dash. The exe waits 10 s for the remote LoadLibraryW and
-passes the DLL path to the target verbatim, so the path given to it is absolute.
+a bad pid. The file is UTF-8, and some texts carry an em dash. The exe waits 10 s for the remote LoadLibraryW (the
+in-process injector before it waited 30 s) and passes the DLL path to the target verbatim, so the path given to it is
+absolute. The exe is this checkout's dist/UE5DumpUI.exe, or -- in a worktree, which has no dist -- the main
+checkout's; --exe names another. The DLL is never taken from elsewhere: it is the build under test.
 
 FAILS LOUDLY at every step. A silent injector is worthless here: several register rows assert that a scan produced
 NOTHING, and "nothing" is exactly what a failed injection also produces (working-lessons.md 1.10a). A LoadLibraryW
@@ -149,7 +152,20 @@ def already_ours(pid):
 
 
 def default_exe():
-    return os.path.join(REPO_ROOT, "dist", "UE5DumpUI.exe")
+    """This checkout's dist/UE5DumpUI.exe, else the main checkout's (a worktree has no dist). Only the injector is
+    borrowed: the DLL stays the caller's."""
+    own = os.path.join(REPO_ROOT, "dist", "UE5DumpUI.exe")
+    if os.path.isfile(own):
+        return own
+    try:
+        common = subprocess.run(["git", "-C", REPO_ROOT, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                                capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return own
+    if common.returncode != 0 or not common.stdout.strip():
+        return own
+    main = os.path.join(os.path.dirname(os.path.normpath(common.stdout.strip())), "dist", "UE5DumpUI.exe")
+    return main if os.path.isfile(main) else own
 
 
 def inject(pid, dll_path, exe_path):
@@ -159,8 +175,7 @@ def inject(pid, dll_path, exe_path):
         raise InjectError(f"DLL not found: {dll_path}")
     exe_path = os.path.abspath(exe_path)
     if not os.path.isfile(exe_path):
-        raise InjectError(f"injector not found: {exe_path} -- publish dist (build.ps1), or pass --exe "
-                          f"(a worktree has no dist; name the main checkout's)")
+        raise InjectError(f"injector not found: {exe_path} -- publish dist (build.ps1), or name one with --exe")
 
     fd, result_path = tempfile.mkstemp(prefix="ue5inject_", suffix=".txt")
     os.close(fd)                               # empty until the exe writes it
@@ -171,8 +186,14 @@ def inject(pid, dll_path, exe_path):
         except subprocess.TimeoutExpired:
             raise InjectError(f"UE5DumpUI.exe did not finish within {EXE_TIMEOUT_S} s; the DLL may still be "
                               f"initialising -- do NOT read this as success") from None
-        with open(result_path, encoding="utf-8-sig", errors="replace") as f:
-            text = f.read().strip()
+        except OSError as e:                    # e.g. the AV blocked the exe, or a publish left half of it
+            raise InjectError(f"could not start {exe_path}: {e}") from None
+        try:
+            with open(result_path, encoding="utf-8-sig", errors="replace") as f:
+                text = f.read().strip()
+        except OSError as e:
+            raise InjectError(f"could not read the injector's result (UE5DumpUI.exe exit {proc.returncode}): {e} "
+                              f"-- the DLL may have loaded anyway: check with --modules before injecting again") from None
     finally:
         try:
             os.remove(result_path)
@@ -186,7 +207,9 @@ def inject(pid, dll_path, exe_path):
             raise InjectError(f"UE5DumpUI.exe reported success with an unreadable handle: {text!r}") from None
     if text and not text.startswith("OK "):
         # Its own words: "LoadLibraryW returned NULL ...", "OpenProcess failed (Win32 5). The game may be ...".
-        raise InjectError(f"{text} (UE5DumpUI.exe exit {proc.returncode})")
+        hint = (" -- check with --modules before injecting again"
+                if text.startswith("Remote thread did not finish") else "")
+        raise InjectError(f"{text} (UE5DumpUI.exe exit {proc.returncode}){hint}")
     raise InjectError(f"UE5DumpUI.exe exited {proc.returncode} with "
                       f"{'the result ' + repr(text) if text else 'no result'} -- the DLL may have loaded "
                       f"anyway: check with --modules before injecting again")
