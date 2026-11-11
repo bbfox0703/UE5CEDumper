@@ -404,11 +404,20 @@ force-field job and See-through. Not reached:
     record (refused naming "a Cheat Engine record"); and the UI's experimental opt-in ticked off in a running UI makes
     the next `write_fly` refuse.
 24. **The other write tools.** Not driven live: `write_gravity_direction` (it would send the fixture's pawn off the
-    map), `write_debug_camera` (its queue and its refusal were driven in item 26, on Development; the AI holding the
-    camera and its exit releasing it were not), `write_mouse_cursor`,
-    `write_foreground_lock`, `write_force_field_reset`, a numeric `write_force_field` value read back from the
-    instances, and a DLL older than 3705 refused. Each is unit-tested (`McpToolsTests`). Acceptance: on a game where
-    each can be held, the tool changes it, `read_holds` names the server, and its exit releases it.
+    map), `write_mouse_cursor`, `write_foreground_lock`, `write_force_field_reset`, a numeric `write_force_field` value
+    read back from the instances, and a DLL older than 3705 refused. Each is unit-tested (`McpToolsTests`). Acceptance:
+    on a game where each can be held, the tool changes it, `read_holds` names the server, and its exit releases it.
+    ✅ **`write_debug_camera` CLOSED 2026-11-11, on DumperTest DEVELOPMENT only** (UE 5.4; Shipping has no live
+    CheatManager), DLL and AOT exe 3706, `mcp_client.py dbgcamhold` 32/32. The UI's side was `pipe_client.py` sending
+    the window's request byte for byte. (D) The AI's ON turned the camera on. `read_holds` named it the server's
+    ("you", background) and `get_holds` named the server's pid. A second ON was a no-op. The session's end turned the
+    camera off and freed the hold (DLL log: "its hold debug_camera is released (code 0)"). (E) The AI's OFF of its own
+    camera; its end then released nothing. (F) The UI's Force ON over the AI's camera made it the UI's. The AI's OFF and
+    ON were then refused naming the UI's pid, and the camera stayed on after the AI session ended. (G) The same for a
+    camera the UI turned on itself. Controls: F and G show that the release takes only the leaving client's own hold.
+    **Found:** if the game thread is stalled when the session ends, the camera stays on with no holder. The release's
+    OFF timed out (code -5) and stayed queued, and a queued OFF does not turn the camera off on UE 4.18-5.7. Case H
+    prints this without counting it; see todo.md `[DBGCAM-RELEASE-STALLED]`.
 
 Stage D2-3, build 3706 (`write_memory`, `write_invoke`; `write_mem` data only; the invoke queue's owners) -- dev-log
 3706. `tools/verify/mcp_client.py raw` 25/25 on DumperTest Shipping with the published DLL and AOT exe, the game thread

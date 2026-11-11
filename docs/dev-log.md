@@ -27,6 +27,27 @@ builds ≤696 in
 
 -----
 
+## 2026-11-11 (no build change) — The AI holding the debug camera, proven on DumperTest Development; a stalled session end leaves it on `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **What.** `tools/verify/mcp_client.py dbgcamhold`, a rig mode for the debug-camera part of verification-register
+  item 24. The AI's ON was held by the server and released when its session ended. Its own OFF worked. A camera the
+  UI took over, or turned on itself, refused the AI's OFF and ON and outlived the AI session.
+- **Measured** on DumperTest Development (UE 5.4), DLL and AOT exe 3706: 32/32. The DLL log shows the release (code 0)
+  and the three refusals. `dbgcam` (item 26) re-ran on the revised rig: 26/26. `raw` ran 24/24 on Development, its
+  Shipping-only check skipped and saying why, and 25/25 on Shipping, where that check still fires.
+- **Found, open:** `[DBGCAM-RELEASE-STALLED]` (todo.md, Stage D). If the game thread is stalled when the AI session
+  ends, the release's OFF stays queued (code -5), and on UE 4.18-5.7 a queued OFF does not turn the camera off. The
+  camera stays on with no holder. The fix is the maintainer's call.
+- **Rig fixes from two review passes** (13 findings confirmed, none refuted):
+  - A suspend or resume that did not take now raises instead of passing silently, and a bad `--suspend-name` is refused
+    before any case runs.
+  - Case H reads the live invoke timeout and waits for `game_thread_stalled`. It prints the release's code from the
+    DLL log, matched by pid and time.
+  - Clean-up re-sends OFF until the camera reads off.
+  - Every MCP session's framing is checked, not only the last.
+  - `--ssh` is refused for the modes that freeze the game.
+- **Not changed:** the shipped UI and DLL.
+
 ## 2026-11-11 (no build change) — Joining a pending debug-camera toggle, proven on DumperTest Development `[PIPE-PER-PROCESS-2026-11-06]`
 
 - **What.** `tools/verify/mcp_client.py dbgcam`, a new rig mode for verification-register item 26, which Shipping
