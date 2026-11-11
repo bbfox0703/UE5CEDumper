@@ -13,6 +13,13 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         one tool call, its result printed.
     py tools/verify/mcp_client.py live --exe dist/UE5DumpUI.exe [--pid N]
         every tool against a game running the DLL (a fixture: DumperTest), and a cancel of a running call.
+    py tools/verify/mcp_client.py writes --exe dist/UE5DumpUI.exe [--pid N] [--toggle-experimental]
+        Stage D2-2: the write tools against a fixture, beside a foreground pipe client standing in for the UI. The
+        UI's holds are refused and named; free ones become the server's; a teleport leaves the marker slots and the
+        undo point; See-through OFF is refused while the UI also claims it; everything the server held is released
+        when it exits, and the UI's hold is not. --toggle-experimental also turns the UI's experimental switch off for
+        one step (the file's exact bytes are put back) to see the experimental tools refuse. It MOVES the fixture's
+        pawn by a few metres and back: run it on a fixture, never on a real game.
 
     --ssh HOST   start the server as `ssh -T HOST <exe> --mcp`, the way an MCP client on another machine would; --exe
                  is then the path on HOST. ssh's own prompts (a password) go to this console, never to the protocol:
@@ -28,6 +35,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import os
 import pathlib
 import queue
 import subprocess
@@ -455,9 +464,235 @@ def run_live(exe: str, pid: int | None, suspend_name: str | None) -> int:
     return ck.done(c)
 
 
+class _ExperimentalSwitch:
+    """The UI's experimental opt-in, which the server reads on every call. Set for a step; restore() puts the file's
+    exact bytes back (or removes it, when there was none)."""
+
+    def __init__(self):
+        self.path = pathlib.Path(os.environ["LOCALAPPDATA"]) / "UE5CEDumper" / "experimental.json"
+        self.original = self.path.read_bytes() if self.path.exists() else None
+
+    def _settings(self) -> dict:
+        return json.loads(self.original.decode("utf-8-sig")) if self.original else {}
+
+    def enabled(self) -> bool:
+        return bool(self._settings().get("enabled"))
+
+    def set(self, enabled: bool):
+        settings = self._settings()
+        settings["enabled"] = enabled
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text(json.dumps(settings), encoding="utf-8")
+
+    def restore(self):
+        if self.original is None:
+            self.path.unlink(missing_ok=True)
+        else:
+            self.path.write_bytes(self.original)
+
+
+FIXTURE_CLASS, FIXTURE_FIELD = "DumperTestHolder", "HolderValue"   # DumperTest's own int field (solide_l3_derivation)
+
+
+def _ahead(pose: dict, distance: float) -> dict:
+    """A point `distance` units along the pawn's facing, a little above it: DumperTest does not respawn its pawn, so it
+    is displaced the way the UI's TP-facing does (handover, DumperTest), never along a fixed axis."""
+    yaw = math.radians(pose.get("yaw", 0.0))
+    return {"x": pose["x"] + distance * math.cos(yaw), "y": pose["y"] + distance * math.sin(yaw), "z": pose["z"] + 30}
+
+
+def _near(a: dict, b: dict, tol: float = 50.0) -> bool:
+    """Horizontally within tol units: a jump to a point above the floor settles a little lower."""
+    try:
+        return abs(a["x"] - b["x"]) <= tol and abs(a["y"] - b["y"]) <= tol
+    except (KeyError, TypeError):
+        return False
+
+
+def run_writes(exe: str, pid: int | None, toggle_experimental: bool) -> int:
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from pipe_client import PipeClient   # noqa: E402 -- the rig beside this one
+
+    ck = Checks()
+    switch = _ExperimentalSwitch()
+    experimental = switch.enabled()
+    c = McpClient(exe)
+    c.initialize()
+    base = {"pid": pid} if pid else {}
+
+    def call(tool, args=None, timeout=180.0):
+        r = c.call(tool, {**base, **(args or {})}, timeout)
+        data, note = payload(r)
+        return r, data, note
+
+    def error_text(data) -> str:
+        return data.get("error", "") if isinstance(data, dict) else str(data)
+
+    # 1. The catalogue: every write tool asks every time.
+    tools = c.request("tools/list").get("result", {}).get("tools", [])
+    writes = [t for t in tools if t["name"].startswith("write_")]
+    unmarked = [t["name"] for t in writes
+                if t.get("_meta", {}).get("anthropic/requiresUserInteraction") is not True
+                or t["annotations"].get("destructiveHint") is not True
+                or t["annotations"].get("readOnlyHint") is not False]
+    ck.check(len(writes) >= 12 and not unmarked,
+             f"{len(writes)} write_* tools, each marked requiresUserInteraction and destructive", unmarked)
+
+    r, st, _ = call("read_status")
+    if not st.get("scanned"):
+        call("scan_start")
+        for _ in range(90):
+            time.sleep(2)
+            r, st, _ = call("read_status")
+            if st.get("scanned"):
+                break
+    ck.check(bool(st.get("scanned")), "the game is scanned", st)
+    build = st.get("build_number") or 0
+    if not ck.check(build >= 3705, f"the game's DLL is build {build} (the write tools need 3705+)"):
+        c.close()
+        return ck.done(c)
+    game = pid or st.get("pid")
+
+    ui = PipeClient(pid=game, timeout=120)
+    ui.connect()
+    me = os.getpid()
+    print(f"        game pid {game}, DLL build {build}; the foreground client (the UI's stand-in) is pid {me}; "
+          f"experimental features {'on' if experimental else 'off'} here")
+
+    def holds() -> dict:
+        return {h["hold"]: h for h in ui.request("get_holds").get("holds", [])}
+
+    held_at_start = sorted(k for k, h in holds().items() if h.get("active"))
+    if not ck.check(not held_at_start, "nothing is held when the run starts", held_at_start):
+        ui.close()
+        c.close()
+        return ck.done(c)
+
+    exited = None
+    ui_claimed_see_through = False
+    try:
+        # 2. A hold the UI took is never replaced or ended, and the refusal names the UI.
+        ui.request("set_god_mode", enable=True)
+        r, d, _ = call("write_god_mode", {"enable": False})
+        ck.check(r.get("isError") and "god_mode is held by the UE5DumpUI window or another program" in error_text(d)
+                 and f"pid {me}" in error_text(d), "write_god_mode OFF over the UI's god mode is refused, naming it", d)
+        g = holds().get("god_mode", {})
+        ck.check(g.get("active") and g.get("holder", {}).get("you"), "and god mode stays on, the UI's", g)
+
+        # 3. Free holds become the server's.
+        r, d, _ = call("write_time_dilation", {"target": "global", "value": 0.5})
+        ck.check(not r.get("isError"), "write_time_dilation global 0.5", d)
+        r, d, _ = call("write_movement", {"knob": "walk_speed", "multiplier": 1.5})
+        ck.check(not r.get("isError"), "write_movement walk_speed x1.5", d)
+        r, d, _ = call("read_holds")
+        mine = {h["hold"]: h for h in (d or {}).get("holds", [])}
+        for hold in ("time:global", "movement:walk_speed"):
+            h = mine.get(hold, {})
+            ck.check(h.get("active") and h.get("holder", {}).get("you") and h["holder"].get("background"),
+                     f"read_holds: {hold} is the server's, marked background", h)
+        r, d, _ = call("write_time_dilation", {"target": "global", "value": 0.75})
+        ck.check(not r.get("isError"), "the server changes its own hold again (0.75)", d)
+
+        # 4. Teleport. Control first: the UI's own explicit jump (no keep_undo) saves the undo point where it left.
+        p0 = ui.request("teleport_get_pose")
+        if ck.check(p0.get("code") == 0 and "x" in p0, "the pawn's pose", p0):
+            ui.request("teleport_recall_marker", **_ahead(p0, 100))
+            before = ui.request("teleport_get_markers").get("markers", [])
+            last = next((m for m in before if m.get("slot") == -1), {})
+            ck.check(last.get("valid") and _near(last, p0), "control: the UI's own jump saved the undo point it left",
+                     last)
+            p1 = ui.request("teleport_get_pose")
+            target = _ahead(p0, 200)
+            r, d, _ = call("write_teleport", target)
+            ck.check(not r.get("isError") and _near((d or {}).get("from", {}), p1),
+                     "write_teleport moves the pawn and returns the pose it left in 'from'", d)
+            ck.check(_near(ui.request("teleport_get_pose"), target), "the pawn is at the coordinates given")
+            after = ui.request("teleport_get_markers").get("markers", [])
+            ck.check(after == before, "the marker slots and the undo point are unchanged",
+                     [m for m in after if m not in before])
+            if not r.get("isError"):
+                back = d["from"]
+                r, d, _ = call("write_teleport", {"x": back["x"], "y": back["y"], "z": back["z"]})
+                ck.check(not r.get("isError") and _near(ui.request("teleport_get_pose"), back),
+                         "write_teleport back to 'from'", d)
+                ck.check(ui.request("teleport_get_markers").get("markers", []) == before,
+                         "and the undo point is still the UI's")
+            ui.request("teleport_recall_last")
+            ck.check(_near(ui.request("teleport_get_pose"), p0), "the UI's Recall last returns where the UI left")
+
+        # 5. The experimental switch binds the server.
+        if toggle_experimental or not experimental:
+            if toggle_experimental:
+                switch.set(False)
+            try:
+                r, d, _ = call("write_fly", {"enable": True})
+                ck.check(r.get("isError") and "experimental" in error_text(d),
+                         "write_fly is refused while the UI's experimental features are off", d)
+                ck.check(not holds().get("fly", {}).get("active"), "and fly stays off")
+            finally:
+                if toggle_experimental:
+                    switch.restore()
+                    switch = _ExperimentalSwitch()
+                    switch.set(True)
+        if experimental or toggle_experimental:
+            r, d, _ = call("write_fly", {"enable": True})
+            ck.check(not r.get("isError"), "write_fly on", d)
+            r, d, _ = call("write_force_field", {"class_name": FIXTURE_CLASS, "field_name": FIXTURE_FIELD,
+                                                 "kind": "numeric", "value": 777})
+            ck.check(not r.get("isError") and (d or {}).get("held", 0) > 0,
+                     f"write_force_field {FIXTURE_CLASS}.{FIXTURE_FIELD} = 777", d)
+            # See-through: the server may end its own claim alone, never one the UI shares.
+            r, d, _ = call("write_see_through", {"enable": True})
+            ck.check(not r.get("isError"), "write_see_through on", d)
+            r, d, _ = call("write_see_through", {"enable": False})
+            ck.check(not r.get("isError"), "write_see_through off over its own claim alone", d)
+            call("write_see_through", {"enable": True})
+            ui.request("seethrough_set", enable=True)
+            ui_claimed_see_through = True
+            r, d, _ = call("write_see_through", {"enable": False})
+            ck.check(r.get("isError") and "also on" in error_text(d),
+                     "write_see_through off is refused while the UI also has it on", d)
+            s = ui.request("seethrough_get_state")
+            ck.check(s.get("active") and s.get("claims") == 2, "and See-through stays on with both claims", s)
+
+        # 6. The session ends: what the server held is released, what the UI holds is not.
+        exited = c.close()
+        ck.check(exited == 0, "the server exits 0 when stdin closes", exited)
+        mine_then = ["time:global", "movement:walk_speed"]
+        if experimental or toggle_experimental:
+            mine_then += ["fly", f"force_field:{FIXTURE_CLASS}::{FIXTURE_FIELD}"]
+        now = {}
+        for _ in range(50):
+            now = holds()
+            if not any(now.get(h, {}).get("active") for h in mine_then):
+                break
+            time.sleep(0.1)
+        for hold in mine_then:
+            h = now.get(hold, {})
+            ck.check(not h.get("active") and h.get("holder", {}).get("kind") == "none",
+                     f"the server's {hold} is released when it exits", h)
+        g = now.get("god_mode", {})
+        ck.check(g.get("active") and g.get("holder", {}).get("you"), "the UI's god mode is untouched", g)
+        if ui_claimed_see_through:
+            s = ui.request("seethrough_get_state")
+            ck.check(s.get("active") and s.get("claims") == 1, "See-through stays on with the UI's claim alone", s)
+    finally:
+        if exited is None:
+            c.close()
+        ui.request("set_god_mode", enable=False)
+        if ui_claimed_see_through:
+            ui.request("seethrough_set", enable=False)
+        ui.request("reset_field", class_name=FIXTURE_CLASS, field_name=FIXTURE_FIELD)
+        switch.restore()
+        left = sorted(k for k, h in holds().items() if h.get("active"))
+        ck.check(not left, "clean-up: nothing is left held", left)
+        ui.close()
+    return ck.done(c)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("mode", choices=["probe", "call", "live"])
+    ap.add_argument("mode", choices=["probe", "call", "live", "writes"])
     ap.add_argument("--exe", required=True, help="path to UE5DumpUI.exe")
     ap.add_argument("--tool")
     ap.add_argument("--args", default="{}")
@@ -467,6 +702,8 @@ def main() -> int:
     ap.add_argument("--ssh", metavar="HOST", help="start the server through `ssh -T HOST`; --exe is the path there")
     ap.add_argument("--ssh-key", metavar="KEY", help="with --ssh: log in with this private key, no prompt (BatchMode)")
     ap.add_argument("--report", metavar="FILE", help="also write everything printed to FILE")
+    ap.add_argument("--toggle-experimental", action="store_true",
+                    help="writes: turn the UI's experimental switch off for one step (its file is put back)")
     a = ap.parse_args()
     global SSH_HOST, SSH_KEY
     SSH_HOST, SSH_KEY = a.ssh, a.ssh_key
@@ -485,6 +722,8 @@ def main() -> int:
         if a.pid:
             args["pid"] = a.pid
         return run_call(exe, a.tool, args)
+    if a.mode == "writes":
+        return run_writes(exe, a.pid, a.toggle_experimental)
     return run_live(exe, a.pid, a.suspend_name)
 
 
