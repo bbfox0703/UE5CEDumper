@@ -50,6 +50,10 @@ extern "C" int32_t  UE5_CallProcessEventDirect(uintptr_t, uintptr_t, uintptr_t);
 namespace FrierenInvoke {
 bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why);
 }
+// [D2-3-INVOKE] Frieren.cpp: whether a debug-camera ON is pending, and which client sent it (ChangeHoldAsCe).
+namespace FrierenDebugCamera {
+bool PendingOn(uint64_t& owner);
+}
 extern uintptr_t    g_cachedGObjects;
 extern uintptr_t    g_cachedGNames;
 extern uintptr_t    g_cachedGWorld;   // &GWorld (address of the global UWorld* pointer)
@@ -1127,6 +1131,12 @@ template <typename Change>
 static int32_t ChangeHoldAsCe(const std::string& hold, Change&& change) {
     std::lock_guard<std::mutex> lock(Voll::Holds().LockFor(hold));
     const int32_t rc = change();
+    // [D2-3-INVOKE] A debug-camera ON still pending is its sender's, as the pipe's hold recorder has it: CE's answer
+    // that sent nothing (a toggle already pending, the other way) never takes another client's.
+    uint64_t sender = 0;
+    if (hold == Grimoire::HOLD_DEBUG_CAMERA && UE5_GetDebugCameraState() != 1
+        && FrierenDebugCamera::PendingOn(sender) && sender != Voll::kHoldOwnerCe)
+        return rc;
     Voll::Holds().SetOwner(hold, Voll::kHoldOwnerCe);
     return rc;
 }

@@ -511,7 +511,8 @@ static void Test_D23_InvokeOwnersAndDenyList() {
     EXPECT("names compare case-insensitively, as the DLL's lookup falls back to",
            !InvokeRefusedForBackground("toggledebugcamera", 0).empty()
            && !InvokeRefusedForBackground("CONSOLECOMMAND", 0).empty());
-    for (const char* n : {"SendToConsole", "ServerExec", "DestroyAllPawnsExceptTarget", "ReturnToMainMenuHost",
+    for (const char* n : {"SwitchLevel", "LocalTravel", "CheatScript", "LaunchURL",
+                          "SendToConsole", "ServerExec", "DestroyAllPawnsExceptTarget", "ReturnToMainMenuHost",
                           "ResetLevel", "ConsoleCommand", "ExecuteConsoleCommand", "QuitGame", "Quit", "OpenLevel",
                           "OpenLevelBySoftObjectPtr", "ClientTravel", "ServerTravel", "RestartLevel", "RestartGame",
                           "K2_DestroyActor", "K2_DestroyComponent", "SetLifeSpan", "DestroyTarget", "DestroyAll",

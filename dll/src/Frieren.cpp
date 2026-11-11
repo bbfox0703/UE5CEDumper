@@ -1372,9 +1372,25 @@ static bool s_dbgCamQueuedWant = false;
 static int s_dbgCamInFlight = -1;   // -1 none, else the direction (0 OFF / 1 ON) being dispatched
 
 // [D2-3-INVOKE] Whose toggle is being dispatched or still queued: the invoke owner of the Set that SENT it
-// (Stark::CurrentInvokeOwner). A Set that sent nothing -- answered -5 / -6 because a toggle was already queued -- never
-// changes it.
+// (Stark::CurrentInvokeOwner) -- or of a foreground client (the UI, CE) that JOINED it: one that asks for the same
+// direction is answered -5, "your toggle is queued", so it becomes so (JoinPendingToggle). An if_free Set (the MCP
+// server) never joins: it was refused before it got here if the toggle was someone else's.
 static uint64_t s_dbgCamOwner = 0;
+static uint64_t s_dbgCamSentBy = 0;     // the client whose dispatch sent the current toggle
+static uint64_t s_dbgCamJoinedBy = 0;   // a client that joined it (0: none); cleared when a new toggle is sent
+static uint64_t s_dbgCamQueuedId = 0;   // the queued toggle's request (Stark::RetagQueued)
+
+// Under s_dbgCamMutex: `answer` is what this Set is told about the toggle already pending.
+static void JoinPendingToggle(int32_t answer, bool queued) {
+    const uint64_t me = Stark::CurrentInvokeOwner();
+    if (answer != Stark::kInvokeTimedOutStillQueued || Stark::CurrentInvokeIfFree() || me == s_dbgCamOwner) return;
+    // Queued: it is the joiner's in the queue now, so the sender's session end does not drop it (false when the drain
+    // already took it: it runs now, and is the joiner's for the hold all the same). Still being dispatched: the sender
+    // retags it when its dispatch returns.
+    if (queued) Stark::RetagQueued(s_dbgCamQueuedId, me);
+    s_dbgCamOwner = me;
+    s_dbgCamJoinedBy = me;
+}
 
 // [D2-3-INVOKE] Fern's hold recorder and if_free check: an ON still queued or being dispatched turns the camera on when
 // it runs, so the client that sent it holds the camera from now -- and nobody else does. Recording nobody let the
@@ -1390,6 +1406,17 @@ bool PendingOn(uint64_t& owner) {
     owner = on ? s_dbgCamOwner : 0;
     return on;
 }
+
+// The sender's own recorder, once its toggle has run: when a client joined it, the camera is that client's, and the
+// join is used up (a later command finds none).
+bool ConsumeJoin(uint64_t caller, uint64_t& joinedBy) {
+    std::lock_guard<std::mutex> lk(s_dbgCamMutex);
+    joinedBy = 0;
+    if (s_dbgCamJoinedBy == 0 || s_dbgCamSentBy != caller || s_dbgCamJoinedBy == caller) return false;
+    joinedBy = s_dbgCamJoinedBy;
+    s_dbgCamJoinedBy = 0;
+    return true;
+}
 }  // namespace FrierenDebugCamera
 }  // extern "C++"
 
@@ -1401,12 +1428,16 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
         std::lock_guard<std::mutex> lk(s_dbgCamMutex);
         if (s_dbgCamInFlight >= 0) {
             LOG_WARN("UE5_SetDebugCamera(%d): a toggle is being dispatched -- nothing sent", enable);
-            return Stark::QueuedToggleAnswer(s_dbgCamInFlight == 1, want);
+            const int32_t answer = Stark::QueuedToggleAnswer(s_dbgCamInFlight == 1, want);
+            JoinPendingToggle(answer, false);
+            return answer;
         }
         if (s_dbgCamQueued.StillQueued()) {
             LOG_WARN("UE5_SetDebugCamera(%d): an earlier %s is still queued -- nothing sent", enable,
                      s_dbgCamQueuedWant ? "ON" : "OFF");
-            return Stark::QueuedToggleAnswer(s_dbgCamQueuedWant, want);
+            const int32_t answer = Stark::QueuedToggleAnswer(s_dbgCamQueuedWant, want);
+            JoinPendingToggle(answer, true);
+            return answer;
         }
         state = DbgCam_ReadState(cm, dcc);
         if (state < 0) {
@@ -1438,20 +1469,26 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
         }
         s_dbgCamInFlight = want ? 1 : 0;
         s_dbgCamOwner = Stark::CurrentInvokeOwner();   // [D2-3-INVOKE] this Set sends it
+        s_dbgCamSentBy = s_dbgCamOwner;
+        s_dbgCamJoinedBy = 0;
     }
     // Every exit from here clears the in-flight mark, and keeps a toggle the dispatch left queued.
     struct InFlight {
         bool want;
         std::shared_future<int32_t> queued;
+        uint64_t queuedId = 0;
         ~InFlight() {
             std::lock_guard<std::mutex> lk(s_dbgCamMutex);
             s_dbgCamInFlight = -1;
             if (queued.valid()) {
                 s_dbgCamQueued.Record(queued);
                 s_dbgCamQueuedWant = want;
+                s_dbgCamQueuedId = queuedId;
+                // [D2-3-INVOKE] A client joined while the dispatch waited: the queued toggle is its.
+                if (s_dbgCamJoinedBy != 0) Stark::RetagQueued(queuedId, s_dbgCamJoinedBy);
             }
         }
-    } inFlight{ want, {} };
+    } inFlight{ want, {}, 0 };
 
     // Known state, opposite of desired → fire ToggleDebugCamera once.
     uintptr_t cmClass = UE5_GetObjectClass(cm);
@@ -1461,11 +1498,13 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
         return -1;
     }
     int32_t r = CallProcessEventRouted(cm, ufunc, 0, 0, false, &inFlight.queued);
+    if (inFlight.queued.valid()) inFlight.queuedId = Stark::LastEnqueuedId();   // this thread's toggle, just queued
     if (r != 0) {
         LOG_WARN("UE5_SetDebugCamera: ToggleDebugCamera ProcessEvent r=%d", r);
         // [W3-DEBUGCAM-QUEUED] A TIMED-OUT toggle (-5) stays queued and still runs: pass it through, so no caller reads
-        // "nothing happened" and sends a second toggle that drains after it. Every other failure answers -1: -4
-        // entered the toggle and faulted inside it, the rest ran nothing.
+        // "nothing happened" and sends a second toggle that drains after it. [D2-3-INVOKE] -25 / -27 (an if_free
+        // caller only) pass through too, to be named. Every other failure answers -1: -4 entered the toggle and faulted
+        // inside it, the rest ran nothing.
         return Stark::StatefulToggleFailure(r);
     }
 

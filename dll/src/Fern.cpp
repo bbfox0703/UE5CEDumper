@@ -102,6 +102,7 @@ bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool dir
 // [D2-3-INVOKE] Frieren.cpp: whether a debug-camera ON is queued or being dispatched, and which client sent it.
 namespace FrierenDebugCamera {
 bool PendingOn(uint64_t& owner);
+bool ConsumeJoin(uint64_t caller, uint64_t& joinedBy);
 }
 
 // ============================================================
@@ -2502,8 +2503,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 for (const auto& h : holds) {
                     try {
                         uint64_t sender = 0;
+                        uint64_t joinedBy = 0;
                         if (HoldActive(h)) {
-                            Voll::Holds().SetOwner(h, caller);
+                            // [D2-3-INVOKE] The camera came on by this command's toggle, which a foreground client
+                            // joined while it was pending: the joiner was told it was its own, so it holds it.
+                            const bool joined = h == Grimoire::HOLD_DEBUG_CAMERA
+                                                && FrierenDebugCamera::ConsumeJoin(caller, joinedBy);
+                            Voll::Holds().SetOwner(h, joined ? joinedBy : caller);
                         } else if (HoldPending(h, sender)) {
                             // [D2-3-INVOKE] An ON on its way is its sender's. A command that sent nothing (a toggle
                             // was already queued) leaves the record as it is.
@@ -5476,6 +5482,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 j["hold"]   = h;
                 j["active"] = HoldActive(h);
                 j["holder"] = Voll::HoldOwnerJson(owner, conn->ownerKey, IsBackgroundOwner(owner));
+                // [D2-3-INVOKE] An ON on its way counts as held for if_free (the debug camera): said, so the listing
+                // agrees with the refusal.
+                uint64_t sender = 0;
+                if (HoldPending(h, sender)) j["pending"] = true;
                 arr.push_back(j);
             }
             json data;

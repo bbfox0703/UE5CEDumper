@@ -113,6 +113,11 @@ uint64_t LastInvokeBlocker();
 /// The owner this thread's invokes are queued for now (0 outside a scope): a toggle that keeps its own record of a
 /// queued call (the debug camera) records whose it is.
 uint64_t CurrentInvokeOwner();
+/// The id of the last request this thread queued (0 before any), and moving a still-queued request to another owner:
+/// a client that JOINS a queued toggle -- told it is its own -- takes it over, so the first sender's session end does
+/// not drop it. False when the drain has already taken it (it runs now) or it was answered.
+uint64_t LastEnqueuedId();
+bool RetagQueued(uint64_t id, uint64_t owner);
 
 /// [W3-DEBUGCAM-QUEUED] (documented above, with kInvokeTimedOutStillQueued) -- and [D2-3-INVOKE]: the owner rule's
 /// refusals (-25, -27) pass through too, so the pipe can name the holder instead of reporting an unreadable state. Only

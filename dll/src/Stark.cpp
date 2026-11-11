@@ -71,8 +71,9 @@ struct InvokeRequest {
     std::promise<int32_t> promise;
     bool dropIfAbandoned = false;                   // [VND584-01] ClaimRequest (Stark.h)
     std::atomic<int32_t> state{kRequestQueued};
-    uint64_t owner = 0;                             // [D2-3-INVOKE] InvokeOwnerScope's owner when it was queued
+    uint64_t owner = 0;                             // [D2-3-INVOKE] InvokeOwnerScope's owner (RetagQueued may move it)
     bool settled = false;                           // [D2-3-INVOKE] taken off s_outstanding (under s_queueMutex)
+    uint64_t id = 0;                                // [D2-3-INVOKE] for RetagQueued
 };
 
 // ---- State ----
@@ -86,11 +87,18 @@ static std::mutex s_queueMutex;
 // A deque, not a queue: DropQueuedInvokesOf takes one owner's requests out of the middle.
 static std::deque<std::shared_ptr<InvokeRequest>> s_invokeQueue;
 // [D2-3-INVOKE] Requests each owner has outstanding, under s_queueMutex: counted from the push until the request is
-// answered (run, dropped, or answered at shutdown) -- NOT until its waiter gives up, so a -5 request still counts.
+// answered (run, dropped, or answered at shutdown) -- NOT until its waiter gives up, so a -5 request still counts; a
+// dropIfAbandoned request its waiter abandons will never run, so it stops counting then.
 static std::map<uint64_t, int32_t> s_outstanding;
 static thread_local uint64_t t_invokeOwner = 0;
 static thread_local bool t_invokeIfFree = false;
 static thread_local uint64_t t_lastInvokeBlocker = 0;
+static std::atomic<uint64_t> s_nextRequestId{1};
+static thread_local uint64_t t_lastEnqueuedId = 0;
+// [D2-3-INVOKE] Set on the game thread while the drain runs a request: a ProcessEvent the request makes does not drain
+// the rest inside it. Taking one request at a time leaves the rest in the queue (where DropQueuedInvokesOf reaches
+// them), and without this they would run nested inside the first, one level deeper each.
+static thread_local bool t_draining = false;
 
 // Under s_queueMutex: `req` was answered, or will never run (its waiter abandoned it). Once only, whichever path
 // reaches it first: the waiter's abandon, the drain, Shutdown or an owner's drop.
@@ -230,10 +238,10 @@ struct OwnPeCallGuard {
 // for us and the process fast-fails (0xC0000409, FAST_FAIL_FATAL_APP_EXIT).
 //
 // That is not hypothetical — it is the DQ7R crash of 2026-08-04 (build 2622), captured in
-// a WER dump whose entire stack was inside our module. It allocates in two places, both
-// reachable while the game is tearing its object pool down: Linie's map insert, and the
-// `pending` vector below. Zero cost on x64 when nothing throws (table-driven EH). (B14,
-// scope corrected by in-game verification.)
+// a WER dump whose entire stack was inside our module. It allocates where it is reachable
+// while the game is tearing its object pool down: Linie's map insert, and (before D2-3 took
+// one request at a time) the drain's batch vector. Zero cost on x64 when nothing throws
+// (table-driven EH). (B14, scope corrected by in-game verification.)
 static void HookedProcessEventBody(void* ufunc, uint64_t nowMs, Linie::ArmHint& hint, bool onGameThread) {
     // Live PE profiler (Linie): opt-in per-UFunction fire counting. The
     // not-recording path pays exactly one relaxed atomic load + a
@@ -267,11 +275,16 @@ static void HookedProcessEventBody(void* ufunc, uint64_t nowMs, Linie::ArmHint& 
                      (unsigned long)s_gameThreadId.load(std::memory_order_relaxed), depth);
         }
     }
-    if (ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {
+    if (!t_draining && ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {
         // [D2-3-INVOKE] One request at a time, each taken under the lock just before it runs, so a request still waiting
         // here stays in the queue where DropQueuedInvokesOf finds it: a departed AI's call is dropped even while an
         // earlier one runs. Bounded by the count at the start, so requests queued meanwhile wait for the next
-        // ProcessEvent instead of keeping the game thread here.
+        // top-level ProcessEvent instead of keeping the game thread here; t_draining keeps a request's own ProcessEvent
+        // calls from draining the rest inside it, as the batch this replaced did.
+        struct DrainScope {
+            DrainScope() { t_draining = true; }
+            ~DrainScope() { t_draining = false; }
+        } drainScope;
         size_t budget = 0;
         {
             std::lock_guard<std::mutex> lock(s_queueMutex);
@@ -961,6 +974,8 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
         // Push a COPY of the shared_ptr (refcount stays >=1 locally) so `req`
         // remains valid below for the out-param copy-back even after the game
         // thread drains and pops the queue entry.
+        req->id = s_nextRequestId.fetch_add(1, std::memory_order_relaxed);
+        t_lastEnqueuedId = req->id;
         s_invokeQueue.push_back(req);
         ++s_outstanding[req->owner];
         s_queueDepth.fetch_add(1, std::memory_order_release);  // wake the hook's fast-path gate
@@ -1028,6 +1043,24 @@ bool CurrentInvokeIfFree() { return t_invokeIfFree; }
 uint64_t LastInvokeBlocker() { return t_lastInvokeBlocker; }
 
 uint64_t CurrentInvokeOwner() { return t_invokeOwner; }
+
+uint64_t LastEnqueuedId() { return t_lastEnqueuedId; }
+
+bool RetagQueued(uint64_t id, uint64_t owner) {
+    if (id == 0) return false;
+    std::lock_guard<std::mutex> lock(s_queueMutex);
+    for (auto& req : s_invokeQueue) {
+        if (req->id != id) continue;
+        if (req->settled) return false;
+        if (req->owner == owner) return true;
+        auto it = s_outstanding.find(req->owner);
+        if (it != s_outstanding.end() && --it->second <= 0) s_outstanding.erase(it);
+        ++s_outstanding[owner];
+        req->owner = owner;
+        return true;
+    }
+    return false;   // already taken by the drain (it runs now), or answered
+}
 
 uint64_t IfFreeBlocker(uint64_t caller) {
     std::lock_guard<std::mutex> lock(s_queueMutex);
