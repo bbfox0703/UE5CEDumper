@@ -41,6 +41,24 @@ public static class Constants
     /// localized Windows never says it, which is why the HResult comes first.</summary>
     public const string WindowsIoBeingUsed = "being used";
 
+    // ── MCP server mode (`UE5DumpUI.exe --mcp`) ─────────────────────────────────────────────────────────
+    // [PIPE-PER-PROCESS-2026-11-06] Stage D. A stdio Model Context Protocol server for an AI client, branched in
+    // Program.Main before the single-instance mutex. ⛔ DO NOT LOCALIZE: these are protocol words the client matches.
+    /// <summary>The command-line switch that starts the MCP server instead of the window.</summary>
+    public const string McpSwitch = "--mcp";
+    /// <summary>The server's name in <c>serverInfo</c>: what a client shows, not what it registers it under.</summary>
+    public const string McpServerName = "ue5cedumper";
+    public const string McpServerTitle = "UE5CEDumper";
+    /// <summary>The handshake revision answered when the client asks for one this server does not speak; the newest
+    /// of <see cref="McpProtocolVersions"/>. 2026-07-28 removed the handshake, and this server answers its
+    /// <c>server/discover</c> with an error, which Claude Code documents as its fallback to the handshake.</summary>
+    public const string McpLatestProtocolVersion = "2025-11-25";
+    /// <summary>Handshake revisions this server speaks; a client's request for one of them is echoed back.</summary>
+    public static readonly string[] McpProtocolVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+    /// <summary>The MCP process's log: one file per process (several AI sessions run their own), in the UI's log
+    /// folder, aged out by the same <see cref="LogMaxAgeDays"/> sweep.</summary>
+    public const string McpLogFilePrefix = "mcp-";
+
     // Application
     public const string AppName = "UE5DumpUI";
     public const string MutexName = "Global\\UE5DumpUI_SingleInstance";
