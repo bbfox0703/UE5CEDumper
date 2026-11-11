@@ -218,6 +218,23 @@ public sealed class McpServerTests
         Assert.False(echo["annotations"]!["openWorldHint"]!.GetValue<bool>());
         Assert.False(tools[1]!["annotations"]!["readOnlyHint"]!.GetValue<bool>());
         Assert.False(tools[1]!["annotations"]!["idempotentHint"]!.GetValue<bool>());
+        Assert.Null(echo["_meta"]);
+        Assert.Null(tools[1]!["_meta"]);
+    }
+
+    [Fact]
+    public async Task ToolsList_AToolThatAsksEveryTime_CarriesClaudeCodesMarker_AndIsDestructive()
+    {
+        // Claude Code reads _meta["anthropic/requiresUserInteraction"] and asks before every call, an allow rule and
+        // auto mode included (Stage D2-2); destructiveHint tells any other client the same.
+        var asks = new McpTool("write_x", "X", "X.", McpSchema.Object(), ReadOnly: false,
+            (_, _) => Task.FromResult(new McpToolResult(new JsonObject())), Destructive: true,
+            RequiresInteraction: true);
+        var tools = (await new Rig(Echo(), asks).Request("tools/list"))["result"]!["tools"]!.AsArray();
+        var entry = tools[1]!;
+        Assert.True(entry["_meta"]!["anthropic/requiresUserInteraction"]!.GetValue<bool>());
+        Assert.True(entry["annotations"]!["destructiveHint"]!.GetValue<bool>());
+        Assert.False(tools[0]!["annotations"]!["destructiveHint"]!.GetValue<bool>());
     }
 
     [Fact]

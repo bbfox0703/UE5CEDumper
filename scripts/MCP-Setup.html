@@ -49,9 +49,12 @@ do in the UI: find objects, read their fields and class layouts, follow pointers
 
 <p>Started with <code>--mcp</code>, the exe opens no window. The AI client starts it and stops it.</p>
 
-<blockquote><strong>This version only reads.</strong> It never writes game memory, calls a game function, or turns a
-feature on. Every reading tool's name starts with <code>read_</code>; the one other tool, <code>scan_start</code>,
-starts the object scan on a game whose scan has never run.</blockquote>
+<blockquote><strong>What the AI can change.</strong> Every reading tool's name starts with <code>read_</code>;
+<code>scan_start</code> starts the object scan on a game whose scan has never run. The tools whose names start with
+<code>write_</code> turn the gameplay features on and off (god mode, movement, gravity direction, time dilation, debug
+camera, mouse cursor, and the experimental Fly, Keep Foreground, See-through and force field) and teleport the player
+to explicit coordinates. They ask you before every call. The AI never writes raw game memory and never calls a game
+function in this version.</blockquote>
 
 <hr>
 
@@ -107,6 +110,9 @@ Claude Code <code>settings.json</code>:</p>
 <p>In the default permission mode, <code>scan_start</code> still asks first. In auto mode, Claude Code decides on its
 own and may run <code>scan_start</code> without asking.</p>
 
+<p>The <code>write_</code> tools ask every time, in every permission mode, and an allow rule does not skip them
+(Claude Code 2.1.246 or later).</p>
+
 <h2>4. Using it</h2>
 
 <ol>
@@ -127,6 +133,12 @@ together; the AI's work never ends or slows down yours:</p>
   <li>the server leaves out every command that changes state another program uses.</li>
 </ul>
 <p>The UI does not show what the AI read.</p>
+
+<p><strong>What you turned on stays yours.</strong> When the UI, a Cheat Engine record or another AI session holds a
+feature, the AI's change to it is refused and the AI is told who holds it. What the AI turned on is turned off when
+its session ends. A teleport by the AI leaves your marker slots and <strong>Recall last</strong> alone. The
+experimental features refuse while the UI's experimental features are off. The write tools need the DLL from build
+3705 or later.</p>
 
 <h3>A game running as administrator</h3>
 

@@ -32,7 +32,10 @@ internal static class McpHost
         {
             using var pipe = new PipeClient(log, "M");
             using var game = new McpGameLink(pipe, platform, log);
-            var server = new McpServer(McpTools.Create(game), log, stdout, version);
+            // The UI's experimental opt-in binds the AI too (Stage D2): read on every call, so the UI's change counts at
+            // once.
+            var server = new McpServer(McpTools.Create(game, () => new ExperimentalGate(platform).IsEnabled), log,
+                stdout, version);
             int code = server.RunAsync(stdin).GetAwaiter().GetResult();
             try { pipe.DisconnectAsync().GetAwaiter().GetResult(); } catch (Exception) { /* exiting anyway */ }
             return code;

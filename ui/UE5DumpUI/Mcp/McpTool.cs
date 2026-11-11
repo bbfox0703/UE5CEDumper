@@ -7,8 +7,11 @@ namespace UE5DumpUI.Mcp;
 /// <summary>
 /// [PIPE-PER-PROCESS-2026-11-06] Stage D. One MCP tool: what <c>tools/list</c> advertises and what <c>tools/call</c>
 /// runs. <paramref name="ReadOnly"/> becomes <c>readOnlyHint</c>, and the name's <c>read_</c> prefix is what lets one
-/// Claude Code allow rule (<c>mcp__&lt;server&gt;__read_*</c>) admit every read while anything else keeps its prompt;
-/// McpToolCatalogTests pins that the two agree.
+/// Claude Code allow rule (<c>mcp__&lt;server&gt;__read_*</c>) admit every read; McpToolsTests pins that the two agree.
+/// <para><paramref name="RequiresInteraction"/> (Stage D2, every <c>write_*</c> tool) becomes
+/// <c>_meta["anthropic/requiresUserInteraction"]</c>: Claude Code then asks before every call in every permission
+/// mode, an allow rule notwithstanding. An allow rule alone does not keep a tool from running in auto mode -- measured,
+/// verification-register item 15 -- so a tool that changes the game carries the marker, not just its name.</para>
 /// </summary>
 internal sealed record McpTool(
     string Name,
@@ -17,7 +20,9 @@ internal sealed record McpTool(
     JsonObject InputSchema,
     bool ReadOnly,
     Func<McpArgs, CancellationToken, Task<McpToolResult>> Run,
-    bool Idempotent = true);
+    bool Idempotent = true,
+    bool Destructive = false,
+    bool RequiresInteraction = false);
 
 /// <summary>What a tool returns: a JSON payload for the model, whether it is an error the model can act on, and an
 /// optional note shown beside it (a reconnect, a cut reply).</summary>
@@ -80,6 +85,26 @@ internal sealed class McpArgs(JsonObject? args)
 
     /// <summary>An integer clamped to [min, max]; the schema advertises the same bounds.</summary>
     public int Int(string name, int def, int min, int max) => Math.Clamp(OptInt(name) ?? def, min, max);
+
+    /// <summary>A finite number, or null when absent. A numeric string is read too.</summary>
+    public double? OptDouble(string name)
+    {
+        var node = _args[name];
+        if (node is null) return null;
+        if (node is JsonValue v)
+        {
+            if (v.GetValueKind() == JsonValueKind.Number && v.TryGetValue<double>(out double d) && double.IsFinite(d))
+                return d;
+            if (McpJson.TryGetLong(v, out long l)) return l;
+            if (v.GetValueKind() == JsonValueKind.String
+                && double.TryParse(v.GetValue<string>(), NumberStyles.Float, CultureInfo.InvariantCulture, out double p)
+                && double.IsFinite(p))
+                return p;
+        }
+        throw new McpToolError($"'{name}' must be a number.");
+    }
+
+    public double ReqDouble(string name) => OptDouble(name) ?? throw new McpToolError($"'{name}' is required.");
 
     public bool Bool(string name, bool def)
     {
@@ -202,6 +227,8 @@ internal static class McpSchema
     }
 
     public static JsonObject Long(string description) => new() { ["type"] = "integer", ["description"] = description };
+
+    public static JsonObject Number(string description) => new() { ["type"] = "number", ["description"] = description };
 
     public static JsonObject Bool(string description, bool def) => new()
     {

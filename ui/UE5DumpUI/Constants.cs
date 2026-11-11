@@ -58,6 +58,14 @@ public static class Constants
     /// <summary>The MCP process's log: one file per process (several AI sessions run their own), in the UI's log
     /// folder, aged out by the same <see cref="LogMaxAgeDays"/> sweep.</summary>
     public const string McpLogFilePrefix = "mcp-";
+    /// <summary>The tool-definition <c>_meta</c> key Claude Code reads to ask before every call of a tool, in every
+    /// permission mode, an allow rule notwithstanding (Claude Code 2.1.246 and later). Every write_* tool carries it.
+    /// </summary>
+    public const string McpRequiresInteractionKey = "anthropic/requiresUserInteraction";
+    /// <summary>The first DLL build the write tools may change a game through: build 3704 records who holds each hold
+    /// (if_free, get_holds) and 3705 keeps the user's undo point on an AI's teleport (keep_undo). An older DLL ignores
+    /// both keys and would let a write replace what the user holds, so the write tools refuse it.</summary>
+    public const int McpMinDllBuildForWrites = 3705;
 
     // Application
     public const string AppName = "UE5DumpUI";

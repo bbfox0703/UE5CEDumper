@@ -2,12 +2,15 @@
 
 `UE5DumpUI.exe --mcp` turns the UI's exe into a [Model Context Protocol](https://modelcontextprotocol.io) server. An
 AI client such as Claude Code or Claude Desktop starts it and talks to it over stdin / stdout. The AI can then look
-through the game the way you do in the UI: find objects, read their fields, follow pointers, and run value scans.
+through the game the way you do in the UI: find objects, read their fields, follow pointers, and run value scans. It
+can also turn the gameplay features on and off and teleport the player, and each of those asks you first.
 
 Started with `--mcp`, the exe opens no window. The AI client starts it and closes it.
 
-> ℹ️ **This version only reads.** It never writes game memory, calls a game function, or turns a feature on.
-> Writing tools are planned for a later version, and each will ask you before it runs.
+> ℹ️ **What the AI can change.** The gameplay toggles (god mode, movement, gravity direction, time dilation, debug
+> camera, mouse cursor, and the experimental Fly, Keep Foreground, See-through and force field) and a teleport to
+> explicit coordinates. It never writes raw game memory and never calls a game function in this version.
+> See [Changing the game](#changing-the-game).
 
 ## What it needs
 
@@ -44,7 +47,8 @@ claude mcp add --scope user ue5cedumper -- "C:\Tools\UE5CEDumper\UE5DumpUI.exe" 
 
 **Skip the prompts for reads (optional).** Every tool that only reads has a name that starts with `read_`. In Claude
 Code, one allow rule in `settings.json` admits all of them. In the default permission mode anything else still asks
-first. Auto mode decides on its own and may run `scan_start` without asking (measured).
+first. Auto mode decides on its own and may run `scan_start` without asking (measured). The `write_*` tools ask
+every time in every mode, whatever the allow rules say.
 
 ```json
 { "permissions": { "allow": ["mcp__ue5cedumper__read_*"] } }
@@ -63,6 +67,8 @@ The server and the UI are separate processes and can run together. Each AI sessi
   while one runs still gets the other half. This needs the DLL from the same release.
 - **Nothing shared is changed.** The server leaves out every command that changes state another client uses. It
   starts a scan only on a game whose scan has never run.
+- **Your holds stay yours.** A feature you turned on in the UI or in a Cheat Engine record is never replaced or
+  turned off by the AI; see [Changing the game](#changing-the-game).
 - **The UI does not see the AI's work.** Results the AI reads appear only in its own conversation.
 
 ## The tools
@@ -104,9 +110,47 @@ The server and the UI are separate processes and can run together. Each AI sessi
 | `read_value_scan_end` | Ends a session. |
 | `read_pipe_clients` | The programs connected to the game's pipe. |
 | `read_offsets` | The engine layout offsets the DLL measured. |
+| `read_holds` | Each gameplay hold (god mode, movement knobs, time dilation, fly, force-field jobs...): in force or not, and who holds it. |
+| `read_pose` | The player pawn's location, rotation and map. |
+| `read_movement` | Walk speed, gravity scale, jump velocity and gravity direction: value, base, multiplier, held or not. |
+| `read_time_dilation` | World and pawn time dilation: value, natural value, held or not. |
+| `read_forced_fields` | The force-field jobs. |
 
 Addresses go in and come out as hex strings (`"0x7FF6A1B2C3D0"`). Lists come in small pages. A reply that would be
 too long for the AI is cut by whole entries, and a note says how much was left out.
+
+## Changing the game
+
+| Tool | What it does |
+|---|---|
+| `write_god_mode` | God mode on or off (holds the player's `bCanBeDamaged` at false). |
+| `write_movement` | Holds walk speed, gravity scale or jump at the base times a multiplier, or resets it. |
+| `write_gravity_direction` | Holds the gravity direction at a vector (UE 5.3+), or resets it. |
+| `write_time_dilation` | Holds world or pawn time dilation at a value, or resets it. |
+| `write_debug_camera` | The engine's debug camera on or off (needs a CheatManager). |
+| `write_mouse_cursor` | Shows or hides the game's mouse cursor once; nothing holds it. |
+| `write_fly` | Experimental. Fly on or off, its speed, key preset and noclip. |
+| `write_foreground_lock` | Experimental. Keep Foreground on or off. |
+| `write_see_through` | Experimental. See-through on or off. |
+| `write_force_field` | Experimental. Holds a bool or numeric field on every live instance of a class. |
+| `write_force_field_reset` | Experimental. Releases one force-field job the AI holds. |
+| `write_teleport` | Moves the player to explicit coordinates and returns the pose it left. |
+
+- **Asked every time.** Every `write_*` tool asks you before each call, in every permission mode, and an allow rule
+  does not skip it (Claude Code 2.1.246 or later).
+- **Never over you.** When the UI, a Cheat Engine record or another AI session holds a feature, the AI's change is
+  refused and the reply names the holder. The DLL decides this under the feature's own lock, so a change you make at
+  the same moment cannot be overwritten. The AI never releases every forced field at once, and See-through stays on
+  while you also have it on.
+- **Released when the AI session ends.** What the AI turned on is turned off when its server exits, and what you turned
+  on stays.
+- **Your teleport markers are yours.** `write_teleport` goes only to coordinates it is given: it never reads, saves or
+  clears a marker slot, and **Recall last** in the UI still returns you to where you were before your own last
+  teleport.
+- **The experimental features follow the UI's switch.** Fly, Keep Foreground, See-through and the force field refuse
+  while the UI's experimental features are off. The switch is read on every call.
+- **The DLL must be build 3705 or later.** An older DLL cannot tell the AI's change from yours, so every write tool
+  refuses it and says to update the DLL.
 
 ## When something goes wrong
 
@@ -121,6 +165,9 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 | "Every connection to game N's pipe is taken" | Close a program holding one; the message names them. |
 | "Windows refused the connection to game N: the game runs as administrator" | Start the AI client elevated too, or start the game normally. A server started over SSH runs elevated for an administrator account. |
 | "... did not answer within N s" | The game is paused, loading or very large; the next call reconnects. |
+| "Not changed: ... is held by ..." | You (or the named program) hold that feature. Release it where it was set if you want the AI to take it. |
+| "... is an experimental feature, and the UE5DumpUI window's experimental features are off" | Turn them on in the UI if you want the AI to use them. |
+| "The game's DLL is build N, older than 3705" | Run **Update All** on the Proxy Deploy tab and restart the game, or inject the new DLL. |
 
 The server writes its log to `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5DumpUI\mcp-<date>-<time>-<pid>.log`, one file per
 server; files older than 21 days are deleted.

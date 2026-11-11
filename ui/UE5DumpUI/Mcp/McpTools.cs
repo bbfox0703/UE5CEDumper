@@ -4,14 +4,15 @@ using UE5DumpUI.Helpers;
 namespace UE5DumpUI.Mcp;
 
 /// <summary>
-/// [PIPE-PER-PROCESS-2026-11-06] Stage D1. The tools the MCP server offers: the DLL's read commands, one tool each.
+/// [PIPE-PER-PROCESS-2026-11-06] Stage D1. The tools the MCP server offers: the DLL's read commands, one tool each,
+/// then <see cref="McpWriteTools"/>' gameplay changes (Stage D2-2), which carry their own rules.
 ///
-/// <para><b>Only reads, and nothing another client shares.</b> D1 is read-only (maintainer, 2026-11-11). It also
-/// leaves out every command whose state another client sees, so an AI working beside the UI never disturbs what the
-/// UI is doing (maintainer, 2026-11-11: the two must not interfere): <c>begin_snapshot</c> clears the name cache a UI
-/// snapshot is using, the LiveFuncs recording is one per game, and <c>reset_diagnostics</c> and the version / timeout
-/// / packed overrides are process-wide. <c>scan_start</c> starts a scan only on a game nobody has scanned. Value-scan
-/// sessions belong to this server's connection (Stage C), so they are its own.</para>
+/// <para><b>Nothing another client shares.</b> The reads here leave out every command whose state another client
+/// sees, so an AI working beside the UI never disturbs what the UI is doing (maintainer, 2026-11-11: the two must not
+/// interfere): <c>begin_snapshot</c> clears the name cache a UI snapshot is using, the LiveFuncs recording is one per
+/// game, and <c>reset_diagnostics</c> and the version / timeout / packed overrides are process-wide. <c>scan_start</c>
+/// starts a scan only on a game nobody has scanned. Value-scan sessions belong to this server's connection (Stage C),
+/// so they are its own.</para>
 ///
 /// <para><b>Small by default.</b> Limits default to a page an AI can read in one reply, and the schema states each
 /// bound; <see cref="McpResultFit"/> cuts whatever still grows past the reply cap. A <c>name_filter</c> on the list
@@ -36,7 +37,7 @@ internal static class McpTools
         ("name_filter", McpSchema.Str("Keep only entries whose name contains every space-separated word "
                                       + "(case-insensitive)."), false);
 
-    public static IReadOnlyList<McpTool> Create(IMcpGame game)
+    public static IReadOnlyList<McpTool> Create(IMcpGame game, Func<bool>? experimentalEnabled = null)
     {
         var tools = new List<McpTool>
         {
@@ -407,6 +408,9 @@ internal static class McpTools
                 + "whether they were validated.",
                 [], "get_offsets", null, needsScan: false),
         };
+        // Stage D2-2: the tools that change the game. Without a reading of the UI's experimental switch, the experimental
+        // ones refuse.
+        tools.AddRange(McpWriteTools.Create(game, experimentalEnabled ?? (() => false)));
         return tools;
     }
 

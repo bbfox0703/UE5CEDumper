@@ -20,6 +20,8 @@ public sealed class McpToolsTests
         public List<JsonObject> Sent { get; } = new();
         public Dictionary<string, Func<JsonObject, JsonObject>> Answers { get; } = new();
         public McpScanState State { get; set; } = McpScanState.Ready;
+        /// <summary>The DLL build get_pointers reports: one the write tools accept unless a test says otherwise.</summary>
+        public int DllBuild { get; set; } = Constants.McpMinDllBuildForWrites;
         public string? PendingNotice { get; set; }
         public int ScanChecks { get; private set; }
 
@@ -58,7 +60,9 @@ public sealed class McpToolsTests
             }
             Sent.Add((JsonObject)request.DeepClone());
             string cmd = request["cmd"]!.GetValue<string>();
-            JsonObject reply = Answers.TryGetValue(cmd, out var f) ? f(request) : new JsonObject();
+            JsonObject reply = Answers.TryGetValue(cmd, out var f) ? f(request)
+                : cmd == "get_pointers" ? new JsonObject { ["build_number"] = DllBuild, ["pid"] = 4242 }
+                : new JsonObject();
             reply["id"] = 1;
             reply["ok"] ??= true;
             reply["_t_read_ms"] = 3;
@@ -81,9 +85,12 @@ public sealed class McpToolsTests
         public IEnumerable<string> Commands => Sent.Select(r => r["cmd"]!.GetValue<string>());
     }
 
-    private static IReadOnlyList<McpTool> Catalog(FakeGame? game = null) => McpTools.Create(game ?? new FakeGame());
+    /// <summary>The catalogue, with the UI's experimental switch read as <paramref name="experimental"/>.</summary>
+    private static IReadOnlyList<McpTool> Catalog(FakeGame? game = null, bool experimental = true)
+        => McpTools.Create(game ?? new FakeGame(), () => experimental);
 
-    private static McpTool Tool(string name, FakeGame game) => Catalog(game).Single(t => t.Name == name);
+    private static McpTool Tool(string name, FakeGame game, bool experimental = true)
+        => Catalog(game, experimental).Single(t => t.Name == name);
 
     private static async Task<(JsonNode? Payload, McpToolResult Result)> Call(FakeGame game, string tool,
         JsonObject? args = null)
@@ -111,12 +118,26 @@ public sealed class McpToolsTests
     }
 
     [Fact]
-    public void ReadOnlyHint_IsExactlyTheReadPrefix_AndScanStartIsTheOnlyOtherTool()
+    public void ReadOnlyHint_IsExactlyTheReadPrefix_AndTheRestIsScanStartOrAWrite()
     {
         // One allow rule, mcp__<server>__read_*, must admit every read and nothing else.
         var tools = Catalog();
         Assert.All(tools, t => Assert.Equal(t.Name.StartsWith("read_", StringComparison.Ordinal), t.ReadOnly));
-        Assert.Equal(["scan_start"], tools.Where(t => !t.ReadOnly).Select(t => t.Name).ToArray());
+        Assert.All(tools.Where(t => !t.ReadOnly), t =>
+            Assert.True(t.Name == "scan_start" || t.Name.StartsWith("write_", StringComparison.Ordinal), t.Name));
+        Assert.Contains(tools, t => t.Name.StartsWith("write_", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void EveryWriteTool_AsksEveryTime_AndIsMarkedDestructive()
+    {
+        // An allow rule does not keep a tool from running in auto mode (measured, register item 15): the marker does.
+        foreach (var t in Catalog())
+        {
+            bool write = t.Name.StartsWith("write_", StringComparison.Ordinal);
+            Assert.Equal(write, t.RequiresInteraction);
+            Assert.Equal(write, t.Destructive);
+        }
     }
 
     [Fact]
@@ -156,10 +177,12 @@ public sealed class McpToolsTests
         }
     }
 
-    /// <summary>The DLL commands D1 may send. Everything else either writes, toggles or invokes (D2), or changes state
-    /// another client shares (maintainer, 2026-11-11: an AI beside the UI must not disturb it): begin_snapshot clears
-    /// the name cache a UI snapshot uses, the LiveFuncs recording is one per game, and reset_diagnostics and the
-    /// version / timeout / packed overrides are process-wide.</summary>
+    /// <summary>The DLL commands the server may send. D1's reads, D2-2's gameplay changes and the reads around them.
+    /// Left out, and pinned out by <see cref="NeverSent"/>: what changes state another client shares (maintainer,
+    /// 2026-11-11: an AI beside the UI must not disturb it) -- begin_snapshot clears the name cache a UI snapshot uses,
+    /// the LiveFuncs recording is one per game, reset_diagnostics and the version / timeout / packed overrides are
+    /// process-wide, reset_all_fields ends everyone's holds, the marker slots and the undo point are the user's -- and
+    /// D2-3's raw writes and invokes, not built yet.</summary>
     private static readonly HashSet<string> AllowedCommands =
     [
         "get_pointers", "scan_status", "trigger_scan", "search_objects", "find_object", "find_instances",
@@ -169,10 +192,29 @@ public sealed class McpToolsTests
         "find_property_xrefs", "walk_function_props", "get_function_code_addr", "find_functions_by_class",
         "list_all_functions", "list_enums", "get_ce_pointer_info", "walk_datatable_rows", "begin_value_scan",
         "refine_value_scan", "query_candidates", "end_value_scan", "pipe_clients", "get_offsets",
+        // D2-2: the reads around the writes
+        "get_holds", "teleport_get_pose", "get_movement_params", "get_time_state", "get_forced_fields",
+        "seethrough_get_state",
+        // D2-2: the writes
+        "set_god_mode", "set_movement_multiplier", "reset_movement", "set_gravity_direction",
+        "reset_gravity_direction", "set_time_dilation", "reset_time_dilation", "set_debug_camera", "set_mouse_cursor",
+        "fly_set", "set_foreground_lock", "seethrough_set", "force_field", "reset_field", "teleport_recall_marker",
+    ];
+
+    /// <summary>Commands the server must never send, whatever a later edit allows.</summary>
+    private static readonly HashSet<string> NeverSent =
+    [
+        "reset_all_fields", "teleport_save_marker", "teleport_clear_marker", "teleport_recall_last",
+        "teleport_to_cursor", "teleport_relative", "set_invoke_timeout", "set_ue_version_override",
+        "set_packed_consts", "reset_diagnostics", "begin_snapshot", "pe_profile_start",
     ];
 
     [Fact]
-    public async Task EveryTool_CalledWithArgumentsItsOwnSchemaAllows_SendsOnlyReadCommands()
+    public void NothingNeverSent_IsAllowed()
+        => Assert.Empty(AllowedCommands.Intersect(NeverSent));
+
+    [Fact]
+    public async Task EveryTool_CalledWithArgumentsItsOwnSchemaAllows_SendsOnlyAllowedCommands()
     {
         // Driven by each schema, so a tool added later is covered without a line here. Twice: on a scanned game (every
         // tool's main path) and on an unscanned one (scan_start's path that starts a scan).
@@ -185,7 +227,10 @@ public sealed class McpToolsTests
                 var (payload, result) = await Call(game, t.Name, ArgsFromSchema(t.InputSchema));
                 if (scanned && result.IsError) refused.Add($"{t.Name}: {payload!["error"]}");
                 foreach (var cmd in game.Commands)
+                {
                     Assert.True(AllowedCommands.Contains(cmd), $"{t.Name} sent {cmd}");
+                    Assert.DoesNotContain(cmd, NeverSent);
+                }
             }
         }
         // Every tool's schema-valid call succeeded on a scanned game, so its main path was walked.
@@ -226,6 +271,7 @@ public sealed class McpToolsTests
             args[name] = type switch
             {
                 "integer" => name == "session_id" ? 7 : p["minimum"]?.GetValue<int>() ?? 1,
+                "number" => 1.5,
                 "boolean" => false,
                 "array" => new JsonArray(),
                 _ when p["enum"] is JsonArray e => e[0]!.GetValue<string>(),
@@ -567,6 +613,184 @@ public sealed class McpToolsTests
         var (payload, _) = await Call(game, "read_games");
         Assert.Equal(4242, payload!["games"]![0]!["pid"]!.GetValue<int>());
         Assert.Empty(game.Sent);
+    }
+
+    // ── The write tools (Stage D2-2) ────────────────────────────────────────────────────────────────────
+
+    private static readonly HashSet<string> HoldCommands =
+    [
+        "set_god_mode", "set_movement_multiplier", "reset_movement", "set_gravity_direction",
+        "reset_gravity_direction", "set_time_dilation", "reset_time_dilation", "set_debug_camera", "fly_set",
+        "set_foreground_lock", "force_field", "reset_field",
+    ];
+
+    [Fact]
+    public async Task EveryChangeToAHold_CarriesIfFree()
+    {
+        // The DLL refuses an if_free change to another's hold under the hold's own lock (D2-1); a request without it
+        // would replace or end what the user holds.
+        int seen = 0;
+        foreach (var t in Catalog().Where(t => t.Name.StartsWith("write_", StringComparison.Ordinal)))
+        {
+            foreach (var args in new[] { ArgsFromSchema(t.InputSchema), WithReset(ArgsFromSchema(t.InputSchema)) })
+            {
+                var game = new FakeGame();
+                await Call(game, t.Name, args);
+                foreach (var r in game.Sent.Where(r => HoldCommands.Contains(r["cmd"]!.GetValue<string>())))
+                {
+                    seen++;
+                    Assert.True(r["if_free"]?.GetValue<bool>() == true, $"{t.Name} sent {r["cmd"]} without if_free");
+                }
+            }
+        }
+        Assert.True(seen >= HoldCommands.Count, $"only {seen} hold changes were driven");
+    }
+
+    private static JsonObject WithReset(JsonObject args)
+    {
+        if (args.ContainsKey("reset")) args["reset"] = true;
+        return args;
+    }
+
+    [Fact]
+    public async Task AWriteToAnOlderDll_IsRefused_BeforeAnythingIsSent()
+    {
+        // A DLL before Constants.McpMinDllBuildForWrites ignores if_free and keep_undo.
+        var game = new FakeGame { DllBuild = Constants.McpMinDllBuildForWrites - 1 };
+        var (payload, result) = await Call(game, "write_god_mode", new JsonObject { ["enable"] = true });
+        Assert.True(result.IsError);
+        Assert.Contains("older than", payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("set_god_mode", game.Commands);
+    }
+
+    [Theory]
+    [InlineData("write_fly", """{"enable":true}""", "fly_set")]
+    [InlineData("write_foreground_lock", """{"enable":true}""", "set_foreground_lock")]
+    [InlineData("write_see_through", """{"enable":true}""", "seethrough_set")]
+    [InlineData("write_force_field", """{"class_name":"C","field_name":"f","kind":"bool","on":true}""", "force_field")]
+    [InlineData("write_force_field_reset", """{"class_name":"C","field_name":"f"}""", "reset_field")]
+    public async Task AnExperimentalWrite_FollowsTheUisExperimentalSwitch(string tool, string argsJson, string cmd)
+    {
+        var off = new FakeGame();
+        McpToolResult result;
+        try
+        {
+            result = await Tool(tool, off, experimental: false)
+                .Run(new McpArgs((JsonObject)JsonNode.Parse(argsJson)!), CancellationToken.None);
+        }
+        catch (McpToolError e) { result = McpToolResult.Fail(e.Message); }
+        Assert.True(result.IsError);
+        Assert.Contains("experimental", result.Payload["error"]!.GetValue<string>());
+        Assert.Empty(off.Sent);
+
+        var on = new FakeGame();
+        await Call(on, tool, (JsonObject)JsonNode.Parse(argsJson)!);
+        Assert.Contains(cmd, on.Commands);
+    }
+
+    [Theory]
+    [InlineData("client", 4321, false, "the UE5DumpUI window or another program (pid 4321)")]
+    [InlineData("client", 777, true, "another AI session (pid 777)")]
+    [InlineData("ce", 0, false, "a Cheat Engine record")]
+    [InlineData("none", 0, false, "recorded no owner")]
+    public async Task AHoldSomeoneElseHolds_IsNotChanged_AndTheHolderIsNamed(string kind, int pid, bool background,
+        string named)
+    {
+        var game = new FakeGame();
+        var holder = new JsonObject { ["kind"] = kind, ["you"] = false };
+        if (pid != 0) { holder["pid"] = pid; holder["background"] = background; }
+        game.Answers["set_god_mode"] = _ => new JsonObject { ["code"] = -20, ["hold"] = "god_mode", ["holder"] = holder };
+        var (payload, result) = await Call(game, "write_god_mode", new JsonObject { ["enable"] = false });
+        Assert.True(result.IsError);
+        string text = payload!["error"]!.GetValue<string>();
+        Assert.Contains("Not changed: god_mode is held by", text);
+        Assert.Contains(named, text);
+    }
+
+    [Fact]
+    public async Task AModulesRefusal_IsAnError_WithItsCode()
+    {
+        var game = new FakeGame();
+        game.Answers["set_debug_camera"] = _ => new JsonObject { ["state"] = -17 };
+        game.Answers["set_god_mode"] = _ => new JsonObject { ["state"] = -3, ["code"] = -3 };
+        var (_, r) = await Call(game, "write_god_mode", new JsonObject { ["enable"] = true });
+        Assert.True(r.IsError);
+        Assert.Contains("code -3", r.Note);
+    }
+
+    [Fact]
+    public async Task Teleport_GoesToExplicitCoordinates_KeepsTheUndoPoint_AndSaysWhereItLeft()
+    {
+        var game = new FakeGame();
+        game.Answers["teleport_get_pose"] = _ => new JsonObject
+        {
+            ["x"] = 10.0, ["y"] = 20.0, ["z"] = 30.0, ["yaw"] = 90.0, ["map"] = "ThirdPersonMap",
+        };
+        game.Answers["teleport_recall_marker"] = _ => new JsonObject { ["code"] = 0, ["tier"] = 1 };
+        var (payload, result) = await Call(game, "write_teleport",
+            new JsonObject { ["x"] = 1.0, ["y"] = 2.0, ["z"] = 3.0 });
+        Assert.False(result.IsError);
+        var req = game.Sent.Single(r => r["cmd"]!.GetValue<string>() == "teleport_recall_marker");
+        Assert.True(req["keep_undo"]!.GetValue<bool>());
+        Assert.False(req.ContainsKey("slot"));
+        Assert.Equal(3.0, req["z"]!.GetValue<double>());
+        Assert.Equal(30.0, payload!["from"]!["z"]!.GetValue<double>());
+        Assert.Equal("ThirdPersonMap", payload["from"]!["map"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task ForceField_DoesNotOffer_ClearingAnObjectPointer()
+    {
+        // object_null cannot be undone.
+        var game = new FakeGame();
+        var (_, r) = await Call(game, "write_force_field",
+            new JsonObject { ["class_name"] = "C", ["field_name"] = "f", ["kind"] = "object_null" });
+        Assert.True(r.IsError);
+        Assert.DoesNotContain("force_field", game.Commands);
+    }
+
+    [Theory]
+    [InlineData(2, false, true)]    // the UI also holds a claim
+    [InlineData(1, true, true)]     // CE's record holds it
+    [InlineData(1, false, false)]   // only this server's claim: may turn it off
+    public async Task SeeThroughOff_IsRefused_WhileAnotherClaimWouldEndWithIt(int claims, bool ce, bool refused)
+    {
+        // An explicit OFF drops every claim (Stage C), so this server turns it off only over its own claim alone.
+        var game = new FakeGame();
+        var tool = Tool("write_see_through", game);
+        game.Answers["seethrough_set"] = _ => new JsonObject { ["code"] = 0, ["active"] = true };
+        await tool.Run(new McpArgs(new JsonObject { ["enable"] = true }), CancellationToken.None);
+        game.Answers["seethrough_get_state"] = _ => new JsonObject
+        {
+            ["active"] = true, ["claims"] = claims, ["ce_claimed"] = ce,
+        };
+        game.Answers["seethrough_set"] = _ => new JsonObject { ["code"] = 0, ["active"] = false };
+        McpToolResult result;
+        try { result = await tool.Run(new McpArgs(new JsonObject { ["enable"] = false }), CancellationToken.None); }
+        catch (McpToolError e) { result = McpToolResult.Fail(e.Message); }
+        Assert.Equal(refused, result.IsError);
+        Assert.Equal(refused ? 1 : 2, game.Commands.Count(c => c == "seethrough_set"));
+    }
+
+    [Fact]
+    public async Task SeeThroughOff_IsRefused_WhenThisServerNeverTurnedItOn()
+    {
+        var game = new FakeGame();
+        game.Answers["seethrough_get_state"] = _ => new JsonObject { ["active"] = true, ["claims"] = 1 };
+        var (_, r) = await Call(game, "write_see_through", new JsonObject { ["enable"] = false });
+        Assert.True(r.IsError);
+        Assert.DoesNotContain("seethrough_set", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteMovement_Reset_SendsTheReset_NotAMultiplier()
+    {
+        var game = new FakeGame();
+        await Call(game, "write_movement", new JsonObject { ["knob"] = "jump", ["reset"] = true });
+        var req = game.Sent.Last();
+        Assert.Equal("reset_movement", req["cmd"]!.GetValue<string>());
+        Assert.Equal("jump", req["knob"]!.GetValue<string>());
+        Assert.False(req.ContainsKey("multiplier"));
     }
 
     // ── Arguments ───────────────────────────────────────────────────────────────────────────────────────

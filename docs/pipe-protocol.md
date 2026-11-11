@@ -2302,7 +2302,10 @@ current pose (TP facing) came from a parent-relative read, nothing moved
   |   { "code":-16, "tier":0 }   // a marker saved from a parent-relative read; force too
 // Explicit-pose variant (BugItGo): pass x/y/z (+optional pitch/yaw/roll)
 // instead of slot — bypasses the marker store and the map check.
-{ "cmd": "teleport_recall_marker", "x":…, "y":…, "z":…, "pitch":…, "yaw":…, "roll":… }
+// keep_undo (build 3705+, default false): leave the process-wide "last" slot as
+// it is, so teleport_recall_last still returns where the user last was. The MCP
+// server's write_teleport always sends it; an older DLL ignores the key.
+{ "cmd": "teleport_recall_marker", "x":…, "y":…, "z":…, "pitch":…, "yaw":…, "roll":…, "keep_undo":false }
 
 { "cmd": "teleport_to_cursor", "zOffset":100.0, "channel":0, "fallbackCenter":true }
 → { "code":0,"tier":1,"usedCenter":false,"hitX":…,"hitY":…,"hitZ":… }

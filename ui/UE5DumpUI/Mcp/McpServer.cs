@@ -57,8 +57,14 @@ internal sealed class McpServer
         + "points at an object, read_path_from_root how to reach it from GWorld, read_ce_pointer a Cheat Engine "
         + "pointer to it. read_value_scan_begin / _refine / _results / _end is a Cheat Engine-style value search "
         + "over UPROPERTY fields.\n"
-        + "Every tool here only reads, except scan_start, which starts a scan on a game nobody has scanned. Calls "
-        + "run one at a time on this server's own pipe connection; a UE5DumpUI window has its own connections and "
+        + "read_* tools only read. scan_start starts a scan on a game whose scan never ran. write_* tools change the "
+        + "game (god mode, movement, time dilation, fly, see-through, Keep Foreground, debug camera, cursor, forced "
+        + "fields, teleport); the user is asked before each one. They never replace or end what the user, a Cheat "
+        + "Engine record or another session holds: such a call is refused, naming the holder (read_holds shows who "
+        + "holds what). Everything this server turns on is released when the session ends. Teleport takes explicit "
+        + "coordinates (read_pose first) and leaves the user's markers and undo point alone. Fly, see-through, Keep "
+        + "Foreground and forced fields follow the UI's experimental switch.\n"
+        + "Calls run one at a time on this server's own pipe connection; a UE5DumpUI window has its own connections and "
         + "is not disturbed. A reply that was cut to fit says so: narrow the request, or page with offset / limit.";
 
     /// <summary>Serves until <paramref name="input"/> ends. Returns the process exit code.</summary>
@@ -239,7 +245,7 @@ internal sealed class McpServer
         var arr = new JsonArray();
         foreach (var t in _tools)
         {
-            McpJson.Append(arr, new JsonObject
+            var entry = new JsonObject
             {
                 ["name"] = t.Name,
                 ["title"] = t.Title,
@@ -249,14 +255,15 @@ internal sealed class McpServer
                 {
                     ["title"] = t.Title,
                     ["readOnlyHint"] = t.ReadOnly,
-                    // Nothing here writes game memory; scan_start, the one tool that is not read-only, only starts a
-                    // scan on a game nobody has scanned.
-                    ["destructiveHint"] = false,
+                    ["destructiveHint"] = t.Destructive,
                     ["idempotentHint"] = t.Idempotent,
                     // Every tool acts on the local game and nothing beyond it.
                     ["openWorldHint"] = false,
                 },
-            });
+            };
+            if (t.RequiresInteraction)
+                entry["_meta"] = new JsonObject { [Constants.McpRequiresInteractionKey] = true };
+            McpJson.Append(arr, entry);
         }
         return arr;
     }
