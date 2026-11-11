@@ -112,6 +112,16 @@ public sealed class McpToolsTests
     }
 
     [Fact]
+    public void TheUserGuide_ListsExactlyTheToolsThereAre()
+    {
+        // docs/mcp.md's table is what a user reads to decide what to allow; a tool added or renamed must reach it.
+        string guide = File.ReadAllText(NumericInputCoercionTests.RepoFile("docs/mcp.md"));
+        var listed = Regex.Matches(guide, @"^\| `([a-z_]+)` \|", RegexOptions.Multiline)
+            .Select(m => m.Groups[1].Value).ToList();
+        Assert.Equal(Catalog().Select(t => t.Name).Order(), listed.Order());
+    }
+
+    [Fact]
     public void EveryGameTool_TakesAPid_AndTheGameListDoesNot()
     {
         foreach (var t in Catalog())

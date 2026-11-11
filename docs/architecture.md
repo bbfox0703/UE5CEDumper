@@ -167,6 +167,10 @@ UE5CEDumper/
 │       │   └── InvokeParamDialog.cs  ← Parameter input dialog for UFunction invoke (no .axaml — code-only)
 │       │
 │       ├── Core/                   ← Platform abstraction interfaces (incl. IAobMakerBridge)
+│       ├── Mcp/                    ← `UE5DumpUI.exe --mcp`: a stdio MCP server for an AI client, one more
+│       │                              client of the game's pipe, no window (docs/mcp.md). McpHost (entry,
+│       │                              branched in Program.Main before the single-instance mutex), McpServer
+│       │                              (JSON-RPC), McpTools (the read_* tools), McpGameLink (the connection)
 │       ├── Converters/             ← Avalonia value converters
 │       ├── Assets/
 │       └── Resources/
