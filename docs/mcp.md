@@ -125,6 +125,9 @@ server; files older than 21 days are deleted.
 - The code is `ui/UE5DumpUI/Mcp/`. The protocol is hand-written JSON-RPC 2.0 for the 2025-11-25 revision, with no SDK
   added to the AOT exe. A client on the 2026-07-28 revision first sends `server/discover`; the server answers with an
   error, and the client falls back to the handshake.
+- ⚠ **Register a copy, not `dist\UE5DumpUI.exe`, on a machine that builds this repository.** Claude Code keeps
+  every registered server running for the whole session, and a running exe in `dist\` makes the next publish fail
+  to replace it. In `--mcp` mode the exe needs none of the DLLs beside it, so copying the exe alone is enough.
 - `py tools/verify/mcp_client.py probe --exe dist/UE5DumpUI.exe` checks the protocol with no game running. Add
   `live --pid N --suspend-name DumperTest` to call every tool against a running fixture.
 - The design decisions, and what comes next, are in [todo.md](todo.md) under `[PIPE-PER-PROCESS-2026-11-06]` Stage D.
