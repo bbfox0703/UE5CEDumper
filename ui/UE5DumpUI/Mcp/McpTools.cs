@@ -65,8 +65,9 @@ internal static class McpTools
                 "find_object", (a, r) => r["path"] = a.ReqStr("path"), HeavySeconds),
 
             Pipe(game, "read_find_instances", "Find instances of a class",
-                "Objects whose class name matches class_name (substring unless exact_match), or whose own name "
-                + "matches name_filter. Includes class templates (Default__...) and archetypes; use "
+                "Objects whose class name matches class_name (substring unless exact_match) and whose own name "
+                + "contains name_filter; either alone is enough, and both must match when both are given. Includes "
+                + "class templates (Default__...) and archetypes; use "
                 + "read_find_live_instance for one live object. Returns a class histogram too.",
                 [("class_name", McpSchema.Str("Class name to match, e.g. \"BP_Enemy_C\"."), false),
                  ("name_filter", McpSchema.Str("Substring of the object's own name."), false),
@@ -112,13 +113,15 @@ internal static class McpTools
                 }, HeavySeconds),
 
             Filtered(game, "read_list_classes", "List classes",
-                "UClasses with their path, super class, property count and a heuristic score (game classes "
-                + "first). game_only leaves out engine classes.",
+                "UClasses with their path, super class, property count and a heuristic score, highest score (most "
+                + "game-like) first. game_only leaves out engine classes. name_filter also matches the path and the "
+                + "super class: \"/Game/\" keeps a game's own classes, \"Character\" also its subclasses.",
                 [("game_only", McpSchema.Bool("Game classes only.", true), false),
                  ("limit", McpSchema.Int("Most classes returned.", 1, 2000, 100), false)],
                 "list_classes", "classes", ["class_name", "class_path", "super_name"],
+                "class name, path or super class",
                 (a, r) => { if (!a.Bool("game_only", true)) r["game_only"] = false; },
-                dllLimitKey: "limit", unfilteredCap: Constants.MaxSearchCap),
+                dllLimitKey: "limit", unfilteredCap: Constants.MaxSearchCap, alwaysFetchAll: true),
 
             Pipe(game, "read_class", "Class layout",
                 "The fields of a UClass or UScriptStruct: name, type, offset, size, and the class or struct a "
@@ -147,14 +150,14 @@ internal static class McpTools
                 + "and offset feed read_array.",
                 [("addr", McpSchema.Addr("The object's address."), true),
                  ("class_addr", McpSchema.Addr("Read the object as this class (default: its own)."), false),
-                 ("array_limit", McpSchema.Int("Array elements shown inline per array field.", 0, 256, 16), false),
+                 ("array_limit", McpSchema.Int("Array elements shown inline per array field.", 1, 256, 16), false),
                  ("preview_limit", McpSchema.Int("Struct members previewed per struct field.", 0, 6, 2), false),
                  NameFilterProp],
                 "walk_instance", (a, r) =>
                 {
                     r["addr"] = a.Addr("addr");
                     if (a.OptAddr("class_addr") is { } cls) r["class_addr"] = cls;
-                    r["array_limit"] = a.Int("array_limit", 16, 0, 256);
+                    r["array_limit"] = a.Int("array_limit", 16, 1, 256);
                     r["preview_limit"] = a.Int("preview_limit", 2, 0, 6);
                 },
                 shape: (a, reply) => FilterTop(reply, a, "fields", "name")),
@@ -162,12 +165,14 @@ internal static class McpTools
             Pipe(game, "read_array", "Array elements",
                 "A page of one TArray field's elements. Take field_offset (the field's offset), inner_addr "
                 + "(array_inner_addr), inner_type (array_inner_type) and elem_size (array_elem_size) from "
-                + "read_instance's field.",
+                + "read_instance's field. The DLL pages elements of up to 256 bytes (string and field-path elements "
+                + "excepted); a larger struct element is read with read_memory.",
                 [("addr", McpSchema.Addr("The object holding the array."), true),
                  ("field_offset", McpSchema.Int("The TArray field's offset in the object.", 0, int.MaxValue), true),
                  ("inner_addr", McpSchema.Addr("The array's inner property (array_inner_addr)."), true),
                  ("inner_type", McpSchema.Str("The inner property's type, e.g. \"FloatProperty\"."), true),
-                 ("elem_size", McpSchema.Int("Bytes per element.", 1, 1 << 20), true),
+                 ("elem_size", McpSchema.Int("Bytes per element (the DLL refuses more than 256, string and "
+                     + "field-path elements excepted).", 1, 65536), true),
                  ("offset", McpSchema.Int("First element.", 0, int.MaxValue, 0), false),
                  ("limit", McpSchema.Int("Most elements returned.", 1, 256, 32), false)],
                 "read_array_elements", (a, r) =>
@@ -303,18 +308,19 @@ internal static class McpTools
                 }, HeavySeconds),
 
             Filtered(game, "read_list_functions", "List all functions",
-                "Every UFunction with its class, flags and parameter count. Heavy on a large game: prefer "
-                + "read_functions for one class, and pass a name_filter here.",
+                "Every UFunction with its class, flags and parameter count, in object order. Heavy on a large game: "
+                + "prefer read_functions for one class, and pass a name_filter here (it also matches the class name, "
+                + "so \"Health\" keeps every function of a HealthComponent).",
                 [("game_only", McpSchema.Bool("Game functions only.", true), false),
                  ("limit", McpSchema.Int("Most functions returned.", 1, 2000, 100), false)],
-                "list_all_functions", "functions", ["func_name", "class_name"],
+                "list_all_functions", "functions", ["func_name", "class_name"], "function name or class name",
                 (a, r) => { if (!a.Bool("game_only", true)) r["game_only"] = false; },
                 dllLimitKey: "limit", unfilteredCap: 100_000),
 
             Filtered(game, "read_list_enums", "List enums",
                 "Every enum (native and Blueprint) with its entries (n = name, v = value).",
                 [("limit", McpSchema.Int("Most enums returned.", 1, 1000, 50), false)],
-                "list_enums", "enums", ["name", "full_path"], null,
+                "list_enums", "enums", ["name", "full_path"], "enum name or path", null,
                 dllLimitKey: null, unfilteredCap: 0),
 
             Pipe(game, "read_ce_pointer", "Cheat Engine pointer",
@@ -350,6 +356,9 @@ internal static class McpTools
                      "Unchanged", "Increased", "Decreased", "Contains", "StartsWith", "EndsWith"), true),
                  ("value", McpSchema.Str("The value, as text."), false),
                  ("value2", McpSchema.Str("Upper bound for Between."), false),
+                 // The session does not keep it: the DLL reads it from each refine, as the UI resends it.
+                 ("case_sensitive", McpSchema.Bool("Strings compare case-sensitively (pass it again on every "
+                     + "refine of a case-sensitive scan).", false), false),
                  ("page_size", McpSchema.Int("Candidates in the first page.", 1, 500, 50), false)],
                 "refine_value_scan", (a, r) =>
                 {
@@ -357,6 +366,7 @@ internal static class McpTools
                     r["scan_type"] = a.ReqStr("scan_type");
                     if (a.Str("value") is { } v) r["value"] = v;
                     if (a.Str("value2") is { } v2) r["value2"] = v2;
+                    if (a.Bool("case_sensitive", false)) r["case_sensitive"] = true;
                     r["page_size"] = a.Int("page_size", 50, 1, 500);
                 }, HeavySeconds, idempotent: false),
 
@@ -412,7 +422,7 @@ internal static class McpTools
             var (games, legacy) = game.ListGames();
             var arr = new JsonArray();
             foreach (var g in games)
-                arr.Add(new JsonObject
+                McpJson.Append(arr, new JsonObject
                 {
                     ["pid"] = g.Pid,
                     ["exe"] = g.Exe,
@@ -436,25 +446,15 @@ internal static class McpTools
         McpSchema.Object(PidProp), ReadOnly: true,
         async (a, ct) =>
         {
-            int? pid = a.OptInt("pid");
-            var reply = await game.SendAsync(pid, new JsonObject { ["cmd"] = "get_pointers" },
-                TimeSpan.FromSeconds(LightSeconds), ct);
-            if (!IsOk(reply)) return DllError(reply, game.TakeNotice());
-            Strip(reply);
-            bool scanned = McpGameLink.ScannedFrom(reply);
-            if (scanned) game.MarkScanned();
+            var report = await game.ScanStateAsync(a.OptInt("pid"), ct);
+            var reply = report.Pointers;
+            bool scanned = report.State == McpScanState.Ready;
             reply["scanned"] = scanned;
             string? note = null;
             if (!scanned)
             {
-                var scan = await game.SendAsync(pid, new JsonObject { ["cmd"] = "scan_status" },
-                    TimeSpan.FromSeconds(LightSeconds), ct);
-                Strip(scan);
-                reply["scan"] = scan;
-                note = Truthy(scan, "running")
-                    ? "The object scan is running: call read_status again until scanned is true."
-                    : "The game is not scanned yet, so object tools answer with nothing. Once the game world is "
-                      + "loaded, call scan_start.";
+                reply["scan"] = report.ScanStatus;
+                note = McpGameLink.Explain(report);
             }
             int ours = typeof(McpTools).Assembly.GetName().Version?.Revision ?? 0;
             long dll = McpJson.TryGetLong(reply["build_number"], out long n) ? n : 0;
@@ -468,30 +468,34 @@ internal static class McpTools
 
     private static McpTool ScanStart(IMcpGame game) => new(
         "scan_start", "Start the object scan",
-        "Starts the DLL's scan for the engine globals and the object pool, on a game whose scan has not run (a "
+        "Starts the DLL's scan for the engine globals and the object pool, on a game whose scan has never run (a "
         + "game loaded through a proxy DLL waits for one). Load into the game world first. Returns at once; poll "
-        + "read_status until scanned is true. Does nothing on a game already scanned, so it never disturbs the UI.",
+        + "read_status until scanned is true. Starts nothing on a game that is scanned, being scanned, or whose scan "
+        + "found nothing, so it never disturbs the UI.",
         McpSchema.Object(PidProp), ReadOnly: false,
         async (a, ct) =>
         {
-            int? pid = a.OptInt("pid");
-            var ptrs = await game.SendAsync(pid, new JsonObject { ["cmd"] = "get_pointers" },
-                TimeSpan.FromSeconds(LightSeconds), ct);
-            if (!IsOk(ptrs)) return DllError(ptrs, game.TakeNotice());
-            if (McpGameLink.ScannedFrom(ptrs))
+            var (before, started) = await game.StartScanAsync(a.OptInt("pid"), ct);
+            switch (before.State)
             {
-                game.MarkScanned();
-                return Combine(new McpToolResult(new JsonObject
-                {
-                    ["already_scanned"] = true,
-                    ["object_count"] = ptrs["object_count"]?.DeepClone(),
-                }), game.TakeNotice());
+                case McpScanState.Ready:
+                    return Combine(new McpToolResult(new JsonObject
+                    {
+                        ["already_scanned"] = true,
+                        ["object_count"] = before.Pointers["object_count"]?.DeepClone(),
+                    }), game.TakeNotice());
+                case McpScanState.Running:
+                    return Combine(new McpToolResult(new JsonObject
+                    {
+                        ["in_progress"] = true,
+                        ["scan"] = before.ScanStatus,
+                    }, Note: "A scan is already running: poll read_status until scanned is true."), game.TakeNotice());
+                case McpScanState.FoundNothing:
+                    return Combine(McpToolResult.Fail(McpGameLink.Explain(before)), game.TakeNotice());
             }
-            var reply = await game.SendAsync(pid, new JsonObject { ["cmd"] = "trigger_scan" },
-                TimeSpan.FromSeconds(LightSeconds), ct);
-            if (!IsOk(reply)) return DllError(reply, game.TakeNotice());
-            Strip(reply);
-            return Combine(new McpToolResult(reply,
+            if (started is null || !IsOk(started)) return DllError(started ?? new JsonObject(), game.TakeNotice());
+            Strip(started);
+            return Combine(new McpToolResult(started,
                 Note: "The scan runs in the background: poll read_status until scanned is true."), game.TakeNotice());
         });
 
@@ -555,9 +559,10 @@ internal static class McpTools
                 int? pid = a.OptInt("pid");
                 var request = new JsonObject { ["cmd"] = cmd };
                 fill?.Invoke(a, request);
-                if (needsScan) await RequireScanAsync(game, pid, ct);
                 int seconds = timeoutFor?.Invoke(a) ?? timeoutSeconds;
-                var reply = await game.SendAsync(pid, request, TimeSpan.FromSeconds(seconds), ct);
+                // An object command on a game whose scan is not done answers with an empty list that reads like
+                // "nothing there": the link refuses it, checking the scan under the same lock as the send.
+                var reply = await game.SendAsync(pid, request, TimeSpan.FromSeconds(seconds), ct, requireScan: needsScan);
                 if (!IsOk(reply)) return DllError(reply, game.TakeNotice());
                 Strip(reply);
                 JsonNode payload = shape is null ? reply : shape(a, reply);
@@ -568,12 +573,17 @@ internal static class McpTools
     /// <summary>A list command filtered here by name. With a filter the DLL is asked for everything (up to
     /// <paramref name="unfilteredCap"/>), since its own limit would cut the list before any name is looked at; the
     /// matches are then cut to the caller's limit, and <c>matched</c> / <c>truncated</c> say how many there were.
-    /// <paramref name="dllLimitKey"/> null: the command has no limit and always returns everything.</summary>
+    /// <paramref name="dllLimitKey"/> null: the command has no limit and always returns everything.
+    /// <paramref name="alwaysFetchAll"/>: the DLL cuts at its limit before it sorts (list_classes), so the best rows
+    /// come only from the whole list. <paramref name="filterFields"/> names what the filter matches, for its schema.
+    /// </summary>
     private static McpTool Filtered(IMcpGame game, string name, string title, string description,
-        (string, JsonObject, bool)[] props, string cmd, string listKey, string[] nameKeys,
-        Action<McpArgs, JsonObject>? fill, string? dllLimitKey, int unfilteredCap)
+        (string, JsonObject, bool)[] props, string cmd, string listKey, string[] nameKeys, string filterFields,
+        Action<McpArgs, JsonObject>? fill, string? dllLimitKey, int unfilteredCap, bool alwaysFetchAll = false)
     {
-        var all = new List<(string, JsonObject, bool)>(props) { NameFilterProp };
+        var filterProp = ("name_filter", McpSchema.Str($"Keep only entries whose {filterFields} contains every "
+                                                       + "space-separated word (case-insensitive)."), false);
+        var all = new List<(string, JsonObject, bool)>(props) { filterProp };
         int maxLimit = props.Select(p => p.Item1 == "limit" ? (int?)p.Item2["maximum"]!.GetValue<int>() : null)
                             .FirstOrDefault(m => m is not null) ?? 1000;
         int defLimit = props.Select(p => p.Item1 == "limit" ? (int?)p.Item2["default"]!.GetValue<int>() : null)
@@ -583,7 +593,7 @@ internal static class McpTools
                 fill?.Invoke(a, r);
                 if (dllLimitKey is null) return;
                 bool filtering = !string.IsNullOrWhiteSpace(a.Str("name_filter"));
-                r[dllLimitKey] = filtering ? unfilteredCap : a.Int("limit", defLimit, 1, maxLimit);
+                r[dllLimitKey] = filtering || alwaysFetchAll ? unfilteredCap : a.Int("limit", defLimit, 1, maxLimit);
             },
             ListSeconds,
             shape: (a, reply) =>
@@ -603,33 +613,13 @@ internal static class McpTools
                         if (!ObjectTreeFilter.MatchesAllTerms(terms, fields)) continue;
                     }
                     matched++;
-                    if (keep.Count < limit) { list.Remove(obj); keep.Add(obj); }
+                    if (keep.Count < limit) { list.Remove(obj); McpJson.Append(keep, obj); }
                 }
                 reply[listKey] = keep;
                 reply["matched"] = matched;
                 if (matched > keep.Count) reply["truncated"] = true;
                 return reply;
             });
-    }
-
-    /// <summary>Before an object command: the game's scan must be done, or every answer is an empty list that reads
-    /// like "nothing there". Asks once per connection; a scanned game stays scanned.</summary>
-    private static async Task RequireScanAsync(IMcpGame game, int? pid, CancellationToken ct)
-    {
-        if (game.Scanned && (pid is null || pid == game.ConnectedPid)) return;
-        var ptrs = await game.SendAsync(pid, new JsonObject { ["cmd"] = "get_pointers" },
-            TimeSpan.FromSeconds(LightSeconds), ct);
-        if (IsOk(ptrs) && McpGameLink.ScannedFrom(ptrs))
-        {
-            game.MarkScanned();
-            return;
-        }
-        var scan = await game.SendAsync(pid, new JsonObject { ["cmd"] = "scan_status" },
-            TimeSpan.FromSeconds(LightSeconds), ct);
-        throw new McpToolError(Truthy(scan, "running")
-            ? "The game's object scan is still running: call read_status until scanned is true, then call again."
-            : "The game is not scanned yet, so this would answer with nothing. Once the game world is loaded, call "
-              + "scan_start, then read_status until scanned is true.");
     }
 
     // ── Reply helpers ───────────────────────────────────────────────────────────────────────────────────
@@ -676,7 +666,7 @@ internal static class McpTools
             if (item is JsonObject obj && ObjectTreeFilter.MatchesAllTerms(terms, McpJson.GetString(obj, nameKey)))
             {
                 list.Remove(obj);
-                keep.Add(obj);
+                McpJson.Append(keep, obj);
             }
         }
         return keep;
@@ -688,7 +678,7 @@ internal static class McpTools
     private static JsonArray ToArray(IEnumerable<string> items)
     {
         var arr = new JsonArray();
-        foreach (var s in items) arr.Add(s);
+        foreach (var s in items) McpJson.Append(arr, s);
         return arr;
     }
 }

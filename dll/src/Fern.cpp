@@ -2293,6 +2293,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
     try {
         id  = request.value("id", 0);
         cmd = request.value("cmd", "");
+        // [PIPE-PER-PROCESS-2026-11-06] Stage D: a request a client marks "background" (the MCP server marks every
+        // one) walks GObjects on at most half of the free worker budget, so the user's own walk in the UI is never
+        // left on one thread. For this dispatch only; a key an older client never sends reads false.
+        const Aura::BackgroundWalkScope backgroundWalk(request.value("background", false));
 
         if (cmd == Renge::CMD_INIT) {
             extern uint32_t g_cachedUEVersion;

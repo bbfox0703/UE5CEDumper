@@ -70,8 +70,9 @@ public sealed class McpHostTests
     public void AReplyThatFits_IsLeftAlone()
     {
         var payload = new JsonObject { ["a"] = new JsonArray(1, 2, 3) };
-        var (text, note) = McpResultFit.Fit(payload, 1000);
+        var (text, note, stubbed) = McpResultFit.Fit(payload, 1000);
         Assert.Null(note);
+        Assert.False(stubbed);
         Assert.Equal("""{"a":[1,2,3]}""", text);
     }
 
@@ -81,7 +82,8 @@ public sealed class McpHostTests
         var items = new JsonArray();
         for (int i = 0; i < 5000; i++) items.Add(new JsonObject { ["addr"] = $"0x{i:X8}", ["name"] = "Object_" + i });
         var payload = new JsonObject { ["total"] = 5000, ["objects"] = items, ["small"] = new JsonArray(1, 2) };
-        var (text, note) = McpResultFit.Fit(payload, 20_000);
+        var (text, note, stubbed) = McpResultFit.Fit(payload, 20_000);
+        Assert.False(stubbed);
         Assert.InRange(text.Length, 1, 20_000);
         var back = JsonNode.Parse(text)!;   // still JSON
         int kept = back["objects"]!.AsArray().Count;
@@ -97,7 +99,7 @@ public sealed class McpHostTests
         var fields = new JsonArray();
         for (int i = 0; i < 2000; i++) fields.Add(new JsonObject { ["name"] = "Field" + i, ["type"] = "IntProperty" });
         var payload = new JsonObject { ["class"] = new JsonObject { ["name"] = "C", ["fields"] = fields } };
-        var (_, note) = McpResultFit.Fit(payload, 10_000);
+        var (_, note, _) = McpResultFit.Fit(payload, 10_000);
         Assert.Contains("class.fields keeps", note);
     }
 
@@ -105,9 +107,65 @@ public sealed class McpHostTests
     public void AReplyThatCannotBeCut_BecomesAStubThatSaysWhy()
     {
         var payload = new JsonObject { ["blob"] = new string('x', 50_000) };
-        var (text, note) = McpResultFit.Fit(payload, 1000);
+        var (text, note, stubbed) = McpResultFit.Fit(payload, 1000);
+        Assert.True(stubbed);
         Assert.Contains("too large", JsonNode.Parse(text)!["error"]!.GetValue<string>());
         Assert.Contains("Narrow", note);
+    }
+
+    [Fact]
+    public void AReplyTooLargeToCut_IsSentAsAnError_WithItsAdviceInsideTheOneBlock()
+    {
+        var result = McpServer.BuildResult(new McpToolResult(new JsonObject { ["blob"] = new string('x', 60_000) },
+            Note: "reconnected"));
+        Assert.True(result["isError"]!.GetValue<bool>());
+        var content = result["content"]!.AsArray();
+        Assert.Single(content);
+        string note = JsonNode.Parse(content[0]!["text"]!.GetValue<string>())!["note"]!.GetValue<string>();
+        Assert.Contains("reconnected", note);
+        Assert.Contains("Narrow", note);
+    }
+
+    [Fact]
+    public void AnErrorsNote_RidesInsideItsFirstBlock_WhichIsAllClaudeCodeShowsOfAnError()
+    {
+        // The connection gives each note once: a note in a second block of an error would be lost for good.
+        var result = McpServer.BuildResult(McpToolResult.Fail("The DLL refused: session_not_found.")
+            with { Note = "Value-scan sessions begun on it are gone." });
+        var content = result["content"]!.AsArray();
+        Assert.Single(content);
+        var payload = JsonNode.Parse(content[0]!["text"]!.GetValue<string>())!;
+        Assert.Contains("session_not_found", payload["error"]!.GetValue<string>());
+        Assert.Contains("sessions begun on it are gone", payload["note"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public void ASuccessfulReplysNote_StaysASecondBlock()
+    {
+        var result = McpServer.BuildResult(new McpToolResult(new JsonObject { ["a"] = 1 }, Note: "switched"));
+        var content = result["content"]!.AsArray();
+        Assert.Equal(2, content.Count);
+        Assert.Equal("Note: switched", content[1]!["text"]!.GetValue<string>());
+        Assert.False(JsonNode.Parse(content[0]!["text"]!.GetValue<string>())!.AsObject().ContainsKey("note"));
+    }
+
+    // ── The DLL side of "background" ────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void TheDll_ScopesEveryDispatchByItsBackgroundKey_BeforeAnyCommandRuns()
+    {
+        // Fern.cpp reaches no C++ test target; Aura's half share and the scope are dll_core_test's
+        // [PIPE-PER-PROCESS-2026-11-06] D block. Here: the dispatcher sets the scope from the request, after the id and
+        // cmd are read and before the first command branch.
+        string fern = Code(Source("dll/src/Fern.cpp"));
+        int dispatch = fern.IndexOf("std::string Fern::DispatchCommand(", StringComparison.Ordinal);
+        Assert.True(dispatch > 0);
+        int cmdRead = fern.IndexOf("cmd = request.value(\"cmd\", \"\");", dispatch, StringComparison.Ordinal);
+        int scope = fern.IndexOf("Aura::BackgroundWalkScope", dispatch, StringComparison.Ordinal);
+        int firstCommand = fern.IndexOf("if (cmd == Renge::CMD_", dispatch, StringComparison.Ordinal);
+        Assert.True(cmdRead > 0 && scope > cmdRead && scope < firstCommand,
+            "DispatchCommand must open the BackgroundWalkScope before its first command");
+        Assert.Contains("request.value(\"background\", false)", fern[scope..firstCommand]);
     }
 
     [Fact]

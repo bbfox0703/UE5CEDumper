@@ -1386,6 +1386,67 @@ int main() {
               std::to_string(alone.nthreads).c_str());
     }
 
+    {   blk("[PIPE-PER-PROCESS-2026-11-06] D -- a background walk takes at most half of the free budget");
+        // The MCP server marks its requests "background": an AI's long value scan must not leave the user's own walk
+        // in the UI on one thread.
+        Aura::WorkerBudget b(13);
+        check("BACKGROUND: half of what is free, rounded down", b.AcquireShare(13) == 6,
+              std::to_string(b.InUse()).c_str());
+        check("BACKGROUND * : a walk started after it finds the other half", b.Acquire(13) == 7);
+        b.Release(13);
+        check("BACKGROUND: asking for less than half takes what it asks", b.AcquireShare(2) == 2);
+        b.Release(2);
+        Aura::WorkerBudget one(1);
+        check("BACKGROUND: with one worker free it takes none (its own thread only)", one.AcquireShare(4) == 0);
+        check("BACKGROUND control: a foreground walk takes that worker", one.Acquire(4) == 1);
+        {
+            Aura::WorkerLease lease(b, 13, /*background*/ true);
+            check("BACKGROUND: a background lease holds a half share", lease.Granted() == 6 && b.InUse() == 6);
+        }
+        check("BACKGROUND: and returns it", b.InUse() == 0);
+
+        check("SCOPE: a dispatch is foreground unless marked", !Aura::IsBackgroundWalk());
+        {
+            const Aura::BackgroundWalkScope outer(true);
+            check("SCOPE: marked inside the scope", Aura::IsBackgroundWalk());
+            {
+                const Aura::BackgroundWalkScope inner(false);
+                check("SCOPE: an inner scope can clear it", !Aura::IsBackgroundWalk());
+            }
+            check("SCOPE: and the outer state comes back", Aura::IsBackgroundWalk());
+            bool seenOnAnotherThread = true;
+            std::thread([&] { seenOnAnotherThread = Aura::IsBackgroundWalk(); }).join();
+            check("SCOPE: it is this thread's alone", !seenOnAnotherThread);
+        }
+        check("SCOPE: cleared when the dispatch returns", !Aura::IsBackgroundWalk());
+
+        // A background walk through the real path, then a foreground walk beside it.
+        auto& pb = Aura::ScanWorkerBudget();
+        const int cap = pb.Capacity();
+        ResetCancel();
+        std::atomic<bool> releaseA{false};
+        int aThreads = 0;
+        std::thread walkA([&] {
+            const Aura::BackgroundWalkScope bg(true);
+            auto r = Aura::ParallelGObjectsScan<int>(kCount, [&](int&, int32_t, int32_t, std::atomic<bool>&) {
+                while (!releaseA.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            });
+            aThreads = r.nthreads;
+        });
+        for (int i = 0; i < 5000 && pb.InUse() < cap / 2; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        auto walkB = Aura::ParallelGObjectsScan<int>(kCount, [&](int&, int32_t, int32_t, std::atomic<bool>&) {});
+        releaseA = true;
+        walkA.join();
+        printf("    (this PC: budget %d workers; background walk on %d threads, foreground walk beside it on %d)\n",
+               cap, aThreads, walkB.nthreads);
+        check("BACKGROUND: the background walk ran on half the workers and its own thread",
+              aThreads == 1 + cap / 2, std::to_string(aThreads).c_str());
+        check("BACKGROUND * : the foreground walk beside it got the rest, not one thread",
+              walkB.nthreads == 1 + (cap - cap / 2), std::to_string(walkB.nthreads).c_str());
+        check("BACKGROUND: every worker is back after both", pb.InUse() == 0, std::to_string(pb.InUse()).c_str());
+    }
+
     // -- SINGLEFLIGHT -- [PIPE-PER-PROCESS-2026-11-06] Stage C: trigger_scan / rescan start one job at a time, and
     // only Stop cancels it. Here, not in dll_helpers_test, because RunThreadGuarded logs through Sein, whose stubs
     // this target defines.

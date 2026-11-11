@@ -51,6 +51,12 @@ internal static class McpJson
         return Encoding.UTF8.GetString(buffer.WrittenSpan);
     }
 
+    /// <summary>Adds a node to an array through the non-generic <c>JsonArray.Add(JsonNode?)</c>. ⚠ <c>arr.Add(x)</c>
+    /// with a string or a JsonObject binds to the generic <c>Add&lt;T&gt;</c> (the identity conversion beats the one
+    /// to JsonNode), which is RequiresUnreferencedCode: the trimmed publish fails on it (IL2026 / IL3050), and a
+    /// string would throw at run time without reflection (working-lessons §3.xc).</summary>
+    public static void Append(JsonArray array, JsonNode? node) => array.Add(node);
+
     public static JsonObject Result(JsonNode? id, JsonNode result) => new()
     {
         ["jsonrpc"] = "2.0",

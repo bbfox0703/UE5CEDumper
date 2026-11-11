@@ -41,6 +41,11 @@ public sealed class McpGameLinkTests
     {
         public List<string> Dialed { get; } = new();
         public List<string> Sent { get; } = new();
+        public List<JsonObject> Requests { get; } = new();
+        /// <summary>What scan_status answers: a finished scan unless a test says otherwise.</summary>
+        public JsonObject ScanStatus { get; set; } = new() { ["running"] = false, ["phase"] = 7 };
+        /// <summary>The object count get_pointers reports.</summary>
+        public long ObjectCount { get; set; } = 100;
         public int Disconnects { get; private set; }
         public bool IsConnected { get; private set; }
         public string? ConnectedTo { get; private set; }
@@ -79,11 +84,22 @@ public sealed class McpGameLinkTests
             if (!IsConnected) throw new InvalidOperationException("Not connected to pipe server");
             string cmd = request["cmd"]!.GetValue<string>();
             Sent.Add(cmd);
+            Requests.Add((JsonObject)request.DeepClone());
             if (cmd == "get_pointers")
             {
                 int pid = ReportedPid.TryGetValue(ConnectedTo!, out int r) ? r
                     : int.Parse(ConnectedTo!["UE5DumpBfx_".Length..]);
-                return new JsonObject { ["ok"] = true, ["pid"] = pid, ["object_count"] = 100, ["gobjects_method"] = "aob" };
+                return new JsonObject
+                {
+                    ["ok"] = true, ["pid"] = pid, ["object_count"] = ObjectCount,
+                    ["gobjects_method"] = ObjectCount > 0 ? "aob" : "not_found",
+                };
+            }
+            if (cmd == "scan_status")
+            {
+                var s = (JsonObject)ScanStatus.DeepClone();
+                s["ok"] = true;
+                return s;
             }
             if (Handler is not null) return await Handler(request, ct);
             return new JsonObject { ["ok"] = true, ["cmd_echo"] = cmd };
@@ -108,8 +124,12 @@ public sealed class McpGameLinkTests
             => SendWith(TestContext.Current.CancellationToken, pid, cmd, timeoutMs);
 
         public Task<JsonObject> SendWith(CancellationToken ct, int? pid = null, string cmd = "get_object",
-            int timeoutMs = 5000)
-            => Link.SendAsync(pid, new JsonObject { ["cmd"] = cmd }, TimeSpan.FromMilliseconds(timeoutMs), ct);
+            int timeoutMs = 5000, bool requireScan = false)
+            => Link.SendAsync(pid, new JsonObject { ["cmd"] = cmd }, TimeSpan.FromMilliseconds(timeoutMs), ct,
+                requireScan);
+
+        public Task<JsonObject> SendScanned(int? pid = null, string cmd = "get_object")
+            => SendWith(TestContext.Current.CancellationToken, pid, cmd, requireScan: true);
     }
 
     private static CancellationToken Ct => TestContext.Current.CancellationToken;
@@ -125,7 +145,16 @@ public sealed class McpGameLinkTests
         Assert.Equal(["get_pointers", "get_object"], rig.Pipe.Sent);
         Assert.Equal("get_object", reply["cmd_echo"]!.GetValue<string>());
         Assert.Equal(4242, rig.Link.ConnectedPid);
-        Assert.True(rig.Link.Scanned);
+    }
+
+    [Fact]
+    public async Task EveryRequest_IsMarkedBackground_SoItsWalksLeaveTheUiHalfTheWorkers()
+    {
+        // Aura::BackgroundWalkScope: a GObjects walk a background request starts takes at most half the free workers.
+        var rig = new Rig(4242);
+        await rig.SendScanned();
+        Assert.NotEmpty(rig.Pipe.Requests);
+        Assert.All(rig.Pipe.Requests, r => Assert.True(r["background"]!.GetValue<bool>(), r["cmd"]!.ToString()));
     }
 
     [Fact]
@@ -177,13 +206,88 @@ public sealed class McpGameLinkTests
     }
 
     [Fact]
-    public async Task ConnectedAndNoPid_StaysWithTheConnectedGame_EvenWhenAnotherStarts()
+    public async Task SeveralGames_AndNoPid_IsAnError_EvenWhileConnected()
     {
+        // An address belongs to one game: a call without a pid would follow whichever game another call had just
+        // switched to, and read the address in the wrong process.
         var rig = new Rig(100);
         await rig.Send();
         rig.Platform.Pipes = [PipeTargets.NameFor(100), PipeTargets.NameFor(200)];
-        await rig.Send();
+        var e = await Assert.ThrowsAsync<McpToolError>(() => rig.Send());
+        Assert.Contains("pass pid", e.Message);
+        await rig.Send(pid: 100);
         Assert.Equal(["UE5DumpBfx_100"], rig.Pipe.Dialed);
+    }
+
+    [Fact]
+    public async Task AGameThatCameBackAsANewProcess_IsNamedInANotice()
+    {
+        // Game 100 exits and starts again as 300: addresses from 100 mean nothing in 300, and the reply must say so.
+        var rig = new Rig(100);
+        await rig.Send();
+        rig.Pipe.Die();
+        rig.Platform.Pipes = [PipeTargets.NameFor(300)];
+        rig.Platform.Processes[300] = ("Game100.exe", "Title");
+        await rig.Send();
+        Assert.Equal("UE5DumpBfx_300", rig.Pipe.ConnectedTo);
+        string? notice = rig.Link.TakeNotice();
+        Assert.Contains("Game 100 is gone", notice);
+        Assert.Contains("addresses from the earlier game do not apply", notice);
+    }
+
+    // ── The scan check ──────────────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public async Task TheScanCheck_ReadsScanStatusAndPointersOnTheConnection_AndKeepsReady()
+    {
+        var rig = new Rig(100);
+        await rig.SendScanned();
+        await rig.SendScanned();
+        Assert.Equal(1, rig.Pipe.Sent.Count(c => c == "scan_status"));
+        Assert.Equal(2, rig.Pipe.Sent.Count(c => c == "get_object"));
+    }
+
+    [Fact]
+    public async Task ARunningScan_IsRefused_EvenWithObjectsPublished_ThenServedOnceItEnds()
+    {
+        // The pool is published (object_count > 0) before the scan validates its offsets.
+        var rig = new Rig(100);
+        rig.Pipe.ScanStatus = new JsonObject { ["running"] = true, ["phase"] = 6, ["status_text"] = "Validating" };
+        var e = await Assert.ThrowsAsync<McpToolError>(() => rig.SendScanned());
+        Assert.Contains("still running (phase 6 of 7: Validating)", e.Message);
+        Assert.DoesNotContain("get_object", rig.Pipe.Sent);
+
+        rig.Pipe.ScanStatus = new JsonObject { ["running"] = false, ["phase"] = 7 };
+        await rig.SendScanned();
+        Assert.Contains("get_object", rig.Pipe.Sent);
+    }
+
+    [Fact]
+    public async Task AScanThatFoundNothing_IsNamedSo_NotAsUnscanned()
+    {
+        var rig = new Rig(100);
+        rig.Pipe.ObjectCount = 0;
+        var e = await Assert.ThrowsAsync<McpToolError>(() => rig.SendScanned());
+        Assert.Contains("without finding the object pool", e.Message);
+        var report = await rig.Link.ScanStateAsync(null, Ct);
+        Assert.Equal(McpScanState.FoundNothing, report.State);
+    }
+
+    [Fact]
+    public async Task StartScan_SendsTriggerScanOnlyWhenNoScanHasRun()
+    {
+        var rig = new Rig(100);
+        var (before, started) = await rig.Link.StartScanAsync(null, Ct);
+        Assert.Equal(McpScanState.Ready, before.State);
+        Assert.Null(started);
+        Assert.DoesNotContain("trigger_scan", rig.Pipe.Sent);
+
+        rig.Pipe.ScanStatus = new JsonObject { ["running"] = false, ["phase"] = 0 };
+        rig.Pipe.ObjectCount = 0;
+        (before, started) = await rig.Link.StartScanAsync(null, Ct);
+        Assert.Equal(McpScanState.NotStarted, before.State);
+        Assert.NotNull(started);
+        Assert.Contains("trigger_scan", rig.Pipe.Sent);
     }
 
     [Fact]
@@ -292,12 +396,11 @@ public sealed class McpGameLinkTests
     [Fact]
     public async Task APipeThatDiedBetweenCalls_IsReopenedToTheSameGame_WithANotice()
     {
-        var rig = new Rig(100, 200);
-        await rig.Send(pid: 200);
-        rig.Pipe.Die();
-        // No pid: the game last used, though two run.
+        var rig = new Rig(100);
         await rig.Send();
-        Assert.Equal("UE5DumpBfx_200", rig.Pipe.ConnectedTo);
+        rig.Pipe.Die();
+        await rig.Send();
+        Assert.Equal(["UE5DumpBfx_100", "UE5DumpBfx_100"], rig.Pipe.Dialed);
         Assert.Contains("had closed", rig.Link.TakeNotice());
     }
 
@@ -336,11 +439,25 @@ public sealed class McpGameLinkTests
     [InlineData(0, "aob", false)]
     [InlineData(24530, "not_found", false)]
     [InlineData(0, null, false)]
-    public void ScannedFrom_NeedsObjectsAndAFoundPool(long count, string? method, bool scanned)
+    public void HasObjects_NeedsObjectsAndAFoundPool(long count, string? method, bool has)
     {
         var reply = new JsonObject { ["object_count"] = count };
         if (method is not null) reply["gobjects_method"] = method;
-        Assert.Equal(scanned, McpGameLink.ScannedFrom(reply));
+        Assert.Equal(has, McpGameLink.HasObjects(reply));
+    }
+
+    [Theory]
+    [InlineData(true, 6, 24530, McpScanState.Running)]   // objects published, offsets not yet validated
+    [InlineData(true, 7, 24530, McpScanState.Running)]   // phase 7 is stored just before the job ends
+    [InlineData(false, 7, 24530, McpScanState.Ready)]    // proxy mode after its scan, and injected mode
+    [InlineData(false, 7, 0, McpScanState.FoundNothing)]
+    [InlineData(false, 0, 0, McpScanState.NotStarted)]   // a proxy-loaded game before any scan
+    [InlineData(false, 5, 24530, McpScanState.NotStarted)]   // Stop cancelled it part-way
+    public void StateFrom_ScanStatusAndPointersTogether(bool running, int phase, long count, McpScanState state)
+    {
+        var status = new JsonObject { ["running"] = running, ["phase"] = phase };
+        var pointers = new JsonObject { ["object_count"] = count, ["gobjects_method"] = count > 0 ? "aob" : "not_found" };
+        Assert.Equal(state, McpGameLink.StateFrom(status, pointers));
     }
 
     [Fact]

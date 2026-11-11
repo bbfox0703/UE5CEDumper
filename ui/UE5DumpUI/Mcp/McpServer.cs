@@ -155,8 +155,9 @@ internal sealed class McpServer
         using var cts = new CancellationTokenSource();
         if (!_inflight.TryAdd(key, cts))
         {
-            await WriteAsync(McpJson.Error(id, McpErrorCode.InvalidRequest,
-                "Invalid request: a request with this id is still running."));
+            // With the id, the client would take this for the running request's answer and then get a second one.
+            await WriteAsync(McpJson.Error(null, McpErrorCode.InvalidRequest,
+                "Invalid request: a request with id " + McpJson.Write(id) + " is still running."));
             return;
         }
         try
@@ -238,7 +239,7 @@ internal sealed class McpServer
         var arr = new JsonArray();
         foreach (var t in _tools)
         {
-            arr.Add(new JsonObject
+            McpJson.Append(arr, new JsonObject
             {
                 ["name"] = t.Name,
                 ["title"] = t.Title,
@@ -295,21 +296,40 @@ internal sealed class McpServer
 
     /// <summary>The <c>tools/call</c> result: the payload as one JSON text block, cut to fit, and the note, when
     /// there is one, as a second block. No <c>structuredContent</c>: which of the two Claude Code hands the model
-    /// is not settled, and sending both would double the reply against its size cap.</summary>
+    /// is not settled, and sending both would double the reply against its size cap.
+    /// <para>An error's note goes inside its one block instead (a <c>note</c> member): Claude Code hands the model only
+    /// the first block of an error result, and a note it drops is lost, since the connection gives each note once.
+    /// A reply too large to cut is an error too.</para></summary>
     internal static JsonObject BuildResult(McpToolResult result)
     {
-        var (text, cutNote) = McpResultFit.Fit(result.Payload);
-        var content = new JsonArray { new JsonObject { ["type"] = "text", ["text"] = text } };
-        string? note = (result.Note, cutNote) switch
+        bool isError = result.IsError;
+        string? note = result.Note;
+        if (isError && note is not null && result.Payload is JsonObject errorPayload)
         {
-            (null, null) => null,
-            (string n, null) => n,
-            (null, string c) => c,
-            (string n, string c) => n + " " + c,
-        };
-        if (note is not null) content.Add(new JsonObject { ["type"] = "text", ["text"] = "Note: " + note });
+            errorPayload["note"] = note;
+            note = null;
+        }
+        var fit = McpResultFit.Fit(result.Payload);
+        string text = fit.Text;
+        if (fit.Stubbed)
+        {
+            isError = true;
+            // The stub replaced the payload: whatever the note said joins the stub's own advice inside the one block.
+            var stub = (JsonObject)JsonNode.Parse(text)!;
+            stub["note"] = note is null ? fit.Note : note + " " + fit.Note;
+            text = McpJson.Write(stub);
+            note = null;
+        }
+        else if (fit.Note is not null)
+        {
+            note = note is null ? fit.Note : note + " " + fit.Note;
+        }
+
+        var content = new JsonArray((JsonNode?)new JsonObject { ["type"] = "text", ["text"] = text });
+        if (note is not null)
+            McpJson.Append(content, new JsonObject { ["type"] = "text", ["text"] = "Note: " + note });
         var obj = new JsonObject { ["content"] = content };
-        if (result.IsError) obj["isError"] = true;
+        if (isError) obj["isError"] = true;
         return obj;
     }
 

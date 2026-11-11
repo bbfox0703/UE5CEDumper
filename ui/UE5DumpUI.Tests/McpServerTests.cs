@@ -315,6 +315,8 @@ public sealed class McpServerTests
             """{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"read_slow"}}""");
         var dup = Assert.Single(await rig.Send("""{"jsonrpc":"2.0","id":7,"method":"ping"}"""));
         Assert.Equal(McpErrorCode.InvalidRequest, dup["error"]!["code"]!.GetValue<int>());
+        // A null id: with 7, the client would take this for the running request's answer and then get a second one.
+        Assert.Null(dup["id"]);
         release.SetResult();
         await first.WaitAsync(TimeSpan.FromSeconds(5), Ct);
     }

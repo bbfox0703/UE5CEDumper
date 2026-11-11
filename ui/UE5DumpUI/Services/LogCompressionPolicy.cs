@@ -48,6 +48,13 @@ public static class LogCompressionPolicy
     public static bool IsLiveLog(string? name) =>
         name != null && name.EndsWith("-0.log", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Stage D: an MCP server's log (<c>mcp-&lt;date&gt;-&lt;time&gt;-&lt;pid&gt;.log</c>,
+    /// rolled ones too). It sits in the UI's own folder but another process writes it, for as long as an AI session
+    /// keeps that server: so it is held to the live-file floor like a game's newest log, not to the idle window.</summary>
+    public static bool IsMcpLog(string? name) =>
+        name != null && name.StartsWith(Constants.McpLogFilePrefix, StringComparison.OrdinalIgnoreCase)
+        && name.EndsWith(".log", StringComparison.OrdinalIgnoreCase);
+
     /// <summary>
     /// Decide one file. Order of the checks is the order of the reasons the UI reports.
     /// </summary>
@@ -64,7 +71,7 @@ public static class LogCompressionPolicy
         if (f.OnDiskBytes > 0 &&
             f.OnDiskBytes < f.Length)         return LogCompressionDecision.SkipAlreadyCompressed;
         if (f.Length <= minSizeBytes)         return LogCompressionDecision.SkipTooSmall;
-        if (IsLiveLog(f.Name) &&
+        if ((IsLiveLog(f.Name) || IsMcpLog(f.Name)) &&
             nowUtc - f.LastWriteUtc < liveMinAge) return LogCompressionDecision.SkipLive;
         if (nowUtc - f.LastWriteUtc < minIdle) return LogCompressionDecision.SkipTooFresh;
         return LogCompressionDecision.Compress;

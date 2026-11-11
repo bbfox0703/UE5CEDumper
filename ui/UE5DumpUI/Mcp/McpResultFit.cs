@@ -23,11 +23,12 @@ internal static class McpResultFit
     private const int MaxPasses = 32;
 
     /// <summary>Trims <paramref name="payload"/> in place until its text fits <paramref name="maxChars"/>. Returns the
-    /// text, and a note when anything was cut (null when the reply fitted as it was).</summary>
-    public static (string Text, string? Note) Fit(JsonNode payload, int maxChars = MaxChars)
+    /// text, a note when anything was cut (null when the reply fitted as it was), and whether nothing could be cut far
+    /// enough, so the text is a stub that says so: an error, not a result.</summary>
+    public static (string Text, string? Note, bool Stubbed) Fit(JsonNode payload, int maxChars = MaxChars)
     {
         string text = McpJson.Write(payload);
-        if (text.Length <= maxChars) return (text, null);
+        if (text.Length <= maxChars) return (text, null, false);
 
         // path -> elements the array had before the first cut
         var cuts = new Dictionary<string, int>(StringComparer.Ordinal);
@@ -57,14 +58,14 @@ internal static class McpResultFit
                 ["reply_chars"] = text.Length,
             };
             return (McpJson.Write(stub),
-                "Narrow the request: a smaller limit, a name_filter, or a smaller object.");
+                "Narrow the request: a smaller limit, a name_filter, or a smaller object.", true);
         }
 
         var parts = new List<string>(cuts.Count);
         foreach (var (path, before) in cuts)
             parts.Add(string.Create(CultureInfo.InvariantCulture, $"{path} keeps {kept[path].Count} of {before}"));
         return (text, "The reply was cut to fit (" + string.Join("; ", parts)
-                      + "). Narrow the request or page with offset / limit for the rest.");
+                      + "). Narrow the request or page with offset / limit for the rest.", false);
     }
 
     /// <summary>The array whose text is longest, anywhere in <paramref name="root"/>, with its path ("fields",

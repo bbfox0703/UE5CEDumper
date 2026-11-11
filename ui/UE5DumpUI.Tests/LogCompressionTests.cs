@@ -111,6 +111,18 @@ public class LogCompressionPolicyTests
                      D(F("walk-0.log", 3_800_000, 3_800_000, 13 * 24)));
     }
 
+    [Theory]
+    [InlineData("mcp-20261111-140000-4242.log")]
+    [InlineData("mcp-20261111-140000-4242_001.log")]
+    public void Decide_AnMcpServersLog_IsHeldToTheLiveFloor_ThoughItSitsInTheUisFolder(string name)
+    {
+        // [PIPE-PER-PROCESS-2026-11-06] Stage D: an AI session's server writes it, so an hour idle does not make it
+        // finished; the UI's manual button (1 h) used to plan it and run compact.exe on a file still open for writing.
+        Assert.Equal(LogCompressionDecision.SkipLive, D(F(name, 8_000_000, 8_000_000, 48, ours: true)));
+        Assert.Equal(LogCompressionDecision.Compress,
+                     D(F(name, 8_000_000, 8_000_000, Constants.LogCompressLiveFileMinAgeDays * 24 + 1, ours: true)));
+    }
+
     [Fact]
     public void Decide_TheLiveFloorAppliesToTheAutomaticTriggerToo()
     {

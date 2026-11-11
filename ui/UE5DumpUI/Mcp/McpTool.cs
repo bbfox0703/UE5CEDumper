@@ -160,7 +160,7 @@ internal static class McpSchema
         {
             // A copy: a JsonNode has one parent, and the shared properties (pid, name_filter) join many schemas.
             properties[name] = schema.DeepClone();
-            if (req) required.Add(name);
+            if (req) McpJson.Append(required, name);
         }
         var obj = new JsonObject
         {
@@ -177,7 +177,7 @@ internal static class McpSchema
     public static JsonObject Enum(string description, params string[] values)
     {
         var arr = new JsonArray();
-        foreach (var v in values) arr.Add(v);
+        foreach (var v in values) McpJson.Append(arr, v);
         return new JsonObject { ["type"] = "string", ["description"] = description, ["enum"] = arr };
     }
 

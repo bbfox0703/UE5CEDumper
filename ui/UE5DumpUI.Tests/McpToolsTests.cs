@@ -13,44 +13,69 @@ public sealed class McpToolsTests
 {
     // ── Rig ─────────────────────────────────────────────────────────────────────────────────────────────
 
-    /// <summary>A game that records every request and answers by command; scanned unless told otherwise.</summary>
+    /// <summary>A game that records every request and answers by command; its scan is in <see cref="State"/>
+    /// (Ready unless told otherwise), which the real link reads from scan_status and get_pointers.</summary>
     private sealed class FakeGame : IMcpGame
     {
         public List<JsonObject> Sent { get; } = new();
         public Dictionary<string, Func<JsonObject, JsonObject>> Answers { get; } = new();
-        public bool ScannedGame { get; set; } = true;
-        public bool ScanRunning { get; set; }
+        public McpScanState State { get; set; } = McpScanState.Ready;
         public string? PendingNotice { get; set; }
-        private bool _marked;
+        public int ScanChecks { get; private set; }
 
         public (IReadOnlyList<McpGameInfo> Games, bool LegacyPresent) ListGames()
             => ([new McpGameInfo(4242, "Game-Win64-Shipping.exe", "Game", true)], false);
 
         public int ConnectedPid => 4242;
-        public bool Scanned => _marked;
-        public void MarkScanned() => _marked = true;
         public string? TakeNotice() { var n = PendingNotice; PendingNotice = null; return n; }
 
-        public Task<JsonObject> SendAsync(int? pid, JsonObject request, TimeSpan timeout, CancellationToken ct)
+        private McpScanReport Report()
         {
-            Sent.Add((JsonObject)request.DeepClone());
-            string cmd = request["cmd"]!.GetValue<string>();
-            JsonObject reply = Answers.TryGetValue(cmd, out var f) ? f(request) : cmd switch
-            {
-                "get_pointers" => new JsonObject
+            ScanChecks++;
+            bool objects = State is McpScanState.Ready;
+            return new McpScanReport(State,
+                new JsonObject
                 {
-                    ["object_count"] = ScannedGame ? 24530 : 0,
-                    ["gobjects_method"] = ScannedGame ? "aob" : "not_found",
+                    ["object_count"] = objects ? 24530 : 0,
+                    ["gobjects_method"] = objects ? "aob" : "not_found",
                     ["build_number"] = 1,
                     ["pid"] = 4242,
                 },
-                "scan_status" => new JsonObject { ["running"] = ScanRunning, ["scanned"] = ScannedGame },
-                _ => new JsonObject(),
-            };
+                new JsonObject
+                {
+                    ["running"] = State == McpScanState.Running,
+                    ["phase"] = State is McpScanState.Ready or McpScanState.FoundNothing ? 7 : 3,
+                });
+        }
+
+        public Task<JsonObject> SendAsync(int? pid, JsonObject request, TimeSpan timeout, CancellationToken ct,
+            bool requireScan = false)
+        {
+            if (requireScan)
+            {
+                var report = Report();
+                if (report.State != McpScanState.Ready) throw new McpToolError(McpGameLink.Explain(report));
+            }
+            Sent.Add((JsonObject)request.DeepClone());
+            string cmd = request["cmd"]!.GetValue<string>();
+            JsonObject reply = Answers.TryGetValue(cmd, out var f) ? f(request) : new JsonObject();
             reply["id"] = 1;
             reply["ok"] ??= true;
             reply["_t_read_ms"] = 3;
             return Task.FromResult(reply);
+        }
+
+        public Task<McpScanReport> ScanStateAsync(int? pid, CancellationToken ct) => Task.FromResult(Report());
+
+        public Task<(McpScanReport Before, JsonObject? Started)> StartScanAsync(int? pid, CancellationToken ct)
+        {
+            var before = Report();
+            if (before.State != McpScanState.NotStarted) return Task.FromResult((before, (JsonObject?)null));
+            var started = new JsonObject { ["cmd"] = "trigger_scan" };
+            Sent.Add(started);
+            var reply = Answers.TryGetValue("trigger_scan", out var f) ? f(started) : new JsonObject();
+            reply["ok"] ??= true;
+            return Task.FromResult((before, (JsonObject?)reply));
         }
 
         public IEnumerable<string> Commands => Sent.Select(r => r["cmd"]!.GetValue<string>());
@@ -156,7 +181,7 @@ public sealed class McpToolsTests
         {
             foreach (bool scanned in new[] { true, false })
             {
-                var game = new FakeGame { ScannedGame = scanned };
+                var game = new FakeGame { State = scanned ? McpScanState.Ready : McpScanState.NotStarted };
                 var (payload, result) = await Call(game, t.Name, ArgsFromSchema(t.InputSchema));
                 if (scanned && result.IsError) refused.Add($"{t.Name}: {payload!["error"]}");
                 foreach (var cmd in game.Commands)
@@ -302,49 +327,71 @@ public sealed class McpToolsTests
     public async Task OnAnUnscannedGame_AnObjectToolSaysToScan_AndSendsNothingThatWouldAnswerEmpty()
     {
         // A proxy-loaded game's object commands answer with zeros: "nothing there" would be a wrong answer.
-        var game = new FakeGame { ScannedGame = false };
+        var game = new FakeGame { State = McpScanState.NotStarted };
         var (payload, result) = await Call(game, "read_search_objects", new JsonObject { ["query"] = "Pawn" });
         Assert.True(result.IsError);
         Assert.Contains("scan_start", payload!["error"]!.GetValue<string>());
         Assert.DoesNotContain("search_objects", game.Commands);
 
-        game.ScanRunning = true;
+        // Running: the pool is published before the offsets are validated, so it is not yet a scanned game.
+        game.State = McpScanState.Running;
         (payload, _) = await Call(game, "read_search_objects", new JsonObject { ["query"] = "Pawn" });
         Assert.Contains("still running", payload!["error"]!.GetValue<string>());
+
+        game.State = McpScanState.FoundNothing;
+        (payload, _) = await Call(game, "read_search_objects", new JsonObject { ["query"] = "Pawn" });
+        Assert.Contains("Extra Scan", payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("search_objects", game.Commands);
     }
 
     [Fact]
-    public async Task OnAScannedGame_TheGateAsksOnce()
+    public async Task ObjectTools_AskForTheScanCheck_AndReadMemoryDoesNot()
     {
         var game = new FakeGame();
         await Call(game, "read_search_objects", new JsonObject { ["query"] = "A" });
-        await Call(game, "read_search_objects", new JsonObject { ["query"] = "B" });
-        Assert.Equal(1, game.Commands.Count(c => c == "get_pointers"));
+        Assert.Equal(1, game.ScanChecks);
+        await Call(game, "read_memory", new JsonObject { ["addr"] = "0x1000" });
+        Assert.Equal(1, game.ScanChecks);
     }
 
     [Fact]
     public async Task ReadMemory_NeedsNoScan()
     {
-        var game = new FakeGame { ScannedGame = false };
+        var game = new FakeGame { State = McpScanState.NotStarted };
         var (_, r) = await Call(game, "read_memory", new JsonObject { ["addr"] = "0x1000" });
         Assert.False(r.IsError);
         Assert.Contains("read_mem", game.Commands);
     }
 
-    [Fact]
-    public async Task ScanStart_OnAScannedGame_StartsNothing()
+    [Theory]
+    [InlineData(McpScanState.Ready, "already_scanned")]
+    [InlineData(McpScanState.Running, "in_progress")]
+    public async Task ScanStart_OnAGameScannedOrBeingScanned_StartsNothing(McpScanState state, string key)
     {
-        // Another client (the UI) has scanned: a second scan would clear the name cache it is using.
-        var game = new FakeGame();
-        var (payload, _) = await Call(game, "scan_start");
-        Assert.True(payload!["already_scanned"]!.GetValue<bool>());
+        // Another client (the UI) has scanned or is scanning: a second scan would clear the name cache it is using.
+        var game = new FakeGame { State = state };
+        var (payload, result) = await Call(game, "scan_start");
+        Assert.False(result.IsError);
+        Assert.True(payload![key]!.GetValue<bool>());
+        Assert.DoesNotContain("trigger_scan", game.Commands);
+    }
+
+    [Fact]
+    public async Task ScanStart_OnAGameWhoseScanFoundNothing_Refuses_RatherThanLoop()
+    {
+        // A finished scan that found no pool reads as "not scanned" by its pointers alone; scanning again would only
+        // clear the shared name cache, every time.
+        var game = new FakeGame { State = McpScanState.FoundNothing };
+        var (payload, result) = await Call(game, "scan_start");
+        Assert.True(result.IsError);
+        Assert.Contains("Extra Scan", payload!["error"]!.GetValue<string>());
         Assert.DoesNotContain("trigger_scan", game.Commands);
     }
 
     [Fact]
     public async Task ScanStart_OnAnUnscannedGame_StartsTheScan_AndSaysToPoll()
     {
-        var game = new FakeGame { ScannedGame = false };
+        var game = new FakeGame { State = McpScanState.NotStarted };
         game.Answers["trigger_scan"] = _ => new JsonObject { ["started"] = true };
         var (payload, result) = await Call(game, "scan_start");
         Assert.Contains("trigger_scan", game.Commands);
@@ -382,6 +429,36 @@ public sealed class McpToolsTests
         var (_, result) = await Call(game, "read_object", new JsonObject { ["addr"] = "0x1000" });
         Assert.Contains("reconnected", result.Note);
         Assert.Null(game.TakeNotice());
+    }
+
+    [Fact]
+    public async Task RefineValueScan_PassesCaseSensitiveAgain_SinceTheSessionDoesNotKeepIt()
+    {
+        var game = new FakeGame();
+        await Call(game, "read_value_scan_refine", new JsonObject
+        {
+            ["session_id"] = 7, ["scan_type"] = "Exact", ["value"] = "Sword", ["case_sensitive"] = true,
+        });
+        Assert.True(game.Sent.Last()["case_sensitive"]!.GetValue<bool>());
+    }
+
+    [Fact]
+    public async Task ListClasses_WithoutAFilter_StillFetchesAll_SinceTheDllCutsBeforeItSorts()
+    {
+        var game = new FakeGame();
+        game.Answers["list_classes"] = _ => new JsonObject
+        {
+            ["classes"] = new JsonArray(Enumerable.Range(0, 30).Select(i => (JsonNode)new JsonObject
+            {
+                ["class_name"] = "C" + i,
+            }).ToArray()),
+        };
+        var (payload, _) = await Call(game, "read_list_classes", new JsonObject { ["limit"] = 7 });
+        Assert.Equal(Constants.MaxSearchCap, game.Sent.Last()["limit"]!.GetValue<int>());
+        var kept = payload!["classes"]!.AsArray();
+        Assert.Equal(7, kept.Count);
+        Assert.Equal("C0", kept[0]!["class_name"]!.GetValue<string>());   // the DLL's order: best score first
+        Assert.True(payload["truncated"]!.GetValue<bool>());
     }
 
     [Fact]
@@ -437,11 +514,12 @@ public sealed class McpToolsTests
     }
 
     [Fact]
-    public async Task ListClasses_WithoutAFilter_PassesTheLimitThrough()
+    public async Task ListFunctions_WithoutAFilter_PassesTheLimitThrough()
     {
+        // Every function of a large game is megabytes: without a filter the DLL's own limit applies.
         var game = new FakeGame();
-        game.Answers["list_classes"] = _ => new JsonObject { ["classes"] = new JsonArray() };
-        await Call(game, "read_list_classes", new JsonObject { ["limit"] = 7 });
+        game.Answers["list_all_functions"] = _ => new JsonObject { ["functions"] = new JsonArray() };
+        await Call(game, "read_list_functions", new JsonObject { ["limit"] = 7 });
         Assert.Equal(7, game.Sent.Last()["limit"]!.GetValue<int>());
     }
 
@@ -465,11 +543,21 @@ public sealed class McpToolsTests
     [Fact]
     public async Task ReadStatus_OnAnUnscannedGame_AddsTheScanStatus_AndSaysWhatToDo()
     {
-        var game = new FakeGame { ScannedGame = false };
+        var game = new FakeGame { State = McpScanState.NotStarted };
         var (payload, result) = await Call(game, "read_status");
         Assert.False(payload!["scanned"]!.GetValue<bool>());
         Assert.NotNull(payload["scan"]);
         Assert.Contains("scan_start", result.Note);
+
+        game.State = McpScanState.Running;
+        (payload, result) = await Call(game, "read_status");
+        Assert.False(payload!["scanned"]!.GetValue<bool>());
+        Assert.Contains("still running", result.Note);
+
+        game.State = McpScanState.Ready;
+        (payload, result) = await Call(game, "read_status");
+        Assert.True(payload!["scanned"]!.GetValue<bool>());
+        Assert.False(payload.AsObject().ContainsKey("scan"));
     }
 
     [Fact]
