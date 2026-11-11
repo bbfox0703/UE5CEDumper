@@ -2745,6 +2745,28 @@ assembly loaded and the lookup checked in `HeadlessTestApp.Initialize`, the clas
 rebuilt or copied anything (dll timestamps, the `*.Up2Date` marker) before blaming `obj\`. A stopped
 publish still consumes its build number, because it bumps first: do not reuse it.
 
+### 3.8f A teardown that runs on the leaving connection's thread inherits its cancel flag
+
+`[DBGCAM-RELEASE-STALLED]` 2026-11-12. When a pipe client disappears while one of its commands runs, MonitorLoop
+raises that connection's cancel flag, and nothing lowers it again. The handler thread stays bound to it through its own
+teardown (`Tot::ConnectionCancelScope` covers the whole handler), so whatever the teardown runs for the departed
+client reads `Tot::Requested()` as true. Fern's release of a background client's holds runs there. The debug camera's
+state read walks GObjects and gives up at once under a cancel, so it answered "unknown": the release sent nothing and
+logged `its hold debug_camera is released (code 0)` while the camera stayed on with no holder. Measured live on build
+3706 (DumperTest Development, `mcp_client.py dbgcamhold` case J): `client gone mid-command (err=109)`, then that line.
+The rule: work that exists BECAUSE a client left must not answer to that client's cancel. Adopt an immune
+`Tot::CancelContextScope(Tot::CancelContext{nullptr, true})` for its reads (shutdown still stops them), as
+`Fern::ReleaseOwnedBy` and `ServeOwedCameraRelease` now do.
+
+Two rig traps from the same measurement:
+- **Reproducing "left mid-command" needs a command that really waits.** On DumperTest `read_pose`
+  (`teleport_get_pose`) answers from memory at once, so a session closed "during" it had already returned. The DLL log
+  had no `client gone mid-command` line, and the first J run measured something else. A `write_invoke` waits on the
+  game thread. Check the DLL log for `client gone mid-command` before reading anything into the result.
+- **A soft-removed hook still stamps fire times.** `Stark::RemoveHook` (a CE Disable) only clears a flag, so
+  `GetGameThreadLiveness` answers Unknown while `MsSinceLastHookFire` still measures the game thread. Code that must
+  not send into a stalled game reads the stamp, not the liveness.
+
 ### 3.9 Two injected hosts at once: the second one silently never scans
 
 "One game at a time" is written down as a **resource** rule. It is also a **correctness** rule, and
