@@ -984,19 +984,85 @@ public sealed class McpToolsTests
     }
 
     [Theory]
-    [InlineData("0xDEAD")]   // inside some object, or nothing: get_object still answers
-    [InlineData("-1")]       // a negative number is no address
-    [InlineData("BP_Player_C_0")]   // a name is not looked up
-    public async Task WriteInvoke_AnObjectParameter_MustBeALiveObjectsAddress(string target)
+    [InlineData("0xDEAD", "must be a live object's address")]   // inside some object, or nothing: get_object answers
+    [InlineData("-1", "pass its hex address")]                  // a negative number is no address
+    [InlineData("BP_Player_C_0", "pass its hex address")]       // a name is not looked up
+    public async Task WriteInvoke_AnObjectParameter_MustBeALiveObjectsAddress(string target, string says)
     {
         var game = InvokeGame(Fn("SetTarget", Parm("Target", "ObjectProperty", 8, 0)));
         OnlyLiveObject(game, "0x1000");
-        var (_, result) = await Call(game, "write_invoke", new JsonObject
+        var (payload, result) = await Call(game, "write_invoke", new JsonObject
         {
             ["instance_addr"] = "0x1000", ["function"] = "SetTarget", ["params"] = new JsonObject { ["Target"] = target },
         });
         Assert.True(result.IsError);
+        Assert.Contains(says, payload!["error"]!.GetValue<string>());
         Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    private static JsonObject StructParm(string name, int size, params (string Name, string Type, int Offset, int Size)[] fields)
+    {
+        var p = Parm(name, "StructProperty", size, 0);
+        p["struct_type"] = "MyStruct";
+        var arr = new JsonArray();
+        foreach (var f in fields)
+            arr.Add(new JsonObject { ["name"] = f.Name, ["type"] = f.Type, ["offset"] = f.Offset, ["size"] = f.Size });
+        p["struct_fields"] = arr;
+        return p;
+    }
+
+    [Fact]
+    public async Task WriteInvoke_AnFTextInsideAStruct_IsRefused_EvenWithTheStructLeftOut()
+    {
+        var game = InvokeGame(Fn("SetQuest", StructParm("Info", 32, ("Title", "TextProperty", 0, 24), ("Id", "IntProperty", 24, 4))));
+        var (payload, result) = await Call(game, "write_invoke",
+            new JsonObject { ["instance_addr"] = "0x1000", ["function"] = "SetQuest" });
+        Assert.True(result.IsError);
+        Assert.Contains("Info.Title", payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvoke_AnObjectFieldOfAStruct_MustBeALiveObject()
+    {
+        var game = InvokeGame(Fn("ApplyDamage", StructParm("Info", 16, ("Instigator", "ObjectProperty", 0, 8), ("Amount", "FloatProperty", 8, 4))));
+        OnlyLiveObject(game, "0x1000");
+        var (payload, result) = await Call(game, "write_invoke", new JsonObject
+        {
+            ["instance_addr"] = "0x1000", ["function"] = "ApplyDamage",
+            ["params"] = new JsonObject { ["Info"] = new JsonObject { ["Instigator"] = "0x12345678", ["Amount"] = 10 } },
+        });
+        Assert.True(result.IsError);
+        Assert.Contains("Info.Instigator", payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    [Theory]
+    [InlineData("FloatProperty", 4, "1e39", "float")]   // would reach the game as infinity
+    public async Task WriteInvoke_AValueItsTypeCannotHold_IsRefused(string type, int size, string value, string says)
+    {
+        var game = InvokeGame(Fn("F", Parm("P", type, size, 0)));
+        var (payload, result) = await Call(game, "write_invoke", new JsonObject
+        {
+            ["instance_addr"] = "0x1000", ["function"] = "F", ["params"] = new JsonObject { ["P"] = JsonNode.Parse(value) },
+        });
+        Assert.True(result.IsError);
+        Assert.Contains(says, payload!["error"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task WriteInvoke_ADecimalAboveLongMax_IsWrittenAsItsBits_NotZero()
+    {
+        // WriteParam reads an int32 with long.TryParse: 18446744073709551615 would read as 0, so it goes as -1.
+        var game = InvokeGame(Fn("SetMask", Parm("M", "IntProperty", 4, 0)));
+        var (_, result) = await Call(game, "write_invoke", new JsonObject
+        {
+            ["instance_addr"] = "0x1000", ["function"] = "SetMask",
+            ["params"] = new JsonObject { ["M"] = JsonNode.Parse("18446744073709551615") },
+        });
+        Assert.False(result.IsError);
+        Assert.StartsWith("FFFFFFFF", game.Sent.Single(r => r["cmd"]!.GetValue<string>() == "invoke_function")
+            ["params_hex"]!.GetValue<string>());
     }
 
     [Theory]
@@ -1047,7 +1113,7 @@ public sealed class McpToolsTests
     [InlineData("IntProperty", 4, "\"abc\"", "integer")]
     [InlineData("IntProperty", 4, "1.5", "integer")]
     [InlineData("BoolProperty", 1, "\"maybe\"", "true or false")]
-    [InlineData("FloatProperty", 4, "\"fast\"", "number")]
+    [InlineData("FloatProperty", 4, "\"fast\"", "is a float")]
     [InlineData("StructProperty", 16, "{\"A\":1}", "only be passed empty")]   // a struct with no known fields
     public async Task WriteInvoke_RefusesWhatItCannotPassFaithfully(string type, int size, string value, string says)
     {
@@ -1066,10 +1132,12 @@ public sealed class McpToolsTests
     [Fact]
     public async Task WriteInvoke_AnIntegralNumber_IsAnInteger()
     {
+        // As the MCP transport gives it: parsed text, "100.0" kept as written (a C# double would serialise as "100").
         var game = InvokeGame(Fn("SetLevel", Parm("L", "IntProperty", 4, 0)));
         var (_, result) = await Call(game, "write_invoke", new JsonObject
         {
-            ["instance_addr"] = "0x1000", ["function"] = "SetLevel", ["params"] = new JsonObject { ["L"] = 100.0 },
+            ["instance_addr"] = "0x1000", ["function"] = "SetLevel",
+            ["params"] = new JsonObject { ["L"] = JsonNode.Parse("100.0") },
         });
         Assert.False(result.IsError);
         Assert.StartsWith("64000000", game.Sent.Single(r => r["cmd"]!.GetValue<string>() == "invoke_function")
@@ -1215,10 +1283,14 @@ public sealed class McpToolsTests
     [Theory]
     [InlineData("IntProperty", 1)]
     [InlineData("SoftObjectProperty", 2)]   // its conversion is a game-thread call of its own
+    [InlineData("struct-of-two-weak", 3)]   // and so is each weak or soft field of a struct
     public async Task WriteInvoke_WaitsAsLongAsTheDllMay(string paramType, int calls)
     {
         // A user-set invoke timeout of 60 s: ending first would drop the connection, and every hold with it.
-        var game = InvokeGame(Fn("Use", Parm("P", paramType, 8, 0)));
+        var parm = paramType == "struct-of-two-weak"
+            ? StructParm("P", 16, ("A", "WeakObjectProperty", 0, 8), ("B", "WeakObjectProperty", 8, 8))
+            : Parm("P", paramType, 8, 0);
+        var game = InvokeGame(Fn("Use", parm));
         game.Answers["get_pointers"] = _ => new JsonObject
         {
             ["build_number"] = Constants.McpMinDllBuildForRawWrites, ["invoke_timeout_ms"] = 60000,
@@ -1281,10 +1353,13 @@ public sealed class McpToolsTests
     }
 
     [Theory]
-    [InlineData("write_teleport", """{"x":1,"y":2,"z":3}""", "teleport_recall_marker", 4)]
+    [InlineData("write_teleport", """{"x":1,"y":2,"z":3}""", "teleport_recall_marker", 7)]
+    [InlineData("write_teleport", """{"x":1,"y":2,"z":3}""", "teleport_get_pose", 1)]
+    [InlineData("read_pose", "{}", "teleport_get_pose", 1)]
     [InlineData("write_debug_camera", """{"enable":true}""", "set_debug_camera", 2)]
     [InlineData("write_see_through", """{"enable":true}""", "seethrough_set", 16)]
     [InlineData("write_fly", """{"enable":false}""", "fly_set", 2)]
+    [InlineData("write_mouse_cursor", """{"show":true}""", "set_mouse_cursor", 2)]
     public async Task AGameThreadCommand_WaitsAsLongAsTheDllMay_OnEachCall(string tool, string args, string cmd, int calls)
     {
         // A user-set invoke timeout of 60 s on each game-thread call the command makes in turn.

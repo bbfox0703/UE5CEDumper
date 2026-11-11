@@ -185,9 +185,10 @@ internal static class McpRawTools
             request["str_params"] = arr;
         }
 
-        // The call, and one conversion per weak / soft object parameter, each a game-thread call the DLL may wait on.
-        int calls = 1 + fn.InputParams.Count(p => p.TypeName is "WeakObjectProperty" or "SoftObjectProperty"
-                                                                or "SoftClassProperty" or "LazyObjectProperty");
+        // The call, and one conversion per weak / soft object slot -- a parameter or a struct parameter's field -- each a
+        // game-thread call the DLL may wait on.
+        int calls = 1 + fn.InputParams.Sum(p => IsConvertedSlot(p.TypeName) ? 1
+            : StructFields(p, ueVersion)?.Count(f => IsConvertedSlot(f.TypeName)) ?? 0);
         var reply = await game.SendAsync(pid, request, McpWriteTools.InvokeTimeout(ptrs, calls), ct, requireScan: true);
         return McpWriteTools.Combine(Answer(reply, fn, ueVersion), game.TakeNotice());
     }
@@ -262,9 +263,17 @@ internal static class McpRawTools
             if (!inputs.Any(p => string.Equals(p.Name, key, StringComparison.OrdinalIgnoreCase)))
                 throw new McpToolError($"{fn.Name} has no parameter '{key}'. Its parameters: "
                                        + (inputs.Count == 0 ? "none" : string.Join(", ", inputs.Select(p => p.Name))) + ".");
-        if (inputs.FirstOrDefault(p => ParamBufferBuilder.IsRefusedParam(p.TypeName)) is { } text)
-            throw new McpToolError($"{fn.Name} takes an FText ('{text.Name}'), which cannot be passed from here: a zeroed "
-                                   + "FText is not an empty one, and the game can crash reading it.");
+        foreach (var p in inputs)
+        {
+            // An FText anywhere in the arguments -- one of them, or a field of a struct one, given or left out: a
+            // zeroed FText is not an empty one, and the game can crash reading it.
+            string? where = ParamBufferBuilder.IsRefusedParam(p.TypeName) ? p.Name
+                : StructFields(p, ueVersion)?.FirstOrDefault(f => ParamBufferBuilder.IsRefusedParam(f.TypeName)) is { } tf
+                    ? $"{p.Name}.{tf.Name}" : null;
+            if (where is not null)
+                throw new McpToolError($"{fn.Name} takes an FText ('{where}'), which cannot be passed from here: a "
+                                       + "zeroed FText is not an empty one, and the game can crash reading it.");
+        }
 
         int size = BakedScriptGenerator.BakedParmsSize(fn);
         var buf = new byte[Math.Max(size, 0)];
@@ -285,9 +294,28 @@ internal static class McpRawTools
                     if (!fields.Any(f => string.Equals(f.Name, key, StringComparison.OrdinalIgnoreCase)))
                         throw new McpToolError($"{StructLabel(p)} has no field '{key}'. Its fields: "
                                                + string.Join(", ", fields.Select(f => f.Name)) + ".");
-                var texts = fields.Select(f => Given(values, f.Name) is { } v
-                    ? (ParamBufferBuilder.IsStringType(f.TypeName) ? Text(v) : StrictScalar(f.TypeName, v, $"{p.Name}.{f.Name}"))
-                    : ParamBufferBuilder.IsStringType(f.TypeName) ? "" : "0").ToArray();
+                var texts = new string[fields.Count];
+                for (int i = 0; i < fields.Count; i++)
+                {
+                    var f = fields[i];
+                    bool isString = ParamBufferBuilder.IsStringType(f.TypeName);
+                    if (Given(values, f.Name) is not { } v)
+                    {
+                        texts[i] = isString ? "" : "0";
+                        continue;
+                    }
+                    if (isString)
+                    {
+                        texts[i] = Text(v);
+                        continue;
+                    }
+                    string s = StrictScalar(f.TypeName, v, $"{p.Name}.{f.Name}");
+                    // A struct's object field is passed as given too: a live object's address or 0, as at top level.
+                    if (ParamBufferBuilder.IsPickablePointerType(f.TypeName) && McpArgs.TryParseHex(s, out ulong fp)
+                        && fp != 0 && !await IsLiveObjectAsync(game, pid, s, timeout, ct))
+                        throw new McpToolError($"'{p.Name}.{f.Name}' must be a live object's address (or 0); {s} is not one.");
+                    texts[i] = s;
+                }
                 if (!ParamBufferBuilder.TryValidateStructSubFields(fields, texts, out string bad, out string err))
                     throw new McpToolError($"'{p.Name}.{bad}': {err}");
                 ParamBufferBuilder.WriteStructParam(buf, p.Offset, fields, texts);
@@ -336,6 +364,10 @@ internal static class McpRawTools
 
     private static string StructLabel(FunctionParamModel p) => string.IsNullOrEmpty(p.StructName) ? "struct" : p.StructName;
 
+    /// <summary>A slot the DLL converts with a game-thread call of its own before the call (PrepareObjectParams).</summary>
+    private static bool IsConvertedSlot(string type)
+        => type is "WeakObjectProperty" or "SoftObjectProperty" or "SoftClassProperty" or "LazyObjectProperty";
+
     /// <summary>A scalar's text, refused unless it parses as its type: the dialog's parsers read anything else as 0, which
     /// a person sees in the box and an AI would not. A JSON number with an integral value is accepted for an integer.
     /// Pointers come back as "0x" hex.</summary>
@@ -346,31 +378,48 @@ internal static class McpRawTools
             return BakedScriptGenerator.ParseBoolLiteral(text) is not null ? text
                 : throw new McpToolError($"'{label}' is a bool: pass true or false.");
         if (type is "FloatProperty" or "DoubleProperty")
+        {
+            // A float holds up to float.MaxValue; anything bigger would reach the game as infinity.
+            double limit = type == "FloatProperty" ? float.MaxValue : double.MaxValue;
             return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) && double.IsFinite(d)
-                ? text : throw new McpToolError($"'{label}' is a number: '{text}' is not one.");
+                   && Math.Abs(d) <= limit
+                ? text : throw new McpToolError($"'{label}' is a {(type == "FloatProperty" ? "float" : "number")}: "
+                                                + $"'{text}' is not one it can hold.");
+        }
         if (type == "NameProperty")
-            return TryInteger(text, out string n) ? n
+            return TryInteger(text, type, out string n) ? n
                 : throw new McpToolError($"'{label}' is an FName: pass its number (read_instance shows a field's raw "
                                          + "value); a name string is not looked up.");
         if (ParamBufferBuilder.IsPickablePointerType(type))
         {
-            if (!TryInteger(text, out string ptrText) || ptrText.StartsWith('-')
+            if (!TryInteger(text, type, out string ptrText) || ptrText.StartsWith('-')
                 || !BakedScriptGenerator.TryParseHexOrDecimal(ptrText, out ulong ptr))
                 throw new McpToolError($"'{label}' is an object: pass its hex address (0 for none).");
             return "0x" + ptr.ToString("X", CultureInfo.InvariantCulture);
         }
         if (IntegerTypes.Contains(type))
-            return TryInteger(text, out string i) ? i
+            return TryInteger(text, type, out string i) ? i
                 : throw new McpToolError($"'{label}' is an integer: '{text}' is not one (an enum goes as its value).");
         return text;
     }
 
+    // The types WriteParam reads as a signed 64-bit value (long.TryParse): a decimal above long.MaxValue would read as 0.
+    private static readonly HashSet<string> SignedParseTypes =
+        ["Int16Property", "IntProperty", "UInt32Property", "Int64Property", "EnumProperty"];
+
     /// <summary>Decimal, negative decimal or 0x hex, as the dialog's parser reads them; or a JSON number with an integral
-    /// value (100.0).</summary>
-    private static bool TryInteger(string text, out string normalized)
+    /// value (100.0). A decimal above long.MaxValue for a type WriteParam reads as signed becomes its two's-complement
+    /// value, the bits TryValidateScalar checked.</summary>
+    private static bool TryInteger(string text, string type, out string normalized)
     {
         normalized = text;
-        if (BakedScriptGenerator.TryParseHexOrDecimal(text, out _)) return true;
+        if (BakedScriptGenerator.TryParseHexOrDecimal(text, out ulong bits))
+        {
+            if (bits > long.MaxValue && !text.StartsWith('-') && !text.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+                && SignedParseTypes.Contains(type))
+                normalized = unchecked((long)bits).ToString(CultureInfo.InvariantCulture);
+            return true;
+        }
         if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) && double.IsFinite(d)
             && d == Math.Floor(d) && Math.Abs(d) < 9.0e15)
         {

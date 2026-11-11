@@ -292,6 +292,12 @@ is already active, which reads ON. `set_debug_camera` only:
   `[W3-DEBUGCAM-QUEUED]`
 - `-6`: NOT SENT, because an earlier toggle of the other direction is still queued; send again once the game responds.
   `[DBGCAM-OFF-OVER-QUEUED-ON]`
+- `[D2-3-INVOKE]` (build 3706+): a `-5` for the same direction tells a client the queued toggle is its own -- and a
+  foreground client (the UI, CE) that joins another client's queued toggle that way takes it over: it holds the camera,
+  and the first sender's session end does not drop it. Only an `if_free` request (the MCP server's) can also get, as
+  `ok:true` replies: `state` `-25` with `code` `-20`, `hold: "invoke_queue"` and the `holder` (another client's
+  game-thread call is outstanding; nothing sent), or `state` and `code` `-27` (the ProcessEvent hook is down; nothing
+  sent).
 - `-17` (from build 3682): an ON NOT SENT, because no CheatManager is live (UE 5 compiles it out of Shipping by
   default) and ToggleDebugCamera does nothing on its class default object (4.20+; undefined behaviour on 4.18/4.19).
   Answered at once, with no game-thread call.
@@ -2115,9 +2121,9 @@ Error codes:
 request; CE's mailbox calls are CE's). Refusals, each `ok:false` with nothing queued or run:
 - `if_free` while another client's call is still queued or running (a -5 one included): `code` `-20`,
   `hold: "invoke_queue"`, and the `holder`, as a hold's refusal. The UI sends no `if_free`, so its calls always queue.
-  The rule covers every game-thread call an `if_free` command makes on its way: `set_debug_camera` answers `state` -25
-  with the same `code` / `hold` / `holder` (and `state` / `code` -27 with the hook down), and a pending ON counts as
-  the debug camera held by the client that sent it.
+  The rule covers every game-thread call an `if_free` command makes on its way: `set_debug_camera` answers (`ok:true`)
+  `state` -25 with the same `code` / `hold` / `holder`, or `state` / `code` -27 with the hook down -- see "Debug
+  Camera" -- and a pending ON counts as the debug camera held by the client that sent it.
 - `if_free` while the ProcessEvent hook is down: `code` `-27`; such a call never runs off the game thread.
 - From a client that marks its requests `background` (the MCP server), `code` `-24`: `direct_call`, a function whose
   flags cannot be read, a network RPC (`FUNC_Net`), or a name on the deny list (console commands, quit / level travel /
@@ -2208,8 +2214,10 @@ and their owners"), whether it is in force now, and who holds it. Read-only, ans
 ```
 
 `invokes` (`[D2-3-INVOKE]`, build 3706+): each client's game-thread calls still queued or running, a timed-out (-5)
-one included, counted until the game thread answers it; the DLL's own workers are left out. An `if_free`
-`invoke_function` is refused while another client has one outstanding.
+one included, counted until the game thread answers it (a dropIfAbandoned conversion stops counting when its waiter
+gives it up: it never runs); the DLL's own workers are left out. An `if_free` `invoke_function` is refused while
+another client has one outstanding. A hold may carry `"pending": true`: a debug-camera ON on its way, which an
+`if_free` request already counts as held by its sender.
 
 The holds, always listed: `god_mode`, `foreground_lock`, `gravity_direction`, `fly`, `debug_camera`,
 `movement:walk_speed`, `movement:gravity`, `movement:jump`, `time:global`, `time:pawn`; then one

@@ -691,7 +691,7 @@ public sealed class PipePerProcessSourceTests
 
         // Answered = settled: the drain (run or dropped), shutdown, an owner's drop and a waiter's abandon each take it
         // off the count, once.
-        string drain = Between(stark, "if (ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {",
+        string drain = Between(stark, "ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {",
             "static void __fastcall HookedProcessEvent(");
         int ran = drain.IndexOf("CallProcessEventSEH(req->instance, req->ufunc, req->params);", StringComparison.Ordinal);
         int settle = drain.IndexOf("SettleLocked(*req);", ran, StringComparison.Ordinal);
@@ -700,9 +700,14 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("SettleLocked(*req);",
             Between(drain, "if (req->dropIfAbandoned && !ClaimRequest(req->state, kRequestRunning)) {", "continue;"));
         // One request at a time, each taken under the lock just before it runs: nothing waits outside the queue's reach.
-        int pop = drain.IndexOf("s_invokeQueue.pop_front();", StringComparison.Ordinal);
-        Assert.True(pop > 0 && pop < ran, "taken from the queue just before it runs");
-        Assert.DoesNotContain("pending.push_back", drain);
+        string loop = Between(drain, "for (; budget > 0; --budget) {", "CallProcessEventSEH(");
+        int lockAtPop = loop.IndexOf("std::lock_guard<std::mutex> lock(s_queueMutex);", StringComparison.Ordinal);
+        int pop = loop.IndexOf("s_invokeQueue.pop_front();", StringComparison.Ordinal);
+        Assert.True(lockAtPop > 0 && pop > lockAtPop, "each request popped under the lock inside the loop");
+        Assert.Single(Regex.Matches(drain, @"s_invokeQueue\.front\(\)"));   // no batch filled before the loop
+        // ...and only at the top level: a request's own ProcessEvent calls do not drain the rest inside it.
+        Assert.Contains("if (!t_draining && ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {", stark);
+        Assert.Contains("DrainScope() { t_draining = true; }", drain);
         Assert.Contains("SettleLocked(*req);", Between(stark, "void Shutdown() {", "bool IsHookActive()"));
         string drop = Between(stark, "int32_t DropQueuedInvokesOf(uint64_t owner) {", "void SetInvokeTimeoutMs(");
         Assert.Contains("ClaimRequest(req.state, kRequestAbandoned)", drop);
@@ -726,17 +731,46 @@ public sealed class PipePerProcessSourceTests
         string pending = Between(frieren, "bool PendingOn(uint64_t& owner) {", "}  ");
         Assert.Contains("owner = on ? s_dbgCamOwner : 0;", pending);
 
+        // A foreground client that joins a pending toggle (told -5, "your toggle is queued") takes it over: in the
+        // queue (retagged, so the first sender's session end does not drop it) and for the hold.
+        string join = Between(frieren, "static void JoinPendingToggle(int32_t answer, bool queued) {", "\n}");
+        Assert.Contains("answer != Stark::kInvokeTimedOutStillQueued || Stark::CurrentInvokeIfFree()", join);
+        Assert.Contains("Stark::RetagQueued(s_dbgCamQueuedId, me)", join);
+        Assert.Contains("s_dbgCamJoinedBy = me;", join);
+        Assert.Contains("if (s_dbgCamJoinedBy != 0) Stark::RetagQueued(queuedId, s_dbgCamJoinedBy);", frieren);
+        Assert.Equal(2, Regex.Matches(set, @"JoinPendingToggle\(answer, (true|false)\);").Count);
+
         string fern = CodeOnly(DllSrc("Fern.cpp"));
         Assert.Contains("return hold == Grimoire::HOLD_DEBUG_CAMERA && FrierenDebugCamera::PendingOn(sender);", fern);
         string head = Between(fern, "std::string Fern::DispatchCommand(", "if (cmd == Renge::CMD_INIT) {");
         Assert.Contains("const bool inForce = HoldActive(h) || HoldPending(h, sender);", head);
-        Assert.Contains("if (sender == caller) Voll::Holds().SetOwner(h, caller);", head);
+        // The recorder's three branches: in force -> the caller (or a joiner of the caller's toggle); on its way -> its
+        // sender only; off -> nobody.
+        string recorder = Between(head, "struct HoldRecorder {", "} holdRecorder{");
+        int active = recorder.IndexOf("if (HoldActive(h)) {", StringComparison.Ordinal);
+        int joined = recorder.IndexOf("FrierenDebugCamera::ConsumeJoin(caller, joinedBy)", StringComparison.Ordinal);
+        int setActive = recorder.IndexOf("Voll::Holds().SetOwner(h, joined ? joinedBy : caller);", StringComparison.Ordinal);
+        int pendingAt = recorder.IndexOf("} else if (HoldPending(h, sender)) {", StringComparison.Ordinal);
+        int senderOnly = recorder.IndexOf("if (sender == caller) Voll::Holds().SetOwner(h, caller);", StringComparison.Ordinal);
+        int off = recorder.IndexOf("Voll::Holds().SetOwner(h, Voll::kHoldOwnerNone);", StringComparison.Ordinal);
+        Assert.True(active > 0 && joined > active && setActive > joined && pendingAt > setActive && senderOnly > pendingAt
+                    && off > senderOnly, "active (or its joiner), pending (its sender only), off (nobody) -- in order");
         Assert.DoesNotContain("HoldActive(h) || HoldPending(h) ? caller", head);
 
         string handler = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_SET_DEBUG_CAMERA) {",
             "return Renge::MakeResponse(id, data).dump();");
         Assert.Contains("state == Stark::kInvokeHeldByOther", handler);
         Assert.Contains("Grimoire::HOLD_HELD_BY_OTHER", handler);
+        Assert.Contains("Grimoire::HOLD_INVOKE_QUEUE", handler);
+        Assert.Contains("Stark::LastInvokeBlocker()", handler);
+        Assert.Contains("state == Stark::kInvokeNeedsGameThread", handler);
+
+        // CE's recorder agrees: its answer that sent nothing never takes another client's pending ON.
+        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
+        string ce = Between(mimic, "static int32_t ChangeHoldAsCe(", "static void HandleSetDebugCamera()");
+        int skip = ce.IndexOf("FrierenDebugCamera::PendingOn(sender) && sender != Voll::kHoldOwnerCe", StringComparison.Ordinal);
+        int setCe = ce.IndexOf("Voll::Holds().SetOwner(hold, Voll::kHoldOwnerCe);", StringComparison.Ordinal);
+        Assert.True(skip > 0 && setCe > skip, "the pending check before CE is named");
     }
 
     /// <summary>Every command's invokes belong to its client; a departed AI's queued ones go before its holds.</summary>

@@ -41,12 +41,13 @@ internal static class McpWriteTools
         yield return Read(game, "read_holds", "Who holds what",
             "Every gameplay hold the DLL records an owner for (god mode, movement knobs, gravity direction, time "
             + "dilation, fly, Keep Foreground, debug camera, each force-field job): whether it is in force and who "
-            + "holds it (\"you\": this server; a client pid; CE; none). A write_* tool changes only a hold that is free "
-            + "or already this server's.",
+            + "holds it (\"you\": this server; a client pid; CE; none); pending: a debug-camera ON on its way, held by "
+            + "its sender already. A write_* tool changes only a hold that is free or already this server's. invokes: "
+            + "each client's game-thread calls still queued or running (write_invoke waits for others' to clear).",
             [], "get_holds", needsScan: false);
         yield return Read(game, "read_pose", "Player pose",
             "The player pawn's location (x, y, z), rotation (pitch, yaw, roll), the map, and the pawn's address.",
-            [], "teleport_get_pose");
+            [], "teleport_get_pose", gameThreadCalls: 1);
         yield return Read(game, "read_movement", "Movement knobs",
             "Walk speed, gravity scale and jump velocity of the player's movement component: current value, captured "
             + "base, multiplier, whether a hold is active; and gravity direction (UE 5.3+).",
@@ -135,7 +136,8 @@ internal static class McpWriteTools
             "Shows or hides the game's mouse cursor (PlayerController.bShowMouseCursor). A one-time change the game may "
             + "set back; nothing holds it.",
             [("show", McpSchema.Bool("Show or hide.", true), true)],
-            (a, r) => r["show"] = ReqBool(a, "show"), "set_mouse_cursor", ifFree: false);
+            (a, r) => r["show"] = ReqBool(a, "show"), "set_mouse_cursor", ifFree: false,
+            gameThreadCalls: 2);   // its input mode is set on the game thread, twice to show the cursor
 
         yield return Write(game, experimentalEnabled, "write_fly", "Fly",
             "Experimental. Turns flying on or off and sets its speed, key preset (0 WASD, 1 numpad, 2 arrows) and "
@@ -201,14 +203,21 @@ internal static class McpWriteTools
     // ── Builders ────────────────────────────────────────────────────────────────────────────────────────
 
     private static McpTool Read(IMcpGame game, string name, string title, string description,
-        (string, JsonObject, bool)[] props, string cmd, bool needsScan = true)
+        (string, JsonObject, bool)[] props, string cmd, bool needsScan = true, int gameThreadCalls = 0)
     {
         var all = new List<(string, JsonObject, bool)>(props) { PidProp };
         return new McpTool(name, title, description, McpSchema.Object([.. all]), ReadOnly: true,
             async (a, ct) =>
             {
-                var reply = await game.SendAsync(a.OptInt("pid"), new JsonObject { ["cmd"] = cmd },
-                    TimeSpan.FromSeconds(WriteSeconds), ct, requireScan: needsScan);
+                int? pid = a.OptInt("pid");
+                // A read that makes a game-thread call waits as long as the DLL may: ending first would drop the
+                // connection, and every hold this server owns with it.
+                var timeout = TimeSpan.FromSeconds(WriteSeconds);
+                if (gameThreadCalls > 0)
+                    timeout = InvokeTimeout(await game.SendAsync(pid, new JsonObject { ["cmd"] = "get_pointers" },
+                        TimeSpan.FromSeconds(WriteSeconds), ct), gameThreadCalls);
+                var reply = await game.SendAsync(pid, new JsonObject { ["cmd"] = cmd }, timeout, ct,
+                    requireScan: needsScan);
                 if (!Truthy(reply, "ok")) return DllError(reply, game.TakeNotice());
                 McpTools.Strip(reply);
                 return Combine(new McpToolResult(reply), game.TakeNotice());
@@ -360,11 +369,12 @@ internal static class McpWriteTools
             foreach (var key in new[] { "pitch", "yaw", "roll" })
                 if (a.OptDouble(key) is double v) request[key] = v;
             var ptrs = await RequireWritableDllAsync(game, pid, ct);
+            // Reading the pose of an attached pawn is a game-thread call (K2_GetActorLocation).
             var from = await game.SendAsync(pid, new JsonObject { ["cmd"] = "teleport_get_pose" },
-                TimeSpan.FromSeconds(WriteSeconds), ct, requireScan: true);
-            // The jump makes up to four game-thread calls in turn (the teleport, a component's move, its relative
-            // location, a fallback): wait as long as the DLL may.
-            var reply = await game.SendAsync(pid, request, InvokeTimeout(ptrs, 4), ct, requireScan: true);
+                InvokeTimeout(ptrs, 1), ct, requireScan: true);
+            // The jump makes up to seven game-thread calls in turn (the teleport, a component's world and relative
+            // moves, a location read, the rotation, two movement stops): wait as long as the DLL may.
+            var reply = await game.SendAsync(pid, request, InvokeTimeout(ptrs, 7), ct, requireScan: true);
             var result = Answer(reply, game.TakeNotice());
             if (!result.IsError && result.Payload is JsonObject payload && Truthy(from, "ok"))
             {
