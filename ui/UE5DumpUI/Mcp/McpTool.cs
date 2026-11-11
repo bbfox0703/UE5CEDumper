@@ -135,6 +135,24 @@ internal sealed class McpArgs(JsonObject? args)
         return list;
     }
 
+    /// <summary>A JSON object argument, or null when absent.</summary>
+    public JsonObject? Obj(string name) => _args[name] switch
+    {
+        null => null,
+        JsonObject o => o,
+        _ => throw new McpToolError($"'{name}' must be an object."),
+    };
+
+    /// <summary>Required bytes as hex, normalised to upper case with no 0x and no separators.</summary>
+    public string HexBytes(string name)
+    {
+        string text = ReqStr(name).Replace(" ", "", StringComparison.Ordinal);
+        if (text.StartsWith("0x", StringComparison.OrdinalIgnoreCase)) text = text[2..];
+        if (text.Length == 0 || text.Length % 2 != 0 || !text.All(Uri.IsHexDigit))
+            throw new McpToolError($"'{name}' must be bytes as hex, two digits each (\"0A000000\").");
+        return text.ToUpperInvariant();
+    }
+
     /// <summary>A required address, normalised to "0x" + upper-case hex.</summary>
     public string Addr(string name)
         => OptAddr(name) ?? throw new McpToolError($"'{name}' (a hex address) is required.");
@@ -235,6 +253,21 @@ internal static class McpSchema
         ["type"] = "boolean",
         ["description"] = description,
         ["default"] = def,
+    };
+
+    public static JsonObject HexBytes(string description) => new()
+    {
+        ["type"] = "string",
+        ["description"] = description,
+        ["pattern"] = "^(0[xX])?([0-9A-Fa-f]{2})+$",
+    };
+
+    /// <summary>An object whose keys the tool reads itself (an invoke's parameters by name).</summary>
+    public static JsonObject FreeObject(string description) => new()
+    {
+        ["type"] = "object",
+        ["description"] = description,
+        ["additionalProperties"] = true,
     };
 
     public static JsonObject StrArray(string description) => new()

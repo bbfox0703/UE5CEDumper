@@ -3,14 +3,15 @@
 `UE5DumpUI.exe --mcp` turns the UI's exe into a [Model Context Protocol](https://modelcontextprotocol.io) server. An
 AI client such as Claude Code or Claude Desktop starts it and talks to it over stdin / stdout. The AI can then look
 through the game the way you do in the UI: find objects, read their fields, follow pointers, and run value scans. It
-can also turn the gameplay features on and off and teleport the player, and each of those asks you first.
+can also turn the gameplay features on and off, teleport the player, write memory and call a game function, and each of
+those asks you first.
 
 Started with `--mcp`, the exe opens no window. The AI client starts it and closes it.
 
 > ℹ️ **What the AI can change.** The gameplay toggles (god mode, movement, gravity direction, time dilation, debug
-> camera, mouse cursor, and the experimental Fly, Keep Foreground, See-through and force field) and a teleport to
-> explicit coordinates. It never writes raw game memory and never calls a game function in this version.
-> See [Changing the game](#changing-the-game).
+> camera, mouse cursor, and the experimental Fly, Keep Foreground, See-through and force field), a teleport to
+> explicit coordinates, data in memory (never code or read-only memory), and a call to a UFunction on the game thread
+> (some kinds are refused). See [Changing the game](#changing-the-game).
 
 ## What it needs
 
@@ -135,6 +136,8 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 | `write_force_field` | Experimental. Holds a bool or numeric field on every live instance of a class. |
 | `write_force_field_reset` | Experimental. Releases one force-field job the AI holds. |
 | `write_teleport` | Moves the player to explicit coordinates and returns the pose it left. |
+| `write_memory` | Writes up to 4 KB of data at an address, if it still holds the bytes the AI read; returns before and after. |
+| `write_invoke` | Calls a UFunction on a live object on the game thread, parameters by name; returns its return value and out parameters. |
 
 - **Asked every time.** Every `write_*` tool asks you before each call, in every permission mode, and an allow rule
   does not skip it (Claude Code 2.1.246 or later).
@@ -149,8 +152,22 @@ too long for the AI is cut by whole entries, and a note says how much was left o
   teleport.
 - **The experimental features follow the UI's switch.** Fly, Keep Foreground, See-through and the force field refuse
   while the UI's experimental features are off. The switch is read on every call.
-- **The DLL must be build 3705 or later.** An older DLL cannot tell the AI's change from yours, so every write tool
-  refuses it and says to update the DLL.
+- **Memory writes are data only.** The DLL refuses code, read-only, guard and uncommitted memory for every program
+  (the UI's field edits included) and never changes a page's protection. The AI sends the bytes it read; if you, the
+  game or another program changed them since, nothing is written. A field one of the holds above keeps is put back by
+  it.
+- **Calls never jump the queue.** Each call the game thread runs is recorded with the program that sent it. The AI's
+  call is refused while yours (from the UI or a Cheat Engine record) is still queued or running, a call that timed out
+  included; yours always queue. A call the game thread did not run in time stays queued and runs later, unless the AI
+  session ends first: it is then dropped. The AI never sends it again, never calls off the game thread, and never
+  changes the call timeout.
+- **Calls the AI may not make**, refused by the DLL: network RPCs, console commands, quitting or travelling to another
+  level, destroying actors, writing or deleting save slots, and the debug camera (it goes through `write_debug_camera`).
+  The list goes by name; a game function that does the same under another name is not caught, and the prompt is then
+  your check.
+- **The DLL must be build 3705 or later** for the gameplay tools, and **3706 or later** for `write_memory` and
+  `write_invoke`. An older DLL cannot keep the AI's change off yours, so the tool refuses it and says to update the
+  DLL.
 
 ## When something goes wrong
 
@@ -167,7 +184,10 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 | "... did not answer within N s" | The game is paused, loading or very large; the next call reconnects. |
 | "Not changed: ... is held by ..." | You (or the named program) hold that feature. Release it where it was set if you want the AI to take it. |
 | "... is an experimental feature, and the UE5DumpUI window's experimental features are off" | Turn them on in the UI if you want the AI to use them. |
-| "The game's DLL is build N, older than 3705" | Run **Update All** on the Proxy Deploy tab and restart the game, or inject the new DLL. |
+| "The game's DLL is build N, older than 3705" (or 3706) | Run **Update All** on the Proxy Deploy tab and restart the game, or inject the new DLL. |
+| "Not written: ... changed since it was read" | You, the game or another program changed the memory after the AI read it; the reply shows what is there now. |
+| "Not invoked: ... has an invoke still queued or running" | A call you made has not run yet; the AI can call again once it has (`read_holds` lists outstanding calls). |
+| "Not invoked: this server's previous invoke ... is still queued" | The game thread has not run the AI's last call; it runs when the game responds, or is dropped when the session ends. |
 
 The server writes its log to `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5DumpUI\mcp-<date>-<time>-<pid>.log`, one file per
 server; files older than 21 days are deleted.

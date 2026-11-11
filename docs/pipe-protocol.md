@@ -1905,9 +1905,21 @@ eyeball calibration (tweak constants until names look like real UObjects).
 // read_mem response
 { "id": 14, "ok": true, "bytes": "48 8B 05 AB CD EF 12 ..." }
 
-// write_mem response
-{ "id": 15, "ok": true }
+// write_mem request: expect (optional, build 3706+) is the bytes the caller read there, as many as bytes
+{ "id": 15, "cmd": "write_mem", "addr": "7FF123456789", "bytes": "3F800000", "expect": "00000000" }
+// write_mem response (build 3706+: the bytes it replaced)
+{ "id": 15, "ok": true, "before": "00000000" }
+// refused: nothing was written
+{ "id": 15, "ok": false, "error": "Not written: ... is in executable memory (code); ...", "code": -21 }
+{ "id": 15, "ok": false, "error": "Not written: the memory at ... changed since it was read", "code": -23,
+  "current": "01000000" }
 ```
+
+`[D2-3-WRITEMEM]` (build 3706+, every client): `write_mem` writes data that is writable as it stands. Code (`-21`),
+read-only, guard, no-access and uncommitted pages (`-22`) are refused, and no page's protection is changed: before,
+any page was made READWRITE for the write, which patched code and read-only data and restored the first page's
+protection on every page of a multi-page write. With `expect`, a range that no longer holds those bytes is refused
+(`-23`, with what is there now in `current`). The codes are Grimoire.h's `WRITE_MEM_*`.
 
 ### walk_functions
 
@@ -2099,6 +2111,18 @@ Error codes:
 - `-5` = game-thread dispatch timeout (5s) — game may be paused or unresponsive
 - `-7` = hook not active, fell back to direct call (may have succeeded but on wrong thread)
 
+`[D2-3-INVOKE]` (build 3706+). Each queued call records the client that sent it (`if_free` and the owner come from the
+request; CE's mailbox calls are CE's). Refusals, each `ok:false` with nothing queued or run:
+- `if_free` while another client's call is still queued or running (a -5 one included): `code` `-20`,
+  `hold: "invoke_queue"`, and the `holder`, as a hold's refusal. The UI sends no `if_free`, so its calls always queue.
+- `if_free` while the ProcessEvent hook is down: `code` `-27`; such a call never runs off the game thread.
+- From a client that marks its requests `background` (the MCP server), `code` `-24`: `direct_call`, a function whose
+  flags cannot be read, a network RPC (`FUNC_Net`), or a name on the deny list (console commands, quit / level travel /
+  restart, actor destruction, save-slot write / delete, the debug-camera toggles -- see `set_debug_camera`). Voll.h's
+  `InvokeRefusedForBackground`.
+- A background client's call still queued when its process leaves is dropped and never runs (`code` `-26` to a caller
+  still waiting).
+
 ### walk_instance_batch
 
 N instance walks in ONE round-trip. **Measured justification** ([multipipe-eval.md](multipipe-eval.md)
@@ -2175,8 +2199,14 @@ and their owners"), whether it is in force now, and who holds it. Read-only, ans
 //        "holder": { "kind": "client", "pid": 5555, "background": true, "you": true } },
 //      { "hold": "fly", "active": false, "holder": { "kind": "none", "you": false } },
 //      { "hold": "force_field:BP_Hero_C::bGodMode", "active": true, "holder": { "kind": "ce", "you": false } },
-//      ... ] }
+//      ... ],
+//    "invokes": [                                   // build 3706+
+//      { "holder": { "kind": "client", "pid": 4321, "background": false, "you": false }, "outstanding": 1 } ] }
 ```
+
+`invokes` (`[D2-3-INVOKE]`, build 3706+): each client's game-thread calls still queued or running, a timed-out (-5)
+one included, counted until the game thread answers it; the DLL's own workers are left out. An `if_free`
+`invoke_function` is refused while another client has one outstanding.
 
 The holds, always listed: `god_mode`, `foreground_lock`, `gravity_direction`, `fly`, `debug_camera`,
 `movement:walk_speed`, `movement:gravity`, `movement:jump`, `time:global`, `time:pawn`; then one

@@ -66,6 +66,11 @@ public static class Constants
     /// (if_free, get_holds) and 3705 keeps the user's undo point on an AI's teleport (keep_undo). An older DLL ignores
     /// both keys and would let a write replace what the user holds, so the write tools refuse it.</summary>
     public const int McpMinDllBuildForWrites = 3705;
+    /// <summary>The first DLL build write_memory and write_invoke may go through (Stage D2-3): write_mem refuses code and
+    /// read-only pages and honours expect, and the invoke queue records owners, refuses an if_free invoke beside another
+    /// client's and drops a departed session's. An older DLL would patch code and queue the AI's call beside the user's.
+    /// The same build stops the debug camera's queued ON from coming on ownerless.</summary>
+    public const int McpMinDllBuildForRawWrites = 3706;
 
     // Application
     public const string AppName = "UE5DumpUI";

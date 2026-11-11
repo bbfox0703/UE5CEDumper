@@ -411,6 +411,7 @@ internal static class McpTools
         // Stage D2-2: the tools that change the game. Without a reading of the UI's experimental switch, the experimental
         // ones refuse.
         tools.AddRange(McpWriteTools.Create(game, experimentalEnabled ?? (() => false)));
+        tools.AddRange(McpRawTools.Create(game));
         return tools;
     }
 

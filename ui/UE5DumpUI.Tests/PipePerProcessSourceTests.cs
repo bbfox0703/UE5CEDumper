@@ -638,6 +638,119 @@ public sealed class PipePerProcessSourceTests
             Assert.Contains("= \"" + cmd + "\";", renge);
     }
 
+    // ── Stage D2-3: write_mem data only; invoke owners; the AI's deny list ──────────────────────────────────────────
+    // The pure rules are dll_helpers_test's (Lager::ClassifyWriteRegion, Stark::InvokeBlocks,
+    // Voll::InvokeRefusedForBackground) and dll_core_test's (Macht::ClassifyWriteRange / WriteDataBytes on real pages).
+    // Fern, Stark, Frieren and Mimic reach no test target, so where they use them, and in what order, is pinned here.
+
+    private static string Between(string text, string start, string end)
+    {
+        int s = text.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(s >= 0, "missing: " + start);
+        int e = text.IndexOf(end, s + start.Length, StringComparison.Ordinal);
+        Assert.True(e > s, "missing after it: " + end);
+        return text[s..e];
+    }
+
+    /// <summary>write_mem classifies the whole range, reads it, checks expect, then writes without a protection flip.</summary>
+    [Fact]
+    public void WriteMem_ClassifiesTheRange_ChecksExpect_ThenWritesData()
+    {
+        string body = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_WRITE_MEM) {",
+            "return Renge::MakeResponse(id, data).dump();");
+        int classify = body.IndexOf("Macht::ClassifyWriteRange(addr, bytes.size())", StringComparison.Ordinal);
+        int read = body.IndexOf("Macht::ReadBytesSafe(addr, before.data(), before.size())", StringComparison.Ordinal);
+        int expect = body.IndexOf("if (expected != before)", StringComparison.Ordinal);
+        int write = body.IndexOf("Macht::WriteDataBytes(addr, bytes.data(), bytes.size())", StringComparison.Ordinal);
+        Assert.True(classify > 0 && read > classify && expect > read && write > expect,
+            "classify, read, compare with expect, then write -- in that order");
+        Assert.DoesNotContain("Macht::WriteBytes(", body);   // the protection-flipping writer
+        foreach (var code in new[] { "WRITE_MEM_EXECUTABLE", "WRITE_MEM_NOT_WRITABLE", "WRITE_MEM_CHANGED" })
+            Assert.Contains("Grimoire::" + code, body);
+        Assert.Contains("data[\"before\"]", body);
+    }
+
+    /// <summary>An if_free enqueue is decided under the queue's lock before the push, and each request counts from the
+    /// push until it is answered.</summary>
+    [Fact]
+    public void TheInvokeQueue_DecidesIfFreeUnderItsLock_AndCountsUntilAnswered()
+    {
+        string stark = CodeOnly(DllSrc("Stark.cpp"));
+        string enqueue = Between(stark, "int32_t EnqueueInvoke(", "auto status = future.wait_for(");
+        int lockAt = enqueue.IndexOf("std::lock_guard<std::mutex> lock(s_queueMutex);", StringComparison.Ordinal);
+        int check = enqueue.IndexOf("if (t_invokeIfFree)", StringComparison.Ordinal);
+        int blocks = enqueue.IndexOf("InvokeBlocks(other, count, req->owner)", StringComparison.Ordinal);
+        int push = enqueue.IndexOf("s_invokeQueue.push_back(req);", StringComparison.Ordinal);
+        int count = enqueue.IndexOf("++s_outstanding[req->owner];", StringComparison.Ordinal);
+        Assert.True(lockAt > 0 && check > lockAt && blocks > check && push > blocks && count > push,
+            "lock, if_free check, push, count -- in that order, all under the lock");
+        Assert.Contains("req->owner = t_invokeOwner;", enqueue);
+
+        // Answered = settled: the drain (run or dropped), shutdown, and an owner's drop each take it off the count.
+        string drain = Between(stark, "if (ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {",
+            "static void __fastcall HookedProcessEvent(");
+        int ran = drain.IndexOf("CallProcessEventSEH(req->instance, req->ufunc, req->params);", StringComparison.Ordinal);
+        int settle = drain.IndexOf("SettleLocked(*req);", ran, StringComparison.Ordinal);
+        int promise = drain.IndexOf("req->promise.set_value(result);", ran, StringComparison.Ordinal);
+        Assert.True(ran > 0 && settle > ran && promise > settle, "settled before the promise wakes its caller");
+        Assert.Contains("SettleLocked(*req);", Between(stark, "void Shutdown() {", "bool IsHookActive()"));
+        string drop = Between(stark, "int32_t DropQueuedInvokesOf(uint64_t owner) {", "void SetInvokeTimeoutMs(");
+        Assert.Contains("ClaimRequest(req.state, kRequestAbandoned)", drop);
+        Assert.Contains("SettleLocked(req);", drop);
+    }
+
+    /// <summary>Every command's invokes belong to its client; a departed AI's queued ones go before its holds.</summary>
+    [Fact]
+    public void Fern_SetsTheInvokeOwner_AndDropsADepartedAisQueue()
+    {
+        string fern = CodeOnly(DllSrc("Fern.cpp"));
+        string head = Between(fern, "std::string Fern::DispatchCommand(", "if (cmd == Renge::CMD_INIT) {");
+        Assert.Contains("const Stark::InvokeOwnerScope invokeOwner(conn->ownerKey, request.value(", head);
+        Assert.Contains("HoldActive(h) || HoldPending(h) ? caller : Voll::kHoldOwnerNone", head);
+
+        string release = Between(fern, "void Fern::ReleaseOwnedBy(", "void Fern::MonitorLoop(");
+        int gate = release.IndexOf("if (!IsBackgroundOwner(owner) || OwnerStillConnected(owner)) return;",
+            StringComparison.Ordinal);
+        int drop = release.IndexOf("Stark::DropQueuedInvokesOf(owner)", StringComparison.Ordinal);
+        int holds = release.IndexOf("Voll::Holds().OwnedBy(owner)", StringComparison.Ordinal);
+        Assert.True(gate > 0 && drop > gate && holds > drop, "only a background owner's, and before its holds");
+
+        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
+        Assert.Contains("const Stark::InvokeOwnerScope ceInvokes(Voll::kHoldOwnerCe, false);", mimic);
+    }
+
+    /// <summary>A background client's refusals come before anything is allocated or queued, and the queue's conflict
+    /// answers as a hold refusal does.</summary>
+    [Fact]
+    public void InvokeFunction_RefusesForTheAi_BeforeAllocating_AndNamesTheConflict()
+    {
+        string body = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_INVOKE_FUNCTION) {",
+            "if (cmd == Renge::CMD_");
+        int deny = body.IndexOf("Voll::InvokeRefusedForBackground(", StringComparison.Ordinal);
+        int alloc = body.IndexOf("strAllocs", StringComparison.Ordinal);
+        int call = body.IndexOf("UE5_CallProcessEventEx(instanceAddr, ufuncAddr, paramPtr", StringComparison.Ordinal);
+        Assert.True(deny > 0 && alloc > deny && call > alloc, "the deny list before the strings and the call");
+        Assert.Contains("if (conn->background.load())", body);
+        Assert.Contains("if (directCall)", body[..alloc]);
+        int held = body.IndexOf("callResult == Stark::kInvokeHeldByOther", StringComparison.Ordinal);
+        Assert.True(held > call);
+        string mapping = body[held..];
+        Assert.Contains("Grimoire::HOLD_HELD_BY_OTHER", mapping);
+        Assert.Contains("Grimoire::HOLD_INVOKE_QUEUE", mapping);
+        Assert.Contains("Stark::LastInvokeBlocker()", mapping);
+
+        string routed = Between(CodeOnly(DllSrc("Frieren.cpp")), "static int32_t CallProcessEventRouted(uintptr_t instance,",
+            "int32_t UE5_CallProcessEventEx(uintptr_t instance");
+        int refuse = routed.LastIndexOf("if (Stark::CurrentInvokeIfFree()) return Stark::kInvokeNeedsGameThread;",
+            StringComparison.Ordinal);
+        int direct = routed.IndexOf("pProcessEvent(reinterpret_cast<void*>(instance)", StringComparison.Ordinal);
+        Assert.True(refuse > 0 && direct > refuse, "an if_free invoke never reaches the off-thread call");
+
+        string holds = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_GET_HOLDS) {", "if (cmd == Renge::CMD_");
+        Assert.Contains("Stark::OutstandingInvokes()", holds);
+        Assert.Contains("data[\"invokes\"]", holds);
+    }
+
     // ── Stage D2-2: an AI's teleport leaves the user's undo point ───────────────────────────────────────────────────
 
     /// <summary>The "last" slot is one for the whole process: an explicit-pose recall sent with keep_undo must reach

@@ -30,7 +30,7 @@ internal static class McpWriteTools
 {
     private const int WriteSeconds = 30;
 
-    private static readonly (string, JsonObject, bool) PidProp =
+    internal static readonly (string, JsonObject, bool) PidProp =
         ("pid", McpSchema.Int("Game process id. Needed only when several games run the dumper (read_games lists "
                               + "them); otherwise the only game is used.", 1, int.MaxValue), false);
 
@@ -129,12 +129,7 @@ internal static class McpWriteTools
                 r["value"] = v;
             }, "set_time_dilation");
 
-        yield return Write(game, experimentalEnabled, "write_debug_camera", "Debug camera",
-            "Turns the engine's debug camera on or off (needs a live CheatManager, which UE 5 leaves out of most "
-            + "Shipping games). Runs on the game thread; an answer of -5 means the toggle is queued and will still run: "
-            + "do not send it again.",
-            [("enable", McpSchema.Bool("On or off.", false), true)],
-            (a, r) => r["enable"] = ReqBool(a, "enable"), "set_debug_camera");
+        yield return DebugCamera(game);
 
         yield return Write(game, experimentalEnabled, "write_mouse_cursor", "Mouse cursor",
             "Shows or hides the game's mouse cursor (PlayerController.bShowMouseCursor). A one-time change the game may "
@@ -288,6 +283,47 @@ internal static class McpWriteTools
             }, Idempotent: true, Destructive: true, RequiresInteraction: true);
     }
 
+    /// <summary>The guarded debug-camera command answers in <c>state</c>, not <c>code</c> (D2-3 found the generic
+    /// reply reading every refusal as success), and its toggle is a game-thread call, so it waits as long as the DLL
+    /// may.</summary>
+    private static McpTool DebugCamera(IMcpGame game) => new(
+        "write_debug_camera", "Debug camera",
+        "Turns the engine's debug camera on or off. It reads the state first and toggles only when needed. ON needs a "
+        + "live CheatManager, which UE 5 leaves out of most Shipping games. Refused when someone else holds the camera. "
+        + "A queued answer means the toggle runs when the game thread is free: do not send it again.",
+        McpSchema.Object(("enable", McpSchema.Bool("On or off.", false), true), PidProp),
+        ReadOnly: false,
+        async (a, ct) =>
+        {
+            int? pid = a.OptInt("pid");
+            bool enable = ReqBool(a, "enable");
+            var ptrs = await RequireWritableDllAsync(game, pid, ct);
+            var reply = await game.SendAsync(pid,
+                new JsonObject { ["cmd"] = "set_debug_camera", ["enable"] = enable, ["if_free"] = true },
+                InvokeTimeout(ptrs), ct, requireScan: true);
+            var answer = Answer(reply, null);   // the if_free refusal (code -20) and a DLL error
+            if (answer.IsError) return Combine(answer, game.TakeNotice());
+            long state = McpJson.TryGetLong(reply["state"], out long s) ? s : -1;
+            string? failure = state switch
+            {
+                -17 => "Not turned on: no CheatManager is live (UE 5 leaves it out of Shipping games by default), and "
+                       + "the toggle does nothing on its class default object. Nothing was sent.",
+                -6 => "Not sent: an earlier toggle the other way is still queued. Send it again once the game responds.",
+                < 0 and not -5 => "The debug camera's state could not be read, or the toggle failed (state "
+                                  + state.ToString(CultureInfo.InvariantCulture) + ").",
+                _ => null,
+            };
+            if (failure is not null)
+                return Combine(new McpToolResult(reply, IsError: true, Note: failure), game.TakeNotice());
+            if (state == -5)
+                return Combine(new McpToolResult(reply, Note: enable
+                    ? "Queued: the game thread did not run the toggle in time. It runs when the game thread is free; do "
+                      + "not send it again."
+                    : "Queued: on UE 4.18-5.7 a queued OFF does not turn the camera off; send OFF again once the game "
+                      + "responds."), game.TakeNotice());
+            return Combine(new McpToolResult(reply), game.TakeNotice());
+        }, Idempotent: true, Destructive: true, RequiresInteraction: true);
+
     /// <summary>Teleport to explicit coordinates only: never a marker slot (they are the user's), and with
     /// <c>keep_undo</c>, so the user's "Recall last" still returns where the user was. The pose before the jump comes
     /// back in <c>from</c>, so the AI can return on its own.</summary>
@@ -314,11 +350,11 @@ internal static class McpWriteTools
             };
             foreach (var key in new[] { "pitch", "yaw", "roll" })
                 if (a.OptDouble(key) is double v) request[key] = v;
-            await RequireWritableDllAsync(game, pid, ct);
-            var timeout = TimeSpan.FromSeconds(WriteSeconds);
-            var from = await game.SendAsync(pid, new JsonObject { ["cmd"] = "teleport_get_pose" }, timeout, ct,
-                requireScan: true);
-            var reply = await game.SendAsync(pid, request, timeout, ct, requireScan: true);
+            var ptrs = await RequireWritableDllAsync(game, pid, ct);
+            var from = await game.SendAsync(pid, new JsonObject { ["cmd"] = "teleport_get_pose" },
+                TimeSpan.FromSeconds(WriteSeconds), ct, requireScan: true);
+            // The jump is a game-thread call (BugItGo): wait as long as the DLL may.
+            var reply = await game.SendAsync(pid, request, InvokeTimeout(ptrs), ct, requireScan: true);
             var result = Answer(reply, game.TakeNotice());
             if (!result.IsError && result.Payload is JsonObject payload && Truthy(from, "ok"))
             {
@@ -341,18 +377,33 @@ internal static class McpWriteTools
     }
 
     /// <summary>A DLL older than <see cref="Constants.McpMinDllBuildForWrites"/> ignores if_free and keep_undo, so a
-    /// write could replace what the user holds: refuse it before anything is sent.</summary>
-    private static async Task RequireWritableDllAsync(IMcpGame game, int? pid, CancellationToken ct)
+    /// write could replace what the user holds: refuse it before anything is sent. Returns get_pointers' reply.</summary>
+    private static Task<JsonObject> RequireWritableDllAsync(IMcpGame game, int? pid, CancellationToken ct)
+        => RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForWrites, ct);
+
+    /// <summary>Refuses a DLL older than <paramref name="minBuild"/> before anything is sent; returns get_pointers'
+    /// reply (build_number, invoke_timeout_ms, ue_version).</summary>
+    internal static async Task<JsonObject> RequireDllBuildAsync(IMcpGame game, int? pid, int minBuild,
+        CancellationToken ct)
     {
         var ptrs = await game.SendAsync(pid, new JsonObject { ["cmd"] = "get_pointers" },
             TimeSpan.FromSeconds(WriteSeconds), ct);
         long build = McpJson.TryGetLong(ptrs["build_number"], out long b) ? b : 0;
-        if (build < Constants.McpMinDllBuildForWrites)
+        if (build < minBuild)
             throw new McpToolError($"The game's DLL is build {build.ToString(CultureInfo.InvariantCulture)}, older "
-                                   + $"than {Constants.McpMinDllBuildForWrites.ToString(CultureInfo.InvariantCulture)}: "
-                                   + "it cannot tell this server's changes from the user's, so nothing is changed "
-                                   + "through it. Update the DLL (a proxy: Update All on the Proxy Deploy tab, then "
-                                   + "restart the game).");
+                                   + $"than {minBuild.ToString(CultureInfo.InvariantCulture)}: it cannot keep this "
+                                   + "server's changes off the user's, so nothing is changed through it. Update the DLL "
+                                   + "(a proxy: Update All on the Proxy Deploy tab, then restart the game).");
+        return ptrs;
+    }
+
+    /// <summary>How long to wait for a command that queues a game-thread call: the DLL waits invoke_timeout_ms (the
+    /// user sets it, up to 600 s), and an object parameter's conversion may wait as long again. Ending first would drop
+    /// the connection -- and with it every hold this server owns -- while the DLL still waits.</summary>
+    internal static TimeSpan InvokeTimeout(JsonObject ptrs)
+    {
+        long ms = McpJson.TryGetLong(ptrs["invoke_timeout_ms"], out long t) && t > 0 ? t : 5000;
+        return TimeSpan.FromMilliseconds(2 * ms + 15000);
     }
 
     /// <summary>A write's reply: the DLL's refusal of another's hold, a module's refusal (a negative code), or the
@@ -394,14 +445,14 @@ internal static class McpWriteTools
     private static bool ReqBool(McpArgs a, string name)
         => a.Has(name) ? a.Bool(name, false) : throw new McpToolError($"'{name}' is required.");
 
-    private static bool Truthy(JsonObject obj, string key)
+    internal static bool Truthy(JsonObject obj, string key)
         => obj[key] is JsonValue v && v.TryGetValue<bool>(out bool b) && b;
 
     private static McpToolResult DllError(JsonObject reply, string? notice)
         => Combine(McpToolResult.Fail("The DLL refused: " + (McpJson.GetString(reply, "error") ?? "no reason given")
                                       + "."), notice);
 
-    private static McpToolResult Combine(McpToolResult result, string? notice)
+    internal static McpToolResult Combine(McpToolResult result, string? notice)
         => notice is null ? result
          : result with { Note = result.Note is null ? notice : result.Note + " " + notice };
 }

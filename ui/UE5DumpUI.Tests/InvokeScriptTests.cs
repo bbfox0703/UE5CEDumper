@@ -1552,7 +1552,7 @@ public class InvokeScriptTests
 
     // --- [P3-INVOKE-Y11-CEFORM] the CE form shares FIRE's unwritable-param gate -----------
     //
-    // Three invoke paths build the same ProcessEvent params from the same FunctionInfoModel.
+    // Every invoke path builds its ProcessEvent params from the same FunctionInfoModel.
     // FIRE refuses an FText outright and a TYPED value for a multi-word structure
     // (ParamBufferBuilder.IsRefusedParam / IsEmptyOnlyParam, audit #5 Y11); the interactive CE
     // form had no gate. An FText went out zeroed -- not an empty FText, and a crash in any

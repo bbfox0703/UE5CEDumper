@@ -20,8 +20,10 @@ public sealed class McpToolsTests
         public List<JsonObject> Sent { get; } = new();
         public Dictionary<string, Func<JsonObject, JsonObject>> Answers { get; } = new();
         public McpScanState State { get; set; } = McpScanState.Ready;
-        /// <summary>The DLL build get_pointers reports: one the write tools accept unless a test says otherwise.</summary>
-        public int DllBuild { get; set; } = Constants.McpMinDllBuildForWrites;
+        /// <summary>The DLL build get_pointers reports: one every write tool accepts unless a test says otherwise.</summary>
+        public int DllBuild { get; set; } = Constants.McpMinDllBuildForRawWrites;
+        /// <summary>The timeout each request was sent with, in order.</summary>
+        public List<TimeSpan> Timeouts { get; } = new();
         public string? PendingNotice { get; set; }
         public int ScanChecks { get; private set; }
 
@@ -59,9 +61,18 @@ public sealed class McpToolsTests
                 if (report.State != McpScanState.Ready) throw new McpToolError(McpGameLink.Explain(report));
             }
             Sent.Add((JsonObject)request.DeepClone());
+            Timeouts.Add(timeout);
             string cmd = request["cmd"]!.GetValue<string>();
             JsonObject reply = Answers.TryGetValue(cmd, out var f) ? f(request)
                 : cmd == "get_pointers" ? new JsonObject { ["build_number"] = DllBuild, ["pid"] = 4242 }
+                // The invoke path's lookups: a live object, and a class with the function ArgsFromSchema names.
+                : cmd == "get_object" ? new JsonObject { ["class_addr"] = "0x7FF600002000", ["class"] = "C" }
+                : cmd == "walk_functions" ? new JsonObject
+                {
+                    ["functions"] = new JsonArray(new JsonObject { ["name"] = "Health", ["params"] = new JsonArray() }),
+                }
+                : cmd == "invoke_function" ? new JsonObject { ["result"] = 0 }
+                : cmd == "set_debug_camera" ? new JsonObject { ["state"] = 0 }   // the guarded command always answers one
                 : new JsonObject();
             reply["id"] = 1;
             reply["ok"] ??= true;
@@ -177,12 +188,13 @@ public sealed class McpToolsTests
         }
     }
 
-    /// <summary>The DLL commands the server may send. D1's reads, D2-2's gameplay changes and the reads around them.
-    /// Left out, and pinned out by <see cref="NeverSent"/>: what changes state another client shares (maintainer,
-    /// 2026-11-11: an AI beside the UI must not disturb it) -- begin_snapshot clears the name cache a UI snapshot uses,
-    /// the LiveFuncs recording is one per game, reset_diagnostics and the version / timeout / packed overrides are
-    /// process-wide, reset_all_fields ends everyone's holds, the marker slots and the undo point are the user's -- and
-    /// D2-3's raw writes and invokes, not built yet.</summary>
+    /// <summary>The DLL commands the server may send: D1's reads, D2-2's gameplay changes and the reads around them, and
+    /// D2-3's raw write and invoke. Left out, and pinned out by <see cref="NeverSent"/>: what changes state another
+    /// client shares (maintainer, 2026-11-11: an AI beside the UI must not disturb it) -- begin_snapshot clears the name
+    /// cache a UI snapshot uses, the LiveFuncs recording and trace are one per game, a rescan replaces the pointers the
+    /// UI walks, reset_diagnostics and the version / timeout / packed overrides are process-wide (an AI must not lengthen
+    /// the invoke timeout to dodge -5), reset_all_fields ends everyone's holds, and the marker slots and the undo point
+    /// are the user's.</summary>
     private static readonly HashSet<string> AllowedCommands =
     [
         "get_pointers", "scan_status", "trigger_scan", "search_objects", "find_object", "find_instances",
@@ -199,14 +211,17 @@ public sealed class McpToolsTests
         "set_god_mode", "set_movement_multiplier", "reset_movement", "set_gravity_direction",
         "reset_gravity_direction", "set_time_dilation", "reset_time_dilation", "set_debug_camera", "set_mouse_cursor",
         "fly_set", "set_foreground_lock", "seethrough_set", "force_field", "reset_field", "teleport_recall_marker",
+        // D2-3: the raw write and the invoke
+        "write_mem", "invoke_function",
     ];
 
     /// <summary>Commands the server must never send, whatever a later edit allows.</summary>
     private static readonly HashSet<string> NeverSent =
     [
         "reset_all_fields", "teleport_save_marker", "teleport_clear_marker", "teleport_recall_last",
-        "teleport_to_cursor", "teleport_relative", "set_invoke_timeout", "set_ue_version_override",
-        "set_packed_consts", "reset_diagnostics", "begin_snapshot", "pe_profile_start",
+        "teleport_to_cursor", "teleport_relative", "teleport_get_markers", "set_invoke_timeout",
+        "set_ue_version_override", "set_packed_consts", "reset_diagnostics", "begin_snapshot", "pe_profile_start",
+        "pe_profile_stop", "pe_trace_release", "rescan", "apply_rescan",
     ];
 
     [Fact]
@@ -231,6 +246,8 @@ public sealed class McpToolsTests
                     Assert.True(AllowedCommands.Contains(cmd), $"{t.Name} sent {cmd}");
                     Assert.DoesNotContain(cmd, NeverSent);
                 }
+                // A call off the game thread is never asked for (Stage D2-3).
+                Assert.DoesNotContain(game.Sent, r => r.ContainsKey("direct_call"));
             }
         }
         // Every tool's schema-valid call succeeded on a scanned game, so its main path was walked.
@@ -274,6 +291,7 @@ public sealed class McpToolsTests
                 "number" => 1.5,
                 "boolean" => false,
                 "array" => new JsonArray(),
+                "object" => new JsonObject(),
                 _ when p["enum"] is JsonArray e => e[0]!.GetValue<string>(),
                 _ when p.ContainsKey("pattern") => "0x7FF600001000",
                 _ => "Health",
@@ -791,6 +809,270 @@ public sealed class McpToolsTests
         Assert.Equal("reset_movement", req["cmd"]!.GetValue<string>());
         Assert.Equal("jump", req["knob"]!.GetValue<string>());
         Assert.False(req.ContainsKey("multiplier"));
+    }
+
+    // ── Stage D2-3: write_memory, write_invoke, and the debug camera's answers ───────────────────────────────
+
+    [Fact]
+    public async Task WriteMemory_SendsTheBytesItRead_AndReturnsBeforeAndAfter()
+    {
+        var game = new FakeGame();
+        game.Answers["write_mem"] = _ => new JsonObject { ["before"] = "05000000" };
+        game.Answers["read_mem"] = _ => new JsonObject { ["bytes"] = "0A000000" };
+        var (payload, result) = await Call(game, "write_memory",
+            new JsonObject { ["addr"] = "7ff600001000", ["bytes"] = "0a 00 00 00", ["expect"] = "0x05000000" });
+        Assert.False(result.IsError);
+        var req = game.Sent.Single(r => r["cmd"]!.GetValue<string>() == "write_mem");
+        Assert.Equal("0x7FF600001000", req["addr"]!.GetValue<string>());
+        Assert.Equal("0A000000", req["bytes"]!.GetValue<string>());
+        Assert.Equal("05000000", req["expect"]!.GetValue<string>());
+        Assert.Equal("05000000", payload!["before"]!.GetValue<string>());
+        Assert.Equal("0A000000", payload["after"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("0A000000", "05", "as many bytes")]
+    [InlineData("0A0", "050", "two digits")]
+    public async Task WriteMemory_RefusesMismatchedOrMalformedBytes_BeforeSending(string bytes, string expect, string says)
+    {
+        var game = new FakeGame();
+        var (payload, result) = await Call(game, "write_memory",
+            new JsonObject { ["addr"] = "0x1000", ["bytes"] = bytes, ["expect"] = expect });
+        Assert.True(result.IsError);
+        Assert.Contains(says, payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteMemory_RefusesMoreThan4KB()
+    {
+        var game = new FakeGame();
+        string big = new('0', 2 * 4097);
+        var (_, result) = await Call(game, "write_memory",
+            new JsonObject { ["addr"] = "0x1000", ["bytes"] = big, ["expect"] = big });
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteMemory_ThroughADllBeforeD23_IsRefused()
+    {
+        // Before D2-3 write_mem patched code and ignored expect.
+        var game = new FakeGame { DllBuild = Constants.McpMinDllBuildForRawWrites - 1 };
+        var (_, result) = await Call(game, "write_memory",
+            new JsonObject { ["addr"] = "0x1000", ["bytes"] = "00", ["expect"] = "01" });
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("write_mem", game.Commands);
+        Assert.Equal(["get_pointers"], game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteMemory_ChangedSinceRead_SaysWhatIsThere()
+    {
+        var game = new FakeGame();
+        game.Answers["write_mem"] = _ => new JsonObject
+        {
+            ["ok"] = false, ["error"] = "Not written: the memory at 0x1000 changed since it was read", ["code"] = -23,
+            ["current"] = "07000000",
+        };
+        var (payload, result) = await Call(game, "write_memory",
+            new JsonObject { ["addr"] = "0x1000", ["bytes"] = "0A000000", ["expect"] = "05000000" });
+        Assert.True(result.IsError);
+        Assert.Equal("07000000", payload!["current"]!.GetValue<string>());
+        Assert.DoesNotContain("read_mem", game.Commands);
+    }
+
+    private static JsonObject Fn(string name, params JsonObject[] parms)
+    {
+        var arr = new JsonArray();
+        foreach (var p in parms) arr.Add(p);
+        return new JsonObject { ["name"] = name, ["params"] = arr };
+    }
+
+    private static JsonObject Parm(string name, string type, int size, int offset, bool ret = false, bool outp = false)
+        => new() { ["name"] = name, ["type"] = type, ["size"] = size, ["offset"] = offset, ["ret"] = ret,
+                   ["out"] = outp || ret, ["parm"] = true };
+
+    private static FakeGame InvokeGame(params JsonObject[] functions)
+    {
+        var game = new FakeGame();
+        var arr = new JsonArray();
+        foreach (var f in functions) arr.Add(f);
+        game.Answers["walk_functions"] = _ => new JsonObject { ["functions"] = arr.DeepClone() };
+        return game;
+    }
+
+    [Fact]
+    public async Task WriteInvoke_BuildsTheBufferByName_IfFree_OnTheObjectsClass_NeverDirect()
+    {
+        var game = InvokeGame(Fn("SetStats", Parm("Level", "IntProperty", 4, 0), Parm("Speed", "FloatProperty", 4, 4),
+            Parm("bOn", "BoolProperty", 1, 8), Parm("Tag", "StrProperty", 16, 16)));
+        var (_, result) = await Call(game, "write_invoke", new JsonObject
+        {
+            ["instance_addr"] = "0x7FF600001000", ["function"] = "setstats",
+            ["params"] = new JsonObject { ["Level"] = 7, ["speed"] = 1.5, ["bOn"] = true, ["Tag"] = "hi" },
+        });
+        Assert.False(result.IsError);
+        var req = game.Sent.Single(r => r["cmd"]!.GetValue<string>() == "invoke_function");
+        Assert.Equal("SetStats", req["func_name"]!.GetValue<string>());          // the resolved name
+        Assert.True(req["if_free"]!.GetValue<bool>());
+        Assert.Equal("0x7FF600002000", req["expect_class_addr"]!.GetValue<string>());
+        Assert.False(req.ContainsKey("direct_call"));
+        Assert.False(req.ContainsKey("class_name"));
+        string hex = req["params_hex"]!.GetValue<string>();
+        Assert.StartsWith("07000000" + "0000C03F" + "01", hex);                 // 7, 1.5f, true
+        var str = req["str_params"]!.AsArray().Single()!;
+        Assert.Equal(16, str["off"]!.GetValue<int>());
+        Assert.Equal("hi", str["text"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task WriteInvoke_FollowsTheSuperChain_ForAnInheritedFunction()
+    {
+        var game = new FakeGame();
+        game.Answers["walk_functions"] = r => r["addr"]!.GetValue<string>() == "0x7FF600002000"
+            ? new JsonObject { ["functions"] = new JsonArray() }
+            : new JsonObject { ["functions"] = new JsonArray(Fn("Jump")) };
+        game.Answers["walk_class"] = _ => new JsonObject
+        {
+            ["class"] = new JsonObject { ["super_addr"] = "0x7FF600003000" },
+        };
+        var (_, result) = await Call(game, "write_invoke",
+            new JsonObject { ["instance_addr"] = "0x1000", ["function"] = "Jump" });
+        Assert.False(result.IsError);
+        Assert.Contains("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvoke_RefusesAnUnknownParameter_NamingTheRealOnes()
+    {
+        var game = InvokeGame(Fn("SetLevel", Parm("NewLevel", "IntProperty", 4, 0)));
+        var (payload, result) = await Call(game, "write_invoke", new JsonObject
+        {
+            ["instance_addr"] = "0x1000", ["function"] = "SetLevel", ["params"] = new JsonObject { ["Lvl"] = 3 },
+        });
+        Assert.True(result.IsError);
+        Assert.Contains("NewLevel", payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvoke_RefusesAnOutOfRangeValue_RatherThanTruncateIt()
+    {
+        var game = InvokeGame(Fn("SetByte", Parm("B", "ByteProperty", 1, 0)));
+        var (_, result) = await Call(game, "write_invoke", new JsonObject
+        {
+            ["instance_addr"] = "0x1000", ["function"] = "SetByte", ["params"] = new JsonObject { ["B"] = 9999 },
+        });
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvoke_AnObjectParameter_MustBeALiveObject()
+    {
+        var game = InvokeGame(Fn("SetTarget", Parm("Target", "ObjectProperty", 8, 0)));
+        game.Answers["get_object"] = r => r["addr"]!.GetValue<string>() == "0xDEAD"
+            ? new JsonObject { ["ok"] = false, ["error"] = "not an object" }
+            : new JsonObject { ["class_addr"] = "0x7FF600002000" };
+        var (_, result) = await Call(game, "write_invoke", new JsonObject
+        {
+            ["instance_addr"] = "0x1000", ["function"] = "SetTarget", ["params"] = new JsonObject { ["Target"] = "0xDEAD" },
+        });
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvoke_WhileItsOwnCallIsStillQueued_IsNeverSentAgain()
+    {
+        var game = InvokeGame(Fn("Jump"));
+        game.Answers["get_holds"] = _ => new JsonObject
+        {
+            ["holds"] = new JsonArray(),
+            ["invokes"] = new JsonArray(new JsonObject
+            {
+                ["holder"] = new JsonObject { ["kind"] = "client", ["you"] = true }, ["outstanding"] = 1,
+            }),
+        };
+        var (payload, result) = await Call(game, "write_invoke",
+            new JsonObject { ["instance_addr"] = "0x1000", ["function"] = "Jump" });
+        Assert.True(result.IsError);
+        Assert.Contains("do not send it again", payload!["error"]!.GetValue<string>());
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
+    [Fact]
+    public async Task WriteInvoke_TheUisOutstandingInvoke_IsNamed()
+    {
+        var game = InvokeGame(Fn("Jump"));
+        game.Answers["invoke_function"] = _ => new JsonObject
+        {
+            ["ok"] = false, ["error"] = "Not invoked: another client's invoke is still queued or running", ["code"] = -20,
+            ["hold"] = "invoke_queue",
+            ["holder"] = new JsonObject { ["kind"] = "client", ["pid"] = 4321, ["background"] = false, ["you"] = false },
+        };
+        var (payload, result) = await Call(game, "write_invoke",
+            new JsonObject { ["instance_addr"] = "0x1000", ["function"] = "Jump" });
+        Assert.True(result.IsError);
+        Assert.Contains("the UE5DumpUI window or another program (pid 4321)", payload!["error"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task WriteInvoke_Queued_SaysSo_AndNeverShowsTheInputAsOutput()
+    {
+        var game = InvokeGame(Fn("GetLevel", Parm("ReturnValue", "IntProperty", 4, 0, ret: true)));
+        game.Answers["invoke_function"] = _ => new JsonObject { ["result"] = -5, ["result_hex"] = "2A000000" };
+        var (payload, result) = await Call(game, "write_invoke",
+            new JsonObject { ["instance_addr"] = "0x1000", ["function"] = "GetLevel" });
+        Assert.False(result.IsError);
+        Assert.True(payload!["queued"]!.GetValue<bool>());
+        Assert.Null(payload["return"]);
+        Assert.Contains("Do not send it again", result.Note);
+    }
+
+    [Fact]
+    public async Task WriteInvoke_DecodesTheReturnValue_AndOutParameters()
+    {
+        var game = InvokeGame(Fn("GetPair", Parm("Count", "IntProperty", 4, 0, outp: true),
+            Parm("ReturnValue", "IntProperty", 4, 4, ret: true)));
+        game.Answers["invoke_function"] = _ => new JsonObject { ["result"] = 0, ["result_hex"] = "030000002A000000" };
+        var (payload, result) = await Call(game, "write_invoke",
+            new JsonObject { ["instance_addr"] = "0x1000", ["function"] = "GetPair" });
+        Assert.False(result.IsError);
+        Assert.Equal("42", payload!["return"]!.GetValue<string>());
+        Assert.Equal("3", payload["out"]!["Count"]!.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task WriteInvoke_WaitsAsLongAsTheDllMay()
+    {
+        // A user-set invoke timeout of 60 s: ending first would drop the connection, and every hold with it.
+        var game = InvokeGame(Fn("Jump"));
+        game.Answers["get_pointers"] = _ => new JsonObject
+        {
+            ["build_number"] = Constants.McpMinDllBuildForRawWrites, ["invoke_timeout_ms"] = 60000,
+        };
+        await Call(game, "write_invoke", new JsonObject { ["instance_addr"] = "0x1000", ["function"] = "Jump" });
+        int i = game.Sent.FindIndex(r => r["cmd"]!.GetValue<string>() == "invoke_function");
+        Assert.True(game.Timeouts[i] >= TimeSpan.FromSeconds(120), game.Timeouts[i].ToString());
+    }
+
+    [Theory]
+    [InlineData(-17, true, "No CheatManager")]
+    [InlineData(-6, true, "other way")]
+    [InlineData(-1, true, "could not be read")]
+    [InlineData(-5, false, "Queued")]
+    [InlineData(1, false, null)]
+    public async Task WriteDebugCamera_ReadsTheGuardedCommandsState(int state, bool error, string? says)
+    {
+        // It answers in state, not code: D2-2 read every refusal as success.
+        var game = new FakeGame();
+        game.Answers["set_debug_camera"] = _ => new JsonObject { ["state"] = state };
+        var (_, result) = await Call(game, "write_debug_camera", new JsonObject { ["enable"] = true });
+        Assert.Equal(error, result.IsError);
+        if (says is null) Assert.Null(result.Note);
+        else Assert.Contains(says, result.Note!, StringComparison.OrdinalIgnoreCase);
     }
 
     // ── Arguments ───────────────────────────────────────────────────────────────────────────────────────

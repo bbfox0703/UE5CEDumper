@@ -1803,7 +1803,13 @@ public sealed class DumpService : IDumpService
         if (includeInterfaces) req["include_interfaces"] = true;
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
+        return ParseFunctions(res);
+    }
 
+    /// <summary>A walk_functions reply's functions. Shared with the MCP server's invoke tool (Stage D2-3), which builds a
+    /// call's buffer from the same model the Invoke dialog does.</summary>
+    internal static List<FunctionInfoModel> ParseFunctions(JsonObject res)
+    {
         var result = new List<FunctionInfoModel>();
         if (res["functions"] is JsonArray arr)
         {
@@ -3769,7 +3775,7 @@ public sealed class DumpService : IDumpService
 
     /// <summary>[VND9-03] invoke_function's str_results: each returned or out string's text by its offset in the param
     /// buffer; null where the DLL found the header but the text did not read. Empty when the key is absent.</summary>
-    private static Dictionary<int, string?> ParseStringResults(JsonArray? arr)
+    internal static Dictionary<int, string?> ParseStringResults(JsonArray? arr)
     {
         var map = new Dictionary<int, string?>();
         if (arr == null) return map;

@@ -52,9 +52,10 @@ do in the UI: find objects, read their fields and class layouts, follow pointers
 <blockquote><strong>What the AI can change.</strong> Every reading tool's name starts with <code>read_</code>;
 <code>scan_start</code> starts the object scan on a game whose scan has never run. The tools whose names start with
 <code>write_</code> turn the gameplay features on and off (god mode, movement, gravity direction, time dilation, debug
-camera, mouse cursor, and the experimental Fly, Keep Foreground, See-through and force field) and teleport the player
-to explicit coordinates. They ask you before every call. The AI never writes raw game memory and never calls a game
-function in this version.</blockquote>
+camera, mouse cursor, and the experimental Fly, Keep Foreground, See-through and force field), teleport the player
+to explicit coordinates, write data in memory (never code or read-only memory) and call a game function on the game
+thread (network calls, console commands, quitting, travelling, destroying and save slots are refused). They ask you
+before every call.</blockquote>
 
 <hr>
 
@@ -137,8 +138,9 @@ together; the AI's work never ends or slows down yours:</p>
 <p><strong>What you turned on stays yours.</strong> When the UI, a Cheat Engine record or another AI session holds a
 feature, the AI's change to it is refused and the AI is told who holds it. What the AI turned on is turned off when
 its session ends. A teleport by the AI leaves your marker slots and <strong>Recall last</strong> alone. The
-experimental features refuse while the UI's experimental features are off. The write tools need the DLL from build
-3705 or later.</p>
+experimental features refuse while the UI's experimental features are off. A memory write goes ahead only if the
+memory still holds what the AI read, and a game-function call is refused while one of yours is still waiting to run.
+The write tools need the DLL from build 3705 or later, and memory writes and function calls from 3706.</p>
 
 <h3>A game running as administrator</h3>
 

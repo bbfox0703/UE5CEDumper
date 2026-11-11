@@ -639,8 +639,8 @@ public static class InvokeScriptGenerator
 
     /// <summary>
     /// [P3-INVOKE-Y11-CEFORM] FIRE's unwritable-param gate (audit #5 Y11), emitted into the CE
-    /// form's own FIRE handler. Three invoke paths build the same ProcessEvent params from the
-    /// same <see cref="FunctionInfoModel"/>; the app's FIRE and Copy AA Script's helper refused
+    /// form's own FIRE handler. Every invoke path builds its ProcessEvent params from the same
+    /// <see cref="FunctionInfoModel"/>; the app's FIRE and Copy AA Script's helper refused
     /// these, and this form wrote them.
     ///
     /// <para>The classification is <see cref="ParamBufferBuilder.IsRefusedParam"/> /
