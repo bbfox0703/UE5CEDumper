@@ -843,6 +843,7 @@ def run_raw(exe: str, pid: int | None, game_name: str) -> int:
         r, d, note = call(c, "write_debug_camera", {"enable": True})
         if not r.get("isError"):
             call(c, "write_debug_camera", {"enable": False})
+        note = note or (d.get("note") if isinstance(d, dict) else None)   # an error carries its note in the payload
         ck.check(r.get("isError") and "CheatManager" in (note or ""), "write_debug_camera ON with no CheatManager is "
                  "reported as refused (state -17)", (d, note))
 
