@@ -32,6 +32,10 @@
 // The CE mailbox poller (Mimic) opts out too, via MarkCancelImmune() — it serves CE,
 // so a PIPE client's death must not cancel its work — but it is NOT a background
 // worker, because it carries the user's one-shot invokes. See t_cancelImmune. (B4)
+//
+// Fern's release of a departed AI client's holds, and its owed debug-camera release,
+// read under an immune CancelContextScope: they exist BECAUSE a client left, so the
+// cancel that leaving raised must not cut their reads short. ([DBGCAM-RELEASE-STALLED])
 // ============================================================
 
 #include <atomic>
