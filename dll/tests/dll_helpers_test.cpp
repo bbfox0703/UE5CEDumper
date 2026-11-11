@@ -11593,6 +11593,34 @@ static void Test_Lager_ChooseHolderTargets() {
            std::string(Lager::HolderKindName(Lager::HolderKind::SectionStart)) == "the start of an executable section");
 }
 
+// [D2-3-WRITEMEM] write_mem writes data that is writable as it stands, for every client; anything else is refused.
+static void Test_Lager_ClassifyWriteRegion() {
+    using namespace Lager;
+    EXPECT("a read-write data page is writable", ClassifyWriteRegion(kMemCommit, kPageReadWrite) == WriteTarget::Writable);
+    EXPECT("a copy-on-write data page is writable (the write makes its private copy)",
+           ClassifyWriteRegion(kMemCommit, kPageWriteCopy) == WriteTarget::Writable);
+    EXPECT("execute-read code is refused as code", ClassifyWriteRegion(kMemCommit, kPageExecuteRead) == WriteTarget::Executable);
+    EXPECT("read-write-execute is refused as code, though writable",
+           ClassifyWriteRegion(kMemCommit, kPageExecuteReadWrite) == WriteTarget::Executable);
+    EXPECT("execute-write-copy is refused as code", ClassifyWriteRegion(kMemCommit, kPageExecuteWriteCopy) == WriteTarget::Executable);
+    EXPECT("execute-only is refused as code", ClassifyWriteRegion(kMemCommit, kPageExecute) == WriteTarget::Executable);
+    EXPECT("a read-only page (a vtable, constants) is refused", ClassifyWriteRegion(kMemCommit, kPageReadOnly) == WriteTarget::NotWritable);
+    EXPECT("a guarded read-write page (a stack's tripwire) is refused",
+           ClassifyWriteRegion(kMemCommit, kPageReadWrite | kPageGuard) == WriteTarget::NotWritable);
+    EXPECT("a no-access page is refused", ClassifyWriteRegion(kMemCommit, kPageNoAccess) == WriteTarget::NotWritable);
+    EXPECT("a reserved page is unmapped", ClassifyWriteRegion(kMemReserve, kPageReadWrite) == WriteTarget::Unmapped);
+    EXPECT("a free page is unmapped", ClassifyWriteRegion(kMemFree, 0) == WriteTarget::Unmapped);
+    EXPECT("a guarded code page is still named as code",
+           ClassifyWriteRegion(kMemCommit, kPageExecuteRead | kPageGuard) == WriteTarget::Executable);
+
+    EXPECT("writable + code is code", WorseWriteTarget(WriteTarget::Writable, WriteTarget::Executable) == WriteTarget::Executable);
+    EXPECT("code + read-only is code", WorseWriteTarget(WriteTarget::Executable, WriteTarget::NotWritable) == WriteTarget::Executable);
+    EXPECT("writable + read-only is not writable",
+           WorseWriteTarget(WriteTarget::Writable, WriteTarget::NotWritable) == WriteTarget::NotWritable);
+    EXPECT("read-only + unmapped is unmapped", WorseWriteTarget(WriteTarget::NotWritable, WriteTarget::Unmapped) == WriteTarget::Unmapped);
+    EXPECT("writable + writable is writable", WorseWriteTarget(WriteTarget::Writable, WriteTarget::Writable) == WriteTarget::Writable);
+}
+
 static void Test_Lager_HolderCandidateReadable() {
     using namespace Lager;
     EXPECT("execute-read code is readable", ProtectIsReadableCode(kPageExecuteRead));
@@ -12531,6 +12559,7 @@ int main() {
     RUN(Test_Lager_OriginsServedBy);
     RUN(Test_Lager_HeldBlockReachesProcessEvent);
     RUN(Test_Lager_ChooseHolderTargets);
+    RUN(Test_Lager_ClassifyWriteRegion);
     RUN(Test_Lager_HolderCandidateReadable);
     RUN(Test_Lager_BufferCBoundaryRules);      // buffer.c's >= / <= / clip boundaries, one map each
     RUN(Test_Falsch_SafeTargets);

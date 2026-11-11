@@ -63,6 +63,39 @@ bool IsAddrReadable(uintptr_t addr, size_t size) {
     return true;
 }
 
+static_assert(Lager::kPageNoAccess == PAGE_NOACCESS && Lager::kPageReadOnly == PAGE_READONLY &&
+              Lager::kPageReadWrite == PAGE_READWRITE && Lager::kPageWriteCopy == PAGE_WRITECOPY &&
+              Lager::kPageGuard == PAGE_GUARD && Lager::kMemCommit == MEM_COMMIT,
+              "Lager's page values must be the SDK's");
+
+Lager::WriteTarget ClassifyWriteRange(uintptr_t addr, size_t size) {
+    using Lager::WriteTarget;
+    if (!addr || size == 0 || !Grimoire::IsUserspacePointer(addr)) return WriteTarget::Unmapped;
+    const uintptr_t end = addr + size;
+    if (end < addr) return WriteTarget::Unmapped;
+    WriteTarget worst = WriteTarget::Writable;
+    MEMORY_BASIC_INFORMATION mbi{};
+    uintptr_t cur = addr;
+    while (cur < end) {
+        if (VirtualQuery(reinterpret_cast<LPCVOID>(cur), &mbi, sizeof(mbi)) == 0) return WriteTarget::Unmapped;
+        worst = Lager::WorseWriteTarget(worst, Lager::ClassifyWriteRegion(mbi.State, mbi.Protect));
+        const uintptr_t regionEnd = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+        if (regionEnd <= cur) return WriteTarget::Unmapped;   // defensive, as in IsAddrReadable
+        cur = regionEnd;
+    }
+    return worst;
+}
+
+bool WriteDataBytes(uintptr_t addr, const void* buf, size_t size) {
+    __try {
+        memcpy(reinterpret_cast<void*>(addr), buf, size);
+        return true;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        return false;
+    }
+}
+
 bool WriteBytes(uintptr_t addr, const void* buf, size_t size) {
     DWORD oldProtect = 0;
     if (!VirtualProtect(reinterpret_cast<void*>(addr), size, PAGE_READWRITE, &oldProtect))

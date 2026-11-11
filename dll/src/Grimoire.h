@@ -67,6 +67,10 @@ constexpr const char*    HOLD_TIME_PREFIX        = "time:";
 constexpr const char*    HOLD_FORCE_FIELD_PREFIX = "force_field:";
 // The code an if_free request answers with when someone else holds what it would change.
 constexpr int32_t        HOLD_HELD_BY_OTHER      = -20;
+// [D2-3-WRITEMEM] write_mem's refusals, each an ok:false reply with this code: nothing was written.
+constexpr int32_t        WRITE_MEM_EXECUTABLE    = -21;   // the range touches code
+constexpr int32_t        WRITE_MEM_NOT_WRITABLE  = -22;   // a read-only, guard, no-access or uncommitted page
+constexpr int32_t        WRITE_MEM_CHANGED       = -23;   // `expect` no longer matches what is there
 // Slice of Fern::Stop's 5 s connection-drain wait. Each slice re-asserts
 // CancelIoEx on the surviving connections, because a single cancel fired before
 // the wait can miss a thread that is BETWEEN two reads and will then park in a

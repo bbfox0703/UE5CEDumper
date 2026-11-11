@@ -462,6 +462,33 @@ inline bool ProtectIsReadableCode(uint32_t protect) {
     return (protect & kPageGuard) == 0 && ProtectIsExecutable(protect);
 }
 
+// The data protections, by value as above (Macht.cpp static_asserts them against the SDK).
+constexpr uint32_t kPageNoAccess  = 0x01;
+constexpr uint32_t kPageReadOnly  = 0x02;
+constexpr uint32_t kPageReadWrite = 0x04;
+constexpr uint32_t kPageWriteCopy = 0x08;
+
+/// [D2-3-WRITEMEM] What `write_mem` may write (maintainer, 2026-11-11, for every client): data that is writable as it
+/// stands. It used to make any page READWRITE for the write, so code and read-only data were writable, a code page lost
+/// execute while it ran (a game thread executing there faulted), and a write across pages restored the FIRST page's
+/// protection on all of them. Now nothing changes a page's protection: an executable page is code, a read-only one is a
+/// vtable or another image's constants, a guard page is a stack's tripwire, and each is refused. A copy-on-write page
+/// is data: writing it is how it gets its private copy.
+enum class WriteTarget : uint8_t { Writable = 0, NotWritable = 1, Unmapped = 2, Executable = 3 };
+
+inline WriteTarget ClassifyWriteRegion(uint32_t state, uint32_t protect) {
+    if (state != kMemCommit) return WriteTarget::Unmapped;
+    if (ProtectIsExecutable(protect)) return WriteTarget::Executable;
+    if (protect & (kPageGuard | kPageNoAccess)) return WriteTarget::NotWritable;
+    if (protect & (kPageReadWrite | kPageWriteCopy)) return WriteTarget::Writable;
+    return WriteTarget::NotWritable;
+}
+
+/// A range over several regions takes its worst one, code first: that is the refusal worth naming.
+inline WriteTarget WorseWriteTarget(WriteTarget a, WriteTarget b) {
+    return static_cast<uint8_t>(a) >= static_cast<uint8_t>(b) ? a : b;
+}
+
 // How far past a hook target MinHook reads, with no SEH of its own. CreateTrampolineFunction decodes the prologue
 // instruction by instruction until the bytes copied reach sizeof(JMP_REL) == 5; the LAST instruction it disassembles
 // therefore starts at an offset of at most 4 + 15 (the longest x86-64 instruction can precede it) = 19, and hde64

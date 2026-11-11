@@ -3336,11 +3336,56 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (bytes.empty() || bytes.size() > 65536) {
                 return Renge::MakeError(id, "Invalid write size (max 65536)").dump();
             }
-            if (!Macht::WriteBytes(addr, bytes.data(), bytes.size())) {
+
+            // [D2-3-WRITEMEM] Data only, as it stands, for every client (maintainer, 2026-11-11): Macht::WriteBytes
+            // made any page READWRITE for the write, so this command patched code and read-only data, a code page lost
+            // execute while it ran, and a write across pages restored the first page's protection on all of them.
+            auto refuse = [&](const std::string& why, int32_t code) {
+                auto e = Renge::MakeError(id, "Not written: " + addrStr + " " + why);
+                e["code"] = code;
+                return e.dump();
+            };
+            switch (Macht::ClassifyWriteRange(addr, bytes.size())) {
+                case Lager::WriteTarget::Executable:
+                    return refuse("is in executable memory (code); write_mem writes data only",
+                                  Grimoire::WRITE_MEM_EXECUTABLE);
+                case Lager::WriteTarget::NotWritable:
+                    return refuse("is not writable as it stands (a read-only, guard or no-access page); write_mem "
+                                  "never changes page protection", Grimoire::WRITE_MEM_NOT_WRITABLE);
+                case Lager::WriteTarget::Unmapped:
+                    return refuse("is not committed memory", Grimoire::WRITE_MEM_NOT_WRITABLE);
+                case Lager::WriteTarget::Writable:
+                    break;
+            }
+            std::vector<uint8_t> before(bytes.size());
+            if (!Macht::ReadBytesSafe(addr, before.data(), before.size())) {
+                return refuse("could not be read", Grimoire::WRITE_MEM_NOT_WRITABLE);
+            }
+            // `expect`: the bytes the caller read before deciding (the MCP server always sends them). Memory that holds
+            // something else now was changed since -- by the user, the game or another client -- and is not
+            // overwritten. Not atomic against them; it catches a change made since the read, which is what the user
+            // would lose.
+            if (request.contains("expect")) {
+                std::vector<uint8_t> expected;
+                if (!request["expect"].is_string() || !Renge::TryHexToBytes(request["expect"].get<std::string>(), expected)
+                    || expected.size() != bytes.size()) {
+                    return Renge::MakeError(id, "Invalid expect (need the same number of hex bytes as bytes)").dump();
+                }
+                if (expected != before) {
+                    auto e = Renge::MakeError(id, "Not written: the memory at " + addrStr
+                                                  + " changed since it was read");
+                    e["code"] = Grimoire::WRITE_MEM_CHANGED;
+                    e["current"] = Renge::BytesToHex(before.data(), before.size());
+                    return e.dump();
+                }
+            }
+            if (!Macht::WriteDataBytes(addr, bytes.data(), bytes.size())) {
                 return Renge::MakeError(id, "Write failed").dump();
             }
 
-            return Renge::MakeResponse(id).dump();
+            json data;
+            data["before"] = Renge::BytesToHex(before.data(), before.size());
+            return Renge::MakeResponse(id, data).dump();
         }
 
         // === walk_instance: Read live field values from a UObject instance ===

@@ -247,6 +247,52 @@ int main() {
         // ⚠ Without this, every assertion below would pass against a pool of zero objects.
     }
 
+    // [D2-3-WRITEMEM] write_mem's range check and write, on real pages of this process: each protection the classifier
+    // tells apart, ranges across two pages, and a refused write that must leave the page's protection alone.
+    {   blk("D2-3-WRITEMEM - ClassifyWriteRange and WriteDataBytes on real pages");
+        using Lager::WriteTarget;
+        SYSTEM_INFO si{};
+        GetSystemInfo(&si);
+        const size_t pg = si.dwPageSize;
+        auto* base = static_cast<uint8_t*>(VirtualAlloc(nullptr, pg * 4, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        check("D2-3-WRITEMEM: four pages allocated", base != nullptr);
+        if (base) {
+            DWORD old = 0;
+            VirtualProtect(base + pg, pg, PAGE_READONLY, &old);
+            VirtualProtect(base + 2 * pg, pg, PAGE_EXECUTE_READ, &old);
+            auto range = [](const uint8_t* a, size_t n) {
+                return Macht::ClassifyWriteRange(reinterpret_cast<uintptr_t>(a), n);
+            };
+            check("D2-3-WRITEMEM: a read-write page is writable", range(base, 16) == WriteTarget::Writable);
+            check("D2-3-WRITEMEM: a whole read-write page is writable", range(base, pg) == WriteTarget::Writable);
+            check("D2-3-WRITEMEM: a read-only page is refused", range(base + pg, 16) == WriteTarget::NotWritable);
+            check("D2-3-WRITEMEM ⭐: code is refused as code", range(base + 2 * pg, 16) == WriteTarget::Executable);
+            check("D2-3-WRITEMEM ⭐: read-write running into read-only is refused",
+                  range(base + pg - 8, 16) == WriteTarget::NotWritable);
+            check("D2-3-WRITEMEM ⭐: read-only running into code is named as code",
+                  range(base + 2 * pg - 8, 16) == WriteTarget::Executable);
+            check("D2-3-WRITEMEM: address 0 is unmapped", Macht::ClassifyWriteRange(0, 4) == WriteTarget::Unmapped);
+            check("D2-3-WRITEMEM: an empty range is unmapped", range(base, 0) == WriteTarget::Unmapped);
+
+            const uint8_t v[4] = {1, 2, 3, 4};
+            check("D2-3-WRITEMEM: WriteDataBytes writes a read-write page",
+                  Macht::WriteDataBytes(reinterpret_cast<uintptr_t>(base), v, 4) && memcmp(base, v, 4) == 0);
+            check("D2-3-WRITEMEM ⭐: WriteDataBytes fails on a read-only page",
+                  !Macht::WriteDataBytes(reinterpret_cast<uintptr_t>(base + pg), v, 4));
+            MEMORY_BASIC_INFORMATION mbi{};
+            VirtualQuery(base + pg, &mbi, sizeof(mbi));
+            check("D2-3-WRITEMEM ⭐: and leaves it read-only (no protection flip)", mbi.Protect == PAGE_READONLY);
+            check("D2-3-WRITEMEM: the read-only page kept its zeros", base[pg] == 0);
+
+            // A guard page fires on its first touch, so it is checked last and never written.
+            VirtualProtect(base + 3 * pg, pg, PAGE_READWRITE | PAGE_GUARD, &old);
+            check("D2-3-WRITEMEM: a guard page is refused", range(base + 3 * pg, 8) == WriteTarget::NotWritable);
+
+            VirtualFree(base, 0, MEM_RELEASE);
+            check("D2-3-WRITEMEM: a released range is unmapped", range(base, 16) == WriteTarget::Unmapped);
+        }
+    }
+
     // [VER-410-GATE] What the resource readings decide before any memory scan. Tier 1 below the floor is a refusal of
     // the whole scan, so each way to reach it is pinned, and so is each way that must NOT reach it.
     {   blk("VER-410-GATE - a reading below the floor is taken at tier 1 only when the resources corroborate it");
