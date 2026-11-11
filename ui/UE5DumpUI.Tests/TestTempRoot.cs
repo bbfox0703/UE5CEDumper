@@ -14,9 +14,10 @@ namespace UE5DumpUI.Tests;
 /// free to leak again, so the process's TEMP itself is moved: GetTempPath reads TMP / TEMP on every call, so every test,
 /// library and child process that asks for a temp folder gets this run's, with no test written for it.
 ///
-/// The run's folder goes when the process exits. A run that could not clean up -- killed, or a file still held -- is
-/// deleted by the next run: its owner file is held open with no sharing for the life of the process, so the OS lets go
-/// of it the moment the owner dies, whatever its PID is reused for. The shared folder %TEMP%\UE5CEDumper.Tests\ itself
+/// The run's folder goes when the test session ends (<see cref="EndRun"/>, called by <see cref="TestRunEnd"/>). A run
+/// that could not clean up -- killed, or a file still held -- is deleted by the next run: its owner file is held open
+/// with no sharing for the life of the process, so the OS lets go of it the moment the owner dies, whatever its PID is
+/// reused for. The shared folder %TEMP%\UE5CEDumper.Tests\ itself
 /// stays, holding SdkTempLeftovers' memory: a run that removed it when empty could do so between another run's look at
 /// it and that run making its folder in it, and that run's TEMP would never move.
 /// </summary>
@@ -44,7 +45,7 @@ internal static class TestTempRoot
     private static readonly Regex LegacyParentName = new(
         "^ue5-(?:backstop|ours-present|proxy-conc|qmark|qmark-pose|unreadable)$", RegexOptions.CultureInvariant);
 
-    private static FileStream? s_owner;   // a static, so nothing collects it before the process ends
+    private static FileStream? s_owner;   // a static, so nothing collects it before the run ends
 
     /// <summary>%TEMP% as the process found it.</summary>
     internal static string SystemTemp { get; private set; } = "";
@@ -75,12 +76,6 @@ internal static class TestTempRoot
             Environment.SetEnvironmentVariable("TMP", run);
             Environment.SetEnvironmentVariable("TEMP", run);
             RunDir = run;
-            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
-            {
-                s_owner?.Dispose();
-                s_owner = null;
-                RemoveRun(run);
-            };
         }
         catch (Exception e) when (Expected(e))
         {
@@ -238,6 +233,16 @@ internal static class TestTempRoot
             if (d.Attributes.HasFlag(FileAttributes.ReadOnly)) d.Attributes &= ~FileAttributes.ReadOnly;
             ClearReadOnly(d.FullName);
         }
+    }
+
+    /// <summary>Ends this run: the owner file closes and the run's folder goes. <see cref="TestRunEnd"/> calls it once
+    /// every test has run, still inside the test session, where its time counts against nothing.</summary>
+    internal static void EndRun()
+    {
+        if (RunDir.Length == 0) return;
+        s_owner?.Dispose();
+        s_owner = null;
+        RemoveRun(RunDir);
     }
 
     internal static void RemoveRun(string run)
