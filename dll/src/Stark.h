@@ -18,6 +18,8 @@
 #include <cstdint>
 #include <future>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace Stark {
 
@@ -79,6 +81,50 @@ constexpr int32_t kInvokeTimedOutStillQueued = -5;
 constexpr int32_t StatefulToggleFailure(int32_t callResult) {
     return callResult == kInvokeTimedOutStillQueued ? kInvokeTimedOutStillQueued : -1;
 }
+
+// ============================================================
+// [D2-3-INVOKE] Who queued an invoke (maintainer, 2026-11-11)
+// ============================================================
+// The queue is one FIFO for the UI, CE, the MCP server and the DLL's own workers, and a -5 request stays in it, unseen,
+// until it runs. An AI invoke must report a conflict with the user's rather than slip in beside it, and must not run
+// after its session ends, so each request records its owner: a pipe client's key (Voll), CE (Voll::kHoldOwnerCe), or 0.
+
+/// Sets who the current thread's invokes belong to, for one command: the C ABI chain to EnqueueInvoke
+/// (UE5_CallProcessEventEx, CallProcessEventRouted) carries no owner. With `ifFree`, an enqueue is refused while another
+/// owner's invoke is outstanding, and nothing is called off the game thread. Owner 0 (no scope) is the DLL's own
+/// workers and C ABI callers.
+class InvokeOwnerScope {
+public:
+    InvokeOwnerScope(uint64_t owner, bool ifFree);
+    ~InvokeOwnerScope();
+    InvokeOwnerScope(const InvokeOwnerScope&) = delete;
+    InvokeOwnerScope& operator=(const InvokeOwnerScope&) = delete;
+private:
+    uint64_t m_prevOwner;
+    bool m_prevIfFree;
+};
+bool CurrentInvokeIfFree();
+
+/// EnqueueInvoke's answer to an if_free enqueue while another owner's invoke is outstanding: nothing was queued.
+/// LastInvokeBlocker() names that owner, for this thread. Apart from ProcessEvent's -1..-8 and the mailbox's codes.
+constexpr int32_t kInvokeHeldByOther = -25;
+/// A queued request dropped because its client left before it ran: it never ran.
+constexpr int32_t kInvokeDroppedOwnerLeft = -26;
+/// An if_free invoke while the game-thread hook is down: refused rather than called on the caller's thread.
+constexpr int32_t kInvokeNeedsGameThread = -27;
+uint64_t LastInvokeBlocker();
+
+/// Pure: whether `other`'s outstanding requests refuse an if_free enqueue by `caller`. The DLL's own workers (owner 0)
+/// never do: See-through, fly and teleport queue all the time, and an AI could then invoke nothing.
+inline bool InvokeBlocks(uint64_t other, int32_t outstanding, uint64_t caller) {
+    return outstanding > 0 && other != 0 && other != caller;
+}
+
+/// Requests each owner has queued or running (owner 0 included), for get_holds.
+std::vector<std::pair<uint64_t, int32_t>> OutstandingInvokes();
+/// Drops the requests `owner` still has queued (the drain has not taken them): each answers kInvokeDroppedOwnerLeft and
+/// never runs. Returns how many.
+int32_t DropQueuedInvokesOf(uint64_t owner);
 
 /// Default invoke timeout (compile-time baseline, used when no override is set).
 constexpr int32_t kDefaultInvokeTimeoutMs = 5000;

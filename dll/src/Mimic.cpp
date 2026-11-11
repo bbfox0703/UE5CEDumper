@@ -264,6 +264,9 @@ static void PollingThreadBody() {
     // fallback, a policy scoped to repeating workers. These are the user's one-shot
     // CE invokes. (B4)
     Tot::MarkCancelImmune();
+    // [D2-3-INVOKE] Every invoke this thread queues is CE's, for the queue's owner rule: an AI invoke reports a
+    // conflict with one CE has outstanding. CE never sends if_free, so its own invokes always queue.
+    const Stark::InvokeOwnerScope ceInvokes(Voll::kHoldOwnerCe, false);
 
     // Bump Windows timer resolution to 1ms for the lifetime of this thread.
     // Without this, Sleep(1) on a host with the default 15.6ms tick (rare on

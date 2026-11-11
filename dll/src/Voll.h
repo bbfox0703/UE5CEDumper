@@ -366,6 +366,49 @@ inline nlohmann::json HoldOwnerJson(uint64_t owner, uint64_t caller, bool backgr
     return j;
 }
 
+// ── What a background client may not invoke ─────────────────────────────────
+// [D2-3-INVOKE] The maintainer's list (2026-11-11) for the MCP server's invoke_function. Empty when the call may go
+// ahead (after the user's per-call prompt); otherwise why not. Network RPCs by flag: a call that can leave the
+// machine. The rest by name, compared case-insensitively as the DLL's own function lookup falls back to; a name list is
+// a heuristic, and a game function that does the same under another name is not caught. The UI and CE are never asked.
+inline std::string InvokeRefusedForBackground(const std::string& funcName, uint32_t functionFlags) {
+    constexpr uint32_t kFuncNet = 0x00000040;   // FUNC_Net: set on every RPC (Server, Client, Multicast)
+    if (functionFlags & kFuncNet)
+        return "is a network RPC: it can reach a server outside this machine";
+    std::string n;
+    n.reserve(funcName.size());
+    for (char c : funcName) n.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c));
+    struct Rule { const char* name; const char* why; };
+    static constexpr Rule kRules[] = {
+        {"toggledebugcamera", "toggles the debug camera: use write_debug_camera, which reads the state first and "
+                              "records who holds it"},
+        {"enabledebugcamera", "turns the debug camera on: use write_debug_camera"},
+        {"disabledebugcamera", "turns the debug camera off: use write_debug_camera"},
+        {"consolecommand", "runs a console command, which can run anything"},
+        {"executeconsolecommand", "runs a console command, which can run anything"},
+        {"quitgame", "quits the game"},
+        {"quit", "quits the game"},
+        {"openlevel", "travels to another level, which invalidates every address the user is looking at"},
+        {"openlevelbysoftobjectptr", "travels to another level, which invalidates every address the user is looking at"},
+        {"clienttravel", "travels to another level or server"},
+        {"servertravel", "travels to another level or server"},
+        {"restartlevel", "restarts the level, which invalidates every address the user is looking at"},
+        {"restartgame", "restarts the game"},
+        {"k2_destroyactor", "destroys an actor, which cannot be undone"},
+        {"k2_destroycomponent", "destroys a component, which cannot be undone"},
+        {"setlifespan", "schedules an actor's destruction"},
+        {"destroytarget", "destroys an actor, which cannot be undone"},
+        {"destroyall", "destroys actors, which cannot be undone"},
+        {"destroypawns", "destroys pawns, which cannot be undone"},
+        {"savegametoslot", "writes a save slot, which can overwrite the user's save"},
+        {"asyncsavegametoslot", "writes a save slot, which can overwrite the user's save"},
+        {"deletegameinslot", "deletes a save slot, which cannot be undone"},
+    };
+    for (const Rule& r : kRules)
+        if (n == r.name) return r.why;
+    return {};
+}
+
 // ── Who should own the pipe at startup ──────────────────────────────────────
 // [RELAUNCHPIPE-2026-08-19]
 //

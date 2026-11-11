@@ -99,6 +99,10 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
 namespace FrierenInvoke {
 bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why);
 }
+// [D2-3-INVOKE] Frieren.cpp: whether a debug-camera ON is queued or being dispatched (the hold recorder).
+namespace FrierenDebugCamera {
+bool OnPending();
+}
 
 // ============================================================
 // Radar wire helpers — parse "100" / "-42" / "3.14" / "true" /
@@ -864,6 +868,12 @@ std::vector<std::string> ForceFieldJobs() {
     return out;
 }
 
+// [D2-3-INVOKE] Whether a change to `hold` is on its way: a debug-camera ON still queued holds the camera for its sender
+// from now (FrierenDebugCamera::OnPending). Only the hold recorder asks; an if_free check reads HoldActive alone.
+bool HoldPending(const std::string& hold) {
+    return hold == Grimoire::HOLD_DEBUG_CAMERA && FrierenDebugCamera::OnPending();
+}
+
 // Whether `hold` is in force now, read from its module: a hold someone turned off is free, whatever owner the ledger
 // still names.
 bool HoldActive(const std::string& hold) {
@@ -991,6 +1001,11 @@ void Fern::ReleaseOwnedBy(uint64_t owner) {
     // server) turned on ends with it. Each hold is released under its own lock and only while the ledger still names
     // this owner, so a hold the UI or CE took over meanwhile stays. A foreground client's holds outlive it, as before.
     if (!IsBackgroundOwner(owner) || OwnerStillConnected(owner)) return;
+    // [D2-3-INVOKE] Its invokes still queued go first: none runs after its session (a debug-camera toggle among them,
+    // which then never turns the camera on).
+    if (const int32_t dropped = Stark::DropQueuedInvokesOf(owner); dropped > 0)
+        LOG_INFO("PipeServer: background client %llu left -- %d queued invoke(s) of it dropped, never run",
+                 (unsigned long long)owner, dropped);
     for (const auto& hold : Voll::Holds().OwnedBy(owner)) {
         std::lock_guard<std::mutex> holdLock(Voll::Holds().LockFor(hold));
         if (Voll::Holds().Owner(hold) != owner) continue;
@@ -2449,6 +2464,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // left on one thread. For this dispatch only; a key an older client never sends reads false.
         const Aura::BackgroundWalkScope backgroundWalk(request.value("background", false));
         if (request.value("background", false)) MarkBackground(conn);
+        // [D2-3-INVOKE] Every invoke this command queues is this client's, and an if_free one is refused while another
+        // client's invoke is outstanding (the maintainer, 2026-11-11: an AI's invoke reports a conflict rather than
+        // slip in beside the user's).
+        const Stark::InvokeOwnerScope invokeOwner(conn->ownerKey, request.value("if_free", false));
 
         // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: a command that changes a hold runs under that hold's lock (the
         // mailbox takes the same one), so an if_free check and the change it allows are one step. Locks in name order,
@@ -2478,7 +2497,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             ~HoldRecorder() {
                 for (const auto& h : holds) {
                     try {
-                        Voll::Holds().SetOwner(h, HoldActive(h) ? caller : Voll::kHoldOwnerNone);
+                        Voll::Holds().SetOwner(h, HoldActive(h) || HoldPending(h) ? caller : Voll::kHoldOwnerNone);
                     } catch (...) {
                         // A hold whose state cannot be read keeps the owner it had.
                     }
@@ -5448,6 +5467,17 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             }
             json data;
             data["holds"] = arr;
+            // [D2-3-INVOKE] Each client's invokes still queued or running (a -5 one included); the DLL's own workers'
+            // are left out. The MCP server reads its own to never resend a queued call.
+            json invokes = json::array();
+            for (const auto& [owner, count] : Stark::OutstandingInvokes()) {
+                if (owner == Voll::kHoldOwnerNone) continue;
+                json j;
+                j["holder"]      = Voll::HoldOwnerJson(owner, conn->ownerKey, IsBackgroundOwner(owner));
+                j["outstanding"] = count;
+                invokes.push_back(j);
+            }
+            data["invokes"] = invokes;
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -7383,6 +7413,25 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // keep the caller's parms_size alone, unchecked (review 2; check_processevent_buffers).
             FunctionInfo fi{};
             const bool resolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);
+            // [D2-3-INVOKE] A background client (the MCP server) neither skips the game thread nor calls what the
+            // maintainer's list refuses (Voll::InvokeRefusedForBackground), and a function whose flags cannot be read
+            // could be an RPC. Decided before anything is allocated or queued; the UI and CE are never asked.
+            if (conn->background.load()) {
+                std::string why;
+                if (directCall)
+                    why = "was asked with direct_call, which runs off the game thread: a background client's invoke "
+                          "runs only on it";
+                else if (!resolved)
+                    why = "has flags that could not be read, so it could be a network RPC";
+                else
+                    why = Voll::InvokeRefusedForBackground(fi.name.empty() ? funcName : fi.name, fi.functionFlags);
+                if (!why.empty()) {
+                    auto e = Renge::MakeError(id, "Not invoked: " + funcName + " " + why);
+                    e["code"] = Grimoire::INVOKE_REFUSED_FOR_BACKGROUND;
+                    Sein::Info("PIPE:cmd", "invoke_function: %s refused for a background client", funcName.c_str());
+                    return e.dump();
+                }
+            }
             // [INVOKE-NONSTATIC-ON-CDO] The object is a template, and the function -- by the flags read here, never the
             // caller's direct_call claim -- is not static: it may do nothing there. Warned, never refused.
             const Aura::TemplateInfo tpl = Aura::TemplateOf(instanceAddr);
@@ -7530,6 +7579,28 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (callResult != -5) {
                 for (void* p : strAllocs) free(p);
                 strAllocs.clear();
+            }
+
+            // [D2-3-INVOKE] Nothing ran, and nothing will: each is ok:false, so "every ok:false is before dispatch"
+            // still holds for the UI's retry.
+            if (callResult == Stark::kInvokeHeldByOther) {
+                const uint64_t blocker = Stark::LastInvokeBlocker();
+                auto e = Renge::MakeError(id, "Not invoked: another client's invoke is still queued or running");
+                e["code"]   = Grimoire::HOLD_HELD_BY_OTHER;
+                e["hold"]   = Grimoire::HOLD_INVOKE_QUEUE;
+                e["holder"] = Voll::HoldOwnerJson(blocker, conn->ownerKey, IsBackgroundOwner(blocker));
+                return e.dump();
+            }
+            if (callResult == Stark::kInvokeNeedsGameThread) {
+                auto e = Renge::MakeError(id, "Not invoked: the game-thread hook is not active, and an if_free invoke "
+                                              "runs only on the game thread");
+                e["code"] = callResult;
+                return e.dump();
+            }
+            if (callResult == Stark::kInvokeDroppedOwnerLeft) {
+                auto e = Renge::MakeError(id, "Not invoked: dropped from the queue before it ran -- its client left");
+                e["code"] = callResult;
+                return e.dump();
             }
 
             // Build response

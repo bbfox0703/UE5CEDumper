@@ -1371,6 +1371,17 @@ static Stark::QueuedInvoke s_dbgCamQueued;
 static bool s_dbgCamQueuedWant = false;
 static int s_dbgCamInFlight = -1;   // -1 none, else the direction (0 OFF / 1 ON) being dispatched
 
+// [D2-3-INVOKE] Fern's hold recorder: an ON still queued or being dispatched turns the camera on when it runs, so its
+// sender holds the camera from now. Recording nobody let the camera come on ownerless: its sender could not turn it off
+// with if_free, and an AI session's end did not release it.
+namespace FrierenDebugCamera {
+bool OnPending() {
+    std::lock_guard<std::mutex> lk(s_dbgCamMutex);
+    if (s_dbgCamInFlight >= 0) return s_dbgCamInFlight == 1;
+    return s_dbgCamQueued.StillQueued() && s_dbgCamQueuedWant;
+}
+}  // namespace FrierenDebugCamera
+
 int32_t UE5_SetDebugCamera(int32_t enable) {
     const bool want = (enable != 0);
     uintptr_t cm = 0, dcc = 0;
@@ -2421,6 +2432,10 @@ static int32_t CallProcessEventRouted(uintptr_t instance, uintptr_t ufunc, uintp
     // trade anyone opted into — and it is the historic crash shape. Refuse, and
     // let the feature surface "unavailable" instead of quietly gambling.
     if (Tot::IsBackgroundWorker()) return -8;
+
+    // [D2-3-INVOKE] An if_free request (the MCP server's) is refused rather than called here, on the caller's thread,
+    // beside the game thread: off the queue, no owner rule could apply to it either.
+    if (Stark::CurrentInvokeIfFree()) return Stark::kInvokeNeedsGameThread;
 
     // Fallback: direct call from current thread (unsafe for state-changing functions)
     // Read vtable from the target instance

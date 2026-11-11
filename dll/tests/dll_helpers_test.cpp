@@ -488,6 +488,40 @@ static void Test_Voll_Holders() {
            Voll::HolderToJson(bg).value("background", false) && !Voll::HolderToJson(h).value("background", true));
 }
 
+// [D2-3-INVOKE] The queue's owner rule and the background client's deny list.
+static void Test_D23_InvokeOwnersAndDenyList() {
+    const uint64_t ui = 1234, ai = 777;
+    EXPECT("an AI invoke waits for the UI's outstanding one", Stark::InvokeBlocks(ui, 1, ai));
+    EXPECT("its own outstanding invoke never blocks a caller", !Stark::InvokeBlocks(ai, 3, ai));
+    EXPECT("the DLL's own workers (owner 0) never block", !Stark::InvokeBlocks(0, 5, ai));
+    EXPECT("CE's outstanding invoke blocks", Stark::InvokeBlocks(Voll::kHoldOwnerCe, 1, ai));
+    EXPECT("an owner with nothing outstanding does not block", !Stark::InvokeBlocks(ui, 0, ai));
+    EXPECT("the codes stay apart from ProcessEvent's and the mailbox's",
+           Stark::kInvokeHeldByOther < -11 && Stark::kInvokeDroppedOwnerLeft < -11 && Stark::kInvokeNeedsGameThread < -11
+           && Stark::kInvokeHeldByOther != Stark::kInvokeDroppedOwnerLeft
+           && Stark::kInvokeDroppedOwnerLeft != Stark::kInvokeNeedsGameThread);
+
+    using Voll::InvokeRefusedForBackground;
+    EXPECT("an ordinary function is allowed", InvokeRefusedForBackground("GetHealth", 0).empty());
+    EXPECT("a native static helper is allowed", InvokeRefusedForBackground("Add_IntInt", 0x00002401).empty());
+    EXPECT("any network RPC is refused by its flag", !InvokeRefusedForBackground("ServerFireWeapon", 0x00200040).empty());
+    EXPECT("a client RPC is refused by its flag", !InvokeRefusedForBackground("ClientSetHealth", 0x01000040).empty());
+    EXPECT("the debug camera toggle points to write_debug_camera",
+           InvokeRefusedForBackground("ToggleDebugCamera", 0).find("write_debug_camera") != std::string::npos);
+    EXPECT("names compare case-insensitively, as the DLL's lookup falls back to",
+           !InvokeRefusedForBackground("toggledebugcamera", 0).empty()
+           && !InvokeRefusedForBackground("CONSOLECOMMAND", 0).empty());
+    for (const char* n : {"ConsoleCommand", "ExecuteConsoleCommand", "QuitGame", "Quit", "OpenLevel",
+                          "OpenLevelBySoftObjectPtr", "ClientTravel", "ServerTravel", "RestartLevel", "RestartGame",
+                          "K2_DestroyActor", "K2_DestroyComponent", "SetLifeSpan", "DestroyTarget", "DestroyAll",
+                          "DestroyPawns", "SaveGameToSlot", "AsyncSaveGameToSlot", "DeleteGameInSlot",
+                          "EnableDebugCamera", "DisableDebugCamera"})
+        EXPECT(n, !InvokeRefusedForBackground(n, 0).empty());
+    EXPECT("a name only containing a listed one is allowed (whole names only)",
+           InvokeRefusedForBackground("QuitGameMenuOpened", 0).empty()
+           && InvokeRefusedForBackground("OnSaveGameToSlotDone", 0).empty());
+}
+
 static void Test_Voll_HoldLedger() {
     // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: who holds each gameplay hold, so an AI working through the MCP server
     // never replaces or ends the UI's.
@@ -12541,6 +12575,7 @@ int main() {
     RUN(Test_Voll_ExtractCmdName);
     RUN(Test_Voll_Holders);
     RUN(Test_Voll_HoldLedger);
+    RUN(Test_D23_InvokeOwnersAndDenyList);
     RUN(Test_Voll_ClassifyFirstInstance);
     RUN(Test_Voll_ClientOwnerKey);
     RUN(Test_Schlacht_Owners);
