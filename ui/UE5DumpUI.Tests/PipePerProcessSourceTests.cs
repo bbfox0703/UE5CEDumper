@@ -785,11 +785,15 @@ public sealed class PipePerProcessSourceTests
         int code = release.IndexOf("code = HoldActive(hold) ? ReleaseHold(hold) : 0;", StringComparison.Ordinal);
         int owed = release.IndexOf("hold == Grimoire::HOLD_DEBUG_CAMERA && code == Stark::kInvokeTimedOutStillQueued",
             StringComparison.Ordinal);
-        int store = release.IndexOf("s_cameraReleaseOwedBy.store(owner);", StringComparison.Ordinal);
-        Assert.True(code > 0 && owed > code && store > owed, "the release's -5 records the owed release");
+        Assert.True(code > 0 && owed > code, "the release's -5 records the owed release");
 
         string flatRelease = Flat(release);
         Assert.Contains("code == Stark::kInvokeTimedOutStillQueued) { s_cameraReleaseOwedBy.store(owner);", flatRelease);
+        // Under shutdown every read gives up: the camera's release is owed to the next Start unread, never forgotten.
+        int shutdownOwed = flatRelease.IndexOf("if (hold == Grimoire::HOLD_DEBUG_CAMERA && Tot::ShutdownRequested()) { "
+                                               + "s_cameraReleaseOwedBy.store(owner);", StringComparison.Ordinal);
+        int flatCode = flatRelease.IndexOf("code = HoldActive(hold) ? ReleaseHold(hold) : 0;", StringComparison.Ordinal);
+        Assert.True(shutdownOwed > 0 && flatCode > shutdownOwed, "the shutdown case before the read");
         // The release's reads answer only to shutdown: a connection that left mid-command still has its own cancel
         // flag raised, and a read under it gives up (the camera "unknown"), releasing nothing and owing nothing.
         int gate = flatRelease.IndexOf("if (!IsBackgroundOwner(owner) || OwnerStillConnected(owner)) return;",
@@ -811,25 +815,40 @@ public sealed class PipePerProcessSourceTests
         // wait). Who has it, an ON on its way, a toggle yet to run, a stall -- then, only if they leave it open, the
         // camera's state (a GObjects walk), then the OFF and what it answered. A Wait returns before the record clears;
         // a newer record is kept.
+        // Review round 2: nothing under shutdown (every read would give up and drop the record); the record re-read once
+        // the lock is held (every store is under it); "running" from the physical hook's own fire stamp, which a CE
+        // Disable does not stop (GetGameThreadLiveness answers Unknown then, and an OFF sent blind would hold the monitor
+        // for the invoke timeout); a fresh re-check just before the send; never a direct call when the hook is down; and
+        // a shutdown that cut a read or the OFF short decides nothing.
         string serve = Flat(Between(fern, "void ServeOwedCameraRelease() {", "\n}"));
         Assert.Contains("{ uint64_t owedBy = s_cameraReleaseOwedBy.load(); if (owedBy == 0) return; "
+                        + "if (Tot::ShutdownRequested()) return; "
                         + "const Tot::CancelContextScope immune(Tot::CancelContext{nullptr, true}); "
                         + "std::unique_lock<std::mutex> holdLock(Voll::Holds().LockFor(Grimoire::HOLD_DEBUG_CAMERA), "
                         + "std::try_to_lock); if (!holdLock.owns_lock()) return; "
+                        + "owedBy = s_cameraReleaseOwedBy.load(); if (owedBy == 0) return; "
                         + "const uint64_t owner = Voll::Holds().Owner(Grimoire::HOLD_DEBUG_CAMERA); uint64_t sender = 0; "
                         + "const bool pendingOn = FrierenDebugCamera::PendingOn(sender); "
                         + "const bool outstanding = FrierenDebugCamera::ToggleOutstanding(); "
-                        + "const bool stalled = Stark::GetGameThreadLiveness() == Stark::GameThreadLiveness::Stalled; "
-                        + "Voll::OwedRelease step = Voll::OwedCameraReleaseBefore(owner, pendingOn, outstanding, stalled); "
+                        + "const bool notRunning = !GameThreadRanWithin(Stark::kStallThresholdMs); "
+                        + "Voll::OwedRelease step = Voll::OwedCameraReleaseBefore(owner, pendingOn, outstanding, notRunning); "
                         + "if (step == Voll::OwedRelease::Wait) return;", serve);
+        Assert.DoesNotContain("GetGameThreadLiveness", serve);
         Assert.Contains("if (step == Voll::OwedRelease::Read) { state = UE5_GetDebugCameraState(); "
                         + "step = Voll::OwedCameraReleaseOnState(state); }", serve);
-        Assert.Contains("if (step == Voll::OwedRelease::Send) { sent = UE5_SetDebugCamera(0); sentOff = true; "
-                        + "step = Voll::OwedCameraReleaseSent(sent);", serve);
-        int sendWait = serve.IndexOf("if (step == Voll::OwedRelease::Wait) return; }", StringComparison.Ordinal);
+        Assert.Contains("if (step == Voll::OwedRelease::Send) { if (!GameThreadRanWithin(kOwedSendFreshMs)) return; "
+                        + "if (Stark::IsHookActive() || UE5_EnsureGameThreadHook()) { sent = UE5_SetDebugCamera(0); "
+                        + "sentOff = true; step = Voll::OwedCameraReleaseSent(sent);", serve);
+        int sendWait = serve.IndexOf("if (step == Voll::OwedRelease::Wait) return; } else { step = Voll::OwedRelease::Abandon;",
+            StringComparison.Ordinal);
+        int cut = serve.IndexOf("if (step == Voll::OwedRelease::Abandon && owner == Voll::kHoldOwnerNone && !pendingOn "
+                                + "&& Tot::ShutdownRequested()) return;", StringComparison.Ordinal);
         int clear = serve.IndexOf("s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0);", StringComparison.Ordinal);
-        Assert.True(sendWait > 0 && clear > sendWait, "a resend queued again stays owed; only then the record clears");
+        Assert.True(sendWait > 0 && cut > sendWait && clear > cut,
+            "a resend queued again stays owed; a shutdown-cut answer decides nothing; only then the record clears");
         Assert.Single(Regex.Matches(serve, @"UE5_GetDebugCameraState\(\)"));
+        Assert.Contains("return Stark::HasOriginal() && Stark::MsSinceLastHookFire() <= ms;",
+            Flat(Between(fern, "bool GameThreadRanWithin(uint64_t ms) {", "\n}")));
 
         string frieren = CodeOnly(DllSrc("Frieren.cpp"));
         string outstanding = Between(frieren, "bool ToggleOutstanding() {", "\n}");
