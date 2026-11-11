@@ -926,11 +926,19 @@ def run_raw(exe: str, pid: int | None, game_name: str) -> int:
 
         # 4. write_debug_camera ON on a Shipping fixture with no live CheatManager: an error now, not a success.
         r, d, note = call(c, "write_debug_camera", {"enable": True})
+        # A camera that really came on means a live CheatManager (a Development build): the refusal is not this
+        # fixture's to show. Only a state of 1 the game confirms counts, so a refusal read as success still fails.
+        live_cheat_manager = (not r.get("isError") and isinstance(d, dict) and d.get("state") == 1
+                              and ui.request("get_debug_camera_state").get("state") == 1)
         if not r.get("isError"):
             call(c, "write_debug_camera", {"enable": False})
         note = note or (d.get("note") if isinstance(d, dict) else None)   # an error carries its note in the payload
-        ck.check(r.get("isError") and "CheatManager" in (note or ""), "write_debug_camera ON with no CheatManager is "
-                 "reported as refused (state -17)", (d, note))
+        if live_cheat_manager:
+            print("  skip  write_debug_camera ON turned the camera on: this fixture has a live CheatManager; the "
+                  "refusal is a Shipping check (dbgcam / dbgcamhold cover a live one)")
+        else:
+            ck.check(r.get("isError") and "CheatManager" in (note or ""), "write_debug_camera ON with no CheatManager "
+                     "is reported as refused (state -17)", (d, note))
 
         # 5. The UI's queued invoke: the AI's is refused, naming it, until it has run.
         ck.check(settle() == 0, "no invoke is outstanding before the conflict check")
