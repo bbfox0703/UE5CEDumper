@@ -105,6 +105,8 @@ bool PendingOn(uint64_t& owner);
 bool ConsumeJoin(uint64_t caller, uint64_t& joinedBy);
 bool ToggleOutstanding();   // [DBGCAM-RELEASE-STALLED] a toggle of either direction yet to run
 }
+// [DBGCAM-RELEASE-STALLED] Defined beside the owed record, below; Fern::Stop drops it.
+namespace { void DropOwedCameraRelease(); }
 
 // ============================================================
 // Radar wire helpers — parse "100" / "-42" / "3.14" / "true" /
@@ -796,6 +798,7 @@ void Fern::Stop(bool graceful) {
         m_monitorThread.join();
     }
     LOG_INFO("PipeServer: Stop monitor join done (%lld ms)", elapsedMs());
+    DropOwedCameraRelease();   // [DBGCAM-RELEASE-STALLED] nothing owed crosses a stop
 
     // No handler thread is running now — free every remaining value-scan session.
     Radar::SessionManager::Instance().DropAll();
@@ -973,6 +976,17 @@ bool GameThreadRanWithin(uint64_t ms) {
 // The re-check just before the owed OFF: the first one is up to kStallThresholdMs old plus a GObjects walk by then.
 constexpr uint64_t kOwedSendFreshMs = 150;
 
+// The owed OFF is never ProcessEvent's direct fallback off the game thread: marked a background worker for the call, it
+// is answered -8 instead when the hook went down between the check and the send (a CE Disable's Stark::Shutdown).
+// Restored on every exit, a throw included -- the MonitorLoop thread must not stay marked.
+struct NoDirectCall {
+    bool prev = Tot::t_backgroundWorker;
+    NoDirectCall() { Tot::t_backgroundWorker = true; }
+    ~NoDirectCall() { Tot::t_backgroundWorker = prev; }
+    NoDirectCall(const NoDirectCall&) = delete;
+    NoDirectCall& operator=(const NoDirectCall&) = delete;
+};
+
 // MonitorLoop, every tick: the owed OFF is sent again once the queued one has run and the game thread is running, unless
 // the camera became someone's meanwhile. Under the camera's hold lock, as every change of it is, so a client's Force ON
 // is either seen here first or waits for this OFF. The lock is only tried: a writer holds it across a game-thread wait,
@@ -1008,9 +1022,12 @@ void ServeOwedCameraRelease() {
     }
     if (step == Voll::OwedRelease::Send) {
         if (!GameThreadRanWithin(kOwedSendFreshMs)) return;   // it stopped since the check: the next tick decides again
+        // A teardown under way: neither re-arm the hook (Stark::Shutdown's RemoveHook would not see it) nor send.
+        if (Tot::ShutdownRequested()) return;
         // A hook a CE Disable soft-removed is brought back first: the OFF goes through the game thread, never a direct
         // call off it.
         if (Stark::IsHookActive() || UE5_EnsureGameThreadHook()) {
+            const NoDirectCall noDirectCall;
             sent = UE5_SetDebugCamera(0);
             sentOff = true;
             step = Voll::OwedCameraReleaseSent(sent);
@@ -1022,8 +1039,9 @@ void ServeOwedCameraRelease() {
             noHook = true;
         }
     }
-    // A read or an OFF that a shutdown beginning mid-call cut short decided nothing: the record waits for the next Start.
-    if (step == Voll::OwedRelease::Abandon && owner == Voll::kHoldOwnerNone && !pendingOn && Tot::ShutdownRequested()) return;
+    // A read or an OFF that a shutdown beginning mid-call cut short decided nothing -- a cut walk can read 0 (off) as
+    // well as unknown. The record stays until Fern::Stop drops it.
+    if (owner == Voll::kHoldOwnerNone && !pendingOn && Tot::ShutdownRequested()) return;
     s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0);   // every store is under this lock: the record read above
     const unsigned long long by = owedBy;
     if (step == Voll::OwedRelease::Done)
@@ -1042,6 +1060,16 @@ void ServeOwedCameraRelease() {
     else
         LOG_INFO("PipeServer: background client %llu's debug-camera release is abandoned -- the camera cannot be read "
                  "(state %d)", by, state);
+}
+
+// Fern::Stop, once the monitor and every handler are joined: nothing owed crosses a stop. After the next Start nobody
+// can be named the camera's holder until the clients reconnect, so a record carried over would turn off a camera the
+// user turned on meanwhile -- the game's own toggle, a level change, another save. Dropped, and said.
+void DropOwedCameraRelease() {
+    const uint64_t owedBy = s_cameraReleaseOwedBy.exchange(0);
+    if (owedBy != 0)
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is dropped at stop -- the camera may stay "
+                 "on; turn it off from the UI", (unsigned long long)owedBy);
 }
 
 }  // namespace
@@ -1103,15 +1131,6 @@ void Fern::ReleaseOwnedBy(uint64_t owner) {
     for (const auto& hold : Voll::Holds().OwnedBy(owner)) {
         std::lock_guard<std::mutex> holdLock(Voll::Holds().LockFor(hold));
         if (Voll::Holds().Owner(hold) != owner) continue;
-        // [DBGCAM-RELEASE-STALLED] Under shutdown every read gives up (the camera "unknown"), so the camera would be
-        // forgotten, still on. Owed unread instead: the next Start's MonitorLoop reads it and ends it (or finds it off).
-        if (hold == Grimoire::HOLD_DEBUG_CAMERA && Tot::ShutdownRequested()) {
-            s_cameraReleaseOwedBy.store(owner);
-            Voll::Holds().SetOwner(hold, Voll::kHoldOwnerNone);
-            LOG_INFO("PipeServer: background client %llu left during shutdown -- its debug-camera release is owed to "
-                     "the next start", (unsigned long long)owner);
-            continue;
-        }
         int32_t code = 0;
         try {
             code = HoldActive(hold) ? ReleaseHold(hold) : 0;
