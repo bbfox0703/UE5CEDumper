@@ -492,28 +492,35 @@ static void Test_Voll_Holders() {
 // the queued OFF has run, unless the camera became someone's meanwhile.
 static void Test_Voll_OwedCameraRelease() {
     using Voll::OwedRelease;
-    using Voll::OwedCameraRelease;
+    using Voll::OwedCameraReleaseBefore;
     const uint64_t none = Voll::kHoldOwnerNone, ui = 1234;
     EXPECT("the owed OFF's code is Stark's queued answer", Voll::kOwedOffQueued == Stark::kInvokeTimedOutStillQueued);
-    EXPECT("the queued OFF has not run: wait",
-           OwedCameraRelease(none, false, true, 1, false) == OwedRelease::Wait);
-    EXPECT("it ran and the camera is still on, the game thread running: send it again",
-           OwedCameraRelease(none, false, false, 1, false) == OwedRelease::Send);
-    EXPECT("still on, but the game thread is stalled again: wait, the OFF could not run",
-           OwedCameraRelease(none, false, false, 1, true) == OwedRelease::Wait);
-    EXPECT("it ran and turned the camera off (UE 5.8): done",
-           OwedCameraRelease(none, false, false, 0, false) == OwedRelease::Done);
-    EXPECT("off while the game thread is stalled: done all the same",
-           OwedCameraRelease(none, false, false, 0, true) == OwedRelease::Done);
+    // Before the camera is read (each read walks GObjects): who has it, and whether an OFF could run now.
+    EXPECT("nobody has it, nothing queued, the game thread running: read the camera",
+           OwedCameraReleaseBefore(none, false, false, false) == OwedRelease::Read);
+    EXPECT("the queued OFF has not run: wait, unread",
+           OwedCameraReleaseBefore(none, false, true, false) == OwedRelease::Wait);
+    EXPECT("the queued OFF has run, the game thread stalled again: wait, an OFF sent now could not run",
+           OwedCameraReleaseBefore(none, false, false, true) == OwedRelease::Wait);
+    EXPECT("queued and stalled: wait", OwedCameraReleaseBefore(none, false, true, true) == OwedRelease::Wait);
     EXPECT("the UI took the camera meanwhile: abandoned, never turned off under it",
-           OwedCameraRelease(ui, false, false, 1, false) == OwedRelease::Abandon);
-    EXPECT("taken while the OFF is still queued: abandoned before it is sent",
-           OwedCameraRelease(ui, false, true, 1, false) == OwedRelease::Abandon);
-    EXPECT("CE took it: abandoned", OwedCameraRelease(Voll::kHoldOwnerCe, false, false, 1, false) == OwedRelease::Abandon);
-    EXPECT("an ON on its way (someone asked for the camera): abandoned",
-           OwedCameraRelease(none, true, true, 1, false) == OwedRelease::Abandon);
-    EXPECT("the camera cannot be read (no CheatManager now): abandoned, nothing to turn off",
-           OwedCameraRelease(none, false, false, -1, false) == OwedRelease::Abandon);
+           OwedCameraReleaseBefore(ui, false, false, false) == OwedRelease::Abandon);
+    EXPECT("taken while the OFF is still queued: abandoned before it is sent, not left waiting",
+           OwedCameraReleaseBefore(ui, false, true, false) == OwedRelease::Abandon);
+    EXPECT("taken while the game thread is stalled: abandoned",
+           OwedCameraReleaseBefore(ui, false, true, true) == OwedRelease::Abandon);
+    EXPECT("CE took it: abandoned", OwedCameraReleaseBefore(Voll::kHoldOwnerCe, false, false, false) == OwedRelease::Abandon);
+    EXPECT("an ON on its way (someone asked for the camera): abandoned, even with a toggle queued",
+           OwedCameraReleaseBefore(none, true, true, false) == OwedRelease::Abandon);
+    EXPECT("an ON on its way alone: abandoned", OwedCameraReleaseBefore(none, true, false, false) == OwedRelease::Abandon);
+
+    // On what it read.
+    using Voll::OwedCameraReleaseOnState;
+    EXPECT("still on: send the OFF again", OwedCameraReleaseOnState(1) == OwedRelease::Send);
+    EXPECT("off (the queued OFF turned it off, UE 5.8): done", OwedCameraReleaseOnState(0) == OwedRelease::Done);
+    EXPECT("unreadable (no CheatManager now): abandoned, nothing to turn off",
+           OwedCameraReleaseOnState(-1) == OwedRelease::Abandon);
+    EXPECT("any other negative: abandoned", OwedCameraReleaseOnState(-17) == OwedRelease::Abandon);
 
     using Voll::OwedCameraReleaseSent;
     EXPECT("the OFF turned it off: done", OwedCameraReleaseSent(0) == OwedRelease::Done);

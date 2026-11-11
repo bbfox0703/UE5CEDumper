@@ -788,31 +788,61 @@ public sealed class PipePerProcessSourceTests
         int store = release.IndexOf("s_cameraReleaseOwedBy.store(owner);", StringComparison.Ordinal);
         Assert.True(code > 0 && owed > code && store > owed, "the release's -5 records the owed release");
 
-        string loop = Between(fern, "void Fern::MonitorLoop() {", "static std::string ClientExeName(");
-        Assert.Contains("ServeOwedCameraRelease();", loop);
-
-        string serve = Between(fern, "void ServeOwedCameraRelease() {", "\n}");
-        int load = serve.IndexOf("s_cameraReleaseOwedBy.load()", StringComparison.Ordinal);
-        int lockAt = serve.IndexOf("Voll::Holds().LockFor(Grimoire::HOLD_DEBUG_CAMERA)", StringComparison.Ordinal);
-        int decide = serve.IndexOf("Voll::OwedCameraRelease(Voll::Holds().Owner(Grimoire::HOLD_DEBUG_CAMERA)",
+        string flatRelease = Flat(release);
+        Assert.Contains("code == Stark::kInvokeTimedOutStillQueued) { s_cameraReleaseOwedBy.store(owner);", flatRelease);
+        // The release's reads answer only to shutdown: a connection that left mid-command still has its own cancel
+        // flag raised, and a read under it gives up (the camera "unknown"), releasing nothing and owing nothing.
+        int gate = flatRelease.IndexOf("if (!IsBackgroundOwner(owner) || OwnerStillConnected(owner)) return;",
             StringComparison.Ordinal);
-        int send = serve.IndexOf("UE5_SetDebugCamera(0)", StringComparison.Ordinal);
-        int sent = serve.IndexOf("Voll::OwedCameraReleaseSent(", StringComparison.Ordinal);
-        int clear = serve.IndexOf("s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0)", StringComparison.Ordinal);
-        Assert.True(load > 0 && lockAt > load && decide > lockAt && send > decide && sent > send && clear > sent,
-            "owed? -> the hold lock -> decide -> send -> what it answered -> cleared, a newer owed release kept");
-        Assert.Contains("FrierenDebugCamera::ToggleOutstanding()", serve);
-        Assert.Contains("FrierenDebugCamera::PendingOn(sender)", serve);
-        Assert.Contains("Stark::GameThreadLiveness::Stalled", serve);
+        int immuneRelease = flatRelease.IndexOf("const Tot::CancelContextScope immune(Tot::CancelContext{nullptr, true});",
+            StringComparison.Ordinal);
+        int loopAt = flatRelease.IndexOf("for (const auto& hold : Voll::Holds().OwnedBy(owner))", StringComparison.Ordinal);
+        Assert.True(gate > 0 && immuneRelease > gate && loopAt > immuneRelease, "cancel-immune before the release loop");
+
+        // Served on every tick, after the running check, before the in-flight snapshot, and a throw costs one tick.
+        string loop = Between(fern, "void Fern::MonitorLoop() {", "static std::string ClientExeName(");
+        int brk = loop.IndexOf("if (!m_running.load()) break;", StringComparison.Ordinal);
+        int call = loop.IndexOf("ServeOwedCameraRelease();", StringComparison.Ordinal);
+        int snap = loop.IndexOf("std::vector<std::shared_ptr<Connection>> inflight;", StringComparison.Ordinal);
+        Assert.True(brk > 0 && call > brk && snap > call, "after the running check, before the snapshot");
+        Assert.Matches(@"Routine::RunTickGuarded\([^;]*ServeOwedCameraRelease\(\);", Flat(loop));
+
+        // Nothing owed: no lock. Immune reads. The lock tried, never waited for (a writer holds it across a game-thread
+        // wait). Who has it, an ON on its way, a toggle yet to run, a stall -- then, only if they leave it open, the
+        // camera's state (a GObjects walk), then the OFF and what it answered. A Wait returns before the record clears;
+        // a newer record is kept.
+        string serve = Flat(Between(fern, "void ServeOwedCameraRelease() {", "\n}"));
+        Assert.Contains("{ uint64_t owedBy = s_cameraReleaseOwedBy.load(); if (owedBy == 0) return; "
+                        + "const Tot::CancelContextScope immune(Tot::CancelContext{nullptr, true}); "
+                        + "std::unique_lock<std::mutex> holdLock(Voll::Holds().LockFor(Grimoire::HOLD_DEBUG_CAMERA), "
+                        + "std::try_to_lock); if (!holdLock.owns_lock()) return; "
+                        + "const uint64_t owner = Voll::Holds().Owner(Grimoire::HOLD_DEBUG_CAMERA); uint64_t sender = 0; "
+                        + "const bool pendingOn = FrierenDebugCamera::PendingOn(sender); "
+                        + "const bool outstanding = FrierenDebugCamera::ToggleOutstanding(); "
+                        + "const bool stalled = Stark::GetGameThreadLiveness() == Stark::GameThreadLiveness::Stalled; "
+                        + "Voll::OwedRelease step = Voll::OwedCameraReleaseBefore(owner, pendingOn, outstanding, stalled); "
+                        + "if (step == Voll::OwedRelease::Wait) return;", serve);
+        Assert.Contains("if (step == Voll::OwedRelease::Read) { state = UE5_GetDebugCameraState(); "
+                        + "step = Voll::OwedCameraReleaseOnState(state); }", serve);
+        Assert.Contains("if (step == Voll::OwedRelease::Send) { sent = UE5_SetDebugCamera(0); sentOff = true; "
+                        + "step = Voll::OwedCameraReleaseSent(sent);", serve);
+        int sendWait = serve.IndexOf("if (step == Voll::OwedRelease::Wait) return; }", StringComparison.Ordinal);
+        int clear = serve.IndexOf("s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0);", StringComparison.Ordinal);
+        Assert.True(sendWait > 0 && clear > sendWait, "a resend queued again stays owed; only then the record clears");
+        Assert.Equal(1, Regex.Matches(serve, @"UE5_GetDebugCameraState\(\)").Count);
 
         string frieren = CodeOnly(DllSrc("Frieren.cpp"));
         string outstanding = Between(frieren, "bool ToggleOutstanding() {", "\n}");
+        Assert.Contains("std::lock_guard<std::mutex> lk(s_dbgCamMutex);", outstanding);
         Assert.Contains("return s_dbgCamInFlight >= 0 || s_dbgCamQueued.StillQueued();", outstanding);
 
-        // get_holds says so, beside the camera's entry.
+        // get_holds says so, on the camera's entry alone.
         string holds = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_GET_HOLDS) {", "data[\"holds\"] = arr;");
-        Assert.Contains("j[\"release_owed\"] = true;", holds);
+        Assert.Contains("if (h == Grimoire::HOLD_DEBUG_CAMERA && s_cameraReleaseOwedBy.load() != 0) "
+                        + "j[\"release_owed\"] = true;", holds);
     }
+
+    private static string Flat(string s) => Regex.Replace(s, @"\s+", " ");
 
     /// <summary>Every command's invokes belong to its client; a departed AI's queued ones go before its holds.</summary>
     [Fact]

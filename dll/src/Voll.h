@@ -317,7 +317,18 @@ constexpr bool HeldByOther(bool active, uint64_t owner, uint64_t caller) noexcep
 // timed out and stays queued, and on stock UE 4.18-5.7 a queued OFF does not turn the camera off (it runs on the
 // original controller's CheatManager, and nobody is left waiting to switch the controller back). Fern keeps that
 // release owed and asks, each tick, what to do with it.
-enum class OwedRelease : uint8_t { Wait, Send, Done, Abandon };
+enum class OwedRelease : uint8_t { Wait, Read, Send, Done, Abandon };
+
+// Review round 1 (red): the decision before the camera is read, and on what it reads. Stubs.
+constexpr OwedRelease OwedCameraReleaseBefore(uint64_t owner, bool pendingOn, bool toggleOutstanding,
+                                              bool gameThreadStalled) noexcept {
+    (void)owner; (void)pendingOn; (void)toggleOutstanding; (void)gameThreadStalled;
+    return OwedRelease::Wait;
+}
+constexpr OwedRelease OwedCameraReleaseOnState(int32_t cameraState) noexcept {
+    (void)cameraState;
+    return OwedRelease::Wait;
+}
 // Stark::kInvokeTimedOutStillQueued, which this header does not include: Fern static_asserts the two agree.
 constexpr int32_t kOwedOffQueued = -5;
 
