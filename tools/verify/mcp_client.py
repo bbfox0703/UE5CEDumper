@@ -40,7 +40,8 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         (G) the UI's own ON, likewise. [DBGCAM-RELEASE-STALLED] (H) the AI session ends while the game thread is
         stalled: the release's OFF stays queued, the release is owed (get_holds' release_owed), and once the game runs
         the DLL sends the OFF again and the camera goes off; (I) the same, but the UI's Force ON during the stall takes
-        the camera: the owed release is abandoned and the camera stays the UI's.
+        the camera: the owed release is abandoned and the camera stays the UI's; (J) the AI leaves mid-command (a
+        read_pose waiting on the stalled game thread): its release still reads the camera, is owed, and ends it.
 
     --ssh HOST   start the server as `ssh -T HOST <exe> --mcp`, the way an MCP client on another machine would; --exe
                  is then the path on HOST. ssh's own prompts (a password) go to this console, never to the protocol:
@@ -1357,6 +1358,43 @@ def run_dbgcam_hold(exe: str, pid: int | None, game_name: str) -> int:
             ck.check(_pipe_log_line(rf"background client {seen['server_pid']}'s debug-camera release .* OFF sent "
                                     r"again", seen["since"]) is None, "I: and no OFF was sent again")
         camera_off("I")
+
+        # J. The AI leaves MID-COMMAND while the game thread is stalled: its read_pose waits on the game thread when its
+        # session ends, so the DLL raises that connection's cancel flag, and the release runs with it raised. Before the
+        # review fix the release's camera read gave up under that flag ("unknown"): nothing was released or owed, and
+        # the camera stayed on with no holder. Its reads are cancel-immune now.
+        c = session()
+        since, server_pid = time.strftime("%Y-%m-%d %H:%M:%S"), c.proc.pid
+        r, d, _ = call(c, "write_debug_camera", {"enable": True})
+        ck.check(not r.get("isError") and d.get("state") == 1 and held_by_server(camera_hold(), c),
+                 "J: the AI's ON, the server's", d)
+        with _FrozenGameThread(game_name) as frozen:
+            stalled, end = False, time.monotonic() + 3.0
+            while not stalled and time.monotonic() < end:
+                stalled = ui.request("get_holds").get("game_thread_stalled") is True
+                if not stalled:
+                    time.sleep(0.2)
+            if ck.check(stalled, f"J: the game thread reads stalled ({frozen.suspend_line})"):
+                c.request_async("tools/call", {"name": "read_pose", "arguments": dict(base)})
+                time.sleep(1.0)   # the read is in flight, waiting on the game thread
+                ck.check(c.close(timeout=15.0) == 0, "J: the AI session ends with its read_pose still waiting")
+                # Its command returns after the invoke timeout; then the release waits as long again.
+                t0 = time.monotonic()
+                while time.monotonic() < t0 + 2 * tmo / 1000 + 5.0:
+                    if camera_hold().get("holder", {}).get("kind") != "client":
+                        break
+                    time.sleep(0.25)
+                time.sleep(0.5)
+                f = camera_hold()
+                ck.check(f.get("active") and f.get("holder", {}).get("kind") == "none" and f.get("release_owed") is True,
+                         "J: during the stall the camera is on, with no holder and its release owed", f)
+        ck.check(wait_cam(0) == 0, "J: the game resumes and the owed release turns the camera off")
+        h = wait_hold(lambda x: is_free(x) and "release_owed" not in x)
+        ck.check(is_free(h) and "release_owed" not in h, "J: the hold is free, nothing owed", h)
+        ck.check("(code -5)" in (_release_line(server_pid, "debug_camera", since) or ""),
+                 "J: the DLL log: the release read the camera and sent its OFF, left queued (-5)",
+                 _release_line(server_pid, "debug_camera", since))
+        camera_off("J")
     finally:
         for c in sessions:
             try:
