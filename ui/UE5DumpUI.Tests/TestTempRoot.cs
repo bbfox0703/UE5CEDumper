@@ -22,7 +22,7 @@ namespace UE5DumpUI.Tests;
 /// </summary>
 internal static class TestTempRoot
 {
-    internal const string RootName = "UE5CEDumper.Tests";
+    internal const string RootName = SdkTempLeftovers.SharedFolderName;
     internal const string OwnerFileName = ".owner";
 
     // A run folder with no owner file is a run starting (between creating the folder and opening the file), or one

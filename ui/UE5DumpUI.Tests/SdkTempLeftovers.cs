@@ -11,22 +11,23 @@ namespace UE5DumpUI.Tests;
 /// [TEST-TEMP-HYGIENE-2026-11-11] Removes what a finished `dotnet build` of THIS repository left in %TEMP% a day ago,
 /// and nothing anyone else left there.
 ///
-/// What the SDK leaves, read in dotnet/sdk v10.0.403 and measured on 2026-11-11: every build, test, publish, pack, run
-/// and restore starts a workload advertising-manifest check (RestoringCommand's constructor). On an SDK installed by
-/// MSI or Visual Studio it makes one empty folder named like Path.GetRandomFileName() (Directory.CreateTempSubdirectory),
-/// then Microsoft.NET.Workload_&lt;pid&gt;_&lt;yyyyMMdd&gt;_&lt;HHmmss&gt;_&lt;fff&gt;.log, then a second such folder -- 581 ms before
-/// the log to 99 ms after it, and in 107 groups of them every group held exactly two folders per log. Nothing in the SDK
-/// removes them and no setting skips them. `dotnet --info`, `dotnet new` and `dotnet tool` make such folders with no log.
+/// What the SDK leaves, read in dotnet/sdk v10.0.403 and measured on 2026-11-11: every build, test, publish, pack and
+/// run starts a workload advertising-manifest check (RestoringCommand's constructor; `dotnet restore` leaves nothing). On
+/// an SDK installed by MSI or Visual Studio it makes one empty folder named like Path.GetRandomFileName()
+/// (Directory.CreateTempSubdirectory), then Microsoft.NET.Workload_&lt;pid&gt;_&lt;yyyyMMdd&gt;_&lt;HHmmss&gt;_&lt;fff&gt;.log, then
+/// a second such folder -- up to about 0.8 s before the log and 0.11 s after it, and every group measured held exactly
+/// two folders per log. Nothing in the SDK removes them and no setting skips them. `dotnet --info`, `dotnet new` and
+/// `dotnet tool` make such folders with no log.
 ///
 /// A folder carries no owner, so nothing goes on the absence of someone else's evidence; it goes on a positive match:
 /// <list type="bullet">
 /// <item>A log is ours when its "Executing:" command builds a project git tracks in this repository: the path exactly
 /// as tracked (a command run from the repository root), an absolute path that ends with it at a folder boundary (any
 /// checkout or worktree of this repository, gone or not), or the project's own folder when the folder is named like the
-/// project. The word after an option that takes a value is that value, not the project (an option this code does not
-/// know is taken to take one, which can only keep more), anything after "--" is the program's, and `dotnet run` builds
-/// only its --project. A bare `ui` is not ours, though this repository's ui folder holds a solution: sibling
-/// repositories on this machine hold one in theirs.</item>
+/// project. The word after an option known to take a value is that value, never the project; an option this code does
+/// not know stops the reading (it may or may not take the next word), so that line is not ours. Anything after "--" is
+/// the program's, and `dotnet run` builds only its --project. A bare `ui` is not ours, though this repository's ui
+/// folder holds a solution: sibling repositories on this machine hold one in theirs.</item>
 /// <item>A log is finished when it ends with the SDK's "Logging ended" line, every line is one an idle build writes (a
 /// log that recorded work is kept for whoever reads it), it has not been written for <see cref="MinAge"/>, and nothing
 /// holds it open.</item>
@@ -34,7 +35,8 @@ namespace UE5DumpUI.Tests;
 /// are one group. A group goes only when every log in it is ours and finished, it holds exactly two folders per log,
 /// each empty, no reparse point, and neither made nor written for <see cref="MinAge"/> -- and it is exactly the group a
 /// run saw while it was young (made under <see cref="Young"/> ago, its last member over <see cref="Settle"/> ago),
-/// recorded in <see cref="SeenGroupsFileName"/>. A test run follows a build within minutes, so ours are seen then.
+/// recorded in <see cref="SeenGroupsFileName"/>. A test run sees the build that started it, and the headless suite,
+/// which build.ps1 runs after this one, records its own (<see cref="RecordYoungGroups"/>).
 /// Another cleanup can take a folder later, and a folder with no log of its own (another session's `dotnet --info`,
 /// another program's temp folder) can sit in the window: the count would be right again, but the group is not the one
 /// seen, so it stays whole, our log with it. A group first seen older is never known whole and stays. Our finished log
@@ -43,27 +45,30 @@ namespace UE5DumpUI.Tests;
 /// it is. Folders go with a non-recursive delete, which removes an empty folder or nothing.</item>
 /// <item>A finished log kept for good is remembered by name in <see cref="KeptLogsFileName"/> under the projects it was
 /// judged against (<see cref="KeptHeader"/>), and is not read again by a run with the same projects. Another session's
-/// logs are never ours, so without this every run would read all of them, about 0.17 ms each and ~600 more a day.
-/// Neither memory can delete anything by itself: a wrong or edited line makes the sweep keep more.</item>
+/// logs are never ours, so without this every run would read all of them, about 0.17 ms each and ~600 more a day. A
+/// wrong line there only keeps more. The seen record is the other way round: a line there lets that exact group go
+/// (if its logs are ours and finished), so only lines under this code's <see cref="SeenHeader"/> are trusted, and a
+/// run that cannot read the record neither records nor writes.</item>
 /// </list>
-/// Left behind on purpose: a build run from a subfolder with a partial path, a build with no path, a group not seen
-/// young, and a group changed since. Once the SDK stops writing the log (dotnet/sdk main no longer does, 2026-11-10),
-/// nothing is ours and nothing goes.
+/// Left behind on purpose: a build named by a relative path other than the tracked one (run from a subfolder, or a copy
+/// of this repository under out/), a build with no path or with an option this code does not know before its project,
+/// a group not seen young (a build no test run follows within <see cref="Young"/>), and a group changed since. Once the
+/// SDK stops writing the log (dotnet/sdk main no longer does, 2026-11-10), nothing is ours and nothing goes.
 /// </summary>
 internal static class SdkTempLeftovers
 {
     internal static readonly TimeSpan MinAge = TimeSpan.FromDays(1);
 
-    // The window that joins a folder to a log: wider than the measured -581 / +99 ms, so a slow disk does not split a
+    // The window that joins a folder to a log: wider than the measured -0.8 / +0.11 s, so a slow disk does not split a
     // build; a wider window only makes groups bigger, and a group that is not exactly ours stays.
     internal static readonly TimeSpan FolderBeforeLog = TimeSpan.FromSeconds(2);
     internal static readonly TimeSpan FolderAfterLog = TimeSpan.FromSeconds(1);
 
-    // A group is recorded only once its last member is this old (a build makes its second folder within 99 ms of the
+    // A group is recorded only once its last member is this old (a build makes its second folder within 0.11 s of the
     // log), and only while its first member is younger than Young: another session's cleanup removes SDK leftovers
-    // about an hour old, so a group seen this young cannot have lost a folder to it yet.
+    // about an hour old, so a group seen at half that age cannot have lost a folder to it yet.
     internal static readonly TimeSpan Settle = TimeSpan.FromSeconds(5);
-    internal static readonly TimeSpan Young = TimeSpan.FromMinutes(10);
+    internal static readonly TimeSpan Young = TimeSpan.FromMinutes(30);
 
     private const int FoldersPerBuild = 2;
 
@@ -92,11 +97,11 @@ internal static class SdkTempLeftovers
     // The commands that reach the manifest check (they derive from or build a RestoringCommand).
     private static readonly HashSet<string> BuildVerbs = new(StringComparer.OrdinalIgnoreCase)
     {
-        "build", "test", "publish", "pack", "run", "restore",
+        "build", "test", "publish", "pack", "run",
     };
 
-    // Options of those commands that take no value, so the word after one is not skipped. One missing here costs only
-    // a log of ours not attributed, which keeps it.
+    // Options of those commands that take no value: the word after one stands alone. An option in neither set stops the
+    // reading, so one missing from either costs only a log of ours not attributed, which keeps it.
     private static readonly HashSet<string> FlagsWithoutValue = new(StringComparer.OrdinalIgnoreCase)
     {
         "--no-restore", "--no-build", "--no-dependencies", "--no-incremental", "--no-self-contained",
@@ -107,20 +112,46 @@ internal static class SdkTempLeftovers
         "--no-ansi", "--no-progress",
     };
 
+    // Options of those commands that take a value as the next word.
+    private static readonly HashSet<string> OptionsWithValue = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "-c", "--configuration", "-f", "--framework", "-r", "--runtime", "-o", "--output", "-v", "--verbosity",
+        "-a", "--arch", "--os", "-s", "--source", "--results-directory", "--filter", "--logger", "-l", "--settings",
+        "--diag", "-d", "--property", "-p", "--collect", "--blame-crash-dump-type", "--blame-hang-dump-type",
+        "--blame-hang-timeout", "--launch-profile", "-lp", "--artifacts-path", "--packages", "--version-suffix",
+        "--test-adapter-path", "--environment", "-e", "--configfile",
+    };
+
     /// <summary>The memory of logs kept for good, in the memory folder.</summary>
     internal const string KeptLogsFileName = "sdk-logs-kept.txt";
 
     /// <summary>The groups seen young, one per line: the names of their members, sorted, joined by '|'.</summary>
     internal const string SeenGroupsFileName = "sdk-groups-seen.txt";
 
-    /// <summary>Red stub: the seen record's first line.</summary>
+    /// <summary>The seen record's first line. A line there lets a group go, so a change to how groups are formed or
+    /// recorded changes this version, and a record under any other header is not trusted.</summary>
     internal const string SeenHeader = "# sdk-groups-seen v1";
 
-    /// <summary>Red stub: the folder in %TEMP% the test runs share.</summary>
+    /// <summary>The folder in %TEMP% the test runs share: their run folders, and both memories.</summary>
     internal const string SharedFolderName = "UE5CEDumper.Tests";
 
-    /// <summary>Red stub: record the groups seen young, deleting nothing.</summary>
-    internal static void RecordYoungGroups(string temp, DateTime nowUtc, string memoryFolder) { }
+    /// <summary>Records the groups in <paramref name="temp"/> seen young, in <paramref name="memoryFolder"/>; deletes
+    /// nothing and reads no log. The headless suite runs it: build.ps1 runs that suite after this one, so its own build
+    /// would otherwise never be seen young. Never throws.</summary>
+    internal static void RecordYoungGroups(string temp, DateTime nowUtc, string memoryFolder)
+    {
+        try
+        {
+            var seenFile = Path.Combine(memoryFolder, SeenGroupsFileName);
+            var seen = ReadSeen(seenFile);
+            if (!seen.Readable) return;
+            var decision = Decide(temp, Array.Empty<string>(), nowUtc, new HashSet<string>(StringComparer.OrdinalIgnoreCase),
+                seen.Keys, record: true, judge: false);
+            if (!seen.Clean || !decision.Seen.SetEquals(seen.Keys))
+                WriteMemory(seenFile, decision.Seen.Order(StringComparer.Ordinal).Prepend(SeenHeader));
+        }
+        catch (Exception e) when (Expected(e)) { }
+    }
 
     // The exceptions a look at %TEMP% can meet: I/O and access, and a time or path .NET cannot represent (anyone can
     // stamp a file with a time past the year 9999).
@@ -169,7 +200,7 @@ internal static class SdkTempLeftovers
             if (projects is not { Count: > 0 }) return new Plan(Array.Empty<string>(), Array.Empty<string>());
             var kept = ReadKept(MemoryFile(memoryFolder, KeptLogsFileName), KeptHeader(projects));
             var seen = ReadSeen(MemoryFile(memoryFolder, SeenGroupsFileName));
-            return Decide(temp, projects, nowUtc, kept.Names, seen, record: false).Plan;
+            return Decide(temp, projects, nowUtc, kept.Names, seen.Keys, record: false, judge: true).Plan;
         }
         catch (Exception e) when (Expected(e))
         {
@@ -194,7 +225,9 @@ internal static class SdkTempLeftovers
             var header = KeptHeader(projects);
             var kept = ReadKept(keptFile, header);
             var seenBefore = ReadSeen(seenFile);
-            var decision = Decide(temp, projects, nowUtc, kept.Names, seenBefore, record: true);
+            // A record that cannot be read: nothing is recorded, and nothing that needs it goes.
+            var decision = Decide(temp, projects, nowUtc, kept.Names, seenBefore.Keys, record: seenBefore.Readable,
+                judge: true);
 
             foreach (var group in decision.Going)
             {
@@ -226,10 +259,11 @@ internal static class SdkTempLeftovers
             // What is remembered and still in %TEMP%, and what this run found kept for good.
             var stillKept = kept.Names.Where(decision.Present.Contains).Concat(decision.NewlyKept)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
-            if (keptFile != null && (!kept.Clean || !stillKept.SetEquals(kept.Names)))
+            // Neither memory is written from a read that failed: written from that empty read, it would lose what it held.
+            if (keptFile != null && kept.Readable && (!kept.Clean || !stillKept.SetEquals(kept.Names)))
                 WriteMemory(keptFile, stillKept.Order(StringComparer.OrdinalIgnoreCase).Prepend(header));
-            if (seenFile != null && !decision.Seen.SetEquals(seenBefore))
-                WriteMemory(seenFile, decision.Seen.Order(StringComparer.Ordinal));
+            if (seenFile != null && seenBefore.Readable && (!seenBefore.Clean || !decision.Seen.SetEquals(seenBefore.Keys)))
+                WriteMemory(seenFile, decision.Seen.Order(StringComparer.Ordinal).Prepend(SeenHeader));
         }
         catch (Exception e) when (Expected(e)) { }
         return new Plan(folders, logs);
@@ -246,38 +280,49 @@ internal static class SdkTempLeftovers
         return "# projects " + hash.ToLowerInvariant();
     }
 
-    // The names remembered under this header, and whether the file was exactly that: a line that is no log name, or a
-    // header for other projects, is dropped on the next write.
-    private static (HashSet<string> Names, bool Clean) ReadKept(string? file, string header)
+    // The names remembered under this header. Clean: the file was exactly that (a line that is no log name, or a header
+    // for other projects, is dropped on the next write). Readable: false when the file is there and cannot be read.
+    private static (HashSet<string> Names, bool Clean, bool Readable) ReadKept(string? file, string header)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (file == null) return (names, true);
-        string[] lines;
-        try
-        {
-            if (!File.Exists(file)) return (names, true);
-            lines = File.ReadAllLines(file);
-        }
-        catch (Exception e) when (Expected(e)) { return (names, true); }
-        if (lines.Length == 0 || lines[0] != header) return (names, false);
+        var lines = ReadMemory(file, out var readable);
+        if (!readable) return (names, true, false);
+        if (lines == null) return (names, true, true);
+        if (lines.Length == 0 || lines[0] != header) return (names, false, true);
         foreach (var line in lines.Skip(1))
             if (LogName.IsMatch(line)) names.Add(line);
-        return (names, names.Count == lines.Length - 1);
+        return (names, names.Count == lines.Length - 1, true);
     }
 
-    // The group keys seen young. A line is only ever compared whole, so one that is no group's key matches nothing.
-    private static HashSet<string> ReadSeen(string? file)
+    // The group keys seen young, under this code's header; the same Clean and Readable as ReadKept. A key is compared
+    // whole to let a group go; its names are read only to prune it, and to keep its logs from being recorded again.
+    private static (HashSet<string> Keys, bool Clean, bool Readable) ReadSeen(string? file)
     {
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (file == null) return seen;
+        var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var lines = ReadMemory(file, out var readable);
+        if (!readable) return (keys, true, false);
+        if (lines == null) return (keys, true, true);
+        if (lines.Length == 0 || lines[0] != SeenHeader) return (keys, false, true);
+        foreach (var line in lines.Skip(1))
+            if (line.Length > 0) keys.Add(line);
+        return (keys, keys.Count == lines.Length - 1, true);
+    }
+
+    // A memory's lines; null when there is no file. A file that is there and cannot be read (another run replacing it,
+    // an AV scan) is not readable, which is not the same as empty.
+    private static string[]? ReadMemory(string? file, out bool readable)
+    {
+        readable = true;
+        if (file == null) return null;
         try
         {
-            if (File.Exists(file))
-                foreach (var line in File.ReadAllLines(file))
-                    if (line.Length > 0) seen.Add(line);
+            return File.Exists(file) ? File.ReadAllLines(file) : null;
         }
-        catch (Exception e) when (Expected(e)) { seen.Clear(); }
-        return seen;
+        catch (Exception e) when (Expected(e))
+        {
+            readable = false;
+            return null;
+        }
     }
 
     // Written whole and moved over the old one, so a run reading it at the same moment sees one or the other.
@@ -298,7 +343,7 @@ internal static class SdkTempLeftovers
     }
 
     private static Decision Decide(string temp, IReadOnlyCollection<string> ourProjects, DateTime nowUtc,
-        HashSet<string> kept, HashSet<string> seenBefore, bool record)
+        HashSet<string> kept, HashSet<string> seenBefore, bool record, bool judge)
     {
         var listing = new DirectoryInfo(temp);
 
@@ -319,7 +364,7 @@ internal static class SdkTempLeftovers
                 _ = created + FolderAfterLog + Settle;
                 present.Add(f.Name);
                 var ours = false;
-                if (!kept.Contains(f.Name) && nowUtc - written >= MinAge)
+                if (judge && !kept.Contains(f.Name) && nowUtc - written >= MinAge)
                 {
                     var verdict = Judge(f.FullName, ourProjects);
                     if (verdict == Verdict.KeepForever) newlyKept.Add(f.Name);
@@ -375,14 +420,16 @@ internal static class SdkTempLeftovers
         for (var i = 0; i < folders.Count; i++) At(logs.Count + i).Folders.Add(folders[i]);
         var withLogs = groups.Values.Where(g => g.Logs.Count > 0).ToList();
 
-        // The groups seen young: what was recorded and still has a log here, and each group seen young now whose logs
-        // no record names (a group recorded once and changed since is not recorded again, so it never matches).
+        // The groups seen young: what was recorded and still has a log here -- less a group holding a log kept for
+        // good, which can never go -- and each group seen young now whose logs no record names (a group recorded once
+        // and changed since is not recorded again, so it never matches).
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var recordedLogs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var keptNow = new HashSet<string>(kept.Concat(newlyKept), StringComparer.OrdinalIgnoreCase);
         foreach (var key in seenBefore)
         {
             var names = key.Split('|');
-            if (!names.Any(present.Contains)) continue;
+            if (!names.Any(present.Contains) || names.Any(keptNow.Contains)) continue;
             seen.Add(key);
             foreach (var n in names) recordedLogs.Add(n);
         }
@@ -469,12 +516,14 @@ internal static class SdkTempLeftovers
         {
             var arg = args[i];
             if (arg == "--") break;   // what follows is the program's own arguments, not the build's
-            if (arg.StartsWith("--project=", StringComparison.OrdinalIgnoreCase))
+            if (arg.StartsWith("--project=", StringComparison.OrdinalIgnoreCase)
+                || arg.StartsWith("--solution=", StringComparison.OrdinalIgnoreCase))
             {
-                if (IsOurProject(arg["--project=".Length..], ourProjects)) return true;
+                if (IsOurProject(arg[(arg.IndexOf('=') + 1)..], ourProjects)) return true;
                 continue;
             }
-            if (string.Equals(arg, "--project", StringComparison.OrdinalIgnoreCase))
+            if (string.Equals(arg, "--project", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(arg, "--solution", StringComparison.OrdinalIgnoreCase))
             {
                 if (i + 1 < args.Count && IsOurProject(args[++i], ourProjects)) return true;
                 continue;
@@ -482,9 +531,12 @@ internal static class SdkTempLeftovers
             if (arg.StartsWith('-'))
             {
                 // A value attached (-p:X=Y, --verbosity=q) or a flag that takes none: the next word stands alone.
-                // Otherwise the next word is this option's value, and never the project.
                 if (arg.Contains(':') || arg.Contains('=') || FlagsWithoutValue.Contains(arg)) continue;
-                i++;
+                // An option this code does not know may or may not take the next word, so the rest of the line cannot
+                // be read: not ours. A log of ours missed this way is kept, the safe way to be wrong.
+                if (!OptionsWithValue.Contains(arg)) return false;
+                // Its value -- never an option or "--", which would shift the reading of everything after it.
+                if (i + 1 < args.Count && !args[i + 1].StartsWith('-')) i++;
                 continue;
             }
             if (positional && IsOurProject(arg, ourProjects)) return true;
@@ -518,9 +570,10 @@ internal static class SdkTempLeftovers
                 : string.Equals(path, tracked, StringComparison.OrdinalIgnoreCase);
     }
 
-    /// <summary>The words of a Windows command line as a C or .NET program receives them (the CommandLineToArgvW rules):
-    /// spaces separate outside quotes; 2n backslashes before a quote give n and the quote opens or closes; 2n+1 give n
-    /// and a literal quote; "" inside quotes is a literal quote; any other backslash is itself.</summary>
+    /// <summary>The words of a Windows command line as dotnet.exe's argv holds them (the MSVC UCRT rules): spaces
+    /// separate outside quotes; 2n backslashes before a quote give n and the quote opens or closes; 2n+1 give n and a
+    /// literal quote; "" inside quotes is a literal quote and quoting goes on (CommandLineToArgvW would end it there,
+    /// and split a word out that the program never sees); any other backslash is itself.</summary>
     internal static List<string> SplitArgs(string command)
     {
         var args = new List<string>();
