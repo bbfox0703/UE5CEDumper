@@ -50,6 +50,9 @@ public sealed class McpGameLinkTests
         public bool IsConnected { get; private set; }
         public string? ConnectedTo { get; private set; }
         public HashSet<string> Busy { get; } = new();
+        /// <summary>Names served by an elevated game: Windows refuses a non-elevated client, as NamedPipeClientStream
+        /// reports it (measured 2026-11-11, verification-register item 18).</summary>
+        public HashSet<string> Elevated { get; } = new();
         /// <summary>The pid get_pointers reports, per pipe name; default: the name's own pid.</summary>
         public Dictionary<string, int> ReportedPid { get; } = new();
         public Func<JsonObject, CancellationToken, Task<JsonObject>>? Handler { get; set; }
@@ -64,6 +67,7 @@ public sealed class McpGameLinkTests
             Dialed.Add(pipeName);
             if (IsConnected) return Task.CompletedTask;
             if (Busy.Contains(pipeName)) throw new TimeoutException("The operation has timed out.");
+            if (Elevated.Contains(pipeName)) throw new UnauthorizedAccessException("Access to the path is denied.");
             IsConnected = true;
             ConnectedTo = pipeName;
             return Task.CompletedTask;
@@ -314,6 +318,19 @@ public sealed class McpGameLinkTests
         Assert.Contains("process 555", e.Message);
         Assert.False(rig.Pipe.IsConnected);
         Assert.Equal(0, rig.Link.ConnectedPid);
+    }
+
+    [Fact]
+    public async Task AnElevatedGame_IsNamedAsSuch_NotAnInternalError()
+    {
+        // Measured 2026-11-11: a non-elevated server against a game running as administrator got "Internal error in
+        // read_status: Access to the path is denied." -- UAC refuses the pipe, and the model needs to know why.
+        var rig = new Rig(100);
+        rig.Pipe.Elevated.Add("UE5DumpBfx_100");
+        var e = await Assert.ThrowsAsync<McpToolError>(() => rig.Send());
+        Assert.Contains("administrator", e.Message);
+        Assert.Contains("elevated", e.Message);
+        Assert.False(rig.Pipe.IsConnected);
     }
 
     [Fact]
