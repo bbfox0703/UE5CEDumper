@@ -53,6 +53,7 @@ repo). Exit code 0 only when every check passed; the failures are listed.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import math
 import os
@@ -724,13 +725,19 @@ def _suspend(*args: str) -> tuple[int, str]:
     return out.returncode, out.stdout
 
 
+_GAME_THREADS: dict[str, int | None] = {}
+
+
 def _game_thread(name: str) -> int | None:
-    """The UE game thread: the process's oldest thread (suspend.py's own rule). A name that matches several processes
-    (a launcher shim beside the game) is refused here, before any case runs."""
-    mains = [line for line in _suspend("threads", name)[1].splitlines() if "<-- main thread" in line]
-    if len(mains) > 1:
-        raise McpError(f"--suspend-name {name!r} matches {len(mains)} processes; pass the full image stem")
-    return int(mains[0].split("tid=")[1].split()[0]) if mains else None
+    """The UE game thread: the process's oldest thread (suspend.py's own rule), looked up once per name -- it does not
+    change while the game runs. A name that matches several processes (a launcher shim beside the game) raises; main()
+    resolves it before any case runs, so that refusal comes first."""
+    if name not in _GAME_THREADS:
+        mains = [line for line in _suspend("threads", name)[1].splitlines() if "<-- main thread" in line]
+        if len(mains) > 1:
+            raise McpError(f"--suspend-name {name!r} matches {len(mains)} processes; pass the full image stem")
+        _GAME_THREADS[name] = int(mains[0].split("tid=")[1].split()[0]) if mains else None
+    return _GAME_THREADS[name]
 
 
 class _FrozenGameThread:
@@ -799,16 +806,19 @@ def _camera_cleanup(ui) -> None:
         ui.close()
 
 
-def _release_line(server_pid: int, hold: str) -> str | None:
-    """The DLL's newest log line for a background client's hold released on its exit, matched by that client's pid so
-    an earlier session's line is never taken. Its code is what the release returned (-5: left queued)."""
+def _release_line(server_pid: int, hold: str, since: str) -> str | None:
+    """The DLL's newest log line for a background client's hold released on its exit. Its code is what the release
+    returned (-5: left queued). Matched by the client's pid AND stamped at or after `since` (local "YYYY-MM-DD
+    HH:MM:SS", the DLL log's own stamp): pids are reused, and every game's pipe log is read, so a pid alone could take an
+    earlier run's line."""
     sys.path.insert(0, str(pathlib.Path(__file__).parent))
     from pipe_client import _read_pipe_logs   # noqa: E402 -- the rig beside this one
 
     pattern = re.compile(rf"background client {server_pid} left -- its hold {re.escape(hold)} is released "
                          r"\(code -?\d+\)")
-    lines = [line.strip() for text in _read_pipe_logs() for line in text.splitlines() if pattern.search(line)]
-    return lines[-1] if lines else None
+    lines = [line.strip() for text in _read_pipe_logs() for line in text.splitlines()
+             if line.startswith("[") and line[1:20] >= since and pattern.search(line)]
+    return max(lines, key=lambda line: line[1:24]) if lines else None
 
 
 def _le_hex(value: int, size: int) -> str:
@@ -1169,7 +1179,10 @@ def run_dbgcam_hold(exe: str, pid: int | None, game_name: str) -> int:
                     and f"(pid {me})" in text)
 
     def camera_off(label: str):
-        _camera_force_off(ui)
+        if _camera_force_off(ui) == 0 and not is_free(camera_hold()):
+            # Off, but the ledger still names a holder (the camera turned off outside the pipe): an OFF over an off
+            # camera is a no-op toggle, and its hold recorder forgets that owner.
+            ui.request("set_debug_camera", enable=False)
         ck.check(cam() == 0 and is_free(camera_hold()), f"{label}: the camera is off and free again", camera_hold())
 
     if not ck.check(cam() in (0, 1), "the debug camera's state reads (a live CheatManager)", cam()):
@@ -1255,28 +1268,36 @@ def run_dbgcam_hold(exe: str, pid: int | None, game_name: str) -> int:
             r, d, _ = call(ai, "write_debug_camera", {"enable": True})
             ck.check(not r.get("isError") and d.get("state") == 1 and held_by_server(camera_hold(), ai),
                      "H: the AI's ON, the server's", d)
-            stalled, released_after, frozen_reply = False, None, {}
-            with _FrozenGameThread(game_name) as frozen:
-                # game_thread_stalled turns true 500 ms after the game thread's last ProcessEvent.
-                end = time.monotonic() + 3.0
-                while not stalled and time.monotonic() < end:
-                    stalled = ui.request("get_holds").get("game_thread_stalled") is True
-                    if not stalled:
-                        time.sleep(0.2)
-                if stalled:
-                    ck.check(ai.close() == 0, "H: the AI session ends while the game thread is stalled")
-                    t0 = time.monotonic()
-                    end = t0 + tmo / 1000 + 3.0
-                    while time.monotonic() < end:
-                        if camera_hold().get("holder", {}).get("kind") != "client":
-                            released_after = time.monotonic() - t0
-                            break
-                        time.sleep(0.25)
-                    time.sleep(1.0)
-                    frozen_reply = ui.request("get_holds")
-            if not stalled:
+            stalled, released_after, frozen_reply, frozen = False, None, {}, None
+            since = time.strftime("%Y-%m-%d %H:%M:%S")
+            # H only observes, so a suspend that did not take skips it rather than ending the run (D-G stay counted);
+            # a resume that did not take still raises, from the stack's exit.
+            with contextlib.ExitStack() as stack:
+                try:
+                    frozen = stack.enter_context(_FrozenGameThread(game_name))
+                except McpError as e:
+                    print(f"  OBSERVED  H: skipped -- {e}")
+                if frozen is not None:
+                    # game_thread_stalled turns true 500 ms after the game thread's last ProcessEvent.
+                    end = time.monotonic() + 3.0
+                    while not stalled and time.monotonic() < end:
+                        stalled = ui.request("get_holds").get("game_thread_stalled") is True
+                        if not stalled:
+                            time.sleep(0.2)
+                    if stalled:
+                        ck.check(ai.close() == 0, "H: the AI session ends while the game thread is stalled")
+                        t0 = time.monotonic()
+                        end = t0 + tmo / 1000 + 3.0
+                        while time.monotonic() < end:
+                            if camera_hold().get("holder", {}).get("kind") != "client":
+                                released_after = time.monotonic() - t0
+                                break
+                            time.sleep(0.25)
+                        time.sleep(1.0)
+                        frozen_reply = ui.request("get_holds")
+            if frozen is not None and not stalled:
                 print("  OBSERVED  H: skipped -- the game thread did not read stalled within 3 s of the suspend")
-            else:
+            elif frozen is not None:
                 time.sleep(5.0)
                 after_cam, after_hold = cam(), camera_hold()
                 frozen_hold = next((h for h in frozen_reply.get("holds", []) if h.get("hold") == "debug_camera"), {})
@@ -1284,7 +1305,8 @@ def run_dbgcam_hold(exe: str, pid: int | None, game_name: str) -> int:
                 print(f"  OBSERVED  H: {frozen.suspend_line}")
                 print(f"  OBSERVED  H: the release returned {returned}; during the stall (game_thread_stalled="
                       f"{frozen_reply.get('game_thread_stalled')}) the hold read {frozen_hold}")
-                print(f"  OBSERVED  H: the DLL log: {_release_line(server_pid, 'debug_camera') or 'no release line'}")
+                line = _release_line(server_pid, "debug_camera", since)
+                print(f"  OBSERVED  H: the DLL log: {line or 'no release line for this session'}")
                 print(f"  OBSERVED  H: 5 s after the game resumed the camera reads {after_cam}, the hold {after_hold}")
             camera_off("H")
     finally:
@@ -1337,6 +1359,13 @@ def main() -> int:
         # These freeze the game's thread from this machine and compare a holder's pid with the server's process here.
         if a.ssh:
             ap.error(f"{a.mode} runs the server on this machine, beside the game: --ssh does not apply")
+        # Resolved before any case runs: an ambiguous or absent name is refused here, not at the first freeze.
+        try:
+            tid = _game_thread(a.suspend_name)
+        except McpError as e:
+            ap.error(str(e))
+        if tid is None:
+            ap.error(f"--suspend-name {a.suspend_name!r}: no running process matches it")
         run = {"raw": run_raw, "dbgcam": run_dbgcam, "dbgcamhold": run_dbgcam_hold}[a.mode]
         return run(exe, a.pid, a.suspend_name)
     return run_live(exe, a.pid, a.suspend_name)
