@@ -416,8 +416,27 @@ force-field job and See-through. Not reached:
     ON were then refused naming the UI's pid, and the camera stayed on after the AI session ended. (G) The same for a
     camera the UI turned on itself. Controls: F and G show that the release takes only the leaving client's own hold.
     **Found:** if the game thread is stalled when the session ends, the camera stays on with no holder. The release's
-    OFF timed out (code -5) and stayed queued, and a queued OFF does not turn the camera off on UE 4.18-5.7. Case H
-    prints this without counting it; see todo.md `[DBGCAM-RELEASE-STALLED]`.
+    OFF timed out (code -5) and stayed queued, and a queued OFF does not turn the camera off on UE 4.18-5.7.
+    ✅ **`[DBGCAM-RELEASE-STALLED]` FIXED in build 3707, live-verified 2026-11-12 on DumperTest Development only**, DLL
+    and AOT exe 3707, `dbgcamhold` 59/59 (H, I and J are acceptance checks now).
+    - (H) The session ended with the game thread frozen. `get_holds` showed the camera on, no holder,
+      `release_owed: true`. Once the game ran, the DLL log read "OFF sent again -> state 0" and "release is done", and
+      the camera was off and free.
+    - (I) The same, but the UI's Force ON during the stall (answered -6) took the camera. The owed release was
+      abandoned and no OFF was sent again; the camera stayed the UI's.
+    - (J) The AI left mid-command (a `write_invoke` waiting on the frozen game thread; the DLL logged `client gone
+      mid-command`). Its release still read the camera, was owed (code -5) and ended it.
+    - Negative control, the 3706 DLL on the same rig: H, I and J failed. J's release logged `released (code 0)` and
+      left the camera on with no holder: the connection's raised cancel made the camera read "unknown".
+    - Regression runs on 3707: `dbgcam` 26/26 and `raw` 24/24 on Development; on Shipping `raw` 25/25, `writes` 36/36,
+      `live` 31/31, `holds_live.py` 22/22, `probe` 15/15.
+
+    **Not reached:**
+    - A CE Disable/Enable while a release is owed or under way. Fern::Stop drops the record, and the camera may stay
+      on; CE testing is pending.
+    - A soft-removed hook (the OFF waits for the hook's own fire stamp, and brings the hook back before sending).
+    - UE 5.8, where the queued OFF itself turns the camera off and the release ends "done" without a second OFF.
+    - Other holds' releases under a stall.
 
 Stage D2-3, build 3706 (`write_memory`, `write_invoke`; `write_mem` data only; the invoke queue's owners) -- dev-log
 3706. `tools/verify/mcp_client.py raw` 25/25 on DumperTest Shipping with the published DLL and AOT exe, the game thread

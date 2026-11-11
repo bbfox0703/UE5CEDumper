@@ -27,6 +27,44 @@ builds ≤696 in
 
 -----
 
+## 2026-11-12 (build 3707) — An AI session's debug camera is turned off even when the game was frozen as it ended `[DBGCAM-RELEASE-STALLED]`
+
+- **What was wrong.** Two cases left the camera on with no holder after the AI session ended:
+  - The game thread was stalled (a long load, a debugger, a suspended thread) when the session ended. The release's
+    OFF then waited the invoke timeout and stayed queued, and on stock UE 4.18-5.7 a queued OFF does not turn the
+    camera off.
+  - The AI left in the middle of a command. The release then ran with that connection's cancel still raised, and its
+    camera read gave up ("unknown"), so it sent nothing.
+- **What changes:**
+  - A release that times out is now *owed*. The DLL's pipe monitor sends the OFF again once the queued one has run and
+    the game thread is running. If the camera has become someone else's meanwhile (the UI's Force ON, a CE record, an
+    ON on its way), the monitor leaves it alone.
+  - The release's reads now answer to shutdown alone.
+  - `get_holds` / `read_holds` mark an owed release with `release_owed: true`.
+  - The DLL's pipe log records each step: owed, sent again, done or abandoned (with the reason).
+  - A stop of the pipe server (a CE Disable) drops a release still owed instead of carrying it over, so a later start
+    never turns off a camera the user turned on meanwhile.
+- **Safety:**
+  - The monitor only tries the camera's lock; it never waits for it.
+  - It reads the camera only when that decides something.
+  - It sends only when the hook's own fire stamp shows the game thread ran in the last 150 ms.
+  - It brings a soft-removed hook back first, and never makes a direct call off the game thread.
+- **Tests:**
+  - `Test_Voll_OwedCameraRelease` (the decision, every branch) and the source pin
+    `AStalledCameraRelease_IsOwed_AndSentAgainOnceTheQueuedOffHasRun`, each red then green in three rounds.
+  - Three review passes: 15, 4 and 5 findings confirmed, none refuted, all fixed. Round 3 withdrew round 2's carrying
+    of a release across a stop.
+  - Publish: C++ 4038 + 1566 + 287 + 30 + 22 checks; C# 7915 passed, 1 skipped; headless 71/71.
+- **Live, DumperTest Development (UE 5.4), 3707:**
+  - `mcp_client.py dbgcamhold` 59/59: (H) a stalled session end, owed and then off; (I) the UI took the camera during
+    the stall, so the release was abandoned; (J) the AI left mid-command, and its release was still owed and ended.
+  - Negative control, the same rig on 3706: H, I and J failed, and J logged `released (code 0)` with the camera left on.
+  - Also on Development: `dbgcam` 26/26, `raw` 24/24.
+  - On Shipping: `raw` 25/25, `writes --toggle-experimental` 36/36, `live` 31/31, `holds_live.py` 22/22, `probe` 15/15.
+- **Not live:** a CE Disable/Enable during an owed release (CE testing pending), a soft-removed hook, and UE 5.8. See
+  verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item 24.
+- AOT UI 62,280,192 bytes (sha256 f2c1704ad7591d03...); UE5Dumper.dll 3,724,800 bytes (sha256 6179c00bec22b7d2...).
+
 ## 2026-11-11 (no build change) — The AI holding the debug camera, proven on DumperTest Development; a stalled session end leaves it on `[PIPE-PER-PROCESS-2026-11-06]`
 
 - **What.** `tools/verify/mcp_client.py dbgcamhold`, a rig mode for the debug-camera part of verification-register

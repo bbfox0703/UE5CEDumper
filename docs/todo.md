@@ -10,8 +10,8 @@ Open work only. **Read this when deciding what to do next.**
 > build 3701; D2 (writes) started 2026-11-11, in three builds: D2-1 (the DLL records who holds what) shipped in build
 > 3704, D2-2 (the MCP write tools for the toggles, force field and teleport) in build 3705, D2-3 (`write_memory`,
 > `write_invoke`, `write_mem` data only, the invoke queue's owners) in build 3706: Stage D2 is complete; what its live
-> checks did not reach is verification-register.md items 19-20, 23-25 and 27, and one defect awaits a decision
-> (`[DBGCAM-RELEASE-STALLED]`, under Stage D); nothing further in Stage D is queued** --
+> checks did not reach is verification-register.md items 19-20, 23-25 and 27 (`[DBGCAM-RELEASE-STALLED]`, found live
+> 2026-11-11, was fixed in build 3707); nothing further in Stage D is queued** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
@@ -672,16 +672,9 @@ write commands, the UI's use of the same state, and the client-side safety knobs
     command's -1 / -6 / -17 as success (it answers `state`, not `code`); a queued (-5) debug-camera ON recorded no
     owner, so the AI could not turn it off and its session end did not release it; the MCP's 30 s timeout could end
     before a user-set invoke timeout.
-- 🆕 **Open, found live 2026-11-11 `[DBGCAM-RELEASE-STALLED]`: an AI's debug camera can outlive its session.** If the
-  game thread is stalled when the AI session ends (for at least the invoke timeout, 5 s by default), the release's OFF
-  times out and stays queued. The DLL log says "its hold debug_camera is released (code -5)", and the ledger is cleared
-  all the same. A queued OFF does not turn the camera off on stock UE 4.18-5.7 (`[DEBUGCAM-QUEUED-OFF-NOESCALATE]`), so
-  after the game resumes the camera stays on with no holder. Measured on DumperTest Development (UE 5.4),
-  `mcp_client.py dbgcamhold` case H: camera 1 and holder `none` 5 s after the resume. The user can still turn it off
-  from the UI, since the hold is free. It needs a stall that covers the session's end, so it is rare. Other holds'
-  releases under a stall were not measured. One way to fix it: when the release answers -5, the DLL keeps a "release
-  owed" note and sends the OFF again once the queued one has drained. Effort **S-M**, risk **low-med** (a deferred
-  game-thread call from the pipe server). Not decided: the maintainer's call.
+- ✅ **`[DBGCAM-RELEASE-STALLED]` fixed in build 3707** (the maintainer chose option 1, 2026-11-11): an AI session's
+  camera release that timed out behind a stalled game thread is owed, and the DLL sends the OFF again once the queued
+  one has run. Proof and what was not reached: dev-log 3707 and verification-register.md item 24.
 - **The experimental opt-in binds the AI too:** Fly, See-through, Keep Foreground and the force-field tools refuse
   while the UI's experimental switch is off, so nothing the AI starts runs behind a card the user cannot see.
 - Every state-changing tool is named `write_*`, carries `requiresUserInteraction` (Claude Code then asks on every

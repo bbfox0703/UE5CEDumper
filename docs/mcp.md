@@ -146,7 +146,8 @@ too long for the AI is cut by whole entries, and a note says how much was left o
   the same moment cannot be overwritten. The AI never releases every forced field at once, and See-through stays on
   while you also have it on.
 - **Released when the AI session ends.** What the AI turned on is turned off when its server exits, and what you turned
-  on stays.
+  on stays. If the game is frozen at that moment (a long load, a debugger), the AI's debug camera is turned off once
+  the game runs again, unless you take the camera first.
 - **Your teleport markers are yours.** `write_teleport` goes only to coordinates it is given: it never reads, saves or
   clears a marker slot, and **Recall last** in the UI still returns you to where you were before your own last
   teleport.
