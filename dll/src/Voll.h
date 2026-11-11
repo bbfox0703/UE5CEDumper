@@ -325,14 +325,19 @@ constexpr int32_t kOwedOffQueued = -5;
 // `toggleOutstanding` a toggle still queued or being dispatched, `cameraState` 1 on / 0 off / below 0 unreadable.
 constexpr OwedRelease OwedCameraRelease(uint64_t owner, bool pendingOn, bool toggleOutstanding, int32_t cameraState,
                                         bool gameThreadStalled) noexcept {
-    (void)owner; (void)pendingOn; (void)toggleOutstanding; (void)cameraState; (void)gameThreadStalled;
-    return OwedRelease::Wait;
+    // Someone took the camera, or asked for it on, since the session ended: it is theirs, never turned off under them.
+    if (owner != kHoldOwnerNone || pendingOn) return OwedRelease::Abandon;
+    if (toggleOutstanding) return OwedRelease::Wait;          // the queued OFF has not run yet
+    if (cameraState == 0) return OwedRelease::Done;           // it ran and turned the camera off (UE 5.8)
+    if (cameraState != 1) return OwedRelease::Abandon;        // unreadable: no CheatManager left to turn off
+    return gameThreadStalled ? OwedRelease::Wait : OwedRelease::Send;   // an OFF sent now could not run
 }
 
-// After sending: what the OFF answered.
+// After sending: what the OFF answered. Queued again (a new stall) stays owed; anything but off is the end of it --
+// the OFF already tried the toggle and the swap-back, or was not sent because an ON is queued.
 constexpr OwedRelease OwedCameraReleaseSent(int32_t state) noexcept {
-    (void)state;
-    return OwedRelease::Wait;
+    if (state == 0) return OwedRelease::Done;
+    return state == kOwedOffQueued ? OwedRelease::Wait : OwedRelease::Abandon;
 }
 
 // The names of the holds a pipe request changes, from its command and keys; empty for a command that changes none.

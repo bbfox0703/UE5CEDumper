@@ -103,6 +103,7 @@ bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool dir
 namespace FrierenDebugCamera {
 bool PendingOn(uint64_t& owner);
 bool ConsumeJoin(uint64_t caller, uint64_t& joinedBy);
+bool ToggleOutstanding();   // [DBGCAM-RELEASE-STALLED] a toggle of either direction yet to run
 }
 
 // ============================================================
@@ -957,6 +958,45 @@ std::vector<std::string> KnownHolds() {
     return out;
 }
 
+// [DBGCAM-RELEASE-STALLED] The background client whose debug-camera release is owed (0: none): its OFF timed out with
+// the game thread stalled and stays queued, and on stock UE 4.18-5.7 a queued OFF does not turn the camera off. Set by
+// Fern::ReleaseOwnedBy, served by MonitorLoop.
+static_assert(Voll::kOwedOffQueued == Stark::kInvokeTimedOutStillQueued, "Voll's owed-release rules read Stark's -5");
+std::atomic<uint64_t> s_cameraReleaseOwedBy{0};
+
+// MonitorLoop, every tick: the owed OFF is sent again once the queued one has run and the game thread is running, unless
+// the camera became someone's meanwhile. Under the camera's hold lock, as every change of it is, so a client's Force ON
+// is either seen here first or waits for this OFF. The OFF holds this loop up only when the game thread stalls again in
+// between, and then for the invoke timeout at most.
+void ServeOwedCameraRelease() {
+    uint64_t owedBy = s_cameraReleaseOwedBy.load();
+    if (owedBy == 0) return;
+    std::lock_guard<std::mutex> holdLock(Voll::Holds().LockFor(Grimoire::HOLD_DEBUG_CAMERA));
+    uint64_t sender = 0;
+    const bool pendingOn = FrierenDebugCamera::PendingOn(sender);
+    // The queued toggle first: one that runs between the two reads leaves a stale "on", and the OFF below then reads
+    // the state again for itself.
+    const bool outstanding = FrierenDebugCamera::ToggleOutstanding();
+    const int32_t state = UE5_GetDebugCameraState();
+    const bool stalled = Stark::GetGameThreadLiveness() == Stark::GameThreadLiveness::Stalled;
+    Voll::OwedRelease step = Voll::OwedCameraRelease(Voll::Holds().Owner(Grimoire::HOLD_DEBUG_CAMERA), pendingOn,
+                                                     outstanding, state, stalled);
+    if (step == Voll::OwedRelease::Send) {
+        const int32_t sent = UE5_SetDebugCamera(0);
+        step = Voll::OwedCameraReleaseSent(sent);
+        LOG_INFO("PipeServer: background client %llu's debug-camera release -- its queued OFF has run and the camera "
+                 "is still on: OFF sent again -> state %d", (unsigned long long)owedBy, sent);
+    }
+    if (step == Voll::OwedRelease::Wait) return;
+    s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0);   // a release owed since, by another session, stays
+    if (step == Voll::OwedRelease::Done)
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is done -- the camera is off",
+                 (unsigned long long)owedBy);
+    else
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is abandoned -- the camera is someone's "
+                 "now, an ON is on its way, or it stays on after the OFF (state %d)", (unsigned long long)owedBy, state);
+}
+
 }  // namespace
 
 bool Fern::IsBackgroundOwner(uint64_t owner) {
@@ -1018,6 +1058,13 @@ void Fern::ReleaseOwnedBy(uint64_t owner) {
         } catch (...) {
             code = -1;
         }
+        // [DBGCAM-RELEASE-STALLED] The camera's OFF timed out with the game thread stalled and stays queued, and on
+        // stock UE 4.18-5.7 a queued OFF does not turn it off: owed, MonitorLoop sends it again once that one has run.
+        if (hold == Grimoire::HOLD_DEBUG_CAMERA && code == Stark::kInvokeTimedOutStillQueued) {
+            s_cameraReleaseOwedBy.store(owner);
+            LOG_INFO("PipeServer: background client %llu left -- its debug-camera OFF is queued behind a stalled game "
+                     "thread; it is sent again once that one has run", (unsigned long long)owner);
+        }
         Voll::Holds().SetOwner(hold, Voll::kHoldOwnerNone);
         LOG_INFO("PipeServer: background client %llu left -- its hold %s is released (code %d)",
                  (unsigned long long)owner, hold.c_str(), code);
@@ -1033,6 +1080,8 @@ void Fern::MonitorLoop() {
     while (m_running.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         if (!m_running.load()) break;
+
+        ServeOwedCameraRelease();   // [DBGCAM-RELEASE-STALLED] a no-op unless an AI's camera release is owed
 
         // Snapshot the in-flight connections (keep them alive via shared_ptr for
         // the peek). Only peek while inFlight — the thread is then CPU-bound in
@@ -2204,7 +2253,8 @@ static json TraceInfoToJson(const Linie::TraceInfo& i) {
 // [LIVEFUNCS-STEP2] The arms' layouts, read in the background (F4). A chosen function is armed on the hook at its
 // first call; its parameters are read here, on a thread of its own, while it is alive -- never on the hook, never on
 // the interactive lane (the first enum detection can walk GObjects for seconds), and not in MonitorLoop, whose job is
-// the disconnect and the cancel (the second design critic). One worker per traced Start with snapshot choices; Stop
+// the disconnect and the cancel (the second design critic); the owed camera release it also serves waits only when the
+// game thread stalls again, never for seconds of work. One worker per traced Start with snapshot choices; Stop
 // gives it a deadline, runs the last pass itself, then seals what is left raw-only.
 // ============================================================
 namespace {
@@ -5486,6 +5536,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // agrees with the refusal.
                 uint64_t sender = 0;
                 if (HoldPending(h, sender)) j["pending"] = true;
+                // [DBGCAM-RELEASE-STALLED] An AI session's camera release still owed: its OFF is sent again once the
+                // queued one has run, unless someone takes the camera first.
+                if (h == Grimoire::HOLD_DEBUG_CAMERA && s_cameraReleaseOwedBy.load() != 0) j["release_owed"] = true;
                 arr.push_back(j);
             }
             json data;

@@ -1417,6 +1417,13 @@ bool ConsumeJoin(uint64_t caller, uint64_t& joinedBy) {
     s_dbgCamJoinedBy = 0;
     return true;
 }
+
+// [DBGCAM-RELEASE-STALLED] Whether a toggle of either direction has yet to run: one being dispatched, or one a
+// dispatch left queued. Fern's owed release waits for it, since a toggle still queued flips whatever state is read now.
+bool ToggleOutstanding() {
+    std::lock_guard<std::mutex> lk(s_dbgCamMutex);
+    return s_dbgCamInFlight >= 0 || s_dbgCamQueued.StillQueued();
+}
 }  // namespace FrierenDebugCamera
 }  // extern "C++"
 
