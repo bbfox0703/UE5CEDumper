@@ -27,6 +27,24 @@ builds ≤696 in
 
 -----
 
+## 2026-11-11 (no build change) — `inject.py` hands the injection to `UE5DumpUI.exe`; python.exe no longer injects `[AV-INJECT-2026-11-11]`
+
+- **Why.** The AV's behavioural layer flagged python.exe running `tools/verify/inject.py` from a terminal, 75 s after
+  the injection had already worked, and an AV exception covers the program that acts, not the script it runs
+  (working-lessons.md §3.8, item 6). The maintainer had excepted python.exe for the day; that exception can now go.
+- **What changes.** `inject.py` starts `dist\UE5DumpUI.exe --inject-elevated <pid> <dll> <result file>` -- the UI's
+  own injector, started plainly, never elevated -- and reads its result. Its options, the guard against a build of ours
+  already in the process, `--list` / `--modules` and its output lines stay; one line is new (`via    : <exe>`), and
+  `--exe` names another exe (a worktree has no `dist\`). No caller changes.
+- **Not changed:** the shipped UI and DLL. `call_export.py` and the rigs built on `mailbox_poke.py` still start a
+  remote thread or write process memory from python.exe themselves.
+- Tests: `InjectElevatedContractTests` (5): a bad pid exits 2 and a missing DLL exits 1 with its reason, neither
+  opening a process; the switch, argument order, `OK <hex>` line and exit codes pinned in both `Program.cs` and
+  `inject.py`; `inject.py` names no injection API and never elevates. 39 gates passed. Live on DumperTest Shipping
+  with the build 3705 `dist\`: a missing DLL and a missing exe refused; a non-PE file reported as the exe's own
+  "LoadLibraryW returned NULL" (exit 1); the injection loaded `dist\UE5Dumper.dll` and its pipe answered (build 3705);
+  a second injection refused by the guard; `--allow-stale` returned the same module; no result file left in %TEMP%.
+
 ## 2026-11-11 (build 3705) — The MCP server can change the game: the gameplay toggles, the force field and teleport, asked every time `[PIPE-PER-PROCESS-2026-11-06]`
 
 Stage D2-2, to the maintainer's D2 decisions of 2026-11-11.
