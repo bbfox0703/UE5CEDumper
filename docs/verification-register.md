@@ -375,8 +375,8 @@ Stage D2-2, build 3705 (the MCP write tools) -- dev-log 3705. `tools/verify/mcp_
 UI: god mode, world time, walk speed, a teleport and its return, Fly (refused with the switch off, then on), a
 force-field job and See-through. Not reached:
 
-22. **Claude Code's prompt for a write tool.** The marker is in `tools/list` (the rig checks all 12), but no client
-    was seen to ask. Acceptance, with the Claude Code version recorded (the marker needs 2.1.246+): in a session,
+22. **Claude Code's prompt for a write tool.** ✅ **CLOSED 2026-11-11** (the three sub-items below). The marker is in
+    `tools/list` (the rig checks all 12). Acceptance, with the Claude Code version recorded (the marker needs 2.1.246+): in a session,
     asking for god mode shows a permission prompt for `write_god_mode`; `claude -p` with `--allowedTools
     "mcp__ue5cedumper__*"` does not run it, in `--permission-mode default` and in the machine's `auto` alike (the
     server's log has no `write_god_mode` call), while the `read_*` tools in the same run do run.
@@ -390,7 +390,14 @@ force-field job and See-through. Not reached:
       and no `--permission-mode` was passed): the same allow rule and request. Both reads ran and `write_god_mode` was
       declined ("MCPTool requires permission"); the server's log (`mcp-20261111-201111-*.log`) has the two
       `read_holds` and no `write_god_mode`. In this mode `scan_start` had run under item 15 with no prompt: the marker
-      is what stops a write tool. Still to measure: the prompt itself in an interactive session.
+      is what stops a write tool.
+    - ✅ **Interactive session 2026-11-11** (a new Claude Code desktop session in the repository, the build 3705 exe,
+      DumperTest Shipping): asked to turn god mode on, it called `read_games`, `read_holds`, then `write_god_mode`;
+      a permission prompt appeared and the maintainer chose Allow. The tool answered code 0, state 1, and
+      `read_holds` named this server as the holder; turning it off the same way answered state 0 and left `god_mode`
+      inactive and nobody's. Seen along the way: the AI told the user that the UI and CE "cannot turn off" the god
+      mode it held, which is wrong (their changes carry no `if_free`); the server's instructions now say so
+      (`McpServerTests.Instructions_SayTheUserCanTakeBackAnyHold`; it reaches `dist\` with the next publish).
 23. **The UI window and a Cheat Engine record as the holders.** The rig's foreground client is `pipe_client.py`, and
     CE was not used (another session needed it). Acceptance: god mode ticked in the UI's Teleport tab, then a
     `write_god_mode` OFF from the AI is refused naming the UE5DumpUI window and the card stays on; the same with a CE
