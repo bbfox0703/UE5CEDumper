@@ -7,8 +7,9 @@ Open work only. **Read this when deciding what to do next.**
 > ▶ **Current programme:** `[PIPE-PER-PROCESS-2026-11-06]`, one stage at a time (2026-11-10): Stage A shipped in build
 > 3695, Stage B (6 pipe slots + the scan-worker budget) in build 3696, Stage C (hardening for a long-lived client) in
 > build 3698; **Stage D (MCP) is active (go-ahead 2026-11-11): D1, the read-only `UE5DumpUI.exe --mcp`, shipped in
-> build 3701; D2 (writes) started 2026-11-11, in three builds; D2-1 (the DLL records who holds what) first** -- the
-> route and its decisions are under Stage D below. Before it, none active
+> build 3701; D2 (writes) started 2026-11-11, in three builds: D2-1 (the DLL records who holds what) shipped in build
+> 3704; D2-2 (the MCP write tools for the toggles, force field and teleport) is next** -- the route and its decisions
+> are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
 > active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
