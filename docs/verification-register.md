@@ -328,8 +328,22 @@ Not reached:
     Acceptance: the UI connected to the game, a Value Search started in the UI while the AI's `read_value_scan_begin`
     runs: both finish, the DLL log shows the UI's walk on at least half the threads, and the UI's candidates match a
     run on its own.
-18. **Over SSH, and an elevated game.** Not measured: no OpenSSH server on this PC, and elevation needs a UAC prompt
-    an unattended session cannot answer (todo.md `[UI-MCP-AUTOMATION-2026-11-06]`).
+18. **Over SSH, and an elevated game.** ✅ **CLOSED 2026-11-11** (build 3701 AOT exe, DumperTest Shipping; the
+    maintainer installed and started the OpenSSH server and allowed the elevation prompts). A game started and injected
+    elevated (`Start-Process -Verb RunAs`; the control: a non-elevated `inject.py` failed with Win32 5):
+    - **a non-elevated server**: `read_games` listed it (listing pipes needs no access), `read_status` was refused by
+      UAC, reported as "Internal error in read_status: Access to the path is denied." -- a defect, fixed red then
+      green: the reply now names the elevated game and what to do;
+    - **an elevated server** (`mcp_client.py live`, run elevated): 31/31;
+    - **a server started over SSH** (`--ssh localhost` with a temporary key in
+      `administrators_authorized_keys`, removed afterwards): the SSH session of an administrator account runs at High
+      integrity (S-1-16-12288), so the server is elevated too: 26/26 against the elevated game (the cancel and the
+      non-elevated stand-in client skipped: neither can reach an elevated process), and 31/31 against a normal game,
+      the cancel through ssh's stdin included.
+
+    Seen along the way: the DLL in a normal game shows the SSH-started (elevated) server as `?` in `pipe_clients`, since
+    it cannot read a higher-integrity process's image name. A real MCP client launching `ssh` itself (Claude Code with
+    `command: ssh`) was not run; the rig starts `ssh -T host <exe> --mcp` the same way.
 
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 

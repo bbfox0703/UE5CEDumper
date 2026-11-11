@@ -594,8 +594,9 @@ spec. Each was the recommended option:
 - **Tests:** the protocol and the tools against a fake pipe (C#), and a rig that starts `dist\UE5DumpUI.exe --mcp`
   as an MCP client would and drives DumperTest. Measure first that stdio reaches a GUI-subsystem exe.
 
-**D1 — how it came out, build 3701** (the code is `ui/UE5DumpUI/Mcp/`, the user guide [mcp.md](mcp.md); what its
-live checks did not reach is verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 15-18):
+**D1 — how it came out, build 3701** (the code is `ui/UE5DumpUI/Mcp/`, the user guide [mcp.md](mcp.md); its live
+checks are verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 15-18: 15 (Claude Code itself) and 18 (SSH,
+an elevated game) closed 2026-11-11; 16 (a large game) and 17 (the UI itself beside the server) open):
 
 - **Non-interference, the maintainer's requirement (2026-11-11):** an AI working beside the UI must not disturb the
   UI's long operations (value scan, snapshot) or the user's writes. D1 sends no command whose state another client
@@ -683,7 +684,16 @@ DLL stays simple.
   DACL adds nothing against SMB clients and would let a non-elevated process into an elevated game. A UI-side
   server would face the same choice.
 - **SSH:** the wrapper runs on the target machine and talks to the local pipe, so the pipe never faces the network.
-  Needs Windows OpenSSH Server. An elevated game with a non-elevated UI is a combination to measure.
+  Needs Windows OpenSSH Server. *Measured 2026-11-11* (verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item
+  18): a server started over SSH works against a normal and an elevated game alike, since an administrator's SSH
+  session runs at High integrity; a non-elevated client is refused an elevated game's pipe by UAC.
+- **Open, MED, the UI: an elevated game refuses the non-elevated UI's Connect** `[UI-CONNECT-ELEVATED-GAME]`. The
+  measurement above, made with the MCP server, holds for any non-elevated client: the pipe of a game running as
+  administrator is refused (`UnauthorizedAccessException`, "Access to the path is denied."). The UI's own flow leads
+  straight there: Proxy Deploy's Inject offers a UAC prompt to inject an elevated game, then auto-connects from the
+  non-elevated UI. Its connect catch shows that raw text as "Connection Error". Fix: say the game runs elevated and
+  the UI must be started as administrator to connect (or the game normally), as the MCP server now does
+  (`McpGameLink`); measure the inject-elevated flow end to end. Not measured in the UI itself.
 - **Pipe slots: settled by `[PIPE-PER-PROCESS-2026-11-06]` Stage B (build 3696): 6 clients.** It was 3, and in
   practice the third was what `tools/verify/*.py` rigs took during development (the maintainer), so with the UI
   connected and a rig running nothing was left for MCP. Stage C still hardens the pipe for a long-lived client.
@@ -794,8 +804,10 @@ Why it is not shipped:
 3. **It would refuse clients that work today.** An elevated admin UI facing a game that runs under another account
    is admitted today through the Administrators ACE; the candidate has none. A local client whose token carries
    NETWORK would be refused too. That includes a process in an SSH session if its token carries NETWORK, which is
-   how `[UI-MCP-AUTOMATION-2026-11-06]` plans to reach the pipe from another machine. *Not measured*: there is no
-   OpenSSH server on this PC.
+   how `[UI-MCP-AUTOMATION-2026-11-06]` plans to reach the pipe from another machine. *Measured 2026-11-11* (OpenSSH
+   server installed by the maintainer): with today's default security, a process in an administrator's SSH session
+   runs at High integrity and opens the pipe of a normal and of an elevated game (verification-register.md
+   `[PIPE-PER-PROCESS-2026-11-06]` item 18). Whether its token carries NETWORK was not read.
 4. **The load path does not change anything.** Fern's `AcceptLoop` runs on a thread the DLL starts itself, so the
    pipe takes the game process's primary token whether CE, `inject.py` or a proxy loaded the DLL. CE Lua never opens
    the pipe: it uses the C exports and the Mimic mailbox.

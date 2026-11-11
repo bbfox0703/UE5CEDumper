@@ -116,6 +116,7 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 | "The game's scan finished without finding the object pool" | Run **Extra Scan** in the UE5DumpUI window; scanning again from the AI finds nothing more. |
 | "Only an old UE5Dumper DLL's pipe is up" | Close the game, run **Update All** on the Proxy Deploy tab, start it again. |
 | "Every connection to game N's pipe is taken" | Close a program holding one; the message names them. |
+| "Windows refused the connection to game N: the game runs as administrator" | Start the AI client elevated too, or start the game normally. A server started over SSH runs elevated for an administrator account. |
 | "... did not answer within N s" | The game is paused, loading or very large; the next call reconnects. |
 
 The server writes its log to `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5DumpUI\mcp-<date>-<time>-<pid>.log`, one file per
