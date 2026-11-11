@@ -8191,7 +8191,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 p.Pitch = request.value("pitch", 0.0);
                 p.Yaw   = request.value("yaw", 0.0);
                 p.Roll  = request.value("roll", 0.0);
-                code = Wirbel::RecallExplicit(p, hasRot, &tier);
+                // [PIPE-PER-PROCESS-2026-11-06] Stage D2-2: keep_undo leaves the process-wide "last" slot alone (the
+                // MCP server sends it, so an AI's jump never replaces where the user's Recall last returns to).
+                code = Wirbel::RecallExplicit(p, hasRot, &tier, request.value("keep_undo", false));
                 Sein::Info("PIPE:cmd", "teleport_recall_marker: explicit -> %d", code);
             } else {
                 int slot = request.value("slot", -1);
