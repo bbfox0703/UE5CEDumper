@@ -447,17 +447,17 @@ public sealed class McpGameLinkTests
     }
 
     [Theory]
-    [InlineData(true, 6, 24530, McpScanState.Running)]   // objects published, offsets not yet validated
-    [InlineData(true, 7, 24530, McpScanState.Running)]   // phase 7 is stored just before the job ends
-    [InlineData(false, 7, 24530, McpScanState.Ready)]    // proxy mode after its scan, and injected mode
-    [InlineData(false, 7, 0, McpScanState.FoundNothing)]
-    [InlineData(false, 0, 0, McpScanState.NotStarted)]   // a proxy-loaded game before any scan
-    [InlineData(false, 5, 24530, McpScanState.NotStarted)]   // Stop cancelled it part-way
-    public void StateFrom_ScanStatusAndPointersTogether(bool running, int phase, long count, McpScanState state)
+    [InlineData(true, 6, 24530, "Running")]   // objects published, offsets not yet validated
+    [InlineData(true, 7, 24530, "Running")]   // phase 7 is stored just before the job ends
+    [InlineData(false, 7, 24530, "Ready")]    // proxy mode after its scan, and injected mode
+    [InlineData(false, 7, 0, "FoundNothing")]
+    [InlineData(false, 0, 0, "NotStarted")]   // a proxy-loaded game before any scan
+    [InlineData(false, 5, 24530, "NotStarted")]   // Stop cancelled it part-way
+    public void StateFrom_ScanStatusAndPointersTogether(bool running, int phase, long count, string state)
     {
         var status = new JsonObject { ["running"] = running, ["phase"] = phase };
         var pointers = new JsonObject { ["object_count"] = count, ["gobjects_method"] = count > 0 ? "aob" : "not_found" };
-        Assert.Equal(state, McpGameLink.StateFrom(status, pointers));
+        Assert.Equal(Enum.Parse<McpScanState>(state), McpGameLink.StateFrom(status, pointers));
     }
 
     [Fact]

@@ -364,12 +364,12 @@ public sealed class McpToolsTests
     }
 
     [Theory]
-    [InlineData(McpScanState.Ready, "already_scanned")]
-    [InlineData(McpScanState.Running, "in_progress")]
-    public async Task ScanStart_OnAGameScannedOrBeingScanned_StartsNothing(McpScanState state, string key)
+    [InlineData("Ready", "already_scanned")]
+    [InlineData("Running", "in_progress")]
+    public async Task ScanStart_OnAGameScannedOrBeingScanned_StartsNothing(string state, string key)
     {
         // Another client (the UI) has scanned or is scanning: a second scan would clear the name cache it is using.
-        var game = new FakeGame { State = state };
+        var game = new FakeGame { State = Enum.Parse<McpScanState>(state) };
         var (payload, result) = await Call(game, "scan_start");
         Assert.False(result.IsError);
         Assert.True(payload![key]!.GetValue<bool>());

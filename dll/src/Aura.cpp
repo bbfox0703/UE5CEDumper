@@ -266,17 +266,9 @@ private:
     const int     granted_;
 };
 
-namespace {
+// Whether the walk about to start on this thread is background work: set by Aura::BackgroundWalkScope, defined below
+// this anonymous namespace (a member of Aura cannot be defined inside it).
 thread_local bool t_backgroundWalk = false;
-}
-
-BackgroundWalkScope::BackgroundWalkScope(bool background) noexcept : previous_(t_backgroundWalk) {
-    t_backgroundWalk = background;
-}
-
-BackgroundWalkScope::~BackgroundWalkScope() { t_backgroundWalk = previous_; }
-
-bool IsBackgroundWalk() noexcept { return t_backgroundWalk; }
 
 // The process's budget: what one walk alone may spawn beyond its own thread.
 WorkerBudget& ScanWorkerBudget() {
@@ -384,7 +376,7 @@ ParallelScanResult<PerThreadT> ParallelGObjectsScan(int32_t count, BodyFn&& body
     if (maxThreads > 0 && nthreads > maxThreads) nthreads = maxThreads;
     // The workers beyond this thread come from the process-wide budget (WorkerBudget), held until this walk returns.
     const int wanted = nthreads;
-    const bool background = IsBackgroundWalk();
+    const bool background = t_backgroundWalk;
     WorkerLease lease(ScanWorkerBudget(), nthreads - 1, background);
     nthreads = 1 + lease.Granted();
     if (nthreads < wanted) {
@@ -492,6 +484,14 @@ bool MergedScanCapHit(const std::vector<PerThreadT>& perThread,
 }
 
 } // namespace
+
+BackgroundWalkScope::BackgroundWalkScope(bool background) noexcept : previous_(t_backgroundWalk) {
+    t_backgroundWalk = background;
+}
+
+BackgroundWalkScope::~BackgroundWalkScope() { t_backgroundWalk = previous_; }
+
+bool IsBackgroundWalk() noexcept { return t_backgroundWalk; }
 
 uintptr_t Aura::DecryptObjectPtr(uintptr_t rawPtr) {
     if (!rawPtr || !s_decryptFunc) return rawPtr;
