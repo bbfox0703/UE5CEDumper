@@ -58,6 +58,7 @@ import math
 import os
 import pathlib
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -260,9 +261,10 @@ class Checks:
             print(f"  FAIL  {what}: {detail}")
         return ok
 
-    def done(self, client: McpClient | None = None) -> int:
-        if client is not None:
-            for e in client.framing_errors:
+    def done(self, client: "McpClient | list[McpClient] | None" = None) -> int:
+        # A rig that starts several sessions passes them all: each one's stdout is checked, not only the last.
+        for c in (client if isinstance(client, list) else [client] if client is not None else []):
+            for e in c.framing_errors:
                 self.failures.append("framing: " + e)
                 print("  FAIL  framing:", e)
         print(f"\n{self.passed} passed, {len(self.failures)} failed")
@@ -716,37 +718,97 @@ def run_writes(exe: str, pid: int | None, toggle_experimental: bool) -> int:
     return ck.done(c)
 
 
-def _suspend(*args: str) -> str:
+def _suspend(*args: str) -> tuple[int, str]:
     out = subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name("suspend.py")), *args],
                          capture_output=True, text=True)
-    return out.stdout
+    return out.returncode, out.stdout
 
 
 def _game_thread(name: str) -> int | None:
-    """The UE game thread: the process's oldest thread (suspend.py's own rule)."""
-    for line in _suspend("threads", name).splitlines():
-        if "<-- main thread" in line:
-            return int(line.split("tid=")[1].split()[0])
-    return None
+    """The UE game thread: the process's oldest thread (suspend.py's own rule). A name that matches several processes
+    (a launcher shim beside the game) is refused here, before any case runs."""
+    mains = [line for line in _suspend("threads", name)[1].splitlines() if "<-- main thread" in line]
+    if len(mains) > 1:
+        raise McpError(f"--suspend-name {name!r} matches {len(mains)} processes; pass the full image stem")
+    return int(mains[0].split("tid=")[1].split()[0]) if mains else None
 
 
 class _FrozenGameThread:
     """The game thread suspended while the DLL's pipe threads keep answering: a game-thread call then times out (-5)
-    and stays queued. Always resumed on exit."""
+    and stays queued. A suspend that did not take raises, so no check runs against a game that was never frozen; a
+    resume is checked and retried, and one that never took raises and stays recorded in `left_suspended`, so a caller
+    sends nothing more to a frozen game."""
+
+    left_suspended: str | None = None
 
     def __init__(self, name: str):
         self.name = name
         self.tid = _game_thread(name)
+        self.suspend_line = ""
 
     def __enter__(self):
         if self.tid is None:
             raise McpError(f"no game thread found for {self.name}")
-        _suspend("suspend-tid", self.name, str(self.tid))
+        rc, out = _suspend("suspend-tid", self.name, str(self.tid))
+        if rc != 0 or f"tid {self.tid}: SUSPENDED" not in out:
+            raise McpError(f"the game thread was not suspended (suspend.py exit {rc}): {out.strip()}")
+        self.suspend_line = out.strip()
         return self
 
-    def __exit__(self, *exc):
-        _suspend("resume-tid", self.name, str(self.tid))
+    def __exit__(self, exc_type, *exc):
+        out = ""
+        for _ in range(3):
+            rc, out = _suspend("resume-tid", self.name, str(self.tid))
+            if rc == 0 and f"tid {self.tid}: RESUMED" in out:
+                return False
+            time.sleep(0.5)
+        _FrozenGameThread.left_suspended = (f"GAME THREAD LEFT SUSPENDED: tid {self.tid} in {self.name}; run: py "
+                                            f"tools/verify/suspend.py resume-tid {self.name} {self.tid}")
+        print("  !! " + _FrozenGameThread.left_suspended + f" (last answer: {out.strip()})", flush=True)
+        if exc_type is None:
+            raise McpError(_FrozenGameThread.left_suspended)
         return False
+
+
+def _camera_force_off(ui, tries: int = 3) -> int:
+    """The UI stand-in's debug-camera OFF, re-sent until the camera reads off: an OFF sent while an earlier toggle is
+    still queued answers -5/-6 and sends nothing, and a queued OFF does not turn the camera off on stock UE 4.18-5.7.
+    Returns the state it ends on."""
+    def state() -> int:
+        return ui.request("get_debug_camera_state").get("state", -99)
+
+    for _ in range(tries):
+        if state() != 1:
+            break
+        ui.request("set_debug_camera", enable=False)
+        end = time.monotonic() + 6.0
+        while time.monotonic() < end and state() != 0:
+            time.sleep(0.25)
+    return state()
+
+
+def _camera_cleanup(ui) -> None:
+    """A rig's last step: the camera off, unless the game thread was left suspended (an OFF then only queues)."""
+    try:
+        if _FrozenGameThread.left_suspended:
+            print("  !! " + _FrozenGameThread.left_suspended + " -- the debug camera was not turned off", flush=True)
+        elif _camera_force_off(ui) == 1:
+            print("  !! the debug camera is LEFT ON in the game, held by this rig's process (a foreground client, so "
+                  "it outlives it): turn it off by hand", flush=True)
+    finally:
+        ui.close()
+
+
+def _release_line(server_pid: int, hold: str) -> str | None:
+    """The DLL's newest log line for a background client's hold released on its exit, matched by that client's pid so
+    an earlier session's line is never taken. Its code is what the release returned (-5: left queued)."""
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from pipe_client import _read_pipe_logs   # noqa: E402 -- the rig beside this one
+
+    pattern = re.compile(rf"background client {server_pid} left -- its hold {re.escape(hold)} is released "
+                         r"\(code -?\d+\)")
+    lines = [line.strip() for text in _read_pipe_logs() for line in text.splitlines() if pattern.search(line)]
+    return lines[-1] if lines else None
 
 
 def _le_hex(value: int, size: int) -> str:
@@ -920,11 +982,12 @@ def run_dbgcam(exe: str, pid: int | None, game_name: str) -> int:
 
     ai = McpClient(exe)
     ai.initialize()
+    sessions = [ai]
     r, st, _ = call(ai, "read_status")
     build = st.get("build_number") or 0
     if not ck.check(st.get("scanned") and build >= 3706, f"the game is scanned, DLL build {build} (needs 3706+)", st):
         ai.close()
-        return ck.done(ai)
+        return ck.done(sessions)
     game = pid or st.get("pid")
     ui = PipeClient(pid=game, timeout=120)
     ui.connect()
@@ -951,13 +1014,12 @@ def run_dbgcam(exe: str, pid: int | None, game_name: str) -> int:
         return cam()
 
     def camera_off(label: str):
-        ui.request("set_debug_camera", enable=False)
-        ck.check(wait_cam(0) == 0 and not camera_hold().get("active"), f"{label}: the camera is off again")
+        ck.check(_camera_force_off(ui) == 0 and not camera_hold().get("active"), f"{label}: the camera is off again")
 
     if not ck.check(cam() in (0, 1), "the debug camera's state reads (a live CheatManager)", cam()):
         ui.close()
         ai.close()
-        return ck.done(ai)
+        return ck.done(sessions)
     if cam() == 1:
         camera_off("start")
     try:
@@ -984,6 +1046,7 @@ def run_dbgcam(exe: str, pid: int | None, game_name: str) -> int:
         # B. The UI's ON queued: the AI's is refused, naming the UI.
         ai = McpClient(exe)
         ai.initialize()
+        sessions.append(ai)
         with _FrozenGameThread(game_name):
             j = ui.request("set_debug_camera", enable=True)
             ck.check(j.get("state") == -5, "B: the UI's ON is queued (-5)", j)
@@ -1019,14 +1082,13 @@ def run_dbgcam(exe: str, pid: int | None, game_name: str) -> int:
         ck.check(h.get("active") and h.get("holder", {}).get("you"), "C: the camera is on, held by the UI", h)
         camera_off("C")
     finally:
-        try:
-            ai.close()
-        except Exception:  # noqa: BLE001 -- already closed
-            pass
-        if cam() == 1:
-            ui.request("set_debug_camera", enable=False)
-        ui.close()
-    return ck.done(ai)
+        for c in sessions:
+            try:
+                c.close()
+            except Exception:  # noqa: BLE001 -- already closed
+                pass
+        _camera_cleanup(ui)
+    return ck.done(sessions)
 
 
 def run_dbgcam_hold(exe: str, pid: int | None, game_name: str) -> int:
@@ -1058,7 +1120,7 @@ def run_dbgcam_hold(exe: str, pid: int | None, game_name: str) -> int:
     build = st.get("build_number") or 0
     if not ck.check(st.get("scanned") and build >= 3706, f"the game is scanned, DLL build {build} (needs 3706+)", st):
         ai.close()
-        return ck.done(ai)
+        return ck.done(sessions)
     game = pid or st.get("pid")
     ui = PipeClient(pid=game, timeout=120)
     ui.connect()
@@ -1107,17 +1169,13 @@ def run_dbgcam_hold(exe: str, pid: int | None, game_name: str) -> int:
                     and f"(pid {me})" in text)
 
     def camera_off(label: str):
-        # Up to three OFFs: one sent while an earlier toggle is still queued answers -5/-6 and sends nothing.
-        for _ in range(3):
-            ui.request("set_debug_camera", enable=False)
-            if wait_cam(0, 6.0) == 0:
-                break
+        _camera_force_off(ui)
         ck.check(cam() == 0 and is_free(camera_hold()), f"{label}: the camera is off and free again", camera_hold())
 
     if not ck.check(cam() in (0, 1), "the debug camera's state reads (a live CheatManager)", cam()):
         ui.close()
         ai.close()
-        return ck.done(ai)
+        return ck.done(sessions)
     if cam() == 1 or not is_free(camera_hold()):
         camera_off("start")
     try:
@@ -1183,33 +1241,60 @@ def run_dbgcam_hold(exe: str, pid: int | None, game_name: str) -> int:
         camera_off("G")
 
         # H. OBSERVED, not an acceptance: the AI's camera when the game thread is stalled as its session ends. The
-        # release's OFF then times out and stays queued, and on stock UE 4.18-5.7 a queued OFF does not turn the camera
-        # off (dev-log, [DEBUGCAM-QUEUED-OFF-NOESCALATE]). What happens is printed, not counted.
-        ai = session()
-        r, d, _ = call(ai, "write_debug_camera", {"enable": True})
-        ck.check(not r.get("isError") and d.get("state") == 1 and held_by_server(camera_hold(), ai),
-                 "H: the AI's ON, the server's", d)
-        with _FrozenGameThread(game_name):
-            ck.check(ai.close() == 0, "H: the AI session ends while the game thread is stalled")
-            time.sleep(8.0)   # the release's OFF waits invoke_timeout_ms (5 s by default) for the game thread
-            frozen_hold = camera_hold()
-        time.sleep(5.0)
-        after_cam, after_hold = cam(), camera_hold()
-        print(f"  OBSERVED  H: during the stall the hold read {frozen_hold}")
-        print(f"  OBSERVED  H: 5 s after the game resumed the camera reads {after_cam}, the hold {after_hold}")
-        camera_off("H")
+        # release's OFF waits the DLL's invoke timeout for the game thread; timed out, it stays queued, and on stock UE
+        # 4.18-5.7 a queued OFF does not turn the camera off (dev-log, [DEBUGCAM-QUEUED-OFF-NOESCALATE]). What happens
+        # is printed, not counted. The timeout is the live one (a per-game override or set_invoke_timeout can change
+        # it): a release still waiting when the game resumes finishes then, with the swap-back, which is another case.
+        tmo = int(ui.request("get_pointers").get("invoke_timeout_ms") or 5000)
+        print(f"        H: the DLL's invoke timeout is {tmo} ms")
+        if tmo > 30000:
+            print(f"  OBSERVED  H: skipped -- an invoke timeout of {tmo} ms would freeze the game thread too long")
+        else:
+            ai = session()
+            server_pid = ai.proc.pid
+            r, d, _ = call(ai, "write_debug_camera", {"enable": True})
+            ck.check(not r.get("isError") and d.get("state") == 1 and held_by_server(camera_hold(), ai),
+                     "H: the AI's ON, the server's", d)
+            stalled, released_after, frozen_reply = False, None, {}
+            with _FrozenGameThread(game_name) as frozen:
+                # game_thread_stalled turns true 500 ms after the game thread's last ProcessEvent.
+                end = time.monotonic() + 3.0
+                while not stalled and time.monotonic() < end:
+                    stalled = ui.request("get_holds").get("game_thread_stalled") is True
+                    if not stalled:
+                        time.sleep(0.2)
+                if stalled:
+                    ck.check(ai.close() == 0, "H: the AI session ends while the game thread is stalled")
+                    t0 = time.monotonic()
+                    end = t0 + tmo / 1000 + 3.0
+                    while time.monotonic() < end:
+                        if camera_hold().get("holder", {}).get("kind") != "client":
+                            released_after = time.monotonic() - t0
+                            break
+                        time.sleep(0.25)
+                    time.sleep(1.0)
+                    frozen_reply = ui.request("get_holds")
+            if not stalled:
+                print("  OBSERVED  H: skipped -- the game thread did not read stalled within 3 s of the suspend")
+            else:
+                time.sleep(5.0)
+                after_cam, after_hold = cam(), camera_hold()
+                frozen_hold = next((h for h in frozen_reply.get("holds", []) if h.get("hold") == "debug_camera"), {})
+                returned = f"after {released_after:.1f} s" if released_after is not None else "NOT within the stall"
+                print(f"  OBSERVED  H: {frozen.suspend_line}")
+                print(f"  OBSERVED  H: the release returned {returned}; during the stall (game_thread_stalled="
+                      f"{frozen_reply.get('game_thread_stalled')}) the hold read {frozen_hold}")
+                print(f"  OBSERVED  H: the DLL log: {_release_line(server_pid, 'debug_camera') or 'no release line'}")
+                print(f"  OBSERVED  H: 5 s after the game resumed the camera reads {after_cam}, the hold {after_hold}")
+            camera_off("H")
     finally:
         for c in sessions:
             try:
                 c.close()
             except Exception:  # noqa: BLE001 -- already closed
                 pass
-        try:
-            if cam() == 1:
-                ui.request("set_debug_camera", enable=False)
-        finally:
-            ui.close()
-    return ck.done(ai)
+        _camera_cleanup(ui)
+    return ck.done(sessions)
 
 
 def main() -> int:
@@ -1249,6 +1334,9 @@ def main() -> int:
     if a.mode in ("raw", "dbgcam", "dbgcamhold"):
         if not a.suspend_name:
             ap.error(f"{a.mode} needs --suspend-name (the game's image stem, for suspend.py's thread verbs)")
+        # These freeze the game's thread from this machine and compare a holder's pid with the server's process here.
+        if a.ssh:
+            ap.error(f"{a.mode} runs the server on this machine, beside the game: --ssh does not apply")
         run = {"raw": run_raw, "dbgcam": run_dbgcam, "dbgcamhold": run_dbgcam_hold}[a.mode]
         return run(exe, a.pid, a.suspend_name)
     return run_live(exe, a.pid, a.suspend_name)
