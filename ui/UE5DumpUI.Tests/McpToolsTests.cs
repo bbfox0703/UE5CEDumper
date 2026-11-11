@@ -999,6 +999,23 @@ public sealed class McpToolsTests
         Assert.DoesNotContain("invoke_function", game.Commands);
     }
 
+    [Theory]
+    [InlineData("contains")]
+    [InlineData("nearest")]
+    public async Task WriteInvoke_OnlyAnExactMatch_IsALiveObject(string kind)
+    {
+        // A low-confidence match is not GObjects saying "this is an object", whatever address it reports.
+        var game = InvokeGame(Fn("Jump"));
+        game.Answers["find_by_address"] = r => new JsonObject
+        {
+            ["found"] = true, ["match_kind"] = kind, ["addr"] = r["addr"]!.GetValue<string>(),
+        };
+        var (_, result) = await Call(game, "write_invoke",
+            new JsonObject { ["instance_addr"] = "0x1000", ["function"] = "Jump" });
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("invoke_function", game.Commands);
+    }
+
     [Fact]
     public async Task WriteInvoke_TheInstance_MustBeALiveObject()
     {
