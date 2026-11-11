@@ -512,9 +512,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
 and `ensure_scanned()` (proxy mode starts the pipe **only**; `init` returns `ok:true` in ~0 ms having
 scanned nothing, after which every pointer reads `not_found` and looks like a broken AOB table).
 
-Other infrastructure worth knowing exists: `inject.py` (fails loudly at every Win32 step, and
-**refuses** when one of our DLLs is already mapped — `LoadLibraryW` would hand back the old module
-and nothing in the logs would say so), `mailbox_addr.py` (read-only `g_invokeMailbox` resolver, an
+Other infrastructure worth knowing exists: `inject.py` (fails loudly at every step, and **refuses**
+when one of our DLLs is already mapped — `LoadLibraryW` would hand back the old module and nothing in
+the logs would say so; the remote thread is started by `dist\UE5DumpUI.exe --inject-elevated`, never by
+python.exe, which the AV flagged — working-lessons §3.8 item 6; in a worktree pass `--exe` with the main
+checkout's exe), `mailbox_addr.py` (read-only `g_invokeMailbox` resolver, an
 independent witness to CE's own `getAddress`), `mailbox_poke.py` (drives the CE mailbox with **no
 Cheat Engine at all** — it is what turns "needs CE" rows into headless ones), `mutate_guard.py`
 (restores mutated game memory in a `finally` with a verified read-back), `read_mem.py`,

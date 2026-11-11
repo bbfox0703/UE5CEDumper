@@ -2598,9 +2598,11 @@ Four rules came out of it:
      injection succeeded.
    - **Except the program that acts, never an interpreter.** An exception on `python.exe` exempts every script it
      runs, in every repository, and its per-user install folder is writable by anything running as the user. The
-     maintainer excepted `python.exe` for the day. The fix is for `inject.py` to hand the injection to
-     `dist\UE5DumpUI.exe --inject-elevated`, an image inside the excepted repository folder; the `python.exe`
-     exception is removed once that ships.
+     maintainer excepted `python.exe` for the day. Since then `inject.py` hands the injection to
+     `dist\UE5DumpUI.exe --inject-elevated`, an image inside the excepted repository folder, and the `python.exe`
+     exception goes (`InjectElevatedContractTests` pins the hand-off). Rigs that still start a remote thread or write
+     into another process from Python (`call_export.py`, `mailbox_poke.py` and the rigs built on it, a few dormant
+     ones) are not covered by it.
    - **Where Bitdefender records a verdict:** the app's `events\events.db` (SQLite; open it read-only) and
      `ctc\rca\*.dat` (JSON: the detection, its score, the process tree). Both are readable without elevation.
      Nothing is kept about runs it allowed, and reading the ATD allow list needs elevation.
