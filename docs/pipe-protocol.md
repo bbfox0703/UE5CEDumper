@@ -2219,6 +2219,12 @@ gives it up: it never runs); the DLL's own workers are left out. An `if_free` `i
 another client has one outstanding. A hold may carry `"pending": true`: a debug-camera ON on its way, which an
 `if_free` request already counts as held by its sender.
 
+`debug_camera` may carry `"release_owed": true` (`[DBGCAM-RELEASE-STALLED]`, build 3707+). It means a background
+client's session ended while the game thread was stalled, so its release's OFF timed out and stays queued. On stock
+UE 4.18-5.7 a queued OFF does not turn the camera off, so the DLL sends the OFF again once the queued one has run and
+the game thread is running. It abandons the release instead when the camera has become someone's meanwhile (a client's
+ON, CE's record, or an ON on its way). The DLL's pipe log records each step.
+
 The holds, always listed: `god_mode`, `foreground_lock`, `gravity_direction`, `fly`, `debug_camera`,
 `movement:walk_speed`, `movement:gravity`, `movement:jump`, `time:global`, `time:pawn`; then one
 `force_field:<class>::<field>` per force-field job there is. `active` is read from the module each time. `holder.kind`:

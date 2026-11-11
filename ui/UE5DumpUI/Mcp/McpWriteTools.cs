@@ -42,7 +42,8 @@ internal static class McpWriteTools
             "Every gameplay hold the DLL records an owner for (god mode, movement knobs, gravity direction, time "
             + "dilation, fly, Keep Foreground, debug camera, each force-field job): whether it is in force and who "
             + "holds it (\"you\": this server; a client pid; CE; none); pending: a debug-camera ON on its way, held by "
-            + "its sender already. A write_* tool changes only a hold that is free or already this server's. invokes: "
+            + "its sender already; release_owed: an ended AI session's debug camera that the DLL turns off once the "
+            + "game thread runs. A write_* tool changes only a hold that is free or already this server's. invokes: "
             + "each client's game-thread calls still queued or running (write_invoke waits for others' to clear).",
             [], "get_holds", needsScan: false);
         yield return Read(game, "read_pose", "Player pose",
