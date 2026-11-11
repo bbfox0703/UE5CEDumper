@@ -646,6 +646,30 @@ write commands, the UI's use of the same state, and the client-side safety knobs
   resent after -5; a debug-camera toggle goes through the guarded command). **D2-1 shipped in build 3704 and D2-2 in
   build 3705** (dev-log); what their live checks did not reach is verification-register.md
   `[PIPE-PER-PROCESS-2026-11-06]` items 19-20 and 22-24.
+- **D2-3 decisions (maintainer, 2026-11-11, each the recommended option)**, from a read-only survey of `write_mem`,
+  the invoke path and the UI's use of both:
+  - **`write_mem`, for every client:** refuse executable, read-only, guard and uncommitted pages, and write without
+    flipping page protection. Today `Macht::WriteBytes` makes any page READWRITE for the write, so code and `.rdata`
+    are writable, a code page briefly loses execute, and a multi-page write restores the first page's protection on
+    all of them. The UI only edits heap fields, so it is unaffected. The MCP tool also passes the bytes it read
+    (`expect`), and the DLL refuses the write if they changed since.
+  - **The invoke queue records owners.** Each queued invoke carries its client, D2-1 style. An AI invoke (`if_free`)
+    is refused, naming the holder, while a UI or CE invoke is outstanding, a -5 one still waiting included. An AI
+    invoke still queued when its session ends is dropped, so it never runs after the session. The UI never sends
+    `if_free`, so its invokes always queue.
+  - **A deny list for the AI's invokes, in the DLL, for background requests only:** network RPCs (`FUNC_Net`),
+    console-command executors, quit / level travel / restart, actor destruction, save-slot write / delete, and the
+    debug-camera toggle (pointing to `write_debug_camera`).
+  - **Parameters by name and type:** the server reads the function's signature and builds the buffer with the UI's
+    `ParamBufferBuilder`, requires a live instance address, and decodes out parameters and the return value.
+  - Not asked, taken as the survey recommended: the MCP never sends `direct_call` or `set_invoke_timeout`; an invoke's
+    MCP timeout follows the DLL's `invoke_timeout_ms`; `write_memory` caps at 4 KB and returns the bytes before and
+    after; raw writes and invokes do not follow the experimental switch (the decision named four features, and the
+    UI's Console and Live Walker are not gated).
+  - **D2-2 defects found by the same survey, fixed in D2-3's build:** `write_debug_camera` reported the guarded
+    command's -1 / -6 / -17 as success (it answers `state`, not `code`); a queued (-5) debug-camera ON recorded no
+    owner, so the AI could not turn it off and its session end did not release it; the MCP's 30 s timeout could end
+    before a user-set invoke timeout.
 - **The experimental opt-in binds the AI too:** Fly, See-through, Keep Foreground and the force-field tools refuse
   while the UI's experimental switch is off, so nothing the AI starts runs behind a card the user cannot see.
 - Every state-changing tool is named `write_*`, carries `requiresUserInteraction` (Claude Code then asks on every
