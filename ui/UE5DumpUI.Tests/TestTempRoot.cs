@@ -61,10 +61,12 @@ internal static class TestTempRoot
             SystemTemp = Path.GetTempPath();
             var root = Path.Combine(SystemTemp, RootName);
             var now = DateTime.UtcNow;
-            SweepDeadRuns(root, now);
-            SweepLegacy(SystemTemp, now);
-            if (SdkTempLeftovers.FindRepoRoot() is { } repo)
-                SdkTempLeftovers.Sweep(SystemTemp, repo, now, root);
+            Housekeeping(() => SweepDeadRuns(root, now));
+            Housekeeping(() => SweepLegacy(SystemTemp, now));
+            Housekeeping(() =>
+            {
+                if (SdkTempLeftovers.FindRepoRoot() is { } repo) SdkTempLeftovers.Sweep(SystemTemp, repo, now, root);
+            });
 
             var run = Path.Combine(root, $"{Environment.ProcessId}-{now:yyyyMMddHHmmss}");
             Directory.CreateDirectory(run);
@@ -80,11 +82,25 @@ internal static class TestTempRoot
                 RemoveRun(run);
             };
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (Expected(e))
         {
             // The suite still runs; the pin tests say why its scratch is not where it should be.
         }
     }
+
+    // Each sweep promises not to throw. This holds the promise for them in the one place a throw costs the whole run:
+    // an exception out of a module initializer stops the test process before any test, and TEMP never moves.
+    private static void Housekeeping(Action sweep)
+    {
+        try { sweep(); }
+        catch (Exception e) when (Expected(e)) { }
+    }
+
+    // What a look at %TEMP% can meet: I/O and access, and a time or path .NET cannot represent (anyone can stamp a
+    // folder with a time past the year 9999, and reading it throws).
+    private static bool Expected(Exception e)
+        => e is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException
+            or System.Security.SecurityException;
 
     /// <summary>Deletes every run folder under <paramref name="root"/> whose owner is gone; returns those deleted.
     /// Never throws: the sweeps are housekeeping, and one that threw would stop Install before TMP / TEMP move.</summary>
@@ -96,9 +112,15 @@ internal static class TestTempRoot
             // A root that is a junction (test scratch moved to another drive) holds folders that are not ours to judge.
             if (!Directory.Exists(root) || File.GetAttributes(root).HasFlag(FileAttributes.ReparsePoint)) return deleted;
             foreach (var dir in Directory.EnumerateDirectories(root))
-                if (OwnerGone(dir, nowUtc) && TryDelete(dir)) deleted.Add(dir);
+            {
+                try
+                {
+                    if (OwnerGone(dir, nowUtc) && TryDelete(dir)) deleted.Add(dir);
+                }
+                catch (Exception e) when (Expected(e)) { }   // that one entry, not the walk
+            }
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        catch (Exception e) when (Expected(e))
         {
             // Gone from under the walk, or unreadable: nothing more to judge this time.
         }
@@ -117,31 +139,44 @@ internal static class TestTempRoot
         {
             foreach (var dir in new DirectoryInfo(temp).EnumerateDirectories())
             {
-                if (LegacyName.IsMatch(dir.Name))
+                try
                 {
-                    if (nowUtc - dir.LastWriteTimeUtc >= LegacyMinAge && TryDelete(dir.FullName)) deleted.Add(dir.FullName);
+                    SweepLegacyEntry(dir, nowUtc, deleted);
                 }
-                else if (LegacyParentName.IsMatch(dir.Name) && !dir.Attributes.HasFlag(FileAttributes.ReparsePoint))
-                {
-                    // The parent's time as listed, before this sweep empties it: an hour old, no child came since.
-                    var parentIdle = nowUtc - dir.LastWriteTimeUtc >= LegacyMinAge;
-                    foreach (var child in dir.EnumerateDirectories())
-                    {
-                        var touched = child.LastWriteTimeUtc > child.CreationTimeUtc ? child.LastWriteTimeUtc : child.CreationTimeUtc;
-                        if (nowUtc - touched >= LegacyMinAge && TryDelete(child.FullName)) deleted.Add(child.FullName);
-                    }
-                    if (!parentIdle) continue;
-                    try
-                    {
-                        Directory.Delete(dir.FullName, recursive: false);   // only when empty
-                        deleted.Add(dir.FullName);
-                    }
-                    catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-                }
+                catch (Exception e) when (Expected(e)) { }   // that one entry, not the walk
             }
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        catch (Exception e) when (Expected(e)) { }
         return deleted;
+    }
+
+    private static void SweepLegacyEntry(DirectoryInfo dir, DateTime nowUtc, List<string> deleted)
+    {
+        if (LegacyName.IsMatch(dir.Name))
+        {
+            if (nowUtc - dir.LastWriteTimeUtc >= LegacyMinAge && TryDelete(dir.FullName)) deleted.Add(dir.FullName);
+            return;
+        }
+        if (!LegacyParentName.IsMatch(dir.Name) || dir.Attributes.HasFlag(FileAttributes.ReparsePoint)) return;
+
+        // The parent's time as listed, before this sweep empties it: an hour old, no child came since.
+        var parentIdle = nowUtc - dir.LastWriteTimeUtc >= LegacyMinAge;
+        foreach (var child in dir.EnumerateDirectories())
+        {
+            try
+            {
+                var touched = child.LastWriteTimeUtc > child.CreationTimeUtc ? child.LastWriteTimeUtc : child.CreationTimeUtc;
+                if (nowUtc - touched >= LegacyMinAge && TryDelete(child.FullName)) deleted.Add(child.FullName);
+            }
+            catch (Exception e) when (Expected(e)) { }   // that one child
+        }
+        if (!parentIdle) return;
+        try
+        {
+            Directory.Delete(dir.FullName, recursive: false);   // only when empty
+            deleted.Add(dir.FullName);
+        }
+        catch (Exception e) when (Expected(e)) { }
     }
 
     private static bool OwnerGone(string dir, DateTime nowUtc)
@@ -177,28 +212,32 @@ internal static class TestTempRoot
                 return true;
             }
             catch (DirectoryNotFoundException) { return true; }   // another run's sweep took it first
-            catch (UnauthorizedAccessException) when (attempt == 0)
+            catch (Exception e) when (attempt == 0 && e is IOException or UnauthorizedAccessException)
             {
-                // A read-only file refuses the delete; a test may have set one. Clear them once and try again.
+                // A read-only file refuses the delete with UnauthorizedAccessException, a read-only folder with an
+                // IOException; a test may have set either. Clear them once and try again.
                 try { ClearReadOnly(dir); }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+                catch (Exception e2) when (Expected(e2)) { return false; }
             }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+            catch (Exception e) when (Expected(e)) { return false; }
         }
         return false;
     }
 
-    /// <summary>Clears read-only on every file under <paramref name="dir"/> and never enters a reparse point: a junction
-    /// in a run's folder may point at another volume's ROOT (VolumeRootTests makes one). Measured: a walk with
-    /// SearchOption.AllDirectories goes through a junction and changes the files it points at.</summary>
+    /// <summary>Clears read-only on every file and folder under <paramref name="dir"/> and never enters a reparse
+    /// point: a junction in a run's folder may point at another volume's ROOT (VolumeRootTests makes one). Measured: a
+    /// walk with SearchOption.AllDirectories goes through a junction and changes the files it points at.</summary>
     internal static void ClearReadOnly(string dir)
     {
         foreach (var f in Directory.EnumerateFiles(dir))
             if (!File.GetAttributes(f).HasFlag(FileAttributes.ReparsePoint))
                 File.SetAttributes(f, FileAttributes.Normal);
-        foreach (var d in Directory.EnumerateDirectories(dir))
-            if (!File.GetAttributes(d).HasFlag(FileAttributes.ReparsePoint))
-                ClearReadOnly(d);
+        foreach (var d in new DirectoryInfo(dir).EnumerateDirectories())
+        {
+            if (d.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
+            if (d.Attributes.HasFlag(FileAttributes.ReadOnly)) d.Attributes &= ~FileAttributes.ReadOnly;
+            ClearReadOnly(d.FullName);
+        }
     }
 
     internal static void RemoveRun(string run)
