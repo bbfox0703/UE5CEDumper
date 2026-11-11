@@ -341,9 +341,30 @@ Not reached:
       non-elevated stand-in client skipped: neither can reach an elevated process), and 31/31 against a normal game,
       the cancel through ssh's stdin included.
 
-    Seen along the way: the DLL in a normal game shows the SSH-started (elevated) server as `?` in `pipe_clients`, since
+    Seen along the way (item 18): the DLL in a normal game shows the SSH-started (elevated) server as `?` in `pipe_clients`, since
     it cannot read a higher-integrity process's image name. A real MCP client launching `ssh` itself (Claude Code with
     `command: ssh`) was not run; the rig starts `ssh -T host <exe> --mcp` the same way.
+
+Stage D2-1, build 3704 (the DLL records who holds each gameplay hold) -- dev-log 3704. `tools/verify/holds_live.py`
+11/11 on DumperTest Shipping, with the DLL built from the same source and injected before the publish: a foreground
+client's god mode refused to a background client's if_free OFF (code -20, the holder named) and left on; the
+background client's world time dilation its own; the foreground client's if_free reset of it refused in turn;
+`pipe_clients` marking the background connection; the background client leaving and its time lane released (the DLL
+log: "background client N left -- its hold time:global is released (code 0)") while the foreground client's god mode
+stayed. Not reached:
+
+19. **CE's mailbox as an owner.** Mimic changes each hold under the ledger lock and names CE (source-pinned:
+    `PipePerProcessSourceTests.TheMailbox_ChangesEachHoldAsCe`); no mailbox command ran. Acceptance: a CE record (or
+    `mailbox_poke.py`) turns god mode on; `get_holds` says `kind: ce`, and a background client's if_free OFF is
+    refused.
+20. **The release of every hold kind.** Only `time:global` was released live. Acceptance: a background client takes
+    each hold (god mode, a knob, gravity direction on UE 5.3+, the pawn lane, fly, the foreground lock, the debug
+    camera, a force-field job), leaves, and each reads inactive and nobody's; the DLL log has one release line per
+    hold.
+21. **A hold the UI took over.** A background client's hold that a foreground client changed (no if_free) becomes the
+    foreground client's and is kept when the background client leaves (`ReleaseOwnedBy` releases only while the ledger
+    still names the leaver). Acceptance: background takes `time:pawn`, foreground sets it to another value, background
+    leaves; the lane is still active and the foreground client's.
 
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 

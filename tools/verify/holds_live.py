@@ -149,6 +149,27 @@ def main() -> int:
         ck.check(any(c.get("background") for c in clients) and any(not c.get("background") for c in clients),
                  "pipe_clients marks the background connection and not the foreground one",
                  [(c.get("pid"), c.get("background")) for c in clients])
+
+        # More kinds of hold for the background client, so its leaving releases each kind (register item 20).
+        took_more = {
+            "movement:walk_speed": bg.request("set_movement_multiplier", knob="walk_speed", multiplier=1.5,
+                                              if_free=True),
+            "movement:jump": bg.request("set_movement_multiplier", knob="jump", multiplier=1.2, if_free=True),
+            "fly": bg.request("fly_set", enable=True, if_free=True),
+            "foreground_lock": bg.request("set_foreground_lock", enable=True, if_free=True),
+            "time:pawn": bg.request("set_time_dilation", target="pawn", value=0.8, if_free=True),
+        }
+        mine = {h["hold"]: h for h in bg.request("get_holds").get("holds", [])}
+        for hold, reply in took_more.items():
+            got = mine.get(hold, {})
+            ck.check(got.get("active") and got.get("holder", {}).get("you"), f"the background client holds {hold}",
+                     (reply, got))
+        # A hold the foreground client takes over (no if_free) becomes its own, and must survive the background
+        # client's leaving (register item 21).
+        over = ui.request("set_time_dilation", target="pawn", value=0.9)
+        now = holds_by_name(ui).get("time:pawn", {})
+        ck.check(now.get("active") and now.get("holder", {}).get("you"),
+                 "the foreground client took time:pawn over: it is now the foreground client's", (over, now))
     finally:
         code = bg.leave()
     ck.check(code == 0, "the background client left", code)
@@ -164,10 +185,18 @@ def main() -> int:
         time.sleep(0.1)
     ck.check(not released.get("active") and released.get("holder", {}).get("kind") == "none",
              "the background client's time lane is released when it leaves", released)
+    for hold in ("movement:walk_speed", "movement:jump", "fly", "foreground_lock"):
+        h = holds.get(hold, {})
+        ck.check(not h.get("active") and h.get("holder", {}).get("kind") == "none",
+                 f"and its {hold} is released too", h)
     ck.check(holds.get("god_mode", {}).get("active") and holds["god_mode"]["holder"].get("you"),
              "the foreground client's god mode is untouched", holds.get("god_mode"))
+    pawn = holds.get("time:pawn", {})
+    ck.check(pawn.get("active") and pawn.get("holder", {}).get("you"),
+             "the time lane the foreground client took over is kept, and still its own", pawn)
 
     # 8. Clean-up.
+    ui.request("reset_time_dilation", target="pawn")
     ui.request("set_god_mode", enable=False)
     holds = holds_by_name(ui)
     still = [h for h, v in holds.items() if v.get("active")]
