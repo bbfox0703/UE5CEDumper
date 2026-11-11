@@ -109,6 +109,18 @@ public sealed class McpServerTests
     }
 
     [Fact]
+    public async Task Instructions_SayTheUserCanTakeBackAnyHold()
+    {
+        // Measured 2026-11-11 in a Claude Code session: told only that the write tools never replace another's hold,
+        // the AI told the user that the UI and CE "cannot turn off" the god mode it held. The rule binds the server
+        // only; the UI's and CE's changes carry no if_free.
+        var r = (await new Rig().Request("initialize", Init("2025-11-25")))["result"]!;
+        string instructions = r["instructions"]!.GetValue<string>();
+        Assert.Contains("The rule binds this server only", instructions);
+        Assert.Contains("can change or end anything this server holds at any time", instructions);
+    }
+
+    [Fact]
     public async Task ServerDiscover_IsMethodNotFound_AndTheServerKeepsServing()
     {
         // 2026-07-28 clients probe with server/discover; Claude Code falls back to the handshake on an error, and a
