@@ -7,8 +7,8 @@ Open work only. **Read this when deciding what to do next.**
 > ▶ **Current programme:** `[PIPE-PER-PROCESS-2026-11-06]`, one stage at a time (2026-11-10): Stage A shipped in build
 > 3695, Stage B (6 pipe slots + the scan-worker budget) in build 3696, Stage C (hardening for a long-lived client) in
 > build 3698; **Stage D (MCP) is active (go-ahead 2026-11-11): D1, the read-only `UE5DumpUI.exe --mcp`, shipped in
-> build 3701; D2 (writes) waits for the maintainer's go-ahead** -- the route and its decisions are under Stage D
-> below. Before it, none active
+> build 3701; D2 (writes) started 2026-11-11, in three builds; D2-1 (the DLL records who holds what) first** -- the
+> route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
 > active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
@@ -626,7 +626,30 @@ an elevated game) closed 2026-11-11; 16 (a large game) and 17 (the UI itself bes
 for every build**, so IL2026 / IL3050 fail the first compile instead of the six-minute publish; the D1 HIGH above would
 have failed the first build. Negative control in working-lessons §3.xc.
 
-**D2 (next build):** `write_mem`, `invoke_function`, the toggles, teleport and force field. Each carries
+**D2 — decisions (maintainer, 2026-11-11, each the recommended option)**, from a read-only survey of the DLL's
+write commands, the UI's use of the same state, and the client-side safety knobs:
+
+- **The DLL records who holds what.** Every hold (god mode, the movement knobs and gravity direction, both time lanes,
+  fly, the foreground lock, force-field jobs, markers, the debug camera) stores its owner -- a client process, CE's
+  mailbox, or unknown (a C ABI call) -- and the `get_*` replies report it. A background request may carry `if_free`:
+  the module refuses, under the lock that guards its state, when someone else holds it. Today none of these has an
+  owner (See-through and the LiveFuncs recording are the only owned ones, Stage C), so a check made by the MCP server
+  alone would race the UI's clicks and could not tell the UI from CE.
+- **What an AI session turned on ends with it.** When a background client's process leaves, the DLL releases the
+  holds it owns, as Stage C does for See-through; the UI's and CE's holds are never touched.
+- **Scope, in three builds:** D2-1 the DLL's owner records, `if_free`, the release, and a `background` role in
+  `pipe_clients` (the MCP server runs as `UE5DumpUI.exe` too, so the exe name cannot tell it from the UI). D2-2 the
+  toggles, force field (the AI's own holds only; never `reset_all_fields`), teleport to explicit coordinates (never the
+  marker slots; the undo point is kept). D2-3 `write_mem` (executable pages refused) and `invoke_function` (never
+  resent after -5; a debug-camera toggle goes through the guarded command).
+- **The experimental opt-in binds the AI too:** Fly, See-through, Keep Foreground and the force-field tools refuse
+  while the UI's experimental switch is off, so nothing the AI starts runs behind a card the user cannot see.
+- Every state-changing tool is named `write_*`, carries `requiresUserInteraction` (Claude Code then asks on every
+  call in every mode, an allow rule notwithstanding) and `destructiveHint: true`. Elicitation is not used: the desktop
+  app's Code tab declines it unseen. Measure both permission modes again, and record the Claude Code version (the
+  marker needs 2.1.246 or later).
+
+**D2 (in three builds, above):** `write_mem`, `invoke_function`, the toggles, teleport and force field. Each carries
 `_meta["anthropic/requiresUserInteraction"]`, which makes Claude Code ask on every call, even under an allow rule.
 Measured 2026-11-11 (verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item 15): under the machine's
 `defaultMode: "auto"`, `scan_start` -- outside the `read_*` allow rule, not read-only, not destructive -- ran without a
