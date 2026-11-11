@@ -64,7 +64,7 @@ internal static class TestTempRoot
             SweepDeadRuns(root, now);
             SweepLegacy(SystemTemp, now);
             if (SdkTempLeftovers.FindRepoRoot() is { } repo)
-                SdkTempLeftovers.Sweep(SystemTemp, repo, now, Path.Combine(root, SdkTempLeftovers.KeptLogsFileName));
+                SdkTempLeftovers.Sweep(SystemTemp, repo, now, root);
 
             var run = Path.Combine(root, $"{Environment.ProcessId}-{now:yyyyMMddHHmmss}");
             Directory.CreateDirectory(run);

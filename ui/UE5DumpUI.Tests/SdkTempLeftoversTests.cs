@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
 using Xunit;
 
 namespace UE5DumpUI.Tests;
@@ -17,8 +19,10 @@ public class SdkTempLeftoversTests : IDisposable
     private readonly string _sandbox = Path.Combine(Path.GetTempPath(), "SdkTempLeftoversTests_" + Guid.NewGuid().ToString("N"));
     private readonly string _temp;
     private readonly string _repo;
+    private readonly string _mem;
     private readonly DateTime _now = DateTime.UtcNow;
     private readonly DateTime _old;
+    private readonly DateTime _seen;
     private int _pid = 1000;
     private int _folder;
 
@@ -30,6 +34,7 @@ public class SdkTempLeftoversTests : IDisposable
     {
         _temp = Directory.CreateDirectory(Path.Combine(_sandbox, "temp")).FullName;
         _repo = Directory.CreateDirectory(Path.Combine(_sandbox, "repo")).FullName;
+        _mem = Path.Combine(_sandbox, "mem");
         foreach (var p in Ours)
         {
             var full = Path.Combine(_repo, p.Replace('/', Path.DirectorySeparatorChar));
@@ -41,23 +46,31 @@ public class SdkTempLeftoversTests : IDisposable
         Directory.CreateDirectory(Path.Combine(_repo, "vendor", "Lib"));
         File.WriteAllText(Path.Combine(_repo, "vendor", "Lib", "Lib.csproj"), "<Project />");
         _old = _now - SdkTempLeftovers.MinAge - TimeSpan.FromHours(1);
+        _seen = _old + TimeSpan.FromMinutes(1);   // a test run a minute after the builds, as one follows a build
     }
 
     public void Dispose()
     {
         if (!Directory.Exists(_sandbox)) return;
+        TestTempRoot.ClearReadOnly(_sandbox);
         foreach (var d in new DirectoryInfo(_temp).EnumerateDirectories())
             if (!d.Attributes.HasFlag(FileAttributes.ReparsePoint))
                 d.Attributes &= ~FileAttributes.ReadOnly;   // a test may leave a folder read-only
-        TestTempRoot.ClearReadOnly(_sandbox);
         Directory.Delete(_sandbox, recursive: true);
     }
 
     private const string OurBuild = "dotnet build ui/App/App.csproj -c Release -v q";
     private const string TheirBuild = "dotnet build tests/AOBMaker.Core.Tests -v q -nologo";
 
-    private SdkTempLeftovers.Plan Sweep(string? kept = null, IReadOnlyCollection<string>? ours = null)
-        => SdkTempLeftovers.Sweep(_temp, _repo, _now, kept, ours ?? Ours);
+    /// <summary>A run a minute after the builds (it records each group as it was made), then one a day later.</summary>
+    private SdkTempLeftovers.Plan Sweep(IReadOnlyCollection<string>? ours = null, string? mem = null)
+    {
+        SweepOnce(_seen, ours, mem);
+        return SweepOnce(_now, ours, mem);
+    }
+
+    private SdkTempLeftovers.Plan SweepOnce(DateTime now, IReadOnlyCollection<string>? ours = null, string? mem = null)
+        => SdkTempLeftovers.Sweep(_temp, _repo, now, mem ?? _mem, ours ?? Ours);
 
     [Fact]
     public void OurFinishedBuild_ADayOld_ItsLogAndBothFoldersGo()
@@ -81,6 +94,11 @@ public class SdkTempLeftoversTests : IDisposable
     [InlineData("dotnet test ui\\App.Tests\\App.Tests.csproj -c Release --filter FullyQualifiedName~X")]
     // A worktree removed since: its path no longer exists, and the build was still this repository's.
     [InlineData("dotnet test --project \"D:\\Gone\\.claude\\worktrees\\wf_1\\ui\\App.Tests\\App.Tests.csproj\" -c Release")]
+    // The project after an option and its value, or after a flag that takes none.
+    [InlineData("dotnet build -c Release ui/App/App.csproj")]
+    [InlineData("dotnet build --no-restore ui/App/App.csproj -v q")]
+    [InlineData("dotnet run --project ui/App/App.csproj")]
+    [InlineData("dotnet run --project=ui/App/App.csproj -- --some-arg")]
     public void OurCommandLines_AreOurs(string command)
     {
         var (log, before, after) = Build(_old, command.Replace("{repo}", _repo));
@@ -108,8 +126,13 @@ public class SdkTempLeftoversTests : IDisposable
     [InlineData("dotnet test ui")]
     // An option's value, or the program's own arguments, is not the project being built.
     [InlineData("dotnet publish src/Other.csproj -o ui")]
+    [InlineData("dotnet publish src/Other.csproj -o ui/App")]
+    [InlineData("dotnet test tests/AOBMaker.Core.Tests --results-directory \"{repo}\\ui\\App.Tests\"")]
     [InlineData("dotnet test tests/AOBMaker.Core.Tests --filter Ui -v q")]
     [InlineData("dotnet run --project D:/Other/Tool/Tool.csproj -- ui/App/App.csproj")]
+    [InlineData("dotnet run --project D:/Other/Tool/Tool.csproj ui/App/App.csproj")]
+    // One quoted argument with escaped quotes inside, as Windows reads it: never split into a word that is our path.
+    [InlineData("dotnet build D:\\Github\\Other\\Other.sln \"-p:Note=\\\" ui\\App\\App.csproj \\\"\"")]
     // Under this checkout, but another repository's clone that git here does not track.
     [InlineData("dotnet build \"{repo}\\vendor\\Lib\\Lib.csproj\"")]
     // Ends with our path's characters but not at a folder boundary.
@@ -178,6 +201,24 @@ public class SdkTempLeftoversTests : IDisposable
         Assert.True(File.Exists(ours));   // a log goes only once no folder it may have made is left
     }
 
+    /// <summary>Our build and another repository's in the same second, each with both its folders: four folders for two
+    /// logs, the right count, and still not ours to take, finished or not.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void OurBuildBesideAnotherReposBuild_AllStay(bool theyEnded)
+    {
+        var (ours, b1, a1) = Build(_old, OurBuild);
+        var (theirs, b2, a2) = Build(_old + TimeSpan.FromMilliseconds(200), TheirBuild, ended: theyEnded);
+
+        Sweep();
+        Sweep();
+
+        foreach (var f in new[] { b1, a1, b2, a2 }) Assert.True(Directory.Exists(f));
+        Assert.True(File.Exists(ours));
+        Assert.True(File.Exists(theirs));
+    }
+
     // ---- a folder is ours only when the group it is in is exactly what our builds make -----------------------------
 
     /// <summary>Folders with no log of their own beside one of our builds: another build's whose log its own cleanup
@@ -200,6 +241,68 @@ public class SdkTempLeftoversTests : IDisposable
         Assert.True(Directory.Exists(after));
         Assert.All(others, f => Assert.True(Directory.Exists(f)));
         Assert.Empty(plan.Folders);
+    }
+
+    /// <summary>Another cleanup took one of our folders after the group was seen, and a folder with no log of its own
+    /// sits in the window: the count is right again, but the group is not the one seen when it was made.</summary>
+    [Fact]
+    public void AFolderInPlaceOfOneAnotherCleanupTook_IsKept()
+    {
+        var (log, before, after) = Build(_old, OurBuild);
+        SweepOnce(_seen);
+        Directory.Delete(before);
+        var stranger = Folder(_old + TimeSpan.FromMilliseconds(300));
+
+        SweepOnce(_now);
+
+        Assert.True(Directory.Exists(stranger));
+        Assert.True(Directory.Exists(after));
+        Assert.True(File.Exists(log));
+    }
+
+    /// <summary>Only a group seen while young is known whole: one first seen a day on may already have lost a folder to
+    /// another cleanup, and gained a stranger.</summary>
+    [Fact]
+    public void AGroupFirstSeenOld_IsKept()
+    {
+        var (log, before, after) = Build(_old, OurBuild);
+
+        SweepOnce(_old + SdkTempLeftovers.Young + TimeSpan.FromMinutes(1));
+        SweepOnce(_now);
+        SweepOnce(_now);
+
+        Assert.True(File.Exists(log));
+        Assert.True(Directory.Exists(before));
+        Assert.True(Directory.Exists(after));
+    }
+
+    /// <summary>A group seen within seconds of its log may not have its second folder yet: not recorded then.</summary>
+    [Fact]
+    public void AGroupStillForming_IsNotRecorded()
+    {
+        var (log, before, after) = Build(_old, OurBuild);
+
+        SweepOnce(_old + TimeSpan.FromSeconds(2));
+        SweepOnce(_now);
+
+        Assert.True(File.Exists(log));
+        Assert.True(Directory.Exists(before));
+        Assert.True(Directory.Exists(after));
+    }
+
+    [Fact]
+    public void AGroupRecordWhoseLogsAreGone_IsDropped()
+    {
+        var (log, before, after) = Build(_old, TheirBuild);
+        SweepOnce(_seen);
+        Assert.Contains(SeenLines(), l => l.Contains(Path.GetFileName(log), StringComparison.Ordinal));
+        File.Delete(log);
+        Directory.Delete(before);
+        Directory.Delete(after);
+
+        SweepOnce(_seen + TimeSpan.FromMinutes(1));
+
+        Assert.DoesNotContain(SeenLines(), l => l.Contains(Path.GetFileName(log), StringComparison.Ordinal));
     }
 
     [Fact]
@@ -269,9 +372,10 @@ public class SdkTempLeftoversTests : IDisposable
     public void AFolderUsedRecently_KeepsItsWholeGroup()
     {
         var (log, before, after) = Build(_old, OurBuild);
+        SweepOnce(_seen);
         Directory.SetLastWriteTimeUtc(after, _now - TimeSpan.FromMinutes(1));
 
-        Sweep();
+        SweepOnce(_now);
 
         Assert.True(Directory.Exists(after));
         Assert.True(Directory.Exists(before));
@@ -292,39 +396,81 @@ public class SdkTempLeftoversTests : IDisposable
         Assert.True(File.Exists(log));
     }
 
+    /// <summary>Only a Path.GetRandomFileName() name is the SDK's. The other folder sits where our build's second one
+    /// would, so counting it would complete the group.</summary>
+    [Theory]
+    [InlineData("ABCDEFGH.IJK")]
+    [InlineData("abcdefg6.ijk")]
+    [InlineData("abcdefgh.ij")]
+    [InlineData("abcdefghi.jkl")]
+    [InlineData("abcdefgh_ijk")]
+    [InlineData("abcdefgh")]
+    public void ANameThatIsNotARandomFileName_IsNeverCounted(string name)
+    {
+        var before = Folder(_old - TimeSpan.FromMilliseconds(120));
+        var log = Log(_old, OurBuild);
+        var other = Folder(_old + TimeSpan.FromMilliseconds(15), name);
+
+        Sweep();
+
+        Assert.True(Directory.Exists(other));
+        Assert.True(Directory.Exists(before));
+        Assert.True(File.Exists(log));
+    }
+
     [Fact]
-    public void NamesThatAreNotARandomFileName_AreKept()
+    public void ARandomNamedFile_IsKept()
     {
         Log(_old, OurBuild);
-        string[] names = { "ABCDEFGH.IJK", "abcdefg6.ijk", "abcdefgh.ij", "abcdefghi.jkl", "abcdefgh_ijk", "abcdefgh" };
-        foreach (var n in names) Folder(_old, n);
         var file = Path.Combine(_temp, "mnopqrst.uvw");
         File.WriteAllText(file, "");
         File.SetCreationTimeUtc(file, _old);
 
         Sweep();
 
-        foreach (var n in names) Assert.True(Directory.Exists(Path.Combine(_temp, n)), n);
         Assert.True(File.Exists(file));
     }
 
+    /// <summary>A junction with a random name where our build's second folder would be, its own times a day old and the
+    /// folder it points at empty: only the reparse-point rule keeps it, and its group with it.</summary>
     [Fact]
     public void AJunctionWithARandomName_IsKept_AndSoIsItsGroup()
     {
+        var before = Folder(_old - TimeSpan.FromMilliseconds(120));
         var log = Log(_old, OurBuild);
-        var folder = Folder(_old - TimeSpan.FromMilliseconds(100));
         var target = Directory.CreateDirectory(Path.Combine(_sandbox, "elsewhere")).FullName;
         var link = Path.Combine(_temp, "zzzzzzzz.zzz");
         Assert.True(TestJunction.Make(link, target));
-        Directory.SetCreationTimeUtc(link, _old);
+        SetOwnTimes(link, _old + TimeSpan.FromMilliseconds(15));
+        Assert.Equal(_old + TimeSpan.FromMilliseconds(15), new DirectoryInfo(link).LastWriteTimeUtc);
 
         Sweep();
 
         Assert.True(Directory.Exists(link));
         Assert.True(Directory.Exists(target));
-        Assert.True(Directory.Exists(folder));
+        Assert.True(Directory.Exists(before));
         Assert.True(File.Exists(log));
         Directory.Delete(link);
+    }
+
+    /// <summary>Anyone can stamp a folder or log with a time past the year 9999; .NET then throws on reading it. The
+    /// sweep skips that one entry and goes on, so the test run is not stopped before it starts.</summary>
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void ATimeOutOfRange_IsSkipped_AndTheSweepGoesOn(bool onAFolder)
+    {
+        var (log, before, after) = Build(_old, OurBuild);
+        var odd = onAFolder ? Folder(_old + TimeSpan.FromSeconds(30)) : Log(_old + TimeSpan.FromSeconds(30), TheirBuild);
+        Assert.True(SetRawTimes(odd, long.MaxValue, long.MaxValue, openReparsePoint: false));
+
+        var plan = Sweep();
+
+        Assert.False(File.Exists(log));
+        Assert.False(Directory.Exists(before));
+        Assert.False(Directory.Exists(after));
+        Assert.True(onAFolder ? Directory.Exists(odd) : File.Exists(odd));
+        Assert.Equal(2, plan.Folders.Count);
     }
 
     /// <summary>A log someone holds is a build not done; the rest of the sweep goes on, and it is not remembered.</summary>
@@ -333,9 +479,10 @@ public class SdkTempLeftoversTests : IDisposable
     {
         var (log, before, after) = Build(_old, OurBuild);
         var (other, ob, oa) = Build(_old + TimeSpan.FromSeconds(30), OurBuild);
+        SweepOnce(_seen);
         using var held = new FileStream(log, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
 
-        Sweep(Kept);
+        SweepOnce(_now);
 
         Assert.True(File.Exists(log));
         Assert.True(Directory.Exists(before));
@@ -372,8 +519,9 @@ public class SdkTempLeftoversTests : IDisposable
     public void FindDeletesNothing()
     {
         var (log, before, after) = Build(_old, OurBuild);
+        SweepOnce(_seen);
 
-        var plan = SdkTempLeftovers.Find(_temp, _repo, _now, null, Ours);
+        var plan = SdkTempLeftovers.Find(_temp, _repo, _now, _mem, Ours);
 
         Assert.Equal(new[] { before, after }.Order(), plan.Folders.Order());
         Assert.Equal(new[] { log }, plan.Logs);
@@ -397,19 +545,22 @@ public class SdkTempLeftoversTests : IDisposable
     [Fact]
     public void ATempFolderThatIsGone_IsNothingToSweep()
     {
-        var plan = SdkTempLeftovers.Sweep(Path.Combine(_sandbox, "absent"), _repo, _now, null, Ours);
+        var plan = SdkTempLeftovers.Sweep(Path.Combine(_sandbox, "absent"), _repo, _now, _mem, Ours);
         Assert.Empty(plan.Folders);
         Assert.Empty(plan.Logs);
     }
 
     // ---- the logs kept for good are remembered, so a run reads only what is new ----------------------------------
 
-    private string Kept => Path.Combine(_sandbox, "kept.txt");
+    private string Kept(string? mem = null) => Path.Combine(mem ?? _mem, SdkTempLeftovers.KeptLogsFileName);
 
-    private List<string> Remembered(string? file = null)
+    private List<string> Remembered(string? mem = null)
+        => File.Exists(Kept(mem)) ? File.ReadAllLines(Kept(mem)).Where(l => !l.StartsWith('#')).ToList() : new();
+
+    private List<string> SeenLines()
     {
-        var f = file ?? Kept;
-        return File.Exists(f) ? File.ReadAllLines(f).Where(l => !l.StartsWith('#')).ToList() : new();
+        var f = Path.Combine(_mem, SdkTempLeftovers.SeenGroupsFileName);
+        return File.Exists(f) ? File.ReadAllLines(f).ToList() : new();
     }
 
     [Fact]
@@ -417,14 +568,14 @@ public class SdkTempLeftoversTests : IDisposable
     {
         var log = Log(_old, TheirBuild);
 
-        Sweep(Kept);
+        Sweep();
         Assert.Contains(Path.GetFileName(log), Remembered());
 
         // Read again, it would now be ours and go: remembered, it is not read, and stays.
         File.WriteAllText(log, Lines(_old, OurBuild, ended: true, extra: null));
         File.SetCreationTimeUtc(log, _old);
         File.SetLastWriteTimeUtc(log, _old);
-        Sweep(Kept);
+        Sweep();
         Assert.True(File.Exists(log));
     }
 
@@ -437,9 +588,9 @@ public class SdkTempLeftoversTests : IDisposable
         var theirs = Log(_old, TheirBuild);
         var (ours, before, after) = Build(_old + TimeSpan.FromMilliseconds(10), OurBuild);
 
-        Sweep(Kept);
+        Sweep();
         Assert.Contains(Path.GetFileName(theirs), Remembered());
-        Sweep(Kept);
+        Sweep();
 
         Assert.True(Directory.Exists(before));
         Assert.True(Directory.Exists(after));
@@ -452,7 +603,7 @@ public class SdkTempLeftoversTests : IDisposable
     {
         var log = Log(_old, OurBuild, extraLines: new[] { "ExtractManifestAsync: Extracting manifest" });
 
-        Sweep(Kept);
+        Sweep();
 
         Assert.Contains(Path.GetFileName(log), Remembered());
     }
@@ -463,7 +614,7 @@ public class SdkTempLeftoversTests : IDisposable
         var running = Log(_old, TheirBuild, ended: false);
         var young = Log(_now - TimeSpan.FromHours(1), TheirBuild);
 
-        Sweep(Kept);
+        Sweep();
 
         Assert.DoesNotContain(Path.GetFileName(running), Remembered());
         Assert.DoesNotContain(Path.GetFileName(young), Remembered());
@@ -474,7 +625,7 @@ public class SdkTempLeftoversTests : IDisposable
     {
         var log = Log(_old, OurBuild);
 
-        Sweep(Kept);
+        Sweep();
 
         Assert.False(File.Exists(log));
         Assert.DoesNotContain(Path.GetFileName(log), Remembered());
@@ -484,29 +635,30 @@ public class SdkTempLeftoversTests : IDisposable
     public void ARememberedLogThatIsGone_IsForgotten_AndALineThatIsNoLogNameIsDropped()
     {
         var log = Log(_old, TheirBuild);
-        File.WriteAllLines(Kept, new[]
+        Directory.CreateDirectory(_mem);
+        File.WriteAllLines(Kept(), new[]
         {
             SdkTempLeftovers.KeptHeader(Ours),
             "Microsoft.NET.Workload_9_20261101_120000_000.log",   // no such file any more
             @"..\..\Windows\win.ini", "", "not a log name",
         });
 
-        Sweep(Kept);
+        Sweep();
 
         Assert.Equal(new[] { Path.GetFileName(log) }, Remembered());
     }
 
-    /// <summary>The first run on a machine, or the first after the shared folder was removed: the memory's folder does
-    /// not exist yet, and the memory is written all the same.</summary>
+    /// <summary>The first run on a machine: the memory's folder does not exist yet, and the memory is written all the
+    /// same.</summary>
     [Fact]
     public void TheMemoryIsWritten_WhenItsFolderDoesNotExistYet()
     {
         var log = Log(_old, TheirBuild);
-        var kept = Path.Combine(_sandbox, "not-yet", "kept.txt");
+        var mem = Path.Combine(_sandbox, "not-yet");
 
-        Sweep(kept);
+        Sweep(mem: mem);
 
-        Assert.Contains(Path.GetFileName(log), Remembered(kept));
+        Assert.Contains(Path.GetFileName(log), Remembered(mem));
     }
 
     /// <summary>"Not ours" holds only for the projects it was judged against: a checkout with other projects (an older
@@ -516,10 +668,10 @@ public class SdkTempLeftoversTests : IDisposable
     {
         const string probe = "dotnet build tools/Probe/Probe.csproj -v q";
         var (log, before, after) = Build(_old, probe);
-        Sweep(Kept);
+        Sweep();
         Assert.Contains(Path.GetFileName(log), Remembered());
 
-        Sweep(Kept, Ours.Append("tools/Probe/Probe.csproj").ToArray());
+        Sweep(Ours.Append("tools/Probe/Probe.csproj").ToArray());
 
         Assert.False(File.Exists(log));
         Assert.False(Directory.Exists(before));
@@ -531,24 +683,30 @@ public class SdkTempLeftoversTests : IDisposable
     {
         var (log, _, _) = Build(_old, OurBuild);
         var their = Log(_old + TimeSpan.FromMinutes(5), TheirBuild);
-        File.WriteAllLines(Kept, new[] { SdkTempLeftovers.KeptHeader(Ours), Path.GetFileName(log) });
-        var before = File.ReadAllText(Kept);
+        SweepOnce(_seen);
+        Directory.CreateDirectory(_mem);
+        File.WriteAllLines(Kept(), new[] { SdkTempLeftovers.KeptHeader(Ours), Path.GetFileName(log) });
+        var keptBefore = File.ReadAllText(Kept());
+        var seenBefore = File.ReadAllText(Path.Combine(_mem, SdkTempLeftovers.SeenGroupsFileName));
 
-        var plan = SdkTempLeftovers.Find(_temp, _repo, _now, Kept, Ours);
+        var plan = SdkTempLeftovers.Find(_temp, _repo, _now, _mem, Ours);
 
         Assert.DoesNotContain(log, plan.Logs);   // remembered: kept, though read it would be ours
-        Assert.Equal(before, File.ReadAllText(Kept));
+        Assert.Equal(keptBefore, File.ReadAllText(Kept()));
+        Assert.Equal(seenBefore, File.ReadAllText(Path.Combine(_mem, SdkTempLeftovers.SeenGroupsFileName)));
         Assert.DoesNotContain(Path.GetFileName(their), Remembered());
     }
 
     [Fact]
     public void AMemoryHeldByAnother_IsNoMemory_AndTheSweepGoesOn()
     {
-        File.WriteAllLines(Kept, new[] { SdkTempLeftovers.KeptHeader(Ours) });
-        using var held = new FileStream(Kept, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
         var (log, _, _) = Build(_old, OurBuild);
+        SweepOnce(_seen);
+        Directory.CreateDirectory(_mem);
+        File.WriteAllLines(Kept(), new[] { SdkTempLeftovers.KeptHeader(Ours) });
+        using var held = new FileStream(Kept(), FileMode.Open, FileAccess.ReadWrite, FileShare.None);
 
-        Sweep(Kept);
+        SweepOnce(_now);
 
         Assert.False(File.Exists(log));
     }
@@ -556,10 +714,11 @@ public class SdkTempLeftoversTests : IDisposable
     [Fact]
     public void AMemoryThatIsAFolder_IsNoMemory()
     {
-        Directory.CreateDirectory(Kept);
         var (log, _, _) = Build(_old, OurBuild);
+        SweepOnce(_seen);
+        Directory.CreateDirectory(Kept());
 
-        Sweep(Kept);
+        SweepOnce(_now);
 
         Assert.False(File.Exists(log));
     }
@@ -618,4 +777,27 @@ public class SdkTempLeftoversTests : IDisposable
         Directory.SetLastWriteTimeUtc(dir, createdUtc);
         return dir;
     }
+
+    // ---- raw file times: a junction's own (not its target's), and values .NET cannot represent ---------------------
+
+    private static void SetOwnTimes(string path, DateTime utc)
+        => Assert.True(SetRawTimes(path, utc.ToFileTimeUtc(), utc.ToFileTimeUtc(), openReparsePoint: true));
+
+    private static bool SetRawTimes(string path, long creation, long lastWrite, bool openReparsePoint)
+    {
+        const uint FileWriteAttributes = 0x100, ShareAll = 7, OpenExisting = 3;
+        const uint BackupSemantics = 0x02000000, OpenReparsePoint = 0x00200000;
+        using var h = CreateFileW(path, FileWriteAttributes, ShareAll, IntPtr.Zero, OpenExisting,
+            BackupSemantics | (openReparsePoint ? OpenReparsePoint : 0), IntPtr.Zero);
+        if (h.IsInvalid) return false;
+        return SetFileTime(h, ref creation, IntPtr.Zero, ref lastWrite);
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, ExactSpelling = true)]
+    private static extern SafeFileHandle CreateFileW(string name, uint access, uint share, IntPtr security,
+        uint disposition, uint flags, IntPtr template);
+
+    [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool SetFileTime(SafeFileHandle file, ref long creation, IntPtr lastAccess, ref long lastWrite);
 }

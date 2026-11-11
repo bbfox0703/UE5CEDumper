@@ -79,8 +79,8 @@ public class TestTempRootTests : IDisposable
     public void ARootThatDoesNotExistIsNothingToSweep()
         => Assert.Empty(TestTempRoot.SweepDeadRuns(Path.Combine(_sandbox, "absent"), DateTime.UtcNow));
 
-    /// <summary>A sweep is housekeeping: a folder gone from under it (another run's exit removes the shared root once
-    /// it is empty) must not stop this run from taking a folder of its own.</summary>
+    /// <summary>A sweep is housekeeping: a %TEMP% that is not there, or a folder gone from under the walk (another
+    /// cleanup), must not stop this run from taking a folder of its own.</summary>
     [Fact]
     public void ASweepWhoseFolderIsGoneThrowsNothing()
         => Assert.Empty(TestTempRoot.SweepLegacy(Path.Combine(_sandbox, "absent"), DateTime.UtcNow));
@@ -294,6 +294,22 @@ public class TestTempRootTests : IDisposable
         }
         Assert.Contains("ProcessExit +=", body);
         Assert.Contains("RemoveRun(run)", body);
+    }
+
+    /// <summary>A run killed while a test held a read-only folder (AFolderThatWillNotGo makes one) leaves it in its
+    /// run folder; the next sweep still removes that run, clearing the folder's flag as it does a file's.</summary>
+    [Fact]
+    public void ADeadRunHoldingAReadOnlyFolder_IsDeleted()
+    {
+        var root = Path.Combine(_sandbox, TestTempRoot.RootName);
+        var dead = MakeRun(root, "dead", ownerFile: true);
+        var stuck = Directory.CreateDirectory(Path.Combine(dead, "t", "abcdefgh.ijk")).FullName;
+        new DirectoryInfo(stuck).Attributes |= FileAttributes.ReadOnly;
+
+        var deleted = TestTempRoot.SweepDeadRuns(root, DateTime.UtcNow);
+
+        Assert.Single(deleted);
+        Assert.False(Directory.Exists(dead));
     }
 
     private static string MakeRun(string root, string name, bool ownerFile)

@@ -86,6 +86,11 @@ internal static class SdkTempLeftovers
     /// <summary>The memory of logs kept for good, beside the test runs' folders.</summary>
     internal const string KeptLogsFileName = "sdk-logs-kept.txt";
 
+    /// <summary>Red stub: the groups seen young.</summary>
+    internal const string SeenGroupsFileName = "sdk-groups-seen.txt";
+    internal static readonly TimeSpan Settle = TimeSpan.FromSeconds(5);
+    internal static readonly TimeSpan Young = TimeSpan.FromMinutes(10);
+
     internal sealed record Plan(IReadOnlyList<string> Folders, IReadOnlyList<string> Logs);
 
     // What a log is to the sweep. Only KeepForever is final for a set of projects, and so only it is remembered: a log
@@ -113,9 +118,10 @@ internal static class SdkTempLeftovers
     private sealed record Decision(Plan Plan, List<Group> Going, HashSet<string> Present, List<string> NewlyKept);
 
     /// <summary>What <see cref="Sweep"/> would remove; deletes and writes nothing. Never throws.</summary>
-    internal static Plan Find(string temp, string repoRoot, DateTime nowUtc, string? keptLogsFile = null,
+    internal static Plan Find(string temp, string repoRoot, DateTime nowUtc, string? memoryFolder = null,
         IReadOnlyCollection<string>? ourProjects = null)
     {
+        var keptLogsFile = memoryFolder == null ? null : Path.Combine(memoryFolder, KeptLogsFileName);
         try
         {
             var projects = ourProjects ?? TrackedProjects(repoRoot);
@@ -130,9 +136,10 @@ internal static class SdkTempLeftovers
 
     /// <summary>Removes what <see cref="Find"/> names; returns what it removed. Never throws.
     /// <paramref name="ourProjects"/> defaults to the project files git tracks under <paramref name="repoRoot"/>.</summary>
-    internal static Plan Sweep(string temp, string repoRoot, DateTime nowUtc, string? keptLogsFile = null,
+    internal static Plan Sweep(string temp, string repoRoot, DateTime nowUtc, string? memoryFolder = null,
         IReadOnlyCollection<string>? ourProjects = null)
     {
+        var keptLogsFile = memoryFolder == null ? null : Path.Combine(memoryFolder, KeptLogsFileName);
         var folders = new List<string>();
         var logs = new List<string>();
         try
