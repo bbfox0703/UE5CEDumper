@@ -2575,6 +2575,36 @@ Four rules came out of it:
    bulk. Put the same instruction in any subagent prompt that has to review it. A quarantined `tasks\*.output` needs
    no restore; it is only a copy.
 
+6. **An injector flagged after it had worked, from one shell and not another.** `[AV-INJECT-2026-11-11]`, build
+   3705. The maintainer ran `py tools/verify/inject.py --name DumperTest` in a Windows Terminal PowerShell tab
+   (`WindowsTerminal → pwsh → py.exe → python.exe`).
+   - The DLL loaded at 18:48:38 and its pipe server was up a second later (the DLL's init log). ATD flagged
+     `python.exe` 75 s after that (`ATC.Malicious`, score 80). Nothing was quarantined and the game kept running.
+     The notification said "4 apps blocked"; Bitdefender's local event store held exactly one detection.
+   - Its MITRE labels are heuristic, not a fingerprint: `T1055.002` (PE injection), although `inject.py` is the
+     `LoadLibraryW` remote thread of `T1055.001`.
+   - **Not an AV update.** The day's last signature and ATC update was at 13:08, the same boot. The 11 loads into the
+     fixture after it were never flagged, among them the agent's run from Claude Code's Bash at 18:39 with the same
+     DLL file.
+   - **An ATD exception follows the image of the process that acts, not the script it runs.** The repository folder,
+     Claude's temp folder and Claude Code's launcher had been ATD exceptions for months (the maintainer added them
+     because the AV kept blocking). `python.exe` running a script inside the repository folder was flagged anyway.
+     Why the agent's runs pass is not known; do not rely on it.
+   - So rule 4 holds only for code that does not inject: a Python process doing `CreateRemoteThread(LoadLibraryW)`
+     is inspected like anything else.
+
+   **Rules:**
+   - **Read the DLL's init log before calling an injection blocked.** A behavioural verdict can arrive after the
+     injection succeeded.
+   - **Except the program that acts, never an interpreter.** An exception on `python.exe` exempts every script it
+     runs, in every repository, and its per-user install folder is writable by anything running as the user. The
+     maintainer excepted `python.exe` for the day. The fix is for `inject.py` to hand the injection to
+     `dist\UE5DumpUI.exe --inject-elevated`, an image inside the excepted repository folder; the `python.exe`
+     exception is removed once that ships.
+   - **Where Bitdefender records a verdict:** the app's `events\events.db` (SQLite; open it read-only) and
+     `ctc\rca\*.dat` (JSON: the detection, its score, the process tree). Both are readable without elevation.
+     Nothing is kept about runs it allowed, and reading the ATD allow list needs elevation.
+
 **Do not respond by making the script look like something else.** The behaviour genuinely *is*
 persistence; that is what the tool does. The honest fixes are a folder exclusion, a second
 implementation in a less-inspected host, and not running the thing automatically.
