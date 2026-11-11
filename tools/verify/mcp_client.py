@@ -270,6 +270,18 @@ def run_live(exe: str, pid: int | None, suspend_name: str | None) -> int:
 
     r, st, note = call("read_status")
     ck.check(not r.get("isError"), "read_status", st)
+
+    # Another client, standing in for a UE5DumpUI window: a value-scan session of its own, begun before the server's
+    # work and read back after it (the maintainer, 2026-11-11: an AI beside the UI must not disturb what the UI does).
+    other = other_sid = other_total = None
+    if st.get("scanned"):
+        sys.path.insert(0, str(pathlib.Path(__file__).parent))
+        from pipe_client import PipeClient   # noqa: E402 -- the rig beside this one
+        other = PipeClient(pid=pid or st.get("pid"), timeout=120)
+        other.connect()
+        began = other.request("begin_value_scan", data_type="Int32", scan_type="Exact", value="1", page_size=1)
+        other_sid, other_total = began.get("session_id"), began.get("total")
+        ck.check(bool(other_sid), f"another client's value scan ({other_total} hits)", began)
     if not st.get("scanned"):
         r, data, note = call("scan_start")
         ck.check(not r.get("isError"), "scan_start", data)
@@ -378,6 +390,15 @@ def run_live(exe: str, pid: int | None, suspend_name: str | None) -> int:
         ck.check(note is not None and "closed" in note, "and says the connection was closed", note)
     else:
         print("  skip  the cancel check (--suspend-name not given)")
+
+    if other is not None and other_sid:
+        page = other.request("query_candidates", session_id=other_sid, offset=0, limit=1)
+        ck.check(page.get("ok") is True and page.get("total") == other_total,
+                 "the other client's session survived the server's scans, cancel and reconnect", page)
+        names = [h.get("exe") for h in other.request("pipe_clients").get("clients", [])]
+        print(f"        pipe clients now: {names}")
+        other.request("end_value_scan", session_id=other_sid)
+        other.close()
 
     code = c.close()
     ck.check(code == 0, "exit code 0 after stdin closes", code)
