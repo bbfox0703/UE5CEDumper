@@ -313,6 +313,28 @@ constexpr bool HeldByOther(bool active, uint64_t owner, uint64_t caller) noexcep
     return active && owner != caller;
 }
 
+// [DBGCAM-RELEASE-STALLED] An AI session's debug camera, released while the game thread was stalled: the release's OFF
+// timed out and stays queued, and on stock UE 4.18-5.7 a queued OFF does not turn the camera off (it runs on the
+// original controller's CheatManager, and nobody is left waiting to switch the controller back). Fern keeps that
+// release owed and asks, each tick, what to do with it.
+enum class OwedRelease : uint8_t { Wait, Send, Done, Abandon };
+// Stark::kInvokeTimedOutStillQueued, which this header does not include: Fern static_asserts the two agree.
+constexpr int32_t kOwedOffQueued = -5;
+
+// Before sending: `owner` is the ledger's holder of the camera, `pendingOn` an ON on its way (its sender's from now),
+// `toggleOutstanding` a toggle still queued or being dispatched, `cameraState` 1 on / 0 off / below 0 unreadable.
+constexpr OwedRelease OwedCameraRelease(uint64_t owner, bool pendingOn, bool toggleOutstanding, int32_t cameraState,
+                                        bool gameThreadStalled) noexcept {
+    (void)owner; (void)pendingOn; (void)toggleOutstanding; (void)cameraState; (void)gameThreadStalled;
+    return OwedRelease::Wait;
+}
+
+// After sending: what the OFF answered.
+constexpr OwedRelease OwedCameraReleaseSent(int32_t state) noexcept {
+    (void)state;
+    return OwedRelease::Wait;
+}
+
 // The names of the holds a pipe request changes, from its command and keys; empty for a command that changes none.
 // `reset_all_fields` changes every force-field job, which the caller lists (`forceFieldJobs`, "<class>::<field>").
 inline std::vector<std::string> HoldsChangedBy(const std::string& cmd, const nlohmann::json& request,

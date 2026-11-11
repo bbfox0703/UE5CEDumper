@@ -773,6 +773,47 @@ public sealed class PipePerProcessSourceTests
         Assert.True(skip > 0 && setCe > skip, "the pending check before CE is named");
     }
 
+    /// <summary>[DBGCAM-RELEASE-STALLED] An AI's camera release that timed out with the game thread stalled is owed,
+    /// and the monitor sends it again once the queued OFF has run -- under the camera's hold lock, so a client taking the
+    /// camera meanwhile is seen first.</summary>
+    [Fact]
+    public void AStalledCameraRelease_IsOwed_AndSentAgainOnceTheQueuedOffHasRun()
+    {
+        string fern = CodeOnly(DllSrc("Fern.cpp"));
+        Assert.Contains("static_assert(Voll::kOwedOffQueued == Stark::kInvokeTimedOutStillQueued", fern);
+        string release = Between(fern, "void Fern::ReleaseOwnedBy(", "void Fern::MonitorLoop(");
+        int code = release.IndexOf("code = HoldActive(hold) ? ReleaseHold(hold) : 0;", StringComparison.Ordinal);
+        int owed = release.IndexOf("hold == Grimoire::HOLD_DEBUG_CAMERA && code == Stark::kInvokeTimedOutStillQueued",
+            StringComparison.Ordinal);
+        int store = release.IndexOf("s_cameraReleaseOwedBy.store(owner);", StringComparison.Ordinal);
+        Assert.True(code > 0 && owed > code && store > owed, "the release's -5 records the owed release");
+
+        string loop = Between(fern, "void Fern::MonitorLoop() {", "static std::string ClientExeName(");
+        Assert.Contains("ServeOwedCameraRelease();", loop);
+
+        string serve = Between(fern, "void ServeOwedCameraRelease() {", "\n}");
+        int load = serve.IndexOf("s_cameraReleaseOwedBy.load()", StringComparison.Ordinal);
+        int lockAt = serve.IndexOf("Voll::Holds().LockFor(Grimoire::HOLD_DEBUG_CAMERA)", StringComparison.Ordinal);
+        int decide = serve.IndexOf("Voll::OwedCameraRelease(Voll::Holds().Owner(Grimoire::HOLD_DEBUG_CAMERA)",
+            StringComparison.Ordinal);
+        int send = serve.IndexOf("UE5_SetDebugCamera(0)", StringComparison.Ordinal);
+        int sent = serve.IndexOf("Voll::OwedCameraReleaseSent(", StringComparison.Ordinal);
+        int clear = serve.IndexOf("s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0)", StringComparison.Ordinal);
+        Assert.True(load > 0 && lockAt > load && decide > lockAt && send > decide && sent > send && clear > sent,
+            "owed? -> the hold lock -> decide -> send -> what it answered -> cleared, a newer owed release kept");
+        Assert.Contains("FrierenDebugCamera::ToggleOutstanding()", serve);
+        Assert.Contains("FrierenDebugCamera::PendingOn(sender)", serve);
+        Assert.Contains("Stark::GameThreadLiveness::Stalled", serve);
+
+        string frieren = CodeOnly(DllSrc("Frieren.cpp"));
+        string outstanding = Between(frieren, "bool ToggleOutstanding() {", "\n}");
+        Assert.Contains("return s_dbgCamInFlight >= 0 || s_dbgCamQueued.StillQueued();", outstanding);
+
+        // get_holds says so, beside the camera's entry.
+        string holds = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_GET_HOLDS) {", "data[\"holds\"] = arr;");
+        Assert.Contains("j[\"release_owed\"] = true;", holds);
+    }
+
     /// <summary>Every command's invokes belong to its client; a departed AI's queued ones go before its holds.</summary>
     [Fact]
     public void Fern_SetsTheInvokeOwner_AndDropsADepartedAisQueue()

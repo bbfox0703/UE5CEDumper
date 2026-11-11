@@ -488,6 +488,43 @@ static void Test_Voll_Holders() {
            Voll::HolderToJson(bg).value("background", false) && !Voll::HolderToJson(h).value("background", true));
 }
 
+// [DBGCAM-RELEASE-STALLED] An AI session's camera release that timed out with the game thread stalled: sent again once
+// the queued OFF has run, unless the camera became someone's meanwhile.
+static void Test_Voll_OwedCameraRelease() {
+    using Voll::OwedRelease;
+    using Voll::OwedCameraRelease;
+    const uint64_t none = Voll::kHoldOwnerNone, ui = 1234;
+    EXPECT("the owed OFF's code is Stark's queued answer", Voll::kOwedOffQueued == Stark::kInvokeTimedOutStillQueued);
+    EXPECT("the queued OFF has not run: wait",
+           OwedCameraRelease(none, false, true, 1, false) == OwedRelease::Wait);
+    EXPECT("it ran and the camera is still on, the game thread running: send it again",
+           OwedCameraRelease(none, false, false, 1, false) == OwedRelease::Send);
+    EXPECT("still on, but the game thread is stalled again: wait, the OFF could not run",
+           OwedCameraRelease(none, false, false, 1, true) == OwedRelease::Wait);
+    EXPECT("it ran and turned the camera off (UE 5.8): done",
+           OwedCameraRelease(none, false, false, 0, false) == OwedRelease::Done);
+    EXPECT("off while the game thread is stalled: done all the same",
+           OwedCameraRelease(none, false, false, 0, true) == OwedRelease::Done);
+    EXPECT("the UI took the camera meanwhile: abandoned, never turned off under it",
+           OwedCameraRelease(ui, false, false, 1, false) == OwedRelease::Abandon);
+    EXPECT("taken while the OFF is still queued: abandoned before it is sent",
+           OwedCameraRelease(ui, false, true, 1, false) == OwedRelease::Abandon);
+    EXPECT("CE took it: abandoned", OwedCameraRelease(Voll::kHoldOwnerCe, false, false, 1, false) == OwedRelease::Abandon);
+    EXPECT("an ON on its way (someone asked for the camera): abandoned",
+           OwedCameraRelease(none, true, true, 1, false) == OwedRelease::Abandon);
+    EXPECT("the camera cannot be read (no CheatManager now): abandoned, nothing to turn off",
+           OwedCameraRelease(none, false, false, -1, false) == OwedRelease::Abandon);
+
+    using Voll::OwedCameraReleaseSent;
+    EXPECT("the OFF turned it off: done", OwedCameraReleaseSent(0) == OwedRelease::Done);
+    EXPECT("the OFF queued again (a new stall): still owed", OwedCameraReleaseSent(Voll::kOwedOffQueued) == OwedRelease::Wait);
+    EXPECT("still on after the toggle and the swap-back: abandoned, nothing more to try",
+           OwedCameraReleaseSent(1) == OwedRelease::Abandon);
+    EXPECT("an error: abandoned", OwedCameraReleaseSent(-1) == OwedRelease::Abandon);
+    EXPECT("not sent, an opposite toggle queued (-6): abandoned, someone wants it on",
+           OwedCameraReleaseSent(Stark::kToggleBlockedByQueued) == OwedRelease::Abandon);
+}
+
 // [D2-3-INVOKE] The queue's owner rule and the background client's deny list.
 static void Test_D23_InvokeOwnersAndDenyList() {
     const uint64_t ui = 1234, ai = 777;
@@ -12588,6 +12625,7 @@ int main() {
     RUN(Test_Voll_Holders);
     RUN(Test_Voll_HoldLedger);
     RUN(Test_D23_InvokeOwnersAndDenyList);
+    RUN(Test_Voll_OwedCameraRelease);
     RUN(Test_Voll_ClassifyFirstInstance);
     RUN(Test_Voll_ClientOwnerKey);
     RUN(Test_Schlacht_Owners);
