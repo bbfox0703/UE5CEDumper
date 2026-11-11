@@ -276,11 +276,18 @@ public class TestTempRootTests : IDisposable
         Assert.True(Directory.Exists(root));
     }
 
-    /// <summary>Install does the housekeeping before TMP / TEMP move, and hands the run's folder to the process exit.
-    /// It runs once per process, before any test, so this reads the source rather than calling it.</summary>
+    /// <summary>Install does the housekeeping before TMP / TEMP move. The run's folder is removed by an assembly fixture,
+    /// inside the test session, and never at ProcessExit: xunit.v3 forces exit code 1 when the process is still alive
+    /// about 11 s after the session ends, and a removal at ProcessExit took longer than that while another process held
+    /// the SSD at 100% I/O (measured 2026-11-11; a 15-s delay there reproduces it: 17 passed, exit 1). Install runs once
+    /// per process, before any test, so this reads the source rather than calling it.</summary>
     [Fact]
-    public void Install_SweepsFirst_ThenMovesTemp_AndRemovesTheRunAtExit()
+    public void Install_SweepsFirst_ThenMovesTemp_AndTheRunGoesInsideTheSession()
     {
+        var dir = Path.Combine(SdkTempLeftovers.FindRepoRoot()!, "ui", "UE5DumpUI.Tests");
+        var end = File.ReadAllText(Path.Combine(dir, "TestRunEnd.cs"));
+        Assert.Contains("[assembly: AssemblyFixture(typeof(UE5DumpUI.Tests.TestRunEnd))]", end);
+        Assert.Contains("TestTempRoot.EndRun()", end);
         var src = File.ReadAllText(Path.Combine(SdkTempLeftovers.FindRepoRoot()!, "ui", "UE5DumpUI.Tests", "TestTempRoot.cs"))
             .Replace("\r\n", "\n");
         var body = src[src.IndexOf("internal static void Install()", StringComparison.Ordinal)..];
@@ -292,8 +299,7 @@ public class TestTempRootTests : IDisposable
             var at = body.IndexOf(call, StringComparison.Ordinal);
             Assert.True(at > 0 && at < move, call);
         }
-        Assert.Contains("ProcessExit +=", body);
-        Assert.Contains("RemoveRun(run)", body);
+        Assert.DoesNotContain("ProcessExit", src);
     }
 
     /// <summary>A run killed while a test held a read-only folder (AFolderThatWillNotGo makes one) leaves it in its
