@@ -37,8 +37,11 @@ import time
 
 PROTOCOL = "2025-11-25"
 
-# --ssh HOST: every McpClient this run makes starts the server through ssh.
+# --ssh HOST / --ssh-key KEY: every McpClient this run makes starts the server through ssh.
 SSH_HOST: str | None = None
+SSH_KEY: str | None = None
+# Windows' own client reads a key's NTFS ACL as sshd expects; Git's ssh, often first on PATH, judges it by POSIX bits.
+WINDOWS_SSH = pathlib.Path(r"C:\Windows\System32\OpenSSH\ssh.exe")
 
 
 class McpError(Exception):
@@ -78,7 +81,9 @@ class McpClient:
         command = [exe, "--mcp", *(extra_args or [])]
         if ssh:
             # -T: no terminal, which would echo and translate newlines inside the protocol.
-            command = ["ssh", "-T", ssh, *command]
+            client = str(WINDOWS_SSH) if WINDOWS_SSH.exists() else "ssh"
+            auth = ["-i", SSH_KEY, "-o", "BatchMode=yes"] if SSH_KEY else []
+            command = [client, "-T", *auth, ssh, *command]
         self.proc = subprocess.Popen(
             command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
             stderr=None if ssh else subprocess.PIPE, bufsize=0)
@@ -317,11 +322,16 @@ def run_live(exe: str, pid: int | None, suspend_name: str | None) -> int:
     if st.get("scanned"):
         sys.path.insert(0, str(pathlib.Path(__file__).parent))
         from pipe_client import PipeClient   # noqa: E402 -- the rig beside this one
-        other = PipeClient(pid=pid or st.get("pid"), timeout=120)
-        other.connect()
-        began = other.request("begin_value_scan", data_type="Int32", scan_type="Exact", value="1", page_size=1)
-        other_sid, other_total = began.get("session_id"), began.get("total")
-        ck.check(bool(other_sid), f"another client's value scan ({other_total} hits)", began)
+        try:
+            other = PipeClient(pid=pid or st.get("pid"), timeout=120)
+            other.connect()
+        except Exception as e:  # noqa: BLE001 -- e.g. an elevated game seen from a non-elevated rig
+            other = None
+            print(f"  skip  another client beside the server: this rig cannot connect ({e})")
+        if other is not None:
+            began = other.request("begin_value_scan", data_type="Int32", scan_type="Exact", value="1", page_size=1)
+            other_sid, other_total = began.get("session_id"), began.get("total")
+            ck.check(bool(other_sid), f"another client's value scan ({other_total} hits)", began)
     if not st.get("scanned"):
         r, data, note = call("scan_start")
         ck.check(not r.get("isError"), "scan_start", data)
@@ -455,10 +465,11 @@ def main() -> int:
     ap.add_argument("--suspend-name", help="live: the game's process name for suspend.py (e.g. DumperTest); "
                                            "enables the cancel check, which suspends the game for about a second")
     ap.add_argument("--ssh", metavar="HOST", help="start the server through `ssh -T HOST`; --exe is the path there")
+    ap.add_argument("--ssh-key", metavar="KEY", help="with --ssh: log in with this private key, no prompt (BatchMode)")
     ap.add_argument("--report", metavar="FILE", help="also write everything printed to FILE")
     a = ap.parse_args()
-    global SSH_HOST
-    SSH_HOST = a.ssh
+    global SSH_HOST, SSH_KEY
+    SSH_HOST, SSH_KEY = a.ssh, a.ssh_key
     if a.report:
         sys.stdout = _Tee(sys.stdout, open(a.report, "w", encoding="utf-8"))
         print(f"mcp_client.py {a.mode} -- {time.strftime('%Y-%m-%d %H:%M:%S')}, elevated: {_elevated()}, "
