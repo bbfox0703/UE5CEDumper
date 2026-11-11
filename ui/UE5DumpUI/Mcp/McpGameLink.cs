@@ -179,7 +179,7 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
             throw new McpToolError($"Game {target} accepted the connection but did not answer get_pointers.");
         }
 
-        int reported = ptrs["pid"] is JsonValue pv && pv.TryGetValue<int>(out int p) ? p : 0;
+        long reported = McpJson.TryGetLong(ptrs["pid"], out long p) ? p : 0;
         if (reported != 0 && reported != target)
         {
             await DropAsync(null);
@@ -262,7 +262,7 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
     /// before its scan, and every object command then answers with zeros.</summary>
     internal static bool ScannedFrom(JsonObject reply)
     {
-        long count = reply["object_count"] is JsonValue c && c.TryGetValue<long>(out long n) ? n : 0;
+        long count = McpJson.TryGetLong(reply["object_count"], out long n) ? n : 0;
         string? method = McpJson.GetString(reply, "gobjects_method");
         return count > 0 && method != "not_found";
     }

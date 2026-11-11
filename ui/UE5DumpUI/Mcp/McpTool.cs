@@ -62,11 +62,7 @@ internal sealed class McpArgs(JsonObject? args)
         if (node is null) return null;
         if (node is JsonValue v)
         {
-            if (v.GetValueKind() == JsonValueKind.Number)
-            {
-                if (v.TryGetValue<long>(out long n)) return n;
-                if (v.TryGetValue<double>(out double d) && d == Math.Floor(d) && Math.Abs(d) < 9.0e15) return (long)d;
-            }
+            if (McpJson.TryGetLong(v, out long n)) return n;
             if (v.GetValueKind() == JsonValueKind.String
                 && long.TryParse(v.GetValue<string>(), NumberStyles.Integer, CultureInfo.InvariantCulture, out long p))
                 return p;
@@ -130,7 +126,7 @@ internal sealed class McpArgs(JsonObject? args)
             if (!TryParseHex(v.GetValue<string>(), out value))
                 throw new McpToolError($"'{name}' must be a hex address such as \"0x7FF6A1B2C3D0\".");
         }
-        else if (node is JsonValue n && n.GetValueKind() == JsonValueKind.Number && n.TryGetValue<long>(out long l) && l > 0)
+        else if (McpJson.TryGetLong(node, out long l) && l > 0)
         {
             value = (ulong)l;
         }

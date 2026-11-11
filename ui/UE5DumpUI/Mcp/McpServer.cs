@@ -81,13 +81,22 @@ internal sealed class McpServer
             Track(HandleLineAsync(line));
         }
 
-        // The client is gone; nothing will read a response. Stop what runs, and give it a moment to close the pipe
-        // connection cleanly (the DLL then cancels its command at once rather than at its next 200 ms check).
-        foreach (var cts in _inflight.Values) TryCancel(cts);
-        await Task.WhenAny(Task.WhenAll(_running.Keys), Task.Delay(TimeSpan.FromSeconds(2)));
+        // stdin closed, but stdout may still be read: a one-shot client pipes its requests in and reads the answers.
+        // What already runs gets EofGrace to answer; then it is cancelled, which closes the pipe connection, so the
+        // DLL stops the command rather than finishing a walk nobody will read.
+        var all = Task.WhenAll(_running.Keys);
+        if (await Task.WhenAny(all, Task.Delay(EofGrace)) != all)
+        {
+            foreach (var cts in _inflight.Values) TryCancel(cts);
+            await Task.WhenAny(Task.WhenAll(_running.Keys), Task.Delay(TimeSpan.FromSeconds(1)));
+        }
         _log.Info(Constants.LogCatInit, "[MCP] stdin closed; server exiting.");
         return 0;
     }
+
+    /// <summary>How long requests still running when stdin closes get to answer. Claude Code ends the process 300 ms
+    /// after closing stdin, so this matters only to a client that waits.</summary>
+    internal static readonly TimeSpan EofGrace = TimeSpan.FromSeconds(2);
 
     private void Track(Task task)
     {

@@ -4,8 +4,9 @@ using System.Text;
 namespace UE5DumpUI.Services;
 
 /// <summary>
-/// The end of a game's DLL log, read while the DLL keeps writing it. [PIPE-PER-PROCESS-2026-11-06] Stage C: Connect reads
-/// the pipe log's at-capacity line (who holds the connections) when it cannot connect to ask.
+/// The end of a game's DLL log, read while the DLL keeps writing it. [PIPE-PER-PROCESS-2026-11-06] Stage C: a client
+/// that finds every connection taken reads the pipe log's at-capacity line (who holds them), since it cannot connect to
+/// ask.
 /// </summary>
 public static class DumperLogTail
 {

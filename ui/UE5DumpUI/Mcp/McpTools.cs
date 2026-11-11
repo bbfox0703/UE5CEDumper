@@ -457,7 +457,7 @@ internal static class McpTools
                       + "loaded, call scan_start.";
             }
             int ours = typeof(McpTools).Assembly.GetName().Version?.Revision ?? 0;
-            int dll = reply["build_number"] is JsonValue b && b.TryGetValue<int>(out int n) ? n : 0;
+            long dll = McpJson.TryGetLong(reply["build_number"], out long n) ? n : 0;
             reply["mcp_build"] = ours;
             if (ours > 0 && dll > 0 && ours != dll)
                 note = (note is null ? "" : note + " ")

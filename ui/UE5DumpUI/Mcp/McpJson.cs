@@ -75,10 +75,24 @@ internal static class McpJson
     {
         if (id is not JsonValue v) return null;
         if (v.GetValueKind() == JsonValueKind.String) return "s:" + v.GetValue<string>();
-        if (v.GetValueKind() == JsonValueKind.Number && v.TryGetValue<long>(out long n)) return "n:" + n;
-        if (v.GetValueKind() == JsonValueKind.Number && v.TryGetValue<double>(out double d)
-            && d == Math.Floor(d) && Math.Abs(d) < 9.0e15)
-            return "n:" + (long)d;
-        return null;
+        return TryGetLong(v, out long n) ? "n:" + n : null;
+    }
+
+    /// <summary>An integral JSON number as a long, however the value was made. <c>TryGetValue&lt;long&gt;</c> alone
+    /// is not enough: a value parsed from text answers it, but one built from an int answers only
+    /// <c>TryGetValue&lt;int&gt;</c>.</summary>
+    public static bool TryGetLong(JsonNode? node, out long value)
+    {
+        value = 0;
+        if (node is not JsonValue v || v.GetValueKind() != JsonValueKind.Number) return false;
+        if (v.TryGetValue<long>(out value)) return true;
+        if (v.TryGetValue<int>(out int i)) { value = i; return true; }
+        if (v.TryGetValue<uint>(out uint u)) { value = u; return true; }
+        if (v.TryGetValue<double>(out double d) && d == Math.Floor(d) && Math.Abs(d) < 9.0e15)
+        {
+            value = (long)d;
+            return true;
+        }
+        return false;
     }
 }
