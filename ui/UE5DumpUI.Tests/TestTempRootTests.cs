@@ -257,9 +257,11 @@ public class TestTempRootTests : IDisposable
     [Fact]
     public void RemoveRun_ReleasesThePool_DeletesTheRun_AndKeepsTheSharedRoot()
     {
-        var root = Directory.CreateDirectory(Path.Combine(_sandbox, TestTempRoot.RootName)).FullName;
-        var run = Directory.CreateDirectory(Path.Combine(root, "1-20261111000000")).FullName;
-        var db = Path.Combine(run, "snapshots.G.db");
+        // Short names: SQLite cannot open a database whose journal path passes MAX_PATH, and %TEMP% may be deep
+        // (measured: a 114-character TEMP gave SQLite Error 14 with the run's folder names spelled out).
+        var root = Directory.CreateDirectory(Path.Combine(_sandbox, "r")).FullName;
+        var run = Directory.CreateDirectory(Path.Combine(root, "1")).FullName;
+        var db = Path.Combine(run, "s.db");
         using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={db}"))
         {
             conn.Open();

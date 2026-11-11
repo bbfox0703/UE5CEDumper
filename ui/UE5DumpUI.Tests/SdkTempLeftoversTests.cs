@@ -428,19 +428,21 @@ public class SdkTempLeftoversTests : IDisposable
         Assert.True(File.Exists(log));
     }
 
-    /// <summary>A remembered log is not read again, but it is still there: a folder beside it may be its build's.</summary>
+    /// <summary>A remembered log is not read again, but it is still there: a folder beside it may be its build's. Their
+    /// log's own folders are gone here (another cleanup took them), so without their log the group would look exactly
+    /// like our build -- the shape only the remembered log tells apart.</summary>
     [Fact]
     public void ARememberedLog_StillKeepsTheFoldersBesideIt()
     {
         var theirs = Log(_old, TheirBuild);
-        var ours = Log(_old + TimeSpan.FromMilliseconds(10), OurBuild);
-        var folders = Enumerable.Range(0, 4).Select(i => Folder(_old + TimeSpan.FromMilliseconds(i * 5 - 300))).ToList();
+        var (ours, before, after) = Build(_old + TimeSpan.FromMilliseconds(10), OurBuild);
 
         Sweep(Kept);
         Assert.Contains(Path.GetFileName(theirs), Remembered());
         Sweep(Kept);
 
-        Assert.All(folders, f => Assert.True(Directory.Exists(f)));
+        Assert.True(Directory.Exists(before));
+        Assert.True(Directory.Exists(after));
         Assert.True(File.Exists(theirs));
         Assert.True(File.Exists(ours));
     }
