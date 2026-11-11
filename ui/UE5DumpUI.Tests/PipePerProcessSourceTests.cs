@@ -685,18 +685,58 @@ public sealed class PipePerProcessSourceTests
         Assert.True(lockAt > 0 && check > lockAt && blocks > check && push > blocks && count > push,
             "lock, if_free check, push, count -- in that order, all under the lock");
         Assert.Contains("req->owner = t_invokeOwner;", enqueue);
+        string refusal = enqueue[check..push];
+        Assert.Contains("t_lastInvokeBlocker = other;", refusal);
+        Assert.Contains("return kInvokeHeldByOther;", refusal);
 
-        // Answered = settled: the drain (run or dropped), shutdown, and an owner's drop each take it off the count.
+        // Answered = settled: the drain (run or dropped), shutdown, an owner's drop and a waiter's abandon each take it
+        // off the count, once.
         string drain = Between(stark, "if (ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {",
             "static void __fastcall HookedProcessEvent(");
         int ran = drain.IndexOf("CallProcessEventSEH(req->instance, req->ufunc, req->params);", StringComparison.Ordinal);
         int settle = drain.IndexOf("SettleLocked(*req);", ran, StringComparison.Ordinal);
         int promise = drain.IndexOf("req->promise.set_value(result);", ran, StringComparison.Ordinal);
         Assert.True(ran > 0 && settle > ran && promise > settle, "settled before the promise wakes its caller");
+        Assert.Contains("SettleLocked(*req);",
+            Between(drain, "if (req->dropIfAbandoned && !ClaimRequest(req->state, kRequestRunning)) {", "continue;"));
+        // One request at a time, each taken under the lock just before it runs: nothing waits outside the queue's reach.
+        int pop = drain.IndexOf("s_invokeQueue.pop_front();", StringComparison.Ordinal);
+        Assert.True(pop > 0 && pop < ran, "taken from the queue just before it runs");
+        Assert.DoesNotContain("pending.push_back", drain);
         Assert.Contains("SettleLocked(*req);", Between(stark, "void Shutdown() {", "bool IsHookActive()"));
         string drop = Between(stark, "int32_t DropQueuedInvokesOf(uint64_t owner) {", "void SetInvokeTimeoutMs(");
         Assert.Contains("ClaimRequest(req.state, kRequestAbandoned)", drop);
         Assert.Contains("SettleLocked(req);", drop);
+        string abandon = Between(enqueue + stark[stark.IndexOf("auto status = future.wait_for(", StringComparison.Ordinal)..],
+            "if (status == std::future_status::timeout && dropIfAbandoned) {", "if (status == std::future_status::timeout) {");
+        Assert.Contains("SettleLocked(*req);", abandon);
+        Assert.Contains("if (req.settled) return;", stark);
+    }
+
+    /// <summary>A pending debug-camera ON is its sender's alone: recorded where the toggle is sent, counted as held by
+    /// the if_free check, and given by the recorder to its sender only.</summary>
+    [Fact]
+    public void APendingDebugCameraOn_IsItsSendersAlone()
+    {
+        string frieren = CodeOnly(DllSrc("Frieren.cpp"));
+        string set = Between(frieren, "int32_t UE5_SetDebugCamera(int32_t enable) {", "struct InFlight {");
+        int inFlight = set.IndexOf("s_dbgCamInFlight = want ? 1 : 0;", StringComparison.Ordinal);
+        int sender = set.IndexOf("s_dbgCamOwner = Stark::CurrentInvokeOwner();", StringComparison.Ordinal);
+        Assert.True(inFlight > 0 && sender > inFlight, "the sender recorded where the toggle is sent");
+        string pending = Between(frieren, "bool PendingOn(uint64_t& owner) {", "}  ");
+        Assert.Contains("owner = on ? s_dbgCamOwner : 0;", pending);
+
+        string fern = CodeOnly(DllSrc("Fern.cpp"));
+        Assert.Contains("return hold == Grimoire::HOLD_DEBUG_CAMERA && FrierenDebugCamera::PendingOn(sender);", fern);
+        string head = Between(fern, "std::string Fern::DispatchCommand(", "if (cmd == Renge::CMD_INIT) {");
+        Assert.Contains("const bool inForce = HoldActive(h) || HoldPending(h, sender);", head);
+        Assert.Contains("if (sender == caller) Voll::Holds().SetOwner(h, caller);", head);
+        Assert.DoesNotContain("HoldActive(h) || HoldPending(h) ? caller", head);
+
+        string handler = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_SET_DEBUG_CAMERA) {",
+            "return Renge::MakeResponse(id, data).dump();");
+        Assert.Contains("state == Stark::kInvokeHeldByOther", handler);
+        Assert.Contains("Grimoire::HOLD_HELD_BY_OTHER", handler);
     }
 
     /// <summary>Every command's invokes belong to its client; a departed AI's queued ones go before its holds.</summary>
@@ -706,7 +746,6 @@ public sealed class PipePerProcessSourceTests
         string fern = CodeOnly(DllSrc("Fern.cpp"));
         string head = Between(fern, "std::string Fern::DispatchCommand(", "if (cmd == Renge::CMD_INIT) {");
         Assert.Contains("const Stark::InvokeOwnerScope invokeOwner(conn->ownerKey, request.value(", head);
-        Assert.Contains("HoldActive(h) || HoldPending(h) ? caller : Voll::kHoldOwnerNone", head);
 
         string release = Between(fern, "void Fern::ReleaseOwnedBy(", "void Fern::MonitorLoop(");
         int gate = release.IndexOf("if (!IsBackgroundOwner(owner) || OwnerStillConnected(owner)) return;",
@@ -727,9 +766,12 @@ public sealed class PipePerProcessSourceTests
         string body = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_INVOKE_FUNCTION) {",
             "if (cmd == Renge::CMD_");
         int deny = body.IndexOf("Voll::InvokeRefusedForBackground(", StringComparison.Ordinal);
+        int blocker = body.IndexOf("Stark::IfFreeBlocker(conn->ownerKey)", StringComparison.Ordinal);
+        int convert = body.IndexOf("FrierenInvoke::PrepareObjectParams(", StringComparison.Ordinal);
         int alloc = body.IndexOf("strAllocs", StringComparison.Ordinal);
         int call = body.IndexOf("UE5_CallProcessEventEx(instanceAddr, ufuncAddr, paramPtr", StringComparison.Ordinal);
-        Assert.True(deny > 0 && alloc > deny && call > alloc, "the deny list before the strings and the call");
+        Assert.True(deny > 0 && blocker > deny && convert > blocker && alloc > convert && call > alloc,
+            "the deny list, then the conflict, before the conversion, the strings and the call");
         Assert.Contains("if (conn->background.load())", body);
         Assert.Contains("if (directCall)", body[..alloc]);
         int held = body.IndexOf("callResult == Stark::kInvokeHeldByOther", StringComparison.Ordinal);
@@ -739,12 +781,15 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("Grimoire::HOLD_INVOKE_QUEUE", mapping);
         Assert.Contains("Stark::LastInvokeBlocker()", mapping);
 
-        string routed = Between(CodeOnly(DllSrc("Frieren.cpp")), "static int32_t CallProcessEventRouted(uintptr_t instance,",
-            "int32_t UE5_CallProcessEventEx(uintptr_t instance");
-        int refuse = routed.LastIndexOf("if (Stark::CurrentInvokeIfFree()) return Stark::kInvokeNeedsGameThread;",
+        // The definition, not the forward declaration above it: its parameter list ends in ") {".
+        string routed = Between(CodeOnly(DllSrc("Frieren.cpp")),
+            "bool dropIfAbandoned, std::shared_future<int32_t>* queuedOut) {", "int32_t UE5_CallProcessEventEx(uintptr_t instance");
+        int hook = routed.IndexOf("if (Stark::IsHookActive()) {", StringComparison.Ordinal);
+        int refuse = routed.IndexOf("if (Stark::CurrentInvokeIfFree()) return Stark::kInvokeNeedsGameThread;",
             StringComparison.Ordinal);
         int direct = routed.IndexOf("pProcessEvent(reinterpret_cast<void*>(instance)", StringComparison.Ordinal);
-        Assert.True(refuse > 0 && direct > refuse, "an if_free invoke never reaches the off-thread call");
+        Assert.True(hook > 0 && refuse > hook && direct > refuse,
+            "the queue first; with the hook down an if_free invoke is refused before the off-thread call");
 
         string holds = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_GET_HOLDS) {", "if (cmd == Renge::CMD_");
         Assert.Contains("Stark::OutstandingInvokes()", holds);

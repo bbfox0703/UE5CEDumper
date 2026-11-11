@@ -152,7 +152,7 @@ internal static class McpWriteTools
                 if (a.Has("speed")) r["speed"] = a.ReqDouble("speed");
                 if (a.Has("preset")) r["preset"] = a.Int("preset", 0, 0, 2);
                 if (a.Has("noclip")) r["noclip"] = a.Bool("noclip", false);
-            }, "fly_set", experimental: true);
+            }, "fly_set", experimental: true, gameThreadCalls: 2);   // fly OFF restores collision on the game thread
 
         yield return Write(game, experimentalEnabled, "write_foreground_lock", "Keep Foreground",
             "Experimental. Makes the game believe it is the foreground window, so it keeps running (and game-thread "
@@ -219,7 +219,7 @@ internal static class McpWriteTools
     /// (a reset) by setting <c>cmd</c>.</summary>
     private static McpTool Write(IMcpGame game, Func<bool> experimentalEnabled, string name, string title,
         string description, (string, JsonObject, bool)[] props, Action<McpArgs, JsonObject> fill, string cmd,
-        bool experimental = false, bool ifFree = true, int timeoutSeconds = WriteSeconds)
+        bool experimental = false, bool ifFree = true, int timeoutSeconds = WriteSeconds, int gameThreadCalls = 0)
     {
         var all = new List<(string, JsonObject, bool)>(props) { PidProp };
         return new McpTool(name, title, description, McpSchema.Object([.. all]), ReadOnly: false,
@@ -230,9 +230,12 @@ internal static class McpWriteTools
                 var request = new JsonObject { ["cmd"] = cmd };
                 fill(a, request);
                 if (ifFree) request["if_free"] = true;
-                await RequireWritableDllAsync(game, pid, ct);
-                var reply = await game.SendAsync(pid, request, TimeSpan.FromSeconds(timeoutSeconds), ct,
-                    requireScan: true);
+                var ptrs = await RequireWritableDllAsync(game, pid, ct);
+                // A command that makes game-thread calls on its way waits as long as the DLL may on each.
+                var timeout = gameThreadCalls > 0
+                    ? InvokeTimeout(ptrs, gameThreadCalls)
+                    : TimeSpan.FromSeconds(timeoutSeconds);
+                var reply = await game.SendAsync(pid, request, timeout, ct, requireScan: true);
                 return Answer(reply, game.TakeNotice());
             }, Idempotent: true, Destructive: true, RequiresInteraction: true);
     }
@@ -255,7 +258,7 @@ internal static class McpWriteTools
                 int? pid = a.OptInt("pid");
                 RequireExperimental(experimentalEnabled, "See-through");
                 bool enable = ReqBool(a, "enable");
-                await RequireWritableDllAsync(game, pid, ct);
+                var ptrs = await RequireWritableDllAsync(game, pid, ct);
                 var timeout = TimeSpan.FromSeconds(WriteSeconds);
                 if (!enable)
                 {
@@ -272,7 +275,8 @@ internal static class McpWriteTools
                 }
                 var request = new JsonObject { ["cmd"] = "seethrough_set", ["enable"] = enable };
                 if (a.Has("count")) request["count"] = a.Int("count", 1, 1, 16);
-                var reply = await game.SendAsync(pid, request, timeout, ct, requireScan: true);
+                // Hiding or showing each occluder is a game-thread call, up to 16 in turn.
+                var reply = await game.SendAsync(pid, request, InvokeTimeout(ptrs, 16), ct, requireScan: true);
                 var result = Answer(reply, game.TakeNotice());
                 if (!result.IsError)
                 {
@@ -297,11 +301,13 @@ internal static class McpWriteTools
         {
             int? pid = a.OptInt("pid");
             bool enable = ReqBool(a, "enable");
-            var ptrs = await RequireWritableDllAsync(game, pid, ct);
+            // 3706: a queued ON records its sender, so the camera this server turns on is its own to turn off and ends
+            // with the session.
+            var ptrs = await RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForRawWrites, ct);
             var reply = await game.SendAsync(pid,
                 new JsonObject { ["cmd"] = "set_debug_camera", ["enable"] = enable, ["if_free"] = true },
-                InvokeTimeout(ptrs), ct, requireScan: true);
-            var answer = Answer(reply, null);   // the if_free refusal (code -20) and a DLL error
+                InvokeTimeout(ptrs, 2), ct, requireScan: true);
+            var answer = Answer(reply, null);   // a hold's or the queue's if_free refusal (code -20), a DLL error
             if (answer.IsError) return Combine(answer, game.TakeNotice());
             long state = McpJson.TryGetLong(reply["state"], out long s) ? s : -1;
             string? failure = state switch
@@ -311,6 +317,9 @@ internal static class McpWriteTools
                 -6 => "Not sent: an earlier toggle the other way is still queued. Send it again once the game responds.",
                 < 0 and not -5 => "The debug camera's state could not be read, or the toggle failed (state "
                                   + state.ToString(CultureInfo.InvariantCulture) + ").",
+                // The toggle ran, and a fresh read still disagrees: it did not take.
+                0 or 1 when (state == 1) != enable => "The toggle ran, but the camera is still "
+                                                      + (state == 1 ? "on" : "off") + ".",
                 _ => null,
             };
             if (failure is not null)
@@ -353,8 +362,9 @@ internal static class McpWriteTools
             var ptrs = await RequireWritableDllAsync(game, pid, ct);
             var from = await game.SendAsync(pid, new JsonObject { ["cmd"] = "teleport_get_pose" },
                 TimeSpan.FromSeconds(WriteSeconds), ct, requireScan: true);
-            // The jump is a game-thread call (BugItGo): wait as long as the DLL may.
-            var reply = await game.SendAsync(pid, request, InvokeTimeout(ptrs), ct, requireScan: true);
+            // The jump makes up to four game-thread calls in turn (the teleport, a component's move, its relative
+            // location, a fallback): wait as long as the DLL may.
+            var reply = await game.SendAsync(pid, request, InvokeTimeout(ptrs, 4), ct, requireScan: true);
             var result = Answer(reply, game.TakeNotice());
             if (!result.IsError && result.Payload is JsonObject payload && Truthy(from, "ok"))
             {
@@ -397,13 +407,13 @@ internal static class McpWriteTools
         return ptrs;
     }
 
-    /// <summary>How long to wait for a command that queues a game-thread call: the DLL waits invoke_timeout_ms (the
-    /// user sets it, up to 600 s), and an object parameter's conversion may wait as long again. Ending first would drop
-    /// the connection -- and with it every hold this server owns -- while the DLL still waits.</summary>
-    internal static TimeSpan InvokeTimeout(JsonObject ptrs)
+    /// <summary>How long to wait for a command that makes <paramref name="calls"/> game-thread calls one after another:
+    /// the DLL may wait invoke_timeout_ms (the user sets it, up to 600 s) on each. Ending first would drop the connection
+    /// -- and with it every hold this server owns -- while the DLL still waits.</summary>
+    internal static TimeSpan InvokeTimeout(JsonObject ptrs, int calls)
     {
         long ms = McpJson.TryGetLong(ptrs["invoke_timeout_ms"], out long t) && t > 0 ? t : 5000;
-        return TimeSpan.FromMilliseconds(2 * ms + 15000);
+        return TimeSpan.FromMilliseconds(Math.Max(calls, 1) * ms + 15000);
     }
 
     /// <summary>A write's reply: the DLL's refusal of another's hold, a module's refusal (a negative code), or the
@@ -413,10 +423,18 @@ internal static class McpWriteTools
         if (!Truthy(reply, "ok")) return DllError(reply, notice);
         McpTools.Strip(reply);
         long code = McpJson.TryGetLong(reply["code"], out long c) ? c : 0;
+        string? hold = McpJson.GetString(reply, "hold");
+        if (code == HeldByOther && hold == InvokeQueueHold)
+            return Combine(McpToolResult.Fail("Not changed: " + DescribeHolder(reply["holder"] as JsonObject)
+                + " has a game-thread call still queued or running, and this server never queues beside it. Try again "
+                + "once it has run (read_holds lists it)."), notice);
         if (code == HeldByOther)
-            return Combine(McpToolResult.Fail("Not changed: " + (McpJson.GetString(reply, "hold") ?? "that hold")
+            return Combine(McpToolResult.Fail("Not changed: " + (hold ?? "that hold")
                 + " is held by " + DescribeHolder(reply["holder"] as JsonObject) + ". This server never replaces or "
                 + "ends what someone else holds; the user can release it where it was set."), notice);
+        if (code == NeedsGameThread)
+            return Combine(McpToolResult.Fail("Not changed: the game-thread hook is not active, and this server's "
+                + "game-thread calls run only on the game thread."), notice);
         if (code < 0)
             return Combine(new McpToolResult(reply, IsError: true,
                 Note: "The game refused (code " + code.ToString(CultureInfo.InvariantCulture) + "): nothing was "
@@ -424,8 +442,12 @@ internal static class McpWriteTools
         return Combine(new McpToolResult(reply), notice);
     }
 
-    // Grimoire::HOLD_HELD_BY_OTHER: the DLL's answer to an if_free request for another's hold.
+    // Grimoire::HOLD_HELD_BY_OTHER: the DLL's answer to an if_free request for another's hold -- or, with the hold
+    // Grimoire::HOLD_INVOKE_QUEUE, while another client's game-thread call is outstanding.
     private const long HeldByOther = -20;
+    private const string InvokeQueueHold = "invoke_queue";
+    // Stark::kInvokeNeedsGameThread: an if_free game-thread call while the ProcessEvent hook is down.
+    private const long NeedsGameThread = -27;
 
     internal static string DescribeHolder(JsonObject? holder)
     {

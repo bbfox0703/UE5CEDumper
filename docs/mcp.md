@@ -157,17 +157,19 @@ too long for the AI is cut by whole entries, and a note says how much was left o
   game or another program changed them since, nothing is written. A field one of the holds above keeps is put back by
   it.
 - **Calls never jump the queue.** Each call the game thread runs is recorded with the program that sent it. The AI's
-  call is refused while yours (from the UI or a Cheat Engine record) is still queued or running, a call that timed out
-  included; yours always queue. A call the game thread did not run in time stays queued and runs later, unless the AI
-  session ends first: it is then dropped. The AI never sends it again, never calls off the game thread, and never
-  changes the call timeout.
+  call is refused while one from the UI, a Cheat Engine record or another AI session is still queued or running, a
+  call that timed out included; yours always queue. The same holds for the game-thread calls the gameplay tools make on
+  their way (the debug camera's toggle, Fly's collision restore). A call the game thread did not run in time stays
+  queued and runs later, unless the AI session ends first: it is then dropped. The AI never sends it again, never calls
+  off the game thread, and never changes the call timeout.
 - **Calls the AI may not make**, refused by the DLL: network RPCs, console commands, quitting or travelling to another
   level, destroying actors, writing or deleting save slots, and the debug camera (it goes through `write_debug_camera`).
   The list goes by name; a game function that does the same under another name is not caught, and the prompt is then
-  your check.
-- **The DLL must be build 3705 or later** for the gameplay tools, and **3706 or later** for `write_memory` and
-  `write_invoke`. An older DLL cannot keep the AI's change off yours, so the tool refuses it and says to update the
-  DLL.
+  your check. The server itself refuses a function taking an FText, a value that does not parse as its parameter's
+  type, and an object parameter that is not a live object.
+- **The DLL must be build 3705 or later** for the gameplay tools, and **3706 or later** for `write_memory`,
+  `write_invoke` and `write_debug_camera`. An older DLL cannot keep the AI's change off yours, so the tool refuses it and
+  says to update the DLL.
 
 ## When something goes wrong
 

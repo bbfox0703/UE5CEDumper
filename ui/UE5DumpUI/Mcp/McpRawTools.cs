@@ -17,12 +17,14 @@ namespace UE5DumpUI.Mcp;
 /// user, the game or another client changed since is not overwritten.</para>
 ///
 /// <para><b>write_invoke</b> calls a UFunction on the game thread, its parameters by name. The server reads the
-/// signature and builds the buffer with the Invoke dialog's <see cref="ParamBufferBuilder"/>, and decodes the return
-/// value and out parameters as the dialog does. The DLL refuses it while the UI or CE has an invoke outstanding (each
-/// queued request records its client), refuses the maintainer's deny list for a background client (network RPCs,
-/// console commands, quit / travel / restart, destruction, save slots, the debug camera), never runs it off the game
-/// thread, and drops it if this session ends while it is still queued. A call queued past its timeout (-5) is never
-/// sent again: the server refuses a new invoke while one of its own is outstanding. It never sends direct_call or
+/// signature and builds the buffer by the Invoke dialog's rules (<see cref="ParamBufferBuilder"/>), stricter where the
+/// dialog relies on a human reading the box: a value that does not parse as its type is refused rather than written as
+/// zero, and an object parameter must be a live object's address (GObjects says so, not a read of the memory). It
+/// decodes the return value and out parameters as the dialog does. The DLL refuses it while the UI or CE has an invoke
+/// outstanding (each queued request records its client), refuses the maintainer's deny list for a background client
+/// (network RPCs, console commands, quit / travel / restart, destruction, save slots, the debug camera), never runs it
+/// off the game thread, and drops it if this session ends while it is still queued. The server refuses a new call while
+/// one of its own is still queued, so a -5 call is never sent again. It never sends direct_call or
 /// set_invoke_timeout.</para>
 /// </summary>
 internal static class McpRawTools
@@ -36,6 +38,12 @@ internal static class McpRawTools
     private const long WriteMemChanged = -23;
     private const long InvokeQueued = -5;
     private const long InvokeFaulted = -4;
+
+    private static readonly HashSet<string> IntegerTypes =
+    [
+        "ByteProperty", "Int8Property", "Int16Property", "UInt16Property", "IntProperty", "UInt32Property",
+        "Int64Property", "UInt64Property", "EnumProperty",
+    ];
 
     public static IEnumerable<McpTool> Create(IMcpGame game)
     {
@@ -105,17 +113,19 @@ internal static class McpRawTools
     private static McpTool Invoke(IMcpGame game) => new(
         "write_invoke", "Invoke a UFunction",
         "Calls a UFunction on a live object, on the game thread, with its parameters by name: the server reads the "
-        + "signature (read_functions shows it) and builds the call. instance_addr is a live object "
-        + "(read_find_live_instance). Returns the return value and out parameters. A call the game thread did not run in "
-        + "time is queued and runs later, unless this session ends first: never send it again; read_holds lists it until "
-        + "it runs. Refused while the UE5DumpUI window or a Cheat Engine record has an invoke outstanding, and for "
-        + "network RPCs, console commands, quitting or travelling, destroying actors, writing or deleting save slots, "
-        + "and the debug camera (use write_debug_camera).",
+        + "signature (read_functions shows it, include_interfaces for an interface's) and builds the call. instance_addr "
+        + "is a live object (read_find_live_instance). Returns the return value and out parameters. A call the game "
+        + "thread did not run in time is queued and runs later, unless this session ends first: never send it again; "
+        + "read_holds lists it until it runs. Refused while the UE5DumpUI window, a Cheat Engine record or another AI "
+        + "session has a call outstanding, and for network RPCs, console commands, quitting or travelling, destroying "
+        + "actors, writing or deleting save slots, functions taking an FText, and the debug camera (use "
+        + "write_debug_camera).",
         McpSchema.Object(
             ("instance_addr", McpSchema.Addr("The object to call it on."), true),
             ("function", McpSchema.Str("The UFunction's name, e.g. \"SetActorHiddenInGame\"."), true),
-            ("params", McpSchema.FreeObject("Parameters by name. A number, true / false or a string; an object as its "
-                                            + "hex address; a struct as an object of its fields. One left out is zero."),
+            ("params", McpSchema.FreeObject("Parameters by name. A number or true / false; an enum or an FName as its "
+                                            + "number; a string; an object as its hex address (0 for none); a struct as "
+                                            + "an object of its fields. One left out is zero."),
                 false),
             McpWriteTools.PidProp),
         ReadOnly: false, (a, ct) => RunInvokeAsync(game, a, ct), Idempotent: false, Destructive: true,
@@ -131,25 +141,29 @@ internal static class McpRawTools
         int ueVersion = McpJson.TryGetLong(ptrs["ue_version"], out long ue) ? (int)ue : 0;
         var lookup = TimeSpan.FromSeconds(LookupSeconds);
 
-        // Never resend after -5: while this server's own call is still queued, refuse the next one.
+        // Never resend after -5: while a game-thread call of this server's is still queued, refuse the next one.
         var holds = await game.SendAsync(pid, new JsonObject { ["cmd"] = "get_holds" }, lookup, ct);
         if (OwnOutstanding(holds) is int mine and > 0)
             return McpWriteTools.Combine(McpToolResult.Fail(
-                "Not invoked: this server's previous invoke (" + mine.ToString(CultureInfo.InvariantCulture) + ") is "
-                + "still queued. It runs when the game thread is free, or is dropped when this session ends; do not "
-                + "send it again."), game.TakeNotice());
+                "Not invoked: a game-thread call this server made is still queued or running ("
+                + mine.ToString(CultureInfo.InvariantCulture) + "; read_holds lists it). If it was a call that answered "
+                + "queued, it runs when the game thread is free unless this session ends first: do not send it again."),
+                game.TakeNotice());
 
+        if (!await IsLiveObjectAsync(game, pid, inst, lookup, ct))
+            throw new McpToolError($"{inst} is not a live object (read_find_live_instance gives one).");
         var obj = await game.SendAsync(pid, new JsonObject { ["cmd"] = "get_object", ["addr"] = inst }, lookup, ct,
             requireScan: true);
-        string? classAddr = McpWriteTools.Truthy(obj, "ok") ? McpJson.GetString(obj, "class_addr") : null;
+        string? classAddr = McpJson.GetString(obj, "class_addr");
         if (string.IsNullOrEmpty(classAddr) || !McpArgs.TryParseHex(classAddr, out ulong cls) || cls == 0)
-            throw new McpToolError($"{inst} is not a live object the DLL knows (read_find_live_instance gives one).");
+            throw new McpToolError($"{inst}'s class could not be read.");
 
         var fn = await FindFunctionAsync(game, pid, classAddr, funcName, lookup, ct)
                  ?? throw new McpToolError($"{McpJson.GetString(obj, "class") ?? "Its class"} has no UFunction "
-                                           + $"'{funcName}' (read_functions lists them).");
+                                           + $"'{funcName}' (read_functions lists them; include_interfaces for an "
+                                           + "interface's).");
 
-        var call = await BuildCallAsync(game, pid, fn, given, lookup, ct);
+        var call = await BuildCallAsync(game, pid, fn, given, ueVersion, lookup, ct);
         var request = new JsonObject
         {
             ["cmd"] = "invoke_function",
@@ -171,7 +185,10 @@ internal static class McpRawTools
             request["str_params"] = arr;
         }
 
-        var reply = await game.SendAsync(pid, request, McpWriteTools.InvokeTimeout(ptrs), ct, requireScan: true);
+        // The call, and one conversion per weak / soft object parameter, each a game-thread call the DLL may wait on.
+        int calls = 1 + fn.InputParams.Count(p => p.TypeName is "WeakObjectProperty" or "SoftObjectProperty"
+                                                                or "SoftClassProperty" or "LazyObjectProperty");
+        var reply = await game.SendAsync(pid, request, McpWriteTools.InvokeTimeout(ptrs, calls), ct, requireScan: true);
         return McpWriteTools.Combine(Answer(reply, fn, ueVersion), game.TakeNotice());
     }
 
@@ -189,8 +206,22 @@ internal static class McpRawTools
         return null;
     }
 
+    /// <summary>Whether <paramref name="addr"/> is a live object's own address. get_object reads whatever is at an
+    /// address and always answers; find_by_address consults GObjects, so only an exact match there counts.</summary>
+    internal static async Task<bool> IsLiveObjectAsync(IMcpGame game, int? pid, string addr, TimeSpan timeout,
+        CancellationToken ct)
+    {
+        if (!McpArgs.TryParseHex(addr, out ulong want) || want == 0) return false;
+        var r = await game.SendAsync(pid, new JsonObject { ["cmd"] = "find_by_address", ["addr"] = addr }, timeout, ct,
+            requireScan: true);
+        return McpWriteTools.Truthy(r, "ok") && McpWriteTools.Truthy(r, "found")
+               && McpJson.GetString(r, "match_kind") == "exact"
+               && McpArgs.TryParseHex(McpJson.GetString(r, "addr"), out ulong got) && got == want;
+    }
+
     /// <summary>The function the DLL will call: walk_functions lists a class's own, so the super chain is followed as
-    /// the DLL's lookup does, an exact name first and then any case.</summary>
+    /// the DLL's lookup does, an exact name first and then any case; then the class's interfaces, which the DLL's lookup
+    /// searches last (walk_functions with include_interfaces marks those entries).</summary>
     private static async Task<FunctionInfoModel?> FindFunctionAsync(IMcpGame game, int? pid, string classAddr,
         string name, TimeSpan timeout, CancellationToken ct)
     {
@@ -199,35 +230,41 @@ internal static class McpRawTools
         {
             var fr = await game.SendAsync(pid, new JsonObject { ["cmd"] = "walk_functions", ["addr"] = addr },
                 timeout, ct, requireScan: true);
-            if (McpWriteTools.Truthy(fr, "ok"))
-            {
-                var funcs = DumpService.ParseFunctions(fr);
-                var hit = funcs.FirstOrDefault(f => f.Name == name)
-                          ?? funcs.FirstOrDefault(f => string.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase));
-                if (hit is not null) return hit;
-            }
+            if (McpWriteTools.Truthy(fr, "ok") && Match(DumpService.ParseFunctions(fr), name) is { } hit) return hit;
             var cr = await game.SendAsync(pid, new JsonObject { ["cmd"] = "walk_class", ["addr"] = addr },
                 timeout, ct, requireScan: true);
             string? super = (cr["class"] as JsonObject) is { } c ? McpJson.GetString(c, "super_addr") : null;
             addr = super is not null && McpArgs.TryParseHex(super, out ulong s) && s != 0 ? super : null;
         }
-        return null;
+        var withInterfaces = await game.SendAsync(pid,
+            new JsonObject { ["cmd"] = "walk_functions", ["addr"] = classAddr, ["include_interfaces"] = true },
+            timeout, ct, requireScan: true);
+        if (!McpWriteTools.Truthy(withInterfaces, "ok")) return null;
+        return Match(DumpService.ParseFunctions(withInterfaces).Where(f => f.ViaInterface.Length > 0).ToList(), name);
     }
+
+    private static FunctionInfoModel? Match(List<FunctionInfoModel> funcs, string name)
+        => funcs.FirstOrDefault(f => f.Name == name)
+           ?? funcs.FirstOrDefault(f => string.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase));
 
     internal sealed record InvokeCall(byte[] Buffer, int Size, List<InvokeStringParam> Strings);
 
-    /// <summary>The call's buffer, by the Invoke dialog's rules (ParamBufferBuilder): each value range-checked before it
-    /// is written, a string sent as the DLL's descriptor, a struct by its fields, FText refused, a container or delegate
-    /// only empty, an object pointer only a live object's address. Every rule refuses rather than send a silently wrong
-    /// argument.</summary>
-    internal static async Task<InvokeCall> BuildCallAsync(IMcpGame game, int? pid, FunctionInfoModel fn, JsonObject given,
-        TimeSpan timeout, CancellationToken ct)
+    /// <summary>The call's buffer, by the Invoke dialog's rules: a struct expanded from its known layout or the DLL's
+    /// fields, a string sent as the DLL's descriptor, a container or delegate only empty, each scalar range-checked
+    /// before it is written. Stricter than the dialog where it relies on a person reading the box: a function taking an
+    /// FText is refused outright (a zeroed FText is a crash, not an empty one), a value that does not parse as its type is
+    /// refused rather than written as zero, and an object pointer must be a live object.</summary>
+    internal static async Task<InvokeCall> BuildCallAsync(IMcpGame game, int? pid, FunctionInfoModel fn,
+        JsonObject given, int ueVersion, TimeSpan timeout, CancellationToken ct)
     {
         var inputs = fn.InputParams.ToList();
         foreach (var (key, _) in given)
             if (!inputs.Any(p => string.Equals(p.Name, key, StringComparison.OrdinalIgnoreCase)))
                 throw new McpToolError($"{fn.Name} has no parameter '{key}'. Its parameters: "
                                        + (inputs.Count == 0 ? "none" : string.Join(", ", inputs.Select(p => p.Name))) + ".");
+        if (inputs.FirstOrDefault(p => ParamBufferBuilder.IsRefusedParam(p.TypeName)) is { } text)
+            throw new McpToolError($"{fn.Name} takes an FText ('{text.Name}'), which cannot be passed from here: a zeroed "
+                                   + "FText is not an empty one, and the game can crash reading it.");
 
         int size = BakedScriptGenerator.BakedParmsSize(fn);
         var buf = new byte[Math.Max(size, 0)];
@@ -237,15 +274,23 @@ internal static class McpRawTools
             JsonNode? node = Given(given, p.Name);
             if (p.Offset < 0 || p.Offset >= buf.Length) continue;
             string type = p.TypeName;
-            if (ParamBufferBuilder.IsRefusedParam(type))
+
+            var fields = StructFields(p, ueVersion);
+            if (fields is { Count: > 0 })
             {
-                if (!IsEmpty(node)) throw new McpToolError($"'{p.Name}' is an FText, which cannot be passed in.");
-                continue;
-            }
-            if (ParamBufferBuilder.IsEmptyOnlyParam(type))
-            {
-                if (!IsEmpty(node)) throw new McpToolError($"'{p.Name}' ({ParamBufferBuilder.ShortTypeName(type)}) can "
-                                                           + "only be passed empty.");
+                if (node is null) continue;
+                if (node is not JsonObject values)
+                    throw new McpToolError($"'{p.Name}' is a {StructLabel(p)}: pass an object of its fields.");
+                foreach (var (key, _) in values)
+                    if (!fields.Any(f => string.Equals(f.Name, key, StringComparison.OrdinalIgnoreCase)))
+                        throw new McpToolError($"{StructLabel(p)} has no field '{key}'. Its fields: "
+                                               + string.Join(", ", fields.Select(f => f.Name)) + ".");
+                var texts = fields.Select(f => Given(values, f.Name) is { } v
+                    ? (ParamBufferBuilder.IsStringType(f.TypeName) ? Text(v) : StrictScalar(f.TypeName, v, $"{p.Name}.{f.Name}"))
+                    : ParamBufferBuilder.IsStringType(f.TypeName) ? "" : "0").ToArray();
+                if (!ParamBufferBuilder.TryValidateStructSubFields(fields, texts, out string bad, out string err))
+                    throw new McpToolError($"'{p.Name}.{bad}': {err}");
+                ParamBufferBuilder.WriteStructParam(buf, p.Offset, fields, texts);
                 continue;
             }
             if (ParamBufferBuilder.IsStringType(type))
@@ -255,20 +300,10 @@ internal static class McpRawTools
                 strings.Add(new InvokeStringParam(p.Offset, ParamBufferBuilder.IsWideString(type), Text(node)));
                 continue;
             }
-            if (type == "StructProperty" && p.StructFields.Count > 0)
+            if (ParamBufferBuilder.IsEmptyOnlyParam(type))
             {
-                if (node is null) continue;
-                if (node is not JsonObject fields)
-                    throw new McpToolError($"'{p.Name}' is a {p.StructName}: pass an object of its fields.");
-                foreach (var (key, _) in fields)
-                    if (!p.StructFields.Any(f => string.Equals(f.Name, key, StringComparison.OrdinalIgnoreCase)))
-                        throw new McpToolError($"{p.StructName} has no field '{key}'. Its fields: "
-                                               + string.Join(", ", p.StructFields.Select(f => f.Name)) + ".");
-                var values = p.StructFields.Select(f => Given(fields, f.Name) is { } v ? Text(v)
-                    : ParamBufferBuilder.IsStringType(f.TypeName) ? "" : "0").ToArray();
-                if (!ParamBufferBuilder.TryValidateStructSubFields(p.StructFields, values, out string bad, out string err))
-                    throw new McpToolError($"'{p.Name}.{bad}': {err}");
-                ParamBufferBuilder.WriteStructParam(buf, p.Offset, p.StructFields, values);
+                if (!IsEmpty(node)) throw new McpToolError($"'{p.Name}' ({ParamBufferBuilder.ShortTypeName(type)}) can "
+                                                           + "only be passed empty.");
                 continue;
             }
             if (ParamBufferBuilder.IsUnwritableParam(type))
@@ -278,21 +313,71 @@ internal static class McpRawTools
                 continue;
             }
             if (node is null) continue;
-            string text = Text(node).Trim();
-            if (ParamBufferBuilder.IsPickablePointerType(type) && McpArgs.TryParseHex(text, out ulong ptr) && ptr != 0)
-            {
-                // The DLL passes a non-object straight to the call: an address must be a live object.
-                var po = await game.SendAsync(pid, new JsonObject { ["cmd"] = "get_object", ["addr"] = text }, timeout, ct,
-                    requireScan: true);
-                if (!McpWriteTools.Truthy(po, "ok") || string.IsNullOrEmpty(McpJson.GetString(po, "class_addr")))
-                    throw new McpToolError($"'{p.Name}' must be a live object's address; {text} is not one.");
-                text = "0x" + ptr.ToString("X", CultureInfo.InvariantCulture);
-            }
-            if (!ParamBufferBuilder.TryValidateScalar(type, p.Size, text, out string rangeErr))
+            string scalar = StrictScalar(type, node, p.Name);
+            if (ParamBufferBuilder.IsPickablePointerType(type) && McpArgs.TryParseHex(scalar, out ulong ptr) && ptr != 0
+                && !await IsLiveObjectAsync(game, pid, scalar, timeout, ct))
+                throw new McpToolError($"'{p.Name}' must be a live object's address (or 0); {scalar} is not one.");
+            if (!ParamBufferBuilder.TryValidateScalar(type, p.Size, scalar, out string rangeErr))
                 throw new McpToolError($"'{p.Name}': {rangeErr}");
-            ParamBufferBuilder.WriteParam(buf, p.Offset, type, p.Size, text);
+            ParamBufferBuilder.WriteParam(buf, p.Offset, type, p.Size, scalar);
         }
         return new InvokeCall(buf, size, strings);
+    }
+
+    /// <summary>A struct parameter's fields as the dialog expands them: a trusted engine layout first (version-aware),
+    /// then the fields the DLL walked; null for a scalar or a layout-less struct.</summary>
+    private static IReadOnlyList<DynamicStructField>? StructFields(FunctionParamModel p, int ueVersion)
+    {
+        var layout = InvokeParamDialog.ResolveTrustedLayout(p.TypeName, p.StructName, p.Size, ueVersion);
+        if (layout is not null)
+            return layout.Fields.Select(f => new DynamicStructField(f.Name, f.TypeName, f.Offset, f.Size)).ToList();
+        return p.TypeName == "StructProperty" && p.StructFields.Count > 0 ? p.StructFields : null;
+    }
+
+    private static string StructLabel(FunctionParamModel p) => string.IsNullOrEmpty(p.StructName) ? "struct" : p.StructName;
+
+    /// <summary>A scalar's text, refused unless it parses as its type: the dialog's parsers read anything else as 0, which
+    /// a person sees in the box and an AI would not. A JSON number with an integral value is accepted for an integer.
+    /// Pointers come back as "0x" hex.</summary>
+    internal static string StrictScalar(string type, JsonNode node, string label)
+    {
+        string text = Text(node).Trim();
+        if (type == "BoolProperty")
+            return BakedScriptGenerator.ParseBoolLiteral(text) is not null ? text
+                : throw new McpToolError($"'{label}' is a bool: pass true or false.");
+        if (type is "FloatProperty" or "DoubleProperty")
+            return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) && double.IsFinite(d)
+                ? text : throw new McpToolError($"'{label}' is a number: '{text}' is not one.");
+        if (type == "NameProperty")
+            return TryInteger(text, out string n) ? n
+                : throw new McpToolError($"'{label}' is an FName: pass its number (read_instance shows a field's raw "
+                                         + "value); a name string is not looked up.");
+        if (ParamBufferBuilder.IsPickablePointerType(type))
+        {
+            if (!TryInteger(text, out string ptrText) || ptrText.StartsWith('-')
+                || !BakedScriptGenerator.TryParseHexOrDecimal(ptrText, out ulong ptr))
+                throw new McpToolError($"'{label}' is an object: pass its hex address (0 for none).");
+            return "0x" + ptr.ToString("X", CultureInfo.InvariantCulture);
+        }
+        if (IntegerTypes.Contains(type))
+            return TryInteger(text, out string i) ? i
+                : throw new McpToolError($"'{label}' is an integer: '{text}' is not one (an enum goes as its value).");
+        return text;
+    }
+
+    /// <summary>Decimal, negative decimal or 0x hex, as the dialog's parser reads them; or a JSON number with an integral
+    /// value (100.0).</summary>
+    private static bool TryInteger(string text, out string normalized)
+    {
+        normalized = text;
+        if (BakedScriptGenerator.TryParseHexOrDecimal(text, out _)) return true;
+        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) && double.IsFinite(d)
+            && d == Math.Floor(d) && Math.Abs(d) < 9.0e15)
+        {
+            normalized = ((long)d).ToString(CultureInfo.InvariantCulture);
+            return true;
+        }
+        return false;
     }
 
     private static JsonNode? Given(JsonObject given, string name)
@@ -328,17 +413,17 @@ internal static class McpRawTools
         _ => false,
     };
 
-    /// <summary>An invoke's reply: a refusal (ok:false, nothing ran), the other client's outstanding invoke (code -20),
-    /// a call that ran (its return value and out parameters, decoded as the Invoke dialog does), one still queued (-5,
-    /// whose buffer is the INPUT, never shown as output), or one that did not run.</summary>
+    /// <summary>An invoke's reply: a refusal (ok:false, nothing ran), another client's outstanding call (code -20), a
+    /// call that ran (its return value and out parameters, decoded as the Invoke dialog does), one still queued (-5, whose
+    /// buffer is the INPUT, never shown as output), or one that did not run.</summary>
     internal static McpToolResult Answer(JsonObject reply, FunctionInfoModel fn, int ueVersion)
     {
         if (!McpWriteTools.Truthy(reply, "ok"))
         {
             if (McpJson.TryGetLong(reply["code"], out long code) && code == HeldByOther)
                 return McpToolResult.Fail("Not invoked: " + McpWriteTools.DescribeHolder(reply["holder"] as JsonObject)
-                                          + " has an invoke still queued or running, and this server never queues "
-                                          + "beside it. Try again once it has run (read_holds lists it).");
+                                          + " has a game-thread call still queued or running, and this server never "
+                                          + "queues beside it. Try again once it has run (read_holds lists it).");
             return McpToolResult.Fail(McpJson.GetString(reply, "error") ?? "Not invoked.");
         }
         long result = McpJson.TryGetLong(reply["result"], out long r) ? r : -999;
@@ -350,6 +435,11 @@ internal static class McpRawTools
             ["result"] = result,
         };
         if (reply["game_thread_stalled"] is JsonNode stalled) payload["game_thread_stalled"] = stalled.DeepClone();
+        // [INVOKE-NONSTATIC-ON-CDO] On a failure too, where it is the likely reason.
+        string? template = reply["nonstatic_on_template"] is JsonValue t && t.TryGetValue<bool>(out bool warn) && warn
+            ? " The object is a template (a class default or an archetype) and the function is not static: it may do "
+              + "nothing there, or fault."
+            : null;
         if (result == InvokeQueued)
         {
             payload["queued"] = true;
@@ -364,7 +454,7 @@ internal static class McpRawTools
                 : "it did not run";
             return new McpToolResult(payload, IsError: true,
                 Note: "The call failed (code " + result.ToString(CultureInfo.InvariantCulture) + "): " + why + ". "
-                      + (McpJson.GetString(reply, "error") ?? ""));
+                      + (McpJson.GetString(reply, "error") ?? "") + template);
         }
 
         string hex = McpJson.GetString(reply, "result_hex") ?? "";
@@ -381,11 +471,7 @@ internal static class McpRawTools
             }
             if (outs.Count > 0) payload["out"] = outs;
         }
-        string? note = reply["nonstatic_on_template"] is JsonValue t && t.TryGetValue<bool>(out bool warn) && warn
-            ? "The object is a template (a class default or an archetype), and the function is not static: it may "
-              + "have done nothing there."
-            : null;
-        return new McpToolResult(payload, Note: note);
+        return new McpToolResult(payload, Note: template?.Trim());
     }
 
     private static string Decode(byte[] bytes, FunctionParamModel p, IReadOnlyDictionary<int, string?> strings,

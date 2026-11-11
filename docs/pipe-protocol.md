@@ -2115,6 +2115,9 @@ Error codes:
 request; CE's mailbox calls are CE's). Refusals, each `ok:false` with nothing queued or run:
 - `if_free` while another client's call is still queued or running (a -5 one included): `code` `-20`,
   `hold: "invoke_queue"`, and the `holder`, as a hold's refusal. The UI sends no `if_free`, so its calls always queue.
+  The rule covers every game-thread call an `if_free` command makes on its way: `set_debug_camera` answers `state` -25
+  with the same `code` / `hold` / `holder` (and `state` / `code` -27 with the hook down), and a pending ON counts as
+  the debug camera held by the client that sent it.
 - `if_free` while the ProcessEvent hook is down: `code` `-27`; such a call never runs off the game thread.
 - From a client that marks its requests `background` (the MCP server), `code` `-24`: `direct_call`, a function whose
   flags cannot be read, a network RPC (`FUNC_Net`), or a name on the deny list (console commands, quit / level travel /
