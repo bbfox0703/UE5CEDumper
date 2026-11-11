@@ -409,6 +409,28 @@ force-field job and See-through. Not reached:
     instances, and a DLL older than 3705 refused. Each is unit-tested (`McpToolsTests`). Acceptance: on a game where
     each can be held, the tool changes it, `read_holds` names the server, and its exit releases it.
 
+Stage D2-3, build 3706 (`write_memory`, `write_invoke`; `write_mem` data only; the invoke queue's owners) -- dev-log
+3706. `tools/verify/mcp_client.py raw` 25/25 on DumperTest Shipping with the published DLL and AOT exe, the game thread
+frozen by `suspend.py suspend-tid` for the queue checks: a field written and put back, a changed-since write refused,
+a vtable and code refused, `Add_IntInt(40, 2)` = 42, the debug-camera toggle refused by name, the UI stand-in's queued
+call refusing the AI's until it ran, the AI's own queued call never resent and dropped when its server exited (the DLL
+log: "1 queued invoke(s) of it dropped, never run"). Not reached:
+
+25. **The real UI and CE in the queue rule.** The stand-in was `pipe_client.py`; CE was not used. Acceptance: a Console
+    Run or an Invoke dialog FIRE left queued (-5, game paused) refuses the AI's `write_invoke`, naming the UE5DumpUI
+    window; the same with a CE record's invoke ("a Cheat Engine record"); and the Live Walker's field edit of a
+    read-only or code address shows the refusal ("Not written: ... is in executable memory").
+26. **Joining a pending debug-camera toggle.** Source-pinned only (`APendingDebugCameraOn_IsItsSendersAlone`): DumperTest
+    Shipping has no live CheatManager. Acceptance, on a game with one (a Development build): the AI's
+    `write_debug_camera` ON left queued (game paused), the UI's Force ON answered "queued", the AI session ended: the
+    camera turns on when the game resumes and stays on, held by the UE5DumpUI window (`get_holds`); and the reverse
+    (the UI's queued ON, the AI's ON refused naming the window).
+27. **Parameters a fixture function does not exercise.** Live: two ints and a return. Unit-tested only: structs (by
+    field and by the engine's known layout), strings and out strings, object parameters checked for liveness,
+    interface functions, the FText and container refusals, the deny list beyond the debug camera. Acceptance: on a
+    game, `write_invoke` of `K2_SetActorLocation` with `NewLocation` {X, Y, Z} moves the actor; an object parameter
+    given a field's address is refused; `SendToConsole` is refused by name.
+
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 
 Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT

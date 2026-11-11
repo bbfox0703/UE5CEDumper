@@ -8,9 +8,10 @@ Open work only. **Read this when deciding what to do next.**
 > 3695, Stage B (6 pipe slots + the scan-worker budget) in build 3696, Stage C (hardening for a long-lived client) in
 > build 3698; **Stage D (MCP) is active (go-ahead 2026-11-11): D1, the read-only `UE5DumpUI.exe --mcp`, shipped in
 > build 3701; D2 (writes) started 2026-11-11, in three builds: D2-1 (the DLL records who holds what) shipped in build
-> 3704, D2-2 (the MCP write tools for the toggles, force field and teleport) in build 3705; D2-3 (`write_memory`,
-> `write_invoke`; go-ahead and decisions 2026-11-11) is built on `dev` and reviewed, its build (3706), publish and live
-> checks next** -- the route and its decisions are under Stage D below. Before it, none active
+> 3704, D2-2 (the MCP write tools for the toggles, force field and teleport) in build 3705, D2-3 (`write_memory`,
+> `write_invoke`, `write_mem` data only, the invoke queue's owners) in build 3706: Stage D2 is complete; what its live
+> checks did not reach is verification-register.md items 19-20 and 22-27; nothing further in Stage D is queued** --
+> the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
 > active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
@@ -643,9 +644,9 @@ write commands, the UI's use of the same state, and the client-side safety knobs
   `pipe_clients` (the MCP server runs as `UE5DumpUI.exe` too, so the exe name cannot tell it from the UI). D2-2 the
   toggles, force field (the AI's own holds only; never `reset_all_fields`), teleport to explicit coordinates (never the
   marker slots; the undo point is kept). D2-3 `write_mem` (executable pages refused) and `invoke_function` (never
-  resent after -5; a debug-camera toggle goes through the guarded command). **D2-1 shipped in build 3704 and D2-2 in
-  build 3705** (dev-log); what their live checks did not reach is verification-register.md
-  `[PIPE-PER-PROCESS-2026-11-06]` items 19-20 and 22-24.
+  resent after -5; a debug-camera toggle goes through the guarded command). **D2-1 shipped in build 3704, D2-2 in
+  build 3705 and D2-3 in build 3706** (dev-log); what their live checks did not reach is verification-register.md
+  `[PIPE-PER-PROCESS-2026-11-06]` items 19-20 and 22-27.
 - **D2-3 decisions (maintainer, 2026-11-11, each the recommended option)**, from a read-only survey of `write_mem`,
   the invoke path and the UI's use of both:
   - **`write_mem`, for every client:** refuse executable, read-only, guard and uncommitted pages, and write without

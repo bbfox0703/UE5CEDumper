@@ -27,6 +27,48 @@ builds ≤696 in
 
 -----
 
+## 2026-11-11 (build 3706) — The MCP server writes memory and calls game functions; `write_mem` writes data only; the game-thread queue knows who sent what `[PIPE-PER-PROCESS-2026-11-06]`
+
+Stage D2-3, to the maintainer's decisions of 2026-11-11 (todo.md, "D2-3 decisions"). Two independent four- and
+three-lens reviews (32 and 20 findings) and a mutation check (15 guards, each failing a test) ran before the build.
+
+- **`write_memory`** (MCP): up to 4 KB of data at an address, only if it still holds the bytes the AI read (`expect`);
+  returns the bytes before and after.
+- **`write_invoke`** (MCP): a UFunction on a live object, on the game thread, its parameters by name. The server reads
+  the signature (inherited and interface functions included) and builds the call by the Invoke dialog's rules, stricter
+  where the dialog trusts a person reading the box: a function taking an FText (anywhere, a struct's field included) is
+  refused, a value that does not parse as its type is refused rather than written as zero, structs go by their fields
+  (an engine struct by its known layout), and every object pointer must be a live object (GObjects decides, not a read
+  of the memory). It returns the return value and out parameters; a call answered queued (-5) is never sent again.
+- **`write_mem` writes data only, for every client** (the UI's field edits included): code, read-only, guard and
+  uncommitted pages are refused, and no page's protection is changed any more. It used to make any page writable for
+  the write, so it could patch code, briefly remove a code page's execute right, and restore the wrong protection
+  after a write across pages.
+- **The game-thread queue records who sent each call.** An AI call is refused, naming the program, while one from the
+  UI, a Cheat Engine record or another AI session is still queued or running; the UI's calls always queue. An AI call
+  still queued when its session ends is dropped and never runs. With the ProcessEvent hook down, an AI call is refused
+  rather than made off the game thread. The same rules cover the game-thread calls the gameplay tools make (the debug
+  camera's toggle). `get_holds` lists each client's outstanding calls.
+- **Calls the AI may not make**, refused by the DLL: network RPCs, console commands (including SendToConsole and
+  ServerExec), quitting or travelling to another level, destroying actors, writing or deleting save slots, opening a
+  URL, and the debug camera toggle (use `write_debug_camera`).
+- **Fixed in the D2-2 tools:** `write_debug_camera` reported its refusals as success (it answers in `state`); a queued
+  debug-camera ON came on with no owner, so the AI could not turn it off and its session end did not release it (now
+  the client that sent it holds it, and a UI or CE request that joins it takes it over); the MCP's 30 s timeout could
+  end before a user-set invoke timeout and drop every hold (each game-thread command now waits per call).
+- **The UI is unaffected** except that a field edit into read-only or code memory is now refused with its reason. The
+  write tools need the DLL from this build; a proxy needs **Update All**.
+- Tests: C# 7914 passed, 0 failed, 1 skipped (117 MCP tools tests, 58 source pins); headless 71; dll_helpers_test 4018,
+  dll_core_test 1566 (write ranges on real pages), utf8_helpers_test 287, grausam_window_test 22, sein_retention_test
+  30, 0 failures; 39 gates passed; the AOT window starts (version 1.0.0.3706). Live, the published DLL and AOT exe on
+  DumperTest Shipping (UE 5.4): `tools/verify/mcp_client.py raw` 25/25 -- a field written, a changed-since write
+  refused with what is there, the field put back; a vtable and code refused; `Add_IntInt(40, 2)` returned 42; the
+  debug-camera toggle refused by name; with the game thread frozen, the UI stand-in's queued call refused the AI's
+  (naming its process) until it ran; the AI's own queued call refused a second one and was dropped when its server
+  exited ("1 queued invoke(s) of it dropped, never run"). `writes` 36/36, `live` 31/31, `holds_live.py` 22/22, `probe`
+  15/15. Not live: verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 25-27. AOT UI 62,280,192 bytes
+  (sha256 56deffe008723f52...); UE5Dumper.dll 3,721,216 bytes (sha256 949afc9535fe2017...).
+
 ## 2026-11-11 (no build change) — `inject.py` hands the injection to `UE5DumpUI.exe`; python.exe no longer injects `[AV-INJECT-2026-11-11]`
 
 - **Why.** The AV's behavioural layer flagged python.exe running `tools/verify/inject.py` from a terminal, 75 s after
