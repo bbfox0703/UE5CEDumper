@@ -41,7 +41,7 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         stalled: the release's OFF stays queued, the release is owed (get_holds' release_owed), and once the game runs
         the DLL sends the OFF again and the camera goes off; (I) the same, but the UI's Force ON during the stall takes
         the camera: the owed release is abandoned and the camera stays the UI's; (J) the AI leaves mid-command (a
-        read_pose waiting on the stalled game thread): its release still reads the camera, is owed, and ends it.
+        write_invoke waiting on the stalled game thread): its release still reads the camera, is owed, and ends it.
 
     --ssh HOST   start the server as `ssh -T HOST <exe> --mcp`, the way an MCP client on another machine would; --exe
                  is then the path on HOST. ssh's own prompts (a password) go to this console, never to the protocol:
@@ -1359,12 +1359,13 @@ def run_dbgcam_hold(exe: str, pid: int | None, game_name: str) -> int:
                                     r"again", seen["since"]) is None, "I: and no OFF was sent again")
         camera_off("I")
 
-        # J. The AI leaves MID-COMMAND while the game thread is stalled: its read_pose waits on the game thread when its
-        # session ends, so the DLL raises that connection's cancel flag, and the release runs with it raised. Before the
-        # review fix the release's camera read gave up under that flag ("unknown"): nothing was released or owed, and
-        # the camera stayed on with no holder. Its reads are cancel-immune now.
+        # J. The AI leaves MID-COMMAND while the game thread is stalled: its write_invoke waits on the game thread when
+        # its session ends, so the DLL raises that connection's cancel flag, and the release runs with it raised. Before
+        # the review fix the release's camera read could give up under that flag ("unknown"): nothing released or owed.
+        # Its reads are cancel-immune now. (read_pose cannot stand in: on this fixture it answers from memory at once.)
         c = session()
         since, server_pid = time.strftime("%Y-%m-%d %H:%M:%S"), c.proc.pid
+        r, kml, _ = call(c, "read_find_object", {"path": "Default__KismetMathLibrary"})
         r, d, _ = call(c, "write_debug_camera", {"enable": True})
         ck.check(not r.get("isError") and d.get("state") == 1 and held_by_server(camera_hold(), c),
                  "J: the AI's ON, the server's", d)
@@ -1375,9 +1376,12 @@ def run_dbgcam_hold(exe: str, pid: int | None, game_name: str) -> int:
                 if not stalled:
                     time.sleep(0.2)
             if ck.check(stalled, f"J: the game thread reads stalled ({frozen.suspend_line})"):
-                c.request_async("tools/call", {"name": "read_pose", "arguments": dict(base)})
-                time.sleep(1.0)   # the read is in flight, waiting on the game thread
-                ck.check(c.close(timeout=15.0) == 0, "J: the AI session ends with its read_pose still waiting")
+                c.request_async("tools/call", {"name": "write_invoke", "arguments": {
+                    **base, "instance_addr": kml.get("addr"), "function": "Add_IntInt", "params": {"A": 1, "B": 2}}})
+                time.sleep(1.5)   # the invoke is in flight, waiting on the game thread
+                ck.check(c.close(timeout=15.0) == 0, "J: the AI session ends with its write_invoke still waiting")
+                ck.check(_pipe_log_line(r"client gone mid-command", since) is not None,
+                         "J: the DLL saw it leave mid-command (its connection's cancel raised)")
                 # Its command returns after the invoke timeout; then the release waits as long again.
                 t0 = time.monotonic()
                 while time.monotonic() < t0 + 2 * tmo / 1000 + 5.0:
