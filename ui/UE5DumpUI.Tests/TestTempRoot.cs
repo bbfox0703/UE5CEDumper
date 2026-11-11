@@ -16,7 +16,9 @@ namespace UE5DumpUI.Tests;
 ///
 /// The run's folder goes when the process exits. A run that could not clean up -- killed, or a file still held -- is
 /// deleted by the next run: its owner file is held open with no sharing for the life of the process, so the OS lets go
-/// of it the moment the owner dies, whatever its PID is reused for.
+/// of it the moment the owner dies, whatever its PID is reused for. The shared folder %TEMP%\UE5CEDumper.Tests\ itself
+/// stays, holding SdkTempLeftovers' memory: a run that removed it when empty could do so between another run's look at
+/// it and that run making its folder in it, and that run's TEMP would never move.
 /// </summary>
 internal static class TestTempRoot
 {
@@ -31,13 +33,16 @@ internal static class TestTempRoot
     // nobody's -- even with a run of an older checkout going on beside this one.
     internal static readonly TimeSpan LegacyMinAge = TimeSpan.FromHours(1);
 
-    // What those builds left: a test class's prefix and a {Guid:N}, or a fixed parent of GUID-named folders. Frozen:
-    // a test written since writes under the run's folder, whatever name it picks.
+    // What those builds left: a test class's prefix and a {Guid:N} (one test's folder), or a fixed parent that every
+    // run of such a build shares, its tests' folders inside. Frozen: a test written since writes under the run's folder,
+    // whatever name it picks.
     private static readonly Regex LegacyName = new(
-        "^(?:(?:UE5Dump(?:AobRows|ArrPivot|DiscTest|GroupTest|PivotTest|PivotVm|SnapTest|SnapVm|SpcGroupTest"
-        + "|SpcGroupVm|SpcTest|SpcVm)_|ue5cd-vmtest-)[0-9a-f]{32}"
-        + "|ue5-(?:backstop|ours-present|proxy-conc|qmark|qmark-pose|unreadable))$",
+        "^(?:UE5Dump(?:AobRows|ArrPivot|DiscTest|GroupTest|PivotTest|PivotVm|SnapTest|SnapVm|SpcGroupTest"
+        + "|SpcGroupVm|SpcTest|SpcVm)_|ue5cd-vmtest-)[0-9a-f]{32}$",
         RegexOptions.CultureInvariant);
+
+    private static readonly Regex LegacyParentName = new(
+        "^ue5-(?:backstop|ours-present|proxy-conc|qmark|qmark-pose|unreadable)$", RegexOptions.CultureInvariant);
 
     private static FileStream? s_owner;   // a static, so nothing collects it before the process ends
 
@@ -88,28 +93,51 @@ internal static class TestTempRoot
         var deleted = new List<string>();
         try
         {
+            // A root that is a junction (test scratch moved to another drive) holds folders that are not ours to judge.
+            if (!Directory.Exists(root) || File.GetAttributes(root).HasFlag(FileAttributes.ReparsePoint)) return deleted;
             foreach (var dir in Directory.EnumerateDirectories(root))
                 if (OwnerGone(dir, nowUtc) && TryDelete(dir)) deleted.Add(dir);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
-            // Absent, or gone from under the walk: another run's exit removes the root once it is empty.
+            // Gone from under the walk, or unreadable: nothing more to judge this time.
         }
         return deleted;
     }
 
-    /// <summary>Deletes, in <paramref name="temp"/>, every folder an older build of the suite left there and that has
-    /// not changed for <see cref="LegacyMinAge"/>; returns those deleted. Never throws, as SweepDeadRuns.</summary>
+    /// <summary>Deletes, in <paramref name="temp"/>, what an older build of the suite left there and has not changed
+    /// for <see cref="LegacyMinAge"/>; returns what it deleted. A test's own folder goes whole. A shared parent loses
+    /// only its children that old -- a child made a moment ago is an older checkout's run in progress, and the parent's
+    /// time read a moment before says nothing of it -- and goes itself only once empty. Never throws, as
+    /// SweepDeadRuns.</summary>
     internal static List<string> SweepLegacy(string temp, DateTime nowUtc)
     {
         var deleted = new List<string>();
         try
         {
-            foreach (var dir in Directory.EnumerateDirectories(temp))
+            foreach (var dir in new DirectoryInfo(temp).EnumerateDirectories())
             {
-                if (!LegacyName.IsMatch(Path.GetFileName(dir))) continue;
-                if (nowUtc - Directory.GetLastWriteTimeUtc(dir) < LegacyMinAge) continue;
-                if (TryDelete(dir)) deleted.Add(dir);
+                if (LegacyName.IsMatch(dir.Name))
+                {
+                    if (nowUtc - dir.LastWriteTimeUtc >= LegacyMinAge && TryDelete(dir.FullName)) deleted.Add(dir.FullName);
+                }
+                else if (LegacyParentName.IsMatch(dir.Name) && !dir.Attributes.HasFlag(FileAttributes.ReparsePoint))
+                {
+                    // The parent's time as listed, before this sweep empties it: an hour old, no child came since.
+                    var parentIdle = nowUtc - dir.LastWriteTimeUtc >= LegacyMinAge;
+                    foreach (var child in dir.EnumerateDirectories())
+                    {
+                        var touched = child.LastWriteTimeUtc > child.CreationTimeUtc ? child.LastWriteTimeUtc : child.CreationTimeUtc;
+                        if (nowUtc - touched >= LegacyMinAge && TryDelete(child.FullName)) deleted.Add(child.FullName);
+                    }
+                    if (!parentIdle) continue;
+                    try
+                    {
+                        Directory.Delete(dir.FullName, recursive: false);   // only when empty
+                        deleted.Add(dir.FullName);
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+                }
             }
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
@@ -178,7 +206,5 @@ internal static class TestTempRoot
         // The pool keeps a closed connection's .db open; nothing else stops the folder going.
         SqliteConnection.ClearAllPools();
         TryDelete(run);
-        try { Directory.Delete(Path.GetDirectoryName(run)!); }   // only when empty: another run may be in it
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
 }

@@ -1,3 +1,7 @@
+using System.ComponentModel;
+using System.Diagnostics;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.RegularExpressions;
 
 namespace UE5DumpUI.Tests;
@@ -6,40 +10,50 @@ namespace UE5DumpUI.Tests;
 /// [TEST-TEMP-HYGIENE-2026-11-11] Removes what a finished `dotnet build` of THIS repository left in %TEMP% a day ago,
 /// and nothing anyone else left there.
 ///
-/// Measured on 2026-11-11 with SDK 10.0.403: every `dotnet build` / `dotnet test` / `dotnet publish` leaves one
-/// Microsoft.NET.Workload_&lt;pid&gt;_&lt;yyyyMMdd&gt;_&lt;HHmmss&gt;_&lt;fff&gt;.log and two empty folders named like
-/// Path.GetRandomFileName(), made from 581 ms before the log to 99 ms after it; no setting tried stops them, and the SDK
-/// never removes them (1,452 folders and 726 logs in a day, from this repository and from an AOBMaker session's builds).
+/// What the SDK leaves, read in dotnet/sdk v10.0.403 and measured on 2026-11-11: every build, test, publish, pack, run
+/// and restore starts a workload advertising-manifest check (RestoringCommand's constructor). On an SDK installed by
+/// MSI or Visual Studio it makes one empty folder named like Path.GetRandomFileName() (Directory.CreateTempSubdirectory),
+/// then Microsoft.NET.Workload_&lt;pid&gt;_&lt;yyyyMMdd&gt;_&lt;HHmmss&gt;_&lt;fff&gt;.log, then a second such folder -- 581 ms before
+/// the log to 99 ms after it, and in 107 groups of them every group held exactly two folders per log. Nothing in the SDK
+/// removes them and no setting skips them. `dotnet --info`, `dotnet new` and `dotnet tool` make such folders with no log.
 ///
-/// Only what is provably ours and provably finished goes, because the folders carry no owner: a folder is the SDK's only
-/// by its name, its emptiness and the log made beside it, and anything that cannot be told apart stays.
+/// A folder carries no owner, so nothing goes on the absence of someone else's evidence; it goes on a positive match:
 /// <list type="bullet">
-/// <item>A log is ours when its "Executing:" command names a project of this repository: an absolute path under the
-/// repository root, or a relative path that is a project file here (or a folder holding one). A relative path is
-/// resolved against this repository, so another repository's project would have to sit at the same relative path here.
-/// No path at all, a `workload` command, or a path elsewhere: not ours.</item>
-/// <item>A log is finished when it ends with the SDK's "Logging ended" line, every line is one an idle build writes
-/// (a log that recorded real work is kept for whoever reads it), it has not been written for <see cref="MinAge"/>, and
-/// nothing holds it open.</item>
-/// <item>A folder goes when its name is a random file name, it is empty, it is no reparse point, it is
-/// <see cref="MinAge"/> old, and every log made beside it is ours and finished: a folder beside another repository's
-/// build, or a build still running, could be theirs.</item>
-/// <item>A log goes only once no random-named folder beside it is left, so a folder that could not go keeps the log
-/// that says whose it is.</item>
-/// <item>A finished log kept for good (another repository's, or one that recorded work) is remembered by name in
-/// <see cref="KeptLogsFileName"/> and never read again: the other session's logs are never ours to delete, so without
-/// this every run would read all of them, about 0.17 ms each and ~600 more a day. The memory can only keep a log; a
-/// wrong or edited line makes the sweep keep more, never delete more.</item>
+/// <item>A log is ours when its "Executing:" command builds a project git tracks in this repository: the path exactly
+/// as tracked (a command run from the repository root), an absolute path that ends with it at a folder boundary (any
+/// checkout or worktree of this repository, gone or not), or the project's own folder when the folder is named like the
+/// project. An option's value, or anything after "--" (the program's own arguments), is not the project. A bare `ui`
+/// is therefore not ours, though this repository's ui folder holds a solution: sibling repositories on this machine
+/// hold one in theirs.</item>
+/// <item>A log is finished when it ends with the SDK's "Logging ended" line, every line is one an idle build writes (a
+/// log that recorded work is kept for whoever reads it), it has not been written for <see cref="MinAge"/>, and nothing
+/// holds it open.</item>
+/// <item>Folders and logs are grouped: a folder joins every log made within its window, and logs that share a folder
+/// are one group. A group goes only when every log in it is ours and finished, and it holds exactly two folders per log,
+/// each empty, no reparse point, and neither made nor written for <see cref="MinAge"/>. A group with one folder too many
+/// (another build's whose log was removed, `dotnet --info`, another program's temp folder) or too few stays whole, our
+/// log with it. Our finished log with no folder near it goes alone.</item>
+/// <item>A group's logs go only after all its folders went, so a folder that would not go keeps the log that says whose
+/// it is. Folders go with a non-recursive delete, which removes an empty folder or nothing.</item>
+/// <item>A finished log kept for good is remembered by name in <see cref="KeptLogsFileName"/> under the projects it was
+/// judged against (<see cref="KeptHeader"/>), and is not read again by a run with the same projects. Another session's
+/// logs are never ours, so without this every run would read all of them, about 0.17 ms each and ~600 more a day. The
+/// memory can only keep a log: a wrong or edited line makes the sweep keep more, never delete more.</item>
 /// </list>
+/// Left behind on purpose: a build run from a subfolder with a partial path, a build with no path, and a group
+/// another cleanup took a folder from. Once the SDK stops writing the log (dotnet/sdk main no longer does, 2026-11-10),
+/// nothing is ours and nothing goes.
 /// </summary>
 internal static class SdkTempLeftovers
 {
     internal static readonly TimeSpan MinAge = TimeSpan.FromDays(1);
 
-    // A folder is made up to 581 ms before its log and up to 99 ms after it (measured over 1,452 folders); the margin
-    // keeps a slow disk inside the window without reaching the next build.
+    // The window that joins a folder to a log: wider than the measured -581 / +99 ms, so a slow disk does not split a
+    // build; a wider window only makes groups bigger, and a group that is not exactly ours stays.
     internal static readonly TimeSpan FolderBeforeLog = TimeSpan.FromSeconds(2);
     internal static readonly TimeSpan FolderAfterLog = TimeSpan.FromSeconds(1);
+
+    private const int FoldersPerBuild = 2;
 
     private static readonly Regex LogName = new(
         @"^Microsoft\.NET\.Workload_\d+_\d{8}_\d{6}_\d{3}\.log$", RegexOptions.CultureInvariant);
@@ -63,34 +77,50 @@ internal static class SdkTempLeftovers
         "Shutting down", "Shutdown completed.", "Restart required: ", EndedLine,
     };
 
-    // The dotnet commands that leave these while doing nothing with workloads.
+    // The commands that reach the manifest check (they derive from or build a RestoringCommand).
     private static readonly HashSet<string> BuildVerbs = new(StringComparer.OrdinalIgnoreCase)
     {
-        "build", "test", "publish", "run", "restore", "pack", "clean", "msbuild",
+        "build", "test", "publish", "pack", "run", "restore",
     };
-
-    private static readonly string[] ProjectPatterns = { "*.csproj", "*.sln", "*.slnx" };
 
     /// <summary>The memory of logs kept for good, beside the test runs' folders.</summary>
     internal const string KeptLogsFileName = "sdk-logs-kept.txt";
 
     internal sealed record Plan(IReadOnlyList<string> Folders, IReadOnlyList<string> Logs);
 
-    // What a log is to the sweep. Only KeepForever is final, and so only it is remembered: a log that has not ended may
-    // still be written, and one of ours goes.
+    // What a log is to the sweep. Only KeepForever is final for a set of projects, and so only it is remembered: a log
+    // that has not ended may still be written, and one of ours goes.
     private enum Verdict { Ours, NotYet, KeepForever }
 
     private sealed record LogInfo(string Path, DateTime CreatedUtc, bool OursAndFinished);
 
-    private sealed record FolderInfo(string Path, DateTime CreatedUtc, bool Deletable);
+    // Candidate: no reparse point, and neither made nor written for MinAge. Emptiness is asked only of a group that
+    // could go, so another session's thousands of folders are never opened.
+    private sealed record FolderInfo(string Path, DateTime CreatedUtc, bool Candidate);
 
-    /// <summary>What <see cref="Sweep"/> would remove; deletes nothing. Never throws.</summary>
+    private sealed record Group(List<LogInfo> Logs, List<FolderInfo> Folders)
+    {
+        public bool Goes()
+        {
+            if (Logs.Count == 0 || !Logs.All(l => l.OursAndFinished)) return false;
+            if (Folders.Count == 0) return true;
+            return Folders.Count == FoldersPerBuild * Logs.Count
+                   && Folders.All(f => f.Candidate)
+                   && Folders.All(f => IsEmpty(f.Path));
+        }
+    }
+
+    private sealed record Decision(Plan Plan, List<Group> Going, HashSet<string> Present, List<string> NewlyKept);
+
+    /// <summary>What <see cref="Sweep"/> would remove; deletes and writes nothing. Never throws.</summary>
     internal static Plan Find(string temp, string repoRoot, DateTime nowUtc, string? keptLogsFile = null,
         IReadOnlyCollection<string>? ourProjects = null)
     {
         try
         {
-            return Decide(temp, repoRoot, nowUtc, ReadKept(keptLogsFile).Names).Plan;
+            var projects = ourProjects ?? TrackedProjects(repoRoot);
+            if (projects is not { Count: > 0 }) return new Plan(Array.Empty<string>(), Array.Empty<string>());
+            return Decide(temp, projects, nowUtc, ReadKept(keptLogsFile, KeptHeader(projects)).Names).Plan;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -98,7 +128,8 @@ internal static class SdkTempLeftovers
         }
     }
 
-    /// <summary>Removes what <see cref="Find"/> names; returns what it removed. Never throws.</summary>
+    /// <summary>Removes what <see cref="Find"/> names; returns what it removed. Never throws.
+    /// <paramref name="ourProjects"/> defaults to the project files git tracks under <paramref name="repoRoot"/>.</summary>
     internal static Plan Sweep(string temp, string repoRoot, DateTime nowUtc, string? keptLogsFile = null,
         IReadOnlyCollection<string>? ourProjects = null)
     {
@@ -106,43 +137,59 @@ internal static class SdkTempLeftovers
         var logs = new List<string>();
         try
         {
-            var kept = ReadKept(keptLogsFile);
-            var decision = Decide(temp, repoRoot, nowUtc, kept.Names);
-            foreach (var f in decision.Plan.Folders)
-            {
-                // Non-recursive: it removes an EMPTY folder or nothing, whatever arrived in it since it was looked at.
-                try
-                {
-                    Directory.Delete(f, recursive: false);
-                    folders.Add(f);
-                }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-            }
+            var projects = ourProjects ?? TrackedProjects(repoRoot);
+            if (projects is not { Count: > 0 }) return new Plan(folders, logs);   // nothing can be told to be ours
+            var header = KeptHeader(projects);
+            var kept = ReadKept(keptLogsFile, header);
+            var decision = Decide(temp, projects, nowUtc, kept.Names);
 
-            var removed = new HashSet<string>(folders, StringComparer.OrdinalIgnoreCase);
-            foreach (var log in decision.GoingLogs)
+            foreach (var group in decision.Going)
             {
-                if (decision.FoldersBeside(log).Any(f => !removed.Contains(f.Path))) continue;
-                try
+                var allGone = true;
+                foreach (var f in group.Folders)
                 {
-                    File.Delete(log.Path);
-                    logs.Add(log.Path);
+                    // Non-recursive: it removes an EMPTY folder or nothing, whatever arrived in it since it was looked at.
+                    try
+                    {
+                        Directory.Delete(f.Path, recursive: false);
+                        folders.Add(f.Path);
+                    }
+                    catch (DirectoryNotFoundException) { }   // gone already (another cleanup): not one left behind
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException) { allGone = false; }
                 }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+                if (!allGone) continue;
+                foreach (var l in group.Logs)
+                {
+                    try
+                    {
+                        File.Delete(l.Path);
+                        logs.Add(l.Path);
+                    }
+                    catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+                }
             }
 
             // What is remembered and still in %TEMP%, and what this run found kept for good.
             var stillKept = kept.Names.Where(decision.Present.Contains).Concat(decision.NewlyKept)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
             if (keptLogsFile != null && (!kept.Clean || !stillKept.SetEquals(kept.Names)))
-                WriteKept(keptLogsFile, stillKept);
+                WriteKept(keptLogsFile, header, stillKept);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return new Plan(folders, logs);
     }
 
-    // The names remembered, and whether every line was one: a line that is no log name is dropped on the next write.
-    private static (HashSet<string> Names, bool Clean) ReadKept(string? file)
+    /// <summary>The memory's first line: its verdicts hold only for the projects they were judged against.</summary>
+    internal static string KeptHeader(IReadOnlyCollection<string> ourProjects)
+    {
+        var joined = string.Join("\n", ourProjects.Select(p => p.Replace('\\', '/').ToLowerInvariant()).Order());
+        var hash = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(joined)))[..16];
+        return "# projects " + hash.ToLowerInvariant();
+    }
+
+    // The names remembered under this header, and whether the file was exactly that: a line that is no log name, or a
+    // header for other projects, is dropped on the next write.
+    private static (HashSet<string> Names, bool Clean) ReadKept(string? file, string header)
     {
         var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (file == null) return (names, true);
@@ -153,18 +200,20 @@ internal static class SdkTempLeftovers
             lines = File.ReadAllLines(file);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return (names, true); }
-        foreach (var line in lines)
+        if (lines.Length == 0 || lines[0] != header) return (names, false);
+        foreach (var line in lines.Skip(1))
             if (LogName.IsMatch(line)) names.Add(line);
-        return (names, names.Count == lines.Length);
+        return (names, names.Count == lines.Length - 1);
     }
 
     // Written whole and moved over the old one, so a run reading it at the same moment sees one or the other.
-    private static void WriteKept(string file, HashSet<string> names)
+    private static void WriteKept(string file, string header, HashSet<string> names)
     {
         var staged = $"{file}.{Environment.ProcessId}.tmp";
         try
         {
-            File.WriteAllLines(staged, names.Order(StringComparer.OrdinalIgnoreCase));
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(file))!);
+            File.WriteAllLines(staged, names.Order(StringComparer.OrdinalIgnoreCase).Prepend(header));
             File.Move(staged, file, overwrite: true);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
@@ -174,17 +223,9 @@ internal static class SdkTempLeftovers
         }
     }
 
-    private sealed record Decision(Plan Plan, List<LogInfo> GoingLogs, List<FolderInfo> Folders,
-        HashSet<string> Present, List<string> NewlyKept)
+    private static Decision Decide(string temp, IReadOnlyCollection<string> ourProjects, DateTime nowUtc,
+        HashSet<string> kept)
     {
-        // Folders is sorted by creation time.
-        public IEnumerable<FolderInfo> FoldersBeside(LogInfo log)
-            => InRange(Folders, f => f.CreatedUtc, log.CreatedUtc - FolderBeforeLog, log.CreatedUtc + FolderAfterLog);
-    }
-
-    private static Decision Decide(string temp, string repoRoot, DateTime nowUtc, HashSet<string> kept)
-    {
-        var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoRoot));
         var listing = new DirectoryInfo(temp);
 
         // Times and attributes come with the listing. Asking for them entry by entry cost 288 ms of a 900-ms sweep
@@ -199,10 +240,11 @@ internal static class SdkTempLeftovers
             var ours = false;
             if (!kept.Contains(f.Name) && nowUtc - f.LastWriteTimeUtc >= MinAge)
             {
-                var verdict = Judge(f.FullName, root);
+                var verdict = Judge(f.FullName, ourProjects);
                 if (verdict == Verdict.KeepForever) newlyKept.Add(f.Name);
                 ours = verdict == Verdict.Ours;
             }
+            // A remembered log stays in the list: a folder beside it may be its build's.
             logs.Add(new LogInfo(f.FullName, f.CreationTimeUtc, ours));
         }
         logs.Sort((x, y) => x.CreatedUtc.CompareTo(y.CreatedUtc));
@@ -211,37 +253,44 @@ internal static class SdkTempLeftovers
         foreach (var d in listing.EnumerateDirectories())
         {
             if (!RandomName.IsMatch(d.Name)) continue;
-            var created = d.CreationTimeUtc;
-            bool deletable;
-            try
-            {
-                // The logs whose window holds this folder: made up to FolderAfterLog before it, FolderBeforeLog after.
-                var beside = InRange(logs, l => l.CreatedUtc, created - FolderAfterLog, created + FolderBeforeLog)
-                    .ToList();
-                deletable = beside.Count > 0
-                            && beside.All(l => l.OursAndFinished)
-                            && nowUtc - created >= MinAge
-                            && !d.Attributes.HasFlag(FileAttributes.ReparsePoint)
-                            && !Directory.EnumerateFileSystemEntries(d.FullName).Any();
-            }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            {
-                deletable = false;   // gone or unreadable since the listing: not ours to judge
-            }
-            folders.Add(new FolderInfo(d.FullName, created, deletable));
+            // An SDK folder is never written after it is made: one written since was someone's, however recently.
+            var candidate = !d.Attributes.HasFlag(FileAttributes.ReparsePoint)
+                            && nowUtc - d.CreationTimeUtc >= MinAge
+                            && nowUtc - d.LastWriteTimeUtc >= MinAge;
+            folders.Add(new FolderInfo(d.FullName, d.CreationTimeUtc, candidate));
         }
-        folders.Sort((x, y) => x.CreatedUtc.CompareTo(y.CreatedUtc));
 
-        var decision = new Decision(new Plan(Array.Empty<string>(), Array.Empty<string>()), new List<LogInfo>(), folders,
-            present, newlyKept);
-        var goingLogs = logs.Where(l => l.OursAndFinished && decision.FoldersBeside(l).All(f => f.Deletable)).ToList();
-        var plan = new Plan(folders.Where(f => f.Deletable).Select(f => f.Path).ToList(),
-                            goingLogs.Select(l => l.Path).ToList());
-        return decision with { Plan = plan, GoingLogs = goingLogs };
+        // Group: a folder joins every log made within its window; logs sharing a folder are one group.
+        var parent = Enumerable.Range(0, logs.Count + folders.Count).ToArray();
+        int Root(int x)
+        {
+            while (parent[x] != x) x = parent[x] = parent[parent[x]];
+            return x;
+        }
+        for (var i = 0; i < folders.Count; i++)
+        {
+            var created = folders[i].CreatedUtc;
+            foreach (var j in InRange(logs, l => l.CreatedUtc, created - FolderAfterLog, created + FolderBeforeLog))
+                parent[Root(logs.Count + i)] = Root(j);
+        }
+        var groups = new Dictionary<int, Group>();
+        Group At(int x)
+        {
+            var r = Root(x);
+            if (!groups.TryGetValue(r, out var g)) groups[r] = g = new Group(new List<LogInfo>(), new List<FolderInfo>());
+            return g;
+        }
+        for (var j = 0; j < logs.Count; j++) At(j).Logs.Add(logs[j]);
+        for (var i = 0; i < folders.Count; i++) At(logs.Count + i).Folders.Add(folders[i]);
+
+        var going = groups.Values.Where(g => g.Goes()).ToList();
+        var plan = new Plan(going.SelectMany(g => g.Folders).Select(f => f.Path).ToList(),
+                            going.SelectMany(g => g.Logs).Select(l => l.Path).ToList());
+        return new Decision(plan, going, present, newlyKept);
     }
 
-    // The items of a list sorted by key whose key is within [lo, hi]: a binary search to the first, then a walk.
-    private static IEnumerable<T> InRange<T>(List<T> sorted, Func<T, DateTime> key, DateTime lo, DateTime hi)
+    // The indexes of a list sorted by key whose key is within [lo, hi]: a binary search to the first, then a walk.
+    private static IEnumerable<int> InRange<T>(List<T> sorted, Func<T, DateTime> key, DateTime lo, DateTime hi)
     {
         int a = 0, b = sorted.Count;
         while (a < b)
@@ -250,10 +299,16 @@ internal static class SdkTempLeftovers
             if (key(sorted[m]) < lo) a = m + 1;
             else b = m;
         }
-        for (var i = a; i < sorted.Count && key(sorted[i]) <= hi; i++) yield return sorted[i];
+        for (var i = a; i < sorted.Count && key(sorted[i]) <= hi; i++) yield return i;
     }
 
-    private static Verdict Judge(string log, string repoRoot)
+    private static bool IsEmpty(string folder)
+    {
+        try { return !Directory.EnumerateFileSystemEntries(folder).Any(); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+    }
+
+    private static Verdict Judge(string log, IReadOnlyCollection<string> ourProjects)
     {
         string text;
         try
@@ -280,47 +335,61 @@ internal static class SdkTempLeftovers
             var ex = Executing.Match(body);
             if (ex.Success) command = ex.Groups["cmd"].Value;
         }
-        return command != null && NamesOurProject(command, repoRoot) ? Verdict.Ours : Verdict.KeepForever;
+        return command != null && NamesOurProject(command, ourProjects) ? Verdict.Ours : Verdict.KeepForever;
     }
 
-    /// <summary>Whether a dotnet command line builds a project of the repository at <paramref name="repoRoot"/>.</summary>
-    internal static bool NamesOurProject(string command, string repoRoot)
+    /// <summary>Whether a dotnet command line builds one of <paramref name="ourProjects"/> (paths as git tracks them,
+    /// relative to the repository root).</summary>
+    internal static bool NamesOurProject(string command, IReadOnlyCollection<string> ourProjects)
     {
         var args = SplitArgs(command);
         if (args.Count < 2) return false;
-        var exe = Path.GetFileNameWithoutExtension(args[0]);
-        if (!string.Equals(exe, "dotnet", StringComparison.OrdinalIgnoreCase)) return false;
+        if (!string.Equals(Path.GetFileNameWithoutExtension(args[0]), "dotnet", StringComparison.OrdinalIgnoreCase))
+            return false;
         if (!BuildVerbs.Contains(args[1])) return false;
 
         foreach (var arg in args.Skip(2))
         {
-            if (arg.StartsWith('-')) continue;
-            string full;
-            try
-            {
-                full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(arg, repoRoot));
-            }
-            catch (Exception e) when (e is ArgumentException or NotSupportedException or PathTooLongException) { continue; }
-            if (!full.StartsWith(repoRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) continue;
-            if (IsProjectFile(full) && File.Exists(full)) return true;
-            if (Directory.Exists(full) && ProjectPatterns.Any(p => Directory.EnumerateFiles(full, p).Any())) return true;
+            if (arg == "--") break;   // what follows is the program's own arguments, not the build's
+            var path = arg;
+            if (arg.StartsWith("--project=", StringComparison.OrdinalIgnoreCase)) path = arg["--project=".Length..];
+            else if (arg.StartsWith('-')) continue;
+            if (IsOurProject(path, ourProjects)) return true;
         }
         return false;
     }
 
-    private static bool IsProjectFile(string path)
+    private static bool IsOurProject(string arg, IReadOnlyCollection<string> ourProjects)
     {
-        var ext = Path.GetExtension(path);
-        return ext.Equals(".csproj", StringComparison.OrdinalIgnoreCase)
-               || ext.Equals(".sln", StringComparison.OrdinalIgnoreCase)
-               || ext.Equals(".slnx", StringComparison.OrdinalIgnoreCase);
+        var p = arg.Replace('/', '\\').TrimEnd('\\');
+        while (p.StartsWith(".\\", StringComparison.Ordinal)) p = p[2..];
+        if (p.Length == 0) return false;
+        var absolute = Path.IsPathFullyQualified(p);
+        foreach (var tracked in ourProjects)
+        {
+            var file = tracked.Replace('/', '\\');
+            if (Matches(p, file, absolute)) return true;
+            // Its folder, when the folder is named like the project: `ui` holding UE5DumpUI.sln is not.
+            var folder = Path.GetDirectoryName(file);
+            if (!string.IsNullOrEmpty(folder)
+                && string.Equals(Path.GetFileName(folder), Path.GetFileNameWithoutExtension(file),
+                    StringComparison.OrdinalIgnoreCase)
+                && Matches(p, folder, absolute))
+                return true;
+        }
+        return false;
+
+        static bool Matches(string path, string tracked, bool absolute)
+            => absolute
+                ? path.EndsWith("\\" + tracked, StringComparison.OrdinalIgnoreCase)
+                : string.Equals(path, tracked, StringComparison.OrdinalIgnoreCase);
     }
 
     // Windows command-line words: spaces separate, double quotes group.
     private static List<string> SplitArgs(string command)
     {
         var args = new List<string>();
-        var current = new System.Text.StringBuilder();
+        var current = new StringBuilder();
         var quoted = false;
         var any = false;
         foreach (var c in command)
@@ -340,11 +409,38 @@ internal static class SdkTempLeftovers
         return args;
     }
 
-    /// <summary>Red stub: the project files git tracks in the repository.</summary>
-    internal static IReadOnlyList<string>? TrackedProjects(string repoRoot) => null;
-
-    /// <summary>Red stub: the memory's first line for a set of projects.</summary>
-    internal static string KeptHeader(IReadOnlyCollection<string> ourProjects) => "# projects";
+    /// <summary>The project files git tracks in the repository at <paramref name="repoRoot"/>, as git prints them; null
+    /// when git cannot say (no git, not a checkout), and then nothing is ours. A clone of another repository under this
+    /// one (vendor/) is tracked by no one here, so it is not ours.</summary>
+    internal static IReadOnlyList<string>? TrackedProjects(string repoRoot)
+    {
+        try
+        {
+            var psi = new ProcessStartInfo("git")
+            {
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true,
+            };
+            foreach (var a in new[] { "-C", repoRoot, "ls-files", "-z", "--", "*.csproj", "*.sln", "*.slnx" })
+                psi.ArgumentList.Add(a);
+            using var p = Process.Start(psi);
+            if (p == null) return null;
+            var stdout = p.StandardOutput.ReadToEndAsync();
+            _ = p.StandardError.ReadToEndAsync();
+            if (!p.WaitForExit(10_000))
+            {
+                try { p.Kill(); }
+                catch (Exception e) when (e is InvalidOperationException or Win32Exception) { }
+                return null;
+            }
+            if (p.ExitCode != 0) return null;
+            var list = stdout.Result.Split('\0', StringSplitOptions.RemoveEmptyEntries);
+            return list.Length > 0 ? list : null;
+        }
+        catch (Exception e) when (e is Win32Exception or InvalidOperationException or IOException) { return null; }
+    }
 
     /// <summary>The repository holding the test binaries: the folder above them with this test project in it.</summary>
     internal static string? FindRepoRoot()

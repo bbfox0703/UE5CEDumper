@@ -103,13 +103,16 @@ public class TestTempRootTests : IDisposable
         var now = DateTime.UtcNow;
         var oldTemp = Path.Combine(_sandbox, "old");
         var old = Path.Combine(oldTemp, name);
-        Directory.CreateDirectory(Path.Combine(old, "UE5CEDumper", "Snapshots"));
-        Directory.SetLastWriteTimeUtc(old, now - TestTempRoot.LegacyMinAge - TimeSpan.FromMinutes(1));
+        var child = Directory.CreateDirectory(Path.Combine(old, "UE5CEDumper", "Snapshots")).Parent!.FullName;
+        var aged = now - TestTempRoot.LegacyMinAge - TimeSpan.FromMinutes(1);
+        Directory.SetCreationTimeUtc(child, aged);   // a shared parent's child is judged by its own age
+        Directory.SetLastWriteTimeUtc(child, aged);
+        Directory.SetLastWriteTimeUtc(old, aged);
         var youngTemp = Path.Combine(_sandbox, "young");
         var young = Path.Combine(youngTemp, name);
         Directory.CreateDirectory(young);
 
-        Assert.Equal(new[] { old }, TestTempRoot.SweepLegacy(oldTemp, now));
+        Assert.Contains(old, TestTempRoot.SweepLegacy(oldTemp, now));
         Assert.False(Directory.Exists(old));
         Assert.Empty(TestTempRoot.SweepLegacy(youngTemp, now));
         Assert.True(Directory.Exists(young));

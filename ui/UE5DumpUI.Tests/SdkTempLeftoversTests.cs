@@ -382,6 +382,18 @@ public class SdkTempLeftoversTests : IDisposable
         Assert.True(File.Exists(log));
     }
 
+    /// <summary>The projects come from git, so a clone under this checkout (vendor/) is no project of ours. This test
+    /// reads this repository itself.</summary>
+    [Fact]
+    public void TrackedProjects_AreThisRepositorysAsGitListsThem()
+    {
+        var projects = SdkTempLeftovers.TrackedProjects(SdkTempLeftovers.FindRepoRoot()!);
+
+        Assert.NotNull(projects);
+        Assert.Contains("ui/UE5DumpUI.Tests/UE5DumpUI.Tests.csproj", projects);
+        Assert.DoesNotContain(projects!, p => p.StartsWith("vendor/", StringComparison.OrdinalIgnoreCase));
+    }
+
     [Fact]
     public void ATempFolderThatIsGone_IsNothingToSweep()
     {
