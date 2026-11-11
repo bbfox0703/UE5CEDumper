@@ -787,7 +787,8 @@ public class SdkTempLeftoversTests : IDisposable
     {
         const uint FileWriteAttributes = 0x100, ShareAll = 7, OpenExisting = 3;
         const uint BackupSemantics = 0x02000000, OpenReparsePoint = 0x00200000;
-        using var h = CreateFileW(path, FileWriteAttributes, ShareAll, IntPtr.Zero, OpenExisting,
+        // \\?\ so a deep %TEMP% does not take the path past MAX_PATH (a 116-character TEMP did, for a log's name).
+        using var h = CreateFileW(@"\\?\" + Path.GetFullPath(path), FileWriteAttributes, ShareAll, IntPtr.Zero, OpenExisting,
             BackupSemantics | (openReparsePoint ? OpenReparsePoint : 0), IntPtr.Zero);
         if (h.IsInvalid) return false;
         return SetFileTime(h, ref creation, IntPtr.Zero, ref lastWrite);
