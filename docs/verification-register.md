@@ -357,14 +357,16 @@ stayed. Not reached:
     `PipePerProcessSourceTests.TheMailbox_ChangesEachHoldAsCe`); no mailbox command ran. Acceptance: a CE record (or
     `mailbox_poke.py`) turns god mode on; `get_holds` says `kind: ce`, and a background client's if_free OFF is
     refused.
-20. **The release of every hold kind.** Only `time:global` was released live. Acceptance: a background client takes
-    each hold (god mode, a knob, gravity direction on UE 5.3+, the pawn lane, fly, the foreground lock, the debug
-    camera, a force-field job), leaves, and each reads inactive and nobody's; the DLL log has one release line per
-    hold.
-21. **A hold the UI took over.** A background client's hold that a foreground client changed (no if_free) becomes the
-    foreground client's and is kept when the background client leaves (`ReleaseOwnedBy` releases only while the ledger
-    still names the leaver). Acceptance: background takes `time:pawn`, foreground sets it to another value, background
-    leaves; the lane is still active and the foreground client's.
+20. **The release of every hold kind.** ◐ **Mostly reached with build 3704** (`holds_live.py` 22/22 on DumperTest
+    Shipping, the published DLL): a background client's world time, walk speed, jump, fly and Keep Foreground each read
+    inactive and nobody's after it left, one DLL log line each ("... its hold fly is released (code 0)"). Not
+    released live: god mode (the rig gives it to the foreground client), gravity direction (changing it would send
+    the fixture's pawn off the map, and DumperTest does not respawn it), the debug camera (DumperTest Shipping has no
+    live CheatManager, so it cannot be held), a force-field job. Acceptance for those: as above, on a game where each
+    can be held.
+21. **A hold the UI took over.** ✅ **CLOSED 2026-11-11** (build 3704, same run): a background client's pawn time lane,
+    changed by the foreground client without if_free, read as the foreground client's; after the background client
+    left it was still active and still the foreground client's, and the DLL log had no release line for it.
 
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 

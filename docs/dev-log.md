@@ -27,6 +27,32 @@ builds ≤696 in
 
 -----
 
+## 2026-11-11 (build 3704) — The DLL records who holds each gameplay hold; an AI session's holds end with it `[PIPE-PER-PROCESS-2026-11-06]`
+
+Stage D2-1, the groundwork for the MCP server's write tools (D2), to the maintainer's decisions of 2026-11-11: the DLL
+records owners, what an AI session turned on ends with it, and an AI never replaces or ends what the UI holds.
+
+- **Who holds what.** God mode, the three movement knobs, gravity direction, both time lanes, fly, Keep Foreground,
+  the debug camera and each force-field job record their owner: a pipe client's process, CE's mailbox, or nobody.
+  Every writer -- each pipe connection and the mailbox -- changes a hold under that hold's own lock.
+- **`if_free`.** A request carrying it is refused (`code -20`, naming the holder) when the hold is in force and
+  someone else holds it -- one with no recorded owner counts as someone else's. Nothing changes then, and no other
+  writer can slip between the check and the change.
+- **A background client's holds end with it.** A client whose requests carry `"background"` (the MCP server) has
+  what it still holds released when its process leaves; a hold the UI took over meanwhile stays. The UI's own holds
+  outlive it, as before.
+- **New command `get_holds`** (107 in all) lists every hold, whether it is in force and who holds it; `pipe_clients`
+  marks background connections.
+- No change in what the UI or Cheat Engine do. A proxy DLL needs **Update All** for this, as for any DLL change.
+- Tests: dll_helpers_test 3952 (the ledger, the if_free rule, the holds each request changes, the holder JSON), 52
+  source pins for Fern and Mimic, which no test target compiles. C# 7822 passed, 0 failed, 1 skipped; headless 71;
+  dll_core_test 1548, utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30, 0 failures; 39 gates
+  passed. Live, the published DLL on DumperTest Shipping (UE 5.4), `tools/verify/holds_live.py` 22/22: a background
+  client refused the foreground client's god mode and could not reset it; its own world time, walk speed, jump, fly
+  and Keep Foreground were released when it left (one DLL log line each), while a lane the foreground client had
+  taken over stayed. Not live: verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 19-20. AOT UI 62,125,056
+  bytes (sha256 b64a095f469b9b5c...); UE5Dumper.dll 3,685,376 bytes (sha256 983e092b3b87d1c1...).
+
 ## 2026-11-11 (build 3703) — `MCP-Setup.html` ships in every release: how to set up the MCP server `[PIPE-PER-PROCESS-2026-11-06]`
 
 - **New in the release folder: `MCP-Setup.html`** (the maintainer: the setup document ships with the publish). How to
