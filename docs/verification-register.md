@@ -303,7 +303,7 @@ a call the suspended game could not answer, and another client's value-scan sess
 The DLL log showed the server's walks on 7 of 14 threads ("a background walk takes at most half of what is free").
 Not reached:
 
-15. **A real MCP client.** ✅ **Reached 2026-11-11, but for the allow rule.** Registered with `claude mcp add --scope
+15. **A real MCP client.** ✅ **CLOSED 2026-11-11.** Registered with `claude mcp add --scope
     local ue5cedumper -- <copy>\UE5DumpUI.exe --mcp` (a copy outside `dist\`: every Claude Code session keeps its
     servers running, and a running exe in `dist\` would refuse the next publish). The build 3701 AOT exe:
     - `claude mcp list` (CLI 2.1.163) showed `✓ Connected`, and the CLI's `/mcp` showed "connected · 35 tools";
@@ -313,10 +313,14 @@ Not reached:
       `scan_start` on DumperTest Shipping: all answered (2-44 ms each in the server log); the server dialled the
       game's pipe only at the first call; `scan_start` answered `already_scanned`.
 
-    Still open: the allow rule. `mcp__ue5cedumper__read_*` (settings, or `--allowedTools`) lets the `read_*` tools run
-    without a prompt while `scan_start` still prompts, or in `-p` mode is denied. A headless `claude -p` run would
-    measure it, but this machine's CLI answered 401 (its sign-in had lapsed), even with the desktop app's own
-    variables taken out of its environment.
+    - **The allow rule**, measured by the maintainer running `claude -p` (after `claude auth login`: the CLI's stored
+      sign-in had lapsed, so every call answered 401 until then) with `--allowedTools "mcp__ue5cedumper__read_*"`,
+      asking for `read_status`, `read_search_objects` and `scan_start` on DumperTest:
+      - `--permission-mode default`: both `read_*` tools ran without a prompt and `scan_start` was denied ("You
+        haven't granted `mcp__ue5cedumper__scan_start`"); the server's log has the two reads and no `scan_start`.
+      - the machine's own `defaultMode: "auto"`: all three ran, `scan_start` too (its log has all three). Auto mode
+        decides on its own, so an allow rule is not the only gate there; D2's write tools carry
+        `anthropic/requiresUserInteraction` for that reason (todo.md, Stage D).
 16. **A large game.** Timeouts and reply sizes were met on a 24,530-object fixture only. Acceptance: on a game of
     300,000+ objects, `read_list_classes`, `read_find_instances`, `read_list_functions` (with a `name_filter`) and
     `read_value_scan_begin` answer within their timeouts, and a reply over the cap comes back cut with its note.

@@ -40,7 +40,8 @@ claude mcp add --scope user ue5cedumper -- "C:\Tools\UE5CEDumper\UE5DumpUI.exe" 
 ```
 
 **Skip the prompts for reads (optional).** Every tool that only reads has a name that starts with `read_`. In Claude
-Code, one allow rule in `settings.json` admits all of them. Anything else still asks first.
+Code, one allow rule in `settings.json` admits all of them. In the default permission mode anything else still asks
+first. Auto mode decides on its own and may run `scan_start` without asking (measured).
 
 ```json
 { "permissions": { "allow": ["mcp__ue5cedumper__read_*"] } }

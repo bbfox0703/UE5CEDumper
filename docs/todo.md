@@ -627,6 +627,11 @@ have failed the first build. Negative control in working-lessons §3.xc.
 
 **D2 (next build):** `write_mem`, `invoke_function`, the toggles, teleport and force field. Each carries
 `_meta["anthropic/requiresUserInteraction"]`, which makes Claude Code ask on every call, even under an allow rule.
+Measured 2026-11-11 (verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item 15): under the machine's
+`defaultMode: "auto"`, `scan_start` -- outside the `read_*` allow rule, not read-only, not destructive -- ran without a
+prompt, while `--permission-mode default` denied it. An allow rule alone does not keep a tool from running in auto
+mode, so the marker is required, not a nicety; mark the write tools `destructiveHint: true` as well, and measure both
+modes again.
 What D2 must not take from the UI: the global holds (force field, teleport markers) and the game-thread invoke queue
 -- an MCP write reports a conflict rather than override the UI's.
 
