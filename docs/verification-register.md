@@ -380,6 +380,13 @@ force-field job and See-through. Not reached:
     asking for god mode shows a permission prompt for `write_god_mode`; `claude -p` with `--allowedTools
     "mcp__ue5cedumper__*"` does not run it, in `--permission-mode default` and in the machine's `auto` alike (the
     server's log has no `write_god_mode` call), while the `read_*` tools in the same run do run.
+    - ◐ **Default mode measured 2026-11-11** (Claude Code 2.1.322, the build 3705 exe registered, DumperTest
+      Shipping, run by the maintainer): `claude -p` with `--allowedTools "mcp__ue5cedumper__*"` -- an allow rule that
+      names `write_god_mode` -- and `--permission-mode default`, asked for `read_holds`, `write_god_mode` (enable)
+      and `read_holds`. Both reads ran and `write_god_mode` was declined at the permission prompt ("MCPTool requires
+      permission"); the server's log (`mcp-20261111-185626-*.log`) has the two `read_holds` and no `write_god_mode`,
+      and `god_mode` stayed inactive and nobody's. Without the marker, that allow rule would have run it. Still to
+      measure: the same in the machine's `auto` mode, and the prompt in an interactive session.
 23. **The UI window and a Cheat Engine record as the holders.** The rig's foreground client is `pipe_client.py`, and
     CE was not used (another session needed it). Acceptance: god mode ticked in the UI's Teleport tab, then a
     `write_god_mode` OFF from the AI is refused naming the UE5DumpUI window and the card stays on; the same with a CE
