@@ -41,7 +41,7 @@ import threading
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from pipe_client import PipeClient, PIPE            # noqa: E402
+from pipe_client import PipeClient                  # noqa: E402
 
 ENVELOPE_FULL = ("id", "ok", "game_thread_stalled")
 ENVELOPE_UNARMED = ("id", "ok")
@@ -201,6 +201,13 @@ def step2(seconds=60):
 
     Two writers, one writeMutex. If the mutex does not actually cover BOTH WriteFile
     calls, an event lands inside a response and the line is garbage.
+
+    ⚠ Since [PIPE-PER-PROCESS-2026-11-06] Stage C the watch thread does no pipe I/O: the
+    watching connection's own handler writes its events, after each command and ahead of
+    the reply, so events and replies on one connection come from ONE thread and the
+    writeMutex is no longer what keeps them apart. Every line must still parse, so this
+    still catches a malformed event or a reply split by one; it no longer exercises the
+    mutex between two writers.
     """
     print(f"=== F5 step 2: interleave control, {seconds}s, two connections ===")
     stop = threading.Event()

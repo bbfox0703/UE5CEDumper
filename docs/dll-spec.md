@@ -10,7 +10,7 @@
 > what is reproduced here. Bullet points and counts are kept in sync with
 > the build shown in `build_number.txt`. The headers are ground truth; this doc trails them.
 >
-> For the JSON pipe protocol (**105** commands — derive it, never hand-edit:
+> For the JSON pipe protocol (**106** commands — derive it, never hand-edit:
 `grep -c 'constexpr const char* CMD' dll/src/Renge.h`), see [pipe-protocol.md](pipe-protocol.md).
 > For drill-down phase / Find Refs / OptionalProperty layout details, see
 > [technical-notes.md](technical-notes.md).
@@ -678,11 +678,11 @@ private:
 };
 
 // Pipe constants (from Grimoire.h)
-// PIPE_NAME    = L"\\\\.\\pipe\\UE5DumpBfx"
+// PIPE_NAME_PREFIX = L"\\\\.\\pipe\\UE5DumpBfx_"   -- Voll::PipeNameForPid appends the decimal pid
 // PIPE_BUF_SIZE = 65536
 ```
 
-For the JSON protocol (105 commands, including `find_refs_to_uobject`), see
+For the JSON protocol (106 commands, including `find_refs_to_uobject`), see
 [pipe-protocol.md](pipe-protocol.md). Command name constants live in `Renge.h`
 (legacy alias: `PipeProtocol`).
 

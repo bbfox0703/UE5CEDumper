@@ -2243,7 +2243,7 @@ public class InvokeScriptTests
         int apply = fern.IndexOf("if (cmd == Renge::CMD_APPLY_RESCAN)", StringComparison.Ordinal);
         Assert.True(apply >= 0, "CMD_APPLY_RESCAN not found");
         int begin = fern.IndexOf("FrierenInit::BeginApply()", apply, StringComparison.Ordinal);
-        int publish = fern.IndexOf("g_cachedGObjects = m_rescan.foundGObjects", apply, StringComparison.Ordinal);
+        int publish = fern.IndexOf("g_cachedGObjects = found.gobjects", apply, StringComparison.Ordinal);
         Assert.True(begin > apply && begin < publish, "the fence is not raised before GObjects is published");
 
         // ...and a caller that finds the process already initialised waits for the fence instead of returning at once.

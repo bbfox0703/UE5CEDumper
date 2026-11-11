@@ -571,8 +571,9 @@ static void DataScanGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t av
         // decoration. void: the caller reads the (partial) bag and reports no winner.
         if ((scan & 0xFFF) == 0 && Tot::Requested()) {
             Sein::Warn("SCAN:GObj", "DataScanGObjectsCandidates: aborted (client gone / shutdown)");
-            // [P1-GENAU-ABORT] Recorded AT THE BAIL, never re-derived later: Fern::AcceptLoop resets the
-            // per-command flag on firstConn, so a later Tot::Requested() can no longer see this abort.
+            // [P1-GENAU-ABORT] Recorded AT THE BAIL, never re-derived later: Fern clears the per-command
+            // flag once no connection that raised it is registered (ReevaluatePerCommandCancel), so a
+            // later Tot::Requested() may no longer see this abort.
             if (outCancelled) *outCancelled = true;
             return;
         }
@@ -891,9 +892,9 @@ struct ScanReport {
     // is strictly worse than the freeze the cancellation exists to prevent.
     //
     // Recorded AT THE BAIL, deliberately, and never re-derived later by calling
-    // Tot::Requested() again: Fern::AcceptLoop resets the per-command flag on firstConn, so
-    // a client reconnecting while this scan is still unwinding would clear it and the run
-    // would silently look complete.
+    // Tot::Requested() again: Fern clears the per-command flag as soon as no connection that
+    // raised it is registered (ReevaluatePerCommandCancel), which can happen while this scan
+    // is still unwinding, and the run would then silently look complete.
     bool                           cancelled    = false;
 };
 

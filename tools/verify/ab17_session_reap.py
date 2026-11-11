@@ -3,13 +3,17 @@
     py ab17_session_reap.py reap      # phase 1: an idle session is swept by a later Begin
     py ab17_session_reap.py protect   # phase 2: Refine protects its OWN session
 
-THE POLICY (`Radar.h:19`, constant at `:837`). Reaping is **activity-triggered, not a
-wall clock**: every `Begin` / `RefineWith` / `End` sweeps sessions idle past
+THE POLICY (Radar.h's header). Reaping is **activity-triggered, not a wall clock**:
+every `Begin` / `RefineWith` / `End` sweeps its OWNER's sessions idle past
 `kScanSessionIdleExpiry` = **300 s**, and a `Refine`/`End` protects its OWN session
 first. The read/query path is deliberately NOT swept, because it is hit on every page.
 
-That design is exactly why this needs a live check and cannot be unit-tested: the
-sweep TRIGGER and the protect-mine-first ORDERING are both wall-clock behaviours.
+[PIPE-PER-PROCESS-2026-11-06] Stage C: a session is the connection's that began it, and
+the sweep reaps only the sweeping connection's sessions. So both phases keep every
+session on ONE connection, as they always did; another connection's Begin no longer
+sweeps them. The owner rule itself is unit-tested with the clock passed in
+(`Test_Radar_IdleSweepIsPerOwner`); the sweep TRIGGER and the protect-mine-first
+ORDERING in the managers remain wall-clock behaviours, which is what this checks live.
 
 TWO PHASES, and the second is the one that could regress silently:
   * `reap`    — open A, idle it past 300 s, then open B. B's Begin must sweep A, so a

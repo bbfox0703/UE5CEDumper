@@ -30,7 +30,7 @@ import sys
 import time
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-from pipe_client import PipeClient, StaleBuildError        # noqa: E402
+from pipe_client import PipeClient, StaleBuildError, list_dumper_pipes   # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LIBS = [pathlib.Path(r"C:\Program Files (x86)\Steam\steamapps\common"),
@@ -200,14 +200,22 @@ def main():
         # instance A opened the pipe, instance B logged `UE5_StartPipeServer: pipe
         # already exists (another instance running) — skipping`, then A exited and took
         # the pipe with it, leaving a live game with no server at all.
-        pipe_path = pathlib.Path(r"\\.\pipe\UE5DumpBfx")
+        # [PIPE-PER-PROCESS-2026-11-06] The game's pipe is UE5DumpBfx_<pid>. Wait for one to be LISTED, which opens
+        # nothing: opening it took a pipe instance and showed the DLL a client that left at once.
         deadline = time.time() + 120
         while time.time() < deadline:
-            try:
-                with open(pipe_path, "r+b", buffering=0):
-                    break
-            except OSError:
-                time.sleep(3)
+            pids, legacy = list_dumper_pipes()
+            if pids:
+                break
+            if legacy:
+                # Only the legacy name: the DLL in this game predates the per-process pipe, so the deployed proxy is
+                # stale -- the verdict assert_build() gave before the name changed, which it can no longer reach.
+                say("*** STALE BUILD *** only the legacy pipe \\\\.\\pipe\\UE5DumpBfx is up: the proxy in this game "
+                    "predates the per-process pipe. Refresh it: py tools/verify/proxy_refresh.py refresh "
+                    f"\"{exe.stem}\"")
+                result["stale_build"] = "legacy pipe only: the deployed proxy predates [PIPE-PER-PROCESS-2026-11-06]"
+                return 1
+            time.sleep(3)
         else:
             tail = (LOGROOT / exe.stem / "init-0.log")
             say("NO PIPE after boot+120s. init-0.log says:")
@@ -232,11 +240,10 @@ def main():
                                     pids[0], "UE5_StartPipeServer"],
                                    capture_output=True, text=True, errors="replace")
                     time.sleep(5)
-                    try:
-                        with open(pipe_path, "r+b", buffering=0):
-                            say("  -> pipe is UP after the workaround; continuing")
-                            result["relaunchpipe_workaround"] = True
-                    except OSError:
+                    if list_dumper_pipes()[0]:
+                        say("  -> pipe is UP after the workaround; continuing")
+                        result["relaunchpipe_workaround"] = True
+                    else:
                         say("  -> still no pipe; giving up on this title")
                         result.update(swept=False, reason="pipe never appeared (workaround failed)")
                         OUT.mkdir(parents=True, exist_ok=True)

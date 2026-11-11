@@ -17,10 +17,11 @@
 //   end_value_scan     → SessionManager::End drops the session
 //
 // Idle sessions are reaped by an ACTIVITY-TRIGGERED lazy sweep, not a wall clock
-// (audit #5 AB17): every Begin / RefineWith / End sweeps sessions idle past
-// kScanSessionIdleExpiry (a Refine/End protects its OWN session first). The real
-// backstop for a client that goes fully quiet is the last-client-disconnect
-// DropAll (Fern) — a single session left by a connected-but-idle client is bounded
+// (audit #5 AB17): every Begin / RefineWith / End sweeps its OWNER's sessions idle
+// past kScanSessionIdleExpiry (a Refine/End protects its own session first). A
+// session is its connection's (kMaxSessionsPerOwner), so the backstop for a client
+// that goes fully quiet is its own disconnect, when Fern drops that connection's
+// sessions — a session left by a connected-but-idle client is bounded
 // by the connection, not by the 300s (a wall-clock sweep would have to live on
 // Fern's pipe-monitor thread; the read/query path is deliberately NOT swept, being
 // hit on every page). SessionManager holds a global mutex; ownership is via
@@ -767,6 +768,7 @@ struct Candidate {
 
 struct Session {
     uint64_t                              id        = 0;
+    uint64_t                              owner     = 0;   // the connection that began it; see kMaxSessionsPerOwner
     DataType                              dt        = DataType::Int32;
     std::vector<Candidate>                candidates;
     std::vector<FieldDescriptor>          descriptors;  // shared via Candidate::descriptorIdx
@@ -864,9 +866,55 @@ std::vector<std::pair<std::string, int>> BuildClassHistogram(
     const std::vector<FieldDescriptor>& descriptors);
 
 // Idle-expiry for a scan session — dropped after this long without a Begin/Refine
-// so a misbehaving client can't leak candidate memory. Shared by both the single
+// so a client that abandons a session without an End does not keep its candidate
+// memory for as long as it stays connected. Shared by both the single
 // (SessionManager) and group (GroupSessionManager) session managers.
 inline constexpr std::chrono::seconds kScanSessionIdleExpiry{300};
+
+// ── A scan session is its connection's ([PIPE-PER-PROCESS-2026-11-06] Stage C) ──
+// The owner is the connection that began it (Fern's Connection::seq). Only that connection can use or end it: to any
+// other, its id names no session. The idle sweep reaps only the sweeping owner's sessions, and a connection's sessions
+// go when it disconnects (DropOwner). Before, ids were global and the sweep reaped anyone's: another client could end
+// or refine the UI's session, a client's scan reaped the UI's session while the UI sat connected and idle, and a client
+// that crashed while another stayed connected left up to a gigabyte of group-scan leaves until somebody's next scan.
+//
+// Each owner keeps at most this many sessions per manager; a Begin past it drops that owner's least recently used one.
+// The UI holds one of each kind; this bounds a client that begins in a loop and never ends.
+inline constexpr size_t kMaxSessionsPerOwner = 8;
+
+// The idle sweep for one owner: erases `owner`'s sessions idle longer than `expiry` at `now`, and returns how many.
+// Pure, with the clock passed in, so it is unit-tested without waiting 300 s.
+template <class SessionMap>
+size_t ReapIdleOwned(SessionMap& sessions, uint64_t owner,
+                     std::chrono::steady_clock::time_point now, std::chrono::steady_clock::duration expiry) {
+    size_t n = 0;
+    for (auto it = sessions.begin(); it != sessions.end();) {
+        if (it->second->owner == owner && now - it->second->lastUse > expiry) { it = sessions.erase(it); ++n; }
+        else ++it;
+    }
+    return n;
+}
+
+// Room for one more of `owner`'s sessions: erases its least recently used (the lower id on a tie) until fewer than
+// `cap` remain, and returns how many went.
+template <class SessionMap>
+size_t EvictOwnedBeyond(SessionMap& sessions, uint64_t owner, size_t cap) {
+    size_t n = 0;
+    for (;;) {
+        size_t owned = 0;
+        auto oldest = sessions.end();
+        for (auto it = sessions.begin(); it != sessions.end(); ++it) {
+            if (it->second->owner != owner) continue;
+            ++owned;
+            if (oldest == sessions.end() || it->second->lastUse < oldest->second->lastUse
+                || (it->second->lastUse == oldest->second->lastUse && it->first < oldest->first))
+                oldest = it;
+        }
+        if (owned < cap || oldest == sessions.end()) return n;
+        sessions.erase(oldest);
+        ++n;
+    }
+}
 
 class SessionManager {
 public:
@@ -876,21 +924,21 @@ public:
     // its shared descriptor / instance pools, return its sessionId.
     // Triggers a lazy expiry pass on existing sessions so abandoned
     // sessions don't accumulate.
-    uint64_t Begin(DataType dt,
+    uint64_t Begin(uint64_t owner, DataType dt,
                    std::vector<Candidate>       candidates,
                    std::vector<FieldDescriptor> descriptors,
                    std::vector<InstanceRecord>  instances);
 
     // Run `fn(Session&)` under the manager's lock. Returns false if the
-    // session doesn't exist (caller should map to wire error
-    // "session_not_found"). `fn` may mutate the session's candidates
+    // session doesn't exist or another connection began it (caller should map
+    // to wire error "session_not_found"). `fn` may mutate the session's candidates
     // vector (typical Refine behavior is to prune entries that no longer
     // match); the descriptor / instance pools are append-only and should
     // be treated as read-only by the callback.
     template <typename Fn>
-    bool RefineWith(uint64_t sessionId, Fn&& fn) {
+    bool RefineWith(uint64_t owner, uint64_t sessionId, Fn&& fn) {
         std::lock_guard<std::mutex> lk(mu_);
-        auto it = sessions_.find(sessionId);
+        auto it = FindOwnedLocked(owner, sessionId);
         if (it == sessions_.end()) return false;
         it->second->lastUse = std::chrono::steady_clock::now();
         fn(*it->second);
@@ -900,15 +948,15 @@ public:
         // Reap OTHER idle sessions too (audit #5 AB17). Runs AFTER the bump above
         // so it can never drop the session being refined — a user stepping away
         // mid-refine keeps their candidates, which is the whole point of the 300s.
-        ExpireOldSessionsLocked();
+        ExpireOldSessionsLocked(owner);
         return true;
     }
 
     // Read-only access — same lock as RefineWith. `fn(const Session&)`.
     template <typename Fn>
-    bool ViewWith(uint64_t sessionId, Fn&& fn) {
+    bool ViewWith(uint64_t owner, uint64_t sessionId, Fn&& fn) {
         std::lock_guard<std::mutex> lk(mu_);
-        auto it = sessions_.find(sessionId);
+        auto it = FindOwnedLocked(owner, sessionId);
         if (it == sessions_.end()) return false;
         fn(static_cast<const Session&>(*it->second));
         return true;
@@ -924,11 +972,11 @@ public:
     // false if the session doesn't exist. Reads only the DLL's own pools (no
     // game memory), so it never touches the game thread.
     template <typename Fn>
-    bool QueryWith(uint64_t sessionId, const std::string& filter,
+    bool QueryWith(uint64_t owner, uint64_t sessionId, const std::string& filter,
                    SortKey sortKey, bool sortDesc,
                    const std::vector<std::string>& excludeClasses, Fn&& fn) {
         std::lock_guard<std::mutex> lk(mu_);
-        auto it = sessions_.find(sessionId);
+        auto it = FindOwnedLocked(owner, sessionId);
         if (it == sessions_.end()) return false;
         Session& s = *it->second;
         s.lastUse = std::chrono::steady_clock::now();
@@ -951,14 +999,17 @@ public:
         return true;
     }
 
-    // Drop a specific session. Returns false if not found.
-    bool End(uint64_t sessionId);
+    // Drop a specific session. Returns false if not found -- or not `owner`'s.
+    bool End(uint64_t owner, uint64_t sessionId);
 
-    // Drop sessions whose lastUse is older than kExpirySeconds. Called lazily from
-    // Begin / RefineWith / End, so any value-scan activity reaps abandoned sessions
-    // (audit #5 AB17 — it used to fire ONLY from Begin, so a client that scanned
-    // once and went quiet never triggered it).
-    void ExpireOldSessions();
+    // Drop `owner`'s sessions whose lastUse is older than kExpirySeconds. Called lazily
+    // from Begin / RefineWith / End, so an owner's value-scan activity reaps the sessions
+    // it abandoned (audit #5 AB17 — it used to fire ONLY from Begin, so a client that
+    // scanned once and went quiet never triggered it).
+    void ExpireOldSessions(uint64_t owner);
+
+    // Drop every session `owner` began, and return how many -- its connection is gone.
+    size_t DropOwner(uint64_t owner);
 
     // Drop every session — called from pipe shutdown / DLL unload.
     void DropAll();
@@ -978,7 +1029,7 @@ private:
     // The sweep body, assuming mu_ is already held. `ExpireOldSessions()` locks and
     // calls this; RefineWith / End call it directly under their own lock so a Refine
     // can protect its session (bump lastUse) BEFORE sweeping. (audit #5 AB17)
-    void ExpireOldSessionsLocked();
+    void ExpireOldSessionsLocked(uint64_t owner);
 
     // 5-minute idle expiry — matches discrete's Phase 27b precedent.
     // Long enough that a user can step away mid-refine without losing
@@ -989,6 +1040,12 @@ private:
     std::mutex                                                  mu_;
     std::unordered_map<uint64_t, std::unique_ptr<Session>>      sessions_;
     uint64_t                                                    nextId_ = 1;
+
+    // mu_ held. A session another connection began is not found: its id names nothing to this one.
+    std::unordered_map<uint64_t, std::unique_ptr<Session>>::iterator FindOwnedLocked(uint64_t owner, uint64_t sessionId) {
+        auto it = sessions_.find(sessionId);
+        return (it != sessions_.end() && it->second->owner != owner) ? sessions_.end() : it;
+    }
 };
 
 // ============================================================
@@ -1125,6 +1182,7 @@ static_assert(kMaxGroupSessionLeaves * kGroupSlotMatchBytes < (1ull << 30),
 
 struct GroupSession {
     uint64_t                              id = 0;
+    uint64_t                              owner = 0;   // the connection that began it; see kMaxSessionsPerOwner
     std::vector<SlotSpec>                 slots;
     std::vector<GroupCandidate>           candidates;
     std::vector<FieldDescriptor>          descriptors;  // shared via GroupSlotMatch::descriptorIdx
@@ -1275,7 +1333,8 @@ public:
     // `perSlotCapHit` / `perSlotCap` are REQUIRED, not defaulted: they are known only
     // at Begin and every later command has to be able to repeat them, so a call site
     // that forgets them should not compile. (audit #5 AE13)
-    uint64_t Begin(std::vector<SlotSpec>        slots,
+    uint64_t Begin(uint64_t owner,
+                   std::vector<SlotSpec>        slots,
                    std::vector<GroupCandidate>  candidates,
                    std::vector<FieldDescriptor> descriptors,
                    std::vector<InstanceRecord>  instances,
@@ -1285,27 +1344,27 @@ public:
     // Run `fn(GroupSession&)` under the lock; may prune candidates. Invalidates
     // the cached view afterwards.
     template <typename Fn>
-    bool RefineWith(uint64_t sessionId, Fn&& fn) {
+    bool RefineWith(uint64_t owner, uint64_t sessionId, Fn&& fn) {
         std::lock_guard<std::mutex> lk(mu_);
-        auto it = sessions_.find(sessionId);
+        auto it = FindOwnedLocked(owner, sessionId);
         if (it == sessions_.end()) return false;
         it->second->lastUse = std::chrono::steady_clock::now();
         fn(*it->second);
         it->second->viewValid = false;
         // Reap OTHER idle group sessions (audit #5 AB17) — after the bump, so the
         // session being refined is protected.
-        ExpireOldSessionsLocked();
+        ExpireOldSessionsLocked(owner);
         return true;
     }
 
     // V3-C window query — same view-cache contract as SessionManager::QueryWith,
     // then `fn(const GroupSession&, const std::vector<uint32_t>&)`.
     template <typename Fn>
-    bool QueryWith(uint64_t sessionId, const std::string& filter,
+    bool QueryWith(uint64_t owner, uint64_t sessionId, const std::string& filter,
                    SortKey sortKey, bool sortDesc,
                    const std::vector<std::string>& excludeClasses, Fn&& fn) {
         std::lock_guard<std::mutex> lk(mu_);
-        auto it = sessions_.find(sessionId);
+        auto it = FindOwnedLocked(owner, sessionId);
         if (it == sessions_.end()) return false;
         GroupSession& s = *it->second;
         s.lastUse = std::chrono::steady_clock::now();
@@ -1334,17 +1393,18 @@ public:
     // ones, and RefineWith drops it outright — so either would throw away the
     // cached order every time a user expands a row.
     template <typename Fn>
-    bool WithSession(uint64_t sessionId, Fn&& fn) {
+    bool WithSession(uint64_t owner, uint64_t sessionId, Fn&& fn) {
         std::lock_guard<std::mutex> lk(mu_);
-        auto it = sessions_.find(sessionId);
+        auto it = FindOwnedLocked(owner, sessionId);
         if (it == sessions_.end()) return false;
         it->second->lastUse = std::chrono::steady_clock::now();
         fn(static_cast<const GroupSession&>(*it->second));
         return true;
     }
 
-    bool End(uint64_t sessionId);
-    void ExpireOldSessions();
+    bool End(uint64_t owner, uint64_t sessionId);
+    void ExpireOldSessions(uint64_t owner);
+    size_t DropOwner(uint64_t owner);   // see SessionManager::DropOwner
     void DropAll();
 
 private:
@@ -1353,13 +1413,20 @@ private:
     GroupSessionManager& operator=(const GroupSessionManager&) = delete;
 
     // Sweep body assuming mu_ is held — see SessionManager::ExpireOldSessionsLocked.
-    void ExpireOldSessionsLocked();
+    void ExpireOldSessionsLocked(uint64_t owner);
 
     static constexpr std::chrono::seconds kExpirySeconds = kScanSessionIdleExpiry;
 
     std::mutex                                                      mu_;
     std::unordered_map<uint64_t, std::unique_ptr<GroupSession>>     sessions_;
     uint64_t                                                        nextId_ = 1;
+
+    // mu_ held — see SessionManager::FindOwnedLocked.
+    std::unordered_map<uint64_t, std::unique_ptr<GroupSession>>::iterator FindOwnedLocked(uint64_t owner,
+                                                                                          uint64_t sessionId) {
+        auto it = sessions_.find(sessionId);
+        return (it != sessions_.end() && it->second->owner != owner) ? sessions_.end() : it;
+    }
 };
 
 // Typed compare predicate. Returns true if rawBytes (size = SizeOf(dt))

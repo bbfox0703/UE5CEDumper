@@ -27,6 +27,216 @@ builds ≤696 in
 
 -----
 
+## 2026-11-11 (build 3700) — build.ps1 leaves nothing in %TEMP%; a green test run no longer ends red on a busy disk `[TEST-TEMP-HYGIENE-2026-11-11]`
+
+- **A build no longer leaves the SDK's folders and logs in %TEMP%.** Every dotnet call build.ps1 makes (restore,
+  publish, both test suites, clean) now runs with TMP/TEMP in a folder of that build's,
+  `%TEMP%\UE5CEDumper.Tests\b<pid>\`, removed when the build ends. A build stopped part-way leaves it, and the next
+  test run removes it. The C++ steps and the shell that started the build keep their own TEMP. Measured on this build:
+  no workload log and no random-named folder of this repository's appeared in %TEMP% while it ran, and its private
+  folder was gone at the end.
+- **A test run whose tests all pass no longer fails at the very end when the disk is busy.** The test run's own folder
+  was removed as the process exited; while another session held the SSD at 100% I/O that took longer than xunit allows
+  once a run is over (about 11 s), and xunit then ended the run with "Foreground threads were left running" and exit
+  code 1 -- build 3699's publish ended FAILED that way with every test passing (2 of 17 runs, both in the same ten
+  minutes). The folder now goes before the run ends.
+- No change to the app or the DLL. C# 7,692 passed, 0 failed, 1 skipped; headless 71; 39 gates. AOT UI 61,767,680
+  bytes (sha A83A90F63BFAB7FB…), UE5Dumper.dll 3,625,984 bytes. Build 3699 was taken by the publish described above;
+  nothing from it was handed over.
+
+## 2026-11-11 (no build change) — This repository's `dotnet build` leftovers leave %TEMP% after a day; nobody else's do `[TEST-TEMP-HYGIENE-2026-11-11]`
+
+- **Every `dotnet build` leaves an empty random-named folder, a `Microsoft.NET.Workload_*.log` and a second folder in
+  %TEMP%,** and the SDK never removes them (1,452 folders and 726 logs in a day here). The test run now removes the
+  ones a finished build of THIS repository left a day ago, when it starts.
+- **Nothing of anyone else's goes.** A log counts as ours only when its command builds a project git tracks in this
+  repository; its folders only when the group is exactly the one a test run saw while it was young (the unit tests and
+  the headless suite record what they see, up to 30 minutes old), two folders per log, all ours. Another repository's
+  build (the AOBMaker session builds and cleans up beside this one), a build still running, a log that recorded real
+  work, `dotnet --info`'s folders, a folder written since, and a group that lost or gained a folder all stay. Logs another session's build left are
+  remembered, so a run does not read them again. The memory lives in `%TEMP%\UE5CEDumper.Tests\`, which now stays.
+- Measured on the real %TEMP% before anything was deleted, as if a day had passed: 152 folders and 76 logs chosen by
+  the first design, and 80 folders and 40 logs by the final rule (after the other session's own cleanup), every log
+  independently this repository's and none of the other session's; a group stayed whenever the other session built
+  in the same second.
+- Three adversarial reviews (the top findings each checked by a second agent; the third found nothing above LOW)
+  found the first designs took too much: `dotnet build ui` in a sibling repository with the same layout, an option's
+  value, a program argument, a vendored clone, folders whose own log another cleanup had removed, a stranger
+  completing a group another cleanup had cut, and an option the parser did not know eating the next option's name.
+  Each is now a test, and the rule changed as above. Also fixed: a folder written a minute ago, the memories not
+  written on a first run or written over after a failed read, a verdict reused by a checkout with other projects, a
+  junction at the shared folder, a run's exit racing another run's start, a file time past the year 9999 stopping
+  every test, a killed run's read-only folder never removed, and the headless suite's own build never recorded.
+  Mutation runs (each guard removed in turn, the test processes on a scratch TEMP; 15, then 28, then 9): every guard
+  is caught by its own test, but one that a later rule made redundant.
+- Left behind on purpose: a build no test run follows within 30 minutes, or one named by an unusual path, stays until
+  someone else's cleanup takes it. The other session's own cleanup already removes SDK leftovers about an hour old.
+- Tests: red, then green, for every item. C# 7692 passed, 0 failed, 1 skipped; headless 71; 39 gates. A test run
+  starts 0.2-0.6 s later, mostly `git ls-files` for the project list (measured while another session kept the SSD at
+  100%).
+
+## 2026-11-11 (no build change) — A test run leaves nothing in %TEMP% `[TEST-TEMP-HYGIENE-2026-11-11]`
+
+- **The C# test suite no longer fills %TEMP%.** One run left about 220 folders there (`UE5Dump*_<guid>`,
+  `ue5cd-vmtest-<guid>`, six `ue5-*` folders), and nothing removed them: 2,743 from one day, about 120 MB. A test
+  deleted its folder and ignored the failure, and the delete fails while SQLite's connection pool still holds the
+  database open. Now each run writes its scratch in a folder of its own, `%TEMP%\UE5CEDumper.Tests\<pid>-<time>\`,
+  which goes when the run ends; a run that was killed is cleaned up by the next one, and the first run cleans up what
+  older builds left. No test had to change.
+- The app itself was checked too: it writes one file in %TEMP% (the result of an elevated inject) and deletes it, and
+  its own folders already age out (logs and snapshots after 21 days).
+- Not ours, and left alone: every `dotnet build` (in any repo) leaves two empty folders with random names and a
+  `Microsoft.NET.Workload_*.log` in %TEMP%.
+- The cleanup never goes through a junction (a test makes one to another drive's root): measured, a plain recursive
+  walk went through one and changed the file it pointed at, so the cleanup walks by hand and skips them.
+- A run still gets its own folder when another run's exit removes the shared one at the same moment.
+- Tests: red, then green, three times. C# 7588 passed, 0 failed, 1 skipped; 39 gates. After a full run nothing of
+  ours is left in %TEMP%: the first measured run left it at 2,185 entries before and after, and later runs grew it
+  only by other processes' `dotnet build` leftovers. A run folder left without its owner was removed by the first run
+  10 minutes later.
+
+## 2026-11-10 (build 3698) — What a client turns on is its own; scans, watches and settings are safe with several clients `[PIPE-PER-PROCESS-2026-11-06]`
+
+Stage C: the pipe is hardened for a client that stays connected (an MCP client, a rig) beside the UI and CE.
+
+- **Closing the UI no longer turns off See-through that Cheat Engine turned on.** What a client turns on now belongs
+  to that client: See-through goes off when the last program holding it leaves or anyone turns it off, and a Live
+  Funcs recording (with its trace, up to 512 MB) is freed when the program that started it leaves -- also when other
+  clients stay connected, which used to leave both running for nobody. The UI's two connections count as one program.
+- **Value Search and Group Scan sessions are private to the connection that began them.** Another client can no
+  longer end or refine yours, and its scans no longer expire your idle session while you are still connected. A
+  connection's sessions are dropped when it disconnects (at most 8 of each kind per connection).
+- **Watches are per connection, and stopping one is instant.** A watch on an address another client also watches is
+  its own. The watching thread only reads memory; the connection sends the latest reading with its next reply (and how
+  many readings it stands for), so a client that sends nothing no longer stalls every stop of its watch -- a
+  10-minute watch now stops in about 1 ms.
+- **Start Scan and Extra Scan run once, whoever asks.** A second request while one runs is answered "in progress"
+  instead of "failed"; the scan keeps running if the client that started it disconnects, and another client crashing
+  no longer cancels it (only stopping the DLL does). A scan stopped that way is not reported as scanned, and an Extra
+  Scan cut short says so instead of "not found".
+- **See who holds the pipe.** New command `pipe_clients` (106 in all) lists each connected program, its last command
+  and whether it is busy; when every connection is taken, the DLL's log line names them and the UI's Connect message
+  and `pipe_client.py` quote it. No client is disconnected for idling (the maintainer's choice).
+- **Heavy walks use the CPU's performance cores less 2** (this 16-core / 32-thread PC: 14 threads per walk, was 16;
+  an 8-core 9800X3D: 6; Intel E-cores are not counted).
+- **Settings saved per game cannot overwrite each other.** The per-game hint cache is changed under one lock across
+  every injected game, and "saved" in the reply (and the UI's log) means the write happened.
+- Tests: red, then green, for every item and for every review finding. An adversarial review (5 lenses, each finding
+  checked by a second agent) confirmed 23 LOW findings and two verification rounds found 8 more, all fixed -- among them
+  a teardown count that a throw could leave raised (every later Stop then waited 5 s), status replies read in two steps,
+  and a watch thread that a failed insert could leave running. C# 7560 passed, 0 failed, 1 skipped; headless 71;
+  dll_helpers_test 3929, dll_core_test 1532, utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30, 0
+  failures; 39 gates passed. ⚠ In `build.ps1 -Mode Publish` the headless step failed 49 of 71 with "No precompiled XAML
+  found" right after the stopped 3697 publish (its MSBuild servers were still up); run alone it passed 71/71, and the
+  AOT UI loads its strings and connects. Live, AOT build on DumperTest Shipping (UE 5.4):
+  - `stagec_live.py` 29/29: CE's See-through survives a pipe client leaving and goes with the last claim; another
+    process's claim goes with it while a client stays; sessions and watches are their connection's; an unwatch of a
+    10-minute watch took 1 ms; two simultaneous `trigger_scan` gave one start and one "in progress", one RunScan in the
+    log; `persisted` matched the cache file;
+  - `pipebusy_capacity.py` PASS: 6 clients, the at-capacity line listed all 6 holders (phase `Reading`), `pipe_clients`
+    listed 6 with one marked self;
+  - `worker_budget_live.py` PASS: 14 threads per walk (13 workers), 32 walks by 4 clients, +14 threads, 0 errors;
+  - the UI connected; `pipe_clients` showed its two connections under one PID.
+
+  Build 3697 was taken by a publish stopped part-way to take the last review fixes; nothing from it was handed over.
+  Not live: verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`, items 9-14. AOT UI 61,767,680 bytes;
+  UE5Dumper.dll 3,625,984 bytes.
+
+## 2026-11-10 (build 3696) — The DLL takes 6 pipe clients, and heavy commands share one thread budget `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **6 clients at once instead of 3.** The UI uses 2, so a rig, an MCP client and a reconnect now fit beside it. The
+  old rule "never run `pipe_client.py` while the UI is connected" is retired; it still holds for a game whose DLL
+  predates this build (3 clients) until its proxy is refreshed and the game restarted. The DLL's log states the limit
+  in force ("takes 6 clients at once").
+- **Heavy commands running at once share one worker budget.** Each full object walk (value scan, find references,
+  property xrefs, snapshots) used to start up to 15 threads on this PC, with no limit across walks: three at once put
+  48 threads in the game. Now the walks running at the same moment share what one walk alone may use; a walk that finds
+  it taken runs on its own thread, and the log says so. Measured on DumperTest, 480 walks from 3 clients at once:
+  - this build: +16 threads at peak, 1.4 s;
+  - build 3695: +48 threads, 8.7 s — the extra threads made the whole load six times slower.
+- **A full pipe is named as such.** When every connection is taken, the UI says so (and that the game may instead not
+  be responding) instead of "The operation has timed out". When the game exited after the list was read, it says the
+  pipe is gone. `pipe_client.py` says the same; Python's `open()` reports a full pipe as "Invalid argument".
+- **Rigs:** `pipebusy_capacity.py` reads the limit from the DLL's log and measures it (the 7th open finds every
+  connection taken). The new `worker_budget_live.py` counts the game's threads while several walks run.
+- Tests: red, then green, for the budget (dll_core_test: grants only what is free, a second walk runs on its own
+  thread while the first holds the budget), the 6-client source pin, the UI's full-pipe and gone-pipe messages, and
+  `pipe_client --selftest`. C# 7515 passed, 0 failed, 1 skipped; headless 71; dll_helpers_test 3856, dll_core_test
+  1503, grausam_window_test 22, sein_retention_test 30, 0 failures; 39 gates passed. A review workflow found the UI
+  reading any timeout as a full pipe, and wording that named an impossible "second copy of this UI"; both fixed, red
+  then green. Live, AOT UI on DumperTest Shipping (UE 5.4):
+  - the DLL logged "takes 6 clients at once"; `pipebusy_capacity.py` PASS: 6 connected, the 7th found every
+    connection taken, one at-capacity line and one recovery line;
+  - with the UI connected, `pipe_client.py` and the CE mailbox (10/10) worked beside it;
+  - with every connection held, a 7th `pipe_client` and the UI's Connect both said every connection is in use; after
+    release, Connect connected;
+  - `worker_budget_live.py`: 3 and 4 clients both +16 threads (bound 18 / 19), 438-453 of 480 walks cut by the
+    budget; the build 3695 control +48 threads.
+
+  Not live: verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`, items 6-8. AOT UI 61,739,008 bytes;
+  UE5Dumper.dll 3,581,440 bytes.
+
+## 2026-11-10 (build 3695) — Each game has its own pipe, and Connect names the game `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **The DLL serves `\\.\pipe\UE5DumpBfx_<pid>`, one pipe per game.** Every game used to serve the same
+  `\\.\pipe\UE5DumpBfx`, and Windows hands a client the oldest listening one, so with two games running the UI, or
+  even one of its two lanes, could reach the wrong game. The old name is no longer served: a protocol break by
+  decision.
+- **Connect in the UI:**
+  - one game: connects at once, as before;
+  - several games: a list showing each game's EXE name, its window title and its PID;
+  - a game running an **old** UE5Dumper DLL (usually a proxy never updated): shown in the list with a warning, and it
+    cannot be connected to. When it is the only one, there is no list: a message says the game runs an old DLL and
+    how to fix it (close it, Update All on the Proxy Deploy tab, start it again);
+  - **Inject into running game** connects to that game by its PID. Connecting to another game while connected
+    switches to it.
+- **The red "more than one process has the dumper loaded" banner is gone.** It warned that the shared name made the
+  game you reached first-come-first-served, which is no longer true. After connecting, the UI checks that the game
+  that answered is the one it asked for.
+- **Python rigs:** `pipe_client.py` takes `--pid` (or `UE5DUMP_PID`); with several games it uses the lowest PID,
+  lists them all and warns; with only an old DLL's pipe it refuses and says why. `tools/verify/legacy_pipe_stub.py`
+  puts up the old name for testing.
+- **A second copy of the DLL in one game** (a stale proxy beside a fresh injection) no longer starts a second server
+  on the same name when every pipe slot is busy, and while it waits it no longer connects to the first copy twice a
+  second.
+- **Cheat Engine:** no change in behaviour. Its messages name the new pipe, and the "pipe server failed" message now
+  gives the real causes (the record unticked during the scan, or ticked again too soon).
+- Tests: red, then green, for the DLL (Voll's name, probe, first instance, watcher), the UI (the connect plan, the
+  list, the refusal, switching games) and `pipe_client --selftest`. C# 7513 passed, 0 failed, 1 skipped
+  (`DUMPDIFF_REAL_DIR` unset); headless 71; dll_helpers_test 3856, dll_core_test 1487, grausam_window_test 22,
+  sein_retention_test 30, 0 failures; 39 gates passed. A review workflow (three reviewers, a skeptic per finding)
+  found five defects in the first version, each fixed red then green. Live, AOT UI on DumperTest Shipping (UE 5.4)
+  and DumperTest58 Shipping (UE 5.8):
+  - Inject into running game connected by PID (`UE5DumpBfx_50208`, both lanes) after 2 s; Connect with one game
+    connected without a list; with no game, "No game is running UE5Dumper";
+  - with the old name up (`legacy_pipe_stub.py`): beside a game, the list showed the warning row, which disabled
+    Connect; alone, the message and no list; neither the UI nor `pipe_client` ever opened it;
+  - two games: the list showed both with EXE names and window titles, and each choice connected to that game
+    (UE504 24,530 objects / UE508 34,570); `pipe_client` with no PID warned and used the lowest, `--pid` and
+    `UE5DUMP_PID` chose;
+  - CE mailbox (`mailbox_poke.py`) 10/10;
+  - a second copy injected while every slot was busy: 0 connections to the first copy in 15 s, against 22 in 10 s
+    from the pre-fix copy.
+
+  Not live: verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`. AOT UI 61,735,424 bytes; UE5Dumper.dll
+  3,579,904 bytes.
+
+## 2026-11-06 (no build change) — Two old explanations of the pipe's 3-client limit were wrong `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **`[PIPEBUSY-2026-08-18]` is not why the DLL's pipe takes at most 3 clients.** That tag recorded a logging bug: a
+  full pipe logged an ERROR once a second, 1,826 lines in 31 minutes. It was fixed on 2026-08-19, and the pipe now
+  logs one line when it fills and one when it frees. The 3 is simply "2 UI lanes + 1 spare". Several notes cited the
+  tag as the reason, including a todo line written earlier today; each now carries a correction. Read this entry, not
+  those notes.
+- **multipipe-eval.md §4's warning no longer holds.** It said two commands running at once race on the class caches.
+  Every access is now locked, and nothing is erased. What does grow with heavy commands running at once is the number
+  of scan threads inside the game.
+- **Planned, not built** (todo.md `[PIPE-PER-PROCESS-2026-11-06]`):
+  - A. a pipe per game process, so the UI can tell games apart and list them by EXE name and window title;
+  - B. 6 pipe slots;
+  - C. hardening for a client that stays connected;
+  - D. then the MCP automation idea.
+
 ## 2026-11-06 (build 3694) — The DLL's pipe refuses clients from other machines `[PIPE-REJECT-REMOTE]`
 
 - **Another PC can no longer drive the DLL over the network.** The pipe `\\.\pipe\UE5DumpBfx` accepted remote clients.

@@ -1433,16 +1433,17 @@ SessionManager& SessionManager::Instance() {
     return *inst;
 }
 
-uint64_t SessionManager::Begin(DataType dt,
+uint64_t SessionManager::Begin(uint64_t owner, DataType dt,
                                std::vector<Candidate>       candidates,
                                std::vector<FieldDescriptor> descriptors,
                                std::vector<InstanceRecord>  instances) {
-    ExpireOldSessions();
-
     std::lock_guard<std::mutex> lk(mu_);
+    ExpireOldSessionsLocked(owner);
+    EvictOwnedBeyond(sessions_, owner, kMaxSessionsPerOwner);
     uint64_t id = nextId_++;
     auto sess = std::make_unique<Session>();
     sess->id          = id;
+    sess->owner       = owner;
     sess->dt          = dt;
     sess->candidates  = std::move(candidates);
     sess->descriptors = std::move(descriptors);
@@ -1452,32 +1453,37 @@ uint64_t SessionManager::Begin(DataType dt,
     return id;
 }
 
-bool SessionManager::End(uint64_t sessionId) {
+bool SessionManager::End(uint64_t owner, uint64_t sessionId) {
     std::lock_guard<std::mutex> lk(mu_);
-    const bool erased = sessions_.erase(sessionId) > 0;
-    // Reap other idle sessions on the way out (audit #5 AB17): ending a scan is a
-    // natural point to drop ones a client abandoned without an End.
-    ExpireOldSessionsLocked();
+    auto it = FindOwnedLocked(owner, sessionId);
+    const bool erased = it != sessions_.end();
+    if (erased) sessions_.erase(it);
+    // Reap this owner's other idle sessions on the way out (audit #5 AB17): ending a
+    // scan is a natural point to drop ones it abandoned without an End.
+    ExpireOldSessionsLocked(owner);
     return erased;
 }
 
-void SessionManager::ExpireOldSessions() {
+void SessionManager::ExpireOldSessions(uint64_t owner) {
     std::lock_guard<std::mutex> lk(mu_);
-    ExpireOldSessionsLocked();
+    ExpireOldSessionsLocked(owner);
+}
+
+size_t SessionManager::DropOwner(uint64_t owner) {
+    std::lock_guard<std::mutex> lk(mu_);
+    size_t n = 0;
+    for (auto it = sessions_.begin(); it != sessions_.end();) {
+        if (it->second->owner == owner) { it = sessions_.erase(it); ++n; }
+        else ++it;
+    }
+    return n;
 }
 
 // Caller MUST hold mu_. Split out so RefineWith / End can sweep AFTER protecting
 // their own session, without the double-lock a public ExpireOldSessions would take
 // (std::mutex is non-recursive). (audit #5 AB17)
-void SessionManager::ExpireOldSessionsLocked() {
-    auto now = std::chrono::steady_clock::now();
-    for (auto it = sessions_.begin(); it != sessions_.end(); ) {
-        if (now - it->second->lastUse > kExpirySeconds) {
-            it = sessions_.erase(it);
-        } else {
-            ++it;
-        }
-    }
+void SessionManager::ExpireOldSessionsLocked(uint64_t owner) {
+    ReapIdleOwned(sessions_, owner, std::chrono::steady_clock::now(), kExpirySeconds);
 }
 
 void SessionManager::DropAll() {
@@ -1927,13 +1933,13 @@ GroupSessionManager& GroupSessionManager::Instance() {
     return *inst;
 }
 
-uint64_t GroupSessionManager::Begin(std::vector<SlotSpec>        slots,
+uint64_t GroupSessionManager::Begin(uint64_t                     owner,
+                                    std::vector<SlotSpec>        slots,
                                     std::vector<GroupCandidate>  candidates,
                                     std::vector<FieldDescriptor> descriptors,
                                     std::vector<InstanceRecord>  instances,
                                     bool                         perSlotCapHit,
                                     int                          perSlotCap) {
-    ExpireOldSessions();
 
     // Total-leaf memory backstop (audit #5 AB19). max_results is not clamped at the
     // Fern boundary, so a broad scan on a large game can arrive with a candidate
@@ -1949,9 +1955,12 @@ uint64_t GroupSessionManager::Begin(std::vector<SlotSpec>        slots,
     }
 
     std::lock_guard<std::mutex> lk(mu_);
+    ExpireOldSessionsLocked(owner);
+    EvictOwnedBeyond(sessions_, owner, kMaxSessionsPerOwner);
     uint64_t id = nextId_++;
     auto sess = std::make_unique<GroupSession>();
     sess->id          = id;
+    sess->owner       = owner;
     sess->slots       = std::move(slots);
     sess->candidates  = std::move(candidates);
     sess->descriptors = std::move(descriptors);
@@ -1965,25 +1974,33 @@ uint64_t GroupSessionManager::Begin(std::vector<SlotSpec>        slots,
     return id;
 }
 
-bool GroupSessionManager::End(uint64_t sessionId) {
+bool GroupSessionManager::End(uint64_t owner, uint64_t sessionId) {
     std::lock_guard<std::mutex> lk(mu_);
-    const bool erased = sessions_.erase(sessionId) > 0;
-    ExpireOldSessionsLocked();   // audit #5 AB17 — sibling of SessionManager::End
+    auto it = FindOwnedLocked(owner, sessionId);
+    const bool erased = it != sessions_.end();
+    if (erased) sessions_.erase(it);
+    ExpireOldSessionsLocked(owner);   // audit #5 AB17 — sibling of SessionManager::End
     return erased;
 }
 
-void GroupSessionManager::ExpireOldSessions() {
+void GroupSessionManager::ExpireOldSessions(uint64_t owner) {
     std::lock_guard<std::mutex> lk(mu_);
-    ExpireOldSessionsLocked();
+    ExpireOldSessionsLocked(owner);
+}
+
+size_t GroupSessionManager::DropOwner(uint64_t owner) {
+    std::lock_guard<std::mutex> lk(mu_);
+    size_t n = 0;
+    for (auto it = sessions_.begin(); it != sessions_.end();) {
+        if (it->second->owner == owner) { it = sessions_.erase(it); ++n; }
+        else ++it;
+    }
+    return n;
 }
 
 // Caller MUST hold mu_ — see SessionManager::ExpireOldSessionsLocked. (audit #5 AB17)
-void GroupSessionManager::ExpireOldSessionsLocked() {
-    auto now = std::chrono::steady_clock::now();
-    for (auto it = sessions_.begin(); it != sessions_.end(); ) {
-        if (now - it->second->lastUse > kExpirySeconds) it = sessions_.erase(it);
-        else ++it;
-    }
+void GroupSessionManager::ExpireOldSessionsLocked(uint64_t owner) {
+    ReapIdleOwned(sessions_, owner, std::chrono::steady_clock::now(), kExpirySeconds);
 }
 
 void GroupSessionManager::DropAll() {

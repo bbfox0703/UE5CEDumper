@@ -9,8 +9,8 @@ register classified it human-only: "needs a human moving the character".
 ⭐ IT IS NOT HUMAN-ONLY. `teleport_relative` is an ordinary pipe command and DumperTest has a
 real player pawn (`ADumperTestCharacter : ACharacter`), so the movement can be driven over the
 same connection that owns the See-through session - which matters, because the DLL disables
-See-through when the pipe client disconnects, so a two-process arm would measure the disabled
-state and call it a pass.
+See-through when the client process that turned it on disconnects, so a two-process arm would
+measure the disabled state and call it a pass.
 
 WHAT MAKES THE RESULT MEAN SOMETHING, in order:
 

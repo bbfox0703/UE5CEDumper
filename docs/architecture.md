@@ -58,6 +58,8 @@ UE5CEDumper/
 │       │                              Compare predicates (738/757); lean Candidate pools (V3-A 926);
 │       │                              TSet/TMap scan (V1a 927); GroupSessionManager (1276)
 │       ├── Orden.h                 ← GroupMatch — source-agnostic SDR matcher for multi-value group scan (1276)
+│       ├── Kanne.h                 ← WatchSample — a pipe watch's key (connection + address) and the slot its thread
+│       │                              leaves samples in; the connection's handler sends them ([PIPE-PER-PROCESS] Stage C)
 │       ├── Tot.h                   ← Cancellation — Tot::Requested() (per-command disconnect flag |
 │       │                              sticky shutdown flag) polled by long loops (936)
 │       ├── Mimic.cpp / .h          ← Mailbox — shared memory mailbox for CE Lua invocation (CMD_* 0-15; derive the max from the Cmd enum, contract version lives beside it)
@@ -70,14 +72,14 @@ UE5CEDumper/
 │       ├── ProxyDxgi.def           ← dxgi.dll export forwarding
 │       │
 │       ├── Frieren.cpp / .h        ← ExportAPI — 63 C ABI exports for CE Lua bridge
-│       ├── Fern.cpp / .h           ← PipeServer — Named pipe IPC server, JSON dispatch (105 commands)
+│       ├── Fern.cpp / .h           ← PipeServer — Named pipe IPC server, JSON dispatch (106 commands)
 │       └── Renge.h                 ← PipeProtocol — shared JSON command/field name constants
 │
 ├── docs/                           ← Documentation
 │   ├── architecture.md             ← This file
 │   ├── dev-log.md                  ← Running milestone log + capability matrix + gaps (read first)
 │   ├── dll-spec.md                 ← C++ header definitions, offset tables, CE Lua bridge
-│   ├── pipe-protocol.md            ← Named Pipe JSON IPC protocol (105 commands)
+│   ├── pipe-protocol.md            ← Named Pipe JSON IPC protocol (106 commands)
 │   ├── ui-spec.md                  ← Avalonia UI tech stack, component skeletons
 │   ├── export-formats.md           ← CE XML, CSX, SDK Header, USMAP export rules
 │   ├── technical-notes.md          ← UE version diffs, FField vs UProperty, FNamePool internals,
@@ -92,7 +94,7 @@ UE5CEDumper/
 │
 ├── ui/                             ← C# Avalonia UI App
 │   ├── UE5DumpUI.sln
-│   ├── UE5DumpUI.Tests/            ← xUnit test project (260 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
+│   ├── UE5DumpUI.Tests/            ← xUnit test project (267 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
 │   ├── UE5DumpUI.HeadlessTests/    ← real Avalonia controls on the headless platform (Avalonia.Headless, same version as the app); its OWN process because a headless session replaces the global UI Dispatcher the view-model tests must not share
 │   └── UE5DumpUI/
 │       ├── UE5DumpUI.csproj        ← .NET 10 windows, Avalonia 12.1.0, Native AOT
@@ -245,7 +247,7 @@ Game Process
         ├── Grausam / Schlacht      — keep-foreground lock · see-through occluders (experimental)
         ├── Denken (NativeDisasm)   — Zydis x64 native-UFunction → property xref
         ├── Flamme (HintCache)      — scan hint caching for repeat scans
-        └── Fern (PipeServer)       — ~87 JSON commands on \\.\pipe\UE5DumpBfx
+        └── Fern (PipeServer)       — ~87 JSON commands on \\.\pipe\UE5DumpBfx_<pid> (one pipe per game process)
                                         ↕ Named pipe (JSON newline-delimited)
 CE Lua (UE5CEDumper.CT)               UE5DumpUI.exe (Avalonia)
   ├── injectDLL()                      ├── PipeClient       — async connect/send/recv
@@ -264,8 +266,8 @@ CE Lua (UE5CEDumper.CT)               UE5DumpUI.exe (Avalonia)
 2. `DLL_PROCESS_ATTACH` (Heiter.cpp) → spawns `AutoStartThreadProc` (1 second delay)
 3. `AutoStartThreadProc` → checks `g_isCEPlugin` (suppresses if loaded into CE.exe)
 4. `UE5_Init()`: `Genau::FindGObjects()` → `Genau::FindGNames()` → `Genau::DetectVersion()` → `Serie::Init()` → `Aura::Init()` → `Genau::ValidateAndFixOffsets()`
-5. `Fern::PipeServer::Start()` → listens on `\\.\pipe\UE5DumpBfx`
-6. User launches `UE5DumpUI.exe` → `PipeClient` connects → UI populated
+5. `Fern::PipeServer::Start()` → listens on `\\.\pipe\UE5DumpBfx_<pid>`, this game process's own name (`Voll::OwnPipeName`, [PIPE-PER-PROCESS-2026-11-06])
+6. User launches `UE5DumpUI.exe` → Connect lists `\\.\pipe\`: one game connects at once, several open a list, the legacy name alone (an old DLL) is refused → `PipeClient` connects → UI populated
 
 ### Logging
 

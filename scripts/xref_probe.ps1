@@ -7,7 +7,7 @@
 # Prereq: the game is running with UE5Dumper.dll injected and its pipe server
 # started. Without the UI, inject via Cheat Engine + dist\UE5CEDumper.CT
 # (the CT's Lua loadLibrary + the DLL auto-start thread runs Init + StartPipeServer).
-# Wait until \\.\pipe\UE5DumpBfx exists, then run this.
+# Wait until \\.\pipe\UE5DumpBfx_<game pid> exists, then run this with -PipeName UE5DumpBfx_<game pid>.
 #
 # Usage:
 #   # 1) validate the Script offset derivation live + run xref on a known FProperty:
@@ -28,11 +28,12 @@ param(
     [string]$FuncAddr  = "",          # UFunction* to run the reverse edge directly
     [bool]  $GameOnly  = $true,
     [int]   $Max       = 200,
-    [string]$PipeName  = "UE5DumpBfx",
+    [string]$PipeName  = "",          # UE5DumpBfx_<game pid>: each game serves its own [PIPE-PER-PROCESS-2026-11-06]
     [int]   $TimeoutMs = 5000
 )
 
 $ErrorActionPreference = "Stop"
+if (-not $PipeName) { throw "Pass -PipeName UE5DumpBfx_<game pid> (each game serves its own pipe)." }
 $script:reqId = 0
 
 function Connect-Pipe {

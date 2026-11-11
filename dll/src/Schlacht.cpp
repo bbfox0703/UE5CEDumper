@@ -490,6 +490,9 @@ struct State {
     int32_t   pierceCount = Grimoire::SCHLACHT_PIERCE_DEFAULT;  // nearest occluders to hide
     int32_t   state       = -1;  // last enable/disable result (1/0/neg); -1 = poll-only
     bool      restoreAbandoned = false;  // [P1-SEETHRU-GIVEUP] the deferred restore gave up; cleared by SetEnabled
+    // Who holds it on ([PIPE-PER-PROCESS-2026-11-06] Stage C). Changed only with s_workerMutex AND s_mutex held, so
+    // either lock is enough to read it.
+    std::vector<uint64_t> owners;
 };
 State s_state;
 std::mutex s_mutex;
@@ -694,9 +697,8 @@ void StopPendingLocked() {    // s_workerMutex held; never called FROM the worke
 
 namespace Schlacht {
 
-int32_t SetEnabled(bool enable) {
-    // lock order: s_workerMutex (outer) → s_mutex (inner).
-    std::lock_guard<std::mutex> wlk(s_workerMutex);
+// The switch itself, s_workerMutex held. SetEnabled and Release decide whether to flip it and who holds it.
+static int32_t ApplyLocked(bool enable) {
     // Either direction supersedes a deferred restore: enable recovers the leftover
     // itself, and a fresh disable re-decides. Joined here so only one path ever
     // owns hiddenActors.
@@ -807,6 +809,47 @@ int32_t SetEnabled(bool enable) {
     return 0;
 }
 
+int32_t SetEnabled(bool enable, uint64_t owner) {
+    // lock order: s_workerMutex (outer) → s_mutex (inner).
+    std::lock_guard<std::mutex> wlk(s_workerMutex);
+    if (!enable) {
+        std::lock_guard<std::mutex> lk(s_mutex);
+        s_state.owners.clear();   // an explicit OFF means off, whoever else had turned it on
+    }
+    const int32_t rc = ApplyLocked(enable);
+    if (enable && rc == 1) {
+        std::lock_guard<std::mutex> lk(s_mutex);
+        ClaimOwner(s_state.owners, owner);
+    }
+    return rc;
+}
+
+OwnerRelease Release(uint64_t owner, const std::function<bool(uint64_t)>& stillLive) {
+    // Claims change only under s_workerMutex, so what is read below holds until this returns.
+    std::lock_guard<std::mutex> wlk(s_workerMutex);
+    {
+        std::lock_guard<std::mutex> lk(s_mutex);
+        if (std::find(s_state.owners.begin(), s_state.owners.end(), owner) == s_state.owners.end())
+            return OwnerRelease::NotHeld;
+    }
+    // Asked outside s_mutex: the pipe's answer takes its registry lock, and the worker's ticks wait on s_mutex.
+    const bool live = stillLive && stillLive(owner);
+    OwnerRelease r;
+    size_t left;
+    {
+        std::lock_guard<std::mutex> lk(s_mutex);
+        r = ReleaseOwner(s_state.owners, owner, live);
+        left = s_state.owners.size();
+    }
+    if (r == OwnerRelease::TurnOff) {
+        LOG_INFO("SeeThrough: its last holder left -- turning it off");
+        ApplyLocked(false);
+    } else if (!live) {
+        LOG_INFO("SeeThrough: a holder left; %zu still hold it on", left);
+    }
+    return r;
+}
+
 void SetPierceCount(int32_t count) {
     if (count < 1) count = 1;
     if (count > Grimoire::SCHLACHT_PIERCE_MAX) count = Grimoire::SCHLACHT_PIERCE_MAX;
@@ -824,6 +867,8 @@ int32_t GetStatus(SeeThroughStatus& out) {
     out.state       = s_state.state;
     out.restorePending   = s_pendingRunning.load();   // [P1-SEETHRU-GIVEUP]
     out.restoreAbandoned = s_state.restoreAbandoned;
+    out.claims    = static_cast<int32_t>(s_state.owners.size());
+    out.ceClaimed = std::find(s_state.owners.begin(), s_state.owners.end(), kOwnerCe) != s_state.owners.end();
     // Under the same lock as hiddenCount, so a caller can never see a count that
     // disagrees with the list it came with.
     out.hiddenActors.assign(s_state.hiddenActors.begin(), s_state.hiddenActors.end());

@@ -27,7 +27,7 @@ no reply used the exact bytecode path, or if the first reply does not carry the
 fields this rig reads -- a renamed key would otherwise look exactly like "this game
 has no such property", which is the failure mode that costs a whole session.
 
-⛔ The UI must be DISCONNECTED: Fern::kMaxPipeInstances = 3 and the UI holds 2 lanes.
+⛔ The UI must be DISCONNECTED from a DLL that predates [PIPE-PER-PROCESS-2026-11-06] Stage B: it took 3 pipe clients and the UI holds 2 lanes (6 since).
 """
 from __future__ import annotations
 

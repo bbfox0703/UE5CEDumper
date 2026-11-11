@@ -42,6 +42,13 @@
     <Compile Include="..\UE5DumpUI.Tests\StringTable.cs" Link="StringTable.cs" />
   </ItemGroup>
 
+  <!-- The record of SDK leftovers seen young [TEST-TEMP-HYGIENE-2026-11-11]: build.ps1 runs this suite after the unit
+       tests, so this suite's own build is seen young only if it records it (SdkTempRecorder.cs). It records; it never
+       deletes. -->
+  <ItemGroup>
+    <Compile Include="..\UE5DumpUI.Tests\SdkTempLeftovers.cs" Link="SdkTempLeftovers.cs" />
+  </ItemGroup>
+
   <!-- The same guard as UE5DumpUI.Tests (see the comment there): SkiaSharp / HarfBuzzSharp
        flow in from the UE5DumpUI reference, and Microsoft.Testing.* from xunit.v3. -->
   <Target Name="_FailOnForbiddenTransitivePin" BeforeTargets="CollectPackageReferences">

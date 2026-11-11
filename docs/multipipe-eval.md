@@ -120,6 +120,12 @@ global `Tot` flag would cross-trip between lanes.
 
 ### The concurrency-safety crux (gates Option 2 / Phase 2)
 
+> **Superseded 2026-11-06** (`[PIPE-PER-PROCESS-2026-11-06]`, re-read against the code). The class-cache race below is
+> gone: `s_classContainerCache` / `s_classRefCache` take their mutex on every access and are never erased, and
+> `Ubel::WalkClassEx` publishes with `try_emplace`. There is still no GObjects epoch, but every walk already races the
+> game's GC with one client. The live cost of concurrent heavy commands is scan threads (min(16, cores − 2) each),
+> which that plan's Stage B budgets.
+
 The DLL is **not** safe to run two scan-family commands concurrently today:
 
 - [`s_classContainerCache`](../dll/src/Aura.cpp:1784) and
@@ -296,6 +302,7 @@ a duplicate cache fill, not corruption.")
 
 1. **maxInstances**: `CreateNamedPipeW(..., /*maxInstances=*/3, ...)` (2 UI lanes + 1 reconnect
    transient). Keep `PIPE_TYPE_BYTE | PIPE_WAIT`, **no** `FILE_FLAG_OVERLAPPED`.
+   > *2026-11-06:* nothing else holds the value at 3; `[PIPE-PER-PROCESS-2026-11-06]` Stage B raises it to 6.
 2. **Thread-per-connection accept loop**: `AcceptLoop` currently creates one instance, calls
    `HandleClient` **inline**, then loops. Change to: create an instance → `ConnectNamedPipe` →
    **spawn a thread** running `HandleClient(conn)` → loop immediately to create the next
@@ -373,9 +380,12 @@ streaming `Utf8JsonReader` and/or smaller chunks (already noted in todo).
   session (registry empty→1) — never per-command — so a light command on one lane can't clear a
   running scan's cancel on the other.
 - Watches are **per-connection**: `WatchEntry.owner` points at the registering `Connection`; the
-  watch thread writes its event to that connection via `WriteLine` (old global `PushEvent` removed).
-  `StopWatchesForConnection(owner)` stops+joins a connection's watches in its cleanup before the
-  `Connection` is freed. Sessions (`Radar::*::DropAll`) dropped only on the last disconnect.
+  watch thread writes its event to that connection via `WriteLine` (old global `PushEvent` removed;
+  since Stage C, 2026-11-10, the watch thread only samples and the connection's own handler writes
+  the events, `Kanne.h`). `StopWatchesForConnection(owner)` stops+joins a connection's watches in its cleanup before the
+  `Connection` is freed. Sessions (`Radar::*::DropAll`) dropped only on the last disconnect
+  (until [PIPE-PER-PROCESS-2026-11-06] Stage C, 2026-11-10: a session is its connection's, and each
+  connection's cleanup drops its own with `DropOwner`).
 - `Stop()` closes `m_listenPipe` (unblock `ConnectNamedPipe`) and `CancelIoEx`'s each connection
   (unblock `ReadFile`/`WriteFile`; each thread then closes its **own** handle), stops watches, waits
   (bounded 5 s) for the registry to drain, then joins accept/monitor.
@@ -674,6 +684,12 @@ i.e. every removed entry was a group). 4,792 leaves gained their parent's label 
 `"parent (off) > leaf (off)"` prefix; 9,534 kept their description verbatim. No leaf gained or lost.
 
 ## The pipe name is a single global — the wrong-game hazard (2026-07-27)
+
+> **2026-11-06:** "the real fix, not built" below is planned. See todo.md `[PIPE-PER-PROCESS-2026-11-06]` Stage A:
+> `UE5DumpBfx_<pid>`, a UI connection list, and a refusal when only an old DLL's pipe exists. It also measured how a
+> second server on the name arises (a startup probe reading `ERROR_PIPE_BUSY` as "no pipe").
+>
+> **2026-11-10: built in build 3695** (dev-log 3695). The hazard below describes builds before it.
 
 Separate from head-of-line blocking, and cheaper to hit: `\.\pipe\UE5DumpBfx` is ONE
 well-known name with `maxInstances = 3`. **Every injected game serves that same name.** A

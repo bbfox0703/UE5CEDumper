@@ -1757,7 +1757,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     }
 
     /// <summary>Reset the recording UI state on pipe disconnect. The DLL (Linie) already
-    /// drops its recording on last-client-gone; this keeps the UI in sync so a reconnect
+    /// drops its recording when the client that started it leaves; this keeps the UI in sync so a reconnect
     /// doesn't show a stuck "recording" that swallows the next Start. (L16)</summary>
     public void ResetOnDisconnect()
     {

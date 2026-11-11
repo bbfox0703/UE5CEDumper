@@ -34,6 +34,8 @@
 #include <atomic>
 #include <chrono>
 #include <exception>
+#include <memory>
+#include <mutex>
 #include <thread>
 
 namespace Routine {
@@ -169,5 +171,97 @@ inline void ReassertLoop(const char* tag, int periodMs,
         RunTickGuarded(tag, warnedThrow, tick);
     LOG_INFO("%s: re-assert worker stopped", tag);
 }
+
+// ============================================================
+// SingleFlightJob — one background job at a time, started by whichever client asks first.
+// ============================================================
+// [PIPE-PER-PROCESS-2026-11-06] Stage C. trigger_scan and rescan each start a background job, and a pipe with six
+// clients can be asked twice at once. The job keeps running when the client that started it leaves: its result is
+// the process's, read by every later client and by CE, and the UI starts it on one lane, polls it on the other and
+// reconnects both together. Only Stop (and shutdown) cancel it.
+class SingleFlightJob {
+public:
+    enum class Start { Started, AlreadyRunning, Stopping };
+
+    explicit SingleFlightJob(const char* tag) : m_tag(tag) {}
+    SingleFlightJob(const SingleFlightJob&) = delete;
+    SingleFlightJob& operator=(const SingleFlightJob&) = delete;
+
+    // `reset` runs only for the caller that starts the job, before its thread; `body` runs on that thread and its
+    // return is Completed(). `serverRunning` false refuses: a job started after Stop's join would be joined by nobody.
+    template <class Reset, class Body>
+    Start TryStart(const std::atomic<bool>& serverRunning, Reset&& reset, Body&& body) {
+        // The claim is one test-and-set under m_stateMu. The old check-then-set let two callers through: both ran
+        // their reset, both joined and replaced one std::thread, and the loser's thread was detached where no Stop
+        // would join it. `completed` is cleared in the same step, so Status() never pairs this run's `running` with
+        // the last run's answer.
+        {
+            std::lock_guard<std::mutex> st(m_stateMu);
+            if (m_running.load(std::memory_order_relaxed)) return Start::AlreadyRunning;
+            m_running.store(true, std::memory_order_release);
+            m_completed.store(false, std::memory_order_relaxed);
+        }
+        bool launched = false;
+        struct Unclaim {   // every way out before the thread exists gives the claim back -- a throw included
+            SingleFlightJob& job;
+            const bool&      launched;
+            ~Unclaim() {
+                if (launched) return;
+                std::lock_guard<std::mutex> st(job.m_stateMu);
+                job.m_running.store(false, std::memory_order_release);
+            }
+        } unclaim{*this, launched};
+        std::lock_guard<std::mutex> lk(m_life);
+        if (!serverRunning.load()) return Start::Stopping;
+        if (m_thread.joinable()) m_thread.join();   // the last run cleared `running` as it ended: a brief join
+        reset();
+        auto token = std::make_shared<std::atomic<bool>>(false);
+        m_token = token;
+        m_thread = std::thread([this, token, body = std::forward<Body>(body)]() mutable {
+            // Bound to the job's own token, which this thread co-owns, so Tot::Requested() here -- and in any worker
+            // it spawns with the captured context and joins -- answers this token or shutdown, never the per-command
+            // cancel another client's death raises.
+            Tot::CancelContextScope scope(Tot::CancelContext{token.get(), false});
+            bool ok = false;
+            RunThreadGuarded(m_tag, [&] { ok = body(); });
+            std::lock_guard<std::mutex> st(m_stateMu);
+            m_completed.store(ok, std::memory_order_relaxed);
+            m_running.store(false, std::memory_order_release);
+        });
+        launched = true;
+        return Start::Started;
+    }
+
+    // Cancel the running job (its own token; never another client's) and join it.
+    void StopAndJoin() {
+        std::lock_guard<std::mutex> lk(m_life);
+        if (m_token) m_token->store(true, std::memory_order_relaxed);
+        if (m_thread.joinable()) m_thread.join();
+    }
+
+    bool Running() const { return m_running.load(std::memory_order_acquire); }
+    // The last run's body returned true. Meaningful once Running() is false.
+    bool Completed() const { return m_completed.load(std::memory_order_relaxed); }
+
+    // Running and Completed as one answer. Read apart, another client's start between the two paired "not running"
+    // with the new run's cleared answer: a status reply that said "finished, nothing found".
+    struct Snapshot {
+        bool running   = false;
+        bool completed = false;
+    };
+    Snapshot Status() const {
+        std::lock_guard<std::mutex> st(m_stateMu);
+        return Snapshot{m_running.load(std::memory_order_relaxed), m_completed.load(std::memory_order_relaxed)};
+    }
+
+private:
+    const char*        m_tag;
+    std::atomic<bool>  m_running{false};
+    std::atomic<bool>  m_completed{false};
+    mutable std::mutex m_stateMu; // every change of running / completed, and Status()'s read of both
+    std::mutex         m_life;    // TryStart's join-and-replace against StopAndJoin
+    std::shared_ptr<std::atomic<bool>> m_token;
+    SafeThread         m_thread;
+};
 
 } // namespace Routine

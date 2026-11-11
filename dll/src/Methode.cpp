@@ -319,8 +319,10 @@ static void __stdcall OnInjectAndConnect()
                 "UE5CEDumper is already loaded in this process as '%s'.\n\n"
                 "Path: %s\n\n"
                 "No injection needed — just launch UE5DumpUI.exe and click Connect.\n"
-                "Pipe: \\\\.\\pipe\\UE5DumpBfx",
-                presentName.c_str(), presentPath.c_str());
+                "Pipe: \\\\.\\pipe\\UE5DumpBfx_%lu\n"
+                "(If the UI says this game runs an old UE5Dumper DLL, refresh the proxy\n"
+                "in the game's folder and restart the game.)",
+                presentName.c_str(), presentPath.c_str(), static_cast<unsigned long>(pid));
             g_CE.ShowMessage(msg);
             return;
         }
@@ -462,10 +464,13 @@ static void __stdcall OnInjectAndConnect()
 
     // Mapped. The scan runs on its own thread now, so this is genuinely "started",
     // not "finished" — the UI's Connect polls the pipe until it is up.
-    g_CE.ShowMessage(const_cast<char*>(
+    char done[512];
+    snprintf(done, sizeof(done),
         "UE5CEDumper: DLL injected — GObjects/GNames scan started in the background.\n"
-        "It takes a few seconds; connect UE5DumpUI.exe to \\\\.\\pipe\\UE5DumpBfx\n"
-        "(check the log file if the scan fails on first run)"));
+        "It takes a few seconds; connect UE5DumpUI.exe to \\\\.\\pipe\\UE5DumpBfx_%lu\n"
+        "(check the log file if the scan fails on first run)",
+        static_cast<unsigned long>(pid));
+    g_CE.ShowMessage(done);
 }
 
 // ── Required CE Plugin exports ────────────────────────────────────────────

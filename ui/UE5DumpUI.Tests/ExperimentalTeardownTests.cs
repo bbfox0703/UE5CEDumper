@@ -12,8 +12,9 @@ namespace UE5DumpUI.Tests;
 /// as the maintainer chose after the review (2026-10-09, 「連線中也可取消，立即清理」): unticked while connected,
 /// Teleport's teardown turns Keep Foreground, Fly, See-through and a Stealth hold off at once, and only then releases
 /// their hotkeys; unticked while disconnected, the next connect with the features still off turns off whatever the
-/// connect prime reads on -- never a connect with them on. The DLL's last-client teardown ends See-through, not the
-/// other three, so without this they ran on behind hidden cards.
+/// connect prime reads on -- never a connect with them on. The DLL ends See-through when the last connection of the
+/// client process that turned it on goes (and CE holds none), not the other three, so without this they ran on behind
+/// hidden cards.
 /// </summary>
 public class ExperimentalTeardownTests : IDisposable
 {

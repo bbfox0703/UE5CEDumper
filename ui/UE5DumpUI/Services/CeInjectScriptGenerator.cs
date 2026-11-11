@@ -245,7 +245,7 @@ public static class CeInjectScriptGenerator
         Line(sb, "else");
         Line(sb, "  dbg(string.format('[UE5CEDumper] ready in %.1f sec', waited / 1000))");
         Line(sb, "end");
-        Line(sb, "dbg('[UE5CEDumper] pipe: \\\\\\\\.\\\\pipe\\\\UE5DumpBfx -- launch UE5DumpUI.exe and click Connect')");
+        Line(sb, "dbg('[UE5CEDumper] pipe: \\\\\\\\.\\\\pipe\\\\UE5DumpBfx_(game PID) -- launch UE5DumpUI.exe and click Connect')");
         // ⛔ OWNERSHIP. Only reached when THIS record brought the pipe up -- a fresh
         // inject, or a revive of a parked DLL. Every bail-out above returns first, so
         // the "already loaded and serving" path never gets here. A GLOBAL on purpose:

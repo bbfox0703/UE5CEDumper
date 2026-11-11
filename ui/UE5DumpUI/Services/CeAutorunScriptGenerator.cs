@@ -174,7 +174,7 @@ public static class CeAutorunScriptGenerator
         Line(sb, "  else");
         Line(sb, "    dbg(string.format('[UE5CEDumper] ready in %.1f sec', waited / 1000))");
         Line(sb, "  end");
-        Line(sb, "  dbg('[UE5CEDumper] pipe: \\\\\\\\.\\\\pipe\\\\UE5DumpBfx -- launch UE5DumpUI.exe and click Connect')");
+        Line(sb, "  dbg('[UE5CEDumper] pipe: \\\\\\\\.\\\\pipe\\\\UE5DumpBfx_(game PID) -- launch UE5DumpUI.exe and click Connect')");
         Line(sb, "  return true");
         Line(sb, "end");
     }

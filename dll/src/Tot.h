@@ -22,9 +22,10 @@
 //
 // Long loops poll Requested() every N iterations (cheap relaxed atomic load)
 // and bail with an empty / partial result. Per-command cancellation is reset
-// when a fresh session connects into an empty connection registry (Fern
-// AcceptLoop firstConn), NOT per-command — a light command on one lane must not
-// clear a running scan's cancel on another lane; shutdown is sticky. Background
+// once no connection that raised it is still registered (Fern::
+// ReevaluatePerCommandCancel, by PerCommandStillOwed below), NOT per-command — a
+// light command on one lane must not clear a running scan's cancel on another
+// lane; shutdown is sticky. Background
 // re-assert workers opt out of the per-command cancel via MarkBackgroundWorker()
 // (they live for the game process, not a single pipe command). (M4)
 //
@@ -38,10 +39,11 @@
 namespace Tot {
 
 // Set when the connected client disconnects mid-command (Fern monitor).
-// Cleared by ResetPerCommand() when a fresh session connects into an empty
-// registry (Fern AcceptLoop firstConn) — kept latched until then so an orphaned
-// in-flight scan on the dropped connection keeps aborting (do NOT clear it at
-// disconnect: the orphaned scan must still see the cancel until it unwinds).
+// Cleared by ResetPerCommand() once no connection that raised it is still
+// registered (Fern::ReevaluatePerCommandCancel) — kept latched until then so an
+// orphaned in-flight scan on the dropped connection keeps aborting (do NOT clear
+// it at disconnect: the orphaned scan must still see the cancel until it unwinds,
+// and a connection unregisters only after its handler returned).
 inline std::atomic<bool> g_perCommand{false};
 
 // Sticky: set at the TOP of UE5_Shutdown() (and by Fern::Stop()) so in-flight
@@ -91,7 +93,8 @@ inline void MarkCancelImmune() { t_cancelImmune = true; }
 //     (Aura.cpp `ParallelGObjectsScan`) -- and the watcher's ONLY job is to turn a client disconnect into
 //     deadlineHit for the parallel path, which is the default path for every real game
 //     (ScanThreadCount, Aura.cpp, goes parallel at >= 8192 objects);
-//   * Fern::RunScan / RunRescan (Fern.cpp) and Frieren's UE5_AutoStart;
+//   * Frieren's UE5_AutoStart (Fern's scan jobs bind their own token since
+//     [PIPE-PER-PROCESS-2026-11-06] Stage C: Routine::SingleFlightJob);
 //   * the CE remote thread entering the Frieren C-ABI exports.
 // Binding those to &conn->cancel is NOT the fix either: the connection can be erased
 // while such a thread still runs, so the pointer would dangle in exactly the disconnect
@@ -123,10 +126,10 @@ inline CancelContext CaptureCancelContext() { return CancelContext{t_connCancel,
 /// ⛔ ONLY safe when the spawning thread OUTLIVES the worker -- i.e. it joins it. That
 /// holds for Aura::ParallelIndexRanges (it joins its pool, Aura.cpp) and for the
 /// ParallelGObjectsScan cancelWatcher, which is why those may adopt a raw
-/// `std::atomic<bool>*`. It does NOT hold for Fern::RunScan / RunRescan, which outlive
-/// the command that started them -- binding those to a connection would be a
-/// use-after-free in exactly the disconnect case the binding exists for. Give those an
-/// owning token before propagating anything into them.
+/// `std::atomic<bool>*`. It does NOT hold for Fern's scan jobs, which outlive the
+/// command that started them -- binding those to a connection would be a use-after-free
+/// in exactly the disconnect case the binding exists for. They bind an owning token
+/// instead: Routine::SingleFlightJob's thread co-owns its token for the whole bound region.
 struct CancelContextScope {
     CancelContext prev;
     explicit CancelContextScope(const CancelContext& c)

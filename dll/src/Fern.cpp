@@ -50,6 +50,7 @@
 #include <condition_variable>   // [LIVEFUNCS-STEP2] the arm-capture worker
 #include <cstdlib>   // malloc/free for by-value FString INPUT-param buffers
 #include <cstring>
+#include <optional>   // TeardownCount, held across the cleanup
 #include <sstream>
 #include <unordered_set>   // widget-base set for pe_profile_get is_widget classification
 #include <vector>
@@ -524,7 +525,8 @@ bool Fern::Start() {
     m_monitorThread = std::thread(&Fern::MonitorLoop, this);
 
     LOG_INFO("PipeServer: Started on %s (maxInstances=%lu)",
-             Utf8Helpers::EncodeUtf16(Grimoire::PIPE_NAME, wcslen(Grimoire::PIPE_NAME)).c_str(), kMaxPipeInstances);
+             Utf8Helpers::EncodeUtf16(Voll::OwnPipeName().c_str(), Voll::OwnPipeName().size()).c_str(),
+             kMaxPipeInstances);
     return true;
 }
 
@@ -675,11 +677,11 @@ void Fern::Stop(bool graceful) {
     // guard fail and the instance was never closed by anyone.
     //
     // Outside the lock on purpose: the connect can block briefly, and AcceptLoop
-    // needs m_connMutex to finish. Gated on listenerParked so we do not poke a
-    // DIFFERENT process's server — the pipe name is machine-global, so a second
-    // instrumented game would otherwise see a phantom connect.
+    // needs m_connMutex to finish. Gated on listenerParked so we do not poke a server
+    // that is not ours: the name is this process's, but a second copy of the DLL in
+    // this process can serve it too, and would see a phantom connect.
     if (listenerParked) {
-        HANDLE poke = CreateFileW(Grimoire::PIPE_NAME, GENERIC_READ, 0, nullptr,
+        HANDLE poke = CreateFileW(Voll::OwnPipeName().c_str(), GENERIC_READ, 0, nullptr,
                                   OPEN_EXISTING, 0, nullptr);
         if (poke != INVALID_HANDLE_VALUE) {
             CloseHandle(poke);
@@ -693,27 +695,21 @@ void Fern::Stop(bool graceful) {
 
     LOG_INFO("PipeServer: Stop cancels+wake done (%lld ms)", elapsedMs());
 
-    // Stop watches AFTER cancelling connection I/O so a watch-thread WriteFile
-    // can't deadlock its own join on a stuck pipe. This is the ONLY StopAllWatches
-    // call — the duplicate that used to sit before the cancel block was a leftover
-    // from before the Path A refactor, and it is exactly the ordering this comment
-    // says not to use.
+    // Watch threads do no pipe I/O ([PIPE-PER-PROCESS-2026-11-06] Stage C), so each join here is one wake and at most
+    // one read. m_running is already false, so no watch can start after this.
     StopAllWatches();
 
-    // Join background scan threads. These joins are UNBOUNDED — the comment here used
+    // Join the background scan jobs. These joins are UNBOUNDED — the comment here used
     // to claim RunScan/RunRescan were "bounded AOB scans", but RunRescan runs Genau's
-    // Extra Scan, a full .data sweep. What actually bounds them is Tot::RequestShutdown()
-    // above plus the cancel polls Genau's loops now carry; without those, and since
-    // UE5_Shutdown runs on the CE Lua caller's thread, CE's UI froze for the remainder
-    // of the sweep. (B18)
-    m_rescan.running.store(false);
-    if (m_rescan.scanThread.joinable()) {
-        m_rescan.scanThread.join();
-    }
-    m_scan.running.store(false);
-    if (m_scan.scanThread.joinable()) {
-        m_scan.scanThread.join();
-    }
+    // Extra Scan, a full .data sweep. What actually bounds them is each job's own cancel
+    // token, raised by StopAndJoin, and Tot::RequestShutdown() above, read by the cancel
+    // polls Genau's loops carry; without those, and since UE5_Shutdown runs on the CE Lua
+    // caller's thread, CE's UI froze for the remainder of the sweep. (B18)
+    // No `running` is cleared first any more: that let a connection still dispatching
+    // start a job and join the same thread beside this one. m_running is already false,
+    // so no job starts now. [PIPE-PER-PROCESS-2026-11-06] Stage C
+    m_rescan.job.StopAndJoin();
+    m_scan.job.StopAndJoin();
     LOG_INFO("PipeServer: Stop watches+scan joins done (%lld ms)", elapsedMs());
 
     // Wait for every connection thread to self-unregister (they are detached;
@@ -721,6 +717,7 @@ void Fern::Stop(bool graceful) {
     // handler can't hang shutdown forever.
     bool drained;
     size_t connsLeft;
+    size_t tearingLeft = 0;
     int reasserts = 0;
     {
         std::unique_lock<std::mutex> lock(m_connMutex);
@@ -738,13 +735,17 @@ void Fern::Stop(bool graceful) {
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
         for (;;) {
             drained = m_connCv.wait_for(lock, std::chrono::milliseconds(Grimoire::PIPE_STOP_CANCEL_REASSERT_MS),
-                                        [this] { return m_conns.empty(); });
+                                        [this] { return m_conns.empty() && m_tearingDown == 0; });
             if (drained || std::chrono::steady_clock::now() >= deadline) break;
             int acc = 0, nf = 0;
             cancelLiveConns(acc, nf);   // safe: lock is held again after wait_for returns
             ++reasserts;
         }
         connsLeft = m_conns.size();
+        tearingLeft = m_tearingDown;
+        if (!drained && tearingLeft != 0)
+            LOG_WARN("PipeServer:   %zu connection(s) already unregistered are still releasing what they owned "
+                     "(See-through, a recording -- possibly waiting on the game thread)", tearingLeft);
         // Name the stragglers while we still hold the registry lock. Without this the
         // timeout says only "N left", which is not enough to act on — the 2026-08-04
         // run burned the full 5 s budget and the log could not say whether the threads
@@ -759,8 +760,6 @@ void Fern::Stop(bool graceful) {
                 { std::lock_guard<std::mutex> dlk(c->diagMutex); what = c->cmdName; }
                 Connection::Phase ph = c->phase.load(std::memory_order_relaxed);
                 long long phStart = c->phaseStartMs.load(std::memory_order_relaxed);
-                long long started = c->cmdStartMs.load(std::memory_order_relaxed);
-                (void)started;
                 // Build the age into a NAMED local. The obvious one-liner passes
                 // .c_str() of a temporary through a ternary — legal (the temporary
                 // outlives the full-expression) but not worth making a reader verify.
@@ -779,8 +778,8 @@ void Fern::Stop(bool graceful) {
     // first cancel worked" and "the first cancel missed and a later one caught it".
     // Both print `satisfied`; without the count a fix for the missed-window case
     // could not be told from it never having been needed.
-    LOG_INFO("PipeServer: Stop conn drain %s, %zu left (%lld ms, %d cancel re-assert%s)",
-             drained ? "satisfied" : "TIMEOUT", connsLeft, elapsedMs(),
+    LOG_INFO("PipeServer: Stop conn drain %s, %zu left, %zu still tearing down (%lld ms, %d cancel re-assert%s)",
+             drained ? "satisfied" : "TIMEOUT", connsLeft, tearingLeft, elapsedMs(),
              reasserts, reasserts == 1 ? "" : "s");
 
     if (m_acceptThread.joinable()) {
@@ -795,8 +794,13 @@ void Fern::Stop(bool graceful) {
     // No handler thread is running now — free every remaining value-scan session.
     Radar::SessionManager::Instance().DropAll();
     Radar::GroupSessionManager::Instance().DropAll();
-    JoinArmWorker();  // [LIVEFUNCS-STEP2] before the table and the trace it reads go
-    Linie::Reset();   // drop any live PE-profile recording + free the table
+    {
+        // A recording whose owner's teardown never ran (the drain timed out) goes here.
+        std::lock_guard<std::mutex> profileLock(m_profileMu);
+        JoinArmWorker();  // [LIVEFUNCS-STEP2] before the table and the trace it reads go
+        Linie::Reset();   // drop any live PE-profile recording + free the table
+        m_profileOwner = 0;
+    }
     Ubel::ClearNameCache();   // same reason as the last-connection teardown (D5/F3)
 
     m_clientConnected = false;
@@ -822,6 +826,37 @@ void Fern::ReevaluatePerCommandCancel() {
     m_cancelOwners.clear();
     Tot::ResetPerCommand();
     LOG_INFO("PipeServer: per-command cancel cleared — no connection that raised it is still live");
+}
+
+bool Fern::OwnerStillConnected(uint64_t owner) {
+    std::lock_guard<std::mutex> lock(m_connMutex);
+    for (const auto& c : m_conns)
+        if (c && c->ownerKey == owner) return true;
+    return false;
+}
+
+void Fern::ReleaseOwnedBy(uint64_t owner) {
+    if (owner == 0) return;   // names no owner: a connection that never got its key
+    // Schlacht asks whether the owner is still connected under its own lock, so a client process that reconnects and
+    // turns See-through on in between keeps it. It logs what it did.
+    Schlacht::Release(owner, [this](uint64_t key) { return OwnerStillConnected(key); });
+    bool freed = false;
+    {
+        std::lock_guard<std::mutex> profileLock(m_profileMu);
+        if (m_profileOwner == owner && !OwnerStillConnected(owner)) {
+            JoinArmWorker();  // [LIVEFUNCS-STEP2] before the table and the trace it reads go
+            Linie::Reset();   // the recording and its trace, up to 512 MB of the game's memory
+            m_profileOwner = 0;
+            freed = true;
+        }
+    }
+    if (freed) {
+        if (owner >> 63)
+            LOG_INFO("PipeServer: connection #%llu left -- its LiveFuncs recording is freed",
+                     (unsigned long long)(owner & ~(1ull << 63)));
+        else
+            LOG_INFO("PipeServer: client pid %llu left -- its LiveFuncs recording is freed", (unsigned long long)owner);
+    }
 }
 
 void Fern::MonitorLoop() {
@@ -883,10 +918,11 @@ void Fern::MonitorLoop() {
                     // The connection that actually broke. Its handler thread is bound to
                     // this flag, so it -- and only it -- aborts promptly.
                     c->cancel.store(true, std::memory_order_relaxed);
-                    // And the global, STILL, for every thread no connection owns: Aura's
-                    // parallel workers and cancelWatcher, RunScan/RunRescan, the CE remote
-                    // thread. Dropping this would silently make them uncancellable, which
-                    // is the failure Tot.h's t_connCancel note documents at length.
+                    // And the global, STILL, for every thread no connection owns. (A worker
+                    // a handler spawns and joins adopts the handler's binding, Tot::
+                    // CancelContextScope, and follows the connection instead.) Dropping this
+                    // would silently make the unbound ones uncancellable, which is the
+                    // failure Tot.h's t_connCancel note documents at length.
                     // ⚠ A bound thread never reads g_perCommand, so setting it here does
                     // NOT reinstate the cross-connection truncation this change fixes.
                     Tot::RequestPerCommand();
@@ -895,6 +931,60 @@ void Fern::MonitorLoop() {
         }
     }
   });
+}
+
+// The exe file name of a client process, UTF-8 and bounded, or "?". Query-limited access is enough, and an elevated
+// client that refuses even that is still listed by its pid.
+static std::string ClientExeName(DWORD pid) {
+    if (pid == 0) return "?";
+    HANDLE h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    if (!h) return "?";
+    wchar_t path[MAX_PATH * 2] = {};
+    DWORD len = static_cast<DWORD>(sizeof(path) / sizeof(path[0]));
+    std::string name = "?";
+    if (QueryFullProcessImageNameW(h, 0, path, &len)) name = Utf8Helpers::LeafUtf8(path, len);
+    CloseHandle(h);
+    return Voll::TruncateUtf8(name, Voll::kMaxHolderExeBytes);
+}
+
+static long long SteadyNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+std::vector<Voll::Holder> Fern::SnapshotHolders(uint64_t selfSeq) {
+    // Copy the list under the lock, read each connection outside it: diagMutex is never taken under m_connMutex here.
+    std::vector<std::shared_ptr<Connection>> conns;
+    {
+        std::lock_guard<std::mutex> lock(m_connMutex);
+        conns = m_conns;
+    }
+    const long long now = SteadyNowMs();
+    std::vector<Voll::Holder> out;
+    out.reserve(conns.size());
+    for (const auto& c : conns) {
+        Voll::Holder h;
+        h.seq = c->seq;
+        h.pid = c->clientPid;
+        h.exe = c->clientExe;
+        h.connectedMs = now - c->connectedMs;
+        // The flag first: HandleConnection writes the name and start, then raises it (release), so a holder seen in
+        // flight carries that command's name and age, never the previous one's.
+        h.inFlight = c->inFlight.load(std::memory_order_acquire);
+        long long started;
+        {
+            std::lock_guard<std::mutex> dlk(c->diagMutex);
+            h.lastCmd = c->cmdName;
+            started = c->cmdStartMs.load(std::memory_order_relaxed);
+        }
+        // `now` was read before the loop, so a command begun since is clamped to 0 rather than going negative (or -1,
+        // which means "no command yet").
+        h.lastCmdAgeMs = started == 0 ? -1 : (std::max)(0LL, now - started);
+        h.phase = PhaseKey(c->phase.load(std::memory_order_relaxed));
+        h.self = c->seq == selfSeq;
+        out.push_back(std::move(h));
+    }
+    return out;
 }
 
 void Fern::AcceptLoop() {
@@ -908,6 +998,10 @@ void Fern::AcceptLoop() {
     // hour that evict real diagnostics ([PIPEBUSY-2026-08-18]). Genuinely unexpected error
     // codes still LOG_ERROR every time, independent of this latch.
     bool atCapacity = false;
+    // [PIPE-PER-PROCESS-2026-11-06] The first instance of each Start is checked for who else serves this process's
+    // name (Voll::ClassifyFirstInstance). Accept-thread-local, like the latch above.
+    bool firstInstance = true;
+    bool foreignLogged = false;
     while (m_running.load()) {
         // Create a new pipe instance (multi-instance: up to kMaxPipeInstances
         // concurrent clients, so the UI's interactive + bulk lanes can connect
@@ -915,13 +1009,13 @@ void Fern::AcceptLoop() {
         // because each connection is served by exactly ONE thread doing serial
         // read→dispatch→write on its own handle (no same-handle deadlock).
         // PIPE_REJECT_REMOTE_CLIENTS: without it, anyone holding this user's (or an admin's)
-        // credentials on ANOTHER machine opens \\host\pipe\UE5DumpBfx over SMB and drives a
+        // credentials on ANOTHER machine opens \\host\pipe\UE5DumpBfx_<pid> over SMB and drives a
         // DLL that writes game memory and invokes UFunctions. A local client is never refused
         // by it. The security stays the default (nullptr below): an explicit "this user"
         // DACL was measured and not shipped, because for an elevated game it would let a
         // non-elevated process in. [PIPE-REJECT-REMOTE]
         HANDLE pipe = CreateNamedPipeW(
-            Grimoire::PIPE_NAME,
+            Voll::OwnPipeName().c_str(),
             PIPE_ACCESS_DUPLEX,
             PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT | PIPE_REJECT_REMOTE_CLIENTS,
             kMaxPipeInstances,
@@ -930,15 +1024,22 @@ void Fern::AcceptLoop() {
             0,                          // Default timeout
             nullptr                     // Default security
         );
+        // Read at once, on success too: a successful create reports ERROR_ALREADY_EXISTS when the name already had
+        // an instance, which the first-instance check below needs.
+        const DWORD createErr = GetLastError();
 
         if (pipe == INVALID_HANDLE_VALUE) {
-            DWORD err = GetLastError();
+            DWORD err = createErr;
             switch (Voll::OnCreateFailure(err, atCapacity)) {
                 case Voll::AcceptLog::EnterCapacity:
                     // All instances busy — the resource cap doing its job. Say so ONCE;
-                    // the 1 s retry below then waits silently for a slot to free.
-                    LOG_INFO("PipeServer: all %lu pipe instances in use, waiting for a free slot",
-                             (unsigned long)kMaxPipeInstances);
+                    // the 1 s retry below then waits silently for a slot to free. The line
+                    // names who holds them: a client that cannot connect cannot ask, and
+                    // reads it here (the UI, pipe_client.py). [PIPE-PER-PROCESS-2026-11-06]
+                    LOG_INFO("PipeServer: all %lu %s, waiting for a free slot -- %s%s%s",
+                             (unsigned long)m_capInForce.load(), Grimoire::PIPE_AT_CAPACITY_TEXT,
+                             Utf8Helpers::EncodeUtf16(Voll::OwnPipeName().c_str(), Voll::OwnPipeName().size()).c_str(),
+                             Grimoire::PIPE_HOLDERS_TOKEN, Voll::HoldersJson(SnapshotHolders(0)).c_str());
                     break;
                 case Voll::AcceptLog::Error:
                     // A genuinely unexpected failure — always surfaced, never suppressed by
@@ -952,9 +1053,57 @@ void Fern::AcceptLoop() {
             continue;
         }
 
+        // [PIPE-PER-PROCESS-2026-11-06] Who else serves this process's name? The startup probe defers to a server it
+        // can see; this catches two copies of the DLL probing in the same moment, and a name another process created.
+        if (firstInstance) {
+            ULONG creator = 0;
+            if (!GetNamedPipeServerProcessId(pipe, &creator)) creator = 0;
+            const std::string name =
+                Utf8Helpers::EncodeUtf16(Voll::OwnPipeName().c_str(), Voll::OwnPipeName().size());
+            switch (Voll::ClassifyFirstInstance(createErr, static_cast<DWORD>(creator), GetCurrentProcessId())) {
+                case Voll::FirstInstance::ForeignCreator:
+                    // A client is handed the oldest listening instance, which is the other process's: serving
+                    // beside it would split this game's clients between the two. Wait for its instances to go.
+                    if (!foreignLogged) {
+                        LOG_ERROR("PipeServer: PID %lu created %s before this process did -- not serving it until "
+                                  "that process's instances are gone (a client could reach it instead of this game)",
+                                  static_cast<unsigned long>(creator), name.c_str());
+                        foreignLogged = true;
+                    }
+                    CloseHandle(pipe);
+                    std::this_thread::sleep_for(std::chrono::seconds(1));
+                    continue;
+                case Voll::FirstInstance::SharedInProcess:
+                    LOG_WARN("PipeServer: %s already had instances in this process when this server started: a second "
+                             "copy of UE5Dumper serves it, or this server's connections from before a restart are "
+                             "still closing. A client can reach either.", name.c_str());
+                    break;
+                default:
+                    break;
+            }
+            if (foreignLogged) LOG_INFO("PipeServer: the other process's instances are gone -- serving %s", name.c_str());
+            // The limit in force is the name's first creator's: a create asking for more on a name another copy made
+            // succeeds and keeps the old limit (measured 2026-11-10). Read it from the handle, so the log says what a
+            // client will meet rather than what this build asked for. [PIPE-PER-PROCESS-2026-11-06] Stage B
+            DWORD inForce = 0;
+            if (GetNamedPipeInfo(pipe, nullptr, nullptr, nullptr, &inForce)) {
+                m_capInForce.store(inForce);
+                if (inForce == kMaxPipeInstances) {
+                    LOG_INFO("PipeServer: %s takes %lu clients at once", name.c_str(),
+                             static_cast<unsigned long>(inForce));
+                } else {
+                    LOG_WARN("PipeServer: %s takes %lu clients at once, not this build's %lu: an older copy of "
+                             "UE5Dumper in this process created the name", name.c_str(),
+                             static_cast<unsigned long>(inForce), static_cast<unsigned long>(kMaxPipeInstances));
+                }
+            }
+            firstInstance = false;
+        }
+
         // Got a listener instance. If we had been at capacity, a slot just freed — say so once.
         if (Voll::OnCreateSuccess(atCapacity) == Voll::AcceptLog::RecoverCapacity) {
-            LOG_INFO("PipeServer: a pipe slot freed, resuming accept");
+            LOG_INFO("PipeServer: a pipe %s, resuming accept -- %s", Grimoire::PIPE_SLOT_FREED_TEXT,
+                     Utf8Helpers::EncodeUtf16(Voll::OwnPipeName().c_str(), Voll::OwnPipeName().size()).c_str());
         }
 
         {
@@ -983,6 +1132,14 @@ void Fern::AcceptLoop() {
         // Hand this connected instance to a Connection served on its own thread.
         auto conn = std::make_shared<Connection>();
         conn->pipe = pipe;
+        // Who connected, before the connection is registered: every reader that finds it in m_conns sees this.
+        // [PIPE-PER-PROCESS-2026-11-06] Stage C
+        {
+            ULONG clientPid = 0;
+            if (GetNamedPipeClientProcessId(pipe, &clientPid)) conn->clientPid = clientPid;
+            conn->clientExe = ClientExeName(conn->clientPid);
+            conn->connectedMs = SteadyNowMs();
+        }
         bool firstConn;
         size_t connCount;
         {
@@ -992,6 +1149,7 @@ void Fern::AcceptLoop() {
             // Assign the id HERE, under the lock — never on the connection thread,
             // or two accepts race to the same value (audit #5 F2).
             conn->seq = ++m_connSeq;
+            conn->ownerKey = Voll::ClientOwnerKey(conn->clientPid, conn->seq);
             m_conns.push_back(conn);
             connCount = m_conns.size();
             m_clientConnected = true;
@@ -1023,10 +1181,21 @@ const char* Fern::PhaseName(Connection::Phase p) {
     switch (p) {
         case Connection::Phase::Reading:         return "parked in ReadFile (waiting for the next command)";
         case Connection::Phase::Dispatching:     return "INSIDE a command (cancel cannot reach it until it returns)";
-        case Connection::Phase::Writing:         return "in WriteLine — WriteFile to a client that may have stopped reading, or waiting on writeMutex";
+        case Connection::Phase::Writing:         return "in WriteLine — WriteFile to a client that may have stopped reading";
         case Connection::Phase::StoppingWatches: return "in cleanup, JOINING its watch threads (an I/O cancel on this thread does nothing)";
         case Connection::Phase::Unregistering:   return "in cleanup, unregistering — should be about to leave";
         default:                                 return "done";
+    }
+}
+
+const char* Fern::PhaseKey(Connection::Phase p) {
+    switch (p) {
+        case Connection::Phase::Reading:         return "Reading";
+        case Connection::Phase::Dispatching:     return "Dispatching";
+        case Connection::Phase::Writing:         return "Writing";
+        case Connection::Phase::StoppingWatches: return "StoppingWatches";
+        case Connection::Phase::Unregistering:   return "Unregistering";
+        default:                                 return "Done";
     }
 }
 
@@ -1067,10 +1236,12 @@ std::string Fern::ReadLine(HANDLE pipe) {
 }
 
 bool Fern::WriteLine(Connection& conn, const std::string& line) {
-    // Per-connection write mutex: serializes this connection's response write
-    // against its own watch-event writes. Writes to OTHER connections use their
-    // own mutex, so the two UI lanes never contend. CloseConnOnce takes the same
-    // mutex, so a write can never run on a just-closed handle.
+    // Per-connection write mutex. Every write on a connection comes from its own
+    // handler thread (replies, and its watch events since Stage C), and so does
+    // CloseConnOnce, the mutex's other taker: it is uncontended today, and keeps a
+    // write off a just-closed handle should either ever move to another thread.
+    // Writes to OTHER connections use their own mutex, so the two UI lanes never
+    // contend.
     std::lock_guard<std::mutex> lock(conn.writeMutex);
     if (conn.closed.load(std::memory_order_relaxed) || conn.pipe == INVALID_HANDLE_VALUE)
         return false;
@@ -1082,8 +1253,9 @@ bool Fern::WriteLine(Connection& conn, const std::string& line) {
     //
     // Safe because the pipe is PIPE_TYPE_BYTE | PIPE_READMODE_BYTE (AcceptLoop's
     // CreateNamedPipeW): there are no message boundaries to split, the reader
-    // frames on '\n' itself, and both writes happen under the SAME writeMutex, so
-    // no other response or watch event can interleave between them.
+    // frames on '\n' itself, and every line on a connection -- replies and watch
+    // events alike -- is written by its own handler thread, one line at a time, so
+    // nothing can come between a payload and its '\n'.
     //
     // Short writes are now treated as failures. A blocking byte-mode pipe writes
     // everything or errors, so this only fires on a genuinely broken connection —
@@ -1158,14 +1330,9 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         std::string line = ReadLine(pipe);
         if (line.empty()) { flushRepeat(); break; } // Disconnected / I/O cancelled
 
-        // Extract command name for dedup (fast: find "cmd":" in JSON)
-        std::string cmd;
-        auto pos = line.find("\"cmd\":\"");
-        if (pos != std::string::npos) {
-            auto start = pos + 7;
-            auto end = line.find('"', start);
-            if (end != std::string::npos) cmd = line.substr(start, end - start);
-        }
+        // The command's name, for the repeat-suppressed log, the diagnostics and pipe_clients. Whatever the client's JSON
+        // spacing (Voll::ExtractCmdName).
+        const std::string cmd = Voll::ExtractCmdName(line);
 
         if (cmd == lastCmd && !cmd.empty()) {
             ++repeatCount;
@@ -1185,19 +1352,22 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         // unavailable to any other command — i.e. precisely the head-of-line
         // blocking docs/multipipe-eval.md blames for UI lag, which until now
         // nothing measured. See Sense.h.
-        conn->inFlight.store(true, std::memory_order_relaxed);
-        SetPhase(*conn, Connection::Phase::Dispatching);
-        // Record WHICH command, for Stop's drain-timeout diagnostic only. `cmd` is
-        // already parsed above for the repeat-suppression, so this costs one small
-        // string copy per command and nothing on any read path.
+        // Record WHICH command, and when, BEFORE raising inFlight: a reader that sees the
+        // command in flight (Stop's drain diagnostic, pipe_clients) must see its name,
+        // not the previous command's. The name and its start are one pair, written under
+        // diagMutex and read under it, so neither comes with the other command's. `cmd` is
+        // already parsed above for the repeat-suppression, so this costs one small string
+        // copy per command.
         {
             std::lock_guard<std::mutex> dlk(conn->diagMutex);
             conn->cmdName = cmd;
+            conn->cmdStartMs.store(
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now().time_since_epoch()).count(),
+                std::memory_order_relaxed);
         }
-        conn->cmdStartMs.store(
-            std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now().time_since_epoch()).count(),
-            std::memory_order_relaxed);
+        conn->inFlight.store(true, std::memory_order_release);
+        SetPhase(*conn, Connection::Phase::Dispatching);
         // QPC, not GetTickCount64: its ~15.6 ms granularity floored every sub-tick
         // dispatch to 0, so a live run of 1397 walk_instance calls reported
         // "0 ms total, max 15 ms" — an artefact of which calls straddled a tick,
@@ -1207,6 +1377,11 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         const uint64_t dispatchUs = Sense::TicksToUs(Sense::NowTicks() - dispatchStart);
         conn->inFlight.store(false, std::memory_order_relaxed);
         Sense::RecordDispatch(cmd.empty() ? std::string("(unparsed)") : cmd, dispatchUs);
+
+        // This connection's watch samples go out here, on its own thread, ahead of the reply, so a client collects
+        // them while it waits for that reply. The sampling threads never touch the pipe (Kanne.h).
+        SetPhase(*conn, Connection::Phase::Writing);
+        FlushWatchEvents(*conn);
 
         if (!response.empty()) {
             SetPhase(*conn, Connection::Phase::Writing);
@@ -1219,18 +1394,22 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     }
     conn->inFlight.store(false, std::memory_order_relaxed);
 
-    // Connection cleanup. Stop THIS connection's watches first (joins their
-    // threads while the handle is still valid + owner pointer alive), then
-    // unregister and close our own handle. Drop value-scan sessions only when
-    // this was the LAST connection (sessions are bulk-lane-only; the UI's two
-    // lanes disconnect together on close).
+    // Connection cleanup. Stop THIS connection's watches first (their threads
+    // hold only their sample slots, so this ends them before the connection
+    // goes), then unregister and close our own handle, then drop this
+    // connection's scan sessions and release what this client process turned
+    // on. Only caches and diagnostics wait for the LAST connection.
     SetPhase(*conn, Connection::Phase::StoppingWatches);
-    StopWatchesForConnection(conn.get());
+    StopWatchesForConnection(conn->seq);
 
     SetPhase(*conn, Connection::Phase::Unregistering);
     bool last;
+    std::optional<TeardownCount> teardown;
     {
         std::lock_guard<std::mutex> lock(m_connMutex);
+        // Counted in before the erase and out when `teardown` goes, a throw included: Stop's drain sees the registry
+        // empty the moment this erase lands, and must also wait for what this teardown still does.
+        teardown.emplace(*this);
         auto it = std::find(m_conns.begin(), m_conns.end(), conn);
         if (it != m_conns.end()) m_conns.erase(it);
         last = m_conns.empty();
@@ -1249,16 +1428,22 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     if (HANDLE th = conn->servingThread.exchange(nullptr, std::memory_order_acq_rel))
         CloseHandle(th);
 
+    // This connection's scan sessions go with it: no other connection can reach them (Radar's owner). Whoever stays
+    // connected keeps theirs. [PIPE-PER-PROCESS-2026-11-06] Stage C
+    const size_t valueSessions = Radar::SessionManager::Instance().DropOwner(conn->seq);
+    const size_t groupSessions = Radar::GroupSessionManager::Instance().DropOwner(conn->seq);
+    if (valueSessions || groupSessions)
+        LOG_INFO("PipeServer: connection #%llu left -- %zu value / %zu group scan session(s) dropped",
+                 (unsigned long long)conn->seq, valueSessions, groupSessions);
+
+    // What this client process turned on goes with its last connection, and nothing else does. The last client to
+    // leave used to turn See-through off for everyone, CE's record included (it then showed ticked over a feature that
+    // was off), and to drop the LiveFuncs recording whoever had started it; a client that left while another stayed
+    // connected left both running for nobody. [PIPE-PER-PROCESS-2026-11-06] Stage C
+    ReleaseOwnedBy(conn->ownerKey);
+
     if (last) {
-        Radar::SessionManager::Instance().DropAll();
-        Radar::GroupSessionManager::Instance().DropAll();
-        JoinArmWorker();  // [LIVEFUNCS-STEP2] before the table and the trace it reads go
-        Linie::Reset();   // last client gone — drop any live PE-profile recording
-        Sense::Reset();   // ...and restart diagnostics so the next session's numbers are its own
-        // Un-hide any see-through occluders + stop its worker — the header contract is
-        // "un-hidden on disable / disconnect", and there's no UI left to toggle it.
-        // Cheap no-op when see-through was never enabled. (M3)
-        Schlacht::SetEnabled(false);
+        Sense::Reset();   // restart diagnostics so the next session's numbers are its own
         // Ubel's per-UObject name cache is keyed by a raw address the engine recycles.
         // This teardown dropped every other per-session resource and left the one that
         // could serve wrong data, so a UI reconnect is now a full reset. (audit #5 F3)
@@ -1278,12 +1463,12 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
         Ubel::ClearNameCache();
     }
 
-    m_connCv.notify_all();
+    teardown.reset();   // counted out, and Stop's drain told
     LOG_INFO("PipeServer: Client disconnected");
 }
 
-// (PushEvent removed in the Path A multi-connection refactor — watch events now
-// write directly to their owning connection's handle; see StartWatch below.)
+// (PushEvent removed in the Path A multi-connection refactor. Watch events are written by their own connection's
+// handler since [PIPE-PER-PROCESS-2026-11-06] Stage C; see FlushWatchEvents below.)
 
 // ============================================================
 // FillPointerSnapshot — Populate a JSON object with the engine pointer state
@@ -1432,9 +1617,9 @@ static void FillPointerSnapshot(json& data) {
     // keyed the confirmed-working proxy, the teleport library and its log folder on a name no file has. The UI
     // derives CE's own (ANSI) view of the name itself for anything it hands to Cheat Engine.
     data["module_name"] = Utf8Helpers::LeafUtf8(moduleNameW, wcslen(moduleNameW));
-    // The ONLY unambiguous answer to "which process is this pipe talking to". The pipe name
-    // is a single global, so two injected games both serve it and a connecting client lands on
-    // whichever instance is free -- the UI cannot otherwise tell it attached to the wrong game.
+    // Which process answered. The pipe name carries the pid [PIPE-PER-PROCESS-2026-11-06], and
+    // the UI compares the two after it connects: a process that created another game's name
+    // first would otherwise answer for it unnoticed.
     data["pid"] = static_cast<uint32_t>(GetCurrentProcessId());
 
     // load_mode: how the dumper got into this process, from THIS module's own file
@@ -1929,7 +2114,8 @@ void StartArmWorker(std::shared_ptr<Linie::ArmState> arms) {
 
 // Stop's half, after the trace and the table stopped: the worker gets the deadline, the last passes run here, then
 // every arm still unread is sealed raw-only. A worker past the deadline (inside the first enum detection) keeps
-// running with its arms sealed and is joined at the next Start, a release, or the last disconnect.
+// running with its arms sealed and is joined at the next Start, a release, when the client process that started the
+// recording leaves (ReleaseOwnedBy), or at Stop.
 void FinishArms() {
     std::lock_guard<std::mutex> lk(g_armWorkerMu);
     ArmCaptureWorker* w = g_armWorker.get();
@@ -2195,6 +2381,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                newVersion);
             }
 
+            // What happened to the write, not what was asked: a write the cache lock or the disk refused is not saved.
+            bool persisted = false;
             if (persist) {
                 // Resolve a process name for the JSON record's gameName.
                 wchar_t exeW[MAX_PATH] = {};
@@ -2211,9 +2399,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     WideCharToMultiByte(CP_UTF8, 0, fileName.c_str(), -1,
                                         nameUtf8.data(), sz, nullptr, nullptr);
                 }
-                Flamme::SaveUserOverride(g_cachedPeHash,
-                                         static_cast<uint32_t>(newVersion),
-                                         nameUtf8.c_str());
+                persisted = Flamme::SaveUserOverride(g_cachedPeHash,
+                                                     static_cast<uint32_t>(newVersion),
+                                                     nameUtf8.c_str());
             }
 
             // ⛔ THE SOFT/LAZY ENVELOPES ARE LATCHED AND MUST BE DROPPED WITH THE VERSION, whichever
@@ -2269,7 +2457,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 } else if (plan.outcome != Flamme::AutoRestore::NotOverridden) {
                     // Nothing to hand back that a launch would start from: the override's version stays
                     // in force, and stays called an override, so no reconnect records it as a detection.
-                    g_cachedAutoPending = Flamme::AutoPendsUntilNextLaunch(plan.outcome, persist);
+                    g_cachedAutoPending = Flamme::AutoPendsUntilNextLaunch(plan.outcome, persisted);
                     Sein::Info("PIPE:cmd", "set_ue_version_override: Auto -- %s; UE %u stays in force %s",
                                Flamme::AutoRestoreName(plan.outcome), g_cachedUEVersion,
                                g_cachedAutoPending ? "until the next launch"
@@ -2290,7 +2478,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["is_user_override"]  = g_cachedIsUserOverride;
             data["is_low_confidence"] = g_cachedIsLowConfidence;
             data["auto_pending"]      = g_cachedAutoPending;
-            data["persisted"]         = persist;
+            data["persisted"]         = persisted;
             if (newVersion == 0)
                 data["auto_restore"]  = Flamme::AutoRestoreName(autoRestore);
             return Renge::MakeResponse(id, data).dump();
@@ -2314,6 +2502,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     "timeout_ms out of supported range (100..600000 or 0 to clear)").dump();
             }
 
+            bool persisted = false;   // as set_ue_version_override: what happened to the write
             if (persist) {
                 wchar_t exeW[MAX_PATH] = {};
                 GetModuleFileNameW(nullptr, exeW, MAX_PATH);
@@ -2329,7 +2518,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     WideCharToMultiByte(CP_UTF8, 0, fileName.c_str(), -1,
                                         nameUtf8.data(), sz, nullptr, nullptr);
                 }
-                Flamme::SaveInvokeTimeout(g_cachedPeHash, timeoutMs, nameUtf8.c_str());
+                persisted = Flamme::SaveInvokeTimeout(g_cachedPeHash, timeoutMs, nameUtf8.c_str());
             }
 
             // Apply immediately — already-blocked invokes keep their original timeout
@@ -2338,7 +2527,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             json data;
             data["invoke_timeout_ms"] = Stark::GetInvokeTimeoutMs();
-            data["persisted"]         = persist;
+            data["persisted"]         = persisted;
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -3795,7 +3984,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 parallel, batchRead, deep, nativeC, nativeAlign, newestFirst, deadlineMs,
                 autoSkipNoise);
 
-            uint64_t sessionId = Radar::SessionManager::Instance().Begin(
+            uint64_t sessionId = Radar::SessionManager::Instance().Begin(conn->seq,
                 dt, std::move(scanResult.candidates),
                 std::move(scanResult.descriptors), std::move(scanResult.instances));
 
@@ -3810,7 +3999,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int totalCount = 0;
             json histogram = json::array();
             int classDistinct = 0;
-            Radar::SessionManager::Instance().ViewWith(sessionId,
+            const bool viewed = Radar::SessionManager::Instance().ViewWith(conn->seq, sessionId,
                 [&](const Radar::Session& sess) {
                     totalCount = static_cast<int>(sess.candidates.size());
                     const int n = (std::min)(pageSize, totalCount);
@@ -3822,6 +4011,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     classDistinct = static_cast<int>(hist.size());
                     histogram = HistogramToJson(hist, kClassHistogramMaxRows);
                 });
+            // A session gone between its Begin and this read (Stop's DropAll) is not answered as an empty one.
+            if (!viewed) return Renge::MakeError(id, "session_not_found").dump();
 
             json data;
             data["session_id"]      = sessionId;
@@ -3877,7 +4068,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             Aura::ValueScanStats stats;
             bool parseFailed = false;
             bool scanTypeInvalid = false;
-            bool found = Radar::SessionManager::Instance().RefineWith(sessionId,
+            bool found = Radar::SessionManager::Instance().RefineWith(conn->seq, sessionId,
                 [&](Radar::Session& sess) {
                     const Radar::DataType dt = sess.dt;
                     auto& cs = sess.candidates;
@@ -4000,7 +4191,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (sessionId == 0) {
                 return Renge::MakeError(id, "Missing or zero session_id").dump();
             }
-            bool ended = Radar::SessionManager::Instance().End(sessionId);
+            bool ended = Radar::SessionManager::Instance().End(conn->seq, sessionId);
             json data;
             data["session_id"] = sessionId;
             data["ended"]      = ended;
@@ -4039,7 +4230,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int filteredCount = 0;
             std::string dtName;
             bool found = Radar::SessionManager::Instance().QueryWith(
-                sessionId, filter, sortKey, sortDesc, excludeClasses,
+                conn->seq, sessionId, filter, sortKey, sortDesc, excludeClasses,
                 [&](const Radar::Session& sess, const std::vector<uint32_t>& order) {
                     totalCount    = static_cast<int>(sess.candidates.size());
                     filteredCount = static_cast<int>(order.size());
@@ -4170,7 +4361,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (perSlotCap > 4096) perSlotCap = 4096;
             auto scanResult = Aura::ScanForValueGroup(slots, gameOnly, maxResults, deep, crossObject, nativeC, newestFirst, deadlineMs, autoSkipNoise, perSlotCap);
 
-            uint64_t sessionId = Radar::GroupSessionManager::Instance().Begin(
+            uint64_t sessionId = Radar::GroupSessionManager::Instance().Begin(conn->seq,
                 std::move(slots), std::move(scanResult.candidates),
                 std::move(scanResult.descriptors), std::move(scanResult.instances),
                 scanResult.perSlotCapHit, perSlotCap);
@@ -4182,8 +4373,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int totalCount = 0;
             json histogram = json::array();
             int classDistinct = 0;
-            Radar::GroupSessionManager::Instance().QueryWith(
-                sessionId, "", Radar::SortKey::ScanOrder, false, std::vector<std::string>{},
+            const bool viewed = Radar::GroupSessionManager::Instance().QueryWith(
+                conn->seq, sessionId, "", Radar::SortKey::ScanOrder, false, std::vector<std::string>{},
                 [&](const Radar::GroupSession& sess, const std::vector<uint32_t>& order) {
                     totalCount = static_cast<int>(sess.candidates.size());
                     const int n = (std::min)(pageSize, static_cast<int>(order.size()));
@@ -4196,6 +4387,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     classDistinct = static_cast<int>(hist.size());
                     histogram = HistogramToJson(hist, kClassHistogramMaxRows);
                 });
+            // As begin_value_scan: a session gone in between is not answered as an empty one.
+            if (!viewed) return Renge::MakeError(id, "session_not_found").dump();
 
             json data;
             data["session_id"]      = sessionId;
@@ -4248,7 +4441,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // pool and never re-runs Orden::MatchGroup, so it cannot recompute this.
             bool perSlotCapHit = false;
             int  perSlotCapEff = 0;
-            bool found = Radar::GroupSessionManager::Instance().RefineWith(sessionId,
+            bool found = Radar::GroupSessionManager::Instance().RefineWith(conn->seq, sessionId,
                 [&](Radar::GroupSession& sess) {
                     if (valuesJson.size() != sess.slots.size()) { countMismatch = true; return; }
                     // Re-target each slot from the new (value, scan_type). The dt is
@@ -4346,7 +4539,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (sessionId == 0) {
                 return Renge::MakeError(id, "Missing or zero session_id").dump();
             }
-            bool ended = Radar::GroupSessionManager::Instance().End(sessionId);
+            bool ended = Radar::GroupSessionManager::Instance().End(conn->seq, sessionId);
             json data;
             data["session_id"] = sessionId;
             data["ended"]      = ended;
@@ -4380,7 +4573,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             bool perSlotCapHit = false;   // carried from Begin (audit #5 AE13)
             int  perSlotCapEff = 0;
             bool found = Radar::GroupSessionManager::Instance().QueryWith(
-                sessionId, filter, sortKey, sortDesc, excludeClasses,
+                conn->seq, sessionId, filter, sortKey, sortDesc, excludeClasses,
                 [&](const Radar::GroupSession& sess, const std::vector<uint32_t>& order) {
                     totalCount    = static_cast<int>(sess.candidates.size());
                     filteredCount = static_cast<int>(order.size());
@@ -4461,7 +4654,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int  total = 0;
             bool candidateFound = false, slotFound = false, staleHint = false;
             const bool sessionFound = Radar::GroupSessionManager::Instance().WithSession(
-                sessionId, [&](const Radar::GroupSession& sess) {
+                conn->seq, sessionId, [&](const Radar::GroupSession& sess) {
                     const Radar::GroupCandidate* chosen = nullptr;
                     const Radar::GroupCandidate* firstByAddr = nullptr;
                     int sharingAddr = 0;   // how many candidates this UObject owns
@@ -4648,6 +4841,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // ProcessEvent; the user performs an in-game action; Stop freezes the
         // table; Get resolves + ranks by fire count. Pipe-only. ===
         if (cmd == Renge::CMD_PE_PROFILE_START) {
+            // [PIPE-PER-PROCESS-2026-11-06] Stage C: one writer at a time (Fern.h, m_profileMu).
+            std::lock_guard<std::mutex> profileLock(m_profileMu);
             // Force the game-thread PE hook up NOW so we count the game's own
             // calls without first issuing an invoke. hook_active=false means the
             // vtable-offset detection failed on this game → counts will stay 0.
@@ -4895,6 +5090,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             Ubel::SetFunctionCapture(captureSetup);
             Linie::StartRecording(&Ubel::CaptureFunctionIdentity, &Ubel::ReadFunctionKey, arms);
+            m_profileOwner = conn->ownerKey;   // the starter's: it goes when that client process leaves
             // Snapshot choices need their layouts read while their functions are alive (F4); ticks alone need none.
             if (arms && arms->capacity != 0) StartArmWorker(arms);
             const long long startMs = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -4958,6 +5154,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         if (cmd == Renge::CMD_PE_PROFILE_STOP) {
+            std::lock_guard<std::mutex> profileLock(m_profileMu);   // one writer at a time (Fern.h)
             // [LIVEFUNCS-STEP2] The trace before the table: a name arms its address on the table's read, so arms keep
             // applying until the trace itself has stopped -- no call between the two loses its hint.
             // Waits until no hook is inside a trace write (TR2): after this the ring is fixed and pe_trace_get reads it.
@@ -4995,6 +5192,20 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             }
             if (!names.empty()) data["names"] = names;
             return Renge::MakeResponse(id, data).dump();
+        }
+
+        // === pipe_clients: who holds this pipe's connections ===
+        // [PIPE-PER-PROCESS-2026-11-06] Stage C, the maintainer's policy (2026-11-10): no client is disconnected for
+        // idling, but who holds the connections can be seen. The asking connection is marked self.
+        if (cmd == Renge::CMD_PIPE_CLIENTS) {
+            json data;
+            data["pipe"]         = Utf8Helpers::EncodeUtf16(Voll::OwnPipeName().c_str(), Voll::OwnPipeName().size());
+            data["cap_in_force"] = static_cast<uint32_t>(m_capInForce.load());
+            data["build_cap"]    = static_cast<uint32_t>(kMaxPipeInstances);
+            json clients = json::array();
+            for (const auto& h : SnapshotHolders(conn->seq)) clients.push_back(Voll::HolderToJson(h));
+            data["clients"] = clients;
+            return Renge::MakeResponse(id, data).dump(-1, ' ', false, json::error_handler_t::replace);
         }
 
         // ── get_diagnostics: Sense self-health telemetry ──
@@ -5644,6 +5855,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         if (cmd == Renge::CMD_PE_TRACE_RELEASE) {
+            std::lock_guard<std::mutex> profileLock(m_profileMu);   // one writer at a time (Fern.h)
             JoinArmWorker();   // [LIVEFUNCS-STEP2] its arms go with the trace
             bool released;
             if (request.contains("gen")) {
@@ -6472,11 +6684,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int interval = request.value("interval_ms", 500);
             if (addrStr.empty()) return Renge::MakeError(id, "Missing addr").dump();
             if (size <= 0 || size > 65536) return Renge::MakeError(id, "Invalid size (1-65536)").dump();
-            if (interval < 50) interval = 50; // Minimum 50ms to prevent CPU spin
+            if (interval < Grimoire::PIPE_WATCH_INTERVAL_MIN_MS) interval = Grimoire::PIPE_WATCH_INTERVAL_MIN_MS;
 
             uintptr_t addr = Renge::StrToAddr(addrStr);
-            StartWatch(conn, addr, size, interval);
-            return Renge::MakeResponse(id).dump();
+            const std::string refused = StartWatch(conn, addr, size, interval);
+            if (!refused.empty()) return Renge::MakeError(id, refused).dump();
+            json data;
+            data["interval_ms"] = interval;   // additive: the interval in force, after the floor
+            return Renge::MakeResponse(id, data).dump();
         }
 
         if (cmd == Renge::CMD_UNWATCH) {
@@ -6484,17 +6699,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (addrStr.empty()) return Renge::MakeError(id, "Missing addr").dump();
 
             uintptr_t addr = Renge::StrToAddr(addrStr);
-            StopWatch(addr);
-            return Renge::MakeResponse(id).dump();
+            json data;
+            data["stopped"] = StopWatch(conn->seq, addr);   // additive: false when this connection watched nothing there
+            return Renge::MakeResponse(id, data).dump();
         }
 
         // === Extra Scan: user-triggered aggressive pointer recovery ===
 
         if (cmd == Renge::CMD_RESCAN) {
-            if (m_rescan.running.load()) {
-                return Renge::MakeError(id, "Rescan already in progress").dump();
-            }
-
             extern uintptr_t g_cachedGObjects;
             extern uintptr_t g_cachedGNames;
             extern uintptr_t g_cachedGWorld;
@@ -6512,6 +6724,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                             "not exist in this binary").dump();
             }
 
+            // What to look for is decided from the published pointers, which a scan still running has not finished
+            // publishing. [PIPE-PER-PROCESS-2026-11-06] Stage C
+            extern std::atomic<bool> g_initInProgress;
+            if (m_scan.job.Running() || g_initInProgress.load(std::memory_order_acquire)) {
+                return Renge::MakeError(id, "A scan is still running -- wait for it to finish").dump();
+            }
+
             bool needGObj = (g_cachedGObjects == 0);
             bool needGWld = (g_cachedGWorld == 0) && (g_cachedGObjects != 0) && (g_cachedGNames != 0);
 
@@ -6523,22 +6742,29 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeResponse(id, data).dump();
             }
 
-            // Reset state
-            m_rescan.foundGObjects = 0;
-            m_rescan.foundGWorld   = 0;
-            m_rescan.gobjectsMethod = "not_found";
-            m_rescan.gworldMethod   = "not_found";
-            m_rescan.phase.store(0);
-            {
-                std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
-                m_rescan.statusText = "Starting...";
-            }
-            m_rescan.running.store(true);
-
-            if (m_rescan.scanThread.joinable()) m_rescan.scanThread.join();
-            m_rescan.scanThread = std::thread(&Fern::RunRescan, this, needGObj, needGWld);
+            using Start = Routine::SingleFlightJob::Start;
+            const Start started = m_rescan.job.TryStart(m_running,
+                [&] {   // only the client that starts the job resets it
+                    std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
+                    m_rescan.result     = RescanResult{};
+                    m_rescan.statusText = "Starting...";
+                    m_rescan.phase.store(0);
+                },
+                [this, needGObj, needGWld] {
+                    // Phase 3 on every way out, a throw included, so rescan_status reports the run as over. (B14)
+                    struct Done { std::atomic<int>& phase; ~Done() { phase.store(3); } } done{m_rescan.phase};
+                    RunRescanBody(needGObj, needGWld);
+                    return true;
+                });
+            if (started == Start::Stopping) return Renge::MakeError(id, "the pipe server is stopping").dump();
 
             json data;
+            data["started"] = (started == Start::Started);
+            // As trigger_scan: a rescan another client started is in progress, not a failure. Its targets are this
+            // asker's own: both read the same published pointers, which nothing changes while a rescan runs (apply
+            // refuses, and so does this command during an init). Flags the starter stored would be read before its
+            // reset wrote them.
+            if (started == Start::AlreadyRunning) data["in_progress"] = true;
             data["scanning_gobjects"] = needGObj;
             data["scanning_gworld"]   = needGWld;
             return Renge::MakeResponse(id, data).dump();
@@ -6546,26 +6772,35 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
         if (cmd == Renge::CMD_RESCAN_STATUS) {
             json data;
-            data["running"] = m_rescan.running.load();
-            data["phase"]   = m_rescan.phase.load();
+            bool running;
+            int phase;
+            RescanResult found;
             {
+                // One snapshot. A start claims `running` and then resets under this lock, so here the flag and the
+                // result belong to the same run: read apart, a start between them answered "finished, nothing found".
                 std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
+                running = m_rescan.job.Running();
+                phase   = m_rescan.phase.load();
                 data["status_text"] = m_rescan.statusText;
+                found   = m_rescan.result;
             }
+            data["running"] = running;
+            data["phase"]   = phase;
             // Include results if scan is complete
-            if (!m_rescan.running.load() && m_rescan.phase.load() == 3) {
-                data["found_gobjects"]   = (m_rescan.foundGObjects != 0);
-                data["found_gworld"]     = (m_rescan.foundGWorld != 0);
-                data["gobjects_addr"]    = Renge::AddrToStr(m_rescan.foundGObjects);
-                data["gworld_addr"]      = Renge::AddrToStr(m_rescan.foundGWorld);
-                data["gobjects_method"]  = m_rescan.gobjectsMethod;
-                data["gworld_method"]    = m_rescan.gworldMethod;
+            if (!running && phase == 3) {
+                data["found_gobjects"]   = (found.gobjects != 0);
+                data["found_gworld"]     = (found.gworld != 0);
+                data["gobjects_addr"]    = Renge::AddrToStr(found.gobjects);
+                data["gworld_addr"]      = Renge::AddrToStr(found.gworld);
+                data["gobjects_method"]  = found.gobjectsMethod;
+                data["gworld_method"]    = found.gworldMethod;
+                data["cancelled"]        = found.cancelled;   // additive: cut short by Stop, so "not found" is unknown
             }
             return Renge::MakeResponse(id, data).dump();
         }
 
         if (cmd == Renge::CMD_APPLY_RESCAN) {
-            if (m_rescan.running.load()) {
+            if (m_rescan.job.Running()) {
                 return Renge::MakeError(id, "Rescan still running").dump();
             }
 
@@ -6596,18 +6831,23 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             bool applied = false;
 
-            if (m_rescan.foundGObjects && g_cachedGObjects == 0) {
-                g_cachedGObjects = m_rescan.foundGObjects;
-                g_cachedGObjectsMethod = m_rescan.gobjectsMethod;
+            // One copy, read under the lock the job writes them under. Each field used to be read twice, from fields
+            // a new run's reset clears, so the publish below could see a pointer and then publish 0 -- and call
+            // Aura::Init(0). [PIPE-PER-PROCESS-2026-11-06] Stage C
+            const RescanResult found = m_rescan.Results();
+
+            if (found.gobjects && g_cachedGObjects == 0) {
+                g_cachedGObjects = found.gobjects;
+                g_cachedGObjectsMethod = found.gobjectsMethod;
                 Aura::Init(g_cachedGObjects);
                 Sein::Info("PIPE:cmd", "apply_rescan: Applied GObjects=0x%llX (%s)",
                          (unsigned long long)g_cachedGObjects, g_cachedGObjectsMethod);
                 applied = true;
             }
 
-            if (m_rescan.foundGWorld && g_cachedGWorld == 0) {
-                g_cachedGWorld = m_rescan.foundGWorld;
-                g_cachedGWorldMethod = m_rescan.gworldMethod;
+            if (found.gworld && g_cachedGWorld == 0) {
+                g_cachedGWorld = found.gworld;
+                g_cachedGWorldMethod = found.gworldMethod;
                 Sein::Info("PIPE:cmd", "apply_rescan: Applied GWorld=0x%llX (%s)",
                          (unsigned long long)g_cachedGWorld, g_cachedGWorldMethod);
                 applied = true;
@@ -6698,45 +6938,42 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // Async: starts a background thread, returns immediately.
         // Also safe to call in CE/manual inject mode — UE5_Init is idempotent.
         if (cmd == Renge::CMD_TRIGGER_SCAN) {
-            if (m_scan.running.load()) {
-                return Renge::MakeError(id, "Scan already in progress").dump();
-            }
-
-            Sein::Info("PIPE:cmd", "trigger_scan: Starting async engine scan...");
-
-            // Re-scan = game state may have changed; drop stale cached names.
-            Ubel::ClearNameCache();
-
-            // Reset state and launch background thread
-            m_scan.completed = false;
-            m_scan.phase.store(0);
-            {
-                std::lock_guard<std::mutex> lock(m_scan.statusMutex);
-                m_scan.statusText = "Starting...";
-            }
-            m_scan.running.store(true);
-
-            if (m_scan.scanThread.joinable()) m_scan.scanThread.join();
-            m_scan.scanThread = std::thread(&Fern::RunScan, this);
+            using Start = Routine::SingleFlightJob::Start;
+            const Start started = m_scan.job.TryStart(m_running,
+                [] {   // only the client that starts the job runs this
+                    Sein::Info("PIPE:cmd", "trigger_scan: Starting async engine scan...");
+                    // Re-scan = game state may have changed; drop stale cached names.
+                    Ubel::ClearNameCache();
+                },
+                [this] { return RunScan(); });
+            if (started == Start::Stopping) return Renge::MakeError(id, "the pipe server is stopping").dump();
 
             json data;
-            data["started"] = true;
+            data["started"] = (started == Start::Started);
+            // [PIPE-PER-PROCESS-2026-11-06] Stage C, the maintainer's choice (2026-11-10): a scan another client started
+            // is a scan in progress, not a failure. Its result is the process's, and scan_status reports it to all.
+            if (started == Start::AlreadyRunning) data["in_progress"] = true;
             return Renge::MakeResponse(id, data).dump();
         }
 
         // ── scan_status: Poll scan progress (pairs with trigger_scan) ────────
         if (cmd == Renge::CMD_SCAN_STATUS) {
             namespace SP = ScanProgress;
-            int phase = SP::phase.load(std::memory_order_acquire);
-
             json data;
-            data["running"]     = m_scan.running.load();
+            const Routine::SingleFlightJob::Snapshot job = m_scan.job.Status();   // one answer: see Status()
+            // The phase AFTER the snapshot: UE5_Init stores phase 7 before the job ends, so once the snapshot says "not
+            // running, completed" this reads 7 -- the UI's completion test reads it. Read first, a poll stalled between
+            // the two reported a finished scan at phase 6.
+            int phase = SP::phase.load(std::memory_order_acquire);
+            const bool running = job.running;
+            data["running"]     = running;
             data["phase"]       = phase;
             data["status_text"] = SP::GetStatusText();
 
             // When complete, include full pointer snapshot — same shape as
             // get_pointers. Single helper guarantees the two paths can't drift.
-            if (!m_scan.running.load() && m_scan.completed) {
+            // Completed is UE5_Init's own answer: a scan Stop cancelled is not "scanned".
+            if (!running && job.completed) {
                 data["scanned"] = true;
                 FillPointerSnapshot(data);
             }
@@ -7557,6 +7794,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["hidden_actors"] = addrs;
             }
             data["pierce_count"] = st.pierceCount;   // nearest occluders to hide along the ray
+            // [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds it on. Additive keys.
+            data["claims"]     = st.claims;       // owners that turned it on and have neither left nor turned it off
+            data["ce_claimed"] = st.ceClaimed;    // CE's mailbox record is one of them
             // [P1-SEETHRU-GIVEUP] The leftover-hidden split: still waiting for the game thread, or abandoned after the
             // restore window. hidden_count > 0 with active == false used to mean both. Additive keys.
             data["restore_pending"]   = st.restorePending;
@@ -7569,7 +7809,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int32_t state = -1;
             const bool haveEnable = request.contains("enable");
             if (haveEnable)
-                state = Schlacht::SetEnabled(request.value("enable", false));
+                state = Schlacht::SetEnabled(request.value("enable", false), conn->ownerKey);
             Sein::Info("PIPE:cmd", "seethrough_set: enable=%s count=%d",
                        haveEnable ? (request.value("enable", false) ? "1" : "0") : "-",
                        request.contains("count") ? request.value("count", 1) : -1);
@@ -7947,28 +8187,19 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 // ============================================================
 // RunScan — Background thread for initial scan (trigger_scan)
 // ============================================================
-void Fern::RunScan() {
+bool Fern::RunScan() {
+    // The job runs this guarded -- UE5_Init allocates heavily against a live game, and a throw must still end the job,
+    // or the UI waits on a scan that is never coming (B14) -- and bound to its own cancel token.
     Sein::Info("PIPE:scan", "RunScan: started");
-    // UE5_Init allocates heavily against a live game. The flags below MUST still be
-    // cleared if it throws, or the UI waits on a scan that is never coming. (B14)
-    Routine::RunThreadGuarded("RunScan", [] { UE5_Init(); });
-    m_scan.completed = true;
-    m_scan.running.store(false);
-    Sein::Info("PIPE:scan", "RunScan: finished");
+    const bool ok = UE5_Init();
+    Sein::Info("PIPE:scan", "RunScan: finished (%s)", ok ? "initialized" : "not initialized: cancelled");
+    return ok;
 }
 
 // ============================================================
-// RunRescan — Background thread for aggressive pointer recovery
+// RunRescanBody — the Extra Scan job's work: aggressive pointer recovery
 // ============================================================
-void Fern::RunRescan(bool scanGObjects, bool scanGWorld) {
-    // Guarded, and the `running` flag is cleared in BOTH outcomes: Genau's Extra Scan
-    // allocates against a live process, and a throw here used to terminate the game AND
-    // (had it not) would have left the UI waiting on a rescan that never finishes. (B14)
-    Routine::RunThreadGuarded("RunRescan", [&] { RunRescanBody(scanGObjects, scanGWorld); });
-    m_rescan.phase.store(3);
-    m_rescan.running.store(false);
-}
-
+// Runs guarded (Genau's Extra Scan allocates against a live process, B14) and bound to the job's own cancel token.
 void Fern::RunRescanBody(bool scanGObjects, bool scanGWorld) {
     Sein::Info("PIPE:rescan", "RunRescan: started (GObjects=%d, GWorld=%d)",
                  scanGObjects, scanGWorld);
@@ -7982,8 +8213,11 @@ void Fern::RunRescanBody(bool scanGObjects, bool scanGWorld) {
 
         uintptr_t result = Genau::ExtraScanGObjects();
         if (result) {
-            m_rescan.foundGObjects = result;
-            m_rescan.gobjectsMethod = "data_heuristic";
+            {
+                std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
+                m_rescan.result.gobjects       = result;
+                m_rescan.result.gobjectsMethod = "data_heuristic";
+            }
             Sein::Info("PIPE:rescan", "RunRescan: GObjects found at 0x%llX",
                          static_cast<unsigned long long>(result));
         } else {
@@ -8000,8 +8234,11 @@ void Fern::RunRescanBody(bool scanGObjects, bool scanGWorld) {
 
         uintptr_t result = Genau::ExtraScanGWorld();
         if (result) {
-            m_rescan.foundGWorld = result;
-            m_rescan.gworldMethod = "instance_scan";
+            {
+                std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
+                m_rescan.result.gworld       = result;
+                m_rescan.result.gworldMethod = "instance_scan";
+            }
             Sein::Info("PIPE:rescan", "RunRescan: GWorld found at 0x%llX",
                          static_cast<unsigned long long>(result));
         } else {
@@ -8009,72 +8246,112 @@ void Fern::RunRescanBody(bool scanGObjects, bool scanGWorld) {
         }
     }
 
-    m_rescan.phase.store(3);
+    // Bound to the job's own token, Requested() here means Stop or shutdown -- never another client's cancel. A sweep
+    // cut short by it found nothing because it stopped looking, which "not found" would misreport.
+    const bool cancelled = Tot::Requested();
+    RescanResult summary;
     {
         std::lock_guard<std::mutex> lock(m_rescan.statusMutex);
-        m_rescan.statusText = "Complete";
+        m_rescan.result.cancelled = cancelled;
+        m_rescan.statusText = cancelled ? "Cancelled" : "Complete";
+        summary = m_rescan.result;
     }
-    m_rescan.running.store(false);
+    m_rescan.phase.store(3);
 
-    Sein::Info("PIPE:rescan", "RunRescan: finished (foundGObj=0x%llX, foundGWld=0x%llX)",
-                 static_cast<unsigned long long>(m_rescan.foundGObjects),
-                 static_cast<unsigned long long>(m_rescan.foundGWorld));
+    Sein::Info("PIPE:rescan", "RunRescan: finished (foundGObj=0x%llX, foundGWld=0x%llX%s)",
+                 static_cast<unsigned long long>(summary.gobjects),
+                 static_cast<unsigned long long>(summary.gworld), cancelled ? ", cancelled" : "");
 }
 
-void Fern::StartWatch(const std::shared_ptr<Connection>& conn, uintptr_t addr, uint32_t size, uint32_t interval_ms) {
-    StopWatch(addr); // Stop existing watch on same address
-
-    std::lock_guard<std::mutex> lock(m_watchMutex);
-
+std::string Fern::StartWatch(const std::shared_ptr<Connection>& conn, uintptr_t addr, uint32_t size, uint32_t interval_ms) {
+    const Kanne::WatchKey key{conn->seq, addr};
     auto entry = std::make_unique<WatchEntry>();
-    entry->addr = addr;
-    entry->size = size;
+    entry->addr        = addr;
+    entry->size        = size;
     entry->interval_ms = interval_ms;
-    entry->owner = conn.get();   // event target; valid until this conn's watches
-                                 // are stopped+joined in HandleConnection cleanup
-    entry->active = true;
-
-    WatchEntry* ptr = entry.get();
-    entry->watchThread = std::thread([this, ptr]() {
-      // Fully unguarded before B14's scope correction, and it allocates on every tick:
-      // the buffer, BytesToHex's string, the json object, and dump(). A bad_alloc here
-      // terminated the game.
-      Routine::RunThreadGuarded("PipeServer: watch", [&] {
-        std::vector<uint8_t> buf(ptr->size);
-        while (ptr->active.load() && m_running.load()) {
-            if (Macht::ReadBytesSafe(ptr->addr, buf.data(), ptr->size)) {
-                json data;
-                data["addr"]      = Renge::AddrToStr(ptr->addr);
-                data["bytes"]     = Renge::BytesToHex(buf.data(), buf.size());
-                data["timestamp"] = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::system_clock::now().time_since_epoch()).count();
-
-                // Write the event to the connection that registered this watch
-                // (the interactive lane). WriteLine no-ops if that connection
-                // closed; the watch is stopped on its connection's disconnect.
-                if (ptr->owner)
-                    WriteLine(*ptr->owner, Renge::MakeEvent(Renge::EVT_WATCH, data).dump());
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(ptr->interval_ms));
+    entry->slot        = std::make_shared<Kanne::WatchSlot>();
+    std::unique_ptr<WatchEntry> replaced;
+    {
+        // One lock decides and replaces. The old StopWatch-then-relock let a second watch land in between, and the
+        // assignment then destroyed it while its thread ran.
+        std::lock_guard<std::mutex> lock(m_watchMutex);
+        // StopAllWatches runs after Stop clears m_running, under this lock: a watch past it would be joined by nobody.
+        if (!m_running.load()) return "the pipe server is stopping";
+        if (m_watches.find(key) == m_watches.end()) {
+            if (Kanne::CountOwned(m_watches, conn->seq) >= static_cast<size_t>(Grimoire::PIPE_WATCH_MAX_PER_CONNECTION))
+                return "too many watches on this connection (at most "
+                       + std::to_string(Grimoire::PIPE_WATCH_MAX_PER_CONNECTION) + ")";
+            if (m_watches.size() >= static_cast<size_t>(Grimoire::PIPE_WATCH_MAX_TOTAL))
+                return "too many watches in this game (at most " + std::to_string(Grimoire::PIPE_WATCH_MAX_TOTAL) + ")";
         }
-      });
-    });
-
-    m_watches[addr] = std::move(entry);
-    Sein::Info("PIPE:watch", "PipeServer: Watch started on 0x%llX (size=%u, interval=%ums)",
-             static_cast<unsigned long long>(addr), size, interval_ms);
+        // The map slot before the thread: a throw after the thread started (an insert's allocation) would leave
+        // it detached, sampling for the life of the process (review, 2026-11-10). Nobody sees an empty slot: every
+        // reader of m_watches holds this lock.
+        auto [slotIt, fresh] = m_watches.try_emplace(key);
+        // The thread holds the slot and copies of what it reads -- nothing of this entry, this server or the
+        // connection -- so a lost entry or a departed connection can never be read through it.
+        std::shared_ptr<Kanne::WatchSlot> slot = entry->slot;
+        try {
+        entry->watchThread = std::thread([slot, addr, size, interval_ms]() {
+          // It allocates on every read (the slot's copy of the sample); a bad_alloc out of a thread proc terminates
+          // the game. (B14)
+          Routine::RunThreadGuarded("PipeServer: watch", [&] {
+            std::vector<uint8_t> buf(size);
+            do {
+                if (Macht::ReadBytesSafe(addr, buf.data(), size))
+                    slot->Publish(buf.data(), buf.size(), std::chrono::duration_cast<std::chrono::milliseconds>(
+                        std::chrono::system_clock::now().time_since_epoch()).count());
+            } while (slot->WaitInterval(std::chrono::milliseconds(interval_ms)));
+          });
+        });
+        } catch (...) {
+            if (fresh) m_watches.erase(slotIt);   // no thread started: give the slot back
+            throw;
+        }
+        replaced = std::move(slotIt->second);   // empty for a fresh key
+        slotIt->second = std::move(entry);
+    }
+    if (replaced) JoinWatch(*replaced);
+    Sein::Info("PIPE:watch", "PipeServer: Watch started on 0x%llX (size=%u, interval=%ums, connection #%llu)",
+               static_cast<unsigned long long>(addr), size, interval_ms, static_cast<unsigned long long>(conn->seq));
+    return {};
 }
 
-// Stop + join every watch registered by a given connection. Called in that
-// connection's HandleConnection cleanup BEFORE the Connection is closed/freed,
-// so the watch threads (which hold a raw owner pointer) never outlive it.
-void Fern::StopWatchesForConnection(Connection* owner) {
+void Fern::JoinWatch(WatchEntry& entry) {
+    if (entry.slot) entry.slot->RequestStop();
+    if (entry.watchThread.joinable()) entry.watchThread.join();
+}
+
+void Fern::FlushWatchEvents(Connection& conn) {
+    std::vector<std::pair<uintptr_t, std::shared_ptr<Kanne::WatchSlot>>> mine;
+    {
+        std::lock_guard<std::mutex> lock(m_watchMutex);
+        for (const auto& kv : m_watches)
+            if (kv.first.connSeq == conn.seq) mine.emplace_back(kv.second->addr, kv.second->slot);
+    }
+    Kanne::WatchSlot::Sample s;
+    for (const auto& [addr, slot] : mine) {
+        if (!slot->TakeLatest(s)) continue;
+        json data;
+        data["addr"]      = Renge::AddrToStr(addr);
+        data["bytes"]     = Renge::BytesToHex(s.bytes.data(), s.bytes.size());
+        data["timestamp"] = s.timestampMs;   // when it was read
+        // Additive: how many reads this event stands for. Only the latest is sent, because a sample can go out only
+        // when its client sends a command (Kanne.h).
+        data["samples"]   = s.samples;
+        if (!WriteLine(conn, Renge::MakeEvent(Renge::EVT_WATCH, data).dump())) return;
+    }
+}
+
+// Stop + join every watch a connection registered. Called in that connection's cleanup. Every thread is told to stop
+// before the first join, so they wind down together.
+void Fern::StopWatchesForConnection(uint64_t connSeq) {
     std::vector<std::unique_ptr<WatchEntry>> toJoin;
     {
         std::lock_guard<std::mutex> lock(m_watchMutex);
         for (auto it = m_watches.begin(); it != m_watches.end(); ) {
-            if (it->second->owner == owner) {
-                it->second->active = false;
+            if (it->first.connSeq == connSeq) {
+                it->second->slot->RequestStop();
                 toJoin.push_back(std::move(it->second));
                 it = m_watches.erase(it);
             } else {
@@ -8082,54 +8359,35 @@ void Fern::StopWatchesForConnection(Connection* owner) {
             }
         }
     }
-    for (auto& entry : toJoin) {
-        if (entry && entry->watchThread.joinable()) entry->watchThread.join();
-    }
+    for (auto& entry : toJoin) JoinWatch(*entry);
 }
 
-void Fern::StopWatch(uintptr_t addr) {
-    // Audit fix #4: extract the entry under m_watchMutex but join the thread
-    // OUTSIDE the lock. The watch thread writes events via WriteLine (the
-    // connection's writeMutex); if we held m_watchMutex while joining and
-    // another thread took both locks in the opposite order, we'd deadlock.
-    // Safer to release m_watchMutex before the blocking join.
+bool Fern::StopWatch(uint64_t connSeq, uintptr_t addr) {
+    // Joined outside m_watchMutex: every connection's FlushWatchEvents takes it once per command.
     std::unique_ptr<WatchEntry> entry;
     {
         std::lock_guard<std::mutex> lock(m_watchMutex);
-        auto it = m_watches.find(addr);
-        if (it == m_watches.end()) return;
-        it->second->active = false;
+        auto it = m_watches.find(Kanne::WatchKey{connSeq, addr});
+        if (it == m_watches.end()) return false;
         entry = std::move(it->second);
         m_watches.erase(it);
     }
-
-    if (entry && entry->watchThread.joinable()) {
-        entry->watchThread.join();
-    }
-    Sein::Info("PIPE:watch", "PipeServer: Watch stopped on 0x%llX",
-             static_cast<unsigned long long>(addr));
+    JoinWatch(*entry);
+    Sein::Info("PIPE:watch", "PipeServer: Watch stopped on 0x%llX (connection #%llu)",
+               static_cast<unsigned long long>(addr), static_cast<unsigned long long>(connSeq));
+    return true;
 }
 
 void Fern::StopAllWatches() {
-    // Audit fix #4: same pattern as StopWatch — extract under lock, join
-    // afterwards. Set every entry's active=false first so all watch threads
-    // start exiting in parallel; then drain the map and join each.
     std::vector<std::unique_ptr<WatchEntry>> toJoin;
     {
         std::lock_guard<std::mutex> lock(m_watchMutex);
         toJoin.reserve(m_watches.size());
-        for (auto& [addr, entry] : m_watches) {
-            entry->active = false;
-        }
-        for (auto& [addr, entry] : m_watches) {
-            toJoin.push_back(std::move(entry));
+        for (auto& kv : m_watches) {
+            kv.second->slot->RequestStop();
+            toJoin.push_back(std::move(kv.second));
         }
         m_watches.clear();
     }
-
-    for (auto& entry : toJoin) {
-        if (entry && entry->watchThread.joinable()) {
-            entry->watchThread.join();
-        }
-    }
+    for (auto& entry : toJoin) JoinWatch(*entry);
 }

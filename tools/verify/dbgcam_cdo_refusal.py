@@ -14,7 +14,8 @@ answers -17 at once, with no game-thread call and no ProcessEvent hook install. 
 PREREQUISITES
   * DumperTest SHIPPING (UE 5.4, no CheatManager): `py tools/verify/launch_dumpertest.py shipping`, then
     `py tools/verify/inject.py --name DumperTest` (or a deployed proxy: assert_build refuses a stale one).
-  * The UI must NOT be connected: it holds two of the DLL's three pipe instances (pipe_client.py).
+  * The UI must NOT be connected to a DLL from before [PIPE-PER-PROCESS-2026-11-06] Stage B: it holds two of that DLL's three pipe instances
+    (pipe_client.py); 6 since.
   * No Cheat Engine: the mailbox is driven with ReadProcessMemory / WriteProcessMemory.
   * dist\build_number.txt names the DLL under test, and that build is 3682 or later.
   * One injected game at a time; kill the game when the row is done (handover section 4).

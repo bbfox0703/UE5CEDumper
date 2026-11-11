@@ -1,10 +1,17 @@
 """Drive the injected UE5Dumper DLL over its named pipe, from Python, with no UI.
 
 This is the rig `docs/working-lessons.md` §2.6 describes: the UI is a *client*, not the subject,
-so every DLL-side row on the verification register can be driven straight over
-`\\\\.\\pipe\\UE5DumpBfx`. It is also STRONGER evidence for a DLL-side claim than a UI session,
+so every DLL-side row on the verification register can be driven straight over the game's pipe.
+It is also STRONGER evidence for a DLL-side claim than a UI session,
 because it removes Avalonia as a variable -- and correspondingly proves nothing about the panel's
 own bindings, which must be said explicitly when a result is recorded.
+
+Which game ([PIPE-PER-PROCESS-2026-11-06]). Each game serves `\\\\.\\pipe\\UE5DumpBfx_<pid>`. The
+client dials, in this order: the `pid=` it was given (`--pid` on this script's command line), then
+the `UE5DUMP_PID` environment variable (it reaches every rig and the children they start), then the
+only game listed under `\\\\.\\pipe\\`. With several games it takes the lowest pid, prints them all
+and warns. When only the legacy `\\\\.\\pipe\\UE5DumpBfx` is there, a game runs an old DLL (a proxy
+never refreshed): it refuses and says so. A rig that already knows the game's pid passes it.
 
 The three traps from §2.6 are enforced here rather than left to the caller, because each one
 produces a *confident wrong answer* rather than an error:
@@ -29,23 +36,189 @@ Usage as a library:
 Usage from the shell:
 
     py tools/verify/pipe_client.py get_pointers
+    py tools/verify/pipe_client.py get_pointers --pid 12345
     py tools/verify/pipe_client.py find_instances --args '{"class_name":"DumperTestActor"}'
 """
 
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
+import os
 import pathlib
 import sys
 import time
 
-PIPE = r"\\.\pipe\UE5DumpBfx"
+# [PIPE-PER-PROCESS-2026-11-06] Each game serves \\.\pipe\UE5DumpBfx_<pid>; the legacy name is what every DLL served
+# before, and an old DLL (a stale proxy) still does.
+PIPE_PREFIX = "UE5DumpBfx_"
+LEGACY_PIPE = "UE5DumpBfx"
+PID_ENV = "UE5DUMP_PID"
+PIPE_ROOT = "\\\\.\\pipe\\"
 DIST_BUILD = pathlib.Path(__file__).resolve().parents[2] / "dist" / "build_number.txt"
+
+# Seams for the selftest: the listing of \\.\pipe\ and the environment.
+_listdir = os.listdir
+_environ = os.environ
 
 
 class PipeError(RuntimeError):
     pass
+
+
+def pipe_name(pid: int) -> str:
+    """The pipe a game process serves, bare (no \\\\.\\pipe\\ path)."""
+    return PIPE_PREFIX + str(int(pid))
+
+
+def pipe_path(pid: int) -> str:
+    """The full path a client opens for game `pid`."""
+    return PIPE_ROOT + pipe_name(pid)
+
+
+def parse_pid(name: str) -> int | None:
+    """The pid in a per-process pipe name, or None for any other name. Exact: the prefix (without case, as Windows
+    compares pipe names), then only ASCII digits, a positive pid. A rig's own "UE5DumpBfx-probe-..." pipe is no game."""
+    if not name.lower().startswith(PIPE_PREFIX.lower()):
+        return None
+    digits = name[len(PIPE_PREFIX):]
+    if not digits or not all("0" <= ch <= "9" for ch in digits):
+        return None
+    pid = int(digits)
+    return pid if 0 < pid <= 0xFFFFFFFF else None
+
+
+def list_dumper_pipes() -> tuple[list[int], bool]:
+    """The game pids serving a pipe (ascending), and whether the legacy pipe is there. Listing opens no pipe."""
+    names = _listdir("//./pipe/")
+    pids = sorted({p for p in (parse_pid(n) for n in names) if p is not None})
+    legacy = any(n.lower() == LEGACY_PIPE.lower() for n in names)
+    return pids, legacy
+
+
+def process_image(pid: int) -> str:
+    """The exe file name of `pid`, or "?" when it cannot be read: for the several-games warning only."""
+    if sys.platform != "win32":
+        return "?"
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = ctypes.c_void_p
+    h = k32.OpenProcess(0x1000, False, int(pid))   # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return "?"
+    try:
+        buf = ctypes.create_unicode_buffer(1024)
+        size = ctypes.c_ulong(len(buf))
+        if not k32.QueryFullProcessImageNameW(ctypes.c_void_p(h), 0, buf, ctypes.byref(size)):
+            return "?"
+        return os.path.basename(buf.value) or "?"
+    finally:
+        k32.CloseHandle(ctypes.c_void_p(h))
+
+
+def pipe_is_busy(path: str) -> bool:
+    """True when the pipe exists and every instance is taken (ERROR_PIPE_BUSY). open() reports that as EINVAL
+    (errno 22), like several other failures (measured 2026-11-10); WaitNamedPipeW tells it apart, ERROR_SEM_TIMEOUT
+    (121), without connecting."""
+    if sys.platform != "win32":
+        return False
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.WaitNamedPipeW.argtypes = [ctypes.c_wchar_p, ctypes.c_ulong]
+    if k32.WaitNamedPipeW(path, 1):   # 1 ms; 0 would be NMPWAIT_USE_DEFAULT_WAIT
+        return False                  # an instance is free now
+    return ctypes.get_last_error() == 121
+
+
+# Seam for the selftest.
+_pipe_is_busy = pipe_is_busy
+
+# [PIPE-PER-PROCESS-2026-11-06] Stage C: when every connection is taken, the DLL writes who holds them on its at-capacity
+# pipe-log line (Grimoire.h PIPE_AT_CAPACITY_TEXT / PIPE_HOLDERS_TOKEN / PIPE_HOLDERS_MORE_TOKEN / PIPE_SLOT_FREED_TEXT).
+AT_CAPACITY_TEXT = "pipe instances in use"
+HOLDERS_TOKEN = " holders="
+HOLDERS_MORE_TOKEN = " more="
+SLOT_FREED_TEXT = "slot freed"
+LOGROOT = pathlib.Path(os.environ.get("LOCALAPPDATA", str(pathlib.Path.home() / "AppData/Local"))) / "UE5CEDumper/Logs"
+
+
+def latest_holders(text: str, name: str):
+    """The latest at-capacity line naming pipe `name` (bare, e.g. UE5DumpBfx_668) in a DLL pipe log, as
+    {"time", "holders": [...], "more", "superseded"}, or None. The pipe is matched digit-exact (two processes of one
+    exe share a log folder); a newer line that cannot be read is no answer, not the older line's."""
+    ref = PIPE_ROOT + name
+    latest, saw_full = None, False
+    for line in (text or "").splitlines():
+        at, names = line.lower().find(ref.lower()), False
+        while at >= 0:
+            nxt = at + len(ref)
+            if nxt >= len(line) or not line[nxt].isdigit():
+                names = True
+                break
+            at = line.lower().find(ref.lower(), at + 1)
+        if not names:
+            continue
+        if SLOT_FREED_TEXT in line:
+            if latest is not None:
+                latest["superseded"] = True
+            continue
+        if AT_CAPACITY_TEXT not in line or HOLDERS_TOKEN not in line:
+            continue
+        saw_full = True
+        rest = line.split(HOLDERS_TOKEN, 1)[1]
+        more = 0
+        if HOLDERS_MORE_TOKEN in rest:
+            rest, tail = rest.split(HOLDERS_MORE_TOKEN, 1)
+            more = int(tail.strip()) if tail.strip().isdigit() else 0
+        try:
+            holders = json.loads(rest)
+        except ValueError:
+            latest = None
+            continue
+        time_ = line[1:line.index("]")] if line.startswith("[") and "]" in line else ""
+        latest = {"time": time_, "holders": holders if isinstance(holders, list) else [], "more": more,
+                  "superseded": False}
+    return latest if saw_full else None
+
+
+def _read_pipe_logs() -> list[str]:
+    """The text of every game's pipe-0.log (a selftest seam). Two processes of one exe share a folder, so a reader
+    filters by pipe name, never by folder."""
+    texts = []
+    for p in LOGROOT.glob("*/pipe-0.log"):
+        try:
+            texts.append(p.read_text(encoding="utf-8", errors="replace"))
+        except OSError:
+            pass
+    return texts
+
+
+def resolve_pipe(pid: int | None = None, *, warn=None) -> str:
+    """Which game's pipe to dial: `pid`, else $UE5DUMP_PID, else the one game listed. Several games: the lowest pid,
+    with every game printed and a warning (to `warn`, stderr by default). Raises PipeError when no game serves a
+    pipe, and says so when only the legacy pipe is there."""
+    if pid is None and _environ.get(PID_ENV, "").strip():
+        try:
+            pid = int(_environ[PID_ENV])
+        except ValueError:
+            raise PipeError(f"{PID_ENV}={_environ[PID_ENV]!r} is not a pid")
+    if pid is not None:
+        return pipe_path(pid)
+    pids, legacy = list_dumper_pipes()
+    if not pids:
+        if legacy:
+            raise PipeError(
+                f"only the legacy pipe {PIPE_ROOT}{LEGACY_PIPE} is up: a game runs an OLD UE5Dumper DLL, which this "
+                f"client does not drive. Refresh its proxy (py tools/verify/proxy_refresh.py refresh \"<title>\") or "
+                f"inject the current DLL into a freshly started game.")
+        raise PipeError(f"no {PIPE_ROOT}{PIPE_PREFIX}<pid>: no game is running UE5Dumper (or its pipe is not up yet)")
+    if len(pids) > 1 or legacy:
+        out = warn if warn is not None else sys.stderr
+        print(f"# WARNING: {len(pids)} game(s) serve a UE5Dumper pipe"
+              + (", and an old DLL serves the legacy one" if legacy else "") + ":", file=out)
+        for p in pids:
+            print(f"#   {pipe_name(p)}  {process_image(p)}", file=out)
+        print(f"# using the first, PID {pids[0]}. Pass --pid, or set {PID_ENV}, to choose.", file=out)
+    return pipe_path(pids[0])
 
 
 class StaleBuildError(PipeError):
@@ -57,8 +230,11 @@ class TruncatedError(PipeError):
 
 
 class PipeClient:
-    def __init__(self, pipe: str = PIPE, timeout: float = 120.0):
+    def __init__(self, pipe: str | None = None, timeout: float = 120.0, pid: int | None = None):
+        # `pipe`: a full path, used as given. Otherwise the game is chosen at connect time (resolve_pipe): `pid`, then
+        # $UE5DUMP_PID, then the listing -- so a game whose DLL is still scanning is found once its pipe appears.
         self.pipe = pipe
+        self.pid = pid
         self.timeout = timeout
         self._f = None
         self._id = 0
@@ -76,14 +252,44 @@ class PipeClient:
         # connection's first reply, which then fails to parse and is dropped.
         self._buf.clear()
         last = None
+        path = self.pipe
         for _ in range(retries):
             try:
-                self._f = open(self.pipe, "r+b", buffering=0)
+                if path is None:
+                    path = resolve_pipe(self.pid)   # warns once, on the attempt that finds the games
+                self._f = open(path, "r+b", buffering=0)
+                self.pipe = path   # which game this client reached; a reconnect dials the same one
                 return self
+            except PipeError as e:  # no game's pipe listed yet
+                last = e
+                time.sleep(delay)
             except OSError as e:  # pipe not up yet, or busy
                 last = e
                 time.sleep(delay)
-        raise PipeError(f"could not open {self.pipe}: {last}")
+        # [PIPE-PER-PROCESS-2026-11-06] Stage B: say when every connection was taken, which open() cannot.
+        hint = ""
+        if path is not None and _pipe_is_busy(path):
+            hint = (" -- every connection it takes is in use (other clients hold them all), or the game is not "
+                    "responding. A UE5Dumper DLL older than this tree may take only 3 clients at once, and the UI "
+                    "holds 2: disconnect the UI or another rig, or refresh the game's DLL and restart the game")
+            # Stage C: who holds them, from the DLL's at-capacity line (no client can connect to ask).
+            name = path[len(PIPE_ROOT):] if path.startswith(PIPE_ROOT) else path
+            seen = None
+            for text in _read_pipe_logs():
+                got = latest_holders(text, name)
+                if got is not None and (seen is None or got["time"] > seen["time"]):
+                    seen = got
+            if seen is not None and not seen["superseded"] and seen["holders"]:
+                me = os.getpid()
+                who = "; ".join(
+                    f"{h.get('exe', '?')} (PID {h.get('pid', 0)}"
+                    + (f", {'running' if h.get('in_flight') else 'last'} {h['last_cmd']}" if h.get("last_cmd") else "")
+                    + (", this process" if h.get("pid") == me else "") + ")"
+                    for h in seen["holders"])
+                if seen["more"]:
+                    who += f"; and {seen['more']} more"
+                hint += f". When the pipe filled ({seen['time']}), its connections were held by: {who}"
+        raise PipeError(f"could not open {path or 'a UE5Dumper pipe'}: {last}{hint}")
 
     def close(self) -> None:
         if self._f:
@@ -193,7 +399,8 @@ class PipeClient:
 def selftest() -> int:
     """[RIG-PIPE-DOUBLE-CONNECT] `with PipeClient() as c:` connects, and a second `c.connect()` must not open again:
     it opened a second handle while the first was still held, which needs a second pipe instance at the same moment.
-    The DLL serves three and the UI holds two, so with the UI up the rig failed after ten retries. A handle closed
+    The DLL served three then (six since [PIPE-PER-PROCESS-2026-11-06] Stage B) and the UI holds two, so with the UI up the rig failed after ten
+    retries. A handle closed
     behind the client's back is reopened, not handed back, and the reopened connection starts with no bytes of the old
     one -- while a connect() on an open client keeps them, since they belong to the live connection. No pipe is
     opened -- `open` is replaced for the duration."""
@@ -213,7 +420,14 @@ def selftest() -> int:
     had, saved = "open" in g, g.get("open")
     g["open"] = fake_open
     try:
-        c = PipeClient()
+        # [PIPE-PER-PROCESS-2026-11-06] A client given a pid dials that game's pipe, and keeps dialling it.
+        by_pid = PipeClient(pid=7)
+        by_pid.connect()
+        dialled = opened[-1] if opened else None
+        by_pid.close()
+        opened.clear()
+
+        c = PipeClient(pipe=pipe_path(1))   # an explicit path: no listing of \\.\pipe\ in a selftest
         with c:
             c._buf.extend(b'{"id":3,"partial')   # the live connection's own unread bytes
             c.connect()
@@ -233,7 +447,40 @@ def selftest() -> int:
         else:
             del g["open"]
     bad = 0
-    for label, got, want in (("connect inside `with`", twice, 1), ("bytes kept by a connect on an open client", kept, 16),
+    # [PIPE-PER-PROCESS-2026-11-06] Stage B: a pipe whose every instance is taken. open() reports it as EINVAL, like
+    # other failures; the error must say the connections are all in use, and must not say so when they are not.
+    def busy_open(*_a, **_k):
+        raise OSError(22, "Invalid argument")
+
+    bsl = "\\"
+    full5 = ("[2026-11-10 20:47:40.123] [INFO] [PIPE:svr] PipeServer: all 6 pipe instances in use, waiting for a free "
+             f"slot -- {bsl * 2}.{bsl}pipe{bsl}UE5DumpBfx_5 holders=[{{\"seq\":3,\"pid\":4321,\"exe\":\"python.exe\","
+             "\"last_cmd\":\"get_pointers\",\"in_flight\":false}]")
+
+    def failure_text(busy):
+        saved_logs = g["_read_pipe_logs"]
+        g["open"], g["_pipe_is_busy"], g["_read_pipe_logs"] = busy_open, (lambda _p: busy), (lambda: [full5])
+        try:
+            PipeClient(pipe=pipe_path(5)).connect(retries=1, delay=0.0)
+            return "connected?!"
+        except PipeError as e:
+            return str(e)
+        finally:
+            g["open"], g["_pipe_is_busy"], g["_read_pipe_logs"] = fake_open, pipe_is_busy, saved_logs
+
+    g["open"] = fake_open
+    busy_text, other_text = failure_text(True), failure_text(False)
+    if had:
+        g["open"] = saved
+    else:
+        del g["open"]
+
+    for label, got, want in (("a busy pipe: the error says every connection is in use", "in use" in busy_text, True),
+                             ("a busy pipe: and who holds it, from the DLL's log",
+                              "python.exe (PID 4321" in busy_text and "get_pointers" in busy_text, True),
+                             ("any other failure: it does not", "in use" in other_text, False),
+                             ("a client given a pid dials its game", dialled, pipe_path(7)),
+                             ("connect inside `with`", twice, 1), ("bytes kept by a connect on an open client", kept, 16),
                              ("connect after close", again, 2),
                              ("connect after the handle was closed directly", reopened, 3),
                              ("bytes a reopened connection inherits", leftover, 0)):
@@ -244,18 +491,97 @@ def selftest() -> int:
     return 0 if bad == 0 else 1
 
 
+def selftest_resolve() -> int:
+    """[PIPE-PER-PROCESS-2026-11-06] Which game a client dials, from a fake \\\\.\\pipe\\ listing and environment: no
+    pipe is opened and no game needs to run."""
+    import io
+    g = globals()
+    saved = g["_listdir"], g["_environ"], g["process_image"]
+    bad = 0
+
+    def case(label, listing, env, pid, want, want_warn=None):
+        nonlocal bad
+        g["_listdir"] = lambda _root: list(listing)
+        g["_environ"] = dict(env)
+        g["process_image"] = lambda p: f"game{p}.exe"
+        warn = io.StringIO()
+        try:
+            got = resolve_pipe(pid, warn=warn)
+        except PipeError as e:
+            got = "PipeError: " + str(e)
+        ok = (got.startswith(want) if want.startswith("PipeError") else got == want)
+        if want_warn is not None:
+            ok = ok and ((want_warn in warn.getvalue()) if want_warn else warn.getvalue() == "")
+        bad += not ok
+        print(f"{'OK ' if ok else 'BAD'}  {label}: {got!r}" + (f" warn={warn.getvalue()!r}" if not ok else ""))
+
+    root = "\\\\.\\pipe\\"
+    try:
+        case("one game: its pipe, no warning", ["UE5DumpBfx_4242", "AOBMakerCEBridge"], {}, None,
+             root + "UE5DumpBfx_4242", "")
+        case("several games: the lowest pid, and every game named",
+             ["UE5DumpBfx_300", "UE5DumpBfx_100"], {}, None, root + "UE5DumpBfx_100", "UE5DumpBfx_300  game300.exe")
+        case("a game beside the legacy pipe: the game, with a warning",
+             ["UE5DumpBfx", "UE5DumpBfx_7"], {}, None, root + "UE5DumpBfx_7", "old DLL")
+        case("the legacy pipe alone: refused, and why", ["UE5DumpBfx"], {}, None, "PipeError: only the legacy pipe")
+        case("no game", ["AOBMakerCEBridge", "UE5DumpBfx-probe-1-ab"], {}, None, "PipeError: no ")
+        case("a pid given: its pipe, listed or not", [], {}, 55, root + "UE5DumpBfx_55", "")
+        case("the environment names the game", ["UE5DumpBfx_1", "UE5DumpBfx_2"], {PID_ENV: "2"}, None,
+             root + "UE5DumpBfx_2", "")
+        case("a pid given beats the environment", [], {PID_ENV: "2"}, 9, root + "UE5DumpBfx_9", "")
+        case("a bad environment value is refused", [], {PID_ENV: "abc"}, None, "PipeError: UE5DUMP_PID=")
+        case("names are compared without case", ["ue5dumpbfx_12"], {}, None, root + "UE5DumpBfx_12", "")
+    finally:
+        g["_listdir"], g["_environ"], g["process_image"] = saved
+
+    # Stage C: who holds a full pipe, read from the DLL's at-capacity line.
+    bs = "\\"
+    full = ("[2026-11-10 20:47:40.123] [INFO] [PIPE:svr] PipeServer: all 6 pipe instances in use, waiting for a free "
+            f"slot -- {bs * 2}.{bs}pipe{bs}UE5DumpBfx_668 holders=[{{\"seq\":3,\"pid\":4321,\"exe\":\"python.exe\","
+            "\"last_cmd\":\"get_pointers\",\"in_flight\":false}]")
+    freed = ("[2026-11-10 20:48:00.000] [INFO] [PIPE:svr] PipeServer: a pipe slot freed, resuming accept -- "
+             f"{bs * 2}.{bs}pipe{bs}UE5DumpBfx_668")
+    got = latest_holders(full, "UE5DumpBfx_668")
+    for label, ok in (
+            ("holders: the latest full line is read",
+             got is not None and got["time"] == "2026-11-10 20:47:40.123" and got["holders"][0]["pid"] == 4321
+             and got["more"] == 0 and not got["superseded"]),
+            ("holders: freed since -> superseded", (latest_holders(full + "\n" + freed, "UE5DumpBfx_668") or {})
+             .get("superseded") is True),
+            ("holders: another pipe is not read", latest_holders(full, "UE5DumpBfx_66") is None),
+            ("holders: 'more=N' is counted", (latest_holders(full + " more=2", "UE5DumpBfx_668") or {}).get("more") == 2),
+            ("holders: a line cut mid-JSON is no answer", latest_holders(full[:-10], "UE5DumpBfx_668") is None)):
+        bad += not ok
+        print(f"{'OK ' if ok else 'BAD'}  {label}")
+
+    for name, want in (("UE5DumpBfx_1234", 1234), ("UE5DumpBfx", None), ("UE5DumpBfx_", None), ("UE5DumpBfx_0", None),
+                       ("UE5DumpBfx_12a", None), ("UE5DumpBfx_-5", None), ("UE5DumpBfx-probe-1-ab", None),
+                       ("UE5DumpBfx_99999999999", None), ("xUE5DumpBfx_12", None)):
+        got = parse_pid(name)
+        ok = got == want
+        bad += not ok
+        print(f"{'OK ' if ok else 'BAD'}  parse_pid({name!r}) = {got}, want {want}")
+    return bad
+
+
 def main() -> int:
     if sys.argv[1:] == ["--selftest"]:
-        return selftest()
+        resolve_bad = selftest_resolve()
+        rc = selftest()
+        if resolve_bad:
+            print(f"RESULT: FAIL ({resolve_bad} resolution case(s))")
+        return 1 if (rc or resolve_bad) else 0
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("cmd")
     ap.add_argument("--args", default="{}", help="JSON object of extra request fields")
     ap.add_argument("--no-guards", action="store_true",
                     help="skip the build/scan guards (they are the point -- only for probing)")
     ap.add_argument("--timeout", type=float, default=120.0)
+    ap.add_argument("--pid", type=int, default=None,
+                    help="the game to drive (its pipe is UE5DumpBfx_<pid>); default $UE5DUMP_PID, else the only game")
     a = ap.parse_args()
 
-    with PipeClient(timeout=a.timeout) as c:
+    with PipeClient(timeout=a.timeout, pid=a.pid) as c:
         if not a.no_guards:
             print(f"# build: {c.assert_build()}", file=sys.stderr)
         r = c.request(a.cmd, **json.loads(a.args))

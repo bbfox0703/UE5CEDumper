@@ -244,9 +244,10 @@ def main(argv=None):
         if running:
             print("launch_dumpertest.py: REFUSING -- a fixture is already running: "
                   + ", ".join(f"{n} (pid {p})" for n, p in running), file=sys.stderr)
-            print("  The house rule is ONE injected game at a time, and the pipe name "
-                  "\\\\.\\pipe\\UE5DumpBfx is single-instance: the second DLL cannot create it, so every "
-                  "command you send goes to the FIRST game while the second's logs stay near-empty.\n"
+            print("  The house rule is ONE injected game at a time (this PC also drives the game under test). "
+                  "Each game serves its own pipe, \\\\.\\pipe\\UE5DumpBfx_<pid>, but a rig given no --pid "
+                  "(or UE5DUMP_PID) drives the FIRST game it lists, so a stray second fixture answers for the "
+                  "one you meant.\n"
                   "  Measured 2026-09-09: a `taskkill /IM DumperTest.exe` looks like it cleaned up "
                   "but matches the DEVELOPMENT image only -- Shipping is DumperTest-Win64-Shipping.exe "
                   "and survived, so a Development run answered with Shipping's object graph.\n"

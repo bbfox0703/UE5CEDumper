@@ -23,7 +23,7 @@ TWO detectors, because the DLL's own tally is not evidence about itself:
 ⚠ Anti-vacuity: the run FAILS if no same-prefix stranger was found, if the Force
 held nothing, or if the strangers list is empty — a diff over nothing is not a pass.
 
-⛔ The UI must be DISCONNECTED (it holds 2 of the 3 pipe slots).
+⛔ The UI must be DISCONNECTED from a DLL that predates [PIPE-PER-PROCESS-2026-11-06] Stage B: it holds 2 of that DLL's 3 pipe slots (6 since).
 """
 from __future__ import annotations
 

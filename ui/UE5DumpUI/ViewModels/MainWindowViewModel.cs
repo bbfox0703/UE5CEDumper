@@ -88,65 +88,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// the banner's IsVisible.</summary>
     [ObservableProperty] private bool _gameThreadStalled;
 
-    /// <summary>Filled in when MORE THAN ONE running process currently hosts our dumper DLL.
-    /// Empty otherwise, and bound directly to the banner's IsVisible via
-    /// <see cref="HasMultipleDumperHosts"/>.
-    ///
-    /// The pipe name is a single global, so every injected game serves the SAME name and a
-    /// connecting client lands on whichever instance happens to be free. There is no way to
-    /// ask for a particular game. That produces two bad outcomes the user cannot otherwise
-    /// distinguish: a connect that fails because the instances are taken, and — far worse — a
-    /// connect that SUCCEEDS against the wrong game and quietly shows its data. Naming the
-    /// process we actually reached is the cheapest honest answer until the pipe is
-    /// per-process.</summary>
-    [ObservableProperty] private string _multipleDumperHostsWarning = "";
-
-    public bool HasMultipleDumperHosts => !string.IsNullOrEmpty(MultipleDumperHostsWarning);
-
-    partial void OnMultipleDumperHostsWarningChanged(string value)
-        => OnPropertyChanged(nameof(HasMultipleDumperHosts));
-
-    /// <summary>Warn when more than one running process currently hosts our dumper DLL.
-    ///
-    /// Fire-and-forget: it enumerates processes, which is slow enough that blocking the connect
-    /// path on it would be felt, and a late warning is still useful. Failures are swallowed —
-    /// this is advisory, and an enumeration that hits access-denied must never break a
-    /// connection that otherwise worked.</summary>
-    private async Task CheckForCompetingDumperHostsAsync(EngineState state)
-    {
-        if (_proxyDeployForChecks == null) return;
-        // Process enumeration is slow, so this can land after the user has disconnected
-        // and reconnected — or after the disconnect that just cleared the banner. Publish
-        // only into the session we were started for. Same shape as ScheduleProxyConfirmation.
-        int epoch = _sessionEpoch;
-        try
-        {
-            var procs = await _proxyDeployForChecks.ListGameProcessesAsync();
-            if (epoch != _sessionEpoch) return;
-            var hosts = procs.Where(p => p.DumperLoaded).ToList();
-            // Exclude the process we actually reached (by PID, or by module name when
-            // the DLL reports no PID) so the connected game is never listed among its
-            // own competitors. Null => 0/1 hosts, nothing to warn about (X9).
-            var banner = Helpers.CompetingHostBanner.Build(hosts, state.ProcessId, state.ModuleName);
-            if (banner is not { } b) { MultipleDumperHostsWarning = ""; return; }
-
-            MultipleDumperHostsWarning =
-                $"{hosts.Count} processes have the dumper DLL loaded. You are connected to "
-                + $"{b.ConnectedLabel} — also loaded: {string.Join(", ", b.Others)}. "
-                + "The pipe name is shared, so which game you reach is first-come-first-served. "
-                + "Close the ones you are not using.";
-            _log.Warn(Constants.LogCatInit, MultipleDumperHostsWarning);
-        }
-        catch (Exception ex)
-        {
-            _log.Warn(Constants.LogCatInit, $"Competing-dumper-host check failed: {ex.Message}");
-        }
-    }
-
-    /// <summary>Kept so the post-connect ambiguity check can enumerate processes. Null when the
-    /// host did not supply one (tests), in which case the check simply never runs.</summary>
-    private readonly IProxyDeployService? _proxyDeployForChecks;
-
     /// <summary>Global stale-DLL badge shown in the always-visible top bar:
     /// only while connected AND the DLL build differs from / pre-dates the UI's.
     /// Mirrors the per-tab Diagnostics badge (PointerPanelViewModel) but is
@@ -763,14 +704,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Gate the handoff menu items to the experimental flag (and pivot existence).
         UpdatePivotHandoffEnabled();
 
-        _proxyDeployForChecks = proxyDeploy;
-
         if (proxyDeploy != null)
         {
             // platform is passed only so the leftover-proxy rows can offer "Open folder".
             ProxyDeploy = new ProxyDeployViewModel(proxyDeploy, log, platform);
-            // Auto-connect the pipe after a successful in-UI DLL injection.
-            ProxyDeploy.RequestConnectAsync = () => ConnectCommand.ExecuteAsync(null);
+            // Auto-connect the pipe after a successful in-UI DLL injection: to that game's own pipe, by pid.
+            // Through ConnectCommand, so the toolbar's Connect stays disabled while the post-inject retry runs.
+            ProxyDeploy.RequestConnectAsync = pid => ConnectCommand.ExecuteAsync(pid);
             // Lets the post-inject retry ASK whether it worked instead of assuming.
             ProxyDeploy.IsConnectedProbe = () => IsConnected;
             ProxyDeploy.SetConnectErrorSuppression = v => SuppressConnectErrors = v;
@@ -866,7 +806,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 _ = CheckCeAttachAsync();   // [AOBM-ATTACH-CHECK]
 
                 StatusText = $"Connected — UE{state.UEVersion} ({state.ObjectCount} objects)";
-                _ = CheckForCompetingDumperHostsAsync(state);
 
                 // Re-load objects if tree was empty
                 if (ObjectTree.ObjectCount == 0 && state.ObjectCount > 0)
@@ -2139,10 +2078,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     _proxyConfirmTimer = null;
                     LiveFuncs.ResetOnDisconnect();   // clear stuck "recording" UI state (L16)
                     CallTrace.ClearOnDisconnect();   // [LIVEFUNCS-TIMELINE-2026-10-04] the next process numbers traces from 1
-                    // The banner names a PID. Left standing it pins a dead one for the
-                    // rest of the session and keeps warning about a conflict that ended
-                    // when the game closed. (B9)
-                    MultipleDumperHostsWarning = "";
                     ResetPanelsOnDisconnect();   // clear stale process-scoped rows (X5)
                 }
             });
@@ -2201,8 +2136,24 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         GC.SuppressFinalize(this);
     }
 
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Lets the user pick the game when several serve UE5Dumper's pipe: takes
+    /// the rows to show (a legacy row included, which cannot be picked) and returns the chosen pid, or null on cancel.
+    /// Set by MainWindow; while unset, a choice is treated as cancelled.</summary>
+    public Func<IReadOnlyList<PipeTarget>, Task<int?>>? PickPipeTargetAsync { get; set; }
+
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Shows a message the user must read (title, text). Set by MainWindow.
+    /// The legacy-only refusal uses it: a list holding one entry nobody can pick would explain nothing.</summary>
+    public Func<string, string, Task>? ShowNoticeAsync { get; set; }
+
+    /// <summary>The toolbar's Connect (no pid) and the post-inject connect (the injected game's pid) both run as this
+    /// command, so the Connect button stays disabled while either is in flight.</summary>
     [RelayCommand]
-    private async Task ConnectAsync()
+    private Task ConnectAsync(int? pid) => ConnectToAsync(pid);
+
+    /// <summary>Connect to a game's pipe. <paramref name="pid"/> names the game (one the UI just injected, or one
+    /// already running the DLL); null looks under \\.\pipe\ and connects at once to a lone game, lets the user choose
+    /// among several, and refuses when only an old DLL's pipe is there.</summary>
+    public async Task ConnectToAsync(int? pid)
     {
         try
         {
@@ -2213,9 +2164,47 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (!SuppressConnectErrors) StatusText = "Connecting...";
             LiveWalker.ClearAllBookmarks();
 
-            await _pipeClient.ConnectAsync();
+            if (await ResolvePipeTargetAsync(pid) is not { } target)
+                return;   // refused, cancelled: the status line already says which
+            int targetPid = target.Pid;
+
+            // Already connected: to this game it is a refresh, to another game a switch. A live PipeClient keeps its
+            // connection, so without the disconnect the first game would answer for the second and fail the pid check
+            // below as though it had taken the second game's name.
+            if (_pipeClient.IsConnected && _engineState?.ProcessId != targetPid)
+                await DisconnectAsync();
+
+            try
+            {
+                await _pipeClient.ConnectAsync(PipeTargets.NameFor(targetPid));
+            }
+            catch (TimeoutException) when (target.UnlistedBesideLegacy)
+            {
+                // The game's pipe never came, and an old DLL serves the legacy name somewhere: perhaps in this game.
+                throw new InvalidOperationException(Res.Format("str.Connect.PidUnlistedBesideLegacy", targetPid));
+            }
+            catch (TimeoutException) when (target.Listed)
+            {
+                // Listed before the dial, yet no instance came free in time. The listing may be old (the picker can
+                // stay open), and .NET retries a missing pipe until its timeout too: list again before saying why.
+                // Still there: every connection is taken, or the game is not responding (a suspended game lets one
+                // lane complete on its waiting instance and starves the other). [PIPE-PER-PROCESS-2026-11-06]
+                var now = await Task.Run(() => _platform.ListNamedPipes());
+                bool gone = now is not null && !PipeTargets.Scan(now).Pids.Contains(targetPid);
+                if (gone) throw new InvalidOperationException(Res.Format("str.Connect.PipeGone", targetPid));
+                throw new InvalidOperationException(
+                    Res.Format("str.Connect.Busy", targetPid) + await HoldersNoteAsync(targetPid));
+            }
 
             var state = await _dump.InitAsync();
+            // The pid the DLL reports is the process that answered. A process that created this game's pipe name
+            // before the game did would otherwise answer for it unnoticed.
+            if (state.ProcessId != 0 && state.ProcessId != targetPid)
+            {
+                await _pipeClient.DisconnectAsync();
+                throw new InvalidOperationException(Res.Format("str.Connect.WrongPid",
+                    PipeTargets.NameFor(targetPid), state.ProcessId, targetPid));
+            }
             _engineState = state;
             IsConnected = true;
 
@@ -2259,6 +2248,91 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             SetError(ex);
             _log.Error(Constants.LogCatInit, "Connection failed", ex);
         }
+    }
+
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Which game to dial, or null when Connect stops here (refused, cancelled).
+    /// Throws with the reason when there is nothing to connect to, so the caller reports it like any connect failure.
+    /// <c>UnlistedBesideLegacy</c>: a named game whose pipe is not listed while the legacy pipe is, which explains the
+    /// failure if its pipe never comes. <c>Listed</c>: the game's pipe was listed, so a connect that times out met
+    /// every instance taken.</summary>
+    private async Task<(int Pid, bool UnlistedBesideLegacy, bool Listed)?> ResolvePipeTargetAsync(int? pid)
+    {
+        // Listing \\.\pipe\ opens no pipe, but it is still I/O: off the UI thread.
+        var names = await Task.Run(() => _platform.ListNamedPipes());
+        if (names is null)
+        {
+            if (pid is int direct) return (direct, false, false);   // a named game needs no listing
+            throw new InvalidOperationException(Res.Get("str.Connect.ListFailed"));
+        }
+        var scan = PipeTargets.Scan(names);
+
+        if (pid is int p)
+        {
+            // Dialled even when unlisted: a DLL still scanning opens its pipe late, and the connect waits for it. The
+            // legacy pipe is no reason to refuse, since it may be another game's; it only explains a pipe that never
+            // comes.
+            return (p, !scan.Pids.Contains(p) && scan.LegacyPresent, scan.Pids.Contains(p));
+        }
+
+        switch (PipeTargets.Decide(scan))
+        {
+            case ConnectPlan.ConnectOne:
+                return (scan.Pids[0], false, true);
+            case ConnectPlan.LegacyOnly:
+                await RefuseLegacyAsync();
+                return null;
+            case ConnectPlan.NoPipe:
+                throw new InvalidOperationException(Res.Get("str.Connect.NoPipe"));
+        }
+
+        // Choose: each game with its exe name and window title, the legacy row last.
+        var rows = await Task.Run(() =>
+        {
+            var list = new List<PipeTarget>();
+            foreach (int id in scan.Pids)
+            {
+                var (image, title) = _platform.DescribeProcess(id);
+                list.Add(new PipeTarget(id, image, title));
+            }
+            if (scan.LegacyPresent) list.Add(new PipeTarget(0, "", null, IsLegacy: true));
+            return list;
+        });
+        int? chosen = PickPipeTargetAsync is null ? null : await PickPipeTargetAsync(rows);
+        // Only a listed game can be the answer: the legacy row has no pid to dial.
+        if (chosen is not int c || !scan.Pids.Contains(c))
+        {
+            StatusText = Res.Get("str.Connect.Cancelled");
+            return null;
+        }
+        return (c, false, true);
+    }
+
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Stage C: who held a full pipe, from the game DLL's at-capacity log line --
+    /// a client that cannot connect cannot ask. Empty when the game's log, or a current line in it, cannot be read.</summary>
+    private Task<string> HoldersNoteAsync(int pid) => Task.Run(() =>
+    {
+        string image = _platform.DescribeProcess(pid).ImageName;
+        if (string.IsNullOrEmpty(image)) return "";
+        var seen = PipeHolders.ParseLatest(
+            DumperLogTail.Read(_platform.GetLogDirectoryPath(), image, "pipe"), PipeTargets.NameFor(pid));
+        if (seen is null || seen.Superseded || seen.Holders.Count == 0) return "";
+        string list = string.Join("; ", seen.Holders.Select(h =>
+            string.IsNullOrEmpty(h.LastCmd) ? Res.Format("str.Connect.BusyHolderNoCmd", h.Exe, h.Pid)
+            : h.InFlight ? Res.Format("str.Connect.BusyHolderRunning", h.Exe, h.Pid, h.LastCmd)
+            : Res.Format("str.Connect.BusyHolder", h.Exe, h.Pid, h.LastCmd)));
+        if (seen.More > 0) list += Res.Format("str.Connect.BusyHoldersMore", seen.More);
+        return " " + Res.Format("str.Connect.BusyHolders", seen.Time, list);
+    });
+
+    /// <summary>Only an old DLL's pipe is there: say so and why, connect to nothing. Deliberately not the game list,
+    /// which would hold one row nobody can pick.</summary>
+    private async Task RefuseLegacyAsync()
+    {
+        _log.Warn(Constants.LogCatInit,
+            $"[PIPE-PER-PROCESS] Only the legacy pipe {Constants.LegacyPipeName} is there: a game runs an old UE5Dumper DLL. Not connecting.");
+        StatusText = Res.Get("str.Connect.LegacyStatus");
+        if (ShowNoticeAsync is not null)
+            await ShowNoticeAsync(Res.Get("str.Connect.LegacyTitle"), Res.Get("str.Connect.LegacyMessage"));
     }
 
     /// <summary>Set while something is deliberately retrying <c>ConnectCommand</c> and owns
@@ -2927,18 +3001,6 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // confirmed-working — but only after the session proves stable (guards a
         // proxy that loads + connects then crashes the game seconds into play).
         ScheduleProxyConfirmation(state);
-
-        // Warn when more than one process has the dumper loaded. This is where every
-        // other post-connect action lives, and both ConnectAsync and the proxy
-        // TriggerScanAsync funnel through here — the check used to run ONLY from the
-        // Pointers.RescanApplied lambda, i.e. only after a UE-override apply or an Extra
-        // Scan, so an ordinary Connect never raised it. The pipe name is shared, so
-        // Connect lands on whichever server is free: the tree fills with the WRONG
-        // GAME'S data and nothing else on screen reveals it. ADDED here rather than
-        // moved — RescanApplied is a duplicated hand-rolled fan-out that never reaches
-        // this method, so moving the call would delete the one path that already worked.
-        // The check is idempotent. (B9)
-        _ = CheckForCompetingDumperHostsAsync(state);
 
         StatusText = $"Connected — UE{state.UEVersion} ({state.ObjectCount} objects)";
 

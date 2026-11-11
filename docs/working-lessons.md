@@ -1455,7 +1455,7 @@ a batch ended with the ▾ menu open, the next batch's click "on the item" lande
 Learned 2026-08-16 closing the AB4 batch, which had been the top-ranked unverified item.
 
 **The UI is a client, not the subject.** Every DLL-side batch on the verification register can be
-driven by a ~50-line Python client speaking the pipe protocol directly: open the `UE5DumpBfx` named
+driven by a ~50-line Python client speaking the pipe protocol directly: open the game's `UE5DumpBfx_<pid>` named
 pipe as `'r+b', buffering=0`, write `{"id":N,"cmd":...}` + `\n`, read newline-delimited replies and
 match on `id` (async events interleave, so a blind readline will hand you the wrong message). AB4's
 seven steps went from "needs a UI session and a human" to a few minutes of scripted scans. It is also
@@ -2684,6 +2684,19 @@ asymmetry**: Mimic.cpp's `ChainListFuncs` is a byte-identical twin that does *no
 per-declaration `extern "C"` and never opens a block. Fixed with `extern "C++" { … }` around the two
 adapters; negative-controlled in both directions.
 
+### 3.8e A publish stopped part-way: shut the build servers down before the next one
+
+Measured 2026-11-10 (build 3698): a `build.ps1 -Mode Publish` stopped during its test step (to fold in a
+last fix) left five `dotnet.exe` MSBuild / compiler servers running. The next publish built and
+published the AOT UI and passed the C# suite, then its headless step failed **49 of 71** with
+`No precompiled XAML found for avares://UE5DumpUI/Resources/Strings/en.axaml`. Run alone right after,
+the headless tests passed 71/71, and the published AOT exe loaded its strings and connected. The
+cause was not pinned down; the servers are the one thing the two runs did not share. ⇒ After stopping
+a publish, run `dotnet build-server shutdown` before the next one, and read a headless "no precompiled
+XAML" right after a stopped build as that, not as a broken view -- then re-run the headless tests alone
+and launch the AOT exe before handing `dist\` over. A stopped publish also consumes its build number
+(it bumps first); do not reuse it.
+
 ### 3.9 Two injected hosts at once: the second one silently never scans
 
 "One game at a time" is written down as a **resource** rule. It is also a **correctness** rule, and
@@ -2940,6 +2953,77 @@ line in the app" as `LiveFuncsLayout.AssertOneLineInTheAppsFont` does (the parts
 times the room headless: under 0.7 of it in Inter), and know what that bound is: 0.7 of the harness's row is about 0.95
 of the app's beside the tree, a guard against a wording that grows rather than a margin. Measure a wording in Inter
 before shortening it to please a headless test, and against the app's row, not the harness's.
+
+### 3.xe A test's swallowed delete left ~220 folders in %TEMP% per run: the run's TEMP is now its own
+
+`UE5DumpUI.Tests` classes made `%TEMP%\UE5Dump<Class>_<guid>\` and deleted it in `Dispose` inside an empty `catch`. The
+delete failed whenever the folder held a SQLite `.db`: Microsoft.Data.Sqlite pools connections, and a pooled connection
+keeps its file open after the code closed it. Measured 2026-11-11: 2,743 such folders in %TEMP% from one day (about
+120 MB); one run with TEMP pointed at an empty folder left 219 (13 GUID-named families and 6 fixed parent folders). The
+C++ tests, the headless suite and the gates, run the same way, left nothing.
+
+**The fix moves TEMP, not the tests** (`TestTempRoot`, [TEST-TEMP-HYGIENE-2026-11-11]). A module initializer points the
+process's TMP and TEMP at `%TEMP%\UE5CEDumper.Tests\<pid>-<utc time>\`, which `Path.GetTempPath()` reads on every call,
+so every test, library and child process writes there. The folder goes when the test session ends (an assembly
+fixture, `TestRunEnd`; never at process exit, see 3.xf), after `SqliteConnection.ClearAllPools()` (measured: without it
+one `.db` stays held, and so does the folder). A run that could
+not clean up is deleted by the next run: its `.owner` file is held open with no sharing for the life of the process, so
+the OS lets go of it when the owner dies. The names older builds left straight in %TEMP% are swept once unchanged for an
+hour; a fixed parent they shared (`ue5-qmark`, ...) loses only its hour-old children, since an older checkout's run may
+be writing a new one. The shared `%TEMP%\UE5CEDumper.Tests\` itself stays: a run that removed it when empty raced
+another run making its folder there.
+
+**How to apply:** a new test needs nothing for this; `Path.GetTempPath()` is already the run's folder. Do not make a
+swallowed delete "work" with retries: the run's folder already goes. A sweep never enters a reparse point:
+VolumeRootTests makes a junction to another volume's ROOT, and one it fails to remove lands in the run's folder.
+`Directory.Delete(recursive: true)` unlinks a junction without entering it (documented), but a walk with
+`SearchOption.AllDirectories` goes straight through one (measured: it cleared the read-only flag of the file a junction
+pointed at), so a walk of our own checks `ReparsePoint` itself, as `TestTempRoot.ClearReadOnly` does.
+
+**The SDK's own leftovers** (`SdkTempLeftovers`, same tag). Every `dotnet build`, `test`, `publish`, `pack` and `run`
+(not `restore`) on an SDK installed by MSI or Visual Studio leaves an empty `Path.GetRandomFileName()` folder, a
+`Microsoft.NET.Workload_<pid>_<time>.log` and a second folder: RestoringCommand's constructor starts the workload
+advertising-manifest check (read in dotnet/sdk v10.0.403), nothing in the SDK removes them, and no setting skips them.
+`DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1` is not even read as true (`bool.TryParse` wants `true`), and `true` only
+skips the update itself. `dotnet --info`, `dotnet new` and `dotnet tool` leave such folders with no log. Measured
+2026-11-11: 1,452 folders and 726 logs in a day, most of them another session's (AOBMaker), and that session runs its
+own %TEMP% cleanup. So the sweep deletes only what it can prove is a finished build of this repository a day old: the
+log's command builds a project git tracks here, and the group of folders and logs made within seconds of each other
+is exactly the group a test run recorded while it was young (`sdk-groups-seen.txt`, under 30 minutes old, written
+by the unit tests and by the headless suite, which build.ps1 runs after them): two folders per log, every log ours
+(107 of 107 real groups had that shape). A line in that record lets a group go, so it carries a version header and a
+run that cannot read it neither records nor writes; the kept-logs memory can only keep more.
+
+**How to apply:** never widen "ours" to a path that merely resolves under this checkout. A bare `ui` is also a sibling
+repository's (three on this machine hold `ui\<x>.sln`), an option's value (`-o ui/App`, `--results-directory ...`)
+and a `dotnet run` program argument are not the project, a clone under `vendor/` is someone else's, and an option the
+parser does not know stops the reading rather than guessing whether it takes a value (`--blame-crash` once ate the
+next option's name): three rounds of adversarial review found each of these. Never infer that a folder is ours from
+what is missing -- someone else's log (another cleanup removes logs and leaves folders; `dotnet --info` writes none)
+-- nor from the count alone: another cleanup can take one of our folders and a stranger in the same second restores
+the count. The composition seen while the group was young is the proof, and a group first seen old stays. When the SDK
+stops writing the log (dotnet/sdk main no longer does, 2026-11-10), nothing is attributable and nothing goes; the fix
+then is a private TMP/TEMP for the dotnet processes this repository's tools start -- which build.ps1 already does
+(`Use-DotnetTemp`: each dotnet call gets `%TEMP%\UE5CEDumper.Tests\b<pid>\`, held by an owner file and removed at the
+end with `[System.IO.Directory]::Delete`, never Windows PowerShell 5.1's junction-following `Remove-Item -Recurse`).
+What the sweep still has to clean is a session's own `dotnet build` / `dotnet test`.
+
+### 3.xf A green test run that ends "Foreground threads were left running", exit 1: the watchdog counts process exit
+
+xunit.v3's Microsoft.Testing.Platform bridge (`TestPlatformTestFramework.RunAsync`) starts a watchdog once the test
+session ends. If the process is still alive about a second later it prints `Waiting 10 seconds for foreground threads
+to exit...`, and ten seconds after that `[FATAL ERROR] Foreground threads were left running, forcing process exit`,
+and exits 1 -- whatever keeps the process alive. It enumerates no threads; the wording is the author's guess. A
+`ProcessExit` handler counts: `TestTempRoot` deleted the run's folder there, and while another session held the SSD at
+100% I/O that took longer, so `build.ps1 -Mode Publish` (build 3699) ended FAILED with every test passing. Measured
+2026-11-11: 2 of 17 runs failed that way, both in the same ten minutes of peak I/O; a 15-s delay in the handler
+reproduces it every time (17 passed, exit 1). The removal now runs in an xunit.v3 assembly fixture (`TestRunEnd`),
+inside the session, where the same delay only makes the run 15 s longer (exit 0).
+
+**How to apply:** do no slow work in a test process's `ProcessExit`; end-of-run work goes in an assembly fixture's
+`Dispose`. When the message comes with every test green, look for what runs at exit before hunting a stray `Thread`.
+To see what lingers, raise `shutdownForegroundThreadWaitSeconds` in xunit.runner.json and take `dotnet-stack report -p
+<pid>` during the wait.
 
 -----
 

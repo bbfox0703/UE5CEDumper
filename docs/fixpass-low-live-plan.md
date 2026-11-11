@@ -6,6 +6,9 @@
 1. **After every verified row, update BOTH records in the same commit:** the row's closure record in `docs/todo.md` (the backlog table) AND the row's status in the session table below. One row per commit, then push.
 2. **Rows unreachable on this machine get a fixture change when one would make them reachable** — `tools/ue-sample/` DumperTest (5.4), DumperTest56, DumperTest58. See *Fixture changes* below.
 
+⚠ **Pipe slots ([PIPE-PER-PROCESS-2026-11-06] Stage B, build 3696).** The DLL takes 6 pipe clients, so the recipes' "the UI holds 2 of the 3
+pipe slots / keep the UI disconnected" preconditions apply only to a DLL from before it.
+
 ⚠ **What the recipes are, and are not.** They are the read-only output of an 8-agent survey run at HEAD `b87915ea` (`git log` for the tree state); **no recipe was live-run by the survey**. Every `file:line` was read at that HEAD and drifts with the code. The survey's synthesis stage already corrected several of its own scouts (listed below). Treat a recipe as a starting point to re-check, not as evidence. Where a recipe and the row's text in `todo.md` disagree, the discrepancy is recorded in the recipe; re-read the source before trusting either.
 
 -----
@@ -912,7 +915,7 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 | CEPlugin: InjectDLL returned %s | dll/src/Methode.cpp:377 | same init-0.log ('TRUE' needed for the new branch) |
 | CEPlugin: post-inject module check: %s (ok=%d) | dll/src/Methode.cpp:415-416 | same init-0.log ('NOT PRESENT (ok=1)' in step 1; the dist path with ok=1 in step 2) |
 | UE5CEDumper: Injection failed — the DLL is not mapped in the target.\n\n(Cheat Engine also reported failure.) | dll/src/Methode.cpp:437-442 | CE dialog, the FALSE branch (step 1 NOT reached if seen) |
-| UE5CEDumper: DLL injected — GObjects/GNames scan started in the background.\nIt takes a few seconds; connect UE5DumpUI.exe to \\\\.\\pipe\\UE5DumpBfx\n(check the log file if the scan fails on first run) | dll/src/Methode.cpp:448-451 | CE dialog in step 2 (the C literal renders as \\.\pipe\UE5DumpBfx) |
+| UE5CEDumper: DLL injected — GObjects/GNames scan started in the background.\nIt takes a few seconds; connect UE5DumpUI.exe to \\\\.\\pipe\\UE5DumpBfx_<pid>\n(check the log file if the scan fails on first run) | dll/src/Methode.cpp:448-451 | CE dialog in step 2 (the C literal renders as \\.\pipe\UE5DumpBfx) |
 | Always force load modules | D:\Github\cheat-engine\Cheat Engine\formsettingsunit.lfm:586 (HKCU value 'Always Force Load', formsettingsunit.pas:1027) | CE Settings → General Settings checkbox |
 
 **Row text vs source:** (a) 'with CE's plugin loaded' means the UE5Dumper.dll CE plugin (Methode), which is NOT registered on this machine today, so the row needs ce_plugin_register.py first. (b) Step 1 is only one of three outcomes: if CE's manual loader fails, ce_InjectDLL returns FALSE and the unchanged 'Injection failed' text is correct. (c) Both new and old dialogs end 'Details: Logs\UE5Dumper-*.log' (Methode.cpp:432, :442), a layout that no longer exists. Logs are per process: Logs\<process>\init-0.log (Sein.cpp:582-600), here Logs\cheatengine-x86_64-SSE4-AVX2\init-0.log. This is a user-facing stale string, a candidate finding.
@@ -1734,14 +1737,14 @@ Decided 2026-09-22. Sources in `tools/ue-sample/`; acceptance values in `tools/u
 1. 1. With the UI closed, write two marker files into Logs\UE5DumpUI\: pipe-0_001.log (mtime T1) and pipe-0_002.log (mtime T2 > T1), each with one 'L74 SEED' line. Keep both mtimes inside the last 21 days (LogMaxAgeDays, Constants.cs:44) and the files under 4096 B (LogCompressMinSizeBytes, Constants.cs:55). Cheaper extra arm needing no Connect: also plant init-0_001.log.
 2. 2. Launch dist\UE5DumpUI.exe. Before any Connect: no pipe-0_*.log remains. Each seed was renamed to pipe-<yyyyMMdd-HHmmss of its OWN mtime>.log (LoggingService.cs:343, :349), with a -1/-2 suffix for a same-second pair. Seeds are archived in name (sequence) order (:322-324) and their contents are intact.
 3. 3. Init arm: init-0.log is a NEW file whose first session line is 'UE5DumpUI starting...' (App.axaml.cs:92), and init-0_001.log has been archived.
-4. 4. Click 'Connect' (en.axaml:6) with no game running. The line 'Connecting to pipe: UE5DumpBfx...' (PipeClient.cs:126; PipeName at Constants.cs:9) lands in a NEW pipe-0.log. Both archives keep their original size and mtime. Pre-fix, Serilog.Sinks.File resumed the highest sequence and appended this line to pipe-0_002.log.
+4. 4. ⚠ [PIPE-PER-PROCESS-2026-11-06] changed this step: Connect with NO game running now stops at the listing and logs nothing in the pipe category, so start DumperTest (injected) first. Click 'Connect' (en.axaml:6). The line 'Connecting to pipe: UE5DumpBfx_<pid>...' (PipeClient.cs:126; PipeName at Constants.cs:9) lands in a NEW pipe-0.log. Both archives keep their original size and mtime. Pre-fix, Serilog.Sinks.File resumed the highest sequence and appended this line to pipe-0_002.log.
 5. 5. Close the UI. Delete only the seed archives, and restore ui-options.json from the backup.
 
 **Expected strings:**
 
 | text | source | where it appears |
 |---|---|---|
-| Connecting to pipe: UE5DumpBfx... | ui/UE5DumpUI/Services/PipeClient.cs:126 ($"Connecting to pipe: {Constants.PipeName}..."; Constants.cs:9 PipeName="UE5DumpBfx") | Logs\UE5DumpUI\pipe-0.log (pipe category, Constants.LogCatPipe) |
+| Connecting to pipe: UE5DumpBfx_<pid>... | ui/UE5DumpUI/Services/PipeClient.cs:126 ($"Connecting to pipe: {Constants.PipeName}..."; Constants.cs:9 PipeName="UE5DumpBfx") | Logs\UE5DumpUI\pipe-0.log (pipe category, Constants.LogCatPipe) |
 | UE5DumpUI starting... | ui/UE5DumpUI/App.axaml.cs:92 | Logs\UE5DumpUI\init-0.log (init category) |
 | pipe-20260920-100000.log  (pattern: {prefix}-yyyyMMdd-HHmmss[-N].log from the file's own local mtime) | ui/UE5DumpUI/Services/LoggingService.cs:343 (stamp), :348-349 (suffix/dst) | Archived file names in Logs\UE5DumpUI\ |
 

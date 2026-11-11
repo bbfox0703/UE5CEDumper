@@ -95,10 +95,12 @@ public static class CeReadinessLua
         "    'This build may predate the readiness flag. Check the DLL log:\\n' ..\n" +
         "    '  %LOCALAPPDATA%\\\\UE5CEDumper\\\\Logs'";
 
-    /// <summary>Pipe server did not come up — almost always another owner.</summary>
+    /// <summary>INIT_FAILED: the scan was stopped part-way (UE5_Init aborted), or the pipe server refused to start
+    /// while the previous stop was still finishing. A second copy of UE5Dumper never causes it: that publishes READY
+    /// or SKIPPED.</summary>
     public static string PipeFailedMessage =>
         "'[UE5CEDumper] The DLL initialised but the Pipe Server FAILED to start.\\n\\n' ..\n" +
-        "    'Most likely another process already owns \\\\\\\\.\\\\pipe\\\\UE5DumpBfx.\\n' ..\n" +
+        "    'Most likely the scan was stopped part-way (the record was unticked while it ran), or the record was ticked again before the previous stop had finished.\\n' ..\n" +
         "    'Check the DLL log:\\n  %LOCALAPPDATA%\\\\UE5CEDumper\\\\Logs'";
 
     /// <summary>Ran out of time still IDLE/RUNNING — a timeout is an ERROR, never a

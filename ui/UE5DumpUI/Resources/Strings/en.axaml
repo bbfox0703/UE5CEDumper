@@ -5,6 +5,32 @@
     <!-- Toolbar -->
     <sys:String x:Key="str.Connect">Connect</sys:String>
     <sys:String x:Key="str.Disconnect">Disconnect</sys:String>
+
+    <!-- Connect: each game serves its own pipe, \\.\pipe\UE5DumpBfx_<pid> [PIPE-PER-PROCESS-2026-11-06] -->
+    <sys:String x:Key="str.Connect.NoPipe">No game is running UE5Dumper: no \\.\pipe\UE5DumpBfx_&lt;pid&gt; was found. Start a game with a proxy deployed, or inject into a running game (Proxy Deploy tab).</sys:String>
+    <sys:String x:Key="str.Connect.ListFailed">Could not list the named pipes (\\.\pipe\) to find the games running UE5Dumper. Try Connect again.</sys:String>
+    <sys:String x:Key="str.Connect.WrongPid">\\.\pipe\{0} was answered by PID {1}, not by the game, PID {2}: another process created that game's pipe name first. Disconnected. Close that process, then connect again.</sys:String>
+    <sys:String x:Key="str.Connect.PidUnlistedBesideLegacy">PID {0} serves no \\.\pipe\UE5DumpBfx_{0}, and a game is running an old UE5Dumper DLL (the old shared pipe, \\.\pipe\UE5DumpBfx, is up). If that is this game, close it, click Update All on the Proxy Deploy tab, and start it again.</sys:String>
+    <sys:String x:Key="str.Connect.Busy">PID {0}'s pipe is up, but no connection to it came free in time. Other clients may hold all of them (a rig, an MCP client, or this UI's own earlier connections still finishing a command), or the game is not responding (paused in a debugger, or suspended). A UE5Dumper DLL older than this UI may take only 3 clients at once, and this UI uses 2. Close the other client and connect again. To raise the limit, close the game, click Update All on the Proxy Deploy tab, and start it again.</sys:String>
+    <sys:String x:Key="str.Connect.BusyHolders">When the pipe filled ({0}), its connections were held by: {1}.</sys:String>
+    <sys:String x:Key="str.Connect.BusyHolder">{0} (PID {1}, last command {2})</sys:String>
+    <sys:String x:Key="str.Connect.BusyHolderRunning">{0} (PID {1}, running {2})</sys:String>
+    <sys:String x:Key="str.Connect.BusyHolderNoCmd">{0} (PID {1})</sys:String>
+    <sys:String x:Key="str.Connect.BusyHoldersMore">; and {0} more</sys:String>
+    <sys:String x:Key="str.Connect.PipeGone">PID {0}'s pipe is gone: the game exited, or its UE5Dumper DLL stopped serving, after the list of games was read. Connect again to see what is running now.</sys:String>
+    <sys:String x:Key="str.Connect.Cancelled">Connect cancelled</sys:String>
+    <sys:String x:Key="str.Connect.LegacyStatus">Not connected — a game runs an old UE5Dumper DLL (see the message)</sys:String>
+    <sys:String x:Key="str.Connect.LegacyTitle">Old UE5Dumper DLL</sys:String>
+    <sys:String x:Key="str.Connect.LegacyMessage">A game is running an old UE5Dumper DLL, and this version of the UI does not connect to it.&#10;&#10;Each game now serves its own pipe, \\.\pipe\UE5DumpBfx_&lt;pid&gt;. The old DLL serves the single name every game used to share, \\.\pipe\UE5DumpBfx, and with that name the UI could reach the wrong game.&#10;&#10;This is usually a proxy DLL (version.dll, dinput8.dll, dxgi.dll or winmm.dll) left in the game's folder by an older build. Close the game, click Update All on the Proxy Deploy tab, and start the game again. Or close the game and inject this version's DLL into a freshly started one.</sys:String>
+    <sys:String x:Key="str.Connect.Picker.Title">Connect to a game</sys:String>
+    <sys:String x:Key="str.Connect.Picker.Hint">More than one game is running UE5Dumper. Pick the one to connect to.</sys:String>
+    <sys:String x:Key="str.Connect.Picker.Row">{0}   (PID {1})</sys:String>
+    <sys:String x:Key="str.Connect.Picker.UnknownImage">(process not readable)</sys:String>
+    <sys:String x:Key="str.Connect.Picker.NoWindowTitle">(no window title)</sys:String>
+    <sys:String x:Key="str.Connect.Picker.LegacyRow">⚠ A game is running an old UE5Dumper DLL (it serves the old shared pipe, \\.\pipe\UE5DumpBfx), so it cannot be connected to. Close that game, click Update All on the Proxy Deploy tab, and start it again.</sys:String>
+    <sys:String x:Key="str.Connect.Picker.Connect">Connect</sys:String>
+    <sys:String x:Key="str.Connect.Picker.Cancel">Cancel</sys:String>
+    <sys:String x:Key="str.Notice.Ok">OK</sys:String>
     <sys:String x:Key="str.Toolbar.AddressFormat">Address:</sys:String>
     <sys:String x:Key="str.Toolbar.CollapsePointers">Collapse Pointer Nodes</sys:String>
     <sys:String x:Key="str.Toolbar.ArrayLimit">Array Limit:</sys:String>

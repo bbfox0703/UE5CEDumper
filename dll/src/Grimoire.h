@@ -40,9 +40,20 @@ constexpr const char*    DUMPER_IDENTITY_EXPORT = "g_mailboxContract";
 constexpr const char*    DUMPER_LEGACY_IDENTITY_EXPORT = "UE5_Init";
 
 // --- Named Pipe ---
-constexpr const wchar_t* PIPE_NAME        = L"\\\\.\\pipe\\UE5DumpBfx";
-constexpr const char*    PIPE_NAME_NARROW  = "\\\\.\\pipe\\UE5DumpBfx";
+// [PIPE-PER-PROCESS-2026-11-06] Each game process serves \\.\pipe\UE5DumpBfx_<its pid>; Voll::PipeNameForPid builds
+// the name. The old fixed name, \\.\pipe\UE5DumpBfx, is no longer served: a protocol break by decision, so a UI that
+// finds the old name knows a game runs an old DLL and can refuse it with an explanation.
+constexpr const wchar_t* PIPE_NAME_PREFIX = L"\\\\.\\pipe\\UE5DumpBfx_";
 constexpr unsigned long  PIPE_BUF_SIZE    = 65536;
+// [PIPE-PER-PROCESS-2026-11-06] Stage C. The pipe log's at-capacity line and the holders it carries, which a client that
+// cannot connect reads: the UI's Constants.cs and tools/verify/pipe_client.py match these words, and
+// PipePerProcessSourceTests pins the three copies equal. The line reads
+//   all <n> pipe instances in use, waiting for a free slot -- <pipe> holders=[...] more=<k>
+// and the recovery line names the pipe after "slot freed".
+constexpr const char*    PIPE_AT_CAPACITY_TEXT   = "pipe instances in use";
+constexpr const char*    PIPE_HOLDERS_TOKEN      = " holders=";
+constexpr const char*    PIPE_HOLDERS_MORE_TOKEN = " more=";
+constexpr const char*    PIPE_SLOT_FREED_TEXT    = "slot freed";
 // Slice of Fern::Stop's 5 s connection-drain wait. Each slice re-asserts
 // CancelIoEx on the surviving connections, because a single cancel fired before
 // the wait can miss a thread that is BETWEEN two reads and will then park in a
@@ -50,6 +61,19 @@ constexpr unsigned long  PIPE_BUF_SIZE    = 65536;
 // command offers many such gaps). 100 ms: 50 chances inside the budget, and the
 // cost when nothing survives is zero — the loop exits on the first wait.
 constexpr int            PIPE_STOP_CANCEL_REASSERT_MS = 100;
+
+// `watch` ([PIPE-PER-PROCESS-2026-11-06] Stage C). The floor keeps a watch from spinning its thread. Each watch is a
+// thread in the game, outside the GObjects walk's worker budget, so the count is capped: per connection, so one client
+// cannot take every watch, and in all.
+constexpr int            PIPE_WATCH_INTERVAL_MIN_MS    = 50;
+constexpr int            PIPE_WATCH_MAX_PER_CONNECTION = 32;
+constexpr int            PIPE_WATCH_MAX_TOTAL          = 64;
+
+// How long a hint-cache writer waits for another to finish before it gives up on its write (logged, the previous
+// cache kept). A write is a few milliseconds; the wait covers an AV scanner holding the file.
+constexpr unsigned long  HINTCACHE_LOCK_WAIT_MS        = 2000;
+// The cache lock's name: this prefix + the cache file's name, so a test on a temp file never contends with a game.
+constexpr const wchar_t* HINTCACHE_LOCK_PREFIX         = L"Local\\UE5CEDumper.HintCache.";
 
 // --- Userspace pointer plausibility ---
 // A candidate x64 pointer is "plausible userspace" iff it sits in the canonical

@@ -9,7 +9,8 @@ param(
 )
 
 Write-Host "=== UE5Dump Mock Pipe Server ===" -ForegroundColor Cyan
-Write-Host "Pipe: \\.\pipe\UE5DumpBfx"
+# The UI connects to \\.\pipe\UE5DumpBfx_<pid> only [PIPE-PER-PROCESS-2026-11-06]: this mock serves its own pid's.
+Write-Host "Pipe: \\.\pipe\UE5DumpBfx_$PID"
 Write-Host "Mock objects: $ObjectCount"
 Write-Host ""
 
@@ -122,7 +123,7 @@ while ($true) {
     Write-Host "Waiting for client connection..." -ForegroundColor Yellow
 
     $pipe = New-Object System.IO.Pipes.NamedPipeServerStream(
-        "UE5DumpBfx",
+        "UE5DumpBfx_$PID",
         [System.IO.Pipes.PipeDirection]::InOut,
         1,
         [System.IO.Pipes.PipeTransmissionMode]::Byte,

@@ -10,13 +10,15 @@ not at all.
 
 ⭐ WHY THIS IS DONE WITH TWO PIPE CLIENTS AND NO UI. The UI's two lanes are just two
 connections (`LaneRoutingPipeClient` opens an interactive "I" and a bulk "B"), and the DLL side is
-per-connection by construction: `Fern::StartWatch` (Fern.cpp:6444) gives each watch its own thread
-whose loop writes with `WriteLine(*ptr->owner, ...)` — `owner` being the connection that
-registered it. So the question "does a busy bulk lane starve the interactive lane's watch pushes?"
+per-connection by construction: each watch belongs to the connection that registered it. Since
+[PIPE-PER-PROCESS-2026-11-06] Stage C its thread only reads memory, and that connection's own handler
+sends the latest read after each command it handles (with `samples`, how many reads the event stands
+for). So the question "does a busy bulk lane starve the interactive lane's watch pushes?"
 is answered by two raw connections, and answered ON BOTH SIDES: we count what actually arrived,
 rather than looking at a panel that could equally be showing a stale cache.
 
-⚠ Fern::kMaxPipeInstances = 3 and the UI takes 2. **Do not run this with the UI connected.**
+⚠ The UI takes 2 pipe slots, and a DLL from before [PIPE-PER-PROCESS-2026-11-06] Stage B takes 3 clients (6 since). **Against such a DLL, do
+not run this with the UI connected.**
 
 THE CONTROLS, because a push count on its own proves very little:
   * **`TickCount` is the mover** (1 Hz) and **`FrozenInt` is the still one** (424242, written once).
@@ -24,9 +26,10 @@ THE CONTROLS, because a push count on its own proves very little:
     if TickCount's never do, the sample is not ticking and every count below is meaningless.
   * **An IDLE window of the same length is measured first**, so "pushes kept coming" is a
     comparison and not an impression. The busy window has to match it, not merely be non-zero.
-  * ⚠ The watch thread pushes EVERY interval regardless of whether the bytes changed (there is no
+  * ⚠ The watch thread reads EVERY interval regardless of whether the bytes changed (there is no
     change detection in that loop), so the count measures DELIVERY and the values measure the game.
-    Those are two different assertions and this rig keeps them apart.
+    Those are two different assertions and this rig keeps them apart. Since Stage C a poll collects
+    at most one event per watch, carrying the latest read.
 
 ⚠⚠ THE ABSOLUTE PUSH COUNTS ARE HARVEST-LIMITED, AND ONLY THE RATIO IS MEANINGFUL. Events are
 collected as a side effect of polling, so this rig samples at its own poll rate, not the watch's.

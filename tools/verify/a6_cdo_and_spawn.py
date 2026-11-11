@@ -39,7 +39,7 @@ already in the `before` set.
 be found, or if the spawn produced no new object of the forced class — "no new
 objects were wrong" is not a pass when there were no new objects.
 
-⛔ The UI must be DISCONNECTED (it holds 2 of the 3 pipe slots).
+⛔ The UI must be DISCONNECTED from a DLL that predates [PIPE-PER-PROCESS-2026-11-06] Stage B: it holds 2 of that DLL's 3 pipe slots (6 since).
 """
 from __future__ import annotations
 

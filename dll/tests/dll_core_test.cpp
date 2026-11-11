@@ -35,6 +35,9 @@
 #include <vector>
 #include <atomic>
 #include <thread>
+#include <stdexcept>
+#include <mutex>
+#include <condition_variable>
 
 namespace Sein {
 void Info(const char*, const char*, ...) {}
@@ -77,6 +80,9 @@ uint32_t g_cachedUEVersion = 0;
 #include "../src/Genau.cpp"      // NOLINT
 #undef LOG_CAT
 #include "../src/Linie.cpp"      // NOLINT -- the profiler table: RecordCall's accumulation behind IsPerFrame
+#undef LOG_CAT
+#define LOG_CAT "TEST"
+#include "../src/Routine.h"      // SingleFlightJob: its guard logs through the Sein stubs above
 
 // ── harness ──────────────────────────────────────────────────────────
 
@@ -1288,6 +1294,256 @@ int main() {
             /*maxThreads=*/1);
         check("D2 control: a clean run ran", cleanRan == 1);
         check("D2 * control: a clean run reports COMPLETE", !clean.incomplete());
+    }
+
+    {   blk("[PIPE-PER-PROCESS-2026-11-06] C -- a walk's threads follow the CPU: performance cores less 2");
+        // The maintainer, 2026-11-10: logical processors less 2 used every physical core of a 16C32T PC, put 14
+        // threads on an 8-core 9800X3D's SMT siblings, and counted Intel's E-cores as cores. The game and background
+        // programs run meanwhile, and threads beyond the cores only switch context more often.
+        auto cores = [](int n, uint8_t cls) { return std::vector<uint8_t>(static_cast<size_t>(n), cls); };
+        auto hybrid = [](int p, int e) {
+            std::vector<uint8_t> v(static_cast<size_t>(p), uint8_t{1});
+            v.insert(v.end(), static_cast<size_t>(e), uint8_t{0});
+            return v;
+        };
+        auto t = [](int got) { return std::to_string(got); };
+        int g;
+        g = Aura::ThreadsForCpu(cores(16, 0), 32);
+        check("CPU: 16C32T -> 14 (16 physical cores less 2)", g == 14, t(g).c_str());
+        g = Aura::ThreadsForCpu(cores(8, 0), 16);
+        check("CPU * : 9800X3D 8C16T -> 6, not 14 on the SMT siblings", g == 6, t(g).c_str());
+        g = Aura::ThreadsForCpu(hybrid(8, 12), 28);
+        check("CPU * : Intel 8P+12E -> 6: E-cores are not counted", g == 6, t(g).c_str());
+        g = Aura::ThreadsForCpu(cores(8, 1), 16);
+        check("CPU: the same Intel with its E-cores disabled -> 6", g == 6, t(g).c_str());
+        g = Aura::ThreadsForCpu(cores(4, 0), 8);
+        check("CPU: 4C8T -> 2", g == 2, t(g).c_str());
+        g = Aura::ThreadsForCpu(cores(2, 0), 4);
+        check("CPU: 2C4T -> 1, never 0", g == 1, t(g).c_str());
+        g = Aura::ThreadsForCpu(cores(1, 0), 1);
+        check("CPU: 1 core -> 1", g == 1, t(g).c_str());
+        g = Aura::ThreadsForCpu(cores(32, 0), 64);
+        check("CPU: 32C64T -> 16, the cap", g == 16, t(g).c_str());
+        g = Aura::ThreadsForCpu({}, 32);
+        check("CPU: topology unread, 32 logical -> 14 (assumes 2-way SMT)", g == 14, t(g).c_str());
+        g = Aura::ThreadsForCpu({}, 1);
+        check("CPU: topology unread, 1 logical -> 1", g == 1, t(g).c_str());
+        g = Aura::ThreadsForCpu(cores(8, 0), 4);
+        check("CPU: never more than logical processors less 2", g == 2, t(g).c_str());
+    }
+
+    {   blk("[PIPE-PER-PROCESS-2026-11-06] B -- one worker budget for every GObjects walk in the process");
+        // With 6 pipe connections, several heavy commands can walk GObjects at once, and each spawned
+        // ScanThreadCount() - 1 workers: k walks put k times that many threads in the game.
+        Aura::WorkerBudget b(3);
+        check("BUDGET: a walk takes what it asks for while there is room", b.Acquire(2) == 2);
+        check("BUDGET * : and only what is left after that", b.Acquire(5) == 1);
+        check("BUDGET * : a spent budget grants nothing (the walk runs on its own thread)", b.Acquire(4) == 0);
+        check("BUDGET: in use = capacity", b.InUse() == 3, std::to_string(b.InUse()).c_str());
+        b.Release(2);
+        check("BUDGET: released workers can be taken again", b.Acquire(4) == 2);
+        b.Release(3);
+        check("BUDGET: all returned", b.InUse() == 0, std::to_string(b.InUse()).c_str());
+        check("BUDGET: asking for none takes none", b.Acquire(0) == 0 && b.InUse() == 0);
+        Aura::WorkerBudget zero(0);
+        check("BUDGET: a 0 budget (a PC with 1-3 cores) grants nothing", zero.Acquire(3) == 0);
+        Aura::WorkerBudget neg(-2);
+        check("BUDGET: a negative capacity is 0", neg.Capacity() == 0 && neg.Acquire(1) == 0);
+        {
+            Aura::WorkerLease lease(b, 2);
+            check("BUDGET: a lease holds its share", lease.Granted() == 2 && b.InUse() == 2);
+        }
+        check("BUDGET: and returns it when the walk ends", b.InUse() == 0);
+
+        auto& pb = Aura::ScanWorkerBudget();
+        const int cap = pb.Capacity();
+        check("BUDGET: the process budget is what one walk alone spawns beyond its own thread",
+              cap == Aura::ScanThreadCount(1 << 20) - 1, std::to_string(cap).c_str());
+
+        // Two walks at once. A holds its workers until released; B runs meanwhile.
+        ResetCancel();
+        std::atomic<bool> releaseA{false};
+        int aThreads = 0;
+        std::thread walkA([&] {
+            auto r = Aura::ParallelGObjectsScan<int>(kCount, [&](int&, int32_t, int32_t, std::atomic<bool>&) {
+                while (!releaseA.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            });
+            aThreads = r.nthreads;
+        });
+        for (int i = 0; i < 5000 && pb.InUse() < cap; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        auto walkB = Aura::ParallelGObjectsScan<int>(kCount, [&](int&, int32_t, int32_t, std::atomic<bool>&) {});
+        releaseA = true;
+        walkA.join();
+        printf("    (this PC: budget %d workers; walk A ran on %d threads, walk B on %d)\n",
+               cap, aThreads, walkB.nthreads);
+        check("BUDGET: the first walk got its whole share", aThreads == cap + 1, std::to_string(aThreads).c_str());
+        check("BUDGET * : while it holds the budget, a second walk runs on its own thread",
+              walkB.nthreads == 1, std::to_string(walkB.nthreads).c_str());
+        check("BUDGET: every worker is back after both", pb.InUse() == 0, std::to_string(pb.InUse()).c_str());
+        auto alone = Aura::ParallelGObjectsScan<int>(kCount, [&](int&, int32_t, int32_t, std::atomic<bool>&) {});
+        check("BUDGET control: a walk on its own gets the whole share again", alone.nthreads == cap + 1,
+              std::to_string(alone.nthreads).c_str());
+    }
+
+    // -- SINGLEFLIGHT -- [PIPE-PER-PROCESS-2026-11-06] Stage C: trigger_scan / rescan start one job at a time, and
+    // only Stop cancels it. Here, not in dll_helpers_test, because RunThreadGuarded logs through Sein, whose stubs
+    // this target defines.
+    {
+        using Job = Routine::SingleFlightJob;
+        Tot::ResetPerCommand();
+        Tot::ResetShutdown();
+        std::atomic<bool> serving{true};
+        auto waitIdle = [](const Job& j) {
+            for (int i = 0; i < 400 && j.Running(); ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            return !j.Running();
+        };
+
+        // T1: a second start arriving while the first is between its check and its thread is refused. The first start's
+        // reset is exactly that window -- today's handler cleared the name cache in it -- so the second call is made there.
+        {
+            Job job("test");
+            Job::Start inner = Job::Start::Started;
+            const Job::Start outer = job.TryStart(serving,
+                [&] { inner = job.TryStart(serving, [] {}, [] { return true; }); },
+                [] { return true; });
+            check("single flight: the first start starts", outer == Job::Start::Started);
+            check("single flight: a start inside its window is told a job is already running",
+                   inner == Job::Start::AlreadyRunning);
+            check("single flight: the job ends", waitIdle(job));
+            job.StopAndJoin();
+        }
+
+        // T2: the job owns its cancel. Another client's death (the global per-command cancel) reaches neither the job nor a
+        // worker it spawns the way Aura does; Stop's StopAndJoin does.
+        {
+            Job job("test");
+            std::mutex m;
+            std::condition_variable cv;
+            int phase = 0;
+            bool sawForeign = true, workerSawForeign = true, sawStop = false;
+            job.TryStart(serving, [] {}, [&] {
+                std::unique_lock<std::mutex> lk(m);
+                cv.wait(lk, [&] { return phase >= 1; });
+                sawForeign = Tot::Requested();
+                const Tot::CancelContext ctx = Tot::CaptureCancelContext();
+                std::thread worker([&] { Tot::CancelContextScope s(ctx); workerSawForeign = Tot::Requested(); });
+                worker.join();
+                phase = 2;
+                cv.notify_all();
+                cv.wait(lk, [&] { return phase >= 3; });
+                // Stop raises the token from another thread; wait for it rather than guess how long that takes.
+                lk.unlock();
+                for (int i = 0; i < 5000 && !Tot::Requested(); ++i)
+                    std::this_thread::sleep_for(std::chrono::milliseconds(1));
+                sawStop = Tot::Requested();
+                return true;
+            });
+            Tot::RequestPerCommand();   // a client with a command in flight died
+            { std::lock_guard<std::mutex> lk(m); phase = 1; }
+            cv.notify_all();
+            { std::unique_lock<std::mutex> lk(m); cv.wait(lk, [&] { return phase >= 2; }); }
+            Tot::ResetPerCommand();
+            std::thread stopper([&] { job.StopAndJoin(); });
+            { std::lock_guard<std::mutex> lk(m); phase = 3; }
+            cv.notify_all();
+            stopper.join();
+            check("own cancel: another client's death does not cancel the job", !sawForeign);
+            check("own cancel: ...nor a worker the job spawns", !workerSawForeign);
+            check("own cancel: Stop does", sawStop);
+            check("own cancel: and Stop joined it", !job.Running());
+        }
+
+        // T3: Completed() is the body's own answer -- a scan that failed or was cancelled is not "scanned".
+        {
+            Job job("test");
+            job.TryStart(serving, [] {}, [] { return false; });
+            waitIdle(job);
+            check("completed: a body that returns false has not completed", !job.Completed());
+            job.TryStart(serving, [] {}, [] { return true; });
+            waitIdle(job);
+            check("completed: one that returns true has", job.Completed());
+            job.TryStart(serving, [] {}, []() -> bool { throw std::runtime_error("boom"); });
+            check("completed: a body that throws ends the job", waitIdle(job));
+            check("completed: ...without completing", !job.Completed());
+            job.StopAndJoin();
+        }
+
+        // T4: once the server is stopping, nothing starts.
+        {
+            Job job("test");
+            std::atomic<bool> stopped{false};
+            bool ran = false;
+            check("stopping: refused", job.TryStart(stopped, [&] { ran = true; }, [] { return true; }) == Job::Start::Stopping);
+            check("stopping: nothing ran and nothing runs", !ran && !job.Running());
+        }
+        Tot::ResetPerCommand();
+        Tot::ResetShutdown();
+    }
+
+    // -- HINTCACHELOCK -- [PIPE-PER-PROCESS-2026-11-06] Stage C: the hint cache is changed under one lock. On a temp
+    // file, never the user's real cache (GetCacheFilePath), so only UpdateCacheRecord is called, never a public Save*.
+    {
+        blk("HINTCACHELOCK - two writers at once both keep their change");
+        namespace fs = std::filesystem;
+        const fs::path dir = fs::temp_directory_path() / ("flamme_lock_" + std::to_string(GetCurrentProcessId()));
+        std::error_code ec;
+        fs::remove_all(dir, ec);
+        fs::create_directories(dir, ec);
+        const fs::path file = dir / "UE5CEDumper.TEST.json";
+        auto readRec = [&]() {
+            std::ifstream ifs(file);
+            nlohmann::json root = nlohmann::json::parse(ifs, nullptr, false);
+            return (root.is_object() && root.contains("games") && root["games"].contains("HASH"))
+                ? root["games"]["HASH"] : nlohmann::json::object();
+        };
+
+        // A is inside its read-modify-write, waiting; B arrives. Unlocked, B publishes its read, then A publishes its
+        // own, and B's change is gone though B published.
+        std::atomic<bool> aInside{false}, bInside{false};
+        bool aOk = false, bOk = false;
+        std::thread a([&] {
+            aOk = Flamme::UpdateCacheRecord(file, "HASH", true, [&](nlohmann::json&, nlohmann::json& rec) {
+                rec["a"] = 1;
+                aInside = true;
+                for (int i = 0; i < 60 && !bInside; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }, "A");
+        });
+        while (!aInside) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        std::thread b([&] {
+            bOk = Flamme::UpdateCacheRecord(file, "HASH", true, [&](nlohmann::json&, nlohmann::json& rec) {
+                bInside = true;
+                rec["b"] = 1;
+            }, "B");
+        });
+        a.join();
+        b.join();
+        const nlohmann::json rec = readRec();
+        check("HINTCACHELOCK: both writers published", aOk && bOk);
+        check("HINTCACHELOCK: the first writer's change survives", rec.contains("a"));
+        check("HINTCACHELOCK: the second writer's change survives", rec.contains("b"));
+
+        // Many writers, each its own fields: every one lands.
+        std::vector<std::thread> ws;
+        for (int t = 0; t < 8; ++t) {
+            ws.emplace_back([&, t] {
+                for (int k = 0; k < 25; ++k)
+                    Flamme::UpdateCacheRecord(file, "HASH", true, [&](nlohmann::json&, nlohmann::json& r) {
+                        r["w" + std::to_string(t) + "_" + std::to_string(k)] = k;
+                    }, "stress");
+            });
+        }
+        for (auto& w : ws) w.join();
+        const nlohmann::json all = readRec();
+        int present = 0;
+        for (int t = 0; t < 8; ++t)
+            for (int k = 0; k < 25; ++k)
+                if (all.contains("w" + std::to_string(t) + "_" + std::to_string(k))) ++present;
+        check("HINTCACHELOCK: 8 writers x 25 changes all land", present == 200, std::to_string(present).c_str());
+
+        check("HINTCACHELOCK: no record and not creating -> nothing written",
+              !Flamme::UpdateCacheRecord(file, "OTHER", false, [](nlohmann::json&, nlohmann::json&) {}, "none"));
+        fs::remove_all(dir, ec);
     }
 
     // -- BOOLLAYOUT-2026-09-11 -- the bool layout probe, and the struct preview's mask -------
@@ -9594,7 +9850,7 @@ int main() {
 
         check("a trace starts again after a free", Linie::StartTrace(cfg(8)) == Linie::TraceStartStatus::Ok);
         Linie::Reset();
-        check("Linie::Reset (the last client left) stops and frees the trace too",
+        check("Linie::Reset (the recording's owner left) stops and frees the trace too",
               !Linie::IsTracing() && !Linie::GetTraceInfo().allocated);
 
         // TR2, made deterministic: the clock is read inside a hook's write, so a clock that blocks holds a writer

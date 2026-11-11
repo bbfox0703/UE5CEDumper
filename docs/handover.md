@@ -311,9 +311,9 @@ py -c "import subprocess,pathlib; subprocess.Popen([str(pathlib.Path('dist/UE5Du
 py tools/verify/front_window.py front UE5DumpUI
 ```
 
-Then click **Connect** (top-left) to attach to an injected game; the header goes
-`Disconnected` → `Connected — UE504 (25,189 objects)`. ⚠ **The moment it connects it takes 2 of the
-3 pipe slots**, so no `pipe_client.py` rig can run until you press **Disconnect** or close it.
+Then click **Connect** (top-left) to attach to an injected game (one game connects at once; several open a list; only an old DLL's pipe is refused with a message); the header goes
+`Disconnected` → `Connected — UE504 (25,189 objects)`. ⚠ **It takes 2 pipe slots** of the 6 a current DLL serves ([PIPE-PER-PROCESS-2026-11-06] Stage B), so rigs run beside it. A DLL
+from before Stage B serves 3: then no `pipe_client.py` rig can run until you press **Disconnect** or close it.
 ⚠ It is a **single-instance** app (Mutex) — a second launch silently does nothing.
 ⚠ Many rows use the UI as their fixture, so this is usually step one, not an afterthought.
 
@@ -406,10 +406,14 @@ Live Funcs run.
 3. ⛔ **Kill the game, CE and the UI the moment the row that needed them is done.** Confirm the
    process is actually gone before launching the next; a Steam title can leave its shipping exe alive
    after the window closes.
-4. ⛔ **Never run `pipe_client.py` while the UI is connected.** `Fern::kMaxPipeInstances = 3` and the
+4. ✅ **RETIRED by [PIPE-PER-PROCESS-2026-11-06] Stage B: "never run `pipe_client.py` while the UI is connected".** The DLL takes 6
+   clients and the UI 2, so a rig, an MCP client and a reconnect fit beside it. ⚠ It still holds for a DLL from
+   before Stage B (3 clients), which a game keeps until its proxy is refreshed; a connect that finds every
+   instance taken now says so. *What it said:* `Fern::kMaxPipeInstances = 3` and the
    UI holds **2** lanes (`LaneRoutingPipeClient` opens an interactive `"I"` and a bulk `"B"`).
-   Several rigs say so in their own docstrings; `pipebusy_capacity.py` is the one deliberate
-   exception and opens all three itself.
+   Rigs whose docstrings still ask for the UI closed say so for a DLL from before Stage B;
+   `pipebusy_capacity.py` derives the limit from the DLL's log and fills it itself.
+   `[PIPEBUSY-2026-08-18]` is a fixed logging bug, not this rule's reason.
 5. ⛔ **SHIPPING IS THE FIXTURE. `dev` is a second opinion, not the default.**
    `py tools/verify/launch_dumpertest.py shipping` — maintainer's standing instruction,
    2026-09-09. **A Development build's offsets are a MINORITY shape in real games**: the layouts,
@@ -521,7 +525,8 @@ they are long and self-critical. Read the docstring before running one; several 
 preconditions and a few refuse to run in the wrong state rather than degrading into a silent no-op.
 ⚠⚠ **`--help` is not safe across all of them.** Several parse `sys.argv` by hand, so
 `py tools/verify/seethrough_arms.py --help` skips argparse entirely and immediately dials the pipe
-(`PipeError: could not open \\.\pipe\UE5DumpBfx`). **Read the file, do not probe it.**
+(`PipeError: could not open a UE5Dumper pipe`). **Read the file, do not probe it.**
+⭐ **Which game a rig drives** ([PIPE-PER-PROCESS-2026-11-06]): each game serves `\\.\pipe\UE5DumpBfx_<pid>`. `pipe_client` dials `--pid` / `PipeClient(pid=)`, else `UE5DUMP_PID`, else the only game listed; with several it takes the lowest pid and warns. Only the legacy `\\.\pipe\UE5DumpBfx` up means a stale proxy: refresh it.
 
 -----
 

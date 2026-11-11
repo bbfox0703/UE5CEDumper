@@ -18,6 +18,7 @@
 #include <iomanip>
 #include <sstream>
 #include <atomic>
+#include <functional>
 
 namespace fs = std::filesystem;
 using json = nlohmann::json;
@@ -31,10 +32,11 @@ namespace Flamme {
 bool IsExperimentalEnabled() {
     // Cached: the scan queries this per GNames candidate, and the answer cannot
     // meaningfully change mid-scan. -1 = not yet read.
-    static int s_cached = -1;
-    if (s_cached >= 0) return s_cached != 0;
+    static std::atomic<int> s_cached{-1};
+    const int known = s_cached.load(std::memory_order_relaxed);
+    if (known >= 0) return known != 0;
 
-    s_cached = 0;
+    int enabled = 0;
     wchar_t* appdata = nullptr;
     if (SUCCEEDED(SHGetKnownFolderPath(FOLDERID_LocalAppData, 0, nullptr, &appdata))) {
         fs::path p = fs::path(appdata) / Grimoire::LOG_FOLDER_NAME / L"experimental.json";
@@ -45,14 +47,15 @@ bool IsExperimentalEnabled() {
                 json j;
                 f >> j;
                 if (j.contains("enabled") && j["enabled"].is_boolean() && j["enabled"].get<bool>())
-                    s_cached = 1;
+                    enabled = 1;
             }
         } catch (...) {
             // Malformed or unreadable — stay OFF. Never throws to the caller.
         }
     }
-    LOG_INFO("Experimental features: %s", s_cached ? "ENABLED" : "disabled");
-    return s_cached != 0;
+    s_cached.store(enabled, std::memory_order_relaxed);
+    LOG_INFO("Experimental features: %s", enabled ? "ENABLED" : "disabled");
+    return enabled != 0;
 }
 
 /// Build the cache file path: %LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{COMPUTERNAME}.json
@@ -130,9 +133,10 @@ static fs::path MakeTempPath(const fs::path& path) {
 // Runs at most once per process. (audit #5 FL2)
 static void SweepOrphanTemps(const fs::path& path) {
     // Atomic, not a plain bool: SaveResults runs on the init/scan path while
-    // SaveUserOverride / SaveInvokeTimeout run on pipe threads, so two writers can
-    // reach here at once. Worst case would only be a duplicate (idempotent) sweep,
-    // but a torn plain-bool write is still a data race.
+    // SaveUserOverride / SaveInvokeTimeout run on pipe threads. They serialise on the
+    // cache lock now, except when it could not be opened (CacheLock writes without it),
+    // so two writers can still reach here at once. Worst case would only be a duplicate
+    // (idempotent) sweep, but a torn plain-bool write is still a data race.
     static std::atomic<bool> s_swept{false};
     if (s_swept.exchange(true)) return;
 
@@ -219,6 +223,90 @@ static bool WriteJsonAtomic(const fs::path& path, const std::string& text,
     return true;
 }
 
+// ============================================================
+// The cache's lock ([PIPE-PER-PROCESS-2026-11-06] Stage C)
+// ============================================================
+// Every writer reads the file, changes one game's record and publishes the whole file. Two at once -- two pipe
+// clients setting an override and an invoke timeout, or one of them beside a scan -- each published its own read,
+// so the later rename dropped the earlier change while its reply said persisted; both also staged through the one
+// .tmp.<pid>, so one could delete the other's staged file. A NAMED mutex rather than a std::mutex: a second copy of
+// the DLL in this process shares the staging name, and a second injected game shares the file. A crashed holder
+// (WAIT_ABANDONED) left a whole file -- the publish is a rename -- so its lock is taken as held.
+class CacheLock {
+public:
+    explicit CacheLock(const fs::path& path, unsigned long waitMs = Grimoire::HINTCACHE_LOCK_WAIT_MS) {
+        const std::wstring name = std::wstring(Grimoire::HINTCACHE_LOCK_PREFIX) + path.filename().wstring();
+        m_mutex = CreateMutexW(nullptr, FALSE, name.c_str());
+        if (!m_mutex) {
+            // No lock to take (the name is held under another security context, say): write as before the lock existed
+            // rather than never again.
+            LOG_WARN("HintCache: could not open the cache lock (err=%lu) -- writing without it", GetLastError());
+            m_held = true;
+            return;
+        }
+        const DWORD w = WaitForSingleObject(m_mutex, waitMs);
+        m_owned = m_held = (w == WAIT_OBJECT_0 || w == WAIT_ABANDONED);
+    }
+    ~CacheLock() {
+        if (m_owned) ReleaseMutex(m_mutex);
+        if (m_mutex) CloseHandle(m_mutex);
+    }
+    CacheLock(const CacheLock&) = delete;
+    CacheLock& operator=(const CacheLock&) = delete;
+    // Go ahead: the lock is ours, or there was no lock to take.
+    bool Held() const { return m_held; }
+
+private:
+    HANDLE m_mutex = nullptr;
+    bool   m_owned = false;   // this object holds the mutex, and releases it
+    bool   m_held  = false;
+};
+
+/// Read the cache, let `mutate` change the root and this game's record, publish -- all under CacheLock, so no other
+/// writer's change is lost between the read and the rename. `createIfMissing` false: no file, or no record for this
+/// game, means nothing to change. Returns whether the file was published; every failure is logged.
+static bool UpdateCacheRecord(const fs::path& path, const char* peHash, bool createIfMissing,
+                              const std::function<void(json& root, json& rec)>& mutate, const char* who) {
+    CacheLock lock(path);
+    if (!lock.Held()) {
+        LOG_WARN("HintCache: %s: another writer held the cache for %lu ms -- not written, the previous cache kept",
+                 who, Grimoire::HINTCACHE_LOCK_WAIT_MS);
+        return false;
+    }
+    json root;
+    if (fs::exists(path)) {
+        std::ifstream ifs(path);
+        if (ifs.is_open()) {
+            root = json::parse(ifs, nullptr, /*allow_exceptions=*/false);
+            ifs.close();
+        }
+    } else if (!createIfMissing) {
+        return false;   // nothing written yet -> nothing to fix
+    }
+    if (!root.is_object()) {
+        if (!createIfMissing) return false;
+        root = json::object();
+    }
+    if (createIfMissing) {
+        fs::create_directories(path.parent_path());
+        if (!root.contains("version")) root["version"] = 1;
+        if (!root.contains("games") || !root["games"].is_object()) root["games"] = json::object();
+    }
+    auto gamesIt = root.find("games");
+    if (gamesIt == root.end() || !gamesIt->is_object()) return false;
+    json rec = gamesIt->contains(peHash) ? (*gamesIt)[peHash] : json::object();
+    if (!rec.is_object()) {
+        if (!createIfMissing) return false;
+        rec = json::object();
+    } else if (!createIfMissing && !gamesIt->contains(peHash)) {
+        return false;
+    }
+    mutate(root, rec);
+    root["games"][peHash] = rec;
+    // Atomic write: staged temp, verified, then renamed. (FL1/FL2)
+    return WriteJsonAtomic(path, root.dump(2), who);
+}
+
 static std::string GetUtcTimestamp() {
     auto now = std::chrono::system_clock::now();
     auto t = std::chrono::system_clock::to_time_t(now);
@@ -252,6 +340,11 @@ ScanHints LoadHints(const char* peHash) {
     try {
         auto path = GetCacheFilePath();
         if (path.empty() || !fs::exists(path)) return hints;
+
+        // Under the writers' lock. The read would be whole without it -- a publish is a rename -- but this open
+        // handle would make a writer's rename fail and drop that change. Past the wait, read anyway: the hints only
+        // speed a scan up.
+        CacheLock lock(path);
 
         // Open with shared read access (UI may hold the file)
         std::ifstream ifs(path);
@@ -358,95 +451,62 @@ void SaveResults(const char* peHash, const Genau::EnginePointers& ptrs,
         auto path = GetCacheFilePath();
         if (path.empty()) return;
 
-        // Ensure directory exists
-        fs::create_directories(path.parent_path());
-
-        // Load existing file (or start fresh)
-        json root;
-        if (fs::exists(path)) {
-            std::ifstream ifs(path);
-            if (ifs.is_open()) {
-                root = json::parse(ifs, nullptr, /*allow_exceptions=*/false);
-                ifs.close();
-                if (!root.is_object()) root = json::object();
+        int scanCount = 0;
+        const bool ok = UpdateCacheRecord(path, peHash, /*createIfMissing=*/true, [&](json& root, json& rec) {
+            // Update machine name
+            wchar_t compName[MAX_COMPUTERNAME_LENGTH + 1] = {};
+            DWORD compLen = MAX_COMPUTERNAME_LENGTH + 1;
+            if (GetComputerNameW(compName, &compLen)) {
+                // Convert wchar to UTF-8
+                int sz = WideCharToMultiByte(CP_UTF8, 0, compName, -1, nullptr, 0, nullptr, nullptr);
+                std::string nameUtf8(sz - 1, '\0');
+                WideCharToMultiByte(CP_UTF8, 0, compName, -1, nameUtf8.data(), sz, nullptr, nullptr);
+                root["machineName"] = nameUtf8;
             }
-        }
 
-        // Ensure structure
-        if (!root.contains("version")) root["version"] = 1;
+            rec["peHash"]   = peHash;
+            rec["gameName"] = processName ? processName : "";
+            // Cache the version-detection result ONLY when it's a genuine detection. When the
+            // version came from a user override (bUserOverride), FindAll skipped detection entirely
+            // and ptrs.UEVersion is just the override value — caching it (with versionDetectRev) would
+            // let it masquerade as a confident detection once the override is later cleared. So we
+            // leave the prior real-detection fields untouched; the override itself lives in
+            // ueVersionUserOverride, and clearing it correctly reverts to the last real detection
+            // (or re-detects if none was ever cached).
+            if (!ptrs.bUserOverride) {
+                rec["ueVersion"]        = static_cast<int>(ptrs.UEVersion);
+                rec["versionDetected"]  = ptrs.bVersionDetected;
+                rec["lowConfidence"]    = ptrs.bLowConfidence;
+                // Stamp the detection-logic revision so the next launch can trust this cached
+                // version and skip the slow DetectVersion scan (until the logic rev changes).
+                rec["versionDetectRev"] = static_cast<int>(Genau::kVersionDetectLogicRev);
+            }
+            // Preserve any pre-existing ueVersionUserOverride from the previous record —
+            // a fresh scan must not silently clobber a user-set persistent override.
+            // If the field was absent before, leave it absent (no zero-stamp).
+            // The override is written/cleared exclusively via SaveUserOverride.
 
-        // Update machine name
-        wchar_t compName[MAX_COMPUTERNAME_LENGTH + 1] = {};
-        DWORD compLen = MAX_COMPUTERNAME_LENGTH + 1;
-        if (GetComputerNameW(compName, &compLen)) {
-            // Convert wchar to UTF-8
-            int sz = WideCharToMultiByte(CP_UTF8, 0, compName, -1, nullptr, 0, nullptr, nullptr);
-            std::string nameUtf8(sz - 1, '\0');
-            WideCharToMultiByte(CP_UTF8, 0, compName, -1, nameUtf8.data(), sz, nullptr, nullptr);
-            root["machineName"] = nameUtf8;
-        }
+            rec["gObjects"] = MakeScanEntry(ptrs.gobjectsMethod, ptrs.gobjectsPatternId,
+                                            ptrs.gobjectsPatternsTried, ptrs.gobjectsPatternsHit);
+            rec["gNames"]   = MakeScanEntry(ptrs.gnamesMethod, ptrs.gnamesPatternId,
+                                            ptrs.gnamesPatternsTried, ptrs.gnamesPatternsHit);
+            rec["gWorld"]   = MakeScanEntry(ptrs.gworldMethod, ptrs.gworldPatternId,
+                                            ptrs.gworldPatternsTried, ptrs.gworldPatternsHit);
 
-        if (!root.contains("games") || !root["games"].is_object())
-            root["games"] = json::object();
+            rec["lastScanUtc"] = GetUtcTimestamp();
 
-        // Build or update the record
-        json& games = root["games"];
-        bool isUpdate = games.contains(peHash);
-
-        json rec;
-        if (isUpdate) {
-            rec = games[peHash];
-        }
-
-        rec["peHash"]   = peHash;
-        rec["gameName"] = processName ? processName : "";
-        // Cache the version-detection result ONLY when it's a genuine detection. When the
-        // version came from a user override (bUserOverride), FindAll skipped detection entirely
-        // and ptrs.UEVersion is just the override value — caching it (with versionDetectRev) would
-        // let it masquerade as a confident detection once the override is later cleared. So we
-        // leave the prior real-detection fields untouched; the override itself lives in
-        // ueVersionUserOverride, and clearing it correctly reverts to the last real detection
-        // (or re-detects if none was ever cached).
-        if (!ptrs.bUserOverride) {
-            rec["ueVersion"]        = static_cast<int>(ptrs.UEVersion);
-            rec["versionDetected"]  = ptrs.bVersionDetected;
-            rec["lowConfidence"]    = ptrs.bLowConfidence;
-            // Stamp the detection-logic revision so the next launch can trust this cached
-            // version and skip the slow DetectVersion scan (until the logic rev changes).
-            rec["versionDetectRev"] = static_cast<int>(Genau::kVersionDetectLogicRev);
-        }
-        // Preserve any pre-existing ueVersionUserOverride from the previous record —
-        // a fresh scan must not silently clobber a user-set persistent override.
-        // If the field was absent before, leave it absent (no zero-stamp).
-        // The override is written/cleared exclusively via SaveUserOverride.
-
-        rec["gObjects"] = MakeScanEntry(ptrs.gobjectsMethod, ptrs.gobjectsPatternId,
-                                        ptrs.gobjectsPatternsTried, ptrs.gobjectsPatternsHit);
-        rec["gNames"]   = MakeScanEntry(ptrs.gnamesMethod, ptrs.gnamesPatternId,
-                                        ptrs.gnamesPatternsTried, ptrs.gnamesPatternsHit);
-        rec["gWorld"]   = MakeScanEntry(ptrs.gworldMethod, ptrs.gworldPatternId,
-                                        ptrs.gworldPatternsTried, ptrs.gworldPatternsHit);
-
-        rec["lastScanUtc"] = GetUtcTimestamp();
-
-        if (isUpdate) {
+            // A new record starts at 1, an existing one counts on.
             int count = 1;
             auto cntIt = rec.find("scanCount");
             if (cntIt != rec.end() && cntIt->is_number_integer())
                 count = cntIt->get<int>() + 1;
             rec["scanCount"] = count;
-        } else {
-            rec["scanCount"] = 1;
-        }
-
-        games[peHash] = rec;
-
-        // Write atomically: staged temp, verified, then renamed. (FL1/FL2)
-        if (!WriteJsonAtomic(path, root.dump(2), "SaveResults")) return;
+            scanCount = count;
+        }, "SaveResults");
+        if (!ok) return;
 
         LOG_INFO("HintCache: Saved results for PE=%s (%s, scan #%d)",
-                 peHash, processName ? processName : "?",
-                 games[peHash]["scanCount"].get<int>());
+                 peHash, processName ? processName : "?", scanCount);
 
     } catch (const std::exception& ex) {
         LOG_WARN("HintCache: Failed to save results: %s", ex.what());
@@ -464,29 +524,16 @@ void UpdateGObjectsMethod(const char* peHash, const char* method) {
 
     try {
         auto path = GetCacheFilePath();
-        if (path.empty() || !fs::exists(path)) return;   // nothing written yet → nothing to fix
+        if (path.empty()) return;
 
-        json root;
-        {
-            std::ifstream ifs(path);
-            if (!ifs.is_open()) return;
-            root = json::parse(ifs, nullptr, /*allow_exceptions=*/false);
-            ifs.close();
-        }
-        if (!root.is_object()) return;
-
-        auto gamesIt = root.find("games");
-        if (gamesIt == root.end() || !gamesIt->is_object()) return;
-        auto recIt = gamesIt->find(peHash);
-        if (recIt == gamesIt->end() || !recIt->is_object()) return;
-
-        json& go = (*recIt)["gObjects"];
-        if (!go.is_object()) go = json::object();
-        go["method"]    = method;
-        go["patternId"] = "";   // the AOB pattern only matched a decoy — do not hint it next launch
-
-        // Atomic write (temp + verify + rename), mirroring SaveResults.
-        if (!WriteJsonAtomic(path, root.dump(2), "UpdateGObjectsMethod")) return;
+        // Not creating: nothing written yet, or no record for this game, means nothing to fix.
+        const bool ok = UpdateCacheRecord(path, peHash, /*createIfMissing=*/false, [&](json&, json& rec) {
+            json& go = rec["gObjects"];
+            if (!go.is_object()) go = json::object();
+            go["method"]    = method;
+            go["patternId"] = "";   // the AOB pattern only matched a decoy — do not hint it next launch
+        }, "UpdateGObjectsMethod");
+        if (!ok) return;
 
         LOG_INFO("HintCache: Updated gObjects method for PE=%s -> %s (patternId cleared)", peHash, method);
 
@@ -501,121 +548,87 @@ void UpdateGObjectsMethod(const char* peHash, const char* method) {
 // SaveUserOverride
 // ============================================================
 
-void SaveUserOverride(const char* peHash, uint32_t ueVersion,
+bool SaveUserOverride(const char* peHash, uint32_t ueVersion,
                       const char* processName) {
-    if (!peHash || !peHash[0]) return;
+    if (!peHash || !peHash[0]) return false;
 
     try {
         auto path = GetCacheFilePath();
-        if (path.empty()) return;
-        fs::create_directories(path.parent_path());
+        if (path.empty()) return false;
 
-        json root;
-        if (fs::exists(path)) {
-            std::ifstream ifs(path);
-            if (ifs.is_open()) {
-                root = json::parse(ifs, nullptr, /*allow_exceptions=*/false);
-                ifs.close();
-                if (!root.is_object()) root = json::object();
+        const bool ok = UpdateCacheRecord(path, peHash, /*createIfMissing=*/true, [&](json&, json& rec) {
+            rec["peHash"]   = peHash;
+            if (processName && processName[0])
+                rec["gameName"] = processName;
+
+            if (ueVersion == 0) {
+                // Clear override
+                rec.erase("ueVersionUserOverride");
+                rec.erase("ueVersionUserOverrideAt");
+            } else {
+                rec["ueVersionUserOverride"]   = static_cast<int>(ueVersion);
+                rec["ueVersionUserOverrideAt"] = GetUtcTimestamp();
             }
-        }
-
-        if (!root.contains("version")) root["version"] = 1;
-        if (!root.contains("games") || !root["games"].is_object())
-            root["games"] = json::object();
-
-        json& games = root["games"];
-        json rec = games.contains(peHash) ? games[peHash] : json::object();
-
-        rec["peHash"]   = peHash;
-        if (processName && processName[0])
-            rec["gameName"] = processName;
-
-        if (ueVersion == 0) {
-            // Clear override
-            rec.erase("ueVersionUserOverride");
-            rec.erase("ueVersionUserOverrideAt");
-        } else {
-            rec["ueVersionUserOverride"]   = static_cast<int>(ueVersion);
-            rec["ueVersionUserOverrideAt"] = GetUtcTimestamp();
-        }
-
-        games[peHash] = rec;
-
-        if (!WriteJsonAtomic(path, root.dump(2), "SaveUserOverride")) return;
+        }, "SaveUserOverride");
+        if (!ok) return false;
 
         if (ueVersion == 0)
             LOG_INFO("HintCache: Cleared user UE-version override for PE=%s", peHash);
         else
             LOG_INFO("HintCache: Saved user UE-version override for PE=%s -> %u",
                      peHash, ueVersion);
+        return true;
 
     } catch (const std::exception& ex) {
         LOG_WARN("HintCache: SaveUserOverride failed: %s", ex.what());
     } catch (...) {
         LOG_WARN("HintCache: SaveUserOverride failed (unknown error)");
     }
+    return false;
 }
 
 // ============================================================
 // SaveInvokeTimeout — mirrors SaveUserOverride for the GameThreadDispatch
-// timeout. Same atomic write + record-preservation pattern.
+// timeout. Same locked read-modify-write and record preservation.
 // ============================================================
 
-void SaveInvokeTimeout(const char* peHash, int32_t timeoutMs,
+bool SaveInvokeTimeout(const char* peHash, int32_t timeoutMs,
                        const char* processName) {
-    if (!peHash || !peHash[0]) return;
+    if (!peHash || !peHash[0]) return false;
 
     try {
         auto path = GetCacheFilePath();
-        if (path.empty()) return;
-        fs::create_directories(path.parent_path());
+        if (path.empty()) return false;
 
-        json root;
-        if (fs::exists(path)) {
-            std::ifstream ifs(path);
-            if (ifs.is_open()) {
-                root = json::parse(ifs, nullptr, /*allow_exceptions=*/false);
-                ifs.close();
-                if (!root.is_object()) root = json::object();
+        const bool ok = UpdateCacheRecord(path, peHash, /*createIfMissing=*/true, [&](json&, json& rec) {
+            rec["peHash"] = peHash;
+            if (processName && processName[0])
+                rec["gameName"] = processName;
+
+            if (timeoutMs <= 0) {
+                // Clear override
+                rec.erase("invokeTimeoutMs");
+                rec.erase("invokeTimeoutMsAt");
+            } else {
+                rec["invokeTimeoutMs"]   = timeoutMs;
+                rec["invokeTimeoutMsAt"] = GetUtcTimestamp();
             }
-        }
-
-        if (!root.contains("version")) root["version"] = 1;
-        if (!root.contains("games") || !root["games"].is_object())
-            root["games"] = json::object();
-
-        json& games = root["games"];
-        json rec = games.contains(peHash) ? games[peHash] : json::object();
-
-        rec["peHash"] = peHash;
-        if (processName && processName[0])
-            rec["gameName"] = processName;
-
-        if (timeoutMs <= 0) {
-            // Clear override
-            rec.erase("invokeTimeoutMs");
-            rec.erase("invokeTimeoutMsAt");
-        } else {
-            rec["invokeTimeoutMs"]   = timeoutMs;
-            rec["invokeTimeoutMsAt"] = GetUtcTimestamp();
-        }
-
-        games[peHash] = rec;
-
-        if (!WriteJsonAtomic(path, root.dump(2), "SaveInvokeTimeout")) return;
+        }, "SaveInvokeTimeout");
+        if (!ok) return false;
 
         if (timeoutMs <= 0)
             LOG_INFO("HintCache: Cleared invoke timeout override for PE=%s", peHash);
         else
             LOG_INFO("HintCache: Saved invoke timeout override for PE=%s -> %dms",
                      peHash, timeoutMs);
+        return true;
 
     } catch (const std::exception& ex) {
         LOG_WARN("HintCache: SaveInvokeTimeout failed: %s", ex.what());
     } catch (...) {
         LOG_WARN("HintCache: SaveInvokeTimeout failed (unknown error)");
     }
+    return false;
 }
 
 } // namespace Flamme

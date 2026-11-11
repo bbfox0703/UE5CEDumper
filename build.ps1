@@ -501,6 +501,45 @@ if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
 Write-Info "dotnet: $(dotnet --version)"
 
 # ============================================================
+# A private %TEMP% for the dotnet processes this script starts
+# ============================================================
+# [TEST-TEMP-HYGIENE-2026-11-11] Every dotnet build / test / publish leaves an empty random-named folder, a
+# Microsoft.NET.Workload_*.log and a second folder in %TEMP%, and nothing in the SDK removes them (read in dotnet/sdk
+# v10.0.403; docs/working-lessons.md 3.xe). The dotnet processes this script starts get TMP and TEMP in a folder of
+# this run's, deleted at the end, so a build leaves none of that in %TEMP%. The folder sits where the test runs keep
+# theirs (%TEMP%\UE5CEDumper.Tests) and holds an owner file open for the life of this script, as a test run's folder
+# does: their sweep never takes it while the build runs, and removes it if the build dies part-way. Only dotnet's
+# environment changes, and only for its call: the C++ steps and the calling shell keep their own TEMP.
+$script:dotnetTemp = $null
+$script:dotnetTempOwner = $null
+try {
+    $dotnetTempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "UE5CEDumper.Tests"
+    $script:dotnetTemp = Join-Path $dotnetTempRoot ("b" + $PID)
+    [System.IO.Directory]::CreateDirectory($script:dotnetTemp) | Out-Null
+    $script:dotnetTempOwner = [System.IO.File]::Open((Join-Path $script:dotnetTemp ".owner"),
+        [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+}
+catch {
+    Write-Info "no private TEMP for dotnet ($($_.Exception.Message)) - dotnet uses %TEMP% as before"
+    $script:dotnetTemp = $null
+}
+
+function Use-DotnetTemp([scriptblock]$Body) {
+    # Runs $Body (a dotnet call) with TMP / TEMP pointed at this run's private folder; $LASTEXITCODE stays dotnet's.
+    $savedTmp = $env:TMP
+    $savedTemp = $env:TEMP
+    if ($script:dotnetTemp) {
+        $env:TMP = $script:dotnetTemp
+        $env:TEMP = $script:dotnetTemp
+    }
+    try { & $Body }
+    finally {
+        $env:TMP = $savedTmp
+        $env:TEMP = $savedTemp
+    }
+}
+
+# ============================================================
 # Clean
 # ============================================================
 
@@ -512,12 +551,12 @@ if ($Clean) {
 
     # Clean dotnet outputs
     if ($Target -in "All", "UI", "Test") {
-        & dotnet clean $UI_PROJ -c $CSharpConfig --nologo -v q 2>$null
+        Use-DotnetTemp { & dotnet clean $UI_PROJ -c $CSharpConfig --nologo -v q 2>$null }
         if (Test-Path $TEST_PROJ) {
-            & dotnet clean $TEST_PROJ -c $CSharpConfig --nologo -v q 2>$null
+            Use-DotnetTemp { & dotnet clean $TEST_PROJ -c $CSharpConfig --nologo -v q 2>$null }
         }
         if (Test-Path $HEADLESS_TEST_PROJ) {
-            & dotnet clean $HEADLESS_TEST_PROJ -c $CSharpConfig --nologo -v q 2>$null
+            Use-DotnetTemp { & dotnet clean $HEADLESS_TEST_PROJ -c $CSharpConfig --nologo -v q 2>$null }
         }
     }
 
@@ -745,7 +784,7 @@ if ($Target -in "All", "UI", "Test") {
     # Restore packages
     if (-not $SkipRestore) {
         Write-Step "Restoring NuGet packages..."
-        & dotnet restore $UI_PROJ --nologo -v q
+        Use-DotnetTemp { & dotnet restore $UI_PROJ --nologo -v q }
         if ($LASTEXITCODE -ne 0) {
             Write-Fail "Package restore failed"
             $exitCode = 1
@@ -858,13 +897,15 @@ if ($Target -in "All", "UI", "Test") {
             # PATH/LIB/INCLUDE), cmd.exe emits "The input line is too long." and that
             # text leaks into the linker path -> link.exe exits 123. Using the
             # environmental tools skips that fragile step entirely.
-            & dotnet publish $UI_PROJ `
-                -c Release `
-                -r win-x64 `
-                -p:PublishAot=true `
-                -p:IlcUseEnvironmentalTools=true `
-                -o $publishDir `
-                --nologo
+            Use-DotnetTemp {
+                & dotnet publish $UI_PROJ `
+                    -c Release `
+                    -r win-x64 `
+                    -p:PublishAot=true `
+                    -p:IlcUseEnvironmentalTools=true `
+                    -o $publishDir `
+                    --nologo
+            }
 
             if ($LASTEXITCODE -ne 0) {
                 Write-Fail "UI AOT publish failed"
@@ -942,16 +983,18 @@ if ($Target -in "All", "UI", "Test") {
             $publishConfig = if ($Mode -eq "Debug") { "Debug" } else { "Release" }
             Write-Step "Publishing UE5DumpUI ($publishConfig, self-contained single-file)..."
 
-            & dotnet publish $UI_PROJ `
-                -c $publishConfig `
-                -r win-x64 `
-                --self-contained `
-                -p:PublishSingleFile=true `
-                -p:PublishAot=false `
-                -p:IncludeNativeLibrariesForSelfExtract=true `
-                -p:IncludeAllContentForSelfExtract=true `
-                -o $publishDir `
-                --nologo
+            Use-DotnetTemp {
+                & dotnet publish $UI_PROJ `
+                    -c $publishConfig `
+                    -r win-x64 `
+                    --self-contained `
+                    -p:PublishSingleFile=true `
+                    -p:PublishAot=false `
+                    -p:IncludeNativeLibrariesForSelfExtract=true `
+                    -p:IncludeAllContentForSelfExtract=true `
+                    -o $publishDir `
+                    --nologo
+            }
 
             if ($LASTEXITCODE -ne 0) {
                 Write-Fail "UI publish failed"
@@ -1147,7 +1190,7 @@ if ($Target -in "All", "Test") {
             # IndexOutOfRangeException on a stray empty arg ("Zero tests ran").
             $testArgs = @('test', '--project', $TEST_PROJ, '-c', $CSharpConfig)
             if ($SkipRestore) { $testArgs += '--no-restore' }
-            & dotnet @testArgs
+            Use-DotnetTemp { & dotnet @testArgs }
 
             if ($LASTEXITCODE -ne 0) {
                 Write-Fail "Tests failed"
@@ -1177,7 +1220,7 @@ if ($Target -in "All", "Test") {
             Write-Step "Building + running headless UI tests..."
             $headlessArgs = @('test', '--project', $HEADLESS_TEST_PROJ, '-c', $CSharpConfig)
             if ($SkipRestore) { $headlessArgs += '--no-restore' }
-            & dotnet @headlessArgs
+            Use-DotnetTemp { & dotnet @headlessArgs }
 
             if ($LASTEXITCODE -ne 0) {
                 Write-Fail "Headless UI tests failed"
@@ -1259,6 +1302,18 @@ if ($Mode -ne "Debug" -and (Test-Path $DIST_DIR)) {
         $pdbs | Remove-Item -Force -ErrorAction SilentlyContinue
         Write-Ok "stripped $($pdbs.Count) *.pdb from dist\ (Release/Publish ship without symbols)"
     }
+}
+
+# ============================================================
+# Remove this run's private TEMP for dotnet
+# ============================================================
+# The owner file closes first. [System.IO.Directory]::Delete does not follow a junction a test left behind; Windows
+# PowerShell 5.1's Remove-Item -Recurse does, into the junction's target -- and VolumeRootTests makes one to another
+# volume's root. Whatever is still held stays for the next test run's sweep.
+if ($script:dotnetTempOwner) { $script:dotnetTempOwner.Dispose() }
+if ($script:dotnetTemp -and (Test-Path -LiteralPath $script:dotnetTemp)) {
+    try { [System.IO.Directory]::Delete($script:dotnetTemp, $true) }
+    catch { Write-Info "private TEMP for dotnet not removed yet ($($_.Exception.Message)) - the next test run removes it" }
 }
 
 # ============================================================

@@ -168,7 +168,7 @@ def main():
     h = k32.OpenProcess(0x0010 | 0x0400, False, a.pid)
     if not h:
         raise SystemExit("frieren: OpenProcess(%d) failed" % a.pid)
-    with PipeClient(timeout=300.0) as c:
+    with PipeClient(timeout=300.0, pid=a.pid) as c:
         print("build:", c.assert_build(a.build))
         slot, nclasses, fields = collect(c, h, a.slot, a.all_classes)
     print("slot +0x%X; %d classes list %d rows = %d distinct properties (%s)" % (

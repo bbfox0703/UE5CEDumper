@@ -10,7 +10,7 @@ process), injected with a staged DLL that stalls the first DetectUEnumNames sear
 reversed + defcb56e's guards removed, red). NO UI connected: it would make the first enum lookup itself.
 
 WHAT IT DOES. A PipeClient resolves the live DumperTest58Actor (find_instances touches no enum) and disconnects.
-A RAW pipe connection (CreateFileW on \\.\pipe\UE5DumpBfx) then sends walk_instance on it -- the process's first
+A RAW pipe connection (CreateFileW on the game's \\.\pipe\UE5DumpBfx_<pid>, the pipe the PipeClient reached) then sends walk_instance on it -- the process's first
 enum lookup, so detection starts and sits in the staged stall -- waits `--hold` seconds and closes the handle.
 The server's monitor must log `client gone mid-command` in pipe-0.log (anti-vacuity: absent means the close was
 never seen in flight and the run measured nothing). After the stall, a fresh PipeClient walks the same actor
@@ -33,7 +33,6 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from pipe_client import PipeClient  # noqa: E402
 
-PIPE = r"\\.\pipe\UE5DumpBfx"
 GENERIC_RW = 0x80000000 | 0x40000000
 OPEN_EXISTING = 3
 INVALID = ctypes.c_void_p(-1).value
@@ -91,9 +90,10 @@ def main():
         raise SystemExit("FIXTURE: no live DumperTest58Actor")
     say("actor %s @ %s" % (live["name"], live["addr"]))
 
-    h = k.CreateFileW(PIPE, GENERIC_RW, 0, None, OPEN_EXISTING, 0, None)
+    pipe = c.pipe   # the game the PipeClient reached [PIPE-PER-PROCESS-2026-11-06]
+    h = k.CreateFileW(pipe, GENERIC_RW, 0, None, OPEN_EXISTING, 0, None)
     if not h or h == INVALID:
-        raise SystemExit("FAIL: CreateFileW(%s) err=%d" % (PIPE, ctypes.get_last_error()))
+        raise SystemExit("FAIL: CreateFileW(%s) err=%d" % (pipe, ctypes.get_last_error()))
     line = (json.dumps({"cmd": "walk_instance", "addr": live["addr"], "id": 1}) + "\n").encode()
     n = wintypes.DWORD(0)
     ok = k.WriteFile(h, line, len(line), ctypes.byref(n), None)

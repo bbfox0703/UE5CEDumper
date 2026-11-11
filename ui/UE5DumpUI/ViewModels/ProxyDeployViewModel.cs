@@ -1174,8 +1174,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
     }
 
     /// <summary>Set by MainWindowViewModel: connect the pipe after a successful
-    /// inject (best-effort auto-connect).</summary>
-    public Func<Task>? RequestConnectAsync { get; set; }
+    /// inject (best-effort auto-connect). Takes the game's pid: each game serves its own
+    /// pipe [PIPE-PER-PROCESS-2026-11-06], and the game just injected is the one meant.</summary>
+    public Func<int?, Task>? RequestConnectAsync { get; set; }
 
     /// <summary>True once the pipe is actually connected. Needed because
     /// <see cref="RequestConnectAsync"/> is fire-and-forget — without a way to ASK, the
@@ -1251,7 +1252,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 RememberInjection(target.Path);
             if (RequestConnectAsync is not null)
             {
-                try { await RequestConnectAsync(); }
+                try { await RequestConnectAsync(target.Pid); }
                 catch (Exception ex) { _log.Warn("ProxyDeploy", $"Connect to already-loaded PID {target.Pid} failed: {ex.Message}"); }
             }
             return;
@@ -1334,7 +1335,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
             while (DateTime.UtcNow < deadline)
             {
                 attempt++;
-                try { await RequestConnectAsync(); }
+                try { await RequestConnectAsync(pid); }
                 catch (Exception ex)
                 {
                     _log.Warn("ProxyDeploy", $"Auto-connect after inject attempt {attempt} failed: {ex.Message}");

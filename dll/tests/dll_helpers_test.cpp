@@ -49,6 +49,8 @@
 #include "../src/Lager.h"      // MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY])
 #include "../src/Falsch.h"     // MinHook trampoline pre-flight against Zydis ([MH-TRAMPOLINE-PREFLIGHT])
 #include "../src/Wirbel.h"     // BugItGoRefusal (constexpr, pure) -- [TELEPORT-BUGITGO-PARENTREL]
+#include "../src/Schlacht.h"   // See-through's owners: ClaimOwner / ReleaseOwner (header-inline, pure)
+#include "../src/Kanne.h"      // Watch samples: WatchKey, WatchSlot (header-only, std-only)
 
 #include <Windows.h>
 
@@ -366,6 +368,240 @@ static void Test_Voll_DecideStart() {
     // name, so a client could be handed the wrong game's DLL — worse than waiting.
     EXPECT("unknown holder defers rather than competing",
            Voll::DecideStart(true, 0, self) == SA::DeferAndWatch);
+}
+
+// ----- Voll: a pipe name per game process -------------------------------------
+// [PIPE-PER-PROCESS-2026-11-06] Two games serving one name let a client reach the wrong one; the pid in the name
+// keeps each game's server its own.
+
+static void Test_Voll_PipeNameForPid() {
+    EXPECT("the name is the prefix and the decimal pid",
+           Voll::PipeNameForPid(1234) == std::wstring(L"\\\\.\\pipe\\UE5DumpBfx_1234"));
+    EXPECT("no padding: the UI and the rigs parse plain digits",
+           Voll::PipeNameForPid(7) == std::wstring(L"\\\\.\\pipe\\UE5DumpBfx_7"));
+    EXPECT("the largest pid still fits",
+           Voll::PipeNameForPid(0xFFFFFFFFu) == std::wstring(L"\\\\.\\pipe\\UE5DumpBfx_4294967295"));
+    EXPECT("two processes never share a name", Voll::PipeNameForPid(100) != Voll::PipeNameForPid(101));
+    // The protocol break is the point: a client that still dials the old name must find nothing from a new DLL.
+    EXPECT("no process serves the legacy name",
+           Voll::PipeNameForPid(GetCurrentProcessId()) != std::wstring(L"\\\\.\\pipe\\UE5DumpBfx"));
+    EXPECT("this process's name is its own pid's",
+           Voll::OwnPipeName() == Voll::PipeNameForPid(GetCurrentProcessId()));
+}
+
+static void Test_Voll_ProbeFoundServer() {
+    EXPECT("an open succeeded: a server is there", Voll::ProbeFoundServer(true, 0));
+    // The bug the per-process name would otherwise keep: every instance taken reads as "no pipe", so a second copy
+    // of the DLL in this process started its own server on the same name.
+    EXPECT("ERROR_PIPE_BUSY: a server is there, every instance taken",
+           Voll::ProbeFoundServer(false, ERROR_PIPE_BUSY));
+    EXPECT("ERROR_ACCESS_DENIED: the name exists, the open was refused",
+           Voll::ProbeFoundServer(false, ERROR_ACCESS_DENIED));
+    EXPECT("ERROR_FILE_NOT_FOUND: no server", !Voll::ProbeFoundServer(false, ERROR_FILE_NOT_FOUND));
+    EXPECT("ERROR_PATH_NOT_FOUND: no server", !Voll::ProbeFoundServer(false, ERROR_PATH_NOT_FOUND));
+}
+
+static void Test_Voll_WaitSaysServed() {
+    EXPECT("an instance listens: served", Voll::WaitSaysServed(true, 0));
+    // A watcher that read busy as gone would start a second server beside a busy one: the bug the probe fix closed.
+    EXPECT("every instance busy (ERROR_SEM_TIMEOUT): served", Voll::WaitSaysServed(false, ERROR_SEM_TIMEOUT));
+    EXPECT("ERROR_PIPE_BUSY: served", Voll::WaitSaysServed(false, ERROR_PIPE_BUSY));
+    EXPECT("ERROR_ACCESS_DENIED: the name exists", Voll::WaitSaysServed(false, ERROR_ACCESS_DENIED));
+    EXPECT("ERROR_FILE_NOT_FOUND: gone", !Voll::WaitSaysServed(false, ERROR_FILE_NOT_FOUND));
+    EXPECT("ERROR_PATH_NOT_FOUND: gone", !Voll::WaitSaysServed(false, ERROR_PATH_NOT_FOUND));
+    EXPECT("the watchers wait 1 ms, never 0 (NMPWAIT_USE_DEFAULT_WAIT)", Voll::kWatchWaitMs == 1);
+}
+
+static void Test_Voll_ExtractCmdName() {
+    // [PIPE-PER-PROCESS-2026-11-06] Stage C. Python's json.dumps writes `"cmd": "x"` with a space; the old exact match
+    // for `"cmd":"` never named a rig's command, so the log, Stop's diagnostic and get_diagnostics were blind to it.
+    EXPECT_EQ_STR("compact JSON (the UI)", Voll::ExtractCmdName(R"({"id":1,"cmd":"get_pointers"})").c_str(),
+                  "get_pointers");
+    EXPECT_EQ_STR("a space after the colon (Python's json.dumps)",
+                  Voll::ExtractCmdName(R"({"id": 1, "cmd": "get_pointers"})").c_str(), "get_pointers");
+    EXPECT_EQ_STR("spaces on both sides", Voll::ExtractCmdName(R"({"cmd" :  "walk_instance"})").c_str(),
+                  "walk_instance");
+    EXPECT_EQ_STR("no cmd: empty", Voll::ExtractCmdName(R"({"id":1})").c_str(), "");
+    EXPECT_EQ_STR("a longer key is not cmd", Voll::ExtractCmdName(R"({"cmdx":"no","cmd":"yes"})").c_str(), "yes");
+    EXPECT_EQ_STR("a non-string value: empty", Voll::ExtractCmdName(R"({"cmd":42})").c_str(), "");
+    EXPECT_EQ_STR("only identifier characters are kept", Voll::ExtractCmdName(R"({"cmd":"a\"b"})").c_str(), "a");
+    const std::string longName(200, 'x');
+    EXPECT("a name is cut at 64 characters",
+           Voll::ExtractCmdName("{\"cmd\":\"" + longName + "\"}").size() == Voll::kMaxCmdNameChars);
+}
+
+static void Test_Voll_Holders() {
+    // [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds the pipe's connections, for pipe_clients and the at-capacity
+    // log line a client that cannot connect reads.
+    EXPECT("TruncateUtf8: ASCII under the limit is kept", Voll::TruncateUtf8("game.exe", 64) == "game.exe");
+    EXPECT("TruncateUtf8: ASCII over the limit is cut", Voll::TruncateUtf8(std::string(100, 'a'), 64).size() == 64);
+    const std::string jp = "\xE3\x82\xB2\xE3\x83\xBC\xE3\x83\xA0.exe";   // a 3-byte character first
+    EXPECT("TruncateUtf8 * : a cut never splits a UTF-8 sequence", Voll::TruncateUtf8(jp, 4) == "\xE3\x82\xB2");
+
+    Voll::Holder h;
+    h.seq = 3; h.pid = 1234; h.exe = "python.exe"; h.connectedMs = 5000; h.lastCmd = "get_pointers";
+    h.lastCmdAgeMs = 20; h.inFlight = true; h.phase = "Dispatching"; h.self = true;
+    const nlohmann::json j = Voll::HolderToJson(h);
+    EXPECT("holder: pid", j.value("pid", 0) == 1234);
+    EXPECT("holder: exe", j.value("exe", std::string()) == "python.exe");
+    EXPECT("holder: last command", j.value("last_cmd", std::string()) == "get_pointers");
+    EXPECT("holder: in flight", j.value("in_flight", false));
+    EXPECT("holder: self", j.value("self", false));
+    EXPECT("holder: ages", j.value("connected_ms", 0LL) == 5000 && j.value("last_cmd_age_ms", 0LL) == 20);
+    EXPECT("holder: seq and phase", j.value("seq", 0ULL) == 3 && j.value("phase", std::string()) == "Dispatching");
+
+    Voll::Holder h2 = h;
+    h2.pid = 99; h2.exe = "UE5DumpUI.exe"; h2.self = false; h2.inFlight = false;
+    const std::string two = Voll::HoldersJson({h, h2});
+    const nlohmann::json parsed = nlohmann::json::parse(two, nullptr, false);
+    EXPECT("HoldersJson * : a JSON array of every holder", parsed.is_array() && parsed.size() == 2);
+
+    Voll::Holder bad;
+    bad.exe = "\xFF\xFE.exe";
+    bool threw = false;
+    std::string badText;
+    try { badText = Voll::HoldersJson({bad}); } catch (...) { threw = true; }
+    EXPECT("HoldersJson * : invalid UTF-8 in a name does not throw (the accept thread would end)",
+           !threw && badText.find("\"pid\"") != std::string::npos);
+
+    std::vector<Voll::Holder> six(6);
+    for (auto& x : six) {
+        x.pid = 4294967295u; x.exe = std::string(Voll::kMaxHolderExeBytes, 'x');
+        x.lastCmd = std::string(Voll::kMaxCmdNameChars, 'y'); x.phase = "StoppingWatches";
+        x.connectedMs = 9223372036854775807LL; x.lastCmdAgeMs = 9223372036854775807LL; x.seq = ~0ULL;
+    }
+    const std::string full = Voll::HoldersJson(six);
+    const nlohmann::json fullParsed = nlohmann::json::parse(full, nullptr, false);
+    EXPECT("HoldersJson * : six holders with the longest fields fit one log line",
+           full.size() <= Voll::kHoldersLineBudget && full.find(" more=") == std::string::npos &&
+           fullParsed.is_array() && fullParsed.size() == 6);
+    const std::string cut = Voll::HoldersJson(six, 400);
+    const size_t more = cut.find(" more=");
+    const nlohmann::json cutParsed =
+        nlohmann::json::parse(more == std::string::npos ? cut : cut.substr(0, more), nullptr, false);
+    EXPECT("HoldersJson * : past the budget, holders are dropped and counted",
+           more != std::string::npos && cutParsed.is_array() && cutParsed.size() >= 1 && cutParsed.size() < 6);
+}
+
+static void Test_Voll_ClassifyFirstInstance() {
+    using FI = Voll::FirstInstance;
+    const DWORD self = 4242, other = 77;
+    EXPECT("a fresh name: sole", Voll::ClassifyFirstInstance(0, self, self) == FI::Sole);
+    EXPECT("instances already there, all ours: shared in this process",
+           Voll::ClassifyFirstInstance(ERROR_ALREADY_EXISTS, self, self) == FI::SharedInProcess);
+    // GetNamedPipeServerProcessId on a SERVER handle names the name's first creator (measured 2026-11-10).
+    EXPECT("another process created the name first: foreign",
+           Voll::ClassifyFirstInstance(ERROR_ALREADY_EXISTS, other, self) == FI::ForeignCreator);
+    EXPECT("a foreign creator wins even without ERROR_ALREADY_EXISTS",
+           Voll::ClassifyFirstInstance(0, other, self) == FI::ForeignCreator);
+    EXPECT("creator unknown, name taken: shared, not foreign",
+           Voll::ClassifyFirstInstance(ERROR_ALREADY_EXISTS, 0, self) == FI::SharedInProcess);
+    EXPECT("creator unknown, name fresh: sole", Voll::ClassifyFirstInstance(0, 0, self) == FI::Sole);
+}
+
+// [PIPE-PER-PROCESS-2026-11-06] Stage C: an owner is a client PROCESS.
+static void Test_Voll_ClientOwnerKey() {
+    EXPECT("two lanes of one process are one owner", Voll::ClientOwnerKey(4242, 1) == Voll::ClientOwnerKey(4242, 2));
+    EXPECT("two processes are two owners", Voll::ClientOwnerKey(4242, 1) != Voll::ClientOwnerKey(77, 1));
+    EXPECT("a pid is its own key", Voll::ClientOwnerKey(4242, 9) == 4242u);
+    EXPECT("pid unread: each connection owns alone", Voll::ClientOwnerKey(0, 5) != Voll::ClientOwnerKey(0, 6));
+    EXPECT("pid unread never collides with a pid", Voll::ClientOwnerKey(0, 4242) != Voll::ClientOwnerKey(4242, 1));
+    EXPECT("never names no owner", Voll::ClientOwnerKey(0, 0) != Schlacht::kOwnerNone);
+    EXPECT("never CE", Voll::ClientOwnerKey(0xFFFFFFFFu, 3) != Schlacht::kOwnerCe
+                      && Voll::ClientOwnerKey(0, 3) != Schlacht::kOwnerCe);
+}
+
+// [PIPE-PER-PROCESS-2026-11-06] Stage C: a departing client releases only its own claim on See-through.
+static void Test_Schlacht_Owners() {
+    using R = Schlacht::OwnerRelease;
+    const uint64_t ui = Voll::ClientOwnerKey(4242, 1), rig = Voll::ClientOwnerKey(77, 2), ce = Schlacht::kOwnerCe;
+    {
+        std::vector<uint64_t> o;
+        Schlacht::ClaimOwner(o, ce);
+        Schlacht::ClaimOwner(o, ui);
+        EXPECT("CE and the UI hold it, the UI leaves: CE still holds it",
+               Schlacht::ReleaseOwner(o, ui, false) == R::StillHeld && o.size() == 1 && o[0] == ce);
+    }
+    {
+        std::vector<uint64_t> o;
+        Schlacht::ClaimOwner(o, ui);
+        EXPECT("only the UI holds it, the UI leaves: off", Schlacht::ReleaseOwner(o, ui, false) == R::TurnOff && o.empty());
+    }
+    {
+        std::vector<uint64_t> o;
+        Schlacht::ClaimOwner(o, ce);
+        EXPECT("a client that never claimed leaves: nothing changes (it used to turn CE's off)",
+               Schlacht::ReleaseOwner(o, rig, false) == R::NotHeld && o.size() == 1);
+        std::vector<uint64_t> none;
+        EXPECT("nobody holds it, a client leaves: nothing to do", Schlacht::ReleaseOwner(none, rig, false) == R::NotHeld);
+    }
+    {
+        std::vector<uint64_t> o;
+        Schlacht::ClaimOwner(o, ui);
+        EXPECT("one lane leaves while the other stays: the process keeps its claim",
+               Schlacht::ReleaseOwner(o, ui, true) == R::StillHeld && o.size() == 1);
+        EXPECT("then the last lane leaves: off", Schlacht::ReleaseOwner(o, ui, false) == R::TurnOff && o.empty());
+    }
+    {
+        std::vector<uint64_t> o;
+        Schlacht::ClaimOwner(o, ui);
+        Schlacht::ClaimOwner(o, ui);
+        EXPECT("claiming twice keeps one claim", o.size() == 1);
+        Schlacht::ClaimOwner(o, Schlacht::kOwnerNone);
+        EXPECT("kOwnerNone is never recorded", o.size() == 1);
+    }
+    {
+        std::vector<uint64_t> o;
+        Schlacht::ClaimOwner(o, ui);
+        Schlacht::ClaimOwner(o, rig);
+        EXPECT("two clients hold it, one leaves: the other still holds it",
+               Schlacht::ReleaseOwner(o, rig, false) == R::StillHeld && o.size() == 1 && o[0] == ui);
+    }
+}
+
+// [PIPE-PER-PROCESS-2026-11-06] Stage C: a watch is its connection's, and its thread never touches the pipe.
+static void Test_Kanne_WatchKeyAndSlot() {
+    using Kanne::WatchKey;
+    struct Dummy { int v; };
+    std::unordered_map<WatchKey, Dummy, Kanne::WatchKeyHash> table;
+    table[WatchKey{1, 0x1000}] = Dummy{1};
+    table[WatchKey{2, 0x1000}] = Dummy{2};
+    table[WatchKey{1, 0x2000}] = Dummy{3};
+    EXPECT("two connections watching one address are two watches", table.size() == 3);
+    EXPECT("connection 2's key does not find connection 1's watch",
+           table.find(WatchKey{2, 0x2000}) == table.end() && table.at(WatchKey{1, 0x1000}).v == 1);
+    EXPECT("CountOwned counts one connection's watches", Kanne::CountOwned(table, 1) == 2
+                                                         && Kanne::CountOwned(table, 2) == 1
+                                                         && Kanne::CountOwned(table, 3) == 0);
+
+    Kanne::WatchSlot slot;
+    Kanne::WatchSlot::Sample s;
+    EXPECT("nothing read yet: nothing to send", !slot.TakeLatest(s));
+    const uint8_t a[2] = {1, 2}, b[2] = {3, 4}, c[2] = {5, 6};
+    slot.Publish(a, 2, 100);
+    slot.Publish(b, 2, 200);
+    slot.Publish(c, 2, 300);
+    EXPECT("the handler sends the latest read", slot.TakeLatest(s) && s.bytes.size() == 2 && s.bytes[0] == 5
+                                                && s.timestampMs == 300);
+    EXPECT("...and says how many reads it stands for", s.samples == 3);
+    EXPECT("...once", !slot.TakeLatest(s));
+
+    Kanne::WatchSlot quick;
+    const auto t0 = std::chrono::steady_clock::now();
+    EXPECT("an interval wait not stopped says read again", quick.WaitInterval(std::chrono::milliseconds(30)));
+    EXPECT("...after the interval", std::chrono::steady_clock::now() - t0 >= std::chrono::milliseconds(25));
+
+    // A stop wakes a thread waiting out a ten-minute interval: its join takes as long as the wake, not the interval.
+    Kanne::WatchSlot longSlot;
+    bool readAgain = true;
+    std::thread waiter([&] { readAgain = longSlot.WaitInterval(std::chrono::milliseconds(600000)); });
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    const auto t1 = std::chrono::steady_clock::now();
+    longSlot.RequestStop();
+    waiter.join();
+    const auto joinedIn = std::chrono::steady_clock::now() - t1;
+    EXPECT("a stop wakes a ten-minute interval at once", joinedIn < std::chrono::milliseconds(500));
+    EXPECT("...and the woken thread stops reading", !readAgain);
 }
 
 static void Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway() {
@@ -1532,7 +1768,8 @@ static void Test_Mimic_CommandRequiresInit() {
 // Getting it wrong in the permissive direction publishes a TRUNCATED JSON document
 // over the only copy, and LoadHints then returns empty for every game at once —
 // pattern IDs, ueVersion, the user's version override and the invoke timeout.
-// Nothing compiles Flamme.cpp, so this predicate is the only assertable part.
+// dll_core_test compiles Flamme.cpp (the locked read-modify-write is tested there); this
+// predicate is pure, so it is pinned here as well.
 static void Test_Flamme_AtomicPublishGate() {
     using Flamme::ShouldPublishAtomicWrite;
 
@@ -2829,11 +3066,12 @@ static void Test_ValueScan_SessionLifecycle() {
     instances[0].instanceAddr = 0x4000;
     instances[0].instanceName = "Actor_0";
 
-    uint64_t sid = mgr.Begin(DataType::Int32, std::move(seed),
+    const uint64_t owner = 0xA0;   // this test's connection
+    uint64_t sid = mgr.Begin(owner, DataType::Int32, std::move(seed),
                              std::move(descriptors), std::move(instances));
     EXPECT("Begin returns non-zero session id", sid != 0);
 
-    bool viewed = mgr.ViewWith(sid, [&](const Session& sess) {
+    bool viewed = mgr.ViewWith(owner, sid, [&](const Session& sess) {
         EXPECT("ViewWith sees correct dataType", sess.dt == DataType::Int32);
         EXPECT("ViewWith sees 2 candidates",     sess.candidates.size() == 2);
         EXPECT("ViewWith preserves descriptor pool", sess.descriptors.size() == 1);
@@ -2844,24 +3082,24 @@ static void Test_ValueScan_SessionLifecycle() {
     EXPECT("ViewWith returns true for live session", viewed);
 
     // RefineWith may mutate the candidates vector.
-    bool refined = mgr.RefineWith(sid, [](Session& sess) {
+    bool refined = mgr.RefineWith(owner, sid, [](Session& sess) {
         sess.candidates.pop_back();  // drop one
     });
     EXPECT("RefineWith returns true for live session", refined);
 
     size_t remaining = 0;
-    mgr.ViewWith(sid, [&](const Session& sess) {
+    mgr.ViewWith(owner, sid, [&](const Session& sess) {
         remaining = sess.candidates.size();
     });
     EXPECT("Refine pruned candidate count", remaining == 1);
 
-    EXPECT("End returns true on first call",  mgr.End(sid));
-    EXPECT("End returns false on second call",!mgr.End(sid));
+    EXPECT("End returns true on first call",  mgr.End(owner, sid));
+    EXPECT("End returns false on second call",!mgr.End(owner, sid));
 
     // Lookups on a missing session id return false WITHOUT invoking
     // the callback -- caller maps to wire error "session_not_found".
     bool callbackRan = false;
-    bool missingOk = mgr.RefineWith(sid, [&](Session&) {
+    bool missingOk = mgr.RefineWith(owner, sid, [&](Session&) {
         callbackRan = true;
     });
     EXPECT("RefineWith on missing returns false", !missingOk);
@@ -3765,23 +4003,108 @@ static void Test_Radar_GroupSessionCarriesPerSlotCap() {
     pool[0].slotMatches.resize(2);
     for (auto& sl : pool[0].slotMatches) sl.resize(1);
 
-    uint64_t hitId = mgr.Begin({}, pool, {}, {}, /*perSlotCapHit=*/true, /*perSlotCap=*/256);
+    const uint64_t owner = 0xA1;   // this test's connection
+    uint64_t hitId = mgr.Begin(owner, {}, pool, {}, {}, /*perSlotCapHit=*/true, /*perSlotCap=*/256);
     bool sawHit = false; int sawCap = -1;
     EXPECT("session: the capped session is retrievable",
-           mgr.WithSession(hitId, [&](const GroupSession& s) {
+           mgr.WithSession(owner, hitId, [&](const GroupSession& s) {
                sawHit = s.perSlotCapHit; sawCap = s.perSlotCap;
            }));
     EXPECT("session: a Begin-time cap hit survives into the session", sawHit);
     EXPECT("session: and so does the EFFECTIVE cap the DLL clamped to", sawCap == 256);
 
     // Control: an uncapped scan must not report one, or every session would warn.
-    uint64_t cleanId = mgr.Begin({}, pool, {}, {}, /*perSlotCapHit=*/false, /*perSlotCap=*/256);
+    uint64_t cleanId = mgr.Begin(owner, {}, pool, {}, {}, /*perSlotCapHit=*/false, /*perSlotCap=*/256);
     bool cleanHit = true;
-    mgr.WithSession(cleanId, [&](const GroupSession& s) { cleanHit = s.perSlotCapHit; });
+    mgr.WithSession(owner, cleanId, [&](const GroupSession& s) { cleanHit = s.perSlotCapHit; });
     EXPECT("session: an uncapped scan reports no truncation", !cleanHit);
 
-    mgr.End(hitId);
-    mgr.End(cleanId);
+    mgr.End(owner, hitId);
+    mgr.End(owner, cleanId);
+}
+
+// [PIPE-PER-PROCESS-2026-11-06] Stage C: a scan session is the connection's that began it.
+static void Test_Radar_SessionsAreTheirConnections() {
+    using namespace Radar;
+    const uint64_t A = 0xA101, B = 0xA102;   // two connections, unique to this test
+    {
+        auto& mgr = SessionManager::Instance();
+        const uint64_t sid = mgr.Begin(A, DataType::Int32, std::vector<Candidate>(2), {}, {});
+        bool called = false;
+        EXPECT("value: another connection cannot view it",
+               !mgr.ViewWith(B, sid, [&](const Session&) { called = true; }) && !called);
+        EXPECT("value: ...nor refine it", !mgr.RefineWith(B, sid, [&](Session&) { called = true; }) && !called);
+        EXPECT("value: ...nor query it",
+               !mgr.QueryWith(B, sid, "", SortKey::ScanOrder, false, {},
+                              [&](const Session&, const std::vector<uint32_t>&) { called = true; }) && !called);
+        EXPECT("value: ...nor end it", !mgr.End(B, sid));
+        EXPECT("value: its owner still can", mgr.ViewWith(A, sid, [](const Session&) {}));
+        const uint64_t sidB = mgr.Begin(B, DataType::Int32, std::vector<Candidate>(1), {}, {});
+        EXPECT("value: DropOwner drops the owner's sessions and says how many", mgr.DropOwner(A) == 1);
+        EXPECT("value: ...and only the owner's",
+               !mgr.ViewWith(A, sid, [](const Session&) {}) && mgr.ViewWith(B, sidB, [](const Session&) {}));
+        mgr.DropOwner(B);
+
+        std::vector<uint64_t> ids;
+        for (size_t i = 0; i <= kMaxSessionsPerOwner; ++i)
+            ids.push_back(mgr.Begin(A, DataType::Int32, std::vector<Candidate>(1), {}, {}));
+        const uint64_t other = mgr.Begin(B, DataType::Int32, std::vector<Candidate>(1), {}, {});
+        EXPECT("value: one Begin past the cap drops the owner's least recently used",
+               !mgr.ViewWith(A, ids.front(), [](const Session&) {}) && mgr.ViewWith(A, ids.back(), [](const Session&) {}));
+        EXPECT("value: ...leaving the cap", mgr.DropOwner(A) == kMaxSessionsPerOwner);
+        EXPECT("value: ...and another owner's untouched", mgr.ViewWith(B, other, [](const Session&) {}));
+        mgr.DropOwner(B);
+    }
+    {
+        auto& mgr = GroupSessionManager::Instance();
+        const uint64_t sid = mgr.Begin(A, {}, std::vector<GroupCandidate>(1), {}, {}, false, 256);
+        bool called = false;
+        EXPECT("group: another connection cannot read it",
+               !mgr.WithSession(B, sid, [&](const GroupSession&) { called = true; }) && !called);
+        EXPECT("group: ...nor refine it", !mgr.RefineWith(B, sid, [&](GroupSession&) { called = true; }) && !called);
+        EXPECT("group: ...nor query it",
+               !mgr.QueryWith(B, sid, "", SortKey::ScanOrder, false, {},
+                              [&](const GroupSession&, const std::vector<uint32_t>&) { called = true; }) && !called);
+        EXPECT("group: ...nor end it", !mgr.End(B, sid));
+        EXPECT("group: its owner still can", mgr.WithSession(A, sid, [](const GroupSession&) {}));
+        EXPECT("group: DropOwner drops the owner's sessions", mgr.DropOwner(A) == 1);
+        EXPECT("group: ...so its id is gone", !mgr.WithSession(A, sid, [](const GroupSession&) {}));
+    }
+}
+
+// [PIPE-PER-PROCESS-2026-11-06] Stage C: the idle sweep reaps only the sweeping owner's sessions -- with the clock passed
+// in, the case AB17 called untestable.
+static void Test_Radar_IdleSweepIsPerOwner() {
+    using namespace Radar;
+    using clock = std::chrono::steady_clock;
+    const uint64_t A = 0xA201, B = 0xA202;
+    const clock::time_point t0 = clock::now();
+    const auto expiry = std::chrono::duration_cast<clock::duration>(kScanSessionIdleExpiry);
+    const auto later = t0 + expiry + std::chrono::seconds(1);
+    std::unordered_map<uint64_t, std::unique_ptr<Session>> m;
+    auto add = [&](uint64_t id, uint64_t owner, clock::time_point used) {
+        auto s = std::make_unique<Session>();
+        s->id = id; s->owner = owner; s->lastUse = used;
+        m.emplace(id, std::move(s));
+    };
+    add(1, A, t0);       // A's, idle
+    add(2, B, t0);       // B's, idle
+    add(3, A, later);    // A's, just used (the refined one)
+    EXPECT("another owner's activity reaps only its own idle session", ReapIdleOwned(m, B, later, expiry) == 1);
+    EXPECT("...so A's idle session survives B's sweep (A is still connected)", m.count(1) == 1 && m.count(2) == 0);
+    EXPECT("A's own activity reaps A's idle session", ReapIdleOwned(m, A, later, expiry) == 1 && m.count(1) == 0);
+    EXPECT("...and never the one just used", m.count(3) == 1);
+
+    std::unordered_map<uint64_t, std::unique_ptr<GroupSession>> g;
+    for (uint64_t id = 10; id < 14; ++id) {
+        auto s = std::make_unique<GroupSession>();
+        s->id = id; s->owner = (id == 13) ? B : A; s->lastUse = t0;   // 10..12 A's, tied on time; 13 B's
+        g.emplace(id, std::move(s));
+    }
+    EXPECT("the cap makes room by dropping the owner's oldest (lower id on a tie)",
+           EvictOwnedBeyond(g, A, 3) == 1 && g.count(10) == 0 && g.count(11) == 1 && g.count(12) == 1);
+    EXPECT("...and never another owner's", g.count(13) == 1);
+    EXPECT("under the cap nothing goes", EvictOwnedBeyond(g, A, 3) == 0);
 }
 
 // The grid must order by the leaf the ROW SHOWS — audit #5 AB6.
@@ -12109,6 +12432,17 @@ int main() {
     // [RELAUNCHPIPE-2026-08-19] a held pipe must be watched, not surrendered
     RUN(Test_Voll_DecideStart);
     RUN(Test_Voll_DecideStart_SelfPidIsNotSpecialCasedAway);
+    RUN(Test_Voll_PipeNameForPid);
+    RUN(Test_Voll_ProbeFoundServer);
+    RUN(Test_Voll_WaitSaysServed);
+    RUN(Test_Voll_ExtractCmdName);
+    RUN(Test_Voll_Holders);
+    RUN(Test_Voll_ClassifyFirstInstance);
+    RUN(Test_Voll_ClientOwnerKey);
+    RUN(Test_Schlacht_Owners);
+    RUN(Test_Radar_SessionsAreTheirConnections);
+    RUN(Test_Radar_IdleSweepIsPerOwner);
+    RUN(Test_Kanne_WatchKeyAndSlot);
 
     // [MH-PRERESERVE-PROXY] MinHook's trampoline-block search, modelled for the MH_ERROR_MEMORY_ALLOC diagnostic
     RUN(Test_Lager_SearchWindowMirrorsGetMemoryBlock);

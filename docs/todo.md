@@ -4,7 +4,10 @@ Open work only. **Read this when deciding what to do next.**
 
 > 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
 >
-> ▶ **Current programme:** none active (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
+> ▶ **Current programme:** `[PIPE-PER-PROCESS-2026-11-06]`, one stage at a time (2026-11-10): Stage A shipped in build
+> 3695, Stage B (6 pipe slots + the scan-worker budget) in build 3696, Stage C (hardening for a long-lived client) in
+> build 3698; Stage D (MCP) waits for the maintainer's go-ahead. Before it, none active
+> (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
 > active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
 > open bugs one after another) ended with build 3686 (dev-log 3671–3686). Census Table A holds 0 HIGH / 0 MED and five
@@ -85,7 +88,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **12 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **13 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -400,9 +403,184 @@ Open work only. **Read this when deciding what to do next.**
 HIT" wording for a crashed worker · Detect Player Stats has no cancel (July L18) · `peHash` with `TimeDateStamp` 0 ·
 the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVEFUNCS-STEP3 B1/E1/P1/O1.
 
+## 🧭 Maintainer request 2026-11-06 — a pipe per game process, then more pipe slots, then multi-client hardening `[PIPE-PER-PROCESS-2026-11-06]`
+
+**Status: Stage A shipped in build 3695, Stage B in build 3696 (2026-11-10; dev-log). Stages C and D are design
+direction only, not started** (maintainer, 2026-11-06: one stage at a time, A and B as separate builds). What the
+live checks did not reach is verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`. It comes before
+`[UI-MCP-AUTOMATION-2026-11-06]`, which depends on it. Evidence: a read-only review on 2026-11-06 (three
+readers plus an adversarial verifier). Windows' named-pipe rules were measured with ctypes on 10.0.26300; the scratch
+is `out/pipecap/`, not committed.
+
+**Why.** Every injected game serves the same `\\.\pipe\UE5DumpBfx` (multipipe-eval.md, "the wrong-game hazard").
+
+- Measured: a client lands on the OLDEST listening instance, across processes. With two servers on the name, even the
+  UI's own two lanes can reach different games. A scan can then start in one game while its progress and pointers
+  are read from another; `invoke_function` rides the bulk lane, so actions can hit the wrong game too.
+- Two servers appear when the pipe is full and a second DLL starts. Its startup probes (Frieren's and Heiter's) read
+  `ERROR_PIPE_BUSY` (231) as "no pipe", and it starts its own server.
+
+**Correction** (also in dev-log): `[PIPEBUSY-2026-08-18]` is NOT a reason for the 3-client cap. It recorded a logging
+bug: a full pipe logged an ERROR once a second. That was fixed 2026-08-19 by Voll. The 3 is only "2 UI lanes + 1
+spare" (Fern.h), and no gate or test pins it.
+
+### Stage A — a pipe name per game process ✅ build 3695
+
+Built as planned below, with these differences, found while building it:
+
+- **A connect by pid is dialled even when another game serves the legacy pipe.** That pipe may be another game's.
+  Only when the named game's own pipe never comes does the error name the legacy pipe as the likely reason. The
+  no-pid Connect still refuses the legacy pipe alone, with the message and no list.
+- **Connecting to another game while connected switches to it** (disconnect first).
+- **The self-check after Fern's first create:** `GetNamedPipeServerProcessId` on a SERVER handle names the
+  name's first creator, and a successful create reports `ERROR_ALREADY_EXISTS` on a taken name (measured
+  2026-11-10). Another process that created the name first gets no server beside it. Instances already in this
+  process are served, with a WARN.
+- **The deferring watchers ask with `WaitNamedPipeW`**, which does not connect: opening the pipe to ask connected to
+  the serving copy twice a second. A restart with this copy's own straggler connections is not deferred.
+- **The competing-dumper-host banner was retired**: its premise, the shared name, is gone.
+- **CE: no change in behaviour.** Only the text naming the pipe, and the INIT_FAILED reasons, changed.
+
+The plan as written:
+
+- **Name:** `UE5DumpBfx_<pid>`. The new DLL serves no legacy name. The new UI does not serve the old: a protocol break
+  by decision.
+- **UI Connect** lists `\\.\pipe\` for `UE5DumpBfx_*`, and also looks for the legacy `UE5DumpBfx`:
+  - exactly one new-format pipe: connect at once (today's behaviour);
+  - several, or new and legacy together: a connection list showing each game's EXE image name and, when it can be
+    read, its main window title. A legacy entry is shown with a warning and cannot be connected to;
+  - **only the legacy pipe:** no list and no connect. Show a refusal with an explanation: the game runs an old
+    UE5Dumper DLL (typically a proxy that was never refreshed), so refresh the proxy or re-inject. Not shown inside the
+    list, and the list is not opened just to show it;
+  - a game injected from the UI: connect to that pid directly;
+  - after connecting, `get_pointers`' pid confirms the target.
+- **Tools** (`tools/verify`, `pipe_client.py` and its users):
+  - one pipe: use it;
+  - several: use the first, print them all, and warn;
+  - `--pid` chooses one. A rig that deliberately drives two games (DumperTest beside DumperTest58) takes two.
+- **No stale entries (measured 2026-11-06).** A named pipe leaves `\\.\pipe\` the moment its server process dies,
+  a killed one included, even while a client still holds its handle. A listed `UE5DumpBfx_<pid>` is always a live
+  server, so a reused pid cannot mislead the list.
+- **A second copy in the same process** (a stale proxy plus a fresh injection) has the same pid, so the same name.
+  - The startup probes must read 231 as "a server exists".
+  - Add a self-check after Fern's first create: `GetNamedPipeServerProcessId` on its own handle must be this process.
+  - Not `FILE_FLAG_FIRST_PIPE_INSTANCE`: it refuses a legitimate restart while the server's own straggler instances
+    still live.
+- **Where the name is hard-coded:**
+  - `Grimoire::PIPE_NAME`;
+  - the UI's `Constants.PipeName` / `PipeClient`;
+  - `tools/verify/pipe_client.py`, which every rig imports;
+  - the `PIPE_REJECT_REMOTE_CLIENTS` pin;
+  - the docs, about 40 files that mention the name.
+
+  AOBMaker has none. Size M–L.
+- **CE: no change.** The Mimic mailbox is an exported variable inside the game process (`g_invokeMailbox`), so it is
+  already per process.
+
+### Stage B — more slots: `kMaxPipeInstances` 3 → 6 ✅ build 3696
+
+Built as planned below (dev-log 3696). How it came out:
+
+- **The worker budget** (`Aura::WorkerBudget`) holds what one walk alone spawns beyond its own thread
+  (`ScanThreadCount() - 1`). A walk takes what is free when it starts and never waits; a walk that finds it spent runs
+  on its own thread. A lease does not grow when another walk returns its workers (the chunks are fixed at the start),
+  and a walk starved that way can reach its deadline sooner: the review weighed it and kept it, since a cut walk still
+  reports `deadline_hit`. Measured on DumperTest, 3 clients x 160 walks: +16 threads and 1.4 s, against +48 and 8.7 s
+  on build 3695.
+- **The limit in force is read from the handle** (`GetNamedPipeInfo`): a name an older copy created keeps its lower
+  limit (measured 2026-11-10), and the log says which.
+- **"Clients handle 231":** the UI lists again when a connect times out, and says either that every connection is
+  taken (or the game is not responding) or that the pipe is gone. `pipe_client.py` asks `WaitNamedPipeW`, because
+  Python's `open()` reports a full pipe as EINVAL.
+
+The plan as written:
+
+- **Why 6:** the UI's 2 lanes, a rig, MCP, and 2 more for a two-lane UI reconnect whose old instances are still
+  unwinding. Each instance is closed by its own thread after its command returns.
+  - The listener is itself an instance, so n is the maximum number of simultaneous clients.
+  - Windows accepts 1..254 (measured).
+  - One instance costs a thread and 2 × 64 KB of buffers.
+- **No data race blocks it.** multipipe-eval.md §4's class-cache race is gone. Aura's `s_classContainerCache` /
+  `s_classRefCache` take their mutex on every access and are never erased. `Ubel::WalkClassEx` publishes with
+  `try_emplace`.
+- **Must land with it: a process-wide scan-worker budget** in Aura's `ParallelGObjectsScan`.
+  - Each heavy scan spawns min(16, cores − 2) workers, with no limit across connections: 16 on a 32-core PC. k heavy
+    scans at once therefore put 16k threads in the game.
+  - multipipe-eval §8.2's "cores − 2 headroom" holds for one scan only.
+  - The maintainer chose the budget over a one-heavy-command gate. It needs no DLL-side list of heavy commands, which
+    exists only as the UI's `BulkCommands` and would drift.
+- **Also with it:**
+  - a `static_assert` keeping the cap in 1..254, and the effective cap in the log (`GetNamedPipeInfo`);
+  - `pipebusy_capacity.py` derives n instead of `range(3)`;
+  - clients handle 231, because a game with an older proxy keeps cap 3 until refreshed.
+- **Retire** handover §4's "never run `pipe_client.py` while the UI is connected" here.
+
+### Stage C — before any long-lived client (MCP), at any n ✅ build 3698
+
+Built (dev-log 3698), with the maintainer's choices of 2026-11-10: a walk's threads follow the CPU (performance
+cores less 2); no client is disconnected for idling, but who holds the pipe can be seen; the watch thread does no pipe
+I/O; a second `trigger_scan` / `rescan` is answered "in progress", not an error. How it came out:
+
+- **Threads per walk** (`Aura::ThreadsForCpu`): the physical cores of the highest efficiency class less 2, in 1..16
+  and under logical processors less 2 (2-way SMT assumed without a topology). This 16C32T PC: 16 before, 14 now.
+- **Who holds the pipe:** `pipe_clients` (106 commands), and the holders on the at-capacity log line, which the UI's
+  full-pipe message and `pipe_client.py`'s error read.
+- **Owner-scoped teardown:** an owner is a client PROCESS (the UI's two lanes are one) or CE's record. See-through
+  goes off with the last claim, the LiveFuncs recording with the process that started it; an explicit OFF still
+  turns it off for everyone. Only caches and diagnostics wait for the last client. Stop's drain waits for teardowns.
+- **Scan sessions per connection** (another connection's id names nothing; owner-scoped idle sweep; 8 per kind per
+  connection; dropped on disconnect).
+- **Watches per connection; the watch thread does no pipe I/O** (`Kanne.h`): the handler sends the latest sample
+  after each command, with `samples`. A stop is one wake: a 10-minute watch unwatches in about 1 ms (measured).
+- **`trigger_scan` / `rescan`** run as one `Routine::SingleFlightJob` each: a claim nobody can share, a cancel token
+  of their own (another client's death no longer cancels them; Stop does), `in_progress` for a second asker.
+- **Flamme** changes its cache under a named lock in one read-modify-write; `persisted` reports the write.
+- **The adversarial review** (5 lenses, every finding refuted or confirmed by a second agent): 23 LOW confirmed, all
+  fixed, among them an exception-safe teardown count, one-snapshot status replies and a watch slot taken before its
+  thread.
+
+The plan as written:
+
+An MCP client in a spare slot (one of 6 since Stage B) triggers every item:
+
+- **Teardown on the last disconnect** (Fern's `last` block: `Radar` DropAll, `Linie::Reset`, see-through off, the name
+  cache) runs unlocked while new clients are being accepted. It also ends what other owners turned on: **closing the
+  UI turns off see-through that CE switched on** (Mimic `CMD_SEETHROUGH`), a bug today. Make teardown owner-scoped,
+  with CE counted as an owner.
+- **Radar sessions** have global ids and no owner, and a second client's activity defeats their idle expiry. Own them
+  per connection and drop them when that connection leaves.
+- **`watch`** is keyed by address across all connections, so one client can stop another's watch. Replacing a watch
+  has a narrow use-after-free window: `StopWatch` unlocks, then the slot is re-locked and assigned. Key watches per
+  connection, replace under one lock, and bound the watch joins: a client that stops reading wedges them today.
+- `trigger_scan` / `rescan`: check-then-set becomes a compare-and-swap, and `completed` becomes atomic.
+- `RunScan` / `RunRescan`: an owning cancel token.
+- **Idle and squatting:** a hung client holds its slot forever, and any local process can fill every slot (Everyone
+  may read the pipe, and any open takes an instance). This needs a policy before a slot count is relied on.
+- **Small:** Flamme rewrites its per-game JSON unlocked, so it needs one mutex.
+
+### Stage D — MCP
+
+See `[UI-MCP-AUTOMATION-2026-11-06]`. Its route is decided when it is planned. The review leans to the UI as the broker
+for anything that writes or toggles, with a direct read-only client acceptable after Stage C.
+
+### Decisions (maintainer, 2026-11-06)
+
+- Order A → B → C → D, and A and B ship as separate builds.
+- n = 6.
+- The worker budget, not a one-heavy-command gate.
+- Name `UE5DumpBfx_<pid>`; the new DLL serves no legacy name.
+- The UI behaviour above, the legacy-only refusal included.
+- Tools take the first pipe and offer `--pid`.
+- CE untouched.
+
+**Stale code comments: rewritten in build 3695.** Fern.h's cap comment, `LaneRoutingPipeClient.cs`'s "must be bulk
+because the class caches race", the `firstConn` remarks in Tot / Frieren / Genau / Mimic, and Fern.cpp's note that
+Aura's workers read the global cancel flag.
+
 ## 🧭 Idea 2026-11-06 — let an AI or a script drive the UI through a named pipe + MCP `[UI-MCP-AUTOMATION-2026-11-06]`
 
-**Status: an idea, not scheduled (maintainer: "先記進 todo，之後再說").** Nothing is built.
+**Status: an idea, not scheduled (maintainer: "先記進 todo，之後再說").** Nothing is built. It comes after
+`[PIPE-PER-PROCESS-2026-11-06]`, which it depends on (maintainer, 2026-11-06).
 
 **The maintainer's sketch.** Reverse-engineering and automation features should be reachable without clicking. The
 DLL stays simple.
@@ -431,12 +609,13 @@ DLL stays simple.
   server would face the same choice.
 - **SSH:** the wrapper runs on the target machine and talks to the local pipe, so the pipe never faces the network.
   Needs Windows OpenSSH Server. An elevated game with a non-elevated UI is a combination to measure.
-- **⚠ Pipe slots — decide before P0.** `Fern::kMaxPipeInstances` is 3. Fern.h calls it "2 UI lanes + 1 slack for
-  reconnect transients", but in practice the third slot is what `tools/verify/*.py` rigs take during development (the
-  maintainer). With the UI connected and a rig running, nothing is left, so an MCP client on the DLL pipe would need:
-  - a higher cap (see the Voll capacity-logging policy and `[PIPEBUSY-2026-08-18]` for what the cap protects); or
-  - to go through the UI as a broker. That also keeps the UI's views in step with what the AI changes; a direct
-    client writes memory the UI does not know about.
+- **Pipe slots: settled by `[PIPE-PER-PROCESS-2026-11-06]` Stage B (build 3696): 6 clients.** It was 3, and in
+  practice the third was what `tools/verify/*.py` rigs took during development (the maintainer), so with the UI
+  connected and a rig running nothing was left for MCP. Stage C still hardens the pipe for a long-lived client.
+  - *Corrected 2026-11-06:* this bullet first cited `[PIPEBUSY-2026-08-18]` for "what the cap protects". That was
+    wrong: the tag is a fixed logging bug, not a reason for 3.
+  - Routing MCP through the UI as a broker remains an option. It keeps the UI's views in step with what the AI
+    changes; a direct client writes memory the UI does not know about.
 
 ## 🧭 Maintainer request 2026-11-06 — guard MinHook's trampoline build, then bump minhook `[MH-TRAMPOLINE-PREFLIGHT]`
 

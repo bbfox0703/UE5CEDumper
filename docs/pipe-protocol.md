@@ -1,9 +1,10 @@
 # Pipe Protocol — JSON IPC Specification
 
-Named pipe: `\\.\pipe\UE5DumpBfx`
+Named pipe: `\\.\pipe\UE5DumpBfx_<pid>`, one per game process (the pid is the game's, in decimal). The fixed `\\.\pipe\UE5DumpBfx` of older builds is no longer served, and the UI refuses it ([PIPE-PER-PROCESS-2026-11-06]).
 Format: JSON, newline-delimited (one message per `\n`)
-Direction: bidirectional — Request/Response + async push Events
-Total commands: **105** — a DERIVED number, regenerate it, never hand-edit:
+Direction: bidirectional — Request/Response + push Events (a watch's events go out with the watching connection's
+next reply since [PIPE-PER-PROCESS-2026-11-06] Stage C; see Push Events)
+Total commands: **106** — a DERIVED number, regenerate it, never hand-edit:
 `grep -c 'constexpr const char\* CMD' dll/src/Renge.h`. (It read 31 from build ~547 until
 2026-08-05, i.e. it was wrong by a factor of three for most of this project's life.)
 
@@ -143,12 +144,17 @@ Total commands: **105** — a DERIVED number, regenerate it, never hand-edit:
 // Write raw memory
 { "id": 15, "cmd": "write_mem", "addr": "7FF123456789", "bytes": "3F800000" }
 
-// Subscribe to address for periodic push (Live Watch)
+// Subscribe to address for periodic push (Live Watch). Reply data: { "interval_ms": N } (the interval in force,
+// floor 50). Errors: at most 32 watches per connection and 64 in all.
 { "id": 16, "cmd": "watch", "addr": "7FF123456789", "size": 4, "interval_ms": 500 }
 
-// Unsubscribe
+// Unsubscribe. Reply data: { "stopped": bool } -- false when THIS connection watches nothing there.
 { "id": 17, "cmd": "unwatch", "addr": "7FF123456789" }
 ```
+
+A watch is the **connection's that asked** ([PIPE-PER-PROCESS-2026-11-06] Stage C): two connections watching one
+address each get their own, another connection's `unwatch` cannot stop it, and a connection's watches end when it
+disconnects. A second `watch` of the same address on the same connection replaces the first (new size and interval).
 
 ### Search & Enumeration
 
@@ -224,6 +230,18 @@ Total commands: **105** — a DERIVED number, regenerate it, never hand-edit:
 { "id": 28, "cmd": "scan_status" }
 ```
 
+`trigger_scan` and `rescan` each start **one background job at a time** ([PIPE-PER-PROCESS-2026-11-06] Stage C):
+- The reply carries `started`. When another client's job is already running, it is `ok` with `"started": false,
+  "in_progress": true` (and `rescan` echoes what that job looks for in `scanning_gobjects` / `scanning_gworld`) --
+  not an error: the job's result is the process's, and `scan_status` / `rescan_status` report it to every client.
+- The job keeps running when the client that started it disconnects, and another client's death no longer cancels
+  it; only Stop / shutdown does.
+- `scan_status` sets `scanned: true` only when the scan initialized the engine; a scan Stop cancelled is not scanned.
+- `rescan` refuses while a scan or an init is still running, since what it looks for is decided from the pointers that
+  scan has not finished publishing.
+- `rescan_status` adds `cancelled` (additive) once the run is over: true when Stop cut the sweep short, so its
+  "not found" is unknown rather than a result.
+
 ### CE Export
 
 ```jsonc
@@ -275,6 +293,8 @@ builds' mailbox CMD_SET_DEBUG_CAMERA published the same thing as `INV_OUT_NONSTA
 ### Value Search (build 738 + Phase 2 build 757)
 
 CE-style First Scan / Next Scan workflow over UPROPERTY fields. Three commands form a session: `begin_value_scan` opens, `refine_value_scan` narrows, `end_value_scan` closes. Sessions auto-expire after 5 min idle.
+
+A session is the **connection's that began it** ([PIPE-PER-PROCESS-2026-11-06] Stage C, value and group scans alike): to any other connection its `session_id` names nothing, and every command on it answers `session_not_found`. The 5-minute idle sweep runs on that connection's own activity and reaps only its sessions; the connection's disconnect drops them; and a connection keeps at most 8 sessions of each kind, a Begin past that dropping its least recently used. Keep a session's commands on one connection (the UI keeps them all on its bulk lane).
 
 ```jsonc
 // First Scan — open a new session, return enriched candidates.
@@ -665,7 +685,7 @@ the three `pe_trace_*` commands read it afterwards. The plan and its decisions: 
 { "id": 75, "cmd": "pe_trace_names", "kind": "objs", "gen": 3, "offset": 0, "limit": 2000 }
 
 // Release the ring now (the UI has read it, or turned the experimental features off over it) instead of at the next
-// Start or when the last client leaves. gen
+// Start or when the client process that started the recording leaves (Stage C). gen
 // (optional): free only that recording, and only once it has stopped, so a reader never frees a newer recording.
 // Reply: released (bool).
 { "id": 76, "cmd": "pe_trace_release", "gen": 3 }
@@ -2085,6 +2105,35 @@ calls** whenever the batch fails *or* returns the wrong number of rows — a sho
 otherwise mis-pair results with addresses, which in a CE export is a wrong pointer chain that looks
 perfectly valid.
 
+### pipe_clients
+
+Who holds this game's pipe connections ([PIPE-PER-PROCESS-2026-11-06] Stage C). The maintainer's policy: no client is
+disconnected for idling, but who holds the connections can be seen. Read-only, answers before a scan.
+
+```jsonc
+{ "id": 1, "cmd": "pipe_clients" }
+// → { "pipe": "\\\\.\\pipe\\UE5DumpBfx_668", "cap_in_force": 6, "build_cap": 6,
+//     "clients": [ { "seq": 3, "pid": 4321, "exe": "python.exe", "connected_ms": 5000,
+//                    "last_cmd": "get_pointers", "last_cmd_age_ms": 20, "in_flight": true,
+//                    "phase": "Dispatching", "self": true }, ... ] }
+```
+
+`cap_in_force` is the limit the pipe really has (a name an older copy of the DLL created keeps that copy's limit);
+`build_cap` is this build's. `last_cmd` is empty and `last_cmd_age_ms` is -1 before a client's first command.
+`phase` is one of `Reading`, `Dispatching`, `Writing`, `StoppingWatches`, `Unregistering`, `Done`.
+
+**When every connection is taken**, no client can connect to ask, so the DLL writes the same list on its at-capacity
+line in its pipe log, `%LOCALAPPDATA%\UE5CEDumper\Logs\<game>\pipe-0.log`:
+
+```
+PipeServer: all 6 pipe instances in use, waiting for a free slot -- \\.\pipe\UE5DumpBfx_668 holders=[{...},...] more=2
+```
+
+`more=N` counts the holders that did not fit one log line. The next `a pipe slot freed, resuming accept --
+\\.\pipe\UE5DumpBfx_668` line supersedes it. The UI's Connect and `tools/verify/pipe_client.py` read it when a
+connect finds every connection taken; the words are Grimoire.h's `PIPE_AT_CAPACITY_TEXT` / `PIPE_HOLDERS_TOKEN` /
+`PIPE_HOLDERS_MORE_TOKEN` / `PIPE_SLOT_FREED_TEXT`.
+
 ### get_diagnostics / reset_diagnostics
 
 Self-health telemetry (`Sense`). Read-only and safe to poll. Exists to answer the
@@ -2146,14 +2195,22 @@ Activity card (that one shows *what* crossed the pipe; this shows what it *cost*
 ## Push Events (DLL → UI, no id)
 
 ```jsonc
-// Live watch periodic push (triggered by "watch" command)
+// Live watch push (triggered by "watch" command)
 {
   "event":     "watch",
   "addr":      "7FF123456789",
   "bytes":     "0000803F",
-  "timestamp": 1234567890
+  "timestamp": 1234567890,   // when it was READ (ms since the epoch)
+  "samples":   3             // how many reads this event stands for (additive)
 }
 ```
+
+**When a watch event arrives** (Stage C): the watch thread only reads memory; the connection's own handler sends the
+latest read of each of its watches **after each command it handles, ahead of that command's reply**. A client
+therefore receives watch events while it is sending commands -- one per watch per command at most, carrying the latest
+read and how many reads it stands for -- and none while it sends nothing. A synchronous pipe could not deliver to an
+idle client before either: the watch thread's write waited behind the client's parked read, and wedged every stop of
+that watch with it.
 
 -----
 

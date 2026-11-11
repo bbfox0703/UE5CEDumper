@@ -700,8 +700,8 @@ bool UE5_Init() {
     // (MA1) The same argument now covers a PER-COMMAND cancel — a pipe client dropping
     // mid-scan — which this guard could not see, because it tests g_shutdown only.
     // ⚠ Do NOT "simplify" the added term to Tot::Requested(). g_perCommand stays latched
-    // until Fern::AcceptLoop's firstConn calls ResetPerCommand, so a stale flag from an
-    // EARLIER disconnect would make the auto-start UE5_Init refuse the latch on a scan that
+    // until Fern::ReevaluatePerCommandCancel finds no connection that raised it still
+    // registered, so a flag from an EARLIER disconnect can still be set here and would make the auto-start UE5_Init refuse the latch on a scan that
     // completed perfectly — permanently disabling the DLL for that process. The note above
     // about ResetShutdown protecting against a false positive has no g_perCommand
     // equivalent; that asymmetry is the trap. `ptrs.bScanCancelled` says "THIS run actually
@@ -783,7 +783,7 @@ void UE5_Shutdown() {
     Hemmung::StopWorker();   // join the time-dilation re-assert worker before unload
     Solide::StopWorker();    // join the force-field hold worker before unload
     Dunste::StopWorker();    // join the fly worker before unload
-    Schlacht::SetEnabled(false);  // un-hide occluders (contract) THEN join the worker; runs before Stark::Shutdown so the un-hide invokes can still dispatch (M3)
+    Schlacht::SetEnabled(false, Schlacht::kOwnerNone);  // un-hide occluders (contract) THEN join the worker; runs before Stark::Shutdown so the un-hide invokes can still dispatch (M3)
     Grausam::SetForegroundLock(false);  // soft-disable: g_enabled=false so the GFW/WndProc hooks pass through + release the masked cursor clip — otherwise the game believes it's foreground forever after a CE-Lua Disable (L10)
     // Teardown: soft RemoveHook + drain the pending invoke queue (MinHook stays
     // initialised -- see Stark::Shutdown). Pipe server is stopped after Shutdown() so any in-flight pipe thread
@@ -997,9 +997,9 @@ static bool AutoStartWork() {
     Tot::ResetShutdown();
     // (G2) Same argument, other flag — and it is now load-bearing rather than tidy.
     // Tot::Requested() is ALSO true for g_perCommand, the mid-command client-disconnect
-    // latch, which Tot deliberately keeps set until a fresh session connects into an
-    // empty registry (Fern AcceptLoop firstConn) so an orphaned scan keeps aborting.
-    // That reset therefore runs AFTER this scan, exactly like ResetShutdown's. Genau's
+    // latch, which Tot deliberately keeps set until no connection that raised it is
+    // still registered (Fern::ReevaluatePerCommandCancel), so an orphaned scan keeps
+    // aborting. That reset can therefore run AFTER this scan, exactly like ResetShutdown's. Genau's
     // recovery sweeps now honour Tot::Requested(), so without this line a stale latch
     // from a previous session's UI disconnect would abort a healthy game's GObjects/
     // GNames recovery at offset 0 — a scan that never ran, reported as one that found
@@ -2724,12 +2724,12 @@ static void WatchForPipeAndClaim(DWORD holderPid) {
             }
             Sleep(Voll::kClaimWatchPollMs);
 
-            HANDLE probe = CreateFileW(Grimoire::PIPE_NAME, GENERIC_READ, 0, nullptr,
-                                       OPEN_EXISTING, 0, nullptr);
-            if (probe != INVALID_HANDLE_VALUE) { CloseHandle(probe); continue; }
-            // ERROR_PIPE_BUSY means the holder is alive with every instance in use — still
-            // theirs. Only "not found" means the pipe is actually gone.
-            if (GetLastError() == ERROR_PIPE_BUSY) continue;
+            // Asked without connecting (Voll::WaitSaysServed): an open would be a client arriving
+            // at the holder's server and leaving, twice a second. A busy pipe is the holder alive
+            // with every instance in use — still theirs. Only "not found" means it is gone.
+            const BOOL waited = WaitNamedPipeW(Voll::OwnPipeName().c_str(), Voll::kWatchWaitMs);
+            const DWORD err = waited ? 0 : GetLastError();
+            if (Voll::WaitSaysServed(waited != FALSE, err)) continue;
 
             const bool ok = s_pipeServer.Start();
             LOG_WARN("PipeClaimWatcher: pipe freed by PID %lu after %d ms — claimed it: %s",
@@ -2745,20 +2745,44 @@ static void WatchForPipeAndClaim(DWORD holderPid) {
 }
 
 bool UE5_StartPipeServer() {
+    // This copy already serves (CE Lua can call the export by hand after auto-start ran). Asked
+    // first because the probe below cannot tell this server from another copy's when every
+    // instance is busy. [PIPE-PER-PROCESS-2026-11-06]
+    if (s_pipeServer.IsRunning()) {
+        LOG_INFO("UE5_StartPipeServer: this copy already serves the pipe — nothing to do");
+        return true;
+    }
+
     // Who, if anyone, already owns the pipe? The old guard asked only whether it EXISTED and
     // skipped for good on a yes — which on a self-relaunching title meant deferring to the
     // process that was in the middle of dying, and never serving again. [RELAUNCHPIPE-2026-08-19]
+    // The name is this process's own, so a holder is a second copy of the DLL here, or a
+    // process that created this process's name.
     HANDLE testPipe = CreateFileW(
-        Grimoire::PIPE_NAME,
+        Voll::OwnPipeName().c_str(),
         GENERIC_READ, 0, nullptr,
         OPEN_EXISTING, 0, nullptr);
 
-    const bool exists = (testPipe != INVALID_HANDLE_VALUE);
+    const bool opened = (testPipe != INVALID_HANDLE_VALUE);
+    const DWORD probeErr = opened ? 0 : GetLastError();
+    // ERROR_PIPE_BUSY is a server with every instance taken, not "no pipe": the holder stays
+    // unknown (0), and an unknown holder defers.
+    const bool exists = Voll::ProbeFoundServer(opened, probeErr);
     DWORD holderPid = 0;
-    if (exists) {
+    if (opened) {
         ULONG pid = 0;
         if (GetNamedPipeServerProcessId(testPipe, &pid)) holderPid = static_cast<DWORD>(pid);
         CloseHandle(testPipe);
+    }
+
+    // A restart after a Stop whose drain timed out (CE untick, then re-tick): this copy's own
+    // connections still hold their instances, so the probe reads busy. Deferring would defer to
+    // ourselves and publish READY with nobody listening. Fern serves the name again beside them,
+    // and its first-instance check logs the shared name.
+    if (!opened && probeErr == ERROR_PIPE_BUSY && s_pipeServer.HasStragglerConnections()) {
+        LOG_WARN("UE5_StartPipeServer: every instance is busy with this copy's connections from "
+                 "before its last stop — restarting the server beside them");
+        return s_pipeServer.Start();
     }
 
     switch (Voll::DecideStart(exists, holderPid, GetCurrentProcessId())) {
@@ -2766,18 +2790,20 @@ bool UE5_StartPipeServer() {
             return s_pipeServer.Start();
 
         case Voll::StartAction::AlreadyOurs:
-            LOG_INFO("UE5_StartPipeServer: this process already serves the pipe — nothing to do");
+            LOG_INFO("UE5_StartPipeServer: another copy of UE5Dumper in this process already serves "
+                     "the pipe — nothing to do");
             return true;
 
         case Voll::StartAction::DeferAndWatch:
         default:
             // ⚠ Still returns TRUE, deliberately. Both callers map this straight onto
-            // g_invokeMailbox.initState, so a false here would publish INIT_FAILED for the
-            // perfectly ordinary case of a second game running — a worse and much more visible
+            // g_invokeMailbox.initState, so a false here would publish INIT_FAILED while a pipe
+            // server IS up in this process (another copy's) — a worse and much more visible
             // regression than the one being fixed. What changes is that the deferral is no
             // longer permanent: the watcher claims the pipe as soon as the holder lets go.
-            LOG_WARN("UE5_StartPipeServer: pipe is held by PID %lu — deferring, and watching for "
-                     "it to free (this process has no server until then)",
+            LOG_WARN("UE5_StartPipeServer: pipe is held by PID %lu (0: every instance busy, holder "
+                     "unknown) — deferring, and watching for it to free (this copy has no server "
+                     "until then)",
                      static_cast<unsigned long>(holderPid));
             {
                 bool expected = false;

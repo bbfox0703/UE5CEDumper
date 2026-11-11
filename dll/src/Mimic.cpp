@@ -251,9 +251,10 @@ static void PollingThreadBody() {
     LOG_INFO("Mailbox: polling thread started (poll=%ums)", kPollIntervalMs);
 
     // This thread serves CE, not the pipe. Fern's disconnect monitor LATCHES the
-    // per-command cancel when a UI client dies mid-command, and in a CE-only session
-    // nothing ever clears it (only Fern::Start / AcceptLoop firstConn do). Without this
-    // line every object lookup below would then bail at n==0 —
+    // per-command cancel when a UI client dies mid-command, and it stays set until that
+    // connection has unregistered (Fern::ReevaluatePerCommandCancel) — and a pipe client's
+    // death is no reason to cancel CE's work at all. Without this line every object
+    // lookup below would bail at n==0 while it is set —
     // FIND_INSTANCE / LIST_INSTANCES / INVOKE_BY_NAME plus the class-scan fallback
     // resolvers in Wirbel/Solitar/Laufen/Hemmung — and still report scanned=<full pool>.
     // NOT MarkBackgroundWorker(): that also refuses (-8) the off-game-thread invoke
@@ -1436,11 +1437,14 @@ static void HandleForeground() {
 // CMD_SEETHROUGH: toggle See-through occluders (Schlacht). instanceAddr = pierce
 // count (>=1, how many nearest occluders to hide), ufuncAddr = value (0/1 on/off).
 // Schlacht owns its own worker thread that does the game-thread invokes, so this
-// handler just flips the flag on the mailbox polling thread.
+// handler just flips the flag on the mailbox polling thread. CE is one owner of
+// it ([PIPE-PER-PROCESS-2026-11-06] Stage C): a pipe client that leaves no longer
+// turns off what CE's record turned on. Nothing in the mailbox changed, so the
+// contract version did not either.
 static void HandleSeeThrough() {
     if (g_invokeMailbox.instanceAddr >= 1)
         Schlacht::SetPierceCount(static_cast<int32_t>(g_invokeMailbox.instanceAddr));
-    int32_t rc = Schlacht::SetEnabled(g_invokeMailbox.ufuncAddr != 0);
+    int32_t rc = Schlacht::SetEnabled(g_invokeMailbox.ufuncAddr != 0, Schlacht::kOwnerCe);
     LOG_INFO("Mailbox: SEETHROUGH count=%llu value=%llu -> rc=%d",
              (unsigned long long)g_invokeMailbox.instanceAddr,
              (unsigned long long)g_invokeMailbox.ufuncAddr, rc);

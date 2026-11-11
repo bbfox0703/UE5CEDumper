@@ -86,7 +86,7 @@ public class ExperimentalCheckboxTests
             ConnectionStateChanged?.Invoke(connected);
         }
 
-        public Task ConnectAsync(CancellationToken ct = default) => Task.CompletedTask;
+        public Task ConnectAsync(string pipeName, CancellationToken ct = default) => Task.CompletedTask;
         public Task DisconnectAsync() => Task.CompletedTask;
         public Task<JsonObject> SendAsync(JsonObject request, CancellationToken ct = default)
             => Task.FromResult(new JsonObject());

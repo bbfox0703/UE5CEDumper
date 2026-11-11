@@ -133,17 +133,133 @@ void Aura::SetDecryptFunc(DecryptFunc func) {
 // (discrete's own docs: Memory-Scanning-Internals.md §16, not in this repo).
 namespace {
 
-// Worker thread count for a GObjects walk of `workItems` objects. Leaves
-// headroom (-2) for the game's own threads + our pipe/UI thread so we don't
-// saturate every core and stall the host. Clamped to [1, 16]; tiny arrays
-// stay single-threaded (thread spawn cost would dominate).
+// Threads one GObjects walk may use, from the CPU's shape. `coreClasses`: one EfficiencyClass per PHYSICAL core
+// (empty when the topology could not be read); `logical`: logical processors.
+//
+// [PIPE-PER-PROCESS-2026-11-06] The maintainer's rule (2026-11-10): the physical PERFORMANCE cores less 2, at least 1,
+// at most 16. Logical processors less 2 -- the rule before -- took every physical core of a 16C32T PC, put 14 threads
+// on an 8-core 9800X3D (8 of them SMT siblings), and counted a hybrid CPU's E-cores as full cores. The game's own
+// threads and background programs run meanwhile; threads beyond the cores only switch context more often.
+//   * Performance cores: those with the highest EfficiencyClass. A CPU without hybrid cores reports one class for all;
+//     an Intel with its E-cores disabled has only P-cores left.
+//   * Less 2: the game's main and render threads keep a core each.
+//   * Never more than logical processors less 2: a sanity bound for a topology that reads oddly.
+//   * Topology unread: 2-way SMT assumed, so half the logical processors.
+int ThreadsForCpu(const std::vector<uint8_t>& coreClasses, unsigned logical) {
+    int pcores = 0;
+    if (!coreClasses.empty()) {
+        const uint8_t top = *std::max_element(coreClasses.begin(), coreClasses.end());
+        pcores = static_cast<int>(std::count(coreClasses.begin(), coreClasses.end(), top));
+    } else {
+        pcores = static_cast<int>(logical / 2);
+    }
+    int n = pcores - 2;
+    const int logicalBound = static_cast<int>(logical) - 2;
+    if (n > logicalBound) n = logicalBound;
+    if (n > 16) n = 16;
+    if (n < 1)  n = 1;
+    return n;
+}
+
+// One EfficiencyClass per physical core (RelationProcessorCore), across every processor group; empty on failure.
+std::vector<uint8_t> CpuCoreClasses() {
+    std::vector<uint8_t> classes;
+    DWORD len = 0;
+    GetLogicalProcessorInformationEx(RelationProcessorCore, nullptr, &len);
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || len == 0) return classes;
+    std::vector<uint8_t> buf(len);
+    auto* first = reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buf.data());
+    if (!GetLogicalProcessorInformationEx(RelationProcessorCore, first, &len)) return classes;
+    for (DWORD off = 0; off + sizeof(LOGICAL_PROCESSOR_RELATIONSHIP) + sizeof(DWORD) <= len;) {
+        auto* e = reinterpret_cast<SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX*>(buf.data() + off);
+        if (e->Size == 0) break;
+        if (e->Relationship == RelationProcessorCore) classes.push_back(e->Processor.EfficiencyClass);
+        off += e->Size;
+    }
+    return classes;
+}
+
+// Threads for a GObjects walk of `workItems` objects: ThreadsForCpu for this machine. Tiny arrays stay
+// single-threaded (thread spawn cost would dominate).
 int ScanThreadCount(int32_t workItems) {
     if (workItems < 8192) return 1;
-    unsigned hc = std::thread::hardware_concurrency();
-    int n = (hc >= 3) ? static_cast<int>(hc) - 2 : 1;
-    if (n < 1)  n = 1;
-    if (n > 16) n = 16;
+    // The CPU does not change under a running game: read it once.
+    static const int n = [] {
+        const std::vector<uint8_t> classes = CpuCoreClasses();
+        const unsigned logical = std::thread::hardware_concurrency();
+        const int threads = ThreadsForCpu(classes, logical);
+        int pcores = 0;
+        if (!classes.empty()) {
+            const uint8_t top = *std::max_element(classes.begin(), classes.end());
+            pcores = static_cast<int>(std::count(classes.begin(), classes.end(), top));
+        }
+        LOG_INFO("Aura: a GObjects walk uses up to %d threads -- %d performance of %zu physical cores, %u logical "
+                 "processors%s; 2 cores kept for the game", threads, pcores, classes.size(), logical,
+                 classes.empty() ? " (topology unread: half the logical processors assumed)" : "");
+        return threads;
+    }();
     return n;
+}
+
+// [PIPE-PER-PROCESS-2026-11-06] Stage B: the extra worker threads of every GObjects walk running at once, drawn from
+// one budget for the whole process.
+//
+// Why: the pipe takes 6 clients, so several heavy commands can walk GObjects at once, and each walk spawned
+// ScanThreadCount() - 1 workers with no limit across walks -- k walks put k times that many threads in the game, and
+// ScanThreadCount's "cores - 2" headroom held for one walk only. With the budget, the workers of all walks together
+// never exceed what one walk alone spawns. (Each walk also runs one chunk on its own thread, the connection's.)
+//
+// A walk takes what is free and never waits for more: waiting would hold a connection's command behind another
+// connection's, and a walk on fewer threads finishes anyway. A walk that finds the budget spent runs serially on its
+// own thread, as Value Search's parallel toggle does when it is off. Chosen over a gate allowing one heavy command at a
+// time (maintainer, 2026-11-06): the DLL keeps no list of which commands are heavy, and one would drift.
+class WorkerBudget {
+public:
+    explicit WorkerBudget(int capacity) : capacity_(capacity < 0 ? 0 : capacity) {}
+    WorkerBudget(const WorkerBudget&) = delete;
+    WorkerBudget& operator=(const WorkerBudget&) = delete;
+
+    // Up to `want` workers, as many as are free; 0 when none are. Never blocks.
+    int Acquire(int want) noexcept {
+        if (want <= 0) return 0;
+        int cur = inUse_.load(std::memory_order_acquire);
+        for (;;) {
+            const int free = capacity_ - cur;
+            const int grant = free <= 0 ? 0 : (want < free ? want : free);
+            if (grant == 0) return 0;
+            if (inUse_.compare_exchange_weak(cur, cur + grant, std::memory_order_acq_rel, std::memory_order_acquire))
+                return grant;
+        }
+    }
+    void Release(int n) noexcept {
+        if (n > 0) inUse_.fetch_sub(n, std::memory_order_acq_rel);
+    }
+    int InUse() const noexcept { return inUse_.load(std::memory_order_acquire); }
+    int Capacity() const noexcept { return capacity_; }
+
+private:
+    const int capacity_;
+    std::atomic<int> inUse_{0};
+};
+
+// A share of a WorkerBudget, returned when the walk that took it ends.
+class WorkerLease {
+public:
+    WorkerLease(WorkerBudget& budget, int want) : budget_(budget), granted_(budget.Acquire(want)) {}
+    ~WorkerLease() { budget_.Release(granted_); }
+    WorkerLease(const WorkerLease&) = delete;
+    WorkerLease& operator=(const WorkerLease&) = delete;
+    int Granted() const noexcept { return granted_; }
+
+private:
+    WorkerBudget& budget_;
+    const int     granted_;
+};
+
+// The process's budget: what one walk alone may spawn beyond its own thread.
+WorkerBudget& ScanWorkerBudget() {
+    static WorkerBudget budget(ScanThreadCount(INT32_MAX) - 1);
+    return budget;
 }
 
 // Partition [0, count) into `nthreads` contiguous ascending ranges and run
@@ -188,7 +304,7 @@ void ParallelIndexRanges(int32_t count, int nthreads, BodyFn&& body) {
     // game (>= 8192 objects), i.e. for exactly the scans that matter.
     // ⭐ Safe to pass the raw pointer: this function JOINS the pool below, so the caller's
     // binding strictly outlives every worker. See Tot::CancelContextScope's warning for
-    // why the same trick is NOT valid for Fern::RunScan / RunRescan.
+    // why the same trick is NOT valid for a thread that outlives its starter.
     const Tot::CancelContext cancelCtx = Tot::CaptureCancelContext();
     for (int t = 1; t < nthreads; ++t) {
         const int64_t b = static_cast<int64_t>(t) * chunk;
@@ -206,8 +322,9 @@ void ParallelIndexRanges(int32_t count, int nthreads, BodyFn&& body) {
 
 // Result of a ParallelGObjectsScan run. `perThread` is exposed so callers can
 // fold their own per-thread stat fields (counters, sets) after the run;
-// `deadlineHit` is the post-join load of the shared flag; `nthreads` is what
-// ScanThreadCount picked (for logging).
+// `deadlineHit` is the post-join load of the shared flag; `nthreads` is how many
+// threads the walk ran on: ScanThreadCount's pick, less what the process-wide
+// WorkerBudget could not lend (for logging).
 template <typename PerThreadT>
 struct ParallelScanResult {
     std::vector<PerThreadT> perThread;
@@ -224,8 +341,9 @@ struct ParallelScanResult {
     bool incomplete() const { return deadlineHit || workerFaulted; }
 };
 
-// Run a parallel GObjects walk: spawn ScanThreadCount(count) workers over
-// contiguous ascending index ranges, each writing into its own PerThreadT.
+// Run a parallel GObjects walk: up to ScanThreadCount(count) threads (this one,
+// plus workers leased from the process-wide WorkerBudget) over contiguous
+// ascending index ranges, each writing into its own PerThreadT.
 // `body(tr, beginIdx, endIdx, deadlineHit)` is the per-thread loop — it owns the
 // per-object work, the per-thread local maxResults cap, and the deadline check
 // (call deadlineHit.store(true) to signal siblings to stop). This factors out
@@ -242,6 +360,14 @@ ParallelScanResult<PerThreadT> ParallelGObjectsScan(int32_t count, BodyFn&& body
     // user turns it off, so concurrent cross-thread memory reads can't trip a
     // game's anti-tamper. 0 = no cap (use whatever ScanThreadCount picked).
     if (maxThreads > 0 && nthreads > maxThreads) nthreads = maxThreads;
+    // The workers beyond this thread come from the process-wide budget (WorkerBudget), held until this walk returns.
+    const int wanted = nthreads;
+    WorkerLease lease(ScanWorkerBudget(), nthreads - 1);
+    nthreads = 1 + lease.Granted();
+    if (nthreads < wanted) {
+        LOG_INFO("ParallelGObjectsScan: %d of %d threads -- other walks running now hold the rest of the %d-worker "
+                 "budget", nthreads, wanted, ScanWorkerBudget().Capacity());
+    }
     std::vector<PerThreadT> perThread(static_cast<size_t>(std::max(1, nthreads)));
     std::atomic<bool> deadlineHit{false};
     std::atomic<bool> workerFaulted{false};

@@ -563,6 +563,10 @@ public partial class MainWindow : Window
             _subscribedObjectTree = vm.ObjectTree;
             _subscribedObjectTree.PropertyChanged += OnObjectTreePropertyChanged;
             ApplyObjectTreeCollapse(_subscribedObjectTree.IsCollapsed);
+            // [PIPE-PER-PROCESS-2026-11-06] Connect's two dialogs: the game list when several games serve the pipe,
+            // and the notice for a game that runs an old DLL.
+            vm.PickPipeTargetAsync = PipeTargetPickerWindow.ShowAsync;
+            vm.ShowNoticeAsync = NoticeDialog.ShowAsync;
         }
     }
 

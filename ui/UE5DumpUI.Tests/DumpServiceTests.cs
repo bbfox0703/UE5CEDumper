@@ -22,7 +22,7 @@ public sealed class MockPipeClient : IPipeClient
 
     public void SetHandler(Func<JsonObject, JsonObject> handler) => _handler = handler;
 
-    public Task ConnectAsync(CancellationToken ct = default)
+    public Task ConnectAsync(string pipeName, CancellationToken ct = default)
     {
         IsConnected = true;
         ConnectionStateChanged?.Invoke(true);
@@ -729,6 +729,36 @@ public class DumpServiceTests
         await CreateService().SetUeVersionOverrideAsync(0, persist: true, TestContext.Current.CancellationToken);
 
         Assert.Contains(_log.Messages, m => m.Contains("override cleared") && m.Contains(expected));
+    }
+
+    /// <summary>[PIPE-PER-PROCESS-2026-11-06] Stage C: `persisted` is the write's answer. A refused clear proves only
+    /// that the clear was not written -- an override saved earlier still applies at the next launch, and whether one was
+    /// saved is not known here -- so the log says that, and never promises "Auto applies at the next launch". Even with
+    /// no override in force in this session one may be on disk (an Auto whose write failed, then a refused pick), so
+    /// not_overridden says both.</summary>
+    [Theory]
+    [InlineData("no_detection", "an override saved there earlier still applies at the next launch")]
+    [InlineData("stale_detection", "an override saved there earlier still applies at the next launch")]
+    [InlineData("too_old", "an override saved there earlier still applies at the next launch")]
+    [InlineData("restored", "an override saved there earlier still applies at the next launch")]
+    [InlineData("not_overridden", "no override was in force")]
+    public async Task SetUeVersionOverrideAsync_Auto_ARefusedWriteIsLoggedAsWhatItProves(string outcome, string expected)
+    {
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "set_ue_version_override")
+                return new JsonObject { ["ok"] = true, ["auto_restore"] = outcome, ["persisted"] = false };
+            return new JsonObject { ["ok"] = true, ["gobjects"] = "0x1", ["gnames"] = "0x2" };
+        });
+
+        await CreateService().SetUeVersionOverrideAsync(0, persist: true, TestContext.Current.CancellationToken);
+
+        var line = Assert.Single(_log.Messages, m => m.Contains("override cleared"));
+        Assert.Contains("persisted=False", line);
+        Assert.DoesNotContain("Auto applies at the next launch", line);
+        Assert.Contains(expected, line);
+        Assert.Contains("an override saved there earlier still applies at the next launch", line);
     }
 
     [Fact]
@@ -2629,7 +2659,7 @@ public class DumpServiceTests
         Assert.Equal(new[] { "find_live_instance", "find_instances", "find_instances" },
                      sent.Select(s => s["cmd"]!.GetValue<string>()));
 
-        await pipe.ConnectAsync(ct);   // a new connection may be a newer DLL
+        await pipe.ConnectAsync("UE5DumpBfx_1", ct);   // a new connection may be a newer DLL
         sent.Clear();
         await dump.FindLiveInstanceAsync("PlayerController", ct);
         Assert.Equal("find_live_instance", sent[0]["cmd"]!.GetValue<string>());
@@ -2651,7 +2681,7 @@ public class DumpServiceTests
             if (reconnectDuringRequest)
             {
                 reconnectDuringRequest = false;
-                pipe.ConnectAsync(TestContext.Current.CancellationToken);   // the game swapped while this request was out
+                pipe.ConnectAsync("UE5DumpBfx_1", TestContext.Current.CancellationToken);   // the game swapped while this request was out
                 return new JsonObject { ["ok"] = false, ["error"] = "Unknown command: find_live_instance" };
             }
             return new JsonObject { ["ok"] = true, ["pick"] = "none", ["scanned"] = 1 };

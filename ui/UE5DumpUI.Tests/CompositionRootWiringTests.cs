@@ -231,7 +231,7 @@ public class CompositionRootWiringTests : IDisposable
         public event Action<System.Text.Json.Nodes.JsonObject>? EventReceived { add { } remove { } }
         public event Action<UE5DumpUI.Models.PipeLogEntry>? Activity { add { } remove { } }
         public event Action<bool>? GameThreadStalledChanged { add { } remove { } }
-        public Task ConnectAsync(System.Threading.CancellationToken ct = default) => Task.CompletedTask;
+        public Task ConnectAsync(string pipeName, System.Threading.CancellationToken ct = default) => Task.CompletedTask;
         public Task DisconnectAsync() => Task.CompletedTask;
         public Task<System.Text.Json.Nodes.JsonObject> SendAsync(
             System.Text.Json.Nodes.JsonObject request,

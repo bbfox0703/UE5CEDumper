@@ -244,6 +244,58 @@ backlog moves here **byte-identical** ([`working-lessons.md`](working-lessons.md
 > larger now. **Never read a count out of this block — derive it**:
 > `grep -c '^### ' docs/pending-verification_zh-TW.md` minus the two `###` under 「怎麼用這份清單」.
 
+### ⬜ A pipe per game process, 6 clients, the worker budget — what their live checks did not reach `[PIPE-PER-PROCESS-2026-11-06]`
+
+Built in build 3695 (2026-11-10), Stage A of todo.md `[PIPE-PER-PROCESS-2026-11-06]`, and proven live on DumperTest
+Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 3695. Not reached:
+
+1. **Another process that created a game's pipe name first.** Fern refuses to serve beside it (ERROR once, retried
+   each second), and the UI disconnects when the pid that answers is not the game's. Unit-tested
+   (`Voll::ClassifyFirstInstance`; `Another_process_answering_for_the_game_is_disconnected`). Acceptance: a stub
+   creates `\\.\pipe\UE5DumpBfx_<pid>` for a game's pid before the DLL is injected; pipe-0.log logs the ERROR and
+   serves nothing until the stub exits, then logs "serving"; the UI never lands on the stub.
+2. **A restart while this copy's own connections from before the stop still hold their instances**
+   (`UE5_StartPipeServer`'s `HasStragglerConnections` branch). It needs a Stop whose 5 s drain times out (a handler
+   inside a long command) and then a CE re-tick. Acceptance: init-0.log logs "restarting the server beside them",
+   pipe-0.log logs the shared-name WARN, and the UI connects.
+3. **A second copy's own log lines.** A second copy of the DLL in one process could not write its logs (the first
+   copy holds the files). Its deferral was proven from the first copy's pipe log instead: 0 new connections in the
+   15 s after an instance freed, against 22 in 10 s from the pre-fix copy. Its "deferring" line was never seen.
+4. **A proxy-loaded game, and an elevated game.** Only injection was driven, non-elevated.
+5. **Cheat Engine itself.** The mailbox was driven by `mailbox_poke.py`; the changed CE texts (the pipe name, the
+   INIT_FAILED reasons) were not displayed in CE.
+
+Stage B, build 3696 (6 clients, the scan-worker budget) -- dev-log 3696. Not reached:
+
+6. **A name an older copy created, with its lower limit.** A 3696 copy whose first instance joins a name a 3695 copy
+   made logs a WARN with the limit in force (3). Acceptance: such a pair in one process; pipe-0.log logs "takes 3
+   clients at once, not this build's 6", and the at-capacity line quotes 3.
+7. **The UI's "pipe is gone" message.** Unit-tested (the game exits while the list is open). Acceptance: open the
+   game list with two games, close one, pick it; the error says its pipe is gone.
+8. **A game that is not responding.** The full-pipe message names it as a cause; a suspended game was not driven.
+   Acceptance: suspend every thread of an injected game (`suspend.py`), Connect; the message appears, and connecting
+   works after resuming.
+
+Stage C, build 3698 (hardening for a long-lived client) -- dev-log 3698; `tools/verify/stagec_live.py` passes on
+DumperTest Shipping, pipe and mailbox only. Not reached:
+
+9. **Cheat Engine's own See-through record.** The record was driven through the mailbox (`mailbox_poke.py`, as
+   `stagec_live.py` does), not ticked in CE. Acceptance: tick the pushed See-through record in CE, connect and close
+   the UI; the record's See-through stays on (`seethrough_get_state` `ce_claimed: true`), and its untick turns it off.
+10. **The UI against a job another client started.** `trigger_scan` and Extra Scan answer `in_progress` to a second
+    asker; the UI was not driven against one. Acceptance: start a scan from `pipe_client.py` on a game still loading
+    (proxy, scan deferred), click Start Scan in the UI; it shows the scan's progress, not "Scan failed".
+11. **The hint-cache lock across processes.** Two writers in one process are tested (dll_core_test HINTCACHELOCK); two
+    games, or a stale proxy beside an injection, writing at once were not. Acceptance: two injected games each
+    `set_invoke_timeout ... persist` at the same moment; both records hold their value.
+12. **A Stop whose teardown waits on the game thread.** Acceptance: See-through on, game paused (`suspend.py`), the
+    UI closes and CE unticks the DLL at once; pipe-0.log's drain line counts the teardown ("still tearing down") and
+    names it, and nothing hangs past the drain budget.
+13. **Another CPU shape.** Only this 16C32T PC was measured (16 threads per walk before, 14 now); hybrid P/E cores,
+    E-cores disabled and a CPU without SMT are unit-tested (dll_core_test CPU). Acceptance: the init log's thread pick
+    on such a PC matches `Aura::ThreadsForCpu` for its topology.
+14. **A long-lived client.** No MCP client exists yet (Stage D); the rigs open connections for seconds.
+
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 
 Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT
@@ -400,7 +452,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`12` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`13` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -492,7 +544,7 @@ expected.
 *Added 2026-09-05 with the four rows below. The batch is unusual in that its highest-value row
 (A2 / EVERSPACE 2) is also its cheapest, and one row is gated on a game that may not be installed.*
 
-**One game at a time, sequential, never parallel.** Injecting a second title while the first holds `\\.\pipe\UE5DumpBfx` is how a session measures the wrong process.
+**One game at a time, sequential, never parallel.** Injecting a second title while the first runs is how a session measures the wrong process: each game has its own `\\.\pipe\UE5DumpBfx_<pid>`, but a rig given no `--pid` drives the first game it lists.
 
 #### ⭐ MACHINE FACTS — measured on the verification PC 2026-09-05, and they differ from this plan
 
@@ -5558,6 +5610,9 @@ The AOBMaker CE plugin **is installed** (maintainer, 2026-08-18). With Cheat Eng
 
 ### ✅ FIXED 2026-08-19 `[PIPEBUSY-2026-08-18]` / `[CLASSTOTAL-2026-08-18]` — both moved to "Pending live-game verification"
 
+> **2026-11-06:** `[PIPEBUSY-2026-08-18]` is a fixed LOGGING bug. It is not a reason for `kMaxPipeInstances = 3`; see
+> todo.md `[PIPE-PER-PROCESS-2026-11-06]`.
+
 Both honesty defects were fixed 2026-08-19 (PIPEBUSY: at-capacity logs once, not 1 Hz forever;
 CLASSTOTAL: `total_classes` now the real pool count past the row cap). The live-check writeups —
 including the ⚠ "never run a second `pipe_client.py` alongside the UI" caveat, which the PIPEBUSY fix
@@ -8593,7 +8648,7 @@ errors. See [[project-vendor-zydis-ue58-status]] in memory.*
 > takes half a minute on packaged `DumperTest` — use it as the acceptance test for whatever fix ships:
 >
 > 1. Launch `DumperTest.exe`, `scripts\inject-ue.ps1 -ProcessId <the -Win64-Shipping pid>`.
-> 2. Connect a `NamedPipeClientStream` to `UE5DumpBfx` and send any command.
+> 2. Connect a `NamedPipeClientStream` to the game's `UE5DumpBfx_<pid>` and send any command.
 > 3. **Close the game with `CloseMainWindow()`** — `WM_CLOSE` → `ExitProcess` → `DLL_PROCESS_DETACH`.
 >    **Not `Stop-Process -Force`**: `TerminateProcess` skips DETACH entirely, so a forced kill exits
 >    fast and "proves" the bug is gone.

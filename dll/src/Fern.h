@@ -2,7 +2,7 @@
 
 // ============================================================
 // Fern — 費倫 (芙莉蓮的弟子 — Frieren's Apprentice)
-// PipeServer: Named Pipe JSON IPC server (105 commands)
+// PipeServer: Named Pipe JSON IPC server (106 commands)
 //
 // ⚠ DERIVED, not hand-maintained: `grep -c 'constexpr const char* CMD' dll/src/Renge.h`,
 // asserted by `tools/check_derived_counts.py` in CI. It said "~30" against a real 99 until
@@ -22,6 +22,8 @@
 
 #include <Windows.h>
 #include "Routine.h"   // Routine::SafeThread — ~std::thread on a joinable thread terminates (B14)
+#include "Voll.h"      // Voll::Holder -- who holds the pipe's connections (Stage C)
+#include "Kanne.h"     // Kanne::WatchKey / WatchSlot -- a watch's key and the samples its thread leaves (Stage C)
 #include <string>
 #include <thread>
 #include <atomic>
@@ -44,16 +46,39 @@ public:
     // graceful=false — reached from ~Fern() at process exit: do the minimum.
     void Stop(bool graceful = true);
     bool IsClientConnected() const { return m_clientConnected.load(); }
+    // This copy of the DLL serves the pipe. A startup probe cannot tell this server from another copy's when every
+    // instance is busy, so UE5_StartPipeServer asks here first. [PIPE-PER-PROCESS-2026-11-06]
+    bool IsRunning() const { return m_running.load(); }
+    // Stopped, yet some connections from before the stop are still registered: Stop's drain gave up while their
+    // handlers ran, so their pipe instances are still open and a probe of the name reads busy. That busy pipe is this
+    // copy's own, and a restart must not defer to it. (Start clears the registry, so ask before starting.)
+    // [PIPE-PER-PROCESS-2026-11-06]
+    bool HasStragglerConnections() {
+        std::lock_guard<std::mutex> lock(m_connMutex);
+        return !m_running.load() && !m_conns.empty();
+    }
 
 private:
-    // Max concurrent client connections. 2 UI lanes (interactive + bulk) + 1
-    // slack for reconnect transients. CE uses the Mimic mailbox, not the pipe.
-    static constexpr DWORD kMaxPipeInstances = 3;
+    // Max concurrent client connections ([PIPE-PER-PROCESS-2026-11-06] Stage B, 3 before):
+    // the UI's 2 lanes (interactive + bulk), a rig (tools/verify/pipe_client.py), an MCP
+    // client, and 2 for a two-lane reconnect whose old instances are still unwinding (each
+    // is closed by its own thread after its command returns). The listener is itself an
+    // instance, so this is the most clients at once. Each costs a thread and two
+    // PIPE_BUF_SIZE buffers; the scan workers several heavy commands could spawn at once
+    // are held by Aura's process-wide budget. It guards no race: [PIPEBUSY-2026-08-18] was
+    // a logging bug, fixed by Voll. CE uses the Mimic mailbox, not the pipe.
+    // ⚠ A name another copy of the DLL created first keeps THAT copy's limit (measured
+    // 2026-11-10); the accept loop logs the limit in force.
+    static constexpr DWORD kMaxPipeInstances = 6;
+    // Windows takes 1..254; 255 is PIPE_UNLIMITED_INSTANCES.
+    static_assert(kMaxPipeInstances >= 1 && kMaxPipeInstances < PIPE_UNLIMITED_INSTANCES,
+                  "CreateNamedPipeW takes 1..254 instances");
 
     // Per-connection state. Each accepted client gets one of these, served by
-    // its own HandleConnection thread on its own handle. writeMutex serializes
-    // the (single) thread's response writes against this connection's own watch
-    // event writes — writes to DIFFERENT connections need no shared lock.
+    // its own HandleConnection thread on its own handle. Every write on a
+    // connection comes from that thread -- replies, and since Stage C its watch
+    // events (Kanne.h) -- and so does CloseConnOnce, so writeMutex is uncontended
+    // today. Writes to DIFFERENT connections need no shared lock.
     struct Connection {
         HANDLE             pipe{INVALID_HANDLE_VALUE};
         // Monotonic id, assigned under m_connMutex at accept (audit #5 F2). Needed
@@ -61,16 +86,27 @@ private:
         // and a raw pointer cannot answer "is that same connection still live" once
         // the object is gone and the allocator has reused the address.
         uint64_t           seq{0};
+        // Who connected, and when ([PIPE-PER-PROCESS-2026-11-06] Stage C: pipe_clients and the at-capacity line).
+        // Written by the accept thread BEFORE the connection is registered in m_conns and never again, so a reader that
+        // got it from m_conns needs no lock.
+        DWORD              clientPid{0};      // GetNamedPipeClientProcessId; 0 when it failed
+        std::string        clientExe{"?"};    // the client's exe file name, UTF-8, Voll::kMaxHolderExeBytes at most
+        long long          connectedMs{0};    // steady-clock ms at accept
+        // Who owns what this connection turns on: its client process, so the UI's two lanes are one owner
+        // (Voll::ClientOwnerKey). Set with seq, under m_connMutex, before the connection is registered.
+        uint64_t           ownerKey{0};
         std::mutex         writeMutex;
         std::atomic<bool>  inFlight{false};   // true only while inside DispatchCommand
         // What that in-flight command IS, and when it started. Written just before
-        // DispatchCommand and read ONLY by Stop's drain-timeout diagnostic, so the hot
-        // path pays one small copy per command and the teardown can finally name the
-        // connection that would not leave. "2 left" is not actionable; "2 left: lane
+        // DispatchCommand (before inFlight goes up) and read by Stop's drain-timeout
+        // diagnostic and by SnapshotHolders, so the hot path pays one small copy per
+        // command and the teardown can finally name the connection that would not leave. "2 left" is not actionable; "2 left: lane
         // busy 4980 ms in 'walk_instance'" is. (2026-08-04: the first Stop ever logged
         // with connections attached timed out at the full 5 s and the log could not say
         // why.)
-        std::mutex         diagMutex;         // guards cmdName only
+        // diagMutex keeps cmdName and cmdStartMs one pair: both are written under it (HandleConnection) and read
+        // under it (SnapshotHolders), so a name never comes with another command's start.
+        std::mutex         diagMutex;
         std::string        cmdName;           // last/current command on this connection
         std::atomic<long long> cmdStartMs{0}; // steady-clock ms when it began
         // Per-connection cooperative cancel. Set by MonitorLoop when THIS connection
@@ -103,7 +139,7 @@ private:
         enum class Phase : uint8_t {
             Reading,          // inside ReadLine's blocking ReadFile
             Dispatching,      // inside DispatchCommand
-            Writing,          // inside WriteLine (WriteFile, or waiting on writeMutex)
+            Writing,          // inside WriteLine (WriteFile to a client that may have stopped reading)
             StoppingWatches,  // cleanup: joining this connection's watch threads
             Unregistering,    // cleanup: erasing from m_conns / closing the handle
             Done,
@@ -112,7 +148,8 @@ private:
         std::atomic<long long> phaseStartMs{0};
     };
 
-    static const char* PhaseName(Connection::Phase p);
+    static const char* PhaseName(Connection::Phase p);   // a sentence, for Stop's drain diagnostic
+    static const char* PhaseKey(Connection::Phase p);    // a short stable name, for pipe_clients and the holders line
     static void SetPhase(Connection& conn, Connection::Phase p);
 
     Routine::SafeThread        m_acceptThread;
@@ -131,16 +168,54 @@ private:
     std::vector<std::shared_ptr<Connection>> m_conns;
     HANDLE                  m_listenPipe{INVALID_HANDLE_VALUE};
     std::mutex              m_connMutex;     // guards m_conns + m_listenPipe + m_clientConnected
-                                             // + m_cancelOwners + m_connSeq
+                                             // + m_cancelOwners + m_connSeq + m_tearingDown
     // Which connections raised the per-command cancel. Cleared when none of them is
     // still registered — NOT when the registry merely goes empty, which the two-lane
     // split made unreachable (audit #5 F2).
     std::vector<uint64_t>   m_cancelOwners;
     uint64_t                m_connSeq{0};    // assigned under m_connMutex at accept
+    // Connections already erased from m_conns whose teardown still runs -- releasing what they owned can wait on the
+    // game thread. Stop's drain waits for these too, so its own resets never run beside one.
+    size_t                  m_tearingDown{0};
+    // A connection's teardown counted in m_tearingDown for its whole length, a throw included: a count left raised
+    // made every later Stop wait out its full drain (review, 2026-11-10). Constructed with m_connMutex held; released
+    // on every way out, and Stop's drain told.
+    struct TeardownCount {
+        Fern& f;
+        explicit TeardownCount(Fern& fern) : f(fern) { ++f.m_tearingDown; }
+        ~TeardownCount() {
+            {
+                std::lock_guard<std::mutex> lock(f.m_connMutex);
+                --f.m_tearingDown;
+            }
+            f.m_connCv.notify_all();
+        }
+        TeardownCount(const TeardownCount&) = delete;
+        TeardownCount& operator=(const TeardownCount&) = delete;
+    };
+
+    // The most clients the pipe takes, as the first instance's handle states it (GetNamedPipeInfo): a name an older
+    // copy of the DLL created keeps that copy's limit. This build's until the first instance exists.
+    std::atomic<DWORD>      m_capInForce{kMaxPipeInstances};
+
+    // [PIPE-PER-PROCESS-2026-11-06] Stage C: who holds the connections now, for pipe_clients and the at-capacity log
+    // line. `selfSeq` marks the asking connection (0: none). Takes m_connMutex only to copy the list.
+    std::vector<Voll::Holder> SnapshotHolders(uint64_t selfSeq);
 
     // Clear the per-command cancel once no connection that raised it is still live.
     // MUST be called with m_connMutex ALREADY HELD.
     void ReevaluatePerCommandCancel();
+
+    // [PIPE-PER-PROCESS-2026-11-06] Stage C: what a client process turned on is its own, and goes when the last
+    // connection of that process does. A connection's teardown calls this with its ownerKey. Takes m_profileMu and
+    // m_connMutex (in that order) and Schlacht's lock; call it holding none of them.
+    void ReleaseOwnedBy(uint64_t owner);
+    bool OwnerStillConnected(uint64_t owner);   // takes m_connMutex
+
+    // The LiveFuncs recording: one writer at a time -- starting one joins the old arm worker and installs a new one,
+    // and that pair is not atomic -- and the owner that started it (0: none). Lock order m_profileMu -> m_connMutex.
+    std::mutex              m_profileMu;
+    uint64_t                m_profileOwner{0};
     std::condition_variable m_connCv;        // notified when a connection thread exits
 
     // Disconnect monitor (cooperative cancellation). A bulk-lane scan blocks its
@@ -153,57 +228,58 @@ private:
     Routine::SafeThread          m_monitorThread;
     void MonitorLoop();
 
-    // Watch entries — per-connection. A watch's event is written to the
-    // connection that registered it (owner); on that connection's disconnect,
-    // only its watches are stopped (and joined before the Connection is freed,
-    // so `owner` stays valid for the watch thread's lifetime).
+    // Watches, keyed by (connection, address): each client's are its own. A watch's thread reads memory into its
+    // slot and does nothing else; its connection's handler sends the samples (Kanne.h says why).
     struct WatchEntry {
-        uintptr_t           addr;
-        uint32_t            size;
-        uint32_t            interval_ms;
-        Connection*         owner{nullptr};
-        Routine::SafeThread         watchThread;
-        std::atomic<bool>   active{true};
+        uintptr_t                         addr        = 0;
+        uint32_t                          size        = 0;
+        uint32_t                          interval_ms = 0;
+        std::shared_ptr<Kanne::WatchSlot> slot;          // shared with the thread, which holds nothing else of ours
+        Routine::SafeThread               watchThread;
     };
-    std::unordered_map<uintptr_t, std::unique_ptr<WatchEntry>> m_watches;
+    std::unordered_map<Kanne::WatchKey, std::unique_ptr<WatchEntry>, Kanne::WatchKeyHash> m_watches;
     std::mutex m_watchMutex;
 
-    // Initial Scan (async trigger_scan for proxy DLL mode)
+    // Initial Scan (async trigger_scan for proxy DLL mode). Its progress is Frieren's ScanProgress.
     struct ScanState {
-        std::atomic<bool> running{false};
-        std::atomic<int>  phase{0};       // 0=idle, 1..6=scanning, 7=complete
-        std::string       statusText;
-        std::mutex        statusMutex;
-        Routine::SafeThread       scanThread;
-        bool              completed = false;
+        Routine::SingleFlightJob job{"RunScan"};
     };
     ScanState m_scan;
-    void RunScan();
+    bool RunScan();   // the job's body: UE5_Init's own answer
 
     // Extra Scan (user-triggered background rescan for missing pointers)
+    struct RescanResult {
+        uintptr_t   gobjects       = 0;
+        uintptr_t   gworld         = 0;
+        const char* gobjectsMethod = "not_found";
+        const char* gworldMethod   = "not_found";
+        bool        cancelled      = false;   // Stop or shutdown cut the sweep short: "not found" would be a guess
+    };
     struct RescanState {
-        std::atomic<bool> running{false};
+        Routine::SingleFlightJob job{"RunRescan"};
         std::atomic<int>  phase{0};       // 0=idle, 1=GObjects, 2=GWorld, 3=complete
+        std::mutex        statusMutex;    // guards statusText and result
         std::string       statusText;
-        std::mutex        statusMutex;
-        uintptr_t         foundGObjects = 0;
-        uintptr_t         foundGWorld   = 0;
-        const char*       gobjectsMethod = "not_found";
-        const char*       gworldMethod   = "not_found";
-        Routine::SafeThread       scanThread;
+        RescanResult      result;
+        RescanResult Results() {
+            std::lock_guard<std::mutex> lock(statusMutex);
+            return result;
+        }
     };
     RescanState m_rescan;
-    void RunRescan(bool scanGObjects, bool scanGWorld);
-    // The actual work; RunRescan is the guarded wrapper that always clears `running`.
     void RunRescanBody(bool scanGObjects, bool scanGWorld);
 
     void AcceptLoop();
     void HandleConnection(std::shared_ptr<Connection> conn);
     std::string DispatchCommand(const std::shared_ptr<Connection>& conn, const std::string& jsonLine);
-    void StartWatch(const std::shared_ptr<Connection>& conn, uintptr_t addr, uint32_t size, uint32_t interval_ms);
-    void StopWatch(uintptr_t addr);
-    void StopWatchesForConnection(Connection* owner);
+    // Empty, or why the watch was refused.
+    std::string StartWatch(const std::shared_ptr<Connection>& conn, uintptr_t addr, uint32_t size, uint32_t interval_ms);
+    bool StopWatch(uint64_t connSeq, uintptr_t addr);   // false: this connection watches nothing there
+    void StopWatchesForConnection(uint64_t connSeq);
     void StopAllWatches();
+    static void JoinWatch(WatchEntry& entry);         // stop its thread and join it: one wake, at most one read
+    // Send this connection's samples read since its last command, on its own handler thread.
+    void FlushWatchEvents(Connection& conn);
     void CloseConnOnce(Connection& conn);
     bool WriteLine(Connection& conn, const std::string& line);
     std::string ReadLine(HANDLE pipe);

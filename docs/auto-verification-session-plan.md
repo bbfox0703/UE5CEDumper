@@ -90,10 +90,14 @@ proxy-mode title you are *supposed* to run it profiler-first once and watch it c
 
 ### ⚠ MORE TRAPS
 
-* ⛔ **Never run `pipe_client.py` while the UI is connected.** `kMaxPipeInstances = 3` and the UI
+* ✅ *Retired by [PIPE-PER-PROCESS-2026-11-06] Stage B (6 clients): applies only to a DLL from before it.* ⛔ **Never run
+  `pipe_client.py` while the UI is connected.** `kMaxPipeInstances = 3` and the UI
   holds **2**, so one rig client fills the pool and the accept loop then logs
   `CreateNamedPipe failed (err=231)` **every second, forever** — 1,826 lines in 31 min, measured
   (`[PIPEBUSY-2026-08-18]`). Close the UI first, or drive the check through the UI instead.
+  > **Corrected 2026-11-06** (`[PIPE-PER-PROCESS-2026-11-06]`): the every-second logging was fixed on 2026-08-19
+  > (Voll: one line on entry, one on recovery). The rule still stands while the cap is 3, because the UI's 2 lanes and
+  > one rig fill the pool. Stage B of that plan raises the cap to 6 and retires the rule.
 * ⏱ **`list_all_functions` is FAST; a long wait means the RIG, not the DLL.** Measured on Avowed
   (281,501 objects): the DLL logs `EnumerateAllFunctions: 21845 entries from 8780 classes`
   **0.34 s** after the request, and the full round trip is **0.8 s** once the client reads in blocks.
@@ -810,7 +814,7 @@ build the pre-fix DLL for `Genau RIP decode` in a **fresh** `git worktree` (⚠ 
 Staging steps that touch outside files are in §4 — **ask first**.
 
 ### ▶ GROUP 1 — DumperTest-Development, headless pipe · ~5 h · A · closes 12+
-One launch, a Python client on `\\.\pipe\UE5DumpBfx`, no UI. Neither package carries a proxy DLL, so
+One launch, a Python client on the game's `\\.\pipe\UE5DumpBfx_<pid>`, no UI. Neither package carries a proxy DLL, so
 `inject-ue.ps1 -ProcessId` scans directly — **no `trigger_scan`**.
 `F9` · `W2/W3` · `D2` · `A3` · `Z1` · `G11` · `G8/G9` · `U3/U17` (1/2/3/5) · `AB3/AB5` (1-3) ·
 `A6` (1/3/5) · `G2` Tier-1 · `G3` partial · `A12` (5-6) · `A11` (6) · `B19`.
@@ -1052,7 +1056,7 @@ Where a cheaper step exists, the last column says so — that is the row to run 
 
 | # | 繁中 item | cat | why that category / cheapest next step |
 |---|---|---|---|
-| 46 | `PIPEBUSY` | **A** | No GUI needed at all: **three** `pipe_client.py` instances reach `kMaxPipeInstances=3` on their own, then it is two greps of `pipe-0.log`. The register stages it as UI-plus-one-client, which is the same code path but B. ⚠ Deliberately breaks the standing "never run `pipe_client.py` while the UI is connected" rule if staged that way — kill the extra client when the row ends |
+| 46 | `PIPEBUSY` | **A** | No GUI needed at all: as many `pipe_client.py` instances as the DLL takes reach its limit on their own (`pipebusy_capacity.py` derives it from the log: 6 since `[PIPE-PER-PROCESS-2026-11-06]` Stage B, **three** before), then it is two greps of `pipe-0.log`. The register stages it as UI-plus-one-client, which is the same code path but B. ⚠ Deliberately breaks the standing "never run `pipe_client.py` while the UI is connected" rule if staged that way — kill the extra client when the row ends |
 | 47 | `SLOTSYM` | **B** | CE's Lua console plus tick/untick on two records. DumperTest's `&GEngine` AOB validates, so it takes the SLOT path. ⚠ Set `UE5_DEBUG=1` **before** the first tick or the `dbg` refcount lines that step 2 asserts on never print |
 | 48 | `CLASSTOTAL` | **B** | ⭐ **Cheapest first step is A** — one `list_classes` over the pipe against Elliot, and the row is decided if `total_classes` > 5,000. The B part is only 鐵則 4 (the status-line *string* must actually be seen). Step 3 needs a **second, small** game, so schedule it beside another `<5,000`-class launch rather than on its own |
 | 49 | `PROXYLOAD` | **B** | Three launches: OCTOPATH (imports `version`, must stay "not observed"), DQ7R or DQ I&II (must read "loaded"), then OCTOPATH again on `winmm`. ⚠ Two of the three are **negative/positive controls for each other** — running only the first proves nothing, because "not observed" is also what a broken lookup returns |

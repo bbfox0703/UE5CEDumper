@@ -11,6 +11,8 @@
 // File: %LOCALAPPDATA%\UE5CEDumper\UE5CEDumper.{COMPUTERNAME}.json
 // Format: same as the C# AobUsageService writes — DLL and UI
 //         share the file (last writer wins, both formats compatible).
+//         The DLL's own writers, in every injected game, take one named
+//         lock around their read-modify-write; the UI does not take it.
 // ============================================================
 
 #include <string>
@@ -160,7 +162,8 @@ inline AutoRestorePlan PlanAutoRestore(bool overrideInForce, const ScanHints& h,
 }
 
 /// Whether the override's version holds until the next launch: Auto found nothing to hand back, and the clear was
-/// persisted. Unpersisted, the override is still on disk and the next launch applies it again, so nothing is pending.
+/// persisted. Unpersisted, nothing was cleared on disk -- an override saved there earlier still applies at the next
+/// launch, and if none was saved the next launch detects -- so nothing is pending.
 constexpr bool AutoPendsUntilNextLaunch(AutoRestore outcome, bool persisted) {
     return persisted && (outcome == AutoRestore::NoDetection || outcome == AutoRestore::StaleDetection
                          || outcome == AutoRestore::TooOld);
@@ -191,16 +194,16 @@ void UpdateGObjectsMethod(const char* peHash, const char* method);
 ///   ueVersion == 0 → clear the override (revert to auto-detect on next launch).
 ///   ueVersion != 0 → save the override; auto-detect is skipped on next launch.
 /// processName is used only for the readable gameName field in the JSON record.
-/// Never throws — errors are logged.
-void SaveUserOverride(const char* peHash, uint32_t ueVersion,
+/// Never throws — errors are logged. Returns whether the cache was written.
+bool SaveUserOverride(const char* peHash, uint32_t ueVersion,
                       const char* processName);
 
 /// Persist (or clear) the user-set GameThreadDispatch invoke timeout for a game.
 ///   timeoutMs == 0 → clear the override (revert to Stark's default 5000ms).
 ///   timeoutMs != 0 → save the override; applied at next scan + immediately to Stark.
 /// processName is used only for the readable gameName field in the JSON record.
-/// Never throws — errors are logged.
-void SaveInvokeTimeout(const char* peHash, int32_t timeoutMs,
+/// Never throws — errors are logged. Returns whether the cache was written.
+bool SaveInvokeTimeout(const char* peHash, int32_t timeoutMs,
                        const char* processName);
 
 /// Is the UI's "experimental features" opt-in switched on?

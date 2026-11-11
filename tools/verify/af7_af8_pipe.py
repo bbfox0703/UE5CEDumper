@@ -3,7 +3,7 @@ r"""L10 steps 7 and 8 (AF8 negative Force, AF7 walk_function_props budget_hit) o
     py tools/verify/af7_af8_pipe.py
 
 Both rows are category A in the plan — they are DLL-side facts, so the UI is not the
-subject and driving them straight over `\\.\pipe\UE5DumpBfx` removes Avalonia as a
+subject and driving them straight over the game's pipe (pipe_client) removes Avalonia as a
 variable. Correspondingly this proves nothing about the panels' own bindings.
 
 AF8 — a NEGATIVE value held in an Int8Property.

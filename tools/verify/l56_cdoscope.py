@@ -13,7 +13,7 @@ r"""L56 `[A4-CDOSCOPE-ANCESTOR]` + `[A4-CDOSCOPE-NESTED-PREVIEW]`: Property Sear
             `preview`; the nested `Arr_StrRows[].Num` row (is_nested) carries NONE. Pre-fix it previewed
             the int at instance+0x10 -- the low dword of UObject::ClassPrivate, a large garbage number.
 
-Run with the UI closed (2 of 3 pipe slots).
+Run with the UI closed when the DLL predates [PIPE-PER-PROCESS-2026-11-06] Stage B (the UI holds 2 of its 3 pipe slots; 6 since).
 """
 import os
 import re
