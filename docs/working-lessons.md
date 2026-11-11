@@ -2684,18 +2684,30 @@ asymmetry**: Mimic.cpp's `ChainListFuncs` is a byte-identical twin that does *no
 per-declaration `extern "C"` and never opens a block. Fixed with `extern "C++" { … }` around the two
 adapters; negative-controlled in both directions.
 
-### 3.8e A publish stopped part-way: shut the build servers down before the next one
+### 3.8e A headless "No precompiled XAML found" that a re-run clears is a test-order race, not a stale build
 
-Measured 2026-11-10 (build 3698): a `build.ps1 -Mode Publish` stopped during its test step (to fold in a
-last fix) left five `dotnet.exe` MSBuild / compiler servers running. The next publish built and
-published the AOT UI and passed the C# suite, then its headless step failed **49 of 71** with
-`No precompiled XAML found for avares://UE5DumpUI/Resources/Strings/en.axaml`. Run alone right after,
-the headless tests passed 71/71, and the published AOT exe loaded its strings and connected. The
-cause was not pinned down; the servers are the one thing the two runs did not share. ⇒ After stopping
-a publish, run `dotnet build-server shutdown` before the next one, and read a headless "no precompiled
-XAML" right after a stopped build as that, not as a broken view -- then re-run the headless tests alone
-and launch the AOT exe before handing `dist\` over. A stopped publish also consumes its build number
-(it bumps first); do not reuse it.
+Builds 3698 (2026-11-10) and 3705 (2026-11-11): a publish's headless step failed **49 of 71**, every
+one with `No precompiled XAML found for avares://UE5DumpUI/Resources/Strings/en.axaml`, and the same
+command run alone straight afterwards passed 71/71. Build 3698 blamed the build servers a stopped
+publish had left running; build 3705 blamed the shared `obj\` of a mutation script that ran before it.
+Neither was the cause. After 3705, all four `UE5DumpUI.dll` copies (obj, bin, both test bins) were
+one file carrying compiled XAML, and the run that passed compiled nothing and copied nothing: its
+`*.Up2Date` copy marker was untouched. It loaded the same bytes as the run that failed.
+
+`[HEADLESS-AVARES-2026-11-11]` Avalonia 12.1.3 (`AssemblyDescriptorResolver`) resolves the host of
+`avares://UE5DumpUI/...` to the shortest **loaded** module whose file name *starts with* `UE5DumpUI`,
+and caches that answer for the session. Until `UE5DumpUI.dll` is loaded, `UE5DumpUI.HeadlessTests.dll`
+matches. It has no compiled XAML, so that load fails, and so does every later `avares://UE5DumpUI`
+load. xunit runs the classes in parallel and every body queues on the one headless dispatcher, so the
+first body decides the run. `StringTableFidelityTests` loads `en.axaml` by URI before it touches any
+UE5DumpUI type. Measured on unchanged binaries: that class run alone failed every time, and 2 of 6
+parallel runs of the suite failed 49/71, each with that test as the first failure. With the app's
+assembly loaded and the lookup checked in `HeadlessTestApp.Initialize`, the class passes alone and
+10 of 10 parallel runs passed 71/71.
+
+⇒ When a re-run clears a test failure, suspect order before the build. Check whether the passing run
+rebuilt or copied anything (dll timestamps, the `*.Up2Date` marker) before blaming `obj\`. A stopped
+publish still consumes its build number, because it bumps first: do not reuse it.
 
 ### 3.9 Two injected hosts at once: the second one silently never scans
 
