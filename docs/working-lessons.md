@@ -2968,17 +2968,42 @@ so every test, library and child process writes there. The folder goes at proces
 `SqliteConnection.ClearAllPools()` (measured: without it one `.db` stays held, and so does the folder). A run that could
 not clean up is deleted by the next run: its `.owner` file is held open with no sharing for the life of the process, so
 the OS lets go of it when the owner dies. The names older builds left straight in %TEMP% are swept once unchanged for an
-hour.
+hour; a fixed parent they shared (`ue5-qmark`, ...) loses only its hour-old children, since an older checkout's run may
+be writing a new one. The shared `%TEMP%\UE5CEDumper.Tests\` itself stays: a run that removed it when empty raced
+another run making its folder there.
 
 **How to apply:** a new test needs nothing for this; `Path.GetTempPath()` is already the run's folder. Do not make a
 swallowed delete "work" with retries: the run's folder already goes. A sweep never enters a reparse point:
 VolumeRootTests makes a junction to another volume's ROOT, and one it fails to remove lands in the run's folder.
 `Directory.Delete(recursive: true)` unlinks a junction without entering it (documented), but a walk with
 `SearchOption.AllDirectories` goes straight through one (measured: it cleared the read-only flag of the file a junction
-pointed at), so a walk of our own checks `ReparsePoint` itself, as `TestTempRoot.ClearReadOnly` does. What is **not** ours in %TEMP%: every `dotnet build` leaves two empty folders with random 8.3
-names and a `Microsoft.NET.Workload_*.log` (measured with TEMP pointed at an empty folder; neither
-`DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE` nor the telemetry opt-out stops them). That is the SDK, in every repo that
-builds with dotnet, and the sweep leaves it alone.
+pointed at), so a walk of our own checks `ReparsePoint` itself, as `TestTempRoot.ClearReadOnly` does.
+
+**The SDK's own leftovers** (`SdkTempLeftovers`, same tag). Every `dotnet build`, `test`, `publish`, `pack` and `run`
+(not `restore`) on an SDK installed by MSI or Visual Studio leaves an empty `Path.GetRandomFileName()` folder, a
+`Microsoft.NET.Workload_<pid>_<time>.log` and a second folder: RestoringCommand's constructor starts the workload
+advertising-manifest check (read in dotnet/sdk v10.0.403), nothing in the SDK removes them, and no setting skips them.
+`DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE=1` is not even read as true (`bool.TryParse` wants `true`), and `true` only
+skips the update itself. `dotnet --info`, `dotnet new` and `dotnet tool` leave such folders with no log. Measured
+2026-11-11: 1,452 folders and 726 logs in a day, most of them another session's (AOBMaker), and that session runs its
+own %TEMP% cleanup. So the sweep deletes only what it can prove is a finished build of this repository a day old: the
+log's command builds a project git tracks here, and the group of folders and logs made within seconds of each other
+is exactly the group a test run recorded while it was young (`sdk-groups-seen.txt`, under 30 minutes old, written
+by the unit tests and by the headless suite, which build.ps1 runs after them): two folders per log, every log ours
+(107 of 107 real groups had that shape). A line in that record lets a group go, so it carries a version header and a
+run that cannot read it neither records nor writes; the kept-logs memory can only keep more.
+
+**How to apply:** never widen "ours" to a path that merely resolves under this checkout. A bare `ui` is also a sibling
+repository's (three on this machine hold `ui\<x>.sln`), an option's value (`-o ui/App`, `--results-directory ...`)
+and a `dotnet run` program argument are not the project, a clone under `vendor/` is someone else's, and an option the
+parser does not know stops the reading rather than guessing whether it takes a value (`--blame-crash` once ate the
+next option's name): three rounds of adversarial review found each of these. Never infer that a folder is ours from
+what is missing -- someone else's log
+(another cleanup removes logs and leaves folders; `dotnet --info` writes none) -- nor from the count alone: another
+cleanup can take one of our folders and a stranger in the same second restores the count. The composition seen while
+the group was young is the proof, and a group first seen old stays. When the SDK stops writing the log (dotnet/sdk
+main no longer does, 2026-11-10), nothing is attributable and nothing goes; the fix then is a private TMP/TEMP for the
+dotnet processes this repository's tools start.
 
 -----
 

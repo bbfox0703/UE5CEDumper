@@ -27,6 +27,37 @@ builds ≤696 in
 
 -----
 
+## 2026-11-11 (no build change) — This repository's `dotnet build` leftovers leave %TEMP% after a day; nobody else's do `[TEST-TEMP-HYGIENE-2026-11-11]`
+
+- **Every `dotnet build` leaves an empty random-named folder, a `Microsoft.NET.Workload_*.log` and a second folder in
+  %TEMP%,** and the SDK never removes them (1,452 folders and 726 logs in a day here). The test run now removes the
+  ones a finished build of THIS repository left a day ago, when it starts.
+- **Nothing of anyone else's goes.** A log counts as ours only when its command builds a project git tracks in this
+  repository; its folders only when the group is exactly the one a test run saw while it was young (the unit tests and
+  the headless suite record what they see, up to 30 minutes old), two folders per log, all ours. Another repository's
+  build (the AOBMaker session builds and cleans up beside this one), a build still running, a log that recorded real
+  work, `dotnet --info`'s folders, a folder written since, and a group that lost or gained a folder all stay. Logs another session's build left are
+  remembered, so a run does not read them again. The memory lives in `%TEMP%\UE5CEDumper.Tests\`, which now stays.
+- Measured on the real %TEMP% before anything was deleted, as if a day had passed: 152 folders and 76 logs chosen by
+  the first design, and 80 folders and 40 logs by the final rule (after the other session's own cleanup), every log
+  independently this repository's and none of the other session's; a group stayed whenever the other session built
+  in the same second.
+- Three adversarial reviews (the top findings each checked by a second agent; the third found nothing above LOW)
+  found the first designs took too much: `dotnet build ui` in a sibling repository with the same layout, an option's
+  value, a program argument, a vendored clone, folders whose own log another cleanup had removed, a stranger
+  completing a group another cleanup had cut, and an option the parser did not know eating the next option's name.
+  Each is now a test, and the rule changed as above. Also fixed: a folder written a minute ago, the memories not
+  written on a first run or written over after a failed read, a verdict reused by a checkout with other projects, a
+  junction at the shared folder, a run's exit racing another run's start, a file time past the year 9999 stopping
+  every test, a killed run's read-only folder never removed, and the headless suite's own build never recorded.
+  Mutation runs (each guard removed in turn, the test processes on a scratch TEMP; 15, then 28, then 9): every guard
+  is caught by its own test, but one that a later rule made redundant.
+- Left behind on purpose: a build no test run follows within 30 minutes, or one named by an unusual path, stays until
+  someone else's cleanup takes it. The other session's own cleanup already removes SDK leftovers about an hour old.
+- Tests: red, then green, for every item. C# 7692 passed, 0 failed, 1 skipped; headless 71; 39 gates. A test run
+  starts 0.2-0.6 s later, mostly `git ls-files` for the project list (measured while another session kept the SSD at
+  100%).
+
 ## 2026-11-11 (no build change) — A test run leaves nothing in %TEMP% `[TEST-TEMP-HYGIENE-2026-11-11]`
 
 - **The C# test suite no longer fills %TEMP%.** One run left about 220 folders there (`UE5Dump*_<guid>`,
