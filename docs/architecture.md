@@ -183,7 +183,9 @@ UE5CEDumper/
 │   ├── ue5_invoke_helper.lua       ← AA Script invoke shim; embedded in UE5DumpUI.exe
 │   │                                  via <EmbeddedResource>; injected into open .CT by
 │   │                                  Tools → Inject Helper (or Export... + Add File...)
-│   ├── DEPLOY_README.md            ← End-user readme; copied to dist/README.md
+│   ├── DEPLOY_README.html          ← End-user readme; copied to dist/README.html
+│   ├── Feature-Guide.html          ← End-user feature walkthrough; copied to dist/
+│   ├── MCP-Setup.html              ← End-user guide to `UE5DumpUI.exe --mcp`; copied to dist/
 │   └── test_pipe.ps1               ← Dev-only pipe test client (not deployed)
 │
 └── vendor/                         ← 2 submodules + 1 committed header + 3 gitignored reference clones

@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>UE5CEDumper — MCP Setup</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font-family: -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.6; max-width: 920px; margin: 0 auto; padding: 32px 24px;
+    color: #1f2328; background: #ffffff;
+  }
+  @media (prefers-color-scheme: dark) {
+    body { color: #d4d4d4; background: #1e1e1e; }
+    code, pre { background: #2d2d2d !important; }
+    th { background: #2d2d2d !important; }
+    tr:nth-child(even) td { background: #252526; }
+    a { color: #569cd6; }
+    blockquote { color: #9aa0a6; border-left-color: #3c3c3c; }
+    .note { background: #2b2a1f !important; border-color: #6b5f2a !important; }
+  }
+  h1 { font-size: 1.9em; border-bottom: 2px solid #d0d7de; padding-bottom: .3em; }
+  h2 { font-size: 1.4em; margin-top: 1.8em; border-bottom: 1px solid #d0d7de; padding-bottom: .2em; }
+  h3 { font-size: 1.15em; margin-top: 1.4em; }
+  hr { border: none; border-top: 1px solid #d0d7de; margin: 2em 0; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; font-size: .95em; }
+  th, td { border: 1px solid #d0d7de; padding: 7px 11px; text-align: left; vertical-align: top; }
+  th { background: #f6f8fa; }
+  code { background: #f6f8fa; padding: .15em .4em; border-radius: 4px; font-size: .9em;
+         font-family: Consolas, "SF Mono", Menlo, monospace; }
+  pre { background: #f6f8fa; padding: 14px 16px; border-radius: 6px; overflow-x: auto; }
+  pre code { background: none; padding: 0; }
+  blockquote { margin: 1em 0; padding: .2em 1em; color: #57606a; border-left: 4px solid #d0d7de; }
+  .note { margin: 1em 0; padding: .6em 1em; background: #fff8c5; border: 1px solid #d4a72c; border-radius: 6px; }
+  ol, ul { padding-left: 1.6em; }
+  a { color: #0969da; text-decoration: none; }
+  a:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<h1>UE5CEDumper — MCP Setup</h1>
+
+<p><code>UE5DumpUI.exe --mcp</code> turns the UI's exe into a
+<a href="https://modelcontextprotocol.io">Model Context Protocol</a> (MCP) server. An AI client such as Claude Code or
+Claude Desktop starts it and talks to it over stdin / stdout; the AI can then look through a running game the way you
+do in the UI: find objects, read their fields and class layouts, follow pointers, and run value scans.</p>
+
+<p>Started with <code>--mcp</code>, the exe opens no window. The AI client starts it and stops it.</p>
+
+<blockquote><strong>This version only reads.</strong> It never writes game memory, calls a game function, or turns a
+feature on. Every reading tool's name starts with <code>read_</code>; the one other tool, <code>scan_start</code>,
+starts the object scan on a game whose scan has never run.</blockquote>
+
+<hr>
+
+<h2>1. What you need</h2>
+
+<ul>
+  <li>A game running <code>UE5Dumper.dll</code> — deployed as a proxy DLL, injected from the UI, or injected through
+    the Cheat Engine table (see <code>README.html</code>).</li>
+  <li><code>UE5DumpUI.exe</code> from the same release as the DLL. An older DLL answers newer commands with
+    "Unknown command"; the <code>read_status</code> tool says when the two builds differ.</li>
+  <li>An MCP client. The examples below are for Claude Code and Claude Desktop; any client that starts a local
+    (stdio) server works the same way: command <code>UE5DumpUI.exe</code>, argument <code>--mcp</code>.</li>
+</ul>
+
+<h2>2. Register the server</h2>
+
+<p>Use the full path to <code>UE5DumpUI.exe</code>; the examples use <code>C:\Tools\UE5CEDumper\</code>.</p>
+
+<h3>Claude Code</h3>
+
+<p>For every project of yours (<code>--scope user</code>), or only the current one (<code>--scope local</code>):</p>
+
+<pre><code>claude mcp add --scope user ue5cedumper -- "C:\Tools\UE5CEDumper\UE5DumpUI.exe" --mcp</code></pre>
+
+<p>Check it: <code>claude mcp list</code> should show <code>ue5cedumper ... ✓ Connected</code>, and
+<code>/mcp</code> inside a session shows its tools. A session started before the server was added does not see it:
+start a new one. To remove it: <code>claude mcp remove ue5cedumper -s user</code>.</p>
+
+<h3>Claude Desktop</h3>
+
+<p>Add it to <code>%APPDATA%\Claude\claude_desktop_config.json</code>, then restart Claude Desktop:</p>
+
+<pre><code>{
+  "mcpServers": {
+    "ue5cedumper": {
+      "command": "C:\\Tools\\UE5CEDumper\\UE5DumpUI.exe",
+      "args": ["--mcp"]
+    }
+  }
+}</code></pre>
+
+<div class="note"><strong>Updating to a new release:</strong> each AI session keeps the server running while it is
+open, and Windows does not let a running exe be replaced. Close the AI sessions (or Claude Desktop) before copying a
+new <code>UE5DumpUI.exe</code> over the old one.</div>
+
+<h2>3. Permissions (optional)</h2>
+
+<p>Claude Code asks before each tool call. To let the reading tools run without asking, add one allow rule to your
+Claude Code <code>settings.json</code>:</p>
+
+<pre><code>{ "permissions": { "allow": ["mcp__ue5cedumper__read_*"] } }</code></pre>
+
+<p>In the default permission mode, <code>scan_start</code> still asks first. In auto mode, Claude Code decides on its
+own and may run <code>scan_start</code> without asking.</p>
+
+<h2>4. Using it</h2>
+
+<ol>
+  <li>Start the game with the DLL, and load into the game world.</li>
+  <li>Ask the AI about the game. It calls <code>read_status</code> first. A game loaded through a proxy DLL needs its
+    object scan before anything else answers; the AI can start it with <code>scan_start</code>.</li>
+  <li>With several games running the DLL, the AI lists them (<code>read_games</code>) and names the game's pid on every
+    call.</li>
+</ol>
+
+<p><strong>Beside the UI.</strong> The server and <code>UE5DumpUI.exe</code> are separate processes and can run
+together; the AI's work never ends or slows down yours:</p>
+<ul>
+  <li>each server has its own connection to the game (the DLL serves 6 at once; the UI uses 2);</li>
+  <li>value scans belong to the connection that started them;</li>
+  <li>the AI's heavy walks take at most half of the free threads, so a value scan or snapshot you start in the UI
+    meanwhile keeps the other half;</li>
+  <li>the server leaves out every command that changes state another program uses.</li>
+</ul>
+<p>The UI does not show what the AI read.</p>
+
+<h3>A game running as administrator</h3>
+
+<p>Windows refuses a program that is not elevated the pipe of a game running as administrator. Start the AI client
+elevated too, or start the game normally. The server says so when it happens.</p>
+
+<h2>5. Using it from another machine over SSH</h2>
+
+<p>An MCP client can start the server on the game's PC through SSH: the server runs there and talks to the local pipe,
+so the pipe never faces the network. Register this as the client's command (example for Claude Code):</p>
+
+<pre><code>claude mcp add --scope user ue5cedumper -- ssh -T user@game-pc "C:\Tools\UE5CEDumper\UE5DumpUI.exe" --mcp</code></pre>
+
+<ul>
+  <li><code>-T</code> (no terminal) is required: a terminal would alter the protocol's bytes.</li>
+  <li><strong>Use key authentication.</strong> stdin carries the protocol, so SSH cannot ask for a password, and a
+    Windows Hello PIN is never accepted by SSH. For an account in the Administrators group, Windows OpenSSH's default
+    configuration reads the public key from <code>C:\ProgramData\ssh\administrators_authorized_keys</code>, which must
+    be writable only by Administrators and SYSTEM.</li>
+  <li>An administrator's SSH session runs elevated, so a server started that way also reaches a game running as
+    administrator.</li>
+</ul>
+
+<h3>Setting up an SSH server on the game's PC (reference only)</h3>
+
+<div class="note"><strong>For reference only.</strong> The commands below are one way to enable the OpenSSH server
+that ships with Windows 11. They may not work on your machine, and each machine needs its own adjustments: another
+Windows edition or policy, a firewall, a third-party SSH server instead. Setting up an SSH server is outside the scope
+of this project.</div>
+
+<p>In a terminal run as administrator:</p>
+
+<pre><code>Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+Start-Service sshd
+Set-Service -Name sshd -StartupType 'Automatic'</code></pre>
+
+<p>The last line starts the server with Windows; leave it out to start it by hand when needed.</p>
+
+<h2>6. When something goes wrong</h2>
+
+<table>
+  <thead><tr><th>The AI reports</th><th>What to do</th></tr></thead>
+  <tbody>
+    <tr><td>"No game is running the UE5Dumper DLL"</td><td>Start the game with the proxy deployed, or inject the DLL.</td></tr>
+    <tr><td>"The game is not scanned yet"</td><td>Load into the game world; the AI can then call <code>scan_start</code>.</td></tr>
+    <tr><td>"The game's object scan is still running"</td><td>Wait: the scan validates its offsets before object tools answer.</td></tr>
+    <tr><td>"The game's scan finished without finding the object pool"</td><td>Run <strong>Extra Scan</strong> in the UE5DumpUI window.</td></tr>
+    <tr><td>"Several games run the UE5Dumper DLL: pass pid on every call"</td><td>Tell the AI which game; it names its pid on every call.</td></tr>
+    <tr><td>"Only an old UE5Dumper DLL's pipe is up"</td><td>Close the game, run <strong>Update All</strong> on the Proxy Deploy tab, start it again.</td></tr>
+    <tr><td>"Every connection to game N's pipe is taken"</td><td>Close a program holding one; the message names them.</td></tr>
+    <tr><td>"Windows refused the connection to game N: the game runs as administrator"</td><td>Start the AI client elevated, or the game normally.</td></tr>
+    <tr><td>"... did not answer within N s"</td><td>The game is paused, loading or very large; the next call reconnects.</td></tr>
+    <tr><td>The client shows the server as failed</td><td>Check the path to <code>UE5DumpUI.exe</code>, and that this file is not blocked by antivirus.</td></tr>
+  </tbody>
+</table>
+
+<p>The server's log: <code>%LOCALAPPDATA%\UE5CEDumper\Logs\UE5DumpUI\mcp-&lt;date&gt;-&lt;time&gt;-&lt;pid&gt;.log</code>,
+one file per server; files older than 21 days are deleted.</p>
+
+<hr>
+
+<p><small>Project page: <a href="https://github.com/bbfox0703/UE5CEDumper">https://github.com/bbfox0703/UE5CEDumper</a>
+— the full MCP guide, with the list of tools, is <code>docs/mcp.md</code> there. Licensed under the MIT License.</small></p>
+
+</body>
+</html>

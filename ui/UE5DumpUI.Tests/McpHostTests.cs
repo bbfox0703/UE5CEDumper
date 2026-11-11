@@ -64,6 +64,59 @@ public sealed class McpHostTests
         Assert.True(setOut < host.IndexOf("new McpLog(", StringComparison.Ordinal));
     }
 
+    // ── The shipped setup guide ─────────────────────────────────────────────────────────────────────────
+
+    [Fact]
+    public void ThePublish_ShipsTheSetupGuide_BesideTheExe()
+    {
+        // The maintainer (2026-11-11): the MCP setup document ships with every publish; release.yml zips dist\ whole.
+        string build = Source("build.ps1");
+        int src = build.IndexOf("scripts\\MCP-Setup.html", StringComparison.Ordinal);
+        Assert.True(src > 0, "build.ps1 does not copy scripts\\MCP-Setup.html");
+        Assert.Contains("Join-Path $DIST_DIR \"MCP-Setup.html\"", build[src..]);
+        Assert.Contains("MCP-Setup.html", Source("scripts/DEPLOY_README.html"));
+    }
+
+    [Fact]
+    public void TheSetupGuide_MatchesTheServer()
+    {
+        string guide = Source("scripts/MCP-Setup.html");
+        Assert.Contains(Constants.McpSwitch, guide);
+        Assert.Contains("claude mcp add --scope user " + Constants.McpServerName + " --", guide);
+        Assert.Contains("\"mcp__" + Constants.McpServerName + "__read_*\"", guide);
+        // Every tool it names is one the server offers.
+        var catalog = McpTools.Create(new NoGame()).Select(t => t.Name).ToHashSet();
+        var named = Regex.Matches(guide, "<code>((?:read|scan)_[a-z_]+)</code>").Select(m => m.Groups[1].Value)
+            .Distinct().ToList();
+        Assert.NotEmpty(named);
+        foreach (var name in named) Assert.True(catalog.Contains(name), $"MCP-Setup.html names {name}");
+    }
+
+    [Fact]
+    public void TheSetupGuide_KeepsTheSshServerCommandsMarkedAsReferenceOnly()
+    {
+        // The maintainer (2026-11-11): the Windows 11 OpenSSH commands are for reference only, may not work on a given
+        // machine, and setting up an SSH server is outside this repository's scope.
+        string guide = Source("scripts/MCP-Setup.html");
+        int commands = guide.IndexOf("Add-WindowsCapability", StringComparison.Ordinal);
+        int disclaimer = guide.IndexOf("For reference only.", StringComparison.Ordinal);
+        Assert.True(disclaimer > 0 && disclaimer < commands, "the disclaimer must come before the commands");
+        Assert.Contains("outside the scope", guide[disclaimer..commands]);
+        Assert.Contains("third-party SSH server", guide[disclaimer..commands]);
+    }
+
+    private sealed class NoGame : IMcpGame
+    {
+        public (IReadOnlyList<McpGameInfo> Games, bool LegacyPresent) ListGames() => ([], false);
+        public int ConnectedPid => 0;
+        public Task<JsonObject> SendAsync(int? pid, JsonObject request, TimeSpan timeout, CancellationToken ct,
+            bool requireScan = false) => throw new NotSupportedException();
+        public Task<McpScanReport> ScanStateAsync(int? pid, CancellationToken ct) => throw new NotSupportedException();
+        public Task<(McpScanReport Before, JsonObject? Started)> StartScanAsync(int? pid, CancellationToken ct)
+            => throw new NotSupportedException();
+        public string? TakeNotice() => null;
+    }
+
     // ── The reply cut ───────────────────────────────────────────────────────────────────────────────────
 
     [Fact]

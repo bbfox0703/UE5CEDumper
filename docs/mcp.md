@@ -16,6 +16,9 @@ Started with `--mcp`, the exe opens no window. The AI client starts it and close
 - `UE5DumpUI.exe` from the same release as the DLL. An older DLL answers newer commands with "Unknown command", and
   `read_status` says when the two builds differ.
 
+Every release carries `MCP-Setup.html` beside the exe (source: `scripts/MCP-Setup.html`): the setup steps a user
+needs, including using the server over SSH. This page adds the tool list and the developer notes.
+
 ## Register it
 
 Use the full path to `UE5DumpUI.exe`.
