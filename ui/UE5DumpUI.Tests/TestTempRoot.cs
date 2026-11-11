@@ -68,7 +68,12 @@ internal static class TestTempRoot
             Environment.SetEnvironmentVariable("TMP", run);
             Environment.SetEnvironmentVariable("TEMP", run);
             RunDir = run;
-            AppDomain.CurrentDomain.ProcessExit += (_, _) => RemoveRun(root, run);
+            AppDomain.CurrentDomain.ProcessExit += (_, _) =>
+            {
+                s_owner?.Dispose();
+                s_owner = null;
+                RemoveRun(run);
+            };
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -168,14 +173,12 @@ internal static class TestTempRoot
                 ClearReadOnly(d);
     }
 
-    private static void RemoveRun(string root, string run)
+    internal static void RemoveRun(string run)
     {
         // The pool keeps a closed connection's .db open; nothing else stops the folder going.
         SqliteConnection.ClearAllPools();
-        s_owner?.Dispose();
-        s_owner = null;
         TryDelete(run);
-        try { Directory.Delete(root); }                         // only when empty: another run may be in it
+        try { Directory.Delete(Path.GetDirectoryName(run)!); }   // only when empty: another run may be in it
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
     }
 }

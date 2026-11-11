@@ -85,7 +85,8 @@ internal static class SdkTempLeftovers
     private sealed record FolderInfo(string Path, DateTime CreatedUtc, bool Deletable);
 
     /// <summary>What <see cref="Sweep"/> would remove; deletes nothing. Never throws.</summary>
-    internal static Plan Find(string temp, string repoRoot, DateTime nowUtc, string? keptLogsFile = null)
+    internal static Plan Find(string temp, string repoRoot, DateTime nowUtc, string? keptLogsFile = null,
+        IReadOnlyCollection<string>? ourProjects = null)
     {
         try
         {
@@ -98,7 +99,8 @@ internal static class SdkTempLeftovers
     }
 
     /// <summary>Removes what <see cref="Find"/> names; returns what it removed. Never throws.</summary>
-    internal static Plan Sweep(string temp, string repoRoot, DateTime nowUtc, string? keptLogsFile = null)
+    internal static Plan Sweep(string temp, string repoRoot, DateTime nowUtc, string? keptLogsFile = null,
+        IReadOnlyCollection<string>? ourProjects = null)
     {
         var folders = new List<string>();
         var logs = new List<string>();
@@ -337,6 +339,12 @@ internal static class SdkTempLeftovers
         if (any) args.Add(current.ToString());
         return args;
     }
+
+    /// <summary>Red stub: the project files git tracks in the repository.</summary>
+    internal static IReadOnlyList<string>? TrackedProjects(string repoRoot) => null;
+
+    /// <summary>Red stub: the memory's first line for a set of projects.</summary>
+    internal static string KeptHeader(IReadOnlyCollection<string> ourProjects) => "# projects";
 
     /// <summary>The repository holding the test binaries: the folder above them with this test project in it.</summary>
     internal static string? FindRepoRoot()

@@ -202,6 +202,95 @@ public class TestTempRootTests : IDisposable
         Directory.Delete(link);   // unlinks; the target stays
     }
 
+    /// <summary>A shared root that is itself a junction (someone moved test scratch to another drive) is not walked:
+    /// the folders behind it are not ours to judge.</summary>
+    [Fact]
+    public void ARootThatIsAJunction_IsNotSwept()
+    {
+        var target = Directory.CreateDirectory(Path.Combine(_sandbox, "elsewhere")).FullName;
+        var theirs = Directory.CreateDirectory(Path.Combine(target, "someone-elses")).FullName;
+        Directory.SetCreationTimeUtc(theirs, DateTime.UtcNow - TimeSpan.FromDays(3));
+        var root = Path.Combine(_sandbox, TestTempRoot.RootName);
+        Assert.True(TestJunction.Make(root, target));
+
+        var deleted = TestTempRoot.SweepDeadRuns(root, DateTime.UtcNow);
+
+        Assert.Empty(deleted);
+        Assert.True(Directory.Exists(theirs));
+        Directory.Delete(root);   // unlinks; the target stays
+    }
+
+    /// <summary>A fixed parent such as ue5-qmark is shared by every run of an older checkout: a child made a moment ago
+    /// is a run in progress, so only children an hour old go, and the parent only once it is empty.</summary>
+    [Fact]
+    public void ALegacyParent_LosesItsOldChildren_KeepsAYoungOne_AndGoesOnlyWhenEmpty()
+    {
+        var now = DateTime.UtcNow;
+        var old = now - TestTempRoot.LegacyMinAge - TimeSpan.FromMinutes(1);
+        var temp = Path.Combine(_sandbox, "temp");
+        var parent = Path.Combine(temp, "ue5-qmark");
+        var oldChild = Directory.CreateDirectory(Path.Combine(parent, Guid32, "UE5CEDumper")).Parent!.FullName;
+        Directory.SetCreationTimeUtc(oldChild, old);
+        Directory.SetLastWriteTimeUtc(oldChild, old);
+        var youngChild = Directory.CreateDirectory(Path.Combine(parent, Guid32.Replace('0', '9'))).FullName;
+        Directory.SetLastWriteTimeUtc(parent, old);   // as read before the young child arrived
+
+        TestTempRoot.SweepLegacy(temp, now);
+
+        Assert.False(Directory.Exists(oldChild));
+        Assert.True(Directory.Exists(youngChild));
+        Assert.True(Directory.Exists(parent));
+
+        Directory.SetCreationTimeUtc(youngChild, old);
+        Directory.SetLastWriteTimeUtc(youngChild, old);
+        Directory.SetLastWriteTimeUtc(parent, old);
+        TestTempRoot.SweepLegacy(temp, now);
+
+        Assert.False(Directory.Exists(parent));
+    }
+
+    /// <summary>A run's exit: the pool lets go of the .db a closed connection still holds, the run's folder goes, and
+    /// the shared root stays -- another run starting at that moment may be about to make its folder in it.</summary>
+    [Fact]
+    public void RemoveRun_ReleasesThePool_DeletesTheRun_AndKeepsTheSharedRoot()
+    {
+        var root = Directory.CreateDirectory(Path.Combine(_sandbox, TestTempRoot.RootName)).FullName;
+        var run = Directory.CreateDirectory(Path.Combine(root, "1-20261111000000")).FullName;
+        var db = Path.Combine(run, "snapshots.G.db");
+        using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={db}"))
+        {
+            conn.Open();
+            using var cmd = conn.CreateCommand();
+            cmd.CommandText = "CREATE TABLE t (x INTEGER)";
+            cmd.ExecuteNonQuery();
+        }
+
+        TestTempRoot.RemoveRun(run);
+
+        Assert.False(Directory.Exists(run));
+        Assert.True(Directory.Exists(root));
+    }
+
+    /// <summary>Install does the housekeeping before TMP / TEMP move, and hands the run's folder to the process exit.
+    /// It runs once per process, before any test, so this reads the source rather than calling it.</summary>
+    [Fact]
+    public void Install_SweepsFirst_ThenMovesTemp_AndRemovesTheRunAtExit()
+    {
+        var src = File.ReadAllText(Path.Combine(SdkTempLeftovers.FindRepoRoot()!, "ui", "UE5DumpUI.Tests", "TestTempRoot.cs"))
+            .Replace("\r\n", "\n");
+        var body = src[src.IndexOf("internal static void Install()", StringComparison.Ordinal)..];
+        body = body[..body.IndexOf("\n    }\n", StringComparison.Ordinal)];
+        var move = body.IndexOf("SetEnvironmentVariable(\"TMP\"", StringComparison.Ordinal);
+        Assert.True(move > 0);
+        foreach (var call in new[] { "SweepDeadRuns(", "SweepLegacy(", "SdkTempLeftovers.Sweep(" })
+        {
+            var at = body.IndexOf(call, StringComparison.Ordinal);
+            Assert.True(at > 0 && at < move, call);
+        }
+        Assert.Contains("ProcessExit +=", body);
+        Assert.Contains("RemoveRun(run)", body);
+    }
+
     private static string MakeRun(string root, string name, bool ownerFile)
     {
         var dir = Directory.CreateDirectory(Path.Combine(root, name)).FullName;
