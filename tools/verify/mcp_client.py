@@ -492,6 +492,7 @@ class _ExperimentalSwitch:
 
 
 FIXTURE_CLASS, FIXTURE_FIELD = "DumperTestHolder", "HolderValue"   # DumperTest's own int field (solide_l3_derivation)
+FORCE_FIELD_HOLD = f"force_field:{FIXTURE_CLASS}::{FIXTURE_FIELD}"
 
 
 def _ahead(pose: dict, distance: float) -> dict:
@@ -641,6 +642,10 @@ def run_writes(exe: str, pid: int | None, toggle_experimental: bool) -> int:
                                                  "kind": "numeric", "value": 777})
             ck.check(not r.get("isError") and (d or {}).get("held", 0) > 0,
                      f"write_force_field {FIXTURE_CLASS}.{FIXTURE_FIELD} = 777", d)
+            r, d, _ = call("read_holds")
+            job = {h["hold"]: h for h in (d or {}).get("holds", [])}.get(FORCE_FIELD_HOLD, {})
+            ck.check(job.get("active") and job.get("holder", {}).get("you") and job["holder"].get("background"),
+                     f"read_holds: {FORCE_FIELD_HOLD} is the server's, marked background", job)
             # See-through: the server may end its own claim alone, never one the UI shares.
             r, d, _ = call("write_see_through", {"enable": True})
             ck.check(not r.get("isError"), "write_see_through on", d)
@@ -660,7 +665,7 @@ def run_writes(exe: str, pid: int | None, toggle_experimental: bool) -> int:
         ck.check(exited == 0, "the server exits 0 when stdin closes", exited)
         mine_then = ["time:global", "movement:walk_speed"]
         if experimental or toggle_experimental:
-            mine_then += ["fly", f"force_field:{FIXTURE_CLASS}::{FIXTURE_FIELD}"]
+            mine_then += ["fly", FORCE_FIELD_HOLD]
         now = {}
         for _ in range(50):
             now = holds()
@@ -668,9 +673,11 @@ def run_writes(exe: str, pid: int | None, toggle_experimental: bool) -> int:
                 break
             time.sleep(0.1)
         for hold in mine_then:
-            h = now.get(hold, {})
-            ck.check(not h.get("active") and h.get("holder", {}).get("kind") == "none",
-                     f"the server's {hold} is released when it exits", h)
+            h = now.get(hold)
+            # A force-field job is listed only while it exists: released, it is gone from get_holds.
+            released = (h is None) if hold == FORCE_FIELD_HOLD else (
+                h is not None and not h.get("active") and h.get("holder", {}).get("kind") == "none")
+            ck.check(released, f"the server's {hold} is released when it exits", h)
         g = now.get("god_mode", {})
         ck.check(g.get("active") and g.get("holder", {}).get("you"), "the UI's god mode is untouched", g)
         if ui_claimed_see_through:
