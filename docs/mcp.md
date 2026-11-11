@@ -52,10 +52,13 @@ The server and the UI are separate processes and can run together. Each AI sessi
 
 - **Separate connections.** Each server holds one connection to the game; the UI holds two. The DLL serves 6 at
   once.
-- **Separate value scans.** A value scan belongs to the connection that started it, so the AI's scans and yours
-  never end or limit each other. Both run at once, sharing the CPU budget for heavy walks.
+- **Separate value scans.** A value scan belongs to the connection that started it, so the AI's scans never end or
+  limit yours, and yours never end or limit the AI's.
+- **Your scans keep their speed.** The AI's heavy walks (value scans, Find References, searches) run in the
+  background: each takes at most half of the threads that are free. A value scan or snapshot you start in the UI
+  while one runs still gets the other half. This needs the DLL from the same release.
 - **Nothing shared is changed.** The server leaves out every command that changes state another client uses. It
-  starts a scan only on a game that nobody has scanned yet.
+  starts a scan only on a game whose scan has never run.
 - **The UI does not see the AI's work.** Results the AI reads appear only in its own conversation.
 
 ## The tools
@@ -107,7 +110,9 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 |---|---|
 | "No game is running the UE5Dumper DLL" | Start the game with the proxy deployed, or inject the DLL. |
 | "The game is not scanned yet" | Load into the game world; the AI can then call `scan_start`. |
-| "Several games run the UE5Dumper DLL: pass pid" | The AI picks one from `read_games`; you can tell it which. |
+| "Several games run the UE5Dumper DLL: pass pid on every call" | The AI picks one from `read_games` and names it on every call (an address belongs to one game); you can tell it which. |
+| "The game's object scan is still running" | Wait: the scan validates its offsets before object tools answer. |
+| "The game's scan finished without finding the object pool" | Run **Extra Scan** in the UE5DumpUI window; scanning again from the AI finds nothing more. |
 | "Only an old UE5Dumper DLL's pipe is up" | Close the game, run **Update All** on the Proxy Deploy tab, start it again. |
 | "Every connection to game N's pipe is taken" | Close a program holding one; the message names them. |
 | "... did not answer within N s" | The game is paused, loading or very large; the next call reconnects. |

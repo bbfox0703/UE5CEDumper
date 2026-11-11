@@ -31,6 +31,14 @@ Total commands: **106** — a DERIVED number, regenerate it, never hand-edit:
   `get_diagnostics.game_thread.liveness` carries the same fact in three states
   (`"responsive"` / `"stalled"` / `"unknown"`); `game_thread.responsive` beside it is the legacy
   gate predicate and is kept unchanged for older clients.
+- **`"background": true` (bool, optional, any command)** marks work a client runs in the background
+  (`[PIPE-PER-PROCESS-2026-11-06]` Stage D; the MCP server, `UE5DumpUI.exe --mcp`, sends it on every
+  request). A GObjects walk the command starts then takes at most half of the worker threads that
+  are free, rounded down (`Aura::BackgroundWalkScope`), so a walk the user starts in the UI meanwhile
+  still gets the other half; without it, a long walk held every worker and the UI's value scan or
+  snapshot ran on one thread into its deadline. Absent or false: the walk takes all that is free, as
+  before. A DLL older than the key ignores it. The DLL log says when a walk ran on fewer threads, and
+  why ("a background walk takes at most half of what is free").
 
 -----
 
