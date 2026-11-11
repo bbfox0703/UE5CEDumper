@@ -4,7 +4,7 @@ Named pipe: `\\.\pipe\UE5DumpBfx_<pid>`, one per game process (the pid is the ga
 Format: JSON, newline-delimited (one message per `\n`)
 Direction: bidirectional — Request/Response + push Events (a watch's events go out with the watching connection's
 next reply since [PIPE-PER-PROCESS-2026-11-06] Stage C; see Push Events)
-Total commands: **106** — a DERIVED number, regenerate it, never hand-edit:
+Total commands: **107** — a DERIVED number, regenerate it, never hand-edit:
 `grep -c 'constexpr const char\* CMD' dll/src/Renge.h`. (It read 31 from build ~547 until
 2026-08-05, i.e. it was wrong by a factor of three for most of this project's life.)
 
@@ -39,6 +39,22 @@ Total commands: **106** — a DERIVED number, regenerate it, never hand-edit:
   snapshot ran on one thread into its deadline. Absent or false: the walk takes all that is free, as
   before. A DLL older than the key ignores it. The DLL log says when a walk ran on fewer threads, and
   why ("a background walk takes at most half of what is free").
+  It also marks the client process as a **background owner** (D2-1, below): what it holds is released
+  when it leaves, and `pipe_clients` shows `"background": true` for its connections.
+- **Holds and their owners (D2-1, build 3704+).** God mode, the three movement knobs, gravity direction,
+  the two time lanes, fly, the foreground lock, the debug camera and each force-field job are one
+  process-wide state each. The DLL records who holds each (`Voll::HoldLedger`): a client process, CE's
+  mailbox, or none. After a command that changes a hold, an active hold is the caller's and one that is
+  off is nobody's.
+  - **`"if_free": true`** (bool, optional, on any of those commands): refuse when the hold is active and
+    anyone else holds it -- an active hold with no recorded owner counts as someone else's. The answer is
+    `ok: true` with `"code": -20`, `"hold"` (its name) and `"holder"` (below); nothing changes. The check
+    and the change run under the hold's own lock, which the mailbox takes too, so no other writer slips
+    between them.
+  - **What a background client holds ends with it:** when its process's last connection closes, the DLL
+    releases each hold the ledger still names it for (god mode off, a knob or lane reset, fly off, the
+    lock off, the debug camera off, the force-field job removed). A foreground client's holds outlive it.
+  - `get_holds` (below) lists them all.
 
 -----
 
@@ -2123,8 +2139,11 @@ disconnected for idling, but who holds the connections can be seen. Read-only, a
 // → { "pipe": "\\\\.\\pipe\\UE5DumpBfx_668", "cap_in_force": 6, "build_cap": 6,
 //     "clients": [ { "seq": 3, "pid": 4321, "exe": "python.exe", "connected_ms": 5000,
 //                    "last_cmd": "get_pointers", "last_cmd_age_ms": 20, "in_flight": true,
-//                    "phase": "Dispatching", "self": true }, ... ] }
+//                    "phase": "Dispatching", "self": true, "background": false }, ... ] }
 ```
+
+`background` (build 3704+) marks a connection whose requests carry `"background": true` (the MCP server): the exe
+name cannot, since the MCP server is `UE5DumpUI.exe` too.
 
 `cap_in_force` is the limit the pipe really has (a name an older copy of the DLL created keeps that copy's limit);
 `build_cap` is this build's. `last_cmd` is empty and `last_cmd_age_ms` is -1 before a client's first command.
@@ -2141,6 +2160,30 @@ PipeServer: all 6 pipe instances in use, waiting for a free slot -- \\.\pipe\UE5
 \\.\pipe\UE5DumpBfx_668` line supersedes it. The UI's Connect and `tools/verify/pipe_client.py` read it when a
 connect finds every connection taken; the words are Grimoire.h's `PIPE_AT_CAPACITY_TEXT` / `PIPE_HOLDERS_TOKEN` /
 `PIPE_HOLDERS_MORE_TOKEN` / `PIPE_SLOT_FREED_TEXT`.
+
+### get_holds
+
+Every hold whose owner the DLL records ([PIPE-PER-PROCESS-2026-11-06] Stage D2-1, build 3704+; General Rules, "Holds
+and their owners"), whether it is in force now, and who holds it. Read-only, answers before a scan.
+
+```jsonc
+{ "id": 1, "cmd": "get_holds" }
+// → { "holds": [
+//      { "hold": "god_mode", "active": true,
+//        "holder": { "kind": "client", "pid": 4321, "background": false, "you": false } },
+//      { "hold": "time:global", "active": true,
+//        "holder": { "kind": "client", "pid": 5555, "background": true, "you": true } },
+//      { "hold": "fly", "active": false, "holder": { "kind": "none", "you": false } },
+//      { "hold": "force_field:BP_Hero_C::bGodMode", "active": true, "holder": { "kind": "ce", "you": false } },
+//      ... ] }
+```
+
+The holds, always listed: `god_mode`, `foreground_lock`, `gravity_direction`, `fly`, `debug_camera`,
+`movement:walk_speed`, `movement:gravity`, `movement:jump`, `time:global`, `time:pawn`; then one
+`force_field:<class>::<field>` per force-field job there is. `active` is read from the module each time. `holder.kind`:
+`client` (a pipe client's process; `pid` absent when it could not be read), `ce` (the mailbox), or `none` (nobody
+recorded -- a hold that is active with no owner was set by a C ABI call or before the DLL recorded owners). `you` marks
+the asker's own; `background`, a client whose holds end when it leaves. The names are Grimoire.h's `HOLD_*`.
 
 ### get_diagnostics / reset_diagnostics
 

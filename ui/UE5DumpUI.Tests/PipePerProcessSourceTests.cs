@@ -559,4 +559,82 @@ public sealed class PipePerProcessSourceTests
         var ui = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Services/DumpService.cs"));
         Assert.DoesNotContain("persisted={persist}", ui);
     }
+
+    // ── Stage D2-1: who holds each gameplay hold ────────────────────────────────────────────────────────────────────
+    // The ledger and its rules are dll_helpers_test's Test_Voll_HoldLedger. Fern.cpp and Mimic.cpp reach no test target,
+    // so where they use it is pinned here.
+
+    /// <summary>Every pipe command that changes a hold runs under the hold's lock, and an if_free refusal is decided
+    /// under it, before the first command branch: a check made anywhere else would race the other writers.</summary>
+    [Fact]
+    public void DispatchTakesTheHoldLocks_AndChecksIfFree_BeforeAnyCommandRuns()
+    {
+        string fern = CodeOnly(DllSrc("Fern.cpp"));
+        int dispatch = fern.IndexOf("std::string Fern::DispatchCommand(", StringComparison.Ordinal);
+        int firstCommand = fern.IndexOf("if (cmd == Renge::CMD_", dispatch, StringComparison.Ordinal);
+        string head = fern[dispatch..firstCommand];
+        int changed = head.IndexOf("Voll::HoldsChangedBy(", StringComparison.Ordinal);
+        int locks = head.IndexOf("Voll::Holds().LockFor(", StringComparison.Ordinal);
+        int ifFree = head.IndexOf("Voll::HeldByOther(", StringComparison.Ordinal);
+        int recorder = head.IndexOf("HoldRecorder", StringComparison.Ordinal);
+        Assert.True(changed > 0 && locks > changed && ifFree > locks && recorder > ifFree,
+            "DispatchCommand must name the holds, lock them, decide if_free, then record the owner -- in that order");
+        Assert.Contains("Grimoire::HOLD_HELD_BY_OTHER", head);
+    }
+
+    /// <summary>What a background client turned on ends with it; a foreground client's holds outlive it.</summary>
+    [Fact]
+    public void ABackgroundClientsHolds_AreReleasedWhenItsProcessLeaves()
+    {
+        string fern = CodeOnly(DllSrc("Fern.cpp"));
+        int start = fern.IndexOf("void Fern::ReleaseOwnedBy(", StringComparison.Ordinal);
+        string body = fern[start..fern.IndexOf("void Fern::MonitorLoop(", start, StringComparison.Ordinal)];
+        int gate = body.IndexOf("IsBackgroundOwner(owner)", StringComparison.Ordinal);
+        int owned = body.IndexOf("Voll::Holds().OwnedBy(owner)", StringComparison.Ordinal);
+        Assert.True(gate > 0 && owned > gate, "only a background owner's holds are released");
+        Assert.Contains("ReleaseHold(hold)", body[owned..]);
+        Assert.Contains("Voll::Holds().Owner(hold) != owner", body[owned..]);   // a hold taken over meanwhile stays
+    }
+
+    /// <summary>The mailbox is the third writer: every command of it that changes a hold goes through the same lock
+    /// and names CE as the owner.</summary>
+    [Theory]
+    [InlineData("HandleSetDebugCamera", "HOLD_DEBUG_CAMERA")]
+    [InlineData("HandleProtect", "HOLD_GOD_MODE")]
+    [InlineData("HandleForeground", "HOLD_FOREGROUND_LOCK")]
+    [InlineData("HandleMovement", "HOLD_GRAVITY_DIRECTION")]
+    [InlineData("HandleMovement", "HOLD_MOVEMENT_PREFIX")]
+    [InlineData("HandleTime", "HOLD_TIME_PREFIX")]
+    [InlineData("HandleFly", "HOLD_FLY")]
+    public void TheMailbox_ChangesEachHoldAsCe(string handler, string hold)
+    {
+        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
+        int start = mimic.IndexOf("static void " + handler + "() {", StringComparison.Ordinal);
+        Assert.True(start > 0, handler);
+        int end = mimic.IndexOf("\nstatic void ", start + 10, StringComparison.Ordinal);
+        string body = mimic[start..(end > 0 ? end : mimic.Length)];
+        Assert.Contains("ChangeHoldAsCe", body);
+        Assert.Contains("Grimoire::" + hold, body);
+    }
+
+    /// <summary>Every pipe command that turns a hold on, off or changes it names that hold: one the ledger missed
+    /// would let an if_free request through and never be released.</summary>
+    [Fact]
+    public void EveryHoldChangingCommand_NamesItsHold()
+    {
+        string voll = DllSrc("Voll.h");
+        int start = voll.IndexOf("inline std::vector<std::string> HoldsChangedBy(", StringComparison.Ordinal);
+        string body = voll[start..voll.IndexOf("inline nlohmann::json HoldOwnerJson(", start, StringComparison.Ordinal)];
+        foreach (var cmd in new[]
+                 {
+                     "set_god_mode", "set_foreground_lock", "set_gravity_direction", "reset_gravity_direction",
+                     "fly_set", "set_debug_camera", "set_movement_multiplier", "reset_movement", "set_time_dilation",
+                     "reset_time_dilation", "force_field", "reset_field", "reset_all_fields",
+                 })
+            Assert.Contains("\"" + cmd + "\"", body);
+        // ...and each of those is a real command (Renge.h), so a rename cannot leave the ledger matching nothing.
+        string renge = DllSrc("Renge.h");
+        foreach (var cmd in new[] { "set_god_mode", "fly_set", "reset_all_fields", "set_time_dilation" })
+            Assert.Contains("= \"" + cmd + "\";", renge);
+    }
 }
