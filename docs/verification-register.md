@@ -435,7 +435,11 @@ force-field job and See-through. Not reached:
     - A CE Disable/Enable while a release is owed or under way. Fern::Stop drops the record, and the camera may stay
       on; CE testing is pending.
     - A soft-removed hook (the OFF waits for the hook's own fire stamp, and brings the hook back before sending).
-    - UE 5.8, where the queued OFF itself turns the camera off and the release ends "done" without a second OFF.
+    - ✅ **UE 5.8: reached 2026-11-12** (DumperTest58 Development, UE 5.8, 35,860 objects, 3707): `dbgcamhold` 57/57
+      (the two checks that apply below 5.8 only are not run). H: the queued OFF itself turned the camera off, and the
+      DLL log reads "release is done" with no "sent again" line. I: the owed release was abandoned once the UI took
+      the camera. After the resume, the release's queued OFF ran and turned the camera off. The UI's Force ON had
+      answered -6, "not sent: send it again once the game responds", so this is the advertised behaviour.
     - Other holds' releases under a stall.
 
 Stage D2-3, build 3706 (`write_memory`, `write_invoke`; `write_mem` data only; the invoke queue's owners) -- dev-log
