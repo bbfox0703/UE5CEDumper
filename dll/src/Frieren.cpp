@@ -1373,7 +1373,9 @@ static int s_dbgCamInFlight = -1;   // -1 none, else the direction (0 OFF / 1 ON
 
 // [D2-3-INVOKE] Fern's hold recorder: an ON still queued or being dispatched turns the camera on when it runs, so its
 // sender holds the camera from now. Recording nobody let the camera come on ownerless: its sender could not turn it off
-// with if_free, and an AI session's end did not release it.
+// with if_free, and an AI session's end did not release it. C++ linkage inside this file's extern "C" block, as
+// FrierenInvoke below: Fern declares it as a C++ function.
+extern "C++" {
 namespace FrierenDebugCamera {
 bool OnPending() {
     std::lock_guard<std::mutex> lk(s_dbgCamMutex);
@@ -1381,6 +1383,7 @@ bool OnPending() {
     return s_dbgCamQueued.StillQueued() && s_dbgCamQueuedWant;
 }
 }  // namespace FrierenDebugCamera
+}  // extern "C++"
 
 int32_t UE5_SetDebugCamera(int32_t enable) {
     const bool want = (enable != 0);
