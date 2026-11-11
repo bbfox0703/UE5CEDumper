@@ -996,7 +996,7 @@ struct NoDirectCall {
 void ServeOwedCameraRelease() {
     uint64_t owedBy = s_cameraReleaseOwedBy.load();
     if (owedBy == 0) return;
-    // Every read below gives up under shutdown: the record waits for the next Start.
+    // Every read below gives up under shutdown: the record waits, and Fern::Stop drops it.
     if (Tot::ShutdownRequested()) return;
     // Its reads answer to shutdown alone: on this unbound thread, a per-command cancel latched by another client's
     // mid-command disconnect would read the camera as unknown and drop the release.

@@ -2223,7 +2223,9 @@ another client has one outstanding. A hold may carry `"pending": true`: a debug-
 client's session ended while the game thread was stalled, so its release's OFF timed out and stays queued. On stock
 UE 4.18-5.7 a queued OFF does not turn the camera off, so the DLL sends the OFF again once the queued one has run and
 the game thread is running. It abandons the release instead when the camera has become someone's meanwhile (a client's
-ON, CE's record, or an ON on its way). The DLL's pipe log records each step.
+ON, CE's record, or an ON on its way). A stop of the pipe server (a CE Disable) drops a release still owed rather than
+carrying it to the next start: nobody can be named the camera's holder until the clients reconnect, so the camera may
+then stay on. The DLL's pipe log records each step.
 
 The holds, always listed: `god_mode`, `foreground_lock`, `gravity_direction`, `fly`, `debug_camera`,
 `movement:walk_speed`, `movement:gravity`, `movement:jump`, `time:global`, `time:pawn`; then one
