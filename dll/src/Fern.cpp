@@ -964,45 +964,73 @@ std::vector<std::string> KnownHolds() {
 static_assert(Voll::kOwedOffQueued == Stark::kInvokeTimedOutStillQueued, "Voll's owed-release rules read Stark's -5");
 std::atomic<uint64_t> s_cameraReleaseOwedBy{0};
 
+// Whether the game thread entered ProcessEvent within `ms`, from the hook's own fire stamp. The physical hook outlives a
+// CE Disable (Stark::RemoveHook only clears its flag) and keeps stamping, so this measures the game thread even while
+// GetGameThreadLiveness answers Unknown; a hook that never fired counts as not running.
+bool GameThreadRanWithin(uint64_t ms) {
+    return Stark::HasOriginal() && Stark::MsSinceLastHookFire() <= ms;
+}
+// The re-check just before the owed OFF: the first one is up to kStallThresholdMs old plus a GObjects walk by then.
+constexpr uint64_t kOwedSendFreshMs = 150;
+
 // MonitorLoop, every tick: the owed OFF is sent again once the queued one has run and the game thread is running, unless
 // the camera became someone's meanwhile. Under the camera's hold lock, as every change of it is, so a client's Force ON
 // is either seen here first or waits for this OFF. The lock is only tried: a writer holds it across a game-thread wait,
 // and the peeks after this call must go on (the next tick sees what that writer recorded). So only this function's own
-// OFF can hold the loop up -- when the game thread stalls again in between, for the invoke timeout at most.
+// OFF can hold the loop up: a game thread that stops within kOwedSendFreshMs of the send, or during the OFF's own state
+// read, holds it for the invoke timeout (set_invoke_timeout allows up to 600 s; only Stark::Shutdown cuts it).
 void ServeOwedCameraRelease() {
     uint64_t owedBy = s_cameraReleaseOwedBy.load();
     if (owedBy == 0) return;
+    // Every read below gives up under shutdown: the record waits for the next Start.
+    if (Tot::ShutdownRequested()) return;
     // Its reads answer to shutdown alone: on this unbound thread, a per-command cancel latched by another client's
     // mid-command disconnect would read the camera as unknown and drop the release.
     const Tot::CancelContextScope immune(Tot::CancelContext{nullptr, true});
     std::unique_lock<std::mutex> holdLock(Voll::Holds().LockFor(Grimoire::HOLD_DEBUG_CAMERA), std::try_to_lock);
     if (!holdLock.owns_lock()) return;
+    // The record as of the lock: every store is under it, so the one read here is the one these reads decide.
+    owedBy = s_cameraReleaseOwedBy.load();
+    if (owedBy == 0) return;
     const uint64_t owner = Voll::Holds().Owner(Grimoire::HOLD_DEBUG_CAMERA);
     uint64_t sender = 0;
     const bool pendingOn = FrierenDebugCamera::PendingOn(sender);
     // The queued toggle before the state: one that runs between the two leaves a stale "on", and the OFF reads again.
     const bool outstanding = FrierenDebugCamera::ToggleOutstanding();
-    const bool stalled = Stark::GetGameThreadLiveness() == Stark::GameThreadLiveness::Stalled;
-    Voll::OwedRelease step = Voll::OwedCameraReleaseBefore(owner, pendingOn, outstanding, stalled);
+    const bool notRunning = !GameThreadRanWithin(Stark::kStallThresholdMs);
+    Voll::OwedRelease step = Voll::OwedCameraReleaseBefore(owner, pendingOn, outstanding, notRunning);
     if (step == Voll::OwedRelease::Wait) return;
     int32_t state = -1, sent = 0;
-    bool sentOff = false;
+    bool sentOff = false, noHook = false;
     if (step == Voll::OwedRelease::Read) {
         state = UE5_GetDebugCameraState();
         step = Voll::OwedCameraReleaseOnState(state);
     }
     if (step == Voll::OwedRelease::Send) {
-        sent = UE5_SetDebugCamera(0);
-        sentOff = true;
-        step = Voll::OwedCameraReleaseSent(sent);
-        LOG_INFO("PipeServer: background client %llu's debug-camera release -- its queued OFF has run and the camera "
-                 "is still on: OFF sent again -> state %d", (unsigned long long)owedBy, sent);
-        if (step == Voll::OwedRelease::Wait) return;
+        if (!GameThreadRanWithin(kOwedSendFreshMs)) return;   // it stopped since the check: the next tick decides again
+        // A hook a CE Disable soft-removed is brought back first: the OFF goes through the game thread, never a direct
+        // call off it.
+        if (Stark::IsHookActive() || UE5_EnsureGameThreadHook()) {
+            sent = UE5_SetDebugCamera(0);
+            sentOff = true;
+            step = Voll::OwedCameraReleaseSent(sent);
+            LOG_INFO("PipeServer: background client %llu's debug-camera release -- its queued OFF has run and the "
+                     "camera is still on: OFF sent again -> state %d", (unsigned long long)owedBy, sent);
+            if (step == Voll::OwedRelease::Wait) return;
+        } else {
+            step = Voll::OwedRelease::Abandon;
+            noHook = true;
+        }
     }
-    s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0);   // a release owed since, by another session, stays
+    // A read or an OFF that a shutdown beginning mid-call cut short decided nothing: the record waits for the next Start.
+    if (step == Voll::OwedRelease::Abandon && owner == Voll::kHoldOwnerNone && !pendingOn && Tot::ShutdownRequested()) return;
+    s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0);   // every store is under this lock: the record read above
     const unsigned long long by = owedBy;
     if (step == Voll::OwedRelease::Done)
         LOG_INFO("PipeServer: background client %llu's debug-camera release is done -- the camera is off", by);
+    else if (noHook)
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is abandoned -- no game-thread hook to send "
+                 "the OFF through (never a direct call off the game thread)", by);
     else if (owner != Voll::kHoldOwnerNone)
         LOG_INFO("PipeServer: background client %llu's debug-camera release is abandoned -- the camera is held by "
                  "another client or CE now", by);
@@ -1075,6 +1103,15 @@ void Fern::ReleaseOwnedBy(uint64_t owner) {
     for (const auto& hold : Voll::Holds().OwnedBy(owner)) {
         std::lock_guard<std::mutex> holdLock(Voll::Holds().LockFor(hold));
         if (Voll::Holds().Owner(hold) != owner) continue;
+        // [DBGCAM-RELEASE-STALLED] Under shutdown every read gives up (the camera "unknown"), so the camera would be
+        // forgotten, still on. Owed unread instead: the next Start's MonitorLoop reads it and ends it (or finds it off).
+        if (hold == Grimoire::HOLD_DEBUG_CAMERA && Tot::ShutdownRequested()) {
+            s_cameraReleaseOwedBy.store(owner);
+            Voll::Holds().SetOwner(hold, Voll::kHoldOwnerNone);
+            LOG_INFO("PipeServer: background client %llu left during shutdown -- its debug-camera release is owed to "
+                     "the next start", (unsigned long long)owner);
+            continue;
+        }
         int32_t code = 0;
         try {
             code = HoldActive(hold) ? ReleaseHold(hold) : 0;

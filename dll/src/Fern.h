@@ -237,9 +237,10 @@ private:
     // is no concurrent read/write on the handle.
     // [DBGCAM-RELEASE-STALLED] Each tick it also serves an AI session's owed
     // debug-camera release, a no-op unless one is owed. It only tries the camera's
-    // hold lock, never waits for it; the OFF it sends waits on the game thread, so
-    // a stall that begins between its check and the send holds the peeks up for
-    // the invoke timeout at most.
+    // hold lock, never waits for it, and sends only when the game thread ran in the
+    // last 150 ms; the OFF waits on the game thread, so a game thread that stops
+    // within that window or during the OFF's own state read holds the peeks up for
+    // the invoke timeout (Fern.cpp's ServeOwedCameraRelease says how long).
     Routine::SafeThread          m_monitorThread;
     void MonitorLoop();
 

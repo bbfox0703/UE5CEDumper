@@ -323,21 +323,24 @@ constexpr int32_t kOwedOffQueued = -5;
 
 // Before the camera is read -- each read walks GObjects, so it is made only when it decides something. `owner` is the
 // ledger's holder of the camera, `pendingOn` an ON on its way (its sender's from now), `toggleOutstanding` a toggle of
-// either direction still queued or being dispatched.
+// either direction still queued or being dispatched, `gameThreadNotRunning` no ProcessEvent from the game thread within
+// the stall threshold by the hook's own stamp (a soft-removed hook included).
 constexpr OwedRelease OwedCameraReleaseBefore(uint64_t owner, bool pendingOn, bool toggleOutstanding,
-                                              bool gameThreadStalled) noexcept {
+                                              bool gameThreadNotRunning) noexcept {
     // Someone took the camera, or asked for it on, since the session ended: it is theirs, never turned off under them.
     if (owner != kHoldOwnerNone || pendingOn) return OwedRelease::Abandon;
     // The queued OFF has not run yet, or an OFF sent now could not run.
-    if (toggleOutstanding || gameThreadStalled) return OwedRelease::Wait;
+    if (toggleOutstanding || gameThreadNotRunning) return OwedRelease::Wait;
     return OwedRelease::Read;
 }
 
-// On what the read says: 1 on, 0 off, below 0 unreadable.
+// On what the read says: 1 on, 0 off, below 0 unreadable -- no CheatManager or DebugCameraController object at all (with
+// no live CheatManager the read lands on the class default object and answers 0 or 1). The caller treats a read that a
+// shutdown cut short as no answer.
 constexpr OwedRelease OwedCameraReleaseOnState(int32_t cameraState) noexcept {
     if (cameraState == 1) return OwedRelease::Send;
     return cameraState == 0 ? OwedRelease::Done          // the queued OFF turned it off (UE 5.8)
-                            : OwedRelease::Abandon;      // no CheatManager left to turn off (a level change)
+                            : OwedRelease::Abandon;      // nothing to turn off
 }
 
 // After sending: what the OFF answered. Queued again (a new stall) stays owed; anything but off is the end of it --
