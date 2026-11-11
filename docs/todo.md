@@ -621,9 +621,9 @@ live checks did not reach is verification-register.md `[PIPE-PER-PROCESS-2026-11
 - The dispatch counters behind `get_diagnostics` (`Sense`) are process-wide, so the UI's PERF line for an operation
   counts the MCP server's commands that ran meanwhile.
 
-**Idea, the maintainer's call:** turn on `EnableTrimAnalyzer` / `EnableAotAnalyzer` in `UE5DumpUI.csproj` for every
-build, so IL2026 / IL3050 fail the first compile instead of the six-minute publish. The D1 HIGH above would have failed
-the first build. Not done: it changes every build of the UI, and the current rule (§3.xc) is a manual step.
+**Done 2026-11-11 (maintainer's go-ahead): `EnableTrimAnalyzer` / `EnableAotAnalyzer` are on in `UE5DumpUI.csproj`
+for every build**, so IL2026 / IL3050 fail the first compile instead of the six-minute publish; the D1 HIGH above would
+have failed the first build. Negative control in working-lessons §3.xc.
 
 **D2 (next build):** `write_mem`, `invoke_function`, the toggles, teleport and force field. Each carries
 `_meta["anthropic/requiresUserInteraction"]`, which makes Claude Code ask on every call, even under an allow rule.

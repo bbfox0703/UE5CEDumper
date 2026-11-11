@@ -2902,6 +2902,13 @@ bump was reverted twice, so the third would have shipped 3631 a second time (the
 
 ### 3.xc Catch an AOT-only error in a minute, before the six-minute publish
 
+⭐ **Since 2026-11-11 the two analyzers are on for EVERY build** (`UE5DumpUI.csproj`, maintainer's decision after the
+`[PIPE-PER-PROCESS-2026-11-06]` Stage D1 review found nine `JsonArray.Add<T>` calls that compiled and passed every
+test). A plain `dotnet build`, the test build and CI now fail on IL2026 / IL3050 by themselves. Measured that day: a
+planted `new JsonArray().Add("x")` failed a plain Release build with IL2026 and IL3050, and the same build was clean
+(18 s, both editorconfig lines below present) once it was taken out. The command below is no longer needed; what
+follows about XAML, the editorconfig check and `--no-restore` still holds.
+
 `dotnet build ui/UE5DumpUI/UE5DumpUI.csproj -c Release -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true` reports
 the IL2026 / IL3050 errors a trimmed publish fails on, from a plain build. Measured 2026-10-07: the publish's own
 failure (`JsonArray.Add<T>` at `DumpService.cs`) showed up as the same two errors in about a minute, and a clean
