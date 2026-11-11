@@ -257,7 +257,7 @@ def run_call(exe: str, tool: str, args: dict) -> int:
     return 1 if r.get("isError") or c.framing_errors else 0
 
 
-def run_live(exe: str, pid: int | None) -> int:
+def run_live(exe: str, pid: int | None, suspend_name: str | None) -> int:
     ck = Checks()
     c = McpClient(exe)
     c.initialize()
@@ -355,21 +355,29 @@ def run_live(exe: str, pid: int | None) -> int:
         r, end, _ = call("read_value_scan_end", {"session_id": sid})
         ck.check(not r.get("isError"), "read_value_scan_end", end)
 
-    # A cancel of a running call: a heavy scan, cancelled at once; the server must not answer it, and the next call
-    # must still work (it reconnects, and says that sessions went with the old connection).
-    rid = c.request_async("tools/call", {"name": "read_value_scan_begin",
-                                          "arguments": {**base, "data_type": "Int32", "value": "0",
-                                                        "deadline_ms": 60000, "deep": True}})
-    time.sleep(0.3)
-    c.notify("notifications/cancelled", {"requestId": rid, "reason": "mcp_client.py cancel test"})
-    try:
-        c.wait(rid, timeout=5)
-        ck.check(False, "a cancelled call gets no response", "it was answered")
-    except McpError:
-        ck.check(True, "a cancelled call gets no response")
-    r, st2, note = call("read_status")
-    ck.check(not r.get("isError") and st2.get("scanned"), "the next call works after a cancel", st2)
-    ck.check(note is not None and "closed" in note, "and says the connection was closed", note)
+    # A cancel of a running call. On a fixture every command answers in milliseconds, so a call is made to outlast its
+    # cancel by suspending the game, which stops the DLL's pipe threads too: the call cannot be answered before the
+    # cancel arrives. The server must not answer it, and after a resume the next call must work (it reconnects, and
+    # says the sessions went with the old connection).
+    if suspend_name:
+        suspend = [sys.executable, str(pathlib.Path(__file__).with_name("suspend.py"))]
+        subprocess.run([*suspend, "suspend", suspend_name], check=True, capture_output=True)
+        try:
+            rid = c.request_async("tools/call", {"name": "read_object", "arguments": {**base, "addr": pc}})
+            time.sleep(0.5)
+            c.notify("notifications/cancelled", {"requestId": rid, "reason": "mcp_client.py cancel test"})
+            try:
+                c.wait(rid, timeout=3)
+                ck.check(False, "a cancelled call gets no response", "it was answered")
+            except McpError:
+                ck.check(True, "a cancelled call gets no response")
+        finally:
+            subprocess.run([*suspend, "resume", suspend_name], check=True, capture_output=True)
+        r, st2, note = call("read_status")
+        ck.check(not r.get("isError") and st2.get("scanned"), "the next call works after a cancel", st2)
+        ck.check(note is not None and "closed" in note, "and says the connection was closed", note)
+    else:
+        print("  skip  the cancel check (--suspend-name not given)")
 
     code = c.close()
     ck.check(code == 0, "exit code 0 after stdin closes", code)
@@ -383,6 +391,8 @@ def main() -> int:
     ap.add_argument("--tool")
     ap.add_argument("--args", default="{}")
     ap.add_argument("--pid", type=int)
+    ap.add_argument("--suspend-name", help="live: the game's process name for suspend.py (e.g. DumperTest); "
+                                           "enables the cancel check, which suspends the game for about a second")
     a = ap.parse_args()
     exe = str(pathlib.Path(a.exe).resolve())
     if a.mode == "probe":
@@ -394,7 +404,7 @@ def main() -> int:
         if a.pid:
             args["pid"] = a.pid
         return run_call(exe, a.tool, args)
-    return run_live(exe, a.pid)
+    return run_live(exe, a.pid, a.suspend_name)
 
 
 if __name__ == "__main__":
