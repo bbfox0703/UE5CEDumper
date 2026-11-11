@@ -481,6 +481,81 @@ static void Test_Voll_Holders() {
         nlohmann::json::parse(more == std::string::npos ? cut : cut.substr(0, more), nullptr, false);
     EXPECT("HoldersJson * : past the budget, holders are dropped and counted",
            more != std::string::npos && cutParsed.is_array() && cutParsed.size() >= 1 && cutParsed.size() < 6);
+
+    Voll::Holder bg = h;
+    bg.background = true;
+    EXPECT("holder * : a background connection is marked (the MCP server runs as UE5DumpUI.exe too)",
+           Voll::HolderToJson(bg).value("background", false) && !Voll::HolderToJson(h).value("background", true));
+}
+
+static void Test_Voll_HoldLedger() {
+    // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: who holds each gameplay hold, so an AI working through the MCP server
+    // never replaces or ends the UI's.
+    Voll::HoldLedger ledger;
+    EXPECT("ledger: a hold nobody set has no owner", ledger.Owner("god_mode") == Voll::kHoldOwnerNone);
+    ledger.SetOwner("god_mode", 1234);
+    ledger.SetOwner("time:global", 1234);
+    ledger.SetOwner("fly", Voll::kHoldOwnerCe);
+    EXPECT("ledger: an owner is kept", ledger.Owner("god_mode") == 1234);
+    auto mine = ledger.OwnedBy(1234);
+    std::sort(mine.begin(), mine.end());
+    EXPECT("ledger * : OwnedBy lists exactly that owner's holds (what its leaving releases)",
+           mine == std::vector<std::string>({"god_mode", "time:global"}));
+    ledger.SetOwner("god_mode", Voll::kHoldOwnerNone);
+    EXPECT("ledger: no owner forgets the hold", ledger.Owner("god_mode") == Voll::kHoldOwnerNone
+           && ledger.OwnedBy(1234).size() == 1 && ledger.Snapshot().size() == 2);
+    EXPECT("ledger: one lock per hold, the same lock each time",
+           &ledger.LockFor("fly") == &ledger.LockFor("fly") && &ledger.LockFor("fly") != &ledger.LockFor("god_mode"));
+
+    // The if_free rule.
+    EXPECT("if_free: a hold that is off is free whoever is named", !Voll::HeldByOther(false, 99, 1234));
+    EXPECT("if_free: the caller's own hold is free to change", !Voll::HeldByOther(true, 1234, 1234));
+    EXPECT("if_free * : another client's active hold is refused", Voll::HeldByOther(true, 99, 1234));
+    EXPECT("if_free * : CE's active hold is refused", Voll::HeldByOther(true, Voll::kHoldOwnerCe, 1234));
+    EXPECT("if_free * : an active hold with no recorded owner is refused (it may be the user's)",
+           Voll::HeldByOther(true, Voll::kHoldOwnerNone, 1234));
+
+    // What a request changes.
+    const std::vector<std::string> none;
+    auto changed = [&](const char* json, const std::vector<std::string>& jobs = {}) {
+        const auto j = nlohmann::json::parse(json);
+        return Voll::HoldsChangedBy(j.value("cmd", std::string()), j, jobs);
+    };
+    EXPECT("holds: god mode", changed(R"({"cmd":"set_god_mode","enable":true})")
+           == std::vector<std::string>({"god_mode"}));
+    EXPECT("holds: a movement knob names itself", changed(R"({"cmd":"reset_movement","knob":"jump"})")
+           == std::vector<std::string>({"movement:jump"}));
+    EXPECT("holds * : an unknown knob names no hold (a made-up name would grow the ledger)",
+           changed(R"({"cmd":"set_movement_multiplier","knob":"warp"})").empty());
+    EXPECT("holds: a time lane defaults to global, as the handler does",
+           changed(R"({"cmd":"set_time_dilation","value":0.5})") == std::vector<std::string>({"time:global"})
+           && changed(R"({"cmd":"reset_time_dilation","target":"pawn"})") == std::vector<std::string>({"time:pawn"}));
+    EXPECT("holds: a force-field job is its class and field",
+           changed(R"({"cmd":"force_field","class_name":"BP_Hero_C","field_name":"bGodMode"})")
+           == std::vector<std::string>({"force_field:BP_Hero_C::bGodMode"}));
+    EXPECT("holds * : reset_all_fields changes every job there is",
+           changed(R"({"cmd":"reset_all_fields"})", {"A::x", "B::y"})
+           == std::vector<std::string>({"force_field:A::x", "force_field:B::y"}));
+    EXPECT("holds: a read changes none", changed(R"({"cmd":"get_protect_state"})").empty()
+           && changed(R"({"cmd":"fly_get_state"})").empty());
+    EXPECT("holds: every toggle is covered",
+           changed(R"({"cmd":"set_foreground_lock"})").size() == 1 && changed(R"({"cmd":"fly_set"})").size() == 1
+           && changed(R"({"cmd":"set_debug_camera"})").size() == 1
+           && changed(R"({"cmd":"reset_gravity_direction"})").size() == 1);
+
+    // Who holds it, as a client reads it.
+    const auto client = Voll::HoldOwnerJson(1234, 1234, true);
+    EXPECT("holder json: a client with its pid, background, and 'you' for its own",
+           client.value("kind", std::string()) == "client" && client.value("pid", 0) == 1234
+           && client.value("background", false) && client.value("you", false));
+    const auto other = Voll::HoldOwnerJson(1234, 99, false);
+    EXPECT("holder json: another's is not 'you'", !other.value("you", true) && !other.value("background", true));
+    EXPECT("holder json: CE and nobody",
+           Voll::HoldOwnerJson(Voll::kHoldOwnerCe, 99, false).value("kind", std::string()) == "ce"
+           && Voll::HoldOwnerJson(Voll::kHoldOwnerNone, 99, false).value("kind", std::string()) == "none"
+           && !Voll::HoldOwnerJson(Voll::kHoldOwnerNone, Voll::kHoldOwnerNone, false).value("you", true));
+    const auto unread = Voll::HoldOwnerJson(Voll::ClientOwnerKey(0, 7), 1, false);
+    EXPECT("holder json: a client whose pid was not read has no pid", !unread.contains("pid"));
 }
 
 static void Test_Voll_ClassifyFirstInstance() {
@@ -12437,6 +12512,7 @@ int main() {
     RUN(Test_Voll_WaitSaysServed);
     RUN(Test_Voll_ExtractCmdName);
     RUN(Test_Voll_Holders);
+    RUN(Test_Voll_HoldLedger);
     RUN(Test_Voll_ClassifyFirstInstance);
     RUN(Test_Voll_ClientOwnerKey);
     RUN(Test_Schlacht_Owners);

@@ -28,6 +28,7 @@
 #include "Stark.h"      // Stark::kInvokeTimedOutStillQueued -- a queued Debug Camera toggle [W3-DEBUGCAM-QUEUED]
 #include "Tot.h"      // Tot::MarkCancelImmune — the poller must survive a pipe client's death (B4)
 #include "Routine.h"   // Routine::RunThreadGuarded — a throw out of a thread proc is std::terminate (B14)
+#include "Voll.h"      // Voll::Holds -- who holds what (Stage D2-1)
 
 #include <Windows.h>
 #include <timeapi.h>   // MMRESULT / TIMERR_NOERROR (types only — see WinmmTimer below)
@@ -35,6 +36,8 @@
 #include <atomic>
 #include <cstring>
 #include <exception>   // std::uncaught_exceptions — CompoundOpGuard's unwind branch (MB3)
+#include <mutex>
+#include <string>
 #include <thread>
 #include <algorithm>
 
@@ -1115,11 +1118,21 @@ static void HandleListInstances() {
 // with no live CheatManager.
 // Delegates entirely to the Frieren exports, which own the toggle +
 // controller-swap fallback.
+// [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: a hold CE changes is changed under the ledger lock the pipe's writers take
+// too, and is CE's afterwards (Voll::HoldLedger). An OFF leaves CE named on a hold that is off, which reads as free.
+template <typename Change>
+static int32_t ChangeHoldAsCe(const std::string& hold, Change&& change) {
+    std::lock_guard<std::mutex> lock(Voll::Holds().LockFor(hold));
+    const int32_t rc = change();
+    Voll::Holds().SetOwner(hold, Voll::kHoldOwnerCe);
+    return rc;
+}
+
 static void HandleSetDebugCamera() {
     uint64_t req = g_invokeMailbox.instanceAddr;
     int32_t state = (req == 2)
         ? UE5_GetDebugCameraState()
-        : UE5_SetDebugCamera(req != 0 ? 1 : 0);
+        : ChangeHoldAsCe(Grimoire::HOLD_DEBUG_CAMERA, [&] { return UE5_SetDebugCamera(req != 0 ? 1 : 0); });
     // [DEBUGCAM-FORCEON-CDO] No toggle reaches the CheatManager's class default object any more (an ON there is -17),
     // so this command leaves cmdOutFlags as the dispatcher cleared it; builds 3676-3681 set the template bit here.
     if (state == -1) {
@@ -1381,7 +1394,8 @@ static void HandleProtect() {
     int32_t rc;
     switch (op) {
     case PROTECT_OP_SET_GODMODE:
-        rc = UE5_SetGodMode(g_invokeMailbox.ufuncAddr != 0 ? 1 : 0);
+        rc = ChangeHoldAsCe(Grimoire::HOLD_GOD_MODE,
+                            [] { return UE5_SetGodMode(g_invokeMailbox.ufuncAddr != 0 ? 1 : 0); });
         break;
     case PROTECT_OP_GET_GODMODE:
         rc = UE5_GetGodMode();
@@ -1421,7 +1435,8 @@ static void HandleForeground() {
     int32_t rc;
     switch (op) {
     case FG_OP_SET:
-        rc = Grausam::SetForegroundLock(g_invokeMailbox.ufuncAddr != 0);
+        rc = ChangeHoldAsCe(Grimoire::HOLD_FOREGROUND_LOCK,
+                            [] { return Grausam::SetForegroundLock(g_invokeMailbox.ufuncAddr != 0); });
         break;
     case FG_OP_GET:
         rc = Grausam::IsForegroundLockEnabled();
@@ -1539,13 +1554,18 @@ static void HandleMovement() {
         // Gravity direction (UE5.3+): 3 doubles x/y/z in paramsData. (0,0,0) = off.
         double v[3] = {};
         memcpy(v, g_invokeMailbox.paramsData, sizeof(v));
-        rc = UE5_SetGravityDirection(v[0], v[1], v[2]);
+        rc = ChangeHoldAsCe(Grimoire::HOLD_GRAVITY_DIRECTION, [&] { return UE5_SetGravityDirection(v[0], v[1], v[2]); });
         LOG_INFO("Mailbox: MOVEMENT gravdir -> (%.3f, %.3f, %.3f) rc=%d",
                  v[0], v[1], v[2], rc);
     } else {
         double percent = 0.0;
         memcpy(&percent, g_invokeMailbox.paramsData, sizeof(double));
-        rc = UE5_SetMovementPercent(static_cast<int32_t>(knobId), percent);
+        static const char* const kKnobs[] = {"walk_speed", "gravity", "jump"};   // Laufen's KNOB_* order
+        if (knobId < 3)
+            rc = ChangeHoldAsCe(std::string(Grimoire::HOLD_MOVEMENT_PREFIX) + kKnobs[knobId],
+                                [&] { return UE5_SetMovementPercent(static_cast<int32_t>(knobId), percent); });
+        else
+            rc = UE5_SetMovementPercent(static_cast<int32_t>(knobId), percent);   // refused by the module
         LOG_INFO("Mailbox: MOVEMENT knob=%llu pct=%.1f -> rc=%d",
                  (unsigned long long)knobId, percent, rc);
     }
@@ -1566,17 +1586,21 @@ static void HandleMovement() {
 static void HandleTime() {
     const uint64_t op = g_invokeMailbox.instanceAddr;
     const int32_t  target = static_cast<int32_t>(g_invokeMailbox.ufuncAddr);
+    // Hemmung's DIL_GLOBAL / DIL_PAWN; any other target is the module's to refuse, and names no hold.
+    const std::string hold = (target == 0 || target == 1)
+        ? std::string(Grimoire::HOLD_TIME_PREFIX) + (target == 0 ? "global" : "pawn") : std::string();
+    auto asCe = [&](auto&& change) { return hold.empty() ? change() : ChangeHoldAsCe(hold, change); };
     int32_t rc;
     switch (op) {
     case TIME_OP_SET: {
         double value = 0.0;
         memcpy(&value, g_invokeMailbox.paramsData, sizeof(double));
-        rc = UE5_SetTimeDilation(target, value);
+        rc = asCe([&] { return UE5_SetTimeDilation(target, value); });
         LOG_INFO("Mailbox: TIME set target=%d value=%.4f -> rc=%d", target, value, rc);
         break;
     }
     case TIME_OP_RESET:
-        rc = UE5_ResetTimeDilation(target);
+        rc = asCe([&] { return UE5_ResetTimeDilation(target); });
         LOG_INFO("Mailbox: TIME reset target=%d -> rc=%d", target, rc);
         break;
     default:
@@ -1602,24 +1626,27 @@ static void HandleFly() {
     int32_t rc;
     switch (op) {
     case FLY_OP_SET_ENABLED:
-        rc = UE5_SetFly(static_cast<int32_t>(g_invokeMailbox.ufuncAddr) != 0 ? 1 : 0);
+        rc = ChangeHoldAsCe(Grimoire::HOLD_FLY,
+                            [] { return UE5_SetFly(static_cast<int32_t>(g_invokeMailbox.ufuncAddr) != 0 ? 1 : 0); });
         LOG_INFO("Mailbox: FLY enable=%llu -> rc=%d",
                  (unsigned long long)g_invokeMailbox.ufuncAddr, rc);
         break;
     case FLY_OP_SET_SPEED: {
         double speed = 0.0;
         memcpy(&speed, g_invokeMailbox.paramsData, sizeof(double));
-        rc = UE5_SetFlySpeed(speed);
+        rc = ChangeHoldAsCe(Grimoire::HOLD_FLY, [&] { return UE5_SetFlySpeed(speed); });
         LOG_INFO("Mailbox: FLY speed=%.0f -> rc=%d", speed, rc);
         break;
     }
     case FLY_OP_SET_PRESET:
-        rc = UE5_SetFlyPreset(static_cast<int32_t>(g_invokeMailbox.ufuncAddr));
+        rc = ChangeHoldAsCe(Grimoire::HOLD_FLY,
+                            [] { return UE5_SetFlyPreset(static_cast<int32_t>(g_invokeMailbox.ufuncAddr)); });
         LOG_INFO("Mailbox: FLY preset=%llu -> rc=%d",
                  (unsigned long long)g_invokeMailbox.ufuncAddr, rc);
         break;
     case FLY_OP_SET_NOCLIP:
-        rc = UE5_SetFlyNoclip(static_cast<int32_t>(g_invokeMailbox.ufuncAddr) != 0 ? 1 : 0);
+        rc = ChangeHoldAsCe(Grimoire::HOLD_FLY,
+                            [] { return UE5_SetFlyNoclip(static_cast<int32_t>(g_invokeMailbox.ufuncAddr) != 0 ? 1 : 0); });
         LOG_INFO("Mailbox: FLY noclip=%llu -> rc=%d",
                  (unsigned long long)g_invokeMailbox.ufuncAddr, rc);
         break;

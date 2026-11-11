@@ -18,8 +18,12 @@
 #pragma once
 
 #include <Windows.h>   // DWORD, ERROR_PIPE_BUSY, ERROR_ALREADY_EXISTS, GetCurrentProcessId
+#include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 #include <json.hpp>    // the holders list (pipe_clients, the at-capacity line)
 
@@ -182,6 +186,9 @@ struct Holder {
     bool        inFlight = false;   // a command is running now
     std::string phase;              // Fern's Connection::Phase as a short key (Fern::PhaseKey), e.g. "Dispatching"
     bool        self = false;       // the connection asking (pipe_clients)
+    // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: the connection marks its requests "background" (the MCP server does).
+    // The exe name cannot tell: the MCP server runs as UE5DumpUI.exe too.
+    bool        background = false;
 };
 
 inline constexpr size_t kMaxHolderExeBytes = 64;
@@ -208,6 +215,7 @@ inline nlohmann::json HolderToJson(const Holder& h) {
     j["in_flight"]       = h.inFlight;
     j["phase"]           = h.phase;
     j["self"]            = h.self;
+    j["background"]      = h.background;
     return j;
 }
 
@@ -236,6 +244,126 @@ inline std::string HoldersJson(const std::vector<Holder>& holders, size_t budget
 // bit keeps that key apart from every pid, which is 32 bits, and from 0, which names no owner.
 constexpr uint64_t ClientOwnerKey(DWORD pid, uint64_t seq) noexcept {
     return pid ? static_cast<uint64_t>(pid) : ((1ull << 63) | seq);
+}
+
+// ── Who holds what the gameplay features hold ───────────────────────────────
+// [PIPE-PER-PROCESS-2026-11-06] Stage D2-1 (maintainer, 2026-11-11)
+//
+// God mode, the movement knobs, gravity direction, the time lanes, fly, the foreground lock, the debug camera and each
+// force-field job are one process-wide state each, held by a re-assert worker past the client that set it. Nothing
+// recorded who set it, so an AI working through the MCP server could not tell the UI's hold from nobody's, and would
+// silently replace or end it. The ledger records the owner of each hold: a client process (ClientOwnerKey), CE's
+// mailbox (kHoldOwnerCe), or none.
+//
+// Every writer -- each pipe connection and the mailbox -- changes a hold under that hold's own lock, so a request
+// marked if_free checks the owner and changes the state in one step, with no window for another writer between them.
+// One lock per hold, not one for all: a debug-camera toggle can wait seconds for the game thread, and must not stall
+// a time-dilation change meanwhile. The ledger keeps names and owners only; whether a hold is ACTIVE is read from its
+// module each time, so a hold someone turned off is free whatever owner is still written down.
+inline constexpr uint64_t kHoldOwnerNone = 0;
+inline constexpr uint64_t kHoldOwnerCe   = ~0ull;   // the same value Schlacht uses for CE's claim
+
+class HoldLedger {
+public:
+    // The lock that guards `hold`, made on first use and never destroyed: a lock handed out must outlive its user.
+    std::mutex& LockFor(const std::string& hold) {
+        std::lock_guard<std::mutex> g(mu_);
+        auto& slot = locks_[hold];
+        if (!slot) slot = std::make_unique<std::mutex>();
+        return *slot;
+    }
+    uint64_t Owner(const std::string& hold) const {
+        std::lock_guard<std::mutex> g(mu_);
+        auto it = owners_.find(hold);
+        return it == owners_.end() ? kHoldOwnerNone : it->second;
+    }
+    // kHoldOwnerNone forgets the hold.
+    void SetOwner(const std::string& hold, uint64_t owner) {
+        std::lock_guard<std::mutex> g(mu_);
+        if (owner == kHoldOwnerNone) owners_.erase(hold);
+        else owners_[hold] = owner;
+    }
+    std::vector<std::string> OwnedBy(uint64_t owner) const {
+        std::lock_guard<std::mutex> g(mu_);
+        std::vector<std::string> out;
+        for (const auto& [hold, who] : owners_)
+            if (who == owner) out.push_back(hold);
+        return out;
+    }
+    std::vector<std::pair<std::string, uint64_t>> Snapshot() const {
+        std::lock_guard<std::mutex> g(mu_);
+        return {owners_.begin(), owners_.end()};
+    }
+
+private:
+    mutable std::mutex mu_;
+    std::map<std::string, std::unique_ptr<std::mutex>> locks_;
+    std::map<std::string, uint64_t> owners_;
+};
+
+// The process's ledger: one for every writer, the pipe's connections and the mailbox alike.
+inline HoldLedger& Holds() {
+    static HoldLedger ledger;
+    return ledger;
+}
+
+// An if_free request is refused when the hold is active and anyone but the caller holds it. An active hold with no
+// recorded owner counts as someone else's: a C ABI call or an older path set it, and it may be the user's.
+constexpr bool HeldByOther(bool active, uint64_t owner, uint64_t caller) noexcept {
+    return active && owner != caller;
+}
+
+// The names of the holds a pipe request changes, from its command and keys; empty for a command that changes none.
+// `reset_all_fields` changes every force-field job, which the caller lists (`forceFieldJobs`, "<class>::<field>").
+inline std::vector<std::string> HoldsChangedBy(const std::string& cmd, const nlohmann::json& request,
+                                               const std::vector<std::string>& forceFieldJobs) {
+    auto str = [&](const char* key) {
+        auto it = request.find(key);
+        return (it != request.end() && it->is_string()) ? it->get<std::string>() : std::string();
+    };
+    if (cmd == "set_god_mode") return {Grimoire::HOLD_GOD_MODE};
+    if (cmd == "set_foreground_lock") return {Grimoire::HOLD_FOREGROUND_LOCK};
+    if (cmd == "set_gravity_direction" || cmd == "reset_gravity_direction") return {Grimoire::HOLD_GRAVITY_DIRECTION};
+    if (cmd == "fly_set") return {Grimoire::HOLD_FLY};
+    if (cmd == "set_debug_camera") return {Grimoire::HOLD_DEBUG_CAMERA};
+    // A knob or a lane the handler would refuse names no hold: a name made up by a request would grow the ledger.
+    if (cmd == "set_movement_multiplier" || cmd == "reset_movement") {
+        const std::string knob = str("knob");
+        if (knob != "walk_speed" && knob != "gravity" && knob != "jump") return {};
+        return {std::string(Grimoire::HOLD_MOVEMENT_PREFIX) + knob};
+    }
+    if (cmd == "set_time_dilation" || cmd == "reset_time_dilation") {
+        auto it = request.find("target");   // the handlers' own default when the key is absent
+        const std::string target = (it == request.end()) ? "global" : (it->is_string() ? it->get<std::string>() : "");
+        if (target != "global" && target != "pawn") return {};
+        return {std::string(Grimoire::HOLD_TIME_PREFIX) + target};
+    }
+    if (cmd == "force_field" || cmd == "reset_field") {
+        const std::string cls = str("class_name"), field = str("field_name");
+        if (cls.empty() || field.empty()) return {};
+        return {std::string(Grimoire::HOLD_FORCE_FIELD_PREFIX) + cls + "::" + field};
+    }
+    if (cmd == "reset_all_fields") {
+        std::vector<std::string> out;
+        for (const auto& job : forceFieldJobs) out.push_back(std::string(Grimoire::HOLD_FORCE_FIELD_PREFIX) + job);
+        return out;
+    }
+    return {};
+}
+
+// Who holds a hold, as get_holds and an if_free refusal say it. `background`: the owner is a client whose requests are
+// marked background (the MCP server).
+inline nlohmann::json HoldOwnerJson(uint64_t owner, uint64_t caller, bool background) {
+    nlohmann::json j;
+    if (owner == kHoldOwnerNone) j["kind"] = "none";
+    else if (owner == kHoldOwnerCe) j["kind"] = "ce";
+    else {
+        j["kind"] = "client";
+        if (!(owner >> 63)) j["pid"] = static_cast<uint32_t>(owner);
+        j["background"] = background;
+    }
+    j["you"] = owner != kHoldOwnerNone && owner == caller;
+    return j;
 }
 
 // ── Who should own the pipe at startup ──────────────────────────────────────

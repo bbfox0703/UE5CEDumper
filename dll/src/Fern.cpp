@@ -828,6 +828,135 @@ void Fern::ReevaluatePerCommandCancel() {
     LOG_INFO("PipeServer: per-command cancel cleared — no connection that raised it is still live");
 }
 
+// ── Holds and their owners ─────────────────────────────────────────────────
+// [PIPE-PER-PROCESS-2026-11-06] Stage D2-1. The ledger (Voll::HoldLedger) keeps who holds what; these read whether a
+// hold is active, and release one, from the module that runs it.
+
+namespace {
+
+int32_t MovementKnobId(const std::string& knob) {
+    return knob == "walk_speed" ? Laufen::KNOB_WALK_SPEED
+         : knob == "gravity"    ? Laufen::KNOB_GRAVITY
+         : knob == "jump"       ? Laufen::KNOB_JUMP : -1;
+}
+
+int32_t TimeTargetId(const std::string& target) {
+    return target == "global" ? Hemmung::DIL_GLOBAL : target == "pawn" ? Hemmung::DIL_PAWN : -1;
+}
+
+bool StartsWith(const std::string& s, const char* prefix) { return s.rfind(prefix, 0) == 0; }
+
+// "<class>::<field>" of a force-field hold's name, split back.
+bool SplitForceField(const std::string& hold, std::string& cls, std::string& field) {
+    const std::string job = hold.substr(std::strlen(Grimoire::HOLD_FORCE_FIELD_PREFIX));
+    const size_t sep = job.find("::");
+    if (sep == std::string::npos) return false;
+    cls = job.substr(0, sep);
+    field = job.substr(sep + 2);
+    return !cls.empty() && !field.empty();
+}
+
+std::vector<std::string> ForceFieldJobs() {
+    std::vector<Solide::ForcedFieldInfo> fields;
+    std::vector<std::string> out;
+    if (Solide::GetState(fields) == Solide::FR_OK)
+        for (const auto& f : fields) out.push_back(f.className + "::" + f.fieldName);
+    return out;
+}
+
+// Whether `hold` is in force now, read from its module: a hold someone turned off is free, whatever owner the ledger
+// still names.
+bool HoldActive(const std::string& hold) {
+    if (hold == Grimoire::HOLD_GOD_MODE) {
+        int32_t want = 0, live = -1, resolvable = 0;
+        UE5_GetProtectState(&want, &live, &resolvable);
+        return want != 0;
+    }
+    if (hold == Grimoire::HOLD_FOREGROUND_LOCK) return Grausam::IsForegroundLockEnabled() == 1;
+    if (hold == Grimoire::HOLD_GRAVITY_DIRECTION) {
+        Laufen::GravDirInfo info{};
+        Laufen::GetGravityDirection(info);
+        return info.active;
+    }
+    if (hold == Grimoire::HOLD_FLY) {
+        Dunste::FlyStatus st{};
+        Dunste::GetStatus(st);
+        return st.active;
+    }
+    if (hold == Grimoire::HOLD_DEBUG_CAMERA) return UE5_GetDebugCameraState() == 1;
+    if (StartsWith(hold, Grimoire::HOLD_MOVEMENT_PREFIX)) {
+        const int32_t kid = MovementKnobId(hold.substr(std::strlen(Grimoire::HOLD_MOVEMENT_PREFIX)));
+        if (kid < 0) return false;
+        Laufen::KnobInfo info{};
+        Laufen::GetKnob(kid, info);
+        return info.active;
+    }
+    if (StartsWith(hold, Grimoire::HOLD_TIME_PREFIX)) {
+        const int32_t tid = TimeTargetId(hold.substr(std::strlen(Grimoire::HOLD_TIME_PREFIX)));
+        if (tid < 0) return false;
+        Hemmung::DilationInfo info{};
+        Hemmung::GetDilation(tid, info);
+        return info.active;
+    }
+    if (StartsWith(hold, Grimoire::HOLD_FORCE_FIELD_PREFIX)) {
+        const std::string job = hold.substr(std::strlen(Grimoire::HOLD_FORCE_FIELD_PREFIX));
+        for (const auto& j : ForceFieldJobs())
+            if (j == job) return true;
+        return false;
+    }
+    return false;
+}
+
+// Ends `hold` as its own off / reset command would. Returns that call's code.
+int32_t ReleaseHold(const std::string& hold) {
+    if (hold == Grimoire::HOLD_GOD_MODE) return UE5_SetGodMode(0);
+    if (hold == Grimoire::HOLD_FOREGROUND_LOCK) return Grausam::SetForegroundLock(false);
+    if (hold == Grimoire::HOLD_GRAVITY_DIRECTION) return Laufen::ResetGravityDirection();
+    if (hold == Grimoire::HOLD_FLY) return Dunste::SetEnabled(false);
+    if (hold == Grimoire::HOLD_DEBUG_CAMERA) return UE5_SetDebugCamera(0);
+    if (StartsWith(hold, Grimoire::HOLD_MOVEMENT_PREFIX)) {
+        const int32_t kid = MovementKnobId(hold.substr(std::strlen(Grimoire::HOLD_MOVEMENT_PREFIX)));
+        return kid < 0 ? -1 : Laufen::ResetKnob(kid);
+    }
+    if (StartsWith(hold, Grimoire::HOLD_TIME_PREFIX)) {
+        const int32_t tid = TimeTargetId(hold.substr(std::strlen(Grimoire::HOLD_TIME_PREFIX)));
+        return tid < 0 ? -1 : Hemmung::ResetDilation(tid);
+    }
+    if (StartsWith(hold, Grimoire::HOLD_FORCE_FIELD_PREFIX)) {
+        std::string cls, field;
+        return SplitForceField(hold, cls, field) ? Solide::RemoveForce(cls.c_str(), field.c_str()) : -1;
+    }
+    return -1;
+}
+
+// Every hold get_holds reports: the fixed ones, then each force-field job there is.
+std::vector<std::string> KnownHolds() {
+    std::vector<std::string> out = {
+        Grimoire::HOLD_GOD_MODE, Grimoire::HOLD_FOREGROUND_LOCK, Grimoire::HOLD_GRAVITY_DIRECTION,
+        Grimoire::HOLD_FLY, Grimoire::HOLD_DEBUG_CAMERA,
+    };
+    for (const char* knob : {"walk_speed", "gravity", "jump"})
+        out.push_back(std::string(Grimoire::HOLD_MOVEMENT_PREFIX) + knob);
+    for (const char* lane : {"global", "pawn"})
+        out.push_back(std::string(Grimoire::HOLD_TIME_PREFIX) + lane);
+    for (const auto& job : ForceFieldJobs())
+        out.push_back(std::string(Grimoire::HOLD_FORCE_FIELD_PREFIX) + job);
+    return out;
+}
+
+}  // namespace
+
+bool Fern::IsBackgroundOwner(uint64_t owner) {
+    std::lock_guard<std::mutex> lock(m_connMutex);
+    return m_backgroundOwners.count(owner) != 0;
+}
+
+void Fern::MarkBackground(const std::shared_ptr<Connection>& conn) {
+    if (conn->background.exchange(true)) return;   // latched once
+    std::lock_guard<std::mutex> lock(m_connMutex);
+    m_backgroundOwners.insert(conn->ownerKey);
+}
+
 bool Fern::OwnerStillConnected(uint64_t owner) {
     std::lock_guard<std::mutex> lock(m_connMutex);
     for (const auto& c : m_conns)
@@ -857,6 +986,27 @@ void Fern::ReleaseOwnedBy(uint64_t owner) {
         else
             LOG_INFO("PipeServer: client pid %llu left -- its LiveFuncs recording is freed", (unsigned long long)owner);
     }
+
+    // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1 (maintainer, 2026-11-11): what a background client (an AI session's MCP
+    // server) turned on ends with it. Each hold is released under its own lock and only while the ledger still names
+    // this owner, so a hold the UI or CE took over meanwhile stays. A foreground client's holds outlive it, as before.
+    if (!IsBackgroundOwner(owner) || OwnerStillConnected(owner)) return;
+    for (const auto& hold : Voll::Holds().OwnedBy(owner)) {
+        std::lock_guard<std::mutex> holdLock(Voll::Holds().LockFor(hold));
+        if (Voll::Holds().Owner(hold) != owner) continue;
+        int32_t code = 0;
+        try {
+            code = HoldActive(hold) ? ReleaseHold(hold) : 0;
+        } catch (...) {
+            code = -1;
+        }
+        Voll::Holds().SetOwner(hold, Voll::kHoldOwnerNone);
+        LOG_INFO("PipeServer: background client %llu left -- its hold %s is released (code %d)",
+                 (unsigned long long)owner, hold.c_str(), code);
+    }
+    std::lock_guard<std::mutex> lock(m_connMutex);
+    if (!std::any_of(m_conns.begin(), m_conns.end(), [&](const auto& c) { return c && c->ownerKey == owner; }))
+        m_backgroundOwners.erase(owner);
 }
 
 void Fern::MonitorLoop() {
@@ -982,6 +1132,7 @@ std::vector<Voll::Holder> Fern::SnapshotHolders(uint64_t selfSeq) {
         h.lastCmdAgeMs = started == 0 ? -1 : (std::max)(0LL, now - started);
         h.phase = PhaseKey(c->phase.load(std::memory_order_relaxed));
         h.self = c->seq == selfSeq;
+        h.background = c->background.load(std::memory_order_relaxed);
         out.push_back(std::move(h));
     }
     return out;
@@ -2297,6 +2448,43 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // one) walks GObjects on at most half of the free worker budget, so the user's own walk in the UI is never
         // left on one thread. For this dispatch only; a key an older client never sends reads false.
         const Aura::BackgroundWalkScope backgroundWalk(request.value("background", false));
+        if (request.value("background", false)) MarkBackground(conn);
+
+        // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: a command that changes a hold runs under that hold's lock (the
+        // mailbox takes the same one), so an if_free check and the change it allows are one step. Locks in name order,
+        // the one order every writer uses.
+        std::vector<std::string> holds = Voll::HoldsChangedBy(
+            cmd, request, cmd == Renge::CMD_RESET_ALL_FIELDS ? ForceFieldJobs() : std::vector<std::string>{});
+        std::sort(holds.begin(), holds.end());
+        std::vector<std::unique_lock<std::mutex>> holdLocks;
+        for (const auto& h : holds) holdLocks.emplace_back(Voll::Holds().LockFor(h));
+        if (!holds.empty() && request.value("if_free", false)) {
+            for (const auto& h : holds) {
+                const uint64_t owner = Voll::Holds().Owner(h);
+                if (!Voll::HeldByOther(HoldActive(h), owner, conn->ownerKey)) continue;
+                json data;
+                data["code"]   = Grimoire::HOLD_HELD_BY_OTHER;
+                data["hold"]   = h;
+                data["holder"] = Voll::HoldOwnerJson(owner, conn->ownerKey, IsBackgroundOwner(owner));
+                Sein::Info("PIPE:cmd", "%s refused (if_free): %s is held by another", cmd.c_str(), h.c_str());
+                return Renge::MakeResponse(id, data).dump();
+            }
+        }
+        // After the command, still under the locks: whoever changed a hold that is now active holds it, and one that is
+        // off is nobody's. Declared after the locks, so it runs before they are released.
+        struct HoldRecorder {
+            const std::vector<std::string>& holds;
+            uint64_t caller;
+            ~HoldRecorder() {
+                for (const auto& h : holds) {
+                    try {
+                        Voll::Holds().SetOwner(h, HoldActive(h) ? caller : Voll::kHoldOwnerNone);
+                    } catch (...) {
+                        // A hold whose state cannot be read keeps the owner it had.
+                    }
+                }
+            }
+        } holdRecorder{holds, conn->ownerKey};
 
         if (cmd == Renge::CMD_INIT) {
             extern uint32_t g_cachedUEVersion;
@@ -5201,6 +5389,23 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // === pipe_clients: who holds this pipe's connections ===
         // [PIPE-PER-PROCESS-2026-11-06] Stage C, the maintainer's policy (2026-11-10): no client is disconnected for
         // idling, but who holds the connections can be seen. The asking connection is marked self.
+        // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: every hold, whether it is in force, and who holds it. "you" marks
+        // the asker's own, so a client can release only what it set.
+        if (cmd == Renge::CMD_GET_HOLDS) {
+            json arr = json::array();
+            for (const auto& h : KnownHolds()) {
+                const uint64_t owner = Voll::Holds().Owner(h);
+                json j;
+                j["hold"]   = h;
+                j["active"] = HoldActive(h);
+                j["holder"] = Voll::HoldOwnerJson(owner, conn->ownerKey, IsBackgroundOwner(owner));
+                arr.push_back(j);
+            }
+            json data;
+            data["holds"] = arr;
+            return Renge::MakeResponse(id, data).dump();
+        }
+
         if (cmd == Renge::CMD_PIPE_CLIENTS) {
             json data;
             data["pipe"]         = Utf8Helpers::EncodeUtf16(Voll::OwnPipeName().c_str(), Voll::OwnPipeName().size());

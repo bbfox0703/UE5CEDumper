@@ -54,6 +54,19 @@ constexpr const char*    PIPE_AT_CAPACITY_TEXT   = "pipe instances in use";
 constexpr const char*    PIPE_HOLDERS_TOKEN      = " holders=";
 constexpr const char*    PIPE_HOLDERS_MORE_TOKEN = " more=";
 constexpr const char*    PIPE_SLOT_FREED_TEXT    = "slot freed";
+// [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: the names of the holds whose owner the DLL records (Voll::HoldLedger),
+// as get_holds reports them and an if_free refusal names them. A movement knob, a time lane and a force-field job add
+// their own name after the prefix ("movement:walk_speed", "time:global", "force_field:<class>::<field>").
+constexpr const char*    HOLD_GOD_MODE           = "god_mode";
+constexpr const char*    HOLD_FOREGROUND_LOCK    = "foreground_lock";
+constexpr const char*    HOLD_GRAVITY_DIRECTION  = "gravity_direction";
+constexpr const char*    HOLD_FLY                = "fly";
+constexpr const char*    HOLD_DEBUG_CAMERA       = "debug_camera";
+constexpr const char*    HOLD_MOVEMENT_PREFIX    = "movement:";
+constexpr const char*    HOLD_TIME_PREFIX        = "time:";
+constexpr const char*    HOLD_FORCE_FIELD_PREFIX = "force_field:";
+// The code an if_free request answers with when someone else holds what it would change.
+constexpr int32_t        HOLD_HELD_BY_OTHER      = -20;
 // Slice of Fern::Stop's 5 s connection-drain wait. Each slice re-asserts
 // CancelIoEx on the surviving connections, because a single cancel fired before
 // the wait can miss a thread that is BETWEEN two reads and will then park in a
