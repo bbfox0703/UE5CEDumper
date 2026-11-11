@@ -99,6 +99,8 @@ public class SdkTempLeftoversTests : IDisposable
     [InlineData("dotnet build --no-restore ui/App/App.csproj -v q")]
     [InlineData("dotnet run --project ui/App/App.csproj")]
     [InlineData("dotnet run --project=ui/App/App.csproj -- --some-arg")]
+    [InlineData("dotnet build ui/App/App.csproj -bl")]
+    [InlineData("dotnet run -c Release --project ui/App/App.csproj -- x")]
     public void OurCommandLines_AreOurs(string command)
     {
         var (log, before, after) = Build(_old, command.Replace("{repo}", _repo));
@@ -132,6 +134,11 @@ public class SdkTempLeftoversTests : IDisposable
     [InlineData("dotnet run --project D:/Other/Tool/Tool.csproj -- ui/App/App.csproj")]
     [InlineData("dotnet run --project D:/Other/Tool/Tool.csproj ui/App/App.csproj")]
     [InlineData("dotnet test tests/AOBMaker.Core.Tests -- ui/App/App.csproj")]
+    // A switch this code does not know may take no value: it must not eat the next option's name, nor "--".
+    [InlineData("dotnet test tests/Other/Other.csproj --blame-crash --results-directory \"{repo}\\ui\\App.Tests\"")]
+    [InlineData("dotnet build D:\\Other\\Other.sln -bl -o ui/App")]
+    [InlineData("dotnet test tests/Other --blame-crash -- ui/App/App.csproj")]
+    [InlineData("dotnet build D:\\Other\\Other.sln -o -- ui/App/App.csproj")]
     // One quoted argument with escaped quotes inside, as Windows reads it: never split into a word that is our path.
     [InlineData("dotnet build D:\\Github\\Other\\Other.sln \"-p:Note=\\\" ui\\App\\App.csproj \\\"\"")]
     // Under this checkout, but another repository's clone that git here does not track.
@@ -569,6 +576,149 @@ public class SdkTempLeftoversTests : IDisposable
         Assert.Empty(plan.Logs);
     }
 
+    // ---- the record of groups seen young (review round 3) ----------------------------------------------------------
+
+    private string SeenFile => Path.Combine(_mem, SdkTempLeftovers.SeenGroupsFileName);
+
+    private static string GroupKey(params string[] paths)
+        => string.Join("|", paths.Select(Path.GetFileName).Order(StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>The build's test run, or the next one, can come a while after it: twenty minutes on, the group is still
+    /// younger than another session's hourly cleanup reaches, and is recorded.</summary>
+    [Fact]
+    public void AGroupFirstSeenTwentyMinutesOld_IsRecorded()
+    {
+        var (log, before, after) = Build(_old, OurBuild);
+
+        SweepOnce(_old + TimeSpan.FromMinutes(20));
+        SweepOnce(_now);
+
+        Assert.False(File.Exists(log));
+        Assert.False(Directory.Exists(before));
+        Assert.False(Directory.Exists(after));
+    }
+
+    /// <summary>A line in the record lets that group go, so only a record this code wrote, under its rules, is
+    /// trusted: one without the header (another version's, or written by hand) is not.</summary>
+    [Fact]
+    public void ASeenRecordWithoutItsHeader_IsNotTrusted()
+    {
+        var (log, before, after) = Build(_old, OurBuild);
+        Directory.CreateDirectory(_mem);
+        File.WriteAllLines(SeenFile, new[] { GroupKey(log, before, after) });
+
+        SweepOnce(_now);
+
+        Assert.True(File.Exists(log));
+        Assert.True(Directory.Exists(before));
+        Assert.True(Directory.Exists(after));
+    }
+
+    /// <summary>A run that cannot read the record (another run replacing it, an AV scan) neither records nor writes:
+    /// written from an empty read, it would drop every group still waiting for its day. Reading is denied here while
+    /// replacing is not, as in that race.</summary>
+    [Fact]
+    public void AnUnreadableSeenRecord_IsNeitherRecordedNorOverwritten()
+    {
+        var (log, before, after) = Build(_old, OurBuild);
+        SweepOnce(_seen);
+        var recorded = GroupKey(log, before, after);
+        Assert.Contains(recorded, SeenLines());
+        Build(_now - TimeSpan.FromMinutes(1), "dotnet test ui/App.Tests/App.Tests.csproj");
+
+        using (DenyRead(SeenFile))
+            SweepOnce(_now);
+
+        Assert.Equal(new[] { recorded }, SeenLines());
+    }
+
+    /// <summary>A group holding a log kept for good can never go, so its line goes: otherwise the record grows with
+    /// every other session's builds.</summary>
+    [Fact]
+    public void ASeenLineHoldingALogKeptForGood_IsDropped()
+    {
+        var (log, _, _) = Build(_old, TheirBuild);
+        SweepOnce(_seen);
+        Assert.Contains(SeenLines(), l => l.Contains(Path.GetFileName(log), StringComparison.Ordinal));
+
+        SweepOnce(_now);
+
+        Assert.Contains(Path.GetFileName(log), Remembered());
+        Assert.DoesNotContain(SeenLines(), l => l.Contains(Path.GetFileName(log), StringComparison.Ordinal));
+    }
+
+    /// <summary>The headless suite runs after this one in build.ps1, so its own build is seen young only if it records
+    /// it itself. The recorder deletes nothing; a later sweep does.</summary>
+    [Fact]
+    public void RecordYoungGroups_Records_AndDeletesNothing()
+    {
+        var (log, before, after) = Build(_old, OurBuild);
+
+        SdkTempLeftovers.RecordYoungGroups(_temp, _seen, _mem);
+
+        Assert.True(File.Exists(log));
+        Assert.True(Directory.Exists(before));
+        Assert.True(Directory.Exists(after));
+        SweepOnce(_now);
+        Assert.False(File.Exists(log));
+        Assert.False(Directory.Exists(before));
+        Assert.False(Directory.Exists(after));
+    }
+
+    [Fact]
+    public void TheHeadlessSuite_RecordsItsOwnBuild()
+    {
+        var root = SdkTempLeftovers.FindRepoRoot()!;
+        var dir = Path.Combine(root, "ui", "UE5DumpUI.HeadlessTests");
+        var csproj = File.ReadAllText(Path.Combine(dir, "UE5DumpUI.HeadlessTests.csproj"));
+        Assert.Contains(@"..\UE5DumpUI.Tests\SdkTempLeftovers.cs", csproj);
+        var sources = Directory.EnumerateFiles(dir, "*.cs").Select(File.ReadAllText).ToList();
+        Assert.Contains(sources, s => s.Contains("[ModuleInitializer]", StringComparison.Ordinal)
+                                      && s.Contains("SdkTempLeftovers.RecordYoungGroups(", StringComparison.Ordinal));
+    }
+
+    /// <summary>A kept-logs memory that cannot be read is not written over either.</summary>
+    [Fact]
+    public void AnUnreadableKeptMemory_IsNotOverwritten()
+    {
+        Directory.CreateDirectory(_mem);
+        File.WriteAllLines(Kept(), new[] { SdkTempLeftovers.KeptHeader(Ours), "Microsoft.NET.Workload_7_20261101_120000_000.log" });
+        var before = File.ReadAllText(Kept());
+        Log(_old, TheirBuild);
+
+        using (DenyRead(Kept()))
+            SweepOnce(_now);
+
+        Assert.Equal(before, File.ReadAllText(Kept()));
+    }
+
+    /// <summary>Denies the current user reading <paramref name="file"/> until disposed; deleting and replacing it stay
+    /// allowed.</summary>
+    private static IDisposable DenyRead(string file)
+    {
+        var user = System.Security.Principal.WindowsIdentity.GetCurrent().User!;
+        var rule = new System.Security.AccessControl.FileSystemAccessRule(user,
+            System.Security.AccessControl.FileSystemRights.ReadData,
+            System.Security.AccessControl.AccessControlType.Deny);
+        var info = new FileInfo(file);
+        var acl = info.GetAccessControl();
+        acl.AddAccessRule(rule);
+        info.SetAccessControl(acl);
+        Assert.ThrowsAny<UnauthorizedAccessException>(() => File.ReadAllText(file));
+        return new Undo(() =>
+        {
+            if (!File.Exists(file)) return;   // replaced: the new file carries no deny
+            var now = info.GetAccessControl();
+            now.RemoveAccessRule(rule);
+            info.SetAccessControl(now);
+        });
+    }
+
+    private sealed class Undo(Action undo) : IDisposable
+    {
+        public void Dispose() => undo();
+    }
+
     // ---- the logs kept for good are remembered, so a run reads only what is new ----------------------------------
 
     private string Kept(string? mem = null) => Path.Combine(mem ?? _mem, SdkTempLeftovers.KeptLogsFileName);
@@ -579,7 +729,7 @@ public class SdkTempLeftoversTests : IDisposable
     private List<string> SeenLines()
     {
         var f = Path.Combine(_mem, SdkTempLeftovers.SeenGroupsFileName);
-        return File.Exists(f) ? File.ReadAllLines(f).ToList() : new();
+        return File.Exists(f) ? File.ReadAllLines(f).Where(l => !l.StartsWith('#')).ToList() : new();
     }
 
     [Fact]

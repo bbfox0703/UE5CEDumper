@@ -113,6 +113,15 @@ internal static class SdkTempLeftovers
     /// <summary>The groups seen young, one per line: the names of their members, sorted, joined by '|'.</summary>
     internal const string SeenGroupsFileName = "sdk-groups-seen.txt";
 
+    /// <summary>Red stub: the seen record's first line.</summary>
+    internal const string SeenHeader = "# sdk-groups-seen v1";
+
+    /// <summary>Red stub: the folder in %TEMP% the test runs share.</summary>
+    internal const string SharedFolderName = "UE5CEDumper.Tests";
+
+    /// <summary>Red stub: record the groups seen young, deleting nothing.</summary>
+    internal static void RecordYoungGroups(string temp, DateTime nowUtc, string memoryFolder) { }
+
     // The exceptions a look at %TEMP% can meet: I/O and access, and a time or path .NET cannot represent (anyone can
     // stamp a file with a time past the year 9999).
     private static bool Expected(Exception e)
