@@ -20,6 +20,12 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         when it exits, and the UI's hold is not. --toggle-experimental also turns the UI's experimental switch off for
         one step (the file's exact bytes are put back) to see the experimental tools refuse. It MOVES the fixture's
         pawn by a few metres and back: run it on a fixture, never on a real game.
+    py tools/verify/mcp_client.py raw --exe dist/UE5DumpUI.exe --suspend-name DumperTest-Win64-Shipping [--pid N]
+        Stage D2-3: write_memory on the fixture's own int field (written, a changed-since refusal, put back), refused on
+        a vtable (read-only) and on code; write_invoke of Add_IntInt (40 + 2), the deny list (ToggleDebugCamera), the
+        UI's queued invoke refusing the AI's, and the AI's own queued invoke never resent and dropped when its session
+        ends. It FREEZES the game thread for a few seconds at a time (suspend.py suspend-tid; always resumed): a
+        fixture only.
 
     --ssh HOST   start the server as `ssh -T HOST <exe> --mcp`, the way an MCP client on another machine would; --exe
                  is then the path on HOST. ssh's own prompts (a password) go to this console, never to the protocol:
@@ -697,9 +703,193 @@ def run_writes(exe: str, pid: int | None, toggle_experimental: bool) -> int:
     return ck.done(c)
 
 
+def _suspend(*args: str) -> str:
+    out = subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name("suspend.py")), *args],
+                         capture_output=True, text=True)
+    return out.stdout
+
+
+def _game_thread(name: str) -> int | None:
+    """The UE game thread: the process's oldest thread (suspend.py's own rule)."""
+    for line in _suspend("threads", name).splitlines():
+        if "<-- main thread" in line:
+            return int(line.split("tid=")[1].split()[0])
+    return None
+
+
+class _FrozenGameThread:
+    """The game thread suspended while the DLL's pipe threads keep answering: a game-thread call then times out (-5)
+    and stays queued. Always resumed on exit."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.tid = _game_thread(name)
+
+    def __enter__(self):
+        if self.tid is None:
+            raise McpError(f"no game thread found for {self.name}")
+        _suspend("suspend-tid", self.name, str(self.tid))
+        return self
+
+    def __exit__(self, *exc):
+        _suspend("resume-tid", self.name, str(self.tid))
+        return False
+
+
+def _le_hex(value: int, size: int) -> str:
+    return (value & ((1 << (8 * size)) - 1)).to_bytes(size, "little").hex().upper()
+
+
+def run_raw(exe: str, pid: int | None, game_name: str) -> int:
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from pipe_client import PipeClient   # noqa: E402 -- the rig beside this one
+
+    ck = Checks()
+    c = McpClient(exe)
+    c.initialize()
+    base = {"pid": pid} if pid else {}
+
+    def call(client, tool, args=None, timeout=180.0):
+        r = client.call(tool, {**base, **(args or {})}, timeout)
+        data, note = payload(r)
+        return r, data, note
+
+    def error_text(data) -> str:
+        return data.get("error", "") if isinstance(data, dict) else str(data)
+
+    tools = {t["name"]: t for t in c.request("tools/list").get("result", {}).get("tools", [])}
+    for name in ("write_memory", "write_invoke"):
+        t = tools.get(name, {})
+        ck.check(t.get("_meta", {}).get("anthropic/requiresUserInteraction") is True
+                 and t.get("annotations", {}).get("destructiveHint") is True, f"{name} listed, asks every time", t)
+    ck.check(tools.get("write_invoke", {}).get("annotations", {}).get("idempotentHint") is False,
+             "write_invoke is not idempotent")
+
+    r, st, _ = call(c, "read_status")
+    build = st.get("build_number") or 0
+    if not ck.check(st.get("scanned") and build >= 3706, f"the game is scanned, DLL build {build} (D2-3 needs 3706+)",
+                    st):
+        c.close()
+        return ck.done(c)
+    game = pid or st.get("pid")
+    ui = PipeClient(pid=game, timeout=120)
+    ui.connect()
+    me = os.getpid()
+    print(f"        game pid {game}; the foreground client (the UI's stand-in) is pid {me}")
+
+    def outstanding(background: bool | None = None) -> int:
+        total = 0
+        for e in ui.request("get_holds").get("invokes", []):
+            h = e.get("holder", {})
+            if background is None or bool(h.get("background")) == background:
+                total += e.get("outstanding", 0)
+        return total
+
+    def settle(background: bool | None = None, seconds: float = 10.0) -> int:
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            n = outstanding(background)
+            if n == 0:
+                return 0
+            time.sleep(0.2)
+        return outstanding(background)
+
+    try:
+        # 1. write_memory on the fixture's own int field.
+        r, live, _ = call(c, "read_find_live_instance", {"class_name": "DumperTestHolder"})
+        inst, cls = live.get("addr"), live.get("class_addr")
+        r, klass, _ = call(c, "read_class", {"addr": cls})
+        field = next((f for f in klass.get("class", {}).get("fields", []) if f.get("name") == "HolderValue"), None)
+        if ck.check(inst and field, "DumperTestHolder.HolderValue found", (live, field)):
+            faddr = "0x%X" % (int(inst, 16) + field["offset"])
+            r, mem, _ = call(c, "read_memory", {"addr": faddr, "size": 4})
+            old = mem.get("bytes", "").upper()
+            new = _le_hex(int.from_bytes(bytes.fromhex(old), "little") + 1, 4)
+            r, d, _ = call(c, "write_memory", {"addr": faddr, "bytes": new, "expect": old})
+            ck.check(not r.get("isError") and d.get("before", "").upper() == old and d.get("after", "").upper() == new,
+                     f"write_memory {old} -> {new}, before and after returned", d)
+            r, d, _ = call(c, "write_memory", {"addr": faddr, "bytes": old, "expect": old})
+            ck.check(r.get("isError") and d.get("code") == -23 and d.get("current", "").upper() == new,
+                     "a write whose expect no longer matches is refused, with what is there now", d)
+            r, d, _ = call(c, "write_memory", {"addr": faddr, "bytes": old, "expect": new})
+            ck.check(not r.get("isError") and d.get("after", "").upper() == old, "and the field is put back", d)
+
+            # Read-only and code pages, written with the very bytes they hold: harmless even if it went through.
+            r, vt, _ = call(c, "read_memory", {"addr": inst, "size": 8})
+            vtable = int.from_bytes(bytes.fromhex(vt.get("bytes", "00" * 8)), "little")
+            r, slot, _ = call(c, "read_memory", {"addr": "0x%X" % vtable, "size": 8})
+            slot_hex = slot.get("bytes", "").upper()
+            r, d, _ = call(c, "write_memory", {"addr": "0x%X" % vtable, "bytes": slot_hex, "expect": slot_hex})
+            ck.check(r.get("isError") and d.get("code") in (-22, -21), "a write to the vtable (read-only) is refused", d)
+            code_addr = int.from_bytes(bytes.fromhex(slot_hex or "00" * 8), "little")
+            r, code_bytes, _ = call(c, "read_memory", {"addr": "0x%X" % code_addr, "size": 4})
+            cb = code_bytes.get("bytes", "").upper()
+            r, d, _ = call(c, "write_memory", {"addr": "0x%X" % code_addr, "bytes": cb, "expect": cb})
+            ck.check(r.get("isError") and d.get("code") == -21, "a write to code is refused as code", d)
+
+        # 2. write_invoke: a computed value, by name.
+        r, kml, _ = call(c, "read_find_object", {"path": "Default__KismetMathLibrary"})
+        cdo = kml.get("addr")
+        r, d, _ = call(c, "write_invoke", {"instance_addr": cdo, "function": "Add_IntInt", "params": {"A": 40, "B": 2}})
+        ck.check(not r.get("isError") and d.get("return") == "42", "write_invoke Add_IntInt(40, 2) returns 42", d)
+
+        # 3. The deny list: the debug-camera toggle points to write_debug_camera.
+        r, cm, _ = call(c, "read_find_object", {"path": "Default__CheatManager"})
+        r, d, _ = call(c, "write_invoke", {"instance_addr": cm.get("addr"), "function": "ToggleDebugCamera"})
+        ck.check(r.get("isError") and "write_debug_camera" in error_text(d),
+                 "write_invoke ToggleDebugCamera is refused, pointing to write_debug_camera", d)
+
+        # 4. write_debug_camera ON on a Shipping fixture with no live CheatManager: an error now, not a success.
+        r, d, note = call(c, "write_debug_camera", {"enable": True})
+        if not r.get("isError"):
+            call(c, "write_debug_camera", {"enable": False})
+        ck.check(r.get("isError") and "CheatManager" in (note or ""), "write_debug_camera ON with no CheatManager is "
+                 "reported as refused (state -17)", (d, note))
+
+        # 5. The UI's queued invoke: the AI's is refused, naming it, until it has run.
+        ck.check(settle() == 0, "no invoke is outstanding before the conflict check")
+        with _FrozenGameThread(game_name):
+            q = ui.request("invoke_function", class_name="KismetMathLibrary", func_name="Add_IntInt", parms_size=12,
+                           params_hex="01000000" + "02000000" + "00000000")
+            ck.check(q.get("result") == -5, "the UI's invoke times out (-5) and stays queued while the game thread is "
+                     "frozen", q)
+            ck.check(outstanding(background=False) >= 1, "get_holds lists the UI's outstanding invoke")
+            r, d, _ = call(c, "write_invoke", {"instance_addr": cdo, "function": "Add_IntInt", "params": {"A": 1, "B": 1}})
+            ck.check(r.get("isError") and f"(pid {me})" in error_text(d),
+                     "the AI's write_invoke is refused, naming the UI's process", d)
+        ck.check(settle(background=False) == 0, "the UI's queued invoke runs once the game thread resumes")
+        r, d, _ = call(c, "write_invoke", {"instance_addr": cdo, "function": "Add_IntInt", "params": {"A": 1, "B": 1}})
+        ck.check(not r.get("isError") and d.get("return") == "2", "and then the AI's goes through", d)
+
+        # 6. The AI's own queued invoke: never resent, dropped when its session ends.
+        with _FrozenGameThread(game_name):
+            r, d, note = call(c, "write_invoke", {"instance_addr": cdo, "function": "Add_IntInt",
+                                                  "params": {"A": 5, "B": 5}})
+            ck.check(not r.get("isError") and d.get("queued") is True, "the AI's invoke times out and is reported "
+                     "queued", (d, note))
+            r, d, _ = call(c, "write_invoke", {"instance_addr": cdo, "function": "Add_IntInt",
+                                               "params": {"A": 6, "B": 6}})
+            ck.check(r.get("isError") and "do not send it again" in error_text(d),
+                     "a second write_invoke is refused while the first is still queued", d)
+            ck.check(outstanding(background=True) == 1, "get_holds lists the AI's one outstanding invoke")
+            code = c.close()
+            ck.check(code == 0, "the server exits while its invoke is still queued", code)
+            ck.check(settle(background=True, seconds=10) == 0, "its queued invoke is dropped when it leaves, before "
+                     "the game thread resumes")
+        time.sleep(1.0)
+        ck.check(settle() == 0, "nothing is left outstanding after the game thread resumes")
+    finally:
+        try:
+            c.close()
+        except Exception:  # noqa: BLE001 -- already closed
+            pass
+        ui.close()
+    return ck.done(c)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("mode", choices=["probe", "call", "live", "writes"])
+    ap.add_argument("mode", choices=["probe", "call", "live", "writes", "raw"])
     ap.add_argument("--exe", required=True, help="path to UE5DumpUI.exe")
     ap.add_argument("--tool")
     ap.add_argument("--args", default="{}")
@@ -731,6 +921,10 @@ def main() -> int:
         return run_call(exe, a.tool, args)
     if a.mode == "writes":
         return run_writes(exe, a.pid, a.toggle_experimental)
+    if a.mode == "raw":
+        if not a.suspend_name:
+            ap.error("raw needs --suspend-name (the game's image stem, for suspend.py's thread verbs)")
+        return run_raw(exe, a.pid, a.suspend_name)
     return run_live(exe, a.pid, a.suspend_name)
 
 
