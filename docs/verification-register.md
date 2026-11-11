@@ -385,8 +385,12 @@ force-field job and See-through. Not reached:
       names `write_god_mode` -- and `--permission-mode default`, asked for `read_holds`, `write_god_mode` (enable)
       and `read_holds`. Both reads ran and `write_god_mode` was declined at the permission prompt ("MCPTool requires
       permission"); the server's log (`mcp-20261111-185626-*.log`) has the two `read_holds` and no `write_god_mode`,
-      and `god_mode` stayed inactive and nobody's. Without the marker, that allow rule would have run it. Still to
-      measure: the same in the machine's `auto` mode, and the prompt in an interactive session.
+      and `god_mode` stayed inactive and nobody's. Without the marker, that allow rule would have run it.
+    - ◐ **Auto mode measured 2026-11-11** (the same CLI and exe; the machine's user settings say `defaultMode: auto`,
+      and no `--permission-mode` was passed): the same allow rule and request. Both reads ran and `write_god_mode` was
+      declined ("MCPTool requires permission"); the server's log (`mcp-20261111-201111-*.log`) has the two
+      `read_holds` and no `write_god_mode`. In this mode `scan_start` had run under item 15 with no prompt: the marker
+      is what stops a write tool. Still to measure: the prompt itself in an interactive session.
 23. **The UI window and a Cheat Engine record as the holders.** The rig's foreground client is `pipe_client.py`, and
     CE was not used (another session needed it). Acceptance: god mode ticked in the UI's Teleport tab, then a
     `write_god_mode` OFF from the AI is refused naming the UE5DumpUI window and the card stays on; the same with a CE
