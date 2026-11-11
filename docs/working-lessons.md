@@ -2600,9 +2600,11 @@ Four rules came out of it:
      runs, in every repository, and its per-user install folder is writable by anything running as the user. The
      maintainer excepted `python.exe` for the day. Since then `inject.py` hands the injection to
      `dist\UE5DumpUI.exe --inject-elevated`, an image inside the excepted repository folder, and the `python.exe`
-     exception goes (`InjectElevatedContractTests` pins the hand-off). Rigs that still start a remote thread or write
-     into another process from Python (`call_export.py`, `mailbox_poke.py` and the rigs built on it, a few dormant
-     ones) are not covered by it.
+     exception goes (`InjectElevatedContractTests` pins the hand-off). Not covered by it: the rigs that still start a
+     remote thread from python.exe (`call_export.py`, `sw1_worker_fault.py`, `findbyfullname_number_gate.py`) or
+     write into another process from it (`mailbox_poke.py` and the rigs built on it, `wpm_int32.py`, and several
+     dormant ones). List them with `git grep -lE "CreateRemoteThread|WriteProcessMemory|VirtualAllocEx" --
+     tools/verify/*.py`; any of them can be flagged.
    - **Where Bitdefender records a verdict:** the app's `events\events.db` (SQLite; open it read-only) and
      `ctc\rca\*.dat` (JSON: the detection, its score, the process tree). Both are readable without elevation.
      Nothing is kept about runs it allowed, and reading the ATD allow list needs elevation.
