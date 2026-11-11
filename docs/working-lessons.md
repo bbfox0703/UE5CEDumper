@@ -2599,8 +2599,10 @@ Four rules came out of it:
    - **Except the program that acts, never an interpreter.** An exception on `python.exe` exempts every script it
      runs, in every repository, and its per-user install folder is writable by anything running as the user. The
      maintainer excepted `python.exe` for the day. Since then `inject.py` hands the injection to
-     `dist\UE5DumpUI.exe --inject-elevated`, an image inside the excepted repository folder, and the `python.exe`
-     exception goes (`InjectElevatedContractTests` pins the hand-off). Not covered by it: the rigs that still start a
+     `dist\UE5DumpUI.exe --inject-elevated`, an image inside the excepted repository folder
+     (`InjectElevatedContractTests` pins the hand-off). The `python.exe` exception was removed the same evening, and
+     the maintainer's `py tools/verify/inject.py --name DumperTest` from the same PowerShell tab then injected with no
+     alert (measured: the DLL loaded, nothing in Bitdefender's notifications). Not covered by it: the rigs that still start a
      remote thread from python.exe (`call_export.py`, `sw1_worker_fault.py`, `findbyfullname_number_gate.py`) or
      write into another process from it (`mailbox_poke.py` and the rigs built on it, `wpm_int32.py`, and several
      dormant ones). List them with `git grep -lE "CreateRemoteThread|WriteProcessMemory|VirtualAllocEx" --
