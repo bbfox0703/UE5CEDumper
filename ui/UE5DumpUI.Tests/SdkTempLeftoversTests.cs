@@ -131,6 +131,7 @@ public class SdkTempLeftoversTests : IDisposable
     [InlineData("dotnet test tests/AOBMaker.Core.Tests --filter Ui -v q")]
     [InlineData("dotnet run --project D:/Other/Tool/Tool.csproj -- ui/App/App.csproj")]
     [InlineData("dotnet run --project D:/Other/Tool/Tool.csproj ui/App/App.csproj")]
+    [InlineData("dotnet test tests/AOBMaker.Core.Tests -- ui/App/App.csproj")]
     // One quoted argument with escaped quotes inside, as Windows reads it: never split into a word that is our path.
     [InlineData("dotnet build D:\\Github\\Other\\Other.sln \"-p:Note=\\\" ui\\App\\App.csproj \\\"\"")]
     // Under this checkout, but another repository's clone that git here does not track.
@@ -274,6 +275,24 @@ public class SdkTempLeftoversTests : IDisposable
         Assert.True(File.Exists(log));
         Assert.True(Directory.Exists(before));
         Assert.True(Directory.Exists(after));
+    }
+
+    /// <summary>A group recorded once and changed while still young (a folder taken, a stranger beside it) is not
+    /// recorded again in its new shape, so the new shape never matches.</summary>
+    [Fact]
+    public void AGroupChangedWhileYoung_IsNotRecordedAgain()
+    {
+        var (log, before, after) = Build(_old, OurBuild);
+        SweepOnce(_seen);
+        Directory.Delete(before);
+        var stranger = Folder(_old + TimeSpan.FromMilliseconds(300));
+        SweepOnce(_seen + TimeSpan.FromMinutes(1));
+
+        SweepOnce(_now);
+
+        Assert.True(Directory.Exists(stranger));
+        Assert.True(Directory.Exists(after));
+        Assert.True(File.Exists(log));
     }
 
     /// <summary>A group seen within seconds of its log may not have its second folder yet: not recorded then.</summary>
