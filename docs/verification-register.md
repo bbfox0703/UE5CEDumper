@@ -363,10 +363,33 @@ stayed. Not reached:
     released live: god mode (the rig gives it to the foreground client), gravity direction (changing it would send
     the fixture's pawn off the map, and DumperTest does not respawn it), the debug camera (DumperTest Shipping has no
     live CheatManager, so it cannot be held), a force-field job. Acceptance for those: as above, on a game where each
-    can be held.
+    can be held. **A force-field job: reached with build 3705** (`mcp_client.py writes`, D2-2 below): the MCP server's
+    `DumperTestHolder::HolderValue` job was gone from `get_holds` after it exited, and the DLL log had "its hold
+    force_field:DumperTestHolder::HolderValue is released (code 0)".
 21. **A hold the UI took over.** ✅ **CLOSED 2026-11-11** (build 3704, same run): a background client's pawn time lane,
     changed by the foreground client without if_free, read as the foreground client's; after the background client
     left it was still active and still the foreground client's, and the DLL log had no release line for it.
+
+Stage D2-2, build 3705 (the MCP write tools) -- dev-log 3705. `tools/verify/mcp_client.py writes --toggle-experimental`
+36/36 on DumperTest Shipping with the published DLL and AOT exe, beside a foreground pipe client standing in for the
+UI: god mode, world time, walk speed, a teleport and its return, Fly (refused with the switch off, then on), a
+force-field job and See-through. Not reached:
+
+22. **Claude Code's prompt for a write tool.** The marker is in `tools/list` (the rig checks all 12), but no client
+    was seen to ask. Acceptance, with the Claude Code version recorded (the marker needs 2.1.246+): in a session,
+    asking for god mode shows a permission prompt for `write_god_mode`; `claude -p` with `--allowedTools
+    "mcp__ue5cedumper__*"` does not run it, in `--permission-mode default` and in the machine's `auto` alike (the
+    server's log has no `write_god_mode` call), while the `read_*` tools in the same run do run.
+23. **The UI window and a Cheat Engine record as the holders.** The rig's foreground client is `pipe_client.py`, and
+    CE was not used (another session needed it). Acceptance: god mode ticked in the UI's Teleport tab, then a
+    `write_god_mode` OFF from the AI is refused naming the UE5DumpUI window and the card stays on; the same with a CE
+    record (refused naming "a Cheat Engine record"); and the UI's experimental opt-in ticked off in a running UI makes
+    the next `write_fly` refuse.
+24. **The other write tools.** Not driven live: `write_gravity_direction` (it would send the fixture's pawn off the
+    map), `write_debug_camera` (DumperTest Shipping has no live CheatManager), `write_mouse_cursor`,
+    `write_foreground_lock`, `write_force_field_reset`, a numeric `write_force_field` value read back from the
+    instances, and a DLL older than 3705 refused. Each is unit-tested (`McpToolsTests`). Acceptance: on a game where
+    each can be held, the tool changes it, `read_holds` names the server, and its exit releases it.
 
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 

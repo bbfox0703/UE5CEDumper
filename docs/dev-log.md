@@ -27,6 +27,47 @@ builds ≤696 in
 
 -----
 
+## 2026-11-11 (build 3705) — The MCP server can change the game: the gameplay toggles, the force field and teleport, asked every time `[PIPE-PER-PROCESS-2026-11-06]`
+
+Stage D2-2, to the maintainer's D2 decisions of 2026-11-11.
+
+- **Twelve `write_*` tools**: god mode, the movement knobs, gravity direction, time dilation, the debug camera, the
+  mouse cursor, a teleport to explicit coordinates, and the experimental Fly, Keep Foreground, See-through, force a
+  field and release a forced field. **Five more reads** around them: `read_holds` (who holds what), `read_pose`,
+  `read_movement`, `read_time_dilation`, `read_forced_fields`.
+- **Asked every time.** Every write tool carries Claude Code's `anthropic/requiresUserInteraction` marker (Claude Code
+  2.1.246+ asks before each call in every permission mode, an allow rule notwithstanding) and `destructiveHint`.
+- **Never over you.** A change to a feature the UI, a Cheat Engine record or another AI session holds is refused by
+  the DLL under that feature's lock (D2-1's `if_free`), and the reply names the holder. The AI never releases every
+  forced field at once, and never turns See-through off while you have it on too.
+- **Ends with the AI session.** What the AI turned on is released when its server exits; what you hold stays.
+- **Your teleport markers and Recall last are yours.** `write_teleport` goes only to the coordinates given and never
+  touches a marker slot. New pipe key `keep_undo` on the explicit-pose `teleport_recall_marker` (the server always
+  sends it) leaves the undo point alone, so the UI's **Recall last** still returns where you were.
+- **The experimental features follow the UI's switch**, read on every call.
+- **The write tools need the DLL from this build** (3705): an older one cannot tell the AI's change from yours, so
+  each write tool refuses it before sending anything. A proxy needs **Update All**.
+- `docs/mcp.md` and `MCP-Setup.html` describe the write tools; `MCP-Setup.html` in `dist\` is byte-identical to its
+  source.
+- Tests: the write tools' rules (if_free on every hold change, the old-DLL refusal, the experimental switch, the
+  holder named in each refusal, teleport's keep_undo and `from`, object_null refused, the See-through OFF guard, no
+  command from the never-sent set), the `_meta` marker in `tools/list`, a source pin for `keep_undo` in Wirbel and
+  Fern. Nine mutations, one per guard, each failed a test. C# 7845 passed, 0 failed, 1 skipped; dll_helpers_test
+  3952, dll_core_test 1548, utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30, 0 failures; 39
+  gates passed. ⚠ The publish's headless step failed, 49 of 71, all with "No precompiled XAML found for
+  avares://UE5DumpUI/Resources/Strings/en.axaml"; the same suite re-run on its own passed 71/71, and the published
+  exe starts its window (up after 12 s, crash.log untouched, version 1.0.0.3705 in its init log). The cause was not
+  found; it followed a long run of mutation rebuilds of the test project.
+- Live, the published DLL and AOT exe on DumperTest Shipping (UE 5.4): `tools/verify/mcp_client.py writes
+  --toggle-experimental` 36/36 beside a foreground pipe client standing in for the UI -- the UI's god mode refused and
+  named; the server's own world time, walk speed, fly and force-field job marked background; a teleport and a return
+  leaving the marker slots and the undo point (a control jump without `keep_undo` moved it), and the UI's Recall last
+  landing where the UI left; Fly refused with the switch off; See-through OFF refused while the UI also had it on;
+  each of the server's holds released when it exited (one DLL log line each), the UI's god mode and See-through
+  kept. `probe` 15/15, `live --suspend-name DumperTest` 31/31, `holds_live.py` 22/22. Not live:
+  verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 22-24. AOT UI 62,190,080 bytes (sha256
+  ab442c67207ec532...); UE5Dumper.dll 3,685,376 bytes (sha256 b562d419e5adc02e...).
+
 ## 2026-11-11 (build 3704) — The DLL records who holds each gameplay hold; an AI session's holds end with it `[PIPE-PER-PROCESS-2026-11-06]`
 
 Stage D2-1, the groundwork for the MCP server's write tools (D2), to the maintainer's decisions of 2026-11-11: the DLL
