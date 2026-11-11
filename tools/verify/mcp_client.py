@@ -26,6 +26,12 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         UI's queued invoke refusing the AI's, and the AI's own queued invoke never resent and dropped when its session
         ends. It FREEZES the game thread for a few seconds at a time (suspend.py suspend-tid; always resumed): a
         fixture only.
+    py tools/verify/mcp_client.py dbgcam --exe dist/UE5DumpUI.exe --suspend-name DumperTest [--pid N]
+        Stage D2-3, register item 26: a pending debug-camera toggle and who holds it. Needs a live CheatManager --
+        DumperTest Development (launch_dumpertest.py dev), not Shipping. With the game thread frozen: (A) the AI's ON
+        queued, the UI stand-in joins it (-5), the AI session ends: the toggle is not dropped, the camera comes on, the
+        UI's; (B) the UI's ON queued: the AI's write_debug_camera is refused naming the UI; (C) the UI joins while the
+        AI's toggle is still being dispatched: the same as (A). Turns the camera off again after each.
 
     --ssh HOST   start the server as `ssh -T HOST <exe> --mcp`, the way an MCP client on another machine would; --exe
                  is then the path on HOST. ssh's own prompts (a password) go to this console, never to the protocol:
@@ -888,9 +894,131 @@ def run_raw(exe: str, pid: int | None, game_name: str) -> int:
     return ck.done(c)
 
 
+def run_dbgcam(exe: str, pid: int | None, game_name: str) -> int:
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from pipe_client import PipeClient   # noqa: E402 -- the rig beside this one
+
+    ck = Checks()
+    base = {"pid": pid} if pid else {}
+
+    def call(client, tool, args=None, timeout=180.0):
+        r = client.call(tool, {**base, **(args or {})}, timeout)
+        data, note = payload(r)
+        if note is None and isinstance(data, dict):
+            note = data.get("note")
+        return r, data, note
+
+    def error_text(data) -> str:
+        return data.get("error", "") if isinstance(data, dict) else str(data)
+
+    ai = McpClient(exe)
+    ai.initialize()
+    r, st, _ = call(ai, "read_status")
+    build = st.get("build_number") or 0
+    if not ck.check(st.get("scanned") and build >= 3706, f"the game is scanned, DLL build {build} (needs 3706+)", st):
+        ai.close()
+        return ck.done(ai)
+    game = pid or st.get("pid")
+    ui = PipeClient(pid=game, timeout=120)
+    ui.connect()
+    me = os.getpid()
+    print(f"        game pid {game}; the UI stand-in (foreground, no if_free) is pid {me}")
+
+    def cam() -> int:
+        return ui.request("get_debug_camera_state").get("state", -99)
+
+    def camera_hold() -> dict:
+        return next((h for h in ui.request("get_holds").get("holds", []) if h.get("hold") == "debug_camera"), {})
+
+    def outstanding(background: bool) -> int:
+        return sum(e.get("outstanding", 0) for e in ui.request("get_holds").get("invokes", [])
+                   if bool(e.get("holder", {}).get("background")) == background)
+
+    def wait_cam(want: int, seconds: float = 15.0) -> int:
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            s = cam()
+            if s == want:
+                return s
+            time.sleep(0.25)
+        return cam()
+
+    def camera_off(label: str):
+        ui.request("set_debug_camera", enable=False)
+        ck.check(wait_cam(0) == 0 and not camera_hold().get("active"), f"{label}: the camera is off again")
+
+    if not ck.check(cam() in (0, 1), "the debug camera's state reads (a live CheatManager)", cam()):
+        ui.close()
+        ai.close()
+        return ck.done(ai)
+    if cam() == 1:
+        camera_off("start")
+    try:
+        # A. The AI's ON queued; the UI joins it; the AI session ends.
+        with _FrozenGameThread(game_name):
+            r, d, note = call(ai, "write_debug_camera", {"enable": True})
+            ck.check(not r.get("isError") and d.get("state") == -5, "A: the AI's ON is queued (-5)", (d, note))
+            h = camera_hold()
+            ck.check(h.get("pending") and h.get("holder", {}).get("background"), "A: the pending ON is the AI's", h)
+            j = ui.request("set_debug_camera", enable=True)
+            ck.check(j.get("state") == -5, "A: the UI's ON joins it (-5, 'your toggle is queued')", j)
+            h = camera_hold()
+            ck.check(h.get("pending") and h.get("holder", {}).get("you"), "A: the pending ON is the UI's now", h)
+            ck.check(outstanding(False) == 1 and outstanding(True) == 0,
+                     "A: the queued toggle is counted under the UI, not the AI")
+            ck.check(ai.close() == 0, "A: the AI session ends while the toggle is queued")
+            time.sleep(1.0)
+            ck.check(outstanding(False) == 1, "A: the AI session's end did not drop it")
+        ck.check(wait_cam(1) == 1, "A: the game resumes and the camera comes on")
+        h = camera_hold()
+        ck.check(h.get("active") and h.get("holder", {}).get("you"), "A: the camera is on, held by the UI", h)
+        camera_off("A")
+
+        # B. The UI's ON queued: the AI's is refused, naming the UI.
+        ai = McpClient(exe)
+        ai.initialize()
+        with _FrozenGameThread(game_name):
+            j = ui.request("set_debug_camera", enable=True)
+            ck.check(j.get("state") == -5, "B: the UI's ON is queued (-5)", j)
+            r, d, _ = call(ai, "write_debug_camera", {"enable": True})
+            ck.check(r.get("isError") and f"(pid {me})" in error_text(d),
+                     "B: the AI's write_debug_camera is refused, naming the UI's process", d)
+        ck.check(wait_cam(1) == 1 and camera_hold().get("holder", {}).get("you"), "B: the camera comes on, the UI's")
+        camera_off("B")
+
+        # C. The UI joins while the AI's toggle is still being dispatched (the AI's call still waiting).
+        with _FrozenGameThread(game_name):
+            rid = ai.request_async("tools/call", {"name": "write_debug_camera", "arguments": {**base, "enable": True}})
+            time.sleep(1.5)
+            j = ui.request("set_debug_camera", enable=True)
+            ck.check(j.get("state") == -5, "C: the UI's ON joins the AI's toggle still being dispatched (-5)", j)
+            res = ai.wait(rid, timeout=60).get("result", {})
+            d, _ = payload(res)
+            ck.check(not res.get("isError") and d.get("state") == -5, "C: the AI's toggle then answers queued", d)
+            h = camera_hold()
+            ck.check(h.get("pending") and h.get("holder", {}).get("you"), "C: the pending ON is the UI's", h)
+            ck.check(outstanding(False) == 1 and outstanding(True) == 0, "C: and counted under the UI")
+            ck.check(ai.close() == 0, "C: the AI session ends while the toggle is queued")
+            time.sleep(1.0)
+            ck.check(outstanding(False) == 1, "C: the AI session's end did not drop it")
+        ck.check(wait_cam(1) == 1, "C: the game resumes and the camera comes on")
+        h = camera_hold()
+        ck.check(h.get("active") and h.get("holder", {}).get("you"), "C: the camera is on, held by the UI", h)
+        camera_off("C")
+    finally:
+        try:
+            ai.close()
+        except Exception:  # noqa: BLE001 -- already closed
+            pass
+        if cam() == 1:
+            ui.request("set_debug_camera", enable=False)
+        ui.close()
+    return ck.done(ai)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("mode", choices=["probe", "call", "live", "writes", "raw"])
+    ap.add_argument("mode", choices=["probe", "call", "live", "writes", "raw", "dbgcam"])
     ap.add_argument("--exe", required=True, help="path to UE5DumpUI.exe")
     ap.add_argument("--tool")
     ap.add_argument("--args", default="{}")
@@ -922,10 +1050,10 @@ def main() -> int:
         return run_call(exe, a.tool, args)
     if a.mode == "writes":
         return run_writes(exe, a.pid, a.toggle_experimental)
-    if a.mode == "raw":
+    if a.mode in ("raw", "dbgcam"):
         if not a.suspend_name:
-            ap.error("raw needs --suspend-name (the game's image stem, for suspend.py's thread verbs)")
-        return run_raw(exe, a.pid, a.suspend_name)
+            ap.error(f"{a.mode} needs --suspend-name (the game's image stem, for suspend.py's thread verbs)")
+        return (run_raw if a.mode == "raw" else run_dbgcam)(exe, a.pid, a.suspend_name)
     return run_live(exe, a.pid, a.suspend_name)
 
 
