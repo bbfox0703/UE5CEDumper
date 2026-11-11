@@ -789,11 +789,14 @@ public sealed class PipePerProcessSourceTests
 
         string flatRelease = Flat(release);
         Assert.Contains("code == Stark::kInvokeTimedOutStillQueued) { s_cameraReleaseOwedBy.store(owner);", flatRelease);
-        // Under shutdown every read gives up: the camera's release is owed to the next Start unread, never forgotten.
-        int shutdownOwed = flatRelease.IndexOf("if (hold == Grimoire::HOLD_DEBUG_CAMERA && Tot::ShutdownRequested()) { "
-                                               + "s_cameraReleaseOwedBy.store(owner);", StringComparison.Ordinal);
-        int flatCode = flatRelease.IndexOf("code = HoldActive(hold) ? ReleaseHold(hold) : 0;", StringComparison.Ordinal);
-        Assert.True(shutdownOwed > 0 && flatCode > shutdownOwed, "the shutdown case before the read");
+        // Review round 3: nothing owed crosses a stop. Once the DLL restarts, nobody can be named holder until the clients
+        // reconnect, so a record carried over would turn off a camera the user turned on meanwhile. Fern::Stop drops it.
+        Assert.DoesNotContain("Tot::ShutdownRequested()", flatRelease);
+        string stop = Flat(Between(fern, "void Fern::Stop(bool graceful) {", "Radar::SessionManager::Instance().DropAll();"));
+        int joined = stop.IndexOf("m_monitorThread.join();", StringComparison.Ordinal);
+        int dropAt = stop.IndexOf("DropOwedCameraRelease();", StringComparison.Ordinal);
+        Assert.True(joined > 0 && dropAt > joined, "dropped once the monitor and every handler are joined");
+        Assert.Contains("s_cameraReleaseOwedBy.exchange(0)", Between(fern, "void DropOwedCameraRelease() {", "\n}"));
         // The release's reads answer only to shutdown: a connection that left mid-command still has its own cancel
         // flag raised, and a read under it gives up (the camera "unknown"), releasing nothing and owing nothing.
         int gate = flatRelease.IndexOf("if (!IsBackgroundOwner(owner) || OwnerStillConnected(owner)) return;",
@@ -836,13 +839,19 @@ public sealed class PipePerProcessSourceTests
         Assert.DoesNotContain("GetGameThreadLiveness", serve);
         Assert.Contains("if (step == Voll::OwedRelease::Read) { state = UE5_GetDebugCameraState(); "
                         + "step = Voll::OwedCameraReleaseOnState(state); }", serve);
+        // Round 3: no hook re-armed and no OFF sent once a teardown began, and the OFF itself never ProcessEvent's direct
+        // fallback off the game thread (marked a background worker for the call: -8 if the hook went down meanwhile).
         Assert.Contains("if (step == Voll::OwedRelease::Send) { if (!GameThreadRanWithin(kOwedSendFreshMs)) return; "
-                        + "if (Stark::IsHookActive() || UE5_EnsureGameThreadHook()) { sent = UE5_SetDebugCamera(0); "
-                        + "sentOff = true; step = Voll::OwedCameraReleaseSent(sent);", serve);
+                        + "if (Tot::ShutdownRequested()) return; "
+                        + "if (Stark::IsHookActive() || UE5_EnsureGameThreadHook()) { const NoDirectCall noDirectCall; "
+                        + "sent = UE5_SetDebugCamera(0); sentOff = true; step = Voll::OwedCameraReleaseSent(sent);", serve);
+        Assert.Contains("NoDirectCall() { Tot::t_backgroundWorker = true; } ~NoDirectCall() { Tot::t_backgroundWorker = prev; }",
+            Flat(Between(fern, "struct NoDirectCall {", "};")));
         int sendWait = serve.IndexOf("if (step == Voll::OwedRelease::Wait) return; } else { step = Voll::OwedRelease::Abandon;",
             StringComparison.Ordinal);
-        int cut = serve.IndexOf("if (step == Voll::OwedRelease::Abandon && owner == Voll::kHoldOwnerNone && !pendingOn "
-                                + "&& Tot::ShutdownRequested()) return;", StringComparison.Ordinal);
+        // Any answer a shutdown may have cut short decides nothing -- a cut walk can read 0 (off) as well as unknown.
+        int cut = serve.IndexOf("if (owner == Voll::kHoldOwnerNone && !pendingOn && Tot::ShutdownRequested()) return; "
+                                + "s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0);", StringComparison.Ordinal);
         int clear = serve.IndexOf("s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0);", StringComparison.Ordinal);
         Assert.True(sendWait > 0 && cut > sendWait && clear > cut,
             "a resend queued again stays owed; a shutdown-cut answer decides nothing; only then the record clears");
