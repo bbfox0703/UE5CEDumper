@@ -99,9 +99,9 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
 namespace FrierenInvoke {
 bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why);
 }
-// [D2-3-INVOKE] Frieren.cpp: whether a debug-camera ON is queued or being dispatched (the hold recorder).
+// [D2-3-INVOKE] Frieren.cpp: whether a debug-camera ON is queued or being dispatched, and which client sent it.
 namespace FrierenDebugCamera {
-bool OnPending();
+bool PendingOn(uint64_t& owner);
 }
 
 // ============================================================
@@ -868,10 +868,12 @@ std::vector<std::string> ForceFieldJobs() {
     return out;
 }
 
-// [D2-3-INVOKE] Whether a change to `hold` is on its way: a debug-camera ON still queued holds the camera for its sender
-// from now (FrierenDebugCamera::OnPending). Only the hold recorder asks; an if_free check reads HoldActive alone.
-bool HoldPending(const std::string& hold) {
-    return hold == Grimoire::HOLD_DEBUG_CAMERA && FrierenDebugCamera::OnPending();
+// [D2-3-INVOKE] Whether a change turning `hold` on is on its way, and which client sent it: a debug-camera ON still
+// queued or being dispatched (FrierenDebugCamera::PendingOn). The if_free check counts it as in force -- the camera is
+// its sender's from now -- and the hold recorder gives it to that sender only.
+bool HoldPending(const std::string& hold, uint64_t& sender) {
+    sender = 0;
+    return hold == Grimoire::HOLD_DEBUG_CAMERA && FrierenDebugCamera::PendingOn(sender);
 }
 
 // Whether `hold` is in force now, read from its module: a hold someone turned off is free, whatever owner the ledger
@@ -2480,7 +2482,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         if (!holds.empty() && request.value("if_free", false)) {
             for (const auto& h : holds) {
                 const uint64_t owner = Voll::Holds().Owner(h);
-                if (!Voll::HeldByOther(HoldActive(h), owner, conn->ownerKey)) continue;
+                uint64_t sender = 0;
+                const bool inForce = HoldActive(h) || HoldPending(h, sender);   // an ON on its way counts
+                if (!Voll::HeldByOther(inForce, owner, conn->ownerKey)) continue;
                 json data;
                 data["code"]   = Grimoire::HOLD_HELD_BY_OTHER;
                 data["hold"]   = h;
@@ -2497,7 +2501,16 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             ~HoldRecorder() {
                 for (const auto& h : holds) {
                     try {
-                        Voll::Holds().SetOwner(h, HoldActive(h) || HoldPending(h) ? caller : Voll::kHoldOwnerNone);
+                        uint64_t sender = 0;
+                        if (HoldActive(h)) {
+                            Voll::Holds().SetOwner(h, caller);
+                        } else if (HoldPending(h, sender)) {
+                            // [D2-3-INVOKE] An ON on its way is its sender's. A command that sent nothing (a toggle
+                            // was already queued) leaves the record as it is.
+                            if (sender == caller) Voll::Holds().SetOwner(h, caller);
+                        } else {
+                            Voll::Holds().SetOwner(h, Voll::kHoldOwnerNone);
+                        }
                     } catch (...) {
                         // A hold whose state cannot be read keeps the owner it had.
                     }
@@ -7464,6 +7477,19 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 }
             }
 
+            // [D2-3-INVOKE] An if_free call reports a conflict before anything is converted: an object parameter's
+            // conversion is itself a queued call, and its refusal would surface only as "returned -25". EnqueueInvoke
+            // decides again, under the queue's lock, for the call itself.
+            if (request.value("if_free", false)) {
+                if (const uint64_t blocker = Stark::IfFreeBlocker(conn->ownerKey); blocker != 0) {
+                    auto e = Renge::MakeError(id, "Not invoked: another client's invoke is still queued or running");
+                    e["code"]   = Grimoire::HOLD_HELD_BY_OTHER;
+                    e["hold"]   = Grimoire::HOLD_INVOKE_QUEUE;
+                    e["holder"] = Voll::HoldOwnerJson(blocker, conn->ownerKey, IsBackgroundOwner(blocker));
+                    return e.dump();
+                }
+            }
+
             // [VND584-01] Before any FString below is allocated, so a refusal has nothing to free.
             {
                 std::string objWhy;
@@ -7689,6 +7715,16 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // [DEBUGCAM-FORCEON-CDO]. Builds 3676-3681 also sent `nonstatic_on_template` for a toggle on the
             // CheatManager's class default object; none is sent there now, so the key is gone.
             data["state"] = state;
+            // [D2-3-INVOKE] An if_free toggle (the MCP server's) met the queue's owner rule: nothing was sent. Answered
+            // as a hold's refusal, naming the client whose invoke is outstanding; -27 as its own code.
+            if (state == Stark::kInvokeHeldByOther) {
+                const uint64_t blocker = Stark::LastInvokeBlocker();
+                data["code"]   = Grimoire::HOLD_HELD_BY_OTHER;
+                data["hold"]   = Grimoire::HOLD_INVOKE_QUEUE;
+                data["holder"] = Voll::HoldOwnerJson(blocker, conn->ownerKey, IsBackgroundOwner(blocker));
+            } else if (state == Stark::kInvokeNeedsGameThread) {
+                data["code"] = state;
+            }
             return Renge::MakeResponse(id, data).dump();
         }
 

@@ -273,6 +273,8 @@ int main() {
                   range(base + 2 * pg - 8, 16) == WriteTarget::Executable);
             check("D2-3-WRITEMEM: address 0 is unmapped", Macht::ClassifyWriteRange(0, 4) == WriteTarget::Unmapped);
             check("D2-3-WRITEMEM: an empty range is unmapped", range(base, 0) == WriteTarget::Unmapped);
+            check("D2-3-WRITEMEM: a range that wraps past the top of the address space is unmapped",
+                  Macht::ClassifyWriteRange(reinterpret_cast<uintptr_t>(base), SIZE_MAX) == WriteTarget::Unmapped);
 
             const uint8_t v[4] = {1, 2, 3, 4};
             check("D2-3-WRITEMEM: WriteDataBytes writes a read-write page",
@@ -290,6 +292,17 @@ int main() {
 
             VirtualFree(base, 0, MEM_RELEASE);
             check("D2-3-WRITEMEM: a released range is unmapped", range(base, 16) == WriteTarget::Unmapped);
+        }
+        // A range running from a committed page into a reserved one.
+        auto* half = static_cast<uint8_t*>(VirtualAlloc(nullptr, pg * 2, MEM_RESERVE, PAGE_NOACCESS));
+        if (half && VirtualAlloc(half, pg, MEM_COMMIT, PAGE_READWRITE)) {
+            check("D2-3-WRITEMEM: the committed half is writable",
+                  Macht::ClassifyWriteRange(reinterpret_cast<uintptr_t>(half), pg) == WriteTarget::Writable);
+            check("D2-3-WRITEMEM ⭐: running on into the reserved half is unmapped",
+                  Macht::ClassifyWriteRange(reinterpret_cast<uintptr_t>(half + pg - 8), 16) == WriteTarget::Unmapped);
+            VirtualFree(half, 0, MEM_RELEASE);
+        } else {
+            check("D2-3-WRITEMEM: reserved + committed pages allocated", false);
         }
     }
 

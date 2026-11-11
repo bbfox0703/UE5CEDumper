@@ -1371,16 +1371,24 @@ static Stark::QueuedInvoke s_dbgCamQueued;
 static bool s_dbgCamQueuedWant = false;
 static int s_dbgCamInFlight = -1;   // -1 none, else the direction (0 OFF / 1 ON) being dispatched
 
-// [D2-3-INVOKE] Fern's hold recorder: an ON still queued or being dispatched turns the camera on when it runs, so its
-// sender holds the camera from now. Recording nobody let the camera come on ownerless: its sender could not turn it off
-// with if_free, and an AI session's end did not release it. C++ linkage inside this file's extern "C" block, as
-// FrierenInvoke below: Fern declares it as a C++ function.
+// [D2-3-INVOKE] Whose toggle is being dispatched or still queued: the invoke owner of the Set that SENT it
+// (Stark::CurrentInvokeOwner). A Set that sent nothing -- answered -5 / -6 because a toggle was already queued -- never
+// changes it.
+static uint64_t s_dbgCamOwner = 0;
+
+// [D2-3-INVOKE] Fern's hold recorder and if_free check: an ON still queued or being dispatched turns the camera on when
+// it runs, so the client that sent it holds the camera from now -- and nobody else does. Recording nobody let the
+// camera come on ownerless (its sender could not turn it off with if_free, and an AI session's end did not release
+// it); recording whoever called last let an AI's no-op Set take over the user's queued ON. C++ linkage inside this
+// file's extern "C" block, as FrierenInvoke below: Fern declares it as a C++ function.
 extern "C++" {
 namespace FrierenDebugCamera {
-bool OnPending() {
+bool PendingOn(uint64_t& owner) {
     std::lock_guard<std::mutex> lk(s_dbgCamMutex);
-    if (s_dbgCamInFlight >= 0) return s_dbgCamInFlight == 1;
-    return s_dbgCamQueued.StillQueued() && s_dbgCamQueuedWant;
+    const bool on = s_dbgCamInFlight >= 0 ? s_dbgCamInFlight == 1
+                                          : (s_dbgCamQueued.StillQueued() && s_dbgCamQueuedWant);
+    owner = on ? s_dbgCamOwner : 0;
+    return on;
 }
 }  // namespace FrierenDebugCamera
 }  // extern "C++"
@@ -1429,6 +1437,7 @@ int32_t UE5_SetDebugCamera(int32_t enable) {
             return state;
         }
         s_dbgCamInFlight = want ? 1 : 0;
+        s_dbgCamOwner = Stark::CurrentInvokeOwner();   // [D2-3-INVOKE] this Set sends it
     }
     // Every exit from here clears the in-flight mark, and keeps a toggle the dispatch left queued.
     struct InFlight {

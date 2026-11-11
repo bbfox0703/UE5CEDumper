@@ -77,10 +77,7 @@ constexpr int32_t kInvokeTimedOutStillQueued = -5;
 /// passes through as kInvokeTimedOutStillQueued: the toggle stays queued and runs when the game thread next drains, so
 /// the caller reports it as queued, never as a failure that ran nothing. What that means for the user is the toggle's
 /// own (UE5_SetDebugCamera's doc in Frieren.h). Every other failure answers -1: -4 entered the call and faulted inside
-/// it, the rest ran nothing.
-constexpr int32_t StatefulToggleFailure(int32_t callResult) {
-    return callResult == kInvokeTimedOutStillQueued ? kInvokeTimedOutStillQueued : -1;
-}
+/// it, the rest ran nothing. Defined below the owner rule's codes, which also pass through.
 
 // ============================================================
 // [D2-3-INVOKE] Who queued an invoke (maintainer, 2026-11-11)
@@ -113,12 +110,27 @@ constexpr int32_t kInvokeDroppedOwnerLeft = -26;
 /// An if_free invoke while the game-thread hook is down: refused rather than called on the caller's thread.
 constexpr int32_t kInvokeNeedsGameThread = -27;
 uint64_t LastInvokeBlocker();
+/// The owner this thread's invokes are queued for now (0 outside a scope): a toggle that keeps its own record of a
+/// queued call (the debug camera) records whose it is.
+uint64_t CurrentInvokeOwner();
+
+/// [W3-DEBUGCAM-QUEUED] (documented above, with kInvokeTimedOutStillQueued) -- and [D2-3-INVOKE]: the owner rule's
+/// refusals (-25, -27) pass through too, so the pipe can name the holder instead of reporting an unreadable state. Only
+/// an if_free caller meets them.
+constexpr int32_t StatefulToggleFailure(int32_t callResult) {
+    return (callResult == kInvokeTimedOutStillQueued || callResult == kInvokeHeldByOther
+            || callResult == kInvokeNeedsGameThread) ? callResult : -1;
+}
 
 /// Pure: whether `other`'s outstanding requests refuse an if_free enqueue by `caller`. The DLL's own workers (owner 0)
 /// never do: See-through, fly and teleport queue all the time, and an AI could then invoke nothing.
 inline bool InvokeBlocks(uint64_t other, int32_t outstanding, uint64_t caller) {
     return outstanding > 0 && other != 0 && other != caller;
 }
+
+/// The owner whose outstanding invoke would refuse an if_free enqueue by `caller` now, or 0: a check made before work
+/// that itself queues (an object parameter's conversion). EnqueueInvoke still decides under its lock.
+uint64_t IfFreeBlocker(uint64_t caller);
 
 /// Requests each owner has queued or running (owner 0 included), for get_holds.
 std::vector<std::pair<uint64_t, int32_t>> OutstandingInvokes();

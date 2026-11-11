@@ -511,7 +511,8 @@ static void Test_D23_InvokeOwnersAndDenyList() {
     EXPECT("names compare case-insensitively, as the DLL's lookup falls back to",
            !InvokeRefusedForBackground("toggledebugcamera", 0).empty()
            && !InvokeRefusedForBackground("CONSOLECOMMAND", 0).empty());
-    for (const char* n : {"ConsoleCommand", "ExecuteConsoleCommand", "QuitGame", "Quit", "OpenLevel",
+    for (const char* n : {"SendToConsole", "ServerExec", "DestroyAllPawnsExceptTarget", "ReturnToMainMenuHost",
+                          "ResetLevel", "ConsoleCommand", "ExecuteConsoleCommand", "QuitGame", "Quit", "OpenLevel",
                           "OpenLevelBySoftObjectPtr", "ClientTravel", "ServerTravel", "RestartLevel", "RestartGame",
                           "K2_DestroyActor", "K2_DestroyComponent", "SetLifeSpan", "DestroyTarget", "DestroyAll",
                           "DestroyPawns", "SaveGameToSlot", "AsyncSaveGameToSlot", "DeleteGameInSlot",
@@ -3351,6 +3352,10 @@ static void Test_Stark_StatefulToggleFailure() {
     EXPECT("DBGCAMQ the queued code is EnqueueInvoke's timeout", Stark::kInvokeTimedOutStillQueued == -5);
     EXPECT("DBGCAMQ control: an SEH fault is a plain failure", Stark::StatefulToggleFailure(-4) == -1);
     EXPECT("DBGCAMQ control: no hook is a plain failure", Stark::StatefulToggleFailure(-7) == -1);
+    EXPECT("D2-3: another client's outstanding invoke passes through, to be named",
+           Stark::StatefulToggleFailure(Stark::kInvokeHeldByOther) == Stark::kInvokeHeldByOther);
+    EXPECT("D2-3: an if_free call with the hook down passes through",
+           Stark::StatefulToggleFailure(Stark::kInvokeNeedsGameThread) == Stark::kInvokeNeedsGameThread);
 }
 
 // [DBGCAM-OFF-OVER-QUEUED-ON] A Debug Camera toggle that timed out stays queued. A later Set read the camera's state
@@ -11646,6 +11651,12 @@ static void Test_Lager_ClassifyWriteRegion() {
     EXPECT("a free page is unmapped", ClassifyWriteRegion(kMemFree, 0) == WriteTarget::Unmapped);
     EXPECT("a guarded code page is still named as code",
            ClassifyWriteRegion(kMemCommit, kPageExecuteRead | kPageGuard) == WriteTarget::Executable);
+    // The modifier bits a data page can carry stay writable; CFG's marker on code stays code.
+    EXPECT("read-write with NOCACHE (0x204) is writable", ClassifyWriteRegion(kMemCommit, 0x204) == WriteTarget::Writable);
+    EXPECT("read-write with WRITECOMBINE (0x404) is writable", ClassifyWriteRegion(kMemCommit, 0x404) == WriteTarget::Writable);
+    EXPECT("execute-read with PAGE_TARGETS_INVALID (0x40000020) is code",
+           ClassifyWriteRegion(kMemCommit, 0x40000020) == WriteTarget::Executable);
+    EXPECT("a guarded read-only page is refused", ClassifyWriteRegion(kMemCommit, kPageReadOnly | kPageGuard) == WriteTarget::NotWritable);
 
     EXPECT("writable + code is code", WorseWriteTarget(WriteTarget::Writable, WriteTarget::Executable) == WriteTarget::Executable);
     EXPECT("code + read-only is code", WorseWriteTarget(WriteTarget::Executable, WriteTarget::NotWritable) == WriteTarget::Executable);

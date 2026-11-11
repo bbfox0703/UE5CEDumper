@@ -72,6 +72,7 @@ struct InvokeRequest {
     bool dropIfAbandoned = false;                   // [VND584-01] ClaimRequest (Stark.h)
     std::atomic<int32_t> state{kRequestQueued};
     uint64_t owner = 0;                             // [D2-3-INVOKE] InvokeOwnerScope's owner when it was queued
+    bool settled = false;                           // [D2-3-INVOKE] taken off s_outstanding (under s_queueMutex)
 };
 
 // ---- State ----
@@ -91,8 +92,11 @@ static thread_local uint64_t t_invokeOwner = 0;
 static thread_local bool t_invokeIfFree = false;
 static thread_local uint64_t t_lastInvokeBlocker = 0;
 
-// Under s_queueMutex: `req` was answered.
-static void SettleLocked(const InvokeRequest& req) {
+// Under s_queueMutex: `req` was answered, or will never run (its waiter abandoned it). Once only, whichever path
+// reaches it first: the waiter's abandon, the drain, Shutdown or an owner's drop.
+static void SettleLocked(InvokeRequest& req) {
+    if (req.settled) return;
+    req.settled = true;
     auto it = s_outstanding.find(req.owner);
     if (it == s_outstanding.end()) return;
     if (--it->second <= 0) s_outstanding.erase(it);
@@ -264,19 +268,25 @@ static void HookedProcessEventBody(void* ufunc, uint64_t nowMs, Linie::ArmHint& 
         }
     }
     if (ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {
-        std::vector<std::shared_ptr<InvokeRequest>> pending;
-
+        // [D2-3-INVOKE] One request at a time, each taken under the lock just before it runs, so a request still waiting
+        // here stays in the queue where DropQueuedInvokesOf finds it: a departed AI's call is dropped even while an
+        // earlier one runs. Bounded by the count at the start, so requests queued meanwhile wait for the next
+        // ProcessEvent instead of keeping the game thread here.
+        size_t budget = 0;
         {
             std::lock_guard<std::mutex> lock(s_queueMutex);
-            while (!s_invokeQueue.empty()) {
-                pending.push_back(std::move(s_invokeQueue.front()));
-                s_invokeQueue.pop_front();
-            }
-            s_queueDepth.store(0, std::memory_order_release);
+            budget = s_invokeQueue.size();
         }
 
-        // Execute all pending requests outside the lock
-        for (auto& req : pending) {
+        for (; budget > 0; --budget) {
+            std::shared_ptr<InvokeRequest> req;
+            {
+                std::lock_guard<std::mutex> lock(s_queueMutex);
+                if (s_invokeQueue.empty()) break;   // dropped meanwhile
+                req = std::move(s_invokeQueue.front());
+                s_invokeQueue.pop_front();
+                s_queueDepth.store(s_invokeQueue.size(), std::memory_order_release);
+            }
             if (req->dropIfAbandoned && !ClaimRequest(req->state, kRequestRunning)) {
                 LOG_INFO("GameThreadDispatch: dropped an abandoned request func=0x%llX",
                          (unsigned long long)req->ufunc);
@@ -962,10 +972,17 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
     // Wait for game thread to execute the request
     int32_t timeoutMs = s_invokeTimeoutMs.load();
     auto status = future.wait_for(std::chrono::milliseconds(timeoutMs));
-    if (status == std::future_status::timeout && dropIfAbandoned && !ClaimRequest(req->state, kRequestAbandoned)) {
-        // [VND584-01] The drain claimed it first: it is running now. Wait it out and take its result.
-        future.wait();
-        status = std::future_status::ready;
+    if (status == std::future_status::timeout && dropIfAbandoned) {
+        if (!ClaimRequest(req->state, kRequestAbandoned)) {
+            // [VND584-01] The drain claimed it first: it is running now. Wait it out and take its result.
+            future.wait();
+            status = std::future_status::ready;
+        } else {
+            // [D2-3-INVOKE] Abandoned: it will never run, so it is no longer outstanding -- an AI is not told a call is
+            // still queued when it is not.
+            std::lock_guard<std::mutex> lock(s_queueMutex);
+            SettleLocked(*req);
+        }
     }
     if (status == std::future_status::timeout) {
         LOG_ERROR("GameThreadDispatch: invoke timeout (%dms) inst=0x%llX func=0x%llX",
@@ -1009,6 +1026,15 @@ InvokeOwnerScope::~InvokeOwnerScope() {
 bool CurrentInvokeIfFree() { return t_invokeIfFree; }
 
 uint64_t LastInvokeBlocker() { return t_lastInvokeBlocker; }
+
+uint64_t CurrentInvokeOwner() { return t_invokeOwner; }
+
+uint64_t IfFreeBlocker(uint64_t caller) {
+    std::lock_guard<std::mutex> lock(s_queueMutex);
+    for (const auto& [other, count] : s_outstanding)
+        if (InvokeBlocks(other, count, caller)) return other;
+    return 0;
+}
 
 std::vector<std::pair<uint64_t, int32_t>> OutstandingInvokes() {
     std::lock_guard<std::mutex> lock(s_queueMutex);
