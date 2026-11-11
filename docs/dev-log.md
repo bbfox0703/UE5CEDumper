@@ -27,6 +27,50 @@ builds ≤696 in
 
 -----
 
+## 2026-11-11 (build 3701) — `UE5DumpUI.exe --mcp`: an AI can read a running game, beside the UI and without disturbing it `[PIPE-PER-PROCESS-2026-11-06]`
+
+Stage D1. The maintainer chose the route on 2026-11-11 (todo.md, Stage D): the server goes straight to the game's
+pipe, it is a mode of the UI's exe, the JSON-RPC is written by hand, and the first build only reads.
+
+- **New: an MCP server for AI clients** (Claude Code, Claude Desktop). Registered as
+  `UE5DumpUI.exe --mcp`, it opens no window: the client starts it on stdin / stdout. Its tools read a running game
+  through the DLL: search and find objects, an instance's live fields, class layouts and functions, raw memory, who
+  points at an object and the pointer path from GWorld, Cheat Engine pointers, DataTables, and Cheat Engine-style
+  value scans. Every reading tool's name starts with `read_`, so one Claude Code allow rule admits them all; the one
+  other tool, `scan_start`, keeps its prompt. Nothing in this build writes game memory or turns a feature on. How
+  to register it, the tools and the messages: [mcp.md](mcp.md).
+- **It runs beside the UI without getting in its way** (the maintainer: an AI working beside the UI must not
+  interfere with its long operations or the user's writes):
+  - its own pipe connection (the UI keeps its two of the six), and the server and the UI are separate processes, so
+    the single-instance rule does not apply between them;
+  - no command whose state another client shares: no snapshot, LiveFuncs recording, diagnostics reset or overrides;
+    `scan_start` starts nothing on a game that is scanned, being scanned, or whose scan found nothing;
+  - **the DLL: a request may carry `"background": true`**, and the server marks every one. A GObjects walk such a
+    request starts takes at most half of the free worker threads, so a value scan or snapshot the user starts in the
+    UI meanwhile keeps the other half. It used to get one thread. A DLL older than the key ignores it.
+- **Behaviour an AI can rely on:** a game counts as scanned only once its scan has finished (the pool is published
+  before the offsets are validated); with several games, every call names its pid; a game that came back as a new
+  process is named; a call that overruns its time or is cancelled closes the connection (the DLL's own cancel), and
+  the next reply says the old value-scan sessions are gone; a reply too long for the client is cut by whole entries,
+  with a note.
+- **An adversarial review** (four lenses, each finding checked against the code) found 1 HIGH, 4 MED and about 12
+  LOW, all fixed but two LOW left for the DLL (todo.md, Stage D). The HIGH: nine `JsonArray.Add` calls bound to the
+  generic `Add<T>`, which the trimmed publish refuses -- working-lessons §3.xc's trap; the analyzer build found 18
+  errors, then none.
+- Tests: the MCP protocol, tools, connection and host (C#, four new files); the half share and its scope
+  (dll_core_test, 16 checks: on this PC a background walk on 7 threads, a foreground walk beside it on 8). C# 7808
+  passed, 0 failed, 1 skipped; headless 71; dll_helpers_test 3929, dll_core_test 1548, utf8_helpers_test 287,
+  grausam_window_test 22, sein_retention_test 30, 0 failures; 39 gates passed. Live, AOT exe on DumperTest Shipping
+  (UE 5.4), `tools/verify/mcp_client.py`:
+  - `probe` 15/15 with no game (handshake, `server/discover` answered with an error, framing, exit 0 at EOF);
+  - `live` 31/31: every tool; a cancel of a call the suspended game could not answer got no response, and the next
+    call reconnected and said so; a value-scan session `pipe_client.py` held for the run survived it;
+  - the DLL log: the server's walks on 7 of 14 threads, "a background walk takes at most half of what is free".
+
+  Not live: verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 15-18 (Claude Code itself, a large game,
+  the UI itself beside the server, SSH and an elevated game). AOT UI 62,124,032 bytes (sha256 a48805d6facd67ea...);
+  UE5Dumper.dll 3,631,104 bytes.
+
 ## 2026-11-11 (build 3700) — build.ps1 leaves nothing in %TEMP%; a green test run no longer ends red on a busy disk `[TEST-TEMP-HYGIENE-2026-11-11]`
 
 - **A build no longer leaves the SDK's folders and logs in %TEMP%.** Every dotnet call build.ps1 makes (restore,

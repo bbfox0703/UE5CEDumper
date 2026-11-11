@@ -294,7 +294,28 @@ DumperTest Shipping, pipe and mailbox only. Not reached:
 13. **Another CPU shape.** Only this 16C32T PC was measured (16 threads per walk before, 14 now); hybrid P/E cores,
     E-cores disabled and a CPU without SMT are unit-tested (dll_core_test CPU). Acceptance: the init log's thread pick
     on such a PC matches `Aura::ThreadsForCpu` for its topology.
-14. **A long-lived client.** No MCP client exists yet (Stage D); the rigs open connections for seconds.
+14. **A long-lived client.** The MCP server (Stage D1, build 3701) is one. Its rig run held the connection for
+    about a minute, through a cancel and a reconnect; a session of hours was not run.
+
+Stage D1, build 3701 (the MCP server, `UE5DumpUI.exe --mcp`) -- dev-log 3701. With the AOT exe on DumperTest Shipping
+(UE 5.4), `tools/verify/mcp_client.py probe` 15/15 and `live --suspend-name DumperTest` 31/31: every tool, a cancel of
+a call the suspended game could not answer, and another client's value-scan session that survived the server's work.
+The DLL log showed the server's walks on 7 of 14 threads ("a background walk takes at most half of what is free").
+Not reached:
+
+15. **A real MCP client.** The rig speaks the protocol as Claude Code does; Claude Code itself never started the
+    server. Acceptance: `claude mcp add --scope user ue5cedumper -- "<dist>\UE5DumpUI.exe" --mcp`; a session lists
+    the tools and calls `read_status` and `read_search_objects` on DumperTest; with the allow rule
+    `mcp__ue5cedumper__read_*` those run without a prompt, and `scan_start` still prompts.
+16. **A large game.** Timeouts and reply sizes were met on a 24,530-object fixture only. Acceptance: on a game of
+    300,000+ objects, `read_list_classes`, `read_find_instances`, `read_list_functions` (with a `name_filter`) and
+    `read_value_scan_begin` answer within their timeouts, and a reply over the cap comes back cut with its note.
+17. **The UI itself beside the server.** The rig's other client is `pipe_client.py` standing in for the UI.
+    Acceptance: the UI connected to the game, a Value Search started in the UI while the AI's `read_value_scan_begin`
+    runs: both finish, the DLL log shows the UI's walk on at least half the threads, and the UI's candidates match a
+    run on its own.
+18. **Over SSH, and an elevated game.** Not measured: no OpenSSH server on this PC, and elevation needs a UAC prompt
+    an unattended session cannot answer (todo.md `[UI-MCP-AUTOMATION-2026-11-06]`).
 
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 

@@ -6,8 +6,9 @@ Open work only. **Read this when deciding what to do next.**
 >
 > ▶ **Current programme:** `[PIPE-PER-PROCESS-2026-11-06]`, one stage at a time (2026-11-10): Stage A shipped in build
 > 3695, Stage B (6 pipe slots + the scan-worker budget) in build 3696, Stage C (hardening for a long-lived client) in
-> build 3698; **Stage D (MCP) is active (go-ahead 2026-11-11): D1, a read-only `UE5DumpUI.exe --mcp`** -- the route
-> and its decisions are under Stage D below. Before it, none active
+> build 3698; **Stage D (MCP) is active (go-ahead 2026-11-11): D1, the read-only `UE5DumpUI.exe --mcp`, shipped in
+> build 3701; D2 (writes) waits for the maintainer's go-ahead** -- the route and its decisions are under Stage D
+> below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
 > active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
@@ -593,8 +594,41 @@ spec. Each was the recommended option:
 - **Tests:** the protocol and the tools against a fake pipe (C#), and a rig that starts `dist\UE5DumpUI.exe --mcp`
   as an MCP client would and drives DumperTest. Measure first that stdio reaches a GUI-subsystem exe.
 
+**D1 — how it came out, build 3701** (the code is `ui/UE5DumpUI/Mcp/`, the user guide [mcp.md](mcp.md); what its
+live checks did not reach is verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 15-18):
+
+- **Non-interference, the maintainer's requirement (2026-11-11):** an AI working beside the UI must not disturb the
+  UI's long operations (value scan, snapshot) or the user's writes. D1 sends no command whose state another client
+  shares (`begin_snapshot`, the LiveFuncs recording, `reset_diagnostics`, the overrides), starts a scan only on a game
+  whose scan never ran, and marks every request `"background"`: a GObjects walk it starts takes at most half of the
+  free workers (`Aura::BackgroundWalkScope`, a DLL change; pipe-protocol.md General Rules). Measured in dll_core_test
+  on this PC: a background walk on 7 threads, a foreground walk beside it on 8 (it got 1 before).
+- **Scanned** means scan_status not running at phase 7 with objects found. The pool is published before the offsets
+  are validated, so a count alone read a game as scanned mid-scan; a finished scan that found no pool is its own
+  state, which `scan_start` refuses rather than loop.
+- **Several games: a pid on every call**, even while connected; a game that came back as a new process is named in
+  a note.
+- **The adversarial review** (four lenses, each finding self-verified): 1 HIGH, 4 MED, about 12 LOW, all fixed but the
+  two below. The HIGH: nine `JsonArray.Add` calls bound to the generic `Add<T>`, which the trimmed publish refuses
+  (IL2026 / IL3050) -- working-lessons §3.xc's trap again; the analyzer build found 18 errors, then 0.
+
+**Open, LOW, found by that review and left for the DLL side:**
+
+- A dropped connection raises the process-wide per-command cancel (`Tot::RequestPerCommand`, in Fern's monitor) until
+  its orphaned handler unwinds. Every thread not bound to a connection reads it, Cheat Engine's remote export calls
+  among them, so one running at that moment returns truncated. The MCP server drops its connection only on a timeout
+  or a client cancel. Fix: raise the global only when unbound work is running.
+- The dispatch counters behind `get_diagnostics` (`Sense`) are process-wide, so the UI's PERF line for an operation
+  counts the MCP server's commands that ran meanwhile.
+
+**Idea, the maintainer's call:** turn on `EnableTrimAnalyzer` / `EnableAotAnalyzer` in `UE5DumpUI.csproj` for every
+build, so IL2026 / IL3050 fail the first compile instead of the six-minute publish. The D1 HIGH above would have failed
+the first build. Not done: it changes every build of the UI, and the current rule (§3.xc) is a manual step.
+
 **D2 (next build):** `write_mem`, `invoke_function`, the toggles, teleport and force field. Each carries
 `_meta["anthropic/requiresUserInteraction"]`, which makes Claude Code ask on every call, even under an allow rule.
+What D2 must not take from the UI: the global holds (force field, teleport markers) and the game-thread invoke queue
+-- an MCP write reports a conflict rather than override the UI's.
 
 The 2026-11-06 review had leaned to the UI as the broker for anything that writes or toggles.
 
