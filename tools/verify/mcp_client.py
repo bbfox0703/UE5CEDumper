@@ -33,6 +33,12 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         UI's; (B) the UI's ON queued: the AI's write_debug_camera is refused naming the UI; (C) the UI's ON sent while
         the AI's toggle is still being dispatched waits for the hold lock, then joins as in (A). Turns the camera off
         again after each.
+    py tools/verify/mcp_client.py dbgcamhold --exe dist/UE5DumpUI.exe --suspend-name DumperTest [--pid N]
+        Register item 24, the debug camera: the AI holding it. Needs a live CheatManager, as dbgcam. (D) The AI's ON
+        turns it on, read_holds names the server, and its session's end turns it off; (E) the AI's OFF of its own;
+        (F) the UI's Force ON takes it over: the AI's OFF and ON are refused naming the UI, and its end leaves it on;
+        (G) the UI's own ON, likewise. (H) is printed, not counted: the AI session ends while the game thread is
+        stalled, so the release's OFF stays queued.
 
     --ssh HOST   start the server as `ssh -T HOST <exe> --mcp`, the way an MCP client on another machine would; --exe
                  is then the path on HOST. ssh's own prompts (a password) go to this console, never to the protocol:
@@ -1023,9 +1029,192 @@ def run_dbgcam(exe: str, pid: int | None, game_name: str) -> int:
     return ck.done(ai)
 
 
+def run_dbgcam_hold(exe: str, pid: int | None, game_name: str) -> int:
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from pipe_client import PipeClient   # noqa: E402 -- the rig beside this one
+
+    ck = Checks()
+    base = {"pid": pid} if pid else {}
+    sessions: list[McpClient] = []
+
+    def session() -> McpClient:
+        c = McpClient(exe)
+        c.initialize()
+        sessions.append(c)
+        return c
+
+    def call(client, tool, args=None, timeout=180.0):
+        r = client.call(tool, {**base, **(args or {})}, timeout)
+        data, note = payload(r)
+        if note is None and isinstance(data, dict):
+            note = data.get("note")
+        return r, data, note
+
+    def error_text(data) -> str:
+        return data.get("error", "") if isinstance(data, dict) else str(data)
+
+    ai = session()
+    r, st, _ = call(ai, "read_status")
+    build = st.get("build_number") or 0
+    if not ck.check(st.get("scanned") and build >= 3706, f"the game is scanned, DLL build {build} (needs 3706+)", st):
+        ai.close()
+        return ck.done(ai)
+    game = pid or st.get("pid")
+    ui = PipeClient(pid=game, timeout=120)
+    ui.connect()
+    me = os.getpid()
+    print(f"        game pid {game}; the UI stand-in (foreground, no if_free) is pid {me}")
+
+    def cam() -> int:
+        return ui.request("get_debug_camera_state").get("state", -99)
+
+    def camera_hold() -> dict:
+        return next((h for h in ui.request("get_holds").get("holds", []) if h.get("hold") == "debug_camera"), {})
+
+    def wait_cam(want: int, seconds: float = 15.0) -> int:
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            s = cam()
+            if s == want:
+                return s
+            time.sleep(0.25)
+        return cam()
+
+    def wait_hold(pred, seconds: float = 15.0) -> dict:
+        end = time.monotonic() + seconds
+        while time.monotonic() < end:
+            h = camera_hold()
+            if pred(h):
+                return h
+            time.sleep(0.25)
+        return camera_hold()
+
+    def is_free(h: dict) -> bool:
+        return not h.get("active") and not h.get("pending") and h.get("holder", {}).get("kind") == "none"
+
+    def held_by_server(h: dict, c: McpClient) -> bool:
+        holder = h.get("holder", {})
+        return (h.get("active") and holder.get("kind") == "client" and holder.get("background") is True
+                and not holder.get("you") and holder.get("pid") == c.proc.pid)
+
+    def held_by_ui(h: dict) -> bool:
+        holder = h.get("holder", {})
+        return bool(h.get("active") and holder.get("you") and not holder.get("background") and holder.get("pid") == me)
+
+    def refused_naming_ui(r, d) -> bool:
+        text = error_text(d)
+        return bool(r.get("isError") and "debug_camera is held by the UE5DumpUI window or another program" in text
+                    and f"(pid {me})" in text)
+
+    def camera_off(label: str):
+        # Up to three OFFs: one sent while an earlier toggle is still queued answers -5/-6 and sends nothing.
+        for _ in range(3):
+            ui.request("set_debug_camera", enable=False)
+            if wait_cam(0, 6.0) == 0:
+                break
+        ck.check(cam() == 0 and is_free(camera_hold()), f"{label}: the camera is off and free again", camera_hold())
+
+    if not ck.check(cam() in (0, 1), "the debug camera's state reads (a live CheatManager)", cam()):
+        ui.close()
+        ai.close()
+        return ck.done(ai)
+    if cam() == 1 or not is_free(camera_hold()):
+        camera_off("start")
+    try:
+        # D. The AI turns the camera on, read_holds names the server, and its session's end turns it off.
+        r, d, note = call(ai, "write_debug_camera", {"enable": True})
+        ck.check(not r.get("isError") and d.get("state") == 1, "D: the AI's write_debug_camera ON turns it on (1)",
+                 (d, note))
+        ck.check(cam() == 1, "D: the camera reads on")
+        r, d, _ = call(ai, "read_holds")
+        mine = next((h for h in (d or {}).get("holds", []) if h.get("hold") == "debug_camera"), {})
+        ck.check(mine.get("active") and mine.get("holder", {}).get("you") and mine["holder"].get("background"),
+                 "D: read_holds: debug_camera is the server's ('you'), marked background", mine)
+        ck.check(held_by_server(camera_hold(), ai), "D: get_holds from the UI: held by the server's pid, not the UI",
+                 camera_hold())
+        r, d, note = call(ai, "write_debug_camera", {"enable": True})
+        ck.check(not r.get("isError") and d.get("state") == 1 and held_by_server(camera_hold(), ai),
+                 "D: the AI's ON again over its own camera: a no-op, still the server's", (d, note))
+        ck.check(ai.close() == 0, "D: the AI session ends (the server exits 0)")
+        ck.check(wait_cam(0) == 0, "D: the session's end turns the camera off")
+        h = wait_hold(is_free)
+        ck.check(is_free(h), "D: and the hold is free (no holder)", h)
+
+        # E. The AI turns its own camera off; its end then has nothing to release.
+        ai = session()
+        r, d, _ = call(ai, "write_debug_camera", {"enable": True})
+        ck.check(not r.get("isError") and d.get("state") == 1, "E: the AI's ON", d)
+        r, d, note = call(ai, "write_debug_camera", {"enable": False})
+        ck.check(not r.get("isError") and d.get("state") == 0, "E: the AI's OFF of its own camera turns it off (0)",
+                 (d, note))
+        h = camera_hold()
+        ck.check(is_free(h), "E: the hold is free", h)
+        ck.check(ai.close() == 0, "E: the AI session ends")
+        time.sleep(2.0)
+        ck.check(cam() == 0 and is_free(camera_hold()), "E: the camera stays off, free")
+
+        # F. A camera the UI took over (Force ON over the AI's) outlives the AI session, and the AI cannot change it.
+        ai = session()
+        r, d, _ = call(ai, "write_debug_camera", {"enable": True})
+        ck.check(not r.get("isError") and d.get("state") == 1 and held_by_server(camera_hold(), ai),
+                 "F: the AI's ON, the server's", d)
+        j = ui.request("set_debug_camera", enable=True)
+        ck.check(j.get("state") == 1, "F: the UI's Force ON over it answers on (1, a no-op toggle)", j)
+        ck.check(held_by_ui(camera_hold()), "F: the camera is the UI's now", camera_hold())
+        r, d, _ = call(ai, "write_debug_camera", {"enable": False})
+        ck.check(refused_naming_ui(r, d), "F: the AI's OFF is refused, naming the UI's process", d)
+        r, d, _ = call(ai, "write_debug_camera", {"enable": True})
+        ck.check(refused_naming_ui(r, d), "F: the AI's ON is refused too (the camera is someone else's)", d)
+        ck.check(cam() == 1, "F: the camera stays on")
+        ck.check(ai.close() == 0, "F: the AI session ends")
+        time.sleep(2.0)
+        ck.check(cam() == 1 and held_by_ui(camera_hold()), "F: the camera stays on, the UI's", camera_hold())
+        camera_off("F")
+
+        # G. A camera the UI turned on from off: the AI cannot change it, and its end leaves it alone.
+        ai = session()
+        j = ui.request("set_debug_camera", enable=True)
+        ck.check(j.get("state") == 1 and held_by_ui(camera_hold()), "G: the UI's Force ON, the UI's", (j, camera_hold()))
+        r, d, _ = call(ai, "write_debug_camera", {"enable": False})
+        ck.check(refused_naming_ui(r, d), "G: the AI's OFF is refused, naming the UI's process", d)
+        ck.check(ai.close() == 0, "G: the AI session ends")
+        time.sleep(2.0)
+        ck.check(cam() == 1 and held_by_ui(camera_hold()), "G: the camera stays on, the UI's", camera_hold())
+        camera_off("G")
+
+        # H. OBSERVED, not an acceptance: the AI's camera when the game thread is stalled as its session ends. The
+        # release's OFF then times out and stays queued, and on stock UE 4.18-5.7 a queued OFF does not turn the camera
+        # off (dev-log, [DEBUGCAM-QUEUED-OFF-NOESCALATE]). What happens is printed, not counted.
+        ai = session()
+        r, d, _ = call(ai, "write_debug_camera", {"enable": True})
+        ck.check(not r.get("isError") and d.get("state") == 1 and held_by_server(camera_hold(), ai),
+                 "H: the AI's ON, the server's", d)
+        with _FrozenGameThread(game_name):
+            ck.check(ai.close() == 0, "H: the AI session ends while the game thread is stalled")
+            time.sleep(8.0)   # the release's OFF waits invoke_timeout_ms (5 s by default) for the game thread
+            frozen_hold = camera_hold()
+        time.sleep(5.0)
+        after_cam, after_hold = cam(), camera_hold()
+        print(f"  OBSERVED  H: during the stall the hold read {frozen_hold}")
+        print(f"  OBSERVED  H: 5 s after the game resumed the camera reads {after_cam}, the hold {after_hold}")
+        camera_off("H")
+    finally:
+        for c in sessions:
+            try:
+                c.close()
+            except Exception:  # noqa: BLE001 -- already closed
+                pass
+        try:
+            if cam() == 1:
+                ui.request("set_debug_camera", enable=False)
+        finally:
+            ui.close()
+    return ck.done(ai)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("mode", choices=["probe", "call", "live", "writes", "raw", "dbgcam"])
+    ap.add_argument("mode", choices=["probe", "call", "live", "writes", "raw", "dbgcam", "dbgcamhold"])
     ap.add_argument("--exe", required=True, help="path to UE5DumpUI.exe")
     ap.add_argument("--tool")
     ap.add_argument("--args", default="{}")
@@ -1057,10 +1246,11 @@ def main() -> int:
         return run_call(exe, a.tool, args)
     if a.mode == "writes":
         return run_writes(exe, a.pid, a.toggle_experimental)
-    if a.mode in ("raw", "dbgcam"):
+    if a.mode in ("raw", "dbgcam", "dbgcamhold"):
         if not a.suspend_name:
             ap.error(f"{a.mode} needs --suspend-name (the game's image stem, for suspend.py's thread verbs)")
-        return (run_raw if a.mode == "raw" else run_dbgcam)(exe, a.pid, a.suspend_name)
+        run = {"raw": run_raw, "dbgcam": run_dbgcam, "dbgcamhold": run_dbgcam_hold}[a.mode]
+        return run(exe, a.pid, a.suspend_name)
     return run_live(exe, a.pid, a.suspend_name)
 
 
