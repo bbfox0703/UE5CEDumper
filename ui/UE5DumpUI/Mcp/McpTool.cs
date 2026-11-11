@@ -162,7 +162,8 @@ internal static class McpSchema
         var required = new JsonArray();
         foreach (var (name, schema, req) in props)
         {
-            properties[name] = schema;
+            // A copy: a JsonNode has one parent, and the shared properties (pid, name_filter) join many schemas.
+            properties[name] = schema.DeepClone();
             if (req) required.Add(name);
         }
         var obj = new JsonObject
