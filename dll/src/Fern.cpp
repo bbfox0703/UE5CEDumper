@@ -966,35 +966,54 @@ std::atomic<uint64_t> s_cameraReleaseOwedBy{0};
 
 // MonitorLoop, every tick: the owed OFF is sent again once the queued one has run and the game thread is running, unless
 // the camera became someone's meanwhile. Under the camera's hold lock, as every change of it is, so a client's Force ON
-// is either seen here first or waits for this OFF. The OFF holds this loop up only when the game thread stalls again in
-// between, and then for the invoke timeout at most.
+// is either seen here first or waits for this OFF. The lock is only tried: a writer holds it across a game-thread wait,
+// and the peeks after this call must go on (the next tick sees what that writer recorded). So only this function's own
+// OFF can hold the loop up -- when the game thread stalls again in between, for the invoke timeout at most.
 void ServeOwedCameraRelease() {
     uint64_t owedBy = s_cameraReleaseOwedBy.load();
     if (owedBy == 0) return;
-    std::lock_guard<std::mutex> holdLock(Voll::Holds().LockFor(Grimoire::HOLD_DEBUG_CAMERA));
+    // Its reads answer to shutdown alone: on this unbound thread, a per-command cancel latched by another client's
+    // mid-command disconnect would read the camera as unknown and drop the release.
+    const Tot::CancelContextScope immune(Tot::CancelContext{nullptr, true});
+    std::unique_lock<std::mutex> holdLock(Voll::Holds().LockFor(Grimoire::HOLD_DEBUG_CAMERA), std::try_to_lock);
+    if (!holdLock.owns_lock()) return;
+    const uint64_t owner = Voll::Holds().Owner(Grimoire::HOLD_DEBUG_CAMERA);
     uint64_t sender = 0;
     const bool pendingOn = FrierenDebugCamera::PendingOn(sender);
-    // The queued toggle first: one that runs between the two reads leaves a stale "on", and the OFF below then reads
-    // the state again for itself.
+    // The queued toggle before the state: one that runs between the two leaves a stale "on", and the OFF reads again.
     const bool outstanding = FrierenDebugCamera::ToggleOutstanding();
-    const int32_t state = UE5_GetDebugCameraState();
     const bool stalled = Stark::GetGameThreadLiveness() == Stark::GameThreadLiveness::Stalled;
-    Voll::OwedRelease step = Voll::OwedCameraRelease(Voll::Holds().Owner(Grimoire::HOLD_DEBUG_CAMERA), pendingOn,
-                                                     outstanding, state, stalled);
+    Voll::OwedRelease step = Voll::OwedCameraReleaseBefore(owner, pendingOn, outstanding, stalled);
+    if (step == Voll::OwedRelease::Wait) return;
+    int32_t state = -1, sent = 0;
+    bool sentOff = false;
+    if (step == Voll::OwedRelease::Read) {
+        state = UE5_GetDebugCameraState();
+        step = Voll::OwedCameraReleaseOnState(state);
+    }
     if (step == Voll::OwedRelease::Send) {
-        const int32_t sent = UE5_SetDebugCamera(0);
+        sent = UE5_SetDebugCamera(0);
+        sentOff = true;
         step = Voll::OwedCameraReleaseSent(sent);
         LOG_INFO("PipeServer: background client %llu's debug-camera release -- its queued OFF has run and the camera "
                  "is still on: OFF sent again -> state %d", (unsigned long long)owedBy, sent);
+        if (step == Voll::OwedRelease::Wait) return;
     }
-    if (step == Voll::OwedRelease::Wait) return;
     s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0);   // a release owed since, by another session, stays
+    const unsigned long long by = owedBy;
     if (step == Voll::OwedRelease::Done)
-        LOG_INFO("PipeServer: background client %llu's debug-camera release is done -- the camera is off",
-                 (unsigned long long)owedBy);
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is done -- the camera is off", by);
+    else if (owner != Voll::kHoldOwnerNone)
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is abandoned -- the camera is held by "
+                 "another client or CE now", by);
+    else if (pendingOn)
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is abandoned -- an ON is on its way", by);
+    else if (sentOff)
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is abandoned -- the OFF sent again "
+                 "answered %d", by, sent);
     else
-        LOG_INFO("PipeServer: background client %llu's debug-camera release is abandoned -- the camera is someone's "
-                 "now, an ON is on its way, or it stays on after the OFF (state %d)", (unsigned long long)owedBy, state);
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is abandoned -- the camera cannot be read "
+                 "(state %d)", by, state);
 }
 
 }  // namespace
@@ -1049,6 +1068,10 @@ void Fern::ReleaseOwnedBy(uint64_t owner) {
     if (const int32_t dropped = Stark::DropQueuedInvokesOf(owner); dropped > 0)
         LOG_INFO("PipeServer: background client %llu left -- %d queued invoke(s) of it dropped, never run",
                  (unsigned long long)owner, dropped);
+    // [DBGCAM-RELEASE-STALLED] review: the release's reads answer to shutdown alone. A client that left mid-command
+    // still has its connection's cancel flag raised, and this thread is bound to it: a read under it gives up (the
+    // camera "unknown"), so nothing would be released, or owed.
+    const Tot::CancelContextScope immune(Tot::CancelContext{nullptr, true});
     for (const auto& hold : Voll::Holds().OwnedBy(owner)) {
         std::lock_guard<std::mutex> holdLock(Voll::Holds().LockFor(hold));
         if (Voll::Holds().Owner(hold) != owner) continue;
@@ -1077,11 +1100,15 @@ void Fern::ReleaseOwnedBy(uint64_t owner) {
 void Fern::MonitorLoop() {
   // Allocates while peeking the pipe and formatting logs; a raw thread proc. (B14)
   Routine::RunThreadGuarded("PipeServer: MonitorLoop", [&] {
+    bool warnedOwedRelease = false;   // one WARN per session, not one per tick
     while (m_running.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         if (!m_running.load()) break;
 
-        ServeOwedCameraRelease();   // [DBGCAM-RELEASE-STALLED] a no-op unless an AI's camera release is owed
+        // [DBGCAM-RELEASE-STALLED] A no-op unless an AI's camera release is owed. A throw from its reads or its OFF
+        // costs one tick, not the disconnect detection below; the record stays set and is tried again.
+        Routine::RunTickGuarded("PipeServer: owed debug-camera release", warnedOwedRelease,
+                                [] { ServeOwedCameraRelease(); });
 
         // Snapshot the in-flight connections (keep them alive via shared_ptr for
         // the peek). Only peek while inFlight — the thread is then CPU-bound in

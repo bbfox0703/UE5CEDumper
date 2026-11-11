@@ -318,30 +318,26 @@ constexpr bool HeldByOther(bool active, uint64_t owner, uint64_t caller) noexcep
 // original controller's CheatManager, and nobody is left waiting to switch the controller back). Fern keeps that
 // release owed and asks, each tick, what to do with it.
 enum class OwedRelease : uint8_t { Wait, Read, Send, Done, Abandon };
-
-// Review round 1 (red): the decision before the camera is read, and on what it reads. Stubs.
-constexpr OwedRelease OwedCameraReleaseBefore(uint64_t owner, bool pendingOn, bool toggleOutstanding,
-                                              bool gameThreadStalled) noexcept {
-    (void)owner; (void)pendingOn; (void)toggleOutstanding; (void)gameThreadStalled;
-    return OwedRelease::Wait;
-}
-constexpr OwedRelease OwedCameraReleaseOnState(int32_t cameraState) noexcept {
-    (void)cameraState;
-    return OwedRelease::Wait;
-}
 // Stark::kInvokeTimedOutStillQueued, which this header does not include: Fern static_asserts the two agree.
 constexpr int32_t kOwedOffQueued = -5;
 
-// Before sending: `owner` is the ledger's holder of the camera, `pendingOn` an ON on its way (its sender's from now),
-// `toggleOutstanding` a toggle still queued or being dispatched, `cameraState` 1 on / 0 off / below 0 unreadable.
-constexpr OwedRelease OwedCameraRelease(uint64_t owner, bool pendingOn, bool toggleOutstanding, int32_t cameraState,
-                                        bool gameThreadStalled) noexcept {
+// Before the camera is read -- each read walks GObjects, so it is made only when it decides something. `owner` is the
+// ledger's holder of the camera, `pendingOn` an ON on its way (its sender's from now), `toggleOutstanding` a toggle of
+// either direction still queued or being dispatched.
+constexpr OwedRelease OwedCameraReleaseBefore(uint64_t owner, bool pendingOn, bool toggleOutstanding,
+                                              bool gameThreadStalled) noexcept {
     // Someone took the camera, or asked for it on, since the session ended: it is theirs, never turned off under them.
     if (owner != kHoldOwnerNone || pendingOn) return OwedRelease::Abandon;
-    if (toggleOutstanding) return OwedRelease::Wait;          // the queued OFF has not run yet
-    if (cameraState == 0) return OwedRelease::Done;           // it ran and turned the camera off (UE 5.8)
-    if (cameraState != 1) return OwedRelease::Abandon;        // unreadable: no CheatManager left to turn off
-    return gameThreadStalled ? OwedRelease::Wait : OwedRelease::Send;   // an OFF sent now could not run
+    // The queued OFF has not run yet, or an OFF sent now could not run.
+    if (toggleOutstanding || gameThreadStalled) return OwedRelease::Wait;
+    return OwedRelease::Read;
+}
+
+// On what the read says: 1 on, 0 off, below 0 unreadable.
+constexpr OwedRelease OwedCameraReleaseOnState(int32_t cameraState) noexcept {
+    if (cameraState == 1) return OwedRelease::Send;
+    return cameraState == 0 ? OwedRelease::Done          // the queued OFF turned it off (UE 5.8)
+                            : OwedRelease::Abandon;      // no CheatManager left to turn off (a level change)
 }
 
 // After sending: what the OFF answered. Queued again (a new stall) stays owed; anything but off is the end of it --

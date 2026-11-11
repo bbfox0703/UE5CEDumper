@@ -236,9 +236,10 @@ private:
     // is then CPU-bound in DispatchCommand, not in ReadFile/WriteFile), so there
     // is no concurrent read/write on the handle.
     // [DBGCAM-RELEASE-STALLED] Each tick it also serves an AI session's owed
-    // debug-camera release, a no-op unless one is owed. The OFF it sends waits on
-    // the game thread, so a stall that begins between its check and the send holds
-    // the peeks up for the invoke timeout at most.
+    // debug-camera release, a no-op unless one is owed. It only tries the camera's
+    // hold lock, never waits for it; the OFF it sends waits on the game thread, so
+    // a stall that begins between its check and the send holds the peeks up for
+    // the invoke timeout at most.
     Routine::SafeThread          m_monitorThread;
     void MonitorLoop();
 
