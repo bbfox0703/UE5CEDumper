@@ -303,10 +303,14 @@ a call the suspended game could not answer, and another client's value-scan sess
 The DLL log showed the server's walks on 7 of 14 threads ("a background walk takes at most half of what is free").
 Not reached:
 
-15. **A real MCP client.** The rig speaks the protocol as Claude Code does; Claude Code itself never started the
-    server. Acceptance: `claude mcp add --scope user ue5cedumper -- "<dist>\UE5DumpUI.exe" --mcp`; a session lists
-    the tools and calls `read_status` and `read_search_objects` on DumperTest; with the allow rule
-    `mcp__ue5cedumper__read_*` those run without a prompt, and `scan_start` still prompts.
+15. **A real MCP client.** ◐ **Half reached 2026-11-11:** registered with `claude mcp add --scope local ue5cedumper
+    -- <copy>\UE5DumpUI.exe --mcp` (a copy outside `dist\`: every Claude Code session keeps its servers running, and a
+    running exe in `dist\` would refuse the next publish). Claude Code 2.1.163's health check (`claude mcp list`)
+    started the build 3701 AOT exe and showed `✓ Connected`; the server's log: "initialize from claude-code: asked
+    2025-11-25, answered 2025-11-25", then stdin closed and it exited. A headless session (`claude -p`) could not run:
+    the CLI's own sign-in had lapsed (401), which only the user can renew. Still open: a session lists the tools and
+    calls `read_status` and `read_search_objects` on DumperTest; with `mcp__ue5cedumper__read_*` allowed (settings or
+    `--allowedTools`) those run without a prompt, and `scan_start` still prompts (in `-p` mode: is denied).
 16. **A large game.** Timeouts and reply sizes were met on a 24,530-object fixture only. Acceptance: on a game of
     300,000+ objects, `read_list_classes`, `read_find_instances`, `read_list_functions` (with a `name_filter`) and
     `read_value_scan_begin` answer within their timeouts, and a reply over the cap comes back cut with its note.
