@@ -26,6 +26,10 @@ namespace UE5DumpUI.Tests;
 /// build, or a build still running, could be theirs.</item>
 /// <item>A log goes only once no random-named folder beside it is left, so a folder that could not go keeps the log
 /// that says whose it is.</item>
+/// <item>A finished log kept for good (another repository's, or one that recorded work) is remembered by name in
+/// <see cref="KeptLogsFileName"/> and never read again: the other session's logs are never ours to delete, so without
+/// this every run would read all of them, about 0.17 ms each and ~600 more a day. The memory can only keep a log; a
+/// wrong or edited line makes the sweep keep more, never delete more.</item>
 /// </list>
 /// </summary>
 internal static class SdkTempLeftovers
@@ -67,7 +71,14 @@ internal static class SdkTempLeftovers
 
     private static readonly string[] ProjectPatterns = { "*.csproj", "*.sln", "*.slnx" };
 
+    /// <summary>The memory of logs kept for good, beside the test runs' folders.</summary>
+    internal const string KeptLogsFileName = "sdk-logs-kept.txt";
+
     internal sealed record Plan(IReadOnlyList<string> Folders, IReadOnlyList<string> Logs);
+
+    // What a log is to the sweep. Only KeepForever is final, and so only it is remembered: a log that has not ended may
+    // still be written, and one of ours goes.
+    private enum Verdict { Ours, NotYet, KeepForever }
 
     private sealed record LogInfo(string Path, DateTime CreatedUtc, bool OursAndFinished);
 
@@ -78,7 +89,7 @@ internal static class SdkTempLeftovers
     {
         try
         {
-            return Decide(temp, repoRoot, nowUtc).Plan;
+            return Decide(temp, repoRoot, nowUtc, ReadKept(keptLogsFile).Names).Plan;
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
@@ -93,7 +104,8 @@ internal static class SdkTempLeftovers
         var logs = new List<string>();
         try
         {
-            var decision = Decide(temp, repoRoot, nowUtc);
+            var kept = ReadKept(keptLogsFile);
+            var decision = Decide(temp, repoRoot, nowUtc, kept.Names);
             foreach (var f in decision.Plan.Folders)
             {
                 // Non-recursive: it removes an EMPTY folder or nothing, whatever arrived in it since it was looked at.
@@ -116,19 +128,59 @@ internal static class SdkTempLeftovers
                 }
                 catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
             }
+
+            // What is remembered and still in %TEMP%, and what this run found kept for good.
+            var stillKept = kept.Names.Where(decision.Present.Contains).Concat(decision.NewlyKept)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            if (keptLogsFile != null && (!kept.Clean || !stillKept.SetEquals(kept.Names)))
+                WriteKept(keptLogsFile, stillKept);
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
         return new Plan(folders, logs);
     }
 
-    private sealed record Decision(Plan Plan, List<LogInfo> GoingLogs, List<FolderInfo> Folders)
+    // The names remembered, and whether every line was one: a line that is no log name is dropped on the next write.
+    private static (HashSet<string> Names, bool Clean) ReadKept(string? file)
+    {
+        var names = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (file == null) return (names, true);
+        string[] lines;
+        try
+        {
+            if (!File.Exists(file)) return (names, true);
+            lines = File.ReadAllLines(file);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return (names, true); }
+        foreach (var line in lines)
+            if (LogName.IsMatch(line)) names.Add(line);
+        return (names, names.Count == lines.Length);
+    }
+
+    // Written whole and moved over the old one, so a run reading it at the same moment sees one or the other.
+    private static void WriteKept(string file, HashSet<string> names)
+    {
+        var staged = $"{file}.{Environment.ProcessId}.tmp";
+        try
+        {
+            File.WriteAllLines(staged, names.Order(StringComparer.OrdinalIgnoreCase));
+            File.Move(staged, file, overwrite: true);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            try { File.Delete(staged); }
+            catch (Exception e2) when (e2 is IOException or UnauthorizedAccessException) { }
+        }
+    }
+
+    private sealed record Decision(Plan Plan, List<LogInfo> GoingLogs, List<FolderInfo> Folders,
+        HashSet<string> Present, List<string> NewlyKept)
     {
         // Folders is sorted by creation time.
         public IEnumerable<FolderInfo> FoldersBeside(LogInfo log)
             => InRange(Folders, f => f.CreatedUtc, log.CreatedUtc - FolderBeforeLog, log.CreatedUtc + FolderAfterLog);
     }
 
-    private static Decision Decide(string temp, string repoRoot, DateTime nowUtc)
+    private static Decision Decide(string temp, string repoRoot, DateTime nowUtc, HashSet<string> kept)
     {
         var root = Path.TrimEndingDirectorySeparator(Path.GetFullPath(repoRoot));
         var listing = new DirectoryInfo(temp);
@@ -136,11 +188,20 @@ internal static class SdkTempLeftovers
         // Times and attributes come with the listing. Asking for them entry by entry cost 288 ms of a 900-ms sweep
         // over 739 logs and 1,513 folders (measured 2026-11-11); the listing itself took 12 ms.
         var logs = new List<LogInfo>();
+        var present = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var newlyKept = new List<string>();
         foreach (var f in listing.EnumerateFiles("Microsoft.NET.Workload_*.log"))
         {
             if (!LogName.IsMatch(f.Name)) continue;
-            var finished = nowUtc - f.LastWriteTimeUtc >= MinAge && IsOursAndFinished(f.FullName, root);
-            logs.Add(new LogInfo(f.FullName, f.CreationTimeUtc, finished));
+            present.Add(f.Name);
+            var ours = false;
+            if (!kept.Contains(f.Name) && nowUtc - f.LastWriteTimeUtc >= MinAge)
+            {
+                var verdict = Judge(f.FullName, root);
+                if (verdict == Verdict.KeepForever) newlyKept.Add(f.Name);
+                ours = verdict == Verdict.Ours;
+            }
+            logs.Add(new LogInfo(f.FullName, f.CreationTimeUtc, ours));
         }
         logs.Sort((x, y) => x.CreatedUtc.CompareTo(y.CreatedUtc));
 
@@ -169,7 +230,8 @@ internal static class SdkTempLeftovers
         }
         folders.Sort((x, y) => x.CreatedUtc.CompareTo(y.CreatedUtc));
 
-        var decision = new Decision(new Plan(Array.Empty<string>(), Array.Empty<string>()), new List<LogInfo>(), folders);
+        var decision = new Decision(new Plan(Array.Empty<string>(), Array.Empty<string>()), new List<LogInfo>(), folders,
+            present, newlyKept);
         var goingLogs = logs.Where(l => l.OursAndFinished && decision.FoldersBeside(l).All(f => f.Deletable)).ToList();
         var plan = new Plan(folders.Where(f => f.Deletable).Select(f => f.Path).ToList(),
                             goingLogs.Select(l => l.Path).ToList());
@@ -189,35 +251,34 @@ internal static class SdkTempLeftovers
         for (var i = a; i < sorted.Count && key(sorted[i]) <= hi; i++) yield return sorted[i];
     }
 
-    private static bool Beside(DateTime folderCreatedUtc, DateTime logCreatedUtc)
-        => folderCreatedUtc >= logCreatedUtc - FolderBeforeLog && folderCreatedUtc <= logCreatedUtc + FolderAfterLog;
-
-    private static bool IsOursAndFinished(string log, string repoRoot)
+    private static Verdict Judge(string log, string repoRoot)
     {
         string text;
         try
         {
             // Read as the SDK's logger would let a reader in: a log still held without sharing is a run in progress.
             using var fs = new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.Read);
-            if (fs.Length > 64 * 1024) return false;   // an idle build's log is about 1.6 KB
+            // An idle build's log is about 1.6 KB: one this large recorded work, whatever else it is.
+            if (fs.Length > 64 * 1024) return Verdict.KeepForever;
             using var reader = new StreamReader(fs);
             text = reader.ReadToEnd();
         }
-        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return false; }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException) { return Verdict.NotYet; }
 
         var lines = text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        // Until it ends, the SDK may still write to it, so nothing about it is final yet.
+        if (lines.Length == 0 || !lines[^1].EndsWith(EndedLine, StringComparison.Ordinal)) return Verdict.NotYet;
         string? command = null;
         foreach (var line in lines)
         {
             var m = LogLine.Match(line);
-            if (!m.Success) return false;
+            if (!m.Success) return Verdict.KeepForever;
             var body = m.Groups["body"].Value;
-            if (!IdleLinePrefixes.Any(p => body.StartsWith(p, StringComparison.Ordinal))) return false;
+            if (!IdleLinePrefixes.Any(p => body.StartsWith(p, StringComparison.Ordinal))) return Verdict.KeepForever;
             var ex = Executing.Match(body);
             if (ex.Success) command = ex.Groups["cmd"].Value;
         }
-        if (lines.Length == 0 || !lines[^1].EndsWith(EndedLine, StringComparison.Ordinal)) return false;
-        return command != null && NamesOurProject(command, repoRoot);
+        return command != null && NamesOurProject(command, repoRoot) ? Verdict.Ours : Verdict.KeepForever;
     }
 
     /// <summary>Whether a dotnet command line builds a project of the repository at <paramref name="repoRoot"/>.</summary>

@@ -58,7 +58,8 @@ internal static class TestTempRoot
             var now = DateTime.UtcNow;
             SweepDeadRuns(root, now);
             SweepLegacy(SystemTemp, now);
-            if (SdkTempLeftovers.FindRepoRoot() is { } repo) SdkTempLeftovers.Sweep(SystemTemp, repo, now);
+            if (SdkTempLeftovers.FindRepoRoot() is { } repo)
+                SdkTempLeftovers.Sweep(SystemTemp, repo, now, Path.Combine(root, SdkTempLeftovers.KeptLogsFileName));
 
             var run = Path.Combine(root, $"{Environment.ProcessId}-{now:yyyyMMddHHmmss}");
             Directory.CreateDirectory(run);
