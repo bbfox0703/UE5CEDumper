@@ -14,6 +14,12 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
     py tools/verify/mcp_client.py live --exe dist/UE5DumpUI.exe [--pid N]
         every tool against a game running the DLL (a fixture: DumperTest), and a cancel of a running call.
 
+    --ssh HOST   start the server as `ssh -T HOST <exe> --mcp`, the way an MCP client on another machine would; --exe
+                 is then the path on HOST. ssh's own prompts (a password) go to this console, never to the protocol:
+                 its stderr is left on the console and only stdin / stdout are piped.
+    --report F   also write everything printed to F: a run started elevated (Start-Process -Verb RunAs) prints into a
+                 window that closes when it ends.
+
 The exe path is an argument, never assumed: a gate or CI has no build and no game (feedback: gates stay inside the
 repo). Exit code 0 only when every check passed; the failures are listed.
 """
@@ -31,18 +37,51 @@ import time
 
 PROTOCOL = "2025-11-25"
 
+# --ssh HOST: every McpClient this run makes starts the server through ssh.
+SSH_HOST: str | None = None
+
 
 class McpError(Exception):
     pass
 
 
+class _Tee:
+    """stdout copied to a report file, flushed per write so a window that closes leaves the file whole."""
+
+    def __init__(self, console, file):
+        self._console, self._file = console, file
+
+    def write(self, text):
+        self._console.write(text)
+        self._file.write(text)
+        self._file.flush()
+
+    def flush(self):
+        self._console.flush()
+        self._file.flush()
+
+
+def _elevated() -> bool:
+    """Whether this process runs elevated: the report says which side of the UAC boundary it measured."""
+    try:
+        import ctypes
+        return bool(ctypes.windll.shell32.IsUserAnAdmin())
+    except (AttributeError, OSError):
+        return False
+
+
 class McpClient:
     """One server process. Requests are answered in any order; a reader thread files each line by id."""
 
-    def __init__(self, exe: str, extra_args: list[str] | None = None):
+    def __init__(self, exe: str, extra_args: list[str] | None = None, ssh: str | None = None):
+        ssh = ssh if ssh is not None else SSH_HOST
+        command = [exe, "--mcp", *(extra_args or [])]
+        if ssh:
+            # -T: no terminal, which would echo and translate newlines inside the protocol.
+            command = ["ssh", "-T", ssh, *command]
         self.proc = subprocess.Popen(
-            [exe, "--mcp", *(extra_args or [])],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, bufsize=0)
+            command, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            stderr=None if ssh else subprocess.PIPE, bufsize=0)
         self._next = 0
         self._lines: queue.Queue[bytes | None] = queue.Queue()
         self.framing_errors: list[str] = []
@@ -50,7 +89,8 @@ class McpClient:
         self._pending: dict[object, dict] = {}
         self._reader = threading.Thread(target=self._read_stdout, daemon=True)
         self._reader.start()
-        threading.Thread(target=self._read_stderr, daemon=True).start()
+        if self.proc.stderr is not None:
+            threading.Thread(target=self._read_stderr, daemon=True).start()
 
     def _read_stdout(self):
         buf = b""
@@ -414,8 +454,17 @@ def main() -> int:
     ap.add_argument("--pid", type=int)
     ap.add_argument("--suspend-name", help="live: the game's process name for suspend.py (e.g. DumperTest); "
                                            "enables the cancel check, which suspends the game for about a second")
+    ap.add_argument("--ssh", metavar="HOST", help="start the server through `ssh -T HOST`; --exe is the path there")
+    ap.add_argument("--report", metavar="FILE", help="also write everything printed to FILE")
     a = ap.parse_args()
-    exe = str(pathlib.Path(a.exe).resolve())
+    global SSH_HOST
+    SSH_HOST = a.ssh
+    if a.report:
+        sys.stdout = _Tee(sys.stdout, open(a.report, "w", encoding="utf-8"))
+        print(f"mcp_client.py {a.mode} -- {time.strftime('%Y-%m-%d %H:%M:%S')}, elevated: {_elevated()}, "
+              f"ssh: {a.ssh or '-'}")
+    # Through ssh the path is the remote machine's: taken as written.
+    exe = a.exe if a.ssh else str(pathlib.Path(a.exe).resolve())
     if a.mode == "probe":
         return run_probe(exe)
     if a.mode == "call":
