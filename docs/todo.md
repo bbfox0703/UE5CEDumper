@@ -6,7 +6,8 @@ Open work only. **Read this when deciding what to do next.**
 >
 > ▶ **Current programme:** `[PIPE-PER-PROCESS-2026-11-06]`, one stage at a time (2026-11-10): Stage A shipped in build
 > 3695, Stage B (6 pipe slots + the scan-worker budget) in build 3696, Stage C (hardening for a long-lived client) in
-> build 3698; Stage D (MCP) waits for the maintainer's go-ahead. Before it, none active
+> build 3698; **Stage D (MCP) is active (go-ahead 2026-11-11): D1, a read-only `UE5DumpUI.exe --mcp`** -- the route
+> and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
 > active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
@@ -405,8 +406,8 @@ the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVE
 
 ## 🧭 Maintainer request 2026-11-06 — a pipe per game process, then more pipe slots, then multi-client hardening `[PIPE-PER-PROCESS-2026-11-06]`
 
-**Status: Stage A shipped in build 3695, Stage B in build 3696 (2026-11-10; dev-log). Stages C and D are design
-direction only, not started** (maintainer, 2026-11-06: one stage at a time, A and B as separate builds). What the
+**Status: Stage A shipped in build 3695, Stage B in build 3696, Stage C in build 3698 (2026-11-10; dev-log). Stage D
+is active since 2026-11-11** (maintainer, 2026-11-06: one stage at a time, A and B as separate builds). What the
 live checks did not reach is verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`. It comes before
 `[UI-MCP-AUTOMATION-2026-11-06]`, which depends on it. Evidence: a read-only review on 2026-11-06 (three
 readers plus an adversarial verifier). Windows' named-pipe rules were measured with ctypes on 10.0.26300; the scratch
@@ -558,10 +559,44 @@ An MCP client in a spare slot (one of 6 since Stage B) triggers every item:
   may read the pipe, and any open takes an instance). This needs a policy before a slot count is relied on.
 - **Small:** Flamme rewrites its per-game JSON unlocked, so it needs one mutex.
 
-### Stage D — MCP
+### Stage D — MCP (active since 2026-11-11)
 
-See `[UI-MCP-AUTOMATION-2026-11-06]`. Its route is decided when it is planned. The review leans to the UI as the broker
-for anything that writes or toggles, with a direct read-only client acceptable after Stage C.
+**Decisions (maintainer, 2026-11-11)**, chosen from a read-only survey of the commands, the client code and the MCP
+spec. Each was the recommended option:
+
+- **Route: direct to the DLL pipe.** The MCP server is a pipe client of its own, so it works without the UI, and the
+  DLL does not change. Exports the UI makes (CE XML, CT, CSX, SDK) come later inside the same process: they are static
+  services that need no view. A UI broker only if a need to keep the UI's views in step appears. Cost: the UI does not
+  see what the AI changed.
+- **Packaging: `UE5DumpUI.exe --mcp`**, a stdio mode branched in `Program.Main` before the single-instance mutex and
+  Avalonia, as `--inject-elevated` is. Every release carries it, with no Python and no new file.
+- **Protocol: hand-rolled JSON-RPC 2.0** over `JsonNode`, as `PipeClient` does; no SDK package in the AOT image. It
+  speaks the 2025-11-25 handshake and answers 2026-07-28's `server/discover` with an error, which Claude Code
+  documents as its fallback to that handshake.
+- **First build read-only (D1); writes, invokes and toggles in D2.**
+
+**D1 — the shape it is built to:**
+
+- **stdout carries JSON-RPC only**: one message per line, UTF-8, LF. `Console.Out` goes to stderr before anything
+  runs, and the server's log is a file of its own, never a Console sink (the UI's `LoggingService` has one, and it
+  archives the UI's own logs when it starts).
+- **One pipe connection, opened on first use**, to the only game, or to the `pid` a call names when there are
+  several. The game list is a tool. The pid is confirmed from `get_pointers`, as the UI does. A dropped pipe reconnects
+  on the next call, and the reply says that scan sessions went with it.
+- **Tools are named `read_*`**, so one allow rule (`mcp__<server>__read_*`) admits them all, and they carry
+  `readOnlyHint`. One exception: `scan_start` (`trigger_scan`), which a proxy-loaded game needs before anything
+  answers, keeps its prompt.
+- **Small default limits and a hard cap on a reply's size**, with a paging hint. Claude Code warns above 10,000
+  tokens and moves a result over 25,000 tokens (or 50,000 characters) to a file.
+- **A call that overruns its time drops the connection.** The DLL has no cancel command; a dropped connection is its
+  cancel, checked every 200 ms.
+- **Tests:** the protocol and the tools against a fake pipe (C#), and a rig that starts `dist\UE5DumpUI.exe --mcp`
+  as an MCP client would and drives DumperTest. Measure first that stdio reaches a GUI-subsystem exe.
+
+**D2 (next build):** `write_mem`, `invoke_function`, the toggles, teleport and force field. Each carries
+`_meta["anthropic/requiresUserInteraction"]`, which makes Claude Code ask on every call, even under an allow rule.
+
+The 2026-11-06 review had leaned to the UI as the broker for anything that writes or toggles.
 
 ### Decisions (maintainer, 2026-11-06)
 
@@ -579,8 +614,9 @@ Aura's workers read the global cancel flag.
 
 ## 🧭 Idea 2026-11-06 — let an AI or a script drive the UI through a named pipe + MCP `[UI-MCP-AUTOMATION-2026-11-06]`
 
-**Status: an idea, not scheduled (maintainer: "先記進 todo，之後再說").** Nothing is built. It comes after
-`[PIPE-PER-PROCESS-2026-11-06]`, which it depends on (maintainer, 2026-11-06).
+**Status: scheduled as `[PIPE-PER-PROCESS-2026-11-06]` Stage D (go-ahead 2026-11-11).** The route chosen there
+(direct to the DLL pipe, `UE5DumpUI.exe --mcp`) replaces the sketch below, which is kept as the idea's record. It was
+an idea until then (maintainer, 2026-11-06: "先記進 todo，之後再說").
 
 **The maintainer's sketch.** Reverse-engineering and automation features should be reachable without clicking. The
 DLL stays simple.
