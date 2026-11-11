@@ -829,7 +829,7 @@ public sealed class PipePerProcessSourceTests
         int sendWait = serve.IndexOf("if (step == Voll::OwedRelease::Wait) return; }", StringComparison.Ordinal);
         int clear = serve.IndexOf("s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0);", StringComparison.Ordinal);
         Assert.True(sendWait > 0 && clear > sendWait, "a resend queued again stays owed; only then the record clears");
-        Assert.Equal(1, Regex.Matches(serve, @"UE5_GetDebugCameraState\(\)").Count);
+        Assert.Single(Regex.Matches(serve, @"UE5_GetDebugCameraState\(\)"));
 
         string frieren = CodeOnly(DllSrc("Frieren.cpp"));
         string outstanding = Between(frieren, "bool ToggleOutstanding() {", "\n}");
