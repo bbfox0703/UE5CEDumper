@@ -249,7 +249,22 @@ backlog moves here **byte-identical** ([`working-lessons.md`](working-lessons.md
 Built in build 3695 (2026-11-10), Stage A of todo.md `[PIPE-PER-PROCESS-2026-11-06]`, and proven live on DumperTest
 Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 3695. Not reached:
 
-1. **Another process that created a game's pipe name first.** Fern refuses to serve beside it (ERROR once, retried
+1. ✅ **CLOSED on intent 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707; `legacy_pipe_stub.py --pid P
+   --instances 6 --answer`, a foreign process that created `\\.\pipe\UE5DumpBfx_12832` before the DLL was injected and
+   answers `get_pointers` with its own pid).
+   - **While the stub lived.** init-0.log: `DllMain AutoStart: pipe is held by PID 5620 ... deferring auto-start, and
+     watching for it to free`; pipe-0.log had no `PipeServer: Started`. The UI's Connect answered
+     "\\.\pipe\UE5DumpBfx_12832 was answered by PID 5620, not by the game, PID 12832: another process created that
+     game's pipe name first. Disconnected. ..." and stayed disconnected.
+   - **After it exited.** 0.7 s later: `AutoStartWatcher: pipe freed by PID 5620 after 95000 ms -- running the
+     auto-start that was deferred`, `Started on ...` and `takes 6 clients at once`. The UI connected, and
+     `get_pointers` answered pid 12832.
+   - **Not reachable from such a stub:** Fern's own ERROR ("created <name> before this process did") and its
+     "instances are gone -- serving". Both startup probes see a stub made before injection and defer first, so
+     Fern never starts beside it. Those lines need a foreign creator between the last probe and the accept loop's
+     first create, inside one call; they stay unit-tested (`Voll::ClassifyFirstInstance`).
+
+   *Was:* **Another process that created a game's pipe name first.** Fern refuses to serve beside it (ERROR once, retried
    each second), and the UI disconnects when the pid that answers is not the game's. Unit-tested
    (`Voll::ClassifyFirstInstance`; `Another_process_answering_for_the_game_is_disconnected`). Acceptance: a stub
    creates `\\.\pipe\UE5DumpBfx_<pid>` for a game's pid before the DLL is injected; pipe-0.log logs the ERROR and
