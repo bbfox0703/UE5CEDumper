@@ -7,7 +7,8 @@ the join needs the older copy to create the name in the instant between the newe
 CreateNamedPipeW. A race between two remote threads started from python.exe would stage it, and the AV flags exactly
 that (working-lessons.md 3.8). This holds the newer copy still instead: Cheat Engine's VEH debugger breaks its accept
 thread ON ITS OWN CreateNamedPipeW call site (an address only that module's code reaches), the breakpoint's handler
-starts the older copy's pipe server, waits, and lets the newer copy go on. Deterministic, no race; every remote thread
+starts the older copy's pipe server, waits, and lets the newer copy go on. Deterministic, no race. No remote thread
+comes from python.exe: the older copy is injected by UE5DumpUI.exe --inject-elevated (inject.py), and every export call
 is Cheat Engine's (executeCodeEx), which is how the .CT drives the DLL anyway.
 
 PRECONDITIONS (checked, not assumed):

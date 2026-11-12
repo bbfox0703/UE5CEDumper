@@ -926,13 +926,20 @@ the session that ran it.
 
 2026-11-12, register item 14 (`tools/verify/mcp_soak.py`). An hour of one MCP server, a call pair every 30 s, grew 9.7
 to 43.8 MB in a straight line, and the rig's "less than 50 MB" bar only just passed it. At 1 s it climbed about 117 KB
-per call to 60.4 MB, then stayed flat. With the full mix it reached 62.5 MB and stayed there for about 840 more calls.
-The workstation GC's first budget scales with the L3 cache: this PC's CPU has 128 MB, so the first collection comes
-after about 50 MB of allocation. A slow run allocates less than that and says nothing either way.
+per call to 60.4 MB, then stayed flat. With the full mix it grew only 2.4 MB (60.1 to 62.5 MB) over about 840 calls,
+and the last 360 added nothing. The workstation GC sizes its first gen0 budget from the largest single cache the OS
+reports, not the CPU's total L3. This PC's 128 MB of L3 is split per CCD into 96 MB and 32 MB, so .NET sees 96 MB, and
+the first collection comes after about 48 MiB of allocation (about 50 MB as the rig counts). A slow run allocates less
+than that and says nothing either way.
 - **Judge memory by whether it levels off,** at a cadence that allocates several budgets' worth, not by its size.
 - A size bar is wrong both ways: it fails a server that has not collected yet, and it passes a real leak that is
   slower than the bar.
-- Name the CPU (§1.al). On a smaller L3 the line bends much earlier.
+- **A "levelled" test needs its own bar to be relative.** The rig's first replacement (the tail grew less than 5 MB)
+  was a size bar again. Its tail was one or two report intervals, so at 1 s it passed a leak of ~40 KB per call. The
+  rig now compares the tail's growth per interval with the first report interval's, over a span the flags cannot
+  shrink (`memory_verdict`, and `--replay` re-judges a saved log).
+- Name the CPU (§1.al). What counts is the largest single cache, so a CPU whose L3 is split per CCD sees less than its
+  total, and on a smaller cache the line bends much earlier.
 
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
@@ -2947,7 +2954,8 @@ made it deterministic, first try once the method was right:
   continues at once. The function runs on CE's main thread; CE's Lua `sleep` is a plain Sleep, pumping nothing.
 - **A second copy of the DLL cannot write its logs** while the first holds the files (item 3). Read its state from its
   own mailbox (`initState`) instead, with ReadProcessMemory.
-- Every remote thread was Cheat Engine's (`executeCodeEx`), as the .CT does anyway.
+- No remote thread came from python.exe. The older copy was injected by `UE5DumpUI.exe --inject-elevated` (inject.py),
+  and every export call was Cheat Engine's (`executeCodeEx`), as the .CT does anyway.
 
 ### 3.we Firing an export while a .CT record's tick holds CE's main thread: a CE worker thread
 
