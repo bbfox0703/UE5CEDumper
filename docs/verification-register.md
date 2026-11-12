@@ -262,8 +262,25 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
    copy holds the files). Its deferral was proven from the first copy's pipe log instead: 0 new connections in the
    15 s after an instance freed, against 22 in 10 s from the pre-fix copy. Its "deferring" line was never seen.
 4. **A proxy-loaded game, and an elevated game.** Only injection was driven, non-elevated.
-5. **Cheat Engine itself.** The mailbox was driven by `mailbox_poke.py`; the changed CE texts (the pipe name, the
-   INIT_FAILED reasons) were not displayed in CE.
+5. ◐ **Mostly reached 2026-11-12** (DumperTest Shipping, DLL 3707, Cheat Engine 64-bit SSE4-AVX2, `dist\UE5CEDumper.CT`
+   loaded into CE, each record ticked from CE's Lua with showMessage and print captured byte for byte).
+   - **The per-process pipe name**, as CE shows it: `\\.\pipe\UE5DumpBfx_(game PID)` every time, never the old bare
+     name, while the real pipe was `\\.\pipe\UE5DumpBfx_54848`. It appeared in the CT's setup row; the CT's "already
+     loaded and serving ... Pipe: ..." message (the game injected by `inject.py`; the record skipped the inject,
+     unticked itself, and the DLL kept serving); the CT's own inject ("DLL auto-start complete in 1.8 sec.", "Pipe:
+     ..."; its untick printed "UE5 Dumper stopped."); and the UI-generated bootstrap record (Tools > Add "Inject DLL"
+     Record; on a parked DLL: "loaded but parked -- restarting via UE5_AutoStart", "ready in 0.5 sec", "pipe: ...";
+     untick "shutdown: true").
+   - **The INIT_FAILED reasons, display only.** The two texts, the CT's and the generated record's, were shown by
+     making `readInteger(mailbox+12)` answer 3. Both name the two real causes ("the scan was stopped part-way ... or
+     the record was ticked again before the previous stop had finished"), and neither says "another process".
+   - **Not reached: the DLL's own INIT_FAILED.** CE cannot cause it, since its tick holds CE's main thread through
+     the whole poll. It needs `UE5_Shutdown` fired from outside during the scan, by a python.exe remote thread
+     (`call_export.py`), and the AV flagged python.exe doing exactly that on 2026-11-11 (working-lessons.md §3.8
+     item 6, `[AV-INJECT-2026-11-11]`), so it was not run.
+
+   *Was:* **Cheat Engine itself.** The mailbox was driven by `mailbox_poke.py`; the changed CE texts (the pipe name,
+   the INIT_FAILED reasons) were not displayed in CE.
 
 Stage B, build 3696 (6 clients, the scan-worker budget) -- dev-log 3696. Not reached:
 
