@@ -307,7 +307,7 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
    *Was:* **A second copy's own log lines.** A second copy of the DLL in one process could not write its logs (the
    first copy holds the files). Its deferral was proven from the first copy's pipe log instead: 0 new connections in
    the 15 s after an instance freed, against 22 in 10 s from the pre-fix copy. Its "deferring" line was never seen.
-4. ✅ **CLOSED 2026-11-12, both halves; one finding open (`[UI-ELEVATED-ACCESS-DENIED]`)** (the PathShape copy of DumperTest51 Shipping, UE 5.1, `version.dll`
+4. ✅ **CLOSED 2026-11-12, both halves; its finding `[UI-ELEVATED-ACCESS-DENIED]` fixed in build 3709** (the PathShape copy of DumperTest51 Shipping, UE 5.1, `version.dll`
    from dist 3707 deployed with `path_shape_live.py deploy`, and undeployed afterwards: `proxy_refresh.py report`
    reads 0 deployed).
    - The proxy served only `\\.\pipe\UE5DumpBfx_9668` (`load_mode proxy:version.dll`, cap 6), unscanned until asked.
@@ -324,6 +324,23 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
      **elevated UI** (approved by the maintainer, who clicked for it: UIPI blocks computer use) connected without a
      picker and scanned through Start Scan: "Connected — UE501 (19144 objects)", one `trigger_scan`, RunScan in 0.6 s.
      Not run: the non-elevated UI's Inject into a running elevated game, then its auto-connect.
+   - ✅ **The finding fixed, 3709 (AOT UI and proxy 3709).**
+     - **No UAC needed:** `legacy_pipe_stub.py --pid 0 --elevated-dacl` served `UE5DumpBfx_14712` under the DACL an
+       elevated game's pipe gets. A non-elevated open got "Permission denied". The non-elevated UI's Connect showed
+       "Connection Error — PID 14712 runs as admini…" (the cause already inside the toolbar's ellipsis). Its init log:
+       `InvalidOperationException: PID 14712 runs as administrator (elevated) or under another Windows account, so
+       Windows refused this UI its pipe. Close UE5DumpUI and start it as administrator, or start the game normally,
+       then connect again.`, with `---> UnauthorizedAccessException: Access to the path is denied.` kept inside it.
+     - **A real elevated game:** the PathShape game with the 3709 `version.dll`, started by ShellExecuteW runas (the
+       maintainer clicked UAC). It served `UE5DumpBfx_11884`, and `pipe_client.py` got "Permission denied". The
+       non-elevated UI showed the same sentence for PID 11884, and its log matched.
+     - **The inject picker cannot offer an elevated game.** A non-elevated process could open pid 11884 with
+       QUERY_LIMITED_INFORMATION but not with QUERY_INFORMATION | VM_READ, which `Process.MainModule` needs (Win32 5).
+       `GetRunningProcesses` drops a process whose main module it cannot read, so the old tooltip's "a UAC prompt to
+       inject elevated" flow cannot start from a non-elevated UI. That is measured, not seen: the picker opened behind
+       the elevated game's window, which computer use cannot show. The tooltip and the shipped guides now say to start
+       the UI as administrator, and the post-inject retry stops on a refusal instead of spinning 45 s.
+     - Undeployed afterwards. The maintainer closed the elevated game: a non-elevated process cannot.
 
    *Was:* **A proxy-loaded game, and an elevated game.** Only injection was driven, non-elevated.
 5. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL 3707, Cheat Engine 64-bit SSE4-AVX2, `dist\UE5CEDumper.CT`
@@ -475,7 +492,25 @@ DumperTest Shipping, pipe and mailbox only. Not reached:
     *Was:* **The hint-cache lock across processes.** Two writers in one process are tested (dll_core_test
     HINTCACHELOCK); two games, or a stale proxy beside an injection, writing at once were not. Acceptance: two
     injected games each `set_invoke_timeout ... persist` at the same moment; both records hold their value.
-12. ◐ **Reached 2026-11-12, with a finding** (DumperTest Shipping, DLL and AOT UI 3707, Cheat Engine, the CT's
+12. ✅ **CLOSED 2026-11-12, its finding fixed in build 3709** (`[SHUTDOWN-SEETHRU-WAIT]`).
+    - **3709, the same rig and shape** (DumperTest Shipping, DLL and AOT UI 3709, CE 7.7, the CT's inject record owning
+      the server, invoke timeout 15000 ms, See-through the UI's claim with 1 actor hidden, the DLL's own game-thread
+      pick frozen; `stop_teardown_live.py` now judges the run itself).
+      - **Untick (12a''s shape):** `UE5_Shutdown: Cleaning up` to `Stop entry` in **25 ms** (11.3 s on 3707).
+        `GameThreadDispatch: invoke wait cut short after 3779 of 15000 ms -- a shutdown is under way and the game
+        thread is stalled; the request stays queued`. The drain read `satisfied, 0 left, 0 still tearing down (4 ms)`,
+        and Stopped came 140 ms after Cleaning up.
+      - **`UE5_StopPipeServer` (12b's shape):** the drain read `satisfied, 0 left, 0 still tearing down (11 ms)`
+        (TIMEOUT, 1 still tearing down, 5022 ms on 3707). The wait was cut after 3833 of 15000 ms, and Stopped came
+        131 ms after Stop entry. The "still tearing down" WARN stays reachable through a teardown that is not an invoke
+        wait, but this shape no longer exercises it.
+      - **The record across the shutdown:** See-through logged `disabled but 1 actor(s) remain hidden (game thread
+        unresponsive) and a shutdown is under way, so no restore waits — the next See-through ON restores them`. After
+        a CE re-tick, `seethrough_get_state` read `hidden_count 1, restore_abandoned true`. ON un-hid it at once
+        (`hidden_count 0`), and OFF 2 s later read `disabled (1 restored)`.
+    - What follows is the 3707 run that found it.
+
+    **Reached 2026-11-12, with a finding** (DumperTest Shipping, DLL and AOT UI 3707, Cheat Engine, the CT's
     inject record owning the server; `tools/verify/stop_teardown_live.py`). In each run See-through was on (the UI's
     claim), the game thread was frozen, the UI was closed by WM_CLOSE 0.3 s later, and CE acted 4 s after the freeze.
     - **12a, CE untick, invoke timeout 5000 ms.** `UE5_Shutdown: Cleaning up` waited for See-through's worker (its

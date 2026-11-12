@@ -27,6 +27,53 @@ builds ≤696 in
 
 -----
 
+## 2026-11-12 (build 3709) — A teardown no longer waits out a frozen game; the UI names a game running as administrator `[SHUTDOWN-SEETHRU-WAIT]` `[UI-ELEVATED-ACCESS-DENIED]`
+
+- **What was wrong (1), `[SHUTDOWN-SEETHRU-WAIT]`.** With See-through on and the game thread stalled, a CE untick could
+  block for the whole invoke timeout before the pipe server even began to stop. Measured on 3707: 11.3 s of a 15 s
+  timeout; `set_invoke_timeout` allows 600 s, and CE gives up after 5 s. A worker parked in a queued game-thread call
+  can only be answered by `Stark::Shutdown`, and the teardown reaches that after joining the worker.
+- **What changes (1):**
+  - A queued call's wait now ends when a shutdown is under way and the game thread has been quiet for over 1 s. The
+    call answers -5 and stays queued, the same as a timeout. A live game is untouched: its calls drain within a frame,
+    and UE5_Shutdown's See-through un-hides still run.
+  - A cut makes a call that did not run more likely, so See-through keeps its record of hidden actors through one.
+    - A trace that did not run no longer reads as "nothing occludes".
+    - An un-hide that did not run keeps its actor; one that faulted inside the engine is dropped, as before.
+    - An actor whose un-hide may still run is hidden again if it still occludes.
+    - A deferred restore that a shutdown ends or refuses says so.
+  - Fly/Noclip keeps its collision record when a restore is cut during a shutdown.
+- **What was wrong (2), `[UI-ELEVATED-ACCESS-DENIED]`.** A UI that is not elevated, connecting to a game that runs as
+  administrator, showed only Windows' "Access to the path is denied.".
+- **What changes (2):**
+  - It now says "PID N runs as administrator (elevated) or under another Windows account, so Windows refused this UI
+    its pipe. Close UE5DumpUI and start it as administrator, or start the game normally, then connect again.", with
+    the cause inside the toolbar's first 30 characters.
+  - An elevated UI that is refused is told another process probably made that pipe name. So is the MCP server, which
+    now asks its own elevation instead of assuming it is not elevated.
+  - Proxy Deploy's post-inject connect stops on a refusal of the game it injected, instead of spinning 45 s and
+    blaming the DLL.
+  - The Inject tooltip and the shipped guides no longer promise a UAC inject that auto-connects.
+- **Tests:** red then green, twice each (the second round from an adversarial review: 11 findings confirmed, all
+  fixed).
+  - C++: `Test_Stark_CutInvokeWait`, `Test_Stark_WaitQueuedInvoke` (a fake clock), `Test_Schlacht_FailedDispatchKeepsTheRecord`
+    and the Dunste commit-rule cases.
+  - C#: source pins on `EnqueueInvoke`, Schlacht's Tick and every restore site, the shutdown flag's order and Dunste's
+    commit sites.
+  - C#: the connect tests (`PipePerProcessConnectTests`, one through a real pipe with a read-only DACL), the MCP
+    mirror tests and the post-inject retry tests.
+- **Publish:** C++ 287 + 4070 + 22 + 30 + 1566 checks; C# 7936 passed, 1 skipped; headless 71/71.
+- **Live, 3709:**
+  - **See-through, DumperTest Shipping, CE 7.7, timeout 15 s, the game thread frozen** (`stop_teardown_live.py`, now
+    with a verdict):
+    - The CE untick went from Cleaning up to Stop entry in **25 ms** (was 11.3 s).
+    - A bare Stop's drain was **satisfied in 11 ms** (was a 5 s TIMEOUT).
+    - The hidden actor's record survived the shutdown, and the next ON restored it.
+  - **Elevated:** a stub pipe with an elevated game's DACL (no UAC), and the PathShape game started as administrator
+    (the maintainer clicked UAC). The non-elevated UI named both. A non-elevated process cannot read an elevated
+    game's main module (Win32 5), so the inject picker cannot list it.
+- AOT UI 62,288,896 bytes (sha256 b87b3ca67a8d24c9...); UE5Dumper.dll 3,729,408 bytes (sha256 f07ce0333f5144e6...).
+
 ## 2026-11-12 (build 3708) — Cheat Engine's "start-up failed" message names both causes `[CT-INITFAILED-HEADLINE]`
 
 - **What was wrong.** When the DLL's start-up fails (mailbox state INIT_FAILED), the .CT's inject record and the

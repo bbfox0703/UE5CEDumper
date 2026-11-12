@@ -11,10 +11,9 @@ Open work only. **Read this when deciding what to do next.**
 > 3704, D2-2 (the MCP write tools for the toggles, force field and teleport) in build 3705, D2-3 (`write_memory`,
 > `write_invoke`, `write_mem` data only, the invoke queue's owners) in build 3706: Stage D2 is complete
 > (`[DBGCAM-RELEASE-STALLED]`, found live 2026-11-11, was fixed in build 3707). The 2026-11-12 verification pass closed
-> verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-11, 14, 16-17, 19-20, 23-25 and 27 (item 4 with
-> `[UI-ELEVATED-ACCESS-DENIED]` open; item 5's `[CT-INITFAILED-HEADLINE]` fixed in build 3708); still open there: 12 (with
-> `[SHUTDOWN-SEETHRU-WAIT]`, an open defect under Stage D) and 13 (needs a PC with another CPU shape); nothing further
-> in Stage D is queued** --
+> verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-12, 14, 16-17, 19-20, 23-25 and 27; their findings are fixed --
+> `[CT-INITFAILED-HEADLINE]` in build 3708, `[UI-ELEVATED-ACCESS-DENIED]` and `[SHUTDOWN-SEETHRU-WAIT]` in build 3709.
+> Still open there: only 13 (needs a PC with another CPU shape); nothing further in Stage D is queued** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
@@ -675,15 +674,14 @@ write commands, the UI's use of the same state, and the client-side safety knobs
     command's -1 / -6 / -17 as success (it answers `state`, not `code`); a queued (-5) debug-camera ON recorded no
     owner, so the AI could not turn it off and its session end did not release it; the MCP's 30 s timeout could end
     before a user-set invoke timeout.
-- 🆕 **Open, found live 2026-11-12 `[UI-ELEVATED-ACCESS-DENIED]`: the UI does not say a game is elevated.** A
-  non-elevated UI connecting to a game that runs as administrator shows only "Access to the path is denied." (an
-  UnauthorizedAccessException out of `NamedPipeClientStream.TryConnect`). The MCP server names this case since item
-  18's red/green fix: "the game runs as administrator (elevated) and this server does not. Start the AI client
-  elevated, or start the game normally." The UI should say the same, in a str.Connect.* text. Measured
-  (verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item 4): the PathShape DumperTest51 started elevated;
-  an elevated UI connects and scans. The source predicts the same raw text after Proxy Deploy's Inject into a
-  running elevated game, then its auto-connect (not run). Effort **S**, risk **low**. Not decided: the maintainer's
-  call.
+- ✅ **`[UI-ELEVATED-ACCESS-DENIED]` fixed in build 3709** (the maintainer asked for it, 2026-11-12). A UI that is
+  not elevated, refused a game's pipe, now says "PID N runs as administrator (elevated) or under another Windows
+  account, so Windows refused this UI its pipe. Close UE5DumpUI and start it as administrator, or start the game
+  normally, then connect again." It used to show only "Access to the path is denied.". An elevated UI refused is told
+  another process probably made the pipe name, and so is the MCP server, which now asks its own elevation. Proxy
+  Deploy's post-inject retry stops on a refusal, and its tooltip and the shipped guides no longer promise a UAC inject
+  that auto-connects: the inject picker cannot even list an elevated game for a UI that is not. Proof: dev-log 3709 and
+  verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item 4.
 - ✅ **`[CT-INITFAILED-HEADLINE]` fixed in build 3708** (the maintainer asked for it, 2026-11-12). INIT_FAILED covers
   an aborted init (the server may be up) as much as a server that did not start. Every INIT_FAILED message now names
   both: "The DLL loaded, but its start-up did not finish: the scan was cut short, or the Pipe Server did not start."
@@ -691,16 +689,12 @@ write commands, the UI's use of the same state, and the client-side safety knobs
   contradicted. The same change covers the CT, its log line, the generated records (`CeReadinessLua.InitFailedMessage`,
   renamed from `PipeFailedMessage`) and the enum docs. Proof: dev-log 3708 and verification-register.md
   `[PIPE-PER-PROCESS-2026-11-06]` item 5.
-- 🆕 **Open, found live 2026-11-12 `[SHUTDOWN-SEETHRU-WAIT]`: a CE untick can block past the drain budget.**
-  `UE5_Shutdown` turns See-through off itself before `Stark::Shutdown` and `Fern::Stop`. If the UI's teardown is
-  releasing See-through at that moment, it holds Schlacht's worker lock while joining the worker, and the worker is
-  parked in a LineTrace on a stalled game thread. `UE5_Shutdown` then waits for the whole invoke timeout before Stop
-  even starts. Measured (verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item 12, run 12a'): with the
-  timeout at 15 s, 11.3 s from `UE5_Shutdown: Cleaning up` to `Stop entry`. `set_invoke_timeout` allows up to 600 s,
-  and CE's executeCodeEx gives up after 5 s. Needs See-through on, a stalled game thread and the UI closing at the
-  same moment, so it is rare. One fix: have `UE5_Shutdown` request the worker's stop and cut its trace's wait
-  (`Stark::Shutdown` answers queued requests -7), not wait on the lock. Effort **S-M**, risk **med** (the
-  shutdown ordering). Not decided: the maintainer's call.
+- ✅ **`[SHUTDOWN-SEETHRU-WAIT]` fixed in build 3709** (the maintainer asked for it, 2026-11-12). A queued game-thread
+  invoke's wait now ends when a shutdown meets a game thread stalled past 1 s (-5, still queued), so a teardown no
+  longer waits out the invoke timeout behind a worker parked on a frozen game. Measured: CE untick 25 ms from
+  `Cleaning up` to `Stop entry` (was 11.3 s), and a bare `UE5_StopPipeServer`'s drain satisfied in 11 ms (was a 5 s
+  TIMEOUT). The same change keeps See-through's and Fly's records when a call that did not run would have cost them.
+  Proof: dev-log 3709 and verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item 12.
 - ✅ **`[DBGCAM-RELEASE-STALLED]` fixed in build 3707** (the maintainer chose option 1, 2026-11-11): an AI session's
   camera release that timed out behind a stalled game thread is owed, and the DLL sends the OFF again once the queued
   one has run. Proof and what was not reached: dev-log 3707 and verification-register.md item 24.
@@ -772,13 +766,10 @@ DLL stays simple.
   Needs Windows OpenSSH Server. *Measured 2026-11-11* (verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item
   18): a server started over SSH works against a normal and an elevated game alike, since an administrator's SSH
   session runs at High integrity; a non-elevated client is refused an elevated game's pipe by UAC.
-- **Open, MED, the UI: an elevated game refuses the non-elevated UI's Connect** `[UI-CONNECT-ELEVATED-GAME]`. The
-  measurement above, made with the MCP server, holds for any non-elevated client: the pipe of a game running as
-  administrator is refused (`UnauthorizedAccessException`, "Access to the path is denied."). The UI's own flow leads
-  straight there: Proxy Deploy's Inject offers a UAC prompt to inject an elevated game, then auto-connects from the
-  non-elevated UI. Its connect catch shows that raw text as "Connection Error". Fix: say the game runs elevated and
-  the UI must be started as administrator to connect (or the game normally), as the MCP server now does
-  (`McpGameLink`); measure the inject-elevated flow end to end. Not measured in the UI itself.
+- ✅ **`[UI-CONNECT-ELEVATED-GAME]` fixed in build 3709, as `[UI-ELEVATED-ACCESS-DENIED]`** (the same defect, found
+  first from the MCP side). The UI names an elevated game; its inject picker cannot list one for a UI that is not
+  elevated (measured: the main-module read it needs is refused, Win32 5), so the inject-then-connect flow this row
+  feared cannot start, and the tooltip and guides now say to start the UI as administrator.
 - **Pipe slots: settled by `[PIPE-PER-PROCESS-2026-11-06]` Stage B (build 3696): 6 clients.** It was 3, and in
   practice the third was what `tools/verify/*.py` rigs took during development (the maintainer), so with the UI
   connected and a rig running nothing was left for MCP. Stage C still hardens the pipe for a long-lived client.
