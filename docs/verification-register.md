@@ -473,7 +473,26 @@ a vtable and code refused, `Add_IntInt(40, 2)` = 42, the debug-camera toggle ref
 call refusing the AI's until it ran, the AI's own queued call never resent and dropped when its server exited (the DLL
 log: "1 queued invoke(s) of it dropped, never run"). Not reached:
 
-25. **The real UI and CE in the queue rule.** The stand-in was `pipe_client.py`; CE was not used. Acceptance: a Console
+25. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707, Cheat Engine 64-bit SSE4-AVX2). Each time the
+    game thread was frozen with `suspend.py suspend-tid` and resumed afterwards.
+    - **Console Run** (`AIIgnorePlayers`): the UI read "✗ AIIgnorePlayers: ProcessEvent error code -5 (game-thread
+      dispatch timeout) — still queued: it will run when the game thread is free (not re-sent)". `get_holds` listed
+      the UI's pid (6052) with 1 outstanding. The AI's `write_invoke` of `Add_IntInt` answered "Not invoked: the
+      UE5DumpUI window or another program (pid 6052) has a game-thread call still queued or running, and this server
+      never queues beside it. ..."
+    - **The Invoke dialog's FIRE** (Live Walker > PIPE on `Add_IntInt`): "[#1] INVOKE FAILED: ProcessEvent error code -5
+      (game-thread dispatch timeout)", and the same refusal followed.
+    - **A CE record's invoke** (Live Walker > INV: "Invoke: DumperTestActor::AD4_GetContestWrites", ticked from CE's
+      Lua): CE read "INVOKE FAILED: error code -5" (captured byte for byte), `get_holds` listed `{"kind": "ce"}` with
+      1 outstanding, and the AI's call answered "Not invoked: a Cheat Engine record has a game-thread call still
+      queued or running, ..."
+    - After each resume, the queued call ran, `invokes` emptied, and the same AI call returned 2.
+    - **The Live Walker's field edit** of a page made executable, then read-only, by CE's `setMemoryProtection` (the
+      L47 clone page, `l47_clone_page.py`): "Write failed for PayloadValue: DLL error: Not written: 0x1AEF0F30048 is
+      in executable memory (code); write_mem writes data only", then "... is not writable as it stands (a read-only,
+      guard or no-access page); write_mem never changes page protection". The value stayed as it was.
+
+    *Was:* **The real UI and CE in the queue rule.** The stand-in was `pipe_client.py`; CE was not used. Acceptance: a Console
     Run or an Invoke dialog FIRE left queued (-5, game paused) refuses the AI's `write_invoke`, naming the UE5DumpUI
     window; the same with a CE record's invoke ("a Cheat Engine record"); and the Live Walker's field edit of a
     read-only or code address shows the refusal ("Not written: ... is in executable memory").
