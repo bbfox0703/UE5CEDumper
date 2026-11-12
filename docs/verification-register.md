@@ -326,7 +326,7 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
      Not run: the non-elevated UI's Inject into a running elevated game, then its auto-connect.
 
    *Was:* **A proxy-loaded game, and an elevated game.** Only injection was driven, non-elevated.
-5. ◐ **Mostly reached 2026-11-12** (DumperTest Shipping, DLL 3707, Cheat Engine 64-bit SSE4-AVX2, `dist\UE5CEDumper.CT`
+5. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL 3707, Cheat Engine 64-bit SSE4-AVX2, `dist\UE5CEDumper.CT`
    loaded into CE, each record ticked from CE's Lua with showMessage and print captured byte for byte).
    - **The per-process pipe name**, as CE shows it: `\\.\pipe\UE5DumpBfx_(game PID)` every time, never the old bare
      name, while the real pipe was `\\.\pipe\UE5DumpBfx_54848`. It appeared in the CT's setup row; the CT's "already
@@ -338,10 +338,25 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
    - **The INIT_FAILED reasons, display only.** The two texts, the CT's and the generated record's, were shown by
      making `readInteger(mailbox+12)` answer 3. Both name the two real causes ("the scan was stopped part-way ... or
      the record was ticked again before the previous stop had finished"), and neither says "another process".
-   - **Not reached: the DLL's own INIT_FAILED.** CE cannot cause it, since its tick holds CE's main thread through
-     the whole poll. It needs `UE5_Shutdown` fired from outside during the scan, by a python.exe remote thread
-     (`call_export.py`), and the AV flagged python.exe doing exactly that on 2026-11-11 (working-lessons.md §3.8
-     item 6, `[AV-INJECT-2026-11-11]`), so it was not run.
+   - ✅ **The DLL's own INIT_FAILED, reached later on 2026-11-12** (a clean DumperTest Shipping, the same CT, CE 7.7;
+     `tools/verify/initfailed_ct.py`).
+     - The CT's own records were ticked from a CE timer, init and then "Inject DLL + Start Pipe Server", with
+       showMessage and print captured.
+     - The shutdown came from inside Cheat Engine, not python.exe. The tick holds CE's main thread, so a CE
+       `createThread` worker (it runs while the tick sleeps between polls) watched the mailbox. 406 ms after initState
+       went RUNNING, it started `UE5_Shutdown` with CE's `createRemoteThread`, a plain CreateRemoteThread with no
+       assembled stub.
+     - The worker saw initState go 1 → 0 (the shutdown's reset) → **3**: the aborted scan wrote FAILED last.
+     - The CT printed `... starting up`, then `DLL init finished but the Pipe Server FAILED to start.`, and showed its
+       message: "The DLL loaded and initialised, but the Pipe Server failed to start. Most likely the scan was stopped
+       part-way (the record was unticked while it ran), or the record was ticked again before the previous stop had
+       finished. ..."
+     - init-0.log: `UE5_Init ABORTED (shutdown landed mid-scan)` and `pipe server started, init ABORTED ->
+       initState=3`.
+     - The record stayed ticked: the DLL is in, and its pipe server came up after the shutdown (Start clears the
+       shutdown latch), so an untick still has something to stop.
+     - The order is a race: the shutdown ends by writing IDLE, so the message shows only when the scan's FAILED comes
+       last (here 62 ms after). The rig reports a run that went the other way.
 
    *Was:* **Cheat Engine itself.** The mailbox was driven by `mailbox_poke.py`; the changed CE texts (the pipe name,
    the INIT_FAILED reasons) were not displayed in CE.
