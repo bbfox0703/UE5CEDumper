@@ -391,7 +391,18 @@ Not reached:
 16. **A large game.** Timeouts and reply sizes were met on a 24,530-object fixture only. Acceptance: on a game of
     300,000+ objects, `read_list_classes`, `read_find_instances`, `read_list_functions` (with a `name_filter`) and
     `read_value_scan_begin` answer within their timeouts, and a reply over the cap comes back cut with its note.
-17. **The UI itself beside the server.** The rig's other client is `pipe_client.py` standing in for the UI.
+17. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707; `tools/verify/vs_beside_ui.py`, Int32 424242 in
+    the UI against Float 100 from the AI).
+    - **Solo control.** The UI's Value Search (Int32, Exact, 424242, game classes only, parallel) gave twice: 2
+      candidates, 24523 objects, 1538 classes, 14 threads (`a GObjects walk uses up to 14 threads`).
+    - **Beside the AI.** One MCP session ran `read_value_scan_begin` back to back for 60 s: 1072 scans, none failed
+      or hit its deadline. Each took 7 of 14 threads ("a background walk takes at most half of what is free of the
+      13-worker budget").
+    - Meanwhile the UI scanned 8 times. Every scan overlapped an AI walk by the log's stamps and got 8 threads:
+      "8 of 14 threads -- other walks running now hold the rest of the 13-worker budget". Each matched the solo run
+      exactly: 2 candidates, 24523 objects, 1538 classes, no truncation.
+
+    *Was:* **The UI itself beside the server.** The rig's other client is `pipe_client.py` standing in for the UI.
     Acceptance: the UI connected to the game, a Value Search started in the UI while the AI's `read_value_scan_begin`
     runs: both finish, the DLL log shows the UI's walk on at least half the threads, and the UI's candidates match a
     run on its own.
