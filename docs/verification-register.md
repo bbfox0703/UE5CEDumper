@@ -345,6 +345,12 @@ Stage B, build 3696 (6 clients, the scan-worker budget) -- dev-log 3696. Not rea
 6. **A name an older copy created, with its lower limit.** A 3696 copy whose first instance joins a name a 3695 copy
    made logs a WARN with the limit in force (3). Acceptance: such a pair in one process; pipe-0.log logs "takes 3
    clients at once, not this build's 6", and the at-capacity line quotes 3.
+   **Not run 2026-11-12, and why.** A 3695 binary exists (`out\stageA\copy3695\UE5Dumper.dll`, 1.0.0.3695, SHA-256
+   a8b38aa4...), but no shipped path makes a 3707 copy join a live name: every start probes first and then defers or
+   skips, and a watcher claims only a name that is gone. The join needs both copies to start in the same instant.
+   The planned rig staged that race with remote threads started from python.exe (`call_export.py`), and the AV
+   flagged python.exe doing exactly that on 2026-11-11 (working-lessons.md §3.8 item 6). A race between two threads
+   inside Cheat Engine was not attempted.
 7. **The UI's "pipe is gone" message.** Unit-tested (the game exits while the list is open). Acceptance: open the
    game list with two games, close one, pick it; the error says its pipe is gone.
 8. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707). Every thread of the game was suspended
