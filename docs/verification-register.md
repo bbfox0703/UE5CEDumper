@@ -506,9 +506,19 @@ force-field job and See-through. Not reached:
       `live` 31/31, `holds_live.py` 22/22, `probe` 15/15.
 
     **Not reached:**
-    - A CE Disable/Enable while a release is owed or under way. Fern::Stop drops the record, and the camera may stay
-      on; CE testing is pending.
-    - A soft-removed hook (the OFF waits for the hook's own fire stamp, and brings the hook back before sending).
+    - ✅ **A CE Disable/Enable: reached 2026-11-12** (DumperTest Development, 3707, the DLL injected by the CT's inject
+      record in Cheat Engine, which unticked and re-ticked it; `mcp_client.py dbgcamstop` 23/23).
+      - (K) A release owed (`released (code -5)`) was dropped at the stop: `background client 21432's debug-camera
+        release is dropped at stop -- the camera may stay on; turn it off from the UI`. No line acted on it
+        afterwards. After the re-tick the camera was still on, free and owed by nobody, and stayed so for 15 s; the
+        UI stand-in turned it off.
+      - (K2) With the invoke timeout at 20 s, the stop landed while the release was still waiting. Stark::Shutdown
+        answered its OFF -7, the release ended `(code -1)`, and nothing was owed or dropped. Afterwards the camera
+        was on and free.
+    - **A soft-removed hook together with an owed release: not constructible with shipped clients.** An owed record
+      comes only from a -5, which needs the hook active when the OFF is sent. A CE Disable soft-removes the hook
+      inside UE5_Shutdown, whose Stop now drops the record. So the guard that brings the hook back before the owed
+      OFF stays unit-tested and source-pinned only.
     - ✅ **UE 5.8: reached 2026-11-12** (DumperTest58 Development, UE 5.8, 35,860 objects, 3707): `dbgcamhold` 57/57
       (the two checks that apply below 5.8 only are not run). H: the queued OFF itself turned the camera off, and the
       DLL log reads "release is done" with no "sent again" line. I: the owed release was abandoned once the UI took
