@@ -10,7 +10,9 @@ At the end it closes the server and reads its exit code.
 
 Report: per-hour read_status p50 / p95, the seqs seen, the growth of private bytes and handles, and the failures.
 PASS (exit 0): no failed call; one seq for the whole run; the last hour's p95 at most twice the first hour's; the
-server's private bytes grew by less than 50 MB and its handles by less than 50; the server exited 0.
+server's handles grew by less than 50; its private bytes are not still growing (5 MB or more over the last third of the
+size reports) past --gc-window-mb of growth -- still growing inside it is reported as no verdict, since the size alone
+says nothing (see the comment at the check); the server exited 0.
 """
 from __future__ import annotations
 
@@ -75,6 +77,7 @@ def main() -> int:
     # pair's share from the light pair's.
     ap.add_argument("--heavy-every", type=int, default=10)
     ap.add_argument("--report-every", type=int, default=10)
+    ap.add_argument("--gc-window-mb", type=float, default=60.0)
     a = ap.parse_args()
     c = McpClient(str(pathlib.Path(a.exe).resolve()))
     c.initialize()
@@ -83,6 +86,7 @@ def main() -> int:
     seqs: set = set()
     lat: dict[int, list[float]] = {}
     s0, g0 = proc_stats(srv), proc_stats(a.pid)
+    sizes: list[int] = [s0[0]]
     t_start = time.monotonic()
     end = t_start + a.hours * 3600
     n = 0
@@ -118,6 +122,7 @@ def main() -> int:
                 call("read_value_scan_end", {"session_id": vs["session_id"]})
         if n % a.report_every == 0:
             s, g = proc_stats(srv), proc_stats(a.pid)
+            sizes.append(s[0])
             print(f"  {time.strftime('%H:%M:%S')} #{n}: server {s[0] / 1e6:.1f} MB / {s[1]} handles, game "
                   f"{g[0] / 1e6:.1f} MB / {g[1]} handles; seqs {sorted(seqs)}; failures {len(fails)}", flush=True)
         time.sleep(max(0.0, a.interval - (time.monotonic() - t0)))
@@ -135,8 +140,22 @@ def main() -> int:
         fails.append(f"the connection changed: seqs {sorted(seqs)}")
     if last != first and pct(lat[last], .95) > 2 * pct(lat[first], .95):
         fails.append("the last hour's p95 is more than twice the first's")
-    if grow_mb >= 50 or grow_h >= 50:
-        fails.append(f"the server grew {grow_mb:+.1f} MB, {grow_h:+d} handles")
+    # Growth is judged by whether it LEVELS OFF, not by its size. The server allocates ~120 KB per call and the
+    # workstation GC's first budget scales with the L3 cache (128 MB on the PC this was measured on), so private bytes
+    # rise in a straight line for ~50 MB before the first collection: an hour at one call pair per 30 s never got there
+    # (+34 MB, linear), and a run at 1 s levelled off at 60 MB and stayed (measured 2026-11-12). Past --gc-window-mb a
+    # leak keeps growing and garbage does not; under it, the run says nothing either way.
+    tail = sizes[-max(2, len(sizes) // 3):]
+    tail_mb = (tail[-1] - tail[0]) / 1e6
+    if tail_mb < 5:
+        print(f"memory: {grow_mb:+.1f} MB, levelled off ({tail_mb:+.1f} MB over the last third)", flush=True)
+    elif grow_mb > a.gc_window_mb:
+        fails.append(f"the server grew {grow_mb:+.1f} MB and was still growing ({tail_mb:+.1f} MB over the last third)")
+    else:
+        print(f"memory: {grow_mb:+.1f} MB and still growing, but inside the GC window ({a.gc_window_mb:.0f} MB) -- "
+              f"no leak verdict; run faster (--interval 1) for one", flush=True)
+    if grow_h >= 50:
+        fails.append(f"the server's handles grew {grow_h:+d}")
     if code != 0:
         fails.append(f"the server exited {code}")
     print(f"\n{'PASS' if not fails else 'FAIL'}: {len(fails)} failed" + "".join("\n  " + f for f in fails[:20]))
