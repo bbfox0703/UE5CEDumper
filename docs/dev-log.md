@@ -27,6 +27,40 @@ builds ≤696 in
 
 -----
 
+## 2026-11-12 (no build change) — The pipe-per-process verification pass: Cheat Engine, the real UI, a proxy, a large game `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **What.** The live checks that waited for a free Cheat Engine, and the rest that this PC can run, all against build
+  3707. verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` has each one's numbers and log lines.
+- **Closed:**
+  - 1: a foreign holder of a game's pipe name.
+  - 2: a restart beside a straggling connection.
+  - 3: a second copy's own logs.
+  - 8: a suspended game.
+  - 9: CE's See-through record.
+  - 10: the UI meeting a scan another client started.
+  - 16: EVERSPACE 2, with 1,000,790 objects.
+  - 17: the UI's Value Search beside the AI's.
+  - 19, 20, 23, 24: CE's mailbox and the UI window as holders, every hold kind released, every write tool, a 3695 DLL
+    refused.
+  - 25: the UI's and CE's queued invokes.
+  - 27: write_invoke's struct, object and deny-list paths.
+  - The 3707 owed release: on UE 5.8 and around a CE Disable/Enable.
+- **Reached in part:**
+  - 4: the proxy-loaded game; the elevated game not run.
+  - 5: CE shows the per-process name and both INIT_FAILED texts, the latter display-only.
+  - 12: the drain counts a See-through teardown, but only for a Stop with no UE5_Shutdown.
+- **Found, open:** `[SHUTDOWN-SEETHRU-WAIT]` (todo.md, Stage D). A CE untick blocks on See-through's lock for the
+  whole invoke timeout before Stop starts; measured 11.3 s at a 15 s timeout.
+- **Not run:**
+  - 6: needs a start race staged with python.exe remote threads, which the AV flags.
+  - 7, 11: need two games at once.
+  - 13: no other CPU shape here.
+  - 14: a run of hours.
+- **New rigs:** `straggler_restart.py`, `stop_teardown_live.py`, `scan_hold.py`, `pipe_hold.py`, `vs_beside_ui.py`,
+  `mcp_large.py`, `mcp_soak.py`. Also `legacy_pipe_stub.py --pid/--instances/--answer`, and the `mcp_client.py`
+  modes `dbgcamstop`, `holdsmore`, `olddll` and `invokeparams`.
+- **Not changed:** the shipped UI and DLL.
+
 ## 2026-11-12 (build 3707) — An AI session's debug camera is turned off even when the game was frozen as it ended `[DBGCAM-RELEASE-STALLED]`
 
 - **What was wrong.** Two cases left the camera on with no holder after the AI session ended:

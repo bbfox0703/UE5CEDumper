@@ -9,9 +9,11 @@ Open work only. **Read this when deciding what to do next.**
 > build 3698; **Stage D (MCP) is active (go-ahead 2026-11-11): D1, the read-only `UE5DumpUI.exe --mcp`, shipped in
 > build 3701; D2 (writes) started 2026-11-11, in three builds: D2-1 (the DLL records who holds what) shipped in build
 > 3704, D2-2 (the MCP write tools for the toggles, force field and teleport) in build 3705, D2-3 (`write_memory`,
-> `write_invoke`, `write_mem` data only, the invoke queue's owners) in build 3706: Stage D2 is complete; what its live
-> checks did not reach is verification-register.md items 19-20, 23-25 and 27 (`[DBGCAM-RELEASE-STALLED]`, found live
-> 2026-11-11, was fixed in build 3707); nothing further in Stage D is queued** --
+> `write_invoke`, `write_mem` data only, the invoke queue's owners) in build 3706: Stage D2 is complete
+> (`[DBGCAM-RELEASE-STALLED]`, found live 2026-11-11, was fixed in build 3707). The 2026-11-12 verification pass closed
+> verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-3, 8-10, 16-17, 19-20 and 23-27; still open there:
+> 4 (an elevated game), 5 (the DLL's own INIT_FAILED), 6, 7, 11, 12 (with `[SHUTDOWN-SEETHRU-WAIT]`, an open defect
+> under Stage D), 13 and 14; nothing further in Stage D is queued** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
