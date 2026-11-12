@@ -502,6 +502,9 @@ void CollectOccluders(uintptr_t pawn, const double start0[3], const double fwd[3
 struct State {
     bool      active      = false;
     std::unordered_set<uintptr_t> hiddenActors;   // occluders currently hidden
+    // [SHUTDOWN-SEETHRU-WAIT] Recorded actors whose last un-hide did not run: it may still, and the actor then shows
+    // while recorded hidden. A tick that finds one still occluding hides it again.
+    std::unordered_set<uintptr_t> unhideQueued;
     int32_t   code        = 0;
     bool      hasTarget   = false;
     int32_t   hiddenCount = 0;
@@ -514,6 +517,14 @@ struct State {
 };
 State s_state;
 std::mutex s_mutex;
+
+// s_mutex held. What a restore's un-hides left hidden (RestoreHidden) goes back in the record, marked as un-hides that
+// may still run. [SHUTDOWN-SEETHRU-WAIT]
+void RecordUnhideLeftoversLocked(const std::unordered_set<uintptr_t>& kept) {
+    s_state.hiddenActors.insert(kept.begin(), kept.end());
+    s_state.unhideQueued.insert(kept.begin(), kept.end());
+    s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
+}
 
 Routine::SafeThread       s_worker;   // detaches at process exit, never terminates
 std::mutex        s_workerMutex;
@@ -571,20 +582,32 @@ void Tick() {
     // That is also why the verification row could not be falsified from outside.
     // [SEETHRUTALLY-2026-08-22]; the reason a COMPONENT arrives here at all is the
     // separate, unfixed [SEETHRUNOOP-2026-08-22].
-    std::unordered_set<uintptr_t> old;
-    { std::lock_guard<std::mutex> lk(s_mutex); old = s_state.hiddenActors; }
+    std::unordered_set<uintptr_t> old, mayStillUnhide;
+    { std::lock_guard<std::mutex> lk(s_mutex); old = s_state.hiddenActors; mayStillUnhide = s_state.unhideQueued; }
 
-    // Still occluding: kept, and we know it took. No longer occluding: un-hidden, and dropped unless that un-hide did not
-    // run (RestoreHidden). One never attempted drops too: the actor died or the setter went away.
+    // Still occluding: kept, and we know it took -- unless its last un-hide did not run and may still, then it is hidden
+    // again (RehideOnTick). No longer occluding: un-hidden, and dropped unless that un-hide did not run (RestoreHidden).
+    // One never attempted drops too: the actor died or the setter went away.
     std::unordered_set<uintptr_t> applied, gone;
-    for (uintptr_t a : old) (desired.count(a) ? applied : gone).insert(a);
-    for (uintptr_t a : RestoreHidden(gone)) applied.insert(a);
+    for (uintptr_t a : old) {
+        const bool occluding = desired.count(a) != 0;
+        if (RehideOnTick(occluding, mayStillUnhide.count(a) != 0)) {
+            if (InvokeSetHidden(a, true)) applied.insert(a);
+        } else if (occluding) {
+            applied.insert(a);
+        } else {
+            gone.insert(a);
+        }
+    }
+    const std::unordered_set<uintptr_t> kept = RestoreHidden(gone);
+    applied.insert(kept.begin(), kept.end());
     for (uintptr_t a : desired)
         if (!old.count(a) && InvokeSetHidden(a, true))
             applied.insert(a);
 
     std::lock_guard<std::mutex> lk(s_mutex);
     s_state.hiddenActors = std::move(applied);
+    s_state.unhideQueued = kept;
     s_state.code = STR_OK;
     s_state.hasTarget = true;
     s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
@@ -687,14 +710,12 @@ void PendingRestoreLoop() {
             std::unordered_set<uintptr_t> restore;
             { std::lock_guard<std::mutex> lk(s_mutex);
               restore = std::move(s_state.hiddenActors);
-              s_state.hiddenActors.clear();
+              s_state.hiddenActors.clear(); s_state.unhideQueued.clear();
               s_state.hiddenCount = 0; }
             // An un-hide that did not run (the game thread stalled again) goes back in the record, and this loop
             // waits for the game thread once more. [SHUTDOWN-SEETHRU-WAIT]
             const std::unordered_set<uintptr_t> kept = RestoreHidden(restore);
-            { std::lock_guard<std::mutex> lk(s_mutex);
-              s_state.hiddenActors.insert(kept.begin(), kept.end());
-              s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size()); }
+            { std::lock_guard<std::mutex> lk(s_mutex); RecordUnhideLeftoversLocked(kept); }
             LOG_INFO("SeeThrough: game thread resumed after %d ms — restored %zu "
                      "leftover hidden actor(s), %zu still hidden", waited, restore.size() - kept.size(), kept.size());
             done = kept.empty();
@@ -705,6 +726,17 @@ void PendingRestoreLoop() {
                 done = true;
             }
         });
+    }
+    // A shutdown ended the wait with actors still hidden. UE5_Shutdown's own OFF re-decides after this; a bare
+    // UE5_StopPipeServer does not, so say here that no restore is waiting. A stop from ApplyLocked re-decides itself.
+    // [SHUTDOWN-SEETHRU-WAIT]
+    if (!s_pendingStop.load() && Tot::ShutdownRequested()) {
+        size_t left;
+        { std::lock_guard<std::mutex> lk(s_mutex);
+          left = s_state.hiddenActors.size();
+          if (left && !s_state.active) s_state.restoreAbandoned = true; }
+        if (left) LOG_WARN("SeeThrough: a shutdown ended the deferred restore with %zu actor(s) still hidden — the next "
+                           "See-through ON restores them", left);
     }
     s_pendingRunning.store(false);
 }
@@ -782,7 +814,7 @@ static int32_t ApplyLocked(bool enable) {
             if (s_state.active) return 1;   // already on
             if (responsive) {
                 leftover = std::move(s_state.hiddenActors);
-                s_state.hiddenActors.clear();
+                s_state.hiddenActors.clear(); s_state.unhideQueued.clear();
             }
         }
         // One whose un-hide did not run stays recorded: the worker inherits it, as it inherits an unresponsive leftover.
@@ -790,7 +822,7 @@ static int32_t ApplyLocked(bool enable) {
         int32_t n;
         {
             std::lock_guard<std::mutex> lk(s_mutex);
-            s_state.hiddenActors.insert(stillHidden.begin(), stillHidden.end());
+            RecordUnhideLeftoversLocked(stillHidden);
             n = s_state.pierceCount;
             s_state.active = true;
             s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
@@ -822,17 +854,13 @@ static int32_t ApplyLocked(bool enable) {
         {
             std::lock_guard<std::mutex> lk(s_mutex);
             restore = std::move(s_state.hiddenActors);
-            s_state.hiddenActors.clear();
+            s_state.hiddenActors.clear(); s_state.unhideQueued.clear();
             s_state.hiddenCount = 0;
         }
         // An un-hide that did not run (a hitch, or a shutdown cutting its wait) keeps its actor: the record survives, and
         // a deferred restore retries it. [SHUTDOWN-SEETHRU-WAIT]
         const std::unordered_set<uintptr_t> kept = RestoreHidden(restore);
-        {
-            std::lock_guard<std::mutex> lk(s_mutex);
-            s_state.hiddenActors.insert(kept.begin(), kept.end());
-            s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
-        }
+        { std::lock_guard<std::mutex> lk(s_mutex); RecordUnhideLeftoversLocked(kept); }
         if (kept.empty()) {
             LOG_INFO("SeeThrough: disabled (%zu restored)", restore.size());
         } else if (StartPendingLocked()) {

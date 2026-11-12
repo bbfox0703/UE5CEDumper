@@ -58,8 +58,10 @@ enum FlyResult : int32_t {
 //   Refused — the dispatcher did not run it and never will: -8 (an off-game-thread worker
 //             while the PE hook is down, Frieren.cpp), -7 (shutdown), -3 (no usable PE offset),
 //             -2/-4. TRANSIENT: the caller must NOT commit, and must retry.
-//   Queued  — -5: the game thread did not drain within the timeout, but the request STAYS
-//             QUEUED and WILL run when it does (Frieren.h, Stark.cpp). The caller COMMITS, so
+//   Queued  — -5: the game thread did not drain within the timeout (or a shutdown cut the wait),
+//             but the request STAYS QUEUED and runs when it does -- unless Stark::Shutdown answers
+//             it first, unrun, which is why a restore Queued during a shutdown keeps its record
+//             (the three-argument ShouldCommitCollision). Otherwise (Frieren.h, Stark.cpp) the caller COMMITS, so
 //             the next opposite toggle emits the undo. [W3-DUNSTE-QUEUED] -- it used to be
 //             filed under Refused, and a queued disable then landed after the record said
 //             collision was ON, with nothing tracking it.
@@ -81,8 +83,8 @@ inline bool ShouldCommitCollision(CollisionApply a) {
 /// Queued during a shutdown keeps its record: the restore is sent again later, and restoring twice is harmless, while a
 /// lost record leaves the pawn ghosted. [SHUTDOWN-SEETHRU-WAIT]
 inline bool ShouldCommitCollision(CollisionApply a, bool restoring, bool shutdownRequested) {
-    (void)restoring; (void)shutdownRequested;
-    return ShouldCommitCollision(a);   // [SHUTDOWN-SEETHRU-WAIT] red: as before
+    if (a == CollisionApply::Queued && restoring && shutdownRequested) return false;
+    return ShouldCommitCollision(a);
 }
 
 /// The dispatcher's return code, as an outcome. Pure, so `dll_helpers_test` pins it without Dunste.cpp.

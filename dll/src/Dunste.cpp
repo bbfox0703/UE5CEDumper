@@ -549,14 +549,15 @@ void WorkerLoop() {
                     --collRetrySkip;                 // backing off from a refusal
                 } else {
                     const CollisionApply r = InvokeSetCollision(collPawn, !wantOff);
-                    if (!ShouldCommitCollision(r)) {
+                    if (!ShouldCommitCollision(r, /*restoring*/ !wantOff, Tot::ShutdownRequested())) {
                         // REFUSED — the dispatcher never ran it, so this is the same
                         // "must retry" class as the deferred branch above and the record
                         // must NOT move. Back off: while the PE hook is down the refusal
                         // is DETERMINISTIC, and re-walking the pawn's class chain every
                         // tick to be refused again buys nothing.
                         collRetrySkip = kCollRefusedBackoffTicks;
-                        if (!warnedCollRefused) {
+                        // A restore kept because a shutdown cut its wait was not refused: the worker is about to stop.
+                        if (!warnedCollRefused && r != CollisionApply::Queued) {
                             warnedCollRefused = true;
                             LOG_WARN("Fly: collision %s REFUSED by the dispatcher — "
                                      "retrying every %d ticks (the record is left alone; "
@@ -654,7 +655,7 @@ void PendingRestoreLoop() {
                 return;
             }
 
-            if (!ShouldCommitCollision(InvokeSetCollision(pawn, true))) {
+            if (!ShouldCommitCollision(InvokeSetCollision(pawn, true), /*restoring*/ true, Tot::ShutdownRequested())) {
                 // The thread ANSWERS but the invoke was refused, so nothing was restored.
                 // Clearing the record here is the exact ghosted-pawn shape B8 fixed — keep
                 // it and keep polling. Bounded by the same deadline the unresponsive branch
@@ -817,7 +818,8 @@ int32_t SetEnabled(bool enable) {
         // of defect D1 exists to fix.
         const bool responsive = Stark::IsGameThreadResponsive();
         const bool restored   = responsive
-            && ShouldCommitCollision(InvokeSetCollision(restoreCollPawn, true));
+            && ShouldCommitCollision(InvokeSetCollision(restoreCollPawn, true), /*restoring*/ true,
+                                     Tot::ShutdownRequested());
         if (restored) {
             std::lock_guard<std::mutex> lk(s_mutex);
             s_state.collisionOff  = false;

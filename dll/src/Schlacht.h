@@ -78,19 +78,22 @@ inline bool ShouldApplyOccluderDiff(bool dispatchFailed, bool stopRequested) {
 // invoke's own result (0 = it ran).
 constexpr int32_t kHideNotAttempted = INT32_MIN;
 
+// The invoke's code for a call that entered the engine and faulted there (CallProcessEventSEH): it ran.
+constexpr int32_t kHideFaultedInCall = -4;
+
 // After an un-hide, does the actor stay in the record? Only when the call was attempted and did not run: it may still be
 // queued, and Stark::Shutdown answers a queued request without running it. Un-hiding twice is harmless, losing the
-// record is not. A call never attempted drops the actor, as before (it died, or the setter went away).
+// record is not. A call never attempted drops the actor, as before (it died, or the setter went away), and so does one
+// that faulted inside the engine: kept, it would fault again on every 100 ms tick.
 inline bool UnhideLeftItHidden(int32_t code) {
-    return code != 0 && code != kHideNotAttempted;
+    return code != 0 && code != kHideNotAttempted && code != kHideFaultedInCall;
 }
 
 // A recorded actor that still occludes counts as hidden with no call -- unless its last un-hide did not run: that
 // un-hide may still be queued, and when it runs the actor shows while the record says hidden. Such an actor is hidden
 // again (the queue runs the hide after the un-hide). Hiding twice is harmless.
 inline bool RehideOnTick(bool stillOccluding, bool unhideMayStillRun) {
-    (void)stillOccluding; (void)unhideMayStillRun;
-    return false;   // [SHUTDOWN-SEETHRU-WAIT] red: never re-hidden, as before
+    return stillOccluding && unhideMayStillRun;
 }
 
 // Result / status code (0 = OK, negative = why the tick could not act).
