@@ -1,6 +1,7 @@
 """Register [PIPE-PER-PROCESS-2026-11-06] item 14: one MCP session held for hours against a game.
 
     py tools/verify/mcp_soak.py --exe dist/UE5DumpUI.exe --pid P [--hours 2] [--interval 30]
+    py tools/verify/mcp_soak.py --replay out/soak.log     (judge an earlier run's memory; starts nothing)
 
 One server process, one pipe connection, held for --hours. Every --interval seconds: read_status (timed) and
 read_pipe_clients (the server's own connection: its seq must never change, i.e. no reconnect), and the server's and the
@@ -10,9 +11,10 @@ At the end it closes the server and reads its exit code.
 
 Report: per-hour read_status p50 / p95, the seqs seen, the growth of private bytes and handles, and the failures.
 PASS (exit 0): no failed call; one seq for the whole run; the last hour's p95 at most twice the first hour's; the
-server's handles grew by less than 50; its private bytes are not still growing (5 MB or more over the last third of the
-size reports) past --gc-window-mb of growth -- still growing inside it is reported as no verdict, since the size alone
-says nothing (see the comment at the check); the server exited 0.
+server's handles grew by less than 50; its private bytes are not still growing past --gc-window-mb of growth (growing:
+the last third of the run, at least three report intervals, adds more than a tenth of the first report interval's
+growth per interval; still growing inside the window is no verdict, since the size alone says nothing: see
+memory_verdict); the server exited 0.
 """
 from __future__ import annotations
 
@@ -67,10 +69,70 @@ def pct(xs: list[float], p: float) -> float:
     return xs[min(len(xs) - 1, int(round(p * (len(xs) - 1))))]
 
 
+def memory_verdict(samples: list[tuple[int, int]], window_mb: float) -> tuple[str, str]:
+    """('levelled' | 'growing' | 'none', text) from (interval, private bytes) samples, the first at interval 0.
+
+    Judged by whether growth LEVELS OFF, never by its size. The server allocates ~120 KB per call, and the workstation
+    GC sizes its first gen0 budget from the largest single cache the OS reports (on the PC this was measured on, 96 MB
+    of a 128 MB L3 split per CCD, so about 48 MiB), so private bytes rise in a straight line for ~50 MB before the
+    first collection. An hour at one call pair per 30 s never got there (+34 MB, linear); runs at 1 s levelled off at
+    60-62 MB (measured 2026-11-12). A fixed size bar passes a leak slower than the bar, so the bar here is RELATIVE:
+    the tail's growth per interval against the first report interval's, the rate of a server that has not collected.
+    The tail is chosen by span (a third of the run, and at least three report intervals), so --interval,
+    --report-every and --hours do not move it. Past --gc-window-mb, still growing is a leak; inside it, no verdict.
+    """
+    n_end = samples[-1][0]
+    grow_mb = (samples[-1][1] - samples[0][1]) / 1e6
+    if len(samples) < 3 or samples[1][0] <= 0:
+        if grow_mb > window_mb:
+            return "growing", f"{grow_mb:+.1f} MB with too few size reports ({len(samples)}) to see it level off"
+        return "none", (f"{grow_mb:+.1f} MB; too few size reports ({len(samples)}) for a verdict -- run longer than "
+                        f"--report-every intervals")
+    step = samples[1][0]
+    need = max(n_end / 3, 3 * step)
+    i = len(samples) - 1
+    while i > 0 and n_end - samples[i][0] < need:
+        i -= 1
+    tail = samples[i:]
+    span = tail[-1][0] - tail[0][0]
+    if span < 3 * step:
+        return "none", f"{grow_mb:+.1f} MB; the run is too short for a tail of three report intervals"
+    r_first = (samples[1][1] - samples[0][1]) / step
+    r_tail = (tail[-1][1] - tail[0][1]) / span
+    rates = (f"{r_tail / 1e3:+.1f} KB per interval over the last {span} intervals, against {r_first / 1e3:+.1f} KB in "
+             f"the first {step}")
+    if r_tail <= 0 or (r_first > 0 and r_tail <= 0.1 * r_first):
+        return "levelled", f"{grow_mb:+.1f} MB, levelled off ({rates})"
+    if grow_mb > window_mb:
+        return "growing", f"{grow_mb:+.1f} MB and still growing past the {window_mb:.0f} MB GC window ({rates})"
+    return "none", (f"{grow_mb:+.1f} MB and still growing, inside the {window_mb:.0f} MB GC window ({rates}) -- no "
+                    f"leak verdict; run faster (--interval 1) for one")
+
+
+def replay_samples(log: pathlib.Path) -> list[tuple[int, int]]:
+    """(interval, bytes) from a run's printed log: its start size, every #n report, and the end size at the last
+    interval (the sum of the per-hour call counts)."""
+    import re
+    text = log.read_text(encoding="utf-8", errors="replace")
+    start = re.search(r"start: server ([\d.]+) MB", text)
+    end = re.search(r"^server: [\d.]+ -> ([\d.]+) MB", text, re.M)
+    if not start or not end:
+        raise SystemExit(f"{log}: no start or end size line")
+    out = [(0, int(float(start.group(1)) * 1e6))]
+    out += [(int(m.group(1)), int(float(m.group(2)) * 1e6)) for m in re.finditer(r"#(\d+): server ([\d.]+) MB", text)]
+    n = sum(int(m.group(1)) for m in re.finditer(r"\((\d+) calls\)", text)) or out[-1][0]
+    last = (n, int(float(end.group(1)) * 1e6))
+    if out[-1][0] == n:
+        out[-1] = last
+    else:
+        out.append(last)
+    return out
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("--exe", required=True)
-    ap.add_argument("--pid", type=int, required=True)
+    ap.add_argument("--exe")
+    ap.add_argument("--pid", type=int)
     ap.add_argument("--hours", type=float, default=2.0)
     ap.add_argument("--interval", type=float, default=30.0)
     # 0 = light calls only. Varying this and --interval tells growth per call from growth per minute, and the heavy
@@ -78,7 +140,14 @@ def main() -> int:
     ap.add_argument("--heavy-every", type=int, default=10)
     ap.add_argument("--report-every", type=int, default=10)
     ap.add_argument("--gc-window-mb", type=float, default=60.0)
+    ap.add_argument("--replay", metavar="LOG", help="judge the memory of an earlier run's log, and start nothing")
     a = ap.parse_args()
+    if a.replay:
+        kind, text = memory_verdict(replay_samples(pathlib.Path(a.replay)), a.gc_window_mb)
+        print(f"{a.replay}: {kind}: {text}")
+        return 1 if kind == "growing" else 0
+    if not a.exe or not a.pid:
+        ap.error("--exe and --pid are required (or --replay LOG)")
     c = McpClient(str(pathlib.Path(a.exe).resolve()))
     c.initialize()
     srv = c.proc.pid
@@ -86,7 +155,7 @@ def main() -> int:
     seqs: set = set()
     lat: dict[int, list[float]] = {}
     s0, g0 = proc_stats(srv), proc_stats(a.pid)
-    sizes: list[int] = [s0[0]]
+    sizes: list[tuple[int, int]] = [(0, s0[0])]   # (interval, private bytes)
     t_start = time.monotonic()
     end = t_start + a.hours * 3600
     n = 0
@@ -122,7 +191,7 @@ def main() -> int:
                 call("read_value_scan_end", {"session_id": vs["session_id"]})
         if n % a.report_every == 0:
             s, g = proc_stats(srv), proc_stats(a.pid)
-            sizes.append(s[0])
+            sizes.append((n, s[0]))
             print(f"  {time.strftime('%H:%M:%S')} #{n}: server {s[0] / 1e6:.1f} MB / {s[1]} handles, game "
                   f"{g[0] / 1e6:.1f} MB / {g[1]} handles; seqs {sorted(seqs)}; failures {len(fails)}", flush=True)
         time.sleep(max(0.0, a.interval - (time.monotonic() - t0)))
@@ -140,20 +209,15 @@ def main() -> int:
         fails.append(f"the connection changed: seqs {sorted(seqs)}")
     if last != first and pct(lat[last], .95) > 2 * pct(lat[first], .95):
         fails.append("the last hour's p95 is more than twice the first's")
-    # Growth is judged by whether it LEVELS OFF, not by its size. The server allocates ~120 KB per call and the
-    # workstation GC's first budget scales with the L3 cache (128 MB on the PC this was measured on), so private bytes
-    # rise in a straight line for ~50 MB before the first collection: an hour at one call pair per 30 s never got there
-    # (+34 MB, linear), and a run at 1 s levelled off at 60 MB and stayed (measured 2026-11-12). Past --gc-window-mb a
-    # leak keeps growing and garbage does not; under it, the run says nothing either way.
-    tail = sizes[-max(2, len(sizes) // 3):]
-    tail_mb = (tail[-1] - tail[0]) / 1e6
-    if tail_mb < 5:
-        print(f"memory: {grow_mb:+.1f} MB, levelled off ({tail_mb:+.1f} MB over the last third)", flush=True)
-    elif grow_mb > a.gc_window_mb:
-        fails.append(f"the server grew {grow_mb:+.1f} MB and was still growing ({tail_mb:+.1f} MB over the last third)")
+    # The end sample belongs to the series: without it a run shorter than --report-every had one point to judge.
+    if sizes[-1][0] == n:
+        sizes[-1] = (n, s1[0])
     else:
-        print(f"memory: {grow_mb:+.1f} MB and still growing, but inside the GC window ({a.gc_window_mb:.0f} MB) -- "
-              f"no leak verdict; run faster (--interval 1) for one", flush=True)
+        sizes.append((n, s1[0]))
+    kind, text = memory_verdict(sizes, a.gc_window_mb)
+    print(f"memory: {text}", flush=True)
+    if kind == "growing":
+        fails.append(f"the server's memory: {text}")
     if grow_h >= 50:
         fails.append(f"the server's handles grew {grow_h:+d}")
     if code != 0:
