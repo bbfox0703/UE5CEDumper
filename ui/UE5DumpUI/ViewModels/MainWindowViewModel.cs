@@ -715,7 +715,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             ProxyDeploy.IsConnectedProbe = () => IsConnected;
             ProxyDeploy.SetConnectErrorSuppression = v => SuppressConnectErrors = v;
             // ...and whether Windows refused it: then no retry can help. [UI-ELEVATED-ACCESS-DENIED]
-            ProxyDeploy.ConnectRefusedProbe = () => LastConnectRefusal;
+            ProxyDeploy.ConnectRefusedProbe = RefusalFor;
             // Persist the remembered-proxy map (a Dictionary mutation isn't caught
             // by the [ObservableProperty] change-tracking save).
             ProxyDeploy.RequestOptionSave = ScheduleOptionSave;
@@ -2152,13 +2152,18 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private Task ConnectAsync(int? pid) => ConnectToAsync(pid);
 
+    /// <summary>[UI-ELEVATED-ACCESS-DENIED] The last connect attempt's refusal by Windows -- the game it dialled and the
+    /// text shown -- or null when it was not refused. Proxy Deploy's post-inject retry asks it: a refusal is not a DLL
+    /// still scanning.</summary>
+    public (int Pid, string Text)? LastConnectRefusal { get; private set; }
+
+    /// <summary>The refusal's text when the last attempt dialled <paramref name="pid"/>: the retry must not stop on a
+    /// refusal from another game's dial (a toolbar Connect can run in its gaps).</summary>
+    internal string? RefusalFor(int pid) => LastConnectRefusal?.Text;   // [UI-ELEVATED-ACCESS-DENIED] red: any pid
+
     /// <summary>Connect to a game's pipe. <paramref name="pid"/> names the game (one the UI just injected, or one
     /// already running the DLL); null looks under \\.\pipe\ and connects at once to a lone game, lets the user choose
     /// among several, and refuses when only an old DLL's pipe is there.</summary>
-    /// <summary>[UI-ELEVATED-ACCESS-DENIED] The text of the last connect attempt's refusal by Windows, or null when it was
-    /// not refused. Proxy Deploy's post-inject retry asks it: a refusal is not a DLL still scanning.</summary>
-    public string? LastConnectRefusal { get; private set; }
-
     public async Task ConnectToAsync(int? pid)
     {
         try
@@ -2207,10 +2212,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 // [UI-ELEVATED-ACCESS-DENIED] Windows refused the open itself: no wait helps, and its own words name
                 // neither the game nor a way out. Elevation is blamed only when this UI is not elevated: the pipe's
                 // default security always lets an administrator in. The inner exception keeps the OS's text for the log.
-                LastConnectRefusal = PipeTargets.ClassifyRefusal(denied, _platform.IsElevated()) == PipeDialRefusal.GameElevated
+                string refusal = PipeTargets.ClassifyRefusal(denied, _platform.IsElevated()) == PipeDialRefusal.GameElevated
                     ? Res.Format("str.Connect.Elevated", targetPid)
                     : Res.Format("str.Connect.Denied", targetPid);
-                throw new InvalidOperationException(LastConnectRefusal, denied);
+                LastConnectRefusal = (targetPid, refusal);
+                throw new InvalidOperationException(refusal, denied);
             }
 
             var state = await _dump.InitAsync();

@@ -1186,9 +1186,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// <summary>Silences the top-bar "Connection Error" while the retry owns the message.</summary>
     public Action<bool>? SetConnectErrorSuppression { get; set; }
 
-    /// <summary>[UI-ELEVATED-ACCESS-DENIED] Why Windows refused the last connect attempt (the text the main window would
-    /// show), or null when it was not refused. Set by MainWindowViewModel.</summary>
-    public Func<string?>? ConnectRefusedProbe { get; set; }
+    /// <summary>[UI-ELEVATED-ACCESS-DENIED] Why Windows refused the last connect attempt to the given pid (the text the
+    /// main window would show), or null when it was not refused. Set by MainWindowViewModel.</summary>
+    public Func<int, string?>? ConnectRefusedProbe { get; set; }
 
     /// <summary>How long to keep retrying the post-inject connect.</summary>
     /// <remarks>
@@ -1347,7 +1347,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
 
                 // Windows refused the pipe (the game runs elevated and this UI does not): every later attempt is refused
                 // too, so stop and say why rather than spend the window and blame the DLL. [UI-ELEVATED-ACCESS-DENIED]
-                if (ConnectRefusedProbe?.Invoke() is { } refusal)
+                if (ConnectRefusedProbe?.Invoke(pid) is { } refusal)
                 {
                     SetOperationResult(Res.Format("str.ProxyDeploy.InjectedButRefused", targetName, pid, refusal), 1);
                     _log.Warn("ProxyDeploy", $"Post-inject connect refused by Windows after {attempt} attempt(s): {refusal}");

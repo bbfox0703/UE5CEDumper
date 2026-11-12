@@ -252,12 +252,39 @@ public sealed class PipePerProcessConnectTests
         var rig = new Rig("UE5DumpBfx_55");
         rig.Pipe.Refused = new() { "UE5DumpBfx_55" };
         await rig.Vm.ConnectToAsync(55);
-        Assert.Equal(rig.Vm.ErrorMessage, rig.Vm.LastConnectRefusal);
+        Assert.Equal(55, rig.Vm.LastConnectRefusal?.Pid);
+        Assert.Equal(rig.Vm.ErrorMessage, rig.Vm.LastConnectRefusal?.Text);
+        Assert.Equal(rig.Vm.ErrorMessage, rig.Vm.RefusalFor(55));
         rig.Pipe.Refused = null;
         rig.Dump.AnsweringPid = 55;
         await rig.Vm.ConnectToAsync(55);
         Assert.True(rig.Vm.IsConnected);
         Assert.Null(rig.Vm.LastConnectRefusal);
+        Assert.Null(rig.Vm.RefusalFor(55));
+    }
+
+    [Fact]
+    public async Task A_refusal_answers_only_for_the_pid_it_came_from()
+    {
+        // A toolbar Connect can run in the retry's 1 s gaps: its refusal of another game must not stop the retry of the
+        // game just injected, which may only still be scanning.
+        var rig = new Rig("UE5DumpBfx_200");
+        rig.Pipe.Refused = new() { "UE5DumpBfx_200" };
+        await rig.Vm.ConnectToAsync(200);
+        Assert.NotNull(rig.Vm.RefusalFor(200));
+        Assert.Null(rig.Vm.RefusalFor(55));
+    }
+
+    [Fact]
+    public async Task A_refusal_is_remembered_while_the_post_inject_retry_suppresses_errors()
+    {
+        // The retry runs every attempt with connect errors suppressed: the refusal must still be recorded for it to ask.
+        var rig = new Rig("UE5DumpBfx_55");
+        rig.Vm.SuppressConnectErrors = true;
+        rig.Pipe.Refused = new() { "UE5DumpBfx_55" };
+        await rig.Vm.ConnectToAsync(55);
+        Assert.Equal(Res.Format("str.Connect.Elevated", 55), rig.Vm.RefusalFor(55));
+        Assert.True(string.IsNullOrEmpty(rig.Vm.ErrorMessage));
     }
 
     [Fact]
@@ -455,6 +482,8 @@ public sealed class PipePerProcessConnectTests
     {
         var vm = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"));
         Assert.Contains("ProxyDeploy.RequestConnectAsync = pid => ConnectCommand.ExecuteAsync(pid);", vm);
+        // [UI-ELEVATED-ACCESS-DENIED] ...and asks why a refused attempt failed: unwired, the retry spins its 45 s again.
+        Assert.Contains("ProxyDeploy.ConnectRefusedProbe = RefusalFor;", vm);
     }
 
     [Fact]

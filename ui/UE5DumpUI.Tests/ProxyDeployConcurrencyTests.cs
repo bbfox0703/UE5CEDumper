@@ -1467,7 +1467,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         vm.RequestConnectAsync = _ => { attempts++; return Task.CompletedTask; };
         vm.IsConnectedProbe = () => false;
         const string why = "PID 55 runs as administrator (elevated)";
-        vm.ConnectRefusedProbe = () => why;
+        vm.ConnectRefusedProbe = p => p == 55 ? why : null;
 
         await Refused(vm.ConnectWithRetryAsync("Game", 55));   // fails fast instead of spinning the 45 s window
 
@@ -1484,7 +1484,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         int attempts = 0;
         vm.RequestConnectAsync = _ => { attempts++; return Task.CompletedTask; };
         vm.IsConnectedProbe = () => attempts >= 3;
-        vm.ConnectRefusedProbe = () => null;
+        vm.ConnectRefusedProbe = _ => null;
 
         await vm.ConnectWithRetryAsync("Game", 55).WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
 

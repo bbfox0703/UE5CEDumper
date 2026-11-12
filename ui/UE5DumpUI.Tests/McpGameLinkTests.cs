@@ -333,6 +333,9 @@ public sealed class McpGameLinkTests
         var e = await Assert.ThrowsAsync<McpToolError>(() => rig.Send());
         Assert.Contains("administrator", e.Message);
         Assert.Contains("elevated", e.Message);
+        // The mirror of the elevated server's case: each fails if the server reaches the other's branch.
+        Assert.Contains("this server does not", e.Message);
+        Assert.DoesNotContain("another process", e.Message);
         Assert.False(rig.Pipe.IsConnected);
     }
 
