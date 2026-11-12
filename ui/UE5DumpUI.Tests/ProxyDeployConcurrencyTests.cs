@@ -1486,7 +1486,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         vm.IsConnectedProbe = () => attempts >= 3;
         vm.ConnectRefusedProbe = () => null;
 
-        await vm.ConnectWithRetryAsync("Game", 55).WaitAsync(TimeSpan.FromSeconds(20));
+        await vm.ConnectWithRetryAsync("Game", 55).WaitAsync(TimeSpan.FromSeconds(20), TestContext.Current.CancellationToken);
 
         Assert.Equal(3, attempts);
         Assert.Contains("connected after", vm.LastOperationResult);
