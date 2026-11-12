@@ -237,8 +237,9 @@ def main() -> int:
 
     off1 = log.stat().st_size
     lua(f"""
-ZZ6 = {{state = "armed", later = 0, bp = 0x{bp:X}, start_old = 0x{start_old:X}}}
+ZZ6 = {{state = "armed", later = 0, hits = {{}}, bp = 0x{bp:X}, start_old = 0x{start_old:X}}}
 function zz6_onbp()
+  ZZ6.hits[#ZZ6.hits + 1] = string.format("%d:%s:%X", getTickCount(), ZZ6.state, RIP or 0)
   if ZZ6.state ~= "armed" then ZZ6.later = ZZ6.later + 1; return 0 end
   ZZ6.state = "broken"
   ZZ6.rip = string.format("%X", RIP)
@@ -246,9 +247,12 @@ function zz6_onbp()
   ZZ6.old_start = tostring(ok) .. ":" .. tostring(r)
   sleep(1000)
   ZZ6.state = "released"
-  return 0
+  return 0   -- 0: continue at once (a per-breakpoint function's nonzero would leave the thread waiting)
 end
-debug_setBreakpoint(ZZ6.bp, zz6_onbp)
+-- int3, not a debug register: the thread that reaches the call is the accept thread Start() is about to create, and a
+-- debug register reached it only after its first create (measured 2026-11-12: the first try created the name, limit 6,
+-- and the breakpoint fired only on the later creates). A patched instruction is seen by every thread at once.
+debug_setBreakpoint(ZZ6.bp, 1, bptExecute, bpmInt3, zz6_onbp)
 return "armed"
 """)
     r = lua(f"return tostring(executeCodeEx(0, 10000, 0x{start_new:X}))", 30)
@@ -276,7 +280,9 @@ return "armed"
     text = log_since(log, off1)
     for c in clients:
         c.close()
-    print("CE:", lua("debug_removeBreakpoint(ZZ6.bp); return 'removed; later hits ' .. ZZ6.later"), flush=True)
+    print("CE:", lua("debug_removeBreakpoint(ZZ6.bp); return 'removed; state ' .. ZZ6.state .. ', the older copy\\'s "
+                     "start ' .. tostring(ZZ6.old_start) .. ', hits (tick:state:rip) ' .. table.concat(ZZ6.hits, ' ')"),
+          flush=True)
 
     shared = [ln for ln in text.splitlines() if "already had instances in this process" in ln]
     limit = [ln for ln in text.splitlines() if "takes 3 clients at once, not this build's 6" in ln]
