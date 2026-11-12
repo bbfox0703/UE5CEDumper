@@ -2159,7 +2159,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>The refusal's text when the last attempt dialled <paramref name="pid"/>: the retry must not stop on a
     /// refusal from another game's dial (a toolbar Connect can run in its gaps).</summary>
-    internal string? RefusalFor(int pid) => LastConnectRefusal?.Text;   // [UI-ELEVATED-ACCESS-DENIED] red: any pid
+    internal string? RefusalFor(int pid) => LastConnectRefusal is { } r && r.Pid == pid ? r.Text : null;
 
     /// <summary>Connect to a game's pipe. <paramref name="pid"/> names the game (one the UI just injected, or one
     /// already running the DLL); null looks under \\.\pipe\ and connects at once to a lone game, lets the user choose
