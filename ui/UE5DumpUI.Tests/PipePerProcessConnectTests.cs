@@ -235,6 +235,18 @@ public sealed class PipePerProcessConnectTests
     }
 
     [Fact]
+    public void An_access_refusal_blames_elevation_only_for_a_client_that_is_not_elevated()
+    {
+        var denied = new UnauthorizedAccessException("Access to the path is denied.");
+        Assert.Equal(PipeDialRefusal.GameElevated, PipeTargets.ClassifyRefusal(denied, clientElevated: false));
+        Assert.Equal(PipeDialRefusal.Denied, PipeTargets.ClassifyRefusal(denied, clientElevated: true));
+        // Not refusals: a missing or full pipe, and anything else, keep their own handling.
+        Assert.Equal(PipeDialRefusal.None, PipeTargets.ClassifyRefusal(new TimeoutException(), false));
+        Assert.Equal(PipeDialRefusal.None, PipeTargets.ClassifyRefusal(new IOException("pipe"), false));
+        Assert.Equal(PipeDialRefusal.None, PipeTargets.ClassifyRefusal(new InvalidOperationException(), true));
+    }
+
+    [Fact]
     public async Task A_refusal_is_remembered_for_the_post_inject_retry_and_forgotten_by_the_next_dial()
     {
         var rig = new Rig("UE5DumpBfx_55");

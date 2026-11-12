@@ -297,7 +297,8 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
             throw new McpToolError($"Every connection to game {target}'s pipe is taken (the DLL serves 6), or the "
                                    + "game is not responding." + HoldersNote(target));
         }
-        catch (UnauthorizedAccessException)
+        catch (UnauthorizedAccessException denied)
+            when (PipeTargets.ClassifyRefusal(denied, _platform.IsElevated()) == PipeDialRefusal.GameElevated)
         {
             // Measured 2026-11-11: a game running as administrator creates its pipe owned by Administrators, and UAC
             // refuses it to a non-elevated client. Listing the pipe needs no access, so the game still shows in
@@ -306,6 +307,15 @@ internal sealed class McpGameLink : IMcpGame, IDisposable
                                    + "(elevated) and this server does not. Start the AI client elevated, or start the "
                                    + "game normally. A server started over SSH runs elevated for an administrator "
                                    + "account.");
+        }
+        catch (UnauthorizedAccessException)
+        {
+            // [UI-ELEVATED-ACCESS-DENIED] Refused although this server is elevated: the DLL's pipe always lets an
+            // administrator in, so something else set its permissions.
+            throw new McpToolError($"Windows refused the connection to game {target} although this server runs "
+                                   + "elevated. UE5Dumper's DLL always lets an administrator in, so another process may "
+                                   + "have created that game's pipe name with its own permissions. Close that process, "
+                                   + "or restart the game.");
         }
 
         JsonObject ptrs;

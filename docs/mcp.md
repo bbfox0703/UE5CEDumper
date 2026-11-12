@@ -184,6 +184,7 @@ too long for the AI is cut by whole entries, and a note says how much was left o
 | "Only an old UE5Dumper DLL's pipe is up" | Close the game, run **Update All** on the Proxy Deploy tab, start it again. |
 | "Every connection to game N's pipe is taken" | Close a program holding one; the message names them. |
 | "Windows refused the connection to game N: the game runs as administrator" | Start the AI client elevated too, or start the game normally. A server started over SSH runs elevated for an administrator account. |
+| "Windows refused the connection to game N although this server runs elevated" | Another process probably created that game's pipe name first. Close it, or restart the game. |
 | "... did not answer within N s" | The game is paused, loading or very large; the next call reconnects. |
 | "Not changed: ... is held by ..." | You (or the named program) hold that feature. Release it where it was set if you want the AI to take it. |
 | "... is an experimental feature, and the UE5DumpUI window's experimental features are off" | Turn them on in the UI if you want the AI to use them. |

@@ -1345,6 +1345,15 @@ public partial class ProxyDeployViewModel : ViewModelBase
                     _log.Warn("ProxyDeploy", $"Auto-connect after inject attempt {attempt} failed: {ex.Message}");
                 }
 
+                // Windows refused the pipe (the game runs elevated and this UI does not): every later attempt is refused
+                // too, so stop and say why rather than spend the window and blame the DLL. [UI-ELEVATED-ACCESS-DENIED]
+                if (ConnectRefusedProbe?.Invoke() is { } refusal)
+                {
+                    SetOperationResult(Res.Format("str.ProxyDeploy.InjectedButRefused", targetName, pid, refusal), 1);
+                    _log.Warn("ProxyDeploy", $"Post-inject connect refused by Windows after {attempt} attempt(s): {refusal}");
+                    return;
+                }
+
                 // No probe wired (tests, or an older composition) — keep the old
                 // single-shot behaviour rather than spinning for 45 s on no information.
                 if (IsConnectedProbe is null) return;

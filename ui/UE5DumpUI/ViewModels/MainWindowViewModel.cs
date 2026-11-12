@@ -714,6 +714,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             // Lets the post-inject retry ASK whether it worked instead of assuming.
             ProxyDeploy.IsConnectedProbe = () => IsConnected;
             ProxyDeploy.SetConnectErrorSuppression = v => SuppressConnectErrors = v;
+            // ...and whether Windows refused it: then no retry can help. [UI-ELEVATED-ACCESS-DENIED]
+            ProxyDeploy.ConnectRefusedProbe = () => LastConnectRefusal;
             // Persist the remembered-proxy map (a Dictionary mutation isn't caught
             // by the [ObservableProperty] change-tracking save).
             ProxyDeploy.RequestOptionSave = ScheduleOptionSave;
@@ -2162,6 +2164,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         try
         {
             ClearError();
+            LastConnectRefusal = null;
             // Skipped while a retry loop owns the message: otherwise every attempt
             // overwrites the countdown with "Connecting..." and the user sees no
             // progress at all -- which is what widening the window to 45 s looked like.
@@ -2198,6 +2201,16 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 if (gone) throw new InvalidOperationException(Res.Format("str.Connect.PipeGone", targetPid));
                 throw new InvalidOperationException(
                     Res.Format("str.Connect.Busy", targetPid) + await HoldersNoteAsync(targetPid));
+            }
+            catch (UnauthorizedAccessException denied)
+            {
+                // [UI-ELEVATED-ACCESS-DENIED] Windows refused the open itself: no wait helps, and its own words name
+                // neither the game nor a way out. Elevation is blamed only when this UI is not elevated: the pipe's
+                // default security always lets an administrator in. The inner exception keeps the OS's text for the log.
+                LastConnectRefusal = PipeTargets.ClassifyRefusal(denied, _platform.IsElevated()) == PipeDialRefusal.GameElevated
+                    ? Res.Format("str.Connect.Elevated", targetPid)
+                    : Res.Format("str.Connect.Denied", targetPid);
+                throw new InvalidOperationException(LastConnectRefusal, denied);
             }
 
             var state = await _dump.InitAsync();

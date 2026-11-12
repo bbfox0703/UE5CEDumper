@@ -193,6 +193,7 @@ Set-Service -Name sshd -StartupType 'Automatic'</code></pre>
     <tr><td>"Only an old UE5Dumper DLL's pipe is up"</td><td>Close the game, run <strong>Update All</strong> on the Proxy Deploy tab, start it again.</td></tr>
     <tr><td>"Every connection to game N's pipe is taken"</td><td>Close a program holding one; the message names them.</td></tr>
     <tr><td>"Windows refused the connection to game N: the game runs as administrator"</td><td>Start the AI client elevated, or the game normally.</td></tr>
+    <tr><td>"Windows refused the connection to game N although this server runs elevated"</td><td>Another process probably created that game's pipe name first. Close it, or restart the game.</td></tr>
     <tr><td>"... did not answer within N s"</td><td>The game is paused, loading or very large; the next call reconnects.</td></tr>
     <tr><td>The client shows the server as failed</td><td>Check the path to <code>UE5DumpUI.exe</code>, and that this file is not blocked by antivirus.</td></tr>
   </tbody>
