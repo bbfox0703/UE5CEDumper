@@ -46,6 +46,7 @@ from pipe_client import LOGROOT           # noqa: E402
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 OUT = ROOT / "out" / "initfailed"
 RECORD = "Inject DLL + Start Pipe Server"
+INIT_RECORD = "init <== enable after process attached"
 FAILED_TEXT = "The DLL loaded and initialised, but the Pipe Server failed to start."
 
 
@@ -74,9 +75,8 @@ def main() -> int:
     if module_of(pid, dll):
         raise SystemExit(f"FAIL: {dll} is already loaded in {pid}; the record must inject it")
     OUT.mkdir(parents=True, exist_ok=True)
-    plan, trace, cap = OUT / "plan.txt", OUT / "trace.txt", OUT / "capture.txt"
-    for f in (plan, trace, cap):
-        f.unlink(missing_ok=True)
+    tok = time.strftime("%H%M%S")   # a worker left by an earlier run must not write into this run's files
+    plan, trace, cap = OUT / f"plan-{tok}.txt", OUT / f"trace-{tok}.txt", OUT / f"capture-{tok}.txt"
     pe = pefile.PE(str(dll))
     since = time.strftime("%Y-%m-%d %H:%M:%S")
 
@@ -126,11 +126,14 @@ t.OnTimer = function(s)
   showMessage = function(m) L[#L+1] = 'MSG<<' .. tostring(m) .. '>>' end
   print = function(...) local p = {{}} for i = 1, select('#', ...) do p[#p+1] = tostring((select(i, ...))) end L[#L+1] = 'PRINT<<' .. table.concat(p, ' | ') .. '>>' end
   UE5_DEBUG = 1
-  local r = getAddressList().getMemoryRecordByDescription([[{RECORD}]])
-  local ok, err = false, 'no record'
-  if r then ok, err = pcall(function() r.Active = true end) end
+  -- The init record defines what the inject record calls: the CT's own order is init first.
+  for _, d in ipairs({{[[{INIT_RECORD}]], [[{RECORD}]]}}) do
+    local r = getAddressList().getMemoryRecordByDescription(d)
+    local ok, err = false, 'no record'
+    if r then ok, err = pcall(function() r.Active = true end) end
+    L[#L+1] = d .. ': pcall=' .. tostring(ok) .. ' err=' .. tostring(err) .. ' active_after=' .. tostring(r and r.Active)
+  end
   showMessage, print, UE5_DEBUG = oldMsg, oldPrint, nil
-  L[#L+1] = 'pcall=' .. tostring(ok) .. ' err=' .. tostring(err) .. ' active_after=' .. tostring(r and r.Active)
   local f = io.open([[{fwd(cap)}]], 'wb') if f then f:write(table.concat(L, string.char(10))) f:close() end
 end
 t.Enabled = true
