@@ -357,8 +357,16 @@ Stage B, build 3696 (6 clients, the scan-worker budget) -- dev-log 3696. Not rea
    The planned rig staged that race with remote threads started from python.exe (`call_export.py`), and the AV
    flagged python.exe doing exactly that on 2026-11-11 (working-lessons.md §3.8 item 6). A race between two threads
    inside Cheat Engine was not attempted.
-7. **The UI's "pipe is gone" message.** Unit-tested (the game exits while the list is open). Acceptance: open the
-   game list with two games, close one, pick it; the error says its pipe is gone.
+7. ✅ **CLOSED 2026-11-12** (two injected DumperTest Shipping games, UE 5.4 and UE 5.8, DLL and AOT UI 3707).
+   - The UI's game list was opened with both games in it. One of them (pid 3292) was then killed, and picked from the
+     still-open list.
+   - The UI's view log reads `Connecting to pipe: UE5DumpBfx_3292...` at 09:20:43.107. `Connection failed` follows
+     at 09:20:48.112 (5.0 s), with "PID 3292's pipe is gone: the game exited, or its UE5Dumper DLL stopped serving,
+     after the list of games was read. Connect again to see what is running now."
+   - The other game, picked next as the control, connected.
+
+   *Was:* **The UI's "pipe is gone" message.** Unit-tested (the game exits while the list is open). Acceptance: open
+   the game list with two games, close one, pick it; the error says its pipe is gone.
 8. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707). Every thread of the game was suspended
    (`suspend.py suspend`, NtSuspendProcess), then Connect was clicked in the UI.
    - The UI's first lane connected and the second timed out. 5.6 s after the click the header read "Connection Error",
@@ -399,9 +407,22 @@ DumperTest Shipping, pipe and mailbox only. Not reached:
     *Was:* **The UI against a job another client started.** `trigger_scan` and Extra Scan answer `in_progress` to a
     second asker; the UI was not driven against one. Acceptance: start a scan from `pipe_client.py` on a game still
     loading (proxy, scan deferred), click Start Scan in the UI; it shows the scan's progress, not "Scan failed".
-11. **The hint-cache lock across processes.** Two writers in one process are tested (dll_core_test HINTCACHELOCK); two
-    games, or a stale proxy beside an injection, writing at once were not. Acceptance: two injected games each
-    `set_invoke_timeout ... persist` at the same moment; both records hold their value.
+11. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, UE 5.4, and DumperTest58 Shipping, UE 5.8, both injected with
+    3707; `tools/verify/hintcache_two_games.py`).
+    - Two different exes, so two cache records (PE hashes `C361A341081CE000` and `AA15AD260A24F000`).
+    - In each of 50 rounds a barrier released both games' `set_invoke_timeout ... persist` at the same moment: game A
+      wrote 7000+i, game B 9000+i. The machine's hint cache was then read back.
+    - All 50 rounds: the file parsed and held both values, and both replies said `persisted: true`. 0 lost, 0
+      unparsable. Both old values (0) were put back.
+    - **Negative control:** the same run with the 3695 DLL (before the cross-process lock) in both games, `--expect-loss`.
+      **50 of 50 rounds lost an update**: in rounds 42 to 49, for one, game A's record stayed at 7041 while B's moved
+      on. So the rig can see a lost update, and 3707's lock is what prevents it.
+    - The "stale proxy beside an injection" shape was not driven separately. It is the same two-writer race, and the
+      lock (`Flamme.cpp` `CacheLock`) is a named mutex keyed on the cache file's name, whatever loaded the DLL.
+
+    *Was:* **The hint-cache lock across processes.** Two writers in one process are tested (dll_core_test
+    HINTCACHELOCK); two games, or a stale proxy beside an injection, writing at once were not. Acceptance: two
+    injected games each `set_invoke_timeout ... persist` at the same moment; both records hold their value.
 12. ◐ **Reached 2026-11-12, with a finding** (DumperTest Shipping, DLL and AOT UI 3707, Cheat Engine, the CT's
     inject record owning the server; `tools/verify/stop_teardown_live.py`). In each run See-through was on (the UI's
     claim), the game thread was frozen, the UI was closed by WM_CLOSE 0.3 s later, and CE acted 4 s after the freeze.
