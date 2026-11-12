@@ -27,6 +27,8 @@ sys.path.insert(0, str(HERE))
 from pipe_client import PipeClient, LOGROOT   # noqa: E402
 from suspend import thread_ids, thread_times  # noqa: E402
 
+sys.stdout.reconfigure(encoding="utf-8", errors="replace")   # the UI's requests start with a BOM; cp950 has none
+
 k32 = ctypes.WinDLL("kernel32", use_last_error=True)
 k32.OpenThread.restype = ctypes.c_void_p
 k32.SuspendThread.restype = ctypes.c_uint32
