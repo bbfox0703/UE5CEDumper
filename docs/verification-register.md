@@ -445,7 +445,23 @@ DumperTest Shipping, pipe and mailbox only. Not reached:
 13. **Another CPU shape.** Only this 16C32T PC was measured (16 threads per walk before, 14 now); hybrid P/E cores,
     E-cores disabled and a CPU without SMT are unit-tested (dll_core_test CPU). Acceptance: the init log's thread pick
     on such a PC matches `Aura::ThreadsForCpu` for its topology.
-14. **A long-lived client.** The MCP server (Stage D1, build 3701) is one. Its rig run held the connection for
+14. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707; `tools/verify/mcp_soak.py`).
+    - **One hour:** one `UE5DumpUI.exe --mcp` held one pipe connection for an hour. Every 30 s it ran read_status and
+      read_pipe_clients, and every 10th interval also read_find_instances of Actor and a value scan (begin, end).
+      120 intervals: 0 failed calls, one seq (2) the whole hour, read_status p50 0 / p95 15 ms. The server exited 0.
+    - **Memory:** the server's private bytes rose in a straight line, 9.7 to 43.8 MB, about 2.8 MB per 5 minutes; its
+      handles 190 to 210, flat after the first 5 minutes. The game: 3,154 to 3,279 MB, handles 2,089 to 1,995.
+    - **The straight line is garbage that was never collected, not a leak.** Two runs at 1 s showed it:
+      - Light calls only, 5 min: +14 MB per 120 calls (about 117 KB per call), then **60.4 MB and flat** over the
+        last 120 calls.
+      - The full mix, 10 min: 60.1 MB at interval 180, then **62.5 MB at interval 600**, +2.4 MB over about 840
+        calls and 42 heavy pairs.
+      This PC's CPU has 128 MB of L3, and the workstation GC's first budget scales with it, so the first collection
+      comes after about 50 MB. The hour at 30 s allocated only 34 MB.
+    - The rig's size bar ("grew less than 50 MB") was wrong for that reason. It now judges whether growth levels off;
+      still growing inside `--gc-window-mb` (60) gives no verdict.
+
+    *Was:* **A long-lived client.** The MCP server (Stage D1, build 3701) is one. Its rig run held the connection for
     about a minute, through a cancel and a reconnect; a session of hours was not run.
 
 Stage D1, build 3701 (the MCP server, `UE5DumpUI.exe --mcp`) -- dev-log 3701. With the AOT exe on DumperTest Shipping
