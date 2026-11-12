@@ -254,7 +254,24 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
    (`Voll::ClassifyFirstInstance`; `Another_process_answering_for_the_game_is_disconnected`). Acceptance: a stub
    creates `\\.\pipe\UE5DumpBfx_<pid>` for a game's pid before the DLL is injected; pipe-0.log logs the ERROR and
    serves nothing until the stub exits, then logs "serving"; the UI never lands on the stub.
-2. **A restart while this copy's own connections from before the stop still hold their instances**
+2. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707, Cheat Engine 64-bit SSE4-AVX2 with
+   `UE5CEDumper.CT`, whose inject record started the server; `tools/verify/straggler_restart.py`, PASS).
+   - **The straggler.** Three connections sent `V1a_GrowContainers(8000000)` (about 0.4 s each) with the invoke
+     timeout raised to 180 s. The game thread was frozen 0.15 s later (none had completed), so one call was mid-run.
+   - **The stop.** CE's untick ran UE5_Shutdown: `Stop conn drain TIMEOUT, 1 left, 0 still tearing down (5026 ms, 49
+     cancel re-asserts)` and `straggler: INSIDE a command (cancel cannot reach it until it returns) for 5934 ms, last
+     cmd 'invoke_function'`.
+   - **The restart.** CE's re-tick, 1.2 s after Stopped: init-0.log logged `UE5_StartPipeServer: every instance is
+     busy with this copy's connections from before its last stop -- restarting the server beside them`, then
+     `Started` and the shared-name WARN; no "Start refused" or "deferring".
+   - **The UI** then connected ("Connected — UE504 (24530 objects)", two UE5DumpUI.exe connections in
+     `pipe_clients`).
+   - After the resume, the straggler's call returned 0. *Observation:* the straggler's own connection then answered
+     `get_pointers`, so it still serves after the restart without being registered.
+   - Two earlier runs missed the mid-run window, so the rig now freezes through a handle opened beforehand:
+     `suspend.py` takes about a second to start, longer than the whole call.
+
+   *Was:* **A restart while this copy's own connections from before the stop still hold their instances**
    (`UE5_StartPipeServer`'s `HasStragglerConnections` branch). It needs a Stop whose 5 s drain times out (a handler
    inside a long command) and then a CE re-tick. Acceptance: init-0.log logs "restarting the server beside them",
    pipe-0.log logs the shared-name WARN, and the UI connects.
