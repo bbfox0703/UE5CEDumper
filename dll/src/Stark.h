@@ -476,6 +476,40 @@ inline bool ClaimRequest(std::atomic<int32_t>& state, int32_t to) {
 }
 
 // ============================================================
+// [SHUTDOWN-SEETHRU-WAIT] A queued invoke's wait, cut by a shutdown on a stalled game thread
+// ============================================================
+// A waiter watched only its request's future, and on a stalled game thread only Stark::Shutdown answers it -- which
+// UE5_Shutdown reaches after joining the workers parked in such waits. A CE untick then waited out the rest of the
+// invoke timeout (measured: 11.3 s of 15) before the pipe server even began to stop. The waiter now asks between slices
+// whether a shutdown makes the rest of its wait pointless. Decisions only, header-inline: no test target compiles
+// Stark.cpp.
+
+// How often a waiter asks. Short against CE's 5 s executeCodeEx and Fern::Stop's 5 s drain.
+constexpr int32_t kInvokeWaitSliceMs = 50;
+// How long the game thread must have been quiet before a shutdown cuts a wait: past the liveness threshold, so a short
+// hitch does not cost UE5_Shutdown's See-through un-hide, and well inside CE's 5 s.
+constexpr int32_t kInvokeShutdownStallMs = 1000;
+static_assert(kInvokeShutdownStallMs > kStallThresholdMs, "a shutdown must not cut a wait over a mere liveness hitch");
+
+enum class InvokeWaitEnd : uint8_t { Ready, TimedOut, CutByShutdown };
+
+// Cut only when a shutdown is under way AND the game thread is measured stalled. A live game thread drains within a
+// frame, and UE5_Shutdown's See-through OFF needs its un-hides to run; Unknown counts as live, as the gate contract
+// says. A stall with no shutdown keeps its full timeout: a caller told -5 may rely on the request running later.
+inline bool CutInvokeWait(bool shutdownRequested, GameThreadLiveness l) {
+    (void)shutdownRequested; (void)l;
+    return false;   // [SHUTDOWN-SEETHRU-WAIT] red: no cut yet
+}
+
+// The waiter's loop. The wait, the clock and the cut check come in as callables so a test drives them with a fake
+// clock. An answer that arrived wins over a cut.
+template <class WaitSlice, class NowMs, class ShouldCut>
+InvokeWaitEnd WaitQueuedInvoke(int32_t timeoutMs, WaitSlice&& waitSlice, NowMs&& nowMs, ShouldCut&& shouldCut) {
+    (void)nowMs; (void)shouldCut;   // [SHUTDOWN-SEETHRU-WAIT] red: one wait for the whole timeout, as before
+    return waitSlice(timeoutMs) ? InvokeWaitEnd::Ready : InvokeWaitEnd::TimedOut;
+}
+
+// ============================================================
 // ProcessEvent DETECTION lifecycle — pure decision rules
 // ([PEHOOKONCE-2026-08-18] / [PEHOOK-2026-08-17])
 // ============================================================

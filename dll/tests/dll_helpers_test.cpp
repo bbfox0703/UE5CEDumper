@@ -714,6 +714,26 @@ static void Test_Schlacht_Owners() {
     }
 }
 
+// [SHUTDOWN-SEETHRU-WAIT] A trace or an un-hide that did not run must not cost the hidden record. A cut LineTrace read
+// as "nothing occludes" and the tick un-hid and dropped every recorded actor; an un-hide that never ran dropped its
+// actor anyway -- either way an actor stayed hidden with nothing left to restore it.
+static void Test_Schlacht_FailedDispatchKeepsTheRecord() {
+    EXPECT("DIFF: every trace ran, no stop: apply the diff", Schlacht::ShouldApplyOccluderDiff(false, false));
+    EXPECT("DIFF ⭐: a trace did not run (cut, timed out, no hook): leave the record alone",
+           !Schlacht::ShouldApplyOccluderDiff(true, false));
+    EXPECT("DIFF ⭐: a stop is under way: leave it to the disabler", !Schlacht::ShouldApplyOccluderDiff(false, true));
+    EXPECT("DIFF: both", !Schlacht::ShouldApplyOccluderDiff(true, true));
+
+    EXPECT("UNHIDE: it ran (0): drop it from the record", !Schlacht::UnhideLeftItHidden(0));
+    EXPECT("UNHIDE: never attempted (not an actor / no setter): drop it, as before",
+           !Schlacht::UnhideLeftItHidden(Schlacht::kHideNotAttempted));
+    EXPECT("UNHIDE ⭐: timed out or cut (-5), still queued -- Stark::Shutdown may answer it unrun: keep it",
+           Schlacht::UnhideLeftItHidden(-5));
+    EXPECT("UNHIDE ⭐: the hook was down (-7): it never ran: keep it", Schlacht::UnhideLeftItHidden(-7));
+    EXPECT("UNHIDE ⭐: a background worker with no hook (-8): keep it", Schlacht::UnhideLeftItHidden(-8));
+    EXPECT("UNHIDE ⭐: it faulted inside the call (-4): not known to have run: keep it", Schlacht::UnhideLeftItHidden(-4));
+}
+
 // [PIPE-PER-PROCESS-2026-11-06] Stage C: a watch is its connection's, and its thread never touches the pipe.
 static void Test_Kanne_WatchKeyAndSlot() {
     using Kanne::WatchKey;
@@ -1287,6 +1307,68 @@ static void Test_Stark_ClaimRequest() {
            !Stark::ClaimRequest(t, Stark::kRequestRunning) && t.load() == Stark::kRequestAbandoned);
     EXPECT("CLAIM: the three states are distinct", Stark::kRequestQueued != Stark::kRequestRunning
            && Stark::kRequestRunning != Stark::kRequestAbandoned && Stark::kRequestQueued != Stark::kRequestAbandoned);
+}
+
+// [SHUTDOWN-SEETHRU-WAIT] A queued invoke's wait ends early when a shutdown meets a stalled game thread. Measured on
+// 3707: a CE untick waited 11.3 s of a 15 s invoke timeout behind a See-through worker parked in a LineTrace, before the
+// pipe server even began to stop.
+static void Test_Stark_CutInvokeWait() {
+    using L = Stark::GameThreadLiveness;
+    EXPECT("CUT ⭐: a shutdown and a stalled game thread: cut", Stark::CutInvokeWait(true, L::Stalled));
+    EXPECT("CUT: a shutdown on a live game thread: no cut (UE5_Shutdown's un-hides still dispatch)",
+           !Stark::CutInvokeWait(true, L::Responsive));
+    EXPECT("CUT: a shutdown, liveness unknown: no cut (Unknown counts as live)", !Stark::CutInvokeWait(true, L::Unknown));
+    EXPECT("CUT: a stall with no shutdown: no cut (a -5 caller may rely on the request running later)",
+           !Stark::CutInvokeWait(false, L::Stalled));
+    EXPECT("CUT: neither", !Stark::CutInvokeWait(false, L::Responsive));
+}
+
+// The waiter's loop, on a fake clock: waitSlice(ms) advances the clock by ms and says whether the answer has arrived.
+static void Test_Stark_WaitQueuedInvoke() {
+    using E = Stark::InvokeWaitEnd;
+    struct Fake {
+        uint64_t t = 0, answeredAt = 0, cutFrom = UINT64_MAX;   // answeredAt 0 = never answered
+        int32_t maxSlice = 0;
+        E run(int32_t timeoutMs) {
+            return Stark::WaitQueuedInvoke(timeoutMs,
+                [&](int32_t ms) { maxSlice = (std::max)(maxSlice, ms); t += static_cast<uint64_t>(ms);
+                                  return answeredAt != 0 && t >= answeredAt; },
+                [&] { return t; },
+                [&] { return t >= cutFrom; });
+        }
+    };
+    {
+        Fake f; f.cutFrom = 3700;
+        const E e = f.run(15000);
+        EXPECT("WAIT ⭐: run 12a' (15 s timeout, the cut possible from 3.7 s): cut short", e == E::CutByShutdown);
+        EXPECT("WAIT ⭐: ...within one slice of the cut becoming possible",
+               f.t <= 3700 + static_cast<uint64_t>(Stark::kInvokeWaitSliceMs));
+    }
+    {
+        Fake f; f.cutFrom = 0;
+        EXPECT("WAIT ⭐: cut possible from the start (every invoke a tick queues after the first): cut",
+               f.run(15000) == E::CutByShutdown);
+        EXPECT("WAIT ⭐: ...after one slice, not the timeout", f.t <= static_cast<uint64_t>(Stark::kInvokeWaitSliceMs));
+    }
+    {
+        Fake f;
+        f.run(600000);   // set_invoke_timeout's cap
+        EXPECT("WAIT ⭐: a 600 s timeout is waited in slices, so a cut is noticed", f.maxSlice <= Stark::kInvokeWaitSliceMs);
+    }
+    {
+        Fake f;
+        const E e = f.run(15000);
+        EXPECT("WAIT: never answered, never cut: times out", e == E::TimedOut);
+        EXPECT("WAIT: ...at the timeout, not later", f.t == 15000);
+    }
+    {
+        Fake f; f.answeredAt = 200;
+        EXPECT("WAIT: answered at 200 ms: ready", f.run(15000) == E::Ready);
+    }
+    {
+        Fake f; f.answeredAt = 3720; f.cutFrom = 3710;   // both first seen at the slice ending at 3750
+        EXPECT("WAIT: answered and cut in the same slice: the answer wins", f.run(15000) == E::Ready);
+    }
 }
 
 // ----- Stark: ProcessEvent detection lifecycle ---------------------------------
@@ -12335,6 +12417,8 @@ int main() {
     RUN(Test_Stark_ShouldDrainQueue);
     RUN(Test_Stark_DrainOnGameThreadOnly);
     RUN(Test_Stark_ClaimRequest);
+    RUN(Test_Stark_CutInvokeWait);
+    RUN(Test_Stark_WaitQueuedInvoke);
     RUN(Test_Stark_NarrowedFlagTests);
     RUN(Test_Stark_PeOffsetSentinels);
     RUN(Test_Stark_ShouldRetryPeDetection);
@@ -12636,6 +12720,7 @@ int main() {
     RUN(Test_Voll_ClassifyFirstInstance);
     RUN(Test_Voll_ClientOwnerKey);
     RUN(Test_Schlacht_Owners);
+    RUN(Test_Schlacht_FailedDispatchKeepsTheRecord);
     RUN(Test_Radar_SessionsAreTheirConnections);
     RUN(Test_Radar_IdleSweepIsPerOwner);
     RUN(Test_Kanne_WatchKeyAndSlot);

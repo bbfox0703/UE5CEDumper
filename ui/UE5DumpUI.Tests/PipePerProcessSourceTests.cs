@@ -328,7 +328,7 @@ public sealed class PipePerProcessSourceTests
     private static string FunctionBody(string code, string signatureStart)
     {
         int def = code.IndexOf(signatureStart, StringComparison.Ordinal);
-        Assert.True(def >= 0, $"Fern.cpp: {signatureStart} not found -- re-point this pin");
+        Assert.True(def >= 0, $"{signatureStart} not found in the source -- re-point this pin");
         int open = code.IndexOf('{', def);
         int depth = 0, close = open;
         for (; close < code.Length; close++)
@@ -947,5 +947,77 @@ public sealed class PipePerProcessSourceTests
 
         string fern = NoComments(DllSrc("Fern.cpp"));   // the key is a string literal, which CodeOnly blanks
         Assert.Contains("Wirbel::RecallExplicit(p, hasRot, &tier, request.value(\"keep_undo\", false))", fern);
+    }
+
+    /// <summary>[SHUTDOWN-SEETHRU-WAIT] A queued invoke's waiter watched only its future, which on a stalled game thread
+    /// only Stark::Shutdown answers -- reached by UE5_Shutdown after joining the workers parked in such waits. Measured on
+    /// 3707: 11.3 s of a 15 s invoke timeout before the pipe server began to stop. The wait now runs in slices and ends
+    /// when a shutdown meets a game thread stalled past kInvokeShutdownStallMs; a cut is a timeout that ended early (-5,
+    /// the request stays queued). Stark.cpp reaches no C++ test target, so its call is pinned here; the decision and the
+    /// loop are unit-tested in dll_helpers_test.</summary>
+    [Fact]
+    public void AQueuedInvokeWaitEndsAtShutdownOnAStalledGame()
+    {
+        var body = FunctionBody(CodeOnly(DllSrc("Stark.cpp")), "int32_t EnqueueInvoke(");
+        Assert.Matches(@"\bWaitQueuedInvoke\s*\(", body);
+        Assert.Matches(@"\bCutInvokeWait\s*\(\s*Tot::ShutdownRequested\s*\(\s*\)\s*,\s*GetGameThreadLiveness\s*\(\s*kInvokeShutdownStallMs\s*\)\s*\)", body);
+        // A cut takes the timeout path: it stays queued (or is abandoned, for a drop-if-abandoned request) and answers -5.
+        Assert.Matches(@"InvokeWaitEnd::Ready\s*\?\s*std::future_status::ready\s*:\s*std::future_status::timeout", body);
+        Assert.DoesNotMatch(@"\.wait_for\s*\(\s*std::chrono::milliseconds\s*\(\s*timeoutMs\s*\)\s*\)", body);
+    }
+
+    /// <summary>[SHUTDOWN-SEETHRU-WAIT] A cut makes a LineTrace or an un-hide that did not run likely, and both used to
+    /// cost See-through's record: a trace that did not run read as "nothing occludes", so the tick un-hid and dropped
+    /// every recorded actor; an un-hide that did not run dropped its actor anyway. The actor then stayed hidden with
+    /// nothing left to restore it. Schlacht.cpp reaches no C++ test target, so the calls are pinned here.</summary>
+    [Fact]
+    public void ATraceOrUnhideThatDidNotRunKeepsSeeThroughsRecord()
+    {
+        var code = CodeOnly(DllSrc("Schlacht.cpp"));
+        var tick = FunctionBody(code, "void Tick(");
+        var gate = Regex.Match(tick, @"\bShouldApplyOccluderDiff\s*\(");
+        Assert.True(gate.Success, "Tick applies its diff without asking whether every trace ran");
+        Assert.True(gate.Index < tick.IndexOf("s_state.hiddenActors = std::move(applied)", StringComparison.Ordinal),
+            "Tick records its diff before asking whether every trace ran");
+
+        // Every un-hide goes through the one helper that keeps an actor whose un-hide did not run.
+        var restore = FunctionBody(code, "RestoreHidden(");
+        Assert.Matches(@"\bUnhideLeftItHidden\s*\(", restore);
+        int rs = code.IndexOf(restore, StringComparison.Ordinal);
+        foreach (Match m in Regex.Matches(code, @"\b(?:InvokeSetHidden|SetHiddenCode)\s*\(\s*\w+\s*,\s*false\s*\)"))
+            Assert.True(m.Index >= rs && m.Index < rs + restore.Length,
+                $"an un-hide outside RestoreHidden drops its actor whatever it returned: ...{code.Substring(Math.Max(0, m.Index - 60), 120)}...");
+        Assert.True(Regex.Matches(code, @"\bRestoreHidden\s*\(").Count >= 5,   // the helper itself plus its four sites
+            "an un-hide site does not use RestoreHidden");
+    }
+
+    /// <summary>[SHUTDOWN-SEETHRU-WAIT] The cut only sees a shutdown flag that is already up, so both teardowns must raise
+    /// it before anything they join or drain. Moving the latch below a join would silently undo the fix. Also UE5_Shutdown
+    /// turns See-through off before Stark::Shutdown, so its un-hides can still dispatch on a live game.</summary>
+    [Fact]
+    public void TheShutdownFlagIsUpBeforeAnyJoin()
+    {
+        var shutdown = FunctionBody(CodeOnly(DllSrc("Frieren.cpp")), "void UE5_Shutdown(");
+        int latch = shutdown.IndexOf("Tot::RequestShutdown()", StringComparison.Ordinal);
+        Assert.True(latch >= 0, "UE5_Shutdown no longer raises the shutdown flag");
+        foreach (var later in new[] { "Mimic::StopThread(", "Schlacht::SetEnabled(", "Stark::Shutdown(", "s_pipeServer.Stop(" })
+        {
+            int at = shutdown.IndexOf(later, StringComparison.Ordinal);
+            Assert.True(at > latch, $"UE5_Shutdown: {later} is not after the shutdown flag goes up");
+        }
+        foreach (Match m in Regex.Matches(shutdown, @"\b\w+::StopWorker\s*\(\s*\)"))
+            Assert.True(m.Index > latch, $"UE5_Shutdown: {m.Value} is not after the shutdown flag goes up");
+        Assert.True(shutdown.IndexOf("Schlacht::SetEnabled(", StringComparison.Ordinal)
+                    < shutdown.IndexOf("Stark::Shutdown(", StringComparison.Ordinal),
+            "UE5_Shutdown: See-through is turned off after Stark::Shutdown, so its un-hides cannot dispatch");
+
+        var stop = FunctionBody(CodeOnly(DllSrc("Fern.cpp")), "void Fern::Stop(");
+        int stopLatch = stop.IndexOf("Tot::RequestShutdown()", StringComparison.Ordinal);
+        Assert.True(stopLatch >= 0, "Fern::Stop no longer raises the shutdown flag");
+        foreach (var later in new[] { "m_connCv.wait_for(", "m_acceptThread.join(", "m_monitorThread.join(" })
+        {
+            int at = stop.IndexOf(later, StringComparison.Ordinal);
+            Assert.True(at > stopLatch, $"Fern::Stop: {later} is not after the shutdown flag goes up");
+        }
     }
 }
