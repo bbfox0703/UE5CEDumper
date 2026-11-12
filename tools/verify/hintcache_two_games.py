@@ -76,7 +76,8 @@ def main() -> int:
             continue
         got = [games.get(pe, {}).get("invokeTimeoutMs") for pe in pes]
         persisted = [bool(r and r.get("persisted")) for r in replies]
-        ok = got == want and all(persisted)
+        # A loss is read from the file alone under --expect-loss: a DLL from before Stage C has no `persisted` key.
+        ok = got == want and (a.expect_loss or all(persisted))
         if not ok:
             lost.append(i)
             print(f"  round {i}: want {want}, file {got}, persisted {persisted}", flush=True)
