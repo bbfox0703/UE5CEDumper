@@ -478,6 +478,10 @@ DumperTest Shipping, pipe and mailbox only. Not reached:
 13. **Another CPU shape.** Only this 16C32T PC was measured (16 threads per walk before, 14 now); hybrid P/E cores,
     E-cores disabled and a CPU without SMT are unit-tested (dll_core_test CPU). Acceptance: the init log's thread pick
     on such a PC matches `Aura::ThreadsForCpu` for its topology.
+    **Not reachable on this PC (checked 2026-11-12).** The pick reads the machine's topology:
+    `GetLogicalProcessorInformationEx(RelationProcessorCore)` and `std::thread::hardware_concurrency()`. A process
+    affinity mask changes neither, so starting the game on fewer cores does not stage another shape. Only a different
+    PC, or SMT / core count changed in the firmware or the boot configuration, would.
 14. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707; `tools/verify/mcp_soak.py`).
     - **One hour:** one `UE5DumpUI.exe --mcp` held one pipe connection for an hour. Every 30 s it ran read_status and
       read_pipe_clients, and every 10th interval also read_find_instances of Actor and a value scan (begin, end).
