@@ -307,7 +307,7 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
    *Was:* **A second copy's own log lines.** A second copy of the DLL in one process could not write its logs (the
    first copy holds the files). Its deferral was proven from the first copy's pipe log instead: 0 new connections in
    the 15 s after an instance freed, against 22 in 10 s from the pre-fix copy. Its "deferring" line was never seen.
-4. ✅ **Reached 2026-11-12, both halves; one finding open** (the PathShape copy of DumperTest51 Shipping, UE 5.1, `version.dll`
+4. ✅ **CLOSED 2026-11-12, both halves; one finding open (`[UI-ELEVATED-ACCESS-DENIED]`)** (the PathShape copy of DumperTest51 Shipping, UE 5.1, `version.dll`
    from dist 3707 deployed with `path_shape_live.py deploy`, and undeployed afterwards: `proxy_refresh.py report`
    reads 0 deployed).
    - The proxy served only `\\.\pipe\UE5DumpBfx_9668` (`load_mode proxy:version.dll`, cap 6), unscanned until asked.
@@ -357,6 +357,9 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
        shutdown latch), so an untick still has something to stop.
      - The order is a race: the shutdown ends by writing IDLE, so the message shows only when the scan's FAILED comes
        last (here 62 ms after). The rig reports a run that went the other way.
+     - **Found, open: the message's headline is wrong for this case.** Its causes sentence is right, but the headline
+       (and the log line before it) says the DLL "initialised, but the Pipe Server failed to start". Here init aborted
+       and the server started. todo.md `[CT-INITFAILED-HEADLINE]`. The rig's pass rests on the causes sentence.
 
    *Was:* **Cheat Engine itself.** The mailbox was driven by `mailbox_poke.py`; the changed CE texts (the pipe name,
    the INIT_FAILED reasons) were not displayed in CE.
@@ -368,7 +371,8 @@ Stage B, build 3696 (6 clients, the scan-worker budget) -- dev-log 3696. Not rea
    - **Why a breakpoint.** No shipped path makes a newer copy join a live name. Every start probes first and then
      defers or skips, and a watcher claims only a name that is gone. A race between remote threads started from
      python.exe would stage it, and the AV flags python.exe doing that (working-lessons.md §3.8 item 6). The rig holds
-     the newer copy still instead, and every remote thread is Cheat Engine's `executeCodeEx`.
+     the newer copy still instead, and no remote thread comes from python.exe: the older copy is injected by
+     `UE5DumpUI.exe --inject-elevated` (inject.py), and every export call is Cheat Engine's `executeCodeEx`.
    - **The older copy settles idle.** It was injected beside the serving 3707 copy. It cannot write its logs while the
      3707 copy holds them (item 3), so its mailbox was read instead: initState READY, the "another copy already serves"
      path. 3707's `UE5_StopPipeServer` then took the name down, and the name was still gone 3 s later, so no watcher
@@ -393,9 +397,9 @@ Stage B, build 3696 (6 clients, the scan-worker budget) -- dev-log 3696. Not rea
 7. ✅ **CLOSED 2026-11-12** (two injected DumperTest Shipping games, UE 5.4 and UE 5.8, DLL and AOT UI 3707).
    - The UI's game list was opened with both games in it. One of them (pid 3292) was then killed, and picked from the
      still-open list.
-   - The UI's view log reads `Connecting to pipe: UE5DumpBfx_3292...` at 09:20:43.107. `Connection failed` follows
-     at 09:20:48.112 (5.0 s), with "PID 3292's pipe is gone: the game exited, or its UE5Dumper DLL stopped serving,
-     after the list of games was read. Connect again to see what is running now."
+   - The UI's pipe log (`Logs\UE5DumpUI\pipe-0.log`) reads `Connecting to pipe: UE5DumpBfx_3292...` at 09:20:43.107.
+     Its init log has `Connection failed` at 09:20:48.112 (5.0 s), with "PID 3292's pipe is gone: the game exited, or
+     its UE5Dumper DLL stopped serving, after the list of games was read. Connect again to see what is running now."
    - The other game, picked next as the control, connected.
 
    *Was:* **The UI's "pipe is gone" message.** Unit-tested (the game exits while the list is open). Acceptance: open
@@ -450,8 +454,13 @@ DumperTest Shipping, pipe and mailbox only. Not reached:
     - **Negative control:** the same run with the 3695 DLL (before the cross-process lock) in both games, `--expect-loss`.
       **50 of 50 rounds lost an update**: in rounds 42 to 49, for one, game A's record stayed at 7041 while B's moved
       on. So the rig can see a lost update, and 3707's lock is what prevents it.
-    - The "stale proxy beside an injection" shape was not driven separately. It is the same two-writer race, and the
-      lock (`Flamme.cpp` `CacheLock`) is a named mutex keyed on the cache file's name, whatever loaded the DLL.
+    - The "stale proxy beside an injection" shape was not driven separately.
+      - When both copies are build 3698 or later, it is the same two-writer race. The lock (`Flamme.cpp` `CacheLock`)
+        is a named mutex keyed on the cache file's name, whatever loaded the DLL.
+      - A stale proxy from before Stage C takes no lock; the 3695 control above shows what such a copy does. Beside a
+        3707 injection its writes are not serialised, so either copy's change can still be lost. Refreshing the proxy
+        is the remedy.
+      - That mixed shape was not driven either.
 
     *Was:* **The hint-cache lock across processes.** Two writers in one process are tested (dll_core_test
     HINTCACHELOCK); two games, or a stale proxy beside an injection, writing at once were not. Acceptance: two
@@ -486,17 +495,22 @@ DumperTest Shipping, pipe and mailbox only. Not reached:
     - **One hour:** one `UE5DumpUI.exe --mcp` held one pipe connection for an hour. Every 30 s it ran read_status and
       read_pipe_clients, and every 10th interval also read_find_instances of Actor and a value scan (begin, end).
       120 intervals: 0 failed calls, one seq (2) the whole hour, read_status p50 0 / p95 15 ms. The server exited 0.
-    - **Memory:** the server's private bytes rose in a straight line, 9.7 to 43.8 MB, about 2.8 MB per 5 minutes; its
-      handles 190 to 210, flat after the first 5 minutes. The game: 3,154 to 3,279 MB, handles 2,089 to 1,995.
+    - **Memory:** the server's private bytes rose in a straight line, 9.7 to 43.8 MB, about 2.8 MB per 5 minutes. Its
+      handles went 190 to 210, flat at 210 from the 10-minute report on. The game: 3,154 to 3,279 MB, handles 2,089 to
+      1,995.
     - **The straight line is garbage that was never collected, not a leak.** Two runs at 1 s showed it:
       - Light calls only, 5 min: +14 MB per 120 calls (about 117 KB per call), then **60.4 MB and flat** over the
         last 120 calls.
       - The full mix, 10 min: 60.1 MB at interval 180, then **62.5 MB at interval 600**, +2.4 MB over about 840
         calls and 42 heavy pairs.
-      This PC's CPU has 128 MB of L3, and the workstation GC's first budget scales with it, so the first collection
-      comes after about 50 MB. The hour at 30 s allocated only 34 MB.
-    - The rig's size bar ("grew less than 50 MB") was wrong for that reason. It now judges whether growth levels off;
-      still growing inside `--gc-window-mb` (60) gives no verdict.
+      The workstation GC sizes its first gen0 budget from the largest single cache the OS reports. This PC's 128 MB of
+      L3 is split per CCD, 96 MB and 32 MB, so the first collection comes after about 48 MiB (about 50 MB). The hour at
+      30 s allocated only 34 MB.
+    - The rig's size bar ("grew less than 50 MB") was wrong for that reason. Its verdict is now relative (see
+      `memory_verdict`), and replayed with `--replay` it reads:
+      - the full-mix run: **levelled off**, +4.6 KB per interval over the last 240, against +296.7 KB in the first 60;
+      - the hour and the light run: no verdict. They were still growing inside the 60 MB window, and the light run's
+        plateau is shorter than the tail the rule reads.
 
     *Was:* **A long-lived client.** The MCP server (Stage D1, build 3701) is one. Its rig run held the connection for
     about a minute, through a cancel and a reconnect; a session of hours was not run.
