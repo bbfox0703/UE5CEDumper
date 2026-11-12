@@ -11,9 +11,10 @@ Open work only. **Read this when deciding what to do next.**
 > 3704, D2-2 (the MCP write tools for the toggles, force field and teleport) in build 3705, D2-3 (`write_memory`,
 > `write_invoke`, `write_mem` data only, the invoke queue's owners) in build 3706: Stage D2 is complete
 > (`[DBGCAM-RELEASE-STALLED]`, found live 2026-11-11, was fixed in build 3707). The 2026-11-12 verification pass closed
-> verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-11, 14, 16-17, 19-20 and 23-27 (item 4 with
-> `[UI-ELEVATED-ACCESS-DENIED]` open); still open there: 12 (with `[SHUTDOWN-SEETHRU-WAIT]`, an open defect under
-> Stage D) and 13 (needs a PC with another CPU shape); nothing further in Stage D is queued** --
+> verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-11, 14, 16-17, 19-20, 23-25 and 27 (item 4 with
+> `[UI-ELEVATED-ACCESS-DENIED]` and item 5 with `[CT-INITFAILED-HEADLINE]` open); still open there: 12 (with
+> `[SHUTDOWN-SEETHRU-WAIT]`, an open defect under Stage D) and 13 (needs a PC with another CPU shape); nothing further
+> in Stage D is queued** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
@@ -683,6 +684,20 @@ write commands, the UI's use of the same state, and the client-side safety knobs
   an elevated UI connects and scans. The source predicts the same raw text after Proxy Deploy's Inject into a
   running elevated game, then its auto-connect (not run). Effort **S**, risk **low**. Not decided: the maintainer's
   call.
+- 🆕 **Open, found live 2026-11-12 `[CT-INITFAILED-HEADLINE]`: the INIT_FAILED message's headline is wrong for an
+  aborted scan.** The DLL publishes INIT_FAILED for `!(ok && inited)` (Frieren.cpp `AutoStartWork`): the pipe server
+  failed, OR init aborted because a shutdown landed mid-scan. The CT's message and its log line say only the first:
+  "The DLL loaded and initialised, but the Pipe Server failed to start." (`scripts/UE5CEDumper.CT`, the INIT_FAILED
+  branch). Its causes sentence already names the abort ("Most likely the scan was stopped part-way ..."), so the
+  message contradicts itself.
+  - Measured (verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item 5, `initfailed_ct.py`): the provoked case
+    logged `pipe server started, init ABORTED -> initState=3`, and the CT showed that headline.
+  - The UI's generated inject and autorun records say the same in other words: "The DLL initialised but the Pipe
+    Server FAILED to start." (`ui/UE5DumpUI/Services/CeReadinessLua.cs` `PipeFailedMessage`, whose own doc comment
+    names both causes). Check its tests before changing it.
+  - Fix: one headline for both causes, e.g. "The DLL loaded, but its start-up did not finish: the scan was cut short,
+    or the Pipe Server did not start." Keep the causes sentence, and make the same change in the log line, the CT and
+    the generator, then publish. Effort **S**, risk **low**. Not decided: the maintainer's call.
 - 🆕 **Open, found live 2026-11-12 `[SHUTDOWN-SEETHRU-WAIT]`: a CE untick can block past the drain budget.**
   `UE5_Shutdown` turns See-through off itself before `Stark::Shutdown` and `Fern::Stop`. If the UI's teardown is
   releasing See-through at that moment, it holds Schlacht's worker lock while joining the worker, and the worker is
