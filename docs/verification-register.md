@@ -506,7 +506,12 @@ stayed. Not reached:
     background client's if_free OFF and ON were both refused (code -20, the holder `ce`), and god mode stayed on. The
     untick turned it off and left the hold free. Acceptance: a CE record (or `mailbox_poke.py`) turns god mode on;
     `get_holds` says `kind: ce`, and a background client's if_free OFF is refused.
-20. **The release of every hold kind.** ◐ **Mostly reached with build 3704** (`holds_live.py` 22/22 on DumperTest
+20. ✅ **CLOSED 2026-11-12: every hold kind released live.** The last two came with build 3707 (`mcp_client.py
+    holdsmore`, DumperTest Shipping): when the MCP server held them and exited, the DLL logged "its hold god_mode is
+    released (code 0)" (`GodMode: set OFF`) and "its hold gravity_direction is released (code 0)", and the gravity
+    bytes went back to their witness. The debug camera was released in item 24 (Development); the force-field job
+    with 3705.
+    *Was:* **The release of every hold kind.** ◐ **Mostly reached with build 3704** (`holds_live.py` 22/22 on DumperTest
     Shipping, the published DLL): a background client's world time, walk speed, jump, fly and Keep Foreground each read
     inactive and nobody's after it left, one DLL log line each ("... its hold fly is released (code 0)"). Not
     released live: god mode (the rig gives it to the foreground client), gravity direction (changing it would send
@@ -566,10 +571,30 @@ force-field job and See-through. Not reached:
     `write_god_mode` OFF from the AI is refused naming the UE5DumpUI window and the card stays on; the same with a CE
     record (refused naming "a Cheat Engine record"); and the UI's experimental opt-in ticked off in a running UI makes
     the next `write_fly` refuse.
-24. **The other write tools.** Not driven live: `write_gravity_direction` (it would send the fixture's pawn off the
-    map), `write_mouse_cursor`, `write_foreground_lock`, `write_force_field_reset`, a numeric `write_force_field` value
-    read back from the instances, and a DLL older than 3705 refused. Each is unit-tested (`McpToolsTests`). Acceptance:
-    on a game where each can be held, the tool changes it, `read_holds` names the server, and its exit releases it.
+24. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT exe 3707, `mcp_client.py holdsmore` 78/78; the old
+    DLL with `mcp_client.py olddll` 34/34).
+    - **Gravity direction.** The AI sent exactly (0, 0, -1), equal to the field, so the pawn had nothing to fall along.
+      The stand-in first wrote the same vector as -0.0 bytes, so the restore is visible. The AI's set wrote +0.0 and
+      was held, named the server's in `read_holds` and `get_holds`, and the pawn drifted ≤ 10 uu. The AI's reset
+      wrote the -0.0 witness back.
+    - **Keep Foreground.** ON (`Foreground lock ENABLED`) and OFF, each named the server's.
+    - **The numeric force field.** `write_force_field` 777 on DumperTestHolder.HolderValue held exactly the Holders and
+      Derived holders, not the Decoys; each read 777, and each Decoy stayed -1. `write_force_field_reset` removed the
+      job and put every instance back to its own baseline. The AI's reset of a job the stand-in held was refused
+      naming its pid.
+    - **The cursor.** `write_mouse_cursor` read back each time; it records no hold, and the exit leaves it alone.
+    - **The exit.** The AI then held gravity direction, god mode, Keep Foreground and a 555 force-field job. On exit
+      the DLL logged each `released (code 0)`, the gravity bytes went back to the witness, and every instance went
+      back to its baseline.
+    - **A DLL older than 3705** (the 3695 copy injected): all 14 write tools were refused with the build text ("The
+      game's DLL is build 3695, older than 3705 ..."; 3706 for write_memory, write_invoke and write_debug_camera),
+      and none reached the DLL's log.
+
+    *Was:* **The other write tools.** Not driven live: `write_gravity_direction` (it would send the fixture's pawn off
+    the map), `write_mouse_cursor`, `write_foreground_lock`, `write_force_field_reset`, a numeric `write_force_field`
+    value read back from the instances, and a DLL older than 3705 refused. Each is unit-tested (`McpToolsTests`).
+    Acceptance: on a game where each can be held, the tool changes it, `read_holds` names the server, and its exit
+    releases it.
     ✅ **`write_debug_camera` CLOSED 2026-11-11, on DumperTest DEVELOPMENT only** (UE 5.4; Shipping has no live
     CheatManager), DLL and AOT exe 3706, `mcp_client.py dbgcamhold` 32/32. The UI's side was `pipe_client.py` sending
     the window's request byte for byte. (D) The AI's ON turned the camera on. `read_holds` named it the server's
@@ -659,8 +684,21 @@ log: "1 queued invoke(s) of it dropped, never run"). Not reached:
     when that dispatch returns. The pipe and the CE mailbox both change the camera under the hold's lock, so a second
     request waits for the first to finish. Only a direct call to the `UE5_SetDebugCamera` export reaches that path, and
     no shipped script makes one. It stays source-pinned (`APendingDebugCameraOn_IsItsSendersAlone`).
-27. **Parameters a fixture function does not exercise.** Live: two ints and a return. Unit-tested only: structs (by
-    field and by the engine's known layout), strings and out strings, object parameters checked for liveness,
+27. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT exe 3707, `mcp_client.py invokeparams` 26/26).
+    - **A struct parameter.** `write_invoke` of `K2_SetActorLocation` on the pawn with `NewLocation` {X, Y, Z} (a
+      Vector struct, 24 bytes) moved it about 100 uu ahead and back, returning true, with `SweepHitResult` among the
+      outs. On a DumperTestHolder it returned false.
+    - **An object parameter.** `EqualEqual_ObjectObject` gave true for (pawn, pawn) and false for (pawn, 0). Given a
+      field's address (`read_find_by_address` answers "contains"), it was refused: "'A' must be a live object's
+      address (or 0); 0x... is not one." Nothing reached the DLL.
+    - **The deny list by name.** `SendToConsole` on the live PlayerController was refused: "Not invoked: SendToConsole
+      runs a console command, which can run anything". The DLL logged the background refusal and no invoke.
+    - **Recorded apart, 3/3:** a struct field inside `Vnd584_EchoSoftSpec` given a non-object address was refused,
+      naming the struct field.
+    - Interface functions and the FText / container refusals remain unit-tested only.
+
+    *Was:* **Parameters a fixture function does not exercise.** Live: two ints and a return. Unit-tested only: structs
+    (by field and by the engine's known layout), strings and out strings, object parameters checked for liveness,
     interface functions, the FText and container refusals, the deny list beyond the debug camera. Acceptance: on a
     game, `write_invoke` of `K2_SetActorLocation` with `NewLocation` {X, Y, Z} moves the actor; an object parameter
     given a field's address is refused; `SendToConsole` is refused by name.
