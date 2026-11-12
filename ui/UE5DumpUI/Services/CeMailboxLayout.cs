@@ -53,7 +53,8 @@ internal static class CeMailboxLayout
     public const int InitIdle    = 0;   // DLL mapped; auto-start has not begun
     public const int InitRunning = 1;   // AOB scan / pipe-server start in progress
     public const int InitReady   = 2;   // init finished AND the pipe server is up
-    public const int InitFailed  = 3;   // init finished but the pipe server failed
+    public const int InitFailed  = 3;   // start-up did not complete: init aborted (the server may
+                                        // still be up), or the pipe server failed to start
     public const int InitSkipped = 4;   // deliberately skipped — CE plugin host, or
                                         // another instance already owns the pipe
 

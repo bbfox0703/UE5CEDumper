@@ -22,9 +22,9 @@ The message appears only if FAILED is the last write (or the poll catches it in 
 which happened ("UE5_Init ABORTED ... initState=3"); a run that missed says so and can be repeated.
 
 PRECONDITIONS: game P with no UE5Dumper loaded; ONE Cheat Engine with the AOBMaker plugin (ce_lua_eval.py's bridge).
-PASS (exit 0): the capture holds the CT's INIT_FAILED message (its causes sentence: the headline is wrong for this case,
-todo.md [CT-INITFAILED-HEADLINE]), and game P's own init log has the aborted init with initState=3. The game is left
-for the caller to kill (it holds a half-started DLL).
+PASS (exit 0): the capture holds the CT's INIT_FAILED message -- a headline naming both outcomes (build 3708,
+[CT-INITFAILED-HEADLINE]) and its causes sentence -- and game P's own init log has the aborted init with initState=3.
+The game is left for the caller to kill (it holds a half-started DLL).
 """
 from __future__ import annotations
 
@@ -47,9 +47,9 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 OUT = ROOT / "out" / "initfailed"
 RECORD = "Inject DLL + Start Pipe Server"
 INIT_RECORD = "init <== enable after process attached"
-# The message's causes sentence, which is what item 5 is about. Its headline ("The DLL loaded and initialised, but the
-# Pipe Server failed to start.") is wrong for the case this rig provokes -- init aborted, the server started --
-# todo.md [CT-INITFAILED-HEADLINE], so it must not be what a pass rests on.
+# Both halves of the message. The headline must name the outcome this rig provokes (init aborted, the server started):
+# before build 3708 it said only "initialised, but the Pipe Server failed to start" ([CT-INITFAILED-HEADLINE]).
+HEADLINE_TEXT = "its start-up did not finish: the scan was cut short, or the Pipe Server did not start"
 CAUSES_TEXT = "Most likely the scan was stopped part-way"
 
 
@@ -178,7 +178,7 @@ return 'tick scheduled'
     print(f"\n{path} since the run's start:")
     for ln in sorted(lines):
         print("  " + ln[:240])
-    shown = CAUSES_TEXT in capture
+    shown = CAUSES_TEXT in capture and HEADLINE_TEXT in capture
     failed = any("init ABORTED -> initState=3" in ln for ln in lines)
     print()
     print(f"  {'PASS' if failed else 'FAIL'}  the DLL published INIT_FAILED itself (init ABORTED -> initState=3)")

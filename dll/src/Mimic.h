@@ -332,7 +332,8 @@ enum InitState : int32_t {
     INIT_IDLE    = 0, // DLL mapped; the auto-start thread has not begun work
     INIT_RUNNING = 1, // AOB scan / pipe-server start in progress
     INIT_READY   = 2, // init finished AND the pipe server is up
-    INIT_FAILED  = 3, // init finished but the pipe server failed to start
+    INIT_FAILED  = 3, // start-up did not complete: init aborted (a shutdown landed mid-scan; the
+                      // pipe server may still have started), or the pipe server failed to start
     INIT_SKIPPED = 4, // auto-start deliberately skipped — CE plugin host, or
                       // another UE5CEDumper instance already owns the pipe
 };

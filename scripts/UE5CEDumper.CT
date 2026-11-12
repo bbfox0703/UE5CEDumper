@@ -906,9 +906,10 @@ function ue5_inject()
             -- CE plugin host). A pipe server IS up, so this is not an error.
             ue5_log("Auto-start skipped — another UE5CEDumper instance owns the pipe. Proceeding.")
         elseif state == INIT_FAILED then
-            -- Real failure: init ran but the pipe server did not come up.
-            ue5_logError("DLL init finished but the Pipe Server FAILED to start.")
-            showMessage("UE5 Dumper Error:\n\nThe DLL loaded and initialised, but the Pipe Server failed to start.\n\nMost likely the scan was stopped part-way (the record was unticked while it ran), or the record was ticked again before the previous stop had finished.\nCheck the DLL log:\n  %LOCALAPPDATA%\\UE5CEDumper\\Logs")
+            -- Real failure, of one of two kinds this poll cannot tell apart: a shutdown cut the scan short (the
+            -- pipe server may still have started), or the pipe server did not start. The message names both.
+            ue5_logError("DLL start-up did not finish: the scan was cut short, or the Pipe Server did not start.")
+            showMessage("UE5 Dumper Error:\n\nThe DLL loaded, but its start-up did not finish: the scan was cut short, or the Pipe Server did not start.\n\nMost likely the scan was stopped part-way (the record was unticked while it ran), or the record was ticked again before the previous stop had finished.\nCheck the DLL log:\n  %LOCALAPPDATA%\\UE5CEDumper\\Logs")
             return false
         elseif not sawProgress then
             -- The symbol resolved but the field never once left IDLE. That is NOT a

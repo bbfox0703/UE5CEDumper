@@ -95,11 +95,12 @@ public static class CeReadinessLua
         "    'This build may predate the readiness flag. Check the DLL log:\\n' ..\n" +
         "    '  %LOCALAPPDATA%\\\\UE5CEDumper\\\\Logs'";
 
-    /// <summary>INIT_FAILED: the scan was stopped part-way (UE5_Init aborted), or the pipe server refused to start
-    /// while the previous stop was still finishing. A second copy of UE5Dumper never causes it: that publishes READY
-    /// or SKIPPED.</summary>
-    public static string PipeFailedMessage =>
-        "'[UE5CEDumper] The DLL initialised but the Pipe Server FAILED to start.\\n\\n' ..\n" +
+    /// <summary>INIT_FAILED: the scan was stopped part-way (UE5_Init aborted; the pipe server may still have started),
+    /// or the pipe server refused to start while the previous stop was still finishing. The script cannot tell which,
+    /// so the headline names both ([CT-INITFAILED-HEADLINE]: it used to claim init finished, the opposite of the
+    /// aborted case). A second copy of UE5Dumper never causes it: that publishes READY or SKIPPED.</summary>
+    public static string InitFailedMessage =>
+        "'[UE5CEDumper] The DLL loaded, but its start-up did not finish: the scan was cut short, or the Pipe Server did not start.\\n\\n' ..\n" +
         "    'Most likely the scan was stopped part-way (the record was unticked while it ran), or the record was ticked again before the previous stop had finished.\\n' ..\n" +
         "    'Check the DLL log:\\n  %LOCALAPPDATA%\\\\UE5CEDumper\\\\Logs'";
 

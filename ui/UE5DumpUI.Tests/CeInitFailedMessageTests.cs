@@ -47,7 +47,7 @@ public class CeInitFailedMessageTests
 
     [Fact]
     public void The_shared_message_names_both_outcomes()
-        => AssertNamesBothOutcomes(CeReadinessLua.PipeFailedMessage, "CeReadinessLua");
+        => AssertNamesBothOutcomes(CeReadinessLua.InitFailedMessage, "CeReadinessLua");
 
     [Fact]
     public void The_generated_inject_record_names_both_outcomes()
