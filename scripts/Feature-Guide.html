@@ -711,8 +711,8 @@ Manage how the DLL gets into the game.
                             scan chosen drives for UE games installed anywhere
                             (Epic / GOG / manual).
   Inject into running game  CreateRemoteThread + LoadLibrary into an already-
-                            running game; auto-connects.  Auto-elevates on
-                            Access-Denied (one UAC prompt).
+                            running game; auto-connects.  A game running as
+                            Administrator needs the UI started as administrator.
   Undeploy                  remove our proxy from a game folder.  Type-agnostic --
                             sweeps every proxy flavour we deployed, never touches
                             another program's DLL.
@@ -854,8 +854,8 @@ Issue:  A value I edit snaps straight back.
 
 Issue:  Inject fails -- "OpenProcess failed (Win32 5)".
   Root Cause:  the game runs as Administrator (higher integrity).
-  Fix:  accept the UAC prompt to inject elevated, or start the UI as
-  Administrator up front.
+  Fix:  start the UI as Administrator.  An elevated inject from a UI that is
+  not elevated cannot be followed by a connect: Windows refuses it the pipe.
 
 Issue:  POV / teleport / invoke time out when the game is not focused.
   Root Cause:  many UE games idle the game thread when the window loses foreground
