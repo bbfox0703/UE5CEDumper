@@ -2,6 +2,11 @@ r"""Serve the LEGACY \\.\pipe\UE5DumpBfx for a while, as a game running an old U
 
     py tools/verify/legacy_pipe_stub.py [--seconds 120]
     py tools/verify/legacy_pipe_stub.py --pid P --instances 6 --answer [--seconds 120]
+    py tools/verify/legacy_pipe_stub.py --pid 0 --elevated-dacl [--seconds 120]
+
+--elevated-dacl serves the name under the DACL a game running as administrator gives its pipe, so a UI that is not
+elevated meets the same refusal with no game and no UAC prompt ([UI-ELEVATED-ACCESS-DENIED]); --pid 0 names the stub's
+own process.
 
 --pid P creates a GAME's per-process name, \\.\pipe\UE5DumpBfx_P, before the game's DLL can (register
 [PIPE-PER-PROCESS-2026-11-06] item 1: another process holding a game's name); --answer then replies to init and to
@@ -70,14 +75,34 @@ def main() -> int:
     ap.add_argument("--instances", type=int, default=1, help="instances served at once, one accept thread each")
     ap.add_argument("--answer", action="store_true",
                     help="answer init and get_pointers (its own pid) instead of disconnecting each client")
+    ap.add_argument("--elevated-dacl", action="store_true",
+                    help="serve under the DACL an ELEVATED creator's pipe gets (SY and BA full, everyone read): a "
+                         "client that is not elevated is refused, as by a game running as administrator")
     a = ap.parse_args()
-    name = f"{LEGACY}_{a.pid}" if a.pid else LEGACY
+    pid = os.getpid() if a.pid == 0 else a.pid   # --pid 0: this stub's own pid, so the name is a live process's
+    name = f"{LEGACY}_{pid}" if a.pid is not None else LEGACY
+
+    # [UI-ELEVATED-ACCESS-DENIED] The DLL keeps the default security, which for an elevated creator makes the owner
+    # Administrators and leaves this user only Everyone's read: an InOut open is refused with ERROR_ACCESS_DENIED.
+    sa = None
+    if a.elevated_dacl:
+        class SA(ctypes.Structure):
+            _fields_ = [("nLength", wintypes.DWORD), ("lpSecurityDescriptor", ctypes.c_void_p),
+                        ("bInheritHandle", wintypes.BOOL)]
+        adv = ctypes.WinDLL("advapi32", use_last_error=True)
+        psd = ctypes.c_void_p()
+        if not adv.ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                "D:(A;;FA;;;SY)(A;;FA;;;BA)(A;;FR;;;WD)(A;;FR;;;AN)", 1, ctypes.byref(psd), None):
+            print(f"legacy_pipe_stub: could not build the DACL: err {ctypes.get_last_error()}", file=sys.stderr)
+            return 2
+        sa = SA(ctypes.sizeof(SA), psd, False)
 
     # FIRST_PIPE_INSTANCE on the first create: fail rather than join a real DLL's instances under the same name.
     handles = []
     for i in range(max(1, a.instances)):
         flags = PIPE_ACCESS_DUPLEX | (FILE_FLAG_FIRST_PIPE_INSTANCE if i == 0 else 0)
-        h = k32.CreateNamedPipeW(name, flags, PIPE_REJECT_REMOTE_CLIENTS, max(1, a.instances), 4096, 4096, 0, None)
+        h = k32.CreateNamedPipeW(name, flags, PIPE_REJECT_REMOTE_CLIENTS, max(1, a.instances), 4096, 4096, 0,
+                                 ctypes.byref(sa) if sa is not None else None)
         if h == INVALID:
             err = ctypes.get_last_error()
             why = "the name already exists (a real DLL?)" if err == ERROR_ACCESS_DENIED else f"err {err}"
