@@ -1453,4 +1453,43 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.Equal(ProxyType.Dxgi, svc.Applied[^1]);
     }
 
+    // ── [UI-ELEVATED-ACCESS-DENIED]: the post-inject connect meets a refusal ──────────────────────────
+    //
+    // Every attempt in the post-inject window is suppressed and expected to fail while the DLL scans. A refusal is not
+    // that: Windows will refuse every attempt (the game runs elevated and this UI does not), so the loop spun the whole
+    // 45 s and then said the pipe "never opened" and to check the DLL's init log -- false, and the init log says nothing.
+
+    [Fact]
+    public async Task A_refused_post_inject_connect_stops_at_once_and_says_why()
+    {
+        var (vm, _) = ReadyWith();
+        int attempts = 0;
+        vm.RequestConnectAsync = _ => { attempts++; return Task.CompletedTask; };
+        vm.IsConnectedProbe = () => false;
+        const string why = "PID 55 runs as administrator (elevated)";
+        vm.ConnectRefusedProbe = () => why;
+
+        await Refused(vm.ConnectWithRetryAsync("Game", 55));   // fails fast instead of spinning the 45 s window
+
+        Assert.Equal(1, attempts);
+        Assert.Contains(why, vm.LastOperationResult);
+        Assert.DoesNotContain("never opened", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task A_post_inject_connect_that_is_only_waiting_keeps_retrying()
+    {
+        // Control: no refusal, the DLL still scanning -- the loop goes on (here it connects on the third attempt).
+        var (vm, _) = ReadyWith();
+        int attempts = 0;
+        vm.RequestConnectAsync = _ => { attempts++; return Task.CompletedTask; };
+        vm.IsConnectedProbe = () => attempts >= 3;
+        vm.ConnectRefusedProbe = () => null;
+
+        await vm.ConnectWithRetryAsync("Game", 55).WaitAsync(TimeSpan.FromSeconds(20));
+
+        Assert.Equal(3, attempts);
+        Assert.Contains("connected after", vm.LastOperationResult);
+    }
+
 }

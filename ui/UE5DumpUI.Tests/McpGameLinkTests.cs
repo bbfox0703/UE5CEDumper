@@ -23,6 +23,9 @@ public sealed class McpGameLinkTests
         public IReadOnlyList<string>? ListNamedPipes() => Pipes;
         public (string ImageName, string? WindowTitle) DescribeProcess(int pid)
             => Processes.TryGetValue(pid, out var p) ? p : ("", null);
+        /// <summary>Whether this server runs elevated.</summary>
+        public bool ElevatedSelf { get; set; }
+        public bool IsElevated() => ElevatedSelf;
         public bool TryAcquireSingleInstance() => true;
         public void ReleaseSingleInstance() { }
         public string GetAppDataPath() => Path.GetTempPath();
@@ -330,6 +333,21 @@ public sealed class McpGameLinkTests
         var e = await Assert.ThrowsAsync<McpToolError>(() => rig.Send());
         Assert.Contains("administrator", e.Message);
         Assert.Contains("elevated", e.Message);
+        Assert.False(rig.Pipe.IsConnected);
+    }
+
+    [Fact]
+    public async Task AnElevatedServerRefused_DoesNotSayTheServerIsNotElevated()
+    {
+        // [UI-ELEVATED-ACCESS-DENIED] The DLL's pipe always lets an administrator in, so a refusal to an elevated server
+        // means something else set that pipe's permissions. The text used to say "this server does not" run elevated
+        // without asking.
+        var rig = new Rig(100);
+        rig.Platform.ElevatedSelf = true;
+        rig.Pipe.Elevated.Add("UE5DumpBfx_100");
+        var e = await Assert.ThrowsAsync<McpToolError>(() => rig.Send());
+        Assert.DoesNotContain("this server does not", e.Message);
+        Assert.Contains("another process", e.Message);
         Assert.False(rig.Pipe.IsConnected);
     }
 

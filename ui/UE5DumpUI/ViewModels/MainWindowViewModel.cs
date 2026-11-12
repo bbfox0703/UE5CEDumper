@@ -2153,6 +2153,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// <summary>Connect to a game's pipe. <paramref name="pid"/> names the game (one the UI just injected, or one
     /// already running the DLL); null looks under \\.\pipe\ and connects at once to a lone game, lets the user choose
     /// among several, and refuses when only an old DLL's pipe is there.</summary>
+    /// <summary>[UI-ELEVATED-ACCESS-DENIED] The text of the last connect attempt's refusal by Windows, or null when it was
+    /// not refused. Proxy Deploy's post-inject retry asks it: a refusal is not a DLL still scanning.</summary>
+    public string? LastConnectRefusal { get; private set; }
+
     public async Task ConnectToAsync(int? pid)
     {
         try
