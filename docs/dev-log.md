@@ -27,6 +27,34 @@ builds ≤696 in
 
 -----
 
+## 2026-11-12 (no build change) — The rest of the pipe-per-process pass: an elevated game, two games at once, an hour of MCP, CE-staged races `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **What.** The items the morning's pass left, all against build 3707. verification-register.md
+  `[PIPE-PER-PROCESS-2026-11-06]` has each one's numbers and log lines. Open there now: only 12 and 13.
+- **Closed:**
+  - 4, the elevated half. An elevated UI connects to an elevated proxied game and scans it. The MCP server names the
+    elevation, but a non-elevated UI shows only "Access to the path is denied.": todo.md `[UI-ELEVATED-ACCESS-DENIED]`.
+  - 5, the DLL's own INIT_FAILED. A CE worker thread fired `UE5_Shutdown` 406 ms into the CT's own inject. The scan
+    aborted (initState 1 → 0 → 3), and the CT showed its INIT_FAILED message.
+  - 6, a name an older copy made. A CE int3 breakpoint held the 3707 copy at its own `CreateNamedPipeW` while a 3695
+    copy created the name. 3707 joined it and logged "takes 3 clients at once, not this build's 6" and "all 3 pipe
+    instances in use".
+  - 7, the UI's "pipe is gone". Killing a game after the game list was read gave "PID 3292's pipe is gone ..." in 5.0 s.
+  - 11, the hint-cache lock across processes. With two games persisting at once, 0 of 50 rounds lost an update on
+    3707. The negative control on 3695 lost 50 of 50.
+  - 14, an hour of one MCP session. 0 failed calls, one connection, p95 15 ms. Its memory levels off at about 62 MB
+    once the GC collects.
+- **Not reachable here:** 13 needs another CPU shape. The thread pick reads the machine's topology, so an affinity mask
+  cannot stage one.
+- **Still open:** 12, behind `[SHUTDOWN-SEETHRU-WAIT]`.
+- **Rigs:**
+  - New: `hintcache_two_games.py`, `oldname_join.py`, `initfailed_ct.py`.
+  - `mcp_soak.py` gained `--heavy-every` / `--report-every`, and now judges memory by whether it levels off, not by
+    its size.
+- **Lessons:** working-lessons.md 1.aq (memory that has not been collected yet), 3.wd (a race staged with a CE int3
+  breakpoint), 3.we (a CE worker thread beside a CT tick).
+- **Not changed:** the shipped UI and DLL.
+
 ## 2026-11-12 (no build change) — The pipe-per-process verification pass: Cheat Engine, the real UI, a proxy, a large game `[PIPE-PER-PROCESS-2026-11-06]`
 
 - **What.** The live checks that waited for a free Cheat Engine, and the rest that this PC can run, all against build

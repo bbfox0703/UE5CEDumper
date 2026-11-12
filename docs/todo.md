@@ -11,10 +11,9 @@ Open work only. **Read this when deciding what to do next.**
 > 3704, D2-2 (the MCP write tools for the toggles, force field and teleport) in build 3705, D2-3 (`write_memory`,
 > `write_invoke`, `write_mem` data only, the invoke queue's owners) in build 3706: Stage D2 is complete
 > (`[DBGCAM-RELEASE-STALLED]`, found live 2026-11-11, was fixed in build 3707). The 2026-11-12 verification pass closed
-> verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-4, 8-10, 16-17, 19-20 and 23-27 (item 4 with
-> `[UI-ELEVATED-ACCESS-DENIED]` open); still open there:
-> 5 (the DLL's own INIT_FAILED), 6, 7, 11, 12 (with `[SHUTDOWN-SEETHRU-WAIT]`, an open defect
-> under Stage D), 13 and 14; nothing further in Stage D is queued** --
+> verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-11, 14, 16-17, 19-20 and 23-27 (item 4 with
+> `[UI-ELEVATED-ACCESS-DENIED]` open); still open there: 12 (with `[SHUTDOWN-SEETHRU-WAIT]`, an open defect under
+> Stage D) and 13 (needs a PC with another CPU shape); nothing further in Stage D is queued** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
