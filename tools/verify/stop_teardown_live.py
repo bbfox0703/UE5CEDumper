@@ -14,8 +14,12 @@ See-through, which joins that worker. It waits for the UI to exit and for "PipeS
 pipe-0.log merged by their own stamps from the start, and resumes the game thread (always, in a finally).
 
 Read the timeline for: the drain line ("satisfied|TIMEOUT, X left, Y still tearing down"), the WARN naming a teardown
-still running, and how long "UE5_Shutdown: Cleaning up" (or the Stop) took to reach "Stopped". Exit 0 when Stopped was
-seen and the game thread resumed; the verdict on the row is read from the timeline.
+still running, and how long "UE5_Shutdown: Cleaning up" (or the Stop) took to reach "Stopped".
+
+VERDICT ([SHUTDOWN-SEETHRU-WAIT]): it refuses to run when the DLL's own game-thread pick is not the thread it would
+freeze. Exit 0 when Stopped was seen and, for `untick`, "Cleaning up" reached "Stop entry" within --max-shutdown-ms
+(3707 measured 11.3 s at a 15 s invoke timeout), or, for `stop`, the drain read "satisfied". It also counts the DLL's
+"invoke wait cut short" lines.
 """
 from __future__ import annotations
 
@@ -33,7 +37,30 @@ from pipe_client import LOGROOT   # noqa: E402
 
 KEYS = ("SeeThrough", "UE5_Shutdown", "UE5_StopPipeServer", "Stop entry", "Stop conn drain", "still tearing down",
         "tearing down", "PipeServer: Stopped", "Client disconnected", "invoke timeout", "hook flag cleared",
-        "straggler", "teardown")
+        "straggler", "teardown", "invoke wait cut short", "GameThreadDispatch: game thread")
+
+
+def ms_of(line: str) -> float:
+    """A log line's own stamp, in ms since the epoch ("[YYYY-MM-DD HH:MM:SS.mmm] ...")."""
+    t = time.mktime(time.strptime(line[1:20], "%Y-%m-%d %H:%M:%S"))
+    return t * 1000 + int(line[21:24])
+
+
+def picked_game_thread(folder: pathlib.Path) -> int | None:
+    """The DLL's own game-thread pick, from its newest "GameThreadDispatch: game thread N" line. The shutdown's cut of
+    a queued invoke's wait reads liveness stamped by that thread alone, so freezing any other one stages nothing."""
+    import re
+    best = None
+    for name in ("pipe-0.log", "init-0.log"):
+        try:
+            text = (folder / name).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for l in text.splitlines():
+            m = re.search(r"GameThreadDispatch: game thread (\d+),", l)
+            if m and l.startswith("[") and (best is None or l[1:24] > best[0]):
+                best = (l[1:24], int(m.group(1)))
+    return best[1] if best else None
 
 
 def stamp() -> str:
@@ -106,6 +133,9 @@ def main() -> int:
     ap.add_argument("--ce-desc", default="Inject DLL + Start Pipe Server")
     ap.add_argument("--ce-delay-ms", type=int, default=4000)
     ap.add_argument("--wait", type=float, default=40.0)
+    # [SHUTDOWN-SEETHRU-WAIT] untick: UE5_Shutdown's "Cleaning up" must reach "Stop entry" within this; 3707 measured
+    # 11.3 s at a 15 s invoke timeout.
+    ap.add_argument("--max-shutdown-ms", type=int, default=2000)
     a = ap.parse_args()
     folder = LOGROOT / a.game_name
     ui = [p for p in ui_pids() if windows_of([p])]   # a windowless one is an MCP server, not the UI
@@ -113,6 +143,12 @@ def main() -> int:
     if not wins:
         raise SystemExit("FAIL: no UE5DumpUI window to close (connect the UI and turn See-through on first)")
     tid = game_thread(a.game_name)
+    picked = picked_game_thread(folder)
+    if picked is not None and picked != tid:
+        raise SystemExit(f"FAIL: the DLL picked game thread {picked}, not the main thread {tid} this rig would freeze: "
+                         "the run would stall nothing the DLL measures")
+    print(f"game thread: tid {tid}" + (" (the DLL's own pick)" if picked else " (no pick line in the log -- unverified)"),
+          flush=True)
     k32 = ctypes.WinDLL("kernel32", use_last_error=True)
     k32.OpenThread.restype = ctypes.c_void_p
     k32.SuspendThread.restype = ctypes.c_uint32
@@ -154,12 +190,35 @@ def main() -> int:
             print(f"RESUME: previous suspend count {prev}", flush=True)
         k32.CloseHandle(h)
     time.sleep(1.0)
+    timeline = lines(folder, since)
     print("\nTIMELINE (init-0.log + pipe-0.log):", flush=True)
-    for l in lines(folder, since):
+    for l in timeline:
         if any(k in l for k in KEYS):
             print("  " + l[:220], flush=True)
     print(f"\n{'Stopped seen' if stopped is not None else 'NO Stopped within the wait'}", flush=True)
-    return 0 if stopped is not None else 1
+    ok = stopped is not None
+
+    def first(text: str) -> str | None:
+        return next((l for l in timeline if text in l), None)
+
+    if a.ce_action == "untick":
+        clean, entry = first("UE5_Shutdown: Cleaning up"), first("PipeServer: Stop entry")
+        if clean and entry:
+            delta = ms_of(entry) - ms_of(clean)
+            verdict = delta <= a.max_shutdown_ms
+            print(f"UE5_Shutdown: Cleaning up -> Stop entry: {delta:.0f} ms (limit {a.max_shutdown_ms}): "
+                  f"{'PASS' if verdict else 'FAIL'}", flush=True)
+            ok = ok and verdict
+        else:
+            print("FAIL: no Cleaning up / Stop entry pair in the timeline", flush=True)
+            ok = False
+    else:
+        drain = first("Stop conn drain")
+        verdict = drain is not None and "satisfied" in drain
+        print(f"drain: {'PASS' if verdict else 'FAIL'} ({drain[26:140] if drain else 'no drain line'})", flush=True)
+        ok = ok and verdict
+    print(f"invoke waits cut short: {sum('invoke wait cut short' in l for l in timeline)}", flush=True)
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
