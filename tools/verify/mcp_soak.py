@@ -4,8 +4,9 @@
 
 One server process, one pipe connection, held for --hours. Every --interval seconds: read_status (timed) and
 read_pipe_clients (the server's own connection: its seq must never change, i.e. no reconnect), and the server's and the
-game's private bytes and handle counts. Every 10th interval also a heavier pair: read_find_instances of Actor and a
-value scan (begin, then end). At the end it closes the server and reads its exit code.
+game's private bytes and handle counts. Every --heavy-every'th interval (10; 0 = never) also a heavier pair:
+read_find_instances of Actor and a value scan (begin, then end). The sizes are printed every --report-every intervals.
+At the end it closes the server and reads its exit code.
 
 Report: per-hour read_status p50 / p95, the seqs seen, the growth of private bytes and handles, and the failures.
 PASS (exit 0): no failed call; one seq for the whole run; the last hour's p95 at most twice the first hour's; the
@@ -70,6 +71,10 @@ def main() -> int:
     ap.add_argument("--pid", type=int, required=True)
     ap.add_argument("--hours", type=float, default=2.0)
     ap.add_argument("--interval", type=float, default=30.0)
+    # 0 = light calls only. Varying this and --interval tells growth per call from growth per minute, and the heavy
+    # pair's share from the light pair's.
+    ap.add_argument("--heavy-every", type=int, default=10)
+    ap.add_argument("--report-every", type=int, default=10)
     a = ap.parse_args()
     c = McpClient(str(pathlib.Path(a.exe).resolve()))
     c.initialize()
@@ -106,11 +111,12 @@ def main() -> int:
         for x in pc.get("clients", []):
             if x.get("pid") == srv:
                 seqs.add(x.get("seq"))
-        if n % 10 == 0:
+        if a.heavy_every and n % a.heavy_every == 0:
             call("read_find_instances", {"class_name": "Actor", "limit": 50})
             vs = call("read_value_scan_begin", {"data_type": "Int32", "value": "1", "page_size": 5})
             if isinstance(vs, dict) and vs.get("session_id") is not None:
                 call("read_value_scan_end", {"session_id": vs["session_id"]})
+        if n % a.report_every == 0:
             s, g = proc_stats(srv), proc_stats(a.pid)
             print(f"  {time.strftime('%H:%M:%S')} #{n}: server {s[0] / 1e6:.1f} MB / {s[1]} handles, game "
                   f"{g[0] / 1e6:.1f} MB / {g[1]} handles; seqs {sorted(seqs)}; failures {len(fails)}", flush=True)
