@@ -47,6 +47,28 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         DLL started by the CE record D (default the CT's "Inject DLL + Start Pipe Server"), CE unticking and
         re-ticking it through ce_lua_eval.py. (K) a release owed is dropped at the stop, and nothing turns the camera
         off after the re-enable; (K2) a stop while the release still waits ends it -1, never owed.
+    py tools/verify/mcp_client.py holdsmore --exe dist/UE5DumpUI.exe [--pid N]
+        Register items 24 and 20: the holds no other mode gives the AI, on a FRESH DumperTest Shipping (UE 5.4, DLL
+        3705+), beside a foreground pipe client standing in for the UI, nothing held at start. (S) the stand-in spawns
+        Holders, Derived and Decoys; (G) the AI holds gravity direction at (0, 0, -1), equal to the field, over a -0.0
+        byte witness the stand-in writes first, so its reset and its exit release are seen writing the captured bytes
+        back; the pawn must not drift; (M) god mode; (F) Keep Foreground on, off, on; (FF) the force field by
+        derivation (Holder + Derived, never Decoy), reset to each instance's own value, the stand-in's job refused
+        naming it, a second job kept; (C) the cursor: changed, no hold; (X) the session ends: each kept hold is released
+        with a (code 0) line and its module's own OFF line, values and witness bytes back, the cursor left alone. Sends
+        no gravity vector but (0, 0, -1). The UI's experimental switch is on for the run (its file's bytes put back);
+        the clean-up undoes what the run changed and destroys the spawned holders.
+    py tools/verify/mcp_client.py olddll --exe dist/UE5DumpUI.exe [--pid N]
+        Register item 24, the old DLL: DumperTest Shipping freshly injected with out/stageA/copy3695/UE5Dumper.dll
+        (build 3695: the per-process pipe, no if_free). Every write_* tool is refused with the build text (older than
+        3705; 3706 for write_memory, write_invoke, write_debug_camera) before anything is sent, and the 3695 pipe log
+        shows none of their commands since the start. Keep the UI closed: 3695 serves three connections.
+    py tools/verify/mcp_client.py invokeparams --exe dist/UE5DumpUI.exe [--pid N]
+        Register item 27, write_invoke's parameters by name, on DumperTest Shipping (DLL 3706+), no game-thread freeze.
+        (K) K2_SetActorLocation moves the pawn 100 uu along its facing through a Vector struct and back, and returns
+        false on a rootless holder; (O) an object parameter given a field's address is refused by the server's liveness
+        check, nothing sent; (S) SendToConsole is refused by name. The EchoSoftSpec struct-field pair is recorded apart
+        from the exit code.
 
     --ssh HOST   start the server as `ssh -T HOST <exe> --mcp`, the way an MCP client on another machine would; --exe
                  is then the path on HOST. ssh's own prompts (a password) go to this console, never to the protocol:
@@ -68,6 +90,7 @@ import os
 import pathlib
 import queue
 import re
+import struct
 import subprocess
 import sys
 import threading
@@ -814,17 +837,41 @@ def _camera_cleanup(ui) -> None:
         ui.close()
 
 
-def _pipe_log_line(pattern: str, since: str) -> str | None:
-    """The newest line of any game's DLL pipe log that matches `pattern` and is stamped at or after `since` (local
-    "YYYY-MM-DD HH:MM:SS", the DLL log's own stamp). Bounded by time because pids are reused and every game's pipe log
-    is read: a pid alone could take an earlier run's line."""
+def _log_line(category: str, pattern: str, since: str) -> str | None:
+    """The newest line of any game's DLL `<category>-0.log` (pipe, walk, init, ...) that matches `pattern` and is
+    stamped at or after `since` (local "YYYY-MM-DD HH:MM:SS", the DLL log's own stamp). Bounded by time because pids
+    are reused and every game's log is read: a pid alone could take an earlier run's line. The glob is exact, so the
+    UI's own ui-<category>-0.log beside it is never read."""
     sys.path.insert(0, str(pathlib.Path(__file__).parent))
-    from pipe_client import _read_pipe_logs   # noqa: E402 -- the rig beside this one
+    from pipe_client import LOGROOT   # noqa: E402 -- the rig beside this one
 
     rx = re.compile(pattern)
-    lines = [line.strip() for text in _read_pipe_logs() for line in text.splitlines()
-             if line.startswith("[") and line[1:20] >= since and rx.search(line)]
+    lines = []
+    for path in LOGROOT.glob(f"*/{category}-0.log"):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        lines += [line.strip() for line in text.splitlines()
+                  if line.startswith("[") and line[1:20] >= since and rx.search(line)]
     return max(lines, key=lambda line: line[1:24]) if lines else None
+
+
+def _pipe_log_line(pattern: str, since: str) -> str | None:
+    """_log_line over the DLL's pipe log, where the server's commands and its holds' releases are written."""
+    return _log_line("pipe", pattern, since)
+
+
+def _now() -> str:
+    """The DLL log's own stamp, to the second: every log read here is bounded by one."""
+    return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _fresh_stamp() -> str:
+    """A stamp in a second of its own. The log is matched to the second, so a line an earlier step wrote in the same
+    second would read as written after it: an absence check would then fail on the wrong line."""
+    time.sleep(1.1)
+    return _now()
 
 
 def _release_line(server_pid: int, hold: str, since: str) -> str | None:
@@ -1587,9 +1634,881 @@ def run_dbgcam_stop(exe: str, pid: int | None, game_name: str, ce_desc: str) -> 
     return ck.done(sessions)
 
 
+# Constants.McpMinDllBuildForWrites / McpMinDllBuildForRawWrites: the DLL builds the server's write tools need.
+MCP_MIN_WRITES, MCP_MIN_RAW_WRITES = 3705, 3706
+FIXTURE_DERIVED, FIXTURE_DECOY = "DumperTestDerivedHolder", "DumperTestHolderDecoy"   # solide_l3's derivation pair
+FIXTURE_FLAG = "bHolderFlag"
+FLAG_HOLD = f"force_field:{FIXTURE_CLASS}::{FIXTURE_FLAG}"
+# GravityDirection as the field holds it (an FVector of doubles; the field exists from UE 5.3). The witness is the same
+# vector with signed zeros: the AI's set writes +0.0 over it, and a restore of the captured base writes -0.0 back, so
+# the bytes tell a restore from none where the numbers cannot.
+GRAVITY_DOWN = struct.pack("<ddd", 0.0, 0.0, -1.0).hex().upper()
+GRAVITY_WITNESS = struct.pack("<ddd", -0.0, -0.0, -1.0).hex().upper()
+# read_class's name_filter when only the class's own name and super are wanted: an engine class's fields stay out.
+_NO_FIELDS = "no-field-is-named-this"
+
+
+def _i32(n: int) -> str:
+    return int(n).to_bytes(4, "little", signed=True).hex()
+
+
+def _as_float(value) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _attempt(label: str, step) -> None:
+    """One clean-up step. A failure is said and the next step still runs, so one dead read cannot leave the rest of the
+    game changed."""
+    try:
+        step()
+    except Exception as e:  # noqa: BLE001 -- the clean-up goes on
+        print(f"  !! clean-up: {label} failed ({e}): check the game by hand", flush=True)
+
+
+def run_holds_more(exe: str, pid: int | None) -> int:
+    """Register items 24 and 20: the holds no other mode gives the AI (see the module docstring). Each section keeps
+    what X, the session's end, must see released; `did` records what this run changed, so the clean-up undoes that and
+    never a hold someone else had."""
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from pipe_client import PipeClient   # noqa: E402 -- the rig beside this one
+    from ad4_contested import find_live_actor   # noqa: E402 -- the fixture's spawner actor, as solide_l3 finds it
+
+    ck = Checks()
+    base = {"pid": pid} if pid else {}
+    sessions: list[McpClient] = []
+    switch = _ExperimentalSwitch()
+    me = os.getpid()
+    did: dict = {"kept": []}
+    c: McpClient | None = None
+    ui = None
+
+    def call(tool, args=None):
+        r = c.call(tool, {**base, **(args or {})})
+        data, note = payload(r)
+        return r, (data if isinstance(data, dict) else {}), note
+
+    def error_text(data) -> str:
+        return data.get("error", "") if isinstance(data, dict) else str(data)
+
+    def holds() -> dict:
+        return {h["hold"]: h for h in ui.request("get_holds").get("holds", [])}
+
+    def server_holds(label: str, hold: str) -> None:
+        """Both views of a hold the AI took: read_holds says it is the server's, and the stand-in's get_holds names the
+        server's process."""
+        r, d, _ = call("read_holds")
+        h = next((x for x in d.get("holds", []) if x.get("hold") == hold), {})
+        ck.check(bool(h.get("active") and h.get("holder", {}).get("you") and h["holder"].get("background")),
+                 f"{label}: read_holds: {hold} is the server's ('you'), marked background", h)
+        h = holds().get(hold, {})
+        holder = h.get("holder", {})
+        ck.check(bool(h.get("active") and holder.get("kind") == "client" and holder.get("background") is True
+                      and not holder.get("you") and holder.get("pid") == c.proc.pid),
+                 f"{label}: get_holds (stand-in): {hold} is held by the server's process, pid {c.proc.pid}", h)
+
+    def freed(hold: str, now: dict) -> bool:
+        # A force-field job is listed only while it exists: released, it is gone from get_holds.
+        if hold.startswith("force_field:"):
+            return hold not in now
+        h = now.get(hold)
+        return bool(h) and not h.get("active") and h.get("holder", {}).get("kind") == "none"
+
+    def ai_value(addr: str) -> float | None:
+        r, d, _ = call("read_instance", {"addr": addr, "name_filter": FIXTURE_FIELD})
+        f = next((f for f in d.get("fields", []) if f.get("name") == FIXTURE_FIELD), None)
+        return _as_float(f.get("value")) if f else None
+
+    def ui_value(addr: str) -> float | None:
+        w = ui.request("walk_instance", addr=addr, array_limit=1)
+        f = next((f for f in w.get("fields", []) if f.get("name") == FIXTURE_FIELD), None)
+        return _as_float(f.get("value")) if f else None
+
+    def misses(values: dict, want: dict) -> dict:
+        return {a: (v, want[a]) for a, v in values.items() if v is None or abs(v - want[a]) > 0.01}
+
+    def grav() -> dict:
+        return ui.request("get_movement_params").get("gravity_direction", {})
+
+    def grav_bytes() -> str:
+        return str(ui.request("read_mem", addr="0x%X" % did["gaddr"], size=24).get("bytes", "")).upper()
+
+    def witness_back(label: str) -> None:
+        now = grav_bytes()
+        if did.get("witness"):
+            ck.check(now == GRAVITY_WITNESS, f"{label} wrote the captured -0.0 witness back (+0.0: no restore)", now)
+        else:
+            ck.check(False, f"{label}: released, restore not decidable",
+                     "the -0.0 witness did not stick, so a restore and none read alike")
+
+    def drift(p0: dict) -> float:
+        p = ui.request("teleport_get_pose")
+        if p.get("code") != 0:
+            return math.inf
+        return max(abs(p[k] - p0[k]) for k in ("x", "y", "z"))
+
+    def fixture_invoke(name: str, params_hex: str = "") -> dict:
+        addr, fns = did["spawner"]
+        f = fns.get(name)
+        if f is None:
+            return {"ok": False, "error": f"{name} is not on the spawner's class"}
+        return ui.request("invoke_function", func_name=name, instance_addr=addr,
+                          parms_size=f.get("parms_size", 0), params_hex=params_hex)
+
+    def section_s() -> dict | None:
+        """The discriminating set (solide_l3_derivation's), spawned by the stand-in, and each instance's own value."""
+        try:
+            act = find_live_actor(ui)
+        except (SystemExit, Exception) as e:  # noqa: BLE001 -- it exits when the level never started
+            ck.check(False, "S: a live DumperTestActor to spawn from", e)
+            return None
+        fns = {f["name"]: f for f in ui.request("walk_functions", addr=act["class_addr"]).get("functions", [])}
+        did["spawner"] = (act["addr"], fns)
+        for name, params, what in (("Spawn_Holders", _i32(5) + "00", "5 Holders"),
+                                   ("Spawn_Holders", _i32(3) + "01", "3 Derived"),
+                                   ("Spawn_Decoys", _i32(2), "2 Decoys")):
+            r = fixture_invoke(name, params)
+            ck.check(bool(r.get("ok")) and r.get("result", 0) == 0, f"S: the stand-in spawns {what} ({name})", r)
+        sets: dict = {}
+        for key, cls in (("base", FIXTURE_CLASS), ("derived", FIXTURE_DERIVED), ("decoy", FIXTURE_DECOY)):
+            r, d, _ = call("read_find_instances", {"class_name": cls, "exact_match": True, "limit": 200})
+            rows = [i["addr"] for i in d.get("instances", [])
+                    if i.get("class") == cls and not str(i.get("name", "")).startswith("Default__")]
+            # A capped list would make held == Holder + Derived a sample, not the arithmetic that decides derivation.
+            whole = not (r.get("isError") or d.get("truncated") or d.get("deadline_hit"))
+            ck.check(bool(rows) and whole, f"S: read_find_instances {cls}: {len(rows)} live, the whole set",
+                     {k: d.get(k) for k in ("total", "truncated", "deadline_hit", "error")})
+            sets[key] = rows
+        if not all(sets.values()):
+            return None
+        baseline = {a: ai_value(a) for rows in sets.values() for a in rows}
+        unread = [a for a, v in baseline.items() if v is None]
+        distinct = {baseline[a] for a in sets["base"]}
+        ck.check(not unread and len(distinct) >= 2,
+                 f"S: every HolderValue reads; the Holders hold {len(distinct)} distinct values (so a shared restore "
+                 "would show)", unread)
+        wrong = {a: baseline[a] for a in sets["decoy"] if baseline[a] is None or abs(baseline[a] + 1) > 0.01}
+        ck.check(not wrong, "S: every Decoy reads -1", wrong)
+        if unread:
+            return None
+        sets["baseline"] = baseline
+        return sets
+
+    def section_g() -> None:
+        gd = grav()
+        if not ck.check(bool(gd.get("resolved")), "G: gravity direction resolves (UE 5.3+). Unresolved on Shipping "
+                        "FAILS this run: rerun G on launch_dumpertest.py dev and say so", gd):
+            return
+        if not ck.check(not gd.get("active") and bool(gd.get("owner_addr")) and gd.get("field_offset") is not None,
+                        "G: nobody holds it, and its field is located", gd):
+            return
+        did["gaddr"] = int(gd["owner_addr"], 16) + int(gd["field_offset"])
+        orig = grav_bytes()
+        vec = struct.unpack("<ddd", bytes.fromhex(orig)) if len(orig) == 48 else None
+        # The gate on every gravity write this rig makes: it only ever sends (0, 0, -1), so it starts only on a field
+        # that already holds that, and the pawn has nothing to fall along.
+        if not ck.check(vec is not None and all(abs(a - b) <= 1e-6 for a, b in zip(vec, (0.0, 0.0, -1.0))),
+                        "G: the field reads (0, 0, -1) within 1e-6", vec):
+            return
+        did["orig"] = orig
+        p0 = ui.request("teleport_get_pose")
+        if not ck.check(p0.get("code") == 0 and "x" in p0, "G: the pawn's pose", p0):
+            return
+        did["p0"] = p0
+        w = ui.request("write_mem", addr="0x%X" % did["gaddr"], bytes=GRAVITY_WITNESS, expect=orig)
+        time.sleep(1.0)
+        did["witness"] = bool(w.get("ok")) and grav_bytes() == GRAVITY_WITNESS
+        print("        G: the stand-in's -0.0 witness " + ("sticks" if did["witness"] else
+              f"did NOT stick ({w.get('error') or 'rewritten'}): the restore half is not decidable"))
+
+        did["grav"] = True
+        r, d, note = call("write_gravity_direction", {"x": 0, "y": 0, "z": -1})
+        if not ck.check(not r.get("isError") and d.get("state") == 1 and d.get("active") is True,
+                        "G: the AI's write_gravity_direction (0, 0, -1), equal to the field, is held (state 1)",
+                        (d, note)):
+            return
+        now = grav_bytes()
+        ck.check(now == GRAVITY_DOWN, "G: it wrote +0.0 over the witness (the set shows in the bytes)", now)
+        server_holds("G", "gravity_direction")
+        worst = 0.0
+        for _ in range(6):
+            time.sleep(0.5)
+            worst = max(worst, drift(p0))
+            if worst > 10:
+                break
+        if not ck.check(worst <= 10, f"G: the pawn stays put for 3 s under the held direction (drift {worst:.1f} uu, "
+                                     "10 at most)"):
+            ui.request("reset_gravity_direction")   # at once: DumperTest never respawns its pawn
+            return
+        r, d, note = call("write_gravity_direction", {"reset": True})
+        ck.check(not r.get("isError") and d.get("code") == 0, "G: the AI's write_gravity_direction reset (code 0)",
+                 (d, note))
+        gd, now_h = grav(), holds()
+        ck.check(not gd.get("active") and freed("gravity_direction", now_h),
+                 "G: after the reset it is not held: inactive, holder none", (gd, now_h.get("gravity_direction")))
+        witness_back("G: the AI's reset")
+        r, d, note = call("write_gravity_direction", {"x": 0, "y": 0, "z": -1})
+        ok = not r.get("isError") and d.get("state") == 1 and d.get("active") is True
+        ck.check(ok, "G: the AI's (0, 0, -1) again, kept for the exit", (d, note))
+        if ok:
+            did["kept"].append("gravity_direction")
+
+    def section_m() -> None:
+        ps = ui.request("get_protect_state")
+        if not ck.check(ps.get("want") == 0, "M: god mode is off at start (want 0)", ps):
+            return
+        did["god"] = True
+        r, d, note = call("write_god_mode", {"enable": True})
+        ok = ck.check(not r.get("isError") and d.get("state") == 1, "M: the AI's write_god_mode ON (state 1)",
+                      (d, note))
+        server_holds("M", "god_mode")
+        ps = ui.request("get_protect_state")
+        ck.check(ps.get("want") == 1 and ps.get("godmode") == 1, "M: get_protect_state: want 1, godmode 1", ps)
+        if ok:
+            did["kept"].append("god_mode")
+
+    def section_f() -> None:
+        if not ck.check(ui.request("get_foreground_lock").get("state") == 0, "F: Keep Foreground is off at start"):
+            return
+        did["fg"] = True
+        since = _now()
+        r, d, note = call("write_foreground_lock", {"enable": True})
+        ck.check(not r.get("isError") and d.get("state") == 1, "F: the AI's write_foreground_lock ON (state 1)",
+                 (d, note))
+        ck.check(ui.request("get_foreground_lock").get("state") == 1, "F: the stand-in reads it on")
+        server_holds("F", "foreground_lock")
+        ck.check(_log_line("init", r"Foreground lock ENABLED", since) is not None,
+                 "F: init log: Foreground lock ENABLED")
+        r, d, note = call("write_foreground_lock", {"enable": False})
+        now_h = holds()
+        ck.check(not r.get("isError") and d.get("state") == 0 and freed("foreground_lock", now_h),
+                 "F: the AI's OFF of its own lock (state 0): holder none", (d, now_h.get("foreground_lock")))
+        r, d, note = call("write_foreground_lock", {"enable": True})
+        ok = not r.get("isError") and d.get("state") == 1
+        ck.check(ok, "F: the AI's ON again, kept for the exit", (d, note))
+        if ok:
+            did["kept"].append("foreground_lock")
+
+    def section_ff(sets: dict) -> None:
+        held_set, decoys, baseline = sets["base"] + sets["derived"], sets["decoy"], sets["baseline"]
+        n = len(held_set)
+        did["ff"] = True
+        job_args = {"class_name": FIXTURE_CLASS, "field_name": FIXTURE_FIELD, "kind": "numeric"}
+
+        def job_listed(field: str) -> dict:
+            r, d, _ = call("read_forced_fields")
+            return next((f for f in d.get("fields", [])
+                         if f.get("class_name") == FIXTURE_CLASS and f.get("field_name") == field), {})
+
+        r, d, note = call("write_force_field", {**job_args, "value": 777})
+        ck.check(not r.get("isError") and d.get("held") == n and d.get("truncated") is False,
+                 f"FF: write_force_field 777 holds {n} = Holder + Derived (Holder + Decoy would be "
+                 f"{len(sets['base']) + len(decoys)}), not truncated", (d, note))
+        values = {a: ai_value(a) for a in held_set + decoys}
+        miss = misses({a: values[a] for a in held_set}, dict.fromkeys(held_set, 777.0))
+        ck.check(not miss, "FF: every Holder and Derived reads 777", miss)
+        miss = misses({a: values[a] for a in decoys}, dict.fromkeys(decoys, -1.0))
+        ck.check(not miss, "FF: every Decoy still reads -1 (derivation, not a name match)", miss)
+        job = job_listed(FIXTURE_FIELD)
+        ck.check(job.get("kind") == "numeric" and abs((_as_float(job.get("value")) or 0.0) - 777) < 0.01
+                 and job.get("held") == n, f"FF: read_forced_fields lists the job: numeric, 777, held {n}", job)
+        server_holds("FF", FORCE_FIELD_HOLD)
+
+        r, d, note = call("write_force_field_reset", {"class_name": FIXTURE_CLASS, "field_name": FIXTURE_FIELD})
+        ck.check(not r.get("isError") and d.get("code") == 0, "FF: the AI's write_force_field_reset (code 0)",
+                 (d, note))
+        ck.check(not job_listed(FIXTURE_FIELD) and FORCE_FIELD_HOLD not in holds(),
+                 "FF: the job is gone from read_forced_fields and from get_holds")
+        back = misses({a: ai_value(a) for a in held_set + decoys}, baseline)
+        ck.check(not back, "FF: every instance is back at its OWN baseline value", back)
+
+        # A job the stand-in holds: the AI's reset is refused, naming it, and the job stays.
+        since = _now()
+        u = ui.request("force_field", class_name=FIXTURE_CLASS, field_name=FIXTURE_FLAG, kind="bool", on=True)
+        ck.check(bool(u.get("ok")) and u.get("held", 0) > 0, f"FF: the stand-in's own job on {FIXTURE_FLAG} (held > 0)",
+                 u)
+        r, d, _ = call("write_force_field_reset", {"class_name": FIXTURE_CLASS, "field_name": FIXTURE_FLAG})
+        text = error_text(d)
+        ck.check(bool(r.get("isError")) and f"{FLAG_HOLD} is held by the UE5DumpUI window or another program" in text
+                 and f"(pid {me})" in text, "FF: the AI's reset of the stand-in's job is refused, naming its pid", d)
+        h = holds().get(FLAG_HOLD, {})
+        ck.check(bool(job_listed(FIXTURE_FLAG)) and h.get("active") and h.get("holder", {}).get("you"),
+                 "FF: and the stand-in's job stays, its own", h)
+        ck.check(_log_line("pipe", rf"reset_field refused \(if_free\): {re.escape(FLAG_HOLD)} is held by another",
+                           since) is not None, "FF: pipe log: reset_field refused (if_free) for the stand-in's job")
+        u = ui.request("reset_field", class_name=FIXTURE_CLASS, field_name=FIXTURE_FLAG)
+        ck.check(bool(u.get("ok")) and u.get("code") == 0, "FF: the stand-in ends its own job", u)
+
+        r, d, note = call("write_force_field", {**job_args, "value": 555})
+        ok = not r.get("isError") and d.get("held") == n
+        miss = misses({a: ai_value(a) for a in held_set}, dict.fromkeys(held_set, 555.0))
+        ck.check(ok and not miss, "FF: a second job, 555, holds them again (kept for the exit)", (d, note, miss))
+        if ok:
+            did["kept"].append(FORCE_FIELD_HOLD)
+
+    def section_c() -> None:
+        g = ui.request("get_mouse_cursor")
+        if not ck.check(g.get("code") == 0 and isinstance(g.get("state"), bool), "C: the cursor's state reads", g):
+            return
+        did["s0"] = g["state"]
+        print(f"        C: the cursor is {'shown' if g['state'] else 'hidden'} at start, and is put back so. Do not "
+              "click into the game while it is hidden (its input mode captures the mouse)")
+        ok = False
+        for i, show in enumerate((True, False, True)):
+            r, d, note = call("write_mouse_cursor", {"show": show})
+            seen = ui.request("get_mouse_cursor").get("state")
+            word = "true" if show else "false"
+            ok = ck.check(not r.get("isError") and d.get("state") == show and seen == show,
+                          f"C: write_mouse_cursor show={word}: the payload and the stand-in read {word}",
+                          (d, note, seen))
+            if i == 0:
+                named = [k for k in holds() if "cursor" in k.lower() or "mouse" in k.lower()]
+                ck.check(not named, "C: no hold is recorded for the cursor (nothing holds it)", named)
+        did["cursor_shown"] = ok
+
+    def section_x(sets: dict | None) -> None:
+        server = c.proc.pid
+        since = _fresh_stamp()
+        code = c.close()
+        did["closed"] = True
+        ck.check(code == 0, "X: the AI session ends (the server exits 0)", code)
+        kept = did["kept"]
+        now: dict = {}
+        end = time.monotonic() + 5.0   # the release runs after the disconnect, not with it
+        while True:
+            now = holds()
+            if all(freed(h, now) for h in kept) or time.monotonic() > end:
+                break
+            time.sleep(0.2)
+        for hold in kept:
+            how = "the job is gone" if hold.startswith("force_field:") else "inactive, holder none"
+            ck.check(freed(hold, now), f"X: the server's {hold} is released: {how}", now.get(hold))
+            line = _release_line(server, hold, since)
+            ck.check(line is not None and "(code 0)" in line, f"X: pipe log: its release of {hold} ends (code 0)", line)
+        if "god_mode" in kept:
+            ck.check(_log_line("walk", r"GodMode: set OFF -> rc=0 \(want=0\)", since) is not None,
+                     "X: walk log: GodMode: set OFF -> rc=0 (want=0), after the exit")
+            ps = ui.request("get_protect_state")
+            ck.check(ps.get("want") == 0 and ps.get("godmode") == 0, "X: get_protect_state: want 0, godmode 0", ps)
+        if "gravity_direction" in kept:
+            ck.check(_log_line("walk", r"Movement: gravity dir reset \(any active left=", since) is not None,
+                     "X: walk log: Movement: gravity dir reset, after the exit")
+            ck.check(not grav().get("active"), "X: gravity direction reads inactive")
+            witness_back("X: the exit's release")
+            moved = drift(did["p0"])
+            ck.check(moved <= 10, f"X: the pawn did not move during the whole hold (drift {moved:.1f} uu)")
+        if "foreground_lock" in kept:
+            ck.check(_log_line("init", r"Foreground lock DISABLED", since) is not None,
+                     "X: init log: Foreground lock DISABLED, after the exit")
+            ck.check(ui.request("get_foreground_lock").get("state") == 0, "X: Keep Foreground reads off")
+        if FORCE_FIELD_HOLD in kept and sets:
+            values = {a: ui_value(a) for key in ("base", "derived", "decoy") for a in sets[key]}
+            back = misses(values, sets["baseline"])
+            ck.check(not back, "X: every instance is back at its own baseline value", back)
+        if did.get("cursor_shown"):
+            g = ui.request("get_mouse_cursor")
+            ck.check(g.get("state") is True, "X: the cursor is still shown: the exit left it alone (not a hold)", g)
+            line = _pipe_log_line(rf"background client {server} left -- its hold \S*(cursor|mouse)", since)
+            ck.check(line is None, "X: no release line names a cursor", line)
+
+    def body() -> None:
+        nonlocal c, ui
+        switch.set(True)   # Keep Foreground and the force field are experimental: the server refuses them otherwise
+        c = McpClient(exe)
+        c.initialize()
+        sessions.append(c)
+        tools = {t["name"]: t for t in c.request("tools/list").get("result", {}).get("tools", [])}
+        need = ("write_gravity_direction", "write_god_mode", "write_foreground_lock", "write_force_field",
+                "write_force_field_reset", "write_mouse_cursor")
+        unmarked = [n for n in need if tools.get(n, {}).get("_meta", {}).get("anthropic/requiresUserInteraction")
+                    is not True or tools.get(n, {}).get("annotations", {}).get("destructiveHint") is not True]
+        ck.check(not unmarked, "tools/list: the six write tools, each asking every time, destructive", unmarked)
+        r, st, _ = call("read_status")
+        build = int(st.get("build_number") or 0)
+        print(f"        UE {st.get('ue_version')}, {st.get('object_count')} objects, DLL build {build}, server build "
+              f"{st.get('mcp_build')}")
+        if not ck.check(bool(st.get("scanned")) and build >= MCP_MIN_WRITES,
+                        f"the game is scanned, DLL build {build} (the write tools need {MCP_MIN_WRITES}+)", st):
+            return
+        game = pid or st.get("pid")
+        client = PipeClient(pid=game, timeout=120)
+        client.connect()
+        ui = client
+        print(f"        game pid {game}; the server is pid {c.proc.pid}; the UI stand-in (foreground) is pid {me}")
+        held = sorted(k for k, h in holds().items() if h.get("active"))
+        if not ck.check(not held, "nothing is held when the run starts (the UI, CE, a peer or a half-done run)", held):
+            return
+        did["clean_start"] = True
+        sets = section_s()
+        section_g()
+        section_m()
+        section_f()
+        if sets:
+            section_ff(sets)
+        section_c()
+        section_x(sets)
+
+    def cleanup() -> None:
+        if c is not None and not did.get("closed"):
+            _attempt("closing the AI session", c.close)
+        if ui is not None:
+            def cursor_back():
+                ui.request("set_mouse_cursor", show=did["s0"])
+
+            def gravity_off():
+                if grav().get("active"):
+                    ui.request("reset_gravity_direction")
+
+            def gravity_bytes_back():
+                if did["orig"] != GRAVITY_WITNESS and grav_bytes() == GRAVITY_WITNESS:
+                    ui.request("write_mem", addr="0x%X" % did["gaddr"], bytes=did["orig"], expect=GRAVITY_WITNESS)
+
+            def god_off():
+                if ui.request("get_protect_state").get("want"):
+                    ui.request("set_god_mode", enable=False)
+
+            def foreground_off():
+                if ui.request("get_foreground_lock").get("state") == 1:
+                    ui.request("set_foreground_lock", enable=False)
+
+            def destroy_holders():
+                r = fixture_invoke("Spawn_DestroyHolders")
+                if not r.get("ok") or r.get("result", 0) != 0:
+                    raise McpError(f"Spawn_DestroyHolders answered {r}; run it from pipe_client before anything else")
+
+            if "s0" in did:
+                _attempt("the cursor back to its starting state", cursor_back)
+            if did.get("grav"):
+                _attempt("gravity direction reset", gravity_off)
+            if "orig" in did:
+                _attempt("GravityDirection's original bytes", gravity_bytes_back)
+            if did.get("god"):
+                _attempt("god mode off", god_off)
+            if did.get("fg"):
+                _attempt("Keep Foreground off", foreground_off)
+            if did.get("ff"):
+                for field in (FIXTURE_FIELD, FIXTURE_FLAG):
+                    _attempt(f"reset_field {field}",
+                             lambda f=field: ui.request("reset_field", class_name=FIXTURE_CLASS, field_name=f))
+            if "spawner" in did:
+                _attempt("Spawn_DestroyHolders", destroy_holders)
+        _attempt("the experimental switch's file", switch.restore)
+        if ui is not None:
+            if did.get("clean_start"):
+                try:
+                    left = sorted(k for k, h in holds().items() if h.get("active"))
+                    ck.check(not left, "clean-up: nothing is left held", left)
+                except Exception as e:  # noqa: BLE001 -- said, not raised over the summary
+                    ck.check(False, "clean-up: nothing is left held", f"get_holds failed: {e}")
+            ui.close()
+
+    try:
+        body()
+    finally:
+        cleanup()
+    return ck.done(sessions)
+
+
+# The pipe-log line each write's command leaves on the 3695 DLL, which logs these on receipt. The first six are the
+# acceptance's own; the rest witness the other commands that DLL logs. Its write_mem logs nothing, so write_memory has
+# no witness here.
+OLD_DLL_COMMAND_LINES = (
+    r"set_god_mode:", r"set_foreground_lock:", r"set_gravity_direction:", r"force_field: class=", r"set_mouse_cursor:",
+    r"invoke_function: ",
+    r"reset_gravity_direction", r"reset_movement:", r"reset_time_dilation:", r"set_debug_camera:", r"fly_set:",
+    r"seethrough_set:", r"reset_field:", r"teleport_recall_marker:",
+)
+OLD_DLL_RAW_TOOLS = ("write_memory", "write_invoke", "write_debug_camera")   # need MCP_MIN_RAW_WRITES, not 3705
+
+
+def run_old_dll(exe: str, pid: int | None) -> int:
+    """Register item 24, the refusal of an old DLL (see the module docstring). The arguments are no-ops for a DLL that
+    ignores if_free and keep_undo -- OFF and reset forms, the current pose, the very bytes there, 1 + 1 -- so a refusal
+    that regressed would change nothing worth undoing; the forced field and the cursor, which would, are put back."""
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from pipe_client import PipeClient   # noqa: E402 -- the rig beside this one
+
+    ck = Checks()
+    base = {"pid": pid} if pid else {}
+    sessions: list[McpClient] = []
+    switch = _ExperimentalSwitch()
+    did: dict = {}
+    c: McpClient | None = None
+    ui = None
+
+    def call(tool, args=None):
+        r = c.call(tool, {**base, **(args or {})})
+        data, note = payload(r)
+        return r, (data if isinstance(data, dict) else {}), note
+
+    def error_text(data) -> str:
+        return data.get("error", "") if isinstance(data, dict) else str(data)
+
+    def body() -> None:
+        nonlocal c, ui
+        # The experimental tools check the switch before the DLL's build: off, they would refuse for that instead.
+        switch.set(True)
+        c = McpClient(exe)
+        c.initialize()
+        sessions.append(c)
+        listed = sorted(t["name"] for t in c.request("tools/list").get("result", {}).get("tools", [])
+                        if t["name"].startswith("write_"))
+        r, st, _ = call("read_status")
+        build = int(st.get("build_number") or 0)
+        print(f"        UE {st.get('ue_version')}, DLL build {build}, server build {st.get('mcp_build')}")
+        if not ck.check(0 < build < MCP_MIN_WRITES, f"the game's DLL is build {build}, older than {MCP_MIN_WRITES} "
+                        "(else: inject an old DLL, out/stageA/copy3695/UE5Dumper.dll, into a fresh game)", st):
+            return
+        if not ck.check(bool(st.get("scanned")), "the game is scanned", st):
+            return
+        game = pid or st.get("pid")
+        try:
+            client = PipeClient(pid=game, timeout=60)
+            client.connect()
+            ui = client
+            g = ui.request("get_mouse_cursor")
+            if g.get("code") == 0 and isinstance(g.get("state"), bool):
+                did["s0"] = g["state"]
+        except Exception as e:  # noqa: BLE001 -- the stand-in is informational here
+            print(f"  skip  the stand-in beside the server (informational): {e}")
+
+        r, p, _ = call("read_pose")
+        ck.check(p.get("code") == 0 and "x" in p, "the pawn's pose (write_teleport's target: where it is)", p)
+        r, kml, _ = call("read_find_object", {"path": "Default__KismetMathLibrary"})
+        ck.check(bool(kml.get("addr")), "KismetMathLibrary's class default (write_invoke's object)", kml)
+        faddr, fbytes = "0x0", "00000000"
+        r, live, _ = call("read_find_live_instance", {"class_name": FIXTURE_CLASS})
+        field = None
+        if live.get("addr") and live.get("class_addr"):
+            r, klass, _ = call("read_class", {"addr": live["class_addr"], "name_filter": FIXTURE_FIELD})
+            field = next((f for f in klass.get("class", {}).get("fields", []) if f.get("name") == FIXTURE_FIELD), None)
+        if ck.check(field is not None, f"{FIXTURE_CLASS}.{FIXTURE_FIELD} and its bytes (write_memory's)", live):
+            faddr = "0x%X" % (int(live["addr"], 16) + field["offset"])
+            r, mem, _ = call("read_memory", {"addr": faddr, "size": 4})
+            fbytes = str(mem.get("bytes", "")).upper() or fbytes
+
+        args = {
+            "write_god_mode": {"enable": False},
+            "write_movement": {"knob": "walk_speed", "reset": True},
+            "write_gravity_direction": {"reset": True},
+            "write_time_dilation": {"target": "global", "reset": True},
+            "write_debug_camera": {"enable": False},
+            "write_mouse_cursor": {"show": False},
+            "write_fly": {"enable": False},
+            "write_foreground_lock": {"enable": False},
+            "write_see_through": {"enable": False},
+            # Before its reset: should both ever reach the old DLL, the reset ends the job.
+            "write_force_field": {"class_name": FIXTURE_CLASS, "field_name": FIXTURE_FIELD, "kind": "numeric",
+                                  "value": 777},
+            "write_force_field_reset": {"class_name": FIXTURE_CLASS, "field_name": FIXTURE_FIELD},
+            "write_teleport": {k: p.get(k, 0.0) for k in ("x", "y", "z", "yaw")},
+            "write_memory": {"addr": faddr, "bytes": fbytes, "expect": fbytes},
+            "write_invoke": {"instance_addr": kml.get("addr", "0x0"), "function": "Add_IntInt",
+                             "params": {"A": 1, "B": 1}},
+        }
+        since = _fresh_stamp()
+        for name, a in args.items():
+            if name not in listed:
+                ck.check(False, f"{name}: listed by tools/list", listed)
+                continue
+            r, d, _ = call(name, a)
+            need = MCP_MIN_RAW_WRITES if name in OLD_DLL_RAW_TOOLS else MCP_MIN_WRITES
+            text = error_text(d)
+            if not r.get("isError") and name in ("write_force_field", "write_mouse_cursor"):
+                did[name] = True
+            ck.check(bool(r.get("isError")) and f"The game's DLL is build {build}, older than {need}" in text
+                     and "nothing is changed through it" in text,
+                     f"{name}: refused with the build text (build {build}, older than {need})", d)
+        for name in sorted(set(listed) - set(args)):
+            ck.check(False, f"{name}: a write tool this rig has no no-op arguments for", "add them to the table")
+        for pattern in OLD_DLL_COMMAND_LINES:
+            line = _log_line("pipe", pattern, since)
+            ck.check(line is None, f"the old DLL's pipe log has no '{pattern.strip()}' line since the start", line)
+        if ui is not None:
+            for cmd in ("get_protect_state", "get_foreground_lock", "get_forced_fields"):
+                reply = {k: v for k, v in ui.request(cmd).items() if k not in ("id", "ok", "game_thread_stalled")}
+                print(f"        stand-in (informational): {cmd} -> {reply}")
+        code = c.close()
+        did["closed"] = True
+        ck.check(code == 0, "the server exits 0 when stdin closes", code)
+
+    def cleanup() -> None:
+        if c is not None and not did.get("closed"):
+            _attempt("closing the AI session", c.close)
+        if ui is not None:
+            if did.get("write_force_field"):
+                _attempt("the field forced through the old DLL",
+                         lambda: ui.request("reset_field", class_name=FIXTURE_CLASS, field_name=FIXTURE_FIELD))
+            if did.get("write_mouse_cursor") and "s0" in did:
+                _attempt("the cursor back", lambda: ui.request("set_mouse_cursor", show=did["s0"]))
+            ui.close()
+        _attempt("the experimental switch's file", switch.restore)
+
+    try:
+        body()
+    finally:
+        cleanup()
+    return ck.done(sessions)
+
+
+def run_invoke_params(exe: str, pid: int | None) -> int:
+    """Register item 27, write_invoke's parameters by name (see the module docstring). The stand-in only reads:
+    get_holds' outstanding invokes, and the pose at the end."""
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from pipe_client import PipeClient   # noqa: E402 -- the rig beside this one
+
+    ck = Checks()
+    extra = Checks()   # the EchoSoftSpec pair: beyond the acceptance, so kept out of the exit code
+    base = {"pid": pid} if pid else {}
+    sessions: list[McpClient] = []
+    did: dict = {}
+    c: McpClient | None = None
+    ui = None
+
+    def call(tool, args=None):
+        r = c.call(tool, {**base, **(args or {})})
+        data, note = payload(r)
+        return r, (data if isinstance(data, dict) else {}), note
+
+    def error_text(data) -> str:
+        return data.get("error", "") if isinstance(data, dict) else str(data)
+
+    def outstanding() -> int:
+        return sum(e.get("outstanding", 0) for e in ui.request("get_holds").get("invokes", []))
+
+    def pose() -> dict:
+        return call("read_pose")[1]
+
+    def invoke(addr: str, function: str, params: dict | None = None):
+        args = {"instance_addr": addr, "function": function}
+        if params is not None:
+            args["params"] = params
+        return call("write_invoke", args)
+
+    def vector(p: dict) -> dict:
+        return {"X": p["x"], "Y": p["y"], "Z": p["z"]}
+
+    def params_of(f: dict | None) -> dict:
+        return {p.get("name"): p for p in (f or {}).get("params", [])}
+
+    def first_declaring(class_addr: str | None, name: str) -> tuple[str, dict] | None:
+        """The first class up the chain from `class_addr` that declares `name` itself, with that function: the one the
+        server's own lookup (the super chain, most derived first) resolves, so an override in a subclass is the one
+        checked, never the base's."""
+        addr = class_addr
+        for _ in range(64):
+            if not addr or int(addr, 16) == 0:
+                return None
+            r, fs, _ = call("read_functions", {"addr": addr, "name_filter": name})
+            f = next((f for f in fs.get("functions", []) if f.get("name") == name), None)
+            r, k, _ = call("read_class", {"addr": addr, "name_filter": _NO_FIELDS})
+            cls = k.get("class", {})
+            if f is not None:
+                return cls.get("name", "?"), f
+            addr = cls.get("super_addr")
+        return None
+
+    def contained(label: str, owner: str, offset: int) -> int | None:
+        """The address `offset` into `owner`, when find_by_address calls it inside that object ('contains'): the
+        server's liveness check then refuses it as an object."""
+        fa = int(owner, 16) + offset
+        r, fb, _ = call("read_find_by_address", {"addr": "0x%X" % fa})
+        print(f"        O: {label} at 0x{fa:X}: find_by_address answers {fb.get('match_kind')} "
+              f"(object {fb.get('addr')} + {fb.get('offset_from_base')})")
+        ok = (fb.get("found") is True and fb.get("match_kind") == "contains"
+              and int(str(fb.get("addr") or "0x0"), 16) == int(owner, 16) and fb.get("offset_from_base") == offset)
+        return fa if ok else None
+
+    def soft_spec_pair(field: int, pawn: str) -> None:
+        r, act, _ = call("read_find_live_instance", {"class_name": "DumperTestActor"})
+        if not extra.check(act.get("pick") == "live" and bool(act.get("addr")), "O extra: a live DumperTestActor", act):
+            return
+        r, d, _ = invoke(act["addr"], "Vnd584_EchoSoftSpec", {"Spec": {"Icon": "0x%X" % field}})
+        want = f"'Spec.Icon' must be a live object's address (or 0); 0x{field:X} is not one."
+        extra.check(bool(r.get("isError")) and error_text(d) == want,
+                    "O extra: Vnd584_EchoSoftSpec with Spec.Icon = that field is refused, naming the struct field",
+                    d)
+        r, d, note = invoke(act["addr"], "Vnd584_EchoSoftSpec", {"Spec": {"Icon": pawn}})
+        try:
+            got = int(str(d.get("return")), 16)
+        except ValueError:
+            got = None
+        extra.check(not r.get("isError") and d.get("result") == 0 and got == int(pawn, 16),
+                    "O extra control: Spec.Icon = the pawn returns the pawn's address", (d, note))
+
+    def body() -> None:
+        nonlocal c, ui
+        c = McpClient(exe)
+        c.initialize()
+        sessions.append(c)
+        r, st, _ = call("read_status")
+        build = int(st.get("build_number") or 0)
+        print(f"        UE {st.get('ue_version')}, DLL build {build}, server build {st.get('mcp_build')}")
+        if not ck.check(bool(st.get("scanned")) and build >= MCP_MIN_RAW_WRITES,
+                        f"the game is scanned, DLL build {build} (write_invoke needs {MCP_MIN_RAW_WRITES}+)", st):
+            return
+        game = pid or st.get("pid")
+        client = PipeClient(pid=game, timeout=120)
+        client.connect()
+        ui = client
+        t0 = _now()
+        # A call left queued (the UI's, CE's, a half-done run's) makes every write_invoke refuse: nothing here decides.
+        if not ck.check(outstanding() == 0, "no invoke is outstanding when the run starts"):
+            return
+        p0 = pose()
+        if not ck.check(p0.get("code") == 0 and "x" in p0 and int(str(p0.get("pawn_addr") or "0x0"), 16) != 0,
+                        "read_pose: the pawn and its pose", p0):
+            return
+        did["p0"] = p0
+        pawn = p0["pawn_addr"]
+
+        # Signature guards, before any call: what each function takes on this build.
+        r, obj, _ = call("read_object", {"addr": pawn})
+        hit = first_declaring(obj.get("class_addr"), "K2_SetActorLocation")
+        ps = params_of(hit[1] if hit else None)
+        nl = ps.get("NewLocation", {})
+        k_ok = ck.check(hit is not None and hit[0] == "Actor" and nl.get("type") == "StructProperty"
+                        and nl.get("struct_type") == "Vector" and nl.get("size") == 24 and "bSweep" in ps
+                        and ps.get("SweepHitResult", {}).get("out") is True and "bTeleport" in ps
+                        and ps.get("ReturnValue", {}).get("ret") is True,
+                        "guard: the pawn resolves Actor's K2_SetActorLocation: NewLocation (Vector, 24 bytes), bSweep, "
+                        "SweepHitResult (out), bTeleport, ReturnValue", hit)
+        r, kml, _ = call("read_find_object", {"path": "Default__KismetMathLibrary"})
+        cdo = kml.get("addr")
+        eq = None
+        if cdo:
+            r, ko, _ = call("read_object", {"addr": cdo})
+            r, fs, _ = call("read_functions", {"addr": ko.get("class_addr") or "0x0",
+                                               "name_filter": "EqualEqual_ObjectObject"})
+            eq = next((f for f in fs.get("functions", []) if f.get("name") == "EqualEqual_ObjectObject"), None)
+        eps = params_of(eq)
+        o_ok = ck.check(eq is not None and eps.get("A", {}).get("type") == "ObjectProperty"
+                        and eps.get("B", {}).get("type") == "ObjectProperty",
+                        "guard: KismetMathLibrary.EqualEqual_ObjectObject takes A and B as objects", eq)
+        r, pc, _ = call("read_find_live_instance", {"class_name": "PlayerController"})
+        stc = first_declaring(pc.get("class_addr"), "SendToConsole") if pc.get("pick") == "live" else None
+        sps = params_of(stc[1] if stc else None)
+        ck.check(stc is not None and not (int(stc[1].get("flags") or 0) & 0x40)
+                 and sps.get("Command", {}).get("type") == "StrProperty",
+                 "guard: the live PlayerController's SendToConsole has no FUNC_Net (0x40) and takes a string: refused "
+                 "by name, not by flag", stc)
+
+        # K. A struct parameter by name moves an actor; a rootless one answers false.
+        if k_ok:
+            target = _ahead(p0, 100)
+            did["moved"] = True
+            r, d, note = invoke(pawn, "K2_SetActorLocation",
+                                {"NewLocation": vector(target), "bSweep": False, "bTeleport": True})
+            ck.check(not r.get("isError") and d.get("result") == 0 and d.get("return") == "true"
+                     and "SweepHitResult" in (d.get("out") or {}),
+                     "K: write_invoke K2_SetActorLocation, 100 uu ahead, returns true, SweepHitResult decoded",
+                     (d, note))
+            time.sleep(0.5)
+            p1 = pose()
+            ck.check(p1.get("z", target["z"]) >= target["z"] - 200,
+                     "K: the pawn did not fall away (z within 200 of the target; else it is moved back at once)", p1)
+            moved = math.hypot(p1.get("x", p0["x"]) - p0["x"], p1.get("y", p0["y"]) - p0["y"])
+            ck.check(_near(p1, target) and moved >= 80,
+                     f"K: the pawn is at the target (within 50 uu), {moved:.0f} uu from where it was (80 at least)", p1)
+            line = _log_line("pipe", r"invoke_function: \S*::K2_SetActorLocation inst=", t0)
+            m = re.search(r"inst=(0x[0-9A-Fa-f]+)", line or "")
+            ck.check(m is not None and int(m.group(1), 16) == int(pawn, 16),
+                     "K: pipe log: its invoke line, on the pawn", line)
+            r, d, note = invoke(pawn, "K2_SetActorLocation", {"NewLocation": vector(p0), "bSweep": False,
+                                                              "bTeleport": True})
+            time.sleep(0.5)
+            pb = pose()
+            if ck.check(not r.get("isError") and d.get("return") == "true" and _near(pb, p0),
+                        "K back: K2_SetActorLocation to where it was; the pawn is back within 50 uu", (d, pb)):
+                did["moved"] = False
+            r, h, _ = call("read_find_live_instance", {"class_name": FIXTURE_CLASS})
+            if ck.check(h.get("pick") == "live" and bool(h.get("addr")),
+                        f"K control: a live {FIXTURE_CLASS} (an actor with no root component)", h):
+                did["holder"] = h
+                r, d, note = invoke(h["addr"], "K2_SetActorLocation",
+                                    {"NewLocation": vector(p0), "bSweep": False, "bTeleport": True})
+                ck.check(not r.get("isError") and d.get("result") == 0 and d.get("return") == "false",
+                         "K control: on it the call runs and returns false (no root to move)", (d, note))
+
+        # O. An object parameter given a field's address: the server's liveness check refuses it, nothing is sent.
+        if o_ok:
+            r, d, note = invoke(cdo, "EqualEqual_ObjectObject", {"A": pawn, "B": pawn})
+            ck.check(not r.get("isError") and d.get("return") == "true",
+                     "O control: EqualEqual_ObjectObject(pawn, pawn) returns true", (d, note))
+            r, d, note = invoke(cdo, "EqualEqual_ObjectObject", {"A": pawn, "B": "0"})
+            ck.check(not r.get("isError") and d.get("return") == "false",
+                     "O control: EqualEqual_ObjectObject(pawn, 0) returns false", (d, note))
+            field = None
+            if p0.get("loc_owner_addr") and p0.get("loc_field_offset") is not None:
+                field = contained("the pawn root's RelativeLocation", p0["loc_owner_addr"], int(p0["loc_field_offset"]))
+            if field is None:
+                # The plan's fallback when an object starts at that field: HolderValue inside a holder.
+                h = did.get("holder") or call("read_find_live_instance", {"class_name": FIXTURE_CLASS})[1]
+                r, k, _ = call("read_class", {"addr": h.get("class_addr") or "0x0", "name_filter": FIXTURE_FIELD})
+                f = next((f for f in k.get("class", {}).get("fields", []) if f.get("name") == FIXTURE_FIELD), None)
+                if h.get("addr") and f is not None:
+                    field = contained(f"{FIXTURE_CLASS}.{FIXTURE_FIELD}", h["addr"], int(f["offset"]))
+            if ck.check(field is not None, "O: find_by_address calls a field's address 'contains', not 'exact'"):
+                since = _fresh_stamp()
+                r, d, _ = invoke(cdo, "EqualEqual_ObjectObject", {"A": "0x%X" % field, "B": pawn})
+                want = f"'A' must be a live object's address (or 0); 0x{field:X} is not one."
+                ck.check(bool(r.get("isError")) and error_text(d) == want,
+                         f"O: EqualEqual_ObjectObject with A = that field is refused: {want}", d)
+                line = _log_line("pipe", r"invoke_function: \S*::EqualEqual_ObjectObject inst=", since)
+                ck.check(line is None, "O: pipe log: no invoke line for it (refused before anything is sent)", line)
+                ck.check(outstanding() == 0, "O: nothing is outstanding")
+                soft_spec_pair(field, pawn)
+
+        # S. A function refused by name for a background client, with no parameters (an empty FString).
+        if ck.check(pc.get("pick") == "live" and bool(pc.get("addr")), "S: a live PlayerController", pc):
+            since = _fresh_stamp()
+            r, d, _ = invoke(pc["addr"], "SendToConsole")
+            want = "Not invoked: SendToConsole runs a console command, which can run anything"
+            ck.check(bool(r.get("isError")) and error_text(d) == want,
+                     f"S: write_invoke SendToConsole is refused: {want}", d)
+            ck.check(_log_line("pipe", r"invoke_function: SendToConsole refused for a background client", since)
+                     is not None, "S: pipe log: SendToConsole refused for a background client")
+            line = _log_line("pipe", r"invoke_function: \S*::SendToConsole inst=", since)
+            ck.check(line is None, "S: pipe log: no invoke line for it", line)
+
+        code = c.close()
+        did["closed"] = True
+        ck.check(code == 0, "end: the AI session ends (the server exits 0)", code)
+        ck.check(outstanding() == 0, "end: nothing is outstanding")
+        p = ui.request("teleport_get_pose")
+        ck.check(_near(p, p0), "end: the pawn is where it started (within 50 uu)", p)
+
+    def cleanup() -> None:
+        if c is not None and not did.get("closed"):
+            _attempt("closing the AI session", c.close)
+        if ui is not None:
+            def pawn_back():
+                p0 = did["p0"]
+                if not _near(ui.request("teleport_get_pose"), p0):
+                    # keep_undo: the user's "Recall last" is not this rig's to move.
+                    ui.request("teleport_recall_marker", x=p0["x"], y=p0["y"], z=p0["z"], keep_undo=True)
+
+            if did.get("moved"):
+                _attempt("the pawn back where it started", pawn_back)
+            ui.close()
+
+    try:
+        body()
+    finally:
+        cleanup()
+    if extra.passed or extra.failures:
+        print(f"\nO extra, recorded apart from the exit code: {extra.passed} passed, {len(extra.failures)} failed")
+        for f in extra.failures:
+            print(f"  -  {f}")
+    return ck.done(sessions)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("mode", choices=["probe", "call", "live", "writes", "raw", "dbgcam", "dbgcamhold", "dbgcamstop"])
+    ap.add_argument("mode", choices=["probe", "call", "live", "writes", "raw", "dbgcam", "dbgcamhold", "dbgcamstop",
+                                     "holdsmore", "olddll", "invokeparams"])
     ap.add_argument("--ce-desc", default="Inject DLL + Start Pipe Server",
                     help="dbgcamstop: the CE record that started the DLL (its untick runs UE5_Shutdown)")
     ap.add_argument("--exe", required=True, help="path to UE5DumpUI.exe")
@@ -1640,6 +2559,12 @@ def main() -> int:
             return run_dbgcam_stop(exe, a.pid, a.suspend_name, a.ce_desc)
         run = {"raw": run_raw, "dbgcam": run_dbgcam, "dbgcamhold": run_dbgcam_hold}[a.mode]
         return run(exe, a.pid, a.suspend_name)
+    if a.mode in ("holdsmore", "olddll", "invokeparams"):
+        # A holder's pid is compared with the server's process here, and the stand-in reads this machine's DLL logs.
+        if a.ssh:
+            ap.error(f"{a.mode} runs the server on this machine, beside the game: --ssh does not apply")
+        run = {"holdsmore": run_holds_more, "olddll": run_old_dll, "invokeparams": run_invoke_params}[a.mode]
+        return run(exe, a.pid)
     return run_live(exe, a.pid, a.suspend_name)
 
 
