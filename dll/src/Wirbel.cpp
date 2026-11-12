@@ -1536,12 +1536,12 @@ int32_t RecallMarker(int32_t slot, bool force, uint8_t* tierOut) {
     return rc;
 }
 
-int32_t RecallExplicit(const Pose& pose, bool hasRot, uint8_t* tierOut) {
+int32_t RecallExplicit(const Pose& pose, bool hasRot, uint8_t* tierOut, bool keepUndo) {
     std::lock_guard<std::mutex> lock(s_opMutex);
-    SaveLastImpl();   // remember where we were, in case this BugItGo goes wrong
+    if (!keepUndo) SaveLastImpl();   // remember where we were, in case this BugItGo goes wrong
     int32_t rc = RecallTo(pose, hasRot, tierOut);
-    LOG_INFO("Teleport: explicit recall (%.1f, %.1f, %.1f) rot=%d -> rc=%d",
-             pose.X, pose.Y, pose.Z, hasRot ? 1 : 0, rc);
+    LOG_INFO("Teleport: explicit recall (%.1f, %.1f, %.1f) rot=%d keep_undo=%d -> rc=%d",
+             pose.X, pose.Y, pose.Z, hasRot ? 1 : 0, keepUndo ? 1 : 0, rc);
     return rc;
 }
 

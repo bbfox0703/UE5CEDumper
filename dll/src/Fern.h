@@ -2,7 +2,7 @@
 
 // ============================================================
 // Fern — 費倫 (芙莉蓮的弟子 — Frieren's Apprentice)
-// PipeServer: Named Pipe JSON IPC server (106 commands)
+// PipeServer: Named Pipe JSON IPC server (107 commands)
 //
 // ⚠ DERIVED, not hand-maintained: `grep -c 'constexpr const char* CMD' dll/src/Renge.h`,
 // asserted by `tools/check_derived_counts.py` in CI. It said "~30" against a real 99 until
@@ -31,6 +31,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <memory>
+#include <set>
 #include <vector>
 
 class Fern {
@@ -95,6 +96,9 @@ private:
         // Who owns what this connection turns on: its client process, so the UI's two lanes are one owner
         // (Voll::ClientOwnerKey). Set with seq, under m_connMutex, before the connection is registered.
         uint64_t           ownerKey{0};
+        // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: this connection marks its requests "background" (the MCP server).
+        // Latched by its first such request; what its process holds is released when that process leaves.
+        std::atomic<bool>  background{false};
         std::mutex         writeMutex;
         std::atomic<bool>  inFlight{false};   // true only while inside DispatchCommand
         // What that in-flight command IS, and when it started. Written just before
@@ -212,6 +216,12 @@ private:
     void ReleaseOwnedBy(uint64_t owner);
     bool OwnerStillConnected(uint64_t owner);   // takes m_connMutex
 
+    // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: the owners (client processes) that mark their requests background, whose
+    // holds (Voll::HoldLedger) go when they leave. Guarded by m_connMutex; an owner leaves the set when it leaves.
+    std::set<uint64_t> m_backgroundOwners;
+    bool IsBackgroundOwner(uint64_t owner);     // takes m_connMutex
+    void MarkBackground(const std::shared_ptr<Connection>& conn);   // takes m_connMutex
+
     // The LiveFuncs recording: one writer at a time -- starting one joins the old arm worker and installs a new one,
     // and that pair is not atomic -- and the owner that started it (0: none). Lock order m_profileMu -> m_connMutex.
     std::mutex              m_profileMu;
@@ -225,6 +235,12 @@ private:
     // bails. It peeks ONLY while a connection's inFlight flag is set (the thread
     // is then CPU-bound in DispatchCommand, not in ReadFile/WriteFile), so there
     // is no concurrent read/write on the handle.
+    // [DBGCAM-RELEASE-STALLED] Each tick it also serves an AI session's owed
+    // debug-camera release, a no-op unless one is owed. It only tries the camera's
+    // hold lock, never waits for it, and sends only when the game thread ran in the
+    // last 150 ms; the OFF waits on the game thread, so a game thread that stops
+    // within that window or during the OFF's own state read holds the peeks up for
+    // the invoke timeout (Fern.cpp's ServeOwedCameraRelease says how long).
     Routine::SafeThread          m_monitorThread;
     void MonitorLoop();
 

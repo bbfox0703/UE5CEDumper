@@ -161,7 +161,7 @@ public static class CeAutorunScriptGenerator
         Line(sb, $"    showMessage({Indent(CeReadinessLua.SymbolNeverAppearedMessage)})");
         Line(sb, "    return false");
         Line(sb, "  elseif state == INIT_FAILED then");
-        Line(sb, $"    showMessage({Indent(CeReadinessLua.PipeFailedMessage)})");
+        Line(sb, $"    showMessage({Indent(CeReadinessLua.InitFailedMessage)})");
         Line(sb, "    return false");
         Line(sb, "  elseif state ~= INIT_READY and state ~= INIT_SKIPPED then");
         Line(sb, $"    showMessage({Indent(CeReadinessLua.TimedOutMessage)})");

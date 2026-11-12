@@ -4,7 +4,7 @@ Named pipe: `\\.\pipe\UE5DumpBfx_<pid>`, one per game process (the pid is the ga
 Format: JSON, newline-delimited (one message per `\n`)
 Direction: bidirectional — Request/Response + push Events (a watch's events go out with the watching connection's
 next reply since [PIPE-PER-PROCESS-2026-11-06] Stage C; see Push Events)
-Total commands: **106** — a DERIVED number, regenerate it, never hand-edit:
+Total commands: **107** — a DERIVED number, regenerate it, never hand-edit:
 `grep -c 'constexpr const char\* CMD' dll/src/Renge.h`. (It read 31 from build ~547 until
 2026-08-05, i.e. it was wrong by a factor of three for most of this project's life.)
 
@@ -31,6 +31,30 @@ Total commands: **106** — a DERIVED number, regenerate it, never hand-edit:
   `get_diagnostics.game_thread.liveness` carries the same fact in three states
   (`"responsive"` / `"stalled"` / `"unknown"`); `game_thread.responsive` beside it is the legacy
   gate predicate and is kept unchanged for older clients.
+- **`"background": true` (bool, optional, any command)** marks work a client runs in the background
+  (`[PIPE-PER-PROCESS-2026-11-06]` Stage D; the MCP server, `UE5DumpUI.exe --mcp`, sends it on every
+  request). A GObjects walk the command starts then takes at most half of the worker threads that
+  are free, rounded down (`Aura::BackgroundWalkScope`), so a walk the user starts in the UI meanwhile
+  still gets the other half; without it, a long walk held every worker and the UI's value scan or
+  snapshot ran on one thread into its deadline. Absent or false: the walk takes all that is free, as
+  before. A DLL older than the key ignores it. The DLL log says when a walk ran on fewer threads, and
+  why ("a background walk takes at most half of what is free").
+  It also marks the client process as a **background owner** (D2-1, below): what it holds is released
+  when it leaves, and `pipe_clients` shows `"background": true` for its connections.
+- **Holds and their owners (D2-1, build 3704+).** God mode, the three movement knobs, gravity direction,
+  the two time lanes, fly, the foreground lock, the debug camera and each force-field job are one
+  process-wide state each. The DLL records who holds each (`Voll::HoldLedger`): a client process, CE's
+  mailbox, or none. After a command that changes a hold, an active hold is the caller's and one that is
+  off is nobody's.
+  - **`"if_free": true`** (bool, optional, on any of those commands): refuse when the hold is active and
+    anyone else holds it -- an active hold with no recorded owner counts as someone else's. The answer is
+    `ok: true` with `"code": -20`, `"hold"` (its name) and `"holder"` (below); nothing changes. The check
+    and the change run under the hold's own lock, which the mailbox takes too, so no other writer slips
+    between them.
+  - **What a background client holds ends with it:** when its process's last connection closes, the DLL
+    releases each hold the ledger still names it for (god mode off, a knob or lane reset, fly off, the
+    lock off, the debug camera off, the force-field job removed). A foreground client's holds outlive it.
+  - `get_holds` (below) lists them all.
 
 -----
 
@@ -268,6 +292,12 @@ is already active, which reads ON. `set_debug_camera` only:
   `[W3-DEBUGCAM-QUEUED]`
 - `-6`: NOT SENT, because an earlier toggle of the other direction is still queued; send again once the game responds.
   `[DBGCAM-OFF-OVER-QUEUED-ON]`
+- `[D2-3-INVOKE]` (build 3706+): a `-5` for the same direction tells a client the queued toggle is its own -- and a
+  foreground client (the UI, CE) that joins another client's queued toggle that way takes it over: it holds the camera,
+  and the first sender's session end does not drop it. Only an `if_free` request (the MCP server's) can also get, as
+  `ok:true` replies: `state` `-25` with `code` `-20`, `hold: "invoke_queue"` and the `holder` (another client's
+  game-thread call is outstanding; nothing sent), or `state` and `code` `-27` (the ProcessEvent hook is down; nothing
+  sent).
 - `-17` (from build 3682): an ON NOT SENT, because no CheatManager is live (UE 5 compiles it out of Shipping by
   default) and ToggleDebugCamera does nothing on its class default object (4.20+; undefined behaviour on 4.18/4.19).
   Answered at once, with no game-thread call.
@@ -1881,9 +1911,21 @@ eyeball calibration (tweak constants until names look like real UObjects).
 // read_mem response
 { "id": 14, "ok": true, "bytes": "48 8B 05 AB CD EF 12 ..." }
 
-// write_mem response
-{ "id": 15, "ok": true }
+// write_mem request: expect (optional, build 3706+) is the bytes the caller read there, as many as bytes
+{ "id": 15, "cmd": "write_mem", "addr": "7FF123456789", "bytes": "3F800000", "expect": "00000000" }
+// write_mem response (build 3706+: the bytes it replaced)
+{ "id": 15, "ok": true, "before": "00000000" }
+// refused: nothing was written
+{ "id": 15, "ok": false, "error": "Not written: ... is in executable memory (code); ...", "code": -21 }
+{ "id": 15, "ok": false, "error": "Not written: the memory at ... changed since it was read", "code": -23,
+  "current": "01000000" }
 ```
+
+`[D2-3-WRITEMEM]` (build 3706+, every client): `write_mem` writes data that is writable as it stands. Code (`-21`),
+read-only, guard, no-access and uncommitted pages (`-22`) are refused, and no page's protection is changed: before,
+any page was made READWRITE for the write, which patched code and read-only data and restored the first page's
+protection on every page of a multi-page write. With `expect`, a range that no longer holds those bytes is refused
+(`-23`, with what is there now in `current`). The codes are Grimoire.h's `WRITE_MEM_*`.
 
 ### walk_functions
 
@@ -2075,6 +2117,21 @@ Error codes:
 - `-5` = game-thread dispatch timeout (5s) — game may be paused or unresponsive
 - `-7` = hook not active, fell back to direct call (may have succeeded but on wrong thread)
 
+`[D2-3-INVOKE]` (build 3706+). Each queued call records the client that sent it (`if_free` and the owner come from the
+request; CE's mailbox calls are CE's). Refusals, each `ok:false` with nothing queued or run:
+- `if_free` while another client's call is still queued or running (a -5 one included): `code` `-20`,
+  `hold: "invoke_queue"`, and the `holder`, as a hold's refusal. The UI sends no `if_free`, so its calls always queue.
+  The rule covers every game-thread call an `if_free` command makes on its way: `set_debug_camera` answers (`ok:true`)
+  `state` -25 with the same `code` / `hold` / `holder`, or `state` / `code` -27 with the hook down -- see "Debug
+  Camera" -- and a pending ON counts as the debug camera held by the client that sent it.
+- `if_free` while the ProcessEvent hook is down: `code` `-27`; such a call never runs off the game thread.
+- From a client that marks its requests `background` (the MCP server), `code` `-24`: `direct_call`, a function whose
+  flags cannot be read, a network RPC (`FUNC_Net`), or a name on the deny list (console commands, quit / level travel /
+  restart, actor destruction, save-slot write / delete, the debug-camera toggles -- see `set_debug_camera`). Voll.h's
+  `InvokeRefusedForBackground`.
+- A background client's call still queued when its process leaves is dropped and never runs (`code` `-26` to a caller
+  still waiting).
+
 ### walk_instance_batch
 
 N instance walks in ONE round-trip. **Measured justification** ([multipipe-eval.md](multipipe-eval.md)
@@ -2115,8 +2172,11 @@ disconnected for idling, but who holds the connections can be seen. Read-only, a
 // → { "pipe": "\\\\.\\pipe\\UE5DumpBfx_668", "cap_in_force": 6, "build_cap": 6,
 //     "clients": [ { "seq": 3, "pid": 4321, "exe": "python.exe", "connected_ms": 5000,
 //                    "last_cmd": "get_pointers", "last_cmd_age_ms": 20, "in_flight": true,
-//                    "phase": "Dispatching", "self": true }, ... ] }
+//                    "phase": "Dispatching", "self": true, "background": false }, ... ] }
 ```
+
+`background` (build 3704+) marks a connection whose requests carry `"background": true` (the MCP server): the exe
+name cannot, since the MCP server is `UE5DumpUI.exe` too.
 
 `cap_in_force` is the limit the pipe really has (a name an older copy of the DLL created keeps that copy's limit);
 `build_cap` is this build's. `last_cmd` is empty and `last_cmd_age_ms` is -1 before a client's first command.
@@ -2133,6 +2193,46 @@ PipeServer: all 6 pipe instances in use, waiting for a free slot -- \\.\pipe\UE5
 \\.\pipe\UE5DumpBfx_668` line supersedes it. The UI's Connect and `tools/verify/pipe_client.py` read it when a
 connect finds every connection taken; the words are Grimoire.h's `PIPE_AT_CAPACITY_TEXT` / `PIPE_HOLDERS_TOKEN` /
 `PIPE_HOLDERS_MORE_TOKEN` / `PIPE_SLOT_FREED_TEXT`.
+
+### get_holds
+
+Every hold whose owner the DLL records ([PIPE-PER-PROCESS-2026-11-06] Stage D2-1, build 3704+; General Rules, "Holds
+and their owners"), whether it is in force now, and who holds it. Read-only, answers before a scan.
+
+```jsonc
+{ "id": 1, "cmd": "get_holds" }
+// → { "holds": [
+//      { "hold": "god_mode", "active": true,
+//        "holder": { "kind": "client", "pid": 4321, "background": false, "you": false } },
+//      { "hold": "time:global", "active": true,
+//        "holder": { "kind": "client", "pid": 5555, "background": true, "you": true } },
+//      { "hold": "fly", "active": false, "holder": { "kind": "none", "you": false } },
+//      { "hold": "force_field:BP_Hero_C::bGodMode", "active": true, "holder": { "kind": "ce", "you": false } },
+//      ... ],
+//    "invokes": [                                   // build 3706+
+//      { "holder": { "kind": "client", "pid": 4321, "background": false, "you": false }, "outstanding": 1 } ] }
+```
+
+`invokes` (`[D2-3-INVOKE]`, build 3706+): each client's game-thread calls still queued or running, a timed-out (-5)
+one included, counted until the game thread answers it (a dropIfAbandoned conversion stops counting when its waiter
+gives it up: it never runs); the DLL's own workers are left out. An `if_free` `invoke_function` is refused while
+another client has one outstanding. A hold may carry `"pending": true`: a debug-camera ON on its way, which an
+`if_free` request already counts as held by its sender.
+
+`debug_camera` may carry `"release_owed": true` (`[DBGCAM-RELEASE-STALLED]`, build 3707+). It means a background
+client's session ended while the game thread was stalled, so its release's OFF timed out and stays queued. On stock
+UE 4.18-5.7 a queued OFF does not turn the camera off, so the DLL sends the OFF again once the queued one has run and
+the game thread is running. It abandons the release instead when the camera has become someone's meanwhile (a client's
+ON, CE's record, or an ON on its way). A stop of the pipe server (a CE Disable) drops a release still owed rather than
+carrying it to the next start: nobody can be named the camera's holder until the clients reconnect, so the camera may
+then stay on. The DLL's pipe log records each step.
+
+The holds, always listed: `god_mode`, `foreground_lock`, `gravity_direction`, `fly`, `debug_camera`,
+`movement:walk_speed`, `movement:gravity`, `movement:jump`, `time:global`, `time:pawn`; then one
+`force_field:<class>::<field>` per force-field job there is. `active` is read from the module each time. `holder.kind`:
+`client` (a pipe client's process; `pid` absent when it could not be read), `ce` (the mailbox), or `none` (nobody
+recorded -- a hold that is active with no owner was set by a C ABI call or before the DLL recorded owners). `you` marks
+the asker's own; `background`, a client whose holds end when it leaves. The names are Grimoire.h's `HOLD_*`.
 
 ### get_diagnostics / reset_diagnostics
 
@@ -2251,7 +2351,10 @@ current pose (TP facing) came from a parent-relative read, nothing moved
   |   { "code":-16, "tier":0 }   // a marker saved from a parent-relative read; force too
 // Explicit-pose variant (BugItGo): pass x/y/z (+optional pitch/yaw/roll)
 // instead of slot — bypasses the marker store and the map check.
-{ "cmd": "teleport_recall_marker", "x":…, "y":…, "z":…, "pitch":…, "yaw":…, "roll":… }
+// keep_undo (build 3705+, default false): leave the process-wide "last" slot as
+// it is, so teleport_recall_last still returns where the user last was. The MCP
+// server's write_teleport always sends it; an older DLL ignores the key.
+{ "cmd": "teleport_recall_marker", "x":…, "y":…, "z":…, "pitch":…, "yaw":…, "roll":…, "keep_undo":false }
 
 { "cmd": "teleport_to_cursor", "zOffset":100.0, "channel":0, "fallbackCenter":true }
 → { "code":0,"tier":1,"usedCenter":false,"hitX":…,"hitY":…,"hitZ":… }

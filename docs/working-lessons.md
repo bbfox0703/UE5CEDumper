@@ -922,6 +922,25 @@ and its message quotes the very lines. **Before reasoning from a commit's code a
 `-dirty` build ran code no commit holds, so look for the experiment first: the commits around its timestamp, then
 the session that ran it.
 
+### 1.aq Private bytes rising in a straight line is not a leak until the process has had a collection
+
+2026-11-12, register item 14 (`tools/verify/mcp_soak.py`). An hour of one MCP server, a call pair every 30 s, grew 9.7
+to 43.8 MB in a straight line, and the rig's "less than 50 MB" bar only just passed it. At 1 s it climbed about 117 KB
+per call to 60.4 MB, then stayed flat. With the full mix it grew only 2.4 MB (60.1 to 62.5 MB) over about 840 calls,
+and the last 360 added nothing. The workstation GC sizes its first gen0 budget from the largest single cache the OS
+reports, not the CPU's total L3. This PC's 128 MB of L3 is split per CCD into 96 MB and 32 MB, so .NET sees 96 MB, and
+the first collection comes after about 48 MiB of allocation (about 50 MB as the rig counts). A slow run allocates less
+than that and says nothing either way.
+- **Judge memory by whether it levels off,** at a cadence that allocates several budgets' worth, not by its size.
+- A size bar is wrong both ways: it fails a server that has not collected yet, and it passes a real leak that is
+  slower than the bar.
+- **A "levelled" test needs its own bar to be relative.** The rig's first replacement (the tail grew less than 5 MB)
+  was a size bar again. Its tail was one or two report intervals, so at 1 s it passed a leak of ~40 KB per call. The
+  rig now compares the tail's growth per interval with the first report interval's, over a span the flags cannot
+  shrink (`memory_verdict`, and `--replay` re-judges a saved log).
+- Name the CPU (§1.al). What counts is the largest single cache, so a CPU whose L3 is split per CCD sees less than its
+  total, and on a smaller cache the line bends much earlier.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
@@ -2575,6 +2594,42 @@ Four rules came out of it:
    bulk. Put the same instruction in any subagent prompt that has to review it. A quarantined `tasks\*.output` needs
    no restore; it is only a copy.
 
+6. **An injector flagged after it had worked, from one shell and not another.** `[AV-INJECT-2026-11-11]`, build
+   3705. The maintainer ran `py tools/verify/inject.py --name DumperTest` in a Windows Terminal PowerShell tab
+   (`WindowsTerminal → pwsh → py.exe → python.exe`).
+   - The DLL loaded at 18:48:38 and its pipe server was up a second later (the DLL's init log). ATD flagged
+     `python.exe` 75 s after that (`ATC.Malicious`, score 80). Nothing was quarantined and the game kept running.
+     The notification said "4 apps blocked"; Bitdefender's local event store held exactly one detection.
+   - Its MITRE labels are heuristic, not a fingerprint: `T1055.002` (PE injection), although `inject.py` is the
+     `LoadLibraryW` remote thread of `T1055.001`.
+   - **Not an AV update.** The day's last signature and ATC update was at 13:08, the same boot. The 11 loads into the
+     fixture after it were never flagged, among them the agent's run from Claude Code's Bash at 18:39 with the same
+     DLL file.
+   - **An ATD exception follows the image of the process that acts, not the script it runs.** The repository folder,
+     Claude's temp folder and Claude Code's launcher had been ATD exceptions for months (the maintainer added them
+     because the AV kept blocking). `python.exe` running a script inside the repository folder was flagged anyway.
+     Why the agent's runs pass is not known; do not rely on it.
+   - So rule 4 holds only for code that does not inject: a Python process doing `CreateRemoteThread(LoadLibraryW)`
+     is inspected like anything else.
+
+   **Rules:**
+   - **Read the DLL's init log before calling an injection blocked.** A behavioural verdict can arrive after the
+     injection succeeded.
+   - **Except the program that acts, never an interpreter.** An exception on `python.exe` exempts every script it
+     runs, in every repository, and its per-user install folder is writable by anything running as the user. The
+     maintainer excepted `python.exe` for the day. Since then `inject.py` hands the injection to
+     `dist\UE5DumpUI.exe --inject-elevated`, an image inside the excepted repository folder
+     (`InjectElevatedContractTests` pins the hand-off). The `python.exe` exception was removed the same evening, and
+     the maintainer's `py tools/verify/inject.py --name DumperTest` from the same PowerShell tab then injected with no
+     alert (measured: the DLL loaded, nothing in Bitdefender's notifications). Not covered by it: the rigs that still start a
+     remote thread from python.exe (`call_export.py`, `sw1_worker_fault.py`, `findbyfullname_number_gate.py`) or
+     write into another process from it (`mailbox_poke.py` and the rigs built on it, `wpm_int32.py`, and several
+     dormant ones). List them with `git grep -lE "CreateRemoteThread|WriteProcessMemory|VirtualAllocEx" --
+     tools/verify/*.py`; any of them can be flagged.
+   - **Where Bitdefender records a verdict:** the app's `events\events.db` (SQLite; open it read-only) and
+     `ctc\rca\*.dat` (JSON: the detection, its score, the process tree). Both are readable without elevation.
+     Nothing is kept about runs it allowed, and reading the ATD allow list needs elevation.
+
 **Do not respond by making the script look like something else.** The behaviour genuinely *is*
 persistence; that is what the tool does. The honest fixes are a folder exclusion, a second
 implementation in a less-inspected host, and not running the thing automatically.
@@ -2684,18 +2739,52 @@ asymmetry**: Mimic.cpp's `ChainListFuncs` is a byte-identical twin that does *no
 per-declaration `extern "C"` and never opens a block. Fixed with `extern "C++" { … }` around the two
 adapters; negative-controlled in both directions.
 
-### 3.8e A publish stopped part-way: shut the build servers down before the next one
+### 3.8e A headless "No precompiled XAML found" that a re-run clears is a test-order race, not a stale build
 
-Measured 2026-11-10 (build 3698): a `build.ps1 -Mode Publish` stopped during its test step (to fold in a
-last fix) left five `dotnet.exe` MSBuild / compiler servers running. The next publish built and
-published the AOT UI and passed the C# suite, then its headless step failed **49 of 71** with
-`No precompiled XAML found for avares://UE5DumpUI/Resources/Strings/en.axaml`. Run alone right after,
-the headless tests passed 71/71, and the published AOT exe loaded its strings and connected. The
-cause was not pinned down; the servers are the one thing the two runs did not share. ⇒ After stopping
-a publish, run `dotnet build-server shutdown` before the next one, and read a headless "no precompiled
-XAML" right after a stopped build as that, not as a broken view -- then re-run the headless tests alone
-and launch the AOT exe before handing `dist\` over. A stopped publish also consumes its build number
-(it bumps first); do not reuse it.
+Builds 3698 (2026-11-10) and 3705 (2026-11-11): a publish's headless step failed **49 of 71**, every
+one with `No precompiled XAML found for avares://UE5DumpUI/Resources/Strings/en.axaml`, and the same
+command run alone straight afterwards passed 71/71. Build 3698 blamed the build servers a stopped
+publish had left running; build 3705 blamed the shared `obj\` of a mutation script that ran before it.
+Neither was the cause. After 3705, all four `UE5DumpUI.dll` copies (obj, bin, both test bins) were
+one file carrying compiled XAML, and the run that passed compiled nothing and copied nothing: its
+`*.Up2Date` copy marker was untouched. It loaded the same bytes as the run that failed.
+
+`[HEADLESS-AVARES-2026-11-11]` Avalonia 12.1.3 (`AssemblyDescriptorResolver`) resolves the host of
+`avares://UE5DumpUI/...` to the shortest **loaded** module whose file name *starts with* `UE5DumpUI`,
+and caches that answer for the session. Until `UE5DumpUI.dll` is loaded, `UE5DumpUI.HeadlessTests.dll`
+matches. It has no compiled XAML, so that load fails, and so does every later `avares://UE5DumpUI`
+load. xunit runs the classes in parallel and every body queues on the one headless dispatcher, so the
+first body decides the run. `StringTableFidelityTests` loads `en.axaml` by URI before it touches any
+UE5DumpUI type. Measured on unchanged binaries: that class run alone failed every time, and 2 of 6
+parallel runs of the suite failed 49/71, each with that test as the first failure. With the app's
+assembly loaded and the lookup checked in `HeadlessTestApp.Initialize`, the class passes alone and
+10 of 10 parallel runs passed 71/71.
+
+⇒ When a re-run clears a test failure, suspect order before the build. Check whether the passing run
+rebuilt or copied anything (dll timestamps, the `*.Up2Date` marker) before blaming `obj\`. A stopped
+publish still consumes its build number, because it bumps first: do not reuse it.
+
+### 3.8f A teardown that runs on the leaving connection's thread inherits its cancel flag
+
+`[DBGCAM-RELEASE-STALLED]` 2026-11-12. When a pipe client disappears while one of its commands runs, MonitorLoop
+raises that connection's cancel flag, and nothing lowers it again. The handler thread stays bound to it through its own
+teardown (`Tot::ConnectionCancelScope` covers the whole handler), so whatever the teardown runs for the departed
+client reads `Tot::Requested()` as true. Fern's release of a background client's holds runs there. The debug camera's
+state read walks GObjects and gives up at once under a cancel, so it answered "unknown": the release sent nothing and
+logged `its hold debug_camera is released (code 0)` while the camera stayed on with no holder. Measured live on build
+3706 (DumperTest Development, `mcp_client.py dbgcamhold` case J): `client gone mid-command (err=109)`, then that line.
+The rule: work that exists BECAUSE a client left must not answer to that client's cancel. Adopt an immune
+`Tot::CancelContextScope(Tot::CancelContext{nullptr, true})` for its reads (shutdown still stops them), as
+`Fern::ReleaseOwnedBy` and `ServeOwedCameraRelease` now do.
+
+Two rig traps from the same measurement:
+- **Reproducing "left mid-command" needs a command that really waits.** On DumperTest `read_pose`
+  (`teleport_get_pose`) answers from memory at once, so a session closed "during" it had already returned. The DLL log
+  had no `client gone mid-command` line, and the first J run measured something else. A `write_invoke` waits on the
+  game thread. Check the DLL log for `client gone mid-command` before reading anything into the result.
+- **A soft-removed hook still stamps fire times.** `Stark::RemoveHook` (a CE Disable) only clears a flag, so
+  `GetGameThreadLiveness` answers Unknown while `MsSinceLastHookFire` still measures the game thread. Code that must
+  not send into a stalled game reads the stamp, not the liveness.
 
 ### 3.9 Two injected hosts at once: the second one silently never scans
 
@@ -2846,6 +2935,42 @@ The rule:
 - change CE's plugin list through that dialog (it writes the registry CE reads), or ask the maintainer to look in
   regedit. Cancel leaves it untouched.
 
+### 3.wd Staging a race inside the game: hold one thread at a Cheat Engine int3 breakpoint, not two remote threads
+
+2026-11-12, `[PIPE-PER-PROCESS-2026-11-06]` register item 6 (`tools/verify/oldname_join.py`). The case needed one DLL
+copy to create a pipe name in the instant between another copy's probe and its own create. A race between two remote
+threads from python.exe would stage it, and the AV flags python.exe doing that (§3.8). Holding the second copy still
+made it deterministic, first try once the method was right:
+- **The VEH debugger, `debugProcess(2)`.** The Windows debugger freezes EVERY thread at a break, so the other copy's
+  start could not run while one thread waited.
+- **int3 (`bpmInt3`), on the module's OWN call site.** Find the one `call [rip+X]` whose X is the import's IAT slot
+  (pefile; assert exactly one). That address is reached only by that module's code, so the other copy, a separate
+  image, never hits it, and the breakpoint never has to be removed while a thread waits on it.
+- **A debug-register breakpoint missed the first run.** The thread to hold was created after the breakpoint was set (the
+  accept thread `Start()` spawns), and the registers reached it only after its first create. A patched instruction is
+  seen by every thread at once.
+- **A per-breakpoint Lua function's return is the INVERSE of `debugger_onBreakpoint`'s.** In CE's source
+  (`debugeventhandler.pas` `VisualizeBreak`) a nonzero return leaves the thread waiting for a continue, and 0
+  continues at once. The function runs on CE's main thread; CE's Lua `sleep` is a plain Sleep, pumping nothing.
+- **A second copy of the DLL cannot write its logs** while the first holds the files (item 3). Read its state from its
+  own mailbox (`initState`) instead, with ReadProcessMemory.
+- No remote thread came from python.exe. The older copy was injected by `UE5DumpUI.exe --inject-elevated` (inject.py),
+  and every export call was Cheat Engine's (`executeCodeEx`), as the .CT does anyway.
+
+### 3.we Firing an export while a .CT record's tick holds CE's main thread: a CE worker thread
+
+2026-11-12, register item 5 (`tools/verify/initfailed_ct.py`). The CT's inject record polls the DLL's mailbox on CE's
+main thread for its whole run, pumping paint messages only, so no CE timer fires meanwhile. The DLL's own INIT_FAILED
+needed `UE5_Shutdown` fired mid-scan, and a python.exe remote thread was ruled out (§3.8). What worked:
+- tick the record from a CE timer, so the bridge call returns first, with showMessage and print captured;
+- a `createThread` worker started beforehand. It is a `lua_newthread` of CE's main state, so it shares globals, and it
+  runs while the tick sleeps between polls (a C call releases the Lua lock);
+- the worker learns the addresses from a file that Python writes once the record has injected the DLL (Toolhelp plus
+  the export RVAs), not from CE's symbol handler mid-tick;
+- it fires the export with `createRemoteThread(address, 0)`: a plain CreateRemoteThread at the export, with no
+  assembled stub. `executeCodeEx` assembles one first.
+The worker's trace of every initState it read showed the race's outcome (1 → 0 → 3), and the DLL's log confirmed it.
+
 ### 3.x `proxy_refresh.py report` cries wolf after ANY local rebuild — do not act on it blindly
 
 It compares **SHA-256**, and our build is not byte-reproducible: rebuilding *identical* source
@@ -2901,6 +3026,13 @@ bump was reverted twice, so the third would have shipped 3631 a second time (the
 `UE5Dumper.dll` into `dist\`). Leave the bump; the next publish takes the next number.
 
 ### 3.xc Catch an AOT-only error in a minute, before the six-minute publish
+
+⭐ **Since 2026-11-11 the two analyzers are on for EVERY build** (`UE5DumpUI.csproj`, maintainer's decision after the
+`[PIPE-PER-PROCESS-2026-11-06]` Stage D1 review found nine `JsonArray.Add<T>` calls that compiled and passed every
+test). A plain `dotnet build`, the test build and CI now fail on IL2026 / IL3050 by themselves. Measured that day: a
+planted `new JsonArray().Add("x")` failed a plain Release build with IL2026 and IL3050, and the same build was clean
+(18 s, both editorconfig lines below present) once it was taken out. The command below is no longer needed; what
+follows about XAML, the editorconfig check and `--no-restore` still holds.
 
 `dotnet build ui/UE5DumpUI/UE5DumpUI.csproj -c Release -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true` reports
 the IL2026 / IL3050 errors a trimmed publish fails on, from a plain build. Measured 2026-10-07: the publish's own

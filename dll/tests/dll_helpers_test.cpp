@@ -481,6 +481,161 @@ static void Test_Voll_Holders() {
         nlohmann::json::parse(more == std::string::npos ? cut : cut.substr(0, more), nullptr, false);
     EXPECT("HoldersJson * : past the budget, holders are dropped and counted",
            more != std::string::npos && cutParsed.is_array() && cutParsed.size() >= 1 && cutParsed.size() < 6);
+
+    Voll::Holder bg = h;
+    bg.background = true;
+    EXPECT("holder * : a background connection is marked (the MCP server runs as UE5DumpUI.exe too)",
+           Voll::HolderToJson(bg).value("background", false) && !Voll::HolderToJson(h).value("background", true));
+}
+
+// [DBGCAM-RELEASE-STALLED] An AI session's camera release that timed out with the game thread stalled: sent again once
+// the queued OFF has run, unless the camera became someone's meanwhile.
+static void Test_Voll_OwedCameraRelease() {
+    using Voll::OwedRelease;
+    using Voll::OwedCameraReleaseBefore;
+    const uint64_t none = Voll::kHoldOwnerNone, ui = 1234;
+    EXPECT("the owed OFF's code is Stark's queued answer", Voll::kOwedOffQueued == Stark::kInvokeTimedOutStillQueued);
+    // Before the camera is read (each read walks GObjects): who has it, and whether an OFF could run now.
+    EXPECT("nobody has it, nothing queued, the game thread running: read the camera",
+           OwedCameraReleaseBefore(none, false, false, false) == OwedRelease::Read);
+    EXPECT("the queued OFF has not run: wait, unread",
+           OwedCameraReleaseBefore(none, false, true, false) == OwedRelease::Wait);
+    EXPECT("the queued OFF has run, the game thread stalled again: wait, an OFF sent now could not run",
+           OwedCameraReleaseBefore(none, false, false, true) == OwedRelease::Wait);
+    EXPECT("queued and stalled: wait", OwedCameraReleaseBefore(none, false, true, true) == OwedRelease::Wait);
+    EXPECT("the UI took the camera meanwhile: abandoned, never turned off under it",
+           OwedCameraReleaseBefore(ui, false, false, false) == OwedRelease::Abandon);
+    EXPECT("taken while the OFF is still queued: abandoned before it is sent, not left waiting",
+           OwedCameraReleaseBefore(ui, false, true, false) == OwedRelease::Abandon);
+    EXPECT("taken while the game thread is stalled: abandoned",
+           OwedCameraReleaseBefore(ui, false, true, true) == OwedRelease::Abandon);
+    EXPECT("CE took it: abandoned", OwedCameraReleaseBefore(Voll::kHoldOwnerCe, false, false, false) == OwedRelease::Abandon);
+    EXPECT("an ON on its way (someone asked for the camera): abandoned, even with a toggle queued",
+           OwedCameraReleaseBefore(none, true, true, false) == OwedRelease::Abandon);
+    EXPECT("an ON on its way alone: abandoned", OwedCameraReleaseBefore(none, true, false, false) == OwedRelease::Abandon);
+
+    // On what it read.
+    using Voll::OwedCameraReleaseOnState;
+    EXPECT("still on: send the OFF again", OwedCameraReleaseOnState(1) == OwedRelease::Send);
+    EXPECT("off (the queued OFF turned it off, UE 5.8): done", OwedCameraReleaseOnState(0) == OwedRelease::Done);
+    EXPECT("unreadable (no CheatManager now): abandoned, nothing to turn off",
+           OwedCameraReleaseOnState(-1) == OwedRelease::Abandon);
+    EXPECT("any other negative: abandoned", OwedCameraReleaseOnState(-17) == OwedRelease::Abandon);
+
+    using Voll::OwedCameraReleaseSent;
+    EXPECT("the OFF turned it off: done", OwedCameraReleaseSent(0) == OwedRelease::Done);
+    EXPECT("the OFF queued again (a new stall): still owed", OwedCameraReleaseSent(Voll::kOwedOffQueued) == OwedRelease::Wait);
+    EXPECT("still on after the toggle and the swap-back: abandoned, nothing more to try",
+           OwedCameraReleaseSent(1) == OwedRelease::Abandon);
+    EXPECT("an error: abandoned", OwedCameraReleaseSent(-1) == OwedRelease::Abandon);
+    EXPECT("not sent, an opposite toggle queued (-6): abandoned, someone wants it on",
+           OwedCameraReleaseSent(Stark::kToggleBlockedByQueued) == OwedRelease::Abandon);
+}
+
+// [D2-3-INVOKE] The queue's owner rule and the background client's deny list.
+static void Test_D23_InvokeOwnersAndDenyList() {
+    const uint64_t ui = 1234, ai = 777;
+    EXPECT("an AI invoke waits for the UI's outstanding one", Stark::InvokeBlocks(ui, 1, ai));
+    EXPECT("its own outstanding invoke never blocks a caller", !Stark::InvokeBlocks(ai, 3, ai));
+    EXPECT("the DLL's own workers (owner 0) never block", !Stark::InvokeBlocks(0, 5, ai));
+    EXPECT("CE's outstanding invoke blocks", Stark::InvokeBlocks(Voll::kHoldOwnerCe, 1, ai));
+    EXPECT("an owner with nothing outstanding does not block", !Stark::InvokeBlocks(ui, 0, ai));
+    EXPECT("the codes stay apart from ProcessEvent's and the mailbox's",
+           Stark::kInvokeHeldByOther < -11 && Stark::kInvokeDroppedOwnerLeft < -11 && Stark::kInvokeNeedsGameThread < -11
+           && Stark::kInvokeHeldByOther != Stark::kInvokeDroppedOwnerLeft
+           && Stark::kInvokeDroppedOwnerLeft != Stark::kInvokeNeedsGameThread);
+
+    using Voll::InvokeRefusedForBackground;
+    EXPECT("an ordinary function is allowed", InvokeRefusedForBackground("GetHealth", 0).empty());
+    EXPECT("a native static helper is allowed", InvokeRefusedForBackground("Add_IntInt", 0x00002401).empty());
+    EXPECT("any network RPC is refused by its flag", !InvokeRefusedForBackground("ServerFireWeapon", 0x00200040).empty());
+    EXPECT("a client RPC is refused by its flag", !InvokeRefusedForBackground("ClientSetHealth", 0x01000040).empty());
+    EXPECT("the debug camera toggle points to write_debug_camera",
+           InvokeRefusedForBackground("ToggleDebugCamera", 0).find("write_debug_camera") != std::string::npos);
+    EXPECT("names compare case-insensitively, as the DLL's lookup falls back to",
+           !InvokeRefusedForBackground("toggledebugcamera", 0).empty()
+           && !InvokeRefusedForBackground("CONSOLECOMMAND", 0).empty());
+    for (const char* n : {"SwitchLevel", "LocalTravel", "CheatScript", "LaunchURL",
+                          "SendToConsole", "ServerExec", "DestroyAllPawnsExceptTarget", "ReturnToMainMenuHost",
+                          "ResetLevel", "ConsoleCommand", "ExecuteConsoleCommand", "QuitGame", "Quit", "OpenLevel",
+                          "OpenLevelBySoftObjectPtr", "ClientTravel", "ServerTravel", "RestartLevel", "RestartGame",
+                          "K2_DestroyActor", "K2_DestroyComponent", "SetLifeSpan", "DestroyTarget", "DestroyAll",
+                          "DestroyPawns", "SaveGameToSlot", "AsyncSaveGameToSlot", "DeleteGameInSlot",
+                          "EnableDebugCamera", "DisableDebugCamera"})
+        EXPECT(n, !InvokeRefusedForBackground(n, 0).empty());
+    EXPECT("a name only containing a listed one is allowed (whole names only)",
+           InvokeRefusedForBackground("QuitGameMenuOpened", 0).empty()
+           && InvokeRefusedForBackground("OnSaveGameToSlotDone", 0).empty());
+}
+
+static void Test_Voll_HoldLedger() {
+    // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: who holds each gameplay hold, so an AI working through the MCP server
+    // never replaces or ends the UI's.
+    Voll::HoldLedger ledger;
+    EXPECT("ledger: a hold nobody set has no owner", ledger.Owner("god_mode") == Voll::kHoldOwnerNone);
+    ledger.SetOwner("god_mode", 1234);
+    ledger.SetOwner("time:global", 1234);
+    ledger.SetOwner("fly", Voll::kHoldOwnerCe);
+    EXPECT("ledger: an owner is kept", ledger.Owner("god_mode") == 1234);
+    auto mine = ledger.OwnedBy(1234);
+    std::sort(mine.begin(), mine.end());
+    EXPECT("ledger * : OwnedBy lists exactly that owner's holds (what its leaving releases)",
+           mine == std::vector<std::string>({"god_mode", "time:global"}));
+    ledger.SetOwner("god_mode", Voll::kHoldOwnerNone);
+    EXPECT("ledger: no owner forgets the hold", ledger.Owner("god_mode") == Voll::kHoldOwnerNone
+           && ledger.OwnedBy(1234).size() == 1 && ledger.Snapshot().size() == 2);
+    EXPECT("ledger: one lock per hold, the same lock each time",
+           &ledger.LockFor("fly") == &ledger.LockFor("fly") && &ledger.LockFor("fly") != &ledger.LockFor("god_mode"));
+
+    // The if_free rule.
+    EXPECT("if_free: a hold that is off is free whoever is named", !Voll::HeldByOther(false, 99, 1234));
+    EXPECT("if_free: the caller's own hold is free to change", !Voll::HeldByOther(true, 1234, 1234));
+    EXPECT("if_free * : another client's active hold is refused", Voll::HeldByOther(true, 99, 1234));
+    EXPECT("if_free * : CE's active hold is refused", Voll::HeldByOther(true, Voll::kHoldOwnerCe, 1234));
+    EXPECT("if_free * : an active hold with no recorded owner is refused (it may be the user's)",
+           Voll::HeldByOther(true, Voll::kHoldOwnerNone, 1234));
+
+    // What a request changes.
+    const std::vector<std::string> none;
+    auto changed = [&](const char* json, const std::vector<std::string>& jobs = {}) {
+        const auto j = nlohmann::json::parse(json);
+        return Voll::HoldsChangedBy(j.value("cmd", std::string()), j, jobs);
+    };
+    EXPECT("holds: god mode", changed(R"({"cmd":"set_god_mode","enable":true})")
+           == std::vector<std::string>({"god_mode"}));
+    EXPECT("holds: a movement knob names itself", changed(R"({"cmd":"reset_movement","knob":"jump"})")
+           == std::vector<std::string>({"movement:jump"}));
+    EXPECT("holds * : an unknown knob names no hold (a made-up name would grow the ledger)",
+           changed(R"({"cmd":"set_movement_multiplier","knob":"warp"})").empty());
+    EXPECT("holds: a time lane defaults to global, as the handler does",
+           changed(R"({"cmd":"set_time_dilation","value":0.5})") == std::vector<std::string>({"time:global"})
+           && changed(R"({"cmd":"reset_time_dilation","target":"pawn"})") == std::vector<std::string>({"time:pawn"}));
+    EXPECT("holds: a force-field job is its class and field",
+           changed(R"({"cmd":"force_field","class_name":"BP_Hero_C","field_name":"bGodMode"})")
+           == std::vector<std::string>({"force_field:BP_Hero_C::bGodMode"}));
+    EXPECT("holds * : reset_all_fields changes every job there is",
+           changed(R"({"cmd":"reset_all_fields"})", {"A::x", "B::y"})
+           == std::vector<std::string>({"force_field:A::x", "force_field:B::y"}));
+    EXPECT("holds: a read changes none", changed(R"({"cmd":"get_protect_state"})").empty()
+           && changed(R"({"cmd":"fly_get_state"})").empty());
+    EXPECT("holds: every toggle is covered",
+           changed(R"({"cmd":"set_foreground_lock"})").size() == 1 && changed(R"({"cmd":"fly_set"})").size() == 1
+           && changed(R"({"cmd":"set_debug_camera"})").size() == 1
+           && changed(R"({"cmd":"reset_gravity_direction"})").size() == 1);
+
+    // Who holds it, as a client reads it.
+    const auto client = Voll::HoldOwnerJson(1234, 1234, true);
+    EXPECT("holder json: a client with its pid, background, and 'you' for its own",
+           client.value("kind", std::string()) == "client" && client.value("pid", 0) == 1234
+           && client.value("background", false) && client.value("you", false));
+    const auto other = Voll::HoldOwnerJson(1234, 99, false);
+    EXPECT("holder json: another's is not 'you'", !other.value("you", true) && !other.value("background", true));
+    EXPECT("holder json: CE and nobody",
+           Voll::HoldOwnerJson(Voll::kHoldOwnerCe, 99, false).value("kind", std::string()) == "ce"
+           && Voll::HoldOwnerJson(Voll::kHoldOwnerNone, 99, false).value("kind", std::string()) == "none"
+           && !Voll::HoldOwnerJson(Voll::kHoldOwnerNone, Voll::kHoldOwnerNone, false).value("you", true));
+    const auto unread = Voll::HoldOwnerJson(Voll::ClientOwnerKey(0, 7), 1, false);
+    EXPECT("holder json: a client whose pid was not read has no pid", !unread.contains("pid"));
 }
 
 static void Test_Voll_ClassifyFirstInstance() {
@@ -557,6 +712,35 @@ static void Test_Schlacht_Owners() {
         EXPECT("two clients hold it, one leaves: the other still holds it",
                Schlacht::ReleaseOwner(o, rig, false) == R::StillHeld && o.size() == 1 && o[0] == ui);
     }
+}
+
+// [SHUTDOWN-SEETHRU-WAIT] A trace or an un-hide that did not run must not cost the hidden record. A cut LineTrace read
+// as "nothing occludes" and the tick un-hid and dropped every recorded actor; an un-hide that never ran dropped its
+// actor anyway -- either way an actor stayed hidden with nothing left to restore it.
+static void Test_Schlacht_FailedDispatchKeepsTheRecord() {
+    EXPECT("DIFF: every trace ran, no stop: apply the diff", Schlacht::ShouldApplyOccluderDiff(false, false));
+    EXPECT("DIFF ⭐: a trace did not run (cut, timed out, no hook): leave the record alone",
+           !Schlacht::ShouldApplyOccluderDiff(true, false));
+    EXPECT("DIFF ⭐: a stop is under way: leave it to the disabler", !Schlacht::ShouldApplyOccluderDiff(false, true));
+    EXPECT("DIFF: both", !Schlacht::ShouldApplyOccluderDiff(true, true));
+
+    EXPECT("UNHIDE: it ran (0): drop it from the record", !Schlacht::UnhideLeftItHidden(0));
+    EXPECT("UNHIDE: never attempted (not an actor / no setter): drop it, as before",
+           !Schlacht::UnhideLeftItHidden(Schlacht::kHideNotAttempted));
+    EXPECT("UNHIDE ⭐: timed out or cut (-5), still queued -- Stark::Shutdown may answer it unrun: keep it",
+           Schlacht::UnhideLeftItHidden(-5));
+    EXPECT("UNHIDE ⭐: the hook was down (-7): it never ran: keep it", Schlacht::UnhideLeftItHidden(-7));
+    EXPECT("UNHIDE ⭐: a background worker with no hook (-8): keep it", Schlacht::UnhideLeftItHidden(-8));
+    // -4 is the one failure that RAN: the call entered the engine and faulted there. Kept, it was retried every 100 ms
+    // tick for as long as See-through stayed on (a stale actor that still passes the class check faults every time).
+    EXPECT("UNHIDE ⭐: it faulted inside the call (-4): a retry faults again: drop it, as before",
+           !Schlacht::UnhideLeftItHidden(-4));
+
+    // An actor whose un-hide did not run may still be un-hidden by the queued call: if it still occludes, hide it again.
+    EXPECT("REHIDE ⭐: still occluding, its un-hide may still run: hide it again", Schlacht::RehideOnTick(true, true));
+    EXPECT("REHIDE: still occluding, no un-hide pending: it is hidden, no call", !Schlacht::RehideOnTick(true, false));
+    EXPECT("REHIDE: no longer occluding: it is un-hidden, not hidden", !Schlacht::RehideOnTick(false, true)
+           && !Schlacht::RehideOnTick(false, false));
 }
 
 // [PIPE-PER-PROCESS-2026-11-06] Stage C: a watch is its connection's, and its thread never touches the pipe.
@@ -1132,6 +1316,68 @@ static void Test_Stark_ClaimRequest() {
            !Stark::ClaimRequest(t, Stark::kRequestRunning) && t.load() == Stark::kRequestAbandoned);
     EXPECT("CLAIM: the three states are distinct", Stark::kRequestQueued != Stark::kRequestRunning
            && Stark::kRequestRunning != Stark::kRequestAbandoned && Stark::kRequestQueued != Stark::kRequestAbandoned);
+}
+
+// [SHUTDOWN-SEETHRU-WAIT] A queued invoke's wait ends early when a shutdown meets a stalled game thread. Measured on
+// 3707: a CE untick waited 11.3 s of a 15 s invoke timeout behind a See-through worker parked in a LineTrace, before the
+// pipe server even began to stop.
+static void Test_Stark_CutInvokeWait() {
+    using L = Stark::GameThreadLiveness;
+    EXPECT("CUT ⭐: a shutdown and a stalled game thread: cut", Stark::CutInvokeWait(true, L::Stalled));
+    EXPECT("CUT: a shutdown on a live game thread: no cut (UE5_Shutdown's un-hides still dispatch)",
+           !Stark::CutInvokeWait(true, L::Responsive));
+    EXPECT("CUT: a shutdown, liveness unknown: no cut (Unknown counts as live)", !Stark::CutInvokeWait(true, L::Unknown));
+    EXPECT("CUT: a stall with no shutdown: no cut (a -5 caller may rely on the request running later)",
+           !Stark::CutInvokeWait(false, L::Stalled));
+    EXPECT("CUT: neither", !Stark::CutInvokeWait(false, L::Responsive));
+}
+
+// The waiter's loop, on a fake clock: waitSlice(ms) advances the clock by ms and says whether the answer has arrived.
+static void Test_Stark_WaitQueuedInvoke() {
+    using E = Stark::InvokeWaitEnd;
+    struct Fake {
+        uint64_t t = 0, answeredAt = 0, cutFrom = UINT64_MAX;   // answeredAt 0 = never answered
+        int32_t maxSlice = 0;
+        E run(int32_t timeoutMs) {
+            return Stark::WaitQueuedInvoke(timeoutMs,
+                [&](int32_t ms) { maxSlice = (std::max)(maxSlice, ms); t += static_cast<uint64_t>(ms);
+                                  return answeredAt != 0 && t >= answeredAt; },
+                [&] { return t; },
+                [&] { return t >= cutFrom; });
+        }
+    };
+    {
+        Fake f; f.cutFrom = 3700;
+        const E e = f.run(15000);
+        EXPECT("WAIT ⭐: run 12a' (15 s timeout, the cut possible from 3.7 s): cut short", e == E::CutByShutdown);
+        EXPECT("WAIT ⭐: ...within one slice of the cut becoming possible",
+               f.t <= 3700 + static_cast<uint64_t>(Stark::kInvokeWaitSliceMs));
+    }
+    {
+        Fake f; f.cutFrom = 0;
+        EXPECT("WAIT ⭐: cut possible from the start (every invoke a tick queues after the first): cut",
+               f.run(15000) == E::CutByShutdown);
+        EXPECT("WAIT ⭐: ...after one slice, not the timeout", f.t <= static_cast<uint64_t>(Stark::kInvokeWaitSliceMs));
+    }
+    {
+        Fake f;
+        f.run(600000);   // set_invoke_timeout's cap
+        EXPECT("WAIT ⭐: a 600 s timeout is waited in slices, so a cut is noticed", f.maxSlice <= Stark::kInvokeWaitSliceMs);
+    }
+    {
+        Fake f;
+        const E e = f.run(15000);
+        EXPECT("WAIT: never answered, never cut: times out", e == E::TimedOut);
+        EXPECT("WAIT: ...at the timeout, not later", f.t == 15000);
+    }
+    {
+        Fake f; f.answeredAt = 200;
+        EXPECT("WAIT: answered at 200 ms: ready", f.run(15000) == E::Ready);
+    }
+    {
+        Fake f; f.answeredAt = 3720; f.cutFrom = 3710;   // both first seen at the slice ending at 3750
+        EXPECT("WAIT: answered and cut in the same slice: the answer wins", f.run(15000) == E::Ready);
+    }
 }
 
 // ----- Stark: ProcessEvent detection lifecycle ---------------------------------
@@ -3242,6 +3488,10 @@ static void Test_Stark_StatefulToggleFailure() {
     EXPECT("DBGCAMQ the queued code is EnqueueInvoke's timeout", Stark::kInvokeTimedOutStillQueued == -5);
     EXPECT("DBGCAMQ control: an SEH fault is a plain failure", Stark::StatefulToggleFailure(-4) == -1);
     EXPECT("DBGCAMQ control: no hook is a plain failure", Stark::StatefulToggleFailure(-7) == -1);
+    EXPECT("D2-3: another client's outstanding invoke passes through, to be named",
+           Stark::StatefulToggleFailure(Stark::kInvokeHeldByOther) == Stark::kInvokeHeldByOther);
+    EXPECT("D2-3: an if_free call with the hook down passes through",
+           Stark::StatefulToggleFailure(Stark::kInvokeNeedsGameThread) == Stark::kInvokeNeedsGameThread);
 }
 
 // [DBGCAM-OFF-OVER-QUEUED-ON] A Debug Camera toggle that timed out stays queued. A later Set read the camera's state
@@ -9135,6 +9385,20 @@ static void Test_Dunste_ShouldCommitCollision() {
     for (int32_t rc : { -8, -7, -3, -2, -4 })
         EXPECT("DUNSTE-QUEUED control: -8 / -7 / -3 / -2 / -4 stay Refused (nothing was queued)",
                Dunste::CollisionApplyFromRc(rc) == CA::Refused);
+
+    // [SHUTDOWN-SEETHRU-WAIT] A shutdown cuts a queued invoke's wait on a stalled game thread and then Stark::Shutdown
+    // answers the request without running it. A Queued RESTORE then must not clear the record, or the pawn stays
+    // ghosted with nothing tracking it.
+    EXPECT("CUT ⭐: a restore that came back Queued during a shutdown keeps its record",
+           !Dunste::ShouldCommitCollision(CA::Queued, /*restoring*/ true, /*shutdown*/ true));
+    EXPECT("CUT: a disable that came back Queued during a shutdown commits (an over-reported OFF is undone harmlessly)",
+           Dunste::ShouldCommitCollision(CA::Queued, false, true));
+    EXPECT("CUT: a Queued restore with no shutdown commits ([W3-DUNSTE-QUEUED] unchanged: it will run)",
+           Dunste::ShouldCommitCollision(CA::Queued, true, false));
+    EXPECT("CUT: Applied and Absent commit during a shutdown", Dunste::ShouldCommitCollision(CA::Applied, true, true)
+           && Dunste::ShouldCommitCollision(CA::Absent, true, true));
+    EXPECT("CUT: Refused never commits", !Dunste::ShouldCommitCollision(CA::Refused, true, false)
+           && !Dunste::ShouldCommitCollision(CA::Refused, false, true));
 }
 
 static void Test_Aura_DescribeSparseDelegateState() {
@@ -11518,6 +11782,40 @@ static void Test_Lager_ChooseHolderTargets() {
            std::string(Lager::HolderKindName(Lager::HolderKind::SectionStart)) == "the start of an executable section");
 }
 
+// [D2-3-WRITEMEM] write_mem writes data that is writable as it stands, for every client; anything else is refused.
+static void Test_Lager_ClassifyWriteRegion() {
+    using namespace Lager;
+    EXPECT("a read-write data page is writable", ClassifyWriteRegion(kMemCommit, kPageReadWrite) == WriteTarget::Writable);
+    EXPECT("a copy-on-write data page is writable (the write makes its private copy)",
+           ClassifyWriteRegion(kMemCommit, kPageWriteCopy) == WriteTarget::Writable);
+    EXPECT("execute-read code is refused as code", ClassifyWriteRegion(kMemCommit, kPageExecuteRead) == WriteTarget::Executable);
+    EXPECT("read-write-execute is refused as code, though writable",
+           ClassifyWriteRegion(kMemCommit, kPageExecuteReadWrite) == WriteTarget::Executable);
+    EXPECT("execute-write-copy is refused as code", ClassifyWriteRegion(kMemCommit, kPageExecuteWriteCopy) == WriteTarget::Executable);
+    EXPECT("execute-only is refused as code", ClassifyWriteRegion(kMemCommit, kPageExecute) == WriteTarget::Executable);
+    EXPECT("a read-only page (a vtable, constants) is refused", ClassifyWriteRegion(kMemCommit, kPageReadOnly) == WriteTarget::NotWritable);
+    EXPECT("a guarded read-write page (a stack's tripwire) is refused",
+           ClassifyWriteRegion(kMemCommit, kPageReadWrite | kPageGuard) == WriteTarget::NotWritable);
+    EXPECT("a no-access page is refused", ClassifyWriteRegion(kMemCommit, kPageNoAccess) == WriteTarget::NotWritable);
+    EXPECT("a reserved page is unmapped", ClassifyWriteRegion(kMemReserve, kPageReadWrite) == WriteTarget::Unmapped);
+    EXPECT("a free page is unmapped", ClassifyWriteRegion(kMemFree, 0) == WriteTarget::Unmapped);
+    EXPECT("a guarded code page is still named as code",
+           ClassifyWriteRegion(kMemCommit, kPageExecuteRead | kPageGuard) == WriteTarget::Executable);
+    // The modifier bits a data page can carry stay writable; CFG's marker on code stays code.
+    EXPECT("read-write with NOCACHE (0x204) is writable", ClassifyWriteRegion(kMemCommit, 0x204) == WriteTarget::Writable);
+    EXPECT("read-write with WRITECOMBINE (0x404) is writable", ClassifyWriteRegion(kMemCommit, 0x404) == WriteTarget::Writable);
+    EXPECT("execute-read with PAGE_TARGETS_INVALID (0x40000020) is code",
+           ClassifyWriteRegion(kMemCommit, 0x40000020) == WriteTarget::Executable);
+    EXPECT("a guarded read-only page is refused", ClassifyWriteRegion(kMemCommit, kPageReadOnly | kPageGuard) == WriteTarget::NotWritable);
+
+    EXPECT("writable + code is code", WorseWriteTarget(WriteTarget::Writable, WriteTarget::Executable) == WriteTarget::Executable);
+    EXPECT("code + read-only is code", WorseWriteTarget(WriteTarget::Executable, WriteTarget::NotWritable) == WriteTarget::Executable);
+    EXPECT("writable + read-only is not writable",
+           WorseWriteTarget(WriteTarget::Writable, WriteTarget::NotWritable) == WriteTarget::NotWritable);
+    EXPECT("read-only + unmapped is unmapped", WorseWriteTarget(WriteTarget::NotWritable, WriteTarget::Unmapped) == WriteTarget::Unmapped);
+    EXPECT("writable + writable is writable", WorseWriteTarget(WriteTarget::Writable, WriteTarget::Writable) == WriteTarget::Writable);
+}
+
 static void Test_Lager_HolderCandidateReadable() {
     using namespace Lager;
     EXPECT("execute-read code is readable", ProtectIsReadableCode(kPageExecuteRead));
@@ -12142,6 +12440,8 @@ int main() {
     RUN(Test_Stark_ShouldDrainQueue);
     RUN(Test_Stark_DrainOnGameThreadOnly);
     RUN(Test_Stark_ClaimRequest);
+    RUN(Test_Stark_CutInvokeWait);
+    RUN(Test_Stark_WaitQueuedInvoke);
     RUN(Test_Stark_NarrowedFlagTests);
     RUN(Test_Stark_PeOffsetSentinels);
     RUN(Test_Stark_ShouldRetryPeDetection);
@@ -12437,9 +12737,13 @@ int main() {
     RUN(Test_Voll_WaitSaysServed);
     RUN(Test_Voll_ExtractCmdName);
     RUN(Test_Voll_Holders);
+    RUN(Test_Voll_HoldLedger);
+    RUN(Test_D23_InvokeOwnersAndDenyList);
+    RUN(Test_Voll_OwedCameraRelease);
     RUN(Test_Voll_ClassifyFirstInstance);
     RUN(Test_Voll_ClientOwnerKey);
     RUN(Test_Schlacht_Owners);
+    RUN(Test_Schlacht_FailedDispatchKeepsTheRecord);
     RUN(Test_Radar_SessionsAreTheirConnections);
     RUN(Test_Radar_IdleSweepIsPerOwner);
     RUN(Test_Kanne_WatchKeyAndSlot);
@@ -12455,6 +12759,7 @@ int main() {
     RUN(Test_Lager_OriginsServedBy);
     RUN(Test_Lager_HeldBlockReachesProcessEvent);
     RUN(Test_Lager_ChooseHolderTargets);
+    RUN(Test_Lager_ClassifyWriteRegion);
     RUN(Test_Lager_HolderCandidateReadable);
     RUN(Test_Lager_BufferCBoundaryRules);      // buffer.c's >= / <= / clip boundaries, one map each
     RUN(Test_Falsch_SafeTargets);

@@ -23,6 +23,12 @@ internal static class Program
         if (args.Length >= 4 && args[0] == "--inject-elevated")
             return RunElevatedInject(args[1], args[2], args[3]);
 
+        // [PIPE-PER-PROCESS-2026-11-06] Stage D: `--mcp` serves the Model Context Protocol on stdio for an AI client
+        // instead of opening the window. Before the single-instance mutex, so a server runs beside the UI and beside
+        // other servers, and before Avalonia, which it never starts.
+        if (args.Length >= 1 && args[0] == Constants.McpSwitch)
+            return Mcp.McpHost.Run();
+
         // AOT publish gives gutted stack traces (no PDB lookup at runtime,
         // inlining opaque). A crash in the compositor thread would otherwise
         // leave the user with "the exe just closed" and no signal. This

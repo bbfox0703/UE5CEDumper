@@ -72,14 +72,14 @@ UE5CEDumper/
 │       ├── ProxyDxgi.def           ← dxgi.dll export forwarding
 │       │
 │       ├── Frieren.cpp / .h        ← ExportAPI — 63 C ABI exports for CE Lua bridge
-│       ├── Fern.cpp / .h           ← PipeServer — Named pipe IPC server, JSON dispatch (106 commands)
+│       ├── Fern.cpp / .h           ← PipeServer — Named pipe IPC server, JSON dispatch (107 commands)
 │       └── Renge.h                 ← PipeProtocol — shared JSON command/field name constants
 │
 ├── docs/                           ← Documentation
 │   ├── architecture.md             ← This file
 │   ├── dev-log.md                  ← Running milestone log + capability matrix + gaps (read first)
 │   ├── dll-spec.md                 ← C++ header definitions, offset tables, CE Lua bridge
-│   ├── pipe-protocol.md            ← Named Pipe JSON IPC protocol (106 commands)
+│   ├── pipe-protocol.md            ← Named Pipe JSON IPC protocol (107 commands)
 │   ├── ui-spec.md                  ← Avalonia UI tech stack, component skeletons
 │   ├── export-formats.md           ← CE XML, CSX, SDK Header, USMAP export rules
 │   ├── technical-notes.md          ← UE version diffs, FField vs UProperty, FNamePool internals,
@@ -94,7 +94,7 @@ UE5CEDumper/
 │
 ├── ui/                             ← C# Avalonia UI App
 │   ├── UE5DumpUI.sln
-│   ├── UE5DumpUI.Tests/            ← xUnit test project (267 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
+│   ├── UE5DumpUI.Tests/            ← xUnit test project (273 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
 │   ├── UE5DumpUI.HeadlessTests/    ← real Avalonia controls on the headless platform (Avalonia.Headless, same version as the app); its OWN process because a headless session replaces the global UI Dispatcher the view-model tests must not share
 │   └── UE5DumpUI/
 │       ├── UE5DumpUI.csproj        ← .NET 10 windows, Avalonia 12.1.0, Native AOT
@@ -167,6 +167,10 @@ UE5CEDumper/
 │       │   └── InvokeParamDialog.cs  ← Parameter input dialog for UFunction invoke (no .axaml — code-only)
 │       │
 │       ├── Core/                   ← Platform abstraction interfaces (incl. IAobMakerBridge)
+│       ├── Mcp/                    ← `UE5DumpUI.exe --mcp`: a stdio MCP server for an AI client, one more
+│       │                              client of the game's pipe, no window (docs/mcp.md). McpHost (entry,
+│       │                              branched in Program.Main before the single-instance mutex), McpServer
+│       │                              (JSON-RPC), McpTools (the read_* tools), McpGameLink (the connection)
 │       ├── Converters/             ← Avalonia value converters
 │       ├── Assets/
 │       └── Resources/
@@ -179,7 +183,9 @@ UE5CEDumper/
 │   ├── ue5_invoke_helper.lua       ← AA Script invoke shim; embedded in UE5DumpUI.exe
 │   │                                  via <EmbeddedResource>; injected into open .CT by
 │   │                                  Tools → Inject Helper (or Export... + Add File...)
-│   ├── DEPLOY_README.md            ← End-user readme; copied to dist/README.md
+│   ├── DEPLOY_README.html          ← End-user readme; copied to dist/README.html
+│   ├── Feature-Guide.html          ← End-user feature walkthrough; copied to dist/
+│   ├── MCP-Setup.html              ← End-user guide to `UE5DumpUI.exe --mcp`; copied to dist/
 │   └── test_pipe.ps1               ← Dev-only pipe test client (not deployed)
 │
 └── vendor/                         ← 2 submodules + 1 committed header + 3 gitignored reference clones

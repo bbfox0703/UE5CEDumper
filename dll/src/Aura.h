@@ -38,6 +38,25 @@ struct FUObjectItem {
 
 namespace Aura {
 
+// [PIPE-PER-PROCESS-2026-11-06] Stage D: work a client runs in the background. A pipe request carrying
+// "background": true (the MCP server marks every request it sends) makes each GObjects walk it starts take at most half
+// of the worker budget that is free, so a walk the user starts in the UI meanwhile still gets the other half. Without
+// it, an AI's long value scan held every worker and the UI's own scan or snapshot ran on one thread into its deadline.
+// Scoped to the thread dispatching the request; restores the previous state when the dispatch returns.
+class BackgroundWalkScope {
+public:
+    explicit BackgroundWalkScope(bool background) noexcept;
+    ~BackgroundWalkScope();
+    BackgroundWalkScope(const BackgroundWalkScope&) = delete;
+    BackgroundWalkScope& operator=(const BackgroundWalkScope&) = delete;
+
+private:
+    bool previous_;
+};
+
+// Whether the walk about to start on this thread is background work (see BackgroundWalkScope).
+bool IsBackgroundWalk() noexcept;
+
 // === Encrypted GObjects Support (GAP #1) ===
 // Some anti-cheat games encrypt the Objects pointer in FUObjectArray.
 // Set a custom decryption function BEFORE calling Init().

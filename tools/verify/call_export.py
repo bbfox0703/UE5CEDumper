@@ -17,8 +17,10 @@ reachable - just not from a window close.
 HOW. The RVA is resolved by loading our own DLL into THIS process with
 `DONT_RESOLVE_DLL_REFERENCES` (so no DllMain, no side effects) and subtracting the local
 base from `GetProcAddress`. The same RVA is then added to the module base found in the
-TARGET process, and `CreateRemoteThread` is pointed at it - the same mechanism inject.py
-uses for `LoadLibraryW`, which is why an export taking no arguments is safe here.
+TARGET process, and `CreateRemoteThread` is pointed at it - the same mechanism the injector
+(UE5DumpUI.exe --inject-elevated, which inject.py starts) uses for `LoadLibraryW`, which is why
+an export taking no arguments is safe here. Unlike inject.py, this rig starts the thread from
+python.exe itself, which the AV can flag (working-lessons.md 3.8, item 6).
 
 The elapsed time is reported because M5's acceptance is a DEADLINE ("no hang"), and a hang
 is not a test result: the wait is bounded and a timeout is reported as such rather than

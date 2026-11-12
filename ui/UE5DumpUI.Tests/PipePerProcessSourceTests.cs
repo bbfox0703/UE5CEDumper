@@ -328,7 +328,7 @@ public sealed class PipePerProcessSourceTests
     private static string FunctionBody(string code, string signatureStart)
     {
         int def = code.IndexOf(signatureStart, StringComparison.Ordinal);
-        Assert.True(def >= 0, $"Fern.cpp: {signatureStart} not found -- re-point this pin");
+        Assert.True(def >= 0, $"{signatureStart} not found in the source -- re-point this pin");
         int open = code.IndexOf('{', def);
         int depth = 0, close = open;
         for (; close < code.Length; close++)
@@ -558,5 +558,522 @@ public sealed class PipePerProcessSourceTests
         Assert.Matches(@"AutoPendsUntilNextLaunch\s*\(\s*plan\.outcome\s*,\s*persisted\s*\)", CodeOnly(DllSrc("Fern.cpp")));
         var ui = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Services/DumpService.cs"));
         Assert.DoesNotContain("persisted={persist}", ui);
+    }
+
+    // ── Stage D2-1: who holds each gameplay hold ────────────────────────────────────────────────────────────────────
+    // The ledger and its rules are dll_helpers_test's Test_Voll_HoldLedger. Fern.cpp and Mimic.cpp reach no test target,
+    // so where they use it is pinned here.
+
+    /// <summary>Every pipe command that changes a hold runs under the hold's lock, and an if_free refusal is decided
+    /// under it, before the first command branch: a check made anywhere else would race the other writers.</summary>
+    [Fact]
+    public void DispatchTakesTheHoldLocks_AndChecksIfFree_BeforeAnyCommandRuns()
+    {
+        string fern = CodeOnly(DllSrc("Fern.cpp"));
+        int dispatch = fern.IndexOf("std::string Fern::DispatchCommand(", StringComparison.Ordinal);
+        int firstCommand = fern.IndexOf("if (cmd == Renge::CMD_", dispatch, StringComparison.Ordinal);
+        string head = fern[dispatch..firstCommand];
+        int changed = head.IndexOf("Voll::HoldsChangedBy(", StringComparison.Ordinal);
+        int locks = head.IndexOf("Voll::Holds().LockFor(", StringComparison.Ordinal);
+        int ifFree = head.IndexOf("Voll::HeldByOther(", StringComparison.Ordinal);
+        int recorder = head.IndexOf("HoldRecorder", StringComparison.Ordinal);
+        Assert.True(changed > 0 && locks > changed && ifFree > locks && recorder > ifFree,
+            "DispatchCommand must name the holds, lock them, decide if_free, then record the owner -- in that order");
+        Assert.Contains("Grimoire::HOLD_HELD_BY_OTHER", head);
+    }
+
+    /// <summary>What a background client turned on ends with it; a foreground client's holds outlive it.</summary>
+    [Fact]
+    public void ABackgroundClientsHolds_AreReleasedWhenItsProcessLeaves()
+    {
+        string fern = CodeOnly(DllSrc("Fern.cpp"));
+        int start = fern.IndexOf("void Fern::ReleaseOwnedBy(", StringComparison.Ordinal);
+        string body = fern[start..fern.IndexOf("void Fern::MonitorLoop(", start, StringComparison.Ordinal)];
+        int gate = body.IndexOf("IsBackgroundOwner(owner)", StringComparison.Ordinal);
+        int owned = body.IndexOf("Voll::Holds().OwnedBy(owner)", StringComparison.Ordinal);
+        Assert.True(gate > 0 && owned > gate, "only a background owner's holds are released");
+        Assert.Contains("ReleaseHold(hold)", body[owned..]);
+        Assert.Contains("Voll::Holds().Owner(hold) != owner", body[owned..]);   // a hold taken over meanwhile stays
+    }
+
+    /// <summary>The mailbox is the third writer: every command of it that changes a hold goes through the same lock
+    /// and names CE as the owner.</summary>
+    [Theory]
+    [InlineData("HandleSetDebugCamera", "HOLD_DEBUG_CAMERA")]
+    [InlineData("HandleProtect", "HOLD_GOD_MODE")]
+    [InlineData("HandleForeground", "HOLD_FOREGROUND_LOCK")]
+    [InlineData("HandleMovement", "HOLD_GRAVITY_DIRECTION")]
+    [InlineData("HandleMovement", "HOLD_MOVEMENT_PREFIX")]
+    [InlineData("HandleTime", "HOLD_TIME_PREFIX")]
+    [InlineData("HandleFly", "HOLD_FLY")]
+    public void TheMailbox_ChangesEachHoldAsCe(string handler, string hold)
+    {
+        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
+        int start = mimic.IndexOf("static void " + handler + "() {", StringComparison.Ordinal);
+        Assert.True(start > 0, handler);
+        int end = mimic.IndexOf("\nstatic void ", start + 10, StringComparison.Ordinal);
+        string body = mimic[start..(end > 0 ? end : mimic.Length)];
+        Assert.Contains("ChangeHoldAsCe", body);
+        Assert.Contains("Grimoire::" + hold, body);
+    }
+
+    /// <summary>Every pipe command that turns a hold on, off or changes it names that hold: one the ledger missed
+    /// would let an if_free request through and never be released.</summary>
+    [Fact]
+    public void EveryHoldChangingCommand_NamesItsHold()
+    {
+        string voll = DllSrc("Voll.h");
+        int start = voll.IndexOf("inline std::vector<std::string> HoldsChangedBy(", StringComparison.Ordinal);
+        string body = voll[start..voll.IndexOf("inline nlohmann::json HoldOwnerJson(", start, StringComparison.Ordinal)];
+        foreach (var cmd in new[]
+                 {
+                     "set_god_mode", "set_foreground_lock", "set_gravity_direction", "reset_gravity_direction",
+                     "fly_set", "set_debug_camera", "set_movement_multiplier", "reset_movement", "set_time_dilation",
+                     "reset_time_dilation", "force_field", "reset_field", "reset_all_fields",
+                 })
+            Assert.Contains("\"" + cmd + "\"", body);
+        // ...and each of those is a real command (Renge.h), so a rename cannot leave the ledger matching nothing.
+        string renge = DllSrc("Renge.h");
+        foreach (var cmd in new[] { "set_god_mode", "fly_set", "reset_all_fields", "set_time_dilation" })
+            Assert.Contains("= \"" + cmd + "\";", renge);
+    }
+
+    // ── Stage D2-3: write_mem data only; invoke owners; the AI's deny list ──────────────────────────────────────────
+    // The pure rules are dll_helpers_test's (Lager::ClassifyWriteRegion, Stark::InvokeBlocks,
+    // Voll::InvokeRefusedForBackground) and dll_core_test's (Macht::ClassifyWriteRange / WriteDataBytes on real pages).
+    // Fern, Stark, Frieren and Mimic reach no test target, so where they use them, and in what order, is pinned here.
+
+    private static string Between(string text, string start, string end)
+    {
+        int s = text.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(s >= 0, "missing: " + start);
+        int e = text.IndexOf(end, s + start.Length, StringComparison.Ordinal);
+        Assert.True(e > s, "missing after it: " + end);
+        return text[s..e];
+    }
+
+    /// <summary>write_mem classifies the whole range, reads it, checks expect, then writes without a protection flip.</summary>
+    [Fact]
+    public void WriteMem_ClassifiesTheRange_ChecksExpect_ThenWritesData()
+    {
+        string body = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_WRITE_MEM) {",
+            "return Renge::MakeResponse(id, data).dump();");
+        int classify = body.IndexOf("Macht::ClassifyWriteRange(addr, bytes.size())", StringComparison.Ordinal);
+        int read = body.IndexOf("Macht::ReadBytesSafe(addr, before.data(), before.size())", StringComparison.Ordinal);
+        int expect = body.IndexOf("if (expected != before)", StringComparison.Ordinal);
+        int write = body.IndexOf("Macht::WriteDataBytes(addr, bytes.data(), bytes.size())", StringComparison.Ordinal);
+        Assert.True(classify > 0 && read > classify && expect > read && write > expect,
+            "classify, read, compare with expect, then write -- in that order");
+        Assert.DoesNotContain("Macht::WriteBytes(", body);   // the protection-flipping writer
+        foreach (var code in new[] { "WRITE_MEM_EXECUTABLE", "WRITE_MEM_NOT_WRITABLE", "WRITE_MEM_CHANGED" })
+            Assert.Contains("Grimoire::" + code, body);
+        Assert.Contains("data[\"before\"]", body);
+    }
+
+    /// <summary>An if_free enqueue is decided under the queue's lock before the push, and each request counts from the
+    /// push until it is answered.</summary>
+    [Fact]
+    public void TheInvokeQueue_DecidesIfFreeUnderItsLock_AndCountsUntilAnswered()
+    {
+        string stark = CodeOnly(DllSrc("Stark.cpp"));
+        string enqueue = Between(stark, "int32_t EnqueueInvoke(", "const InvokeWaitEnd end = WaitQueuedInvoke(");
+        int lockAt = enqueue.IndexOf("std::lock_guard<std::mutex> lock(s_queueMutex);", StringComparison.Ordinal);
+        int check = enqueue.IndexOf("if (t_invokeIfFree)", StringComparison.Ordinal);
+        int blocks = enqueue.IndexOf("InvokeBlocks(other, count, req->owner)", StringComparison.Ordinal);
+        int push = enqueue.IndexOf("s_invokeQueue.push_back(req);", StringComparison.Ordinal);
+        int count = enqueue.IndexOf("++s_outstanding[req->owner];", StringComparison.Ordinal);
+        Assert.True(lockAt > 0 && check > lockAt && blocks > check && push > blocks && count > push,
+            "lock, if_free check, push, count -- in that order, all under the lock");
+        Assert.Contains("req->owner = t_invokeOwner;", enqueue);
+        string refusal = enqueue[check..push];
+        Assert.Contains("t_lastInvokeBlocker = other;", refusal);
+        Assert.Contains("return kInvokeHeldByOther;", refusal);
+
+        // Answered = settled: the drain (run or dropped), shutdown, an owner's drop and a waiter's abandon each take it
+        // off the count, once.
+        string drain = Between(stark, "ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {",
+            "static void __fastcall HookedProcessEvent(");
+        int ran = drain.IndexOf("CallProcessEventSEH(req->instance, req->ufunc, req->params);", StringComparison.Ordinal);
+        int settle = drain.IndexOf("SettleLocked(*req);", ran, StringComparison.Ordinal);
+        int promise = drain.IndexOf("req->promise.set_value(result);", ran, StringComparison.Ordinal);
+        Assert.True(ran > 0 && settle > ran && promise > settle, "settled before the promise wakes its caller");
+        Assert.Contains("SettleLocked(*req);",
+            Between(drain, "if (req->dropIfAbandoned && !ClaimRequest(req->state, kRequestRunning)) {", "continue;"));
+        // One request at a time, each taken under the lock just before it runs: nothing waits outside the queue's reach.
+        string loop = Between(drain, "for (; budget > 0; --budget) {", "CallProcessEventSEH(");
+        int lockAtPop = loop.IndexOf("std::lock_guard<std::mutex> lock(s_queueMutex);", StringComparison.Ordinal);
+        int pop = loop.IndexOf("s_invokeQueue.pop_front();", StringComparison.Ordinal);
+        Assert.True(lockAtPop > 0 && pop > lockAtPop, "each request popped under the lock inside the loop");
+        Assert.Single(Regex.Matches(drain, @"s_invokeQueue\.front\(\)"));   // no batch filled before the loop
+        // ...and only at the top level: a request's own ProcessEvent calls do not drain the rest inside it.
+        Assert.Contains("if (!t_draining && ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {", stark);
+        Assert.Contains("DrainScope() { t_draining = true; }", drain);
+        Assert.Contains("SettleLocked(*req);", Between(stark, "void Shutdown() {", "bool IsHookActive()"));
+        string drop = Between(stark, "int32_t DropQueuedInvokesOf(uint64_t owner) {", "void SetInvokeTimeoutMs(");
+        Assert.Contains("ClaimRequest(req.state, kRequestAbandoned)", drop);
+        Assert.Contains("SettleLocked(req);", drop);
+        string abandon = Between(enqueue + stark[stark.IndexOf("const InvokeWaitEnd end = WaitQueuedInvoke(", StringComparison.Ordinal)..],
+            "if (status == std::future_status::timeout && dropIfAbandoned) {", "if (status == std::future_status::timeout) {");
+        Assert.Contains("SettleLocked(*req);", abandon);
+        Assert.Contains("if (req.settled) return;", stark);
+    }
+
+    /// <summary>A pending debug-camera ON is its sender's alone: recorded where the toggle is sent, counted as held by
+    /// the if_free check, and given by the recorder to its sender only.</summary>
+    [Fact]
+    public void APendingDebugCameraOn_IsItsSendersAlone()
+    {
+        string frieren = CodeOnly(DllSrc("Frieren.cpp"));
+        string set = Between(frieren, "int32_t UE5_SetDebugCamera(int32_t enable) {", "struct InFlight {");
+        int inFlight = set.IndexOf("s_dbgCamInFlight = want ? 1 : 0;", StringComparison.Ordinal);
+        int sender = set.IndexOf("s_dbgCamOwner = Stark::CurrentInvokeOwner();", StringComparison.Ordinal);
+        Assert.True(inFlight > 0 && sender > inFlight, "the sender recorded where the toggle is sent");
+        string pending = Between(frieren, "bool PendingOn(uint64_t& owner) {", "}  ");
+        Assert.Contains("owner = on ? s_dbgCamOwner : 0;", pending);
+
+        // A foreground client that joins a pending toggle (told -5, "your toggle is queued") takes it over: in the
+        // queue (retagged, so the first sender's session end does not drop it) and for the hold.
+        string join = Between(frieren, "static void JoinPendingToggle(int32_t answer, bool queued) {", "\n}");
+        Assert.Contains("answer != Stark::kInvokeTimedOutStillQueued || Stark::CurrentInvokeIfFree()", join);
+        Assert.Contains("Stark::RetagQueued(s_dbgCamQueuedId, me)", join);
+        Assert.Contains("s_dbgCamJoinedBy = me;", join);
+        Assert.Contains("if (s_dbgCamJoinedBy != 0) Stark::RetagQueued(queuedId, s_dbgCamJoinedBy);", frieren);
+        Assert.Equal(2, Regex.Matches(set, @"JoinPendingToggle\(answer, (true|false)\);").Count);
+
+        string fern = CodeOnly(DllSrc("Fern.cpp"));
+        Assert.Contains("return hold == Grimoire::HOLD_DEBUG_CAMERA && FrierenDebugCamera::PendingOn(sender);", fern);
+        string head = Between(fern, "std::string Fern::DispatchCommand(", "if (cmd == Renge::CMD_INIT) {");
+        Assert.Contains("const bool inForce = HoldActive(h) || HoldPending(h, sender);", head);
+        // The recorder's three branches: in force -> the caller (or a joiner of the caller's toggle); on its way -> its
+        // sender only; off -> nobody.
+        string recorder = Between(head, "struct HoldRecorder {", "} holdRecorder{");
+        int active = recorder.IndexOf("if (HoldActive(h)) {", StringComparison.Ordinal);
+        int joined = recorder.IndexOf("FrierenDebugCamera::ConsumeJoin(caller, joinedBy)", StringComparison.Ordinal);
+        int setActive = recorder.IndexOf("Voll::Holds().SetOwner(h, joined ? joinedBy : caller);", StringComparison.Ordinal);
+        int pendingAt = recorder.IndexOf("} else if (HoldPending(h, sender)) {", StringComparison.Ordinal);
+        int senderOnly = recorder.IndexOf("if (sender == caller) Voll::Holds().SetOwner(h, caller);", StringComparison.Ordinal);
+        int off = recorder.IndexOf("Voll::Holds().SetOwner(h, Voll::kHoldOwnerNone);", StringComparison.Ordinal);
+        Assert.True(active > 0 && joined > active && setActive > joined && pendingAt > setActive && senderOnly > pendingAt
+                    && off > senderOnly, "active (or its joiner), pending (its sender only), off (nobody) -- in order");
+        Assert.DoesNotContain("HoldActive(h) || HoldPending(h) ? caller", head);
+
+        string handler = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_SET_DEBUG_CAMERA) {",
+            "return Renge::MakeResponse(id, data).dump();");
+        Assert.Contains("state == Stark::kInvokeHeldByOther", handler);
+        Assert.Contains("Grimoire::HOLD_HELD_BY_OTHER", handler);
+        Assert.Contains("Grimoire::HOLD_INVOKE_QUEUE", handler);
+        Assert.Contains("Stark::LastInvokeBlocker()", handler);
+        Assert.Contains("state == Stark::kInvokeNeedsGameThread", handler);
+
+        // CE's recorder agrees: its answer that sent nothing never takes another client's pending ON.
+        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
+        string ce = Between(mimic, "static int32_t ChangeHoldAsCe(", "static void HandleSetDebugCamera()");
+        int skip = ce.IndexOf("FrierenDebugCamera::PendingOn(sender) && sender != Voll::kHoldOwnerCe", StringComparison.Ordinal);
+        int setCe = ce.IndexOf("Voll::Holds().SetOwner(hold, Voll::kHoldOwnerCe);", StringComparison.Ordinal);
+        Assert.True(skip > 0 && setCe > skip, "the pending check before CE is named");
+    }
+
+    /// <summary>[DBGCAM-RELEASE-STALLED] An AI's camera release that timed out with the game thread stalled is owed,
+    /// and the monitor sends it again once the queued OFF has run -- under the camera's hold lock, so a client taking the
+    /// camera meanwhile is seen first.</summary>
+    [Fact]
+    public void AStalledCameraRelease_IsOwed_AndSentAgainOnceTheQueuedOffHasRun()
+    {
+        string fern = CodeOnly(DllSrc("Fern.cpp"));
+        Assert.Contains("static_assert(Voll::kOwedOffQueued == Stark::kInvokeTimedOutStillQueued", fern);
+        string release = Between(fern, "void Fern::ReleaseOwnedBy(", "void Fern::MonitorLoop(");
+        int code = release.IndexOf("code = HoldActive(hold) ? ReleaseHold(hold) : 0;", StringComparison.Ordinal);
+        int owed = release.IndexOf("hold == Grimoire::HOLD_DEBUG_CAMERA && code == Stark::kInvokeTimedOutStillQueued",
+            StringComparison.Ordinal);
+        Assert.True(code > 0 && owed > code, "the release's -5 records the owed release");
+
+        string flatRelease = Flat(release);
+        Assert.Contains("code == Stark::kInvokeTimedOutStillQueued) { s_cameraReleaseOwedBy.store(owner);", flatRelease);
+        // Review round 3: nothing owed crosses a stop. Once the DLL restarts, nobody can be named holder until the clients
+        // reconnect, so a record carried over would turn off a camera the user turned on meanwhile. Fern::Stop drops it.
+        Assert.DoesNotContain("Tot::ShutdownRequested()", flatRelease);
+        string stop = Flat(Between(fern, "void Fern::Stop(bool graceful) {", "Radar::SessionManager::Instance().DropAll();"));
+        int joined = stop.IndexOf("m_monitorThread.join();", StringComparison.Ordinal);
+        int dropAt = stop.IndexOf("DropOwedCameraRelease();", StringComparison.Ordinal);
+        Assert.True(joined > 0 && dropAt > joined, "dropped once the monitor and every handler are joined");
+        Assert.Contains("s_cameraReleaseOwedBy.exchange(0)", Between(fern, "void DropOwedCameraRelease() {", "\n}"));
+        // The release's reads answer only to shutdown: a connection that left mid-command still has its own cancel
+        // flag raised, and a read under it gives up (the camera "unknown"), releasing nothing and owing nothing.
+        int gate = flatRelease.IndexOf("if (!IsBackgroundOwner(owner) || OwnerStillConnected(owner)) return;",
+            StringComparison.Ordinal);
+        int immuneRelease = flatRelease.IndexOf("const Tot::CancelContextScope immune(Tot::CancelContext{nullptr, true});",
+            StringComparison.Ordinal);
+        int loopAt = flatRelease.IndexOf("for (const auto& hold : Voll::Holds().OwnedBy(owner))", StringComparison.Ordinal);
+        Assert.True(gate > 0 && immuneRelease > gate && loopAt > immuneRelease, "cancel-immune before the release loop");
+
+        // Served on every tick, after the running check, before the in-flight snapshot, and a throw costs one tick.
+        string loop = Between(fern, "void Fern::MonitorLoop() {", "static std::string ClientExeName(");
+        int brk = loop.IndexOf("if (!m_running.load()) break;", StringComparison.Ordinal);
+        int call = loop.IndexOf("ServeOwedCameraRelease();", StringComparison.Ordinal);
+        int snap = loop.IndexOf("std::vector<std::shared_ptr<Connection>> inflight;", StringComparison.Ordinal);
+        Assert.True(brk > 0 && call > brk && snap > call, "after the running check, before the snapshot");
+        Assert.Matches(@"Routine::RunTickGuarded\([^;]*ServeOwedCameraRelease\(\);", Flat(loop));
+
+        // Nothing owed: no lock. Immune reads. The lock tried, never waited for (a writer holds it across a game-thread
+        // wait). Who has it, an ON on its way, a toggle yet to run, a stall -- then, only if they leave it open, the
+        // camera's state (a GObjects walk), then the OFF and what it answered. A Wait returns before the record clears;
+        // a newer record is kept.
+        // Review round 2: nothing under shutdown (every read would give up and drop the record); the record re-read once
+        // the lock is held (every store is under it); "running" from the physical hook's own fire stamp, which a CE
+        // Disable does not stop (GetGameThreadLiveness answers Unknown then, and an OFF sent blind would hold the monitor
+        // for the invoke timeout); a fresh re-check just before the send; never a direct call when the hook is down; and
+        // a shutdown that cut a read or the OFF short decides nothing.
+        string serve = Flat(Between(fern, "void ServeOwedCameraRelease() {", "\n}"));
+        Assert.Contains("{ uint64_t owedBy = s_cameraReleaseOwedBy.load(); if (owedBy == 0) return; "
+                        + "if (Tot::ShutdownRequested()) return; "
+                        + "const Tot::CancelContextScope immune(Tot::CancelContext{nullptr, true}); "
+                        + "std::unique_lock<std::mutex> holdLock(Voll::Holds().LockFor(Grimoire::HOLD_DEBUG_CAMERA), "
+                        + "std::try_to_lock); if (!holdLock.owns_lock()) return; "
+                        + "owedBy = s_cameraReleaseOwedBy.load(); if (owedBy == 0) return; "
+                        + "const uint64_t owner = Voll::Holds().Owner(Grimoire::HOLD_DEBUG_CAMERA); uint64_t sender = 0; "
+                        + "const bool pendingOn = FrierenDebugCamera::PendingOn(sender); "
+                        + "const bool outstanding = FrierenDebugCamera::ToggleOutstanding(); "
+                        + "const bool notRunning = !GameThreadRanWithin(Stark::kStallThresholdMs); "
+                        + "Voll::OwedRelease step = Voll::OwedCameraReleaseBefore(owner, pendingOn, outstanding, notRunning); "
+                        + "if (step == Voll::OwedRelease::Wait) return;", serve);
+        Assert.DoesNotContain("GetGameThreadLiveness", serve);
+        Assert.Contains("if (step == Voll::OwedRelease::Read) { state = UE5_GetDebugCameraState(); "
+                        + "step = Voll::OwedCameraReleaseOnState(state); }", serve);
+        // Round 3: no hook re-armed and no OFF sent once a teardown began, and the OFF itself never ProcessEvent's direct
+        // fallback off the game thread (marked a background worker for the call: -8 if the hook went down meanwhile).
+        Assert.Contains("if (step == Voll::OwedRelease::Send) { if (!GameThreadRanWithin(kOwedSendFreshMs)) return; "
+                        + "if (Tot::ShutdownRequested()) return; "
+                        + "if (Stark::IsHookActive() || UE5_EnsureGameThreadHook()) { const NoDirectCall noDirectCall; "
+                        + "sent = UE5_SetDebugCamera(0); sentOff = true; step = Voll::OwedCameraReleaseSent(sent);", serve);
+        Assert.Contains("NoDirectCall() { Tot::t_backgroundWorker = true; } ~NoDirectCall() { Tot::t_backgroundWorker = prev; }",
+            Flat(Between(fern, "struct NoDirectCall {", "};")));
+        int sendWait = serve.IndexOf("if (step == Voll::OwedRelease::Wait) return; } else { step = Voll::OwedRelease::Abandon;",
+            StringComparison.Ordinal);
+        // Any answer a shutdown may have cut short decides nothing -- a cut walk can read 0 (off) as well as unknown.
+        int cut = serve.IndexOf("if (owner == Voll::kHoldOwnerNone && !pendingOn && Tot::ShutdownRequested()) return; "
+                                + "s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0);", StringComparison.Ordinal);
+        int clear = serve.IndexOf("s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0);", StringComparison.Ordinal);
+        Assert.True(sendWait > 0 && cut > sendWait && clear > cut,
+            "a resend queued again stays owed; a shutdown-cut answer decides nothing; only then the record clears");
+        Assert.Single(Regex.Matches(serve, @"UE5_GetDebugCameraState\(\)"));
+        Assert.Contains("return Stark::HasOriginal() && Stark::MsSinceLastHookFire() <= ms;",
+            Flat(Between(fern, "bool GameThreadRanWithin(uint64_t ms) {", "\n}")));
+
+        string frieren = CodeOnly(DllSrc("Frieren.cpp"));
+        string outstanding = Between(frieren, "bool ToggleOutstanding() {", "\n}");
+        Assert.Contains("std::lock_guard<std::mutex> lk(s_dbgCamMutex);", outstanding);
+        Assert.Contains("return s_dbgCamInFlight >= 0 || s_dbgCamQueued.StillQueued();", outstanding);
+
+        // get_holds says so, on the camera's entry alone.
+        string holds = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_GET_HOLDS) {", "data[\"holds\"] = arr;");
+        Assert.Contains("if (h == Grimoire::HOLD_DEBUG_CAMERA && s_cameraReleaseOwedBy.load() != 0) "
+                        + "j[\"release_owed\"] = true;", holds);
+    }
+
+    private static string Flat(string s) => Regex.Replace(s, @"\s+", " ");
+
+    /// <summary>Every command's invokes belong to its client; a departed AI's queued ones go before its holds.</summary>
+    [Fact]
+    public void Fern_SetsTheInvokeOwner_AndDropsADepartedAisQueue()
+    {
+        string fern = CodeOnly(DllSrc("Fern.cpp"));
+        string head = Between(fern, "std::string Fern::DispatchCommand(", "if (cmd == Renge::CMD_INIT) {");
+        Assert.Contains("const Stark::InvokeOwnerScope invokeOwner(conn->ownerKey, request.value(", head);
+
+        string release = Between(fern, "void Fern::ReleaseOwnedBy(", "void Fern::MonitorLoop(");
+        int gate = release.IndexOf("if (!IsBackgroundOwner(owner) || OwnerStillConnected(owner)) return;",
+            StringComparison.Ordinal);
+        int drop = release.IndexOf("Stark::DropQueuedInvokesOf(owner)", StringComparison.Ordinal);
+        int holds = release.IndexOf("Voll::Holds().OwnedBy(owner)", StringComparison.Ordinal);
+        Assert.True(gate > 0 && drop > gate && holds > drop, "only a background owner's, and before its holds");
+
+        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
+        Assert.Contains("const Stark::InvokeOwnerScope ceInvokes(Voll::kHoldOwnerCe, false);", mimic);
+    }
+
+    /// <summary>A background client's refusals come before anything is allocated or queued, and the queue's conflict
+    /// answers as a hold refusal does.</summary>
+    [Fact]
+    public void InvokeFunction_RefusesForTheAi_BeforeAllocating_AndNamesTheConflict()
+    {
+        string body = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_INVOKE_FUNCTION) {",
+            "if (cmd == Renge::CMD_");
+        int deny = body.IndexOf("Voll::InvokeRefusedForBackground(", StringComparison.Ordinal);
+        int blocker = body.IndexOf("Stark::IfFreeBlocker(conn->ownerKey)", StringComparison.Ordinal);
+        int convert = body.IndexOf("FrierenInvoke::PrepareObjectParams(", StringComparison.Ordinal);
+        int alloc = body.IndexOf("strAllocs", StringComparison.Ordinal);
+        int call = body.IndexOf("UE5_CallProcessEventEx(instanceAddr, ufuncAddr, paramPtr", StringComparison.Ordinal);
+        Assert.True(deny > 0 && blocker > deny && convert > blocker && alloc > convert && call > alloc,
+            "the deny list, then the conflict, before the conversion, the strings and the call");
+        Assert.Contains("if (conn->background.load())", body);
+        Assert.Contains("if (directCall)", body[..alloc]);
+        int held = body.IndexOf("callResult == Stark::kInvokeHeldByOther", StringComparison.Ordinal);
+        Assert.True(held > call);
+        string mapping = body[held..];
+        Assert.Contains("Grimoire::HOLD_HELD_BY_OTHER", mapping);
+        Assert.Contains("Grimoire::HOLD_INVOKE_QUEUE", mapping);
+        Assert.Contains("Stark::LastInvokeBlocker()", mapping);
+
+        // The definition, not the forward declaration above it: its parameter list ends in ") {".
+        string routed = Between(CodeOnly(DllSrc("Frieren.cpp")),
+            "bool dropIfAbandoned, std::shared_future<int32_t>* queuedOut) {", "int32_t UE5_CallProcessEventEx(uintptr_t instance");
+        int hook = routed.IndexOf("if (Stark::IsHookActive()) {", StringComparison.Ordinal);
+        int refuse = routed.IndexOf("if (Stark::CurrentInvokeIfFree()) return Stark::kInvokeNeedsGameThread;",
+            StringComparison.Ordinal);
+        int direct = routed.IndexOf("pProcessEvent(reinterpret_cast<void*>(instance)", StringComparison.Ordinal);
+        Assert.True(hook > 0 && refuse > hook && direct > refuse,
+            "the queue first; with the hook down an if_free invoke is refused before the off-thread call");
+
+        string holds = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_GET_HOLDS) {", "if (cmd == Renge::CMD_");
+        Assert.Contains("Stark::OutstandingInvokes()", holds);
+        Assert.Contains("data[\"invokes\"]", holds);
+    }
+
+    // ── Stage D2-2: an AI's teleport leaves the user's undo point ───────────────────────────────────────────────────
+
+    /// <summary>The "last" slot is one for the whole process: an explicit-pose recall sent with keep_undo must reach
+    /// Wirbel, and Wirbel must then skip the save, or an AI's jump overwrites where the user's Recall last returns.
+    /// Wirbel.cpp and Fern.cpp reach no test target.</summary>
+    [Fact]
+    public void AnExplicitTeleport_WithKeepUndo_LeavesTheLastSlot()
+    {
+        string wirbel = CodeOnly(DllSrc("Wirbel.cpp"));
+        int start = wirbel.IndexOf("int32_t RecallExplicit(const Pose& pose, bool hasRot, uint8_t* tierOut, bool keepUndo)",
+            StringComparison.Ordinal);
+        Assert.True(start > 0, "RecallExplicit takes keepUndo");
+        string body = wirbel[start..wirbel.IndexOf("\n}", start, StringComparison.Ordinal)];
+        Assert.Contains("if (!keepUndo) SaveLastImpl();", body);
+        Assert.Single(Regex.Matches(body, @"SaveLastImpl\(\)"));
+
+        string fern = NoComments(DllSrc("Fern.cpp"));   // the key is a string literal, which CodeOnly blanks
+        Assert.Contains("Wirbel::RecallExplicit(p, hasRot, &tier, request.value(\"keep_undo\", false))", fern);
+    }
+
+    /// <summary>[SHUTDOWN-SEETHRU-WAIT] A queued invoke's waiter watched only its future, which on a stalled game thread
+    /// only Stark::Shutdown answers -- reached by UE5_Shutdown after joining the workers parked in such waits. Measured on
+    /// 3707: 11.3 s of a 15 s invoke timeout before the pipe server began to stop. The wait now runs in slices and ends
+    /// when a shutdown meets a game thread stalled past kInvokeShutdownStallMs; a cut is a timeout that ended early (-5,
+    /// the request stays queued). Stark.cpp reaches no C++ test target, so its call is pinned here; the decision and the
+    /// loop are unit-tested in dll_helpers_test.</summary>
+    [Fact]
+    public void AQueuedInvokeWaitEndsAtShutdownOnAStalledGame()
+    {
+        var body = FunctionBody(CodeOnly(DllSrc("Stark.cpp")), "int32_t EnqueueInvoke(");
+        Assert.Matches(@"\bWaitQueuedInvoke\s*\(", body);
+        Assert.Matches(@"\bCutInvokeWait\s*\(\s*Tot::ShutdownRequested\s*\(\s*\)\s*,\s*GetGameThreadLiveness\s*\(\s*kInvokeShutdownStallMs\s*\)\s*\)", body);
+        // A cut takes the timeout path: it stays queued (or is abandoned, for a drop-if-abandoned request) and answers -5.
+        Assert.Matches(@"InvokeWaitEnd::Ready\s*\?\s*std::future_status::ready\s*:\s*std::future_status::timeout", body);
+        Assert.DoesNotMatch(@"\.wait_for\s*\(\s*std::chrono::milliseconds\s*\(\s*timeoutMs\s*\)\s*\)", body);
+    }
+
+    /// <summary>[SHUTDOWN-SEETHRU-WAIT] A cut makes a LineTrace or an un-hide that did not run likely, and both used to
+    /// cost See-through's record: a trace that did not run read as "nothing occludes", so the tick un-hid and dropped
+    /// every recorded actor; an un-hide that did not run dropped its actor anyway. The actor then stayed hidden with
+    /// nothing left to restore it. Schlacht.cpp reaches no C++ test target, so the calls are pinned here.</summary>
+    [Fact]
+    public void ATraceOrUnhideThatDidNotRunKeepsSeeThroughsRecord()
+    {
+        var code = CodeOnly(DllSrc("Schlacht.cpp"));
+
+        // A trace that did not run is reported, never read as a miss: decided before hit/miss.
+        var collect = FunctionBody(code, "void CollectOccluders(");
+        var failed = Regex.Match(collect, @"if\s*\(\s*r\s*!=\s*0\s*\)\s*\{\s*dispatchFailed\s*=\s*true\s*;\s*break\s*;\s*\}");
+        Assert.True(failed.Success, "CollectOccluders reads a trace that did not run as a miss");
+        Assert.True(failed.Index < collect.IndexOf("bool hit", StringComparison.Ordinal),
+            "CollectOccluders decides hit or miss before asking whether the trace ran");
+
+        // ...and Tick returns, leaving the record alone, before it records any diff.
+        var tick = FunctionBody(code, "void Tick(");
+        Assert.Matches(@"\bCollectOccluders\s*\([^;]*\bdispatchFailed\s*\)\s*;", tick);
+        var gate = Regex.Match(tick,
+            @"if\s*\(\s*!\s*ShouldApplyOccluderDiff\s*\(\s*dispatchFailed\s*,\s*s_workerStop\.load\s*\(\s*\)\s*\)\s*\)\s*\{[^}]*\breturn\s*;");
+        Assert.True(gate.Success, "Tick goes on to its diff when a trace did not run or a stop is under way");
+        int store = tick.IndexOf("s_state.hiddenActors = std::move(applied)", StringComparison.Ordinal);
+        Assert.True(gate.Index < store, "Tick records its diff before asking whether every trace ran");
+
+        // Every un-hide goes through the one helper, which keeps (not drops) an actor whose un-hide did not run...
+        var restore = FunctionBody(code, "RestoreHidden(");
+        Assert.Matches(@"if\s*\(\s*UnhideLeftItHidden\s*\(\s*SetHiddenCode\s*\(\s*a\s*,\s*false\s*\)\s*\)\s*\)\s*kept\.insert\s*\(\s*a\s*\)", restore);
+        int rs = code.IndexOf(restore, StringComparison.Ordinal);
+        foreach (Match m in Regex.Matches(code, @"\b(?:InvokeSetHidden|SetHiddenCode)\s*\(\s*\w+\s*,\s*false\s*\)"))
+            Assert.True(m.Index >= rs && m.Index < rs + restore.Length,
+                $"an un-hide outside RestoreHidden drops its actor whatever it returned: ...{code.Substring(Math.Max(0, m.Index - 60), 120)}...");
+
+        // ...and every site writes what it kept back to the record, marked as an un-hide that may still run.
+        var tickKept = Regex.Match(tick, @"const\s+std::unordered_set<uintptr_t>\s+kept\s*=\s*RestoreHidden\s*\(\s*gone\s*\)");
+        Assert.True(tickKept.Success, "Tick does not keep what its un-hides left hidden");
+        Assert.Matches(@"applied\.insert\s*\(\s*kept\.begin\s*\(\s*\)\s*,\s*kept\.end\s*\(\s*\)\s*\)", tick[tickKept.Index..]);
+        Assert.Matches(@"s_state\.unhideQueued\s*=\s*kept\s*;", tick[tickKept.Index..]);
+        var record = FunctionBody(code, "void RecordUnhideLeftoversLocked(");
+        Assert.Matches(@"s_state\.hiddenActors\.insert\s*\(\s*kept\.begin\s*\(\s*\)\s*,\s*kept\.end\s*\(\s*\)\s*\)", record);
+        Assert.Matches(@"s_state\.unhideQueued\.insert\s*\(\s*kept\.begin\s*\(\s*\)\s*,\s*kept\.end\s*\(\s*\)\s*\)", record);
+        foreach (var (fn, sites) in new[] { ("void PendingRestoreLoop(", 1), ("static int32_t ApplyLocked(", 2) })
+        {
+            var body = FunctionBody(code, fn);
+            var kept = Regex.Matches(body, @"const\s+std::unordered_set<uintptr_t>\s+(\w+)\s*=\s*RestoreHidden\s*\(");
+            Assert.Equal(sites, kept.Count);
+            foreach (Match k in kept)
+                Assert.Matches(@"\bRecordUnhideLeftoversLocked\s*\(\s*" + k.Groups[1].Value + @"\s*\)", body[k.Index..]);
+        }
+        // A record moved out to be restored takes its pending un-hides with it.
+        Assert.Equal(Regex.Matches(code, @"s_state\.hiddenActors\.clear\s*\(\s*\)\s*;").Count,
+                     Regex.Matches(code, @"s_state\.hiddenActors\.clear\s*\(\s*\)\s*;\s*s_state\.unhideQueued\.clear\s*\(\s*\)\s*;").Count);
+
+        // An actor that still occludes but whose un-hide may still run is hidden again, not just counted.
+        Assert.Matches(@"if\s*\(\s*RehideOnTick\s*\(\s*occluding\s*,\s*mayStillUnhide\.count\s*\(\s*a\s*\)\s*!=\s*0\s*\)\s*\)\s*\{\s*if\s*\(\s*InvokeSetHidden\s*\(\s*a\s*,\s*true\s*\)\s*\)\s*applied\.insert\s*\(\s*a\s*\)", tick);
+    }
+
+    /// <summary>[SHUTDOWN-SEETHRU-WAIT] A shutdown ends See-through's deferred restore with actors still hidden; on a bare
+    /// UE5_StopPipeServer nothing re-decides after it, so the loop itself must say no restore is waiting.</summary>
+    [Fact]
+    public void ADeferredRestoreEndedByAShutdownSaysSo()
+    {
+        var loop = FunctionBody(CodeOnly(DllSrc("Schlacht.cpp")), "void PendingRestoreLoop(");
+        var exit = Regex.Match(loop, @"if\s*\(\s*!\s*s_pendingStop\.load\s*\(\s*\)\s*&&\s*Tot::ShutdownRequested\s*\(\s*\)\s*\)");
+        Assert.True(exit.Success, "PendingRestoreLoop does not handle the exit a shutdown causes");
+        Assert.Matches(@"restoreAbandoned\s*=\s*true", loop[exit.Index..]);
+    }
+
+    /// <summary>[SHUTDOWN-SEETHRU-WAIT] Fly/Noclip commits its collision record on a Queued request, which runs later --
+    /// unless Stark::Shutdown answers it unrun. Every commit site passes the direction and the shutdown flag, so a restore
+    /// cut during a shutdown keeps its record. Dunste.cpp reaches no C++ test target.</summary>
+    [Fact]
+    public void FlysCollisionRestoreCutByAShutdownKeepsItsRecord()
+    {
+        var code = CodeOnly(DllSrc("Dunste.cpp"));
+        var calls = Regex.Matches(code, @"\bShouldCommitCollision\s*\(");
+        var full = Regex.Matches(code, @"\bShouldCommitCollision\s*\([^;]*?,\s*[^,;]+,\s*Tot::ShutdownRequested\s*\(\s*\)\s*\)");
+        Assert.Equal(3, calls.Count);
+        Assert.Equal(calls.Count, full.Count);
+    }
+
+    /// <summary>[SHUTDOWN-SEETHRU-WAIT] The cut only sees a shutdown flag that is already up, so both teardowns must raise
+    /// it before anything they join or drain. Moving the latch below a join would silently undo the fix. Also UE5_Shutdown
+    /// turns See-through off before Stark::Shutdown, so its un-hides can still dispatch on a live game.</summary>
+    [Fact]
+    public void TheShutdownFlagIsUpBeforeAnyJoin()
+    {
+        var shutdown = FunctionBody(CodeOnly(DllSrc("Frieren.cpp")), "void UE5_Shutdown(");
+        int latch = shutdown.IndexOf("Tot::RequestShutdown()", StringComparison.Ordinal);
+        Assert.True(latch >= 0, "UE5_Shutdown no longer raises the shutdown flag");
+        foreach (var later in new[] { "Mimic::StopThread(", "Schlacht::SetEnabled(", "Stark::Shutdown(", "s_pipeServer.Stop(" })
+        {
+            int at = shutdown.IndexOf(later, StringComparison.Ordinal);
+            Assert.True(at > latch, $"UE5_Shutdown: {later} is not after the shutdown flag goes up");
+        }
+        foreach (Match m in Regex.Matches(shutdown, @"\b\w+::StopWorker\s*\(\s*\)"))
+            Assert.True(m.Index > latch, $"UE5_Shutdown: {m.Value} is not after the shutdown flag goes up");
+        Assert.True(shutdown.IndexOf("Schlacht::SetEnabled(", StringComparison.Ordinal)
+                    < shutdown.IndexOf("Stark::Shutdown(", StringComparison.Ordinal),
+            "UE5_Shutdown: See-through is turned off after Stark::Shutdown, so its un-hides cannot dispatch");
+
+        var stop = FunctionBody(CodeOnly(DllSrc("Fern.cpp")), "void Fern::Stop(");
+        int stopLatch = stop.IndexOf("Tot::RequestShutdown()", StringComparison.Ordinal);
+        Assert.True(stopLatch >= 0, "Fern::Stop no longer raises the shutdown flag");
+        foreach (var later in new[] { "m_connCv.wait_for(", "m_acceptThread.join(", "m_monitorThread.join(" })
+        {
+            int at = stop.IndexOf(later, StringComparison.Ordinal);
+            Assert.True(at > stopLatch, $"Fern::Stop: {later} is not after the shutdown flag goes up");
+        }
     }
 }

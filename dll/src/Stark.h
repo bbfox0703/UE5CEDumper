@@ -18,6 +18,8 @@
 #include <cstdint>
 #include <future>
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace Stark {
 
@@ -48,7 +50,9 @@ void Shutdown();
 bool IsHookActive();
 
 /// Enqueue a ProcessEvent invocation for game-thread execution.
-/// Blocks until the game thread executes it (or timeout).
+/// Blocks until the game thread executes it, or the invoke timeout passes, or a shutdown meets a game thread stalled
+/// past kInvokeShutdownStallMs ([SHUTDOWN-SEETHRU-WAIT]): those two answer -5 and leave the request queued. The cut does
+/// not reach a drop-if-abandoned request the game thread has already started: that one is waited out.
 ///
 /// @param instance    UObject instance pointer
 /// @param ufunc       UFunction pointer
@@ -68,17 +72,79 @@ bool IsHookActive();
 int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize,
                       bool dropIfAbandoned = false, std::shared_future<int32_t>* queuedOut = nullptr);
 
-/// [W3-DEBUGCAM-QUEUED] EnqueueInvoke's -5: the game-thread dispatch TIMED OUT and the request STAYS QUEUED -- it still
-/// runs when the game thread next drains. Mirrored UI-side as Constants.InvokeDispatchTimeoutResult.
+/// [W3-DEBUGCAM-QUEUED] EnqueueInvoke's -5: the wait for the game-thread dispatch ended -- it TIMED OUT, or a shutdown
+/// cut it short on a stalled game thread -- and the request STAYS QUEUED: it still runs when the game thread next
+/// drains, unless Stark::Shutdown answers it first. Mirrored UI-side as Constants.InvokeDispatchTimeoutResult.
 constexpr int32_t kInvokeTimedOutStillQueued = -5;
 /// [W3-DEBUGCAM-QUEUED] What a STATEFUL toggle export returns when its queued call did not return 0. A timed-out call
 /// passes through as kInvokeTimedOutStillQueued: the toggle stays queued and runs when the game thread next drains, so
 /// the caller reports it as queued, never as a failure that ran nothing. What that means for the user is the toggle's
 /// own (UE5_SetDebugCamera's doc in Frieren.h). Every other failure answers -1: -4 entered the call and faulted inside
-/// it, the rest ran nothing.
+/// it, the rest ran nothing. Defined below the owner rule's codes, which also pass through.
+
+// ============================================================
+// [D2-3-INVOKE] Who queued an invoke (maintainer, 2026-11-11)
+// ============================================================
+// The queue is one FIFO for the UI, CE, the MCP server and the DLL's own workers, and a -5 request stays in it, unseen,
+// until it runs. An AI invoke must report a conflict with the user's rather than slip in beside it, and must not run
+// after its session ends, so each request records its owner: a pipe client's key (Voll), CE (Voll::kHoldOwnerCe), or 0.
+
+/// Sets who the current thread's invokes belong to, for one command: the C ABI chain to EnqueueInvoke
+/// (UE5_CallProcessEventEx, CallProcessEventRouted) carries no owner. With `ifFree`, an enqueue is refused while another
+/// owner's invoke is outstanding, and nothing is called off the game thread. Owner 0 (no scope) is the DLL's own
+/// workers and C ABI callers.
+class InvokeOwnerScope {
+public:
+    InvokeOwnerScope(uint64_t owner, bool ifFree);
+    ~InvokeOwnerScope();
+    InvokeOwnerScope(const InvokeOwnerScope&) = delete;
+    InvokeOwnerScope& operator=(const InvokeOwnerScope&) = delete;
+private:
+    uint64_t m_prevOwner;
+    bool m_prevIfFree;
+};
+bool CurrentInvokeIfFree();
+
+/// EnqueueInvoke's answer to an if_free enqueue while another owner's invoke is outstanding: nothing was queued.
+/// LastInvokeBlocker() names that owner, for this thread. Apart from ProcessEvent's -1..-8 and the mailbox's codes.
+constexpr int32_t kInvokeHeldByOther = -25;
+/// A queued request dropped because its client left before it ran: it never ran.
+constexpr int32_t kInvokeDroppedOwnerLeft = -26;
+/// An if_free invoke while the game-thread hook is down: refused rather than called on the caller's thread.
+constexpr int32_t kInvokeNeedsGameThread = -27;
+uint64_t LastInvokeBlocker();
+/// The owner this thread's invokes are queued for now (0 outside a scope): a toggle that keeps its own record of a
+/// queued call (the debug camera) records whose it is.
+uint64_t CurrentInvokeOwner();
+/// The id of the last request this thread queued (0 before any), and moving a still-queued request to another owner:
+/// a client that JOINS a queued toggle -- told it is its own -- takes it over, so the first sender's session end does
+/// not drop it. False when the drain has already taken it (it runs now) or it was answered.
+uint64_t LastEnqueuedId();
+bool RetagQueued(uint64_t id, uint64_t owner);
+
+/// [W3-DEBUGCAM-QUEUED] (documented above, with kInvokeTimedOutStillQueued) -- and [D2-3-INVOKE]: the owner rule's
+/// refusals (-25, -27) pass through too, so the pipe can name the holder instead of reporting an unreadable state. Only
+/// an if_free caller meets them.
 constexpr int32_t StatefulToggleFailure(int32_t callResult) {
-    return callResult == kInvokeTimedOutStillQueued ? kInvokeTimedOutStillQueued : -1;
+    return (callResult == kInvokeTimedOutStillQueued || callResult == kInvokeHeldByOther
+            || callResult == kInvokeNeedsGameThread) ? callResult : -1;
 }
+
+/// Pure: whether `other`'s outstanding requests refuse an if_free enqueue by `caller`. The DLL's own workers (owner 0)
+/// never do: See-through, fly and teleport queue all the time, and an AI could then invoke nothing.
+inline bool InvokeBlocks(uint64_t other, int32_t outstanding, uint64_t caller) {
+    return outstanding > 0 && other != 0 && other != caller;
+}
+
+/// The owner whose outstanding invoke would refuse an if_free enqueue by `caller` now, or 0: a check made before work
+/// that itself queues (an object parameter's conversion). EnqueueInvoke still decides under its lock.
+uint64_t IfFreeBlocker(uint64_t caller);
+
+/// Requests each owner has queued or running (owner 0 included), for get_holds.
+std::vector<std::pair<uint64_t, int32_t>> OutstandingInvokes();
+/// Drops the requests `owner` still has queued (the drain has not taken them): each answers kInvokeDroppedOwnerLeft and
+/// never runs. Returns how many.
+int32_t DropQueuedInvokesOf(uint64_t owner);
 
 /// Default invoke timeout (compile-time baseline, used when no override is set).
 constexpr int32_t kDefaultInvokeTimeoutMs = 5000;
@@ -410,6 +476,47 @@ constexpr int32_t kRequestQueued = 0, kRequestRunning = 1, kRequestAbandoned = 2
 inline bool ClaimRequest(std::atomic<int32_t>& state, int32_t to) {
     int32_t expected = kRequestQueued;
     return state.compare_exchange_strong(expected, to, std::memory_order_acq_rel);
+}
+
+// ============================================================
+// [SHUTDOWN-SEETHRU-WAIT] A queued invoke's wait, cut by a shutdown on a stalled game thread
+// ============================================================
+// A waiter watched only its request's future, and on a stalled game thread only Stark::Shutdown answers it -- which
+// UE5_Shutdown reaches after joining the workers parked in such waits. A CE untick then waited out the rest of the
+// invoke timeout (measured: 11.3 s of 15) before the pipe server even began to stop. The waiter now asks between slices
+// whether a shutdown makes the rest of its wait pointless. Decisions only, header-inline: no test target compiles
+// Stark.cpp.
+
+// How often a waiter asks. Short against CE's 5 s executeCodeEx and Fern::Stop's 5 s drain.
+constexpr int32_t kInvokeWaitSliceMs = 50;
+// How long the game thread must have been quiet before a shutdown cuts a wait: past the liveness threshold, so a short
+// hitch does not cost UE5_Shutdown's See-through un-hide, and well inside CE's 5 s.
+constexpr int32_t kInvokeShutdownStallMs = 1000;
+static_assert(kInvokeShutdownStallMs > kStallThresholdMs, "a shutdown must not cut a wait over a mere liveness hitch");
+
+enum class InvokeWaitEnd : uint8_t { Ready, TimedOut, CutByShutdown };
+
+// Cut only when a shutdown is under way AND the game thread is measured stalled. A live game thread drains within a
+// frame, and UE5_Shutdown's See-through OFF needs its un-hides to run; Unknown counts as live, as the gate contract
+// says. A stall with no shutdown keeps its full timeout: a caller told -5 may rely on the request running later.
+inline bool CutInvokeWait(bool shutdownRequested, GameThreadLiveness l) {
+    return shutdownRequested && l == GameThreadLiveness::Stalled;
+}
+
+// The waiter's loop. The wait, the clock and the cut check come in as callables so a test drives them with a fake
+// clock. An answer that arrived wins over a cut.
+template <class WaitSlice, class NowMs, class ShouldCut>
+InvokeWaitEnd WaitQueuedInvoke(int32_t timeoutMs, WaitSlice&& waitSlice, NowMs&& nowMs, ShouldCut&& shouldCut) {
+    const uint64_t deadline = nowMs() + static_cast<uint64_t>(timeoutMs > 0 ? timeoutMs : 0);
+    for (;;) {
+        const uint64_t now = nowMs();
+        const uint64_t left = deadline > now ? deadline - now : 0;
+        const int32_t slice = left < static_cast<uint64_t>(kInvokeWaitSliceMs) ? static_cast<int32_t>(left)
+                                                                               : kInvokeWaitSliceMs;
+        if (waitSlice(slice)) return InvokeWaitEnd::Ready;
+        if (nowMs() >= deadline) return InvokeWaitEnd::TimedOut;
+        if (shouldCut()) return InvokeWaitEnd::CutByShutdown;
+    }
 }
 
 // ============================================================

@@ -27,6 +27,427 @@ builds ≤696 in
 
 -----
 
+## 2026-11-12 (build 3709) — A teardown no longer waits out a frozen game; the UI names a game running as administrator `[SHUTDOWN-SEETHRU-WAIT]` `[UI-ELEVATED-ACCESS-DENIED]`
+
+- **What was wrong (1), `[SHUTDOWN-SEETHRU-WAIT]`.** With See-through on and the game thread stalled, a CE untick could
+  block for the whole invoke timeout before the pipe server even began to stop. Measured on 3707: 11.3 s of a 15 s
+  timeout; `set_invoke_timeout` allows 600 s, and CE gives up after 5 s. A worker parked in a queued game-thread call
+  can only be answered by `Stark::Shutdown`, and the teardown reaches that after joining the worker.
+- **What changes (1):**
+  - A queued call's wait now ends when a shutdown is under way and the game thread has been quiet for over 1 s. The
+    call answers -5 and stays queued, the same as a timeout. A live game is untouched: its calls drain within a frame,
+    and UE5_Shutdown's See-through un-hides still run.
+  - A cut makes a call that did not run more likely, so See-through keeps its record of hidden actors through one.
+    - A trace that did not run no longer reads as "nothing occludes".
+    - An un-hide that did not run keeps its actor; one that faulted inside the engine is dropped, as before.
+    - An actor whose un-hide may still run is hidden again if it still occludes.
+    - A deferred restore that a shutdown ends or refuses says so.
+  - Fly/Noclip keeps its collision record when a restore is cut during a shutdown.
+- **What was wrong (2), `[UI-ELEVATED-ACCESS-DENIED]`.** A UI that is not elevated, connecting to a game that runs as
+  administrator, showed only Windows' "Access to the path is denied.".
+- **What changes (2):**
+  - It now says "PID N runs as administrator (elevated) or under another Windows account, so Windows refused this UI
+    its pipe. Close UE5DumpUI and start it as administrator, or start the game normally, then connect again.", with
+    the cause inside the toolbar's first 30 characters.
+  - An elevated UI that is refused is told another process probably made that pipe name. So is the MCP server, which
+    now asks its own elevation instead of assuming it is not elevated.
+  - Proxy Deploy's post-inject connect stops on a refusal of the game it injected, instead of spinning 45 s and
+    blaming the DLL.
+  - The Inject tooltip and the shipped guides no longer promise a UAC inject that auto-connects.
+- **Tests:** red then green, twice each (the second round from an adversarial review: 11 findings confirmed, all
+  fixed).
+  - C++: `Test_Stark_CutInvokeWait`, `Test_Stark_WaitQueuedInvoke` (a fake clock), `Test_Schlacht_FailedDispatchKeepsTheRecord`
+    and the Dunste commit-rule cases.
+  - C#: source pins on `EnqueueInvoke`, Schlacht's Tick and every restore site, the shutdown flag's order and Dunste's
+    commit sites.
+  - C#: the connect tests (`PipePerProcessConnectTests`, one through a real pipe with a read-only DACL), the MCP
+    mirror tests and the post-inject retry tests.
+- **Publish:** C++ 287 + 4070 + 22 + 30 + 1566 checks; C# 7936 passed, 1 skipped; headless 71/71.
+- **Live, 3709:**
+  - **See-through, DumperTest Shipping, CE 7.7, timeout 15 s, the game thread frozen** (`stop_teardown_live.py`, now
+    with a verdict):
+    - The CE untick went from Cleaning up to Stop entry in **25 ms** (was 11.3 s).
+    - A bare Stop's drain was **satisfied in 11 ms** (was a 5 s TIMEOUT).
+    - The hidden actor's record survived the shutdown, and the next ON restored it.
+  - **Elevated:** a stub pipe with an elevated game's DACL (no UAC), and the PathShape game started as administrator
+    (the maintainer clicked UAC). The non-elevated UI named both. A non-elevated process cannot read an elevated
+    game's main module (Win32 5), so the inject picker cannot list it.
+- AOT UI 62,288,896 bytes (sha256 b87b3ca67a8d24c9...); UE5Dumper.dll 3,729,408 bytes (sha256 f07ce0333f5144e6...).
+
+## 2026-11-12 (build 3708) — Cheat Engine's "start-up failed" message names both causes `[CT-INITFAILED-HEADLINE]`
+
+- **What was wrong.** When the DLL's start-up fails (mailbox state INIT_FAILED), the .CT's inject record and the
+  records the UI generates showed "The DLL loaded and initialised, but the Pipe Server failed to start." INIT_FAILED
+  covers two cases, though. The pipe server did not start, or the scan was cut short (the record was unticked while
+  it ran), in which case the pipe server usually DID start. Provoked live on 3707, the message said the server failed
+  while the DLL's log said `pipe server started, init ABORTED`, and the message's own causes sentence pointed at the
+  aborted scan.
+- **What changes:**
+  - The message now opens with "The DLL loaded, but its start-up did not finish: the scan was cut short, or the Pipe
+    Server did not start.", then keeps the causes sentence.
+  - The same change covers the .CT (its message and its log line) and the generated inject and autorun records.
+  - `CeReadinessLua.PipeFailedMessage` is renamed `InitFailedMessage`, and the INIT_FAILED docs in `Mimic.h` and
+    `CeMailboxLayout.cs` say the same. Comment-only, so the mailbox contract is unchanged (v9).
+- **Tests:** `CeInitFailedMessageTests`, red then green. All four copies, the shared text, both generated records and
+  the shipped .CT, must name both outcomes and never claim init finished. Only the INIT_FAILED branch's string literals
+  are read. `Reports_failures_rather_than_returning_success` now finds the message by its new wording.
+- **Publish:** C++ 287 + 4038 + 22 + 30 + 1566 checks; C# 7919 passed, 1 skipped; headless 71/71.
+- **Live, DumperTest Shipping, 3708** (`tools/verify/initfailed_ct.py`, which now requires both the headline and the
+  causes sentence): a CE worker thread fired `UE5_Shutdown` 406 ms after initState went RUNNING. The CT logged and
+  showed the new headline, and the DLL's log read `pipe server started, init ABORTED -> initState=3`. The generated
+  records were not provoked live: their INIT_FAILED branch is pinned by the test, and they compile on CE's Lua 5.3.
+- **Reviewed:** two reviewers on the diff; 2 findings confirmed (the derived test-file count, the register wording),
+  both fixed.
+- AOT UI 62,280,704 bytes (sha256 b6093d1043716524...); UE5Dumper.dll 3,724,800 bytes (sha256 690039faa94ffe30...).
+
+## 2026-11-12 (no build change) — The rest of the pipe-per-process pass: an elevated game, two games at once, an hour of MCP, CE-staged races `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **What.** The items the morning's pass left, all against build 3707. verification-register.md
+  `[PIPE-PER-PROCESS-2026-11-06]` has each one's numbers and log lines. Open there now: only 12 and 13.
+- **Closed:**
+  - 4, the elevated half. An elevated UI connects to an elevated proxied game and scans it. The MCP server names the
+    elevation, but a non-elevated UI shows only "Access to the path is denied.": todo.md `[UI-ELEVATED-ACCESS-DENIED]`.
+  - 5, the DLL's own INIT_FAILED. During the CT's own inject, a CE worker thread fired `UE5_Shutdown` 406 ms after
+    initState went RUNNING. The scan aborted (initState 1 → 0 → 3), and the CT showed its INIT_FAILED message. That
+    message's headline is wrong for this case (it says the server failed; init aborted and the server started): todo.md
+    `[CT-INITFAILED-HEADLINE]`.
+  - 6, a name an older copy made. A CE int3 breakpoint held the 3707 copy at its own `CreateNamedPipeW` while a 3695
+    copy created the name. 3707 joined it and logged "takes 3 clients at once, not this build's 6" and "all 3 pipe
+    instances in use".
+  - 7, the UI's "pipe is gone". Killing a game after the game list was read gave "PID 3292's pipe is gone ..." in 5.0 s.
+  - 11, the hint-cache lock across processes. With two games persisting at once, 0 of 50 rounds lost an update on
+    3707. The negative control on 3695 lost 50 of 50.
+  - 14, an hour of one MCP session. 0 failed calls, one connection, p95 15 ms. Its memory rose in a straight line to
+    43.8 MB without a collection; runs at 1 s showed it levels off at about 62 MB once the GC collects.
+- **Not reachable here:** 13 needs another CPU shape. The thread pick reads the machine's topology, so an affinity mask
+  cannot stage one.
+- **Still open:** 12, behind `[SHUTDOWN-SEETHRU-WAIT]`.
+- **Rigs:**
+  - New: `hintcache_two_games.py`, `oldname_join.py`, `initfailed_ct.py`.
+  - `mcp_soak.py` gained `--heavy-every` / `--report-every` / `--replay`. It now judges memory by whether it levels
+    off: the tail's growth per interval against the first report interval's, never a size.
+- **Reviewed:** an adversarial review of these records and rigs confirmed 14 findings and refuted 2. All 14 are fixed
+  (rigs, register wording, lessons, this entry), or filed (`[CT-INITFAILED-HEADLINE]`).
+- **Lessons:** working-lessons.md 1.aq (memory that has not been collected yet), 3.wd (a race staged with a CE int3
+  breakpoint), 3.we (a CE worker thread beside a CT tick).
+- **Not changed:** the shipped UI and DLL.
+
+## 2026-11-12 (no build change) — The pipe-per-process verification pass: Cheat Engine, the real UI, a proxy, a large game `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **What.** The live checks that waited for a free Cheat Engine, and the rest that this PC can run, all against build
+  3707. verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` has each one's numbers and log lines.
+- **Closed:**
+  - 1: a foreign holder of a game's pipe name.
+  - 2: a restart beside a straggling connection.
+  - 3: a second copy's own logs.
+  - 8: a suspended game.
+  - 9: CE's See-through record.
+  - 10: the UI meeting a scan another client started.
+  - 16: EVERSPACE 2, with 1,000,790 objects.
+  - 17: the UI's Value Search beside the AI's.
+  - 19, 20, 23, 24: CE's mailbox and the UI window as holders, every hold kind released, every write tool, a 3695 DLL
+    refused.
+  - 25: the UI's and CE's queued invokes.
+  - 27: write_invoke's struct, object and deny-list paths.
+  - The 3707 owed release: on UE 5.8 and around a CE Disable/Enable.
+- **Reached in part:**
+  - 4: the proxy-loaded game; the elevated game not run.
+  - 5: CE shows the per-process name and both INIT_FAILED texts, the latter display-only.
+  - 12: the drain counts a See-through teardown, but only for a Stop with no UE5_Shutdown.
+- **Found, open:** `[SHUTDOWN-SEETHRU-WAIT]` (todo.md, Stage D). A CE untick blocks on See-through's lock for the
+  whole invoke timeout before Stop starts; measured 11.3 s at a 15 s timeout.
+- **Not run:**
+  - 6: needs a start race staged with python.exe remote threads, which the AV flags.
+  - 7, 11: need two games at once.
+  - 13: no other CPU shape here.
+  - 14: a run of hours.
+- **New rigs:** `straggler_restart.py`, `stop_teardown_live.py`, `scan_hold.py`, `pipe_hold.py`, `vs_beside_ui.py`,
+  `mcp_large.py`, `mcp_soak.py`. Also `legacy_pipe_stub.py --pid/--instances/--answer`, and the `mcp_client.py`
+  modes `dbgcamstop`, `holdsmore`, `olddll` and `invokeparams`.
+- **Not changed:** the shipped UI and DLL.
+
+## 2026-11-12 (build 3707) — An AI session's debug camera is turned off even when the game was frozen as it ended `[DBGCAM-RELEASE-STALLED]`
+
+- **What was wrong.** Two cases left the camera on with no holder after the AI session ended:
+  - The game thread was stalled (a long load, a debugger, a suspended thread) when the session ended. The release's
+    OFF then waited the invoke timeout and stayed queued, and on stock UE 4.18-5.7 a queued OFF does not turn the
+    camera off.
+  - The AI left in the middle of a command. The release then ran with that connection's cancel still raised, and its
+    camera read gave up ("unknown"), so it sent nothing.
+- **What changes:**
+  - A release that times out is now *owed*. The DLL's pipe monitor sends the OFF again once the queued one has run and
+    the game thread is running. If the camera has become someone else's meanwhile (the UI's Force ON, a CE record, an
+    ON on its way), the monitor leaves it alone.
+  - The release's reads now answer to shutdown alone.
+  - `get_holds` / `read_holds` mark an owed release with `release_owed: true`.
+  - The DLL's pipe log records each step: owed, sent again, done or abandoned (with the reason).
+  - A stop of the pipe server (a CE Disable) drops a release still owed instead of carrying it over, so a later start
+    never turns off a camera the user turned on meanwhile.
+- **Safety:**
+  - The monitor only tries the camera's lock; it never waits for it.
+  - It reads the camera only when that decides something.
+  - It sends only when the hook's own fire stamp shows the game thread ran in the last 150 ms.
+  - It brings a soft-removed hook back first, and never makes a direct call off the game thread.
+- **Tests:**
+  - `Test_Voll_OwedCameraRelease` (the decision, every branch) and the source pin
+    `AStalledCameraRelease_IsOwed_AndSentAgainOnceTheQueuedOffHasRun`, each red then green in three rounds.
+  - Three review passes: 15, 4 and 5 findings confirmed, none refuted, all fixed. Round 3 withdrew round 2's carrying
+    of a release across a stop.
+  - Publish: C++ 4038 + 1566 + 287 + 30 + 22 checks; C# 7915 passed, 1 skipped; headless 71/71.
+- **Live, DumperTest Development (UE 5.4), 3707:**
+  - `mcp_client.py dbgcamhold` 59/59: (H) a stalled session end, owed and then off; (I) the UI took the camera during
+    the stall, so the release was abandoned; (J) the AI left mid-command, and its release was still owed and ended.
+  - Negative control, the same rig on 3706: H, I and J failed, and J logged `released (code 0)` with the camera left on.
+  - Also on Development: `dbgcam` 26/26, `raw` 24/24.
+  - On Shipping: `raw` 25/25, `writes --toggle-experimental` 36/36, `live` 31/31, `holds_live.py` 22/22, `probe` 15/15.
+- **Not live:** a CE Disable/Enable during an owed release (CE testing pending), a soft-removed hook, and UE 5.8. See
+  verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item 24.
+- AOT UI 62,280,192 bytes (sha256 f2c1704ad7591d03...); UE5Dumper.dll 3,724,800 bytes (sha256 6179c00bec22b7d2...).
+
+## 2026-11-11 (no build change) — The AI holding the debug camera, proven on DumperTest Development; a stalled session end leaves it on `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **What.** `tools/verify/mcp_client.py dbgcamhold`, a rig mode for the debug-camera part of verification-register
+  item 24. The AI's ON was held by the server and released when its session ended. Its own OFF worked. A camera the
+  UI took over, or turned on itself, refused the AI's OFF and ON and outlived the AI session.
+- **Measured** on DumperTest Development (UE 5.4), DLL and AOT exe 3706: 32/32. The DLL log shows the release (code 0)
+  and the three refusals. `dbgcam` (item 26) re-ran on the revised rig: 26/26. `raw` ran 24/24 on Development, its
+  Shipping-only check skipped and saying why, and 25/25 on Shipping, where that check still fires.
+- **Found, open:** `[DBGCAM-RELEASE-STALLED]` (todo.md, Stage D). If the game thread is stalled when the AI session
+  ends, the release's OFF stays queued (code -5), and on UE 4.18-5.7 a queued OFF does not turn the camera off. The
+  camera stays on with no holder. The fix is the maintainer's call.
+- **Rig fixes from two review passes** (13 findings confirmed, none refuted):
+  - A suspend or resume that did not take now raises instead of passing silently, and a bad `--suspend-name` is refused
+    before any case runs.
+  - Case H reads the live invoke timeout and waits for `game_thread_stalled`. It prints the release's code from the
+    DLL log, matched by pid and time.
+  - Clean-up re-sends OFF until the camera reads off.
+  - Every MCP session's framing is checked, not only the last.
+  - `--ssh` is refused for the modes that freeze the game.
+- **Not changed:** the shipped UI and DLL.
+
+## 2026-11-11 (no build change) — Joining a pending debug-camera toggle, proven on DumperTest Development `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **What.** `tools/verify/mcp_client.py dbgcam`, a new rig mode for verification-register item 26, which Shipping
+  could not reach (no live CheatManager). With the game thread frozen: the AI's ON queued and the UI's joined; the
+  UI's ON queued and the AI's refused; the UI's ON sent while the AI's toggle was still dispatching.
+- **Measured** on DumperTest Development (UE 5.4), DLL and AOT exe 3706: 26/26. The joined toggle survived the AI
+  session's end and turned the camera on, held by the UI. The negative control (nobody joined) dropped the toggle, and
+  the camera stayed off.
+- **Found:** Frieren's "join while still dispatching" path is reached by no shipped client. The pipe and the CE
+  mailbox both change the camera under the hold's lock, so a second request waits 3.5 s and then joins the queued
+  toggle. Only a direct `UE5_SetDebugCamera` export call reaches that path. The register row says so.
+- **Not changed:** the shipped UI and DLL.
+
+## 2026-11-11 (build 3706) — The MCP server writes memory and calls game functions; `write_mem` writes data only; the game-thread queue knows who sent what `[PIPE-PER-PROCESS-2026-11-06]`
+
+Stage D2-3, to the maintainer's decisions of 2026-11-11 (todo.md, "D2-3 decisions"). Two independent four- and
+three-lens reviews (32 and 20 findings) and a mutation check (15 guards, each failing a test) ran before the build.
+
+- **`write_memory`** (MCP): up to 4 KB of data at an address, only if it still holds the bytes the AI read (`expect`);
+  returns the bytes before and after.
+- **`write_invoke`** (MCP): a UFunction on a live object, on the game thread, its parameters by name. The server reads
+  the signature (inherited and interface functions included) and builds the call by the Invoke dialog's rules, stricter
+  where the dialog trusts a person reading the box: a function taking an FText (anywhere, a struct's field included) is
+  refused, a value that does not parse as its type is refused rather than written as zero, structs go by their fields
+  (an engine struct by its known layout), and every object pointer must be a live object (GObjects decides, not a read
+  of the memory). It returns the return value and out parameters; a call answered queued (-5) is never sent again.
+- **`write_mem` writes data only, for every client** (the UI's field edits included): code, read-only, guard and
+  uncommitted pages are refused, and no page's protection is changed any more. It used to make any page writable for
+  the write, so it could patch code, briefly remove a code page's execute right, and restore the wrong protection
+  after a write across pages.
+- **The game-thread queue records who sent each call.** An AI call is refused, naming the program, while one from the
+  UI, a Cheat Engine record or another AI session is still queued or running; the UI's calls always queue. An AI call
+  still queued when its session ends is dropped and never runs. With the ProcessEvent hook down, an AI call is refused
+  rather than made off the game thread. The same rules cover the game-thread calls the gameplay tools make (the debug
+  camera's toggle). `get_holds` lists each client's outstanding calls.
+- **Calls the AI may not make**, refused by the DLL: network RPCs, console commands (including SendToConsole and
+  ServerExec), quitting or travelling to another level, destroying actors, writing or deleting save slots, opening a
+  URL, and the debug camera toggle (use `write_debug_camera`).
+- **Fixed in the D2-2 tools:** `write_debug_camera` reported its refusals as success (it answers in `state`); a queued
+  debug-camera ON came on with no owner, so the AI could not turn it off and its session end did not release it (now
+  the client that sent it holds it, and a UI or CE request that joins it takes it over); the MCP's 30 s timeout could
+  end before a user-set invoke timeout and drop every hold (each game-thread command now waits per call).
+- **The UI is unaffected** except that a field edit into read-only or code memory is now refused with its reason. The
+  write tools need the DLL from this build; a proxy needs **Update All**.
+- Tests: C# 7914 passed, 0 failed, 1 skipped (117 MCP tools tests, 58 source pins); headless 71; dll_helpers_test 4018,
+  dll_core_test 1566 (write ranges on real pages), utf8_helpers_test 287, grausam_window_test 22, sein_retention_test
+  30, 0 failures; 39 gates passed; the AOT window starts (version 1.0.0.3706). Live, the published DLL and AOT exe on
+  DumperTest Shipping (UE 5.4): `tools/verify/mcp_client.py raw` 25/25 -- a field written, a changed-since write
+  refused with what is there, the field put back; a vtable and code refused; `Add_IntInt(40, 2)` returned 42; the
+  debug-camera toggle refused by name; with the game thread frozen, the UI stand-in's queued call refused the AI's
+  (naming its process) until it ran; the AI's own queued call refused a second one and was dropped when its server
+  exited ("1 queued invoke(s) of it dropped, never run"). `writes` 36/36, `live` 31/31, `holds_live.py` 22/22, `probe`
+  15/15. Not live: verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 25-27. AOT UI 62,280,192 bytes
+  (sha256 56deffe008723f52...); UE5Dumper.dll 3,721,216 bytes (sha256 949afc9535fe2017...).
+
+## 2026-11-11 (no build change) — `inject.py` hands the injection to `UE5DumpUI.exe`; python.exe no longer injects `[AV-INJECT-2026-11-11]`
+
+- **Why.** The AV's behavioural layer flagged python.exe running `tools/verify/inject.py` from a terminal, 75 s after
+  the injection had already worked, and an AV exception covers the program that acts, not the script it runs
+  (working-lessons.md §3.8, item 6). The maintainer had excepted python.exe for the day; that exception can now go.
+- **What changes.** `inject.py` starts `dist\UE5DumpUI.exe --inject-elevated <pid> <dll> <result file>` -- the UI's
+  own injector, started plainly, never elevated -- and reads its result. Its options, the guard against a build of ours
+  already in the process, `--list` / `--modules` and its output lines stay; one line is new (`via    : <exe>`), and
+  `--exe` names another exe (a worktree has no `dist\`). No caller changes.
+- **Not changed:** the shipped UI and DLL. `call_export.py` and the rigs built on `mailbox_poke.py` still start a
+  remote thread or write process memory from python.exe themselves.
+- Tests: `InjectElevatedContractTests` (5): a bad pid exits 2 and a missing DLL exits 1 with its reason, neither
+  opening a process; the switch, argument order, `OK <hex>` line and exit codes pinned in both `Program.cs` and
+  `inject.py`; `inject.py` names no injection API and never elevates. 39 gates passed. Live on DumperTest Shipping
+  with the build 3705 `dist\`: a missing DLL and a missing exe refused; a non-PE file reported as the exe's own
+  "LoadLibraryW returned NULL" (exit 1); the injection loaded `dist\UE5Dumper.dll` and its pipe answered (build 3705);
+  a second injection refused by the guard; `--allow-stale` returned the same module; no result file left in %TEMP%.
+
+## 2026-11-11 (build 3705) — The MCP server can change the game: the gameplay toggles, the force field and teleport, asked every time `[PIPE-PER-PROCESS-2026-11-06]`
+
+Stage D2-2, to the maintainer's D2 decisions of 2026-11-11.
+
+- **Twelve `write_*` tools**: god mode, the movement knobs, gravity direction, time dilation, the debug camera, the
+  mouse cursor, a teleport to explicit coordinates, and the experimental Fly, Keep Foreground, See-through, force a
+  field and release a forced field. **Five more reads** around them: `read_holds` (who holds what), `read_pose`,
+  `read_movement`, `read_time_dilation`, `read_forced_fields`.
+- **Asked every time.** Every write tool carries Claude Code's `anthropic/requiresUserInteraction` marker (Claude Code
+  2.1.246+ asks before each call in every permission mode, an allow rule notwithstanding) and `destructiveHint`.
+- **Never over you.** A change to a feature the UI, a Cheat Engine record or another AI session holds is refused by
+  the DLL under that feature's lock (D2-1's `if_free`), and the reply names the holder. The AI never releases every
+  forced field at once, and never turns See-through off while you have it on too.
+- **Ends with the AI session.** What the AI turned on is released when its server exits; what you hold stays.
+- **Your teleport markers and Recall last are yours.** `write_teleport` goes only to the coordinates given and never
+  touches a marker slot. New pipe key `keep_undo` on the explicit-pose `teleport_recall_marker` (the server always
+  sends it) leaves the undo point alone, so the UI's **Recall last** still returns where you were.
+- **The experimental features follow the UI's switch**, read on every call.
+- **The write tools need the DLL from this build** (3705): an older one cannot tell the AI's change from yours, so
+  each write tool refuses it before sending anything. A proxy needs **Update All**.
+- `docs/mcp.md` and `MCP-Setup.html` describe the write tools; `MCP-Setup.html` in `dist\` is byte-identical to its
+  source.
+- Tests: the write tools' rules (if_free on every hold change, the old-DLL refusal, the experimental switch, the
+  holder named in each refusal, teleport's keep_undo and `from`, object_null refused, the See-through OFF guard, no
+  command from the never-sent set), the `_meta` marker in `tools/list`, a source pin for `keep_undo` in Wirbel and
+  Fern. Nine mutations, one per guard, each failed a test. C# 7845 passed, 0 failed, 1 skipped; dll_helpers_test
+  3952, dll_core_test 1548, utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30, 0 failures; 39
+  gates passed. ⚠ The publish's headless step failed, 49 of 71, all with "No precompiled XAML found for
+  avares://UE5DumpUI/Resources/Strings/en.axaml"; the same suite re-run on its own passed 71/71, and the published
+  exe starts its window (up after 12 s, crash.log untouched, version 1.0.0.3705 in its init log). The cause was not
+  found; it followed a long run of mutation rebuilds of the test project.
+- Live, the published DLL and AOT exe on DumperTest Shipping (UE 5.4): `tools/verify/mcp_client.py writes
+  --toggle-experimental` 36/36 beside a foreground pipe client standing in for the UI -- the UI's god mode refused and
+  named; the server's own world time, walk speed, fly and force-field job marked background; a teleport and a return
+  leaving the marker slots and the undo point (a control jump without `keep_undo` moved it), and the UI's Recall last
+  landing where the UI left; Fly refused with the switch off; See-through OFF refused while the UI also had it on;
+  each of the server's holds released when it exited (one DLL log line each), the UI's god mode and See-through
+  kept. `probe` 15/15, `live --suspend-name DumperTest` 31/31, `holds_live.py` 22/22. Not live:
+  verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 22-24. AOT UI 62,190,080 bytes (sha256
+  ab442c67207ec532...); UE5Dumper.dll 3,685,376 bytes (sha256 b562d419e5adc02e...).
+
+## 2026-11-11 (build 3704) — The DLL records who holds each gameplay hold; an AI session's holds end with it `[PIPE-PER-PROCESS-2026-11-06]`
+
+Stage D2-1, the groundwork for the MCP server's write tools (D2), to the maintainer's decisions of 2026-11-11: the DLL
+records owners, what an AI session turned on ends with it, and an AI never replaces or ends what the UI holds.
+
+- **Who holds what.** God mode, the three movement knobs, gravity direction, both time lanes, fly, Keep Foreground,
+  the debug camera and each force-field job record their owner: a pipe client's process, CE's mailbox, or nobody.
+  Every writer -- each pipe connection and the mailbox -- changes a hold under that hold's own lock.
+- **`if_free`.** A request carrying it is refused (`code -20`, naming the holder) when the hold is in force and
+  someone else holds it -- one with no recorded owner counts as someone else's. Nothing changes then, and no other
+  writer can slip between the check and the change.
+- **A background client's holds end with it.** A client whose requests carry `"background"` (the MCP server) has
+  what it still holds released when its process leaves; a hold the UI took over meanwhile stays. The UI's own holds
+  outlive it, as before.
+- **New command `get_holds`** (107 in all) lists every hold, whether it is in force and who holds it; `pipe_clients`
+  marks background connections.
+- No change in what the UI or Cheat Engine do. A proxy DLL needs **Update All** for this, as for any DLL change.
+- Tests: dll_helpers_test 3952 (the ledger, the if_free rule, the holds each request changes, the holder JSON), 52
+  source pins for Fern and Mimic, which no test target compiles. C# 7822 passed, 0 failed, 1 skipped; headless 71;
+  dll_core_test 1548, utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30, 0 failures; 39 gates
+  passed. Live, the published DLL on DumperTest Shipping (UE 5.4), `tools/verify/holds_live.py` 22/22: a background
+  client refused the foreground client's god mode and could not reset it; its own world time, walk speed, jump, fly
+  and Keep Foreground were released when it left (one DLL log line each), while a lane the foreground client had
+  taken over stayed. Not live: verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 19-20. AOT UI 62,125,056
+  bytes (sha256 b64a095f469b9b5c...); UE5Dumper.dll 3,685,376 bytes (sha256 983e092b3b87d1c1...).
+
+## 2026-11-11 (build 3703) — `MCP-Setup.html` ships in every release: how to set up the MCP server `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **New in the release folder: `MCP-Setup.html`** (the maintainer: the setup document ships with the publish). How to
+  register `UE5DumpUI.exe --mcp` in Claude Code and Claude Desktop, let the reading tools run without a prompt, use
+  it beside the UI and against a game running as administrator, and start it from another machine over SSH with key
+  authentication; then a troubleshooting table. `README.html` lists it.
+- **The Windows 11 OpenSSH server commands in it are the maintainer's, for reference only:** they may not work on a
+  given machine (another SSH server, a policy, a firewall), and setting up an SSH server is outside this project.
+- No change to the app or the DLL. Tests pin the copy step, the guide against the server's switch, name, allow rule
+  and tools, and the disclaimer ahead of the commands. C# 7812 passed, 0 failed, 1 skipped; headless 71;
+  dll_helpers_test 3929, dll_core_test 1548, utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30,
+  0 failures; 39 gates passed; `dist\MCP-Setup.html` byte-identical to its source. AOT UI 62,125,056 bytes (sha256
+  ddbcff42d219504c...); UE5Dumper.dll 3,631,104 bytes.
+
+## 2026-11-11 (build 3702) — The MCP server says when a game runs as administrator; it works in Claude Code, over SSH and elevated `[PIPE-PER-PROCESS-2026-11-06]`
+
+- **A game running as administrator is named as such.** A server that is not elevated sees the game listed but is
+  refused its pipe by Windows (UAC); it answered "Internal error in read_status: Access to the path is denied." It now
+  says the game runs elevated and what to do: start the AI client elevated, or the game normally. Red, then green.
+- **The UI's project runs the trim and AOT analyzers on every build** (no change to the exe): IL2026 / IL3050 now fail
+  the first compile and the test build instead of the publish. A planted generic `JsonArray.Add("x")` failed a plain
+  build; taken out, the build was clean.
+- **Measured live** (verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`), build 3701's AOT exe on DumperTest
+  Shipping (UE 5.4):
+  - **Claude Code itself** (item 15, closed): registered with `claude mcp add --scope local`, from a copy of the exe
+    outside `dist\` (a running server would stop the next publish replacing it). A desktop session loaded the
+    server (handshake 2025-11-25), offered its 35 tools, and called six of them on the game. With the allow rule
+    `mcp__ue5cedumper__read_*` and `--permission-mode default`, the reads ran without a prompt and `scan_start` was
+    denied; in auto mode, `scan_start` ran too -- why D2's write tools must carry `requiresUserInteraction`.
+  - **SSH and an elevated game** (item 18, closed): an elevated server against an elevated game 31/31; a server
+    started over SSH (an administrator's SSH session runs at High integrity) 26/26 against the elevated game and 31/31
+    against a normal one. The temporary SSH key was removed afterwards.
+- New in todo.md: `[UI-CONNECT-ELEVATED-GAME]` (MED, not measured in the UI) -- the UI's inject-elevated flow
+  auto-connects from a non-elevated UI and would meet the same refusal, shown as raw text.
+- Tests: C# 7809 passed, 0 failed, 1 skipped; headless 71; dll_helpers_test 3929, dll_core_test 1548,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30, 0 failures; 39 gates passed;
+  `mcp_client.py probe` 15/15 on this build. AOT UI 62,125,056 bytes (sha256 df435701e4e9414b...); UE5Dumper.dll
+  3,631,104 bytes.
+
+## 2026-11-11 (build 3701) — `UE5DumpUI.exe --mcp`: an AI can read a running game, beside the UI and without disturbing it `[PIPE-PER-PROCESS-2026-11-06]`
+
+Stage D1. The maintainer chose the route on 2026-11-11 (todo.md, Stage D): the server goes straight to the game's
+pipe, it is a mode of the UI's exe, the JSON-RPC is written by hand, and the first build only reads.
+
+- **New: an MCP server for AI clients** (Claude Code, Claude Desktop). Registered as
+  `UE5DumpUI.exe --mcp`, it opens no window: the client starts it on stdin / stdout. Its tools read a running game
+  through the DLL: search and find objects, an instance's live fields, class layouts and functions, raw memory, who
+  points at an object and the pointer path from GWorld, Cheat Engine pointers, DataTables, and Cheat Engine-style
+  value scans. Every reading tool's name starts with `read_`, so one Claude Code allow rule admits them all; the one
+  other tool, `scan_start`, keeps its prompt. Nothing in this build writes game memory or turns a feature on. How
+  to register it, the tools and the messages: [mcp.md](mcp.md).
+- **It runs beside the UI without getting in its way** (the maintainer: an AI working beside the UI must not
+  interfere with its long operations or the user's writes):
+  - its own pipe connection (the UI keeps its two of the six), and the server and the UI are separate processes, so
+    the single-instance rule does not apply between them;
+  - no command whose state another client shares: no snapshot, LiveFuncs recording, diagnostics reset or overrides;
+    `scan_start` starts nothing on a game that is scanned, being scanned, or whose scan found nothing;
+  - **the DLL: a request may carry `"background": true`**, and the server marks every one. A GObjects walk such a
+    request starts takes at most half of the free worker threads, so a value scan or snapshot the user starts in the
+    UI meanwhile keeps the other half. It used to get one thread. A DLL older than the key ignores it.
+- **Behaviour an AI can rely on:** a game counts as scanned only once its scan has finished (the pool is published
+  before the offsets are validated); with several games, every call names its pid; a game that came back as a new
+  process is named; a call that overruns its time or is cancelled closes the connection (the DLL's own cancel), and
+  the next reply says the old value-scan sessions are gone; a reply too long for the client is cut by whole entries,
+  with a note.
+- **An adversarial review** (four lenses, each finding checked against the code) found 1 HIGH, 4 MED and about 12
+  LOW, all fixed but two LOW left for the DLL (todo.md, Stage D). The HIGH: nine `JsonArray.Add` calls bound to the
+  generic `Add<T>`, which the trimmed publish refuses -- working-lessons §3.xc's trap; the analyzer build found 18
+  errors, then none.
+- Tests: the MCP protocol, tools, connection and host (C#, four new files); the half share and its scope
+  (dll_core_test, 16 checks: on this PC a background walk on 7 threads, a foreground walk beside it on 8). C# 7808
+  passed, 0 failed, 1 skipped; headless 71; dll_helpers_test 3929, dll_core_test 1548, utf8_helpers_test 287,
+  grausam_window_test 22, sein_retention_test 30, 0 failures; 39 gates passed. Live, AOT exe on DumperTest Shipping
+  (UE 5.4), `tools/verify/mcp_client.py`:
+  - `probe` 15/15 with no game (handshake, `server/discover` answered with an error, framing, exit 0 at EOF);
+  - `live` 31/31: every tool; a cancel of a call the suspended game could not answer got no response, and the next
+    call reconnected and said so; a value-scan session `pipe_client.py` held for the run survived it;
+  - the DLL log: the server's walks on 7 of 14 threads, "a background walk takes at most half of what is free".
+
+  Not live: verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 15-18 (Claude Code itself, a large game,
+  the UI itself beside the server, SSH and an elevated game). AOT UI 62,124,032 bytes (sha256 a48805d6facd67ea...);
+  UE5Dumper.dll 3,631,104 bytes.
+
 ## 2026-11-11 (build 3700) — build.ps1 leaves nothing in %TEMP%; a green test run no longer ends red on a busy disk `[TEST-TEMP-HYGIENE-2026-11-11]`
 
 - **A build no longer leaves the SDK's folders and logs in %TEMP%.** Every dotnet call build.ps1 makes (restore,

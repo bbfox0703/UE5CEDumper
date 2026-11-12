@@ -18,8 +18,12 @@
 #pragma once
 
 #include <Windows.h>   // DWORD, ERROR_PIPE_BUSY, ERROR_ALREADY_EXISTS, GetCurrentProcessId
+#include <map>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 #include <json.hpp>    // the holders list (pipe_clients, the at-capacity line)
 
@@ -182,6 +186,9 @@ struct Holder {
     bool        inFlight = false;   // a command is running now
     std::string phase;              // Fern's Connection::Phase as a short key (Fern::PhaseKey), e.g. "Dispatching"
     bool        self = false;       // the connection asking (pipe_clients)
+    // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: the connection marks its requests "background" (the MCP server does).
+    // The exe name cannot tell: the MCP server runs as UE5DumpUI.exe too.
+    bool        background = false;
 };
 
 inline constexpr size_t kMaxHolderExeBytes = 64;
@@ -208,6 +215,7 @@ inline nlohmann::json HolderToJson(const Holder& h) {
     j["in_flight"]       = h.inFlight;
     j["phase"]           = h.phase;
     j["self"]            = h.self;
+    j["background"]      = h.background;
     return j;
 }
 
@@ -236,6 +244,217 @@ inline std::string HoldersJson(const std::vector<Holder>& holders, size_t budget
 // bit keeps that key apart from every pid, which is 32 bits, and from 0, which names no owner.
 constexpr uint64_t ClientOwnerKey(DWORD pid, uint64_t seq) noexcept {
     return pid ? static_cast<uint64_t>(pid) : ((1ull << 63) | seq);
+}
+
+// ── Who holds what the gameplay features hold ───────────────────────────────
+// [PIPE-PER-PROCESS-2026-11-06] Stage D2-1 (maintainer, 2026-11-11)
+//
+// God mode, the movement knobs, gravity direction, the time lanes, fly, the foreground lock, the debug camera and each
+// force-field job are one process-wide state each, held by a re-assert worker past the client that set it. Nothing
+// recorded who set it, so an AI working through the MCP server could not tell the UI's hold from nobody's, and would
+// silently replace or end it. The ledger records the owner of each hold: a client process (ClientOwnerKey), CE's
+// mailbox (kHoldOwnerCe), or none.
+//
+// Every writer -- each pipe connection and the mailbox -- changes a hold under that hold's own lock, so a request
+// marked if_free checks the owner and changes the state in one step, with no window for another writer between them.
+// One lock per hold, not one for all: a debug-camera toggle can wait seconds for the game thread, and must not stall
+// a time-dilation change meanwhile. The ledger keeps names and owners only; whether a hold is ACTIVE is read from its
+// module each time, so a hold someone turned off is free whatever owner is still written down.
+inline constexpr uint64_t kHoldOwnerNone = 0;
+inline constexpr uint64_t kHoldOwnerCe   = ~0ull;   // the same value Schlacht uses for CE's claim
+
+class HoldLedger {
+public:
+    // The lock that guards `hold`, made on first use and never destroyed: a lock handed out must outlive its user.
+    std::mutex& LockFor(const std::string& hold) {
+        std::lock_guard<std::mutex> g(mu_);
+        auto& slot = locks_[hold];
+        if (!slot) slot = std::make_unique<std::mutex>();
+        return *slot;
+    }
+    uint64_t Owner(const std::string& hold) const {
+        std::lock_guard<std::mutex> g(mu_);
+        auto it = owners_.find(hold);
+        return it == owners_.end() ? kHoldOwnerNone : it->second;
+    }
+    // kHoldOwnerNone forgets the hold.
+    void SetOwner(const std::string& hold, uint64_t owner) {
+        std::lock_guard<std::mutex> g(mu_);
+        if (owner == kHoldOwnerNone) owners_.erase(hold);
+        else owners_[hold] = owner;
+    }
+    std::vector<std::string> OwnedBy(uint64_t owner) const {
+        std::lock_guard<std::mutex> g(mu_);
+        std::vector<std::string> out;
+        for (const auto& [hold, who] : owners_)
+            if (who == owner) out.push_back(hold);
+        return out;
+    }
+    std::vector<std::pair<std::string, uint64_t>> Snapshot() const {
+        std::lock_guard<std::mutex> g(mu_);
+        return {owners_.begin(), owners_.end()};
+    }
+
+private:
+    mutable std::mutex mu_;
+    std::map<std::string, std::unique_ptr<std::mutex>> locks_;
+    std::map<std::string, uint64_t> owners_;
+};
+
+// The process's ledger: one for every writer, the pipe's connections and the mailbox alike.
+inline HoldLedger& Holds() {
+    static HoldLedger ledger;
+    return ledger;
+}
+
+// An if_free request is refused when the hold is active and anyone but the caller holds it. An active hold with no
+// recorded owner counts as someone else's: a C ABI call or an older path set it, and it may be the user's.
+constexpr bool HeldByOther(bool active, uint64_t owner, uint64_t caller) noexcept {
+    return active && owner != caller;
+}
+
+// [DBGCAM-RELEASE-STALLED] An AI session's debug camera, released while the game thread was stalled: the release's OFF
+// timed out and stays queued, and on stock UE 4.18-5.7 a queued OFF does not turn the camera off (it runs on the
+// original controller's CheatManager, and nobody is left waiting to switch the controller back). Fern keeps that
+// release owed and asks, each tick, what to do with it.
+enum class OwedRelease : uint8_t { Wait, Read, Send, Done, Abandon };
+// Stark::kInvokeTimedOutStillQueued, which this header does not include: Fern static_asserts the two agree.
+constexpr int32_t kOwedOffQueued = -5;
+
+// Before the camera is read -- each read walks GObjects, so it is made only when it decides something. `owner` is the
+// ledger's holder of the camera, `pendingOn` an ON on its way (its sender's from now), `toggleOutstanding` a toggle of
+// either direction still queued or being dispatched, `gameThreadNotRunning` no ProcessEvent from the game thread within
+// the stall threshold by the hook's own stamp (a soft-removed hook included).
+constexpr OwedRelease OwedCameraReleaseBefore(uint64_t owner, bool pendingOn, bool toggleOutstanding,
+                                              bool gameThreadNotRunning) noexcept {
+    // Someone took the camera, or asked for it on, since the session ended: it is theirs, never turned off under them.
+    if (owner != kHoldOwnerNone || pendingOn) return OwedRelease::Abandon;
+    // The queued OFF has not run yet, or an OFF sent now could not run.
+    if (toggleOutstanding || gameThreadNotRunning) return OwedRelease::Wait;
+    return OwedRelease::Read;
+}
+
+// On what the read says: 1 on, 0 off, below 0 unreadable -- no CheatManager or DebugCameraController object at all (with
+// no live CheatManager the read lands on the class default object and answers 0 or 1). The caller treats a read that a
+// shutdown cut short as no answer.
+constexpr OwedRelease OwedCameraReleaseOnState(int32_t cameraState) noexcept {
+    if (cameraState == 1) return OwedRelease::Send;
+    return cameraState == 0 ? OwedRelease::Done          // the queued OFF turned it off (UE 5.8)
+                            : OwedRelease::Abandon;      // nothing to turn off
+}
+
+// After sending: what the OFF answered. Queued again (a new stall) stays owed; anything but off is the end of it --
+// the OFF already tried the toggle and the swap-back, or was not sent because an ON is queued.
+constexpr OwedRelease OwedCameraReleaseSent(int32_t state) noexcept {
+    if (state == 0) return OwedRelease::Done;
+    return state == kOwedOffQueued ? OwedRelease::Wait : OwedRelease::Abandon;
+}
+
+// The names of the holds a pipe request changes, from its command and keys; empty for a command that changes none.
+// `reset_all_fields` changes every force-field job, which the caller lists (`forceFieldJobs`, "<class>::<field>").
+inline std::vector<std::string> HoldsChangedBy(const std::string& cmd, const nlohmann::json& request,
+                                               const std::vector<std::string>& forceFieldJobs) {
+    auto str = [&](const char* key) {
+        auto it = request.find(key);
+        return (it != request.end() && it->is_string()) ? it->get<std::string>() : std::string();
+    };
+    if (cmd == "set_god_mode") return {Grimoire::HOLD_GOD_MODE};
+    if (cmd == "set_foreground_lock") return {Grimoire::HOLD_FOREGROUND_LOCK};
+    if (cmd == "set_gravity_direction" || cmd == "reset_gravity_direction") return {Grimoire::HOLD_GRAVITY_DIRECTION};
+    if (cmd == "fly_set") return {Grimoire::HOLD_FLY};
+    if (cmd == "set_debug_camera") return {Grimoire::HOLD_DEBUG_CAMERA};
+    // A knob or a lane the handler would refuse names no hold: a name made up by a request would grow the ledger.
+    if (cmd == "set_movement_multiplier" || cmd == "reset_movement") {
+        const std::string knob = str("knob");
+        if (knob != "walk_speed" && knob != "gravity" && knob != "jump") return {};
+        return {std::string(Grimoire::HOLD_MOVEMENT_PREFIX) + knob};
+    }
+    if (cmd == "set_time_dilation" || cmd == "reset_time_dilation") {
+        auto it = request.find("target");   // the handlers' own default when the key is absent
+        const std::string target = (it == request.end()) ? "global" : (it->is_string() ? it->get<std::string>() : "");
+        if (target != "global" && target != "pawn") return {};
+        return {std::string(Grimoire::HOLD_TIME_PREFIX) + target};
+    }
+    if (cmd == "force_field" || cmd == "reset_field") {
+        const std::string cls = str("class_name"), field = str("field_name");
+        if (cls.empty() || field.empty()) return {};
+        return {std::string(Grimoire::HOLD_FORCE_FIELD_PREFIX) + cls + "::" + field};
+    }
+    if (cmd == "reset_all_fields") {
+        std::vector<std::string> out;
+        for (const auto& job : forceFieldJobs) out.push_back(std::string(Grimoire::HOLD_FORCE_FIELD_PREFIX) + job);
+        return out;
+    }
+    return {};
+}
+
+// Who holds a hold, as get_holds and an if_free refusal say it. `background`: the owner is a client whose requests are
+// marked background (the MCP server).
+inline nlohmann::json HoldOwnerJson(uint64_t owner, uint64_t caller, bool background) {
+    nlohmann::json j;
+    if (owner == kHoldOwnerNone) j["kind"] = "none";
+    else if (owner == kHoldOwnerCe) j["kind"] = "ce";
+    else {
+        j["kind"] = "client";
+        if (!(owner >> 63)) j["pid"] = static_cast<uint32_t>(owner);
+        j["background"] = background;
+    }
+    j["you"] = owner != kHoldOwnerNone && owner == caller;
+    return j;
+}
+
+// ── What a background client may not invoke ─────────────────────────────────
+// [D2-3-INVOKE] The maintainer's list (2026-11-11) for the MCP server's invoke_function. Empty when the call may go
+// ahead (after the user's per-call prompt); otherwise why not. Network RPCs by flag: a call that can leave the
+// machine. The rest by name, compared case-insensitively as the DLL's own function lookup falls back to; a name list is
+// a heuristic, and a game function that does the same under another name is not caught. The UI and CE are never asked.
+inline std::string InvokeRefusedForBackground(const std::string& funcName, uint32_t functionFlags) {
+    constexpr uint32_t kFuncNet = 0x00000040;   // FUNC_Net: set on every RPC (Server, Client, Multicast)
+    if (functionFlags & kFuncNet)
+        return "is a network RPC: it can reach a server outside this machine";
+    std::string n;
+    n.reserve(funcName.size());
+    for (char c : funcName) n.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c));
+    struct Rule { const char* name; const char* why; };
+    static constexpr Rule kRules[] = {
+        {"toggledebugcamera", "toggles the debug camera: use write_debug_camera, which reads the state first and "
+                              "records who holds it"},
+        {"enabledebugcamera", "turns the debug camera on: use write_debug_camera"},
+        {"disabledebugcamera", "turns the debug camera off: use write_debug_camera"},
+        // APlayerController's console runners are exec UFUNCTIONs with no FUNC_Net (ServerExec calls its RPC itself);
+        // ConsoleCommand is plain C++ in the engine, kept for a game that exposes its own.
+        {"sendtoconsole", "runs a console command, which can run anything"},
+        {"serverexec", "runs a console command, which can run anything"},
+        {"consolecommand", "runs a console command, which can run anything"},
+        {"executeconsolecommand", "runs a console command, which can run anything"},
+        {"quitgame", "quits the game"},
+        {"quit", "quits the game"},
+        {"openlevel", "travels to another level, which invalidates every address the user is looking at"},
+        {"openlevelbysoftobjectptr", "travels to another level, which invalidates every address the user is looking at"},
+        {"clienttravel", "travels to another level or server"},
+        {"servertravel", "travels to another level or server"},
+        {"switchlevel", "travels to another level, which invalidates every address the user is looking at"},
+        {"localtravel", "travels to another level, which invalidates every address the user is looking at"},
+        {"cheatscript", "runs the console commands an ini section lists, which can run anything"},
+        {"launchurl", "opens a URL outside the game"},
+        {"restartlevel", "restarts the level, which invalidates every address the user is looking at"},
+        {"restartgame", "restarts the game"},
+        {"resetlevel", "resets the level, which invalidates every address the user is looking at"},
+        {"returntomainmenuhost", "leaves the game for the main menu"},
+        {"k2_destroyactor", "destroys an actor, which cannot be undone"},
+        {"k2_destroycomponent", "destroys a component, which cannot be undone"},
+        {"setlifespan", "schedules an actor's destruction"},
+        {"destroytarget", "destroys an actor, which cannot be undone"},
+        {"destroyall", "destroys actors, which cannot be undone"},
+        {"destroypawns", "destroys pawns, which cannot be undone"},
+        {"destroyallpawnsexcepttarget", "destroys pawns, which cannot be undone"},
+        {"savegametoslot", "writes a save slot, which can overwrite the user's save"},
+        {"asyncsavegametoslot", "writes a save slot, which can overwrite the user's save"},
+        {"deletegameinslot", "deletes a save slot, which cannot be undone"},
+    };
+    for (const Rule& r : kRules)
+        if (n == r.name) return r.why;
+    return {};
 }
 
 // ── Who should own the pipe at startup ──────────────────────────────────────

@@ -1274,6 +1274,13 @@ if ($Target -in "All", "DLL") {
         Copy-Item $guideSrc -Destination (Join-Path $DIST_DIR "Feature-Guide.html") -Force
         Write-Ok "Feature-Guide.html copied to dist\"
     }
+    # MCP-Setup.html — how to register `UE5DumpUI.exe --mcp` with an AI client ([PIPE-PER-PROCESS-2026-11-06]
+    # Stage D). It ships beside the exe it describes, since a user sets the server up from the release folder.
+    $mcpSrc = Join-Path $ROOT_DIR "scripts\MCP-Setup.html"
+    if (Test-Path $mcpSrc) {
+        Copy-Item $mcpSrc -Destination (Join-Path $DIST_DIR "MCP-Setup.html") -Force
+        Write-Ok "MCP-Setup.html copied to dist\"
+    }
     # build_number.txt — build version tracking
     $buildNumSrc = Join-Path $ROOT_DIR "build_number.txt"
     if (Test-Path $buildNumSrc) {

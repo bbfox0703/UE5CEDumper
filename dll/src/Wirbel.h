@@ -218,7 +218,9 @@ int32_t RecallMarker(int32_t slot, bool force, uint8_t* tierOut);
 
 // Teleport to an explicit pose (BugItGo interop, pipe-only path). Bypasses
 // the marker store and the map check. hasRot: also restore Pitch/Yaw/Roll.
-int32_t RecallExplicit(const Pose& pose, bool hasRot, uint8_t* tierOut);
+// keepUndo: leave the "last" slot as it is. [PIPE-PER-PROCESS-2026-11-06] Stage D2-2: the slot is one for the whole
+// process, and an AI's teleport through the MCP server must not replace the place the user's "Recall last" returns to.
+int32_t RecallExplicit(const Pose& pose, bool hasRot, uint8_t* tierOut, bool keepUndo = false);
 
 // Teleport the pawn to the world position under the mouse cursor (or the
 // screen center when the cursor is unavailable and fallbackToCenter is set).

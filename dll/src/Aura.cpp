@@ -220,17 +220,12 @@ public:
     WorkerBudget& operator=(const WorkerBudget&) = delete;
 
     // Up to `want` workers, as many as are free; 0 when none are. Never blocks.
-    int Acquire(int want) noexcept {
-        if (want <= 0) return 0;
-        int cur = inUse_.load(std::memory_order_acquire);
-        for (;;) {
-            const int free = capacity_ - cur;
-            const int grant = free <= 0 ? 0 : (want < free ? want : free);
-            if (grant == 0) return 0;
-            if (inUse_.compare_exchange_weak(cur, cur + grant, std::memory_order_acq_rel, std::memory_order_acquire))
-                return grant;
-        }
-    }
+    int Acquire(int want) noexcept { return Take(want, false); }
+
+    // Background work (BackgroundWalkScope): up to `want`, but never more than half of what is free, rounded down, so
+    // a walk started after it still finds the other half. With one worker free it takes none and runs on its own thread.
+    int AcquireShare(int want) noexcept { return Take(want, true); }
+
     void Release(int n) noexcept {
         if (n > 0) inUse_.fetch_sub(n, std::memory_order_acq_rel);
     }
@@ -238,14 +233,29 @@ public:
     int Capacity() const noexcept { return capacity_; }
 
 private:
+    int Take(int want, bool half) noexcept {
+        if (want <= 0) return 0;
+        int cur = inUse_.load(std::memory_order_acquire);
+        for (;;) {
+            const int free = capacity_ - cur;
+            const int room = half ? free / 2 : free;
+            const int grant = room <= 0 ? 0 : (want < room ? want : room);
+            if (grant == 0) return 0;
+            if (inUse_.compare_exchange_weak(cur, cur + grant, std::memory_order_acq_rel, std::memory_order_acquire))
+                return grant;
+        }
+    }
+
     const int capacity_;
     std::atomic<int> inUse_{0};
 };
 
-// A share of a WorkerBudget, returned when the walk that took it ends.
+// A share of a WorkerBudget, returned when the walk that took it ends. A background walk takes a half share
+// (WorkerBudget::AcquireShare).
 class WorkerLease {
 public:
-    WorkerLease(WorkerBudget& budget, int want) : budget_(budget), granted_(budget.Acquire(want)) {}
+    WorkerLease(WorkerBudget& budget, int want, bool background = false)
+        : budget_(budget), granted_(background ? budget.AcquireShare(want) : budget.Acquire(want)) {}
     ~WorkerLease() { budget_.Release(granted_); }
     WorkerLease(const WorkerLease&) = delete;
     WorkerLease& operator=(const WorkerLease&) = delete;
@@ -255,6 +265,10 @@ private:
     WorkerBudget& budget_;
     const int     granted_;
 };
+
+// Whether the walk about to start on this thread is background work: set by Aura::BackgroundWalkScope, defined below
+// this anonymous namespace (a member of Aura cannot be defined inside it).
+thread_local bool t_backgroundWalk = false;
 
 // The process's budget: what one walk alone may spawn beyond its own thread.
 WorkerBudget& ScanWorkerBudget() {
@@ -362,11 +376,13 @@ ParallelScanResult<PerThreadT> ParallelGObjectsScan(int32_t count, BodyFn&& body
     if (maxThreads > 0 && nthreads > maxThreads) nthreads = maxThreads;
     // The workers beyond this thread come from the process-wide budget (WorkerBudget), held until this walk returns.
     const int wanted = nthreads;
-    WorkerLease lease(ScanWorkerBudget(), nthreads - 1);
+    const bool background = t_backgroundWalk;
+    WorkerLease lease(ScanWorkerBudget(), nthreads - 1, background);
     nthreads = 1 + lease.Granted();
     if (nthreads < wanted) {
-        LOG_INFO("ParallelGObjectsScan: %d of %d threads -- other walks running now hold the rest of the %d-worker "
-                 "budget", nthreads, wanted, ScanWorkerBudget().Capacity());
+        LOG_INFO("ParallelGObjectsScan: %d of %d threads -- %s of the %d-worker budget", nthreads, wanted,
+                 background ? "a background walk takes at most half of what is free"
+                            : "other walks running now hold the rest", ScanWorkerBudget().Capacity());
     }
     std::vector<PerThreadT> perThread(static_cast<size_t>(std::max(1, nthreads)));
     std::atomic<bool> deadlineHit{false};
@@ -468,6 +484,14 @@ bool MergedScanCapHit(const std::vector<PerThreadT>& perThread,
 }
 
 } // namespace
+
+BackgroundWalkScope::BackgroundWalkScope(bool background) noexcept : previous_(t_backgroundWalk) {
+    t_backgroundWalk = background;
+}
+
+BackgroundWalkScope::~BackgroundWalkScope() { t_backgroundWalk = previous_; }
+
+bool IsBackgroundWalk() noexcept { return t_backgroundWalk; }
 
 uintptr_t Aura::DecryptObjectPtr(uintptr_t rawPtr) {
     if (!rawPtr || !s_decryptFunc) return rawPtr;

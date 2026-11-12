@@ -247,6 +247,65 @@ int main() {
         // ⚠ Without this, every assertion below would pass against a pool of zero objects.
     }
 
+    // [D2-3-WRITEMEM] write_mem's range check and write, on real pages of this process: each protection the classifier
+    // tells apart, ranges across two pages, and a refused write that must leave the page's protection alone.
+    {   blk("D2-3-WRITEMEM - ClassifyWriteRange and WriteDataBytes on real pages");
+        using Lager::WriteTarget;
+        SYSTEM_INFO si{};
+        GetSystemInfo(&si);
+        const size_t pg = si.dwPageSize;
+        auto* base = static_cast<uint8_t*>(VirtualAlloc(nullptr, pg * 4, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
+        check("D2-3-WRITEMEM: four pages allocated", base != nullptr);
+        if (base) {
+            DWORD old = 0;
+            VirtualProtect(base + pg, pg, PAGE_READONLY, &old);
+            VirtualProtect(base + 2 * pg, pg, PAGE_EXECUTE_READ, &old);
+            auto range = [](const uint8_t* a, size_t n) {
+                return Macht::ClassifyWriteRange(reinterpret_cast<uintptr_t>(a), n);
+            };
+            check("D2-3-WRITEMEM: a read-write page is writable", range(base, 16) == WriteTarget::Writable);
+            check("D2-3-WRITEMEM: a whole read-write page is writable", range(base, pg) == WriteTarget::Writable);
+            check("D2-3-WRITEMEM: a read-only page is refused", range(base + pg, 16) == WriteTarget::NotWritable);
+            check("D2-3-WRITEMEM ⭐: code is refused as code", range(base + 2 * pg, 16) == WriteTarget::Executable);
+            check("D2-3-WRITEMEM ⭐: read-write running into read-only is refused",
+                  range(base + pg - 8, 16) == WriteTarget::NotWritable);
+            check("D2-3-WRITEMEM ⭐: read-only running into code is named as code",
+                  range(base + 2 * pg - 8, 16) == WriteTarget::Executable);
+            check("D2-3-WRITEMEM: address 0 is unmapped", Macht::ClassifyWriteRange(0, 4) == WriteTarget::Unmapped);
+            check("D2-3-WRITEMEM: an empty range is unmapped", range(base, 0) == WriteTarget::Unmapped);
+            check("D2-3-WRITEMEM: a range that wraps past the top of the address space is unmapped",
+                  Macht::ClassifyWriteRange(reinterpret_cast<uintptr_t>(base), SIZE_MAX) == WriteTarget::Unmapped);
+
+            const uint8_t v[4] = {1, 2, 3, 4};
+            check("D2-3-WRITEMEM: WriteDataBytes writes a read-write page",
+                  Macht::WriteDataBytes(reinterpret_cast<uintptr_t>(base), v, 4) && memcmp(base, v, 4) == 0);
+            check("D2-3-WRITEMEM ⭐: WriteDataBytes fails on a read-only page",
+                  !Macht::WriteDataBytes(reinterpret_cast<uintptr_t>(base + pg), v, 4));
+            MEMORY_BASIC_INFORMATION mbi{};
+            VirtualQuery(base + pg, &mbi, sizeof(mbi));
+            check("D2-3-WRITEMEM ⭐: and leaves it read-only (no protection flip)", mbi.Protect == PAGE_READONLY);
+            check("D2-3-WRITEMEM: the read-only page kept its zeros", base[pg] == 0);
+
+            // A guard page fires on its first touch, so it is checked last and never written.
+            VirtualProtect(base + 3 * pg, pg, PAGE_READWRITE | PAGE_GUARD, &old);
+            check("D2-3-WRITEMEM: a guard page is refused", range(base + 3 * pg, 8) == WriteTarget::NotWritable);
+
+            VirtualFree(base, 0, MEM_RELEASE);
+            check("D2-3-WRITEMEM: a released range is unmapped", range(base, 16) == WriteTarget::Unmapped);
+        }
+        // A range running from a committed page into a reserved one.
+        auto* half = static_cast<uint8_t*>(VirtualAlloc(nullptr, pg * 2, MEM_RESERVE, PAGE_NOACCESS));
+        if (half && VirtualAlloc(half, pg, MEM_COMMIT, PAGE_READWRITE)) {
+            check("D2-3-WRITEMEM: the committed half is writable",
+                  Macht::ClassifyWriteRange(reinterpret_cast<uintptr_t>(half), pg) == WriteTarget::Writable);
+            check("D2-3-WRITEMEM ⭐: running on into the reserved half is unmapped",
+                  Macht::ClassifyWriteRange(reinterpret_cast<uintptr_t>(half + pg - 8), 16) == WriteTarget::Unmapped);
+            VirtualFree(half, 0, MEM_RELEASE);
+        } else {
+            check("D2-3-WRITEMEM: reserved + committed pages allocated", false);
+        }
+    }
+
     // [VER-410-GATE] What the resource readings decide before any memory scan. Tier 1 below the floor is a refusal of
     // the whole scan, so each way to reach it is pinned, and so is each way that must NOT reach it.
     {   blk("VER-410-GATE - a reading below the floor is taken at tier 1 only when the resources corroborate it");
@@ -1384,6 +1443,67 @@ int main() {
         auto alone = Aura::ParallelGObjectsScan<int>(kCount, [&](int&, int32_t, int32_t, std::atomic<bool>&) {});
         check("BUDGET control: a walk on its own gets the whole share again", alone.nthreads == cap + 1,
               std::to_string(alone.nthreads).c_str());
+    }
+
+    {   blk("[PIPE-PER-PROCESS-2026-11-06] D -- a background walk takes at most half of the free budget");
+        // The MCP server marks its requests "background": an AI's long value scan must not leave the user's own walk
+        // in the UI on one thread.
+        Aura::WorkerBudget b(13);
+        check("BACKGROUND: half of what is free, rounded down", b.AcquireShare(13) == 6,
+              std::to_string(b.InUse()).c_str());
+        check("BACKGROUND * : a walk started after it finds the other half", b.Acquire(13) == 7);
+        b.Release(13);
+        check("BACKGROUND: asking for less than half takes what it asks", b.AcquireShare(2) == 2);
+        b.Release(2);
+        Aura::WorkerBudget one(1);
+        check("BACKGROUND: with one worker free it takes none (its own thread only)", one.AcquireShare(4) == 0);
+        check("BACKGROUND control: a foreground walk takes that worker", one.Acquire(4) == 1);
+        {
+            Aura::WorkerLease lease(b, 13, /*background*/ true);
+            check("BACKGROUND: a background lease holds a half share", lease.Granted() == 6 && b.InUse() == 6);
+        }
+        check("BACKGROUND: and returns it", b.InUse() == 0);
+
+        check("SCOPE: a dispatch is foreground unless marked", !Aura::IsBackgroundWalk());
+        {
+            const Aura::BackgroundWalkScope outer(true);
+            check("SCOPE: marked inside the scope", Aura::IsBackgroundWalk());
+            {
+                const Aura::BackgroundWalkScope inner(false);
+                check("SCOPE: an inner scope can clear it", !Aura::IsBackgroundWalk());
+            }
+            check("SCOPE: and the outer state comes back", Aura::IsBackgroundWalk());
+            bool seenOnAnotherThread = true;
+            std::thread([&] { seenOnAnotherThread = Aura::IsBackgroundWalk(); }).join();
+            check("SCOPE: it is this thread's alone", !seenOnAnotherThread);
+        }
+        check("SCOPE: cleared when the dispatch returns", !Aura::IsBackgroundWalk());
+
+        // A background walk through the real path, then a foreground walk beside it.
+        auto& pb = Aura::ScanWorkerBudget();
+        const int cap = pb.Capacity();
+        ResetCancel();
+        std::atomic<bool> releaseA{false};
+        int aThreads = 0;
+        std::thread walkA([&] {
+            const Aura::BackgroundWalkScope bg(true);
+            auto r = Aura::ParallelGObjectsScan<int>(kCount, [&](int&, int32_t, int32_t, std::atomic<bool>&) {
+                while (!releaseA.load()) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            });
+            aThreads = r.nthreads;
+        });
+        for (int i = 0; i < 5000 && pb.InUse() < cap / 2; ++i)
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        auto walkB = Aura::ParallelGObjectsScan<int>(kCount, [&](int&, int32_t, int32_t, std::atomic<bool>&) {});
+        releaseA = true;
+        walkA.join();
+        printf("    (this PC: budget %d workers; background walk on %d threads, foreground walk beside it on %d)\n",
+               cap, aThreads, walkB.nthreads);
+        check("BACKGROUND: the background walk ran on half the workers and its own thread",
+              aThreads == 1 + cap / 2, std::to_string(aThreads).c_str());
+        check("BACKGROUND * : the foreground walk beside it got the rest, not one thread",
+              walkB.nthreads == 1 + (cap - cap / 2), std::to_string(walkB.nthreads).c_str());
+        check("BACKGROUND: every worker is back after both", pb.InUse() == 0, std::to_string(pb.InUse()).c_str());
     }
 
     // -- SINGLEFLIGHT -- [PIPE-PER-PROCESS-2026-11-06] Stage C: trigger_scan / rescan start one job at a time, and

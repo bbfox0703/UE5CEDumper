@@ -232,7 +232,7 @@ public static class CeInjectScriptGenerator
         Line(sb, $"  showMessage({CeReadinessLua.SymbolNeverAppearedMessage})");
         Line(sb, "  return");
         Line(sb, "elseif state == INIT_FAILED then");
-        Line(sb, $"  showMessage({CeReadinessLua.PipeFailedMessage})");
+        Line(sb, $"  showMessage({CeReadinessLua.InitFailedMessage})");
         Line(sb, "  return");
         Line(sb, "elseif state ~= INIT_READY and state ~= INIT_SKIPPED then");
         Line(sb, $"  showMessage({CeReadinessLua.TimedOutMessage})");

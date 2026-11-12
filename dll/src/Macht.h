@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include "Grimoire.h"   // SANITY_MAX_CONTAINER_NUM -- the container-header plausibility ceiling
+#include "Lager.h"      // WriteTarget: what write_mem may write
 
 namespace Macht {
 
@@ -47,8 +48,17 @@ bool ReadBytesSafe(uintptr_t addr, void* buf, size_t size);
 // infinite traversal when memory has been reused for valid-looking data.
 bool IsAddrReadable(uintptr_t addr, size_t size = sizeof(uintptr_t));
 
-// Write bytes to memory
+// Write bytes to memory. Makes the pages READWRITE for the write, so it writes code and read-only data too: only the
+// DLL's own writers use it, on addresses they found themselves. A caller's address goes through the two below.
 bool WriteBytes(uintptr_t addr, const void* buf, size_t size);
+
+// [D2-3-WRITEMEM] The worst page in [addr, addr + size) for a data write (Lager::ClassifyWriteRegion): Writable only
+// when every page is committed, writable as it stands and not executable.
+Lager::WriteTarget ClassifyWriteRange(uintptr_t addr, size_t size);
+
+// Write data without touching page protection: an SEH-guarded copy that fails, and changes nothing, on a page that is
+// not writable.
+bool WriteDataBytes(uintptr_t addr, const void* buf, size_t size);
 
 // Get base address of a loaded module (nullptr = main module)
 uintptr_t GetModuleBase(const wchar_t* moduleName = nullptr);

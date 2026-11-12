@@ -53,6 +53,14 @@
 
     <!-- AOT: off by default, enabled via -p:PublishAot=true on publish -->
     <PublishAot Condition="'$(PublishAot)' == ''">false</PublishAot>
+    <!-- The trim and AOT analyzers run on EVERY build, not only the publish (maintainer, 2026-11-11). With
+         TreatWarningsAsErrors their IL2026 / IL3050 then fail the first compile and the test build, where before only
+         `-Mode Publish` (six minutes) or the manual analyzer build of working-lessons §3.xc saw them: the
+         [PIPE-PER-PROCESS-2026-11-06] Stage D1 review found nine JsonArray.Add<T> calls that compiled, passed every
+         test, and would have failed the publish. They read C# only: a ReflectionBinding in XAML still fails only at the
+         publish's ILC step (§3.xc). -->
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
     <!-- partial trim: only [Trimmable]-annotated assemblies get aggressive trimming;
          Avalonia/MicroCom infrastructure is preserved via TrimmerRootAssembly below. -->
     <TrimMode>partial</TrimMode>

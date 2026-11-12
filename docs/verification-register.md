@@ -249,52 +249,601 @@ backlog moves here **byte-identical** ([`working-lessons.md`](working-lessons.md
 Built in build 3695 (2026-11-10), Stage A of todo.md `[PIPE-PER-PROCESS-2026-11-06]`, and proven live on DumperTest
 Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 3695. Not reached:
 
-1. **Another process that created a game's pipe name first.** Fern refuses to serve beside it (ERROR once, retried
+1. ✅ **CLOSED on intent 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707; `legacy_pipe_stub.py --pid P
+   --instances 6 --answer`, a foreign process that created `\\.\pipe\UE5DumpBfx_12832` before the DLL was injected and
+   answers `get_pointers` with its own pid).
+   - **While the stub lived.** init-0.log: `DllMain AutoStart: pipe is held by PID 5620 ... deferring auto-start, and
+     watching for it to free`; pipe-0.log had no `PipeServer: Started`. The UI's Connect answered
+     "\\.\pipe\UE5DumpBfx_12832 was answered by PID 5620, not by the game, PID 12832: another process created that
+     game's pipe name first. Disconnected. ..." and stayed disconnected.
+   - **After it exited.** 0.7 s later: `AutoStartWatcher: pipe freed by PID 5620 after 95000 ms -- running the
+     auto-start that was deferred`, `Started on ...` and `takes 6 clients at once`. The UI connected, and
+     `get_pointers` answered pid 12832.
+   - **Not reachable from such a stub:** Fern's own ERROR ("created <name> before this process did") and its
+     "instances are gone -- serving". Both startup probes see a stub made before injection and defer first, so
+     Fern never starts beside it. Those lines need a foreign creator between the last probe and the accept loop's
+     first create, inside one call; they stay unit-tested (`Voll::ClassifyFirstInstance`).
+
+   *Was:* **Another process that created a game's pipe name first.** Fern refuses to serve beside it (ERROR once, retried
    each second), and the UI disconnects when the pid that answers is not the game's. Unit-tested
    (`Voll::ClassifyFirstInstance`; `Another_process_answering_for_the_game_is_disconnected`). Acceptance: a stub
    creates `\\.\pipe\UE5DumpBfx_<pid>` for a game's pid before the DLL is injected; pipe-0.log logs the ERROR and
    serves nothing until the stub exits, then logs "serving"; the UI never lands on the stub.
-2. **A restart while this copy's own connections from before the stop still hold their instances**
+2. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707, Cheat Engine 64-bit SSE4-AVX2 with
+   `UE5CEDumper.CT`, whose inject record started the server; `tools/verify/straggler_restart.py`, PASS).
+   - **The straggler.** Three connections sent `V1a_GrowContainers(8000000)` (about 0.4 s each) with the invoke
+     timeout raised to 180 s. The game thread was frozen 0.15 s later (none had completed), so one call was mid-run.
+   - **The stop.** CE's untick ran UE5_Shutdown: `Stop conn drain TIMEOUT, 1 left, 0 still tearing down (5026 ms, 49
+     cancel re-asserts)` and `straggler: INSIDE a command (cancel cannot reach it until it returns) for 5934 ms, last
+     cmd 'invoke_function'`.
+   - **The restart.** CE's re-tick, 1.2 s after Stopped: init-0.log logged `UE5_StartPipeServer: every instance is
+     busy with this copy's connections from before its last stop -- restarting the server beside them`, then
+     `Started` and the shared-name WARN; no "Start refused" or "deferring".
+   - **The UI** then connected ("Connected — UE504 (24530 objects)", two UE5DumpUI.exe connections in
+     `pipe_clients`).
+   - After the resume, the straggler's call returned 0. *Observation:* the straggler's own connection then answered
+     `get_pointers`, so it still serves after the restart without being registered.
+   - Two earlier runs missed the mid-run window, so the rig now freezes through a handle opened beforehand:
+     `suspend.py` takes about a second to start, longer than the whole call.
+
+   *Was:* **A restart while this copy's own connections from before the stop still hold their instances**
    (`UE5_StartPipeServer`'s `HasStragglerConnections` branch). It needs a Stop whose 5 s drain times out (a handler
    inside a long command) and then a CE re-tick. Acceptance: init-0.log logs "restarting the server beside them",
    pipe-0.log logs the shared-name WARN, and the UI connects.
-3. **A second copy's own log lines.** A second copy of the DLL in one process could not write its logs (the first
-   copy holds the files). Its deferral was proven from the first copy's pipe log instead: 0 new connections in the
-   15 s after an instance freed, against 22 in 10 s from the pre-fix copy. Its "deferring" line was never seen.
-4. **A proxy-loaded game, and an elevated game.** Only injection was driven, non-elevated.
-5. **Cheat Engine itself.** The mailbox was driven by `mailbox_poke.py`; the changed CE texts (the pipe name, the
-   INIT_FAILED reasons) were not displayed in CE.
+3. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, two copies of the 3707 DLL in one process; `hold_exclusive.py`
+   ×5, `pipe_hold.py`, Cheat Engine's executeCodeEx to stop the first copy instead of a python.exe remote thread).
+   - **Copy A** (`dist\UE5Dumper.dll`) was injected while all five -0.log files were held exclusively, so it could
+     open none. init-0.log's timestamp stayed unchanged while A served (`load_mode injected`).
+   - **Copy B.** With all 6 instances held, copy B (`out\row3\UE5DumperB.dll`) was injected. It owned the files and
+     logged its own lines: `Module identity: UE5DumperB.dll ...` and `DllMain AutoStart: pipe is held by PID 0 (0:
+     every instance busy, holder unknown) -- deferring auto-start, and watching for it to free`.
+   - **No connections from B's watcher.** One holder was released, and 15 s later a probe got seq 8, the last
+     holder's 7 plus 1.
+   - **B takes over.** All holders were released and A was stopped (`UE5Dumper.UE5_StopPipeServer` through CE).
+     Within 1 s B logged `AutoStartWatcher: pipe freed by PID 0 after 37500 ms -- running the auto-start that was
+     deferred`, then `Started` and `takes 6 clients at once`. The pipe then answered `load_mode
+     loaded:ue5dumperb.dll`.
+
+   *Was:* **A second copy's own log lines.** A second copy of the DLL in one process could not write its logs (the
+   first copy holds the files). Its deferral was proven from the first copy's pipe log instead: 0 new connections in
+   the 15 s after an instance freed, against 22 in 10 s from the pre-fix copy. Its "deferring" line was never seen.
+4. ✅ **CLOSED 2026-11-12, both halves; its finding `[UI-ELEVATED-ACCESS-DENIED]` fixed in build 3709** (the PathShape copy of DumperTest51 Shipping, UE 5.1, `version.dll`
+   from dist 3707 deployed with `path_shape_live.py deploy`, and undeployed afterwards: `proxy_refresh.py report`
+   reads 0 deployed).
+   - The proxy served only `\\.\pipe\UE5DumpBfx_9668` (`load_mode proxy:version.dll`, cap 6), unscanned until asked.
+   - The UI's Connect attached with no game picker ("Connected — waiting for scan") and scanned through Start Scan
+     (row 10): "Connected — UE501 (19144 objects)".
+   - Proxy Deploy > Inject into running game listed it as "UE5Dumper loaded (proxy: VERSION.dll) v1.0.0.3707 — already
+     active; Inject will just Connect", and Inject connected without loading a `UE5Dumper.dll`.
+   - The MCP server's `read_games` / `read_status` saw it (scanned, 19144 objects, the proxy load mode).
+   - **The elevated game: reached 2026-11-12, with a finding.** The same proxied PathShape game was started elevated
+     (ShellExecuteW runas; the maintainer approved UAC). Non-elevated, `pipe_client.py` got "Permission denied", and
+     the MCP server's `read_status` named the cause: "the game runs as administrator (elevated) and this server does
+     not. ..." The **non-elevated UI** showed only "Access to the path is denied." (UnauthorizedAccessException from
+     `NamedPipeClientStream.TryConnect`), with no word of elevation: todo.md `[UI-ELEVATED-ACCESS-DENIED]`. The
+     **elevated UI** (approved by the maintainer, who clicked for it: UIPI blocks computer use) connected without a
+     picker and scanned through Start Scan: "Connected — UE501 (19144 objects)", one `trigger_scan`, RunScan in 0.6 s.
+     Not run: the non-elevated UI's Inject into a running elevated game, then its auto-connect.
+   - ✅ **The finding fixed, 3709 (AOT UI and proxy 3709).**
+     - **No UAC needed:** `legacy_pipe_stub.py --pid 0 --elevated-dacl` served `UE5DumpBfx_14712` under the DACL an
+       elevated game's pipe gets. A non-elevated open got "Permission denied". The non-elevated UI's Connect showed
+       "Connection Error — PID 14712 runs as admini…" (the cause already inside the toolbar's ellipsis). Hovering the
+       red text shows the whole sentence, wrapped, in its tooltip (seen again with stub pid 54256). Its init log:
+       `InvalidOperationException: PID 14712 runs as administrator (elevated) or under another Windows account, so
+       Windows refused this UI its pipe. Close UE5DumpUI and start it as administrator, or start the game normally,
+       then connect again.`, with `---> UnauthorizedAccessException: Access to the path is denied.` kept inside it.
+     - **A real elevated game:** the PathShape game with the 3709 `version.dll`, started by ShellExecuteW runas (the
+       maintainer clicked UAC). It served `UE5DumpBfx_11884`, and `pipe_client.py` got "Permission denied". The
+       non-elevated UI showed the same sentence for PID 11884, and its log matched.
+     - **The inject picker cannot offer an elevated game.** A non-elevated process could open pid 11884 with
+       QUERY_LIMITED_INFORMATION but not with QUERY_INFORMATION | VM_READ, which `Process.MainModule` needs (Win32 5).
+       `GetRunningProcesses` drops a process whose main module it cannot read, so the old tooltip's "a UAC prompt to
+       inject elevated" flow cannot start from a non-elevated UI. That is measured, not seen: the picker opened behind
+       the elevated game's window, which computer use cannot show. The tooltip and the shipped guides now say to start
+       the UI as administrator, and the post-inject retry stops on a refusal instead of spinning 45 s.
+     - Undeployed afterwards. The maintainer closed the elevated game: a non-elevated process cannot.
+
+   *Was:* **A proxy-loaded game, and an elevated game.** Only injection was driven, non-elevated.
+5. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL 3707, Cheat Engine 64-bit SSE4-AVX2, `dist\UE5CEDumper.CT`
+   loaded into CE, each record ticked from CE's Lua with showMessage and print captured byte for byte).
+   - **The per-process pipe name**, as CE shows it: `\\.\pipe\UE5DumpBfx_(game PID)` every time, never the old bare
+     name, while the real pipe was `\\.\pipe\UE5DumpBfx_54848`. It appeared in the CT's setup row; the CT's "already
+     loaded and serving ... Pipe: ..." message (the game injected by `inject.py`; the record skipped the inject,
+     unticked itself, and the DLL kept serving); the CT's own inject ("DLL auto-start complete in 1.8 sec.", "Pipe:
+     ..."; its untick printed "UE5 Dumper stopped."); and the UI-generated bootstrap record (Tools > Add "Inject DLL"
+     Record; on a parked DLL: "loaded but parked -- restarting via UE5_AutoStart", "ready in 0.5 sec", "pipe: ...";
+     untick "shutdown: true").
+   - **The INIT_FAILED reasons, display only.** The two texts, the CT's and the generated record's, were shown by
+     making `readInteger(mailbox+12)` answer 3. Both name the two real causes ("the scan was stopped part-way ... or
+     the record was ticked again before the previous stop had finished"), and neither says "another process".
+   - ✅ **The DLL's own INIT_FAILED, reached later on 2026-11-12** (a clean DumperTest Shipping, the same CT, CE 7.7;
+     `tools/verify/initfailed_ct.py`).
+     - The CT's own records were ticked from a CE timer, init and then "Inject DLL + Start Pipe Server", with
+       showMessage and print captured.
+     - The shutdown came from inside Cheat Engine, not python.exe. The tick holds CE's main thread, so a CE
+       `createThread` worker (it runs while the tick sleeps between polls) watched the mailbox. 406 ms after initState
+       went RUNNING, it started `UE5_Shutdown` with CE's `createRemoteThread`, a plain CreateRemoteThread with no
+       assembled stub.
+     - The worker saw initState go 1 → 0 (the shutdown's reset) → **3**: the aborted scan wrote FAILED last.
+     - The CT printed `... starting up`, then `DLL init finished but the Pipe Server FAILED to start.`, and showed its
+       message: "The DLL loaded and initialised, but the Pipe Server failed to start. Most likely the scan was stopped
+       part-way (the record was unticked while it ran), or the record was ticked again before the previous stop had
+       finished. ..."
+     - init-0.log: `UE5_Init ABORTED (shutdown landed mid-scan)` and `pipe server started, init ABORTED ->
+       initState=3`.
+     - The record stayed ticked: the DLL is in, and its pipe server came up after the shutdown (Start clears the
+       shutdown latch), so an untick still has something to stop.
+     - The order is a race: the shutdown ends by writing IDLE, so the message shows only when the scan's FAILED comes
+       last (here 62 ms after). The rig reports a run that went the other way.
+     - **Found, then fixed in build 3708: the headline was wrong for this case** (`[CT-INITFAILED-HEADLINE]`). On 3707
+       the headline and the log line before it said the DLL "initialised, but the Pipe Server failed to start", while
+       init had aborted and the server had started.
+     - ✅ **Re-run on 3708** (a clean DumperTest Shipping, `dist\UE5CEDumper.CT` 3708, CE 7.7). `initfailed_ct.py` now
+       passes only on both the headline and the causes sentence. The race went the same way (1 → 0 → 3, the shutdown
+       406 ms after RUNNING).
+       - The CT logged `DLL start-up did not finish: the scan was cut short, or the Pipe Server did not start.`
+       - It showed "The DLL loaded, but its start-up did not finish: the scan was cut short, or the Pipe Server did not
+         start. Most likely the scan was stopped part-way ...".
+       - The DLL's own init log: `pipe server started, init ABORTED -> initState=3`.
+       - The generated records carry the same headline (`CeReadinessLua.InitFailedMessage`). They were not provoked
+         live; `CeInitFailedMessageTests` pins their INIT_FAILED branch, and `GeneratedScripts_OnCesVm_...` compiles
+         them on CE's Lua 5.3.
+
+   *Was:* **Cheat Engine itself.** The mailbox was driven by `mailbox_poke.py`; the changed CE texts (the pipe name,
+   the INIT_FAILED reasons) were not displayed in CE.
 
 Stage B, build 3696 (6 clients, the scan-worker budget) -- dev-log 3696. Not reached:
 
-6. **A name an older copy created, with its lower limit.** A 3696 copy whose first instance joins a name a 3695 copy
-   made logs a WARN with the limit in force (3). Acceptance: such a pair in one process; pipe-0.log logs "takes 3
-   clients at once, not this build's 6", and the at-capacity line quotes 3.
-7. **The UI's "pipe is gone" message.** Unit-tested (the game exits while the list is open). Acceptance: open the
-   game list with two games, close one, pick it; the error says its pipe is gone.
-8. **A game that is not responding.** The full-pipe message names it as a cause; a suspended game was not driven.
-   Acceptance: suspend every thread of an injected game (`suspend.py`), Connect; the message appears, and connecting
-   works after resuming.
+6. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, dist 3707 plus `out\stageA\copy3695\UE5Dumper.dll` (1.0.0.3695) in
+   the same process, Cheat Engine 7.7 64-bit SSE4-AVX2 with its VEH debugger; `tools/verify/oldname_join.py`).
+   - **Why a breakpoint.** No shipped path makes a newer copy join a live name. Every start probes first and then
+     defers or skips, and a watcher claims only a name that is gone. A race between remote threads started from
+     python.exe would stage it, and the AV flags python.exe doing that (working-lessons.md §3.8 item 6). The rig holds
+     the newer copy still instead, and no remote thread comes from python.exe: the older copy is injected by
+     `UE5DumpUI.exe --inject-elevated` (inject.py), and every export call is Cheat Engine's `executeCodeEx`.
+   - **The older copy settles idle.** It was injected beside the serving 3707 copy. It cannot write its logs while the
+     3707 copy holds them (item 3), so its mailbox was read instead: initState READY, the "another copy already serves"
+     path. 3707's `UE5_StopPipeServer` then took the name down, and the name was still gone 3 s later, so no watcher
+     in the older copy claimed it.
+   - **The staging.** An int3 breakpoint went on the 3707 module's only `CreateNamedPipeW` call site (RVA 0x131D37),
+     then 3707's `UE5_StartPipeServer` ran: its probe found the name gone, and its new accept thread stopped at the
+     breakpoint. The handler called the older copy's `UE5_StartPipeServer` (it returned 1, creating the name with ITS
+     limit), waited 1 s, and let the 3707 thread go on.
+   - **pipe-0.log, 10:49:11.475,** the 3707 copy's first instance:
+     - `already had instances in this process when this server started: a second copy of UE5Dumper serves it, ...`
+     - `takes 3 clients at once, not this build's 6: an older copy of UE5Dumper in this process created the name`
+   - **With 3 clients held** (all 3 connected): `all 3 pipe instances in use, waiting for a free slot -- ...
+     holders=[...]`.
+   - A first try used a debug-register breakpoint. It reached the newly created accept thread only after that
+     thread's first create, which made the name itself (`takes 6 clients at once`). The breakpoint fired only on the
+     later creates, by which point the older copy's start was a no-op. int3 is seen by every thread at once.
+
+   *Was:* **A name an older copy created, with its lower limit.** A 3696 copy whose first instance joins a name a 3695
+   copy made logs a WARN with the limit in force (3). Acceptance: such a pair in one process; pipe-0.log logs "takes 3
+   clients at once, not this build's 6", and the at-capacity line quotes 3. Not run in the first pass of 2026-11-12:
+   the join needs both copies to start in the same instant, and the planned python.exe race was ruled out by the AV.
+7. ✅ **CLOSED 2026-11-12** (two injected DumperTest Shipping games, UE 5.4 and UE 5.8, DLL and AOT UI 3707).
+   - The UI's game list was opened with both games in it. One of them (pid 3292) was then killed, and picked from the
+     still-open list.
+   - The UI's pipe log (`Logs\UE5DumpUI\pipe-0.log`) reads `Connecting to pipe: UE5DumpBfx_3292...` at 09:20:43.107.
+     Its init log has `Connection failed` at 09:20:48.112 (5.0 s), with "PID 3292's pipe is gone: the game exited, or
+     its UE5Dumper DLL stopped serving, after the list of games was read. Connect again to see what is running now."
+   - The other game, picked next as the control, connected.
+
+   *Was:* **The UI's "pipe is gone" message.** Unit-tested (the game exits while the list is open). Acceptance: open
+   the game list with two games, close one, pick it; the error says its pipe is gone.
+8. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707). Every thread of the game was suspended
+   (`suspend.py suspend`, NtSuspendProcess), then Connect was clicked in the UI.
+   - The UI's first lane connected and the second timed out. 5.6 s after the click the header read "Connection Error",
+     with "PID 44708's pipe is up, but no connection to it came free in time. Other clients may hold all of them (a
+     rig, an MCP client, or this UI's own earlier connections still finishing a command), or the game is not
+     responding (paused in a debugger, or suspended). ..."
+   - It was not "pipe is gone", and nothing hung.
+   - After `suspend.py resume`, Connect gave "Connected — UE504 (24530 objects)", and `pipe_clients` listed the UI's
+     two connections.
+
+   *Was:* **A game that is not responding.** The full-pipe message names it as a cause; a suspended game was not
+   driven. Acceptance: suspend every thread of an injected game (`suspend.py`), Connect; the message appears, and
+   connecting works after resuming.
 
 Stage C, build 3698 (hardening for a long-lived client) -- dev-log 3698; `tools/verify/stagec_live.py` passes on
 DumperTest Shipping, pipe and mailbox only. Not reached:
 
-9. **Cheat Engine's own See-through record.** The record was driven through the mailbox (`mailbox_poke.py`, as
+9. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707, Cheat Engine 64-bit SSE4-AVX2). The record was
+   the UI's own (Teleport > See-through > **Add to CE**: "See-through occluders (toggle)"), ticked from CE's Lua with
+   no message. `Mailbox: SEETHROUGH count=1 value=1 -> rc=1`, then `seethrough_get_state` read active, `ce_claimed:
+   true`, 1 claim, 1 actor hidden. The UI then connected (its card read "ON — Active — hiding the occluder in front of
+   your character." with no click) and closed by WM_CLOSE as the last pipe client. Five seconds later the state was
+   unchanged (active, `ce_claimed: true`, 1 claim), and init-0.log had no turn-off line. The untick turned it off:
+   `SEETHROUGH count=0 value=0 -> rc=0`, `SeeThrough: disabled (1 restored)`, 0 claims.
+   *Was:* **Cheat Engine's own See-through record.** The record was driven through the mailbox (`mailbox_poke.py`, as
    `stagec_live.py` does), not ticked in CE. Acceptance: tick the pushed See-through record in CE, connect and close
    the UI; the record's See-through stays on (`seethrough_get_state` `ce_claimed: true`), and its untick turns it off.
-10. **The UI against a job another client started.** `trigger_scan` and Extra Scan answer `in_progress` to a second
-    asker; the UI was not driven against one. Acceptance: start a scan from `pipe_client.py` on a game still loading
-    (proxy, scan deferred), click Start Scan in the UI; it shows the scan's progress, not "Scan failed".
-11. **The hint-cache lock across processes.** Two writers in one process are tested (dll_core_test HINTCACHELOCK); two
-    games, or a stale proxy beside an injection, writing at once were not. Acceptance: two injected games each
-    `set_invoke_timeout ... persist` at the same moment; both records hold their value.
-12. **A Stop whose teardown waits on the game thread.** Acceptance: See-through on, game paused (`suspend.py`), the
-    UI closes and CE unticks the DLL at once; pipe-0.log's drain line counts the teardown ("still tearing down") and
-    names it, and nothing hangs past the drain budget.
+10. ✅ **CLOSED 2026-11-12** (the proxy-loaded PathShape DumperTest51 Shipping of row 4, 3707;
+    `tools/verify/scan_hold.py`).
+    - A pipe client started the scan, and the rig froze the scan job's thread ("Scanning FSparseDelegateStorage...",
+      phase 4) so it stayed running.
+    - Start Scan in the UI then showed "Scanning... Scanning FSparseDelegate..." and, once the rig resumed the
+      thread, "Connected — UE501 (19144 objects)", with no "Scan failed" or "TriggerScan failed".
+    - pipe-0.log has one `trigger_scan: Starting async engine scan`, one `RunScan: started` and one `RunScan:
+      finished`. The UI's own `trigger_scan` was received at 08:53:59.98, inside the scan, which finished at
+      08:54:03.78.
+
+    *Was:* **The UI against a job another client started.** `trigger_scan` and Extra Scan answer `in_progress` to a
+    second asker; the UI was not driven against one. Acceptance: start a scan from `pipe_client.py` on a game still
+    loading (proxy, scan deferred), click Start Scan in the UI; it shows the scan's progress, not "Scan failed".
+11. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, UE 5.4, and DumperTest58 Shipping, UE 5.8, both injected with
+    3707; `tools/verify/hintcache_two_games.py`).
+    - Two different exes, so two cache records (PE hashes `C361A341081CE000` and `AA15AD260A24F000`).
+    - In each of 50 rounds a barrier released both games' `set_invoke_timeout ... persist` at the same moment: game A
+      wrote 7000+i, game B 9000+i. The machine's hint cache was then read back.
+    - All 50 rounds: the file parsed and held both values, and both replies said `persisted: true`. 0 lost, 0
+      unparsable. Both old values (0) were put back.
+    - **Negative control:** the same run with the 3695 DLL (before the cross-process lock) in both games, `--expect-loss`.
+      **50 of 50 rounds lost an update**: in rounds 42 to 49, for one, game A's record stayed at 7041 while B's moved
+      on. So the rig can see a lost update, and 3707's lock is what prevents it.
+    - The "stale proxy beside an injection" shape was not driven separately.
+      - When both copies are build 3698 or later, it is the same two-writer race. The lock (`Flamme.cpp` `CacheLock`)
+        is a named mutex keyed on the cache file's name, whatever loaded the DLL.
+      - A stale proxy from before Stage C takes no lock; the 3695 control above shows what such a copy does. Beside a
+        3707 injection its writes are not serialised, so either copy's change can still be lost. Refreshing the proxy
+        is the remedy.
+      - That mixed shape was not driven either.
+
+    *Was:* **The hint-cache lock across processes.** Two writers in one process are tested (dll_core_test
+    HINTCACHELOCK); two games, or a stale proxy beside an injection, writing at once were not. Acceptance: two
+    injected games each `set_invoke_timeout ... persist` at the same moment; both records hold their value.
+12. ✅ **CLOSED 2026-11-12, its finding fixed in build 3709** (`[SHUTDOWN-SEETHRU-WAIT]`).
+    - **3709, the same rig and shape** (DumperTest Shipping, DLL and AOT UI 3709, CE 7.7, the CT's inject record owning
+      the server, invoke timeout 15000 ms, See-through the UI's claim with 1 actor hidden, the DLL's own game-thread
+      pick frozen; `stop_teardown_live.py` now judges the run itself).
+      - **Untick (12a''s shape):** `UE5_Shutdown: Cleaning up` to `Stop entry` in **25 ms** (11.3 s on 3707).
+        `GameThreadDispatch: invoke wait cut short after 3779 of 15000 ms -- a shutdown is under way and the game
+        thread is stalled; the request stays queued`. The drain read `satisfied, 0 left, 0 still tearing down (4 ms)`,
+        and Stopped came 140 ms after Cleaning up.
+      - **`UE5_StopPipeServer` (12b's shape):** the drain read `satisfied, 0 left, 0 still tearing down (11 ms)`
+        (TIMEOUT, 1 still tearing down, 5022 ms on 3707). The wait was cut after 3833 of 15000 ms, and Stopped came
+        131 ms after Stop entry. The "still tearing down" WARN stays reachable through a teardown that is not an invoke
+        wait, but this shape no longer exercises it.
+      - **The record across the shutdown:** See-through logged `disabled but 1 actor(s) remain hidden (game thread
+        unresponsive) and a shutdown is under way, so no restore waits — the next See-through ON restores them`. After
+        a CE re-tick, `seethrough_get_state` read `hidden_count 1, restore_abandoned true`. ON un-hid it at once
+        (`hidden_count 0`), and OFF 2 s later read `disabled (1 restored)`.
+    - What follows is the 3707 run that found it.
+
+    **Reached 2026-11-12, with a finding** (DumperTest Shipping, DLL and AOT UI 3707, Cheat Engine, the CT's
+    inject record owning the server; `tools/verify/stop_teardown_live.py`). In each run See-through was on (the UI's
+    claim), the game thread was frozen, the UI was closed by WM_CLOSE 0.3 s later, and CE acted 4 s after the freeze.
+    - **12a, CE untick, invoke timeout 5000 ms.** `UE5_Shutdown: Cleaning up` waited for See-through's worker (its
+      LineTrace timed out at 5000 ms) before `Stop entry`. The drain read `satisfied, 0 left, 0 still tearing down
+      (5 ms)`; Cleaning up to Stopped took 1.3 s. As the source predicts, a CE untick cannot show the count:
+      UE5_Shutdown turns See-through off itself, on the lock the UI's teardown holds, before Stop.
+    - **12a', the same at 15000 ms.** `UE5_Shutdown` blocked 11.3 s on that lock before `Stop entry`, past the 5 s
+      drain budget. Finding, todo.md `[SHUTDOWN-SEETHRU-WAIT]`.
+    - **12b, `UE5_StopPipeServer` from CE (a Stop with no UE5_Shutdown in front), 15000 ms.** The drain read `Stop
+      conn drain TIMEOUT, 0 left, 1 still tearing down (5022 ms, 49 cancel re-asserts)`. A WARN named it: `1
+      connection(s) already unregistered are still releasing what they owned (See-through, a recording -- possibly
+      waiting on the game thread)`. Stopped came 5.03 s after Stop entry. The count and the WARN work.
+    - Seen along the way: after 12a a hidden actor stayed hidden ("Off — 1 actor(s) still hidden"), since the deferred
+      restore refuses under shutdown. The next See-through ON restored it.
+
+    *Was:* **A Stop whose teardown waits on the game thread.** Acceptance: See-through on, game paused
+    (`suspend.py`), the UI closes and CE unticks the DLL at once; pipe-0.log's drain line counts the teardown ("still
+    tearing down") and names it, and nothing hangs past the drain budget.
 13. **Another CPU shape.** Only this 16C32T PC was measured (16 threads per walk before, 14 now); hybrid P/E cores,
     E-cores disabled and a CPU without SMT are unit-tested (dll_core_test CPU). Acceptance: the init log's thread pick
     on such a PC matches `Aura::ThreadsForCpu` for its topology.
-14. **A long-lived client.** No MCP client exists yet (Stage D); the rigs open connections for seconds.
+    **Not reachable on this PC (checked 2026-11-12).** The pick reads the machine's topology:
+    `GetLogicalProcessorInformationEx(RelationProcessorCore)` and `std::thread::hardware_concurrency()`. A process
+    affinity mask changes neither, so starting the game on fewer cores does not stage another shape. Only a different
+    PC, or SMT / core count changed in the firmware or the boot configuration, would.
+    **Kept open (the maintainer, 2026-11-12):** there is no machine with another CPU shape (an Intel hybrid CPU, say)
+    to run it on.
+14. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707; `tools/verify/mcp_soak.py`).
+    - **One hour:** one `UE5DumpUI.exe --mcp` held one pipe connection for an hour. Every 30 s it ran read_status and
+      read_pipe_clients, and every 10th interval also read_find_instances of Actor and a value scan (begin, end).
+      120 intervals: 0 failed calls, one seq (2) the whole hour, read_status p50 0 / p95 15 ms. The server exited 0.
+    - **Memory:** the server's private bytes rose in a straight line, 9.7 to 43.8 MB, about 2.8 MB per 5 minutes. Its
+      handles went 190 to 210, flat at 210 from the 10-minute report on. The game: 3,154 to 3,279 MB, handles 2,089 to
+      1,995.
+    - **The straight line is garbage that was never collected, not a leak.** Two runs at 1 s showed it:
+      - Light calls only, 5 min: +14 MB per 120 calls (about 117 KB per call), then **60.4 MB and flat** over the
+        last 120 calls.
+      - The full mix, 10 min: 60.1 MB at interval 180, then **62.5 MB at interval 600**, +2.4 MB over about 840
+        calls and 42 heavy pairs.
+      The workstation GC sizes its first gen0 budget from the largest single cache the OS reports. This PC's 128 MB of
+      L3 is split per CCD, 96 MB and 32 MB, so the first collection comes after about 48 MiB (about 50 MB). The hour at
+      30 s allocated only 34 MB.
+    - The rig's size bar ("grew less than 50 MB") was wrong for that reason. Its verdict is now relative (see
+      `memory_verdict`), and replayed with `--replay` it reads:
+      - the full-mix run: **levelled off**, +4.6 KB per interval over the last 240, against +296.7 KB in the first 60;
+      - the hour and the light run: no verdict. They were still growing inside the 60 MB window, and the light run's
+        plateau is shorter than the tail the rule reads.
+
+    *Was:* **A long-lived client.** The MCP server (Stage D1, build 3701) is one. Its rig run held the connection for
+    about a minute, through a cancel and a reconnect; a session of hours was not run.
+
+Stage D1, build 3701 (the MCP server, `UE5DumpUI.exe --mcp`) -- dev-log 3701. With the AOT exe on DumperTest Shipping
+(UE 5.4), `tools/verify/mcp_client.py probe` 15/15 and `live --suspend-name DumperTest` 31/31: every tool, a cancel of
+a call the suspended game could not answer, and another client's value-scan session that survived the server's work.
+The DLL log showed the server's walks on 7 of 14 threads ("a background walk takes at most half of what is free").
+Not reached:
+
+15. **A real MCP client.** ✅ **CLOSED 2026-11-11.** Registered with `claude mcp add --scope
+    local ue5cedumper -- <copy>\UE5DumpUI.exe --mcp` (a copy outside `dist\`: every Claude Code session keeps its
+    servers running, and a running exe in `dist\` would refuse the next publish). The build 3701 AOT exe:
+    - `claude mcp list` (CLI 2.1.163) showed `✓ Connected`, and the CLI's `/mcp` showed "connected · 35 tools";
+    - a Claude Code desktop session started in the repository loaded it at start (its server log: "initialize from
+      claude-code: asked 2025-11-25, answered 2025-11-25"), offered the 35 tools, and called `read_games`,
+      `read_status`, `read_search_objects`, `read_find_live_instance`, `read_instance` (with `name_filter`) and
+      `scan_start` on DumperTest Shipping: all answered (2-44 ms each in the server log); the server dialled the
+      game's pipe only at the first call; `scan_start` answered `already_scanned`.
+
+    - **The allow rule**, measured by the maintainer running `claude -p` (after `claude auth login`: the CLI's stored
+      sign-in had lapsed, so every call answered 401 until then) with `--allowedTools "mcp__ue5cedumper__read_*"`,
+      asking for `read_status`, `read_search_objects` and `scan_start` on DumperTest:
+      - `--permission-mode default`: both `read_*` tools ran without a prompt and `scan_start` was denied ("You
+        haven't granted `mcp__ue5cedumper__scan_start`"); the server's log has the two reads and no `scan_start`.
+      - the machine's own `defaultMode: "auto"`: all three ran, `scan_start` too (its log has all three). Auto mode
+        decides on its own, so an allow rule is not the only gate there; D2's write tools carry
+        `anthropic/requiresUserInteraction` for that reason (todo.md, Stage D).
+16. ✅ **CLOSED 2026-11-12** (EVERSPACE 2, UE 5.6, launched through Steam and injected with dist 3707, a save loaded:
+    1,000,790 objects; the AOT exe 3707; `tools/verify/mcp_large.py`, one session).
+    - **Timings.** `read_list_classes` unfiltered at limit 2000 took 1.12 s, filtered by "Character" 0.42 s.
+      `read_find_instances` of Actor at limit 2000 took 0.38 s. `read_list_functions` unfiltered at 2000 took 0.06 s,
+      filtered by "Health" 1.11 s. `read_value_scan_begin` (Int32 100) took 556 ms: 137 candidates, no deadline hit.
+      None timed out, none errored, and every reply parsed.
+    - **Cut replies.** Each oversized reply came back cut, with the note "The reply was cut to fit (classes keeps 147
+      of 2000). Narrow the request or page with offset / limit for the rest." (instances 204 of 2000, functions 126
+      of 2000, candidates 101 of 137). So did the "Health" filter, whose 150 matches do not fit one reply (107 kept).
+    - At the title screen the game had only 79,832 objects; a loaded save is what makes it large.
+
+    *Was:* **A large game.** Timeouts and reply sizes were met on a 24,530-object fixture only. Acceptance: on a game of
+    300,000+ objects, `read_list_classes`, `read_find_instances`, `read_list_functions` (with a `name_filter`) and
+    `read_value_scan_begin` answer within their timeouts, and a reply over the cap comes back cut with its note.
+17. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707; `tools/verify/vs_beside_ui.py`, Int32 424242 in
+    the UI against Float 100 from the AI).
+    - **Solo control.** The UI's Value Search (Int32, Exact, 424242, game classes only, parallel) gave twice: 2
+      candidates, 24523 objects, 1538 classes, 14 threads (`a GObjects walk uses up to 14 threads`).
+    - **Beside the AI.** One MCP session ran `read_value_scan_begin` back to back for 60 s: 1072 scans, none failed
+      or hit its deadline. Each took 7 of 14 threads ("a background walk takes at most half of what is free of the
+      13-worker budget").
+    - Meanwhile the UI scanned 8 times. Every scan overlapped an AI walk by the log's stamps and got 8 threads:
+      "8 of 14 threads -- other walks running now hold the rest of the 13-worker budget". Each matched the solo run
+      exactly: 2 candidates, 24523 objects, 1538 classes, no truncation.
+
+    *Was:* **The UI itself beside the server.** The rig's other client is `pipe_client.py` standing in for the UI.
+    Acceptance: the UI connected to the game, a Value Search started in the UI while the AI's `read_value_scan_begin`
+    runs: both finish, the DLL log shows the UI's walk on at least half the threads, and the UI's candidates match a
+    run on its own.
+18. **Over SSH, and an elevated game.** ✅ **CLOSED 2026-11-11** (build 3701 AOT exe, DumperTest Shipping; the
+    maintainer installed and started the OpenSSH server and allowed the elevation prompts). A game started and injected
+    elevated (`Start-Process -Verb RunAs`; the control: a non-elevated `inject.py` failed with Win32 5):
+    - **a non-elevated server**: `read_games` listed it (listing pipes needs no access), `read_status` was refused by
+      UAC, reported as "Internal error in read_status: Access to the path is denied." -- a defect, fixed red then
+      green: the reply now names the elevated game and what to do;
+    - **an elevated server** (`mcp_client.py live`, run elevated): 31/31;
+    - **a server started over SSH** (`--ssh localhost` with a temporary key in
+      `administrators_authorized_keys`, removed afterwards): the SSH session of an administrator account runs at High
+      integrity (S-1-16-12288), so the server is elevated too: 26/26 against the elevated game (the cancel and the
+      non-elevated stand-in client skipped: neither can reach an elevated process), and 31/31 against a normal game,
+      the cancel through ssh's stdin included.
+
+    Seen along the way (item 18): the DLL in a normal game shows the SSH-started (elevated) server as `?` in `pipe_clients`, since
+    it cannot read a higher-integrity process's image name. A real MCP client launching `ssh` itself (Claude Code with
+    `command: ssh`) was not run; the rig starts `ssh -T host <exe> --mcp` the same way.
+
+Stage D2-1, build 3704 (the DLL records who holds each gameplay hold) -- dev-log 3704. `tools/verify/holds_live.py`
+11/11 on DumperTest Shipping, with the DLL built from the same source and injected before the publish: a foreground
+client's god mode refused to a background client's if_free OFF (code -20, the holder named) and left on; the
+background client's world time dilation its own; the foreground client's if_free reset of it refused in turn;
+`pipe_clients` marking the background connection; the background client leaving and its time lane released (the DLL
+log: "background client N left -- its hold time:global is released (code 0)") while the foreground client's god mode
+stayed. Not reached:
+
+19. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707, Cheat Engine 64-bit SSE4-AVX2 with the
+    AOBMaker plugin). The record was the UI's own: Teleport > God Mode > **Add to CE** pushed "God Mode (toggle)"
+    through AOBMaker. Ticking it from CE's Lua (`ce_lua_eval.py`, showMessage and print captured to a file: none)
+    logged `Mailbox: PROTECT op=0 -> rc=1`, and `get_holds` read god_mode active with holder `{"kind": "ce"}`. A
+    background client's if_free OFF and ON were both refused (code -20, the holder `ce`), and god mode stayed on. The
+    untick turned it off and left the hold free. Acceptance: a CE record (or `mailbox_poke.py`) turns god mode on;
+    `get_holds` says `kind: ce`, and a background client's if_free OFF is refused.
+20. ✅ **CLOSED 2026-11-12: every hold kind released live.** The last two came with build 3707 (`mcp_client.py
+    holdsmore`, DumperTest Shipping): when the MCP server held them and exited, the DLL logged "its hold god_mode is
+    released (code 0)" (`GodMode: set OFF`) and "its hold gravity_direction is released (code 0)", and the gravity
+    bytes went back to their witness. The debug camera was released in item 24 (Development); the force-field job
+    with 3705.
+    *Was:* **The release of every hold kind.** ◐ **Mostly reached with build 3704** (`holds_live.py` 22/22 on DumperTest
+    Shipping, the published DLL): a background client's world time, walk speed, jump, fly and Keep Foreground each read
+    inactive and nobody's after it left, one DLL log line each ("... its hold fly is released (code 0)"). Not
+    released live: god mode (the rig gives it to the foreground client), gravity direction (changing it would send
+    the fixture's pawn off the map, and DumperTest does not respawn it), the debug camera (DumperTest Shipping has no
+    live CheatManager, so it cannot be held), a force-field job. Acceptance for those: as above, on a game where each
+    can be held. **A force-field job: reached with build 3705** (`mcp_client.py writes`, D2-2 below): the MCP server's
+    `DumperTestHolder::HolderValue` job was gone from `get_holds` after it exited, and the DLL log had "its hold
+    force_field:DumperTestHolder::HolderValue is released (code 0)".
+21. **A hold the UI took over.** ✅ **CLOSED 2026-11-11** (build 3704, same run): a background client's pawn time lane,
+    changed by the foreground client without if_free, read as the foreground client's; after the background client
+    left it was still active and still the foreground client's, and the DLL log had no release line for it.
+
+Stage D2-2, build 3705 (the MCP write tools) -- dev-log 3705. `tools/verify/mcp_client.py writes --toggle-experimental`
+36/36 on DumperTest Shipping with the published DLL and AOT exe, beside a foreground pipe client standing in for the
+UI: god mode, world time, walk speed, a teleport and its return, Fly (refused with the switch off, then on), a
+force-field job and See-through. Not reached:
+
+22. **Claude Code's prompt for a write tool.** ✅ **CLOSED 2026-11-11** (the three sub-items below). The marker is in
+    `tools/list` (the rig checks all 12). Acceptance, with the Claude Code version recorded (the marker needs 2.1.246+): in a session,
+    asking for god mode shows a permission prompt for `write_god_mode`; `claude -p` with `--allowedTools
+    "mcp__ue5cedumper__*"` does not run it, in `--permission-mode default` and in the machine's `auto` alike (the
+    server's log has no `write_god_mode` call), while the `read_*` tools in the same run do run.
+    - ◐ **Default mode measured 2026-11-11** (Claude Code 2.1.322, the build 3705 exe registered, DumperTest
+      Shipping, run by the maintainer): `claude -p` with `--allowedTools "mcp__ue5cedumper__*"` -- an allow rule that
+      names `write_god_mode` -- and `--permission-mode default`, asked for `read_holds`, `write_god_mode` (enable)
+      and `read_holds`. Both reads ran and `write_god_mode` was declined at the permission prompt ("MCPTool requires
+      permission"); the server's log (`mcp-20261111-185626-*.log`) has the two `read_holds` and no `write_god_mode`,
+      and `god_mode` stayed inactive and nobody's. Without the marker, that allow rule would have run it.
+    - ◐ **Auto mode measured 2026-11-11** (the same CLI and exe; the machine's user settings say `defaultMode: auto`,
+      and no `--permission-mode` was passed): the same allow rule and request. Both reads ran and `write_god_mode` was
+      declined ("MCPTool requires permission"); the server's log (`mcp-20261111-201111-*.log`) has the two
+      `read_holds` and no `write_god_mode`. In this mode `scan_start` had run under item 15 with no prompt: the marker
+      is what stops a write tool.
+    - ✅ **Interactive session 2026-11-11** (a new Claude Code desktop session in the repository, the build 3705 exe,
+      DumperTest Shipping): asked to turn god mode on, it called `read_games`, `read_holds`, then `write_god_mode`;
+      a permission prompt appeared and the maintainer chose Allow. The tool answered code 0, state 1, and
+      `read_holds` named this server as the holder; turning it off the same way answered state 0 and left `god_mode`
+      inactive and nobody's. Seen along the way: the AI told the user that the UI and CE "cannot turn off" the god
+      mode it held, which is wrong (their changes carry no `if_free`); the server's instructions now say so
+      (`McpServerTests.Instructions_SayTheUserCanTakeBackAnyHold`; it reaches `dist\` with the next publish).
+23. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707, the real UI window and Cheat Engine).
+    - **The UI window.** Teleport > God Mode > Force ON: `get_holds` named the UI's pid (6052, not background). The
+      AI's `write_god_mode` OFF answered "Not changed: god_mode is held by the UE5DumpUI window or another program (pid
+      6052). This server never replaces or ends what someone else holds; the user can release it where it was set."
+      The DLL logged `set_god_mode refused (if_free)`, and the card read ON after ↻. Force OFF freed it.
+    - **A CE record** (row 19's "God Mode (toggle)", ticked): the AI's OFF and ON both answered "Not changed: god_mode
+      is held by a Cheat Engine record. ...", and walk-0.log had no god-mode change between CE's ON and its untick.
+      After the untick the same OFF was accepted.
+    - **The experimental opt-in.** With it on, `write_fly` OFF was accepted. Unticked in the running UI (System tab,
+      the footer checkbox; the experimental tabs left the strip, experimental.json read `"enabled": false`), the next
+      `write_fly` ON answered "Fly is an experimental feature, and the UE5DumpUI window's experimental features are
+      off: the user turns them on in the UI (they stay off by default on purpose). Not changed." Fly stayed off and
+      free. Re-ticked, `write_fly` was accepted again.
+
+    *Was:* The rig's foreground client is `pipe_client.py`, and
+    CE was not used (another session needed it). Acceptance: god mode ticked in the UI's Teleport tab, then a
+    `write_god_mode` OFF from the AI is refused naming the UE5DumpUI window and the card stays on; the same with a CE
+    record (refused naming "a Cheat Engine record"); and the UI's experimental opt-in ticked off in a running UI makes
+    the next `write_fly` refuse.
+24. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT exe 3707, `mcp_client.py holdsmore` 78/78; the old
+    DLL with `mcp_client.py olddll` 34/34).
+    - **Gravity direction.** The AI sent exactly (0, 0, -1), equal to the field, so the pawn had nothing to fall along.
+      The stand-in first wrote the same vector as -0.0 bytes, so the restore is visible. The AI's set wrote +0.0 and
+      was held, named the server's in `read_holds` and `get_holds`, and the pawn drifted ≤ 10 uu. The AI's reset
+      wrote the -0.0 witness back.
+    - **Keep Foreground.** ON (`Foreground lock ENABLED`) and OFF, each named the server's.
+    - **The numeric force field.** `write_force_field` 777 on DumperTestHolder.HolderValue held exactly the Holders and
+      Derived holders, not the Decoys; each read 777, and each Decoy stayed -1. `write_force_field_reset` removed the
+      job and put every instance back to its own baseline. The AI's reset of a job the stand-in held was refused
+      naming its pid.
+    - **The cursor.** `write_mouse_cursor` read back each time; it records no hold, and the exit leaves it alone.
+    - **The exit.** The AI then held gravity direction, god mode, Keep Foreground and a 555 force-field job. On exit
+      the DLL logged each `released (code 0)`, the gravity bytes went back to the witness, and every instance went
+      back to its baseline.
+    - **A DLL older than 3705** (the 3695 copy injected): all 14 write tools were refused with the build text ("The
+      game's DLL is build 3695, older than 3705 ..."; 3706 for write_memory, write_invoke and write_debug_camera),
+      and none reached the DLL's log.
+
+    *Was:* **The other write tools.** Not driven live: `write_gravity_direction` (it would send the fixture's pawn off
+    the map), `write_mouse_cursor`, `write_foreground_lock`, `write_force_field_reset`, a numeric `write_force_field`
+    value read back from the instances, and a DLL older than 3705 refused. Each is unit-tested (`McpToolsTests`).
+    Acceptance: on a game where each can be held, the tool changes it, `read_holds` names the server, and its exit
+    releases it.
+    ✅ **`write_debug_camera` CLOSED 2026-11-11, on DumperTest DEVELOPMENT only** (UE 5.4; Shipping has no live
+    CheatManager), DLL and AOT exe 3706, `mcp_client.py dbgcamhold` 32/32. The UI's side was `pipe_client.py` sending
+    the window's request byte for byte. (D) The AI's ON turned the camera on. `read_holds` named it the server's
+    ("you", background) and `get_holds` named the server's pid. A second ON was a no-op. The session's end turned the
+    camera off and freed the hold (DLL log: "its hold debug_camera is released (code 0)"). (E) The AI's OFF of its own
+    camera; its end then released nothing. (F) The UI's Force ON over the AI's camera made it the UI's. The AI's OFF and
+    ON were then refused naming the UI's pid, and the camera stayed on after the AI session ended. (G) The same for a
+    camera the UI turned on itself. Controls: F and G show that the release takes only the leaving client's own hold.
+    **Found:** if the game thread is stalled when the session ends, the camera stays on with no holder. The release's
+    OFF timed out (code -5) and stayed queued, and a queued OFF does not turn the camera off on UE 4.18-5.7.
+    ✅ **`[DBGCAM-RELEASE-STALLED]` FIXED in build 3707, live-verified 2026-11-12 on DumperTest Development only**, DLL
+    and AOT exe 3707, `dbgcamhold` 59/59 (H, I and J are acceptance checks now).
+    - (H) The session ended with the game thread frozen. `get_holds` showed the camera on, no holder,
+      `release_owed: true`. Once the game ran, the DLL log read "OFF sent again -> state 0" and "release is done", and
+      the camera was off and free.
+    - (I) The same, but the UI's Force ON during the stall (answered -6) took the camera. The owed release was
+      abandoned and no OFF was sent again; the camera stayed the UI's.
+    - (J) The AI left mid-command (a `write_invoke` waiting on the frozen game thread; the DLL logged `client gone
+      mid-command`). Its release still read the camera, was owed (code -5) and ended it.
+    - Negative control, the 3706 DLL on the same rig: H, I and J failed. J's release logged `released (code 0)` and
+      left the camera on with no holder: the connection's raised cancel made the camera read "unknown".
+    - Regression runs on 3707: `dbgcam` 26/26 and `raw` 24/24 on Development; on Shipping `raw` 25/25, `writes` 36/36,
+      `live` 31/31, `holds_live.py` 22/22, `probe` 15/15.
+
+    **Not reached:**
+    - ✅ **A CE Disable/Enable: reached 2026-11-12** (DumperTest Development, 3707, the DLL injected by the CT's inject
+      record in Cheat Engine, which unticked and re-ticked it; `mcp_client.py dbgcamstop` 23/23).
+      - (K) A release owed (`released (code -5)`) was dropped at the stop: `background client 21432's debug-camera
+        release is dropped at stop -- the camera may stay on; turn it off from the UI`. No line acted on it
+        afterwards. After the re-tick the camera was still on, free and owed by nobody, and stayed so for 15 s; the
+        UI stand-in turned it off.
+      - (K2) With the invoke timeout at 20 s, the stop landed while the release was still waiting. Stark::Shutdown
+        answered its OFF -7, the release ended `(code -1)`, and nothing was owed or dropped. Afterwards the camera
+        was on and free.
+    - **A soft-removed hook together with an owed release: not constructible with shipped clients.** An owed record
+      comes only from a -5, which needs the hook active when the OFF is sent. A CE Disable soft-removes the hook
+      inside UE5_Shutdown, whose Stop now drops the record. So the guard that brings the hook back before the owed
+      OFF stays unit-tested and source-pinned only.
+    - ✅ **UE 5.8: reached 2026-11-12** (DumperTest58 Development, UE 5.8, 35,860 objects, 3707): `dbgcamhold` 57/57
+      (the two checks that apply below 5.8 only are not run). H: the queued OFF itself turned the camera off, and the
+      DLL log reads "release is done" with no "sent again" line. I: the owed release was abandoned once the UI took
+      the camera. After the resume, the release's queued OFF ran and turned the camera off. The UI's Force ON had
+      answered -6, "not sent: send it again once the game responds", so this is the advertised behaviour.
+    - Other holds' releases under a stall.
+
+Stage D2-3, build 3706 (`write_memory`, `write_invoke`; `write_mem` data only; the invoke queue's owners) -- dev-log
+3706. `tools/verify/mcp_client.py raw` 25/25 on DumperTest Shipping with the published DLL and AOT exe, the game thread
+frozen by `suspend.py suspend-tid` for the queue checks: a field written and put back, a changed-since write refused,
+a vtable and code refused, `Add_IntInt(40, 2)` = 42, the debug-camera toggle refused by name, the UI stand-in's queued
+call refusing the AI's until it ran, the AI's own queued call never resent and dropped when its server exited (the DLL
+log: "1 queued invoke(s) of it dropped, never run"). Not reached:
+
+25. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707, Cheat Engine 64-bit SSE4-AVX2). Each time the
+    game thread was frozen with `suspend.py suspend-tid` and resumed afterwards.
+    - **Console Run** (`AIIgnorePlayers`): the UI read "✗ AIIgnorePlayers: ProcessEvent error code -5 (game-thread
+      dispatch timeout) — still queued: it will run when the game thread is free (not re-sent)". `get_holds` listed
+      the UI's pid (6052) with 1 outstanding. The AI's `write_invoke` of `Add_IntInt` answered "Not invoked: the
+      UE5DumpUI window or another program (pid 6052) has a game-thread call still queued or running, and this server
+      never queues beside it. ..."
+    - **The Invoke dialog's FIRE** (Live Walker > PIPE on `Add_IntInt`): "[#1] INVOKE FAILED: ProcessEvent error code -5
+      (game-thread dispatch timeout)", and the same refusal followed.
+    - **A CE record's invoke** (Live Walker > INV: "Invoke: DumperTestActor::AD4_GetContestWrites", ticked from CE's
+      Lua): CE read "INVOKE FAILED: error code -5" (captured byte for byte), `get_holds` listed `{"kind": "ce"}` with
+      1 outstanding, and the AI's call answered "Not invoked: a Cheat Engine record has a game-thread call still
+      queued or running, ..."
+    - After each resume, the queued call ran, `invokes` emptied, and the same AI call returned 2.
+    - **The Live Walker's field edit** of a page made executable, then read-only, by CE's `setMemoryProtection` (the
+      L47 clone page, `l47_clone_page.py`): "Write failed for PayloadValue: DLL error: Not written: 0x1AEF0F30048 is
+      in executable memory (code); write_mem writes data only", then "... is not writable as it stands (a read-only,
+      guard or no-access page); write_mem never changes page protection". The value stayed as it was.
+
+    *Was:* **The real UI and CE in the queue rule.** The stand-in was `pipe_client.py`; CE was not used. Acceptance: a Console
+    Run or an Invoke dialog FIRE left queued (-5, game paused) refuses the AI's `write_invoke`, naming the UE5DumpUI
+    window; the same with a CE record's invoke ("a Cheat Engine record"); and the Live Walker's field edit of a
+    read-only or code address shows the refusal ("Not written: ... is in executable memory").
+26. ✅ **CLOSED 2026-11-11, on DumperTest DEVELOPMENT only** (UE 5.4; Shipping has no live CheatManager), DLL and AOT
+    exe 3706, `mcp_client.py dbgcam` 26/26, the game thread frozen by `suspend.py suspend-tid`. The UI's side was
+    `pipe_client.py` sending the window's request byte for byte (`DumpService.SetDebugCameraDetailedAsync`); the
+    window's own button was not clicked. (A) The AI's ON queued, the UI's ON answered -5 and became the pending ON's
+    holder (`get_holds`), the queued toggle counted under the UI; the AI session ended and nothing was dropped; on
+    resume the camera came on, held by the UI. (B) The UI's ON queued: the AI's `write_debug_camera` refused, naming the
+    UI's pid. (C) The UI's ON sent while the AI's toggle was still being dispatched waited 3.5 s on the hold lock, then
+    joined the queued toggle as in (A). The DLL log shows "an earlier ON is still queued -- nothing sent" for both
+    joins, and no drop. Negative control: the AI's ON queued, nobody joined, the session ended: "1 queued invoke(s) of
+    it dropped, never run", and the camera stayed off.
+    **Not reachable by any shipped client:** Frieren's join while a toggle is still being dispatched, and the retag
+    when that dispatch returns. The pipe and the CE mailbox both change the camera under the hold's lock, so a second
+    request waits for the first to finish. Only a direct call to the `UE5_SetDebugCamera` export reaches that path, and
+    no shipped script makes one. It stays source-pinned (`APendingDebugCameraOn_IsItsSendersAlone`).
+27. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT exe 3707, `mcp_client.py invokeparams` 26/26).
+    - **A struct parameter.** `write_invoke` of `K2_SetActorLocation` on the pawn with `NewLocation` {X, Y, Z} (a
+      Vector struct, 24 bytes) moved it about 100 uu ahead and back, returning true, with `SweepHitResult` among the
+      outs. On a DumperTestHolder it returned false.
+    - **An object parameter.** `EqualEqual_ObjectObject` gave true for (pawn, pawn) and false for (pawn, 0). Given a
+      field's address (`read_find_by_address` answers "contains"), it was refused: "'A' must be a live object's
+      address (or 0); 0x... is not one." Nothing reached the DLL.
+    - **The deny list by name.** `SendToConsole` on the live PlayerController was refused: "Not invoked: SendToConsole
+      runs a console command, which can run anything". The DLL logged the background refusal and no invoke.
+    - **Recorded apart, 3/3:** a struct field inside `Vnd584_EchoSoftSpec` given a non-object address was refused,
+      naming the struct field.
+    - Interface functions and the FText / container refusals remain unit-tested only.
+
+    *Was:* **Parameters a fixture function does not exercise.** Live: two ints and a return. Unit-tested only: structs
+    (by field and by the engine's known layout), strings and out strings, object parameters checked for liveness,
+    interface functions, the FText and container refusals, the deny list beyond the debug camera. Acceptance: on a
+    game, `write_invoke` of `K2_SetActorLocation` with `NewLocation` {X, Y, Z} moves the actor; an object parameter
+    given a field's address is refused; `SendToConsole` is refused by name.
 
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 

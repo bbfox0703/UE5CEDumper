@@ -18,6 +18,21 @@ public enum ConnectPlan
 /// <summary>The dumper pipes found under \\.\pipe\: each game's pid (ascending), and whether the legacy name is there.</summary>
 public sealed record PipeScan(IReadOnlyList<int> Pids, bool LegacyPresent);
 
+/// <summary>[UI-ELEVATED-ACCESS-DENIED] Why Windows refused to open a game's pipe, as far as the client can tell. The DLL
+/// keeps the pipe's default security: an elevated game's pipe is owned by Administrators and anyone else may only read,
+/// and an administrator is always let in.</summary>
+public enum PipeDialRefusal
+{
+    /// <summary>Not a refusal: a missing or full pipe, or another failure.</summary>
+    None,
+    /// <summary>Refused to a client that is not elevated. An inference, not a probe of the game: the game runs elevated,
+    /// or under another Windows account, whose pipe this user may also only read.</summary>
+    GameElevated,
+    /// <summary>Refused although the client is elevated: something other than UE5Dumper's DLL set that pipe's
+    /// permissions, most likely another process that created the game's pipe name first.</summary>
+    Denied,
+}
+
 /// <summary>
 /// [PIPE-PER-PROCESS-2026-11-06] The pipe name per game process, \\.\pipe\UE5DumpBfx_&lt;pid&gt;, and what Connect
 /// makes of the names it finds. Pure: the listing itself comes from <see cref="IPlatformService.ListNamedPipes"/>.
@@ -66,4 +81,10 @@ public static class PipeTargets
         1 when !scan.LegacyPresent => ConnectPlan.ConnectOne,
         _ => ConnectPlan.Choose,
     };
+
+    /// <summary>[UI-ELEVATED-ACCESS-DENIED] Classifies a failed dial. Windows refuses the open itself with an
+    /// UnauthorizedAccessException, which no wait can fix; the client's own elevation decides whom to blame.</summary>
+    public static PipeDialRefusal ClassifyRefusal(Exception ex, bool clientElevated) => ex is UnauthorizedAccessException
+        ? clientElevated ? PipeDialRefusal.Denied : PipeDialRefusal.GameElevated
+        : PipeDialRefusal.None;
 }

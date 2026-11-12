@@ -195,9 +195,12 @@ __declspec(dllexport) int32_t   UE5_GetDebugCameraState();
 // CheatManager, which on stock UE 4.18-5.7 leaves the camera on, so the OFF is sent
 // again once the game responds. [W3-DEBUGCAM-QUEUED] [DEBUGCAM-QUEUED-OFF-NOESCALATE]
 // While an earlier toggle is queued or being dispatched, a Set sends nothing -- the state
-// it would read is from before that toggle: -5 for the same direction (it is the caller's
-// toggle, already queued), -6 for the opposite one (send again once the game responds).
-// [DBGCAM-OFF-OVER-QUEUED-ON]
+// it would read is from before that toggle: -5 for the same direction (the caller's
+// toggle, already queued -- or another client's, which a foreground caller then JOINS:
+// it becomes the caller's, in the queue and for the hold [D2-3-INVOKE]), -6 for the
+// opposite one (send again once the game responds). [DBGCAM-OFF-OVER-QUEUED-ON]
+// -25 / -27 reach only an if_free caller (the MCP server, through the pipe): another
+// client's game-thread call is outstanding, or the hook is down. [D2-3-INVOKE]
 __declspec(dllexport) int32_t   UE5_SetDebugCamera(int32_t enable);
 
 // === Teleport (Wirbel: marker save/recall + cursor teleport) ===

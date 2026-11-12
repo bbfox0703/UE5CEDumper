@@ -201,7 +201,7 @@ public class CeAutorunScriptGeneratorTests
     {
         var s = CeAutorunScriptGenerator.Generate(Dll);
         // Each of the three readiness failure verdicts must end in `return false`.
-        foreach (var probe in new[] { "never published its state", "Pipe Server FAILED",
+        foreach (var probe in new[] { "never published its state", "start-up did not finish",
                                       "Timed out waiting" })
         {
             var idx = s.IndexOf(probe, StringComparison.Ordinal);

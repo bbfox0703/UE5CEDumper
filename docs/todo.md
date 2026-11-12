@@ -6,7 +6,16 @@ Open work only. **Read this when deciding what to do next.**
 >
 > ▶ **Current programme:** `[PIPE-PER-PROCESS-2026-11-06]`, one stage at a time (2026-11-10): Stage A shipped in build
 > 3695, Stage B (6 pipe slots + the scan-worker budget) in build 3696, Stage C (hardening for a long-lived client) in
-> build 3698; Stage D (MCP) waits for the maintainer's go-ahead. Before it, none active
+> build 3698; **Stage D (MCP) is active (go-ahead 2026-11-11): D1, the read-only `UE5DumpUI.exe --mcp`, shipped in
+> build 3701; D2 (writes) started 2026-11-11, in three builds: D2-1 (the DLL records who holds what) shipped in build
+> 3704, D2-2 (the MCP write tools for the toggles, force field and teleport) in build 3705, D2-3 (`write_memory`,
+> `write_invoke`, `write_mem` data only, the invoke queue's owners) in build 3706: Stage D2 is complete
+> (`[DBGCAM-RELEASE-STALLED]`, found live 2026-11-11, was fixed in build 3707). The 2026-11-12 verification pass closed
+> verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-12, 14, 16-17, 19-20, 23-25 and 27; their findings are fixed --
+> `[CT-INITFAILED-HEADLINE]` in build 3708, `[UI-ELEVATED-ACCESS-DENIED]` and `[SHUTDOWN-SEETHRU-WAIT]` in build 3709.
+> Still open there: only 13, kept open by the maintainer (2026-11-12): no machine with another CPU shape to run it on;
+> nothing further in Stage D is queued** --
+> the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
 > active (2026-11-04). The census fix pass of 2026-11-02 (the maintainer: fix the census's
@@ -405,8 +414,8 @@ the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVE
 
 ## 🧭 Maintainer request 2026-11-06 — a pipe per game process, then more pipe slots, then multi-client hardening `[PIPE-PER-PROCESS-2026-11-06]`
 
-**Status: Stage A shipped in build 3695, Stage B in build 3696 (2026-11-10; dev-log). Stages C and D are design
-direction only, not started** (maintainer, 2026-11-06: one stage at a time, A and B as separate builds). What the
+**Status: Stage A shipped in build 3695, Stage B in build 3696, Stage C in build 3698 (2026-11-10; dev-log). Stage D
+is active since 2026-11-11** (maintainer, 2026-11-06: one stage at a time, A and B as separate builds). What the
 live checks did not reach is verification-register.md `[PIPE-PER-PROCESS-2026-11-06]`. It comes before
 `[UI-MCP-AUTOMATION-2026-11-06]`, which depends on it. Evidence: a read-only review on 2026-11-06 (three
 readers plus an adversarial verifier). Windows' named-pipe rules were measured with ctypes on 10.0.26300; the scratch
@@ -558,10 +567,156 @@ An MCP client in a spare slot (one of 6 since Stage B) triggers every item:
   may read the pipe, and any open takes an instance). This needs a policy before a slot count is relied on.
 - **Small:** Flamme rewrites its per-game JSON unlocked, so it needs one mutex.
 
-### Stage D — MCP
+### Stage D — MCP (active since 2026-11-11)
 
-See `[UI-MCP-AUTOMATION-2026-11-06]`. Its route is decided when it is planned. The review leans to the UI as the broker
-for anything that writes or toggles, with a direct read-only client acceptable after Stage C.
+**Decisions (maintainer, 2026-11-11)**, chosen from a read-only survey of the commands, the client code and the MCP
+spec. Each was the recommended option:
+
+- **Route: direct to the DLL pipe.** The MCP server is a pipe client of its own, so it works without the UI, and the
+  DLL does not change. Exports the UI makes (CE XML, CT, CSX, SDK) come later inside the same process: they are static
+  services that need no view. A UI broker only if a need to keep the UI's views in step appears. Cost: the UI does not
+  see what the AI changed.
+- **Packaging: `UE5DumpUI.exe --mcp`**, a stdio mode branched in `Program.Main` before the single-instance mutex and
+  Avalonia, as `--inject-elevated` is. Every release carries it, with no Python and no new file.
+- **Protocol: hand-rolled JSON-RPC 2.0** over `JsonNode`, as `PipeClient` does; no SDK package in the AOT image. It
+  speaks the 2025-11-25 handshake and answers 2026-07-28's `server/discover` with an error, which Claude Code
+  documents as its fallback to that handshake.
+- **First build read-only (D1); writes, invokes and toggles in D2.**
+
+**D1 — the shape it is built to:**
+
+- **stdout carries JSON-RPC only**: one message per line, UTF-8, LF. `Console.Out` goes to stderr before anything
+  runs, and the server's log is a file of its own, never a Console sink (the UI's `LoggingService` has one, and it
+  archives the UI's own logs when it starts).
+- **One pipe connection, opened on first use**, to the only game, or to the `pid` a call names when there are
+  several. The game list is a tool. The pid is confirmed from `get_pointers`, as the UI does. A dropped pipe reconnects
+  on the next call, and the reply says that scan sessions went with it.
+- **Tools are named `read_*`**, so one allow rule (`mcp__<server>__read_*`) admits them all, and they carry
+  `readOnlyHint`. One exception: `scan_start` (`trigger_scan`), which a proxy-loaded game needs before anything
+  answers, keeps its prompt.
+- **Small default limits and a hard cap on a reply's size**, with a paging hint. Claude Code warns above 10,000
+  tokens and moves a result over 25,000 tokens (or 50,000 characters) to a file.
+- **A call that overruns its time drops the connection.** The DLL has no cancel command; a dropped connection is its
+  cancel, checked every 200 ms.
+- **Tests:** the protocol and the tools against a fake pipe (C#), and a rig that starts `dist\UE5DumpUI.exe --mcp`
+  as an MCP client would and drives DumperTest. Measure first that stdio reaches a GUI-subsystem exe.
+
+**D1 — how it came out, build 3701** (the code is `ui/UE5DumpUI/Mcp/`, the user guide [mcp.md](mcp.md); its live
+checks are verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 15-18: 15 (Claude Code itself) and 18 (SSH,
+an elevated game) closed 2026-11-11; 16 (a large game) and 17 (the UI itself beside the server) open):
+
+- **Non-interference, the maintainer's requirement (2026-11-11):** an AI working beside the UI must not disturb the
+  UI's long operations (value scan, snapshot) or the user's writes. D1 sends no command whose state another client
+  shares (`begin_snapshot`, the LiveFuncs recording, `reset_diagnostics`, the overrides), starts a scan only on a game
+  whose scan never ran, and marks every request `"background"`: a GObjects walk it starts takes at most half of the
+  free workers (`Aura::BackgroundWalkScope`, a DLL change; pipe-protocol.md General Rules). Measured in dll_core_test
+  on this PC: a background walk on 7 threads, a foreground walk beside it on 8 (it got 1 before).
+- **Scanned** means scan_status not running at phase 7 with objects found. The pool is published before the offsets
+  are validated, so a count alone read a game as scanned mid-scan; a finished scan that found no pool is its own
+  state, which `scan_start` refuses rather than loop.
+- **Several games: a pid on every call**, even while connected; a game that came back as a new process is named in
+  a note.
+- **The adversarial review** (four lenses, each finding self-verified): 1 HIGH, 4 MED, about 12 LOW, all fixed but the
+  two below. The HIGH: nine `JsonArray.Add` calls bound to the generic `Add<T>`, which the trimmed publish refuses
+  (IL2026 / IL3050) -- working-lessons §3.xc's trap again; the analyzer build found 18 errors, then 0.
+
+**Open, LOW, found by that review and left for the DLL side:**
+
+- A dropped connection raises the process-wide per-command cancel (`Tot::RequestPerCommand`, in Fern's monitor) until
+  its orphaned handler unwinds. Every thread not bound to a connection reads it, Cheat Engine's remote export calls
+  among them, so one running at that moment returns truncated. The MCP server drops its connection only on a timeout
+  or a client cancel. Fix: raise the global only when unbound work is running.
+- The dispatch counters behind `get_diagnostics` (`Sense`) are process-wide, so the UI's PERF line for an operation
+  counts the MCP server's commands that ran meanwhile.
+
+**Done 2026-11-11 (maintainer's go-ahead): `EnableTrimAnalyzer` / `EnableAotAnalyzer` are on in `UE5DumpUI.csproj`
+for every build**, so IL2026 / IL3050 fail the first compile instead of the six-minute publish; the D1 HIGH above would
+have failed the first build. Negative control in working-lessons §3.xc.
+
+**D2 — decisions (maintainer, 2026-11-11, each the recommended option)**, from a read-only survey of the DLL's
+write commands, the UI's use of the same state, and the client-side safety knobs:
+
+- **The DLL records who holds what.** Every hold (god mode, the movement knobs and gravity direction, both time lanes,
+  fly, the foreground lock, force-field jobs, markers, the debug camera) stores its owner -- a client process, CE's
+  mailbox, or unknown (a C ABI call) -- and the `get_*` replies report it. A background request may carry `if_free`:
+  the module refuses, under the lock that guards its state, when someone else holds it. Today none of these has an
+  owner (See-through and the LiveFuncs recording are the only owned ones, Stage C), so a check made by the MCP server
+  alone would race the UI's clicks and could not tell the UI from CE.
+- **What an AI session turned on ends with it.** When a background client's process leaves, the DLL releases the
+  holds it owns, as Stage C does for See-through; the UI's and CE's holds are never touched.
+- **Scope, in three builds:** D2-1 the DLL's owner records, `if_free`, the release, and a `background` role in
+  `pipe_clients` (the MCP server runs as `UE5DumpUI.exe` too, so the exe name cannot tell it from the UI). D2-2 the
+  toggles, force field (the AI's own holds only; never `reset_all_fields`), teleport to explicit coordinates (never the
+  marker slots; the undo point is kept). D2-3 `write_mem` (executable pages refused) and `invoke_function` (never
+  resent after -5; a debug-camera toggle goes through the guarded command). **D2-1 shipped in build 3704, D2-2 in
+  build 3705 and D2-3 in build 3706** (dev-log); what their live checks did not reach is verification-register.md
+  `[PIPE-PER-PROCESS-2026-11-06]` items 19-20, 23-25 and 27.
+- **D2-3 decisions (maintainer, 2026-11-11, each the recommended option)**, from a read-only survey of `write_mem`,
+  the invoke path and the UI's use of both:
+  - **`write_mem`, for every client:** refuse executable, read-only, guard and uncommitted pages, and write without
+    flipping page protection. Today `Macht::WriteBytes` makes any page READWRITE for the write, so code and `.rdata`
+    are writable, a code page briefly loses execute, and a multi-page write restores the first page's protection on
+    all of them. The UI only edits heap fields, so it is unaffected. The MCP tool also passes the bytes it read
+    (`expect`), and the DLL refuses the write if they changed since.
+  - **The invoke queue records owners.** Each queued invoke carries its client, D2-1 style. An AI invoke (`if_free`)
+    is refused, naming the holder, while a UI or CE invoke is outstanding, a -5 one still waiting included. An AI
+    invoke still queued when its session ends is dropped, so it never runs after the session. The UI never sends
+    `if_free`, so its invokes always queue.
+  - **A deny list for the AI's invokes, in the DLL, for background requests only:** network RPCs (`FUNC_Net`),
+    console-command executors, quit / level travel / restart, actor destruction, save-slot write / delete, and the
+    debug-camera toggle (pointing to `write_debug_camera`).
+  - **Parameters by name and type:** the server reads the function's signature and builds the buffer with the UI's
+    `ParamBufferBuilder`, requires a live instance address, and decodes out parameters and the return value.
+  - Not asked, taken as the survey recommended: the MCP never sends `direct_call` or `set_invoke_timeout`; an invoke's
+    MCP timeout follows the DLL's `invoke_timeout_ms`; `write_memory` caps at 4 KB and returns the bytes before and
+    after; raw writes and invokes do not follow the experimental switch (the decision named four features, and the
+    UI's Console and Live Walker are not gated).
+  - **D2-2 defects found by the same survey, fixed in D2-3's build:** `write_debug_camera` reported the guarded
+    command's -1 / -6 / -17 as success (it answers `state`, not `code`); a queued (-5) debug-camera ON recorded no
+    owner, so the AI could not turn it off and its session end did not release it; the MCP's 30 s timeout could end
+    before a user-set invoke timeout.
+- ✅ **`[UI-ELEVATED-ACCESS-DENIED]` fixed in build 3709** (the maintainer asked for it, 2026-11-12). A UI that is
+  not elevated, refused a game's pipe, now says "PID N runs as administrator (elevated) or under another Windows
+  account, so Windows refused this UI its pipe. Close UE5DumpUI and start it as administrator, or start the game
+  normally, then connect again." It used to show only "Access to the path is denied.". An elevated UI refused is told
+  another process probably made the pipe name, and so is the MCP server, which now asks its own elevation. Proxy
+  Deploy's post-inject retry stops on a refusal, and its tooltip and the shipped guides no longer promise a UAC inject
+  that auto-connects: the inject picker cannot even list an elevated game for a UI that is not. Proof: dev-log 3709 and
+  verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item 4.
+- ✅ **`[CT-INITFAILED-HEADLINE]` fixed in build 3708** (the maintainer asked for it, 2026-11-12). INIT_FAILED covers
+  an aborted init (the server may be up) as much as a server that did not start. Every INIT_FAILED message now names
+  both: "The DLL loaded, but its start-up did not finish: the scan was cut short, or the Pipe Server did not start."
+  It used to open with only "initialised, but the Pipe Server failed to start", which the live provoked case
+  contradicted. The same change covers the CT, its log line, the generated records (`CeReadinessLua.InitFailedMessage`,
+  renamed from `PipeFailedMessage`) and the enum docs. Proof: dev-log 3708 and verification-register.md
+  `[PIPE-PER-PROCESS-2026-11-06]` item 5.
+- ✅ **`[SHUTDOWN-SEETHRU-WAIT]` fixed in build 3709** (the maintainer asked for it, 2026-11-12). A queued game-thread
+  invoke's wait now ends when a shutdown meets a game thread stalled past 1 s (-5, still queued), so a teardown no
+  longer waits out the invoke timeout behind a worker parked on a frozen game. Measured: CE untick 25 ms from
+  `Cleaning up` to `Stop entry` (was 11.3 s), and a bare `UE5_StopPipeServer`'s drain satisfied in 11 ms (was a 5 s
+  TIMEOUT). The same change keeps See-through's and Fly's records when a call that did not run would have cost them.
+  Proof: dev-log 3709 and verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item 12.
+- ✅ **`[DBGCAM-RELEASE-STALLED]` fixed in build 3707** (the maintainer chose option 1, 2026-11-11): an AI session's
+  camera release that timed out behind a stalled game thread is owed, and the DLL sends the OFF again once the queued
+  one has run. Proof and what was not reached: dev-log 3707 and verification-register.md item 24.
+- **The experimental opt-in binds the AI too:** Fly, See-through, Keep Foreground and the force-field tools refuse
+  while the UI's experimental switch is off, so nothing the AI starts runs behind a card the user cannot see.
+- Every state-changing tool is named `write_*`, carries `requiresUserInteraction` (Claude Code then asks on every
+  call in every mode, an allow rule notwithstanding) and `destructiveHint: true`. Elicitation is not used: the desktop
+  app's Code tab declines it unseen. Measure both permission modes again, and record the Claude Code version (the
+  marker needs 2.1.246 or later).
+
+**D2 (in three builds, above):** `write_mem`, `invoke_function`, the toggles, teleport and force field. Each carries
+`_meta["anthropic/requiresUserInteraction"]`, which makes Claude Code ask on every call, even under an allow rule.
+Measured 2026-11-11 (verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item 15): under the machine's
+`defaultMode: "auto"`, `scan_start` -- outside the `read_*` allow rule, not read-only, not destructive -- ran without a
+prompt, while `--permission-mode default` denied it. An allow rule alone does not keep a tool from running in auto
+mode, so the marker is required, not a nicety; mark the write tools `destructiveHint: true` as well, and measure both
+modes again.
+What D2 must not take from the UI: the global holds (force field, teleport markers) and the game-thread invoke queue
+-- an MCP write reports a conflict rather than override the UI's.
+
+The 2026-11-06 review had leaned to the UI as the broker for anything that writes or toggles.
 
 ### Decisions (maintainer, 2026-11-06)
 
@@ -579,8 +734,9 @@ Aura's workers read the global cancel flag.
 
 ## 🧭 Idea 2026-11-06 — let an AI or a script drive the UI through a named pipe + MCP `[UI-MCP-AUTOMATION-2026-11-06]`
 
-**Status: an idea, not scheduled (maintainer: "先記進 todo，之後再說").** Nothing is built. It comes after
-`[PIPE-PER-PROCESS-2026-11-06]`, which it depends on (maintainer, 2026-11-06).
+**Status: scheduled as `[PIPE-PER-PROCESS-2026-11-06]` Stage D (go-ahead 2026-11-11).** The route chosen there
+(direct to the DLL pipe, `UE5DumpUI.exe --mcp`) replaces the sketch below, which is kept as the idea's record. It was
+an idea until then (maintainer, 2026-11-06: "先記進 todo，之後再說").
 
 **The maintainer's sketch.** Reverse-engineering and automation features should be reachable without clicking. The
 DLL stays simple.
@@ -608,7 +764,13 @@ DLL stays simple.
   DACL adds nothing against SMB clients and would let a non-elevated process into an elevated game. A UI-side
   server would face the same choice.
 - **SSH:** the wrapper runs on the target machine and talks to the local pipe, so the pipe never faces the network.
-  Needs Windows OpenSSH Server. An elevated game with a non-elevated UI is a combination to measure.
+  Needs Windows OpenSSH Server. *Measured 2026-11-11* (verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item
+  18): a server started over SSH works against a normal and an elevated game alike, since an administrator's SSH
+  session runs at High integrity; a non-elevated client is refused an elevated game's pipe by UAC.
+- ✅ **`[UI-CONNECT-ELEVATED-GAME]` fixed in build 3709, as `[UI-ELEVATED-ACCESS-DENIED]`** (the same defect, found
+  first from the MCP side). The UI names an elevated game; its inject picker cannot list one for a UI that is not
+  elevated (measured: the main-module read it needs is refused, Win32 5), so the inject-then-connect flow this row
+  feared cannot start, and the tooltip and guides now say to start the UI as administrator.
 - **Pipe slots: settled by `[PIPE-PER-PROCESS-2026-11-06]` Stage B (build 3696): 6 clients.** It was 3, and in
   practice the third was what `tools/verify/*.py` rigs took during development (the maintainer), so with the UI
   connected and a rig running nothing was left for MCP. Stage C still hardens the pipe for a long-lived client.
@@ -719,8 +881,10 @@ Why it is not shipped:
 3. **It would refuse clients that work today.** An elevated admin UI facing a game that runs under another account
    is admitted today through the Administrators ACE; the candidate has none. A local client whose token carries
    NETWORK would be refused too. That includes a process in an SSH session if its token carries NETWORK, which is
-   how `[UI-MCP-AUTOMATION-2026-11-06]` plans to reach the pipe from another machine. *Not measured*: there is no
-   OpenSSH server on this PC.
+   how `[UI-MCP-AUTOMATION-2026-11-06]` plans to reach the pipe from another machine. *Measured 2026-11-11* (OpenSSH
+   server installed by the maintainer): with today's default security, a process in an administrator's SSH session
+   runs at High integrity and opens the pipe of a normal and of an elevated game (verification-register.md
+   `[PIPE-PER-PROCESS-2026-11-06]` item 18). Whether its token carries NETWORK was not read.
 4. **The load path does not change anything.** Fern's `AcceptLoop` runs on a thread the DLL starts itself, so the
    pipe takes the game process's primary token whether CE, `inject.py` or a proxy loaded the DLL. CE Lua never opens
    the pipe: it uses the C exports and the Mimic mailbox.

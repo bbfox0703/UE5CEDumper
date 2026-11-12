@@ -61,6 +61,41 @@ inline OwnerRelease ReleaseOwner(std::vector<uint64_t>& owners, uint64_t owner, 
     return OwnerRelease::NotHeld;
 }
 
+// ── The hidden record across a failed dispatch ([SHUTDOWN-SEETHRU-WAIT]) ──────
+// A game-thread invoke that did not run (a timeout, a wait cut by a shutdown on a stalled game thread, a hook that is
+// down) used to count as a clean answer twice over. A LineTrace that did not run read as "nothing occludes", so the
+// tick un-hid every recorded actor and dropped it; and an un-hide that did not run dropped its actor anyway. Each left an
+// actor hidden with nothing tracking it, out of the next enable's or disable's reach. A shutdown cutting such waits
+// makes both likely, so the record now keeps what a failed dispatch may have left hidden.
+
+// Apply a tick's hide/un-hide diff only when every trace ran and no stop is under way: a trace that did not run says
+// nothing about what occludes.
+inline bool ShouldApplyOccluderDiff(bool dispatchFailed, bool stopRequested) {
+    return !dispatchFailed && !stopRequested;
+}
+
+// What one SetActorHiddenInGame call came to: never attempted (not an actor, or the setter is cooked out), or the
+// invoke's own result (0 = it ran).
+constexpr int32_t kHideNotAttempted = INT32_MIN;
+
+// The invoke's code for a call that entered the engine and faulted there (CallProcessEventSEH): it ran.
+constexpr int32_t kHideFaultedInCall = -4;
+
+// After an un-hide, does the actor stay in the record? Only when the call was attempted and did not run: it may still be
+// queued, and Stark::Shutdown answers a queued request without running it. Un-hiding twice is harmless, losing the
+// record is not. A call never attempted drops the actor, as before (it died, or the setter went away), and so does one
+// that faulted inside the engine: kept, it would fault again on every 100 ms tick.
+inline bool UnhideLeftItHidden(int32_t code) {
+    return code != 0 && code != kHideNotAttempted && code != kHideFaultedInCall;
+}
+
+// A recorded actor that still occludes counts as hidden with no call -- unless its last un-hide did not run: that
+// un-hide may still be queued, and when it runs the actor shows while the record says hidden. Such an actor is hidden
+// again (the queue runs the hide after the un-hide). Hiding twice is harmless.
+inline bool RehideOnTick(bool stillOccluding, bool unhideMayStillRun) {
+    return stillOccluding && unhideMayStillRun;
+}
+
 // Result / status code (0 = OK, negative = why the tick could not act).
 enum SeeThroughResult {
     STR_OK             =  0,
@@ -133,8 +168,8 @@ int32_t GetStatus(SeeThroughStatus& out);
 // True while the worker is engaged.
 bool IsActive();
 
-// Stop + join the worker. Idempotent. Called by SetEnabled(false) and from
-// UE5_Shutdown() before the DLL unloads.
+// Stop + join the worker, leaving the hidden record as it is. Idempotent. UE5_Shutdown does not use it: it turns
+// See-through off, so the occluders are un-hidden while the hook can still dispatch.
 void StopWorker();
 
 } // namespace Schlacht

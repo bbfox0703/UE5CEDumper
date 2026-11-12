@@ -1186,6 +1186,10 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// <summary>Silences the top-bar "Connection Error" while the retry owns the message.</summary>
     public Action<bool>? SetConnectErrorSuppression { get; set; }
 
+    /// <summary>[UI-ELEVATED-ACCESS-DENIED] Why Windows refused the last connect attempt to the given pid (the text the
+    /// main window would show), or null when it was not refused. Set by MainWindowViewModel.</summary>
+    public Func<int, string?>? ConnectRefusedProbe { get; set; }
+
     /// <summary>How long to keep retrying the post-inject connect.</summary>
     /// <remarks>
     /// The injected DLL scans BEFORE it opens its pipe (the proxy path is the opposite —
@@ -1318,7 +1322,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// the log showed the pipe opening 8.8 s later and then waiting for a client that
     /// never came back.
     /// </remarks>
-    private async Task ConnectWithRetryAsync(string targetName, int pid)
+    internal async Task ConnectWithRetryAsync(string targetName, int pid)
     {
         if (RequestConnectAsync is null) return;
 
@@ -1339,6 +1343,15 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 catch (Exception ex)
                 {
                     _log.Warn("ProxyDeploy", $"Auto-connect after inject attempt {attempt} failed: {ex.Message}");
+                }
+
+                // Windows refused the pipe (the game runs elevated and this UI does not): every later attempt is refused
+                // too, so stop and say why rather than spend the window and blame the DLL. [UI-ELEVATED-ACCESS-DENIED]
+                if (ConnectRefusedProbe?.Invoke(pid) is { } refusal)
+                {
+                    SetOperationResult(Res.Format("str.ProxyDeploy.InjectedButRefused", targetName, pid, refusal), 1);
+                    _log.Warn("ProxyDeploy", $"Post-inject connect refused by Windows after {attempt} attempt(s): {refusal}");
+                    return;
                 }
 
                 // No probe wired (tests, or an older composition) — keep the old

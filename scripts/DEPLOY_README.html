@@ -56,6 +56,7 @@ It injects a DLL into the game process, then communicates with a standalone UI v
     <tr><td><code>UE5CEDumper.CT</code></td><td>CE Cheat Table — loads and injects the DLL (Option A)</td></tr>
     <tr><td><code>inject-ue.ps1</code></td><td>Command-line injector — inject <code>UE5Dumper.dll</code> into a running UE game (Option C). No Cheat Engine needed.</td></tr>
     <tr><td><code>ue5_dissect.lua</code></td><td>Cheat Engine script that fills Structure Dissect from the game's class data (optional — see <em>Structure Dissect in Cheat Engine</em> below)</td></tr>
+    <tr><td><code>MCP-Setup.html</code></td><td>Let an AI client (Claude Code, Claude Desktop) read a running game through <code>UE5DumpUI.exe --mcp</code>: how to set it up</td></tr>
   </tbody>
 </table>
 
@@ -116,14 +117,14 @@ They work with Option B and C as well, once Cheat Engine has the game open. See 
   <li>Start the game and reach gameplay so UE objects are populated.</li>
   <li>Launch <code>UE5DumpUI.exe</code> and open the <strong>Proxy Deploy</strong> tab.</li>
   <li>Click <strong>Inject into running game…</strong>, pick the game in the process picker, and press <strong>Inject</strong>.</li>
-  <li>The UI injects the DLL and <strong>auto-connects</strong>. If the game runs as Administrator you'll get a UAC prompt to inject elevated — no manual restart.</li>
+  <li>The UI injects the DLL and <strong>auto-connects</strong>. A game that runs as Administrator needs <code>UE5DumpUI.exe</code> started as administrator too: Windows lets only an elevated UI connect to it.</li>
 </ol>
 
 <p><strong>From the command line</strong> (run in the folder that holds <code>UE5Dumper.dll</code>):</p>
 <pre><code>.\inject-ue.ps1                 # auto: inject the single running UE game
 .\inject-ue.ps1 -List           # list detected UE games
 .\inject-ue.ps1 -ProcessId 1234 # inject a specific PID</code></pre>
-<p>Then launch <code>UE5DumpUI.exe</code> and click <strong>Connect</strong>. If the game runs as Administrator, the script auto-relaunches elevated (one UAC prompt).</p>
+<p>Then launch <code>UE5DumpUI.exe</code> and click <strong>Connect</strong>. If the game runs as Administrator, the script auto-relaunches elevated (one UAC prompt) to inject, and <code>UE5DumpUI.exe</code> must then be started as administrator too, or Windows refuses it the game's pipe.</p>
 
 <blockquote><strong>x64 games only</strong>, and <strong>single-player / offline use only</strong> — like all injection, <code>CreateRemoteThread</code> may be flagged by anti-virus and is blocked/banned by kernel anti-cheat (EAC / BattlEye).</blockquote>
 
@@ -220,7 +221,7 @@ dissect.disableAutoCallback()</code></pre>
     <tr><td>UI connects but shows 0 objects</td><td>Scan not run or game data not loaded</td><td>Load a save first, then inject (A / C) or click Start Scan (B)</td></tr>
     <tr><td>Start Scan button not visible</td><td>Already scanned, or the DLL was injected (Option A / C), which scans on inject</td><td>Normal — button only appears in proxy DLL mode before first scan</td></tr>
     <tr><td>Game crashes on launch with a proxy DLL</td><td>Rare DLL conflict / anti-tamper</td><td>Try a different proxy (<code>dxgi.dll</code> / <code>winmm.dll</code> / <code>dinput8.dll</code> / <code>version.dll</code>); if all fail, inject the DLL instead (Option A / C) and file a bug report</td></tr>
-    <tr><td>Inject fails: "OpenProcess failed (Win32 5)"</td><td>The game runs as Administrator (higher integrity)</td><td>The UI / <code>inject-ue.ps1</code> auto-relaunch elevated — just accept the UAC prompt. Or start them as Administrator up front.</td></tr>
+    <tr><td>Inject fails: "OpenProcess failed (Win32 5)"</td><td>The game runs as Administrator (higher integrity)</td><td>Start <code>UE5DumpUI.exe</code> (and <code>inject-ue.ps1</code>) as Administrator. A UAC relaunch can inject, but a UI that is not elevated is still refused the game's pipe afterwards.</td></tr>
     <tr><td>Game freezes / UI actions (POV, teleport, invokes) time out when the game is not focused</td><td>The game idles its game thread when it loses foreground (<code>t.IdleWhenNotForeground</code>)</td><td>In the <strong>Teleport</strong> tab, turn on <strong>Keep Foreground</strong> (Force ON) so the game keeps running while it's in the background.</td></tr>
     <tr><td>"UE version: Unknown"</td><td>AOB patterns didn't match</td><td>File a bug report with game name + UE version</td></tr>
   </tbody>

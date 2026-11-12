@@ -41,6 +41,37 @@ public static class Constants
     /// localized Windows never says it, which is why the HResult comes first.</summary>
     public const string WindowsIoBeingUsed = "being used";
 
+    // ── MCP server mode (`UE5DumpUI.exe --mcp`) ─────────────────────────────────────────────────────────
+    // [PIPE-PER-PROCESS-2026-11-06] Stage D. A stdio Model Context Protocol server for an AI client, branched in
+    // Program.Main before the single-instance mutex. ⛔ DO NOT LOCALIZE: these are protocol words the client matches.
+    /// <summary>The command-line switch that starts the MCP server instead of the window.</summary>
+    public const string McpSwitch = "--mcp";
+    /// <summary>The server's name in <c>serverInfo</c>: what a client shows, not what it registers it under.</summary>
+    public const string McpServerName = "ue5cedumper";
+    public const string McpServerTitle = "UE5CEDumper";
+    /// <summary>The handshake revision answered when the client asks for one this server does not speak; the newest
+    /// of <see cref="McpProtocolVersions"/>. 2026-07-28 removed the handshake, and this server answers its
+    /// <c>server/discover</c> with an error, which Claude Code documents as its fallback to the handshake.</summary>
+    public const string McpLatestProtocolVersion = "2025-11-25";
+    /// <summary>Handshake revisions this server speaks; a client's request for one of them is echoed back.</summary>
+    public static readonly string[] McpProtocolVersions = ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
+    /// <summary>The MCP process's log: one file per process (several AI sessions run their own), in the UI's log
+    /// folder, aged out by the same <see cref="LogMaxAgeDays"/> sweep.</summary>
+    public const string McpLogFilePrefix = "mcp-";
+    /// <summary>The tool-definition <c>_meta</c> key Claude Code reads to ask before every call of a tool, in every
+    /// permission mode, an allow rule notwithstanding (Claude Code 2.1.246 and later). Every write_* tool carries it.
+    /// </summary>
+    public const string McpRequiresInteractionKey = "anthropic/requiresUserInteraction";
+    /// <summary>The first DLL build the write tools may change a game through: build 3704 records who holds each hold
+    /// (if_free, get_holds) and 3705 keeps the user's undo point on an AI's teleport (keep_undo). An older DLL ignores
+    /// both keys and would let a write replace what the user holds, so the write tools refuse it.</summary>
+    public const int McpMinDllBuildForWrites = 3705;
+    /// <summary>The first DLL build write_memory and write_invoke may go through (Stage D2-3): write_mem refuses code and
+    /// read-only pages and honours expect, and the invoke queue records owners, refuses an if_free invoke beside another
+    /// client's and drops a departed session's. An older DLL would patch code and queue the AI's call beside the user's.
+    /// The same build stops the debug camera's queued ON from coming on ownerless.</summary>
+    public const int McpMinDllBuildForRawWrites = 3706;
+
     // Application
     public const string AppName = "UE5DumpUI";
     public const string MutexName = "Global\\UE5DumpUI_SingleInstance";
@@ -121,10 +152,11 @@ public static class Constants
     public const int LogCompressBatchSize = 40;
 
     // ── Invoke result codes ─────────────────────────────────────────────────
-    // invoke_function / UE5_CallProcessEvent result -5: the game-thread dispatch TIMED OUT and
-    // the request STAYS QUEUED -- it will still execute when the game thread next drains
-    // (dll/src/Stark.cpp, the future.wait_for timeout path; Fern leaks the FString buffers for
-    // exactly that reason). So never "resend on failure" for it: that runs the call twice.
+    // invoke_function / UE5_CallProcessEvent result -5: the wait for the game-thread dispatch
+    // ended -- it TIMED OUT, or a shutdown cut it short on a stalled game thread -- and the
+    // request STAYS QUEUED: it will still execute when the game thread next drains (dll/src/Stark.cpp,
+    // EnqueueInvoke's timeout path; Fern leaks the FString buffers for exactly that reason).
+    // So never "resend on failure" for it: that runs the call twice.
     // [W3-CONSOLE-REINVOKE]
     public const int InvokeDispatchTimeoutResult = -5;
 

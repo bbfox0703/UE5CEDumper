@@ -54,6 +54,27 @@ constexpr const char*    PIPE_AT_CAPACITY_TEXT   = "pipe instances in use";
 constexpr const char*    PIPE_HOLDERS_TOKEN      = " holders=";
 constexpr const char*    PIPE_HOLDERS_MORE_TOKEN = " more=";
 constexpr const char*    PIPE_SLOT_FREED_TEXT    = "slot freed";
+// [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: the names of the holds whose owner the DLL records (Voll::HoldLedger),
+// as get_holds reports them and an if_free refusal names them. A movement knob, a time lane and a force-field job add
+// their own name after the prefix ("movement:walk_speed", "time:global", "force_field:<class>::<field>").
+constexpr const char*    HOLD_GOD_MODE           = "god_mode";
+constexpr const char*    HOLD_FOREGROUND_LOCK    = "foreground_lock";
+constexpr const char*    HOLD_GRAVITY_DIRECTION  = "gravity_direction";
+constexpr const char*    HOLD_FLY                = "fly";
+constexpr const char*    HOLD_DEBUG_CAMERA       = "debug_camera";
+constexpr const char*    HOLD_MOVEMENT_PREFIX    = "movement:";
+constexpr const char*    HOLD_TIME_PREFIX        = "time:";
+constexpr const char*    HOLD_FORCE_FIELD_PREFIX = "force_field:";
+// The code an if_free request answers with when someone else holds what it would change.
+constexpr int32_t        HOLD_HELD_BY_OTHER      = -20;
+// [D2-3-WRITEMEM] write_mem's refusals, each an ok:false reply with this code: nothing was written.
+constexpr int32_t        WRITE_MEM_EXECUTABLE    = -21;   // the range touches code
+constexpr int32_t        WRITE_MEM_NOT_WRITABLE  = -22;   // a read-only, guard, no-access or uncommitted page
+constexpr int32_t        WRITE_MEM_CHANGED       = -23;   // `expect` no longer matches what is there
+// [D2-3-INVOKE] invoke_function's refusal of a background client's call the maintainer's list names (Voll); and the
+// name an if_free invoke's conflict carries, beside the holds, when another client's invoke is outstanding.
+constexpr int32_t        INVOKE_REFUSED_FOR_BACKGROUND = -24;
+constexpr const char*    HOLD_INVOKE_QUEUE       = "invoke_queue";
 // Slice of Fern::Stop's 5 s connection-drain wait. Each slice re-asserts
 // CancelIoEx on the surviving connections, because a single cancel fired before
 // the wait can miss a thread that is BETWEEN two reads and will then park in a

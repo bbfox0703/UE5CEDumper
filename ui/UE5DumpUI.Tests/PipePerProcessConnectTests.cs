@@ -172,6 +172,121 @@ public sealed class PipePerProcessConnectTests
         }
     }
 
+    // ── [UI-ELEVATED-ACCESS-DENIED] Windows refusing the pipe ───────────────────────────────────────────────────────
+    //
+    // Measured 2026-11-12 (verification-register.md [PIPE-PER-PROCESS-2026-11-06] item 4): a non-elevated UI connecting to
+    // a game that runs as administrator showed only "Access to the path is denied." -- the OS's words, naming neither
+    // the game nor a way out. The DLL keeps the pipe's default security, under which an elevated creator's owner is
+    // Administrators and everyone else may only read; an administrator is always let in.
+
+    [Fact]
+    public async Task A_game_running_as_administrator_is_named_as_such_to_a_UI_that_is_not()
+    {
+        var rig = new Rig("UE5DumpBfx_100");
+        rig.Pipe.Refused = new() { "UE5DumpBfx_100" };
+        await rig.Vm.ConnectCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { "UE5DumpBfx_100" }, rig.Pipe.Dialed);
+        Assert.False(rig.Vm.IsConnected);
+        Assert.Equal("Connection Error", rig.Vm.StatusText);
+        Assert.Contains("administrator", rig.Vm.ErrorMessage);
+        Assert.Contains("elevated", rig.Vm.ErrorMessage);
+        Assert.DoesNotContain("Access to the path is denied", rig.Vm.ErrorMessage);
+        // The toolbar shows about 25 characters before its ellipsis: the cause must be in them.
+        Assert.InRange(rig.Vm.ErrorMessage!.IndexOf("administrator", StringComparison.Ordinal), 0, 30);
+    }
+
+    [Fact]
+    public async Task An_elevated_game_picked_from_the_list_is_named_as_such()
+    {
+        var rig = new Rig("UE5DumpBfx_100", "UE5DumpBfx_200");
+        rig.Pick = _ => 200;
+        rig.Pipe.Refused = new() { "UE5DumpBfx_200" };
+        await rig.Vm.ConnectCommand.ExecuteAsync(null);
+        Assert.Contains("200", rig.Vm.ErrorMessage);
+        Assert.Contains("administrator", rig.Vm.ErrorMessage);
+        Assert.DoesNotContain("Access to the path is denied", rig.Vm.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task An_elevated_game_dialled_by_pid_is_named_as_such()
+    {
+        // Proxy Deploy's connect after an inject, and its "already active" connect, dial by pid.
+        var rig = new Rig("UE5DumpBfx_55");
+        rig.Pipe.Refused = new() { "UE5DumpBfx_55" };
+        await rig.Vm.ConnectToAsync(55);
+        Assert.Contains("55", rig.Vm.ErrorMessage);
+        Assert.Contains("administrator", rig.Vm.ErrorMessage);
+        Assert.DoesNotContain("Access to the path is denied", rig.Vm.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task A_refusal_to_a_UI_that_runs_as_administrator_does_not_blame_elevation()
+    {
+        // An administrator is always let into the DLL's pipe, so a refusal then means something else set its
+        // permissions -- most likely another process that created the game's pipe name first.
+        var rig = new Rig("UE5DumpBfx_100");
+        rig.Platform.Elevated = true;
+        rig.Pipe.Refused = new() { "UE5DumpBfx_100" };
+        await rig.Vm.ConnectCommand.ExecuteAsync(null);
+        Assert.Contains("100", rig.Vm.ErrorMessage);
+        Assert.Contains("another process", rig.Vm.ErrorMessage);
+        Assert.DoesNotContain("this UI does not", rig.Vm.ErrorMessage);
+        Assert.DoesNotContain("Access to the path is denied", rig.Vm.ErrorMessage);
+    }
+
+    [Fact]
+    public void An_access_refusal_blames_elevation_only_for_a_client_that_is_not_elevated()
+    {
+        var denied = new UnauthorizedAccessException("Access to the path is denied.");
+        Assert.Equal(PipeDialRefusal.GameElevated, PipeTargets.ClassifyRefusal(denied, clientElevated: false));
+        Assert.Equal(PipeDialRefusal.Denied, PipeTargets.ClassifyRefusal(denied, clientElevated: true));
+        // Not refusals: a missing or full pipe, and anything else, keep their own handling.
+        Assert.Equal(PipeDialRefusal.None, PipeTargets.ClassifyRefusal(new TimeoutException(), false));
+        Assert.Equal(PipeDialRefusal.None, PipeTargets.ClassifyRefusal(new IOException("pipe"), false));
+        Assert.Equal(PipeDialRefusal.None, PipeTargets.ClassifyRefusal(new InvalidOperationException(), true));
+    }
+
+    [Fact]
+    public async Task A_refusal_is_remembered_for_the_post_inject_retry_and_forgotten_by_the_next_dial()
+    {
+        var rig = new Rig("UE5DumpBfx_55");
+        rig.Pipe.Refused = new() { "UE5DumpBfx_55" };
+        await rig.Vm.ConnectToAsync(55);
+        Assert.Equal(55, rig.Vm.LastConnectRefusal?.Pid);
+        Assert.Equal(rig.Vm.ErrorMessage, rig.Vm.LastConnectRefusal?.Text);
+        Assert.Equal(rig.Vm.ErrorMessage, rig.Vm.RefusalFor(55));
+        rig.Pipe.Refused = null;
+        rig.Dump.AnsweringPid = 55;
+        await rig.Vm.ConnectToAsync(55);
+        Assert.True(rig.Vm.IsConnected);
+        Assert.Null(rig.Vm.LastConnectRefusal);
+        Assert.Null(rig.Vm.RefusalFor(55));
+    }
+
+    [Fact]
+    public async Task A_refusal_answers_only_for_the_pid_it_came_from()
+    {
+        // A toolbar Connect can run in the retry's 1 s gaps: its refusal of another game must not stop the retry of the
+        // game just injected, which may only still be scanning.
+        var rig = new Rig("UE5DumpBfx_200");
+        rig.Pipe.Refused = new() { "UE5DumpBfx_200" };
+        await rig.Vm.ConnectToAsync(200);
+        Assert.NotNull(rig.Vm.RefusalFor(200));
+        Assert.Null(rig.Vm.RefusalFor(55));
+    }
+
+    [Fact]
+    public async Task A_refusal_is_remembered_while_the_post_inject_retry_suppresses_errors()
+    {
+        // The retry runs every attempt with connect errors suppressed: the refusal must still be recorded for it to ask.
+        var rig = new Rig("UE5DumpBfx_55");
+        rig.Vm.SuppressConnectErrors = true;
+        rig.Pipe.Refused = new() { "UE5DumpBfx_55" };
+        await rig.Vm.ConnectToAsync(55);
+        Assert.Equal(Res.Format("str.Connect.Elevated", 55), rig.Vm.RefusalFor(55));
+        Assert.True(string.IsNullOrEmpty(rig.Vm.ErrorMessage));
+    }
+
     [Fact]
     public async Task One_game_connects_at_once()
     {
@@ -367,6 +482,8 @@ public sealed class PipePerProcessConnectTests
     {
         var vm = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"));
         Assert.Contains("ProxyDeploy.RequestConnectAsync = pid => ConnectCommand.ExecuteAsync(pid);", vm);
+        // [UI-ELEVATED-ACCESS-DENIED] ...and asks why a refused attempt failed: unwired, the retry spins its 45 s again.
+        Assert.Contains("ProxyDeploy.ConnectRefusedProbe = RefusalFor;", vm);
     }
 
     [Fact]
@@ -440,6 +557,25 @@ public sealed class PipePerProcessConnectTests
         Assert.False(lanes.IsConnected);
     }
 
+    [Fact]
+    public async Task A_pipe_this_user_may_only_read_refuses_the_first_lane_with_UnauthorizedAccess()
+    {
+        // [UI-ELEVATED-ACCESS-DENIED] The type the main window's catch relies on, through the real stack: a pipe whose
+        // DACL lets this user only read -- what everyone but Administrators gets on an elevated game's pipe -- refuses
+        // the read/write open the lanes make. The interactive lane is dialled first, so its refusal is the one seen.
+        string name = "UE5DumpRefuseTest_" + Guid.NewGuid().ToString("N");
+        var sec = new PipeSecurity();
+        sec.AddAccessRule(new PipeAccessRule(System.Security.Principal.WindowsIdentity.GetCurrent().User!,
+            PipeAccessRights.Read, System.Security.AccessControl.AccessControlType.Allow));
+        using var server = NamedPipeServerStreamAcl.Create(name, PipeDirection.InOut, 2, PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous, 65536, 65536, sec);
+        var ct = TestContext.Current.CancellationToken;
+        var accept = server.WaitForConnectionAsync(ct);
+        using var lanes = new LaneRoutingPipeClient(new MockLoggingService());
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => lanes.ConnectAsync(name, ct));
+        Assert.False(accept.IsCompleted);   // the server saw no connection
+    }
+
     // ── Doubles ─────────────────────────────────────────────────────────────────────────────────────────────────
 
     private sealed class PipePlatform : IPlatformService
@@ -451,6 +587,9 @@ public sealed class PipePerProcessConnectTests
         public IReadOnlyList<string>? ListNamedPipes() => Pipes;
         public (string ImageName, string? WindowTitle) DescribeProcess(int pid)
             => Processes.TryGetValue(pid, out var p) ? p : ("", null);
+        /// <summary>Whether this UI runs as administrator.</summary>
+        public bool Elevated { get; set; }
+        public bool IsElevated() => Elevated;
 
         public bool TryAcquireSingleInstance() => true;
         public void ReleaseSingleInstance() { }
@@ -478,6 +617,9 @@ public sealed class PipePerProcessConnectTests
         public HashSet<string>? Busy { get; set; }
         /// <summary>Called with the name on every dial, before the connect resolves: the world changing meanwhile.</summary>
         public Action<string>? OnDial { get; set; }
+        /// <summary>Names Windows refuses to open, as NamedPipeClientStream does for a game running as administrator:
+        /// the exception type and text measured live on 2026-11-12.</summary>
+        public HashSet<string>? Refused { get; set; }
         public event Action<bool>? ConnectionStateChanged { add { } remove { } }
         public event Action<JsonObject>? EventReceived { add { } remove { } }
         public event Action<PipeLogEntry>? Activity { add { } remove { } }
@@ -489,6 +631,7 @@ public sealed class PipePerProcessConnectTests
             if (Gate is not null) await Gate;
             // As PipeClient: a live connection is kept, whatever name is asked for.
             if (IsConnected) return;
+            if (Refused?.Contains(pipeName) ?? false) throw new UnauthorizedAccessException("Access to the path is denied.");
             if ((Listening is not null && !Listening.Contains(pipeName)) || (Busy?.Contains(pipeName) ?? false))
                 throw new TimeoutException("The operation has timed out.");
             IsConnected = true;

@@ -1,0 +1,535 @@
+using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using UE5DumpUI.Models;
+using UE5DumpUI.Services;
+using UE5DumpUI.Views;
+
+namespace UE5DumpUI.Mcp;
+
+/// <summary>
+/// [PIPE-PER-PROCESS-2026-11-06] Stage D2-3: raw memory writes and UFunction invokes, to the maintainer's decisions of
+/// 2026-11-11. Both ask every time, as every write_* tool does, and both need the DLL from
+/// <see cref="Constants.McpMinDllBuildForRawWrites"/>, which enforces what matters in the DLL itself:
+///
+/// <para><b>write_memory</b> writes data only. The DLL refuses code, read-only, guard and uncommitted pages for every
+/// client and never changes page protection; this tool also sends the bytes the AI read (<c>expect</c>), so memory the
+/// user, the game or another client changed since is not overwritten.</para>
+///
+/// <para><b>write_invoke</b> calls a UFunction on the game thread, its parameters by name. The server reads the
+/// signature and builds the buffer by the Invoke dialog's rules (<see cref="ParamBufferBuilder"/>), stricter where the
+/// dialog relies on a human reading the box: a value that does not parse as its type is refused rather than written as
+/// zero, and an object parameter must be a live object's address (GObjects says so, not a read of the memory). It
+/// decodes the return value and out parameters as the dialog does. The DLL refuses it while the UI or CE has an invoke
+/// outstanding (each queued request records its client), refuses the maintainer's deny list for a background client
+/// (network RPCs, console commands, quit / travel / restart, destruction, save slots, the debug camera), never runs it
+/// off the game thread, and drops it if this session ends while it is still queued. The server refuses a new call while
+/// one of its own is still queued, so a -5 call is never sent again. It never sends direct_call or
+/// set_invoke_timeout.</para>
+/// </summary>
+internal static class McpRawTools
+{
+    private const int MaxWriteBytes = 4096;
+    private const int LookupSeconds = 30;
+    private const int MaxSuperHops = 64;
+
+    // Grimoire's codes the replies carry.
+    private const long HeldByOther = -20;
+    private const long WriteMemChanged = -23;
+    private const long InvokeQueued = -5;
+    private const long InvokeFaulted = -4;
+
+    private static readonly HashSet<string> IntegerTypes =
+    [
+        "ByteProperty", "Int8Property", "Int16Property", "UInt16Property", "IntProperty", "UInt32Property",
+        "Int64Property", "UInt64Property", "EnumProperty",
+    ];
+
+    public static IEnumerable<McpTool> Create(IMcpGame game)
+    {
+        yield return WriteMemory(game);
+        yield return Invoke(game);
+    }
+
+    // ── write_memory ────────────────────────────────────────────────────────────────────────────────────
+
+    private static McpTool WriteMemory(IMcpGame game) => new(
+        "write_memory", "Write memory",
+        "Writes bytes at an address. Data only: the DLL refuses code, read-only, guard and uncommitted pages, and never "
+        + "changes page protection. Pass the bytes there now as expect (read them with read_memory first): if the user, "
+        + "the game or another client changed them since, nothing is written and the reply gives what is there. Up to "
+        + "4096 bytes. Returns the bytes before and after. A field a gameplay hold keeps (god mode, a forced field) is "
+        + "put back by it; change that through its write_* tool instead.",
+        McpSchema.Object(
+            ("addr", McpSchema.Addr("The first byte's address."), true),
+            ("bytes", McpSchema.HexBytes("The bytes to write, as hex: \"0A000000\" is the int32 10."), true),
+            ("expect", McpSchema.HexBytes("The bytes there now, as read_memory gave them: as many as bytes."), true),
+            McpWriteTools.PidProp),
+        ReadOnly: false,
+        async (a, ct) =>
+        {
+            int? pid = a.OptInt("pid");
+            string addr = a.Addr("addr");
+            string bytes = a.HexBytes("bytes");
+            string expect = a.HexBytes("expect");
+            int count = bytes.Length / 2;
+            if (count > MaxWriteBytes)
+                throw new McpToolError($"Up to {MaxWriteBytes} bytes per write ({count} given).");
+            if (expect.Length != bytes.Length)
+                throw new McpToolError("'expect' must be as many bytes as 'bytes'.");
+            await McpWriteTools.RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForRawWrites, ct);
+
+            var timeout = TimeSpan.FromSeconds(LookupSeconds);
+            var reply = await game.SendAsync(pid, new JsonObject
+            {
+                ["cmd"] = "write_mem", ["addr"] = addr, ["bytes"] = bytes, ["expect"] = expect,
+            }, timeout, ct);
+            if (!McpWriteTools.Truthy(reply, "ok"))
+            {
+                var fail = new JsonObject { ["error"] = McpJson.GetString(reply, "error") ?? "Not written." };
+                if (McpJson.TryGetLong(reply["code"], out long code)) fail["code"] = code;
+                if (code == WriteMemChanged && reply["current"] is JsonNode current) fail["current"] = current.DeepClone();
+                return McpWriteTools.Combine(new McpToolResult(fail, IsError: true), game.TakeNotice());
+            }
+            var payload = new JsonObject
+            {
+                ["addr"] = addr,
+                ["written"] = bytes,
+                ["before"] = McpJson.GetString(reply, "before") ?? "",
+            };
+            var back = await game.SendAsync(pid, new JsonObject { ["cmd"] = "read_mem", ["addr"] = addr, ["size"] = count },
+                timeout, ct);
+            string? after = McpWriteTools.Truthy(back, "ok") ? McpJson.GetString(back, "bytes") : null;
+            payload["after"] = after ?? "";
+            string? note = after is null ? "The write was made, but reading it back failed."
+                : !string.Equals(after, bytes, StringComparison.OrdinalIgnoreCase)
+                    ? "Read back differently: the game (or a hold) changed it again at once."
+                    : null;
+            return McpWriteTools.Combine(new McpToolResult(payload, Note: note), game.TakeNotice());
+        }, Idempotent: true, Destructive: true, RequiresInteraction: true);
+
+    // ── write_invoke ────────────────────────────────────────────────────────────────────────────────────
+
+    private static McpTool Invoke(IMcpGame game) => new(
+        "write_invoke", "Invoke a UFunction",
+        "Calls a UFunction on a live object, on the game thread, with its parameters by name: the server reads the "
+        + "signature (read_functions shows it, include_interfaces for an interface's) and builds the call. instance_addr "
+        + "is a live object (read_find_live_instance). Returns the return value and out parameters. A call the game "
+        + "thread did not run in time is queued and runs later, unless this session ends first: never send it again; "
+        + "read_holds lists it until it runs. Refused while the UE5DumpUI window, a Cheat Engine record or another AI "
+        + "session has a call outstanding, and for network RPCs, console commands, quitting or travelling, destroying "
+        + "actors, writing or deleting save slots, functions taking an FText, and the debug camera (use "
+        + "write_debug_camera).",
+        McpSchema.Object(
+            ("instance_addr", McpSchema.Addr("The object to call it on."), true),
+            ("function", McpSchema.Str("The UFunction's name, e.g. \"SetActorHiddenInGame\"."), true),
+            ("params", McpSchema.FreeObject("Parameters by name. A number or true / false; an enum or an FName as its "
+                                            + "number; a string; an object as its hex address (0 for none); a struct as "
+                                            + "an object of its fields. One left out is zero."),
+                false),
+            McpWriteTools.PidProp),
+        ReadOnly: false, (a, ct) => RunInvokeAsync(game, a, ct), Idempotent: false, Destructive: true,
+        RequiresInteraction: true);
+
+    private static async Task<McpToolResult> RunInvokeAsync(IMcpGame game, McpArgs a, CancellationToken ct)
+    {
+        int? pid = a.OptInt("pid");
+        string inst = a.Addr("instance_addr");
+        string funcName = a.ReqStr("function").Trim();
+        JsonObject given = a.Obj("params") ?? new JsonObject();
+        var ptrs = await McpWriteTools.RequireDllBuildAsync(game, pid, Constants.McpMinDllBuildForRawWrites, ct);
+        int ueVersion = McpJson.TryGetLong(ptrs["ue_version"], out long ue) ? (int)ue : 0;
+        var lookup = TimeSpan.FromSeconds(LookupSeconds);
+
+        // Never resend after -5: while a game-thread call of this server's is still queued, refuse the next one.
+        var holds = await game.SendAsync(pid, new JsonObject { ["cmd"] = "get_holds" }, lookup, ct);
+        if (OwnOutstanding(holds) is int mine and > 0)
+            return McpWriteTools.Combine(McpToolResult.Fail(
+                "Not invoked: a game-thread call this server made is still queued or running ("
+                + mine.ToString(CultureInfo.InvariantCulture) + "; read_holds lists it). If it was a call that answered "
+                + "queued, it runs when the game thread is free unless this session ends first: do not send it again."),
+                game.TakeNotice());
+
+        if (!await IsLiveObjectAsync(game, pid, inst, lookup, ct))
+            throw new McpToolError($"{inst} is not a live object (read_find_live_instance gives one).");
+        var obj = await game.SendAsync(pid, new JsonObject { ["cmd"] = "get_object", ["addr"] = inst }, lookup, ct,
+            requireScan: true);
+        string? classAddr = McpJson.GetString(obj, "class_addr");
+        if (string.IsNullOrEmpty(classAddr) || !McpArgs.TryParseHex(classAddr, out ulong cls) || cls == 0)
+            throw new McpToolError($"{inst}'s class could not be read.");
+
+        var fn = await FindFunctionAsync(game, pid, classAddr, funcName, lookup, ct)
+                 ?? throw new McpToolError($"{McpJson.GetString(obj, "class") ?? "Its class"} has no UFunction "
+                                           + $"'{funcName}' (read_functions lists them; include_interfaces for an "
+                                           + "interface's).");
+
+        var call = await BuildCallAsync(game, pid, fn, given, ueVersion, lookup, ct);
+        var request = new JsonObject
+        {
+            ["cmd"] = "invoke_function",
+            ["func_name"] = fn.Name,
+            ["instance_addr"] = inst,
+            ["expect_class_addr"] = classAddr,
+            ["if_free"] = true,
+        };
+        if (call.Size > 0)
+        {
+            request["parms_size"] = call.Size;
+            request["params_hex"] = Convert.ToHexString(call.Buffer);
+        }
+        if (call.Strings.Count > 0)
+        {
+            var arr = new JsonArray();
+            foreach (var sp in call.Strings)
+                McpJson.Append(arr, new JsonObject { ["off"] = sp.Offset, ["wide"] = sp.Wide, ["text"] = sp.Text });
+            request["str_params"] = arr;
+        }
+
+        // The call, and one conversion per weak / soft object slot -- a parameter or a struct parameter's field -- each a
+        // game-thread call the DLL may wait on.
+        int calls = 1 + fn.InputParams.Sum(p => IsConvertedSlot(p.TypeName) ? 1
+            : StructFields(p, ueVersion)?.Count(f => IsConvertedSlot(f.TypeName)) ?? 0);
+        var reply = await game.SendAsync(pid, request, McpWriteTools.InvokeTimeout(ptrs, calls), ct, requireScan: true);
+        return McpWriteTools.Combine(Answer(reply, fn, ueVersion), game.TakeNotice());
+    }
+
+    /// <summary>This server's own outstanding invokes, from get_holds; null when the DLL reports none.</summary>
+    internal static int? OwnOutstanding(JsonObject holds)
+    {
+        if (holds["invokes"] is not JsonArray arr) return null;
+        foreach (var item in arr)
+        {
+            if (item is not JsonObject o || o["holder"] is not JsonObject h) continue;
+            if (h["you"] is JsonValue y && y.TryGetValue<bool>(out bool you) && you
+                && McpJson.TryGetLong(o["outstanding"], out long n))
+                return (int)n;
+        }
+        return null;
+    }
+
+    /// <summary>Whether <paramref name="addr"/> is a live object's own address. get_object reads whatever is at an
+    /// address and always answers; find_by_address consults GObjects, so only an exact match there counts.</summary>
+    internal static async Task<bool> IsLiveObjectAsync(IMcpGame game, int? pid, string addr, TimeSpan timeout,
+        CancellationToken ct)
+    {
+        if (!McpArgs.TryParseHex(addr, out ulong want) || want == 0) return false;
+        var r = await game.SendAsync(pid, new JsonObject { ["cmd"] = "find_by_address", ["addr"] = addr }, timeout, ct,
+            requireScan: true);
+        return McpWriteTools.Truthy(r, "ok") && McpWriteTools.Truthy(r, "found")
+               && McpJson.GetString(r, "match_kind") == "exact"
+               && McpArgs.TryParseHex(McpJson.GetString(r, "addr"), out ulong got) && got == want;
+    }
+
+    /// <summary>The function the DLL will call: walk_functions lists a class's own, so the super chain is followed as
+    /// the DLL's lookup does, an exact name first and then any case; then the class's interfaces, which the DLL's lookup
+    /// searches last (walk_functions with include_interfaces marks those entries).</summary>
+    private static async Task<FunctionInfoModel?> FindFunctionAsync(IMcpGame game, int? pid, string classAddr,
+        string name, TimeSpan timeout, CancellationToken ct)
+    {
+        string? addr = classAddr;
+        for (int hop = 0; hop < MaxSuperHops && !string.IsNullOrEmpty(addr); hop++)
+        {
+            var fr = await game.SendAsync(pid, new JsonObject { ["cmd"] = "walk_functions", ["addr"] = addr },
+                timeout, ct, requireScan: true);
+            if (McpWriteTools.Truthy(fr, "ok") && Match(DumpService.ParseFunctions(fr), name) is { } hit) return hit;
+            var cr = await game.SendAsync(pid, new JsonObject { ["cmd"] = "walk_class", ["addr"] = addr },
+                timeout, ct, requireScan: true);
+            string? super = (cr["class"] as JsonObject) is { } c ? McpJson.GetString(c, "super_addr") : null;
+            addr = super is not null && McpArgs.TryParseHex(super, out ulong s) && s != 0 ? super : null;
+        }
+        var withInterfaces = await game.SendAsync(pid,
+            new JsonObject { ["cmd"] = "walk_functions", ["addr"] = classAddr, ["include_interfaces"] = true },
+            timeout, ct, requireScan: true);
+        if (!McpWriteTools.Truthy(withInterfaces, "ok")) return null;
+        return Match(DumpService.ParseFunctions(withInterfaces).Where(f => f.ViaInterface.Length > 0).ToList(), name);
+    }
+
+    private static FunctionInfoModel? Match(List<FunctionInfoModel> funcs, string name)
+        => funcs.FirstOrDefault(f => f.Name == name)
+           ?? funcs.FirstOrDefault(f => string.Equals(f.Name, name, StringComparison.OrdinalIgnoreCase));
+
+    internal sealed record InvokeCall(byte[] Buffer, int Size, List<InvokeStringParam> Strings);
+
+    /// <summary>The call's buffer, by the Invoke dialog's rules: a struct expanded from its known layout or the DLL's
+    /// fields, a string sent as the DLL's descriptor, a container or delegate only empty, each scalar range-checked
+    /// before it is written. Stricter than the dialog where it relies on a person reading the box: a function taking an
+    /// FText is refused outright (a zeroed FText is a crash, not an empty one), a value that does not parse as its type is
+    /// refused rather than written as zero, and an object pointer must be a live object.</summary>
+    internal static async Task<InvokeCall> BuildCallAsync(IMcpGame game, int? pid, FunctionInfoModel fn,
+        JsonObject given, int ueVersion, TimeSpan timeout, CancellationToken ct)
+    {
+        var inputs = fn.InputParams.ToList();
+        foreach (var (key, _) in given)
+            if (!inputs.Any(p => string.Equals(p.Name, key, StringComparison.OrdinalIgnoreCase)))
+                throw new McpToolError($"{fn.Name} has no parameter '{key}'. Its parameters: "
+                                       + (inputs.Count == 0 ? "none" : string.Join(", ", inputs.Select(p => p.Name))) + ".");
+        foreach (var p in inputs)
+        {
+            // An FText anywhere in the arguments -- one of them, or a field of a struct one, given or left out: a
+            // zeroed FText is not an empty one, and the game can crash reading it.
+            string? where = ParamBufferBuilder.IsRefusedParam(p.TypeName) ? p.Name
+                : StructFields(p, ueVersion)?.FirstOrDefault(f => ParamBufferBuilder.IsRefusedParam(f.TypeName)) is { } tf
+                    ? $"{p.Name}.{tf.Name}" : null;
+            if (where is not null)
+                throw new McpToolError($"{fn.Name} takes an FText ('{where}'), which cannot be passed from here: a "
+                                       + "zeroed FText is not an empty one, and the game can crash reading it.");
+        }
+
+        int size = BakedScriptGenerator.BakedParmsSize(fn);
+        var buf = new byte[Math.Max(size, 0)];
+        var strings = new List<InvokeStringParam>();
+        foreach (var p in inputs)
+        {
+            JsonNode? node = Given(given, p.Name);
+            if (p.Offset < 0 || p.Offset >= buf.Length) continue;
+            string type = p.TypeName;
+
+            var fields = StructFields(p, ueVersion);
+            if (fields is { Count: > 0 })
+            {
+                if (node is null) continue;
+                if (node is not JsonObject values)
+                    throw new McpToolError($"'{p.Name}' is a {StructLabel(p)}: pass an object of its fields.");
+                foreach (var (key, _) in values)
+                    if (!fields.Any(f => string.Equals(f.Name, key, StringComparison.OrdinalIgnoreCase)))
+                        throw new McpToolError($"{StructLabel(p)} has no field '{key}'. Its fields: "
+                                               + string.Join(", ", fields.Select(f => f.Name)) + ".");
+                var texts = new string[fields.Count];
+                for (int i = 0; i < fields.Count; i++)
+                {
+                    var f = fields[i];
+                    bool isString = ParamBufferBuilder.IsStringType(f.TypeName);
+                    if (Given(values, f.Name) is not { } v)
+                    {
+                        texts[i] = isString ? "" : "0";
+                        continue;
+                    }
+                    if (isString)
+                    {
+                        texts[i] = Text(v);
+                        continue;
+                    }
+                    string s = StrictScalar(f.TypeName, v, $"{p.Name}.{f.Name}");
+                    // A struct's object field is passed as given too: a live object's address or 0, as at top level.
+                    if (ParamBufferBuilder.IsPickablePointerType(f.TypeName) && McpArgs.TryParseHex(s, out ulong fp)
+                        && fp != 0 && !await IsLiveObjectAsync(game, pid, s, timeout, ct))
+                        throw new McpToolError($"'{p.Name}.{f.Name}' must be a live object's address (or 0); {s} is not one.");
+                    texts[i] = s;
+                }
+                if (!ParamBufferBuilder.TryValidateStructSubFields(fields, texts, out string bad, out string err))
+                    throw new McpToolError($"'{p.Name}.{bad}': {err}");
+                ParamBufferBuilder.WriteStructParam(buf, p.Offset, fields, texts);
+                continue;
+            }
+            if (ParamBufferBuilder.IsStringType(type))
+            {
+                if (node is null) continue;
+                if (p.IsOut) throw new McpToolError($"'{p.Name}' is an out string: the function fills it; leave it out.");
+                strings.Add(new InvokeStringParam(p.Offset, ParamBufferBuilder.IsWideString(type), Text(node)));
+                continue;
+            }
+            if (ParamBufferBuilder.IsEmptyOnlyParam(type))
+            {
+                if (!IsEmpty(node)) throw new McpToolError($"'{p.Name}' ({ParamBufferBuilder.ShortTypeName(type)}) can "
+                                                           + "only be passed empty.");
+                continue;
+            }
+            if (ParamBufferBuilder.IsUnwritableParam(type))
+            {
+                if (!IsEmpty(node)) throw new McpToolError($"'{p.Name}' ({ParamBufferBuilder.ShortTypeName(type)}) has no "
+                                                           + "fields the DLL could read, so it cannot be passed in.");
+                continue;
+            }
+            if (node is null) continue;
+            string scalar = StrictScalar(type, node, p.Name);
+            if (ParamBufferBuilder.IsPickablePointerType(type) && McpArgs.TryParseHex(scalar, out ulong ptr) && ptr != 0
+                && !await IsLiveObjectAsync(game, pid, scalar, timeout, ct))
+                throw new McpToolError($"'{p.Name}' must be a live object's address (or 0); {scalar} is not one.");
+            if (!ParamBufferBuilder.TryValidateScalar(type, p.Size, scalar, out string rangeErr))
+                throw new McpToolError($"'{p.Name}': {rangeErr}");
+            ParamBufferBuilder.WriteParam(buf, p.Offset, type, p.Size, scalar);
+        }
+        return new InvokeCall(buf, size, strings);
+    }
+
+    /// <summary>A struct parameter's fields as the dialog expands them: a trusted engine layout first (version-aware),
+    /// then the fields the DLL walked; null for a scalar or a layout-less struct.</summary>
+    private static IReadOnlyList<DynamicStructField>? StructFields(FunctionParamModel p, int ueVersion)
+    {
+        var layout = InvokeParamDialog.ResolveTrustedLayout(p.TypeName, p.StructName, p.Size, ueVersion);
+        if (layout is not null)
+            return layout.Fields.Select(f => new DynamicStructField(f.Name, f.TypeName, f.Offset, f.Size)).ToList();
+        return p.TypeName == "StructProperty" && p.StructFields.Count > 0 ? p.StructFields : null;
+    }
+
+    private static string StructLabel(FunctionParamModel p) => string.IsNullOrEmpty(p.StructName) ? "struct" : p.StructName;
+
+    /// <summary>A slot the DLL converts with a game-thread call of its own before the call (PrepareObjectParams).</summary>
+    private static bool IsConvertedSlot(string type)
+        => type is "WeakObjectProperty" or "SoftObjectProperty" or "SoftClassProperty" or "LazyObjectProperty";
+
+    /// <summary>A scalar's text, refused unless it parses as its type: the dialog's parsers read anything else as 0, which
+    /// a person sees in the box and an AI would not. A JSON number with an integral value is accepted for an integer.
+    /// Pointers come back as "0x" hex.</summary>
+    internal static string StrictScalar(string type, JsonNode node, string label)
+    {
+        string text = Text(node).Trim();
+        if (type == "BoolProperty")
+            return BakedScriptGenerator.ParseBoolLiteral(text) is not null ? text
+                : throw new McpToolError($"'{label}' is a bool: pass true or false.");
+        if (type is "FloatProperty" or "DoubleProperty")
+        {
+            // A float holds up to float.MaxValue; anything bigger would reach the game as infinity.
+            double limit = type == "FloatProperty" ? float.MaxValue : double.MaxValue;
+            return double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) && double.IsFinite(d)
+                   && Math.Abs(d) <= limit
+                ? text : throw new McpToolError($"'{label}' is a {(type == "FloatProperty" ? "float" : "number")}: "
+                                                + $"'{text}' is not one it can hold.");
+        }
+        if (type == "NameProperty")
+            return TryInteger(text, type, out string n) ? n
+                : throw new McpToolError($"'{label}' is an FName: pass its number (read_instance shows a field's raw "
+                                         + "value); a name string is not looked up.");
+        if (ParamBufferBuilder.IsPickablePointerType(type))
+        {
+            if (!TryInteger(text, type, out string ptrText) || ptrText.StartsWith('-')
+                || !BakedScriptGenerator.TryParseHexOrDecimal(ptrText, out ulong ptr))
+                throw new McpToolError($"'{label}' is an object: pass its hex address (0 for none).");
+            return "0x" + ptr.ToString("X", CultureInfo.InvariantCulture);
+        }
+        if (IntegerTypes.Contains(type))
+            return TryInteger(text, type, out string i) ? i
+                : throw new McpToolError($"'{label}' is an integer: '{text}' is not one (an enum goes as its value).");
+        return text;
+    }
+
+    // The types WriteParam reads as a signed 64-bit value (long.TryParse): a decimal above long.MaxValue would read as 0.
+    private static readonly HashSet<string> SignedParseTypes =
+        ["Int16Property", "IntProperty", "UInt32Property", "Int64Property", "EnumProperty"];
+
+    /// <summary>Decimal, negative decimal or 0x hex, as the dialog's parser reads them; or a JSON number with an integral
+    /// value (100.0). A decimal above long.MaxValue for a type WriteParam reads as signed becomes its two's-complement
+    /// value, the bits TryValidateScalar checked.</summary>
+    private static bool TryInteger(string text, string type, out string normalized)
+    {
+        normalized = text;
+        if (BakedScriptGenerator.TryParseHexOrDecimal(text, out ulong bits))
+        {
+            if (bits > long.MaxValue && !text.StartsWith('-') && !text.StartsWith("0x", StringComparison.OrdinalIgnoreCase)
+                && SignedParseTypes.Contains(type))
+                normalized = unchecked((long)bits).ToString(CultureInfo.InvariantCulture);
+            return true;
+        }
+        if (double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out double d) && double.IsFinite(d)
+            && d == Math.Floor(d) && Math.Abs(d) < 9.0e15)
+        {
+            normalized = ((long)d).ToString(CultureInfo.InvariantCulture);
+            return true;
+        }
+        return false;
+    }
+
+    private static JsonNode? Given(JsonObject given, string name)
+    {
+        if (given[name] is { } exact) return exact;
+        foreach (var (key, value) in given)
+            if (string.Equals(key, name, StringComparison.OrdinalIgnoreCase)) return value;
+        return null;
+    }
+
+    private static string Text(JsonNode node) => node is JsonValue v
+        ? v.GetValueKind() switch
+        {
+            JsonValueKind.String => v.GetValue<string>(),
+            JsonValueKind.True => "true",
+            JsonValueKind.False => "false",
+            _ => v.ToJsonString(),
+        }
+        : node.ToJsonString();
+
+    private static bool IsEmpty(JsonNode? node) => node switch
+    {
+        null => true,
+        JsonArray arr => arr.Count == 0,
+        JsonObject obj => obj.Count == 0,
+        JsonValue v => v.GetValueKind() switch
+        {
+            JsonValueKind.Null or JsonValueKind.False => true,
+            JsonValueKind.String => v.GetValue<string>().Length == 0,
+            JsonValueKind.Number => Text(v) == "0",
+            _ => false,
+        },
+        _ => false,
+    };
+
+    /// <summary>An invoke's reply: a refusal (ok:false, nothing ran), another client's outstanding call (code -20), a
+    /// call that ran (its return value and out parameters, decoded as the Invoke dialog does), one still queued (-5, whose
+    /// buffer is the INPUT, never shown as output), or one that did not run.</summary>
+    internal static McpToolResult Answer(JsonObject reply, FunctionInfoModel fn, int ueVersion)
+    {
+        if (!McpWriteTools.Truthy(reply, "ok"))
+        {
+            if (McpJson.TryGetLong(reply["code"], out long code) && code == HeldByOther)
+                return McpToolResult.Fail("Not invoked: " + McpWriteTools.DescribeHolder(reply["holder"] as JsonObject)
+                                          + " has a game-thread call still queued or running, and this server never "
+                                          + "queues beside it. Try again once it has run (read_holds lists it).");
+            return McpToolResult.Fail(McpJson.GetString(reply, "error") ?? "Not invoked.");
+        }
+        long result = McpJson.TryGetLong(reply["result"], out long r) ? r : -999;
+        var payload = new JsonObject
+        {
+            ["function"] = fn.Name,
+            ["instance"] = McpJson.GetString(reply, "instance_name") ?? "",
+            ["class"] = McpJson.GetString(reply, "instance_class_name") ?? "",
+            ["result"] = result,
+        };
+        if (reply["game_thread_stalled"] is JsonNode stalled) payload["game_thread_stalled"] = stalled.DeepClone();
+        // [INVOKE-NONSTATIC-ON-CDO] On a failure too, where it is the likely reason.
+        string? template = reply["nonstatic_on_template"] is JsonValue t && t.TryGetValue<bool>(out bool warn) && warn
+            ? " The object is a template (a class default or an archetype) and the function is not static: it may do "
+              + "nothing there, or fault."
+            : null;
+        if (result == InvokeQueued)
+        {
+            payload["queued"] = true;
+            return new McpToolResult(payload, Note: "Queued: the game thread did not run the call in time. It runs when "
+                + "the game thread is free, unless this session ends first. Do not send it again; read_holds lists it "
+                + "until it runs.");
+        }
+        if (result != 0)
+        {
+            string why = result == InvokeFaulted
+                ? "it was entered and faulted inside (it may have done part of its work)"
+                : "it did not run";
+            return new McpToolResult(payload, IsError: true,
+                Note: "The call failed (code " + result.ToString(CultureInfo.InvariantCulture) + "): " + why + ". "
+                      + (McpJson.GetString(reply, "error") ?? "") + template);
+        }
+
+        string hex = McpJson.GetString(reply, "result_hex") ?? "";
+        if (hex.Length > 0)
+        {
+            var bytes = InvokeParamDialog.HexToBytes(hex);
+            var strings = DumpService.ParseStringResults(reply["str_results"] as JsonArray);
+            var outs = new JsonObject();
+            foreach (var p in fn.Parameters.Where(p => p.IsReturn || p.IsOut))
+            {
+                string value = Decode(bytes, p, strings, ueVersion);
+                if (p.IsReturn) payload["return"] = value;
+                else outs[p.Name] = value;
+            }
+            if (outs.Count > 0) payload["out"] = outs;
+        }
+        return new McpToolResult(payload, Note: template?.Trim());
+    }
+
+    private static string Decode(byte[] bytes, FunctionParamModel p, IReadOnlyDictionary<int, string?> strings,
+        int ueVersion)
+    {
+        var layout = InvokeParamDialog.ResolveTrustedLayout(p.TypeName, p.StructName, p.Size, ueVersion);
+        if (layout is not null) return InvokeParamDialog.DecodeStructParamValue(bytes, p, layout);
+        if (p.TypeName == "StructProperty" && p.StructFields.Count > 0)
+            return InvokeParamDialog.DecodeDynamicStructParamValue(bytes, p);
+        return InvokeParamDialog.DecodeParamValue(bytes, p, strings);
+    }
+}

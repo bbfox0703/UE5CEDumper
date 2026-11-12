@@ -17,6 +17,7 @@
 #include "Routine.h"   // Routine::RunThreadGuarded — a throw out of the PE hook fast-fails the GAME (B14)
 #include "Lager.h"     // MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY])
 #include "Falsch.h"    // MinHook trampoline pre-flight against Zydis ([MH-TRAMPOLINE-PREFLIGHT])
+#include "Tot.h"       // the shutdown flag a queued invoke's wait answers to ([SHUTDOWN-SEETHRU-WAIT])
 
 #include <MinHook.h>
 #include <Windows.h>
@@ -29,7 +30,8 @@
 #include <future>
 #include <memory>
 #include <mutex>
-#include <queue>
+#include <deque>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -70,6 +72,9 @@ struct InvokeRequest {
     std::promise<int32_t> promise;
     bool dropIfAbandoned = false;                   // [VND584-01] ClaimRequest (Stark.h)
     std::atomic<int32_t> state{kRequestQueued};
+    uint64_t owner = 0;                             // [D2-3-INVOKE] InvokeOwnerScope's owner (RetagQueued may move it)
+    bool settled = false;                           // [D2-3-INVOKE] taken off s_outstanding (under s_queueMutex)
+    uint64_t id = 0;                                // [D2-3-INVOKE] for RetagQueued
 };
 
 // ---- State ----
@@ -80,7 +85,31 @@ static FnProcessEvent s_originalPE = nullptr;
 
 // Pending invoke queue
 static std::mutex s_queueMutex;
-static std::queue<std::shared_ptr<InvokeRequest>> s_invokeQueue;
+// A deque, not a queue: DropQueuedInvokesOf takes one owner's requests out of the middle.
+static std::deque<std::shared_ptr<InvokeRequest>> s_invokeQueue;
+// [D2-3-INVOKE] Requests each owner has outstanding, under s_queueMutex: counted from the push until the request is
+// answered (run, dropped, or answered at shutdown) -- NOT until its waiter gives up, so a -5 request still counts; a
+// dropIfAbandoned request its waiter abandons will never run, so it stops counting then.
+static std::map<uint64_t, int32_t> s_outstanding;
+static thread_local uint64_t t_invokeOwner = 0;
+static thread_local bool t_invokeIfFree = false;
+static thread_local uint64_t t_lastInvokeBlocker = 0;
+static std::atomic<uint64_t> s_nextRequestId{1};
+static thread_local uint64_t t_lastEnqueuedId = 0;
+// [D2-3-INVOKE] Set on the game thread while the drain runs a request: a ProcessEvent the request makes does not drain
+// the rest inside it. Taking one request at a time leaves the rest in the queue (where DropQueuedInvokesOf reaches
+// them), and without this they would run nested inside the first, one level deeper each.
+static thread_local bool t_draining = false;
+
+// Under s_queueMutex: `req` was answered, or will never run (its waiter abandoned it). Once only, whichever path
+// reaches it first: the waiter's abandon, the drain, Shutdown or an owner's drop.
+static void SettleLocked(InvokeRequest& req) {
+    if (req.settled) return;
+    req.settled = true;
+    auto it = s_outstanding.find(req.owner);
+    if (it == s_outstanding.end()) return;
+    if (--it->second <= 0) s_outstanding.erase(it);
+}
 // Relaxed mirror of s_invokeQueue.size(), maintained under s_queueMutex. Lets the
 // hot ProcessEvent hook skip taking the mutex on the overwhelmingly common path
 // where no invoke is pending (ProcessEvent fires thousands of times per second).
@@ -210,10 +239,10 @@ struct OwnPeCallGuard {
 // for us and the process fast-fails (0xC0000409, FAST_FAIL_FATAL_APP_EXIT).
 //
 // That is not hypothetical — it is the DQ7R crash of 2026-08-04 (build 2622), captured in
-// a WER dump whose entire stack was inside our module. It allocates in two places, both
-// reachable while the game is tearing its object pool down: Linie's map insert, and the
-// `pending` vector below. Zero cost on x64 when nothing throws (table-driven EH). (B14,
-// scope corrected by in-game verification.)
+// a WER dump whose entire stack was inside our module. It allocates where it is reachable
+// while the game is tearing its object pool down: Linie's map insert, and (before D2-3 took
+// one request at a time) the drain's batch vector. Zero cost on x64 when nothing throws
+// (table-driven EH). (B14, scope corrected by in-game verification.)
 static void HookedProcessEventBody(void* ufunc, uint64_t nowMs, Linie::ArmHint& hint, bool onGameThread) {
     // Live PE profiler (Linie): opt-in per-UFunction fire counting. The
     // not-recording path pays exactly one relaxed atomic load + a
@@ -247,27 +276,42 @@ static void HookedProcessEventBody(void* ufunc, uint64_t nowMs, Linie::ArmHint& 
                      (unsigned long)s_gameThreadId.load(std::memory_order_relaxed), depth);
         }
     }
-    if (ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {
-        std::vector<std::shared_ptr<InvokeRequest>> pending;
-
+    if (!t_draining && ShouldDrainQueue(depth, InOwnPeCall(), onGameThread)) {
+        // [D2-3-INVOKE] One request at a time, each taken under the lock just before it runs, so a request still waiting
+        // here stays in the queue where DropQueuedInvokesOf finds it: a departed AI's call is dropped even while an
+        // earlier one runs. Bounded by the count at the start, so requests queued meanwhile wait for the next
+        // top-level ProcessEvent instead of keeping the game thread here; t_draining keeps a request's own ProcessEvent
+        // calls from draining the rest inside it, as the batch this replaced did.
+        struct DrainScope {
+            DrainScope() { t_draining = true; }
+            ~DrainScope() { t_draining = false; }
+        } drainScope;
+        size_t budget = 0;
         {
             std::lock_guard<std::mutex> lock(s_queueMutex);
-            while (!s_invokeQueue.empty()) {
-                pending.push_back(std::move(s_invokeQueue.front()));
-                s_invokeQueue.pop();
-            }
-            s_queueDepth.store(0, std::memory_order_release);
+            budget = s_invokeQueue.size();
         }
 
-        // Execute all pending requests outside the lock
-        for (auto& req : pending) {
+        for (; budget > 0; --budget) {
+            std::shared_ptr<InvokeRequest> req;
+            {
+                std::lock_guard<std::mutex> lock(s_queueMutex);
+                if (s_invokeQueue.empty()) break;   // dropped meanwhile
+                req = std::move(s_invokeQueue.front());
+                s_invokeQueue.pop_front();
+                s_queueDepth.store(s_invokeQueue.size(), std::memory_order_release);
+            }
             if (req->dropIfAbandoned && !ClaimRequest(req->state, kRequestRunning)) {
                 LOG_INFO("GameThreadDispatch: dropped an abandoned request func=0x%llX",
                          (unsigned long long)req->ufunc);
+                { std::lock_guard<std::mutex> lock(s_queueMutex); SettleLocked(*req); }
                 try { req->promise.set_value(kInvokeTimedOutStillQueued); } catch (...) {}
                 continue;
             }
             int32_t result = CallProcessEventSEH(req->instance, req->ufunc, req->params);
+            // [D2-3-INVOKE] Answered: no longer outstanding. Before the promise, so a caller woken by it reads a count
+            // that already excludes this request.
+            { std::lock_guard<std::mutex> lock(s_queueMutex); SettleLocked(*req); }
 
             if (result == -4) {
                 LOG_ERROR("GameThreadDispatch: SEH exception during queued PE call "
@@ -864,7 +908,8 @@ void Shutdown() {
         std::lock_guard<std::mutex> lock(s_queueMutex);
         while (!s_invokeQueue.empty()) {
             auto req = std::move(s_invokeQueue.front());
-            s_invokeQueue.pop();
+            s_invokeQueue.pop_front();
+            SettleLocked(*req);
             try {
                 req->promise.set_value(-7); // hook not active
             } catch (...) {
@@ -898,6 +943,7 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
     req->instance = instance;
     req->ufunc = ufunc;
     req->dropIfAbandoned = dropIfAbandoned;
+    req->owner = t_invokeOwner;
     // Own a copy of the param bytes so a timed-out-but-still-queued request can
     // never dereference a freed caller buffer (use-after-free). When the caller
     // passes size 0 (a persistent buffer like Mimic's global), use the pointer
@@ -915,28 +961,64 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
 
     {
         std::lock_guard<std::mutex> lock(s_queueMutex);
+        // [D2-3-INVOKE] if_free: decided under the queue's lock, so no other owner's push slips between the check and
+        // this one. A refused request is never queued.
+        if (t_invokeIfFree) {
+            for (const auto& [other, count] : s_outstanding) {
+                if (!InvokeBlocks(other, count, req->owner)) continue;
+                t_lastInvokeBlocker = other;
+                LOG_INFO("GameThreadDispatch: if_free invoke refused -- another client has %d invoke(s) outstanding",
+                         count);
+                return kInvokeHeldByOther;
+            }
+        }
         // Push a COPY of the shared_ptr (refcount stays >=1 locally) so `req`
         // remains valid below for the out-param copy-back even after the game
         // thread drains and pops the queue entry.
-        s_invokeQueue.push(req);
+        req->id = s_nextRequestId.fetch_add(1, std::memory_order_relaxed);
+        t_lastEnqueuedId = req->id;
+        s_invokeQueue.push_back(req);
+        ++s_outstanding[req->owner];
         s_queueDepth.fetch_add(1, std::memory_order_release);  // wake the hook's fast-path gate
     }
 
     LOG_INFO("GameThreadDispatch: enqueued invoke inst=0x%llX func=0x%llX, waiting...",
              (unsigned long long)instance, (unsigned long long)ufunc);
 
-    // Wait for game thread to execute the request
-    int32_t timeoutMs = s_invokeTimeoutMs.load();
-    auto status = future.wait_for(std::chrono::milliseconds(timeoutMs));
-    if (status == std::future_status::timeout && dropIfAbandoned && !ClaimRequest(req->state, kRequestAbandoned)) {
-        // [VND584-01] The drain claimed it first: it is running now. Wait it out and take its result.
-        future.wait();
-        status = std::future_status::ready;
+    // Wait for game thread to execute the request. In slices, so a shutdown that meets a stalled game thread ends the
+    // wait: only Stark::Shutdown would answer it, and UE5_Shutdown reaches that after joining the workers waiting here.
+    // [SHUTDOWN-SEETHRU-WAIT]
+    const int32_t timeoutMs = s_invokeTimeoutMs.load();
+    const uint64_t waitStart = NowMs();
+    const InvokeWaitEnd end = WaitQueuedInvoke(timeoutMs,
+        [&](int32_t ms) { return future.wait_for(std::chrono::milliseconds(ms)) == std::future_status::ready; },
+        [] { return NowMs(); },
+        [] { return CutInvokeWait(Tot::ShutdownRequested(), GetGameThreadLiveness(kInvokeShutdownStallMs)); });
+    auto status = end == InvokeWaitEnd::Ready ? std::future_status::ready : std::future_status::timeout;
+    if (end == InvokeWaitEnd::CutByShutdown) {
+        LOG_WARN("GameThreadDispatch: invoke wait cut short after %llu of %d ms -- a shutdown is under way and the game "
+                 "thread is stalled; the request stays queued inst=0x%llX func=0x%llX",
+                 (unsigned long long)(NowMs() - waitStart), timeoutMs,
+                 (unsigned long long)instance, (unsigned long long)ufunc);
+    }
+    if (status == std::future_status::timeout && dropIfAbandoned) {
+        if (!ClaimRequest(req->state, kRequestAbandoned)) {
+            // [VND584-01] The drain claimed it first: it is running now. Wait it out and take its result.
+            future.wait();
+            status = std::future_status::ready;
+        } else {
+            // [D2-3-INVOKE] Abandoned: it will never run, so it is no longer outstanding -- an AI is not told a call is
+            // still queued when it is not.
+            std::lock_guard<std::mutex> lock(s_queueMutex);
+            SettleLocked(*req);
+        }
     }
     if (status == std::future_status::timeout) {
-        LOG_ERROR("GameThreadDispatch: invoke timeout (%dms) inst=0x%llX func=0x%llX",
-                  timeoutMs,
-                  (unsigned long long)instance, (unsigned long long)ufunc);
+        if (end == InvokeWaitEnd::TimedOut) {
+            LOG_ERROR("GameThreadDispatch: invoke timeout (%dms) inst=0x%llX func=0x%llX",
+                      timeoutMs,
+                      (unsigned long long)instance, (unsigned long long)ufunc);
+        }
         // The request stays queued. When the caller supplied a size (>0) the
         // request owns a COPY of the param bytes, so the eventual game-thread
         // execution reads stable data even after the caller's buffer is reused/
@@ -957,6 +1039,79 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
     }
     LOG_INFO("GameThreadDispatch: invoke completed result=%d", result);
     return result;
+}
+
+// ---- [D2-3-INVOKE] owners ----
+
+InvokeOwnerScope::InvokeOwnerScope(uint64_t owner, bool ifFree)
+    : m_prevOwner(t_invokeOwner), m_prevIfFree(t_invokeIfFree) {
+    t_invokeOwner = owner;
+    t_invokeIfFree = ifFree;
+}
+
+InvokeOwnerScope::~InvokeOwnerScope() {
+    t_invokeOwner = m_prevOwner;
+    t_invokeIfFree = m_prevIfFree;
+}
+
+bool CurrentInvokeIfFree() { return t_invokeIfFree; }
+
+uint64_t LastInvokeBlocker() { return t_lastInvokeBlocker; }
+
+uint64_t CurrentInvokeOwner() { return t_invokeOwner; }
+
+uint64_t LastEnqueuedId() { return t_lastEnqueuedId; }
+
+bool RetagQueued(uint64_t id, uint64_t owner) {
+    if (id == 0) return false;
+    std::lock_guard<std::mutex> lock(s_queueMutex);
+    for (auto& req : s_invokeQueue) {
+        if (req->id != id) continue;
+        if (req->settled) return false;
+        if (req->owner == owner) return true;
+        auto it = s_outstanding.find(req->owner);
+        if (it != s_outstanding.end() && --it->second <= 0) s_outstanding.erase(it);
+        ++s_outstanding[owner];
+        req->owner = owner;
+        return true;
+    }
+    return false;   // already taken by the drain (it runs now), or answered
+}
+
+uint64_t IfFreeBlocker(uint64_t caller) {
+    std::lock_guard<std::mutex> lock(s_queueMutex);
+    for (const auto& [other, count] : s_outstanding)
+        if (InvokeBlocks(other, count, caller)) return other;
+    return 0;
+}
+
+std::vector<std::pair<uint64_t, int32_t>> OutstandingInvokes() {
+    std::lock_guard<std::mutex> lock(s_queueMutex);
+    return {s_outstanding.begin(), s_outstanding.end()};
+}
+
+int32_t DropQueuedInvokesOf(uint64_t owner) {
+    if (owner == 0) return 0;   // the DLL's own workers are nobody's to drop
+    std::vector<std::shared_ptr<InvokeRequest>> dropped;
+    {
+        std::lock_guard<std::mutex> lock(s_queueMutex);
+        for (auto it = s_invokeQueue.begin(); it != s_invokeQueue.end();) {
+            InvokeRequest& req = **it;
+            // A dropIfAbandoned request whose waiter already gave it up is skipped by the drain, which answers it.
+            if (req.owner != owner || !ClaimRequest(req.state, kRequestAbandoned)) { ++it; continue; }
+            SettleLocked(req);
+            dropped.push_back(std::move(*it));
+            it = s_invokeQueue.erase(it);
+        }
+        s_queueDepth.store(s_invokeQueue.size(), std::memory_order_release);
+    }
+    // Answered outside the lock: a caller woken by the promise may take the queue's lock itself.
+    for (auto& req : dropped) {
+        try { req->promise.set_value(kInvokeDroppedOwnerLeft); } catch (...) {}
+        LOG_INFO("GameThreadDispatch: dropped a queued invoke func=0x%llX -- its client left before it ran",
+                 (unsigned long long)req->ufunc);
+    }
+    return static_cast<int32_t>(dropped.size());
 }
 
 // Public setter/getter for the invoke timeout. Clamped to a sane band so

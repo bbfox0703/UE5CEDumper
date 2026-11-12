@@ -99,6 +99,14 @@ DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool us
 namespace FrierenInvoke {
 bool PrepareObjectParams(uintptr_t ufunc, uint8_t* params, size_t size, bool direct, std::string& why);
 }
+// [D2-3-INVOKE] Frieren.cpp: whether a debug-camera ON is queued or being dispatched, and which client sent it.
+namespace FrierenDebugCamera {
+bool PendingOn(uint64_t& owner);
+bool ConsumeJoin(uint64_t caller, uint64_t& joinedBy);
+bool ToggleOutstanding();   // [DBGCAM-RELEASE-STALLED] a toggle of either direction yet to run
+}
+// [DBGCAM-RELEASE-STALLED] Defined beside the owed record, below; Fern::Stop drops it.
+namespace { void DropOwedCameraRelease(); }
 
 // ============================================================
 // Radar wire helpers — parse "100" / "-42" / "3.14" / "true" /
@@ -790,6 +798,7 @@ void Fern::Stop(bool graceful) {
         m_monitorThread.join();
     }
     LOG_INFO("PipeServer: Stop monitor join done (%lld ms)", elapsedMs());
+    DropOwedCameraRelease();   // [DBGCAM-RELEASE-STALLED] nothing owed crosses a stop
 
     // No handler thread is running now — free every remaining value-scan session.
     Radar::SessionManager::Instance().DropAll();
@@ -828,6 +837,255 @@ void Fern::ReevaluatePerCommandCancel() {
     LOG_INFO("PipeServer: per-command cancel cleared — no connection that raised it is still live");
 }
 
+// ── Holds and their owners ─────────────────────────────────────────────────
+// [PIPE-PER-PROCESS-2026-11-06] Stage D2-1. The ledger (Voll::HoldLedger) keeps who holds what; these read whether a
+// hold is active, and release one, from the module that runs it.
+
+namespace {
+
+int32_t MovementKnobId(const std::string& knob) {
+    return knob == "walk_speed" ? Laufen::KNOB_WALK_SPEED
+         : knob == "gravity"    ? Laufen::KNOB_GRAVITY
+         : knob == "jump"       ? Laufen::KNOB_JUMP : -1;
+}
+
+int32_t TimeTargetId(const std::string& target) {
+    return target == "global" ? Hemmung::DIL_GLOBAL : target == "pawn" ? Hemmung::DIL_PAWN : -1;
+}
+
+bool StartsWith(const std::string& s, const char* prefix) { return s.rfind(prefix, 0) == 0; }
+
+// "<class>::<field>" of a force-field hold's name, split back.
+bool SplitForceField(const std::string& hold, std::string& cls, std::string& field) {
+    const std::string job = hold.substr(std::strlen(Grimoire::HOLD_FORCE_FIELD_PREFIX));
+    const size_t sep = job.find("::");
+    if (sep == std::string::npos) return false;
+    cls = job.substr(0, sep);
+    field = job.substr(sep + 2);
+    return !cls.empty() && !field.empty();
+}
+
+std::vector<std::string> ForceFieldJobs() {
+    std::vector<Solide::ForcedFieldInfo> fields;
+    std::vector<std::string> out;
+    if (Solide::GetState(fields) == Solide::FR_OK)
+        for (const auto& f : fields) out.push_back(f.className + "::" + f.fieldName);
+    return out;
+}
+
+// [D2-3-INVOKE] Whether a change turning `hold` on is on its way, and which client sent it: a debug-camera ON still
+// queued or being dispatched (FrierenDebugCamera::PendingOn). The if_free check counts it as in force -- the camera is
+// its sender's from now -- and the hold recorder gives it to that sender only.
+bool HoldPending(const std::string& hold, uint64_t& sender) {
+    sender = 0;
+    return hold == Grimoire::HOLD_DEBUG_CAMERA && FrierenDebugCamera::PendingOn(sender);
+}
+
+// Whether `hold` is in force now, read from its module: a hold someone turned off is free, whatever owner the ledger
+// still names.
+bool HoldActive(const std::string& hold) {
+    if (hold == Grimoire::HOLD_GOD_MODE) {
+        int32_t want = 0, live = -1, resolvable = 0;
+        UE5_GetProtectState(&want, &live, &resolvable);
+        return want != 0;
+    }
+    if (hold == Grimoire::HOLD_FOREGROUND_LOCK) return Grausam::IsForegroundLockEnabled() == 1;
+    if (hold == Grimoire::HOLD_GRAVITY_DIRECTION) {
+        Laufen::GravDirInfo info{};
+        Laufen::GetGravityDirection(info);
+        return info.active;
+    }
+    if (hold == Grimoire::HOLD_FLY) {
+        Dunste::FlyStatus st{};
+        Dunste::GetStatus(st);
+        return st.active;
+    }
+    if (hold == Grimoire::HOLD_DEBUG_CAMERA) return UE5_GetDebugCameraState() == 1;
+    if (StartsWith(hold, Grimoire::HOLD_MOVEMENT_PREFIX)) {
+        const int32_t kid = MovementKnobId(hold.substr(std::strlen(Grimoire::HOLD_MOVEMENT_PREFIX)));
+        if (kid < 0) return false;
+        Laufen::KnobInfo info{};
+        Laufen::GetKnob(kid, info);
+        return info.active;
+    }
+    if (StartsWith(hold, Grimoire::HOLD_TIME_PREFIX)) {
+        const int32_t tid = TimeTargetId(hold.substr(std::strlen(Grimoire::HOLD_TIME_PREFIX)));
+        if (tid < 0) return false;
+        Hemmung::DilationInfo info{};
+        Hemmung::GetDilation(tid, info);
+        return info.active;
+    }
+    if (StartsWith(hold, Grimoire::HOLD_FORCE_FIELD_PREFIX)) {
+        const std::string job = hold.substr(std::strlen(Grimoire::HOLD_FORCE_FIELD_PREFIX));
+        for (const auto& j : ForceFieldJobs())
+            if (j == job) return true;
+        return false;
+    }
+    return false;
+}
+
+// Ends `hold` as its own off / reset command would. Returns that call's code.
+int32_t ReleaseHold(const std::string& hold) {
+    if (hold == Grimoire::HOLD_GOD_MODE) return UE5_SetGodMode(0);
+    if (hold == Grimoire::HOLD_FOREGROUND_LOCK) return Grausam::SetForegroundLock(false);
+    if (hold == Grimoire::HOLD_GRAVITY_DIRECTION) return Laufen::ResetGravityDirection();
+    if (hold == Grimoire::HOLD_FLY) return Dunste::SetEnabled(false);
+    if (hold == Grimoire::HOLD_DEBUG_CAMERA) return UE5_SetDebugCamera(0);
+    if (StartsWith(hold, Grimoire::HOLD_MOVEMENT_PREFIX)) {
+        const int32_t kid = MovementKnobId(hold.substr(std::strlen(Grimoire::HOLD_MOVEMENT_PREFIX)));
+        return kid < 0 ? -1 : Laufen::ResetKnob(kid);
+    }
+    if (StartsWith(hold, Grimoire::HOLD_TIME_PREFIX)) {
+        const int32_t tid = TimeTargetId(hold.substr(std::strlen(Grimoire::HOLD_TIME_PREFIX)));
+        return tid < 0 ? -1 : Hemmung::ResetDilation(tid);
+    }
+    if (StartsWith(hold, Grimoire::HOLD_FORCE_FIELD_PREFIX)) {
+        std::string cls, field;
+        return SplitForceField(hold, cls, field) ? Solide::RemoveForce(cls.c_str(), field.c_str()) : -1;
+    }
+    return -1;
+}
+
+// Every hold get_holds reports: the fixed ones, then each force-field job there is.
+std::vector<std::string> KnownHolds() {
+    std::vector<std::string> out = {
+        Grimoire::HOLD_GOD_MODE, Grimoire::HOLD_FOREGROUND_LOCK, Grimoire::HOLD_GRAVITY_DIRECTION,
+        Grimoire::HOLD_FLY, Grimoire::HOLD_DEBUG_CAMERA,
+    };
+    for (const char* knob : {"walk_speed", "gravity", "jump"})
+        out.push_back(std::string(Grimoire::HOLD_MOVEMENT_PREFIX) + knob);
+    for (const char* lane : {"global", "pawn"})
+        out.push_back(std::string(Grimoire::HOLD_TIME_PREFIX) + lane);
+    for (const auto& job : ForceFieldJobs())
+        out.push_back(std::string(Grimoire::HOLD_FORCE_FIELD_PREFIX) + job);
+    return out;
+}
+
+// [DBGCAM-RELEASE-STALLED] The background client whose debug-camera release is owed (0: none): its OFF timed out with
+// the game thread stalled and stays queued, and on stock UE 4.18-5.7 a queued OFF does not turn the camera off. Set by
+// Fern::ReleaseOwnedBy, served by MonitorLoop.
+static_assert(Voll::kOwedOffQueued == Stark::kInvokeTimedOutStillQueued, "Voll's owed-release rules read Stark's -5");
+std::atomic<uint64_t> s_cameraReleaseOwedBy{0};
+
+// Whether the game thread entered ProcessEvent within `ms`, from the hook's own fire stamp. The physical hook outlives a
+// CE Disable (Stark::RemoveHook only clears its flag) and keeps stamping, so this measures the game thread even while
+// GetGameThreadLiveness answers Unknown; a hook that never fired counts as not running.
+bool GameThreadRanWithin(uint64_t ms) {
+    return Stark::HasOriginal() && Stark::MsSinceLastHookFire() <= ms;
+}
+// The re-check just before the owed OFF: the first one is up to kStallThresholdMs old plus a GObjects walk by then.
+constexpr uint64_t kOwedSendFreshMs = 150;
+
+// The owed OFF is never ProcessEvent's direct fallback off the game thread: marked a background worker for the call, it
+// is answered -8 instead when the hook went down between the check and the send (a CE Disable's Stark::Shutdown).
+// Restored on every exit, a throw included -- the MonitorLoop thread must not stay marked.
+struct NoDirectCall {
+    bool prev = Tot::t_backgroundWorker;
+    NoDirectCall() { Tot::t_backgroundWorker = true; }
+    ~NoDirectCall() { Tot::t_backgroundWorker = prev; }
+    NoDirectCall(const NoDirectCall&) = delete;
+    NoDirectCall& operator=(const NoDirectCall&) = delete;
+};
+
+// MonitorLoop, every tick: the owed OFF is sent again once the queued one has run and the game thread is running, unless
+// the camera became someone's meanwhile. Under the camera's hold lock, as every change of it is, so a client's Force ON
+// is either seen here first or waits for this OFF. The lock is only tried: a writer holds it across a game-thread wait,
+// and the peeks after this call must go on (the next tick sees what that writer recorded). So only this function's own
+// OFF can hold the loop up: a game thread that stops within kOwedSendFreshMs of the send, or during the OFF's own state
+// read, holds it for the invoke timeout (set_invoke_timeout allows up to 600 s), unless a shutdown finds the game thread
+// stalled and cuts the wait ([SHUTDOWN-SEETHRU-WAIT]).
+void ServeOwedCameraRelease() {
+    uint64_t owedBy = s_cameraReleaseOwedBy.load();
+    if (owedBy == 0) return;
+    // Every read below gives up under shutdown: the record waits, and Fern::Stop drops it.
+    if (Tot::ShutdownRequested()) return;
+    // Its reads answer to shutdown alone: on this unbound thread, a per-command cancel latched by another client's
+    // mid-command disconnect would read the camera as unknown and drop the release.
+    const Tot::CancelContextScope immune(Tot::CancelContext{nullptr, true});
+    std::unique_lock<std::mutex> holdLock(Voll::Holds().LockFor(Grimoire::HOLD_DEBUG_CAMERA), std::try_to_lock);
+    if (!holdLock.owns_lock()) return;
+    // The record as of the lock: every store is under it, so the one read here is the one these reads decide.
+    owedBy = s_cameraReleaseOwedBy.load();
+    if (owedBy == 0) return;
+    const uint64_t owner = Voll::Holds().Owner(Grimoire::HOLD_DEBUG_CAMERA);
+    uint64_t sender = 0;
+    const bool pendingOn = FrierenDebugCamera::PendingOn(sender);
+    // The queued toggle before the state: one that runs between the two leaves a stale "on", and the OFF reads again.
+    const bool outstanding = FrierenDebugCamera::ToggleOutstanding();
+    const bool notRunning = !GameThreadRanWithin(Stark::kStallThresholdMs);
+    Voll::OwedRelease step = Voll::OwedCameraReleaseBefore(owner, pendingOn, outstanding, notRunning);
+    if (step == Voll::OwedRelease::Wait) return;
+    int32_t state = -1, sent = 0;
+    bool sentOff = false, noHook = false;
+    if (step == Voll::OwedRelease::Read) {
+        state = UE5_GetDebugCameraState();
+        step = Voll::OwedCameraReleaseOnState(state);
+    }
+    if (step == Voll::OwedRelease::Send) {
+        if (!GameThreadRanWithin(kOwedSendFreshMs)) return;   // it stopped since the check: the next tick decides again
+        // A teardown under way: neither re-arm the hook (Stark::Shutdown's RemoveHook would not see it) nor send.
+        if (Tot::ShutdownRequested()) return;
+        // A hook a CE Disable soft-removed is brought back first: the OFF goes through the game thread, never a direct
+        // call off it.
+        if (Stark::IsHookActive() || UE5_EnsureGameThreadHook()) {
+            const NoDirectCall noDirectCall;
+            sent = UE5_SetDebugCamera(0);
+            sentOff = true;
+            step = Voll::OwedCameraReleaseSent(sent);
+            LOG_INFO("PipeServer: background client %llu's debug-camera release -- its queued OFF has run and the "
+                     "camera is still on: OFF sent again -> state %d", (unsigned long long)owedBy, sent);
+            if (step == Voll::OwedRelease::Wait) return;
+        } else {
+            step = Voll::OwedRelease::Abandon;
+            noHook = true;
+        }
+    }
+    // A read or an OFF that a shutdown beginning mid-call cut short decided nothing -- a cut walk can read 0 (off) as
+    // well as unknown. The record stays until Fern::Stop drops it.
+    if (owner == Voll::kHoldOwnerNone && !pendingOn && Tot::ShutdownRequested()) return;
+    s_cameraReleaseOwedBy.compare_exchange_strong(owedBy, 0);   // every store is under this lock: the record read above
+    const unsigned long long by = owedBy;
+    if (step == Voll::OwedRelease::Done)
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is done -- the camera is off", by);
+    else if (noHook)
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is abandoned -- no game-thread hook to send "
+                 "the OFF through (never a direct call off the game thread)", by);
+    else if (owner != Voll::kHoldOwnerNone)
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is abandoned -- the camera is held by "
+                 "another client or CE now", by);
+    else if (pendingOn)
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is abandoned -- an ON is on its way", by);
+    else if (sentOff)
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is abandoned -- the OFF sent again "
+                 "answered %d", by, sent);
+    else
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is abandoned -- the camera cannot be read "
+                 "(state %d)", by, state);
+}
+
+// Fern::Stop, once the monitor and every handler are joined: nothing owed crosses a stop. After the next Start nobody
+// can be named the camera's holder until the clients reconnect, so a record carried over would turn off a camera the
+// user turned on meanwhile -- the game's own toggle, a level change, another save. Dropped, and said.
+void DropOwedCameraRelease() {
+    const uint64_t owedBy = s_cameraReleaseOwedBy.exchange(0);
+    if (owedBy != 0)
+        LOG_INFO("PipeServer: background client %llu's debug-camera release is dropped at stop -- the camera may stay "
+                 "on; turn it off from the UI", (unsigned long long)owedBy);
+}
+
+}  // namespace
+
+bool Fern::IsBackgroundOwner(uint64_t owner) {
+    std::lock_guard<std::mutex> lock(m_connMutex);
+    return m_backgroundOwners.count(owner) != 0;
+}
+
+void Fern::MarkBackground(const std::shared_ptr<Connection>& conn) {
+    if (conn->background.exchange(true)) return;   // latched once
+    std::lock_guard<std::mutex> lock(m_connMutex);
+    m_backgroundOwners.insert(conn->ownerKey);
+}
+
 bool Fern::OwnerStillConnected(uint64_t owner) {
     std::lock_guard<std::mutex> lock(m_connMutex);
     for (const auto& c : m_conns)
@@ -857,14 +1115,57 @@ void Fern::ReleaseOwnedBy(uint64_t owner) {
         else
             LOG_INFO("PipeServer: client pid %llu left -- its LiveFuncs recording is freed", (unsigned long long)owner);
     }
+
+    // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1 (maintainer, 2026-11-11): what a background client (an AI session's MCP
+    // server) turned on ends with it. Each hold is released under its own lock and only while the ledger still names
+    // this owner, so a hold the UI or CE took over meanwhile stays. A foreground client's holds outlive it, as before.
+    if (!IsBackgroundOwner(owner) || OwnerStillConnected(owner)) return;
+    // [D2-3-INVOKE] Its invokes still queued go first: none runs after its session (a debug-camera toggle among them,
+    // which then never turns the camera on).
+    if (const int32_t dropped = Stark::DropQueuedInvokesOf(owner); dropped > 0)
+        LOG_INFO("PipeServer: background client %llu left -- %d queued invoke(s) of it dropped, never run",
+                 (unsigned long long)owner, dropped);
+    // [DBGCAM-RELEASE-STALLED] review: the release's reads answer to shutdown alone. A client that left mid-command
+    // still has its connection's cancel flag raised, and this thread is bound to it: a read under it gives up (the
+    // camera "unknown"), so nothing would be released, or owed.
+    const Tot::CancelContextScope immune(Tot::CancelContext{nullptr, true});
+    for (const auto& hold : Voll::Holds().OwnedBy(owner)) {
+        std::lock_guard<std::mutex> holdLock(Voll::Holds().LockFor(hold));
+        if (Voll::Holds().Owner(hold) != owner) continue;
+        int32_t code = 0;
+        try {
+            code = HoldActive(hold) ? ReleaseHold(hold) : 0;
+        } catch (...) {
+            code = -1;
+        }
+        // [DBGCAM-RELEASE-STALLED] The camera's OFF timed out with the game thread stalled and stays queued, and on
+        // stock UE 4.18-5.7 a queued OFF does not turn it off: owed, MonitorLoop sends it again once that one has run.
+        if (hold == Grimoire::HOLD_DEBUG_CAMERA && code == Stark::kInvokeTimedOutStillQueued) {
+            s_cameraReleaseOwedBy.store(owner);
+            LOG_INFO("PipeServer: background client %llu left -- its debug-camera OFF is queued behind a stalled game "
+                     "thread; it is sent again once that one has run", (unsigned long long)owner);
+        }
+        Voll::Holds().SetOwner(hold, Voll::kHoldOwnerNone);
+        LOG_INFO("PipeServer: background client %llu left -- its hold %s is released (code %d)",
+                 (unsigned long long)owner, hold.c_str(), code);
+    }
+    std::lock_guard<std::mutex> lock(m_connMutex);
+    if (!std::any_of(m_conns.begin(), m_conns.end(), [&](const auto& c) { return c && c->ownerKey == owner; }))
+        m_backgroundOwners.erase(owner);
 }
 
 void Fern::MonitorLoop() {
   // Allocates while peeking the pipe and formatting logs; a raw thread proc. (B14)
   Routine::RunThreadGuarded("PipeServer: MonitorLoop", [&] {
+    bool warnedOwedRelease = false;   // one WARN per session, not one per tick
     while (m_running.load()) {
         std::this_thread::sleep_for(std::chrono::milliseconds(200));
         if (!m_running.load()) break;
+
+        // [DBGCAM-RELEASE-STALLED] A no-op unless an AI's camera release is owed. A throw from its reads or its OFF
+        // costs one tick, not the disconnect detection below; the record stays set and is tried again.
+        Routine::RunTickGuarded("PipeServer: owed debug-camera release", warnedOwedRelease,
+                                [] { ServeOwedCameraRelease(); });
 
         // Snapshot the in-flight connections (keep them alive via shared_ptr for
         // the peek). Only peek while inFlight — the thread is then CPU-bound in
@@ -982,6 +1283,7 @@ std::vector<Voll::Holder> Fern::SnapshotHolders(uint64_t selfSeq) {
         h.lastCmdAgeMs = started == 0 ? -1 : (std::max)(0LL, now - started);
         h.phase = PhaseKey(c->phase.load(std::memory_order_relaxed));
         h.self = c->seq == selfSeq;
+        h.background = c->background.load(std::memory_order_relaxed);
         out.push_back(std::move(h));
     }
     return out;
@@ -2035,7 +2337,8 @@ static json TraceInfoToJson(const Linie::TraceInfo& i) {
 // [LIVEFUNCS-STEP2] The arms' layouts, read in the background (F4). A chosen function is armed on the hook at its
 // first call; its parameters are read here, on a thread of its own, while it is alive -- never on the hook, never on
 // the interactive lane (the first enum detection can walk GObjects for seconds), and not in MonitorLoop, whose job is
-// the disconnect and the cancel (the second design critic). One worker per traced Start with snapshot choices; Stop
+// the disconnect and the cancel (the second design critic); the owed camera release it also serves waits only when the
+// game thread stalls again, never for seconds of work. One worker per traced Start with snapshot choices; Stop
 // gives it a deadline, runs the last pass itself, then seals what is left raw-only.
 // ============================================================
 namespace {
@@ -2293,6 +2596,67 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
     try {
         id  = request.value("id", 0);
         cmd = request.value("cmd", "");
+        // [PIPE-PER-PROCESS-2026-11-06] Stage D: a request a client marks "background" (the MCP server marks every
+        // one) walks GObjects on at most half of the free worker budget, so the user's own walk in the UI is never
+        // left on one thread. For this dispatch only; a key an older client never sends reads false.
+        const Aura::BackgroundWalkScope backgroundWalk(request.value("background", false));
+        if (request.value("background", false)) MarkBackground(conn);
+        // [D2-3-INVOKE] Every invoke this command queues is this client's, and an if_free one is refused while another
+        // client's invoke is outstanding (the maintainer, 2026-11-11: an AI's invoke reports a conflict rather than
+        // slip in beside the user's).
+        const Stark::InvokeOwnerScope invokeOwner(conn->ownerKey, request.value("if_free", false));
+
+        // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: a command that changes a hold runs under that hold's lock (the
+        // mailbox takes the same one), so an if_free check and the change it allows are one step. Locks in name order,
+        // the one order every writer uses.
+        std::vector<std::string> holds = Voll::HoldsChangedBy(
+            cmd, request, cmd == Renge::CMD_RESET_ALL_FIELDS ? ForceFieldJobs() : std::vector<std::string>{});
+        std::sort(holds.begin(), holds.end());
+        std::vector<std::unique_lock<std::mutex>> holdLocks;
+        for (const auto& h : holds) holdLocks.emplace_back(Voll::Holds().LockFor(h));
+        if (!holds.empty() && request.value("if_free", false)) {
+            for (const auto& h : holds) {
+                const uint64_t owner = Voll::Holds().Owner(h);
+                uint64_t sender = 0;
+                const bool inForce = HoldActive(h) || HoldPending(h, sender);   // an ON on its way counts
+                if (!Voll::HeldByOther(inForce, owner, conn->ownerKey)) continue;
+                json data;
+                data["code"]   = Grimoire::HOLD_HELD_BY_OTHER;
+                data["hold"]   = h;
+                data["holder"] = Voll::HoldOwnerJson(owner, conn->ownerKey, IsBackgroundOwner(owner));
+                Sein::Info("PIPE:cmd", "%s refused (if_free): %s is held by another", cmd.c_str(), h.c_str());
+                return Renge::MakeResponse(id, data).dump();
+            }
+        }
+        // After the command, still under the locks: whoever changed a hold that is now active holds it, and one that is
+        // off is nobody's. Declared after the locks, so it runs before they are released.
+        struct HoldRecorder {
+            const std::vector<std::string>& holds;
+            uint64_t caller;
+            ~HoldRecorder() {
+                for (const auto& h : holds) {
+                    try {
+                        uint64_t sender = 0;
+                        uint64_t joinedBy = 0;
+                        if (HoldActive(h)) {
+                            // [D2-3-INVOKE] The camera came on by this command's toggle, which a foreground client
+                            // joined while it was pending: the joiner was told it was its own, so it holds it.
+                            const bool joined = h == Grimoire::HOLD_DEBUG_CAMERA
+                                                && FrierenDebugCamera::ConsumeJoin(caller, joinedBy);
+                            Voll::Holds().SetOwner(h, joined ? joinedBy : caller);
+                        } else if (HoldPending(h, sender)) {
+                            // [D2-3-INVOKE] An ON on its way is its sender's. A command that sent nothing (a toggle
+                            // was already queued) leaves the record as it is.
+                            if (sender == caller) Voll::Holds().SetOwner(h, caller);
+                        } else {
+                            Voll::Holds().SetOwner(h, Voll::kHoldOwnerNone);
+                        }
+                    } catch (...) {
+                        // A hold whose state cannot be read keeps the owner it had.
+                    }
+                }
+            }
+        } holdRecorder{holds, conn->ownerKey};
 
         if (cmd == Renge::CMD_INIT) {
             extern uint32_t g_cachedUEVersion;
@@ -3144,11 +3508,56 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (bytes.empty() || bytes.size() > 65536) {
                 return Renge::MakeError(id, "Invalid write size (max 65536)").dump();
             }
-            if (!Macht::WriteBytes(addr, bytes.data(), bytes.size())) {
+
+            // [D2-3-WRITEMEM] Data only, as it stands, for every client (maintainer, 2026-11-11): Macht::WriteBytes
+            // made any page READWRITE for the write, so this command patched code and read-only data, a code page lost
+            // execute while it ran, and a write across pages restored the first page's protection on all of them.
+            auto refuse = [&](const std::string& why, int32_t code) {
+                auto e = Renge::MakeError(id, "Not written: " + addrStr + " " + why);
+                e["code"] = code;
+                return e.dump();
+            };
+            switch (Macht::ClassifyWriteRange(addr, bytes.size())) {
+                case Lager::WriteTarget::Executable:
+                    return refuse("is in executable memory (code); write_mem writes data only",
+                                  Grimoire::WRITE_MEM_EXECUTABLE);
+                case Lager::WriteTarget::NotWritable:
+                    return refuse("is not writable as it stands (a read-only, guard or no-access page); write_mem "
+                                  "never changes page protection", Grimoire::WRITE_MEM_NOT_WRITABLE);
+                case Lager::WriteTarget::Unmapped:
+                    return refuse("is not committed memory", Grimoire::WRITE_MEM_NOT_WRITABLE);
+                case Lager::WriteTarget::Writable:
+                    break;
+            }
+            std::vector<uint8_t> before(bytes.size());
+            if (!Macht::ReadBytesSafe(addr, before.data(), before.size())) {
+                return refuse("could not be read", Grimoire::WRITE_MEM_NOT_WRITABLE);
+            }
+            // `expect`: the bytes the caller read before deciding (the MCP server always sends them). Memory that holds
+            // something else now was changed since -- by the user, the game or another client -- and is not
+            // overwritten. Not atomic against them; it catches a change made since the read, which is what the user
+            // would lose.
+            if (request.contains("expect")) {
+                std::vector<uint8_t> expected;
+                if (!request["expect"].is_string() || !Renge::TryHexToBytes(request["expect"].get<std::string>(), expected)
+                    || expected.size() != bytes.size()) {
+                    return Renge::MakeError(id, "Invalid expect (need the same number of hex bytes as bytes)").dump();
+                }
+                if (expected != before) {
+                    auto e = Renge::MakeError(id, "Not written: the memory at " + addrStr
+                                                  + " changed since it was read");
+                    e["code"] = Grimoire::WRITE_MEM_CHANGED;
+                    e["current"] = Renge::BytesToHex(before.data(), before.size());
+                    return e.dump();
+                }
+            }
+            if (!Macht::WriteDataBytes(addr, bytes.data(), bytes.size())) {
                 return Renge::MakeError(id, "Write failed").dump();
             }
 
-            return Renge::MakeResponse(id).dump();
+            json data;
+            data["before"] = Renge::BytesToHex(before.data(), before.size());
+            return Renge::MakeResponse(id, data).dump();
         }
 
         // === walk_instance: Read live field values from a UObject instance ===
@@ -5197,6 +5606,41 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // === pipe_clients: who holds this pipe's connections ===
         // [PIPE-PER-PROCESS-2026-11-06] Stage C, the maintainer's policy (2026-11-10): no client is disconnected for
         // idling, but who holds the connections can be seen. The asking connection is marked self.
+        // [PIPE-PER-PROCESS-2026-11-06] Stage D2-1: every hold, whether it is in force, and who holds it. "you" marks
+        // the asker's own, so a client can release only what it set.
+        if (cmd == Renge::CMD_GET_HOLDS) {
+            json arr = json::array();
+            for (const auto& h : KnownHolds()) {
+                const uint64_t owner = Voll::Holds().Owner(h);
+                json j;
+                j["hold"]   = h;
+                j["active"] = HoldActive(h);
+                j["holder"] = Voll::HoldOwnerJson(owner, conn->ownerKey, IsBackgroundOwner(owner));
+                // [D2-3-INVOKE] An ON on its way counts as held for if_free (the debug camera): said, so the listing
+                // agrees with the refusal.
+                uint64_t sender = 0;
+                if (HoldPending(h, sender)) j["pending"] = true;
+                // [DBGCAM-RELEASE-STALLED] An AI session's camera release still owed: its OFF is sent again once the
+                // queued one has run, unless someone takes the camera first.
+                if (h == Grimoire::HOLD_DEBUG_CAMERA && s_cameraReleaseOwedBy.load() != 0) j["release_owed"] = true;
+                arr.push_back(j);
+            }
+            json data;
+            data["holds"] = arr;
+            // [D2-3-INVOKE] Each client's invokes still queued or running (a -5 one included); the DLL's own workers'
+            // are left out. The MCP server reads its own to never resend a queued call.
+            json invokes = json::array();
+            for (const auto& [owner, count] : Stark::OutstandingInvokes()) {
+                if (owner == Voll::kHoldOwnerNone) continue;
+                json j;
+                j["holder"]      = Voll::HoldOwnerJson(owner, conn->ownerKey, IsBackgroundOwner(owner));
+                j["outstanding"] = count;
+                invokes.push_back(j);
+            }
+            data["invokes"] = invokes;
+            return Renge::MakeResponse(id, data).dump();
+        }
+
         if (cmd == Renge::CMD_PIPE_CLIENTS) {
             json data;
             data["pipe"]         = Utf8Helpers::EncodeUtf16(Voll::OwnPipeName().c_str(), Voll::OwnPipeName().size());
@@ -7129,6 +7573,25 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // keep the caller's parms_size alone, unchecked (review 2; check_processevent_buffers).
             FunctionInfo fi{};
             const bool resolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);
+            // [D2-3-INVOKE] A background client (the MCP server) neither skips the game thread nor calls what the
+            // maintainer's list refuses (Voll::InvokeRefusedForBackground), and a function whose flags cannot be read
+            // could be an RPC. Decided before anything is allocated or queued; the UI and CE are never asked.
+            if (conn->background.load()) {
+                std::string why;
+                if (directCall)
+                    why = "was asked with direct_call, which runs off the game thread: a background client's invoke "
+                          "runs only on it";
+                else if (!resolved)
+                    why = "has flags that could not be read, so it could be a network RPC";
+                else
+                    why = Voll::InvokeRefusedForBackground(fi.name.empty() ? funcName : fi.name, fi.functionFlags);
+                if (!why.empty()) {
+                    auto e = Renge::MakeError(id, "Not invoked: " + funcName + " " + why);
+                    e["code"] = Grimoire::INVOKE_REFUSED_FOR_BACKGROUND;
+                    Sein::Info("PIPE:cmd", "invoke_function: %s refused for a background client", funcName.c_str());
+                    return e.dump();
+                }
+            }
             // [INVOKE-NONSTATIC-ON-CDO] The object is a template, and the function -- by the flags read here, never the
             // caller's direct_call claim -- is not static: it may do nothing there. Warned, never refused.
             const Aura::TemplateInfo tpl = Aura::TemplateOf(instanceAddr);
@@ -7158,6 +7621,19 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 size_t copyLen = (std::min)(hexBytes.size(), paramBuf.size());
                 if (copyLen > 0) {
                     memcpy(paramBuf.data(), hexBytes.data(), copyLen);
+                }
+            }
+
+            // [D2-3-INVOKE] An if_free call reports a conflict before anything is converted: an object parameter's
+            // conversion is itself a queued call, and its refusal would surface only as "returned -25". EnqueueInvoke
+            // decides again, under the queue's lock, for the call itself.
+            if (request.value("if_free", false)) {
+                if (const uint64_t blocker = Stark::IfFreeBlocker(conn->ownerKey); blocker != 0) {
+                    auto e = Renge::MakeError(id, "Not invoked: another client's invoke is still queued or running");
+                    e["code"]   = Grimoire::HOLD_HELD_BY_OTHER;
+                    e["hold"]   = Grimoire::HOLD_INVOKE_QUEUE;
+                    e["holder"] = Voll::HoldOwnerJson(blocker, conn->ownerKey, IsBackgroundOwner(blocker));
+                    return e.dump();
                 }
             }
 
@@ -7278,6 +7754,28 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 strAllocs.clear();
             }
 
+            // [D2-3-INVOKE] Nothing ran, and nothing will: each is ok:false, so "every ok:false is before dispatch"
+            // still holds for the UI's retry.
+            if (callResult == Stark::kInvokeHeldByOther) {
+                const uint64_t blocker = Stark::LastInvokeBlocker();
+                auto e = Renge::MakeError(id, "Not invoked: another client's invoke is still queued or running");
+                e["code"]   = Grimoire::HOLD_HELD_BY_OTHER;
+                e["hold"]   = Grimoire::HOLD_INVOKE_QUEUE;
+                e["holder"] = Voll::HoldOwnerJson(blocker, conn->ownerKey, IsBackgroundOwner(blocker));
+                return e.dump();
+            }
+            if (callResult == Stark::kInvokeNeedsGameThread) {
+                auto e = Renge::MakeError(id, "Not invoked: the game-thread hook is not active, and an if_free invoke "
+                                              "runs only on the game thread");
+                e["code"] = callResult;
+                return e.dump();
+            }
+            if (callResult == Stark::kInvokeDroppedOwnerLeft) {
+                auto e = Renge::MakeError(id, "Not invoked: dropped from the queue before it ran -- its client left");
+                e["code"] = callResult;
+                return e.dump();
+            }
+
             // Build response
             json data;
             data["result"]        = callResult;
@@ -7364,6 +7862,16 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // [DEBUGCAM-FORCEON-CDO]. Builds 3676-3681 also sent `nonstatic_on_template` for a toggle on the
             // CheatManager's class default object; none is sent there now, so the key is gone.
             data["state"] = state;
+            // [D2-3-INVOKE] An if_free toggle (the MCP server's) met the queue's owner rule: nothing was sent. Answered
+            // as a hold's refusal, naming the client whose invoke is outstanding; -27 as its own code.
+            if (state == Stark::kInvokeHeldByOther) {
+                const uint64_t blocker = Stark::LastInvokeBlocker();
+                data["code"]   = Grimoire::HOLD_HELD_BY_OTHER;
+                data["hold"]   = Grimoire::HOLD_INVOKE_QUEUE;
+                data["holder"] = Voll::HoldOwnerJson(blocker, conn->ownerKey, IsBackgroundOwner(blocker));
+            } else if (state == Stark::kInvokeNeedsGameThread) {
+                data["code"] = state;
+            }
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -7982,7 +8490,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 p.Pitch = request.value("pitch", 0.0);
                 p.Yaw   = request.value("yaw", 0.0);
                 p.Roll  = request.value("roll", 0.0);
-                code = Wirbel::RecallExplicit(p, hasRot, &tier);
+                // [PIPE-PER-PROCESS-2026-11-06] Stage D2-2: keep_undo leaves the process-wide "last" slot alone (the
+                // MCP server sends it, so an AI's jump never replaces where the user's Recall last returns to).
+                code = Wirbel::RecallExplicit(p, hasRot, &tier, request.value("keep_undo", false));
                 Sein::Info("PIPE:cmd", "teleport_recall_marker: explicit -> %d", code);
             } else {
                 int slot = request.value("slot", -1);
