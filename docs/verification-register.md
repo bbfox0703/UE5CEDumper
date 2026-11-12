@@ -348,15 +348,33 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
 
 Stage B, build 3696 (6 clients, the scan-worker budget) -- dev-log 3696. Not reached:
 
-6. **A name an older copy created, with its lower limit.** A 3696 copy whose first instance joins a name a 3695 copy
-   made logs a WARN with the limit in force (3). Acceptance: such a pair in one process; pipe-0.log logs "takes 3
-   clients at once, not this build's 6", and the at-capacity line quotes 3.
-   **Not run 2026-11-12, and why.** A 3695 binary exists (`out\stageA\copy3695\UE5Dumper.dll`, 1.0.0.3695, SHA-256
-   a8b38aa4...), but no shipped path makes a 3707 copy join a live name: every start probes first and then defers or
-   skips, and a watcher claims only a name that is gone. The join needs both copies to start in the same instant.
-   The planned rig staged that race with remote threads started from python.exe (`call_export.py`), and the AV
-   flagged python.exe doing exactly that on 2026-11-11 (working-lessons.md §3.8 item 6). A race between two threads
-   inside Cheat Engine was not attempted.
+6. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, dist 3707 plus `out\stageA\copy3695\UE5Dumper.dll` (1.0.0.3695) in
+   the same process, Cheat Engine 7.7 64-bit SSE4-AVX2 with its VEH debugger; `tools/verify/oldname_join.py`).
+   - **Why a breakpoint.** No shipped path makes a newer copy join a live name. Every start probes first and then
+     defers or skips, and a watcher claims only a name that is gone. A race between remote threads started from
+     python.exe would stage it, and the AV flags python.exe doing that (working-lessons.md §3.8 item 6). The rig holds
+     the newer copy still instead, and every remote thread is Cheat Engine's `executeCodeEx`.
+   - **The older copy settles idle.** It was injected beside the serving 3707 copy. It cannot write its logs while the
+     3707 copy holds them (item 3), so its mailbox was read instead: initState READY, the "another copy already serves"
+     path. 3707's `UE5_StopPipeServer` then took the name down, and the name was still gone 3 s later, so no watcher
+     in the older copy claimed it.
+   - **The staging.** An int3 breakpoint went on the 3707 module's only `CreateNamedPipeW` call site (RVA 0x131D37),
+     then 3707's `UE5_StartPipeServer` ran: its probe found the name gone, and its new accept thread stopped at the
+     breakpoint. The handler called the older copy's `UE5_StartPipeServer` (it returned 1, creating the name with ITS
+     limit), waited 1 s, and let the 3707 thread go on.
+   - **pipe-0.log, 10:49:11.475,** the 3707 copy's first instance:
+     - `already had instances in this process when this server started: a second copy of UE5Dumper serves it, ...`
+     - `takes 3 clients at once, not this build's 6: an older copy of UE5Dumper in this process created the name`
+   - **With 3 clients held** (all 3 connected): `all 3 pipe instances in use, waiting for a free slot -- ...
+     holders=[...]`.
+   - A first try used a debug-register breakpoint. It reached the newly created accept thread only after that
+     thread's first create, which made the name itself (`takes 6 clients at once`). The breakpoint fired only on the
+     later creates, by which point the older copy's start was a no-op. int3 is seen by every thread at once.
+
+   *Was:* **A name an older copy created, with its lower limit.** A 3696 copy whose first instance joins a name a 3695
+   copy made logs a WARN with the limit in force (3). Acceptance: such a pair in one process; pipe-0.log logs "takes 3
+   clients at once, not this build's 6", and the at-capacity line quotes 3. Not run in the first pass of 2026-11-12:
+   the join needs both copies to start in the same instant, and the planned python.exe race was ruled out by the AV.
 7. ✅ **CLOSED 2026-11-12** (two injected DumperTest Shipping games, UE 5.4 and UE 5.8, DLL and AOT UI 3707).
    - The UI's game list was opened with both games in it. One of them (pid 3292) was then killed, and picked from the
      still-open list.
