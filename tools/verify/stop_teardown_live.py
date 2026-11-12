@@ -108,7 +108,7 @@ def main() -> int:
     ap.add_argument("--wait", type=float, default=40.0)
     a = ap.parse_args()
     folder = LOGROOT / a.game_name
-    ui = [p for p in ui_pids()]
+    ui = [p for p in ui_pids() if windows_of([p])]   # a windowless one is an MCP server, not the UI
     wins = windows_of(ui)
     if not wins:
         raise SystemExit("FAIL: no UE5DumpUI window to close (connect the UI and turn See-through on first)")
