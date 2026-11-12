@@ -279,7 +279,14 @@ Stage B, build 3696 (6 clients, the scan-worker budget) -- dev-log 3696. Not rea
 Stage C, build 3698 (hardening for a long-lived client) -- dev-log 3698; `tools/verify/stagec_live.py` passes on
 DumperTest Shipping, pipe and mailbox only. Not reached:
 
-9. **Cheat Engine's own See-through record.** The record was driven through the mailbox (`mailbox_poke.py`, as
+9. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707, Cheat Engine 64-bit SSE4-AVX2). The record was
+   the UI's own (Teleport > See-through > **Add to CE**: "See-through occluders (toggle)"), ticked from CE's Lua with
+   no message. `Mailbox: SEETHROUGH count=1 value=1 -> rc=1`, then `seethrough_get_state` read active, `ce_claimed:
+   true`, 1 claim, 1 actor hidden. The UI then connected (its card read "ON — Active — hiding the occluder in front of
+   your character." with no click) and closed by WM_CLOSE as the last pipe client. Five seconds later the state was
+   unchanged (active, `ce_claimed: true`, 1 claim), and init-0.log had no turn-off line. The untick turned it off:
+   `SEETHROUGH count=0 value=0 -> rc=0`, `SeeThrough: disabled (1 restored)`, 0 claims.
+   *Was:* **Cheat Engine's own See-through record.** The record was driven through the mailbox (`mailbox_poke.py`, as
    `stagec_live.py` does), not ticked in CE. Acceptance: tick the pushed See-through record in CE, connect and close
    the UI; the record's See-through stays on (`seethrough_get_state` `ce_claimed: true`), and its untick turns it off.
 10. **The UI against a job another client started.** `trigger_scan` and Extra Scan answer `in_progress` to a second
