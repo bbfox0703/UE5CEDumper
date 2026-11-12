@@ -731,7 +731,16 @@ static void Test_Schlacht_FailedDispatchKeepsTheRecord() {
            Schlacht::UnhideLeftItHidden(-5));
     EXPECT("UNHIDE ⭐: the hook was down (-7): it never ran: keep it", Schlacht::UnhideLeftItHidden(-7));
     EXPECT("UNHIDE ⭐: a background worker with no hook (-8): keep it", Schlacht::UnhideLeftItHidden(-8));
-    EXPECT("UNHIDE ⭐: it faulted inside the call (-4): not known to have run: keep it", Schlacht::UnhideLeftItHidden(-4));
+    // -4 is the one failure that RAN: the call entered the engine and faulted there. Kept, it was retried every 100 ms
+    // tick for as long as See-through stayed on (a stale actor that still passes the class check faults every time).
+    EXPECT("UNHIDE ⭐: it faulted inside the call (-4): a retry faults again: drop it, as before",
+           !Schlacht::UnhideLeftItHidden(-4));
+
+    // An actor whose un-hide did not run may still be un-hidden by the queued call: if it still occludes, hide it again.
+    EXPECT("REHIDE ⭐: still occluding, its un-hide may still run: hide it again", Schlacht::RehideOnTick(true, true));
+    EXPECT("REHIDE: still occluding, no un-hide pending: it is hidden, no call", !Schlacht::RehideOnTick(true, false));
+    EXPECT("REHIDE: no longer occluding: it is un-hidden, not hidden", !Schlacht::RehideOnTick(false, true)
+           && !Schlacht::RehideOnTick(false, false));
 }
 
 // [PIPE-PER-PROCESS-2026-11-06] Stage C: a watch is its connection's, and its thread never touches the pipe.
@@ -9376,6 +9385,20 @@ static void Test_Dunste_ShouldCommitCollision() {
     for (int32_t rc : { -8, -7, -3, -2, -4 })
         EXPECT("DUNSTE-QUEUED control: -8 / -7 / -3 / -2 / -4 stay Refused (nothing was queued)",
                Dunste::CollisionApplyFromRc(rc) == CA::Refused);
+
+    // [SHUTDOWN-SEETHRU-WAIT] A shutdown cuts a queued invoke's wait on a stalled game thread and then Stark::Shutdown
+    // answers the request without running it. A Queued RESTORE then must not clear the record, or the pawn stays
+    // ghosted with nothing tracking it.
+    EXPECT("CUT ⭐: a restore that came back Queued during a shutdown keeps its record",
+           !Dunste::ShouldCommitCollision(CA::Queued, /*restoring*/ true, /*shutdown*/ true));
+    EXPECT("CUT: a disable that came back Queued during a shutdown commits (an over-reported OFF is undone harmlessly)",
+           Dunste::ShouldCommitCollision(CA::Queued, false, true));
+    EXPECT("CUT: a Queued restore with no shutdown commits ([W3-DUNSTE-QUEUED] unchanged: it will run)",
+           Dunste::ShouldCommitCollision(CA::Queued, true, false));
+    EXPECT("CUT: Applied and Absent commit during a shutdown", Dunste::ShouldCommitCollision(CA::Applied, true, true)
+           && Dunste::ShouldCommitCollision(CA::Absent, true, true));
+    EXPECT("CUT: Refused never commits", !Dunste::ShouldCommitCollision(CA::Refused, true, false)
+           && !Dunste::ShouldCommitCollision(CA::Refused, false, true));
 }
 
 static void Test_Aura_DescribeSparseDelegateState() {

@@ -85,6 +85,14 @@ inline bool UnhideLeftItHidden(int32_t code) {
     return code != 0 && code != kHideNotAttempted;
 }
 
+// A recorded actor that still occludes counts as hidden with no call -- unless its last un-hide did not run: that
+// un-hide may still be queued, and when it runs the actor shows while the record says hidden. Such an actor is hidden
+// again (the queue runs the hide after the un-hide). Hiding twice is harmless.
+inline bool RehideOnTick(bool stillOccluding, bool unhideMayStillRun) {
+    (void)stillOccluding; (void)unhideMayStillRun;
+    return false;   // [SHUTDOWN-SEETHRU-WAIT] red: never re-hidden, as before
+}
+
 // Result / status code (0 = OK, negative = why the tick could not act).
 enum SeeThroughResult {
     STR_OK             =  0,

@@ -974,21 +974,77 @@ public sealed class PipePerProcessSourceTests
     public void ATraceOrUnhideThatDidNotRunKeepsSeeThroughsRecord()
     {
         var code = CodeOnly(DllSrc("Schlacht.cpp"));
-        var tick = FunctionBody(code, "void Tick(");
-        var gate = Regex.Match(tick, @"\bShouldApplyOccluderDiff\s*\(");
-        Assert.True(gate.Success, "Tick applies its diff without asking whether every trace ran");
-        Assert.True(gate.Index < tick.IndexOf("s_state.hiddenActors = std::move(applied)", StringComparison.Ordinal),
-            "Tick records its diff before asking whether every trace ran");
 
-        // Every un-hide goes through the one helper that keeps an actor whose un-hide did not run.
+        // A trace that did not run is reported, never read as a miss: decided before hit/miss.
+        var collect = FunctionBody(code, "void CollectOccluders(");
+        var failed = Regex.Match(collect, @"if\s*\(\s*r\s*!=\s*0\s*\)\s*\{\s*dispatchFailed\s*=\s*true\s*;\s*break\s*;\s*\}");
+        Assert.True(failed.Success, "CollectOccluders reads a trace that did not run as a miss");
+        Assert.True(failed.Index < collect.IndexOf("bool hit", StringComparison.Ordinal),
+            "CollectOccluders decides hit or miss before asking whether the trace ran");
+
+        // ...and Tick returns, leaving the record alone, before it records any diff.
+        var tick = FunctionBody(code, "void Tick(");
+        Assert.Matches(@"\bCollectOccluders\s*\([^;]*\bdispatchFailed\s*\)\s*;", tick);
+        var gate = Regex.Match(tick,
+            @"if\s*\(\s*!\s*ShouldApplyOccluderDiff\s*\(\s*dispatchFailed\s*,\s*s_workerStop\.load\s*\(\s*\)\s*\)\s*\)\s*\{[^}]*\breturn\s*;");
+        Assert.True(gate.Success, "Tick goes on to its diff when a trace did not run or a stop is under way");
+        int store = tick.IndexOf("s_state.hiddenActors = std::move(applied)", StringComparison.Ordinal);
+        Assert.True(gate.Index < store, "Tick records its diff before asking whether every trace ran");
+
+        // Every un-hide goes through the one helper, which keeps (not drops) an actor whose un-hide did not run...
         var restore = FunctionBody(code, "RestoreHidden(");
-        Assert.Matches(@"\bUnhideLeftItHidden\s*\(", restore);
+        Assert.Matches(@"if\s*\(\s*UnhideLeftItHidden\s*\(\s*SetHiddenCode\s*\(\s*a\s*,\s*false\s*\)\s*\)\s*\)\s*kept\.insert\s*\(\s*a\s*\)", restore);
         int rs = code.IndexOf(restore, StringComparison.Ordinal);
         foreach (Match m in Regex.Matches(code, @"\b(?:InvokeSetHidden|SetHiddenCode)\s*\(\s*\w+\s*,\s*false\s*\)"))
             Assert.True(m.Index >= rs && m.Index < rs + restore.Length,
                 $"an un-hide outside RestoreHidden drops its actor whatever it returned: ...{code.Substring(Math.Max(0, m.Index - 60), 120)}...");
-        Assert.True(Regex.Matches(code, @"\bRestoreHidden\s*\(").Count >= 5,   // the helper itself plus its four sites
-            "an un-hide site does not use RestoreHidden");
+
+        // ...and every site writes what it kept back to the record, marked as an un-hide that may still run.
+        var tickKept = Regex.Match(tick, @"const\s+std::unordered_set<uintptr_t>\s+kept\s*=\s*RestoreHidden\s*\(\s*gone\s*\)");
+        Assert.True(tickKept.Success, "Tick does not keep what its un-hides left hidden");
+        Assert.Matches(@"applied\.insert\s*\(\s*kept\.begin\s*\(\s*\)\s*,\s*kept\.end\s*\(\s*\)\s*\)", tick[tickKept.Index..]);
+        Assert.Matches(@"s_state\.unhideQueued\s*=\s*kept\s*;", tick[tickKept.Index..]);
+        var record = FunctionBody(code, "void RecordUnhideLeftoversLocked(");
+        Assert.Matches(@"s_state\.hiddenActors\.insert\s*\(\s*kept\.begin\s*\(\s*\)\s*,\s*kept\.end\s*\(\s*\)\s*\)", record);
+        Assert.Matches(@"s_state\.unhideQueued\.insert\s*\(\s*kept\.begin\s*\(\s*\)\s*,\s*kept\.end\s*\(\s*\)\s*\)", record);
+        foreach (var (fn, sites) in new[] { ("void PendingRestoreLoop(", 1), ("static int32_t ApplyLocked(", 2) })
+        {
+            var body = FunctionBody(code, fn);
+            var kept = Regex.Matches(body, @"const\s+std::unordered_set<uintptr_t>\s+(\w+)\s*=\s*RestoreHidden\s*\(");
+            Assert.Equal(sites, kept.Count);
+            foreach (Match k in kept)
+                Assert.Matches(@"\bRecordUnhideLeftoversLocked\s*\(\s*" + k.Groups[1].Value + @"\s*\)", body[k.Index..]);
+        }
+        // A record moved out to be restored takes its pending un-hides with it.
+        Assert.Equal(Regex.Matches(code, @"s_state\.hiddenActors\.clear\s*\(\s*\)\s*;").Count,
+                     Regex.Matches(code, @"s_state\.hiddenActors\.clear\s*\(\s*\)\s*;\s*s_state\.unhideQueued\.clear\s*\(\s*\)\s*;").Count);
+
+        // An actor that still occludes but whose un-hide may still run is hidden again, not just counted.
+        Assert.Matches(@"if\s*\(\s*RehideOnTick\s*\(\s*occluding\s*,\s*mayStillUnhide\.count\s*\(\s*a\s*\)\s*!=\s*0\s*\)\s*\)\s*\{\s*if\s*\(\s*InvokeSetHidden\s*\(\s*a\s*,\s*true\s*\)\s*\)\s*applied\.insert\s*\(\s*a\s*\)", tick);
+    }
+
+    /// <summary>[SHUTDOWN-SEETHRU-WAIT] A shutdown ends See-through's deferred restore with actors still hidden; on a bare
+    /// UE5_StopPipeServer nothing re-decides after it, so the loop itself must say no restore is waiting.</summary>
+    [Fact]
+    public void ADeferredRestoreEndedByAShutdownSaysSo()
+    {
+        var loop = FunctionBody(CodeOnly(DllSrc("Schlacht.cpp")), "void PendingRestoreLoop(");
+        var exit = Regex.Match(loop, @"if\s*\(\s*!\s*s_pendingStop\.load\s*\(\s*\)\s*&&\s*Tot::ShutdownRequested\s*\(\s*\)\s*\)");
+        Assert.True(exit.Success, "PendingRestoreLoop does not handle the exit a shutdown causes");
+        Assert.Matches(@"restoreAbandoned\s*=\s*true", loop[exit.Index..]);
+    }
+
+    /// <summary>[SHUTDOWN-SEETHRU-WAIT] Fly/Noclip commits its collision record on a Queued request, which runs later --
+    /// unless Stark::Shutdown answers it unrun. Every commit site passes the direction and the shutdown flag, so a restore
+    /// cut during a shutdown keeps its record. Dunste.cpp reaches no C++ test target.</summary>
+    [Fact]
+    public void FlysCollisionRestoreCutByAShutdownKeepsItsRecord()
+    {
+        var code = CodeOnly(DllSrc("Dunste.cpp"));
+        var calls = Regex.Matches(code, @"\bShouldCommitCollision\s*\(");
+        var full = Regex.Matches(code, @"\bShouldCommitCollision\s*\([^;]*?,\s*[^,;]+,\s*Tot::ShutdownRequested\s*\(\s*\)\s*\)");
+        Assert.Equal(3, calls.Count);
+        Assert.Equal(calls.Count, full.Count);
     }
 
     /// <summary>[SHUTDOWN-SEETHRU-WAIT] The cut only sees a shutdown flag that is already up, so both teardowns must raise

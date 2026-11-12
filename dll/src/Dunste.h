@@ -76,6 +76,15 @@ inline bool ShouldCommitCollision(CollisionApply a) {
     return a != CollisionApply::Refused;      // Applied, Absent (B8) AND Queued all commit
 }
 
+/// The same rule at a commit site, with the direction and whether a shutdown is under way. A Queued request runs when
+/// the game thread drains -- unless Stark::Shutdown answers it first, without running it. So a RESTORE that comes back
+/// Queued during a shutdown keeps its record: the restore is sent again later, and restoring twice is harmless, while a
+/// lost record leaves the pawn ghosted. [SHUTDOWN-SEETHRU-WAIT]
+inline bool ShouldCommitCollision(CollisionApply a, bool restoring, bool shutdownRequested) {
+    (void)restoring; (void)shutdownRequested;
+    return ShouldCommitCollision(a);   // [SHUTDOWN-SEETHRU-WAIT] red: as before
+}
+
 /// The dispatcher's return code, as an outcome. Pure, so `dll_helpers_test` pins it without Dunste.cpp.
 /// [W3-DUNSTE-QUEUED] -5 is Queued, never Refused: it is the one non-zero code whose request still runs.
 inline CollisionApply CollisionApplyFromRc(int32_t rc) {
