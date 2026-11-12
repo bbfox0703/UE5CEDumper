@@ -14,9 +14,9 @@ thread is EXECUTING when it is frozen is out of Stark::Shutdown's reach: its han
 timeout, Stop's 5 s drain times out with it still registered, and the re-tick's probe finds every instance busy.
 
 WHAT IT DOES:
-  1. set_invoke_timeout 180000 (persist false), find the fixture actor, calibrate a V1a_GrowContainers count that runs
-     about 2 s on the game thread.
-  2. Three connections send that call at once; 1 s after the first is enqueued, the game thread is frozen
+  1. set_invoke_timeout 180000 (persist false), find the fixture actor, time one V1a_GrowContainers(--count) call -- a
+     long run on the game thread.
+  2. Three connections send that call at once; --freeze-after s after the first is enqueued, the game thread is frozen
      (suspend.py suspend-tid), so one call is mid-run and two are queued.
   3. CE unticks the record (scheduled on CE's main thread); the rig waits for "PipeServer: Stopped" and reads the drain
      line: it must be TIMEOUT with 1 left, the straggler INSIDE invoke_function.
@@ -98,6 +98,9 @@ def main() -> int:
     ap.add_argument("--ce-desc", default="Inject DLL + Start Pipe Server")
     ap.add_argument("--go-file", default=str(HERE.parent.parent / "out" / "straggler_go"))
     ap.add_argument("--ui-wait", type=float, default=120.0)
+    ap.add_argument("--count", type=int, default=8000000, help="V1a_GrowContainers' count (about 0.4 s at 8,000,000)")
+    ap.add_argument("--freeze-after", type=float, default=0.15,
+                    help="seconds after the first call is enqueued: inside that call's run, before it returns")
     a = ap.parse_args()
     folder = LOGROOT / a.game_name
     go = pathlib.Path(a.go_file)
@@ -121,16 +124,13 @@ def main() -> int:
     def params(count: int) -> str:
         return count.to_bytes(4, "little").hex() + "00" * (ps - 4)
 
-    count, took = 200000, 0.0
-    for _ in range(5):
-        t0 = time.monotonic()
-        r = c0.request("invoke_function", func_name=FN, instance_addr=act["addr"], parms_size=ps,
-                       params_hex=params(count))
-        took = time.monotonic() - t0
-        print(f"calibrate {FN}({count}) -> result {r.get('result')} in {took:.2f} s", flush=True)
-        if took >= 1.5 or count >= 8000000:
-            break
-        count = min(8000000, int(count * max(2.0, 2.0 / max(took, 0.05))))
+    # One timed call: on DumperTest Shipping even 8,000,000 entries run about 0.4 s (measured 2026-11-12), and a larger
+    # count only grows the fixture's memory, so the freeze is timed into the first call instead (--freeze-after).
+    count = a.count
+    t0 = time.monotonic()
+    r = c0.request("invoke_function", func_name=FN, instance_addr=act["addr"], parms_size=ps, params_hex=params(count))
+    took = time.monotonic() - t0
+    print(f"timed {FN}({count}) -> result {r.get('result')} in {took:.2f} s", flush=True)
     c0.close()
     tid = game_thread(a.game_name)
     print(f"actor {act['addr']}; {FN}({count}) about {took:.1f} s; game thread tid {tid}", flush=True)
@@ -159,10 +159,11 @@ def main() -> int:
         while time.monotonic() < end and sum("GameThreadDispatch: enqueued invoke" in l
                                              for l in log_lines(folder, "pipe-0.log", since)) < 3:
             time.sleep(0.05)
-        time.sleep(max(0.0, 1.0 - (time.monotonic() - t_first)))
+        time.sleep(max(0.0, a.freeze_after - (time.monotonic() - t_first)))
         rc, out = suspend("suspend-tid", a.game_name, str(tid))
         frozen = rc == 0 and f"tid {tid}: SUSPENDED" in out
-        if not check(frozen and first is not None, "the game thread frozen 1 s into the first call", out):
+        if not check(frozen and first is not None, f"the game thread frozen {a.freeze_after:.2f} s after the first "
+                                                   f"enqueue", out):
             return 1
         done = sum("GameThreadDispatch: invoke completed" in l for l in log_lines(folder, "pipe-0.log", since))
         print(f"        calls completed before the freeze: {done}", flush=True)
