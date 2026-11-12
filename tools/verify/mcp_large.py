@@ -72,7 +72,9 @@ def main() -> int:
     run("read_list_classes", {"game_only": False, "limit": 2000}, None)
     run("read_list_classes", {"name_filter": "Character", "limit": 100}, False)
     run("read_find_instances", {"class_name": "Actor", "limit": 2000}, None)
-    run("read_list_functions", {"name_filter": "Health", "limit": 200}, False)
+    # Not held to "uncut": on EVERSPACE 2 "Health" matched 150 functions, more than one reply holds (measured
+    # 2026-11-12), and the cut with its note is the right answer then.
+    run("read_list_functions", {"name_filter": "Health", "limit": 200}, None)
     run("read_list_functions", {"game_only": False, "limit": 2000}, None)
     vs = run("read_value_scan_begin", {"data_type": "Int32", "value": "100", "page_size": 500}, None)
     if isinstance(vs, dict) and vs.get("session_id") is not None:
