@@ -30,6 +30,7 @@ Exit 0 when every check passed.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import json
 import pathlib
 import subprocess
@@ -147,24 +148,33 @@ def main() -> int:
         except Exception as e:  # noqa: BLE001 -- recorded, judged below
             replies[i] = f"error: {e}"
 
+    # The freeze is made in this process, on a handle opened beforehand: suspend.py starts a Python and runs tasklist,
+    # about a second, longer than the whole call (measured 2026-11-12: the freeze landed after all three had run).
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenThread.restype = ctypes.c_void_p
+    k32.SuspendThread.restype = ctypes.c_uint32
+    k32.ResumeThread.restype = ctypes.c_uint32
+    hthread = k32.OpenThread(0x0002, False, tid)   # THREAD_SUSPEND_RESUME
+    if not hthread:
+        raise SystemExit(f"FAIL: OpenThread({tid}) -> Win32 {ctypes.get_last_error()}")
+    hthread = ctypes.c_void_p(hthread)
+
     since = stamp()
     frozen = False
     threads = [threading.Thread(target=send, args=(i,), daemon=True) for i in range(3)]
     try:
+        t_send = time.monotonic()
         for t in threads:
             t.start()
-        first = wait_line(folder, "pipe-0.log", since, "GameThreadDispatch: enqueued invoke", 10)
-        t_first = time.monotonic()
-        end = time.monotonic() + 10
-        while time.monotonic() < end and sum("GameThreadDispatch: enqueued invoke" in l
-                                             for l in log_lines(folder, "pipe-0.log", since)) < 3:
-            time.sleep(0.05)
-        time.sleep(max(0.0, a.freeze_after - (time.monotonic() - t_first)))
-        rc, out = suspend("suspend-tid", a.game_name, str(tid))
-        frozen = rc == 0 and f"tid {tid}: SUSPENDED" in out
-        if not check(frozen and first is not None, f"the game thread frozen {a.freeze_after:.2f} s after the first "
-                                                   f"enqueue", out):
+        time.sleep(max(0.0, a.freeze_after - (time.monotonic() - t_send)))
+        prev = k32.SuspendThread(hthread)
+        frozen = prev != 0xFFFFFFFF
+        if not check(frozen, f"the game thread frozen {a.freeze_after:.2f} s after the three sends",
+                     f"SuspendThread -> Win32 {ctypes.get_last_error()}"):
             return 1
+        time.sleep(0.5)
+        enq = sum("GameThreadDispatch: enqueued invoke" in l for l in log_lines(folder, "pipe-0.log", since))
+        print(f"        calls enqueued: {enq}", flush=True)
         done = sum("GameThreadDispatch: invoke completed" in l for l in log_lines(folder, "pipe-0.log", since))
         print(f"        calls completed before the freeze: {done}", flush=True)
 
@@ -206,11 +216,14 @@ def main() -> int:
         print("        go file seen" if go.exists() else "        no go file: carrying on", flush=True)
     finally:
         if frozen:
-            rc, out = suspend("resume-tid", a.game_name, str(tid))
-            print("RESUME:", out, flush=True)
-            if rc != 0:
+            prev = k32.ResumeThread(hthread)
+            while prev not in (0, 1, 0xFFFFFFFF):   # ResumeThread is the one safe to over-call: drain to zero
+                prev = k32.ResumeThread(hthread)
+            print(f"RESUME: previous suspend count {prev}", flush=True)
+            if prev == 0xFFFFFFFF:
                 print(f"!! GAME THREAD LEFT SUSPENDED: py tools/verify/suspend.py resume-tid {a.game_name} {tid}",
                       flush=True)
+        k32.CloseHandle(hthread)
 
     for t in threads:
         t.join(timeout=200)
