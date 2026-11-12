@@ -353,10 +353,13 @@ background client's world time dilation its own; the foreground client's if_free
 log: "background client N left -- its hold time:global is released (code 0)") while the foreground client's god mode
 stayed. Not reached:
 
-19. **CE's mailbox as an owner.** Mimic changes each hold under the ledger lock and names CE (source-pinned:
-    `PipePerProcessSourceTests.TheMailbox_ChangesEachHoldAsCe`); no mailbox command ran. Acceptance: a CE record (or
-    `mailbox_poke.py`) turns god mode on; `get_holds` says `kind: ce`, and a background client's if_free OFF is
-    refused.
+19. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707, Cheat Engine 64-bit SSE4-AVX2 with the
+    AOBMaker plugin). The record was the UI's own: Teleport > God Mode > **Add to CE** pushed "God Mode (toggle)"
+    through AOBMaker. Ticking it from CE's Lua (`ce_lua_eval.py`, showMessage and print captured to a file: none)
+    logged `Mailbox: PROTECT op=0 -> rc=1`, and `get_holds` read god_mode active with holder `{"kind": "ce"}`. A
+    background client's if_free OFF and ON were both refused (code -20, the holder `ce`), and god mode stayed on. The
+    untick turned it off and left the hold free. Acceptance: a CE record (or `mailbox_poke.py`) turns god mode on;
+    `get_holds` says `kind: ce`, and a background client's if_free OFF is refused.
 20. **The release of every hold kind.** ◐ **Mostly reached with build 3704** (`holds_live.py` 22/22 on DumperTest
     Shipping, the published DLL): a background client's world time, walk speed, jump, fly and Keep Foreground each read
     inactive and nobody's after it left, one DLL log line each ("... its hold fly is released (code 0)"). Not
@@ -398,7 +401,21 @@ force-field job and See-through. Not reached:
       inactive and nobody's. Seen along the way: the AI told the user that the UI and CE "cannot turn off" the god
       mode it held, which is wrong (their changes carry no `if_free`); the server's instructions now say so
       (`McpServerTests.Instructions_SayTheUserCanTakeBackAnyHold`; it reaches `dist\` with the next publish).
-23. **The UI window and a Cheat Engine record as the holders.** The rig's foreground client is `pipe_client.py`, and
+23. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707, the real UI window and Cheat Engine).
+    - **The UI window.** Teleport > God Mode > Force ON: `get_holds` named the UI's pid (6052, not background). The
+      AI's `write_god_mode` OFF answered "Not changed: god_mode is held by the UE5DumpUI window or another program (pid
+      6052). This server never replaces or ends what someone else holds; the user can release it where it was set."
+      The DLL logged `set_god_mode refused (if_free)`, and the card read ON after ↻. Force OFF freed it.
+    - **A CE record** (row 19's "God Mode (toggle)", ticked): the AI's OFF and ON both answered "Not changed: god_mode
+      is held by a Cheat Engine record. ...", and walk-0.log had no god-mode change between CE's ON and its untick.
+      After the untick the same OFF was accepted.
+    - **The experimental opt-in.** With it on, `write_fly` OFF was accepted. Unticked in the running UI (System tab,
+      the footer checkbox; the experimental tabs left the strip, experimental.json read `"enabled": false`), the next
+      `write_fly` ON answered "Fly is an experimental feature, and the UE5DumpUI window's experimental features are
+      off: the user turns them on in the UI (they stay off by default on purpose). Not changed." Fly stayed off and
+      free. Re-ticked, `write_fly` was accepted again.
+
+    *Was:* The rig's foreground client is `pipe_client.py`, and
     CE was not used (another session needed it). Acceptance: god mode ticked in the UI's Teleport tab, then a
     `write_god_mode` OFF from the AI is refused naming the UE5DumpUI window and the card stays on; the same with a CE
     record (refused naming "a Cheat Engine record"); and the UI's experimental opt-in ticked off in a running UI makes
