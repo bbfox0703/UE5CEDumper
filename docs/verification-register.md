@@ -425,7 +425,18 @@ Not reached:
       - the machine's own `defaultMode: "auto"`: all three ran, `scan_start` too (its log has all three). Auto mode
         decides on its own, so an allow rule is not the only gate there; D2's write tools carry
         `anthropic/requiresUserInteraction` for that reason (todo.md, Stage D).
-16. **A large game.** Timeouts and reply sizes were met on a 24,530-object fixture only. Acceptance: on a game of
+16. ✅ **CLOSED 2026-11-12** (EVERSPACE 2, UE 5.6, launched through Steam and injected with dist 3707, a save loaded:
+    1,000,790 objects; the AOT exe 3707; `tools/verify/mcp_large.py`, one session).
+    - **Timings.** `read_list_classes` unfiltered at limit 2000 took 1.12 s, filtered by "Character" 0.42 s.
+      `read_find_instances` of Actor at limit 2000 took 0.38 s. `read_list_functions` unfiltered at 2000 took 0.06 s,
+      filtered by "Health" 1.11 s. `read_value_scan_begin` (Int32 100) took 556 ms: 137 candidates, no deadline hit.
+      None timed out, none errored, and every reply parsed.
+    - **Cut replies.** Each oversized reply came back cut, with the note "The reply was cut to fit (classes keeps 147
+      of 2000). Narrow the request or page with offset / limit for the rest." (instances 204 of 2000, functions 126
+      of 2000, candidates 101 of 137). So did the "Health" filter, whose 150 matches do not fit one reply (107 kept).
+    - At the title screen the game had only 79,832 objects; a loaded save is what makes it large.
+
+    *Was:* **A large game.** Timeouts and reply sizes were met on a 24,530-object fixture only. Acceptance: on a game of
     300,000+ objects, `read_list_classes`, `read_find_instances`, `read_list_functions` (with a `name_filter`) and
     `read_value_scan_begin` answer within their timeouts, and a reply over the cap comes back cut with its note.
 17. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707; `tools/verify/vs_beside_ui.py`, Int32 424242 in
