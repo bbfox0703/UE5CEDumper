@@ -672,6 +672,16 @@ write commands, the UI's use of the same state, and the client-side safety knobs
     command's -1 / -6 / -17 as success (it answers `state`, not `code`); a queued (-5) debug-camera ON recorded no
     owner, so the AI could not turn it off and its session end did not release it; the MCP's 30 s timeout could end
     before a user-set invoke timeout.
+- 🆕 **Open, found live 2026-11-12 `[SHUTDOWN-SEETHRU-WAIT]`: a CE untick can block past the drain budget.**
+  `UE5_Shutdown` turns See-through off itself before `Stark::Shutdown` and `Fern::Stop`. If the UI's teardown is
+  releasing See-through at that moment, it holds Schlacht's worker lock while joining the worker, and the worker is
+  parked in a LineTrace on a stalled game thread. `UE5_Shutdown` then waits for the whole invoke timeout before Stop
+  even starts. Measured (verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item 12, run 12a'): with the
+  timeout at 15 s, 11.3 s from `UE5_Shutdown: Cleaning up` to `Stop entry`. `set_invoke_timeout` allows up to 600 s,
+  and CE's executeCodeEx gives up after 5 s. Needs See-through on, a stalled game thread and the UI closing at the
+  same moment, so it is rare. One fix: have `UE5_Shutdown` request the worker's stop and cut its trace's wait
+  (`Stark::Shutdown` answers queued requests -7), not wait on the lock. Effort **S-M**, risk **med** (the
+  shutdown ordering). Not decided: the maintainer's call.
 - ✅ **`[DBGCAM-RELEASE-STALLED]` fixed in build 3707** (the maintainer chose option 1, 2026-11-11): an AI session's
   camera release that timed out behind a stalled game thread is owed, and the DLL sends the OFF again once the queued
   one has run. Proof and what was not reached: dev-log 3707 and verification-register.md item 24.

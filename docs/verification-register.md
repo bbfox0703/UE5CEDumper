@@ -329,9 +329,25 @@ DumperTest Shipping, pipe and mailbox only. Not reached:
 11. **The hint-cache lock across processes.** Two writers in one process are tested (dll_core_test HINTCACHELOCK); two
     games, or a stale proxy beside an injection, writing at once were not. Acceptance: two injected games each
     `set_invoke_timeout ... persist` at the same moment; both records hold their value.
-12. **A Stop whose teardown waits on the game thread.** Acceptance: See-through on, game paused (`suspend.py`), the
-    UI closes and CE unticks the DLL at once; pipe-0.log's drain line counts the teardown ("still tearing down") and
-    names it, and nothing hangs past the drain budget.
+12. ◐ **Reached 2026-11-12, with a finding** (DumperTest Shipping, DLL and AOT UI 3707, Cheat Engine, the CT's
+    inject record owning the server; `tools/verify/stop_teardown_live.py`). In each run See-through was on (the UI's
+    claim), the game thread was frozen, the UI was closed by WM_CLOSE 0.3 s later, and CE acted 4 s after the freeze.
+    - **12a, CE untick, invoke timeout 5000 ms.** `UE5_Shutdown: Cleaning up` waited for See-through's worker (its
+      LineTrace timed out at 5000 ms) before `Stop entry`. The drain read `satisfied, 0 left, 0 still tearing down
+      (5 ms)`; Cleaning up to Stopped took 1.3 s. As the source predicts, a CE untick cannot show the count:
+      UE5_Shutdown turns See-through off itself, on the lock the UI's teardown holds, before Stop.
+    - **12a', the same at 15000 ms.** `UE5_Shutdown` blocked 11.3 s on that lock before `Stop entry`, past the 5 s
+      drain budget. Finding, todo.md `[SHUTDOWN-SEETHRU-WAIT]`.
+    - **12b, `UE5_StopPipeServer` from CE (a Stop with no UE5_Shutdown in front), 15000 ms.** The drain read `Stop
+      conn drain TIMEOUT, 0 left, 1 still tearing down (5022 ms, 49 cancel re-asserts)`. A WARN named it: `1
+      connection(s) already unregistered are still releasing what they owned (See-through, a recording -- possibly
+      waiting on the game thread)`. Stopped came 5.03 s after Stop entry. The count and the WARN work.
+    - Seen along the way: after 12a a hidden actor stayed hidden ("Off — 1 actor(s) still hidden"), since the deferred
+      restore refuses under shutdown. The next See-through ON restored it.
+
+    *Was:* **A Stop whose teardown waits on the game thread.** Acceptance: See-through on, game paused
+    (`suspend.py`), the UI closes and CE unticks the DLL at once; pipe-0.log's drain line counts the teardown ("still
+    tearing down") and names it, and nothing hangs past the drain budget.
 13. **Another CPU shape.** Only this 16C32T PC was measured (16 threads per walk before, 14 now); hybrid P/E cores,
     E-cores disabled and a CPU without SMT are unit-tested (dll_core_test CPU). Acceptance: the init log's thread pick
     on such a PC matches `Aura::ThreadsForCpu` for its topology.
