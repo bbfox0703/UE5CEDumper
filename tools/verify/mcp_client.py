@@ -42,6 +42,11 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
         the DLL sends the OFF again and the camera goes off; (I) the same, but the UI's Force ON during the stall takes
         the camera: the owed release is abandoned and the camera stays the UI's; (J) the AI leaves mid-command (a
         write_invoke waiting on the stalled game thread): its release still reads the camera, is owed, and ends it.
+    py tools/verify/mcp_client.py dbgcamstop --exe dist/UE5DumpUI.exe --suspend-name DumperTest [--pid N] [--ce-desc D]
+        [DBGCAM-RELEASE-STALLED] a CE Disable/Enable around the AI's camera release, on DumperTest Development with the
+        DLL started by the CE record D (default the CT's "Inject DLL + Start Pipe Server"), CE unticking and
+        re-ticking it through ce_lua_eval.py. (K) a release owed is dropped at the stop, and nothing turns the camera
+        off after the re-enable; (K2) a stop while the release still waits ends it -1, never owed.
 
     --ssh HOST   start the server as `ssh -T HOST <exe> --mcp`, the way an MCP client on another machine would; --exe
                  is then the path on HOST. ssh's own prompts (a password) go to this console, never to the protocol:
@@ -1409,9 +1414,184 @@ def run_dbgcam_hold(exe: str, pid: int | None, game_name: str) -> int:
     return ck.done(sessions)
 
 
+def _ce_schedule(desc: str, active: bool) -> str:
+    """Tick or untick a CE record on CE's main thread from a timer (ce_lua_eval.py), so this returns at once."""
+    chunk = ("local t=createTimer(nil,false) t.Interval=50 t.OnTimer=function(x) x.destroy() "
+             f"local r=getAddressList().getMemoryRecordByDescription([[{desc}]]) if r then r.Active="
+             f"{str(active).lower()} end end t.Enabled=true return 'scheduled'")
+    out = subprocess.run([sys.executable, str(pathlib.Path(__file__).with_name("ce_lua_eval.py")), chunk,
+                          "--timeout", "60"], capture_output=True, text=True)
+    return out.stdout.strip().splitlines()[-1] if out.stdout.strip() else out.stderr.strip()
+
+
+def run_dbgcam_stop(exe: str, pid: int | None, game_name: str, ce_desc: str) -> int:
+    """[DBGCAM-RELEASE-STALLED] A CE Disable/Enable around an AI session's camera release. K: a release owed (the AI's
+    session ended with the game thread stalled) is dropped at the stop, and nothing turns the camera off after the
+    re-enable. K2: the stop lands while the release is still waiting (invoke timeout raised to 20 s): Stark::Shutdown
+    answers its OFF -7, so it ends with code -1 and is never owed. Needs a live CheatManager (DumperTest Development)
+    and the DLL started by the CE record `ce_desc`, whose untick runs UE5_Shutdown."""
+    sys.path.insert(0, str(pathlib.Path(__file__).parent))
+    from pipe_client import PipeClient   # noqa: E402 -- the rig beside this one
+
+    ck = Checks()
+    base = {"pid": pid} if pid else {}
+    sessions: list[McpClient] = []
+
+    def session() -> McpClient:
+        c = McpClient(exe)
+        c.initialize()
+        sessions.append(c)
+        return c
+
+    def call(client, tool, args=None):
+        r = client.call(tool, {**base, **(args or {})}, 180.0)
+        data, note = payload(r)
+        return r, data, note
+
+    ai = session()
+    r, st, _ = call(ai, "read_status")
+    build = st.get("build_number") or 0
+    if not ck.check(st.get("scanned") and build >= 3707, f"the game is scanned, DLL build {build} (needs 3707+)", st):
+        ai.close()
+        return ck.done(sessions)
+    game = pid or st.get("pid")
+    ai.close()
+
+    def connect(retries: int = 10):
+        c = PipeClient(pid=game, timeout=120)
+        c.connect(retries=retries, delay=1.0)
+        return c
+
+    def camera_hold(c) -> dict:
+        return next((h for h in c.request("get_holds").get("holds", []) if h.get("hold") == "debug_camera"), {})
+
+    def cam(c) -> int:
+        return c.request("get_debug_camera_state").get("state", -99)
+
+    def is_free(h: dict) -> bool:
+        return h.get("holder", {}).get("kind") == "none" and "release_owed" not in h and not h.get("pending")
+
+    def server_holds(h: dict, c: McpClient) -> bool:
+        holder = h.get("holder", {})
+        return bool(h.get("active") and holder.get("background") is True and holder.get("pid") == c.proc.pid)
+
+    def wait_stalled(c) -> bool:
+        end = time.monotonic() + 3.0
+        while time.monotonic() < end:
+            if c.request("get_holds").get("game_thread_stalled") is True:
+                return True
+            time.sleep(0.2)
+        return False
+
+    def stop_and_restart(label: str, since: str) -> tuple[str | None, object]:
+        """CE unticks (UE5_Shutdown, Fern::Stop), then re-ticks 1.2 s after Stopped; a new client returned."""
+        print(f"        {label}: CE untick: {_ce_schedule(ce_desc, False)}", flush=True)
+        stopped = None
+        end = time.monotonic() + 60
+        while time.monotonic() < end and stopped is None:
+            stopped = _pipe_log_line(r"PipeServer: Stopped", since)
+            time.sleep(0.25)
+        return stopped, None
+
+    ui = connect()
+    if not ck.check(cam(ui) in (0, 1), "the debug camera's state reads (a live CheatManager)", cam(ui)):
+        ui.close()
+        return ck.done(sessions)
+    _camera_force_off(ui)
+    tmo = int(ui.request("get_pointers").get("invoke_timeout_ms") or 5000)
+    print(f"        game pid {game}; invoke timeout {tmo} ms; CE record {ce_desc!r}", flush=True)
+    ui2 = None
+    try:
+        # K. Owed, then the stop.
+        ai = session()
+        srv = ai.proc.pid
+        r, d, _ = call(ai, "write_debug_camera", {"enable": True})
+        ck.check(not r.get("isError") and d.get("state") == 1 and server_holds(camera_hold(ui), ai),
+                 "K: the AI's ON, the server's", d)
+        with _FrozenGameThread(game_name) as frozen:
+            ck.check(wait_stalled(ui), f"K: the game thread reads stalled ({frozen.suspend_line})")
+            ck.check(ai.close() == 0, "K: the AI session ends while the game thread is stalled")
+            end = time.monotonic() + tmo / 1000 + 3.0
+            while time.monotonic() < end and camera_hold(ui).get("holder", {}).get("kind") == "client":
+                time.sleep(0.25)
+            time.sleep(0.5)
+            h = camera_hold(ui)
+            ck.check(h.get("active") and h.get("release_owed") is True, "K: the release is owed", h)
+            since = time.strftime("%Y-%m-%d %H:%M:%S")
+            stopped, _ = stop_and_restart("K", since)
+            ck.check(stopped is not None, "K: CE's untick stopped the server", stopped)
+            dropped = _pipe_log_line(rf"background client {srv}'s debug-camera release is dropped at stop", since)
+            ck.check(dropped is not None, "K: the owed release is dropped at the stop", dropped)
+        time.sleep(5.0)
+        acted = _pipe_log_line(rf"background client {srv}'s debug-camera release .*(OFF sent again|is done|is "
+                               r"abandoned)", since)
+        ck.check(acted is None, "K: nothing acted on it after the stop", acted)
+        time.sleep(1.2)
+        print(f"        K: CE re-tick: {_ce_schedule(ce_desc, True)}", flush=True)
+        ui2 = connect(retries=60)
+        started = _pipe_log_line(r"PipeServer: Started on", since)
+        ck.check(started is not None, "K: the re-tick started the server", started)
+        h, state = camera_hold(ui2), cam(ui2)
+        ck.check(is_free(h) and state == 1, "K: after the re-enable the camera is on, free, nothing owed",
+                 (state, h))
+        time.sleep(15.0)
+        h, state = camera_hold(ui2), cam(ui2)
+        late = _pipe_log_line(r"debug-camera release", started[1:20] if started else since)
+        ck.check(is_free(h) and state == 1 and late is None, "K: 15 s later still on, free, and no release line",
+                 (state, h, late))
+        ck.check(_camera_force_off(ui2) == 0 and is_free(camera_hold(ui2)), "K: the UI stand-in turns it off")
+
+        # K2. The stop lands while the release still waits.
+        ui2.request("set_invoke_timeout", timeout_ms=20000, persist=False)
+        ai = session()
+        srv = ai.proc.pid
+        r, d, _ = call(ai, "write_debug_camera", {"enable": True})
+        ck.check(not r.get("isError") and d.get("state") == 1, "K2: the AI's ON", d)
+        since = time.strftime("%Y-%m-%d %H:%M:%S")
+        with _FrozenGameThread(game_name) as frozen:
+            ck.check(wait_stalled(ui2), f"K2: the game thread reads stalled ({frozen.suspend_line})")
+            ck.check(ai.close() == 0, "K2: the AI session ends while the game thread is stalled")
+            time.sleep(1.5)
+            h = camera_hold(ui2)
+            ck.check(h.get("holder", {}).get("kind") == "client" and h["holder"].get("pid") == srv,
+                     "K2: the release is still under way (the server still named)", h)
+            stopped, _ = stop_and_restart("K2", since)
+            ck.check(stopped is not None, "K2: CE's untick stopped the server", stopped)
+            rel = _release_line(srv, "debug_camera", since)
+            ck.check(rel is not None and "(code -1)" in rel, "K2: the release ended -1 (its OFF answered -7)", rel)
+            ck.check(_pipe_log_line(rf"background client {srv} left -- its debug-camera OFF is queued", since) is None
+                     and _pipe_log_line(rf"background client {srv}'s debug-camera release is dropped", since) is None,
+                     "K2: never owed, nothing dropped")
+        time.sleep(1.2)
+        print(f"        K2: CE re-tick: {_ce_schedule(ce_desc, True)}", flush=True)
+        ui2 = connect(retries=60)
+        h, state = camera_hold(ui2), cam(ui2)
+        ck.check(is_free(h) and state == 1, "K2: after the re-enable the camera is on, free, nothing owed", (state, h))
+        time.sleep(15.0)
+        h, state = camera_hold(ui2), cam(ui2)
+        ck.check(is_free(h) and state == 1, "K2: 15 s later still on and free", (state, h))
+        ck.check(_camera_force_off(ui2) == 0 and is_free(camera_hold(ui2)), "K2: the UI stand-in turns it off")
+        ui2.request("set_invoke_timeout", timeout_ms=0, persist=False)
+    finally:
+        for c in sessions:
+            try:
+                c.close()
+            except Exception:  # noqa: BLE001 -- already closed
+                pass
+        for c in (ui, ui2):
+            try:
+                if c is not None:
+                    c.close()
+            except Exception:  # noqa: BLE001 -- a stopped server closed it
+                pass
+    return ck.done(sessions)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("mode", choices=["probe", "call", "live", "writes", "raw", "dbgcam", "dbgcamhold"])
+    ap.add_argument("mode", choices=["probe", "call", "live", "writes", "raw", "dbgcam", "dbgcamhold", "dbgcamstop"])
+    ap.add_argument("--ce-desc", default="Inject DLL + Start Pipe Server",
+                    help="dbgcamstop: the CE record that started the DLL (its untick runs UE5_Shutdown)")
     ap.add_argument("--exe", required=True, help="path to UE5DumpUI.exe")
     ap.add_argument("--tool")
     ap.add_argument("--args", default="{}")
@@ -1443,7 +1623,7 @@ def main() -> int:
         return run_call(exe, a.tool, args)
     if a.mode == "writes":
         return run_writes(exe, a.pid, a.toggle_experimental)
-    if a.mode in ("raw", "dbgcam", "dbgcamhold"):
+    if a.mode in ("raw", "dbgcam", "dbgcamhold", "dbgcamstop"):
         if not a.suspend_name:
             ap.error(f"{a.mode} needs --suspend-name (the game's image stem, for suspend.py's thread verbs)")
         # These freeze the game's thread from this machine and compare a holder's pid with the server's process here.
@@ -1456,6 +1636,8 @@ def main() -> int:
             ap.error(str(e))
         if tid is None:
             ap.error(f"--suspend-name {a.suspend_name!r}: no running process matches it")
+        if a.mode == "dbgcamstop":
+            return run_dbgcam_stop(exe, a.pid, a.suspend_name, a.ce_desc)
         run = {"raw": run_raw, "dbgcam": run_dbgcam, "dbgcamhold": run_dbgcam_hold}[a.mode]
         return run(exe, a.pid, a.suspend_name)
     return run_live(exe, a.pid, a.suspend_name)
