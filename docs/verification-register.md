@@ -327,7 +327,8 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
    - ✅ **The finding fixed, 3709 (AOT UI and proxy 3709).**
      - **No UAC needed:** `legacy_pipe_stub.py --pid 0 --elevated-dacl` served `UE5DumpBfx_14712` under the DACL an
        elevated game's pipe gets. A non-elevated open got "Permission denied". The non-elevated UI's Connect showed
-       "Connection Error — PID 14712 runs as admini…" (the cause already inside the toolbar's ellipsis). Its init log:
+       "Connection Error — PID 14712 runs as admini…" (the cause already inside the toolbar's ellipsis). Hovering the
+       red text shows the whole sentence, wrapped, in its tooltip (seen again with stub pid 54256). Its init log:
        `InvalidOperationException: PID 14712 runs as administrator (elevated) or under another Windows account, so
        Windows refused this UI its pipe. Close UE5DumpUI and start it as administrator, or start the game normally,
        then connect again.`, with `---> UnauthorizedAccessException: Access to the path is denied.` kept inside it.
@@ -536,6 +537,8 @@ DumperTest Shipping, pipe and mailbox only. Not reached:
     `GetLogicalProcessorInformationEx(RelationProcessorCore)` and `std::thread::hardware_concurrency()`. A process
     affinity mask changes neither, so starting the game on fewer cores does not stage another shape. Only a different
     PC, or SMT / core count changed in the firmware or the boot configuration, would.
+    **Kept open (the maintainer, 2026-11-12):** there is no machine with another CPU shape (an Intel hybrid CPU, say)
+    to run it on.
 14. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707; `tools/verify/mcp_soak.py`).
     - **One hour:** one `UE5DumpUI.exe --mcp` held one pipe connection for an hour. Every 30 s it ran read_status and
       read_pipe_clients, and every 10th interval also read_find_instances of Actor and a value scan (begin, end).

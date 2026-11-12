@@ -13,7 +13,8 @@ Open work only. **Read this when deciding what to do next.**
 > (`[DBGCAM-RELEASE-STALLED]`, found live 2026-11-11, was fixed in build 3707). The 2026-11-12 verification pass closed
 > verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-12, 14, 16-17, 19-20, 23-25 and 27; their findings are fixed --
 > `[CT-INITFAILED-HEADLINE]` in build 3708, `[UI-ELEVATED-ACCESS-DENIED]` and `[SHUTDOWN-SEETHRU-WAIT]` in build 3709.
-> Still open there: only 13 (needs a PC with another CPU shape); nothing further in Stage D is queued** --
+> Still open there: only 13, kept open by the maintainer (2026-11-12): no machine with another CPU shape to run it on;
+> nothing further in Stage D is queued** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
