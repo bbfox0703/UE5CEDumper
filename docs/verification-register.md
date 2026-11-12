@@ -307,7 +307,7 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
    *Was:* **A second copy's own log lines.** A second copy of the DLL in one process could not write its logs (the
    first copy holds the files). Its deferral was proven from the first copy's pipe log instead: 0 new connections in
    the 15 s after an instance freed, against 22 in 10 s from the pre-fix copy. Its "deferring" line was never seen.
-4. ◐ **The proxy-loaded game: reached 2026-11-12** (the PathShape copy of DumperTest51 Shipping, UE 5.1, `version.dll`
+4. ✅ **Reached 2026-11-12, both halves; one finding open** (the PathShape copy of DumperTest51 Shipping, UE 5.1, `version.dll`
    from dist 3707 deployed with `path_shape_live.py deploy`, and undeployed afterwards: `proxy_refresh.py report`
    reads 0 deployed).
    - The proxy served only `\\.\pipe\UE5DumpBfx_9668` (`load_mode proxy:version.dll`, cap 6), unscanned until asked.
@@ -316,8 +316,14 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
    - Proxy Deploy > Inject into running game listed it as "UE5Dumper loaded (proxy: VERSION.dll) v1.0.0.3707 — already
      active; Inject will just Connect", and Inject connected without loading a `UE5Dumper.dll`.
    - The MCP server's `read_games` / `read_status` saw it (scanned, 19144 objects, the proxy load mode).
-   - **Not run: an elevated game.** Its UAC prompt needs the maintainer; item 18 drove an elevated game against the
-     MCP server only.
+   - **The elevated game: reached 2026-11-12, with a finding.** The same proxied PathShape game was started elevated
+     (ShellExecuteW runas; the maintainer approved UAC). Non-elevated, `pipe_client.py` got "Permission denied", and
+     the MCP server's `read_status` named the cause: "the game runs as administrator (elevated) and this server does
+     not. ..." The **non-elevated UI** showed only "Access to the path is denied." (UnauthorizedAccessException from
+     `NamedPipeClientStream.TryConnect`), with no word of elevation: todo.md `[UI-ELEVATED-ACCESS-DENIED]`. The
+     **elevated UI** (approved by the maintainer, who clicked for it: UIPI blocks computer use) connected without a
+     picker and scanned through Start Scan: "Connected — UE501 (19144 objects)", one `trigger_scan`, RunScan in 0.6 s.
+     Not run: the non-elevated UI's Inject into a running elevated game, then its auto-connect.
 
    *Was:* **A proxy-loaded game, and an elevated game.** Only injection was driven, non-elevated.
 5. ◐ **Mostly reached 2026-11-12** (DumperTest Shipping, DLL 3707, Cheat Engine 64-bit SSE4-AVX2, `dist\UE5CEDumper.CT`

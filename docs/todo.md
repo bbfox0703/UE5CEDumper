@@ -11,8 +11,9 @@ Open work only. **Read this when deciding what to do next.**
 > 3704, D2-2 (the MCP write tools for the toggles, force field and teleport) in build 3705, D2-3 (`write_memory`,
 > `write_invoke`, `write_mem` data only, the invoke queue's owners) in build 3706: Stage D2 is complete
 > (`[DBGCAM-RELEASE-STALLED]`, found live 2026-11-11, was fixed in build 3707). The 2026-11-12 verification pass closed
-> verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-3, 8-10, 16-17, 19-20 and 23-27; still open there:
-> 4 (an elevated game), 5 (the DLL's own INIT_FAILED), 6, 7, 11, 12 (with `[SHUTDOWN-SEETHRU-WAIT]`, an open defect
+> verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-4, 8-10, 16-17, 19-20 and 23-27 (item 4 with
+> `[UI-ELEVATED-ACCESS-DENIED]` open); still open there:
+> 5 (the DLL's own INIT_FAILED), 6, 7, 11, 12 (with `[SHUTDOWN-SEETHRU-WAIT]`, an open defect
 > under Stage D), 13 and 14; nothing further in Stage D is queued** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
@@ -674,6 +675,15 @@ write commands, the UI's use of the same state, and the client-side safety knobs
     command's -1 / -6 / -17 as success (it answers `state`, not `code`); a queued (-5) debug-camera ON recorded no
     owner, so the AI could not turn it off and its session end did not release it; the MCP's 30 s timeout could end
     before a user-set invoke timeout.
+- 🆕 **Open, found live 2026-11-12 `[UI-ELEVATED-ACCESS-DENIED]`: the UI does not say a game is elevated.** A
+  non-elevated UI connecting to a game that runs as administrator shows only "Access to the path is denied." (an
+  UnauthorizedAccessException out of `NamedPipeClientStream.TryConnect`). The MCP server names this case since item
+  18's red/green fix: "the game runs as administrator (elevated) and this server does not. Start the AI client
+  elevated, or start the game normally." The UI should say the same, in a str.Connect.* text. Measured
+  (verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` item 4): the PathShape DumperTest51 started elevated;
+  an elevated UI connects and scans. The source predicts the same raw text after Proxy Deploy's Inject into a
+  running elevated game, then its auto-connect (not run). Effort **S**, risk **low**. Not decided: the maintainer's
+  call.
 - 🆕 **Open, found live 2026-11-12 `[SHUTDOWN-SEETHRU-WAIT]`: a CE untick can block past the drain budget.**
   `UE5_Shutdown` turns See-through off itself before `Stark::Shutdown` and `Fern::Stop`. If the UI's teardown is
   releasing See-through at that moment, it holds Schlacht's worker lock while joining the worker, and the worker is
