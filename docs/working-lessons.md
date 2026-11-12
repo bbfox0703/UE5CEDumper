@@ -922,6 +922,18 @@ and its message quotes the very lines. **Before reasoning from a commit's code a
 `-dirty` build ran code no commit holds, so look for the experiment first: the commits around its timestamp, then
 the session that ran it.
 
+### 1.aq Private bytes rising in a straight line is not a leak until the process has had a collection
+
+2026-11-12, register item 14 (`tools/verify/mcp_soak.py`). An hour of one MCP server, a call pair every 30 s, grew 9.7
+to 43.8 MB in a straight line, and the rig's "less than 50 MB" bar only just passed it. At 1 s it climbed about 117 KB
+per call to 60.4 MB, then stayed flat. With the full mix it reached 62.5 MB and stayed there for about 840 more calls.
+The workstation GC's first budget scales with the L3 cache: this PC's CPU has 128 MB, so the first collection comes
+after about 50 MB of allocation. A slow run allocates less than that and says nothing either way.
+- **Judge memory by whether it levels off,** at a cadence that allocates several budgets' worth, not by its size.
+- A size bar is wrong both ways: it fails a server that has not collected yet, and it passes a real leak that is
+  slower than the bar.
+- Name the CPU (§1.al). On a smaller L3 the line bends much earlier.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
@@ -2915,6 +2927,41 @@ The rule:
   `Logs\cheatengine-x86_64-SSE4-AVX2\` ("Module identity ... path:"), or CE's Settings > Plugins;
 - change CE's plugin list through that dialog (it writes the registry CE reads), or ask the maintainer to look in
   regedit. Cancel leaves it untouched.
+
+### 3.wd Staging a race inside the game: hold one thread at a Cheat Engine int3 breakpoint, not two remote threads
+
+2026-11-12, `[PIPE-PER-PROCESS-2026-11-06]` register item 6 (`tools/verify/oldname_join.py`). The case needed one DLL
+copy to create a pipe name in the instant between another copy's probe and its own create. A race between two remote
+threads from python.exe would stage it, and the AV flags python.exe doing that (§3.8). Holding the second copy still
+made it deterministic, first try once the method was right:
+- **The VEH debugger, `debugProcess(2)`.** The Windows debugger freezes EVERY thread at a break, so the other copy's
+  start could not run while one thread waited.
+- **int3 (`bpmInt3`), on the module's OWN call site.** Find the one `call [rip+X]` whose X is the import's IAT slot
+  (pefile; assert exactly one). That address is reached only by that module's code, so the other copy, a separate
+  image, never hits it, and the breakpoint never has to be removed while a thread waits on it.
+- **A debug-register breakpoint missed the first run.** The thread to hold was created after the breakpoint was set (the
+  accept thread `Start()` spawns), and the registers reached it only after its first create. A patched instruction is
+  seen by every thread at once.
+- **A per-breakpoint Lua function's return is the INVERSE of `debugger_onBreakpoint`'s.** In CE's source
+  (`debugeventhandler.pas` `VisualizeBreak`) a nonzero return leaves the thread waiting for a continue, and 0
+  continues at once. The function runs on CE's main thread; CE's Lua `sleep` is a plain Sleep, pumping nothing.
+- **A second copy of the DLL cannot write its logs** while the first holds the files (item 3). Read its state from its
+  own mailbox (`initState`) instead, with ReadProcessMemory.
+- Every remote thread was Cheat Engine's (`executeCodeEx`), as the .CT does anyway.
+
+### 3.we Firing an export while a .CT record's tick holds CE's main thread: a CE worker thread
+
+2026-11-12, register item 5 (`tools/verify/initfailed_ct.py`). The CT's inject record polls the DLL's mailbox on CE's
+main thread for its whole run, pumping paint messages only, so no CE timer fires meanwhile. The DLL's own INIT_FAILED
+needed `UE5_Shutdown` fired mid-scan, and a python.exe remote thread was ruled out (§3.8). What worked:
+- tick the record from a CE timer, so the bridge call returns first, with showMessage and print captured;
+- a `createThread` worker started beforehand. It is a `lua_newthread` of CE's main state, so it shares globals, and it
+  runs while the tick sleeps between polls (a C call releases the Lua lock);
+- the worker learns the addresses from a file that Python writes once the record has injected the DLL (Toolhelp plus
+  the export RVAs), not from CE's symbol handler mid-tick;
+- it fires the export with `createRemoteThread(address, 0)`: a plain CreateRemoteThread at the export, with no
+  assembled stub. `executeCodeEx` assembles one first.
+The worker's trace of every initState it read showed the race's outcome (1 → 0 → 3), and the DLL's log confirmed it.
 
 ### 3.x `proxy_refresh.py report` cries wolf after ANY local rebuild — do not act on it blindly
 
