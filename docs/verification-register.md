@@ -357,9 +357,19 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
        shutdown latch), so an untick still has something to stop.
      - The order is a race: the shutdown ends by writing IDLE, so the message shows only when the scan's FAILED comes
        last (here 62 ms after). The rig reports a run that went the other way.
-     - **Found, open: the message's headline is wrong for this case.** Its causes sentence is right, but the headline
-       (and the log line before it) says the DLL "initialised, but the Pipe Server failed to start". Here init aborted
-       and the server started. todo.md `[CT-INITFAILED-HEADLINE]`. The rig's pass rests on the causes sentence.
+     - **Found, then fixed in build 3708: the headline was wrong for this case** (`[CT-INITFAILED-HEADLINE]`). On 3707
+       the headline and the log line before it said the DLL "initialised, but the Pipe Server failed to start", while
+       init had aborted and the server had started.
+     - ✅ **Re-run on 3708** (a clean DumperTest Shipping, `dist\UE5CEDumper.CT` 3708, CE 7.7). `initfailed_ct.py` now
+       passes only on both the headline and the causes sentence. The race went the same way (1 → 0 → 3, the shutdown
+       406 ms after RUNNING).
+       - The CT logged `DLL start-up did not finish: the scan was cut short, or the Pipe Server did not start.`
+       - It showed "The DLL loaded, but its start-up did not finish: the scan was cut short, or the Pipe Server did not
+         start. Most likely the scan was stopped part-way ...".
+       - The DLL's own init log: `pipe server started, init ABORTED -> initState=3`.
+       - The generated records carry the same headline (`CeReadinessLua.InitFailedMessage`). They were not provoked
+         live; `CeInitFailedMessageTests` pins their INIT_FAILED branch, and `GeneratedScripts_OnCesVm_...` compiles
+         them on CE's Lua 5.3.
 
    *Was:* **Cheat Engine itself.** The mailbox was driven by `mailbox_poke.py`; the changed CE texts (the pipe name,
    the INIT_FAILED reasons) were not displayed in CE.

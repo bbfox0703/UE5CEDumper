@@ -27,6 +27,32 @@ builds ≤696 in
 
 -----
 
+## 2026-11-12 (build 3708) — Cheat Engine's "start-up failed" message names both causes `[CT-INITFAILED-HEADLINE]`
+
+- **What was wrong.** When the DLL's start-up fails (mailbox state INIT_FAILED), the .CT's inject record and the
+  records the UI generates showed "The DLL loaded and initialised, but the Pipe Server failed to start." INIT_FAILED
+  covers two cases, though. The pipe server did not start, or the scan was cut short (the record was unticked while
+  it ran), in which case the pipe server usually DID start. Provoked live on 3707, the message said the server failed
+  while the DLL's log said `pipe server started, init ABORTED`, and the message's own causes sentence pointed at the
+  aborted scan.
+- **What changes:**
+  - The message now opens with "The DLL loaded, but its start-up did not finish: the scan was cut short, or the Pipe
+    Server did not start.", then keeps the causes sentence.
+  - The same change covers the .CT (its message and its log line) and the generated inject and autorun records.
+  - `CeReadinessLua.PipeFailedMessage` is renamed `InitFailedMessage`, and the INIT_FAILED docs in `Mimic.h` and
+    `CeMailboxLayout.cs` say the same. Comment-only, so the mailbox contract is unchanged (v9).
+- **Tests:** `CeInitFailedMessageTests`, red then green. All four copies, the shared text, both generated records and
+  the shipped .CT, must name both outcomes and never claim init finished. Only the INIT_FAILED branch's string literals
+  are read. `Reports_failures_rather_than_returning_success` now finds the message by its new wording.
+- **Publish:** C++ 287 + 4038 + 22 + 30 + 1566 checks; C# 7919 passed, 1 skipped; headless 71/71.
+- **Live, DumperTest Shipping, 3708** (`tools/verify/initfailed_ct.py`, which now requires both the headline and the
+  causes sentence): a CE worker thread fired `UE5_Shutdown` 406 ms after initState went RUNNING. The CT logged and
+  showed the new headline, and the DLL's log read `pipe server started, init ABORTED -> initState=3`. The generated
+  records were not provoked live: their INIT_FAILED branch is pinned by the test, and they compile on CE's Lua 5.3.
+- **Reviewed:** two reviewers on the diff; 2 findings confirmed (the derived test-file count, the register wording),
+  both fixed.
+- AOT UI 62,280,704 bytes (sha256 b6093d1043716524...); UE5Dumper.dll 3,724,800 bytes (sha256 690039faa94ffe30...).
+
 ## 2026-11-12 (no build change) — The rest of the pipe-per-process pass: an elevated game, two games at once, an hour of MCP, CE-staged races `[PIPE-PER-PROCESS-2026-11-06]`
 
 - **What.** The items the morning's pass left, all against build 3707. verification-register.md
