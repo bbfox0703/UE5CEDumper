@@ -327,10 +327,10 @@ bool ExtractHitImpactPoint(const std::vector<uint8_t>& buf, const FunctionParam&
     return true;
 }
 
-// Invoke AActor::SetActorHiddenInGame(hidden) on the game thread. Returns false
-// when the setter is cooked out or the actor no longer looks like a live Actor.
-bool InvokeSetHidden(uintptr_t actor, bool hidden) {
-    if (!actor) return false;
+// Invoke AActor::SetActorHiddenInGame(hidden) on the game thread. Returns kHideNotAttempted when the setter is cooked
+// out or the actor no longer looks like a live Actor, else the invoke's own result (0 = it ran).
+int32_t SetHiddenCode(uintptr_t actor, bool hidden) {
+    if (!actor) return kHideNotAttempted;
     uintptr_t cls = Ubel::GetClass(actor);
     // Cheap liveness/sanity guard: a freed/garbage actor won't walk to AActor.
     if (!cls || !Aura::ClassDerivesFromAny(cls, {"Actor"})) {
@@ -351,18 +351,32 @@ bool InvokeSetHidden(uintptr_t actor, bool hidden) {
                      static_cast<unsigned long long>(actor),
                      Ubel::GetName(Ubel::GetOuter(actor)).c_str());
         }
-        return false;
+        return kHideNotAttempted;
     }
     FunctionInfo fi;
     if (!FindFuncByName(cls, "SetActorHiddenInGame", fi)) {
         static bool s_warned = false;   // one-shot: persistent condition, don't spam
         if (!s_warned) { s_warned = true; LOG_WARN("SeeThrough: SetActorHiddenInGame NOT FOUND (cooked out?) — can't hide occluders"); }
-        return false;
+        return kHideNotAttempted;
     }
     std::vector<uint8_t> buf((std::max<size_t>)(static_cast<size_t>(Ubel::ParamBufferSize(fi)), size_t{1}), 0);
     WriteBoolParam(buf, fi, "bNewHidden", hidden);
-    Invoke(actor, fi, buf);
-    return true;
+    return Invoke(actor, fi, buf);
+}
+
+// The hide path: true when a hide was attempted. One that timed out is still queued and runs later, so it is recorded
+// like one that ran.
+bool InvokeSetHidden(uintptr_t actor, bool hidden) {
+    return SetHiddenCode(actor, hidden) != kHideNotAttempted;
+}
+
+// Un-hides each, and returns those an un-hide may have left hidden: attempted but not run (UnhideLeftItHidden). The
+// caller puts them back in the record so the next disable or enable un-hides them again. [SHUTDOWN-SEETHRU-WAIT]
+std::unordered_set<uintptr_t> RestoreHidden(const std::unordered_set<uintptr_t>& actors) {
+    std::unordered_set<uintptr_t> kept;
+    for (uintptr_t a : actors)
+        if (UnhideLeftItHidden(SetHiddenCode(a, false))) kept.insert(a);
+    return kept;
 }
 
 // [P1-SEETHRU-NOPRODUCER] Can this build hide ANYTHING? Both producers must exist: KismetSystemLibrary::LineTraceSingle
@@ -402,10 +416,13 @@ std::atomic<int> s_enableGen{0};
 // one surface at a time — no LineTraceMulti / TArray<FHitResult> (which would leak
 // the engine-allocated OutHits every tick). Pawns/Characters (and the pawn itself)
 // are skipped: kept visible, passed through, and do NOT consume the pierce depth.
+// `dispatchFailed`: a trace did not run (timed out, cut by a shutdown, no hook). That says nothing about what occludes,
+// so it must not read as a miss. [SHUTDOWN-SEETHRU-WAIT]
 void CollectOccluders(uintptr_t pawn, const double start0[3], const double fwd[3],
                       const double end[3], int32_t pierceN,
-                      std::unordered_set<uintptr_t>& out) {
+                      std::unordered_set<uintptr_t>& out, bool& dispatchFailed) {
     out.clear();
+    dispatchFailed = false;
 
     // The KismetSystemLibrary CDO + LineTraceSingle signature are resolved ONCE
     // per enable, not per tick. `Aura::FindLiveOrDefaultOf` is a full GObjects scan
@@ -452,6 +469,7 @@ void CollectOccluders(uintptr_t pawn, const double start0[3], const double fwd[3
         WriteBoolParam(buf, lt, "bTraceComplex", false);
         WriteBoolParam(buf, lt, "bIgnoreSelf",   true);
         int32_t r = Invoke(ksl, lt, buf);
+        if (r != 0) { dispatchFailed = true; break; }
         bool hit = (r == 0) &&
                    (!rv || rv->offset < 0 || rv->offset >= static_cast<int32_t>(buf.size()) || buf[rv->offset] != 0);
         if (!hit) break;
@@ -532,7 +550,11 @@ void Tick() {
     { std::lock_guard<std::mutex> lk(s_mutex); pierceN = s_state.pierceCount; }
 
     std::unordered_set<uintptr_t> desired;
-    CollectOccluders(pawn, camLoc, fwd, end, pierceN, desired);
+    bool dispatchFailed = false;
+    CollectOccluders(pawn, camLoc, fwd, end, pierceN, desired, dispatchFailed);
+    // A trace that did not run, or a stop under way: leave the record as it is. The diff would un-hide and drop every
+    // recorded actor, and the disabler decides what happens to them. [SHUTDOWN-SEETHRU-WAIT]
+    if (!ShouldApplyOccluderDiff(dispatchFailed, s_workerStop.load())) { SetCode(STR_OK, false); return; }
 
     // Diff against the currently-hidden set: un-hide those no longer occluding, hide
     // the newly-occluding ones. Nothing to do (and nothing logged) when unchanged.
@@ -552,14 +574,11 @@ void Tick() {
     std::unordered_set<uintptr_t> old;
     { std::lock_guard<std::mutex> lk(s_mutex); old = s_state.hiddenActors; }
 
-    std::unordered_set<uintptr_t> applied;
-    for (uintptr_t a : old) {
-        if (desired.count(a)) {
-            applied.insert(a);          // still occluding, and we know this one took
-        } else {
-            InvokeSetHidden(a, false);  // best effort; drop it either way — a failed
-        }                               // un-hide means the actor died or the setter
-    }                                   // went away, and the disable sweep is the net
+    // Still occluding: kept, and we know it took. No longer occluding: un-hidden, and dropped unless that un-hide did not
+    // run (RestoreHidden). One never attempted drops too: the actor died or the setter went away.
+    std::unordered_set<uintptr_t> applied, gone;
+    for (uintptr_t a : old) (desired.count(a) ? applied : gone).insert(a);
+    for (uintptr_t a : RestoreHidden(gone)) applied.insert(a);
     for (uintptr_t a : desired)
         if (!old.count(a) && InvokeSetHidden(a, true))
             applied.insert(a);
@@ -670,22 +689,36 @@ void PendingRestoreLoop() {
               restore = std::move(s_state.hiddenActors);
               s_state.hiddenActors.clear();
               s_state.hiddenCount = 0; }
-            for (uintptr_t a : restore) InvokeSetHidden(a, false);
+            // An un-hide that did not run (the game thread stalled again) goes back in the record, and this loop
+            // waits for the game thread once more. [SHUTDOWN-SEETHRU-WAIT]
+            const std::unordered_set<uintptr_t> kept = RestoreHidden(restore);
+            { std::lock_guard<std::mutex> lk(s_mutex);
+              s_state.hiddenActors.insert(kept.begin(), kept.end());
+              s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size()); }
             LOG_INFO("SeeThrough: game thread resumed after %d ms — restored %zu "
-                     "leftover hidden actor(s)", waited, restore.size());
-            done = true;
+                     "leftover hidden actor(s), %zu still hidden", waited, restore.size() - kept.size(), kept.size());
+            done = kept.empty();
+            if (!done && waited >= Grimoire::PENDING_RESTORE_MAX_MS) {   // a responsive game whose un-hide keeps failing
+                LOG_WARN("SeeThrough: gave up restoring %zu hidden actor(s) after %d s — they stay hidden until "
+                         "See-through is enabled and disabled again", kept.size(), Grimoire::PENDING_RESTORE_MAX_MS / 1000);
+                { std::lock_guard<std::mutex> lk(s_mutex); s_state.restoreAbandoned = true; }
+                done = true;
+            }
         });
     }
     s_pendingRunning.store(false);
 }
 
-void StartPendingLocked() {   // s_workerMutex held
-    if (s_pendingRunning.load()) return;                     // already waiting
+// True when a deferred restore is waiting, already or now. False under a shutdown, which starts no thread nothing would
+// join (M5): the caller then says no restore is waiting.
+bool StartPendingLocked() {   // s_workerMutex held
+    if (s_pendingRunning.load()) return true;                // already waiting
     if (s_pendingWorker.joinable()) s_pendingWorker.join();  // reap a finished one
-    if (Tot::ShutdownRequested()) return;                    // M5 spawn chokepoint
+    if (Tot::ShutdownRequested()) return false;              // M5 spawn chokepoint
     s_pendingStop.store(false);
     s_pendingRunning.store(true);
     s_pendingWorker = std::thread(PendingRestoreLoop);
+    return true;
 }
 void StopPendingLocked() {    // s_workerMutex held; never called FROM the worker
     if (!s_pendingWorker.joinable()) return;
@@ -752,10 +785,12 @@ static int32_t ApplyLocked(bool enable) {
                 s_state.hiddenActors.clear();
             }
         }
-        for (uintptr_t a : leftover) InvokeSetHidden(a, false);
+        // One whose un-hide did not run stays recorded: the worker inherits it, as it inherits an unresponsive leftover.
+        const std::unordered_set<uintptr_t> stillHidden = RestoreHidden(leftover);
         int32_t n;
         {
             std::lock_guard<std::mutex> lk(s_mutex);
+            s_state.hiddenActors.insert(stillHidden.begin(), stillHidden.end());
             n = s_state.pierceCount;
             s_state.active = true;
             s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
@@ -790,8 +825,25 @@ static int32_t ApplyLocked(bool enable) {
             s_state.hiddenActors.clear();
             s_state.hiddenCount = 0;
         }
-        for (uintptr_t a : restore) InvokeSetHidden(a, false);
-        LOG_INFO("SeeThrough: disabled (%zu restored)", restore.size());
+        // An un-hide that did not run (a hitch, or a shutdown cutting its wait) keeps its actor: the record survives, and
+        // a deferred restore retries it. [SHUTDOWN-SEETHRU-WAIT]
+        const std::unordered_set<uintptr_t> kept = RestoreHidden(restore);
+        {
+            std::lock_guard<std::mutex> lk(s_mutex);
+            s_state.hiddenActors.insert(kept.begin(), kept.end());
+            s_state.hiddenCount = static_cast<int32_t>(s_state.hiddenActors.size());
+        }
+        if (kept.empty()) {
+            LOG_INFO("SeeThrough: disabled (%zu restored)", restore.size());
+        } else if (StartPendingLocked()) {
+            LOG_WARN("SeeThrough: disabled (%zu restored); %zu un-hide(s) did not run — waiting for the game thread to "
+                     "restore them", restore.size() - kept.size(), kept.size());
+        } else {
+            { std::lock_guard<std::mutex> lk(s_mutex); s_state.restoreAbandoned = true; }
+            LOG_WARN("SeeThrough: disabled (%zu restored); %zu un-hide(s) did not run and a shutdown is under way, so "
+                     "no restore waits — the next See-through ON restores them", restore.size() - kept.size(),
+                     kept.size());
+        }
     } else {
         // Game thread unresponsive (paused / backgrounded) → we can't un-hide now.
         // KEEP the record so the next enable (when responsive) restores them, rather
@@ -802,9 +854,17 @@ static int32_t ApplyLocked(bool enable) {
             kept = s_state.hiddenActors.size();
             s_state.hiddenCount = static_cast<int32_t>(kept);
         }
-        LOG_WARN("SeeThrough: disabled but %zu actor(s) remain hidden (game thread unresponsive) "
-                 "— waiting for it to resume to restore them", kept);
-        if (kept > 0) StartPendingLocked();
+        // A shutdown starts no deferred restore (M5): say so, rather than promise one that is not waiting.
+        if (kept == 0) {
+            LOG_INFO("SeeThrough: disabled (nothing hidden)");
+        } else if (StartPendingLocked()) {
+            LOG_WARN("SeeThrough: disabled but %zu actor(s) remain hidden (game thread unresponsive) "
+                     "— waiting for it to resume to restore them", kept);
+        } else {
+            { std::lock_guard<std::mutex> lk(s_mutex); s_state.restoreAbandoned = true; }
+            LOG_WARN("SeeThrough: disabled but %zu actor(s) remain hidden (game thread unresponsive) and a shutdown is "
+                     "under way, so no restore waits — the next See-through ON restores them", kept);
+        }
     }
     return 0;
 }

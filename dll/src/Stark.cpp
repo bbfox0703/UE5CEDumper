@@ -17,6 +17,7 @@
 #include "Routine.h"   // Routine::RunThreadGuarded — a throw out of the PE hook fast-fails the GAME (B14)
 #include "Lager.h"     // MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY])
 #include "Falsch.h"    // MinHook trampoline pre-flight against Zydis ([MH-TRAMPOLINE-PREFLIGHT])
+#include "Tot.h"       // the shutdown flag a queued invoke's wait answers to ([SHUTDOWN-SEETHRU-WAIT])
 
 #include <MinHook.h>
 #include <Windows.h>
@@ -984,9 +985,22 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
     LOG_INFO("GameThreadDispatch: enqueued invoke inst=0x%llX func=0x%llX, waiting...",
              (unsigned long long)instance, (unsigned long long)ufunc);
 
-    // Wait for game thread to execute the request
-    int32_t timeoutMs = s_invokeTimeoutMs.load();
-    auto status = future.wait_for(std::chrono::milliseconds(timeoutMs));
+    // Wait for game thread to execute the request. In slices, so a shutdown that meets a stalled game thread ends the
+    // wait: only Stark::Shutdown would answer it, and UE5_Shutdown reaches that after joining the workers waiting here.
+    // [SHUTDOWN-SEETHRU-WAIT]
+    const int32_t timeoutMs = s_invokeTimeoutMs.load();
+    const uint64_t waitStart = NowMs();
+    const InvokeWaitEnd end = WaitQueuedInvoke(timeoutMs,
+        [&](int32_t ms) { return future.wait_for(std::chrono::milliseconds(ms)) == std::future_status::ready; },
+        [] { return NowMs(); },
+        [] { return CutInvokeWait(Tot::ShutdownRequested(), GetGameThreadLiveness(kInvokeShutdownStallMs)); });
+    auto status = end == InvokeWaitEnd::Ready ? std::future_status::ready : std::future_status::timeout;
+    if (end == InvokeWaitEnd::CutByShutdown) {
+        LOG_WARN("GameThreadDispatch: invoke wait cut short after %llu of %d ms -- a shutdown is under way and the game "
+                 "thread is stalled; the request stays queued inst=0x%llX func=0x%llX",
+                 (unsigned long long)(NowMs() - waitStart), timeoutMs,
+                 (unsigned long long)instance, (unsigned long long)ufunc);
+    }
     if (status == std::future_status::timeout && dropIfAbandoned) {
         if (!ClaimRequest(req->state, kRequestAbandoned)) {
             // [VND584-01] The drain claimed it first: it is running now. Wait it out and take its result.
@@ -1000,9 +1014,11 @@ int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, siz
         }
     }
     if (status == std::future_status::timeout) {
-        LOG_ERROR("GameThreadDispatch: invoke timeout (%dms) inst=0x%llX func=0x%llX",
-                  timeoutMs,
-                  (unsigned long long)instance, (unsigned long long)ufunc);
+        if (end == InvokeWaitEnd::TimedOut) {
+            LOG_ERROR("GameThreadDispatch: invoke timeout (%dms) inst=0x%llX func=0x%llX",
+                      timeoutMs,
+                      (unsigned long long)instance, (unsigned long long)ufunc);
+        }
         // The request stays queued. When the caller supplied a size (>0) the
         // request owns a COPY of the param bytes, so the eventual game-thread
         // execution reads stable data even after the caller's buffer is reused/

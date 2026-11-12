@@ -55,9 +55,11 @@ inline std::atomic<bool> g_perCommand{false};
 // StartWorker* refuses to (re)spawn a re-assert worker during the shutdown window
 // (join → Stark::Shutdown → pipe stop) — otherwise a pipe/mailbox command landing
 // in that window could revive a just-joined worker that nothing joins again (M5).
-// Cleared only by Fern::Start() (ResetShutdown) so re-enabling the CE script in
-// the same game process brings the server back to a non-aborting state — otherwise
-// every long op would bail on its first Requested() poll.
+// A queued game-thread invoke's wait reads it too: on a stalled game thread only Stark::Shutdown would answer that wait,
+// and the teardown joins the workers waiting in it first ([SHUTDOWN-SEETHRU-WAIT]). So it must be up before anything
+// is joined or drained. Cleared when the server or the DLL starts again (ResetShutdown) so re-enabling the CE script in
+// the same game process brings it back to a non-aborting state — otherwise every long op would bail on its first
+// Requested() poll.
 inline std::atomic<bool> g_shutdown{false};
 
 // Marks the current thread as a background re-assert worker (Solide/Hemmung/
@@ -187,8 +189,8 @@ inline bool Requested() {
         || g_shutdown.load(std::memory_order_relaxed);
 }
 
-// True once teardown has begun (g_shutdown). Used by the worker (re)start gate to
-// refuse spawning a re-assert worker during the shutdown window. (M5)
+// True once teardown has begun (g_shutdown): no re-assert worker may be (re)spawned during the shutdown window (M5),
+// and a queued invoke's wait on a stalled game thread may end early.
 inline bool ShutdownRequested() { return g_shutdown.load(std::memory_order_relaxed); }
 
 // Is the per-command cancel still OWED, i.e. is at least one of the connections

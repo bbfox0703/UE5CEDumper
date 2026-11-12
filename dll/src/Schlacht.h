@@ -71,8 +71,7 @@ inline OwnerRelease ReleaseOwner(std::vector<uint64_t>& owners, uint64_t owner, 
 // Apply a tick's hide/un-hide diff only when every trace ran and no stop is under way: a trace that did not run says
 // nothing about what occludes.
 inline bool ShouldApplyOccluderDiff(bool dispatchFailed, bool stopRequested) {
-    (void)dispatchFailed; (void)stopRequested;
-    return true;   // [SHUTDOWN-SEETHRU-WAIT] red: applied regardless, as before
+    return !dispatchFailed && !stopRequested;
 }
 
 // What one SetActorHiddenInGame call came to: never attempted (not an actor, or the setter is cooked out), or the
@@ -83,8 +82,7 @@ constexpr int32_t kHideNotAttempted = INT32_MIN;
 // queued, and Stark::Shutdown answers a queued request without running it. Un-hiding twice is harmless, losing the
 // record is not. A call never attempted drops the actor, as before (it died, or the setter went away).
 inline bool UnhideLeftItHidden(int32_t code) {
-    (void)code;
-    return false;   // [SHUTDOWN-SEETHRU-WAIT] red: dropped either way, as before
+    return code != 0 && code != kHideNotAttempted;
 }
 
 // Result / status code (0 = OK, negative = why the tick could not act).

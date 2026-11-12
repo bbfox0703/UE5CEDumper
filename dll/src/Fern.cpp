@@ -992,7 +992,8 @@ struct NoDirectCall {
 // is either seen here first or waits for this OFF. The lock is only tried: a writer holds it across a game-thread wait,
 // and the peeks after this call must go on (the next tick sees what that writer recorded). So only this function's own
 // OFF can hold the loop up: a game thread that stops within kOwedSendFreshMs of the send, or during the OFF's own state
-// read, holds it for the invoke timeout (set_invoke_timeout allows up to 600 s; only Stark::Shutdown cuts it).
+// read, holds it for the invoke timeout (set_invoke_timeout allows up to 600 s), unless a shutdown finds the game thread
+// stalled and cuts the wait ([SHUTDOWN-SEETHRU-WAIT]).
 void ServeOwedCameraRelease() {
     uint64_t owedBy = s_cameraReleaseOwedBy.load();
     if (owedBy == 0) return;

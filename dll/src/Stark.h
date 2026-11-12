@@ -50,7 +50,9 @@ void Shutdown();
 bool IsHookActive();
 
 /// Enqueue a ProcessEvent invocation for game-thread execution.
-/// Blocks until the game thread executes it (or timeout).
+/// Blocks until the game thread executes it, or the invoke timeout passes, or a shutdown meets a game thread stalled
+/// past kInvokeShutdownStallMs ([SHUTDOWN-SEETHRU-WAIT]): those two answer -5 and leave the request queued. The cut does
+/// not reach a drop-if-abandoned request the game thread has already started: that one is waited out.
 ///
 /// @param instance    UObject instance pointer
 /// @param ufunc       UFunction pointer
@@ -70,8 +72,9 @@ bool IsHookActive();
 int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize,
                       bool dropIfAbandoned = false, std::shared_future<int32_t>* queuedOut = nullptr);
 
-/// [W3-DEBUGCAM-QUEUED] EnqueueInvoke's -5: the game-thread dispatch TIMED OUT and the request STAYS QUEUED -- it still
-/// runs when the game thread next drains. Mirrored UI-side as Constants.InvokeDispatchTimeoutResult.
+/// [W3-DEBUGCAM-QUEUED] EnqueueInvoke's -5: the wait for the game-thread dispatch ended -- it TIMED OUT, or a shutdown
+/// cut it short on a stalled game thread -- and the request STAYS QUEUED: it still runs when the game thread next
+/// drains, unless Stark::Shutdown answers it first. Mirrored UI-side as Constants.InvokeDispatchTimeoutResult.
 constexpr int32_t kInvokeTimedOutStillQueued = -5;
 /// [W3-DEBUGCAM-QUEUED] What a STATEFUL toggle export returns when its queued call did not return 0. A timed-out call
 /// passes through as kInvokeTimedOutStillQueued: the toggle stays queued and runs when the game thread next drains, so
@@ -497,16 +500,23 @@ enum class InvokeWaitEnd : uint8_t { Ready, TimedOut, CutByShutdown };
 // frame, and UE5_Shutdown's See-through OFF needs its un-hides to run; Unknown counts as live, as the gate contract
 // says. A stall with no shutdown keeps its full timeout: a caller told -5 may rely on the request running later.
 inline bool CutInvokeWait(bool shutdownRequested, GameThreadLiveness l) {
-    (void)shutdownRequested; (void)l;
-    return false;   // [SHUTDOWN-SEETHRU-WAIT] red: no cut yet
+    return shutdownRequested && l == GameThreadLiveness::Stalled;
 }
 
 // The waiter's loop. The wait, the clock and the cut check come in as callables so a test drives them with a fake
 // clock. An answer that arrived wins over a cut.
 template <class WaitSlice, class NowMs, class ShouldCut>
 InvokeWaitEnd WaitQueuedInvoke(int32_t timeoutMs, WaitSlice&& waitSlice, NowMs&& nowMs, ShouldCut&& shouldCut) {
-    (void)nowMs; (void)shouldCut;   // [SHUTDOWN-SEETHRU-WAIT] red: one wait for the whole timeout, as before
-    return waitSlice(timeoutMs) ? InvokeWaitEnd::Ready : InvokeWaitEnd::TimedOut;
+    const uint64_t deadline = nowMs() + static_cast<uint64_t>(timeoutMs > 0 ? timeoutMs : 0);
+    for (;;) {
+        const uint64_t now = nowMs();
+        const uint64_t left = deadline > now ? deadline - now : 0;
+        const int32_t slice = left < static_cast<uint64_t>(kInvokeWaitSliceMs) ? static_cast<int32_t>(left)
+                                                                               : kInvokeWaitSliceMs;
+        if (waitSlice(slice)) return InvokeWaitEnd::Ready;
+        if (nowMs() >= deadline) return InvokeWaitEnd::TimedOut;
+        if (shouldCut()) return InvokeWaitEnd::CutByShutdown;
+    }
 }
 
 // ============================================================

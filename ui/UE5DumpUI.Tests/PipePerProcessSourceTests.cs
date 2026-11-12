@@ -676,7 +676,7 @@ public sealed class PipePerProcessSourceTests
     public void TheInvokeQueue_DecidesIfFreeUnderItsLock_AndCountsUntilAnswered()
     {
         string stark = CodeOnly(DllSrc("Stark.cpp"));
-        string enqueue = Between(stark, "int32_t EnqueueInvoke(", "auto status = future.wait_for(");
+        string enqueue = Between(stark, "int32_t EnqueueInvoke(", "const InvokeWaitEnd end = WaitQueuedInvoke(");
         int lockAt = enqueue.IndexOf("std::lock_guard<std::mutex> lock(s_queueMutex);", StringComparison.Ordinal);
         int check = enqueue.IndexOf("if (t_invokeIfFree)", StringComparison.Ordinal);
         int blocks = enqueue.IndexOf("InvokeBlocks(other, count, req->owner)", StringComparison.Ordinal);
@@ -712,7 +712,7 @@ public sealed class PipePerProcessSourceTests
         string drop = Between(stark, "int32_t DropQueuedInvokesOf(uint64_t owner) {", "void SetInvokeTimeoutMs(");
         Assert.Contains("ClaimRequest(req.state, kRequestAbandoned)", drop);
         Assert.Contains("SettleLocked(req);", drop);
-        string abandon = Between(enqueue + stark[stark.IndexOf("auto status = future.wait_for(", StringComparison.Ordinal)..],
+        string abandon = Between(enqueue + stark[stark.IndexOf("const InvokeWaitEnd end = WaitQueuedInvoke(", StringComparison.Ordinal)..],
             "if (status == std::future_status::timeout && dropIfAbandoned) {", "if (status == std::future_status::timeout) {");
         Assert.Contains("SettleLocked(*req);", abandon);
         Assert.Contains("if (req.settled) return;", stark);
