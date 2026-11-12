@@ -293,7 +293,19 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
 3. **A second copy's own log lines.** A second copy of the DLL in one process could not write its logs (the first
    copy holds the files). Its deferral was proven from the first copy's pipe log instead: 0 new connections in the
    15 s after an instance freed, against 22 in 10 s from the pre-fix copy. Its "deferring" line was never seen.
-4. **A proxy-loaded game, and an elevated game.** Only injection was driven, non-elevated.
+4. ◐ **The proxy-loaded game: reached 2026-11-12** (the PathShape copy of DumperTest51 Shipping, UE 5.1, `version.dll`
+   from dist 3707 deployed with `path_shape_live.py deploy`, and undeployed afterwards: `proxy_refresh.py report`
+   reads 0 deployed).
+   - The proxy served only `\\.\pipe\UE5DumpBfx_9668` (`load_mode proxy:version.dll`, cap 6), unscanned until asked.
+   - The UI's Connect attached with no game picker ("Connected — waiting for scan") and scanned through Start Scan
+     (row 10): "Connected — UE501 (19144 objects)".
+   - Proxy Deploy > Inject into running game listed it as "UE5Dumper loaded (proxy: VERSION.dll) v1.0.0.3707 — already
+     active; Inject will just Connect", and Inject connected without loading a `UE5Dumper.dll`.
+   - The MCP server's `read_games` / `read_status` saw it (scanned, 19144 objects, the proxy load mode).
+   - **Not run: an elevated game.** Its UAC prompt needs the maintainer; item 18 drove an elevated game against the
+     MCP server only.
+
+   *Was:* **A proxy-loaded game, and an elevated game.** Only injection was driven, non-elevated.
 5. ◐ **Mostly reached 2026-11-12** (DumperTest Shipping, DLL 3707, Cheat Engine 64-bit SSE4-AVX2, `dist\UE5CEDumper.CT`
    loaded into CE, each record ticked from CE's Lua with showMessage and print captured byte for byte).
    - **The per-process pipe name**, as CE shows it: `\\.\pipe\UE5DumpBfx_(game PID)` every time, never the old bare
@@ -348,9 +360,19 @@ DumperTest Shipping, pipe and mailbox only. Not reached:
    *Was:* **Cheat Engine's own See-through record.** The record was driven through the mailbox (`mailbox_poke.py`, as
    `stagec_live.py` does), not ticked in CE. Acceptance: tick the pushed See-through record in CE, connect and close
    the UI; the record's See-through stays on (`seethrough_get_state` `ce_claimed: true`), and its untick turns it off.
-10. **The UI against a job another client started.** `trigger_scan` and Extra Scan answer `in_progress` to a second
-    asker; the UI was not driven against one. Acceptance: start a scan from `pipe_client.py` on a game still loading
-    (proxy, scan deferred), click Start Scan in the UI; it shows the scan's progress, not "Scan failed".
+10. ✅ **CLOSED 2026-11-12** (the proxy-loaded PathShape DumperTest51 Shipping of row 4, 3707;
+    `tools/verify/scan_hold.py`).
+    - A pipe client started the scan, and the rig froze the scan job's thread ("Scanning FSparseDelegateStorage...",
+      phase 4) so it stayed running.
+    - Start Scan in the UI then showed "Scanning... Scanning FSparseDelegate..." and, once the rig resumed the
+      thread, "Connected — UE501 (19144 objects)", with no "Scan failed" or "TriggerScan failed".
+    - pipe-0.log has one `trigger_scan: Starting async engine scan`, one `RunScan: started` and one `RunScan:
+      finished`. The UI's own `trigger_scan` was received at 08:53:59.98, inside the scan, which finished at
+      08:54:03.78.
+
+    *Was:* **The UI against a job another client started.** `trigger_scan` and Extra Scan answer `in_progress` to a
+    second asker; the UI was not driven against one. Acceptance: start a scan from `pipe_client.py` on a game still
+    loading (proxy, scan deferred), click Start Scan in the UI; it shows the scan's progress, not "Scan failed".
 11. **The hint-cache lock across processes.** Two writers in one process are tested (dll_core_test HINTCACHELOCK); two
     games, or a stale proxy beside an injection, writing at once were not. Acceptance: two injected games each
     `set_invoke_timeout ... persist` at the same moment; both records hold their value.
