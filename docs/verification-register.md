@@ -306,9 +306,19 @@ Stage B, build 3696 (6 clients, the scan-worker budget) -- dev-log 3696. Not rea
    clients at once, not this build's 6", and the at-capacity line quotes 3.
 7. **The UI's "pipe is gone" message.** Unit-tested (the game exits while the list is open). Acceptance: open the
    game list with two games, close one, pick it; the error says its pipe is gone.
-8. **A game that is not responding.** The full-pipe message names it as a cause; a suspended game was not driven.
-   Acceptance: suspend every thread of an injected game (`suspend.py`), Connect; the message appears, and connecting
-   works after resuming.
+8. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, DLL and AOT UI 3707). Every thread of the game was suspended
+   (`suspend.py suspend`, NtSuspendProcess), then Connect was clicked in the UI.
+   - The UI's first lane connected and the second timed out. 5.6 s after the click the header read "Connection Error",
+     with "PID 44708's pipe is up, but no connection to it came free in time. Other clients may hold all of them (a
+     rig, an MCP client, or this UI's own earlier connections still finishing a command), or the game is not
+     responding (paused in a debugger, or suspended). ..."
+   - It was not "pipe is gone", and nothing hung.
+   - After `suspend.py resume`, Connect gave "Connected — UE504 (24530 objects)", and `pipe_clients` listed the UI's
+     two connections.
+
+   *Was:* **A game that is not responding.** The full-pipe message names it as a cause; a suspended game was not
+   driven. Acceptance: suspend every thread of an injected game (`suspend.py`), Connect; the message appears, and
+   connecting works after resuming.
 
 Stage C, build 3698 (hardening for a long-lived client) -- dev-log 3698; `tools/verify/stagec_live.py` passes on
 DumperTest Shipping, pipe and mailbox only. Not reached:
