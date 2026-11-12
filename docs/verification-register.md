@@ -290,9 +290,23 @@ Shipping (UE 5.4) and DumperTest58 Shipping (UE 5.8) on the AOT UI -- dev-log 36
    (`UE5_StartPipeServer`'s `HasStragglerConnections` branch). It needs a Stop whose 5 s drain times out (a handler
    inside a long command) and then a CE re-tick. Acceptance: init-0.log logs "restarting the server beside them",
    pipe-0.log logs the shared-name WARN, and the UI connects.
-3. **A second copy's own log lines.** A second copy of the DLL in one process could not write its logs (the first
-   copy holds the files). Its deferral was proven from the first copy's pipe log instead: 0 new connections in the
-   15 s after an instance freed, against 22 in 10 s from the pre-fix copy. Its "deferring" line was never seen.
+3. ✅ **CLOSED 2026-11-12** (DumperTest Shipping, two copies of the 3707 DLL in one process; `hold_exclusive.py`
+   ×5, `pipe_hold.py`, Cheat Engine's executeCodeEx to stop the first copy instead of a python.exe remote thread).
+   - **Copy A** (`dist\UE5Dumper.dll`) was injected while all five -0.log files were held exclusively, so it could
+     open none. init-0.log's timestamp stayed unchanged while A served (`load_mode injected`).
+   - **Copy B.** With all 6 instances held, copy B (`out\row3\UE5DumperB.dll`) was injected. It owned the files and
+     logged its own lines: `Module identity: UE5DumperB.dll ...` and `DllMain AutoStart: pipe is held by PID 0 (0:
+     every instance busy, holder unknown) -- deferring auto-start, and watching for it to free`.
+   - **No connections from B's watcher.** One holder was released, and 15 s later a probe got seq 8, the last
+     holder's 7 plus 1.
+   - **B takes over.** All holders were released and A was stopped (`UE5Dumper.UE5_StopPipeServer` through CE).
+     Within 1 s B logged `AutoStartWatcher: pipe freed by PID 0 after 37500 ms -- running the auto-start that was
+     deferred`, then `Started` and `takes 6 clients at once`. The pipe then answered `load_mode
+     loaded:ue5dumperb.dll`.
+
+   *Was:* **A second copy's own log lines.** A second copy of the DLL in one process could not write its logs (the
+   first copy holds the files). Its deferral was proven from the first copy's pipe log instead: 0 new connections in
+   the 15 s after an instance freed, against 22 in 10 s from the pre-fix copy. Its "deferring" line was never seen.
 4. ◐ **The proxy-loaded game: reached 2026-11-12** (the PathShape copy of DumperTest51 Shipping, UE 5.1, `version.dll`
    from dist 3707 deployed with `path_shape_live.py deploy`, and undeployed afterwards: `proxy_refresh.py report`
    reads 0 deployed).
