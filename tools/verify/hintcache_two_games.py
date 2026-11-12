@@ -41,7 +41,9 @@ def main() -> int:
     for pid in a.pid:
         c = PipeClient(pid=pid, timeout=60)
         c.connect()
-        print(f"pid {pid}: build {c.assert_build()}", flush=True)
+        # The negative control runs an old DLL on purpose, so only the normal run insists on dist's build.
+        build = c.request("get_pointers").get("build_number") if a.expect_loss else c.assert_build()
+        print(f"pid {pid}: build {build}", flush=True)
         clients.append(c)
     pes = [c.request("get_pointers").get("pe_hash") for c in clients]
     print(f"PE hashes {pes}", flush=True)
