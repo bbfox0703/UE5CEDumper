@@ -57,7 +57,8 @@ def main() -> int:
     c = PipeClient(pid=a.pid, timeout=60)
     c.connect()
     print(f"build {c.assert_build()}", flush=True)
-    if c.request("get_pointers").get("gobjects_method"):
+    # scan_status' own flag: get_pointers' gobjects_method reads "not_found" before a scan, which is not empty.
+    if c.request("scan_status").get("scanned"):
         print("FAIL: this game is already scanned -- start a fresh one (a proxy-loaded game scans only when asked)")
         return 1
     since = stamp()
