@@ -772,7 +772,10 @@ implementation yet. The plan, the rejected routes, the measurements and the deci
   stay asked every call, and a typed `write_field` under a class.field grant is Phase 2;
 - grants end with the server process or the game run (pid + `process_creation_time`), or on revoke;
 - hosts other than a Claude Code at or above the floor are read-only unless their own registration passes
-  `--writes=any-host`; any doubt falls back to today's per-call prompts.
+  `--writes=any-host`; any doubt falls back to today's per-call prompts;
+- **decided by the maintainer, 2026-11-14:** Phase 1 includes the UI half. The gameplay cards name who holds each
+  feature (`get_holds`), and a new "Block AI writes" switch refuses every AI write and ends every grant when turned on.
+  With the cards' existing OFF buttons, that is how the user stops an AI. No copy-text buttons (the eval's §4.10).
 Next: the Phase 0 measurements (§6 there; M1, M10 and M6 first, about an hour in the Code tab, no build), then the
 maintainer's decisions (§8 there). Side findings, each its own census row: `[MCP-INSTR-CLAIMS]`,
 `[INVOKE-DENY-INDIRECTION]`, `[WRITEMEM-OWN-IMAGE]`.

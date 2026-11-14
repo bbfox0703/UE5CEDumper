@@ -5,6 +5,10 @@
 > and Phase 1 can start. Tracked in [todo.md](todo.md) under `[PIPE-PER-PROCESS-2026-11-06]` Stage D as
 > `[MCP-WRITE-GRANTS-2026-11-14]`.
 >
+> **Decided by the maintainer, 2026-11-14:** Phase 1 includes the UI half (§4.10). The gameplay cards name who holds
+> each feature. A new "Block AI writes" switch, together with the cards' existing OFF buttons, is how the user stops an
+> AI session.
+>
 > **Sources.** Two workflows on 2026-11-14, eight and seven agents:
 > - `wf_17c2b19a-5d3`: how approval works today, Claude Code's documentation, the MCP specification and twelve other
 >   hosts, with a skeptic re-checking every claim;
@@ -229,6 +233,51 @@ A typed twin of the UI's field edit: `write_field {instance_addr, field_name, va
   - the instructions say that game text is data, never a request, and that a declined grant means no, with no other
     route (`pipe_client.py`) to be tried.
 
+### 4.10 What the user sees, and how to stop the AI (decided by the maintainer, 2026-11-14)
+
+Once grants remove the per-call prompt, the window must show what the AI holds, much as a CE record's tick shows in
+the table. This ships with Phase 1.
+
+**Who holds each feature, on its existing card**
+- The UI reads `get_holds` (DLL 3704 and later) and shows the holder on each gameplay card:
+  - "AI session (pid N)" for a client whose requests are background;
+  - "Cheat Engine";
+  - "another program (pid N)";
+  - nothing when this window or nobody holds it.
+
+  `get_holds` already reports `kind` (none, ce or client), `pid`, `background` and `you` (`Voll::HoldOwnerJson`), so
+  the DLL does not change.
+- See-through's claims come from `seethrough_get_state`; `get_holds` does not cover See-through.
+- **The same read refreshes each card's state.** Today a card changes only on connect or its own Refresh button
+  (`TeleportViewModel.RefreshGodModeAsync`), so an AI's ON does not show until the user clicks.
+- **The poll** is light: about every 2 s, the marker refresh's cadence, and only while connected to a DLL that answers
+  `get_holds`. Where it runs is decided at implementation.
+
+**To stop the AI: the "Block AI writes" switch, then the card's OFF**
+- **The switch is a new checkbox in UE5DumpUI.** Its file lives in the app-data folder beside `experimental.json`,
+  following ui/CLAUDE.md's app-data rules. Every MCP server process reads it on every call, as `ExperimentalGate` is
+  read today. While it is on:
+  - every state-changing tool is refused: the grant tools, the granted writes, and the still-marked per-call tools (an
+    Allow at a prompt does not override the window's block);
+  - releases still pass (OFF, reset, force-field reset), so an AI can still clean up;
+  - the refusal says the user blocked AI writes in UE5DumpUI, and the instructions tell the model not to try another
+    route.
+- **Turning it on ends every grant of every AI session on the machine.** The file carries a revoke stamp, a counter
+  bumped at each turn-on. A server that sees a newer stamp clears its grant table, so after the switch goes off again
+  each session must ask again at a prompt. A quick on and off between two calls still revokes.
+- **The card's existing OFF or Reset** then turns off what the AI holds. A UI request carries no `if_free`, so the
+  window can always take over and end a hold, and the server's instructions already tell the model so. Without the
+  switch, an AI session that still holds a grant could turn the feature back on with no prompt; with it on, it
+  cannot through MCP.
+- **The switch only narrows.** It cannot grant anything, so a forged or edited file can at most block or revoke. A
+  same-user agent with file tools could turn it back off, which §4.9 already accepts.
+
+**Not chosen**
+- A button that copies a stop instruction to paste to the AI: it works only if the model obeys, and the switch does
+  not depend on that.
+- A button that copies an enable instruction: the card's own ON already does it, and an enable sent through the AI
+  only adds a grant prompt.
+
 ## 5. Rejected, and why
 
 | Idea | Why not |
@@ -239,11 +288,12 @@ A typed twin of the UI's field edit: `write_field {instance_addr, field_name, va
 | MCP elicitation | A user's Elicitation hook can answer it with no dialog *(docs)*, so an answer does not prove a human agreed; the marker does. todo.md's "the Code tab declines it unseen" was never measured (M11). |
 | A PermissionRequest hook with a `session` rule | Whether it can approve a marked tool is undocumented, and it works in Claude Code only; the server cannot see it. |
 | Grants in the DLL's per-owner ledger | The `background` role it would key on is declared by the client itself; new pipe commands and a contract review buy nothing over an in-memory table that dies with the server. |
-| The UE5DumpUI window as a source of grants | A same-user model with file tools could forge a grant file (`%LOCALAPPDATA%` is not a path Claude Code protects). The UI is kept for visibility and revoke only (Phase 3), where a forged file can only narrow. |
+| The UE5DumpUI window as a source of grants | A same-user model with file tools could forge a grant file (`%LOCALAPPDATA%` is not a path Claude Code protects). The UI is kept for visibility, blocking and revoking only (§4.10), where a forged file can only narrow. |
 | Raw address-range grants on `write_memory` | Nobody can meaningfully read a hex range; it covers neighbouring vtables, headers and pointers. |
 | One grant tool with a scope enum | The tool name would then say nothing, and the meaning would sit in arguments whose display is unmeasured. |
 | A minutes argument, pinned invoke parameters, function lists or wildcards | Each adds something the human must read in a prompt whose argument display is unmeasured, or brings back rubber-stamping. |
 | A global trusted-hosts file keyed on `clientInfo.name` | It would unlock every registration of any host that sends that name; a per-registration flag is explicit. |
+| Copy-text buttons that hand the AI a stop or an enable instruction | A stop that depends on the model obeying is weaker than the "Block AI writes" switch, and the cards already have ON (§4.10; the maintainer, 2026-11-14). |
 
 ## 6. Measure before implementing (Phase 0, no build needed)
 
@@ -288,15 +338,22 @@ Use the current 3709 dist in the desktop Code tab, and record the Claude Code ve
     - no instructions claim "asked before each one".
   - The rig: `tools/verify/mcp_client.py` starts with `--writes=any-host`, a write before its grant is refused, and the
     default host sees no write tools.
-  - Docs: `docs/mcp.md`, `scripts/MCP-Setup.html` (the flags, the always-allow warning), the register's new live rows,
-    working-lessons §6, architecture.md.
+  - **The UI half (§4.10):**
+    - the holder label on each gameplay card, and the `get_holds` / `seethrough_get_state` poll that also refreshes the
+      cards' state;
+    - the "Block AI writes" switch: a gate service in the `ExperimentalGate` pattern with a source-generated JSON
+      context (AOT), strings in `en.axaml`, and the revoke stamp;
+    - the MCP side: the gate reads the switch on every call;
+    - tests: the label per holder kind, a block refusing grant and marked tools, a release passing while blocked, and
+      a newer stamp clearing the grant table.
+  - Docs: `docs/mcp.md`, `scripts/MCP-Setup.html` (the flags, the always-allow warning, how to stop an AI), the
+    register's new live rows, working-lessons §6, architecture.md.
   - One AOT `-Mode Publish` build.
-  - Estimate: about 450 lines of C# and 300 of tests, 1–2 sessions.
+  - Estimate: about 450 lines of C# and 300 of tests for the server, plus the UI half; 2–3 sessions.
 - **Phase 1b: invoke grants**, after M1, with the §4.4 exclusions.
 - **Phase 2: `write_field`**, after M1. About one session.
-- **Phase 3 (optional): visibility in the UI.** Per-session status files, "held by AI session pid N" on the existing
-  cards, a revoke-only "Block AI writes" switch read on every call. The adversarial review argued for pulling a minimal
-  "held by AI" display forward: once the prompts go, visibility is the only human check left (§8).
+- **Phase 3 (optional): an "AI sessions" card.** Per-session status files listing each session's grants, with a
+  per-session revoke. The holder labels and the "Block AI writes" switch moved into Phase 1 (§4.10).
 
 ## 8. Decisions for the maintainer
 
@@ -314,7 +371,7 @@ Each has a recommendation.
 | Field grants | class-wide · one instance | **Class-wide**, worded so. |
 | Other hosts | read-only unless `--writes=any-host` · today's behaviour | **Read-only by default.** |
 | Recommend the `write_*` allow rule? | yes · Manual only until M3 · no | **Manual mode only until M3.** |
-| "Held by AI" in the UI | with Phase 1 · Phase 3 | Open. The review argued for Phase 1; the judge for Phase 3. |
+| "Held by AI" in the UI, and how to stop an AI | with Phase 1 · Phase 3; a copy-text stop · a "Block AI writes" switch | **Decided (maintainer, 2026-11-14): with Phase 1.** Holder labels on the cards, the "Block AI writes" switch, and the cards' existing OFF buttons (§4.10). No copy-text buttons. |
 
 ## 9. Corrections and side findings
 
