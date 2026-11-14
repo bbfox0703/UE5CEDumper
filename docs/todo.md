@@ -14,7 +14,9 @@ Open work only. **Read this when deciding what to do next.**
 > verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-12, 14, 16-17, 19-20, 23-25 and 27; their findings are fixed --
 > `[CT-INITFAILED-HEADLINE]` in build 3708, `[UI-ELEVATED-ACCESS-DENIED]` and `[SHUTDOWN-SEETHRU-WAIT]` in build 3709.
 > Still open there: only 13, kept open by the maintainer (2026-11-12): no machine with another CPU shape to run it on;
-> nothing further in Stage D is queued** --
+> next in Stage D, evaluated 2026-11-14 and not started (the maintainer asked for the evaluation only):
+> `[MCP-WRITE-GRANTS-2026-11-14]`, a grant per kind or target instead of a prompt on every write -- its Phase 0
+> measurements come first** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
@@ -294,7 +296,7 @@ Open work only. **Read this when deciding what to do next.**
 > here (marked 🆕), and their source names the section the original note sits in plus a phrase to grep for — those
 > notes may since have moved to `docs/archive/`, where tags still resolve.
 
-### A. Open defects and UX — 37 items, LOW or unrated (the last five were found by the same-day archiving pass), plus one MED and four LOW leads added 2026-10-29
+### A. Open defects and UX — 37 items, LOW or unrated (the last five were found by the same-day archiving pass), plus one MED and four LOW leads added 2026-10-29, and three LOW found by the MCP approval evaluation (2026-11-14)
 
 | tag | sev | what goes wrong | recorded at (grep) |
 |---|---|---|---|
@@ -355,6 +357,9 @@ Open work only. **Read this when deciding what to do next.**
 | 🆕 `[CLASSPIVOT-DT-CONNECT-RACE]` | LOW, read from source | **The tests: ✅ FIXED 2026-11-04** (the commit that adds this row). PR #554's CI failed one Class Pivot test, `InArraySource_ASwitchToTheDataTableSource_SupersedesTheArrayFieldLoadInFlight` (fields `[]`, expected `[Damage]`); alone on this PC it failed 4 runs of 6. `[CLASSPIVOT-DT-STARTUP-LOG]` (build 3671) made eight tests connect first, and the connect starts a snapshot-list refresh on the thread pool that none of them awaited. A helper, `ConnectAsync`, awaits `PendingRefresh` and the loads it starts: 10 of 10. **Open, the product half:** with a class still picked from a snapshot source, a class reload that lands while the DataTable source is shown (the connect's refresh, when it lands after a table is picked) detaches `SelectedClass`, and `LoadFieldsAsync` clears the table's field list. In the app that needs a source switch and a table pick inside the refresh's few milliseconds; not seen. A fix: a class change in the DataTable source leaves its fields alone. | CI of PR #554 (2026-11-04) |
 | 🆕 `[PARTIAL-UNIT-PLURAL]` | LOW, read from source | ✅ **FIXED 2026-11-05** (red `3361d7c1`; green: the commit that marks this row). The three batch clauses take the plural whole (`units`, default unit + "s"); the noun agrees with the total, the verb and "that / those" / "its / their" with the count, and no "(s)" is left; Find Func passes "classes". C# 7448 passed, 0 failed (red: 5). Was: `PartialResultNotice.BatchPartialClause` and `BatchCapClause` pluralise the caller's noun as `{unit}(s)`, and the partial clause adds `{unit}s` as well. Find Func (`InstanceFinderViewModel`) passes `"class"`, so its status line reads "… of N class(s) hit the scan deadline … a 0 on those classs means …". Fix: the caller passes the singular and the plural (or a key pair), never one English noun; that is also the whole-sentence rule `[I18N-READINESS-2026-11-04]` needs. | `[I18N-READINESS-2026-11-04]` survey (2026-11-04) |
 | 🆕 `[VENDOR-AUDIT9-2026-11-05]` | FIX ×3, FIX-low, PREPARE, DOC | ⬜ **Open: `[VND9-05]` only** (2026-11-05; it waits for a UE 5.9 preview). `[VND9-04]` ✅ fixed (build 3688), its FString half checked live. ✅ `[VND9-01]` and `[VND9-03]` fixed and checked live (build 3687); `[VND9-02]` fixed (3687, CE check owed); `[VND9-DOC]` ✅. Three pre-existing gaps exposed by the new upstream commits: a live soft pointer drops its sub-path; Pipe FIRE shows a returned string as raw bytes; `ue5_dissect.lua` misses the UE 5.5+ narrow string types. None decodes wrong today. VND9-05 waits for a 5.9 preview. | [audit-2026-11-05-vendor-delta9.md](audit-2026-11-05-vendor-delta9.md) |
+| 🆕 `[MCP-INSTR-CLAIMS]` | LOW, read from source | ⬜ The MCP server's instructions (`McpServer.cs`) tell the model two things that are not quite true: "the user is asked before each one" (false on every host but Claude Code, which alone reads the marker), and "Everything this server turns on is released when the session ends" (Fly's speed, preset and noclip are global settings `fly_set` applies before `enable` and nobody restores; an invoke can leave game-side state, e.g. a looping timer). A model repeats both to the user as reassurance. Fix with `[MCP-WRITE-GRANTS-2026-11-14]` Phase 1, which rewrites the instructions per host, or earlier on its own. | mcp-write-approval-eval.md §9 |
+| 🆕 `[INVOKE-DENY-INDIRECTION]` | LOW, read from source | ⬜ The background invoke deny list (`Voll::InvokeRefusedForBackground`) compares the invoked function's own name, so functions that call others or write properties BY NAME reach deny-listed effects: `K2_SetTimer` and its family, the `Set*PropertyByName` setters, `ExecuteUbergraph_*` (a free EntryPoint into Blueprint bytecode). Its comment calls `FUNC_Net` the check for "a call that can leave the machine", but online-service functions (achievements, leaderboards, purchases) are not RPCs. LOW while every `write_invoke` is still asked per call; it must be fixed before per-function invoke grants ship (the eval's §4.4 list). Engine names to verify against UE source. | mcp-write-approval-eval.md §4.4, §9 |
+| 🆕 `[WRITEMEM-OWN-IMAGE]` | LOW, read from source | ⬜ A background client's `write_mem` passes the data-page check for the DLL's own writable data, e.g. the exported `g_invokeMailbox`; a write there hands an invoke to the CE-owned mailbox poller, past the background deny list. Each such MCP write is still a per-call prompt. Fix: the DLL refuses a background `write_mem` into its own image (S; a UE5Dumper target build, Fern.cpp is in no test target). | mcp-write-approval-eval.md §9 |
 
 ### B. Live checks owed on shipped, unit-tested fixes
 
@@ -401,6 +406,8 @@ Open work only. **Read this when deciding what to do next.**
 - CE export drilldown: CSX array-of-struct elements are not re-walked; a "UE FName to String" CE custom type (M–L).
 - Snapshot capture of one chosen class's instances.
 - `[I18N-READINESS-2026-11-04]`: move the UI's remaining hard-coded English into `en.axaml`, ahead of UI languages. Started 2026-11-05: P1 and P3-P5 are done; P2 (labels that are also values) comes before any option list moves (its section).
+- `[MCP-WRITE-GRANTS-2026-11-14]`: a grant per kind of risk or per target instead of a prompt on every MCP write
+  (Stage D3, evaluated, not started; Phase 0 measurements first): [mcp-write-approval-eval.md](mcp-write-approval-eval.md).
 - `[CPP-HARDENING-2026-11-14]` (hardening, not a defect): `[[nodiscard]]` on the DLL's status returns, race-free
   `DynOff` reads, AddressSanitizer on the C++ test executables -- chosen instead of a Rust rewrite (its section).
 
@@ -737,7 +744,9 @@ write commands, the UI's use of the same state, and the client-side safety knobs
 - Every state-changing tool is named `write_*`, carries `requiresUserInteraction` (Claude Code then asks on every
   call in every mode, an allow rule notwithstanding) and `destructiveHint: true`. Elicitation is not used: the desktop
   app's Code tab declines it unseen. Measure both permission modes again, and record the Claude Code version (the
-  marker needs 2.1.246 or later).
+  marker needs 2.1.246 or later). *(2026-11-14: "declines it unseen" was never measured; elicitation stays unused
+  for another reason, a hook can answer it with no human: [mcp-write-approval-eval.md](mcp-write-approval-eval.md)
+  §5.)*
 
 **D2 (in three builds, above):** `write_mem`, `invoke_function`, the toggles, teleport and force field. Each carries
 `_meta["anthropic/requiresUserInteraction"]`, which makes Claude Code ask on every call, even under an allow rule.
@@ -750,6 +759,23 @@ What D2 must not take from the UI: the global holds (force field, teleport marke
 -- an MCP write reports a conflict rather than override the UI's.
 
 The 2026-11-06 review had leaned to the UI as the broker for anything that writes or toggles.
+
+**D3, evaluated 2026-11-14, not started: grants instead of a prompt on every write `[MCP-WRITE-GRANTS-2026-11-14]`.**
+The maintainer found God mode needing Allow on every call impractical, and doubted that `write_memory` /
+`write_invoke` should ask every time when a CE user is never asked; they asked for an evaluation written down, no
+implementation yet. The plan, the rejected routes, the measurements and the decisions are in
+[mcp-write-approval-eval.md](mcp-write-approval-eval.md). In short:
+- the marker moves from the writes to a few grant tools (Claude Code's docs name that use); the server refuses any
+  covered write with no grant, through one choke point over `IMcpGame`;
+- a gameplay-toggles grant and a movement grant per game run; a per-function invoke grant after M1, with
+  indirection, `ExecuteUbergraph_*` and online-service functions refused; `write_memory` and `write_force_field`
+  stay asked every call, and a typed `write_field` under a class.field grant is Phase 2;
+- grants end with the server process or the game run (pid + `process_creation_time`), or on revoke;
+- hosts other than a Claude Code at or above the floor are read-only unless their own registration passes
+  `--writes=any-host`; any doubt falls back to today's per-call prompts.
+Next: the Phase 0 measurements (§6 there; M1, M10 and M6 first, about an hour in the Code tab, no build), then the
+maintainer's decisions (§8 there). Side findings, each its own census row: `[MCP-INSTR-CLAIMS]`,
+`[INVOKE-DENY-INDIRECTION]`, `[WRITEMEM-OWN-IMAGE]`.
 
 ### Decisions (maintainer, 2026-11-06)
 
