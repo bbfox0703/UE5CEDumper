@@ -401,6 +401,8 @@ Open work only. **Read this when deciding what to do next.**
 - CE export drilldown: CSX array-of-struct elements are not re-walked; a "UE FName to String" CE custom type (M–L).
 - Snapshot capture of one chosen class's instances.
 - `[I18N-READINESS-2026-11-04]`: move the UI's remaining hard-coded English into `en.axaml`, ahead of UI languages. Started 2026-11-05: P1 and P3-P5 are done; P2 (labels that are also values) comes before any option list moves (its section).
+- `[CPP-HARDENING-2026-11-14]` (hardening, not a defect): `[[nodiscard]]` on the DLL's status returns, race-free
+  `DynOff` reads, AddressSanitizer on the C++ test executables -- chosen instead of a Rust rewrite (its section).
 
 ### D. Open by a recorded decision — do not re-raise without a new reason
 
@@ -410,7 +412,38 @@ Open work only. **Read this when deciding what to do next.**
 `[GRIMOIRE-507-GUARD]` (maintainer call) · `[CEFORM-LABEL-CLIP]` (lowest priority) · `[FILTER-RESTORE-LOADED-PRIORITY]`
 (leave it) · `[P1-SEETHRU-NOPRODUCER]`'s one-shot warning · `[A2-UFUNC-TAIL-4X]`'s optional margin · D2's "DEADLINE
 HIT" wording for a crashed worker · Detect Player Stats has no cancel (July L18) · `peHash` with `TimeDateStamp` 0 ·
-the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVEFUNCS-STEP3 B1/E1/P1/O1.
+the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVEFUNCS-STEP3 B1/E1/P1/O1 · a Rust
+rewrite of any part of the DLL (maintainer, 2026-11-14: not worth it, [rust-rewrite-eval.md](rust-rewrite-eval.md)).
+
+## 🧭 Maintainer request 2026-11-14 — cheap C++ hardening instead of a Rust rewrite `[CPP-HARDENING-2026-11-14]`
+
+**Status: not started.** The maintainer decided against rewriting any part of the DLL in Rust (2026-11-14,
+[rust-rewrite-eval.md](rust-rewrite-eval.md)): Rust would have prevented about 2-4% of the recorded DLL defects, and
+most of what it would have caught is reachable from C++ with the three items below. One commit per item; a red test
+first where one applies. The DLL rebuild and the AOT publish follow the usual rules.
+
+1. **`[[nodiscard]]` on the DLL's status returns** -- Effort: S · Risk: low. dll/src uses `[[nodiscard]]` nowhere.
+   Shipped defects that were a dropped status: `[SEETHRUTALLY]` (`InvokeSetHidden`'s `bool` discarded at both call
+   sites, so the hidden counts reported intent), the Fly `MovementMode` writes in `Dunste::SetEnabled` dropping
+   `Macht::WriteBytes`' result (dev-log, Slice B: Fly logged ENABLED over a pawn whose mode never changed), and audit
+   2026-08-13 SE1 / FL1 / FL2 (Sein's `OpenFileInDir`, Flamme's stream state and `fs::rename`). Start with Macht's
+   `WriteBytes`, `WriteDataBytes` and `ReadBytesSafe`, then the gameplay setters that report applied or not. Each
+   C4834 warning the build then reports is a call site to read and fix, not to silence with a cast; once they are
+   gone, decide whether `/we4834` makes the warning an error.
+2. **Race-free reads of the calibrated `DynOff` offsets** -- Effort: S-M · Risk: low-med. The writers of the
+   `sizeof(FProperty)` family go through `ApplyPropertyFamily` under `s_calibrationMutex` (2026-09-07, `5d1a6bfe`,
+   gated by `check_property_family`), but the offsets are still plain `inline int` globals in `Grimoire.h`, read by
+   the parallel snapshot workers without synchronisation: a formal data race, benign on x64 in practice.
+   ⚠ A per-int `std::atomic<int>` removes the UB but still lets a reader see a half-updated family (one offset new,
+   its sibling old), the split the 2026-09-07 fix closed for writers. Read that row (search this file for
+   "neither proposed fix was right") and establish when readers can run during a calibration; then choose relaxed
+   atomics if a calibration always completes before readers start, or publish the family as one snapshot (an
+   immutable struct swapped atomically, or a seqlock) if it does not.
+3. **AddressSanitizer on the C++ test executables** -- Effort: M · Risk: low (test builds only, never the shipped
+   DLL). No target builds with `/fsanitize=address` today. Pilot it on `dll_helpers_test` and `dll_core_test`, which
+   compile most of the DLL's own data-structure code, as an opt-in switch in `build_dll.py`. Check first that MSVC's
+   ASan works with this tree's `/MT` and `/EHa`. ⚠ Macht's SEH-guarded probes read bad addresses on purpose and may
+   need `__declspec(no_sanitize_address)`. Measure the run time before deciding whether `-Target Test` runs it.
 
 ## 🧭 Maintainer request 2026-11-06 — a pipe per game process, then more pipe slots, then multi-client hardening `[PIPE-PER-PROCESS-2026-11-06]`
 

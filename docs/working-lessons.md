@@ -3963,7 +3963,8 @@ architecture or UX changes in these areas.
   a wide (CJK) name before the readings pushes them out of line on screen.
 
 Evaluations that concluded "do not build" live in the repo rather than here — see [README.md](README.md)'s
-index for `text-translation-eval.md` and `multipipe-eval.md`; `Nibble-Mask-Evaluation.md` is in the
+index for `text-translation-eval.md`, `multipipe-eval.md` and `rust-rewrite-eval.md` (no Rust rewrite of any part of
+the DLL, maintainer 2026-11-14); `Nibble-Mask-Evaluation.md` is in the
 AOBMaker repo's `docs/`. (`teleport-coord-library-spec.md` and `native-c-value-scan-spec.md` used to be
 listed here; both SHIPPED, as their status headers say.)
 
