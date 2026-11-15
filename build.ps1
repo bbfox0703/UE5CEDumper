@@ -516,16 +516,19 @@ Write-Info "dotnet: $(dotnet --version)"
 # environment changes, and only for its call: the C++ steps and the calling shell keep their own TEMP.
 $script:dotnetTemp = $null
 $script:dotnetTempOwner = $null
-try {
-    $dotnetTempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "UE5CEDumper.Tests"
-    $script:dotnetTemp = Join-Path $dotnetTempRoot ("b" + $PID)
-    [System.IO.Directory]::CreateDirectory($script:dotnetTemp) | Out-Null
-    $script:dotnetTempOwner = [System.IO.File]::Open((Join-Path $script:dotnetTemp ".owner"),
-        [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-}
-catch {
-    Write-Info "no private TEMP for dotnet ($($_.Exception.Message)) - dotnet uses %TEMP% as before"
-    $script:dotnetTemp = $null
+# AsanConfigure starts no dotnet process and exits before the cleanup at the end of this script, so it takes no folder.
+if ($Target -ne "AsanConfigure") {
+    try {
+        $dotnetTempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "UE5CEDumper.Tests"
+        $script:dotnetTemp = Join-Path $dotnetTempRoot ("b" + $PID)
+        [System.IO.Directory]::CreateDirectory($script:dotnetTemp) | Out-Null
+        $script:dotnetTempOwner = [System.IO.File]::Open((Join-Path $script:dotnetTemp ".owner"),
+            [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+    }
+    catch {
+        Write-Info "no private TEMP for dotnet ($($_.Exception.Message)) - dotnet uses %TEMP% as before"
+        $script:dotnetTemp = $null
+    }
 }
 
 function Use-DotnetTemp([scriptblock]$Body) {
@@ -620,7 +623,7 @@ if ($Target -eq "AsanConfigure") {
         Write-Fail "CMake configure of build_asan failed"
         exit 1
     }
-    Write-Ok "build_asan configured. Build and run: py tools/verify/build_dll.py --asan --targets utf8_helpers_test dll_helpers_test --run"
+    Write-Ok "build_asan configured. Build and run all five self-tests: py tools/verify/build_dll.py --asan --run"
     exit 0
 }
 

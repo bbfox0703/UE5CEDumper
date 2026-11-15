@@ -34,7 +34,8 @@ WHAT IT ALLOWS, and nothing else:
     before `Inner`, so that member legitimately diverges from the shared base AFTER
     calibration. The probe re-probes per field per walk rather than latching, so a family
     write that resets it to the base is corrected on the next array the walker meets. Until
-    2026-11-15 the probe assigned the member itself, outside any lock.
+    2026-11-15 the probe assigned the member itself, outside any lock. The helper's CALLER is
+    pinned the same way: only that probe, beside its "Correcting FARRAYPROP_INNER" marker.
 
 Adding a new writer is fine -- route it through `ApplyPropertyFamily` and this gate is happy.
 Adding a new EXCEPTION means editing the list below, which is the point: it makes the second
@@ -54,6 +55,8 @@ FAMILY = ["FSTRUCTPROP_STRUCT", "FARRAYPROP_INNER", "FBOOLPROP_FIELDSIZE",
 
 # An assignment to a family member: the name, then `=` that is not `==`, `!=`, `<=`, `>=`.
 ASSIGN = re.compile(r"\b(" + "|".join(FAMILY) + r")\s*=(?!=)")
+# A call of DynOff::SetArrayInner, the helper behind the one exception below.
+SET_ARRAY_INNER_CALL = re.compile(r"\bSetArrayInner\s*\(")
 
 # The ONE sanctioned direct writer outside ApplyPropertyFamily. Keyed by (file, member) and
 # required to carry its justification nearby, so deleting the reasoning breaks the gate too.
@@ -117,6 +120,19 @@ def main():
                 in_apply = True
             elif in_apply and code.strip() == "}":
                 in_apply = False
+
+            # The helper is a writer too, so its caller is pinned as the old direct assignment was: only Ubel.cpp's
+            # ArrayProperty probe, beside its marker (which sits in a log string, hence the raw lines). Without this
+            # a second solo writer of Inner could call the helper and pass (review 2026-11-15).
+            if SET_ARRAY_INNER_CALL.search(code) and "inline void SetArrayInner" not in code:
+                lo, hi = max(0, i - 6), min(len(lines), i + 7)
+                if name == "Ubel.cpp" and any("Correcting FARRAYPROP_INNER" in l for l in lines[lo:hi]):
+                    allowed.append((name, i + 1, "FARRAYPROP_INNER", "SetArrayInner from the ArrayProperty probe"))
+                else:
+                    violations.append(
+                        (name, i + 1, "FARRAYPROP_INNER",
+                         "SetArrayInner outside Ubel.cpp's ArrayProperty probe -- the one member that may leave the "
+                         "family has one writer; a new one is a decision, made by editing this gate"))
 
             m = ASSIGN.search(code)
             if not m:

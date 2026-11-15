@@ -37,8 +37,14 @@ import build_dll  # noqa: E402  (msvc_env and the configured-tree check only)
 ERROR_FLAGS = ("/we4834", "/we4858", "/we5240")
 # Every target that compiles DLL sources. A test target that #includes production .cpp files is listed too: a
 # discard in such a file would otherwise fail the DLL build and only warn in the test build.
+# The main DLL and the version / dinput8 proxies compile TUs of their own (Heiter.cpp, Methode.cpp, the proxy sources)
+# outside UE5DumperCommon.dir, so each is checked by its own compile lines. The markers are distinct substrings:
+# "UE5Dumper.dir" is not inside "UE5DumperCommon.dir", nor "UE5Dumper_Proxy.dir" inside "UE5Dumper_ProxyDxgi.dir".
 TARGET_OBJECT_MARKERS = {
     "UE5DumperCommon": "UE5DumperCommon.dir",
+    "UE5Dumper": "UE5Dumper.dir",
+    "UE5Dumper_Proxy": "UE5Dumper_Proxy.dir",
+    "UE5Dumper_ProxyDinput8": "UE5Dumper_ProxyDinput8.dir",
     "UE5Dumper_ProxyDxgi": "UE5Dumper_ProxyDxgi.dir",
     "UE5Dumper_ProxyWinmm": "UE5Dumper_ProxyWinmm.dir",
     "dll_helpers_test": "dll_helpers_test.dir",

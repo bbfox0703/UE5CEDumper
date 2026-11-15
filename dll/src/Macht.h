@@ -63,6 +63,11 @@ __declspec(noinline) inline void TouchOwnedRead(const void* p, size_t n) {
 // Safe read with SEH protection, returns true on success
 template<typename T>
 inline bool ReadSafe(uintptr_t addr, T& out) {
+#if defined(__SANITIZE_ADDRESS__)
+    // The caller's `out`, checked (a read touch: it leaves `out` as it is, should addr ever alias it); the foreign
+    // source below is not. Without it the unchecked copy also hid a dangling `out` (review 2026-11-15).
+    AsanProbe::TouchOwnedRead(&out, sizeof(T));
+#endif
     __try {
 #if defined(__SANITIZE_ADDRESS__)
         static_assert(std::is_trivially_copyable_v<T>, "ReadSafe copies T as bytes in the ASan build");

@@ -131,12 +131,21 @@ def _summary(text):
     return None
 
 
+# The self-tests the ASan tree instruments (dll/CMakeLists.txt, ue5_apply_asan): what `--asan --run` builds and runs
+# when no --targets is given. A run that reaches none of them is a failure, not a pass.
+ASAN_TEST_TARGETS = ["utf8_helpers_test", "dll_helpers_test", "grausam_window_test", "sein_retention_test",
+                     "dll_core_test"]
+
+
 def run_tests(env, targets, asan):
     """Run each built *_test target and judge it. Returns the number of failures."""
     failures = 0
-    for t in targets:
-        if not t.endswith("_test"):
-            continue
+    tests = [t for t in targets if t.endswith("_test")]
+    if not tests:
+        # Measured in review (2026-11-15): `--asan --run` with the default target (the DLL) ran nothing and exited 0.
+        print("run: FAIL -- no *_test target among --targets, so zero tests ran")
+        return 1
+    for t in tests:
         exe = BUILD / "dll" / f"{t}.exe"
         if not exe.is_file():
             print(f"run: FAIL {t}: {exe} does not exist")
@@ -261,7 +270,8 @@ def objects_depending_on(env, header):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--targets", nargs="*", default=["UE5Dumper"])
+    ap.add_argument("--targets", nargs="*", default=None,
+                    help="ninja targets (default: UE5Dumper; with --asan --run, the five ASan self-tests)")
     ap.add_argument("--deps-check", action="store_true")
     ap.add_argument("--require-dep", metavar="HEADER",
                     help="hard-fail unless at least one built object records a dependency on "
@@ -282,6 +292,8 @@ def main(argv=None):
     global BUILD
     if a.asan:
         BUILD = ROOT / "build_asan"
+    if a.targets is None:
+        a.targets = list(ASAN_TEST_TARGETS) if (a.asan and a.run) else ["UE5Dumper"]
     require_configured()
     env = msvc_env()
 
@@ -312,9 +324,11 @@ def main(argv=None):
               .decode(sys.stdout.encoding or "utf-8", "replace"))
     # The tail above is cut at 4000 characters, so a build with many diagnostics hid most of them: measured
     # 2026-11-15, a [[nodiscard]] batch raised C4834 at 21 sites and the tail showed 19, with no sign of the cut.
-    # Every compiler diagnostic line in the WHOLE output is listed here, so none is lost to the cut.
+    # Every compiler diagnostic line in the WHOLE output is listed here, so none is lost to the cut: C-numbered ones
+    # from the compiler, and D-numbered ones from the cl driver ("Command line warning D9025 : overriding ..."), which
+    # are how a rejected or overridden /we or /fsanitize flag shows.
     diag = sorted({ln.strip() for ln in (r.stdout or "").splitlines()
-                   if re.search(r"\b(warning|error) C\d{4}\b", ln)})
+                   if re.search(r"\b(warning|error) [CD]\d{4}\b", ln)})
     if diag:
         print(f"compiler diagnostics in the whole output: {len(diag)} distinct line(s)")
         for ln in diag:
