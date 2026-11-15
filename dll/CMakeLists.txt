@@ -174,6 +174,13 @@ set(UE5_COMMON_INCLUDE_DIRS
 # Apply the identical MSVC compile flags every DLL-side C++ target uses. Keeping
 # this in one function guarantees the shared object library and the four DLLs are
 # compiled with byte-for-byte identical flags (a prerequisite for sharing objects).
+# [CPP-HARDENING-2026-11-14] A discarded [[nodiscard]] status is a build error, not a warning: no build output here
+# is read line by line, and build_dll.py printed only a tail until 2026-11-15. C4834 is a discarded value, C4858 the
+# same for [[nodiscard("reason")]], C5240 an attribute in a position MSVC ignores (`static [[nodiscard]] bool f()`
+# would silently protect nothing). The dxgi and winmm proxies list their flags by hand below, and the test targets
+# that compile production sources take them too; tools/verify/nodiscard_probe.py checks every one.
+set(UE5_NODISCARD_ERROR_FLAGS /we4834 /we4858 /we5240)
+
 function(ue5_apply_common_msvc_flags _tgt)
     if(MSVC)
         set_property(TARGET ${_tgt} PROPERTY
@@ -186,6 +193,7 @@ function(ue5_apply_common_msvc_flags _tgt)
             /EHa            # SEH exceptions for __try/__except
             /arch:AVX2      # enable AVX2 instruction-set optimization
             /favor:blend    # tune for modern hybrid-core CPUs
+            ${UE5_NODISCARD_ERROR_FLAGS}
         )
     endif()
 endfunction()
@@ -423,6 +431,9 @@ if(BUILD_PROXY_DXGI)
             $<$<COMPILE_LANGUAGE:CXX>:/EHa>
             $<$<COMPILE_LANGUAGE:CXX>:/arch:AVX2>
             $<$<COMPILE_LANGUAGE:CXX>:/favor:blend>
+            $<$<COMPILE_LANGUAGE:CXX>:/we4834>   # UE5_NODISCARD_ERROR_FLAGS, one by one inside the guard
+            $<$<COMPILE_LANGUAGE:CXX>:/we4858>
+            $<$<COMPILE_LANGUAGE:CXX>:/we5240>
         )
     endif()
 
@@ -478,6 +489,9 @@ if(BUILD_PROXY_WINMM)
             $<$<COMPILE_LANGUAGE:CXX>:/EHa>
             $<$<COMPILE_LANGUAGE:CXX>:/arch:AVX2>
             $<$<COMPILE_LANGUAGE:CXX>:/favor:blend>
+            $<$<COMPILE_LANGUAGE:CXX>:/we4834>   # UE5_NODISCARD_ERROR_FLAGS, one by one inside the guard
+            $<$<COMPILE_LANGUAGE:CXX>:/we4858>
+            $<$<COMPILE_LANGUAGE:CXX>:/we5240>
         )
     endif()
 
@@ -558,7 +572,7 @@ if(BUILD_DLL_TESTS)
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         )
         target_compile_options(dll_helpers_test PRIVATE
-            /utf-8 /W4 /permissive- /EHa
+            /utf-8 /W4 /permissive- /EHa ${UE5_NODISCARD_ERROR_FLAGS}
         )
     endif()
 
@@ -602,7 +616,7 @@ if(BUILD_DLL_TESTS)
         )
         # /W4 without /permissive- : Grausam.cpp is compiled here as an INCLUDED source and
         # its warning posture is the DLL's, not this target's, to argue with.
-        target_compile_options(grausam_window_test PRIVATE /utf-8 /W4 /EHsc)
+        target_compile_options(grausam_window_test PRIVATE /utf-8 /W4 /EHsc ${UE5_NODISCARD_ERROR_FLAGS})
     endif()
 
     # Grausam.cpp vets every hook through Falsch ([MH-TRAMPOLINE-PREFLIGHT]), so the TU needs Falsch.cpp, its
@@ -636,7 +650,7 @@ if(BUILD_DLL_TESTS)
         set_property(TARGET sein_retention_test PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         )
-        target_compile_options(sein_retention_test PRIVATE /utf-8 /W4 /EHsc)
+        target_compile_options(sein_retention_test PRIVATE /utf-8 /W4 /EHsc ${UE5_NODISCARD_ERROR_FLAGS})
     endif()
 
     # ---- dll_core_test: the FIRST test target that compiles the DLL's core --------------
@@ -675,7 +689,7 @@ if(BUILD_DLL_TESTS)
         )
         # /W3, not /W4: these are PRODUCTION sources compiled as an included TU, and their
         # warning posture is the DLL's to argue with, not this target's.
-        target_compile_options(dll_core_test PRIVATE /utf-8 /W3 /EHsc /bigobj)
+        target_compile_options(dll_core_test PRIVATE /utf-8 /W3 /EHsc /bigobj ${UE5_NODISCARD_ERROR_FLAGS})
     endif()
 
     target_link_libraries(dll_core_test PRIVATE Zydis version)
