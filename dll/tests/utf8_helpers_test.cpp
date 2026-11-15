@@ -12,6 +12,7 @@
 #include "../src/Utf8Helpers.h"
 
 #include <cstdio>
+#include <cstdlib>   // getenv_s: the AddressSanitizer build's negative control
 #include <cstdint>
 #include <cstring>
 #include <cwchar>
@@ -823,6 +824,19 @@ static void Test_LeafUtf8_AsciiAndEdges() {
 int main() {
     std::printf("Utf8Helpers self-test\n");
     std::printf("---------------------\n");
+#ifdef __SANITIZE_ADDRESS__
+    // [CPP-HARDENING-2026-11-14] Compiled into the AddressSanitizer build only; the same banner and negative control
+    // as dll_helpers_test (build_dll.py --asan --run needs both).
+    std::printf("asan: on\n");
+    {
+        size_t negLen = 0;
+        if (getenv_s(&negLen, nullptr, 0, "UE5_ASAN_NEGATIVE_CONTROL") == 0 && negLen > 0) {
+            char* volatile p = new char[16];
+            p[16] = 1;   // heap-buffer-overflow: ASan ends the process here
+            delete[] p;
+        }
+    }
+#endif
 
     Test_LeafUtf8_KeepsNonAsciiExactly();
     Test_LeafUtf8_AsciiAndEdges();

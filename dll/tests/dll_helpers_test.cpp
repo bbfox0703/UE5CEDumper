@@ -12423,6 +12423,20 @@ int main() {
 
     std::printf("dll_helpers_test (Renge + Scharf + Radar)\n");
     std::printf("------------------------------------------\n");
+#ifdef __SANITIZE_ADDRESS__
+    // [CPP-HARDENING-2026-11-14] Compiled into the AddressSanitizer build only. build_dll.py --asan --run reads the
+    // banner, and first runs this exe with UE5_ASAN_NEGATIVE_CONTROL set: a deliberate one-past-the-end heap write
+    // that ASan must report, or a clean run would prove nothing.
+    std::printf("asan: on\n");
+    {
+        size_t negLen = 0;
+        if (getenv_s(&negLen, nullptr, 0, "UE5_ASAN_NEGATIVE_CONTROL") == 0 && negLen > 0) {
+            char* volatile p = new char[16];
+            p[16] = 1;   // heap-buffer-overflow: ASan ends the process here
+            delete[] p;
+        }
+    }
+#endif
 
     RUN(Test_Renge_CeModuleRelative_NeverTruncates);
     RUN(Test_Methode_NarrowForAnsiLoad);

@@ -528,6 +528,30 @@ endif()
 # rather than linking the object library, to keep the leaf test self-contained.
 # ============================================================
 option(BUILD_DLL_TESTS "Build the C++ self-test executables" ON)
+
+# [CPP-HARDENING-2026-11-14] AddressSanitizer on the C++ self-test executables -- never on a DLL. It lives in a tree of
+# its own, build_asan\, configured by `build.ps1 -Target AsanConfigure` and built and run by
+# `py tools/verify/build_dll.py --asan --run`, so the default tree never builds an instrumented test without saying so.
+option(UE5DUMPER_ASAN "Instrument the C++ self-test executables with AddressSanitizer; never the DLLs" OFF)
+if(UE5DUMPER_ASAN)
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+        # CMake's stock Debug flags carry /RTC1 and RelWithDebInfo's link flags /INCREMENTAL; MSVC's ASan takes neither.
+        message(FATAL_ERROR "UE5DUMPER_ASAN needs CMAKE_BUILD_TYPE=Release (got '${CMAKE_BUILD_TYPE}')")
+    endif()
+    if(BUILD_PROXY_DLL OR BUILD_PROXY_DINPUT8 OR BUILD_PROXY_DXGI OR BUILD_PROXY_WINMM)
+        # build.ps1 configures the shipping tree (build\) with every proxy ON; refusing the pair keeps ASan out of it.
+        message(FATAL_ERROR "UE5DUMPER_ASAN is for its own tree (build_asan), not the one that builds the proxies")
+    endif()
+endif()
+function(ue5_apply_asan _tgt)
+    if(UE5DUMPER_ASAN AND MSVC)
+        target_compile_options(${_tgt} PRIVATE /fsanitize=address)
+        # /Z7 (embedded) keeps parallel Ninja compiles off a shared PDB; /DEBUG gives ASan's reports symbols.
+        set_property(TARGET ${_tgt} PROPERTY MSVC_DEBUG_INFORMATION_FORMAT Embedded)
+        target_link_options(${_tgt} PRIVATE /DEBUG /INCREMENTAL:NO)
+    endif()
+endfunction()
+
 if(BUILD_DLL_TESTS)
     add_executable(utf8_helpers_test
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/utf8_helpers_test.cpp
@@ -545,6 +569,7 @@ if(BUILD_DLL_TESTS)
             /utf-8 /W4 /permissive- /EHa
         )
     endif()
+    ue5_apply_asan(utf8_helpers_test)
 
     # Pure-helper tests (Renge::TryStrToAddr, Scharf::IsAlignmentSuspicious,
     # Radar typed-read + predicates + session lifecycle).
@@ -575,6 +600,7 @@ if(BUILD_DLL_TESTS)
             /utf-8 /W4 /permissive- /EHa ${UE5_NODISCARD_ERROR_FLAGS}
         )
     endif()
+    ue5_apply_asan(dll_helpers_test)
 
     # Winmm deliberately absent: nothing in this target needs it. Mimic resolves
     # timeBeginPeriod / timeEndPeriod from the System32 copy by explicit path so a

@@ -4,6 +4,7 @@
     "Microsoft.VisualStudio.Workload.NativeDesktop",
     "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
     "Microsoft.VisualStudio.Component.VC.CMake.Project",
+    "Microsoft.VisualStudio.Component.VC.ASAN",
     "Microsoft.VisualStudio.Component.Windows11SDK.26100"
   ]
 }
