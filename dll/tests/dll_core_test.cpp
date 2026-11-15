@@ -1645,15 +1645,19 @@ int main() {
 
         // Many writers, each its own fields: every one lands.
         std::vector<std::thread> ws;
+        std::atomic<int> published{0};   // each writer's own answer, beside what the file shows afterwards
         for (int t = 0; t < 8; ++t) {
             ws.emplace_back([&, t] {
                 for (int k = 0; k < 25; ++k)
-                    Flamme::UpdateCacheRecord(file, "HASH", true, [&](nlohmann::json&, nlohmann::json& r) {
-                        r["w" + std::to_string(t) + "_" + std::to_string(k)] = k;
-                    }, "stress");
+                    if (Flamme::UpdateCacheRecord(file, "HASH", true, [&](nlohmann::json&, nlohmann::json& r) {
+                            r["w" + std::to_string(t) + "_" + std::to_string(k)] = k;
+                        }, "stress"))
+                        published.fetch_add(1);
             });
         }
         for (auto& w : ws) w.join();
+        check("HINTCACHELOCK: all 200 stress writes report published", published.load() == 200,
+              std::to_string(published.load()).c_str());
         const nlohmann::json all = readRec();
         int present = 0;
         for (int t = 0; t < 8; ++t)

@@ -33,6 +33,7 @@
 #include <cstring>
 #include <mutex>
 #include <string>
+#include <tuple>    // std::ignore: a [[nodiscard]] result this file deliberately does not act on
 #include <vector>
 
 // Frieren exports reused internally (extern "C" must live at global scope).
@@ -551,7 +552,11 @@ void SetCmcMode(uintptr_t cmc, uint8_t mode) {
     if (!FindFunc(Ubel::GetClass(cmc), "SetMovementMode", fi)) return;
     std::vector<uint8_t> buf((std::max<size_t>)(Ubel::ParamBufferSize(fi), 1), 0);
     WriteByteParam(buf, fi, "NewMovementMode", mode);
-    Invoke(cmc, fi, buf);
+    // Best-effort: the teleport measures where the pawn ended up, so a failed dispatch is logged, not acted on.
+    const int32_t rc = Invoke(cmc, fi, buf);
+    if (rc != 0)
+        LOG_INFO("Teleport: SetMovementMode(%u) on CMC 0x%llX did not complete (rc=%d; -5 = still queued)",
+                 static_cast<unsigned>(mode), (unsigned long long)cmc, rc);
 }
 
 // Pack + invoke AActor::K2_SetActorLocation(target, bSweep=false, bTeleport=true).
@@ -1124,8 +1129,10 @@ int32_t TeleportPawnTo(const Chain& c, const double xyz[3], const double* destPy
         if (!attached) {                              // raw write (world==relative)
             uint8_t raw[24] = {};
             WriteVec3(raw, c.relLocSize, xyz);
-            Macht::WriteBytes(c.root + static_cast<uintptr_t>(c.relLocOff), raw,
-                              (c.relLocSize >= 24) ? 24 : 12);
+            // Not acted on: whether the pawn moved is measured below (dist3 against the target), which also covers
+            // a write that landed and was then overwritten -- the case a write result cannot see.
+            std::ignore = Macht::WriteBytes(c.root + static_cast<uintptr_t>(c.relLocOff), raw,
+                                            (c.relLocSize >= 24) ? 24 : 12);
             // Belt-and-suspenders: rewrite any still-stale cached world-transform
             // vectors (catches the case where K2_SetWorldLocation is also a no-op).
             DeepForceWorldPos(c, oldPos, xyz);
@@ -1161,8 +1168,12 @@ void SetRotation(const Chain& c, const double pyr[3]) {
     if (c.ctrlRotOff >= 0) {
         uint8_t raw[24] = {};
         WriteVec3(raw, c.ctrlRotSize, pyr);
-        Macht::WriteBytes(c.pc + static_cast<uintptr_t>(c.ctrlRotOff), raw,
-                          (c.ctrlRotSize >= 24) ? 24 : 12);
+        // SetRotation reports nothing (the teleport's code describes the move), so a failed fallback is at least
+        // logged rather than silent.
+        if (!Macht::WriteBytes(c.pc + static_cast<uintptr_t>(c.ctrlRotOff), raw,
+                               (c.ctrlRotSize >= 24) ? 24 : 12))
+            LOG_WARN("Teleport: the ControlRotation fallback write FAILED at 0x%llX -- the rotation was not "
+                     "restored", (unsigned long long)(c.pc + static_cast<uintptr_t>(c.ctrlRotOff)));
     }
 }
 
@@ -1178,9 +1189,10 @@ void StopMovement(const Chain& c) {
     FunctionInfo pcStop;
     if (FindFunc(Ubel::GetClass(c.pc), "StopMovement", pcStop)) {
         std::vector<uint8_t> b((std::max<size_t>)(Ubel::ParamBufferSize(pcStop), 1), 0);
-        Invoke(c.pc, pcStop, b);
-        LOG_INFO("Teleport: AController::StopMovement invoked on PC 0x%llX",
-                 (unsigned long long)c.pc);
+        // Best-effort settle step; the log says whether the dispatch completed (rc 0) instead of claiming it did.
+        const int32_t rc = Invoke(c.pc, pcStop, b);
+        LOG_INFO("Teleport: AController::StopMovement on PC 0x%llX: rc=%d%s",
+                 (unsigned long long)c.pc, rc, rc == 0 ? "" : " (did not complete; -5 = still queued)");
     }
 
     uintptr_t pawnClass = Ubel::GetClass(c.pawn);
@@ -1194,9 +1206,9 @@ void StopMovement(const Chain& c) {
     FunctionInfo fi;
     if (!FindFunc(Ubel::GetClass(cm), "StopMovementImmediately", fi)) return;
     std::vector<uint8_t> buf((std::max<size_t>)(Ubel::ParamBufferSize(fi), 1), 0);
-    Invoke(cm, fi, buf);
-    LOG_INFO("Teleport: StopMovementImmediately invoked on CMC 0x%llX",
-             (unsigned long long)cm);
+    const int32_t rc = Invoke(cm, fi, buf);
+    LOG_INFO("Teleport: StopMovementImmediately on CMC 0x%llX: rc=%d%s",
+             (unsigned long long)cm, rc, rc == 0 ? "" : " (did not complete; -5 = still queued)");
 }
 
 // ---- feature helpers: directional move + mouse cursor ----
@@ -1278,7 +1290,7 @@ int32_t ResolveCursorBit(uintptr_t& outPc, uintptr_t& byteAddr, uint8_t& mask) {
 // gameAndUI packs the GameAndUI-only params (InWidgetToFocus=null,
 // MouseLock=DoNotLock, bHideCursorDuringCapture=FALSE — the false keeps the OS
 // cursor visible; the param DEFAULTS to true). Returns false if the function
-// isn't reflected.
+// isn't reflected or its game-thread dispatch did not complete.
 bool InvokeWblInputMode(uintptr_t wbl, uintptr_t wblClass, const char* fn,
                         uintptr_t pc, bool gameAndUI) {
     FunctionInfo fi;
@@ -1292,7 +1304,12 @@ bool InvokeWblInputMode(uintptr_t wbl, uintptr_t wblClass, const char* fn,
         WriteByteParam(buf, fi, "InMouseLockMode", 0);              // DoNotLock
         WriteBoolParam(buf, fi, "bHideCursorDuringCapture", false);  // keep cursor visible
     }
-    Invoke(wbl, fi, buf);
+    const int32_t rc = Invoke(wbl, fi, buf);
+    if (rc != 0) {
+        LOG_WARN("Teleport: cursor — %s on PC 0x%llX did not complete (rc=%d; -5 = still queued)", fn,
+                 (unsigned long long)pc, rc);
+        return false;
+    }
     LOG_INFO("Teleport: cursor — %s invoked on PC 0x%llX", fn, (unsigned long long)pc);
     return true;
 }

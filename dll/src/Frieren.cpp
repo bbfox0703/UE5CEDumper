@@ -1338,12 +1338,24 @@ static bool DbgCam_SwapControllerBack(uintptr_t dcc) {
     if (pcOff < 0) return false;
 
     // Mirror UPlayer::SwitchController(origPC) + OnDeactivate cleanup.
-    DbgCam_WritePtr(localPlayer, pcOff,     origPc);      // 1. view follows origPC (critical)
-    DbgCam_WritePtr(origPc,      playerOff, localPlayer); // 2. origPC.Player = LP
-    DbgCam_WritePtr(dcc,         playerOff, 0);           // 3. DCC.Player = null
-    DbgCam_WritePtr(dcc,         origOff,   0);           // 4a. clear active flag
-    if (origPlOff >= 0)
-        DbgCam_WritePtr(dcc,     origPlOff, 0);           // 4b. clear OriginalPlayer
+    // Write 1 is the one that moves the view. If it fails, nothing has changed yet, so stop there: writing 4a alone
+    // would make the state read "off" while the view is still the debug camera's.
+    if (!DbgCam_WritePtr(localPlayer, pcOff, origPc)) {   // 1. view follows origPC (critical)
+        LOG_WARN("DbgCam_SwapControllerBack: the view write FAILED (LP=0x%llX + 0x%X) -- nothing was changed",
+                 (unsigned long long)localPlayer, pcOff);
+        return false;
+    }
+    // Once the view has moved, finish the rest even if one fails: a half-cleared controller pair is worse than a
+    // fully cleared one. Each failure is named, and the caller re-reads the state afterwards.
+    unsigned failed = 0;
+    if (!DbgCam_WritePtr(origPc, playerOff, localPlayer)) failed |= 1u;   // 2. origPC.Player = LP
+    if (!DbgCam_WritePtr(dcc,    playerOff, 0))           failed |= 2u;   // 3. DCC.Player = null
+    if (!DbgCam_WritePtr(dcc,    origOff,   0))           failed |= 4u;   // 4a. clear active flag
+    if (origPlOff >= 0 && !DbgCam_WritePtr(dcc, origPlOff, 0))
+        failed |= 8u;                                                     // 4b. clear OriginalPlayer
+    if (failed)
+        LOG_WARN("DbgCam_SwapControllerBack: the view moved back, but follow-up writes FAILED (mask 0x%X: "
+                 "1 origPC.Player, 2 DCC.Player, 4 the active flag, 8 OriginalPlayer)", failed);
 
     LOG_INFO("DbgCam_SwapControllerBack: LP=0x%llX PC<-0x%llX "
              "(DCC=0x%llX pcOff=0x%X playerOff=0x%X)",

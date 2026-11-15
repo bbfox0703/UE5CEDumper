@@ -410,8 +410,13 @@ int32_t ResetDilation(int32_t target) {
         DilState& d = s_dils[target];
         if (d.active) {
             DilLoc f;
-            if (ResolveDilField(target, f) == TR_OK)
-                WriteFloatAt(f.addr, f.size, d.base);   // best-effort restore
+            // Best-effort restore. A failed write still ends the hold and still returns TR_OK: TR_ERR_WRITE (-10)
+            // means "the override is held" to every caller, and after a reset it is not. The reply's dilation
+            // object shows the live value; the log says the restore did not land.
+            if (ResolveDilField(target, f) == TR_OK && !WriteFloatAt(f.addr, f.size, d.base))
+                LOG_WARN("Time: reset target %d -- the restore write of %.3f FAILED at 0x%llX; the dilation may "
+                         "still be the held value, and nothing re-asserts it now",
+                         target, d.base, (unsigned long long)f.addr);
         }
         d.active = false;
         d.value = 1.0;

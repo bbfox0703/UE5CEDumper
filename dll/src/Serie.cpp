@@ -844,16 +844,18 @@ void LogDiagnostics() {
         uintptr_t chunkPtr = 0;
         if (Macht::ReadSafe(chunksBase + c * sizeof(uintptr_t), chunkPtr) && chunkPtr) {
             uint8_t dump[32] = {};
-            Macht::ReadBytesSafe(chunkPtr, dump, 32);
+            // A failed read leaves zeros, which must not read as the chunk's real bytes.
+            const bool readable = Macht::ReadBytesSafe(chunkPtr, dump, 32);
             LOG_INFO("  Chunk[%d] @0x%llX: %02X %02X %02X %02X %02X %02X %02X %02X "
                      "%02X %02X %02X %02X %02X %02X %02X %02X "
                      "%02X %02X %02X %02X %02X %02X %02X %02X "
-                     "%02X %02X %02X %02X %02X %02X %02X %02X",
+                     "%02X %02X %02X %02X %02X %02X %02X %02X%s",
                      c, (unsigned long long)chunkPtr,
                      dump[0], dump[1], dump[2], dump[3], dump[4], dump[5], dump[6], dump[7],
                      dump[8], dump[9], dump[10], dump[11], dump[12], dump[13], dump[14], dump[15],
                      dump[16], dump[17], dump[18], dump[19], dump[20], dump[21], dump[22], dump[23],
-                     dump[24], dump[25], dump[26], dump[27], dump[28], dump[29], dump[30], dump[31]);
+                     dump[24], dump[25], dump[26], dump[27], dump[28], dump[29], dump[30], dump[31],
+                     readable ? "" : " (UNREADABLE: the zeros are a failed read)");
         }
     }
 }

@@ -45,6 +45,7 @@
 #include <exception>
 #include <mutex>
 #include <thread>
+#include <tuple>    // std::ignore: a [[nodiscard]] result this file deliberately does not act on
 #include <vector>
 
 #include <windows.h>   // GetAsyncKeyState / GetForegroundWindow (foreground gate)
@@ -472,7 +473,9 @@ void FlyTickLocked(const Ctx& c, double dtSec, uintptr_t& outCollPawn, int& outC
     // additionally turns OFF the actor's collision (below) so the flying sweep passes
     // through walls.
     double vel[3] = { dir[0]*s_state.speed, dir[1]*s_state.speed, dir[2]*s_state.speed };
-    WriteVec3At(c.velAddr, c.velSize, vel);
+    // Not acted on: the next tick writes the velocity again, and a log line per failed tick would flood. A game that
+    // never takes the write shows as a pawn that does not move.
+    std::ignore = WriteVec3At(c.velAddr, c.velSize, vel);
 
     // Collision should be OFF iff noclip is on. Emit an invoke request when the
     // desired state differs, or when the pawn changed while it should stay off
@@ -796,7 +799,9 @@ int32_t SetEnabled(bool enable) {
                     }
                 }
                 double zero[3] = {0, 0, 0};
-                if (c.velAddr) WriteVec3At(c.velAddr, c.velSize, zero);
+                if (c.velAddr && !WriteVec3At(c.velAddr, c.velSize, zero))
+                    LOG_WARN("Fly: zeroing the velocity at disable FAILED at 0x%llX -- the pawn keeps its last "
+                             "flight velocity until the engine changes it", (unsigned long long)c.velAddr);
             }
         }
         s_state.active = false;

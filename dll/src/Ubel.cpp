@@ -6743,14 +6743,16 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     uint8_t dumpBuf[64] = {};
                     int dumpStart = DynOff::FARRAYPROP_INNER - 16;
                     if (dumpStart < 0) dumpStart = 0;
-                    Macht::ReadBytesSafe(fi.Address + dumpStart, dumpBuf, 64);
+                    // A failed read leaves zeros, which must not read as the property's real bytes.
+                    const bool dumpReadable = Macht::ReadBytesSafe(fi.Address + dumpStart, dumpBuf, 64);
                     char hexDump[200] = {};
                     for (int i = 0; i < 64 && i < (int)sizeof(hexDump)/3; i++)
                         snprintf(hexDump + i*3, 4, "%02X ", dumpBuf[i]);
                     Sein::Info("WALK:ArrayP", "Inner NOT found for '%s' (FField=0x%llX, FARRAYPROP_INNER=0x%X, FSTRUCTPROP_STRUCT=0x%X)",
                         fi.Name.c_str(), static_cast<unsigned long long>(fi.Address),
                         DynOff::FARRAYPROP_INNER, DynOff::FSTRUCTPROP_STRUCT);
-                    Sein::Info("WALK:ArrayP", "  hex @+0x%X..+0x%X: %s", dumpStart, dumpStart+64, hexDump);
+                    Sein::Info("WALK:ArrayP", "  hex @+0x%X..+0x%X: %s%s", dumpStart, dumpStart+64, hexDump,
+                               dumpReadable ? "" : " (UNREADABLE: the zeros are a failed read)");
                 }
             } else {
                 // UProperty mode (UE4 <4.25): UArrayProperty::Inner is a UProperty* (UObject subclass), the first
