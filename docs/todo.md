@@ -408,8 +408,9 @@ Open work only. **Read this when deciding what to do next.**
 - `[I18N-READINESS-2026-11-04]`: move the UI's remaining hard-coded English into `en.axaml`, ahead of UI languages. Started 2026-11-05: P1 and P3-P5 are done; P2 (labels that are also values) comes before any option list moves (its section).
 - `[MCP-WRITE-GRANTS-2026-11-14]`: a grant per kind of risk or per target instead of a prompt on every MCP write
   (Stage D3, evaluated, not started; Phase 0 measurements first): [mcp-write-approval-eval.md](mcp-write-approval-eval.md).
-- `[CPP-HARDENING-2026-11-14]` (hardening, not a defect): `[[nodiscard]]` on the DLL's status returns, race-free
-  `DynOff` reads, AddressSanitizer on the C++ test executables -- chosen instead of a Rust rewrite (its section).
+- `[CPP-HARDENING-2026-11-14]` (hardening, not a defect): ✅ `[[nodiscard]]` on the DLL's status returns (2026-11-15);
+  open: race-free `DynOff` reads, AddressSanitizer on the C++ test executables -- chosen instead of a Rust rewrite
+  (its section).
 
 ### D. Open by a recorded decision — do not re-raise without a new reason
 
@@ -429,7 +430,22 @@ rewrite of any part of the DLL (maintainer, 2026-11-14: not worth it, [rust-rewr
 most of what it would have caught is reachable from C++ with the three items below. One commit per item; a red test
 first where one applies. The DLL rebuild and the AOT publish follow the usual rules.
 
-1. **`[[nodiscard]]` on the DLL's status returns** -- Effort: S · Risk: low. dll/src uses `[[nodiscard]]` nowhere.
+1. ✅ **DONE 2026-11-15** (red `ecaea1cb`, green `a019fe17`; the error flags: probe `65d5e984`, green `081d5697`).
+   Batch 1 is annotated (Macht's `WriteBytes` / `WriteDataBytes` / `ReadBytesSafe`, the module wrappers that return
+   `WriteBytes`' result, Schlacht's and Wirbel's `Invoke`, `SetHiddenCode`, `InvokeSetHidden`,
+   `InvokeSetCollision`, Sein's `OpenFileInDir`, Flamme's `WriteJsonAtomic` / `UpdateCacheRecord`). The compiler found
+   21 discarding sites: 19 now act on the result (the reset restores and the debug camera's controller swap log or
+   stop on a failed write; Wirbel logs each dispatch's real rc; diagnostic dumps say UNREADABLE), 2 are
+   `std::ignore` with the reason beside them. `/we4834 /we4858 /we5240` make a new discard a build error on the
+   DLL, the four proxies and the test targets that compile DLL sources; `tools/verify/nodiscard_probe.py` proves the
+   flags and the behaviour. Found on the way: `build_dll.py` printed only a 4000-character tail, which hid 2 of the
+   21 warnings; it now lists every diagnostic (`6242afab`). **Left for a batch 2** (5 discards, all but
+   `Dunste::SetPreset` at the `fly_set` handler intentional): the public gameplay setters (Solitar, Laufen, Hemmung,
+   Dunste, Schlacht, Wirbel's teleport API, Grausam, Solide), Stark's `EnqueueInvoke` / `InstallHook` /
+   `CallOriginalSEH` / `CallAddressAsOwnSEH`, Wirbel's teleport helpers. Not planned: `Macht::ReadSafe` (173
+   read-or-zero discards; it would need a read-or-zero API first) and the out-param getters, whose code is designed
+   to be ignored.
+   *Original:* **`[[nodiscard]]` on the DLL's status returns** -- Effort: S · Risk: low. dll/src uses `[[nodiscard]]` nowhere.
    Shipped defects that were a dropped status: `[SEETHRUTALLY]` (`InvokeSetHidden`'s `bool` discarded at both call
    sites, so the hidden counts reported intent), the Fly `MovementMode` writes in `Dunste::SetEnabled` dropping
    `Macht::WriteBytes`' result (dev-log, Slice B: Fly logged ENABLED over a pawn whose mode never changed), and audit
