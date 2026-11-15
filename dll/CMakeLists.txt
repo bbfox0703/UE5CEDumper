@@ -545,7 +545,8 @@ if(UE5DUMPER_ASAN)
 endif()
 function(ue5_apply_asan _tgt)
     if(UE5DUMPER_ASAN AND MSVC)
-        target_compile_options(${_tgt} PRIVATE /fsanitize=address)
+        # /bigobj: the instrumentation multiplies sections; dll_helpers_test passed the object-format limit (C1128).
+        target_compile_options(${_tgt} PRIVATE /fsanitize=address /bigobj)
         # /Z7 (embedded) keeps parallel Ninja compiles off a shared PDB; /DEBUG gives ASan's reports symbols.
         set_property(TARGET ${_tgt} PROPERTY MSVC_DEBUG_INFORMATION_FORMAT Embedded)
         target_link_options(${_tgt} PRIVATE /DEBUG /INCREMENTAL:NO)
