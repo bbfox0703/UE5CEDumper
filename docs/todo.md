@@ -296,7 +296,7 @@ Open work only. **Read this when deciding what to do next.**
 > here (marked 🆕), and their source names the section the original note sits in plus a phrase to grep for — those
 > notes may since have moved to `docs/archive/`, where tags still resolve.
 
-### A. Open defects and UX — 37 items, LOW or unrated (the last five were found by the same-day archiving pass), plus one MED and four LOW leads added 2026-10-29, and three LOW found by the MCP approval evaluation (2026-11-14)
+### A. Open defects and UX — 37 items, LOW or unrated (the last five were found by the same-day archiving pass), plus one MED and four LOW leads added 2026-10-29, three LOW found by the MCP approval evaluation (2026-11-14) and two LOW found by the DynOff analysis (2026-11-15)
 
 | tag | sev | what goes wrong | recorded at (grep) |
 |---|---|---|---|
@@ -359,6 +359,8 @@ Open work only. **Read this when deciding what to do next.**
 | 🆕 `[VENDOR-AUDIT9-2026-11-05]` | FIX ×3, FIX-low, PREPARE, DOC | ⬜ **Open: `[VND9-05]` only** (2026-11-05; it waits for a UE 5.9 preview). `[VND9-04]` ✅ fixed (build 3688), its FString half checked live. ✅ `[VND9-01]` and `[VND9-03]` fixed and checked live (build 3687); `[VND9-02]` fixed (3687, CE check owed); `[VND9-DOC]` ✅. Three pre-existing gaps exposed by the new upstream commits: a live soft pointer drops its sub-path; Pipe FIRE shows a returned string as raw bytes; `ue5_dissect.lua` misses the UE 5.5+ narrow string types. None decodes wrong today. VND9-05 waits for a 5.9 preview. | [audit-2026-11-05-vendor-delta9.md](audit-2026-11-05-vendor-delta9.md) |
 | 🆕 `[MCP-INSTR-CLAIMS]` | LOW, read from source | ⬜ The MCP server's instructions (`McpServer.cs`) tell the model two things that are not quite true: "the user is asked before each one" (false on every host but Claude Code, which alone reads the marker), and "Everything this server turns on is released when the session ends" (Fly's speed, preset and noclip are global settings `fly_set` applies before `enable` and nobody restores; an invoke can leave game-side state, e.g. a looping timer). A model repeats both to the user as reassurance. Fix with `[MCP-WRITE-GRANTS-2026-11-14]` Phase 1, which rewrites the instructions per host, or earlier on its own. | mcp-write-approval-eval.md §9 |
 | 🆕 `[INVOKE-DENY-INDIRECTION]` | LOW, read from source | ⬜ The background invoke deny list (`Voll::InvokeRefusedForBackground`) compares the invoked function's own name, so functions that call others or write properties BY NAME reach deny-listed effects: `K2_SetTimer` and its family, the `Set*PropertyByName` setters, `ExecuteUbergraph_*` (a free EntryPoint into Blueprint bytecode). Its comment calls `FUNC_Net` the check for "a call that can leave the machine", but online-service functions (achievements, leaderboards, purchases) are not RPCs. LOW while every `write_invoke` is still asked per call; it must be fixed before per-function invoke grants ship (the eval's §4.4 list). Engine names to verify against UE source. | mcp-write-approval-eval.md §4.4, §9 |
+| 🆕 `[DYNOFF-LATCH-STALE]` | LOW, read from source; plausible, not observed live | ⬜ `Ubel::s_subclassCalibrated` (CorrectSubclassOffsets' once-per-process latch) is only ever set, never re-armed in production (only dll_core_test resets it). Two ways that leaves a wrong family for the session: (1) in proxy mode `trigger_scan` runs `UE5_Init` on a job thread while other connections keep serving; a walk there can correct the family and latch, and Genau's measured arm (`Genau.cpp`, `PropertyFamilyFor(Offset_Internal)`) then overwrites it -- if that derivation is off, as TQ2's 0x74 against 0x78 was, nothing corrects it again except a WalkInstance struct probe; (2) after a cancelled `UE5_Init`, the next init re-runs ValidateAndFixOffsets (defaults first, then probes) and the latch still says calibrated. Fix: re-arm the latch whenever ValidateAndFixOffsets publishes a family, or keep a slot `IsSubclassSlotConfirmed` proved. Red test first, seam-able in dll_core_test (correct and latch, then apply a measured family as Genau does; assert the confirmed slot survives or the latch re-arms). | `[CPP-HARDENING-2026-11-14]` item 2; analysis `wf_67d2f373-6ff` |
+| 🆕 `[PIPE-WALK-DURING-INIT]` | LOW, read from source | ⬜ Only `CMD_RESCAN` checks `g_initInProgress` (`Fern.cpp`); every other pipe command dispatches during `UE5_Init`. In proxy mode the pipe serves before any scan, and `trigger_scan` runs init on a job thread while the other connections walk: a walk then reads Step 2.5's unmeasured defaults or values mid-probe, and can feed `[DYNOFF-LATCH-STALE]`. The window repeats on a re-run init after a cancel. Fix: refuse (or answer "init in progress" for) the walking commands while `g_initInProgress`, as `CMD_RESCAN` does. Decide which commands are "walking" first; status and pipe-client reads must keep answering. | `[CPP-HARDENING-2026-11-14]` item 2; analysis `wf_67d2f373-6ff` |
 | 🆕 `[WRITEMEM-OWN-IMAGE]` | LOW, read from source | ⬜ A background client's `write_mem` passes the data-page check for the DLL's own writable data, e.g. the exported `g_invokeMailbox`; a write there hands an invoke to the CE-owned mailbox poller, past the background deny list. Each such MCP write is still a per-call prompt. Fix: the DLL refuses a background `write_mem` into its own image (S; a UE5Dumper target build, Fern.cpp is in no test target). | mcp-write-approval-eval.md §9 |
 
 ### B. Live checks owed on shipped, unit-tested fixes
@@ -408,9 +410,10 @@ Open work only. **Read this when deciding what to do next.**
 - `[I18N-READINESS-2026-11-04]`: move the UI's remaining hard-coded English into `en.axaml`, ahead of UI languages. Started 2026-11-05: P1 and P3-P5 are done; P2 (labels that are also values) comes before any option list moves (its section).
 - `[MCP-WRITE-GRANTS-2026-11-14]`: a grant per kind of risk or per target instead of a prompt on every MCP write
   (Stage D3, evaluated, not started; Phase 0 measurements first): [mcp-write-approval-eval.md](mcp-write-approval-eval.md).
-- `[CPP-HARDENING-2026-11-14]` (hardening, not a defect): ✅ `[[nodiscard]]` on the DLL's status returns (2026-11-15);
-  open: race-free `DynOff` reads, AddressSanitizer on the C++ test executables -- chosen instead of a Rust rewrite
-  (its section).
+- `[CPP-HARDENING-2026-11-14]` (hardening, not a defect): ✅ `[[nodiscard]]` on the DLL's status returns and ✅
+  race-free reads of the property family (both 2026-11-15); open: AddressSanitizer on the C++ test executables, and
+  the other runtime-written `DynOff` ints (`SOFTPTR_PATH` / `LAZYPTR_GUID`, the `UENUM_*` and `UFUNCTION_*` offsets)
+  as `RuntimeOffset` too -- chosen instead of a Rust rewrite (its section).
 
 ### D. Open by a recorded decision — do not re-raise without a new reason
 
@@ -453,7 +456,23 @@ first where one applies. The DLL rebuild and the AOT publish follow the usual ru
    `WriteBytes`, `WriteDataBytes` and `ReadBytesSafe`, then the gameplay setters that report applied or not. Each
    C4834 warning the build then reports is a call site to read and fix, not to silence with a cast; once they are
    gone, decide whether `/we4834` makes the warning an error.
-2. **Race-free reads of the calibrated `DynOff` offsets** -- Effort: S-M · Risk: low-med. The writers of the
+2. ✅ **DONE 2026-11-15** (`99747557`). The analysis (workflow `wf_67d2f373-6ff`) found the premise below false:
+   calibration does NOT always finish before readers start. CorrectSubclassOffsets and WalkInstance's struct and array
+   probes correct the family lazily, on purpose, while scan workers and other pipe connections read it. So:
+   - the five members are `DynOff::RuntimeOffset`, an int-converting wrapper over `std::atomic<int>` with relaxed
+     loads and stores; every read site stayed as it was, and the nine variadic log arguments take an explicit int;
+   - one family write lock, `DynOff::g_familyWriteMutex`, taken through `DynOff::FamilyWriteLock`. The writers that
+     assume it is held take the lock object as proof, so a call without the lock does not compile. Genau's six
+     writers now hold it too (they held only the init mutex);
+   - the ArrayProperty probe's lone `FARRAYPROP_INNER` write goes through `DynOff::SetArrayInner`, under the lock;
+     `check_property_family.py`'s exception names that function;
+   - `dll_helpers_test` pins the five members' type with `static_assert`: no run-time test can see this race.
+
+   Not a snapshot: each walk reads the family once per field across many functions, so an atomically swapped
+   snapshot loaded per site still mixes old and new across fields; walk-level consistency already comes from
+   `FamilyCacheKey`'s epoch. Two logic defects the analysis found are their own rows: `[DYNOFF-LATCH-STALE]` and
+   `[PIPE-WALK-DURING-INIT]`.
+   *Original:* **Race-free reads of the calibrated `DynOff` offsets** -- Effort: S-M · Risk: low-med. The writers of the
    `sizeof(FProperty)` family go through `ApplyPropertyFamily` under `s_calibrationMutex` (2026-09-07, `5d1a6bfe`,
    gated by `check_property_family`), but the offsets are still plain `inline int` globals in `Grimoire.h`, read by
    the parallel snapshot workers without synchronisation: a formal data race, benign on x64 in practice.
