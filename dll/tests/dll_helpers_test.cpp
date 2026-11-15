@@ -4582,8 +4582,16 @@ static void Test_ValueScan_OrderedViewScale() {
     // lower. The filter is allocation-heavier than the sort (lowercases each
     // displayed column) — if it ever creeps past this, the follow-up is the
     // incremental/top-k path noted in todo V2.
-    EXPECT("scale: sort under 5s",   sortMs < 5000.0);
-    EXPECT("scale: filter under 5s", filtMs < 5000.0);
+#ifdef __SANITIZE_ADDRESS__
+    // [CPP-HARDENING-2026-11-14] AddressSanitizer slows the allocation-heavy filter about 20x (measured 2026-11-15:
+    // 14.6 s against 0.73 s; the sort 3.1 s against 0.69 s). An O(n^2) regression at this N would still take hours,
+    // so the wider bound keeps catching it.
+    constexpr double kScaleBoundMs = 60000.0;
+#else
+    constexpr double kScaleBoundMs = 5000.0;
+#endif
+    EXPECT("scale: sort within the bound",   sortMs < kScaleBoundMs);
+    EXPECT("scale: filter within the bound", filtMs < kScaleBoundMs);
 }
 
 // Macht::IsRipRelativeModRM — the x64 `[rip+disp32]` ModR/M test.
