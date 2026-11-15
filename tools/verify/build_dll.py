@@ -218,6 +218,16 @@ def main(argv=None):
     # text raises UnicodeEncodeError and HIDES the compile error behind a traceback.
     print(tail.encode(sys.stdout.encoding or "utf-8", "replace")
               .decode(sys.stdout.encoding or "utf-8", "replace"))
+    # The tail above is cut at 4000 characters, so a build with many diagnostics hid most of them: measured
+    # 2026-11-15, a [[nodiscard]] batch raised C4834 at 21 sites and the tail showed 19, with no sign of the cut.
+    # Every compiler diagnostic line in the WHOLE output is listed here, so none is lost to the cut.
+    diag = sorted({ln.strip() for ln in (r.stdout or "").splitlines()
+                   if re.search(r"\b(warning|error) C\d{4}\b", ln)})
+    if diag:
+        print(f"compiler diagnostics in the whole output: {len(diag)} distinct line(s)")
+        for ln in diag:
+            print("   ", ln.encode(sys.stdout.encoding or "utf-8", "replace")
+                          .decode(sys.stdout.encoding or "utf-8", "replace"))
     if r.returncode != 0:
         print(f"build_dll: FAILED -- ninja rc={r.returncode}", file=sys.stderr)
         return r.returncode
