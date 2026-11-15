@@ -49,6 +49,7 @@
 #include "../src/Lager.h"      // MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY])
 #include "../src/Falsch.h"     // MinHook trampoline pre-flight against Zydis ([MH-TRAMPOLINE-PREFLIGHT])
 #include "../src/Wirbel.h"     // BugItGoRefusal (constexpr, pure) -- [TELEPORT-BUGITGO-PARENTREL]
+#include <type_traits>         // the DynOff::RuntimeOffset pins beside Test_PropertyFamilyIsCoherent
 #include "../src/Schlacht.h"   // See-through's owners: ClaimOwner / ReleaseOwner (header-inline, pure)
 #include "../src/Kanne.h"      // Watch samples: WatchKey, WatchSlot (header-only, std-only)
 
@@ -4581,8 +4582,16 @@ static void Test_ValueScan_OrderedViewScale() {
     // lower. The filter is allocation-heavier than the sort (lowercases each
     // displayed column) — if it ever creeps past this, the follow-up is the
     // incremental/top-k path noted in todo V2.
-    EXPECT("scale: sort under 5s",   sortMs < 5000.0);
-    EXPECT("scale: filter under 5s", filtMs < 5000.0);
+#ifdef __SANITIZE_ADDRESS__
+    // [CPP-HARDENING-2026-11-14] AddressSanitizer slows the allocation-heavy filter about 20x (measured 2026-11-15:
+    // 14.6 s against 0.73 s; the sort 3.1 s against 0.69 s). An O(n^2) regression at this N would still take hours,
+    // so the wider bound keeps catching it.
+    constexpr double kScaleBoundMs = 60000.0;
+#else
+    constexpr double kScaleBoundMs = 5000.0;
+#endif
+    EXPECT("scale: sort within the bound",   sortMs < kScaleBoundMs);
+    EXPECT("scale: filter within the bound", filtMs < kScaleBoundMs);
 }
 
 // Macht::IsRipRelativeModRM — the x64 `[rip+disp32]` ModR/M test.
@@ -8787,6 +8796,17 @@ static void Test_UPropertyUStructHeadFor() {
         }
 }
 
+// [CPP-HARDENING-2026-11-14] The five family members are corrected while other threads read them, so they are
+// RuntimeOffset (relaxed atomics), not plain ints: as ints the lazy corrections were a data race. No run-time test can
+// see that race (an aligned int never tears on x64), so the type is pinned here instead.
+static_assert(std::is_same_v<decltype(DynOff::FSTRUCTPROP_STRUCT), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::FARRAYPROP_INNER), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::FBOOLPROP_FIELDSIZE), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::FBYTEPROP_ENUM), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::FENUMPROP_ENUM), DynOff::RuntimeOffset>);
+// The proof that the family lock is held cannot be copied out of the scope that took the lock.
+static_assert(!std::is_copy_constructible_v<DynOff::FamilyWriteLock>);
+
 static void Test_PropertyFamilyIsCoherent() {
     // Every real Offset_Internal this repo has measured, plus the neighbours a future
     // engine could plausibly land on.
@@ -12411,6 +12431,20 @@ int main() {
 
     std::printf("dll_helpers_test (Renge + Scharf + Radar)\n");
     std::printf("------------------------------------------\n");
+#ifdef __SANITIZE_ADDRESS__
+    // [CPP-HARDENING-2026-11-14] Compiled into the AddressSanitizer build only. build_dll.py --asan --run reads the
+    // banner, and first runs this exe with UE5_ASAN_NEGATIVE_CONTROL set: a deliberate one-past-the-end heap write
+    // that ASan must report, or a clean run would prove nothing.
+    std::printf("asan: on\n");
+    {
+        size_t negLen = 0;
+        if (getenv_s(&negLen, nullptr, 0, "UE5_ASAN_NEGATIVE_CONTROL") == 0 && negLen > 0) {
+            char* volatile p = new char[16];
+            p[16] = 1;   // heap-buffer-overflow: ASan ends the process here
+            delete[] p;
+        }
+    }
+#endif
 
     RUN(Test_Renge_CeModuleRelative_NeverTruncates);
     RUN(Test_Methode_NarrowForAnsiLoad);

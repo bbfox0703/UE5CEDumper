@@ -84,13 +84,19 @@ Verified against this machine's own VS catalog
 | `Microsoft.VisualStudio.Component.VC.Tools.x86.x64` | **Recommended** |
 | `Microsoft.VisualStudio.Component.VC.CMake.Project` | **Recommended** |
 | `Microsoft.VisualStudio.Component.Windows11SDK.26100` | **Recommended** |
+| `Microsoft.VisualStudio.Component.VC.ASAN` | **Recommended** -- needed only for the AddressSanitizer test tree |
 
 An unattended `--add Microsoft.VisualStudio.Workload.NativeDesktop` installs only the workload's
-**Required** tier, which is IDE plumbing — **no compiler, no CMake, no SDK**. The four ids live
+**Required** tier, which is IDE plumbing — **no compiler, no CMake, no SDK**. The ids live
 in [`.vsconfig`](../.vsconfig) so the script and the IDE read the same list.
 
+`VC.ASAN` (added 2026-11-15, `[CPP-HARDENING-2026-11-14]`) is for `build.ps1 -Target AsanConfigure` and
+`py tools/verify/build_dll.py --asan --run`: without it the instrumented tests fail to link (LNK1356,
+`clang_rt.asan_dynamic-*.lib` not found). The shipping build does not need it. A machine installed before that
+date: re-run the `modify` command below.
+
 ⛔ **Do not use `--includeRecommended`** — the workload has ~18 recommended entries and drags in
-ARM64 toolsets, ATL, ASAN, Vcpkg, IntelliCode. This repo is x64-only.
+ARM64 toolsets, ATL, Vcpkg, IntelliCode. This repo is x64-only; ASAN is named on its own above.
 
 **Fresh install:**
 

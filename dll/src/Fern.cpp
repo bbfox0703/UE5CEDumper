@@ -3790,7 +3790,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             Sein::Info("PIPE:world", "DynOff: FFIELD_NEXT=0x%02X FFIELD_NAME=0x%02X FPROPERTY_OFFSET=0x%02X "
                 "FPROPERTY_ELEMSIZE=0x%02X FSTRUCTPROP_STRUCT=0x%02X bTaggedFFV=%d",
                 DynOff::FFIELD_NEXT, DynOff::FFIELD_NAME, DynOff::FPROPERTY_OFFSET,
-                DynOff::FPROPERTY_ELEMSIZE, DynOff::FSTRUCTPROP_STRUCT,
+                DynOff::FPROPERTY_ELEMSIZE, static_cast<int>(DynOff::FSTRUCTPROP_STRUCT),
                 DynOff::bTaggedFFieldVariant ? 1 : 0);
 
             // Walk UWorld class to find PersistentLevel field offset dynamically

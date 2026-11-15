@@ -419,6 +419,7 @@ FodyWeavers.xsd
 
 # Build output
 build/
+build_asan/
 build_proxy/
 build_proxy_dinput8/
 build_proxy_dxgi/

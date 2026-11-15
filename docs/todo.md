@@ -14,7 +14,9 @@ Open work only. **Read this when deciding what to do next.**
 > verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-12, 14, 16-17, 19-20, 23-25 and 27; their findings are fixed --
 > `[CT-INITFAILED-HEADLINE]` in build 3708, `[UI-ELEVATED-ACCESS-DENIED]` and `[SHUTDOWN-SEETHRU-WAIT]` in build 3709.
 > Still open there: only 13, kept open by the maintainer (2026-11-12): no machine with another CPU shape to run it on;
-> nothing further in Stage D is queued** --
+> next in Stage D, evaluated 2026-11-14 and not started (the maintainer asked for the evaluation only):
+> `[MCP-WRITE-GRANTS-2026-11-14]`, a grant per kind or target instead of a prompt on every write -- its Phase 0
+> measurements come first** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
@@ -294,7 +296,7 @@ Open work only. **Read this when deciding what to do next.**
 > here (marked 🆕), and their source names the section the original note sits in plus a phrase to grep for — those
 > notes may since have moved to `docs/archive/`, where tags still resolve.
 
-### A. Open defects and UX — 37 items, LOW or unrated (the last five were found by the same-day archiving pass), plus one MED and four LOW leads added 2026-10-29
+### A. Open defects and UX — 37 items, LOW or unrated (the last five were found by the same-day archiving pass), plus one MED and four LOW leads added 2026-10-29, three LOW found by the MCP approval evaluation (2026-11-14), two LOW found by the DynOff analysis (2026-11-15) and one LOW found by the ASan build (2026-11-15)
 
 | tag | sev | what goes wrong | recorded at (grep) |
 |---|---|---|---|
@@ -355,6 +357,12 @@ Open work only. **Read this when deciding what to do next.**
 | 🆕 `[CLASSPIVOT-DT-CONNECT-RACE]` | LOW, read from source | **The tests: ✅ FIXED 2026-11-04** (the commit that adds this row). PR #554's CI failed one Class Pivot test, `InArraySource_ASwitchToTheDataTableSource_SupersedesTheArrayFieldLoadInFlight` (fields `[]`, expected `[Damage]`); alone on this PC it failed 4 runs of 6. `[CLASSPIVOT-DT-STARTUP-LOG]` (build 3671) made eight tests connect first, and the connect starts a snapshot-list refresh on the thread pool that none of them awaited. A helper, `ConnectAsync`, awaits `PendingRefresh` and the loads it starts: 10 of 10. **Open, the product half:** with a class still picked from a snapshot source, a class reload that lands while the DataTable source is shown (the connect's refresh, when it lands after a table is picked) detaches `SelectedClass`, and `LoadFieldsAsync` clears the table's field list. In the app that needs a source switch and a table pick inside the refresh's few milliseconds; not seen. A fix: a class change in the DataTable source leaves its fields alone. | CI of PR #554 (2026-11-04) |
 | 🆕 `[PARTIAL-UNIT-PLURAL]` | LOW, read from source | ✅ **FIXED 2026-11-05** (red `3361d7c1`; green: the commit that marks this row). The three batch clauses take the plural whole (`units`, default unit + "s"); the noun agrees with the total, the verb and "that / those" / "its / their" with the count, and no "(s)" is left; Find Func passes "classes". C# 7448 passed, 0 failed (red: 5). Was: `PartialResultNotice.BatchPartialClause` and `BatchCapClause` pluralise the caller's noun as `{unit}(s)`, and the partial clause adds `{unit}s` as well. Find Func (`InstanceFinderViewModel`) passes `"class"`, so its status line reads "… of N class(s) hit the scan deadline … a 0 on those classs means …". Fix: the caller passes the singular and the plural (or a key pair), never one English noun; that is also the whole-sentence rule `[I18N-READINESS-2026-11-04]` needs. | `[I18N-READINESS-2026-11-04]` survey (2026-11-04) |
 | 🆕 `[VENDOR-AUDIT9-2026-11-05]` | FIX ×3, FIX-low, PREPARE, DOC | ⬜ **Open: `[VND9-05]` only** (2026-11-05; it waits for a UE 5.9 preview). `[VND9-04]` ✅ fixed (build 3688), its FString half checked live. ✅ `[VND9-01]` and `[VND9-03]` fixed and checked live (build 3687); `[VND9-02]` fixed (3687, CE check owed); `[VND9-DOC]` ✅. Three pre-existing gaps exposed by the new upstream commits: a live soft pointer drops its sub-path; Pipe FIRE shows a returned string as raw bytes; `ue5_dissect.lua` misses the UE 5.5+ narrow string types. None decodes wrong today. VND9-05 waits for a 5.9 preview. | [audit-2026-11-05-vendor-delta9.md](audit-2026-11-05-vendor-delta9.md) |
+| 🆕 `[MCP-INSTR-CLAIMS]` | LOW, read from source | ⬜ The MCP server's instructions (`McpServer.cs`) tell the model two things that are not quite true: "the user is asked before each one" (false on every host but Claude Code, which alone reads the marker), and "Everything this server turns on is released when the session ends" (Fly's speed, preset and noclip are global settings `fly_set` applies before `enable` and nobody restores; an invoke can leave game-side state, e.g. a looping timer). A model repeats both to the user as reassurance. Fix with `[MCP-WRITE-GRANTS-2026-11-14]` Phase 1, which rewrites the instructions per host, or earlier on its own. | mcp-write-approval-eval.md §9 |
+| 🆕 `[INVOKE-DENY-INDIRECTION]` | LOW, read from source | ⬜ The background invoke deny list (`Voll::InvokeRefusedForBackground`) compares the invoked function's own name, so functions that call others or write properties BY NAME reach deny-listed effects: `K2_SetTimer` and its family, the `Set*PropertyByName` setters, `ExecuteUbergraph_*` (a free EntryPoint into Blueprint bytecode). Its comment calls `FUNC_Net` the check for "a call that can leave the machine", but online-service functions (achievements, leaderboards, purchases) are not RPCs. LOW while every `write_invoke` is still asked per call; it must be fixed before per-function invoke grants ship (the eval's §4.4 list). Engine names to verify against UE source. Also missing by name (found 2026-11-15, mcp-player2-eval.md §4): `RemovePlayer`, which with `bDestroyPawn` true destroys the pawn (`GameplayStatics.cpp`). | mcp-write-approval-eval.md §4.4, §9 |
+| 🆕 `[DYNOFF-LATCH-STALE]` | LOW, read from source; plausible, not observed live | ⬜ `Ubel::s_subclassCalibrated` (CorrectSubclassOffsets' once-per-process latch) is only ever set, never re-armed in production (only dll_core_test resets it). Two ways that leaves a wrong family for the session: (1) in proxy mode `trigger_scan` runs `UE5_Init` on a job thread while other connections keep serving; a walk there can correct the family and latch, and Genau's measured arm (`Genau.cpp`, `PropertyFamilyFor(Offset_Internal)`) then overwrites it -- if that derivation is off, as TQ2's 0x74 against 0x78 was, nothing corrects it again except a WalkInstance struct probe; (2) after a cancelled `UE5_Init`, the next init re-runs ValidateAndFixOffsets (defaults first, then probes) and the latch still says calibrated. Fix: re-arm the latch whenever ValidateAndFixOffsets publishes a family, or keep a slot `IsSubclassSlotConfirmed` proved. Red test first, seam-able in dll_core_test (correct and latch, then apply a measured family as Genau does; assert the confirmed slot survives or the latch re-arms). | `[CPP-HARDENING-2026-11-14]` item 2; analysis `wf_67d2f373-6ff` |
+| 🆕 `[PIPE-WALK-DURING-INIT]` | LOW, read from source | ⬜ Only `CMD_RESCAN` checks `g_initInProgress` (`Fern.cpp`); every other pipe command dispatches during `UE5_Init`. In proxy mode the pipe serves before any scan, and `trigger_scan` runs init on a job thread while the other connections walk: a walk then reads Step 2.5's unmeasured defaults or values mid-probe, and can feed `[DYNOFF-LATCH-STALE]`. The window repeats on a re-run init after a cancel. Fix: refuse (or answer "init in progress" for) the walking commands while `g_initInProgress`, as `CMD_RESCAN` does. Decide which commands are "walking" first; status and pipe-client reads must keep answering. | `[CPP-HARDENING-2026-11-14]` item 2; analysis `wf_67d2f373-6ff` |
+| 🆕 `[VND584-03-FLOOR-HIGH-HEAP]` | LOW, read from source + measured in the ASan build | ⬜ The VND584-03 fix (a Mistfall-shaped UE 5.7 FUObjectArray, chunk counts before Objects) rests on `kRelaxedMinObjects = 0x1000` in `Aura.cpp`'s relaxed fallback: relaxed A/C reads Max at +0x10 and Num at +0x14, which on that layout are the low and high dwords of the Objects pointer, and the floor rejects the high dword only while it is below 0x1000, i.e. while the chunk table sits below 16 TB. Measured 2026-11-15: in the AddressSanitizer build the fixture's table sat at high dword 0x1222, and dll_core_test's VND584-03 floor check read 4,642 objects instead of 16,384 (the check now SKIPs, naming this tag, where its premise fails). Real UE 5.x pointers sit that high too (this repo's notes show objects at 0x7FEA44710000, high dword 0x7FEA). Fix: refuse a relaxed row whose Num equals the high dword of the 8 bytes it straddles, or whose +0x10..+0x17 read as one plausible heap pointer; red test first with a fixture table placed above 16 TB (a VirtualAlloc'd page at a high address). | `[CPP-HARDENING-2026-11-14]` item 3 phase 2 |
+| 🆕 `[WRITEMEM-OWN-IMAGE]` | LOW, read from source | ⬜ A background client's `write_mem` passes the data-page check for the DLL's own writable data, e.g. the exported `g_invokeMailbox`; a write there hands an invoke to the CE-owned mailbox poller, past the background deny list. Each such MCP write is still a per-call prompt. Fix: the DLL refuses a background `write_mem` into its own image (S; a UE5Dumper target build, Fern.cpp is in no test target). | mcp-write-approval-eval.md §9 |
 
 ### B. Live checks owed on shipped, unit-tested fixes
 
@@ -401,6 +409,17 @@ Open work only. **Read this when deciding what to do next.**
 - CE export drilldown: CSX array-of-struct elements are not re-walked; a "UE FName to String" CE custom type (M–L).
 - Snapshot capture of one chosen class's instances.
 - `[I18N-READINESS-2026-11-04]`: move the UI's remaining hard-coded English into `en.axaml`, ahead of UI languages. Started 2026-11-05: P1 and P3-P5 are done; P2 (labels that are also values) comes before any option list moves (its section).
+- `[MCP-PLAYER2-2026-11-15]`: an AI driving a second pawn (player 2) through MCP -- evaluated, not started. Today: P2
+  can be found and its UFunctions called (one Allow each), commands only, no per-frame input. Next would be a
+  no-code proof of concept on DumperTest; then grants plus an `FInputActionValue` layout for held stick directions:
+  [mcp-player2-eval.md](mcp-player2-eval.md).
+- `[MCP-WRITE-GRANTS-2026-11-14]`: a grant per kind of risk or per target instead of a prompt on every MCP write
+  (Stage D3, evaluated, not started; Phase 0 measurements first): [mcp-write-approval-eval.md](mcp-write-approval-eval.md).
+- `[CPP-HARDENING-2026-11-14]` (hardening, not a defect): ✅ `[[nodiscard]]` on the DLL's status returns, ✅
+  race-free reads of the property family, ✅ AddressSanitizer on all five C++ test executables (all 2026-11-15);
+  open follow-ups: `[[nodiscard]]` batch 2, the other runtime-written `DynOff` ints (`SOFTPTR_PATH` /
+  `LAZYPTR_GUID`, the `UENUM_*` and `UFUNCTION_*` offsets) as `RuntimeOffset`, an ASan CI job -- chosen instead of a
+  Rust rewrite (its section).
 
 ### D. Open by a recorded decision — do not re-raise without a new reason
 
@@ -410,7 +429,106 @@ Open work only. **Read this when deciding what to do next.**
 `[GRIMOIRE-507-GUARD]` (maintainer call) · `[CEFORM-LABEL-CLIP]` (lowest priority) · `[FILTER-RESTORE-LOADED-PRIORITY]`
 (leave it) · `[P1-SEETHRU-NOPRODUCER]`'s one-shot warning · `[A2-UFUNC-TAIL-4X]`'s optional margin · D2's "DEADLINE
 HIT" wording for a crashed worker · Detect Player Stats has no cancel (July L18) · `peHash` with `TimeDateStamp` 0 ·
-the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVEFUNCS-STEP3 B1/E1/P1/O1.
+the invokeUFunction duplicate guard, gate #17, the 4.15 / 4.18 fixtures and LIVEFUNCS-STEP3 B1/E1/P1/O1 · a Rust
+rewrite of any part of the DLL (maintainer, 2026-11-14: not worth it, [rust-rewrite-eval.md](rust-rewrite-eval.md)).
+
+## 🧭 Maintainer request 2026-11-14 — cheap C++ hardening instead of a Rust rewrite `[CPP-HARDENING-2026-11-14]`
+
+**Status: items 1-3 done 2026-11-15** (below). An adversarial review of the whole change (workflow
+`wf_034db2b3-55a`, three lenses, each finding re-checked by a second agent) found six defects, all fixed in
+`63519807`: `--asan --run` ran zero tests with no targets (MED); ReadSafe's destination unchecked under ASan; the
+probe skipping three targets; D9xxx driver lines missing from the diagnostic list; `SetArrayInner`'s caller not
+pinned; a TEMP folder left by AsanConfigure. It found no deadlock and sound ordering. Second clean ASan run after
+the fixes: 287 / 4070 / 22 / 30 / 1569, every negative control reported.
+**Status at filing: not started.** The maintainer decided against rewriting any part of the DLL in Rust (2026-11-14,
+[rust-rewrite-eval.md](rust-rewrite-eval.md)): Rust would have prevented about 2-4% of the recorded DLL defects, and
+most of what it would have caught is reachable from C++ with the three items below. One commit per item; a red test
+first where one applies. The DLL rebuild and the AOT publish follow the usual rules.
+
+1. ✅ **DONE 2026-11-15** (red `ecaea1cb`, green `a019fe17`; the error flags: probe `65d5e984`, green `081d5697`).
+   Batch 1 is annotated (Macht's `WriteBytes` / `WriteDataBytes` / `ReadBytesSafe`, the module wrappers that return
+   `WriteBytes`' result, Schlacht's and Wirbel's `Invoke`, `SetHiddenCode`, `InvokeSetHidden`,
+   `InvokeSetCollision`, Sein's `OpenFileInDir`, Flamme's `WriteJsonAtomic` / `UpdateCacheRecord`). The compiler found
+   21 discarding sites: 19 now act on the result (the reset restores and the debug camera's controller swap log or
+   stop on a failed write; Wirbel logs each dispatch's real rc; diagnostic dumps say UNREADABLE), 2 are
+   `std::ignore` with the reason beside them. `/we4834 /we4858 /we5240` make a new discard a build error on the
+   DLL, the four proxies and the test targets that compile DLL sources; `tools/verify/nodiscard_probe.py` proves the
+   flags and the behaviour. Found on the way: `build_dll.py` printed only a 4000-character tail, which hid 2 of the
+   21 warnings; it now lists every diagnostic (`6242afab`). **Left for a batch 2** (5 discards, all but
+   `Dunste::SetPreset` at the `fly_set` handler intentional): the public gameplay setters (Solitar, Laufen, Hemmung,
+   Dunste, Schlacht, Wirbel's teleport API, Grausam, Solide), Stark's `EnqueueInvoke` / `InstallHook` /
+   `CallOriginalSEH` / `CallAddressAsOwnSEH`, Wirbel's teleport helpers. Not planned: `Macht::ReadSafe` (173
+   read-or-zero discards; it would need a read-or-zero API first) and the out-param getters, whose code is designed
+   to be ignored.
+   *Original:* **`[[nodiscard]]` on the DLL's status returns** -- Effort: S · Risk: low. dll/src uses `[[nodiscard]]` nowhere.
+   Shipped defects that were a dropped status: `[SEETHRUTALLY]` (`InvokeSetHidden`'s `bool` discarded at both call
+   sites, so the hidden counts reported intent), the Fly `MovementMode` writes in `Dunste::SetEnabled` dropping
+   `Macht::WriteBytes`' result (dev-log, Slice B: Fly logged ENABLED over a pawn whose mode never changed), and audit
+   2026-08-13 SE1 / FL1 / FL2 (Sein's `OpenFileInDir`, Flamme's stream state and `fs::rename`). Start with Macht's
+   `WriteBytes`, `WriteDataBytes` and `ReadBytesSafe`, then the gameplay setters that report applied or not. Each
+   C4834 warning the build then reports is a call site to read and fix, not to silence with a cast; once they are
+   gone, decide whether `/we4834` makes the warning an error.
+2. ✅ **DONE 2026-11-15** (`99747557`). The analysis (workflow `wf_67d2f373-6ff`) found the premise below false:
+   calibration does NOT always finish before readers start. CorrectSubclassOffsets and WalkInstance's struct and array
+   probes correct the family lazily, on purpose, while scan workers and other pipe connections read it. So:
+   - the five members are `DynOff::RuntimeOffset`, an int-converting wrapper over `std::atomic<int>` with relaxed
+     loads and stores; every read site stayed as it was, and the nine variadic log arguments take an explicit int;
+   - one family write lock, `DynOff::g_familyWriteMutex`, taken through `DynOff::FamilyWriteLock`. The writers that
+     assume it is held take the lock object as proof, so a call without the lock does not compile. Genau's six
+     writers now hold it too (they held only the init mutex);
+   - the ArrayProperty probe's lone `FARRAYPROP_INNER` write goes through `DynOff::SetArrayInner`, under the lock;
+     `check_property_family.py`'s exception names that function;
+   - `dll_helpers_test` pins the five members' type with `static_assert`: no run-time test can see this race.
+
+   Not a snapshot: each walk reads the family once per field across many functions, so an atomically swapped
+   snapshot loaded per site still mixes old and new across fields; walk-level consistency already comes from
+   `FamilyCacheKey`'s epoch. Two logic defects the analysis found are their own rows: `[DYNOFF-LATCH-STALE]` and
+   `[PIPE-WALK-DURING-INIT]`.
+   *Original:* **Race-free reads of the calibrated `DynOff` offsets** -- Effort: S-M · Risk: low-med. The writers of the
+   `sizeof(FProperty)` family go through `ApplyPropertyFamily` under `s_calibrationMutex` (2026-09-07, `5d1a6bfe`,
+   gated by `check_property_family`), but the offsets are still plain `inline int` globals in `Grimoire.h`, read by
+   the parallel snapshot workers without synchronisation: a formal data race, benign on x64 in practice.
+   ⚠ A per-int `std::atomic<int>` removes the UB but still lets a reader see a half-updated family (one offset new,
+   its sibling old), the split the 2026-09-07 fix closed for writers. Read that row (search this file for
+   "neither proposed fix was right") and establish when readers can run during a calibration; then choose relaxed
+   atomics if a calibration always completes before readers start, or publish the family as one snapshot (an
+   immutable struct swapped atomically, or a seqlock) if it does not.
+3. ✅ **DONE 2026-11-15, all five test executables.** Phase 2 (dll_core_test, then grausam_window_test and
+   sein_retention_test): the inventory run before any exemption gave 1,021 ASan reports, 42 distinct, every one from
+   `Macht::ReadSafe` (589) or `Macht::ReadBytesSafe` (432). In the ASan build only, the foreign side of each probe's
+   copy goes through `Macht::AsanProbe::CopyUnchecked` (`no_sanitize_address` + `noinline`, a volatile byte loop,
+   since memcpy is ASan's run-time interceptor) and this DLL's side through instrumented touches, so a destination too
+   small is still reported: dll_core_test's negative control is exactly that, a probe read into a buffer one byte
+   short. dll_core_test also gained ASAN-PROBE-EXEMPT (probe over-reads of a global and a heap block, which an ASan
+   report would fail). Two checks behave differently under ASan, both by design: the ring-release measurement (ASan's
+   quarantine keeps freed blocks: 65 MB) asserts only the refusal there, and VND584-03's floor check SKIPs where its
+   premise fails -- which exposed a real gap, `[VND584-03-FLOOR-HIGH-HEAP]`. **Measured 2026-11-15, all under ASan,
+   each after its negative control was reported:** 287 / 4070 / 22 / 30 / 1569 (one SKIP), 0 failures, 0 reports.
+   Plain tree unchanged: 287 / 4070 / 22 / 30 / 1570. **Not in CI yet**: after a second clean measured run,
+   decide on a parallel CI job (`build.ps1 -Target AsanConfigure`, then `py tools/verify/build_dll.py --asan --run`;
+   it would need the runner image's `VC.ASAN` and `check_all.GATES` parity).
+   Phase 1 detail: (`e8da97f6`, then `/bigobj` and the ASan time bound). `build.ps1 -Target
+   AsanConfigure` configures `build_asan\` (Release, no proxies: CMake refuses `UE5DUMPER_ASAN` otherwise);
+   `py tools/verify/build_dll.py --asan --targets utf8_helpers_test dll_helpers_test --run` builds and judges it.
+   Under ASan it first checks that the import table names `clang_rt.asan` and that a deliberate heap overflow
+   (`UE5_ASAN_NEGATIVE_CONTROL`) is reported, then fails on any ASan report, a failure, a missing summary or zero
+   checks. Measured on 14.52.37025: both negative controls reported; `utf8_helpers_test` 287 and
+   `dll_helpers_test` 4070 checks, 0 failures, no ASan report (17.2 s against 1.7 s plain). One check moved: the
+   1M-row filter benchmark runs about 20x slower under ASan, so its bound widens there. `--run` also judges the
+   plain tree. `.vsconfig` gains `VC.ASAN` (docs/toolchain.md: an older install re-runs `modify`).
+   **Phase 2, open:** `dll_core_test`. It will report false positives until Macht's SEH-guarded probes
+   (`ReadSafe`, `ReadBytesSafe`, `WriteDataBytes`, `WriteBytes`) and Falsch's `CopySEH` are exempt in the ASan
+   build only: the GENAUABORT section sweeps read this exe's own instrumented globals, and the UE4 name readers
+   over-read small static fixtures by design. Plan: an inventory run first (`continue_on_error=2`), then
+   `__declspec(no_sanitize_address) __declspec(noinline)` plus a byte loop instead of memcpy (the attribute does
+   not stop the memcpy interceptor), all under `#ifdef __SANITIZE_ADDRESS__`, keeping the check on the DLL-owned
+   side of each copy; two controls (an exempt over-read not reported, a too-small destination reported). Then
+   `grausam_window_test` and `sein_retention_test`. Not in CI until two clean measured runs.
+   *Original:* **AddressSanitizer on the C++ test executables** -- Effort: M · Risk: low (test builds only, never the shipped
+   DLL). No target builds with `/fsanitize=address` today. Pilot it on `dll_helpers_test` and `dll_core_test`, which
+   compile most of the DLL's own data-structure code, as an opt-in switch in `build_dll.py`. Check first that MSVC's
+   ASan works with this tree's `/MT` and `/EHa`. ⚠ Macht's SEH-guarded probes read bad addresses on purpose and may
+   need `__declspec(no_sanitize_address)`. Measure the run time before deciding whether `-Target Test` runs it.
 
 ## 🧭 Maintainer request 2026-11-06 — a pipe per game process, then more pipe slots, then multi-client hardening `[PIPE-PER-PROCESS-2026-11-06]`
 
@@ -704,7 +822,9 @@ write commands, the UI's use of the same state, and the client-side safety knobs
 - Every state-changing tool is named `write_*`, carries `requiresUserInteraction` (Claude Code then asks on every
   call in every mode, an allow rule notwithstanding) and `destructiveHint: true`. Elicitation is not used: the desktop
   app's Code tab declines it unseen. Measure both permission modes again, and record the Claude Code version (the
-  marker needs 2.1.246 or later).
+  marker needs 2.1.246 or later). *(2026-11-14: "declines it unseen" was never measured; elicitation stays unused
+  for another reason, a hook can answer it with no human: [mcp-write-approval-eval.md](mcp-write-approval-eval.md)
+  §5.)*
 
 **D2 (in three builds, above):** `write_mem`, `invoke_function`, the toggles, teleport and force field. Each carries
 `_meta["anthropic/requiresUserInteraction"]`, which makes Claude Code ask on every call, even under an allow rule.
@@ -717,6 +837,26 @@ What D2 must not take from the UI: the global holds (force field, teleport marke
 -- an MCP write reports a conflict rather than override the UI's.
 
 The 2026-11-06 review had leaned to the UI as the broker for anything that writes or toggles.
+
+**D3, evaluated 2026-11-14, not started: grants instead of a prompt on every write `[MCP-WRITE-GRANTS-2026-11-14]`.**
+The maintainer found God mode needing Allow on every call impractical, and doubted that `write_memory` /
+`write_invoke` should ask every time when a CE user is never asked; they asked for an evaluation written down, no
+implementation yet. The plan, the rejected routes, the measurements and the decisions are in
+[mcp-write-approval-eval.md](mcp-write-approval-eval.md). In short:
+- the marker moves from the writes to a few grant tools (Claude Code's docs name that use); the server refuses any
+  covered write with no grant, through one choke point over `IMcpGame`;
+- a gameplay-toggles grant and a movement grant per game run; a per-function invoke grant after M1, with
+  indirection, `ExecuteUbergraph_*` and online-service functions refused; `write_memory` and `write_force_field`
+  stay asked every call, and a typed `write_field` under a class.field grant is Phase 2;
+- grants end with the server process or the game run (pid + `process_creation_time`), or on revoke;
+- hosts other than a Claude Code at or above the floor are read-only unless their own registration passes
+  `--writes=any-host`; any doubt falls back to today's per-call prompts;
+- **decided by the maintainer, 2026-11-14:** Phase 1 includes the UI half. The gameplay cards name who holds each
+  feature (`get_holds`), and a new "Block AI writes" switch refuses every AI write and ends every grant when turned on.
+  With the cards' existing OFF buttons, that is how the user stops an AI. No copy-text buttons (the eval's §4.10).
+Next: the Phase 0 measurements (§6 there; M1, M10 and M6 first, about an hour in the Code tab, no build), then the
+maintainer's decisions (§8 there). Side findings, each its own census row: `[MCP-INSTR-CLAIMS]`,
+`[INVOKE-DENY-INDIRECTION]`, `[WRITEMEM-OWN-IMAGE]`.
 
 ### Decisions (maintainer, 2026-11-06)
 

@@ -174,6 +174,13 @@ set(UE5_COMMON_INCLUDE_DIRS
 # Apply the identical MSVC compile flags every DLL-side C++ target uses. Keeping
 # this in one function guarantees the shared object library and the four DLLs are
 # compiled with byte-for-byte identical flags (a prerequisite for sharing objects).
+# [CPP-HARDENING-2026-11-14] A discarded [[nodiscard]] status is a build error, not a warning: no build output here
+# is read line by line, and build_dll.py printed only a tail until 2026-11-15. C4834 is a discarded value, C4858 the
+# same for [[nodiscard("reason")]], C5240 an attribute in a position MSVC ignores (`static [[nodiscard]] bool f()`
+# would silently protect nothing). The dxgi and winmm proxies list their flags by hand below, and the test targets
+# that compile production sources take them too; tools/verify/nodiscard_probe.py checks every one.
+set(UE5_NODISCARD_ERROR_FLAGS /we4834 /we4858 /we5240)
+
 function(ue5_apply_common_msvc_flags _tgt)
     if(MSVC)
         set_property(TARGET ${_tgt} PROPERTY
@@ -186,6 +193,7 @@ function(ue5_apply_common_msvc_flags _tgt)
             /EHa            # SEH exceptions for __try/__except
             /arch:AVX2      # enable AVX2 instruction-set optimization
             /favor:blend    # tune for modern hybrid-core CPUs
+            ${UE5_NODISCARD_ERROR_FLAGS}
         )
     endif()
 endfunction()
@@ -423,6 +431,9 @@ if(BUILD_PROXY_DXGI)
             $<$<COMPILE_LANGUAGE:CXX>:/EHa>
             $<$<COMPILE_LANGUAGE:CXX>:/arch:AVX2>
             $<$<COMPILE_LANGUAGE:CXX>:/favor:blend>
+            $<$<COMPILE_LANGUAGE:CXX>:/we4834>   # UE5_NODISCARD_ERROR_FLAGS, one by one inside the guard
+            $<$<COMPILE_LANGUAGE:CXX>:/we4858>
+            $<$<COMPILE_LANGUAGE:CXX>:/we5240>
         )
     endif()
 
@@ -478,6 +489,9 @@ if(BUILD_PROXY_WINMM)
             $<$<COMPILE_LANGUAGE:CXX>:/EHa>
             $<$<COMPILE_LANGUAGE:CXX>:/arch:AVX2>
             $<$<COMPILE_LANGUAGE:CXX>:/favor:blend>
+            $<$<COMPILE_LANGUAGE:CXX>:/we4834>   # UE5_NODISCARD_ERROR_FLAGS, one by one inside the guard
+            $<$<COMPILE_LANGUAGE:CXX>:/we4858>
+            $<$<COMPILE_LANGUAGE:CXX>:/we5240>
         )
     endif()
 
@@ -514,6 +528,31 @@ endif()
 # rather than linking the object library, to keep the leaf test self-contained.
 # ============================================================
 option(BUILD_DLL_TESTS "Build the C++ self-test executables" ON)
+
+# [CPP-HARDENING-2026-11-14] AddressSanitizer on the C++ self-test executables -- never on a DLL. It lives in a tree of
+# its own, build_asan\, configured by `build.ps1 -Target AsanConfigure` and built and run by
+# `py tools/verify/build_dll.py --asan --run`, so the default tree never builds an instrumented test without saying so.
+option(UE5DUMPER_ASAN "Instrument the C++ self-test executables with AddressSanitizer; never the DLLs" OFF)
+if(UE5DUMPER_ASAN)
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Release")
+        # CMake's stock Debug flags carry /RTC1 and RelWithDebInfo's link flags /INCREMENTAL; MSVC's ASan takes neither.
+        message(FATAL_ERROR "UE5DUMPER_ASAN needs CMAKE_BUILD_TYPE=Release (got '${CMAKE_BUILD_TYPE}')")
+    endif()
+    if(BUILD_PROXY_DLL OR BUILD_PROXY_DINPUT8 OR BUILD_PROXY_DXGI OR BUILD_PROXY_WINMM)
+        # build.ps1 configures the shipping tree (build\) with every proxy ON; refusing the pair keeps ASan out of it.
+        message(FATAL_ERROR "UE5DUMPER_ASAN is for its own tree (build_asan), not the one that builds the proxies")
+    endif()
+endif()
+function(ue5_apply_asan _tgt)
+    if(UE5DUMPER_ASAN AND MSVC)
+        # /bigobj: the instrumentation multiplies sections; dll_helpers_test passed the object-format limit (C1128).
+        target_compile_options(${_tgt} PRIVATE /fsanitize=address /bigobj)
+        # /Z7 (embedded) keeps parallel Ninja compiles off a shared PDB; /DEBUG gives ASan's reports symbols.
+        set_property(TARGET ${_tgt} PROPERTY MSVC_DEBUG_INFORMATION_FORMAT Embedded)
+        target_link_options(${_tgt} PRIVATE /DEBUG /INCREMENTAL:NO)
+    endif()
+endfunction()
+
 if(BUILD_DLL_TESTS)
     add_executable(utf8_helpers_test
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/utf8_helpers_test.cpp
@@ -531,6 +570,7 @@ if(BUILD_DLL_TESTS)
             /utf-8 /W4 /permissive- /EHa
         )
     endif()
+    ue5_apply_asan(utf8_helpers_test)
 
     # Pure-helper tests (Renge::TryStrToAddr, Scharf::IsAlignmentSuspicious,
     # Radar typed-read + predicates + session lifecycle).
@@ -558,9 +598,10 @@ if(BUILD_DLL_TESTS)
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         )
         target_compile_options(dll_helpers_test PRIVATE
-            /utf-8 /W4 /permissive- /EHa
+            /utf-8 /W4 /permissive- /EHa ${UE5_NODISCARD_ERROR_FLAGS}
         )
     endif()
+    ue5_apply_asan(dll_helpers_test)
 
     # Winmm deliberately absent: nothing in this target needs it. Mimic resolves
     # timeBeginPeriod / timeEndPeriod from the System32 copy by explicit path so a
@@ -602,8 +643,9 @@ if(BUILD_DLL_TESTS)
         )
         # /W4 without /permissive- : Grausam.cpp is compiled here as an INCLUDED source and
         # its warning posture is the DLL's, not this target's, to argue with.
-        target_compile_options(grausam_window_test PRIVATE /utf-8 /W4 /EHsc)
+        target_compile_options(grausam_window_test PRIVATE /utf-8 /W4 /EHsc ${UE5_NODISCARD_ERROR_FLAGS})
     endif()
+    ue5_apply_asan(grausam_window_test)
 
     # Grausam.cpp vets every hook through Falsch ([MH-TRAMPOLINE-PREFLIGHT]), so the TU needs Falsch.cpp, its
     # Zydis and MinHook's hde64 header -- the real pre-flight, not a stub, though this test installs no hook.
@@ -636,8 +678,9 @@ if(BUILD_DLL_TESTS)
         set_property(TARGET sein_retention_test PROPERTY
             MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
         )
-        target_compile_options(sein_retention_test PRIVATE /utf-8 /W4 /EHsc)
+        target_compile_options(sein_retention_test PRIVATE /utf-8 /W4 /EHsc ${UE5_NODISCARD_ERROR_FLAGS})
     endif()
+    ue5_apply_asan(sein_retention_test)
 
     # ---- dll_core_test: the FIRST test target that compiles the DLL's core --------------
     #
@@ -675,8 +718,11 @@ if(BUILD_DLL_TESTS)
         )
         # /W3, not /W4: these are PRODUCTION sources compiled as an included TU, and their
         # warning posture is the DLL's to argue with, not this target's.
-        target_compile_options(dll_core_test PRIVATE /utf-8 /W3 /EHsc /bigobj)
+        target_compile_options(dll_core_test PRIVATE /utf-8 /W3 /EHsc /bigobj ${UE5_NODISCARD_ERROR_FLAGS})
     endif()
+    # Only the test exe: its verres_* and owncopy_* fixture DLLs below stay uninstrumented (a partly sanitized process
+    # is supported, with less detection in the parts left out).
+    ue5_apply_asan(dll_core_test)
 
     target_link_libraries(dll_core_test PRIVATE Zydis version)
 

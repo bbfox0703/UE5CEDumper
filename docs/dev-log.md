@@ -27,6 +27,47 @@ builds ≤696 in
 
 -----
 
+## 2026-11-15 (build 3712) — C++ hardening instead of a Rust rewrite: unhandled status results, a data race in the property offsets, AddressSanitizer on the self-tests `[CPP-HARDENING-2026-11-14]`
+
+The maintainer decided against rewriting any part of the DLL in Rust (docs/rust-rewrite-eval.md: about 2-4% of the
+recorded DLL defects would have been prevented) and asked for the cheap C++ hardening instead. Builds 3710 and 3711
+were configure runs (a VS update moved the compiler to 14.52.37025, and the new ASan tree); 3712 is the release.
+
+- **What changes for a user:** almost nothing visible, by design. Where something used to be reported that did not
+  happen, it is now said:
+  - Resetting a movement knob, the gravity direction or time dilation logs a warning when the restore write fails.
+    The reset still ends the hold and answers OK, as before; the reply's current value already shows the field.
+  - A debug-camera OFF whose view write fails now changes nothing and answers "still on". It used to clear the
+    active flag alone, so the state read "off" while the view stayed the debug camera's.
+  - The teleport's settle steps, the rotation fallback and the cursor's input-mode calls log what the game thread
+    really answered (`-5` = still queued) instead of "invoked".
+  - Diagnostic hex dumps say UNREADABLE when the read failed, instead of showing zeros as data.
+- **`[[nodiscard]]`:** the DLL's write, read-into-buffer, invoke and file-write status returns are marked, and
+  `/we4834 /we4858 /we5240` make a discarded one a build error on the DLL, all four proxies and the test targets that
+  compile DLL sources. The compiler found 21 discarding sites; 19 now act on the result, 2 are `std::ignore` with the
+  reason beside them. `tools/verify/nodiscard_probe.py` proves the flags and the behaviour, and reverting one fix
+  failed the build with error C4834.
+- **The property-family data race:** the five offsets of the `sizeof(FProperty)` family are corrected lazily while
+  scan workers and other pipe connections read them. They are now relaxed atomics (`DynOff::RuntimeOffset`), and
+  every writer holds one lock, taken through a `FamilyWriteLock` that the writers demand as a parameter, so a write
+  without the lock does not compile. Genau's writers hold it too now.
+- **AddressSanitizer:** `build.ps1 -Target AsanConfigure` configures `build_asan\` (the self-tests only; CMake refuses
+  it in the shipping tree), and `py tools/verify/build_dll.py --asan --run` builds and judges all five. Macht's probes
+  read the game's memory past objects and across sections on purpose; in the ASan build only, their foreign side goes
+  through an unchecked copy while this DLL's side is still checked. Before that, dll_core_test gave 1,021 reports, all
+  from the probes; after it, 0. Every run first proves ASan live with a deliberate overflow.
+- **Found on the way** (todo.md rows):
+  - `[VND584-03-FLOOR-HIGH-HEAP]`: the relaxed GObjects rows' 0x1000 floor tells a count from half a pointer only
+    below 16 TB; the ASan build's heap sat higher and reproduced the misread.
+  - `[DYNOFF-LATCH-STALE]` and `[PIPE-WALK-DURING-INIT]`: two logic gaps the race analysis found, which atomics do
+    not fix.
+  - `build_dll.py` printed only a 4000-character tail, which hid 2 of the 21 warnings; it now lists every diagnostic.
+- **Review:** an adversarial review of the whole change (three lenses, each finding re-checked) confirmed six
+  defects, all fixed; it found no deadlock and sound memory ordering.
+- **Publish:** C++ 287 + 4070 + 22 + 30 + 1570 checks; C# 7936 passed, 1 skipped; headless 71/71. Under ASan:
+  287 + 4070 + 22 + 30 + 1569 (one check SKIPs where its premise fails), 0 reports.
+- AOT UI 62,289,408 bytes (sha256 a431eab8687bb325...); UE5Dumper.dll 3,773,440 bytes (sha256 92d51666e5067dd7...).
+
 ## 2026-11-12 (build 3709) — A teardown no longer waits out a frozen game; the UI names a game running as administrator `[SHUTDOWN-SEETHRU-WAIT]` `[UI-ELEVATED-ACCESS-DENIED]`
 
 - **What was wrong (1), `[SHUTDOWN-SEETHRU-WAIT]`.** With See-through on and the game thread stalled, a CE untick could

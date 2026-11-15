@@ -696,10 +696,12 @@ static bool DetectLayout(uintptr_t addr) {
     // Diagnostic: dump first 48 bytes at the GObjects address
     {
         uint64_t dump[6] = {};
-        Macht::ReadBytesSafe(addr, dump, sizeof(dump));
-        LOG_DEBUG("ObjectArray: GObjects@0x%llX: +00:%016llX +08:%016llX +10:%016llX +18:%016llX +20:%016llX +28:%016llX",
+        // A failed read leaves zeros, which must not read as the array's real contents.
+        const bool readable = Macht::ReadBytesSafe(addr, dump, sizeof(dump));
+        LOG_DEBUG("ObjectArray: GObjects@0x%llX: +00:%016llX +08:%016llX +10:%016llX +18:%016llX +20:%016llX +28:%016llX%s",
                   (unsigned long long)addr,
-                  dump[0], dump[1], dump[2], dump[3], dump[4], dump[5]);
+                  dump[0], dump[1], dump[2], dump[3], dump[4], dump[5],
+                  readable ? "" : " (UNREADABLE: the zeros are a failed read)");
     }
 
     // No preset has claimed an item hint yet this run (Init may run again on re-attach).
@@ -1276,10 +1278,11 @@ static void DetectItemSize() {
     // Diagnostic: dump first 64 bytes at chunkTable address
     {
         uint64_t dump[8] = {};
-        Macht::ReadBytesSafe(chunkTable, dump, sizeof(dump));
-        LOG_DEBUG("ObjectArray: chunkTable@0x%llX: +00:%016llX +08:%016llX +10:%016llX +18:%016llX +20:%016llX +28:%016llX +30:%016llX +38:%016llX",
+        const bool readable = Macht::ReadBytesSafe(chunkTable, dump, sizeof(dump));
+        LOG_DEBUG("ObjectArray: chunkTable@0x%llX: +00:%016llX +08:%016llX +10:%016llX +18:%016llX +20:%016llX +28:%016llX +30:%016llX +38:%016llX%s",
                   (unsigned long long)chunkTable,
-                  dump[0], dump[1], dump[2], dump[3], dump[4], dump[5], dump[6], dump[7]);
+                  dump[0], dump[1], dump[2], dump[3], dump[4], dump[5], dump[6], dump[7],
+                  readable ? "" : " (UNREADABLE: the zeros are a failed read)");
     }
 
     uintptr_t chunk0 = 0;

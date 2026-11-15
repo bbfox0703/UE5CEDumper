@@ -103,7 +103,7 @@ bool ReadFloatAt(uintptr_t addr, int32_t size, double& out) {
     if (!Macht::ReadSafe(addr, f)) return false;
     out = static_cast<double>(f); return true;
 }
-bool WriteFloatAt(uintptr_t addr, int32_t size, double v) {
+[[nodiscard]] bool WriteFloatAt(uintptr_t addr, int32_t size, double v) {
     if (size >= 8) { double d = v; return Macht::WriteBytes(addr, &d, 8); }
     float f = static_cast<float>(v); return Macht::WriteBytes(addr, &f, 4);
 }
@@ -137,7 +137,7 @@ bool ReadNumeric(uintptr_t addr, const FieldInfo& fi, double& out) {
         default: return false;   // not an integer type we hold — never guess a width
     }
 }
-bool WriteNumeric(uintptr_t addr, const FieldInfo& fi, double value) {
+[[nodiscard]] bool WriteNumeric(uintptr_t addr, const FieldInfo& fi, double value) {
     if (IsFloatType(fi.TypeName)) return WriteFloatAt(addr, fi.Size, value);
     const IntWidth w = IntWidthOf(fi.TypeName);
     if (w.bytes == 0) return false;

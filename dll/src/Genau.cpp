@@ -4852,7 +4852,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         Sein::Info("DYNO", "  FProperty::ElemSize = +0x%02X", DynOff::FPROPERTY_ELEMSIZE);
         Sein::Info("DYNO", "  FProperty::Flags    = +0x%02X", DynOff::FPROPERTY_FLAGS);
         Sein::Info("DYNO", "  FProperty::Offset   = +0x%02X", DynOff::FPROPERTY_OFFSET);
-        Sein::Info("DYNO", "  FStructProp::Struct = +0x%02X", DynOff::FSTRUCTPROP_STRUCT);
+        Sein::Info("DYNO", "  FStructProp::Struct = +0x%02X", static_cast<int>(DynOff::FSTRUCTPROP_STRUCT));
         Sein::Info("DYNO", "  UField::Next        = +0x%02X (function chains)", DynOff::UFIELD_NEXT);
     } else {
         Sein::Info("DYNO", "  UField::Next        = +0x%02X", DynOff::UFIELD_NEXT);
@@ -4860,7 +4860,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         Sein::Info("DYNO", "  UProperty::Flags    = +0x%02X", DynOff::UPROPERTY_FLAGS);
         Sein::Info("DYNO", "  UProperty::Offset   = +0x%02X", DynOff::UPROPERTY_OFFSET);
         Sein::Info("DYNO", "  UProp subclass      = +0x%02X (Struct / PropertyClass / Inner; UEnumProperty::Enum +0x%02X)",
-                   DynOff::FSTRUCTPROP_STRUCT, DynOff::FENUMPROP_ENUM);
+                   static_cast<int>(DynOff::FSTRUCTPROP_STRUCT), static_cast<int>(DynOff::FENUMPROP_ENUM));
     }
     Sein::Info("DYNO", "==============================");
 

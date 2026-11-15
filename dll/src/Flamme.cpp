@@ -175,7 +175,7 @@ static void SweepOrphanTemps(const fs::path& path) {
 /// Write `text` to a temp file, VERIFY it, then rename it over `path`.
 /// Returns false without touching `path` when anything went wrong, and never
 /// leaves the staging file behind. `who` names the caller for the log line.
-static bool WriteJsonAtomic(const fs::path& path, const std::string& text,
+[[nodiscard]] static bool WriteJsonAtomic(const fs::path& path, const std::string& text,
                             const char* who) {
     const fs::path tempPath = MakeTempPath(path);
 
@@ -265,7 +265,7 @@ private:
 /// Read the cache, let `mutate` change the root and this game's record, publish -- all under CacheLock, so no other
 /// writer's change is lost between the read and the rename. `createIfMissing` false: no file, or no record for this
 /// game, means nothing to change. Returns whether the file was published; every failure is logged.
-static bool UpdateCacheRecord(const fs::path& path, const char* peHash, bool createIfMissing,
+[[nodiscard]] static bool UpdateCacheRecord(const fs::path& path, const char* peHash, bool createIfMissing,
                               const std::function<void(json& root, json& rec)>& mutate, const char* who) {
     CacheLock lock(path);
     if (!lock.Held()) {

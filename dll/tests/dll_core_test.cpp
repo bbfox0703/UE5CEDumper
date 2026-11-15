@@ -38,6 +38,8 @@
 #include <stdexcept>
 #include <mutex>
 #include <condition_variable>
+#include <cstdlib>   // getenv_s: the AddressSanitizer build's negative control
+#include <tuple>     // std::ignore: the negative control's deliberately unread probe result
 
 namespace Sein {
 void Info(const char*, const char*, ...) {}
@@ -228,6 +230,22 @@ static __declspec(noinline) void S3TraceDeep(int depth, uint64_t hintGen, uint64
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("dll_core_test — the DLL core, against a fake object pool in this process\n");
+#ifdef __SANITIZE_ADDRESS__
+    // [CPP-HARDENING-2026-11-14] Compiled into the AddressSanitizer build only. build_dll.py --asan --run reads the
+    // banner and first runs this exe with UE5_ASAN_NEGATIVE_CONTROL set. Here the control is a probe read into a
+    // DLL-owned buffer one byte too small: it must be reported, which proves ASan is live AND that Macht's probes,
+    // exempt from ASan for the foreign memory they read, still have their destination checked.
+    printf("asan: on\n");
+    {
+        size_t negLen = 0;
+        if (getenv_s(&negLen, nullptr, 0, "UE5_ASAN_NEGATIVE_CONTROL") == 0 && negLen > 0) {
+            static const uint8_t src[32] = {};
+            char* volatile dst = new char[16];
+            std::ignore = Macht::ReadBytesSafe(reinterpret_cast<uintptr_t>(src), dst, 17);   // heap-buffer-overflow
+            delete[] dst;
+        }
+    }
+#endif
 
     // The poll is `(i & 0xFFF) == 0`, i.e. every 4096. A pool must be several multiples
     // of that or "it stopped early" cannot be told from "it ran to the end".
@@ -245,6 +263,25 @@ int main() {
         Aura::ForEach([&](int32_t, uintptr_t obj) { if (obj) ++seen; return true; });
         check("ForEach visits EVERY object when not cancelled", seen == kCount);
         // ⚠ Without this, every assertion below would pass against a pool of zero objects.
+    }
+
+    // [CPP-HARDENING-2026-11-14] A probe reads past the end of what it inspects, by design (a UE4 name reader takes
+    // 255 bytes from a name of 12). In the AddressSanitizer build such a read must NOT be an ASan report -- Macht's
+    // probes are exempt for the foreign side of their copy -- and build_dll.py --asan --run fails on any report, which
+    // is what makes this a control there. In the plain build it is an ordinary read. The other half, a destination too
+    // small IS reported, is the ASan build's negative control at the top of main.
+    {   blk("ASAN-PROBE-EXEMPT - a probe's over-read of the memory it inspects is not an ASan report");
+        static uint8_t globalFixture[0x40] = { 1, 2, 3 };
+        std::vector<uint8_t> heapFixture(0x40, 7);
+        uint8_t window[0x48] = {};
+        check("ReadBytesSafe reads 8 bytes past a 0x40-byte global",
+              Macht::ReadBytesSafe(reinterpret_cast<uintptr_t>(globalFixture), window, sizeof(window)) && window[0] == 1);
+        check("ReadBytesSafe reads 8 bytes past a 0x40-byte heap block",
+              Macht::ReadBytesSafe(reinterpret_cast<uintptr_t>(heapFixture.data()), window, sizeof(window))
+                  && window[0] == 7);
+        uint64_t straddle = 0;
+        check("ReadSafe reads a uint64 that straddles a heap block's end",
+              Macht::ReadSafe(reinterpret_cast<uintptr_t>(heapFixture.data()) + 0x3C, straddle));
     }
 
     // [D2-3-WRITEMEM] write_mem's range check and write, on real pages of this process: each protection the classifier
@@ -1645,15 +1682,19 @@ int main() {
 
         // Many writers, each its own fields: every one lands.
         std::vector<std::thread> ws;
+        std::atomic<int> published{0};   // each writer's own answer, beside what the file shows afterwards
         for (int t = 0; t < 8; ++t) {
             ws.emplace_back([&, t] {
                 for (int k = 0; k < 25; ++k)
-                    Flamme::UpdateCacheRecord(file, "HASH", true, [&](nlohmann::json&, nlohmann::json& r) {
-                        r["w" + std::to_string(t) + "_" + std::to_string(k)] = k;
-                    }, "stress");
+                    if (Flamme::UpdateCacheRecord(file, "HASH", true, [&](nlohmann::json&, nlohmann::json& r) {
+                            r["w" + std::to_string(t) + "_" + std::to_string(k)] = k;
+                        }, "stress"))
+                        published.fetch_add(1);
             });
         }
         for (auto& w : ws) w.join();
+        check("HINTCACHELOCK: all 200 stress writes report published", published.load() == 200,
+              std::to_string(published.load()).c_str());
         const nlohmann::json all = readRec();
         int present = 0;
         for (int t = 0; t < 8; ++t)
@@ -10939,8 +10980,17 @@ int main() {
             const uint64_t before = privateBytes();
             const bool refused = Linie::StartTrace(big) == Linie::TraceStartStatus::SnapTooSmall;
             const uint64_t after = privateBytes();
+#ifdef __SANITIZE_ADDRESS__
+            // [CPP-HARDENING-2026-11-14] ASan keeps freed blocks in its quarantine, to catch a use after free, and adds
+            // shadow memory, so committed bytes do not come back by design (measured 65 MB here, 2026-11-15). The
+            // refusal is still checked; the release is the plain build's to measure.
+            static_cast<void>(before);
+            static_cast<void>(after);
+            check("...a refused Start is refused (the release is measured in the plain build, not under ASan)", refused);
+#else
             check("...measured: a refused Start leaves no 256 MB ring committed behind it",
                   refused && after < before + (16ull << 20), (u((after - before) >> 20) + " MB").c_str());
+#endif
         }
         check("a buffer smaller than the rings' alignment: refused, not a wrapped-around K",
               Linie::StartTrace(cfg(100)) == Linie::TraceStartStatus::SnapTooSmall && !Linie::GetTraceInfo().allocated);
@@ -13592,8 +13642,18 @@ int main() {
         buildMist(1, kCount);
         Aura::Init(reinterpret_cast<uintptr_t>(mist));
         got = Aura::GetCount();
-        check("VND584-03 ⭐: with no strict row, the relaxed rows' 0x1000 floor still reaches every object",
-              got == kCount, std::to_string(got).c_str());
+        // The floor tells a count from half a pointer only while the chunk table sits below 16 TB (its high dword
+        // under 0x1000). The AddressSanitizer build's heap lives higher (high dword 0x1222, 2026-11-15), and there
+        // relaxed A/C reads that dword as the count again -- as it would in a game whose table sits that high:
+        // [VND584-03-FLOOR-HIGH-HEAP]. Where the premise does not hold the check cannot test the floor, so it says so.
+        const uint32_t tableHigh = static_cast<uint32_t>(table >> 32);
+        if (tableHigh < 0x1000) {
+            check("VND584-03 ⭐: with no strict row, the relaxed rows' 0x1000 floor still reaches every object",
+                  got == kCount, std::to_string(got).c_str());
+        } else {
+            printf("  SKIP  VND584-03: the fixture's chunk table is above 16 TB (high dword 0x%X), where the floor "
+                   "cannot work; read %d objects -- [VND584-03-FLOOR-HIGH-HEAP]\n", tableHigh, got);
+        }
 
         // CONTROL: the main fixture's stock UE5-Extended array still reads whole through detection.
         Aura::Init(pool.Addr());

@@ -33,6 +33,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 BUILD = ROOT / "build"
@@ -44,8 +45,11 @@ def find_vcvars():
 
     ⚠ DO NOT HARDCODE A PATH HERE. This machine has TWO Visual Studio
     installations -- `2022\\Community` (MSVC 14.44.35207 only) and `18\\Community`
-    (14.38, 14.44 and **14.51.36231**) -- and `build.ps1` resolves the newest, so
-    every object already in `build/` was compiled by 14.51.
+    (14.29, 14.38, 14.44 and, since a VS update on 2026-11-12, **14.52.37025**, which replaced
+    14.51.36231) -- and `build.ps1` resolves the newest. A VS update moves the compiler out
+    from under a configured tree: build\\'s cache still named the removed 14.51 directory, and
+    the tree had to be configured again by build.ps1 (2026-11-15). Toolset numbers drift; read
+    `build/CMakeCache.txt`'s CMAKE_CXX_COMPILER for the one a tree uses.
 
     Pointing this script at 2022's vcvars64 mixes toolsets inside ONE build
     directory. The compile stage succeeds, and the failure surfaces at LINK time
@@ -101,10 +105,97 @@ def _ninja(env):
 
 def require_configured():
     if not (BUILD / "build.ninja").is_file():
+        how = ("build.ps1 -Target AsanConfigure" if BUILD.name == "build_asan" else "build.ps1")
         raise SystemExit(
             f"build_dll: FAILED -- {BUILD} is not configured. This script deliberately will "
             f"NOT run cmake: configuring from the wrong console code page silently breaks "
-            f"header dependency tracking (see the module docstring). Configure with build.ps1.")
+            f"header dependency tracking (see the module docstring). Configure with {how}.")
+
+
+# [CPP-HARDENING-2026-11-14] --run. Both harness summaries this tree prints; a run whose summary is missing, or says
+# zero checks ran, is a FAILURE, never a pass (CLAUDE.md: a test run that executed zero tests is a failure).
+SUMMARY_RES = (re.compile(r"Pass:\s+(\d+)\s+Fail:\s+(\d+)"), re.compile(r"(\d+) checks?, (\d+) failure"))
+# Under ASan: a distinctive exit code (ASan's default 1 is also a one-failure harness exit) and the report text,
+# which is searched for as well because a broad __except filter can swallow a report raised as an exception.
+ASAN_EXIT = 86
+ASAN_OPTIONS = f"exitcode={ASAN_EXIT}:print_summary=1"
+ASAN_REPORT = "ERROR: AddressSanitizer"
+
+
+def _summary(text):
+    for rx in SUMMARY_RES:
+        found = rx.findall(text)
+        if found:
+            n, fails = found[-1]
+            return int(n), int(fails)
+    return None
+
+
+# The self-tests the ASan tree instruments (dll/CMakeLists.txt, ue5_apply_asan): what `--asan --run` builds and runs
+# when no --targets is given. A run that reaches none of them is a failure, not a pass.
+ASAN_TEST_TARGETS = ["utf8_helpers_test", "dll_helpers_test", "grausam_window_test", "sein_retention_test",
+                     "dll_core_test"]
+
+
+def run_tests(env, targets, asan):
+    """Run each built *_test target and judge it. Returns the number of failures."""
+    failures = 0
+    tests = [t for t in targets if t.endswith("_test")]
+    if not tests:
+        # Measured in review (2026-11-15): `--asan --run` with the default target (the DLL) ran nothing and exited 0.
+        print("run: FAIL -- no *_test target among --targets, so zero tests ran")
+        return 1
+    for t in tests:
+        exe = BUILD / "dll" / f"{t}.exe"
+        if not exe.is_file():
+            print(f"run: FAIL {t}: {exe} does not exist")
+            failures += 1
+            continue
+        run_env = dict(env)
+        if asan:
+            deps = subprocess.run(["dumpbin", "/dependents", str(exe)], env=env, capture_output=True,
+                                  text=True, errors="replace", shell=True).stdout
+            if "clang_rt.asan" not in deps.lower():
+                print(f"run: FAIL {t}: its import table names no clang_rt.asan runtime -- not instrumented")
+                failures += 1
+                continue
+            run_env["ASAN_OPTIONS"] = ASAN_OPTIONS
+            # The negative control first: a deliberate heap overflow must be reported, or nothing below is believed.
+            neg_env = dict(run_env, UE5_ASAN_NEGATIVE_CONTROL="1")
+            r = subprocess.run([str(exe)], env=neg_env, capture_output=True, cwd=str(exe.parent))
+            out = (r.stdout + r.stderr).decode("utf-8", "replace")
+            if r.returncode != ASAN_EXIT or "heap-buffer-overflow" not in out:
+                print(f"run: FAIL {t}: the negative control was not reported (rc={r.returncode}) -- ASan is not "
+                      f"live, so a clean run would mean nothing")
+                failures += 1
+                continue
+            print(f"run: ok   {t}: negative control reported (rc={ASAN_EXIT}, heap-buffer-overflow)")
+        t0 = time.monotonic()
+        r = subprocess.run([str(exe)], env=run_env, capture_output=True, cwd=str(exe.parent))
+        secs = time.monotonic() - t0
+        out = (r.stdout + r.stderr).decode("utf-8", "replace")
+        summ = _summary(out)
+        problems = []
+        if asan and ASAN_REPORT in out:
+            first = next(ln for ln in out.splitlines() if ASAN_REPORT in ln)
+            problems.append(f"ASan report: {first.strip()}")
+        if asan and "asan: on" not in out:
+            problems.append("no 'asan: on' banner")
+        if r.returncode != 0:
+            problems.append(f"exit code {r.returncode}")
+        if summ is None:
+            problems.append("no summary line")
+        elif summ[0] == 0:
+            problems.append("zero checks ran")
+        elif summ[1] != 0:
+            problems.append(f"{summ[1]} failure(s)")
+        label = f"{summ[0]} checks" if summ else "no summary"
+        if problems:
+            print(f"run: FAIL {t}: {label}, {secs:.1f} s -- " + "; ".join(problems))
+            failures += 1
+        else:
+            print(f"run: ok   {t}: {label}, 0 failures, {secs:.1f} s{' (ASan)' if asan else ''}")
+    return failures
 
 
 # An object emitted from a translation unit that preprocessed to NOTHING. Measured on this
@@ -179,7 +270,8 @@ def objects_depending_on(env, header):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--targets", nargs="*", default=["UE5Dumper"])
+    ap.add_argument("--targets", nargs="*", default=None,
+                    help="ninja targets (default: UE5Dumper; with --asan --run, the five ASan self-tests)")
     ap.add_argument("--deps-check", action="store_true")
     ap.add_argument("--require-dep", metavar="HEADER",
                     help="hard-fail unless at least one built object records a dependency on "
@@ -188,8 +280,20 @@ def main(argv=None):
                          "is irrelevant, but a missing dep on the header you just changed means "
                          "the build measured nothing.")
     ap.add_argument("--list-targets", action="store_true")
+    ap.add_argument("--asan", action="store_true",
+                    help="use build_asan\\ (configured by build.ps1 -Target AsanConfigure): the C++ self-tests "
+                         "under AddressSanitizer. [CPP-HARDENING-2026-11-14]")
+    ap.add_argument("--run", action="store_true",
+                    help="after the build, run each *_test target and fail on a failure, a missing summary or "
+                         "zero checks; with --asan also on an ASan report, and first prove ASan is live with a "
+                         "deliberate heap overflow that must be reported")
     a = ap.parse_args(argv)
 
+    global BUILD
+    if a.asan:
+        BUILD = ROOT / "build_asan"
+    if a.targets is None:
+        a.targets = list(ASAN_TEST_TARGETS) if (a.asan and a.run) else ["UE5Dumper"]
     require_configured()
     env = msvc_env()
 
@@ -218,6 +322,18 @@ def main(argv=None):
     # text raises UnicodeEncodeError and HIDES the compile error behind a traceback.
     print(tail.encode(sys.stdout.encoding or "utf-8", "replace")
               .decode(sys.stdout.encoding or "utf-8", "replace"))
+    # The tail above is cut at 4000 characters, so a build with many diagnostics hid most of them: measured
+    # 2026-11-15, a [[nodiscard]] batch raised C4834 at 21 sites and the tail showed 19, with no sign of the cut.
+    # Every compiler diagnostic line in the WHOLE output is listed here, so none is lost to the cut: C-numbered ones
+    # from the compiler, and D-numbered ones from the cl driver ("Command line warning D9025 : overriding ..."), which
+    # are how a rejected or overridden /we or /fsanitize flag shows.
+    diag = sorted({ln.strip() for ln in (r.stdout or "").splitlines()
+                   if re.search(r"\b(warning|error) [CD]\d{4}\b", ln)})
+    if diag:
+        print(f"compiler diagnostics in the whole output: {len(diag)} distinct line(s)")
+        for ln in diag:
+            print("   ", ln.encode(sys.stdout.encoding or "utf-8", "replace")
+                          .decode(sys.stdout.encoding or "utf-8", "replace"))
     if r.returncode != 0:
         print(f"build_dll: FAILED -- ninja rc={r.returncode}", file=sys.stderr)
         return r.returncode
@@ -245,6 +361,9 @@ def main(argv=None):
                   f"therefore measured nothing.", file=sys.stderr)
             return 1
         print(f"dep guard OK: {len(n)} object(s) depend on {a.require_dep}")
+    if a.run and run_tests(env, a.targets, a.asan):
+        print("build_dll: FAILED -- a test run failed (above)", file=sys.stderr)
+        return 1
     return 0
 
 

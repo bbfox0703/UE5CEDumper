@@ -30,8 +30,15 @@ namespace Macht {
 // ============================================================
 
 bool ReadBytesSafe(uintptr_t addr, void* buf, size_t size) {
+#if defined(__SANITIZE_ADDRESS__)
+    AsanProbe::TouchOwnedWrite(buf, size);   // the caller's buffer, checked; the foreign source below is not (Macht.h)
+#endif
     __try {
+#if defined(__SANITIZE_ADDRESS__)
+        AsanProbe::CopyUnchecked(buf, reinterpret_cast<const void*>(addr), size);
+#else
         memcpy(buf, reinterpret_cast<const void*>(addr), size);
+#endif
         return true;
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -87,8 +94,15 @@ Lager::WriteTarget ClassifyWriteRange(uintptr_t addr, size_t size) {
 }
 
 bool WriteDataBytes(uintptr_t addr, const void* buf, size_t size) {
+#if defined(__SANITIZE_ADDRESS__)
+    AsanProbe::TouchOwnedRead(buf, size);   // the caller's source, checked; the foreign destination is not (Macht.h)
+#endif
     __try {
+#if defined(__SANITIZE_ADDRESS__)
+        AsanProbe::CopyUnchecked(reinterpret_cast<void*>(addr), buf, size);
+#else
         memcpy(reinterpret_cast<void*>(addr), buf, size);
+#endif
         return true;
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -100,8 +114,15 @@ bool WriteBytes(uintptr_t addr, const void* buf, size_t size) {
     DWORD oldProtect = 0;
     if (!VirtualProtect(reinterpret_cast<void*>(addr), size, PAGE_READWRITE, &oldProtect))
         return false;
+#if defined(__SANITIZE_ADDRESS__)
+    AsanProbe::TouchOwnedRead(buf, size);   // the caller's source, checked; the foreign destination is not (Macht.h)
+#endif
     __try {
+#if defined(__SANITIZE_ADDRESS__)
+        AsanProbe::CopyUnchecked(reinterpret_cast<void*>(addr), buf, size);
+#else
         memcpy(reinterpret_cast<void*>(addr), buf, size);
+#endif
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
         VirtualProtect(reinterpret_cast<void*>(addr), size, oldProtect, &oldProtect);

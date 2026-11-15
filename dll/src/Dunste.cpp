@@ -45,6 +45,7 @@
 #include <exception>
 #include <mutex>
 #include <thread>
+#include <tuple>    // std::ignore: a [[nodiscard]] result this file deliberately does not act on
 #include <vector>
 
 #include <windows.h>   // GetAsyncKeyState / GetForegroundWindow (foreground gate)
@@ -139,7 +140,7 @@ bool ReadVec3At(uintptr_t addr, int32_t structSize, double out[3]) {
     return true;
 }
 
-bool WriteVec3At(uintptr_t addr, int32_t structSize, const double v[3]) {
+[[nodiscard]] bool WriteVec3At(uintptr_t addr, int32_t structSize, const double v[3]) {
     int cw = (structSize >= 24) ? 8 : 4;
     for (int i = 0; i < 3; ++i) {
         if (cw == 8) {
@@ -209,7 +210,7 @@ bool FindFuncByName(uintptr_t classAddr, const char* name, FunctionInfo& out) {
 // Returns what ACTUALLY happened. It used to return "the setter was found" — a bool the
 // callers all read as "collision changed" — while discarding the dispatcher's int32_t
 // entirely, so a refusal committed the record and logged "invoked" (D1).
-CollisionApply InvokeSetCollision(uintptr_t pawn, bool enable) {
+[[nodiscard]] CollisionApply InvokeSetCollision(uintptr_t pawn, bool enable) {
     // A null pawn is TRANSIENT — it re-resolves on the next tick — so it is Refused,
     // not Absent. Committing here would record a disable that never happened.
     if (!pawn) return CollisionApply::Refused;
@@ -472,7 +473,9 @@ void FlyTickLocked(const Ctx& c, double dtSec, uintptr_t& outCollPawn, int& outC
     // additionally turns OFF the actor's collision (below) so the flying sweep passes
     // through walls.
     double vel[3] = { dir[0]*s_state.speed, dir[1]*s_state.speed, dir[2]*s_state.speed };
-    WriteVec3At(c.velAddr, c.velSize, vel);
+    // Not acted on: the next tick writes the velocity again, and a log line per failed tick would flood. A game that
+    // never takes the write shows as a pawn that does not move.
+    std::ignore = WriteVec3At(c.velAddr, c.velSize, vel);
 
     // Collision should be OFF iff noclip is on. Emit an invoke request when the
     // desired state differs, or when the pawn changed while it should stay off
@@ -796,7 +799,9 @@ int32_t SetEnabled(bool enable) {
                     }
                 }
                 double zero[3] = {0, 0, 0};
-                if (c.velAddr) WriteVec3At(c.velAddr, c.velSize, zero);
+                if (c.velAddr && !WriteVec3At(c.velAddr, c.velSize, zero))
+                    LOG_WARN("Fly: zeroing the velocity at disable FAILED at 0x%llX -- the pawn keeps its last "
+                             "flight velocity until the engine changes it", (unsigned long long)c.velAddr);
             }
         }
         s_state.active = false;

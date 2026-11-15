@@ -155,7 +155,7 @@ void WritePtrParam(std::vector<uint8_t>& buf, const FunctionInfo& fi, const char
         std::memcpy(buf.data() + p->offset, &ptr, sizeof(uintptr_t));
 }
 
-int32_t Invoke(uintptr_t instance, const FunctionInfo& fi, std::vector<uint8_t>& buf) {
+[[nodiscard]] int32_t Invoke(uintptr_t instance, const FunctionInfo& fi, std::vector<uint8_t>& buf) {
     if (buf.empty()) buf.resize(1, 0);
     return UE5_CallProcessEventEx(instance, fi.address,
                                   reinterpret_cast<uintptr_t>(buf.data()),
@@ -329,7 +329,7 @@ bool ExtractHitImpactPoint(const std::vector<uint8_t>& buf, const FunctionParam&
 
 // Invoke AActor::SetActorHiddenInGame(hidden) on the game thread. Returns kHideNotAttempted when the setter is cooked
 // out or the actor no longer looks like a live Actor, else the invoke's own result (0 = it ran).
-int32_t SetHiddenCode(uintptr_t actor, bool hidden) {
+[[nodiscard]] int32_t SetHiddenCode(uintptr_t actor, bool hidden) {
     if (!actor) return kHideNotAttempted;
     uintptr_t cls = Ubel::GetClass(actor);
     // Cheap liveness/sanity guard: a freed/garbage actor won't walk to AActor.
@@ -366,7 +366,7 @@ int32_t SetHiddenCode(uintptr_t actor, bool hidden) {
 
 // The hide path: true when a hide was attempted. One that timed out is still queued and runs later, so it is recorded
 // like one that ran.
-bool InvokeSetHidden(uintptr_t actor, bool hidden) {
+[[nodiscard]] bool InvokeSetHidden(uintptr_t actor, bool hidden) {
     return SetHiddenCode(actor, hidden) != kHideNotAttempted;
 }
 

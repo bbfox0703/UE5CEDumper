@@ -7,6 +7,7 @@
 
 #include <vector>
 #include <atomic>
+#include <mutex>     // DynOff::g_familyWriteMutex: every writer of the sizeof(FProperty) family holds it
 #include <string>    // DynOff::LooksLikeFieldClassName / PickFFieldClassNameOffset
 #include <cwchar>    // _wcsnicmp / _wcsicmp — IsCheatEngineExeName
 #include <string_view>  // EngineBuildStringCode: a VERSIONINFO string is parsed without copying it
@@ -360,10 +361,43 @@ inline int PickFFieldClassNameOffset(Resolve&& resolve) {
     return -1;
 }
 
+// [CPP-HARDENING-2026-11-14] A calibrated offset that one thread may correct while others read it. The
+// sizeof(FProperty) family below is corrected lazily, on purpose, by whichever walk first meets the proof (Ubel's
+// CorrectSubclassOffsets, WalkInstance's struct and array probes), while the parallel scan workers and the other pipe
+// connections are already reading it; as plain ints that was a data race, undefined behaviour however benign on x64.
+// Relaxed loads and stores are enough: each reader decides on ONE member at a time, and the readers that need the
+// family coherent take FamilyCacheKey's acquire of the epoch first, which ApplyPropertyFamily bumps after its stores.
+// It converts to int implicitly, so every read site stays as it was; a variadic log argument needs an explicit int.
+class RuntimeOffset {
+public:
+    // explicit: an implicit int -> RuntimeOffset next to the implicit RuntimeOffset -> int made every
+    // `cond ? DynOff::X : 0` ambiguous (C2445).
+    constexpr explicit RuntimeOffset(int v) noexcept : v_(v) {}
+    RuntimeOffset(const RuntimeOffset&) = delete;
+    RuntimeOffset& operator=(const RuntimeOffset&) = delete;
+    operator int() const noexcept { return v_.load(std::memory_order_relaxed); }
+    RuntimeOffset& operator=(int v) noexcept { v_.store(v, std::memory_order_relaxed); return *this; }
+private:
+    std::atomic<int> v_;
+};
+
+// Every writer of the family holds this, so two corrections cannot interleave into a split family. Genau's writers
+// take it while they hold the init mutex, so it must never be held while taking that one.
+inline std::mutex g_familyWriteMutex;
+
+// Proof that the caller holds g_familyWriteMutex: the writers that assume the lock is held take one of these as a
+// parameter, so a call that does not hold the lock does not compile.
+class FamilyWriteLock {
+public:
+    FamilyWriteLock() : lk_(g_familyWriteMutex) {}
+private:
+    std::lock_guard<std::mutex> lk_;
+};
+
 // === FStructProperty (subclass of FProperty) ===
 // UScriptStruct* — first field after FProperty base layout.
 // Derived from FPROPERTY_OFFSET + 0x2C (UE 4.25-5.2: 0x78, UE 5.3+: 0x70; +0x34 under CPN -- PropertyFamilyFor).
-inline int FSTRUCTPROP_STRUCT = 0x78;
+inline RuntimeOffset FSTRUCTPROP_STRUCT{0x78};
 
 // === FArrayProperty (subclass of FProperty) ===
 // FProperty* Inner — element type descriptor. The value here is only the STARTING guess.
@@ -372,14 +406,14 @@ inline int FSTRUCTPROP_STRUCT = 0x78;
 // so on UE5.3+ ArrayFlags occupies the family base (1 byte + 7 padding) and Inner sits at
 // base + 8. Verified against vendor/UnrealEngine UnrealType.h at 5.2.1 vs 5.3.0, unchanged
 // through 5.8.2. Ubel's ProbeInnerProperty recovers the +8 at walk time and writes it back
-// here — this is the one family member that may legitimately leave the shared base.
-inline int FARRAYPROP_INNER   = 0x78;
+// here (SetArrayInner) — this is the one family member that may legitimately leave the shared base.
+inline RuntimeOffset FARRAYPROP_INNER{0x78};
 
 // === FBoolProperty layout (subclass of FProperty) ===
 //   uint8 FieldSize, ByteOffset, ByteMask, FieldMask
 // These 4 bytes are consecutive, located after the standard FProperty fields.
 // Same offset as FSTRUCTPROP_STRUCT for most builds.
-inline int FBOOLPROP_FIELDSIZE = 0x78;
+inline RuntimeOffset FBOOLPROP_FIELDSIZE{0x78};
 
 // === UE4 UBoolProperty layout (subclass of UProperty) ===
 // Same 4 bytes: FieldSize, ByteOffset, ByteMask, FieldMask
@@ -1308,11 +1342,11 @@ inline int UPROPERTY_SUBCLASS_START = 0;
 // pointer later -- read either through Ubel::ReadPropertyEnum, which picks the type's own slot
 // ([ENUMSLOT-ANY-NAME]: the DataTable reader read a TEnumAsByte at the EnumProperty slot).
 // Derived from FSTRUCTPROP_STRUCT (same subclass extension offset).
-inline int FBYTEPROP_ENUM       = 0x78;  // FByteProperty::Enum (UEnum*) — first subclass field (== sizeof(FProperty))
+inline RuntimeOffset FBYTEPROP_ENUM{0x78};  // FByteProperty::Enum (UEnum*) — first subclass field (== sizeof(FProperty))
 // FEnumProperty has FNumericProperty* UnderlyingProp BEFORE its UEnum* Enum, so Enum sits
 // 8 bytes after the FByteProperty position. Verified vs UE5.7.4 EnumProperty.h:143-144.
 // (Detection keeps this = FBYTEPROP_ENUM + 8; default mirrors that.)
-inline int FENUMPROP_ENUM       = 0x80;  // FEnumProperty::Enum (UEnum*) = FBYTEPROP_ENUM + 8
+inline RuntimeOffset FENUMPROP_ENUM{0x80};  // FEnumProperty::Enum (UEnum*) = FBYTEPROP_ENUM + 8
 
 // ── The sizeof(FProperty) subclass-extension FAMILY (audit #5 G12) ───────────
 //
@@ -1336,10 +1370,11 @@ inline int FENUMPROP_ENUM       = 0x80;  // FEnumProperty::Enum (UEnum*) = FBYTE
 // had not counted. Every writer is routed now -- Genau's default and measured arms for BOTH modes,
 // Ubel::CorrectSubclassOffsets, and Ubel's WalkInstance StructProperty probe -- and
 // `tools/check_property_family.py` counts them mechanically instead of this comment.
-// ⛔ ONE deliberate exception, and it is the only one: `Ubel.cpp`'s ArrayProperty probe assigns
-// FARRAYPROP_INNER on its own, because UE5.3+ puts EArrayPropertyFlags before Inner so that
-// member legitimately diverges from the shared base after calibration. It re-probes per field
-// per walk, so a family write that resets it to the base is corrected on the next array.
+// ⛔ ONE deliberate exception: `Ubel.cpp`'s ArrayProperty probe sets FARRAYPROP_INNER on its own,
+// through SetArrayInner (below, under the family write lock), because UE5.3+ puts
+// EArrayPropertyFlags before Inner so that member legitimately diverges from the shared base after
+// calibration. It re-probes per field per walk, so a family write that resets it to the base is
+// corrected on the next array.
 // `tools/check_property_family.py` pins all of this — counting writers by hand is what failed
 // the first time.
 //
@@ -1417,8 +1452,9 @@ inline uintptr_t FamilyCacheKey(uintptr_t addr) {
     return (static_cast<uintptr_t>(g_propertyFamilyEpoch.load(std::memory_order_acquire)) << 48) ^ addr;
 }
 
-// Publish all five together. Never assign a member of this family directly.
-inline void ApplyPropertyFamily(const PropertyFamily& f) {
+// Publish all five together. Never assign a member of this family directly. The relaxed stores are published by the
+// epoch's acq_rel bump: a reader that took FamilyCacheKey after the bump sees all five.
+inline void ApplyPropertyFamily(const PropertyFamily& f, const FamilyWriteLock&) {
     const bool moved = FSTRUCTPROP_STRUCT != f.structProp;
     FSTRUCTPROP_STRUCT  = f.structProp;
     FARRAYPROP_INNER    = f.arrayInner;
@@ -1426,6 +1462,19 @@ inline void ApplyPropertyFamily(const PropertyFamily& f) {
     FBYTEPROP_ENUM      = f.byteEnum;
     FENUMPROP_ENUM      = f.enumEnum;
     if (moved) g_propertyFamilyEpoch.fetch_add(1, std::memory_order_acq_rel);
+}
+// For a writer that does not already hold the lock.
+inline void ApplyPropertyFamily(const PropertyFamily& f) {
+    const FamilyWriteLock lk;
+    ApplyPropertyFamily(f, lk);
+}
+
+// The one member allowed to leave the family on its own: UE5.3+ puts EArrayPropertyFlags before Inner, so a walker
+// that finds Inner off the shared base corrects it here. Under the family lock, so it cannot interleave with a
+// family write; a later family write resetting it to the base is intended, and the probe re-corrects per walk.
+inline void SetArrayInner(int off) {
+    const FamilyWriteLock lk;
+    FARRAYPROP_INNER = off;
 }
 
 // === UEnum — detected by DetectUEnumNames(), on first use or by the version ladder at init ===

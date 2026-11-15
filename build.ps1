@@ -16,7 +16,8 @@
     Build target: All, DLL, UI, Test (default: All).
     DLL builds the main UE5Dumper.dll AND every proxy DLL — the proxies are what
     actually get injected. ProxyDLL / ProxyDinput8 / ProxyDxgi / ProxyWinmm build a
-    single proxy in isolation.
+    single proxy in isolation. AsanConfigure configures build_asan\ (the C++ self-tests
+    under AddressSanitizer) and stops; -Clean then removes build_asan\ only.
 
 .PARAMETER Clean
     Remove all build artifacts before building
@@ -32,6 +33,7 @@
     .\build.ps1 -Target DLL             # Build the C++ DLL + every proxy DLL
     .\build.ps1 -Target UI -Mode Debug  # Debug build UI only
     .\build.ps1 -Target Test            # Build + run tests (also republishes UI to dist/)
+    .\build.ps1 -Target AsanConfigure   # Configure build_asan\; then py tools/verify/build_dll.py --asan --run
 #>
 
 [CmdletBinding()]
@@ -42,7 +44,9 @@ param(
     [ValidateSet("Debug", "Release", "Publish")]
     [string]$Mode = "Release",
 
-    [ValidateSet("All", "DLL", "ProxyDLL", "ProxyDinput8", "ProxyDxgi", "ProxyWinmm", "UI", "Test")]
+    # AsanConfigure: configure build_asan\ (the C++ self-tests under AddressSanitizer) and stop; nothing is built and
+    # nothing reaches dist\. Build and run it with `py tools/verify/build_dll.py --asan --run`.
+    [ValidateSet("All", "DLL", "ProxyDLL", "ProxyDinput8", "ProxyDxgi", "ProxyWinmm", "UI", "Test", "AsanConfigure")]
     [string]$Target = "All",
 
     [switch]$Clean,
@@ -133,7 +137,7 @@ function Write-Info([string]$Text) {
     Write-Host "   $Text" -ForegroundColor Gray
 }
 
-function Repair-NinjaHeaderDeps() {
+function Repair-NinjaHeaderDeps([string]$Dir = $BUILD_DIR) {
     <#
     .SYNOPSIS
         Drop the build dir if its msvc_deps_prefix cannot match what cl.exe prints,
@@ -165,7 +169,7 @@ function Repair-NinjaHeaderDeps() {
         working deps. A pure-ASCII prefix (English MSVC) is valid UTF-8 and is left
         alone, so this is a no-op on non-localized toolchains.
     #>
-    $rulesPath = Join-Path $BUILD_DIR "CMakeFiles\rules.ninja"
+    $rulesPath = Join-Path $Dir "CMakeFiles\rules.ninja"
     if (-not (Test-Path $rulesPath)) { return }   # nothing configured yet
 
     # latin-1 maps 0x00-0xFF one-to-one, so the raw prefix bytes survive the round trip.
@@ -189,7 +193,7 @@ function Repair-NinjaHeaderDeps() {
     Write-Info "Ninja cannot match cl.exe /showIncludes output, so it is recording NO header"
     Write-Info "dependencies: a .h edit would not trigger a rebuild and the tests would link"
     Write-Info "stale objects. Removing the build dir to force a clean re-configure."
-    Remove-Item -Recurse -Force $BUILD_DIR -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force $Dir -ErrorAction SilentlyContinue
 }
 
 function Enter-VsDevEnvironment() {
@@ -512,16 +516,19 @@ Write-Info "dotnet: $(dotnet --version)"
 # environment changes, and only for its call: the C++ steps and the calling shell keep their own TEMP.
 $script:dotnetTemp = $null
 $script:dotnetTempOwner = $null
-try {
-    $dotnetTempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "UE5CEDumper.Tests"
-    $script:dotnetTemp = Join-Path $dotnetTempRoot ("b" + $PID)
-    [System.IO.Directory]::CreateDirectory($script:dotnetTemp) | Out-Null
-    $script:dotnetTempOwner = [System.IO.File]::Open((Join-Path $script:dotnetTemp ".owner"),
-        [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
-}
-catch {
-    Write-Info "no private TEMP for dotnet ($($_.Exception.Message)) - dotnet uses %TEMP% as before"
-    $script:dotnetTemp = $null
+# AsanConfigure starts no dotnet process and exits before the cleanup at the end of this script, so it takes no folder.
+if ($Target -ne "AsanConfigure") {
+    try {
+        $dotnetTempRoot = Join-Path ([System.IO.Path]::GetTempPath()) "UE5CEDumper.Tests"
+        $script:dotnetTemp = Join-Path $dotnetTempRoot ("b" + $PID)
+        [System.IO.Directory]::CreateDirectory($script:dotnetTemp) | Out-Null
+        $script:dotnetTempOwner = [System.IO.File]::Open((Join-Path $script:dotnetTemp ".owner"),
+            [System.IO.FileMode]::OpenOrCreate, [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+    }
+    catch {
+        Write-Info "no private TEMP for dotnet ($($_.Exception.Message)) - dotnet uses %TEMP% as before"
+        $script:dotnetTemp = $null
+    }
 }
 
 function Use-DotnetTemp([scriptblock]$Body) {
@@ -543,7 +550,8 @@ function Use-DotnetTemp([scriptblock]$Body) {
 # Clean
 # ============================================================
 
-if ($Clean) {
+# AsanConfigure cleans only its own tree (below); build\ and dist\ are the shipping ones.
+if ($Clean -and $Target -ne "AsanConfigure") {
     Write-Step "Cleaning build artifacts..."
 
     if (Test-Path $BUILD_DIR)  { Remove-Item $BUILD_DIR -Recurse -Force }
@@ -596,6 +604,27 @@ if (-not $NoBumpBuildNumber) {
 }
 else {
     Write-Info "Build#: $buildNum (no bump)"
+}
+
+# ============================================================
+# AddressSanitizer tree -- configure only. [CPP-HARDENING-2026-11-14]
+# build_asan\ holds the C++ self-tests built with /fsanitize=address, never a DLL. It is configured HERE because this
+# script is the one that configures trees (the localized /showIncludes prefix: Repair-NinjaHeaderDeps), and it sits
+# beside build\, not under it: Invoke-CppSelfTest finds test exes by a recursive search of build\. The build number
+# has already bumped above, as on every invocation.
+# ============================================================
+if ($Target -eq "AsanConfigure") {
+    Write-Banner "AddressSanitizer tree (configure only)"
+    $asanDir = Join-Path $ROOT_DIR "build_asan"
+    if ($Clean -and (Test-Path $asanDir)) { Remove-Item $asanDir -Recurse -Force }
+    Repair-NinjaHeaderDeps $asanDir
+    $asanOk = Invoke-CmdInVsEnv "cmake -S `"$ROOT_DIR`" -B `"$asanDir`" -G Ninja -DCMAKE_BUILD_TYPE=Release -DUE5DUMPER_ASAN=ON"
+    if (-not $asanOk) {
+        Write-Fail "CMake configure of build_asan failed"
+        exit 1
+    }
+    Write-Ok "build_asan configured. Build and run all five self-tests: py tools/verify/build_dll.py --asan --run"
+    exit 0
 }
 
 $exitCode = 0

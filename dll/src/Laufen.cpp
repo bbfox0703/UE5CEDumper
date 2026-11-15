@@ -109,7 +109,7 @@ bool ReadFloatAt(uintptr_t addr, int32_t size, double& out) {
     return true;
 }
 
-bool WriteFloatAt(uintptr_t addr, int32_t size, double v) {
+[[nodiscard]] bool WriteFloatAt(uintptr_t addr, int32_t size, double v) {
     if (size >= 8) {
         double d = v;
         return Macht::WriteBytes(addr, &d, 8);
@@ -137,7 +137,7 @@ bool ReadVec3At(uintptr_t addr, int32_t structSize, double out[3]) {
     return true;
 }
 
-bool WriteVec3At(uintptr_t addr, int32_t structSize, const double v[3]) {
+[[nodiscard]] bool WriteVec3At(uintptr_t addr, int32_t structSize, const double v[3]) {
     int cw = (structSize >= 24) ? 8 : 4;
     for (int i = 0; i < 3; ++i) {
         if (cw == 8) {
@@ -498,8 +498,13 @@ int32_t ResetKnob(int32_t knobId) {
             Ctx c;
             if (ResolveCtx(c) == MR_OK) {
                 FieldLoc f;
-                if (ResolveField(c, knobId, f))
-                    WriteFloatAt(f.addr, f.size, k.base);   // best-effort restore
+                // Best-effort restore. A failed write still ends the hold and still returns MR_OK: MR_ERR_WRITE (-10)
+                // means "the override is held" to every caller, and after a reset it is not. The reply's
+                // current-against-base shows what the field holds; the log says the restore did not land.
+                if (ResolveField(c, knobId, f) && !WriteFloatAt(f.addr, f.size, k.base))
+                    LOG_WARN("Movement: reset knob %d -- the restore write of base %.3f FAILED at 0x%llX; the "
+                             "field may still hold the multiplied value, and nothing re-asserts it now",
+                             knobId, k.base, (unsigned long long)f.addr);
             }
         }
         k.active = false;
@@ -577,7 +582,11 @@ int32_t ResetGravityDirection() {
                 uintptr_t addr = 0; int32_t size = 0;
                 if (ResolveGravDirField(c, addr, size)) {
                     double base[3] = { s_gravDir.baseX, s_gravDir.baseY, s_gravDir.baseZ };
-                    WriteVec3At(addr, size, base);   // best-effort restore
+                    // Best-effort restore; a failure still ends the hold and returns MR_OK, as ResetKnob explains.
+                    if (!WriteVec3At(addr, size, base))
+                        LOG_WARN("Movement: gravity dir reset -- the restore write FAILED at 0x%llX; the vector "
+                                 "may still be the modified one, and nothing re-asserts it now",
+                                 (unsigned long long)addr);
                 }
             }
         }

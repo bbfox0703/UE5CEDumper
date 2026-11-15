@@ -9,6 +9,9 @@
 #include <cstdint>
 #include <string>
 #include <vector>
+#if defined(__SANITIZE_ADDRESS__)
+#include <type_traits>  // ReadSafe's trivially-copyable check, in the AddressSanitizer test build only
+#endif
 #include "Grimoire.h"   // SANITY_MAX_CONTAINER_NUM -- the container-header plausibility ceiling
 #include "Lager.h"      // WriteTarget: what write_mem may write
 
@@ -26,11 +29,52 @@ inline T* Ptr(uintptr_t addr) {
     return reinterpret_cast<T*>(addr);
 }
 
+#if defined(__SANITIZE_ADDRESS__)
+// [CPP-HARDENING-2026-11-14] The AddressSanitizer test build only (build_asan\; the shipped DLL never defines
+// __SANITIZE_ADDRESS__, so none of this exists there). The probes below read memory this DLL does not own -- the
+// game's, or a test fixture standing in for it -- past objects, into freed ones and across sections, under SEH: that
+// is their job, and ASan reported it 1,021 times in dll_core_test (2026-11-15), every one from ReadSafe or
+// ReadBytesSafe. So the foreign side of a probe's copy goes through CopyUnchecked, which ASan does not check, while
+// this DLL's own side still goes through an instrumented touch, so a destination too small is still reported.
+namespace AsanProbe {
+// Byte by byte through volatile: a memcpy here would be ASan's run-time interceptor, which checks both ranges whatever
+// the attribute says (no_sanitize_address "disables compiler behavior, not runtime behavior"). noinline because the
+// attribute is not documented to survive inlining into an instrumented caller.
+__declspec(no_sanitize_address) __declspec(noinline)
+inline void CopyUnchecked(void* dst, const void* src, size_t n) {
+    volatile unsigned char* d = static_cast<volatile unsigned char*>(dst);
+    const volatile unsigned char* s = static_cast<const volatile unsigned char*>(src);
+    for (size_t i = 0; i < n; ++i) d[i] = s[i];
+}
+// Instrumented on purpose: ASan checks this DLL's buffer here, the half of the copy it owns.
+__declspec(noinline) inline void TouchOwnedWrite(void* p, size_t n) {
+    volatile unsigned char* b = static_cast<volatile unsigned char*>(p);
+    for (size_t i = 0; i < n; ++i) b[i] = 0;
+}
+__declspec(noinline) inline void TouchOwnedRead(const void* p, size_t n) {
+    const volatile unsigned char* b = static_cast<const volatile unsigned char*>(p);
+    unsigned char sink = 0;
+    for (size_t i = 0; i < n; ++i) sink = static_cast<unsigned char>(sink ^ b[i]);
+    static_cast<void>(sink);
+}
+}  // namespace AsanProbe
+#endif
+
 // Safe read with SEH protection, returns true on success
 template<typename T>
 inline bool ReadSafe(uintptr_t addr, T& out) {
+#if defined(__SANITIZE_ADDRESS__)
+    // The caller's `out`, checked (a read touch: it leaves `out` as it is, should addr ever alias it); the foreign
+    // source below is not. Without it the unchecked copy also hid a dangling `out` (review 2026-11-15).
+    AsanProbe::TouchOwnedRead(&out, sizeof(T));
+#endif
     __try {
+#if defined(__SANITIZE_ADDRESS__)
+        static_assert(std::is_trivially_copyable_v<T>, "ReadSafe copies T as bytes in the ASan build");
+        AsanProbe::CopyUnchecked(&out, reinterpret_cast<const void*>(addr), sizeof(T));
+#else
         out = *reinterpret_cast<T*>(addr);
+#endif
         return true;
     }
     __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -39,8 +83,9 @@ inline bool ReadSafe(uintptr_t addr, T& out) {
     }
 }
 
-// Safe memory copy with SEH protection
-bool ReadBytesSafe(uintptr_t addr, void* buf, size_t size);
+// Safe memory copy with SEH protection. [[nodiscard]]: false means the read faulted and `buf` holds zeros, which a
+// caller that does not look reads as real data. [CPP-HARDENING-2026-11-14]
+[[nodiscard]] bool ReadBytesSafe(uintptr_t addr, void* buf, size_t size);
 
 // Check if an address is in committed, readable memory via VirtualQuery.
 // Useful as a cheap pre-flight before walking potentially freed objects —
@@ -50,7 +95,8 @@ bool IsAddrReadable(uintptr_t addr, size_t size = sizeof(uintptr_t));
 
 // Write bytes to memory. Makes the pages READWRITE for the write, so it writes code and read-only data too: only the
 // DLL's own writers use it, on addresses they found themselves. A caller's address goes through the two below.
-bool WriteBytes(uintptr_t addr, const void* buf, size_t size);
+// [[nodiscard]]: a dropped result is how Fly once logged ENABLED over a pawn whose mode never changed.
+[[nodiscard]] bool WriteBytes(uintptr_t addr, const void* buf, size_t size);
 
 // [D2-3-WRITEMEM] The worst page in [addr, addr + size) for a data write (Lager::ClassifyWriteRegion): Writable only
 // when every page is committed, writable as it stands and not executable.
@@ -58,7 +104,7 @@ Lager::WriteTarget ClassifyWriteRange(uintptr_t addr, size_t size);
 
 // Write data without touching page protection: an SEH-guarded copy that fails, and changes nothing, on a page that is
 // not writable.
-bool WriteDataBytes(uintptr_t addr, const void* buf, size_t size);
+[[nodiscard]] bool WriteDataBytes(uintptr_t addr, const void* buf, size_t size);
 
 // Get base address of a loaded module (nullptr = main module)
 uintptr_t GetModuleBase(const wchar_t* moduleName = nullptr);

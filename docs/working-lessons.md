@@ -1144,9 +1144,10 @@ one, either revert experimental edits or say explicitly in the prompt which file
 `git diff origin/main...HEAD` is the authority. Same rule for a temporary edit made *while* an agent
 is already running — that is a race against your own reviewer.
 
-It also predicted `ASAN_OPTIONS=detect_stack_use_after_return=1` would name the bug. It does not:
-MSVC parses the option and does not implement it (§3.7b). **An agent's "how to confirm" is a
-hypothesis too.**
+It also predicted `ASAN_OPTIONS=detect_stack_use_after_return=1` would name the bug. It does not on its
+own: MSVC runs that check only in code also compiled with `/fsanitize-address-use-after-return`
+(experimental), and the run set the runtime option alone (§3.7b; the reason corrected 2026-11-15 against
+learn.microsoft.com/cpp/sanitizers/asan-building). **An agent's "how to confirm" is a hypothesis too.**
 
 ### 2.1 What audit #5 measured across all 12 segments (2026-08-13 → 2026-08-15)
 
@@ -2490,9 +2491,12 @@ stack layout and timing, so unrelated edits (27 new assertions) can surface a la
 **Three traps, all of which cost time here:**
 
 1. **A clean ASAN run is NOT evidence against a stack use-after-return.** MSVC's ASAN *parses*
-   `detect_stack_use_after_return=1` — `verbosity=1` proves options are read — but **does not
-   implement it** (a clang-only feature). The buggy code and the fixed code produce identical,
-   silent ASAN runs. Confirm a sanitizer actually covers your bug class before trusting its silence.
+   `detect_stack_use_after_return=1` — `verbosity=1` proves options are read — but the check runs only
+   in code ALSO compiled with `/fsanitize-address-use-after-return` (experimental, much slower; MSVC,
+   unlike Clang, makes no heap frames without it). That run set the runtime option alone, so the buggy
+   code and the fixed code produced identical, silent ASAN runs. *(Corrected 2026-11-15: this said MSVC
+   does not implement the check at all; learn.microsoft.com/cpp/sanitizers/asan-building documents the
+   compile option.)* Confirm a sanitizer actually covers your bug class before trusting its silence.
 2. **A test harness that buffers stdout tells you nothing at the only moment it matters.** The CI log
    held not one line, not even the banner, because stdout to a pipe is fully buffered and the buffer
    dies with the process. `setvbuf(stdout, nullptr, _IONBF, 0)` is now main's first statement, plus a
@@ -3963,7 +3967,8 @@ architecture or UX changes in these areas.
   a wide (CJK) name before the readings pushes them out of line on screen.
 
 Evaluations that concluded "do not build" live in the repo rather than here — see [README.md](README.md)'s
-index for `text-translation-eval.md` and `multipipe-eval.md`; `Nibble-Mask-Evaluation.md` is in the
+index for `text-translation-eval.md`, `multipipe-eval.md` and `rust-rewrite-eval.md` (no Rust rewrite of any part of
+the DLL, maintainer 2026-11-14); `Nibble-Mask-Evaluation.md` is in the
 AOBMaker repo's `docs/`. (`teleport-coord-library-spec.md` and `native-c-value-scan-spec.md` used to be
 listed here; both SHIPPED, as their status headers say.)
 

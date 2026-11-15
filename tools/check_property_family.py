@@ -26,13 +26,16 @@ prevent stayed reachable by the one path G12 had not counted. A prose invariant 
 hand-counted writer list is what failed; counting them mechanically is the fix.
 
 WHAT IT ALLOWS, and nothing else:
-  * the `inline int` DECLARATIONS in Grimoire.h (the defaults),
+  * the DECLARATIONS in Grimoire.h (the defaults; `DynOff::RuntimeOffset` since
+    [CPP-HARDENING-2026-11-14], `inline int` before),
   * the body of `ApplyPropertyFamily` itself, which is the one legitimate publisher,
-  * ONE named exception: `Ubel.cpp`'s ArrayProperty probe assigns FARRAYPROP_INNER on its
-    own, because UE5.3+ places `EArrayPropertyFlags` before `Inner`, so that member
-    legitimately diverges from the shared base AFTER calibration. It re-probes per field per
-    walk rather than latching, so a family write that resets it to the base is corrected on
-    the next array the walker meets.
+  * ONE named exception: `DynOff::SetArrayInner` in Grimoire.h assigns FARRAYPROP_INNER on
+    its own, for `Ubel.cpp`'s ArrayProperty probe, because UE5.3+ places `EArrayPropertyFlags`
+    before `Inner`, so that member legitimately diverges from the shared base AFTER
+    calibration. The probe re-probes per field per walk rather than latching, so a family
+    write that resets it to the base is corrected on the next array the walker meets. Until
+    2026-11-15 the probe assigned the member itself, outside any lock. The helper's CALLER is
+    pinned the same way: only that probe, beside its "Correcting FARRAYPROP_INNER" marker.
 
 Adding a new writer is fine -- route it through `ApplyPropertyFamily` and this gate is happy.
 Adding a new EXCEPTION means editing the list below, which is the point: it makes the second
@@ -52,20 +55,23 @@ FAMILY = ["FSTRUCTPROP_STRUCT", "FARRAYPROP_INNER", "FBOOLPROP_FIELDSIZE",
 
 # An assignment to a family member: the name, then `=` that is not `==`, `!=`, `<=`, `>=`.
 ASSIGN = re.compile(r"\b(" + "|".join(FAMILY) + r")\s*=(?!=)")
+# A call of DynOff::SetArrayInner, the helper behind the one exception below.
+SET_ARRAY_INNER_CALL = re.compile(r"\bSetArrayInner\s*\(")
 
 # The ONE sanctioned direct writer outside ApplyPropertyFamily. Keyed by (file, member) and
 # required to carry its justification nearby, so deleting the reasoning breaks the gate too.
 EXCEPTIONS = [
     {
-        "file": "Ubel.cpp",
+        "file": "Grimoire.h",
         "member": "FARRAYPROP_INNER",
         "why": "UE5.3+ puts EArrayPropertyFlags before Inner, so this member legitimately "
-               "diverges from the shared base after calibration; the probe re-runs per field "
-               "per walk rather than latching.",
+               "diverges from the shared base after calibration; Ubel's probe re-runs per field "
+               "per walk rather than latching, and writes through SetArrayInner, under the "
+               "family write lock.",
         # A token that must appear within `window` lines of the assignment, so the exception
         # cannot silently move to an unrelated site that happens to be in the same file.
-        "near": "Correcting FARRAYPROP_INNER",
-        "window": 6,
+        "near": "inline void SetArrayInner",
+        "window": 3,
     },
 ]
 
@@ -87,8 +93,9 @@ def strip_code(line):
 
 
 def is_declaration(line):
-    """`inline int FBYTEPROP_ENUM = 0x78;` in Grimoire.h — the default, not a writer."""
-    return re.match(r"\s*inline\s+(constexpr\s+)?int\s+", line) is not None
+    """`inline RuntimeOffset FBYTEPROP_ENUM{0x78};` (or the older `inline int ... = 0x78;`) in Grimoire.h -- the
+    default, not a writer."""
+    return re.match(r"\s*inline\s+(constexpr\s+)?(int|RuntimeOffset)\s+", line) is not None
 
 
 def main():
@@ -113,6 +120,19 @@ def main():
                 in_apply = True
             elif in_apply and code.strip() == "}":
                 in_apply = False
+
+            # The helper is a writer too, so its caller is pinned as the old direct assignment was: only Ubel.cpp's
+            # ArrayProperty probe, beside its marker (which sits in a log string, hence the raw lines). Without this
+            # a second solo writer of Inner could call the helper and pass (review 2026-11-15).
+            if SET_ARRAY_INNER_CALL.search(code) and "inline void SetArrayInner" not in code:
+                lo, hi = max(0, i - 6), min(len(lines), i + 7)
+                if name == "Ubel.cpp" and any("Correcting FARRAYPROP_INNER" in l for l in lines[lo:hi]):
+                    allowed.append((name, i + 1, "FARRAYPROP_INNER", "SetArrayInner from the ArrayProperty probe"))
+                else:
+                    violations.append(
+                        (name, i + 1, "FARRAYPROP_INNER",
+                         "SetArrayInner outside Ubel.cpp's ArrayProperty probe -- the one member that may leave the "
+                         "family has one writer; a new one is a decision, made by editing this gate"))
 
             m = ASSIGN.search(code)
             if not m:
