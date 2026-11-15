@@ -36,6 +36,7 @@
 
 #include <windows.h>
 #include <stdio.h>
+#include <stdlib.h>   // getenv_s: the AddressSanitizer build's negative control
 #include <atomic>
 #include <thread>
 #include <vector>
@@ -130,6 +131,19 @@ int main() {
     // exists there.
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("grausam_window_test — DLL LOW L10, the window re-subclass half\n");
+#ifdef __SANITIZE_ADDRESS__
+    // [CPP-HARDENING-2026-11-14] The AddressSanitizer build only: the banner and negative control
+    // build_dll.py --asan --run needs (a deliberate heap overflow that must be reported).
+    printf("asan: on\n");
+    {
+        size_t negLen = 0;
+        if (getenv_s(&negLen, nullptr, 0, "UE5_ASAN_NEGATIVE_CONTROL") == 0 && negLen > 0) {
+            char* volatile p = new char[16];
+            p[16] = 1;   // heap-buffer-overflow: ASan ends the process here
+            delete[] p;
+        }
+    }
+#endif
     RegisterTestClass();
 
     {   // 1. The baseline: SubclassAllGameWindows installs the subclass at all.

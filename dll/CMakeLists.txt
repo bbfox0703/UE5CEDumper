@@ -645,6 +645,7 @@ if(BUILD_DLL_TESTS)
         # its warning posture is the DLL's, not this target's, to argue with.
         target_compile_options(grausam_window_test PRIVATE /utf-8 /W4 /EHsc ${UE5_NODISCARD_ERROR_FLAGS})
     endif()
+    ue5_apply_asan(grausam_window_test)
 
     # Grausam.cpp vets every hook through Falsch ([MH-TRAMPOLINE-PREFLIGHT]), so the TU needs Falsch.cpp, its
     # Zydis and MinHook's hde64 header -- the real pre-flight, not a stub, though this test installs no hook.
@@ -679,6 +680,7 @@ if(BUILD_DLL_TESTS)
         )
         target_compile_options(sein_retention_test PRIVATE /utf-8 /W4 /EHsc ${UE5_NODISCARD_ERROR_FLAGS})
     endif()
+    ue5_apply_asan(sein_retention_test)
 
     # ---- dll_core_test: the FIRST test target that compiles the DLL's core --------------
     #

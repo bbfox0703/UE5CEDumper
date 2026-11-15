@@ -31,6 +31,7 @@
 
 #include <windows.h>
 #include <stdio.h>
+#include <stdlib.h>   // getenv_s: the AddressSanitizer build's negative control
 #include <string>
 
 namespace BuildStamp { const char* VersionString(); }
@@ -147,6 +148,19 @@ static bool Exists(const fs::path& p) { std::error_code ec; return fs::exists(p,
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("sein_retention_test — AB9, the retention sweep off the loader lock\n");
+#ifdef __SANITIZE_ADDRESS__
+    // [CPP-HARDENING-2026-11-14] The AddressSanitizer build only: the banner and negative control
+    // build_dll.py --asan --run needs (a deliberate heap overflow that must be reported).
+    printf("asan: on\n");
+    {
+        size_t negLen = 0;
+        if (getenv_s(&negLen, nullptr, 0, "UE5_ASAN_NEGATIVE_CONTROL") == 0 && negLen > 0) {
+            char* volatile p = new char[16];
+            p[16] = 1;   // heap-buffer-overflow: ASan ends the process here
+            delete[] p;
+        }
+    }
+#endif
 
     const int keep = Grimoire::LOG_RETENTION_DAYS;   // 21 at time of writing; derived, not typed
     printf("  (retention window: %d days)\n", keep);
