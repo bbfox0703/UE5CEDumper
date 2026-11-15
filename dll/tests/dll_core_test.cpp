@@ -265,6 +265,25 @@ int main() {
         // ⚠ Without this, every assertion below would pass against a pool of zero objects.
     }
 
+    // [CPP-HARDENING-2026-11-14] A probe reads past the end of what it inspects, by design (a UE4 name reader takes
+    // 255 bytes from a name of 12). In the AddressSanitizer build such a read must NOT be an ASan report -- Macht's
+    // probes are exempt for the foreign side of their copy -- and build_dll.py --asan --run fails on any report, which
+    // is what makes this a control there. In the plain build it is an ordinary read. The other half, a destination too
+    // small IS reported, is the ASan build's negative control at the top of main.
+    {   blk("ASAN-PROBE-EXEMPT - a probe's over-read of the memory it inspects is not an ASan report");
+        static uint8_t globalFixture[0x40] = { 1, 2, 3 };
+        std::vector<uint8_t> heapFixture(0x40, 7);
+        uint8_t window[0x48] = {};
+        check("ReadBytesSafe reads 8 bytes past a 0x40-byte global",
+              Macht::ReadBytesSafe(reinterpret_cast<uintptr_t>(globalFixture), window, sizeof(window)) && window[0] == 1);
+        check("ReadBytesSafe reads 8 bytes past a 0x40-byte heap block",
+              Macht::ReadBytesSafe(reinterpret_cast<uintptr_t>(heapFixture.data()), window, sizeof(window))
+                  && window[0] == 7);
+        uint64_t straddle = 0;
+        check("ReadSafe reads a uint64 that straddles a heap block's end",
+              Macht::ReadSafe(reinterpret_cast<uintptr_t>(heapFixture.data()) + 0x3C, straddle));
+    }
+
     // [D2-3-WRITEMEM] write_mem's range check and write, on real pages of this process: each protection the classifier
     // tells apart, ranges across two pages, and a refused write that must leave the page's protection alone.
     {   blk("D2-3-WRITEMEM - ClassifyWriteRange and WriteDataBytes on real pages");
@@ -10961,8 +10980,17 @@ int main() {
             const uint64_t before = privateBytes();
             const bool refused = Linie::StartTrace(big) == Linie::TraceStartStatus::SnapTooSmall;
             const uint64_t after = privateBytes();
+#ifdef __SANITIZE_ADDRESS__
+            // [CPP-HARDENING-2026-11-14] ASan keeps freed blocks in its quarantine, to catch a use after free, and adds
+            // shadow memory, so committed bytes do not come back by design (measured 65 MB here, 2026-11-15). The
+            // refusal is still checked; the release is the plain build's to measure.
+            static_cast<void>(before);
+            static_cast<void>(after);
+            check("...a refused Start is refused (the release is measured in the plain build, not under ASan)", refused);
+#else
             check("...measured: a refused Start leaves no 256 MB ring committed behind it",
                   refused && after < before + (16ull << 20), (u((after - before) >> 20) + " MB").c_str());
+#endif
         }
         check("a buffer smaller than the rings' alignment: refused, not a wrapped-around K",
               Linie::StartTrace(cfg(100)) == Linie::TraceStartStatus::SnapTooSmall && !Linie::GetTraceInfo().allocated);
