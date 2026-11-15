@@ -430,7 +430,13 @@ rewrite of any part of the DLL (maintainer, 2026-11-14: not worth it, [rust-rewr
 
 ## 🧭 Maintainer request 2026-11-14 — cheap C++ hardening instead of a Rust rewrite `[CPP-HARDENING-2026-11-14]`
 
-**Status: not started.** The maintainer decided against rewriting any part of the DLL in Rust (2026-11-14,
+**Status: items 1-3 done 2026-11-15** (below). An adversarial review of the whole change (workflow
+`wf_034db2b3-55a`, three lenses, each finding re-checked by a second agent) found six defects, all fixed in
+`63519807`: `--asan --run` ran zero tests with no targets (MED); ReadSafe's destination unchecked under ASan; the
+probe skipping three targets; D9xxx driver lines missing from the diagnostic list; `SetArrayInner`'s caller not
+pinned; a TEMP folder left by AsanConfigure. It found no deadlock and sound ordering. Second clean ASan run after
+the fixes: 287 / 4070 / 22 / 30 / 1569, every negative control reported.
+**Status at filing: not started.** The maintainer decided against rewriting any part of the DLL in Rust (2026-11-14,
 [rust-rewrite-eval.md](rust-rewrite-eval.md)): Rust would have prevented about 2-4% of the recorded DLL defects, and
 most of what it would have caught is reachable from C++ with the three items below. One commit per item; a red test
 first where one applies. The DLL rebuild and the AOT publish follow the usual rules.
