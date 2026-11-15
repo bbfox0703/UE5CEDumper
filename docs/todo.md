@@ -481,7 +481,24 @@ first where one applies. The DLL rebuild and the AOT publish follow the usual ru
    "neither proposed fix was right") and establish when readers can run during a calibration; then choose relaxed
    atomics if a calibration always completes before readers start, or publish the family as one snapshot (an
    immutable struct swapped atomically, or a seqlock) if it does not.
-3. **AddressSanitizer on the C++ test executables** -- Effort: M · Risk: low (test builds only, never the shipped
+3. ◐ **PHASE 1 DONE 2026-11-15** (`e8da97f6`, then `/bigobj` and the ASan time bound). `build.ps1 -Target
+   AsanConfigure` configures `build_asan\` (Release, no proxies: CMake refuses `UE5DUMPER_ASAN` otherwise);
+   `py tools/verify/build_dll.py --asan --targets utf8_helpers_test dll_helpers_test --run` builds and judges it.
+   Under ASan it first checks that the import table names `clang_rt.asan` and that a deliberate heap overflow
+   (`UE5_ASAN_NEGATIVE_CONTROL`) is reported, then fails on any ASan report, a failure, a missing summary or zero
+   checks. Measured on 14.52.37025: both negative controls reported; `utf8_helpers_test` 287 and
+   `dll_helpers_test` 4070 checks, 0 failures, no ASan report (17.2 s against 1.7 s plain). One check moved: the
+   1M-row filter benchmark runs about 20x slower under ASan, so its bound widens there. `--run` also judges the
+   plain tree. `.vsconfig` gains `VC.ASAN` (docs/toolchain.md: an older install re-runs `modify`).
+   **Phase 2, open:** `dll_core_test`. It will report false positives until Macht's SEH-guarded probes
+   (`ReadSafe`, `ReadBytesSafe`, `WriteDataBytes`, `WriteBytes`) and Falsch's `CopySEH` are exempt in the ASan
+   build only: the GENAUABORT section sweeps read this exe's own instrumented globals, and the UE4 name readers
+   over-read small static fixtures by design. Plan: an inventory run first (`continue_on_error=2`), then
+   `__declspec(no_sanitize_address) __declspec(noinline)` plus a byte loop instead of memcpy (the attribute does
+   not stop the memcpy interceptor), all under `#ifdef __SANITIZE_ADDRESS__`, keeping the check on the DLL-owned
+   side of each copy; two controls (an exempt over-read not reported, a too-small destination reported). Then
+   `grausam_window_test` and `sein_retention_test`. Not in CI until two clean measured runs.
+   *Original:* **AddressSanitizer on the C++ test executables** -- Effort: M · Risk: low (test builds only, never the shipped
    DLL). No target builds with `/fsanitize=address` today. Pilot it on `dll_helpers_test` and `dll_core_test`, which
    compile most of the DLL's own data-structure code, as an opt-in switch in `build_dll.py`. Check first that MSVC's
    ASan works with this tree's `/MT` and `/EHa`. ⚠ Macht's SEH-guarded probes read bad addresses on purpose and may

@@ -45,8 +45,11 @@ def find_vcvars():
 
     ⚠ DO NOT HARDCODE A PATH HERE. This machine has TWO Visual Studio
     installations -- `2022\\Community` (MSVC 14.44.35207 only) and `18\\Community`
-    (14.38, 14.44 and **14.51.36231**) -- and `build.ps1` resolves the newest, so
-    every object already in `build/` was compiled by 14.51.
+    (14.29, 14.38, 14.44 and, since a VS update on 2026-11-12, **14.52.37025**, which replaced
+    14.51.36231) -- and `build.ps1` resolves the newest. A VS update moves the compiler out
+    from under a configured tree: build\\'s cache still named the removed 14.51 directory, and
+    the tree had to be configured again by build.ps1 (2026-11-15). Toolset numbers drift; read
+    `build/CMakeCache.txt`'s CMAKE_CXX_COMPILER for the one a tree uses.
 
     Pointing this script at 2022's vcvars64 mixes toolsets inside ONE build
     directory. The compile stage succeeds, and the failure surfaces at LINK time
