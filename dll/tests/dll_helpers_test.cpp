@@ -49,6 +49,7 @@
 #include "../src/Lager.h"      // MinHook's trampoline-block search, modelled ([MH-PRERESERVE-PROXY])
 #include "../src/Falsch.h"     // MinHook trampoline pre-flight against Zydis ([MH-TRAMPOLINE-PREFLIGHT])
 #include "../src/Wirbel.h"     // BugItGoRefusal (constexpr, pure) -- [TELEPORT-BUGITGO-PARENTREL]
+#include <type_traits>         // the DynOff::RuntimeOffset pins beside Test_PropertyFamilyIsCoherent
 #include "../src/Schlacht.h"   // See-through's owners: ClaimOwner / ReleaseOwner (header-inline, pure)
 #include "../src/Kanne.h"      // Watch samples: WatchKey, WatchSlot (header-only, std-only)
 
@@ -8786,6 +8787,17 @@ static void Test_UPropertyUStructHeadFor() {
                    h.children == h.super + 8 && h.propsSize == h.children + 8 && h.script == h.propsSize + 8);
         }
 }
+
+// [CPP-HARDENING-2026-11-14] The five family members are corrected while other threads read them, so they are
+// RuntimeOffset (relaxed atomics), not plain ints: as ints the lazy corrections were a data race. No run-time test can
+// see that race (an aligned int never tears on x64), so the type is pinned here instead.
+static_assert(std::is_same_v<decltype(DynOff::FSTRUCTPROP_STRUCT), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::FARRAYPROP_INNER), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::FBOOLPROP_FIELDSIZE), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::FBYTEPROP_ENUM), DynOff::RuntimeOffset>);
+static_assert(std::is_same_v<decltype(DynOff::FENUMPROP_ENUM), DynOff::RuntimeOffset>);
+// The proof that the family lock is held cannot be copied out of the scope that took the lock.
+static_assert(!std::is_copy_constructible_v<DynOff::FamilyWriteLock>);
 
 static void Test_PropertyFamilyIsCoherent() {
     // Every real Offset_Internal this repo has measured, plus the neighbours a future

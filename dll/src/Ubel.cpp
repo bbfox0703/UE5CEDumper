@@ -77,13 +77,13 @@ static std::unordered_map<uintptr_t, NameCacheEntry> s_nameCache;
 // across other threads' inserts), so callers can read lock-free after lookup.
 // These touches are per-class / per-match (NOT per-object), so contention is low.
 // All locks are leaf-level (no function holds one while acquiring another), so
-// there is no lock-ordering / deadlock concern. s_calibrationMutex guards the
-// one-time CorrectSubclassOffsets DynOff writes via double-checked locking.
+// there is no lock-ordering / deadlock concern. CorrectSubclassOffsets' double-checked
+// calibration and WalkInstance's struct-slot correction hold DynOff's family write lock
+// (DynOff::FamilyWriteLock), the one every writer of the sizeof(FProperty) family holds.
 static std::mutex s_enumCacheMutex;
 static std::mutex s_nameCacheMutex;
 static std::mutex s_walkClassCacheMutex;
 static std::mutex s_structFieldCacheMutex;
-static std::mutex s_calibrationMutex;
 
 // CorrectSubclassOffsets' once-per-process latch. At namespace scope so dll_core_test, which compiles this file into its
 // own translation unit, can re-arm it.
@@ -5640,7 +5640,7 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
 
     // Slow path: serialize calibration so the parallel GObjects walkers can't
     // race on the DynOff:: writes below. Double-checked under the lock.
-    std::lock_guard<std::mutex> lk(s_calibrationMutex);
+    const DynOff::FamilyWriteLock lk;
     if (s_subclassCalibrated.load(std::memory_order_acquire)) return;
     // [FRIEREN-PROBE-OVERRUN] A UProperty family is derived from the measured layout ([UPROP-SUBCLASS-SLOT]) and is
     // never moved here -- but it is CHECKED, where this used to latch without looking, so a UE4 session can be proven
@@ -5667,14 +5667,14 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
             if (delta != 0) {
                 int corrected = DynOff::FSTRUCTPROP_STRUCT + delta;
                 Sein::Info("WALK", "CorrectSubclassOffsets: delta=%d, FSTRUCTPROP 0x%X -> 0x%X (validated with '%s' -> '%s')",
-                    delta, DynOff::FSTRUCTPROP_STRUCT, corrected, fi.Name.c_str(), sname.c_str());
+                    delta, static_cast<int>(DynOff::FSTRUCTPROP_STRUCT), corrected, fi.Name.c_str(), sname.c_str());
                 // (G12) Fourth writer of the sizeof(FProperty) family — one expression, so it
                 // cannot drift from Genau's three. Note FARRAYPROP_INNER may legitimately
                 // differ later (UE5.3+ puts EArrayPropertyFlags before Inner); the helper only
                 // sets the shared STARTING point, and the ArrayProperty probe further down
-                // this file re-probes it with delta=8. That probe is deliberately NOT routed
-                // through the helper for exactly that reason.
-                DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(corrected));
+                // this file re-probes it with delta=8. That probe deliberately writes that one
+                // member alone, through DynOff::SetArrayInner, for exactly that reason.
+                DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(corrected), lk);
                 // The corrected family's epoch, read after the move.
                 MarkSubclassSlotConfirmed(DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire));
             } else {
@@ -6548,8 +6548,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         // Persist corrected FARRAYPROP_INNER if delta != 0
                         if (delta != 0) {
                             Sein::Info("WALK:ArrayP", "Correcting FARRAYPROP_INNER: 0x%X -> 0x%X",
-                                DynOff::FARRAYPROP_INNER, tryOff);
-                            DynOff::FARRAYPROP_INNER = tryOff;
+                                static_cast<int>(DynOff::FARRAYPROP_INNER), tryOff);
+                            DynOff::SetArrayInner(tryOff);
                         }
                         fv.arrayInnerFFieldAddr = inner;
                         innerFound = true;
@@ -6750,7 +6750,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         snprintf(hexDump + i*3, 4, "%02X ", dumpBuf[i]);
                     Sein::Info("WALK:ArrayP", "Inner NOT found for '%s' (FField=0x%llX, FARRAYPROP_INNER=0x%X, FSTRUCTPROP_STRUCT=0x%X)",
                         fi.Name.c_str(), static_cast<unsigned long long>(fi.Address),
-                        DynOff::FARRAYPROP_INNER, DynOff::FSTRUCTPROP_STRUCT);
+                        static_cast<int>(DynOff::FARRAYPROP_INNER), static_cast<int>(DynOff::FSTRUCTPROP_STRUCT));
                     Sein::Info("WALK:ArrayP", "  hex @+0x%X..+0x%X: %s%s", dumpStart, dumpStart+64, hexDump,
                                dumpReadable ? "" : " (UNREADABLE: the zeros are a failed read)");
                 }
@@ -7549,7 +7549,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     fv.structDataAddr  = instanceAddr + fi.Offset;
                     if (delta != 0) {
                         Sein::Info("WALK:StructP", "FStructProperty::Struct at FField+0x%X (base=0x%X, delta=%d) for '%s' -> '%s'",
-                            tryOffset, DynOff::FSTRUCTPROP_STRUCT, delta, fi.Name.c_str(), sname.c_str());
+                            tryOffset, static_cast<int>(DynOff::FSTRUCTPROP_STRUCT), delta, fi.Name.c_str(),
+                            sname.c_str());
                         // Persist the correction. This writer is NOT redundant with
                         // CorrectSubclassOffsets: that one probes {0,±4,±8,±0xC} and gives up on a
                         // class with no StructProperty, while this probes {0,±4,±8,±0x10} — so it
@@ -7570,8 +7571,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         // per-field and per-walk, not latched, so it re-corrects on the next array
                         // it meets.
                         {
-                            std::lock_guard<std::mutex> lk(s_calibrationMutex);
-                            DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(tryOffset));
+                            const DynOff::FamilyWriteLock lk;
+                            DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(tryOffset), lk);
                             MarkSubclassSlotConfirmed(DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire));
                         }
                     } else {
@@ -7585,7 +7586,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             }
             if (!found) {
                 Sein::Debug("WALK:StructP", "FStructProperty::Struct not found for '%s' (FField=0x%llX, probed 0x%X +/- 16)",
-                    fi.Name.c_str(), static_cast<unsigned long long>(fi.Address), DynOff::FSTRUCTPROP_STRUCT);
+                    fi.Name.c_str(), static_cast<unsigned long long>(fi.Address),
+                    static_cast<int>(DynOff::FSTRUCTPROP_STRUCT));
             }
 
             // Generate field-based preview using cached WalkClass data.

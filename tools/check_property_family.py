@@ -26,13 +26,15 @@ prevent stayed reachable by the one path G12 had not counted. A prose invariant 
 hand-counted writer list is what failed; counting them mechanically is the fix.
 
 WHAT IT ALLOWS, and nothing else:
-  * the `inline int` DECLARATIONS in Grimoire.h (the defaults),
+  * the DECLARATIONS in Grimoire.h (the defaults; `DynOff::RuntimeOffset` since
+    [CPP-HARDENING-2026-11-14], `inline int` before),
   * the body of `ApplyPropertyFamily` itself, which is the one legitimate publisher,
-  * ONE named exception: `Ubel.cpp`'s ArrayProperty probe assigns FARRAYPROP_INNER on its
-    own, because UE5.3+ places `EArrayPropertyFlags` before `Inner`, so that member
-    legitimately diverges from the shared base AFTER calibration. It re-probes per field per
-    walk rather than latching, so a family write that resets it to the base is corrected on
-    the next array the walker meets.
+  * ONE named exception: `DynOff::SetArrayInner` in Grimoire.h assigns FARRAYPROP_INNER on
+    its own, for `Ubel.cpp`'s ArrayProperty probe, because UE5.3+ places `EArrayPropertyFlags`
+    before `Inner`, so that member legitimately diverges from the shared base AFTER
+    calibration. The probe re-probes per field per walk rather than latching, so a family
+    write that resets it to the base is corrected on the next array the walker meets. Until
+    2026-11-15 the probe assigned the member itself, outside any lock.
 
 Adding a new writer is fine -- route it through `ApplyPropertyFamily` and this gate is happy.
 Adding a new EXCEPTION means editing the list below, which is the point: it makes the second
@@ -57,15 +59,16 @@ ASSIGN = re.compile(r"\b(" + "|".join(FAMILY) + r")\s*=(?!=)")
 # required to carry its justification nearby, so deleting the reasoning breaks the gate too.
 EXCEPTIONS = [
     {
-        "file": "Ubel.cpp",
+        "file": "Grimoire.h",
         "member": "FARRAYPROP_INNER",
         "why": "UE5.3+ puts EArrayPropertyFlags before Inner, so this member legitimately "
-               "diverges from the shared base after calibration; the probe re-runs per field "
-               "per walk rather than latching.",
+               "diverges from the shared base after calibration; Ubel's probe re-runs per field "
+               "per walk rather than latching, and writes through SetArrayInner, under the "
+               "family write lock.",
         # A token that must appear within `window` lines of the assignment, so the exception
         # cannot silently move to an unrelated site that happens to be in the same file.
-        "near": "Correcting FARRAYPROP_INNER",
-        "window": 6,
+        "near": "inline void SetArrayInner",
+        "window": 3,
     },
 ]
 
@@ -87,8 +90,9 @@ def strip_code(line):
 
 
 def is_declaration(line):
-    """`inline int FBYTEPROP_ENUM = 0x78;` in Grimoire.h — the default, not a writer."""
-    return re.match(r"\s*inline\s+(constexpr\s+)?int\s+", line) is not None
+    """`inline RuntimeOffset FBYTEPROP_ENUM{0x78};` (or the older `inline int ... = 0x78;`) in Grimoire.h -- the
+    default, not a writer."""
+    return re.match(r"\s*inline\s+(constexpr\s+)?(int|RuntimeOffset)\s+", line) is not None
 
 
 def main():

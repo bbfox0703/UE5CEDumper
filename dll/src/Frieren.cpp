@@ -751,14 +751,14 @@ bool UE5_Init() {
         // neither probed nor printed.
         LOG_SUMMARY("  FField: Next=+0x%02X Name=+0x%02X | FProp: Offset=+0x%02X ElemSize=+0x%02X StructProp=+0x%02X | FCName=+0x%02X",
                     DynOff::FFIELD_NEXT, DynOff::FFIELD_NAME,
-                    DynOff::FPROPERTY_OFFSET, DynOff::FPROPERTY_ELEMSIZE, DynOff::FSTRUCTPROP_STRUCT,
-                    DynOff::FFIELDCLASS_NAME);
+                    DynOff::FPROPERTY_OFFSET, DynOff::FPROPERTY_ELEMSIZE,
+                    static_cast<int>(DynOff::FSTRUCTPROP_STRUCT), DynOff::FFIELDCLASS_NAME);
     } else {
         // The subclass slot is printed here too: its absence from every summary is what kept [UPROP-SUBCLASS-SLOT]
         // invisible -- a UE 4.23 log showed Offset=+0x44 and nothing that said the struct reads used +0x78.
         LOG_SUMMARY("  UProperty: Next=+0x%02X Offset=+0x%02X ElemSize=+0x%02X SubclassStart=+0x%02X",
                     DynOff::UFIELD_NEXT, DynOff::UPROPERTY_OFFSET, DynOff::UPROPERTY_ELEMSIZE,
-                    DynOff::FSTRUCTPROP_STRUCT);
+                    static_cast<int>(DynOff::FSTRUCTPROP_STRUCT));
     }
 
     ScanProgress::Set(7, "Complete");
