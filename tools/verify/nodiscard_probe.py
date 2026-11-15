@@ -57,6 +57,11 @@ CASES = [
 ]
 
 
+def is_compile(cmd):
+    """A cl.exe compile line. CMake's Ninja generator writes `-c <source>`, not `/c`."""
+    return "cl.exe" in cmd.lower() and (" -c " in cmd or " /c " in cmd)
+
+
 def ninja_commands(env):
     r = subprocess.run([build_dll._ninja(env), "-C", str(build_dll.BUILD), "-t", "commands"], env=env,
                        capture_output=True, text=True, errors="replace")
@@ -73,7 +78,7 @@ def main():
 
     print("1. flags in ninja's compile commands")
     for target, marker in TARGET_OBJECT_MARKERS.items():
-        lines = [c for c in cmds if marker in c and " /c " in c and "cl.exe" in c.lower()]
+        lines = [c for c in cmds if marker in c and is_compile(c)]
         if not lines:
             print(f"   FAIL {target}: no compile command found (is the target configured?)")
             ok = False
@@ -86,7 +91,7 @@ def main():
             print(f"   ok   {target}: {len(lines)} command(s) carry {' '.join(ERROR_FLAGS)}")
 
     print("2. behaviour, with UE5DumperCommon's flags for Macht.cpp")
-    base = [c for c in cmds if "UE5DumperCommon.dir" in c and "Macht.cpp" in c and " /c " in c]
+    base = [c for c in cmds if "UE5DumperCommon.dir" in c and c.rstrip().endswith("Macht.cpp") and is_compile(c)]
     if not base:
         print("   FAIL: no UE5DumperCommon compile command for Macht.cpp")
         return 1
@@ -103,7 +108,10 @@ def main():
         if low in ("/fo", "-fo"):
             skip_next = True
             continue
+        if low == "-c":   # re-added with the probe's own source below
+            continue
         keep.append(p)
+    keep.append("-c")
     cl = shutil.which("cl", path=env.get("PATH") or env.get("Path"))
     if not cl:
         print("   FAIL: cl.exe not on the MSVC environment's PATH")
