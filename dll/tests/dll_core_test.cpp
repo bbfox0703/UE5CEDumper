@@ -38,6 +38,8 @@
 #include <stdexcept>
 #include <mutex>
 #include <condition_variable>
+#include <cstdlib>   // getenv_s: the AddressSanitizer build's negative control
+#include <tuple>     // std::ignore: the negative control's deliberately unread probe result
 
 namespace Sein {
 void Info(const char*, const char*, ...) {}
@@ -228,6 +230,22 @@ static __declspec(noinline) void S3TraceDeep(int depth, uint64_t hintGen, uint64
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("dll_core_test — the DLL core, against a fake object pool in this process\n");
+#ifdef __SANITIZE_ADDRESS__
+    // [CPP-HARDENING-2026-11-14] Compiled into the AddressSanitizer build only. build_dll.py --asan --run reads the
+    // banner and first runs this exe with UE5_ASAN_NEGATIVE_CONTROL set. Here the control is a probe read into a
+    // DLL-owned buffer one byte too small: it must be reported, which proves ASan is live AND that Macht's probes,
+    // exempt from ASan for the foreign memory they read, still have their destination checked.
+    printf("asan: on\n");
+    {
+        size_t negLen = 0;
+        if (getenv_s(&negLen, nullptr, 0, "UE5_ASAN_NEGATIVE_CONTROL") == 0 && negLen > 0) {
+            static const uint8_t src[32] = {};
+            char* volatile dst = new char[16];
+            std::ignore = Macht::ReadBytesSafe(reinterpret_cast<uintptr_t>(src), dst, 17);   // heap-buffer-overflow
+            delete[] dst;
+        }
+    }
+#endif
 
     // The poll is `(i & 0xFFF) == 0`, i.e. every 4096. A pool must be several multiples
     // of that or "it stopped early" cannot be told from "it ran to the end".

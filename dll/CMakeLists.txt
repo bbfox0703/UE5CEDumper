@@ -718,6 +718,9 @@ if(BUILD_DLL_TESTS)
         # warning posture is the DLL's to argue with, not this target's.
         target_compile_options(dll_core_test PRIVATE /utf-8 /W3 /EHsc /bigobj ${UE5_NODISCARD_ERROR_FLAGS})
     endif()
+    # Only the test exe: its verres_* and owncopy_* fixture DLLs below stay uninstrumented (a partly sanitized process
+    # is supported, with less detection in the parts left out).
+    ue5_apply_asan(dll_core_test)
 
     target_link_libraries(dll_core_test PRIVATE Zydis version)
 
