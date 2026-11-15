@@ -411,10 +411,11 @@ Open work only. **Read this when deciding what to do next.**
 - `[I18N-READINESS-2026-11-04]`: move the UI's remaining hard-coded English into `en.axaml`, ahead of UI languages. Started 2026-11-05: P1 and P3-P5 are done; P2 (labels that are also values) comes before any option list moves (its section).
 - `[MCP-WRITE-GRANTS-2026-11-14]`: a grant per kind of risk or per target instead of a prompt on every MCP write
   (Stage D3, evaluated, not started; Phase 0 measurements first): [mcp-write-approval-eval.md](mcp-write-approval-eval.md).
-- `[CPP-HARDENING-2026-11-14]` (hardening, not a defect): ✅ `[[nodiscard]]` on the DLL's status returns and ✅
-  race-free reads of the property family (both 2026-11-15); open: AddressSanitizer on the C++ test executables, and
-  the other runtime-written `DynOff` ints (`SOFTPTR_PATH` / `LAZYPTR_GUID`, the `UENUM_*` and `UFUNCTION_*` offsets)
-  as `RuntimeOffset` too -- chosen instead of a Rust rewrite (its section).
+- `[CPP-HARDENING-2026-11-14]` (hardening, not a defect): ✅ `[[nodiscard]]` on the DLL's status returns, ✅
+  race-free reads of the property family, ✅ AddressSanitizer on all five C++ test executables (all 2026-11-15);
+  open follow-ups: `[[nodiscard]]` batch 2, the other runtime-written `DynOff` ints (`SOFTPTR_PATH` /
+  `LAZYPTR_GUID`, the `UENUM_*` and `UFUNCTION_*` offsets) as `RuntimeOffset`, an ASan CI job -- chosen instead of a
+  Rust rewrite (its section).
 
 ### D. Open by a recorded decision — do not re-raise without a new reason
 
@@ -482,7 +483,21 @@ first where one applies. The DLL rebuild and the AOT publish follow the usual ru
    "neither proposed fix was right") and establish when readers can run during a calibration; then choose relaxed
    atomics if a calibration always completes before readers start, or publish the family as one snapshot (an
    immutable struct swapped atomically, or a seqlock) if it does not.
-3. ◐ **PHASE 1 DONE 2026-11-15** (`e8da97f6`, then `/bigobj` and the ASan time bound). `build.ps1 -Target
+3. ✅ **DONE 2026-11-15, all five test executables.** Phase 2 (dll_core_test, then grausam_window_test and
+   sein_retention_test): the inventory run before any exemption gave 1,021 ASan reports, 42 distinct, every one from
+   `Macht::ReadSafe` (589) or `Macht::ReadBytesSafe` (432). In the ASan build only, the foreign side of each probe's
+   copy goes through `Macht::AsanProbe::CopyUnchecked` (`no_sanitize_address` + `noinline`, a volatile byte loop,
+   since memcpy is ASan's run-time interceptor) and this DLL's side through instrumented touches, so a destination too
+   small is still reported: dll_core_test's negative control is exactly that, a probe read into a buffer one byte
+   short. dll_core_test also gained ASAN-PROBE-EXEMPT (probe over-reads of a global and a heap block, which an ASan
+   report would fail). Two checks behave differently under ASan, both by design: the ring-release measurement (ASan's
+   quarantine keeps freed blocks: 65 MB) asserts only the refusal there, and VND584-03's floor check SKIPs where its
+   premise fails -- which exposed a real gap, `[VND584-03-FLOOR-HIGH-HEAP]`. **Measured 2026-11-15, all under ASan,
+   each after its negative control was reported:** 287 / 4070 / 22 / 30 / 1569 (one SKIP), 0 failures, 0 reports.
+   Plain tree unchanged: 287 / 4070 / 22 / 30 / 1570. **Not in CI yet**: after a second clean measured run,
+   decide on a parallel CI job (`build.ps1 -Target AsanConfigure`, then `py tools/verify/build_dll.py --asan --run`;
+   it would need the runner image's `VC.ASAN` and `check_all.GATES` parity).
+   Phase 1 detail: (`e8da97f6`, then `/bigobj` and the ASan time bound). `build.ps1 -Target
    AsanConfigure` configures `build_asan\` (Release, no proxies: CMake refuses `UE5DUMPER_ASAN` otherwise);
    `py tools/verify/build_dll.py --asan --targets utf8_helpers_test dll_helpers_test --run` builds and judges it.
    Under ASan it first checks that the import table names `clang_rt.asan` and that a deliberate heap overflow
