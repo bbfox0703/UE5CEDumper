@@ -251,7 +251,7 @@ bool ReturnedTrue(const FunctionInfo& fi, const std::vector<uint8_t>& buf) {
 // Invoke through the game thread (Stark). NEVER the static-native direct
 // shortcut here — traces read the physics scene and teleports mutate actor
 // state; both must run on the game thread (§11 caveat 1-2).
-int32_t Invoke(uintptr_t instance, const FunctionInfo& fi, std::vector<uint8_t>& buf) {
+[[nodiscard]] int32_t Invoke(uintptr_t instance, const FunctionInfo& fi, std::vector<uint8_t>& buf) {
     if (buf.empty()) buf.resize(1, 0);  // never hand ProcessEvent a null buffer
     return UE5_CallProcessEventEx(instance, fi.address,
                                   reinterpret_cast<uintptr_t>(buf.data()),

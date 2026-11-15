@@ -407,7 +407,7 @@ static void RotateIfNeeded(LogFileState& fs_state) {
 // Returns false when the category's -0.log could not be opened. THE CALLER MUST
 // HONOUR IT: InitProcessMirror used to discard this bool and set s_filesOpen
 // regardless. (audit #5 SE1)
-static bool OpenFileInDir(LogFileState& fs_state, const fs::path& dir,
+[[nodiscard]] static bool OpenFileInDir(LogFileState& fs_state, const fs::path& dir,
                           const LogFileName& name, int* outErr) {
     const wchar_t* baseName = name.w;
     fs_state.baseName    = baseName;

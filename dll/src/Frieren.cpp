@@ -1261,7 +1261,7 @@ static uintptr_t DbgCam_ReadPtr(uintptr_t obj, int off) {
     return v;
 }
 
-static bool DbgCam_WritePtr(uintptr_t obj, int off, uintptr_t val) {
+[[nodiscard]] static bool DbgCam_WritePtr(uintptr_t obj, int off, uintptr_t val) {
     if (!obj || off < 0) return false;
     return Macht::WriteBytes(obj + (uintptr_t)off, &val, sizeof(val));
 }

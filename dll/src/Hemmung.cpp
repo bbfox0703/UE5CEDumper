@@ -86,7 +86,7 @@ bool ReadFloatAt(uintptr_t addr, int32_t size, double& out) {
     return true;
 }
 
-bool WriteFloatAt(uintptr_t addr, int32_t size, double v) {
+[[nodiscard]] bool WriteFloatAt(uintptr_t addr, int32_t size, double v) {
     if (size >= 8) {
         double d = v;
         return Macht::WriteBytes(addr, &d, 8);

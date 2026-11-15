@@ -139,7 +139,7 @@ bool ReadVec3At(uintptr_t addr, int32_t structSize, double out[3]) {
     return true;
 }
 
-bool WriteVec3At(uintptr_t addr, int32_t structSize, const double v[3]) {
+[[nodiscard]] bool WriteVec3At(uintptr_t addr, int32_t structSize, const double v[3]) {
     int cw = (structSize >= 24) ? 8 : 4;
     for (int i = 0; i < 3; ++i) {
         if (cw == 8) {
@@ -209,7 +209,7 @@ bool FindFuncByName(uintptr_t classAddr, const char* name, FunctionInfo& out) {
 // Returns what ACTUALLY happened. It used to return "the setter was found" — a bool the
 // callers all read as "collision changed" — while discarding the dispatcher's int32_t
 // entirely, so a refusal committed the record and logged "invoked" (D1).
-CollisionApply InvokeSetCollision(uintptr_t pawn, bool enable) {
+[[nodiscard]] CollisionApply InvokeSetCollision(uintptr_t pawn, bool enable) {
     // A null pawn is TRANSIENT — it re-resolves on the next tick — so it is Refused,
     // not Absent. Committing here would record a disable that never happened.
     if (!pawn) return CollisionApply::Refused;

@@ -109,7 +109,7 @@ bool ReadFloatAt(uintptr_t addr, int32_t size, double& out) {
     return true;
 }
 
-bool WriteFloatAt(uintptr_t addr, int32_t size, double v) {
+[[nodiscard]] bool WriteFloatAt(uintptr_t addr, int32_t size, double v) {
     if (size >= 8) {
         double d = v;
         return Macht::WriteBytes(addr, &d, 8);
@@ -137,7 +137,7 @@ bool ReadVec3At(uintptr_t addr, int32_t structSize, double out[3]) {
     return true;
 }
 
-bool WriteVec3At(uintptr_t addr, int32_t structSize, const double v[3]) {
+[[nodiscard]] bool WriteVec3At(uintptr_t addr, int32_t structSize, const double v[3]) {
     int cw = (structSize >= 24) ? 8 : 4;
     for (int i = 0; i < 3; ++i) {
         if (cw == 8) {

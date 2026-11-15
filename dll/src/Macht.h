@@ -39,8 +39,9 @@ inline bool ReadSafe(uintptr_t addr, T& out) {
     }
 }
 
-// Safe memory copy with SEH protection
-bool ReadBytesSafe(uintptr_t addr, void* buf, size_t size);
+// Safe memory copy with SEH protection. [[nodiscard]]: false means the read faulted and `buf` holds zeros, which a
+// caller that does not look reads as real data. [CPP-HARDENING-2026-11-14]
+[[nodiscard]] bool ReadBytesSafe(uintptr_t addr, void* buf, size_t size);
 
 // Check if an address is in committed, readable memory via VirtualQuery.
 // Useful as a cheap pre-flight before walking potentially freed objects —
@@ -50,7 +51,8 @@ bool IsAddrReadable(uintptr_t addr, size_t size = sizeof(uintptr_t));
 
 // Write bytes to memory. Makes the pages READWRITE for the write, so it writes code and read-only data too: only the
 // DLL's own writers use it, on addresses they found themselves. A caller's address goes through the two below.
-bool WriteBytes(uintptr_t addr, const void* buf, size_t size);
+// [[nodiscard]]: a dropped result is how Fly once logged ENABLED over a pawn whose mode never changed.
+[[nodiscard]] bool WriteBytes(uintptr_t addr, const void* buf, size_t size);
 
 // [D2-3-WRITEMEM] The worst page in [addr, addr + size) for a data write (Lager::ClassifyWriteRegion): Writable only
 // when every page is committed, writable as it stands and not executable.
@@ -58,7 +60,7 @@ Lager::WriteTarget ClassifyWriteRange(uintptr_t addr, size_t size);
 
 // Write data without touching page protection: an SEH-guarded copy that fails, and changes nothing, on a page that is
 // not writable.
-bool WriteDataBytes(uintptr_t addr, const void* buf, size_t size);
+[[nodiscard]] bool WriteDataBytes(uintptr_t addr, const void* buf, size_t size);
 
 // Get base address of a loaded module (nullptr = main module)
 uintptr_t GetModuleBase(const wchar_t* moduleName = nullptr);
