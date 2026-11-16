@@ -18,8 +18,9 @@ namespace UE5DumpUI.Mcp;
 /// passes a write_mem nowhere else, so the capability cannot carry another write.</para>
 ///
 /// <para><b>Values are checked as the Live Walker's editor checks them, and stricter.</b> A number must fit its type
-/// (<see cref="FieldValueConverter.TryConvert"/>); an enum takes only one of its own entries, where the editor also
-/// takes any number that fits; a packed bool is written through its single-bit mask, and an unresolved bit is refused
+/// (<see cref="FieldValueConverter.TryConvert"/>); an enum takes only one of its own entries (never its _MAX
+/// sentinel, and nothing when its entries could not be read), where the editor also takes any number that fits; a
+/// packed bool is written through its single-bit mask, and an unresolved bit is refused
 /// (<see cref="FieldValueConverter.PlanBoolWrite"/>). The write carries the bytes read just before it (expect), so a
 /// value the game or the user changed in between is not overwritten. A template is refused, by the DLL's own verdict
 /// (get_object's template, DLL 3718+): a class default, a class default's subobject or a Blueprint component template
@@ -241,9 +242,17 @@ internal static class McpFieldTools
                     back => (back[0] & mask) != 0 == on);
         }
         var entries = live.EnumEntries;
-        if (entries is { Count: > 0 } && !IsEntry(entries, text))
-            throw new McpToolError("Not changed: '" + text + "' is not one of " + meta.Name + "'s entries "
-                                   + "(read_instance shows them).");
+        if (meta.TypeName == "EnumProperty" || meta.EnumName.Length > 0 || entries is { Count: > 0 })
+        {
+            // An enum without its entries (UEnum::Names never located) would take any number that fits.
+            if (entries is not { Count: > 0 })
+                throw new McpToolError("Not changed: " + meta.Name + "'s entries could not be read in this game, so a "
+                                       + "value cannot be checked against them." + Instead);
+            var entry = EntryFor(entries, text)
+                ?? throw new McpToolError("Not changed: '" + text + "' is not one of " + meta.Name + "'s entries "
+                                          + "(read_instance shows them).");
+            text = entry.Value.ToString(CultureInfo.InvariantCulture);
+        }
         var (ok, data, error) = FieldValueConverter.TryConvert(meta.TypeName, text, meta.Size, entries);
         if (!ok) throw new McpToolError("Not changed: " + meta.Name + " cannot hold '" + text + "': " + error + ".");
         if (data.Length != meta.Size)
@@ -253,12 +262,27 @@ internal static class McpFieldTools
         return (fieldAddr, data.Length, _ => data, back => back.AsSpan().SequenceEqual(data));
     }
 
-    private static bool IsEntry(IReadOnlyList<EnumEntryValue> entries, string text)
+    /// <summary>The entry a value names: by the name the DLL sends (an enum class's is qualified,
+    /// <c>EGrade::Wide_High</c>), by its short name, or by its value; never UHT's sentinel (<c>EGrade_MAX</c>, or a
+    /// <c>MAX</c> the enum declares), which is no state of the enum.</summary>
+    private static EnumEntryValue? EntryFor(IReadOnlyList<EnumEntryValue> entries, string text)
     {
-        bool numeric = long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long value);
-        return entries.Any(e => string.Equals(e.Name, text, StringComparison.OrdinalIgnoreCase)
-                                || (numeric && e.Value == value));
+        var real = entries.Where(e => !IsSentinel(ShortName(e.Name))).ToList();
+        return real.FirstOrDefault(e => string.Equals(e.Name, text, StringComparison.OrdinalIgnoreCase))
+               ?? real.FirstOrDefault(e => string.Equals(ShortName(e.Name), text, StringComparison.OrdinalIgnoreCase))
+               ?? (long.TryParse(text, NumberStyles.Integer, CultureInfo.InvariantCulture, out long value)
+                   ? real.FirstOrDefault(e => e.Value == value)
+                   : null);
     }
+
+    private static string ShortName(string name)
+    {
+        int sep = name.LastIndexOf("::", StringComparison.Ordinal);
+        return sep >= 0 ? name[(sep + 2)..] : name;
+    }
+
+    private static bool IsSentinel(string shortName)
+        => shortName == "MAX" || shortName.EndsWith("_MAX", StringComparison.Ordinal);
 
     private static string ValueText(JsonNode? node)
     {
