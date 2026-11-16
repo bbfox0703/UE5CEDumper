@@ -762,6 +762,24 @@ public class TeleportViewModelTests
         Assert.Equal("Armed @0", vm.StealthState);
     }
 
+    // Review round 2: the badge followed the job and the readout kept "= 0 (held)" -- Off beside held, or a value the
+    // holder no longer holds.
+    [Fact]
+    public async Task TheStealthReadout_FollowsTheJobSomeoneElseHolds()
+    {
+        var (vm, dump) = await StealthReleasedVm();
+        dump.NextHolds = Report(HeldBy(StealthJob));
+        dump.NextForcedFields = new List<ForcedFieldInfo> { StealthJobAt(5) };
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("BP_Player_C::Visibility = 5 (held)", vm.StealthFieldText);
+
+        dump.NextHolds = Report();
+        dump.NextForcedFields = new List<ForcedFieldInfo>();
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Off", vm.StealthState);
+        Assert.Equal("BP_Player_C::Visibility", vm.StealthFieldText);   // the meter's name, no value it no longer knows
+    }
+
     [Fact]
     public async Task SeeThrough_IsLabelledFromItsClaims_WhileItsCardShows()
     {
