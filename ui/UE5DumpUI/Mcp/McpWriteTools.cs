@@ -478,11 +478,26 @@ internal static class McpWriteTools
         long build = McpJson.TryGetLong(ptrs["build_number"], out long b) ? b : 0;
         if (build < minBuild)
             throw new McpToolError($"The game's DLL is build {build.ToString(CultureInfo.InvariantCulture)}, older "
-                                   + $"than {minBuild.ToString(CultureInfo.InvariantCulture)}: it cannot keep this "
-                                   + "server's changes off the user's, so nothing is changed through it. Update the DLL "
-                                   + "(a proxy: Update All on the Proxy Deploy tab, then restart the game).");
+                                   + $"than {minBuild.ToString(CultureInfo.InvariantCulture)}: {WhyFloor(minBuild)}, so "
+                                   + "nothing is changed through it. Update the DLL (a proxy: Update All on the Proxy "
+                                   + "Deploy tab, then restart the game).");
         return ptrs;
     }
+
+    /// <summary>What a DLL below a floor lacks, as the floor's own constant documents it: the model repeats this to the
+    /// user, so a later floor must not borrow an earlier one's reason.</summary>
+    private static string WhyFloor(int minBuild) => minBuild switch
+    {
+        Constants.McpMinDllBuildForFieldWrites =>
+            "its get_object does not say whether an object is a template, so a write could reach a class default or an "
+            + "archetype",
+        Constants.McpMinDllBuildForInvokeGrants =>
+            "its invoke_function cannot check a call against the function a grant names",
+        Constants.McpMinDllBuildForRawWrites =>
+            "its write_mem could write code or read-only memory and ignores the bytes read first, and its invoke queue "
+            + "would run this server's call beside the user's",
+        _ => "it cannot keep this server's changes off the user's",
+    };
 
     /// <summary>How long to wait for a command that makes <paramref name="calls"/> game-thread calls one after another:
     /// the DLL may wait invoke_timeout_ms (the user sets it, up to 600 s) on each. Ending first would drop the connection
