@@ -418,9 +418,10 @@ Open work only. **Read this when deciding what to do next.**
   [mcp-player2-eval.md](mcp-player2-eval.md).
 - `[MCP-WRITE-GRANTS-2026-11-14]`: a grant per kind of risk or per target instead of a prompt on every MCP write
   (Stage D3: Phases 1, 1b and 2 shipped in builds 3714-3718; Phase 3 optional): [mcp-write-approval-eval.md](mcp-write-approval-eval.md).
-- `[CPP-HARDENING-2026-11-14]` (hardening, not a defect): ✅ `[[nodiscard]]` on the DLL's status returns, ✅
+- `[CPP-HARDENING-2026-11-14]` (hardening, not a defect): ✅ `[[nodiscard]]` on the DLL's status returns (batch 2
+  done 2026-11-17), ✅
   race-free reads of the property family, ✅ AddressSanitizer on all five C++ test executables (all 2026-11-15);
-  open follow-ups: `[[nodiscard]]` batch 2, the other runtime-written `DynOff` ints (`SOFTPTR_PATH` /
+  open follow-ups: the other runtime-written `DynOff` ints (`SOFTPTR_PATH` /
   `LAZYPTR_GUID`, the `UENUM_*` and `UFUNCTION_*` offsets) as `RuntimeOffset`, an ASan CI job -- chosen instead of a
   Rust rewrite (its section).
 
@@ -457,12 +458,17 @@ first where one applies. The DLL rebuild and the AOT publish follow the usual ru
    `std::ignore` with the reason beside them. `/we4834 /we4858 /we5240` make a new discard a build error on the
    DLL, the four proxies and the test targets that compile DLL sources; `tools/verify/nodiscard_probe.py` proves the
    flags and the behaviour. Found on the way: `build_dll.py` printed only a 4000-character tail, which hid 2 of the
-   21 warnings; it now lists every diagnostic (`6242afab`). **Left for a batch 2** (5 discards, all but
-   `Dunste::SetPreset` at the `fly_set` handler intentional): the public gameplay setters (Solitar, Laufen, Hemmung,
-   Dunste, Schlacht, Wirbel's teleport API, Grausam, Solide), Stark's `EnqueueInvoke` / `InstallHook` /
-   `CallOriginalSEH` / `CallAddressAsOwnSEH`, Wirbel's teleport helpers. Not planned: `Macht::ReadSafe` (173
-   read-or-zero discards; it would need a read-or-zero API first) and the out-param getters, whose code is designed
-   to be ignored.
+   21 warnings; it now lists every diagnostic (`6242afab`). ✅ **Batch 2 DONE 2026-11-17** (red `9efcefe1`, green
+   `49bdcde1`): 27 more declarations -- the public gameplay setters (Solitar, Laufen, Hemmung, Dunste, Schlacht,
+   Wirbel's teleport API, Grausam, Solide) and Stark's `EnqueueInvoke` / `InstallHook` / `CallOriginalSEH` /
+   `CallAddressAsOwnSEH`. The five discards it found: `fly_set` dropped a refused preset and replied as if applied
+   (now the preset goes first and a refused one answers an error, nothing changed; a source pin holds the order);
+   Dunste's `SetSpeed` / `SetNoclip` always return FR_OK, so they stay unannotated, saying why; `UE5_Shutdown`'s
+   See-through and Keep Foreground OFFs log a failure. Wirbel's file-local teleport helpers were tried and left
+   unannotated: all 9 of their discards are by design, since every teleport measures where the pawn ended up
+   afterwards and the cursor's input mode is best effort. Not planned: `Macht::ReadSafe` (173 read-or-zero
+   discards; it would need a read-or-zero API first) and the out-param getters, whose code is designed to be
+   ignored.
    *Original:* **`[[nodiscard]]` on the DLL's status returns** -- Effort: S · Risk: low. dll/src uses `[[nodiscard]]` nowhere.
    Shipped defects that were a dropped status: `[SEETHRUTALLY]` (`InvokeSetHidden`'s `bool` discarded at both call
    sites, so the hidden counts reported intent), the Fly `MovementMode` writes in `Dunste::SetEnabled` dropping
