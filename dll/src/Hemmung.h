@@ -91,12 +91,12 @@ int32_t GetDilation(int32_t target, DilationInfo& out);
 // level transition / respawn). Starts the re-assert worker. Returns 1 (active)
 // or a negative TimeResult. value = 1.0 is a valid state ("lock at normal speed"
 // — blocks the game from slowing time); use ResetDilation to turn it off.
-int32_t SetDilation(int32_t target, double value);
+[[nodiscard]] int32_t SetDilation(int32_t target, double value);
 
 // Disable a lever: best-effort restore the captured natural value, clear the
 // override. Stops the worker when no lever remains active. Returns TR_OK or a
 // negative TimeResult.
-int32_t ResetDilation(int32_t target);
+[[nodiscard]] int32_t ResetDilation(int32_t target);
 
 // Stop and join the re-assert worker. Idempotent. Called by ResetDilation (when
 // nothing else is active) and from UE5_Shutdown() before the DLL unloads.

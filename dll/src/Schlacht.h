@@ -158,7 +158,7 @@ struct SeeThroughStatus {
 // Enable / disable the see-through worker. Idempotent. enable=true records `owner`'s claim when it turns on or was
 // already on; a refused enable records nothing. enable=false is an explicit OFF: every claim goes, any actor we hid is
 // un-hidden and the worker stops, and `owner` is not consulted. Returns 1 (on), 0 (off), or negative on error.
-int32_t SetEnabled(bool enable, uint64_t owner);
+[[nodiscard]] int32_t SetEnabled(bool enable, uint64_t owner);
 
 // A departed owner's release. `stillLive(owner)` is asked under Schlacht's own lock, so a client process that
 // reconnects and turns See-through on in between is not turned off under it. When the last claim goes it turns off,

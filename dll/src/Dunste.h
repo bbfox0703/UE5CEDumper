@@ -125,19 +125,20 @@ struct FlyStatus {
 // restore later), force MOVE_Flying, start the worker. On disable: restore the
 // captured MovementMode, zero velocity, stop the worker. Returns 1 (active),
 // 0 (off), or a negative FlyResult.
-int32_t SetEnabled(bool enable);
+[[nodiscard]] int32_t SetEnabled(bool enable);
 
 // Set the flight speed (uu/s), clamped to [FLY_SPEED_MIN, FLY_SPEED_MAX].
-// Takes effect on the next worker tick. Returns FR_OK.
+// Takes effect on the next worker tick. Returns FR_OK: it cannot fail, so it is not [[nodiscard]].
 int32_t SetSpeed(double uuPerSec);
 
 // Select the active keyboard preset (0 WASD / 1 numpad / 2 arrows). Returns
 // FR_OK, or FR_ERR_REFLECT for an out-of-range value.
-int32_t SetPreset(int32_t preset);
+[[nodiscard]] int32_t SetPreset(int32_t preset);
 
 // Toggle Noclip: true = disable the actor's collision so flight passes through
 // walls (velocity-drive is unchanged); false = keep collision. Takes effect on the
-// next worker tick (a one-shot SetActorEnableCollision invoke). Returns FR_OK.
+// next worker tick (a one-shot SetActorEnableCollision invoke). Returns FR_OK: it only records the wish, so it is not
+// [[nodiscard]].
 int32_t SetNoclip(bool enable);
 
 // Read the live fly state (+ CMC owner for Locate-in-GWorld). Always fills

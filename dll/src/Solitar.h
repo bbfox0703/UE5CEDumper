@@ -146,7 +146,7 @@ inline bool MatchProtectionBool(const std::string& nameLower, bool& outProtect) 
 // Turn GodMode on/off. GodMode ON ⇒ AActor::bCanBeDamaged set FALSE. Applies to
 // the live pawn immediately and starts/stops the re-assert worker. Returns the
 // OBSERVED live state (1/0) or a negative ProtectResult.
-int32_t SetGodMode(bool on);
+[[nodiscard]] int32_t SetGodMode(bool on);
 
 // Read the OBSERVED GodMode state on the live pawn (1 = immune, 0 = can be
 // damaged) or a negative ProtectResult when the pawn/property can't be resolved.
@@ -165,7 +165,7 @@ int32_t GetState(State& out);
 // on an object -- its bit, or a native bool's whole byte (PickBoolBits). `on` is
 // the DESIRED VALUE OF THE PROPERTY. One-shot (no re-assert). Returns the observed
 // property value (1/0) or a negative ProtectResult.
-int32_t SetActorBool(uintptr_t obj, uintptr_t classAddr, const char* propName, bool on);
+[[nodiscard]] int32_t SetActorBool(uintptr_t obj, uintptr_t classAddr, const char* propName, bool on);
 
 // Read-only companion to SetActorBool: resolve + read one reflected FBoolProperty
 // on an object. Returns the observed value (1/0) or a negative ProtectResult

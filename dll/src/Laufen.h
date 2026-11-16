@@ -98,12 +98,12 @@ int32_t GetKnob(int32_t knobId, KnobInfo& out);
 // first activation (and re-captures when the pawn changes — respawn). Starts
 // the re-assert worker. Returns the observed active state (1) or a negative
 // MoveResult. multiplier is clamped to [MOVE_MULT_MIN, MOVE_MULT_MAX].
-int32_t SetMultiplier(int32_t knobId, double multiplier);
+[[nodiscard]] int32_t SetMultiplier(int32_t knobId, double multiplier);
 
 // Disable a knob: best-effort restore the captured base, clear the override.
 // Stops the worker when no knob remains active. Returns MR_OK or a negative
 // MoveResult.
-int32_t ResetKnob(int32_t knobId);
+[[nodiscard]] int32_t ResetKnob(int32_t knobId);
 
 // One-call "set percent" entry point for the CE-Lua / mailbox path (and the
 // UI). `percent` is the USER-FACING slider value: 100 (±0.5) means OFF and calls
@@ -112,7 +112,7 @@ int32_t ResetKnob(int32_t knobId);
 // other knobs the multiplier is percent/100. Returns 1 (active), 0 (off via
 // 100%), or a negative MoveResult. This keeps the height↔velocity + "100% = off"
 // logic in ONE place (the DLL), so Lua just passes a percentage.
-int32_t SetKnobPercent(int32_t knobId, double percent);
+[[nodiscard]] int32_t SetKnobPercent(int32_t knobId, double percent);
 
 // === Gravity DIRECTION (UE5.3+ arbitrary gravity) ===
 
@@ -122,10 +122,10 @@ int32_t SetKnobPercent(int32_t knobId, double percent);
 // Sentinel: (0,0,0) means OFF — restore the captured default (a zero vector is
 // not a valid direction). Returns 1 (active), 0 (off via (0,0,0)), or a negative
 // MoveResult (MR_ERR_REFLECT when GravityDirection isn't reflected — pre-5.3).
-int32_t SetGravityDirection(double x, double y, double z);
+[[nodiscard]] int32_t SetGravityDirection(double x, double y, double z);
 
 // Restore GravityDirection to its captured default and stop holding it.
-int32_t ResetGravityDirection();
+[[nodiscard]] int32_t ResetGravityDirection();
 
 // Read the live gravity direction (+ owner/offset for Locate-in-GWorld).
 int32_t GetGravityDirection(GravDirInfo& out);
