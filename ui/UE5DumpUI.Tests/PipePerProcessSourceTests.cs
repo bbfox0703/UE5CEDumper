@@ -797,14 +797,15 @@ public sealed class PipePerProcessSourceTests
         string head = Between(fern, "std::string Fern::DispatchCommand(", "if (cmd == Renge::CMD_INIT) {");
         Assert.Contains("const bool inForce = HoldActive(h) || HoldPending(h, sender);", head);
         // The recorder's three branches: in force -> the caller (or a joiner of the caller's toggle); on its way -> its
-        // sender only; off -> nobody.
+        // sender only; off -> nobody (an invoke's toggle may still be queued: its caller).
         string recorder = Between(head, "struct HoldRecorder {", "} holdRecorder{");
         int active = recorder.IndexOf("if (HoldActive(h)) {", StringComparison.Ordinal);
         int joined = recorder.IndexOf("FrierenDebugCamera::ConsumeJoin(caller, joinedBy)", StringComparison.Ordinal);
         int setActive = recorder.IndexOf("Voll::Holds().SetOwner(h, joined ? joinedBy : caller);", StringComparison.Ordinal);
         int pendingAt = recorder.IndexOf("} else if (HoldPending(h, sender)) {", StringComparison.Ordinal);
         int senderOnly = recorder.IndexOf("if (sender == caller) Voll::Holds().SetOwner(h, caller);", StringComparison.Ordinal);
-        int off = recorder.IndexOf("Voll::Holds().SetOwner(h, Voll::kHoldOwnerNone);", StringComparison.Ordinal);
+        int off = recorder.IndexOf("Voll::Holds().SetOwner(h, invoke ? caller : Voll::kHoldOwnerNone);",
+            StringComparison.Ordinal);
         Assert.True(active > 0 && joined > active && setActive > joined && pendingAt > setActive && senderOnly > pendingAt
                     && off > senderOnly, "active (or its joiner), pending (its sender only), off (nobody) -- in order");
         Assert.DoesNotContain("HoldActive(h) || HoldPending(h) ? caller", head);

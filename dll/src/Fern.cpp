@@ -2652,7 +2652,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                             // was already queued) leaves the record as it is.
                             if (sender == caller) Voll::Holds().SetOwner(h, caller);
                         } else {
-                            Voll::Holds().SetOwner(h, Voll::kHoldOwnerNone);
+                            // An invoke's toggle may be queued behind a stalled game thread and turn the camera on
+                            // later, which FrierenDebugCamera's pending state does not track: it is the caller's then.
+                            // A hold that is off reads as free whoever is named.
+                            Voll::Holds().SetOwner(h, invoke ? caller : Voll::kHoldOwnerNone);
                         }
                     } catch (...) {
                         // A hold whose state cannot be read keeps the owner it had.
