@@ -27,6 +27,35 @@ builds ≤696 in
 
 -----
 
+## 2026-11-17 (build 3720) — `[[nodiscard]]` batch 2: a refused Fly preset is an error, not a silent no-op `[CPP-HARDENING-2026-11-14]`
+
+The second batch of the maintainer's C++ hardening item 1 (2026-11-14: cheap hardening instead of a Rust rewrite).
+- **What changes for a user:** `fly_set` with a key preset other than 0 (WASD), 1 (numpad) or 2 (arrows) used to be
+  dropped while the reply read as applied. It now answers an error and changes nothing in that request (not the speed,
+  noclip or ON/OFF it also carried), and records no holder. The UI, the MCP server and CE send only valid presets, so
+  this reaches a raw pipe client or a script.
+- **The batch:** 28 more DLL declarations are `[[nodiscard]]` -- the gameplay setters (god mode, movement, gravity
+  direction, time dilation, Fly, See-through, Keep Foreground, forced fields), the teleport API, and the
+  ProcessEvent hook's invoke and install entries. The compiler (`/we4834`, a build error) found the five discards
+  batch 1 had recorded: the preset above; Fly's speed and noclip setters, which cannot fail and stay unannotated; and
+  the shutdown's See-through and Keep Foreground OFFs, which return 0 by contract. The teleport's file-local helpers
+  were tried and left unannotated: every teleport measures where the pawn ended up afterwards, so their 9 discards are
+  by design.
+- **Review:** a fresh-context review with a verifier (1 LOW, 3 INFO, all confirmed and fixed before the build): the
+  shutdown's two warnings could never fire, a refused preset could still record a holder, a stale comment, a count.
+- **Proven live** on the AOT exe and DLL 3720 (DumperTest Shipping, UE 5.4): `tools/verify/flyset_preset_live.py` 4/4
+  -- preset 7 refused with the preset unchanged, preset 7 with a speed refused with neither changed, a valid preset
+  taken, the originals put back. Regressions: `mcp_client.py writes --toggle-experimental` 39/39 (Fly among them),
+  `holdsmore` 78/78, `raw` 28/28, `probe` 29/29.
+- **Also since 3719 (docs and rigs, no code):** the verification register's holder-labels batch is closed (rows 3-6
+  live: the experimental cards' chips, a restarted window's "exited" hold, a queued camera ON and an owed release --
+  that row's premise corrected, since a departed AI's queued ON is dropped and never runs -- and a CE invoke behind a
+  busy camera lock), and Phase 1b's row 3 (a Blueprint function under an invoke grant, the DLL's -28 naming the
+  override).
+- **Tests:** C# 8390 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4150, dll_core_test 1574 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; nodiscard_probe OK; 39 gates.
+- AOT UI 62,691,840 bytes (sha256 a055a972c7d6dbf7...); UE5Dumper.dll 3,794,944 bytes (sha256 e45e174c31b01b24...).
+
 ## 2026-11-17 (build 3719) — An AI's UFunction call: an object argument must be of the class its parameter declares `[INVOKE-OBJECT-PARAM-CLASS]`
 
 The LOW hardening item from Phase 1b's review, for `write_invoke` and `write_invoke_granted_function` alike.
