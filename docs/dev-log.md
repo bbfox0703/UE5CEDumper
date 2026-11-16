@@ -27,6 +27,49 @@ builds ≤696 in
 
 -----
 
+## 2026-11-17 (build 3718) — MCP field grants: one field of one class, approved once `[MCP-WRITE-GRANTS-2026-11-14]`
+
+Phase 2 of docs/mcp-write-approval-eval.md (§4.5): the typed twin of the UI's field edit, approved once per game run.
+- **What changes for a user of an AI client:** `grant_write_field_one_property_every_instance` asks once, for one game
+  run, to let the AI write ONE field of ONE class, named by the field and the class's full path as `read_class` shows
+  them (e.g. `HolderValue` and `//Script/DumperTest/DumperTestHolder`), on every live instance of that class and its
+  subclasses (other characters included), with any value its type allows. `write_field` then writes it without asking
+  again. `read_grants` names the field and counts its writes; `revoke_grants` ends one field's grant, named as
+  `read_grants` shows it. `write_memory` still asks every call, for anything else.
+- **What a field grant covers:** a number, a bool or an enum field, one element -- never a struct, a string, a
+  reference, a container or a static array, nor a struct's or a function's member. Each write goes to the address the
+  server computes from the granted class's layout, checked against the object's own walk; the gate passes the write
+  nowhere else, and it carries the bytes read just before it (expect). An enum takes one of its own entries (by its
+  qualified or short name, or its value; never its trailing `_MAX`, and nothing when the game's enum names could not
+  be read); a packed bool keeps its sibling bits; `42.0` or `1e3` for an integer reads as 42 or 1000.
+- **Refused:** a template -- a class default, one of its subobjects, a Blueprint component template -- by the DLL's
+  own verdict; a field of the same name on a class outside the grant's derivation; and a walk of another object than
+  the one resolved (freed, its slot reused).
+- **The DLL:** `get_object` now names its template verdict (`template`: "", "class_default" or "template"), so field
+  grants need DLL 3718; an older DLL is refused with that floor's own reason.
+- **The server's instructions** name the field grant; what stays after the session names
+  `write_invoke_granted_function` and `write_field` too; the per-call exceptions follow the server's refusal of an
+  invoke or a field grant, never a declined prompt or the user's block; a host that asks every call no longer names
+  tools it does not list. Under "Block AI writes", `write_field` answers with the block.
+- **Reviews:** two fresh-context rounds, each with an adversarial verifier. Round 1, 26 rows (3 MED: archetypes written
+  under a grant, and two in the live rig; 11 LOW; INFO) in 18 distinct issues, each fixed or covered by a test; round
+  2, 22 rows (LOW / INFO) in 12, fixed. Mutation checks: 8, 16 and 4 mutations, every one killed.
+- **Proven live** on the AOT exe and DLL 3718 (DumperTest Shipping, UE 5.4): `mcp_client.py fieldgrant` 33/33 --
+  grants refused for a struct, a static array, a short class name and a missing field; `HolderValue` granted on
+  `DumperTestHolder`, written unasked on a spawned `DumperTestDerivedHolder` (4321.5, read back) and put back byte for
+  byte; refused on a `DumperTestHolderDecoy` (the same field name, no derivation), on the class default and on
+  `Default__Character`'s movement component (an archetype named like any component); a float past its range refused;
+  a native bool set and cleared, a 4-byte enum set by its short name (`Wide_High`, all four bytes) and refused a value
+  that is no entry, each put back; one grant revoked while the others stand. Regressions: `probe` 29/29, `invokegrant`
+  22/22, `raw` 28/28, `invokeparams` 26/26 (+3/3 apart), `writes --toggle-experimental` 39/39, `holdsmore` 78/78;
+  `olddll` 41/41 on a fresh 3695 DLL (the field grant and `write_field` refused "older than 3718", nothing sent).
+- **Not seen live:** Claude Code's own prompt for the field grant (the session's server is an older build), a
+  Blueprint class's field and a packed bool on a live object (the fixture's flag is a native bool): the verification
+  register's new batch, each with its acceptance test.
+- **Tests:** C# 8379 passed, 1 skipped; headless 71/71; C++ dll_helpers_test 4150, dll_core_test 1574 checks,
+  utf8_helpers_test 287, grausam_window_test 22, sein_retention_test 30; 39 gates.
+- AOT UI 62,684,160 bytes (sha256 b8278dc7993e07f3...); UE5Dumper.dll 3,794,432 bytes (sha256 176a023f13160af1...).
+
 ## 2026-11-17 (build 3717) — MCP invoke grants: one game function, approved once `[MCP-WRITE-GRANTS-2026-11-14]`
 
 Phase 1b of docs/mcp-write-approval-eval.md (§4.4): CE's point for invoke, without unmarking arbitrary calls.
