@@ -767,6 +767,32 @@ public sealed class McpToolsTests
         Assert.DoesNotContain("write_mem", game.Commands);
     }
 
+    [Theory]
+    [InlineData("42.0", "2A000000")]    // a model's JSON number, parsed as the server receives it
+    [InlineData("1e3", "E8030000")]
+    [InlineData("\"42.0\"", "2A000000")]
+    public async Task WriteField_AnIntegralNumberWrittenAsADecimal_ReachesAnIntegerField(string json, string bytes)
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (payload, result) = await Call(game, Constants.McpFieldGrantedTool,
+            FieldWrite("HolderValue", JsonNode.Parse(json)!));
+        Assert.False(result.IsError, payload?.ToJsonString());
+        Assert.Equal(bytes, SentWrite(game)["bytes"]!.GetValue<string>());
+    }
+
+    [Theory]
+    [InlineData("42.5")]
+    [InlineData("1e300")]
+    public async Task WriteField_ANumberNoIntegerFieldHolds_IsStillRefused(string json)
+    {
+        var game = FieldGame();
+        await Call(game, Constants.McpGrantToolField, FieldGrantArgs());
+        var (_, result) = await Call(game, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", JsonNode.Parse(json)!));
+        Assert.True(result.IsError);
+        Assert.DoesNotContain("write_mem", game.Commands);
+    }
+
     [Fact]
     public async Task RevokeGrants_EndsOneFieldsGrant()
     {
