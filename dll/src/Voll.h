@@ -525,11 +525,47 @@ inline std::string InvokeRefusedForBackground(const std::string& funcName, uint3
     return {};
 }
 
-// Stub (red).
+// [MCP-WRITE-GRANTS-2026-11-14] Phase 1b. What a parameter list says about an invoke that reaches other functions or
+// properties by name, which a name list cannot see. `Field` is Ubel::ParamField's shape (name, typeName, structType,
+// objClass, and `sub`, a struct's members). Empty when it may go ahead.
+// - Always refused: a latent function. Its LatentActionInfo names the function the engine calls on CallbackTarget when
+//   it finishes (LatentActionManager: FindFunction(ExecutionFunction), then ProcessEvent): any function, refused ones
+//   included, behind numbers a prompt cannot show.
+// - Under a grant (`underGrant`), whose prompt shows no later call's arguments, also any parameter that hands the engine
+//   a function, an event or a property: a delegate, a property path, a UFunction object, or a string or name whose
+//   parameter name says so. A heuristic on the name: the scan's everyday names (SocketName, BoneName, LevelName, Tag)
+//   pass, while a few harmless ones (an animation's TransitionEvent) are refused under a grant and stay per call.
 template <typename Field>
 inline std::string InvokeParamIndirection(const std::vector<Field>& params, bool underGrant) {
-    (void)params;
-    (void)underGrant;
+    static constexpr const char* kNameLike[] = {"func", "event", "property", "command", "delegate", "callback"};
+    for (const Field& f : params) {
+        const std::string& t = f.typeName;
+        if (t == "StructProperty" && f.structType == "LatentActionInfo")
+            return "is latent: its LatentActionInfo names the function the engine calls when it finishes, which can be "
+                   "any function";
+        if (underGrant) {
+            if (t == "DelegateProperty" || t == "MulticastDelegateProperty" || t == "MulticastInlineDelegateProperty"
+                || t == "MulticastSparseDelegateProperty")
+                return "takes a delegate (" + f.name + "), which calls whatever function it is bound to";
+            if (t == "FieldPathProperty")
+                return "takes a property path (" + f.name + "), which reaches any property";
+            if (f.objClass == "Function")
+                return "takes a UFunction (" + f.name + "), which it can call";
+            if (t == "NameProperty" || t == "StrProperty" || t == "Utf8StrProperty" || t == "AnsiStrProperty"
+                || t == "TextProperty") {
+                std::string n;
+                n.reserve(f.name.size());
+                for (char c : f.name) n.push_back(static_cast<char>((c >= 'A' && c <= 'Z') ? c - 'A' + 'a' : c));
+                for (const char* token : kNameLike)
+                    if (n.find(token) != std::string::npos)
+                        return "takes a name (" + f.name + ") that says what to call or write";
+            }
+        }
+        if (!f.sub.empty()) {
+            std::string why = InvokeParamIndirection(f.sub, underGrant);
+            if (!why.empty()) return why;
+        }
+    }
     return {};
 }
 
