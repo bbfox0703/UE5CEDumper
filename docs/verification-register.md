@@ -845,7 +845,7 @@ log: "1 queued invoke(s) of it dropped, never run"). Not reached:
     game, `write_invoke` of `K2_SetActorLocation` with `NewLocation` {X, Y, Z} moves the actor; an object parameter
     given a field's address is refused; `SendToConsole` is refused by name.
 
-### ⬜ MCP write grants, Phase 1 — live checks `[MCP-WRITE-GRANTS-2026-11-14]`
+### ✅ MCP write grants, Phase 1 — live checks, all five closed 2026-11-16 `[MCP-WRITE-GRANTS-2026-11-14]`
 
 Phase 1 of the write grants, build 3714 (`McpGrants`, the grant tools, the Block AI writes switch, the agent guard,
 See-through's own-claim OFF) -- dev-log 3714, docs/mcp-write-approval-eval.md. Unit-tested and `mcp_client.py probe`
@@ -921,9 +921,21 @@ session yet. `[MCP-WRITE-GRANTS-2026-11-14]`
     `write_god_mode` is denied with the guard's reason and nothing reaches the pipe (no `set_god_mode` in the DLL's
     pipe log), while the main conversation's call goes on to the usual prompt. Also record whether a workflow agent's
     call carries `agent_id` (the hooks reference does not say).
-5. ⬜ **See-through's own-claim OFF.** Acceptance: the UI's card turns See-through on, the AI turns it on and then off:
-    the reply says it stays on, the DLL logs "own claim released", and the occluders stay hidden; with only the AI's
-    claim, its OFF turns See-through off. Against a DLL older than 3714 the OFF is refused before anything is sent.
+5. ✅ **CLOSED 2026-11-16, with two parts left to the unit tests** (`mcp_client.py writes` on DumperTest Shipping, the
+    AOT exe and DLL 3715, the UI's card played by the rig's foreground pipe client):
+    - **The AI's claim alone:** `write_see_through` OFF answered `released: off`, `active: false`; the DLL logged
+      `seethrough_set: own claim released (2)` (`OwnerRelease::TurnOff`).
+    - **Beside the UI's claim:** OFF answered `released: still_held`, `active: true` with the note "See-through stays
+      on: the UE5DumpUI window or a Cheat Engine record also has it on"; the DLL logged `own claim released (1)`
+      (`StillHeld`); the stand-in then read `active: true, claims: 1, you: true`, its own claim intact.
+    - **Not measured live:** that the occluders stay hidden (none stood between the fixture's camera and pawn:
+      `hidden_count` 0 throughout), and the refusal on a DLL of 3705-3713 (no such DLL is kept; on 3695 `olddll`
+      refuses every write with the general build text first). `McpToolsTests.SeeThroughOff_OnAnOlderDll_IsRefused_AndNothingIsSent`
+      and `McpGameLinkTests.AnOwnClaimOff_GoesOnlyToADllThatKnowsIt` cover the refusal.
+
+    *Was:* Acceptance: the UI's card turns See-through on, the AI turns it on and then off: the reply says it stays on,
+    the DLL logs "own claim released", and the occluders stay hidden; with only the AI's claim, its OFF turns
+    See-through off. Against a DLL older than 3714 the OFF is refused before anything is sent.
 
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 
@@ -1081,7 +1093,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`14` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`13` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
