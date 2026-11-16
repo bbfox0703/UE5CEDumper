@@ -96,9 +96,11 @@ internal sealed class McpServer
         + McpGrants.Covers(McpGrantKind.Movement) + ". Call a grant only after the user asked for a change it covers, "
         + "never in advance, and first say in chat what it covers and that it lasts until the game run or this "
         + "session ends. A write that needs a grant is refused, naming it. Turning off and resetting the holds this "
-        + "server took need no grant, and See-through's OFF ends only this server's claim. write_memory, write_invoke "
+        + "server took need no grant. write_memory, write_invoke "
         + "and write_force_field take no grant and are asked about on every call; " + Constants.McpGrantToolInvoke
-        + " lets " + Constants.McpInvokeGrantedTool + " call one UFunction, named by function and class path, unasked. "
+        + " lets " + Constants.McpInvokeGrantedTool + " call one UFunction, named by function and class path, unasked; "
+        + Constants.McpGrantToolField + " lets " + Constants.McpFieldGrantedTool + " write one field of one class, "
+        + "unasked. "
         + "Claude Code asks the user before each grant and each of those three; other MCP hosts decide for themselves "
         + "whether to ask, so do not tell the user that every host asks. read_grants lists this session's grants; "
         + "revoke_grants ends them and releases no hold. A dropped pipe connection releases the holds but keeps the "
@@ -109,18 +111,17 @@ internal sealed class McpServer
         + "Cheat Engine record or another session holds: such a call is refused, naming the holder (read_holds shows "
         + "who holds what). The rule binds this server only: the user's UE5DumpUI window and Cheat Engine records can "
         + "change or end anything this server holds at any time, and it is then theirs. The holds this server takes "
-        + "are released when the session ends; Fly's speed, preset and noclip stay, and what write_invoke or "
-        + "write_memory did stays. write_memory writes data only and needs the bytes read there first "
+        + "are released when the session ends; Fly's speed, preset and noclip stay, and what write_invoke, "
+        + "write_memory or write_field did stays. write_memory writes data only and needs the bytes read there first "
         + "(expect). write_invoke calls a UFunction on the game thread with its parameters by name; a queued one "
-        + "(-5) runs later, so never send it again. Teleport takes explicit "
-        + "coordinates (read_pose first) and leaves the user's markers and undo point alone. Fly, see-through, Keep "
-        + "Foreground and forced fields follow the UI's experimental switch. The user can turn on \"Block AI "
+        + "(-5) runs later, so never send it again. The user can turn on \"Block AI "
         + "writes\" in the UE5DumpUI window: every change is then refused, turning off or resetting what this server "
         + "holds still works, and every grant ends; such a refusal means stop. ";
 
     private const string Declined =
-        "A declined prompt or a refused grant means no: never try another route to the same change. The one exception: "
-        + "when the server refuses an invoke grant, write_invoke, asked every call, may still be offered.\n";
+        "A declined prompt or a refused grant means no: never try another route to the same change. The exceptions: "
+        + "when the server refuses an invoke or a field grant, write_invoke or write_memory, asked every call, may "
+        + "still be offered.\n";
 
     private const string Tail =
         "Calls run one at a time on this server's own pipe connection; a UE5DumpUI window has its own connections and "

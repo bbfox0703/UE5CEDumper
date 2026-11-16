@@ -381,7 +381,8 @@ internal static class McpWriteTools
     /// back in <c>from</c>, so the AI can return on its own.</summary>
     private static McpTool Teleport(IMcpGame game, Func<bool> experimentalEnabled, McpGrants grants) => new(
         "write_teleport", "Teleport",
-        "Moves the player pawn to explicit world coordinates (and rotation, when given). Returns the pose it left in "
+        "Moves the player pawn to explicit world coordinates (and rotation, when given); read_pose gives where it is "
+        + "now. Returns the pose it left in "
         + "\"from\", to return to. Leaves the user's marker slots and \"Recall last\" alone. A point in the air or the "
         + "void can kill the pawn; some games do not respawn it.",
         McpSchema.Object(("x", McpSchema.Number("World X."), true), ("y", McpSchema.Number("World Y."), true),
