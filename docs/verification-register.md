@@ -862,10 +862,22 @@ session yet. `[MCP-WRITE-GRANTS-2026-11-14]`
 2. ⬜ **The write rigs against the 3714 DLL.** Acceptance: on DumperTest Shipping with the published DLL and AOT exe,
     `mcp_client.py writes`, `raw`, `holdsmore` and `invokeparams` pass with their grant steps (a covered write before
     its grant refused naming it), and `olddll` against `copy3695` refuses both grants with the build text.
-3. ⬜ **Block AI writes against a running server.** Acceptance: with the AI holding god mode under a grant, ticking the
-    switch in the window makes the AI's `write_god_mode` ON refused with the switch's text while its OFF of its own
-    hold goes through; unticking does not bring the grant back (the next ON is refused naming the grant); the server's
-    log has the "grant(s) revoked" line; the card's OFF in the window ends the AI's hold at any time.
+3. ✅ **CLOSED 2026-11-16** (the maintainer ticking the switch in the AOT window 3714; Claude Code 2.1.325; DumperTest
+    Shipping pid 4640). From the window's log, the server's log and the DLL's pipe log:
+    - 19:07:26 ticked (`ai-writes.json` blocked, stamp 1); at the AI's next call (19:08:02) the server logged "Block AI
+      writes was turned on: 1 grant(s) revoked" and refused `write_god_mode` ON with the switch's text.
+    - 19:08:45 unticked (the stamp stays 1); the next ON was refused naming the grant, and `read_grants` was empty.
+    - 19:09:05 Grant 2 (a new prompt, Allowed); 19:09:06 `set_god_mode: enable=1`, held by the server.
+    - 19:09:15 ticked again (stamp 2); 19:09:26 the server revoked Grant 2, `write_time_dilation` 0.5 was refused with
+      the switch's text and reached nothing (no `set_time_dilation` in the DLL's log), and `write_god_mode` OFF of the
+      server's own hold went through (`set_god_mode: enable=0`).
+    - Not re-run here: the card's OFF ending an AI's hold is D2's existing behaviour (a UI request carries no
+      `if_free`), shown live for the debug camera in `[PIPE-PER-PROCESS-2026-11-06]` item 24.
+
+    *Was:* Acceptance: with the AI holding god mode under a grant, ticking the switch in the window makes the AI's
+    `write_god_mode` ON refused with the switch's text while its OFF of its own hold goes through; unticking does not
+    bring the grant back (the next ON is refused naming the grant); the server's log has the "grant(s) revoked" line;
+    the card's OFF in the window ends the AI's hold at any time.
 4. ✅ **CLOSED 2026-11-16** (Claude Code 2.1.325 desktop Code tab, AOT exe and DLL 3714, DumperTest Shipping pid 4640).
     The user-level entry `^mcp__ue5cedumper__(write|grant)_.*$` -> `"<path>/UE5DumpUI.exe" --mcp-agent-guard`, the
     string-command form docs/mcp.md gives, ran on Windows as written.
