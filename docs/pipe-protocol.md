@@ -47,8 +47,12 @@ Total commands: **107** — a DERIVED number, regenerate it, never hand-edit:
   mailbox, or none. After a command that changes a hold, an active hold is the caller's and one that is
   off is nobody's. An `invoke_function` of `ToggleDebugCamera`, `EnableDebugCamera` or
   `DisableDebugCamera` (any case) from a client that is not background changes the debug camera too
-  (build 3716+), as the UI's Console panel runs it; a background client's is refused before it runs and
-  changes no hold. A toggle in the game's own console reaches no ledger.
+  (build 3716+), as the UI's Console panel runs it, and names its caller even when the camera is off
+  after it: its toggle may still be queued behind a stalled game thread and turn the camera on later.
+  A background client's is refused before it runs and changes no hold. CE's mailbox `INVOKE` and
+  `INVOKE_BY_NAME` of those functions name CE, as its `SET_DEBUG_CAMERA` does, unless another writer
+  holds the camera's lock at that moment: the invoke then runs unrecorded rather than wait. A toggle in
+  the game's own console reaches no ledger.
   - **`"if_free": true`** (bool, optional, on any of those commands): refuse when the hold is active and
     anyone else holds it -- an active hold with no recorded owner counts as someone else's. The answer is
     `ok: true` with `"code": -20`, `"hold"` (its name) and `"holder"` (below); nothing changes. The check
