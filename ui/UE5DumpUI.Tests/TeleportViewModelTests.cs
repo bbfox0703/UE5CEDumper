@@ -587,13 +587,20 @@ public class TeleportViewModelTests
             new() { ClassName = "BP_Player_C", FieldName = "Visibility", Score = 9 },
         };
         await vm.DetectStealthMeterCommand.ExecuteAsync(null);
-        dump.NextHolds = Report(
-            HeldBy(Constants.HoldForceFieldPrefix + "BP_Player_C" + Constants.HoldForceFieldSeparator + "Visibility"),
-            HeldBy(Constants.HoldForceFieldPrefix + "bp_player_c" + Constants.HoldForceFieldSeparator + "Visibility",
-                kind: "ce", pid: null, background: false));
-        await vm.PollHoldsOnceAsync();
         // Matched whole and ordinally: a job on another spelling is another job, which this card's Reset does not end.
+        // Listed first, so a looser match would name it (review: listed second, nothing could tell).
+        var otherSpelling = HeldBy(Constants.HoldForceFieldPrefix + "bp_player_c" + Constants.HoldForceFieldSeparator
+                                   + "Visibility", kind: "ce", pid: null, background: false);
+        var longer = HeldBy(Constants.HoldForceFieldPrefix + "BP_Player_C" + Constants.HoldForceFieldSeparator
+                            + "VisibilityScale", pid: OtherPid, background: false);
+        dump.NextHolds = Report(otherSpelling, longer,
+            HeldBy(Constants.HoldForceFieldPrefix + "BP_Player_C" + Constants.HoldForceFieldSeparator + "Visibility"));
+        await vm.PollHoldsOnceAsync();
         Assert.Equal("Held by an AI session (pid 8048)", vm.StealthHolderText);
+
+        dump.NextHolds = Report(otherSpelling, longer);   // only the jobs on other names
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("", vm.StealthHolderText);
     }
 
     private const string StealthJob = Constants.HoldForceFieldPrefix + "BP_Player_C"
