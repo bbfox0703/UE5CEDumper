@@ -1150,6 +1150,30 @@ public sealed class McpToolsTests
         }
     }
 
+    [Fact]
+    public async Task WhileTheUserBlocksAiWrites_TheGrantedInvokeAndFieldTools_SayTheBlock()
+    {
+        // The block ends every grant, so a tool that looks for its grant first would answer "ask for a grant, or use
+        // write_memory" -- two routes the block forbids -- instead of the block's own "stop".
+        var field = FieldGame();
+        await Call(field, Constants.McpGrantToolField, FieldGrantArgs());
+        var invoke = InvokeGrantGame(HiddenFn());
+        await Call(invoke, Constants.McpGrantToolInvoke, GrantArgs());
+        foreach (var (game, tool, args) in new[]
+                 {
+                     (field, Constants.McpFieldGrantedTool, FieldWrite("HolderValue", 42)),
+                     (invoke, Constants.McpInvokeGrantedTool, HiddenCall()),
+                 })
+        {
+            // Turning the switch on writes a new stamp, which ends every grant at the server's next look.
+            game.Block = new AiWriteBlockState(true, 1, false);
+            var (payload, result) = await Call(game, tool, args);
+            Assert.True(result.IsError, tool);
+            Assert.Contains("Block AI writes", ErrorOf(payload));
+            Assert.DoesNotContain("write_memory", ErrorOf(payload));
+        }
+    }
+
     [Theory]
     [InlineData("write_god_mode", """{"enable":false}""", "set_god_mode")]
     [InlineData("write_movement", """{"knob":"jump","reset":true}""", "reset_movement")]
