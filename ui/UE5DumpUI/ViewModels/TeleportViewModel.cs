@@ -30,6 +30,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     // trainer-flavoured cards added after v1817 — Keep Foreground, Fly, Standalone
     // trainer export — plus their split-out hotkey card. Null in headless tests.
     private readonly IExperimentalGate? _experimentalGate;
+    private readonly IAiWriteBlockGate? _aiWriteBlock;
     private readonly TeleportHotkeyStore? _hotkeyStore;
     private IGlobalHotkeyRegistration? _cursorHotkey;
     // Live marker-hotkey registrations + the persisted combos, both keyed by
@@ -81,6 +82,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         _globalHotkeys = globalHotkeys;
         _experimentalGate = experimentalGate;
         _coordStore = coordStore;
+        _aiWriteBlock = aiWriteBlock;
+        if (_aiWriteBlock != null) _aiWriteBlock.Changed += OnAiWriteBlockChanged;
         _coordFilterMemory = new KeywordSearchMemory(
             () => (CoordFilterText, CoordResults.Count > 0));
         CoordGroups.Add(CoordAllGroups);
@@ -3904,11 +3907,33 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// </summary>
     internal bool HasCoordStore => _coordStore != null;
 
-    // RED: the surface only.
-    public bool BlockAiWrites { get => false; set { } }
-    public bool HasAiWriteBlock => false;
+    // ── Block AI writes ([MCP-WRITE-GRANTS-2026-11-14] §4.10) ──
+
+    /// <summary>The "Block AI writes" switch: while ticked, every MCP server refuses every change but an OFF or a reset
+    /// of its own holds, and each tick ends every AI session's grants. The cards' OFF and Reset then take back what an
+    /// AI holds. A tick whose save did not land is put back, with a status line, since the servers never saw it.
+    /// </summary>
+    public bool BlockAiWrites
+    {
+        get => _aiWriteBlock?.IsBlocked ?? false;
+        set
+        {
+            if (_aiWriteBlock == null || _aiWriteBlock.IsBlocked == value) return;
+            if (!_aiWriteBlock.TrySetBlocked(value))
+                StatusText = BlockAiSaveFailedText;
+            OnPropertyChanged();   // the box shows what the file holds, whether or not the save landed
+        }
+    }
+
+    /// <summary>Whether the window was given the switch (CompositionRootWiringTests; the view shows it only then).
+    /// </summary>
+    public bool HasAiWriteBlock => _aiWriteBlock != null;
+
     internal const string KeyBlockAiSaveFailed = "str.TP.BlockAiSaveFailed";
-    internal static string BlockAiSaveFailedText => "";
+    internal static string BlockAiSaveFailedText => AobMakerStatus.Say(KeyBlockAiSaveFailed,
+        "Block AI writes could not be saved, so AI sessions do not see the change and the box shows the switch as it was. Try again.");
+
+    private void OnAiWriteBlockChanged(object? sender, EventArgs e) => OnPropertyChanged(nameof(BlockAiWrites));
 
     private string _activeCoordKey = "";
 
@@ -5920,6 +5945,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
         if (_experimentalGate != null)
             _experimentalGate.Changed -= OnExperimentalGateChanged;
+        if (_aiWriteBlock != null)
+            _aiWriteBlock.Changed -= OnAiWriteBlockChanged;
         _cursorHotkey?.Dispose();
         _cursorHotkey = null;
         foreach (var live in _markerHotkeys.Values) live.Registration.Dispose();
