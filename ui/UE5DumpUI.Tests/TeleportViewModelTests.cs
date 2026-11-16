@@ -721,6 +721,50 @@ public class TeleportViewModelTests
         Assert.Equal("OFF", vm.SeeThroughState);
     }
 
+    // [MCP-WRITE-GRANTS-2026-11-14] review: get_debug_camera_state reads OFF until a queued ON's toggle runs, so a
+    // read then would replace the card's "Queued" ([W3-DEBUGCAM-QUEUED]) with an OFF the game is about to undo.
+    [Fact]
+    public async Task ADebugCameraOnOnItsWay_IsShownQueued_AndReadOnceItRuns()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        dump.NextDebugCameraState = 0;
+        dump.NextHolds = Report(HeldBy(Constants.HoldDebugCamera, active: false, pending: true));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("Queued", vm.DebugCameraState);
+        Assert.Equal(0, dump.GetDebugCameraCalls);
+
+        dump.NextDebugCameraState = 1;   // the toggle ran
+        dump.NextHolds = Report(HeldBy(Constants.HoldDebugCamera));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("ON", vm.DebugCameraState);
+    }
+
+    [Fact]
+    public async Task AQueuedOnTheWindowJoined_StaysQueued_UntilItRuns()
+    {
+        var (vm, dump) = HoldsVm();
+        await vm.HoldsFirstPoll;
+        dump.NextDebugCameraState = 0;
+        dump.NextHolds = Report(HeldBy(Constants.HoldDebugCamera, active: false, pending: true));
+        await vm.PollHoldsOnceAsync();
+
+        // The window's Force ON joins the AI's queued toggle and is told it is its own: no longer someone else's.
+        dump.NextHolds = Report(HeldBy(Constants.HoldDebugCamera, active: false, pending: true, you: true,
+            background: false));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("", vm.DebugCameraHolderText);
+        Assert.Equal("Queued", vm.DebugCameraState);
+        Assert.Equal(0, dump.GetDebugCameraCalls);
+
+        dump.NextDebugCameraState = 1;
+        dump.NextHolds = Report(HeldBy(Constants.HoldDebugCamera, you: true, background: false));
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal("ON", vm.DebugCameraState);
+        await vm.PollHoldsOnceAsync();
+        Assert.Equal(1, dump.GetDebugCameraCalls);   // read once it ran, then the window's own: read on use
+    }
+
     [Theory]
     [InlineData(0, false)]                                // an engine state that names no build
     [InlineData(Constants.HoldsMinDllBuild - 1, false)]   // a DLL that answers get_holds with an error
