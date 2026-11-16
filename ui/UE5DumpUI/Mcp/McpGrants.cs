@@ -671,11 +671,15 @@ public sealed partial class McpGrants
 
     /// <summary>The fields this game run's field grants name, which write_field resolves an instance's class chain
     /// against. A grant of another run (an earlier one of a reused pid, another game) would end the walk at a class whose
-    /// admission, keyed on this run, then fails.</summary>
-    public IReadOnlySet<string> FieldTargets(JsonObject ptrs)
+    /// admission, keyed on this run, then fails.
+    /// <para>Under the user's block, <paramref name="blocked"/> says so and the set is empty: the block ended every grant,
+    /// and "no grant covers it" would send the model after a grant or write_memory, which the block forbids.</para>
+    /// </summary>
+    public IReadOnlySet<string> FieldTargets(JsonObject ptrs, out string? blocked)
     {
-        LookAtBlock();
-        if (!TryRun(ptrs, out long pid, out string creationTime, out _)) return new HashSet<string>();
+        blocked = LookAtBlock();
+        if (blocked is not null || !TryRun(ptrs, out long pid, out string creationTime, out _))
+            return new HashSet<string>();
         lock (_lock)
             return _grants.Where(e => e.Kind == McpGrantKind.Field && e.Pid == pid
                                       && string.Equals(e.CreationTime, creationTime, StringComparison.Ordinal))

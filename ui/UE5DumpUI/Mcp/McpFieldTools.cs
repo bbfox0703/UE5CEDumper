@@ -127,8 +127,10 @@ internal static class McpFieldTools
                                            : "a template (a class default's subobject or a Blueprint component template)")
                                        + ": what it holds reaches every instance spawned later, and a field grant covers "
                                        + "live instances." + Instead);
-            var (target, meta) = await GrantedFieldAsync(game, grants.FieldTargets(ptrs), pid,
-                McpJson.GetString(obj, "class_addr"), field, timeout, ct);
+            var targets = grants.FieldTargets(ptrs, out string? blocked);
+            if (blocked is not null) throw new McpToolError("Not changed: " + blocked);
+            var (target, meta) = await GrantedFieldAsync(game, targets, pid, McpJson.GetString(obj, "class_addr"), field,
+                timeout, ct);
 
             var walked = await game.SendAsync(pid, new JsonObject { ["cmd"] = "walk_instance", ["addr"] = inst }, timeout,
                 ct, requireScan: true);
