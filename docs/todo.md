@@ -101,7 +101,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **16 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **15 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -875,8 +875,10 @@ claim; a release needs `if_free`; the time-dilation wording). Open, in order:
   1"). The default (Manual) permission mode stays with Phase 0's M2-M5: the maintainer runs auto mode.
 - ~~`[MCP-GRANT-USES-RELEASES]`~~ ✅ fixed 2026-11-16 (the uses count no longer counts releases).
 - ~~**The cards' holder labels**~~ ✅ shipped in build 3716 (dev-log 3716), after three review rounds; proven live
-  (verification-register.md, "The cards' holder labels": items 1-2 closed, the edge states 3-6 open, each with its
-  acceptance test). The DLL now records who toggles the debug camera through an invoke of its own functions.
+  (verification-register.md, "The cards' holder labels": all six closed, the edge states 3-6 on 2026-11-17 with
+  build 3719; row 5's premise was corrected -- a departed AI's queued camera ON is dropped, and an OFF is owed only
+  when the camera is on as it leaves). The DLL now records who toggles the debug camera through an invoke of its own
+  functions.
 - ~~**Phase 1b, invoke grants**~~ ✅ shipped in build 3717 (dev-log 3717): one UFunction per grant, the AI's invoke
   deny list from a scan of the UE 4.18-5.8 sources; proven live (verification-register.md, "MCP invoke grants, Phase
   1b": item 1 closed, the Claude Code prompt and a Blueprint function open).

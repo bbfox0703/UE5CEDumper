@@ -937,7 +937,7 @@ session yet. `[MCP-WRITE-GRANTS-2026-11-14]`
     the DLL logs "own claim released", and the occluders stay hidden; with only the AI's claim, its OFF turns
     See-through off. Against a DLL older than 3714 the OFF is refused before anything is sent.
 
-### ⬜ The cards' holder labels (build 3716) — what the live checks did not reach `[MCP-WRITE-GRANTS-2026-11-14]`
+### ✅ The cards' holder labels (build 3716) — live checks, all six closed 2026-11-17 `[MCP-WRITE-GRANTS-2026-11-14]`
 
 Each gameplay card on the Teleport tab names who other than the window holds its feature, from `get_holds` every 2 s,
 and follows that holder's value -- dev-log 3716, docs/mcp-write-approval-eval.md §4.10. Three review rounds; unit
@@ -986,12 +986,24 @@ tests (`TeleportViewModelTests` holds poll, `HolderTextTests`, `AiWriteBlockGate
     The window started again (pid 10044) and connected: its God Mode card read State ON, "Held by a program that has
     exited (pid 1264)". Its Force OFF turned it off and cleared the chip; `get_holds` then read inactive, holder none
     (godmode 0).
-5. ⬜ **A queued debug-camera ON and an owed release.** Acceptance (DumperTest58 Development, the game thread frozen
-    with `tools/verify/suspend.py`): a background client's `set_debug_camera` ON answers -5; `get_holds` reads
-    `pending: true` with that client; the window's Debug Camera card reads Queued with "Held by an AI session (pid N)"
-    and sends no `get_debug_camera_state` while pending (DLL pipe log). Then, still frozen, the client exits:
-    `get_holds` reads `release_owed: true`, kind none, and the card reads "Turning off: the AI session that held it
-    has ended"; after the resume the camera turns off and the chip goes.
+5. ✅ **CLOSED 2026-11-17, its premise corrected** (AOT exe and DLL 3719, DumperTest58 Development pid 21556, UE 5.8,
+    the window connected on the Debug Camera card; `tools/verify/dbgcam_ledger_live.py --ui-queued --suspend-name
+    DumperTest58 --seconds 30` 9/9, log `out/dbgcam_uiqueued_3719.log`; the cards read by screenshot).
+    - **A, queued:** game thread frozen; the background client's (pid 14868) `set_debug_camera` ON answered -5 and
+      `get_holds` read it pending, the client's; the card read State Queued, "Held by an AI session (pid 14868)"; the
+      window sent no `get_debug_camera_state` in the 30 s it was pending (pipe log: 0). Resumed, the queued ON ran:
+      camera on, held by the client.
+    - **B, owed:** frozen again with the camera on, the client exited: `get_holds` read `release_owed`, kind none; the
+      card read State ON, "Turning off: the AI session that held it has ended". Resumed, the owed OFF was sent: camera
+      off, the hold nobody's, the card OFF with no chip.
+    - **C, dropped:** a second background client's ON queued (-5, pending), then the client exited while still frozen:
+      the hold read nobody's at once, nothing owed, and after the resume the camera stayed off -- the DLL drops a
+      departed background client's queued invokes first (Fern.cpp, [D2-3-INVOKE]), so that ON never ran.
+    - **Premise corrected:** the acceptance had the client exit while its ON was still queued and expected an owed
+      release. The first run (log `out/dbgcam_uiqueued_3719_firstpremise.log`, 4 of 5) showed what the DLL does
+      instead: case C. An OFF is owed only when the camera is ON as its holder leaves with the game thread stalled.
+      *Was:* "Then, still frozen, the client exits: get_holds reads release_owed: true, kind none, and the card reads
+      'Turning off: ...'; after the resume the camera turns off and the chip goes." 
 6. ✅ **CLOSED 2026-11-17** (DLL 3719, DumperTest58 Development pid 13776, UE 5.8, 35,859 objects;
     `tools/verify/dbgcam_ledger_live.py --busy-lock --suspend-name DumperTest58` 7/7, log
     `out/dbgcam_busylock_3719.log`). The game thread (tid 33700) suspended; a second foreground client's
@@ -1231,7 +1243,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`16` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`15` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
