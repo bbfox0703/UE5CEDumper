@@ -686,6 +686,24 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("HandleInvoke();", held);
     }
 
+    /// <summary>[MCP-WRITE-GRANTS-2026-11-14] review round 3: a pipe writer holds the camera's lock across its own
+    /// game-thread wait (up to the invoke timeout, 5 s by default, more by override), and the mailbox has one poller. A
+    /// CE invoke that waited for the lock and then for its own toggle passed CE's 10 s deadline, reporting "did not
+    /// finish" where it used to answer "queued". Busy, it runs unrecorded instead, as every mailbox invoke did before.
+    /// </summary>
+    [Fact]
+    public void TheMailboxsCameraInvoke_NeverWaitsForTheHoldsLock()
+    {
+        string mimic = CodeOnly(DllSrc("Mimic.cpp"));
+        string held = Between(mimic, "static void HandleInvokeHeld() {", "\nstatic void ");
+        Assert.Contains("TryChangeHoldAsCe(Grimoire::HOLD_DEBUG_CAMERA", held);
+        string tryChange = Between(mimic, "static bool TryChangeHoldAsCe(const std::string& hold, Change&& change) {",
+            "\n}");
+        Assert.Contains("std::try_to_lock", tryChange);
+        Assert.DoesNotContain("std::lock_guard", tryChange);
+        Assert.Contains("RecordCeChange(hold);", tryChange);   // recorded as ChangeHoldAsCe records, when it got the lock
+    }
+
     /// <summary>Every pipe command that turns a hold on, off or changes it names that hold: one the ledger missed
     /// would let an if_free request through and never be released.</summary>
     [Fact]
