@@ -89,6 +89,11 @@ public sealed class McpInvokeRulesTests
             parms: P("Info", "StructProperty", structName: "MyInfo",
                 fields: [new DynamicStructField("EventName", "NameProperty", 0, 8)]))));   // a struct member, one deep
         Assert.NotNull(McpInvokeRules.WhyNotGrantable(Fn("SetLabel", parms: P("Label", "TextProperty"))));
+        // A struct that wraps a name, named for an event: SendGameplayEventToActor's FGameplayTag EventTag.
+        Assert.NotNull(McpInvokeRules.WhyNotGrantable(Fn("SendGameplayEventToActor",
+            parms: [P("Actor", "ObjectProperty", objClass: "Actor"),
+                    P("EventTag", "StructProperty", structName: "GameplayTag",
+                        fields: [new DynamicStructField("TagName", "NameProperty", 0, 8)])])));
         Assert.NotNull(McpInvokeRules.WhyNotGrantable(Fn("Run", parms: P("Func", "ObjectProperty", objClass: "Function"))));
     }
 }

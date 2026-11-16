@@ -658,6 +658,14 @@ static void Test_Voll_InvokeParamIndirection() {
            !InvokeParamIndirection(std::vector<Ubel::ParamField>{
                PF("Info", "StructProperty", "MyInfo", "", {PF("Inner", "StructProperty", "MyInner", "",
                                                                 {PF("EventName", "StrProperty")})})}, true).empty());
+    // Review: a struct that wraps a name (FGameplayTag EventTag: its one member is TagName) names an event by its
+    // parameter's name; SendGameplayEventToActor fires any gameplay event that way.
+    EXPECT("params * : under a grant, a struct parameter named for an event is refused",
+           !InvokeParamIndirection(std::vector<Ubel::ParamField>{
+               PF("Actor", "ObjectProperty", "", "Actor"),
+               PF("EventTag", "StructProperty", "GameplayTag", "", {PF("TagName", "NameProperty")})}, true).empty());
+    EXPECT("params: and allowed per call", InvokeParamIndirection(std::vector<Ubel::ParamField>{
+               PF("EventTag", "StructProperty", "GameplayTag", "", {PF("TagName", "NameProperty")})}, false).empty());
     // Controls: the everyday names (a socket, a bone, a level, a tag) and non-string types pass, granted or not.
     const std::vector<Ubel::ParamField> everyday = {
         PF("SocketName", "NameProperty"), PF("BoneName", "NameProperty"), PF("LevelName", "NameProperty"),
