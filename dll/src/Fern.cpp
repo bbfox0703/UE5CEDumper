@@ -2633,6 +2633,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         struct HoldRecorder {
             const std::vector<std::string>& holds;
             uint64_t caller;
+            bool invoke;   // an invoke_function of the debug camera's own functions (Voll::HoldsChangedBy)
             ~HoldRecorder() {
                 for (const auto& h : holds) {
                     try {
@@ -2640,8 +2641,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                         uint64_t joinedBy = 0;
                         if (HoldActive(h)) {
                             // [D2-3-INVOKE] The camera came on by this command's toggle, which a foreground client
-                            // joined while it was pending: the joiner was told it was its own, so it holds it.
-                            const bool joined = h == Grimoire::HOLD_DEBUG_CAMERA
+                            // joined while it was pending: the joiner was told it was its own, so it holds it. Only
+                            // set_debug_camera's toggles carry a join: an invoke sends none, and consuming one left
+                            // from before would hand the camera this invoke turned on to that old joiner.
+                            const bool joined = !invoke && h == Grimoire::HOLD_DEBUG_CAMERA
                                                 && FrierenDebugCamera::ConsumeJoin(caller, joinedBy);
                             Voll::Holds().SetOwner(h, joined ? joinedBy : caller);
                         } else if (HoldPending(h, sender)) {
@@ -2656,7 +2659,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     }
                 }
             }
-        } holdRecorder{holds, conn->ownerKey};
+        } holdRecorder{holds, conn->ownerKey, cmd == Renge::CMD_INVOKE_FUNCTION};
 
         if (cmd == Renge::CMD_INIT) {
             extern uint32_t g_cachedUEVersion;

@@ -2733,8 +2733,8 @@ public class InvokeScriptTests
         }
 
         var fern = CodeOnly(DllSource("Fern.cpp"));
-        int start = fern.IndexOf("cmd == Renge::CMD_INVOKE_FUNCTION", StringComparison.Ordinal);
-        int next = fern.IndexOf("cmd == Renge::CMD_", start + 1, StringComparison.Ordinal);
+        int start = fern.IndexOf("if (cmd == Renge::CMD_INVOKE_FUNCTION) {", StringComparison.Ordinal);
+        int next = fern.IndexOf("cmd == Renge::CMD_", start + "if (cmd == ".Length, StringComparison.Ordinal);
         Assert.True(start > 0 && next > start, "invoke_function's block not found -- re-point this pin");
         var invoke = fern[start..next];
         Assert.Contains("Aura::ResolveUserInstance(className)", invoke, StringComparison.Ordinal);
@@ -3005,8 +3005,9 @@ public class InvokeScriptTests
         }
 
         var fern = CodeOnly(DllSource("Fern.cpp"));
-        int start = fern.IndexOf("cmd == Renge::CMD_INVOKE_FUNCTION", StringComparison.Ordinal);
-        var invoke = fern[start..fern.IndexOf("cmd == Renge::CMD_", start + 1, StringComparison.Ordinal)];
+        int start = fern.IndexOf("if (cmd == Renge::CMD_INVOKE_FUNCTION) {", StringComparison.Ordinal);
+        var invoke = fern[start..fern.IndexOf("cmd == Renge::CMD_", start + "if (cmd == ".Length,
+            StringComparison.Ordinal)];
         Assert.Contains("Aura::TemplateOf(instanceAddr)", invoke, StringComparison.Ordinal);
         Assert.Matches(@"Mimic::WarnNonStaticOnTemplate\([^;]*resolved,\s*fi\.functionFlags\)", invoke);
         Assert.DoesNotMatch(@"WarnNonStaticOnTemplate\([^;]*directCall", invoke);

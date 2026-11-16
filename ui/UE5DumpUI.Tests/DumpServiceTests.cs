@@ -370,7 +370,7 @@ public class DumpServiceTests
     public void Fern_InvokeReply_NamesTheClassItReadAtTheAddress()
     {
         var s = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
-        int start = s.IndexOf("cmd == Renge::CMD_INVOKE_FUNCTION", StringComparison.Ordinal);
+        int start = s.IndexOf("if (cmd == Renge::CMD_INVOKE_FUNCTION) {", StringComparison.Ordinal);
         Assert.True(start > 0);
         int reply = s.IndexOf("data[\"instance_addr\"] = Renge::AddrToStr(instanceAddr);", start, StringComparison.Ordinal);
         Assert.True(reply > start);
