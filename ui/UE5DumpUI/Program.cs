@@ -23,6 +23,11 @@ internal static class Program
         if (args.Length >= 4 && args[0] == "--inject-elevated")
             return RunElevatedInject(args[1], args[2], args[3]);
 
+        // [MCP-WRITE-GRANTS-2026-11-14] `--mcp-agent-guard` is a Claude Code PreToolUse hook: one decision on stdout,
+        // no window, no mutex, before anything else starts.
+        if (args.Length == 1 && args[0] == Constants.McpAgentGuardSwitch)
+            return Mcp.McpHost.RunAgentGuard();
+
         // [PIPE-PER-PROCESS-2026-11-06] Stage D: `--mcp` serves the Model Context Protocol on stdio for an AI client
         // instead of opening the window. Before the single-instance mutex, so a server runs beside the UI and beside
         // other servers, and before Avalonia, which it never starts. Anywhere on the line: a registration may put

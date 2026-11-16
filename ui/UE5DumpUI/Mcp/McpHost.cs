@@ -57,6 +57,22 @@ internal static class McpHost
            + "one of " + Constants.McpWritesArgPrefix + Constants.McpWritesAnyHost + " or "
            + Constants.McpWritesArgPrefix + Constants.McpWritesOff + ".";
 
+    /// <summary>The exe as a PreToolUse hook (<see cref="McpAgentGuard"/>): the hook input on stdin, the decision, if
+    /// any, on stdout, and exit 0 either way, the code Claude Code reads the decision under.</summary>
+    public static int RunAgentGuard()
+    {
+        string input;
+        using (var reader = new StreamReader(Console.OpenStandardInput(), new UTF8Encoding(false)))
+            input = reader.ReadToEnd();
+        if (McpAgentGuard.Decide(input) is { } decision)
+        {
+            using var stdout = Console.OpenStandardOutput();
+            byte[] bytes = new UTF8Encoding(false).GetBytes(decision + "\n");
+            stdout.Write(bytes, 0, bytes.Length);
+        }
+        return 0;
+    }
+
     public static int Run(string[] args)
     {
         // stdout carries JSON-RPC and nothing else. Anything that writes Console.Out by accident lands in stderr,
