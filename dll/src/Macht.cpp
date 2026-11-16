@@ -76,8 +76,11 @@ static_assert(Lager::kPageNoAccess == PAGE_NOACCESS && Lager::kPageReadOnly == P
               "Lager's page values must be the SDK's");
 
 bool RangeInOwnImage(uintptr_t addr, size_t size) {
-    static_cast<void>(addr); static_cast<void>(size);
-    return false;   // RED: dll_core_test's OWNIMAGE checks fail until this is written
+    // __ImageBase is this image's own mapped header (declared at the top of this file); SizeOfImage spans every
+    // section, the CE mailbox's .data included.
+    const auto base = reinterpret_cast<uintptr_t>(&__ImageBase);
+    const auto* nt = reinterpret_cast<const IMAGE_NT_HEADERS*>(base + static_cast<uintptr_t>(__ImageBase.e_lfanew));
+    return Lager::RangeOverlapsImage(addr, size, base, nt->OptionalHeader.SizeOfImage);
 }
 
 Lager::WriteTarget ClassifyWriteRange(uintptr_t addr, size_t size) {

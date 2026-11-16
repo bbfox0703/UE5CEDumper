@@ -72,6 +72,7 @@ constexpr int32_t        HOLD_HELD_BY_OTHER      = -20;
 constexpr int32_t        WRITE_MEM_EXECUTABLE    = -21;   // the range touches code
 constexpr int32_t        WRITE_MEM_NOT_WRITABLE  = -22;   // a read-only, guard, no-access or uncommitted page
 constexpr int32_t        WRITE_MEM_CHANGED       = -23;   // `expect` no longer matches what is there
+constexpr int32_t        WRITE_MEM_OWN_IMAGE     = -25;   // [WRITEMEM-OWN-IMAGE] a background client, inside the DLL's image
 // [D2-3-INVOKE] invoke_function's refusal of a background client's call the maintainer's list names (Voll); and the
 // name an if_free invoke's conflict carries, beside the holds, when another client's invoke is outstanding.
 constexpr int32_t        INVOKE_REFUSED_FOR_BACKGROUND = -24;

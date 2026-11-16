@@ -492,8 +492,11 @@ inline WriteTarget WorseWriteTarget(WriteTarget a, WriteTarget b) {
 /// [WRITEMEM-OWN-IMAGE] True when [addr, addr + size) overlaps [imageBase, imageBase + imageSize): write_mem refuses a
 /// background client's write into the DLL's own image. An empty range or image overlaps nothing.
 inline bool RangeOverlapsImage(uintptr_t addr, size_t size, uintptr_t imageBase, size_t imageSize) {
-    static_cast<void>(addr); static_cast<void>(size); static_cast<void>(imageBase); static_cast<void>(imageSize);
-    return false;   // RED: the tests below fail until this is written
+    if (size == 0 || imageSize == 0) return false;
+    // Exclusive ends, clamped at the top of the address space so a wrapping range still reaches what lies above it.
+    const uintptr_t end = (addr + size < addr) ? UINTPTR_MAX : addr + size;
+    const uintptr_t imageEnd = (imageBase + imageSize < imageBase) ? UINTPTR_MAX : imageBase + imageSize;
+    return addr < imageEnd && imageBase < end;
 }
 
 // How far past a hook target MinHook reads, with no SEH of its own. CreateTrampolineFunction decodes the prologue

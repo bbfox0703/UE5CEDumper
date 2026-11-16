@@ -1925,7 +1925,10 @@ eyeball calibration (tweak constants until names look like real UObjects).
 read-only, guard, no-access and uncommitted pages (`-22`) are refused, and no page's protection is changed: before,
 any page was made READWRITE for the write, which patched code and read-only data and restored the first page's
 protection on every page of a multi-page write. With `expect`, a range that no longer holds those bytes is refused
-(`-23`, with what is there now in `current`). The codes are Grimoire.h's `WRITE_MEM_*`.
+(`-23`, with what is there now in `current`). `[WRITEMEM-OWN-IMAGE]` (build 3713+): a client whose requests are
+marked `background` (the MCP server) is refused a range inside the DLL's own image (`-25`): its globals include the
+Cheat Engine mailbox, and a write there would hand an invoke to the CE-owned poller, past the background deny list.
+The codes are Grimoire.h's `WRITE_MEM_*`.
 
 ### walk_functions
 
