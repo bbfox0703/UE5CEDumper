@@ -32,6 +32,10 @@ internal static class HolderText
     internal static string For(HoldEntry? hold, Func<long, bool> exited)
     {
         if (hold is null || !hold.InForce || hold.Holder.You) return "";
+        // An ended AI session's debug camera whose OFF waits for the game thread: the DLL dropped its owner, and no
+        // program holds it any more.
+        if (hold.ReleaseOwed)
+            return AobMakerStatus.Say(KeyReleaseOwed, "Turning off: the AI session that held it has ended");
         var h = hold.Holder;
         if (h.Kind == Constants.HoldKindCe) return AobMakerStatus.Say(KeyCe, "Held by Cheat Engine");
         if (h.Kind != Constants.HoldKindClient)
