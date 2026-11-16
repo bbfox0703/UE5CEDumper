@@ -421,9 +421,9 @@ Open work only. **Read this when deciding what to do next.**
 - `[CPP-HARDENING-2026-11-14]` (hardening, not a defect): ✅ `[[nodiscard]]` on the DLL's status returns (batch 2
   done 2026-11-17), ✅
   race-free reads of the property family, ✅ AddressSanitizer on all five C++ test executables (all 2026-11-15);
-  open follow-ups: the other runtime-written `DynOff` ints (`SOFTPTR_PATH` /
-  `LAZYPTR_GUID`, the `UENUM_*` and `UFUNCTION_*` offsets) as `RuntimeOffset`, an ASan CI job -- chosen instead of a
-  Rust rewrite (its section).
+  ✅ the other runtime-written `DynOff` ints (`SOFTPTR_PATH` / `LAZYPTR_GUID`, the `UENUM_*` and `UFUNCTION_*`
+  offsets) as `RuntimeOffset` (2026-11-17, red `e7294472`, green `163a408b`); open follow-up: an ASan CI job --
+  chosen instead of a Rust rewrite (its section).
 
 ### D. Open by a recorded decision — do not re-raise without a new reason
 
