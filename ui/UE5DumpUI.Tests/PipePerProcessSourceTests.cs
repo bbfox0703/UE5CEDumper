@@ -1011,6 +1011,23 @@ public sealed class PipePerProcessSourceTests
         Assert.Contains("constexpr int32_t        INVOKE_REFUSED_UNDER_GRANT    = -28;", DllSrc("Grimoire.h"));
     }
 
+    /// <summary>[CPP-HARDENING-2026-11-14] [[nodiscard]] batch 2. fly_set applies the preset first, the one setting that
+    /// can be refused, and a refused preset answers an error with nothing else changed -- it was discarded, and the reply
+    /// read as applied.</summary>
+    [Fact]
+    public void FlySet_ARefusedPreset_AnswersAnError_BeforeAnythingElseChanges()
+    {
+        string body = Between(NoComments(DllSrc("Fern.cpp")), "if (cmd == Renge::CMD_FLY_SET) {", "if (cmd == Renge::CMD_");
+        int preset = body.IndexOf("Dunste::SetPreset(", StringComparison.Ordinal);
+        int speed = body.IndexOf("Dunste::SetSpeed(", StringComparison.Ordinal);
+        int noclip = body.IndexOf("Dunste::SetNoclip(", StringComparison.Ordinal);
+        int enable = body.IndexOf("Dunste::SetEnabled(", StringComparison.Ordinal);
+        Assert.True(preset > 0 && preset < speed && preset < noclip && preset < enable,
+            "the preset is applied before speed, noclip and enable");
+        int error = body.IndexOf("Renge::MakeError(", preset, StringComparison.Ordinal);
+        Assert.True(error > preset && error < speed, "a refused preset answers an error before speed is set");
+    }
+
     /// <summary>[MCP-WRITE-GRANTS-2026-11-14] Phase 2. get_object names the DLL's template verdict, which write_field
     /// refuses a class default and an archetype by (Constants.McpMinDllBuildForFieldWrites).</summary>
     [Fact]
