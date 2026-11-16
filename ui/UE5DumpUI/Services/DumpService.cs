@@ -4166,8 +4166,37 @@ public sealed class DumpService : IDumpService
         return res["code"]?.GetValue<int>() ?? 0;
     }
 
-    // RED: the surface only.
-    public Task<HoldsReport> GetHoldsAsync(CancellationToken ct = default) => Task.FromResult(new HoldsReport());
+    public async Task<HoldsReport> GetHoldsAsync(CancellationToken ct = default)
+    {
+        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "get_holds" }, ct);
+        CheckResponse(res);
+        var holds = new List<HoldEntry>();
+        if (res["holds"] is JsonArray arr)
+        {
+            foreach (var h in arr)
+            {
+                if (h is not JsonObject o) continue;
+                var holder = o["holder"] as JsonObject;
+                holds.Add(new HoldEntry
+                {
+                    Hold        = o["hold"]?.GetValue<string>() ?? "",
+                    Active      = o["active"]?.GetValue<bool>() ?? false,
+                    // Sent only when true, by DLLs from 3706 / 3707 on.
+                    Pending     = o["pending"]?.GetValue<bool>() ?? false,
+                    ReleaseOwed = o["release_owed"]?.GetValue<bool>() ?? false,
+                    Holder = new HoldOwner
+                    {
+                        Kind       = holder?["kind"]?.GetValue<string>() ?? "none",
+                        // A uint32, absent when the DLL keyed the owner by its connection.
+                        Pid        = holder?["pid"] is JsonValue p && p.TryGetValue<long>(out long pid) ? pid : null,
+                        Background = holder?["background"]?.GetValue<bool>() ?? false,
+                        You        = holder?["you"]?.GetValue<bool>() ?? false,
+                    },
+                });
+            }
+        }
+        return new HoldsReport { Holds = holds };
+    }
 
     public async Task<IReadOnlyList<ForcedFieldInfo>> GetForcedFieldsAsync(CancellationToken ct = default)
     {
@@ -4295,6 +4324,10 @@ public sealed class DumpService : IDumpService
         // [P1-SEETHRU-GIVEUP] Additive; an older DLL sends neither, which reads as the old "still waiting" card.
         RestorePending   = res?["restore_pending"]?.GetValue<bool>() ?? false,
         RestoreAbandoned = res?["restore_abandoned"]?.GetValue<bool>() ?? false,
+        // Who has it on (DLL 3698+), and since 3714 whether this window is one of them: unknown before, never false.
+        Claims    = res?["claims"]?.GetValue<int>() ?? 0,
+        CeClaimed = res?["ce_claimed"]?.GetValue<bool>() ?? false,
+        You       = res?["you"] is JsonValue you && you.TryGetValue<bool>(out bool mine) ? mine : null,
     };
 
     // === Teleport (Wirbel) — docs/teleport-spec.md §7 ===

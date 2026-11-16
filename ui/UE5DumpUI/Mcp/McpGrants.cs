@@ -319,19 +319,21 @@ public sealed partial class McpGrants
         string? Str(string key) => McpJson.GetString(request, key);
         switch (Str("cmd"))
         {
-            case "set_god_mode": return "god_mode";
-            case "set_foreground_lock": return "foreground_lock";
-            case "set_debug_camera": return "debug_camera";
-            case "fly_set": return "fly";
-            case "reset_gravity_direction": return "gravity_direction";
+            case "set_god_mode": return Constants.HoldGodMode;
+            case "set_foreground_lock": return Constants.HoldForegroundLock;
+            case "set_debug_camera": return Constants.HoldDebugCamera;
+            case "fly_set": return Constants.HoldFly;
+            case "reset_gravity_direction": return Constants.HoldGravityDirection;
             case "reset_movement":
-                return Str("knob") is "walk_speed" or "gravity" or "jump" ? "movement:" + Str("knob") : null;
+                return Str("knob") is "walk_speed" or "gravity" or "jump" ? Constants.HoldMovementPrefix + Str("knob") : null;
             case "reset_time_dilation":
                 string? target = request.ContainsKey("target") ? Str("target") : "global";   // the DLL's default
-                return target is "global" or "pawn" ? "time:" + target : null;
+                return target is "global" or "pawn" ? Constants.HoldTimePrefix + target : null;
             case "reset_field":
                 string? cls = Str("class_name"), field = Str("field_name");
-                return string.IsNullOrEmpty(cls) || string.IsNullOrEmpty(field) ? null : "force_field:" + cls + "::" + field;
+                return string.IsNullOrEmpty(cls) || string.IsNullOrEmpty(field)
+                    ? null
+                    : Constants.HoldForceFieldPrefix + cls + Constants.HoldForceFieldSeparator + field;
             default: return null;
         }
     }
