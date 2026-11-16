@@ -189,6 +189,24 @@ public sealed class McpHostTests
         foreach (var name in named) Assert.True(catalog.Contains(name), $"MCP-Setup.html names {name}");
     }
 
+    [Theory]
+    [InlineData(McpHostDecision.Grants)]
+    [InlineData(McpHostDecision.MarkedPerCall)]
+    [InlineData(McpHostDecision.ReadOnly)]
+    public void TheInstructions_NameOnlyToolsTheirHostLists(McpHostDecision decision)
+    {
+        // Each decision's text describes its own host: a tool it names that the host does not list sends the model after
+        // a tool that is not there (the review of [MCP-WRITE-GRANTS-2026-11-14] Phase 2 found write_field named on a
+        // host that asks every call, which lists no grant and no granted tool).
+        var listed = McpTools.Create(new NoGame(), new McpGrants())
+            .Where(t => McpGrants.IsListed(t.EffectiveRole, decision)).Select(t => t.Name).ToHashSet();
+        string text = McpServer.InstructionsFor(decision);
+        var named = Regex.Matches(text, @"\b(?:read|write|grant|revoke|scan)_[a-z_]+").Select(m => m.Value).Distinct()
+            .ToList();
+        Assert.NotEmpty(named);
+        foreach (var name in named) Assert.True(listed.Contains(name), $"{decision}: the instructions name {name}");
+    }
+
     [Fact]
     public void TheSetupGuide_KeepsTheSshServerCommandsMarkedAsReferenceOnly()
     {
