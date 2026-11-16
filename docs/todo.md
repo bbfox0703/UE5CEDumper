@@ -14,9 +14,9 @@ Open work only. **Read this when deciding what to do next.**
 > verification-register.md `[PIPE-PER-PROCESS-2026-11-06]` items 1-12, 14, 16-17, 19-20, 23-25 and 27; their findings are fixed --
 > `[CT-INITFAILED-HEADLINE]` in build 3708, `[UI-ELEVATED-ACCESS-DENIED]` and `[SHUTDOWN-SEETHRU-WAIT]` in build 3709.
 > Still open there: only 13, kept open by the maintainer (2026-11-12): no machine with another CPU shape to run it on;
-> next in Stage D, evaluated 2026-11-14 and not started (the maintainer asked for the evaluation only):
-> `[MCP-WRITE-GRANTS-2026-11-14]`, a grant per kind or target instead of a prompt on every write -- its Phase 0
-> measurements come first** --
+> next in Stage D, `[MCP-WRITE-GRANTS-2026-11-14]`, a grant per kind or target instead of a prompt on every write:
+> Phase 0 measured 2026-11-16, **Phase 1 shipped in build 3714 (2026-11-16), its live checks open** in
+> verification-register.md; the cards' holder labels and Phase 1b (invoke grants) are next** --
 > the route and its decisions are under Stage D below. Before it, none active
 > (2026-11-06). `[MH-TRAMPOLINE-PREFLIGHT]` ended with build 3693: the guard
 > shipped, and the minhook bump is deferred to the triggers in its section (maintainer, 2026-11-06). Before it, none
@@ -99,7 +99,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **13 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **14 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -858,9 +858,23 @@ Phase 0, 2026-11-16 (the eval's §6.1): **M1** a marked prompt shows every argum
 values, wrapped) -- invoke and field grants can ship; **M10** it shows the tool's name only, not its title or
 description -- grant names must state their scope; **M6 / M6b** subagents and workflow agents share the session's
 server, and a subagent's prompt is indistinguishable from the main conversation's -- the agent_id deny hook is
-required. Still open: M2-M5 (permission-mode switches), M7 (needs Phase 1's log line), M9's idle lifetime. Next: the
-maintainer's decisions (§8 there), then Phase 1. Side findings, all fixed in build 3713: `[MCP-INSTR-CLAIMS]`,
-`[INVOKE-DENY-INDIRECTION]`, `[WRITEMEM-OWN-IMAGE]`.
+required. Still open: M2-M5 (permission-mode switches), M7 (needs Phase 1's log line), M9's idle lifetime. Side
+findings, all fixed in build 3713: `[MCP-INSTR-CLAIMS]`, `[INVOKE-DENY-INDIRECTION]`, `[WRITEMEM-OWN-IMAGE]`.
+
+**Phase 1 shipped in build 3714 (2026-11-16; the maintainer took every §8 recommendation).** The grant core and gate
+(`McpGrants`, checked inside `McpGameLink` on every send), the host decision and `--writes`, the two grant tools plus
+`read_grants` / `revoke_grants`, refused out-of-range values, the "Block AI writes" switch (server and window), the
+`--mcp-agent-guard` hook, and See-through's own-claim OFF in the DLL. A fresh-context review's two MED and two LOW were
+fixed before the build (an OFF of what the server does not hold is no release; See-through's OFF ends only the AI's
+claim; a release needs `if_free`; the time-dilation wording). Open, in order:
+- **Live checks:** verification-register.md, "MCP write grants, Phase 1" (the grant prompt in Claude Code, the write
+  rigs, the switch, the guard hook, See-through's own claim). The guard hook and the prompt need the maintainer: the
+  hook goes into the user-level settings, and Claude Code reads hooks and the server at session start.
+- **The cards' holder labels** (§4.10, the rest of Phase 1's UI half): each gameplay card names who holds it from a
+  2-second `get_holds` poll, and See-through from its claims (`you` now says whether the window holds one). The
+  implementation map, with its traps (a restarted UI's own holds, the badge-prime gate, quiet polling), was written
+  2026-11-16 and is to be redone from the code when this starts.
+- **Phase 1b, invoke grants** (§4.4), then Phase 2's `write_field` (§4.5).
 
 ### Decisions (maintainer, 2026-11-06)
 

@@ -845,6 +845,35 @@ log: "1 queued invoke(s) of it dropped, never run"). Not reached:
     game, `write_invoke` of `K2_SetActorLocation` with `NewLocation` {X, Y, Z} moves the actor; an object parameter
     given a field's address is refused; `SendToConsole` is refused by name.
 
+### ⬜ MCP write grants, Phase 1 — live checks `[MCP-WRITE-GRANTS-2026-11-14]`
+
+Phase 1 of the write grants, build 3714 (`McpGrants`, the grant tools, the Block AI writes switch, the agent guard,
+See-through's own-claim OFF) -- dev-log 3714, docs/mcp-write-approval-eval.md. Unit-tested and `mcp_client.py probe`
+29/29 (the host decision through real server processes); nothing below has run against a game or a real Claude Code
+session yet. `[MCP-WRITE-GRANTS-2026-11-14]`
+
+1. ⬜ **The grant prompt, in Claude Code.** Acceptance: with the server registered from the 3714 exe and DumperTest
+    running, asking for god mode makes the AI call `grant_god_mode_camera_cursor_time_see_through_foreground` first;
+    the prompt shows that name and the `scope_ack` sentence; after Allow, `write_god_mode` ON and OFF and
+    `write_time_dilation` run with no further prompt in the default mode once the documented `write_*` allow rule is
+    in place (and with one Allow each without it); `write_memory` still asks every call; `read_grants` shows one grant
+    with its uses. The server's log has the `initialize from claude-code <version>: ... writes: Grants` line (Phase 0
+    M7) and one `Grant` line.
+2. ⬜ **The write rigs against the 3714 DLL.** Acceptance: on DumperTest Shipping with the published DLL and AOT exe,
+    `mcp_client.py writes`, `raw`, `holdsmore` and `invokeparams` pass with their grant steps (a covered write before
+    its grant refused naming it), and `olddll` against `copy3695` refuses both grants with the build text.
+3. ⬜ **Block AI writes against a running server.** Acceptance: with the AI holding god mode under a grant, ticking the
+    switch in the window makes the AI's `write_god_mode` ON refused with the switch's text while its OFF of its own
+    hold goes through; unticking does not bring the grant back (the next ON is refused naming the grant); the server's
+    log has the "grant(s) revoked" line; the card's OFF in the window ends the AI's hold at any time.
+4. ⬜ **The agent guard, in a real session.** Acceptance: with the documented PreToolUse entry in the user-level
+    settings, a subagent asked to call `write_god_mode` is denied with the guard's reason and nothing reaches the
+    pipe (no `set_god_mode` in the DLL's pipe log), while the main conversation's call goes on to the usual prompt.
+    Also record whether a workflow agent's call carries `agent_id` (the hooks reference does not say).
+5. ⬜ **See-through's own-claim OFF.** Acceptance: the UI's card turns See-through on, the AI turns it on and then off:
+    the reply says it stays on, the DLL logs "own claim released", and the occluders stay hidden; with only the AI's
+    claim, its OFF turns See-through off. Against a DLL older than 3714 the OFF is refused before anything is sent.
+
 ### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
 
 Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT
@@ -1001,7 +1030,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`13` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`14` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:

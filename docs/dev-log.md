@@ -27,6 +27,48 @@ builds ≤696 in
 
 -----
 
+## 2026-11-16 (build 3714) — MCP write grants, Phase 1: one grant per game run instead of a prompt per write, and a switch to stop every AI session `[MCP-WRITE-GRANTS-2026-11-14]`
+
+Claude Code's prompt for a write tool offers only "Deny" and "Allow once", so every repeat of a write asked again. The
+maintainer took every recommendation of docs/mcp-write-approval-eval.md §8 for Phase 1; Phase 0 had measured the prompt
+(it shows the tool's name and its arguments in full, nothing else) and that subagents share the session's server.
+- **What changes for a user of an AI client** (the UI and Cheat Engine change only by the new switch):
+  - Claude Code 2.1.246 or later asks once per game run, through two grant tools whose names say what they unlock:
+    `grant_god_mode_camera_cursor_time_see_through_foreground` (god mode, the debug camera, the mouse cursor, time
+    dilation, See-through, Keep Foreground) and `grant_movement_fly_teleport_may_kill_or_lose_pawn` (the movement
+    knobs, gravity direction, Fly, teleport). The prompt shows a fixed sentence of what the grant covers and how long.
+    A grant ends with the game run, the AI session or its server's reconnect, or `revoke_grants`; `read_grants` lists
+    them. A dropped pipe connection to the same game run keeps them.
+  - `write_memory`, `write_invoke` and `write_force_field` still ask before every call.
+  - Turning off or resetting what the AI itself holds needs no grant. Turning off what it did not turn on needs the
+    grant: god mode's OFF writes the normal value to every protection bool, whoever set them.
+  - Every other client, Claude Desktop included, only reads unless its own registration adds `--writes=any-host`. An
+    older or unparseable Claude Code asks before every write, as before. `--writes=off` turns writes off; any other
+    argument stops the server with exit code 1.
+  - A value outside the UI's own range is refused, never clamped by the DLL: time dilation up to 3 (world) and 10
+    (pawn), walk speed and gravity 0.1 to 10 times, jump 10% to 30 times the height, Fly 50 to 20000, See-through 1 to
+    10 (the tool said 16, the DLL clamps at 10). A zero gravity vector points to the reset.
+  - **Block AI writes**, at the top of the Teleport tab: every AI session is refused every change but an OFF or a
+    reset of its own holds, and every grant ends. Per Windows user (`ai-writes.json`); a file that cannot be read
+    blocks too.
+  - `UE5DumpUI.exe --mcp-agent-guard` is a Claude Code PreToolUse hook that refuses a subagent's or a workflow agent's
+    write or grant; docs/mcp.md gives the settings entry.
+  - An AI's See-through OFF ends only its own claim: `seethrough_set` takes `own_claim` (DLL change), and See-through
+    stays on while the user or a Cheat Engine record has it on. `seethrough_get_state` says `you`.
+- **How:** `McpGrants` decides the client once, at the first initialize, classes every DLL command, and keys grants on
+  the game run (pid and process start time). `McpGameLink` checks every send under its lock: a write admitted for
+  another run, another kind, a revoked grant, or an OFF of what this server does not hold (read from get_holds right
+  before) is refused and nothing is sent.
+- **Review:** a fresh-context review of the change found two MED and two LOW; all four were fixed, red then green,
+  before this build (an OFF of what the server does not hold was passed as a release; See-through's OFF ended
+  everyone's claims; a release did not need `if_free`; the time-dilation refusal named 0).
+- **Tests:** C# 8180 passed, 1 skipped (McpGrantsTests and AiWriteBlockGateTests are new); headless 71/71; C++
+  dll_helpers_test 4101 and dll_core_test 1574 checks. `mcp_client.py probe` 29/29 on a local build: the host decision
+  through real server processes.
+- **Live: pending.** The grant prompts in Claude Code, the guard hook in a real session, the switch against a running
+  server, and the write rigs on DumperTest are open in docs/verification-register.md.
+- AOT UI 62,438,912 bytes (sha256 040ba069aec56233...); UE5Dumper.dll 3,777,536 bytes (sha256 828bd085db3d5800...).
+
 ## 2026-11-16 (build 3713) — The AI's calls: three gaps closed before any grant ships `[INVOKE-DENY-INDIRECTION]` `[WRITEMEM-OWN-IMAGE]` `[MCP-INSTR-CLAIMS]`
 
 The maintainer chose these three from the MCP write-approval plan (docs/mcp-write-approval-eval.md) because they need
