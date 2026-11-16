@@ -4156,8 +4156,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             return;
         }
         _stealthNoneHeld = false;
-        // Held at 0 is what this card's Hold does; any other value is a hold this card would not show as its own.
-        ApplyStealthState(job.Kind == "numeric" && job.Value == 0 ? 1 : -1);
+        // Held at 0 is what this card's Hold does; any other value is a hold this card would not show as its own. A
+        // job with no live instance yet is armed, as the card's own Hold says it: Solide applies it once one spawns.
+        if (job.Kind != "numeric" || job.Value != 0) ApplyStealthState(-1);
+        else if (job.Held == 0) (StealthState, StealthBadgeColor) = (StealthArmedState, "#E0A050");
+        else ApplyStealthState(1);
     }
 
     /// <summary>The card reads the connect prime makes, for the holds given, each dropped if a disconnect or a
