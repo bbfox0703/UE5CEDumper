@@ -20,7 +20,7 @@ byte on stdout (a stray log line, a CR) fails the run, because a real client dro
     py tools/verify/mcp_client.py writes --exe dist/UE5DumpUI.exe [--pid N] [--toggle-experimental]
         Stage D2-2: the write tools against a fixture, beside a foreground pipe client standing in for the UI. The
         UI's holds are refused and named; free ones become the server's; a teleport leaves the marker slots and the
-        undo point; See-through OFF is refused while the UI also claims it; everything the server held is released
+        undo point; See-through OFF ends only the server's own claim, never the UI's; everything the server held is released
         when it exits, and the UI's hold is not. --toggle-experimental also turns the UI's experimental switch off for
         one step (the file's exact bytes are put back) to see the experimental tools refuse. It MOVES the fixture's
         pawn by a few metres and back: run it on a fixture, never on a real game.
@@ -811,19 +811,23 @@ def run_writes(exe: str, pid: int | None, toggle_experimental: bool) -> int:
             job = {h["hold"]: h for h in (d or {}).get("holds", [])}.get(FORCE_FIELD_HOLD, {})
             ck.check(job.get("active") and job.get("holder", {}).get("you") and job["holder"].get("background"),
                      f"read_holds: {FORCE_FIELD_HOLD} is the server's, marked background", job)
-            # See-through: the server may end its own claim alone, never one the UI shares.
+            # See-through: the server's OFF ends its own claim only (own_claim, DLL 3714 [MCP-WRITE-GRANTS-2026-11-14]);
+            # See-through goes off with the last claim, and never under the UI's.
             r, d, _ = call("write_see_through", {"enable": True})
             ck.check(not r.get("isError"), "write_see_through on", d)
             r, d, _ = call("write_see_through", {"enable": False})
-            ck.check(not r.get("isError"), "write_see_through off over its own claim alone", d)
+            ck.check(not r.get("isError") and d.get("released") == "off" and not d.get("active"),
+                     "write_see_through off over its own claim alone: See-through goes off", d)
             call("write_see_through", {"enable": True})
             ui.request("seethrough_set", enable=True)
             ui_claimed_see_through = True
-            r, d, _ = call("write_see_through", {"enable": False})
-            ck.check(r.get("isError") and "also on" in error_text(d),
-                     "write_see_through off is refused while the UI also has it on", d)
+            r, d, note = call("write_see_through", {"enable": False})
+            ck.check(not r.get("isError") and d.get("released") == "still_held" and d.get("active")
+                     and "stays on" in (note or ""),
+                     "write_see_through off while the UI also has it on: only the server's claim ends", (d, note))
             s = ui.request("seethrough_get_state")
-            ck.check(s.get("active") and s.get("claims") == 2, "and See-through stays on with both claims", s)
+            ck.check(s.get("active") and s.get("claims") == 1 and s.get("you"),
+                     "and See-through stays on with the UI's claim alone", s)
 
         # 6. The session ends: what the server held is released, what the UI holds is not.
         exited = c.close()
