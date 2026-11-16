@@ -1038,10 +1038,14 @@ One UFunction per grant: `grant_invoke_one_function_any_object_and_args`, then `
     runs without a prompt in auto mode, `write_invoke` of another function still asks, and the server's log has one
     `Grant N: Invoke ... : <full name>` line. Covered meanwhile by
     `McpToolsTests.TheInvokeGrant_StatesItsScope_WithTheFunctionFirst` (the order) and Phase 0's M1 (whole arguments).
-3. ⬜ **A Blueprint function under a grant.** Acceptance: on a fixture with a Blueprint-defined function (its full name
-    under `//Game/...`), the grant takes the function and its BP class path, the call runs on a live instance of that
-    class, and a native function the Blueprint overrides is refused under a grant on the parent's full name (the DLL's
-    -28 names the override's `func_full`).
+3. ✅ **CLOSED 2026-11-17** (AOT exe and DLL 3719, DumperTest Shipping pid 6244; `mcp_client.py invokegrant` 29/29,
+    its step 7, log `out/mcp_invokegrant_3719b.log`). `BlueprintUpdateAnimation`, the anim Blueprint
+    `//Game/Characters/Mannequins/Animations/ABP_Manny/ABP_Manny_C`'s override of AnimInstance's native event, was
+    granted by its `//Game` full name and run unasked on the live `ABP_Quinn_C` (a Blueprint subclass of it, so the
+    call was on a subclass's instance rather than the class's own), result 0. With only the native declaration
+    granted (`//Script/Engine/AnimInstance.BlueprintUpdateAnimation`), the server refused the call naming the
+    override; asked directly as a background client (`grant`, `expect_func_full` the native name), the DLL resolved
+    the override and refused it -28 with `func_full` naming `ABP_Manny_C.BlueprintUpdateAnimation`.
 
 ### ⬜ MCP field grants, Phase 2 (build 3718) — what the live checks did not reach `[MCP-WRITE-GRANTS-2026-11-14]`
 

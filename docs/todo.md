@@ -881,7 +881,7 @@ claim; a release needs `if_free`; the time-dilation wording). Open, in order:
   functions.
 - ~~**Phase 1b, invoke grants**~~ ✅ shipped in build 3717 (dev-log 3717): one UFunction per grant, the AI's invoke
   deny list from a scan of the UE 4.18-5.8 sources; proven live (verification-register.md, "MCP invoke grants, Phase
-  1b": item 1 closed, the Claude Code prompt and a Blueprint function open).
+  1b": items 1 and 3 closed -- a Blueprint function included, 2026-11-17; the Claude Code prompt open).
 - ~~**Phase 2's `write_field`**~~ ✅ shipped in build 3718 (dev-log 3718): one field of one class per grant, written
   on that class's live instances and its subclasses'; `get_object` names the DLL's template verdict, which the server
   refuses a class default and an archetype by. Two review rounds (26 and 22 rows) fixed; proven live
